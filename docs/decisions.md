@@ -43,7 +43,7 @@ multiplier makes one props pull cost more than a month's quota.
 
 ## Corrections issued during design
 
-Five things I got wrong then fixed. Do not revert to the earlier version.
+Six things I got wrong then fixed. Do not revert to the earlier version.
 
 1. **MCP is not categorically expensive.** Claude Code ships MCP Tool Search, which defers tool
    definitions and loads them semantically. Revised rule: MCP *definitions* are cheap, MCP
@@ -64,6 +64,22 @@ Five things I got wrong then fixed. Do not revert to the earlier version.
    view via `lg.espn_request.league_get`, one bulk request for the whole pool
    (`hub/fetch/espn.py:player_adp`). Verified Aug 21 2026: 463 players, Gibbs at 1.49.
    Do not go back to `posRank`, and do not add an ADP dependency -- ESPN has it.
+
+6. **`load_ff_rankings("draft")` is 31 ranking pages stacked in one frame, not one board.**
+   Redraft, dynasty, best-ball, superflex and IDP pages each carry their *own* `ecr` scale.
+   `consensus()` selected `page_type` away before `.unique(keep="first")`, so every player's
+   ECR came from whichever page happened to sort first -- 27 distinct pages, the largest
+   contributors `best-overall` (419 players, best-ball) and `redraft-lb` (216, IDP
+   linebackers). The symptom was kickers topping the edge list on *positional* ECRs of
+   11-30, which is the same error as the `posRank` one: a scoped rank read as an overall.
+   Correct slice for this league is `page_type == "redraft-overall"`, which resolves to
+   `/nfl/rankings/ppr-cheatsheets.php` -- redraft, full PPR, no superflex, no IDP. Filtered
+   to QB/RB/WR/TE, since K and DST are rostered but drafted off ESPN's own list.
+   Board went 1474 -> 452 players and 957 -> 104 missing xFP. A missing page now raises
+   `ContractViolation` rather than silently rebuilding the mongrel.
+
+   General lesson, now twice: **before differencing two ranks, ask what population each was
+   computed over.** Every bug in the draft board so far has been a version of that.
 
 ## Alternatives rejected
 

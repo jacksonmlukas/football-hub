@@ -16,6 +16,8 @@ from pathlib import Path
 import polars as pl
 
 from hub.contracts import ContractViolation
+from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
+from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 import nflreadpy as nfl
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -202,12 +204,61 @@ def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
     return board.sort("ecr")
 
 
+def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
+              w: float = DEFAULT_ESPN_WEIGHT, top: int = 10) -> tuple[str, pl.DataFrame]:
+    """Rank the board for one specific pick, under the rule that pick's wait implies.
+
+    Slot 3 of 12 alternates a 19-pick wait and a 5-pick wait, and that alternation should
+    drive the pick more than any ranking does:
+
+      scarcity -- a 19-pick wait follows. The question is not "who is best" but "who will
+                  not survive", so rank by cost_of_waiting = VOR x P(gone by next turn).
+      value    -- your next turn is 5 picks away. Almost anyone you like survives, so
+                  availability is noise; take the highest VOR.
+
+    Ranking by `edge` is deliberately not offered. The largest edges sit on players
+    consensus does not rate, so an edge-sorted board drafts replacement level.
+    """
+    # ECR-only mode drops the column entirely rather than nulling it, and blended_adp
+    # reads it unconditionally. Degrading to consensus-only must still produce a board.
+    if "adp" not in board.columns:
+        board = board.with_columns(pl.lit(None, pl.Float64).alias("adp"))
+    picks = my_picks(rounds)
+    now, nxt = next_two(picks, current_pick - 1)
+    if now != current_pick:
+        raise ValueError(f"{current_pick} is not one of your picks: {picks}")
+    mode = draft_mode(now, rounds)
+    if mode == "value":
+        ranked = board.filter(pl.col("vor").is_not_null()).sort("vor", descending=True)
+    else:
+        ranked = pick_value(board, now, nxt, w=w)
+    return mode, ranked.head(top)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--league-size", type=int, default=12)
     ap.add_argument("--scoring", default="ppr")
     ap.add_argument("--season", type=int, default=2025)
+    ap.add_argument("--pick", type=int, default=None,
+                    help="rank the board for this pick of yours (e.g. 3, 22, 27)")
+    ap.add_argument("--espn-weight", type=float, default=DEFAULT_ESPN_WEIGHT,
+                    help="fraction of the room drafting off ESPN's board (0=all sharp)")
+    ap.add_argument("--show-slots", action="store_true",
+                    help="print league shape and your pick schedule, then exit")
     a = ap.parse_args()
+
+    if a.show_slots:
+        picks = my_picks()
+        waits = [b - x for x, b in zip(picks, picks[1:])]
+        print(f"  teams {TEAMS} | slot {MY_SLOT} | starters "
+              + " ".join(f"{k}{v}" for k, v in SLOTS.items()))
+        print(f"  drafted positions: {'/'.join(DRAFTED_POSITIONS)}")
+        print(f"  picks: {', '.join(map(str, picks[:8]))} ...")
+        print(f"  waits: {', '.join(map(str, waits[:7]))} ...")
+        for pk in picks[:6]:
+            print(f"    pick {pk:>3}  ->  {draft_mode(pk)}")
+        return
 
     board = build(a.league_size, a.season)
     OUT.mkdir(parents=True, exist_ok=True)
@@ -221,6 +272,18 @@ def main():
     for r in top.head(8).iter_rows(named=True):
         print(f"    {r['player']:<24} {r['pos'] or '':<4} ECR {r['ecr']:>5.1f}  "
               f"xFP-FP {-r['fp_over_expected']:>6.1f}")
+
+    if a.pick is not None:
+        mode, rec = recommend(board, a.pick, w=a.espn_weight)
+        rule = ("19-pick wait ahead: take who will not survive it"
+                if mode == "scarcity" else "5-pick wait ahead: take the highest VOR")
+        print(f"\n  Pick {a.pick} -- {mode.upper()} ({rule})")
+        for r in rec.iter_rows(named=True):
+            cw = r.get("cost_of_waiting")
+            extra = f"cost_of_waiting {cw:>5.1f}" if cw is not None else ""
+            v = r["vor"]
+            print(f"    {r['player']:<24} {r['pos'] or '':<4} "
+                  f"VOR {0.0 if v is None else v:>5.1f}  {extra}")
 
 
 if __name__ == "__main__":
