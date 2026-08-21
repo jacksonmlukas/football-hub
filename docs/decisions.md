@@ -137,6 +137,25 @@ toward RB, so flex allocation is ~even (0.45 RB / 0.50 WR), not WR-dominant.
 | ESPN parks undrafted players on a shared tail ADP (~170), not null | `_adp_saturation_cutoff()`: lowest value shared by >= `teams` players |
 | Subtracting ranks drawn from different populations | Rank consensus *within* the ADP pool before differencing |
 
+## Weeks 15-17 SoS (pre-draft gate: met)
+
+`hub/draft/schedule.py`, column `sos_1517` on the board, `--sos` to view. 1.00 is a
+league-average defence *for that position*; the ratio is never collapsed across positions
+because a defence soft against WRs need not be soft against RBs. Built from two bulk pulls:
+2025 PPR points allowed per defence per position, and the published 2026 weeks 15-17
+schedule. 435 of 452 players placed; the 17 without a team get null, not a default 1.0.
+
+Caveats, since this is a tiebreaker and not a ranking:
+
+- last season's defence is a noisy guide to this one, and rosters move
+- the spread is widest at TE and QB, where the pool is small, so the extremes are
+  partly small-sample rather than real schedule strength
+- it moves players *inside* a tier. Taking a worse player for a softer week 16 is not
+  what this column is for.
+
+Most actionable form is the same-tier swap: Nabers (1.10) over Garrett Wilson (0.90) at an
+identical ADP of 36; Tyler Warren (1.18) over Colston Loveland (0.85) at 48 vs 45.
+
 ## Conflict: championship-leverage.md vs the live league
 
 `docs/championship-leverage.md` states **8 of 12 make the playoffs, 3 weeks, no byes**, and
