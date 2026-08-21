@@ -14,6 +14,8 @@ from __future__ import annotations
 import argparse, json
 from pathlib import Path
 import polars as pl
+
+from hub.contracts import ContractViolation
 import nflreadpy as nfl
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -45,14 +47,41 @@ def expected_points(season: int = 2025) -> pl.DataFrame:
     ])
 
 
+# `load_ff_rankings("draft")` stacks 31 FantasyPros pages into one frame -- redraft,
+# dynasty, best-ball, superflex, IDP -- each with its OWN ecr scale. Picking a player's
+# row without filtering draws from 27 of them, which is how kickers ended up with ECRs of
+# 11 and topped the edge list. This page is /nfl/rankings/ppr-cheatsheets.php: redraft,
+# full PPR, no superflex, no IDP. It is the only one that matches this league.
+CONSENSUS_PAGE = "redraft-overall"
+
+# On the board because you draft them off it. K and DST are rostered but taken late off
+# ESPN's own list, and their presence distorts every rank below the skill players.
+DRAFTED_POSITIONS = ("QB", "RB", "WR", "TE")
+
+
+def _select_consensus(r: pl.DataFrame) -> pl.DataFrame:
+    """Reduce the multi-page rankings frame to this league's single comparable board."""
+    if "page_type" not in r.columns:
+        raise ContractViolation(
+            "ff_rankings: no `page_type` column; cannot tell which ranking page each row "
+            "came from, and blending pages silently produces a mongrel ECR scale")
+    keep = [c for c in ("player", "pos", "team", "ecr", "sd", "best", "worst") if c in r.columns]
+    out = (r.filter(pl.col("page_type") == CONSENSUS_PAGE)
+            .select(keep)
+            .filter(pl.col("ecr").is_not_null())
+            .filter(pl.col("pos").is_in(DRAFTED_POSITIONS))
+            .unique(subset=["player"], keep="first")
+            .sort("ecr"))
+    if out.is_empty():
+        raise ContractViolation(
+            f"ff_rankings: page `{CONSENSUS_PAGE}` returned no {'/'.join(DRAFTED_POSITIONS)} "
+            f"rows; FantasyPros likely renamed the page")
+    return out
+
+
 def consensus() -> pl.DataFrame:
     """FantasyPros ECR. `sd` is a crude prior on uncertainty until conformal lands."""
-    r = nfl.load_ff_rankings("draft")
-    keep = [c for c in ("player", "pos", "team", "ecr", "sd", "best", "worst") if c in r.columns]
-    return (r.select(keep)
-             .filter(pl.col("ecr").is_not_null())
-             .unique(subset=["player"], keep="first")
-             .sort("ecr"))
+    return _select_consensus(nfl.load_ff_rankings("draft"))
 
 
 def replacement_levels(df: pl.DataFrame, teams: int = 12) -> dict[str, float]:
@@ -104,18 +133,24 @@ def espn_adp(league_size: int = 12) -> pl.DataFrame | None:
 def _adp_saturation_cutoff(adp: pl.Series, teams: int) -> float | None:
     """The ADP value at which ESPN stops actually knowing anything.
 
-    ESPN does not leave ADP null for players nobody drafts -- it parks them all on a
-    shared value at the tail (~170 in a 12-team league, where 27 players share 169.97).
-    A genuine ADP is near-unique; the sentinel is shared by dozens. So: the lowest value
-    shared by at least `teams` players is the cutoff, and it and everything above is
-    undrafted. Derived from the data rather than hardcoded, so it self-tunes if ESPN
-    moves the cluster or the league changes size.
+    ESPN does not leave ADP null for players nobody drafts -- it parks them in a jittered
+    band at the tail. Observed Aug 2026: bins 160-167 hold 1-10 players each, then 168
+    holds 16 and 169 holds 191, almost all distinct values. Counting exact repeats finds
+    the spike (169.97 x29) but lets the shoulder through, which prices a dozen deep TEs
+    on sentinel ADPs and invents a large negative edge for each.
+
+    So bin to whole picks. Genuine ADP averages roughly one player per pick, so the first
+    bin holding a full league's worth of players is where ESPN stopped knowing anything.
+    Derived from the data rather than hardcoded, so it self-tunes if ESPN moves the band
+    or the league changes size.
     """
     if adp.is_empty():
         return None
-    counts = adp.value_counts().sort(adp.name)
-    hits = counts.filter(pl.col("count") >= teams)
-    return float(hits[adp.name][0]) if hits.height else None
+    bins = (adp.to_frame()
+               .with_columns(pl.col(adp.name).floor().alias("_bin"))
+               .group_by("_bin").len().sort("_bin"))
+    hits = bins.filter(pl.col("len") >= teams)
+    return float(hits["_bin"][0]) if hits.height else None
 
 
 def _attach_edge(board: pl.DataFrame, adp: pl.DataFrame, teams: int) -> pl.DataFrame:

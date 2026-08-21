@@ -32,9 +32,20 @@ def test_no_saturation_when_every_adp_is_distinct():
 
 
 def test_tail_cluster_is_detected():
-    """ESPN parks undrafted players on a shared tail value instead of leaving it null."""
+    """ESPN parks undrafted players in a tail band instead of leaving it null."""
     s = pl.Series("adp", [1.0, 2.0, 3.0] + [169.99] * 12)
-    assert _adp_saturation_cutoff(s, teams=12) == 169.99
+    assert _adp_saturation_cutoff(s, teams=12) == 169.0
+
+
+def test_jittered_band_is_caught_not_just_the_exact_spike():
+    """The real shape: a dense band of near-distinct values, not one repeated number.
+
+    Counting exact repeats would miss this entirely -- no value appears twice -- and
+    every one of these would be priced as a genuine round-14 pick.
+    """
+    band = [169.0 + i / 100 for i in range(20)]
+    s = pl.Series("adp", [1.0, 2.0, 3.0] + band)
+    assert _adp_saturation_cutoff(s, teams=12) == 169.0
 
 
 def test_cluster_smaller_than_league_size_is_not_saturation():
