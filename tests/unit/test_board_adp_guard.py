@@ -1,68 +1,56 @@
-"""The ADP guard.
+"""The board's ADP substance guard.
 
-The Sep 2026 failure was not a crash: espn_api sets `posRank` from a
-`positionalRanking` key that free-agent payloads omit, so it comes back as `[]`.
-An empty list is not null, so the null filter passed it, `espn_adp` returned a
-non-None frame, the ECR-only branch never fired, and `edge` shipped as 366 empty
-lists. Shape checks passed; substance was absent.
+The fetch layer is typed now, so the guard is defence in depth rather than the
+primary fix. It stays because the original failure -- ESPN returning something
+structurally valid and semantically empty -- is the documented failure mode for
+this whole data source, not a one-off.
 
-These tests pin the substance check: anything that is not a numeric ADP must
-return None so the caller degrades loudly instead of quietly.
+Seam under test: whatever `player_adp` hands back, does the board degrade loudly
+instead of shipping an edge column with nothing in it?
 """
 import polars as pl
 import pytest
 from hub.draft import board
 
 
-class _Player:
-    def __init__(self, name, posRank):
-        self.name, self.posRank = name, posRank
-
-
-class _League:
-    def __init__(self, players):
-        self._players = players
-
-    def free_agents(self, size=400):
-        return self._players[:size]
-
-
 @pytest.fixture
-def fake_league(monkeypatch):
-    def _install(players):
+def fake_adp(monkeypatch):
+    def _install(frame_or_exc):
         import hub.fetch.espn as espn
-        monkeypatch.setattr(espn, "league_settings", lambda: (_League(players), {}))
+
+        def _fake(*a, **kw):
+            if isinstance(frame_or_exc, Exception):
+                raise frame_or_exc
+            return frame_or_exc
+        monkeypatch.setattr(espn, "player_adp", _fake)
     return _install
 
 
-def test_empty_positional_ranking_degrades_to_ecr_only(fake_league, capsys):
-    """The actual bug: `positionalRanking` absent -> posRank is []."""
-    fake_league([_Player(f"P{i}", []) for i in range(50)])
+def _frame(rows, dtype=pl.Float64):
+    return pl.DataFrame(rows, schema={"player": pl.Utf8, "adp": dtype})
+
+
+def test_usable_adp_is_returned(fake_adp):
+    fake_adp(_frame([{"player": "Jahmyr Gibbs", "adp": 1.49}]))
+    adp = board.espn_adp()
+    assert adp is not None and adp.height == 1
+
+
+def test_empty_frame_degrades_to_ecr_only(fake_adp, capsys):
+    fake_adp(_frame([]))
     assert board.espn_adp() is None
     assert "ECR-only" in capsys.readouterr().out
 
 
-def test_all_null_positional_ranking_degrades_to_ecr_only(fake_league):
-    fake_league([_Player(f"P{i}", None) for i in range(50)])
+def test_non_numeric_adp_degrades_to_ecr_only(fake_adp, capsys):
+    """The original bug shape: structurally present, semantically empty."""
+    fake_adp(pl.DataFrame({"player": ["a", "b"], "adp": [[], []]}))
     assert board.espn_adp() is None
+    assert "ECR-only" in capsys.readouterr().out
 
 
-def test_no_free_agents_degrades_to_ecr_only(fake_league):
-    fake_league([])
+def test_fetch_failure_degrades_to_ecr_only(fake_adp, capsys):
+    fake_adp(RuntimeError("ESPN 403"))
     assert board.espn_adp() is None
-
-
-def test_real_numeric_adp_is_returned(fake_league):
-    fake_league([_Player(f"P{i}", i + 1) for i in range(50)])
-    adp = board.espn_adp()
-    assert adp is not None
-    assert adp.height == 50
-    assert adp["adp"].dtype.is_numeric()
-    assert adp["adp"].is_not_null().all()
-
-
-def test_partial_nulls_keep_the_numeric_rows(fake_league):
-    fake_league([_Player("a", 1), _Player("b", None), _Player("c", 3)])
-    adp = board.espn_adp()
-    assert adp is not None
-    assert adp.height == 2
+    out = capsys.readouterr().out
+    assert "ECR-only" in out and "RuntimeError" in out

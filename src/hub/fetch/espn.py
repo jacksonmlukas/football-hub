@@ -10,6 +10,7 @@ from __future__ import annotations
 import json, os, time
 from pathlib import Path
 import requests
+import polars as pl
 
 CACHE = Path(__file__).resolve().parents[3] / "data" / "raw" / "espn"
 CACHE.mkdir(parents=True, exist_ok=True)
@@ -122,6 +123,44 @@ def poll(interval: int = 45, league: str = "nfl", out: Path | None = None,
             print(f"poll error (serving stale): {e!r}", flush=True)
         tick += 1
         time.sleep(interval)
+
+
+def _parse_adp(payload: dict) -> pl.DataFrame:
+    """Pull (player, adp) out of a kona_player_info response.
+
+    Split out from the fetch so the parsing is testable without a network call, and
+    because this is where every silent-failure mode lives. ESPN writes 0.0 for a
+    player with no draft history; that is a sentinel for undrafted, not the first
+    overall pick, so it is dropped rather than allowed to invert the top of the board.
+
+    The empty frame is explicitly typed. The board's substance guard checks dtype, and
+    an untyped empty frame comes back as Null -- which is exactly the failure this
+    whole path is meant to stop.
+    """
+    rows = []
+    for entry in payload.get("players") or []:
+        p = entry.get("player") or {}
+        name = p.get("fullName")
+        adp = (p.get("ownership") or {}).get("averageDraftPosition")
+        if name and isinstance(adp, (int, float)) and not isinstance(adp, bool) and adp > 0:
+            rows.append({"player": name, "adp": float(adp)})
+    return pl.DataFrame(rows, schema={"player": pl.Utf8, "adp": pl.Float64})
+
+
+def player_adp(limit: int = 500) -> pl.DataFrame:
+    """ESPN's own average draft position -- what your room is actually drafting off.
+
+    espn_api cannot give you this. It reads `ownership.percentOwned` and discards the
+    rest of the block, where `averageDraftPosition` lives, so we go to the raw view.
+    One bulk request covers the whole draftable pool; do not loop over players.
+    """
+    lg, _ = league_settings()
+    filters = {"players": {"limit": limit,
+                           "sortDraftRanks": {"sortPriority": 100, "sortAsc": True,
+                                              "value": "PPR"}}}
+    payload = lg.espn_request.league_get(params={"view": "kona_player_info"},
+                                         headers={"x-fantasy-filter": json.dumps(filters)})
+    return _parse_adp(payload)
 
 
 def league_settings():

@@ -75,21 +75,25 @@ def replacement_levels(df: pl.DataFrame, teams: int = 12) -> dict[str, float]:
 
 
 def espn_adp(league_size: int = 12) -> pl.DataFrame | None:
-    """ESPN's own ADP -- the thing your room is actually drafting off. Optional."""
+    """ESPN's own ADP -- the thing your room is actually drafting off. Optional.
+
+    Was built on espn_api's `posRank`, which is a *positional* rank (WR5 -> 5) parsed from
+    a `positionalRanking` key that free-agent payloads omit entirely. It therefore returned
+    empty lists, and subtracting a positional rank from an overall consensus rank would not
+    have meant anything even if it had not. Real overall ADP now comes from the fetch layer.
+    """
     try:
-        from hub.fetch.espn import league_settings
-        lg, _ = league_settings()
-        rows = [{"player": p.name, "adp": p.posRank if hasattr(p, "posRank") else None}
-                for p in lg.free_agents(size=400)]
-        adp = pl.DataFrame(rows).filter(pl.col("adp").is_not_null())
+        from hub.fetch.espn import player_adp
+        adp = player_adp()
     except Exception as e:  # noqa: BLE001
         print(f"  ESPN ADP unavailable ({type(e).__name__}); running ECR-only mode.")
         return None
 
-    # Shape is not substance. espn_api fills posRank from a `positionalRanking` key that
-    # free-agent payloads omit, so it arrives as [] -- which is not null, so the filter
-    # above happily passes it through. Without this check `edge` ships as a column of
-    # empty lists: no crash, no warning, and a draft board that silently has no edge.
+    # Shape is not substance. The predecessor of this function returned a frame of 400 rows
+    # whose every value was an empty list: not null, so it passed every null check, and
+    # `edge` shipped as a column of empty lists with no crash and no warning. Keep asserting
+    # on dtype and height here even though the fetch layer is now typed, because the failure
+    # this catches is ESPN quietly changing a field, which is not a hypothetical.
     if adp.is_empty() or not adp["adp"].dtype.is_numeric():
         print(f"  ESPN ADP present but unusable "
               f"(dtype={adp['adp'].dtype}, rows={adp.height}); running ECR-only mode.")
