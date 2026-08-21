@@ -1,0 +1,61 @@
+# Private now, public Sep 4
+
+The draft is Sep 3 and your leaguemates are a mixed room. Publishing the board before then
+hands them the exact artifact built to beat them. So the repo stays private until the draft
+is over, then flips.
+
+## What private costs you
+
+**GitHub Pages does not work.** Pages is available in public repositories on GitHub Free;
+private-repo Pages requires Pro. And even on Pro the site is still publicly reachable — truly
+private Pages needs an organization on Enterprise Cloud. So there is no configuration where a
+private repo gets you a hidden dashboard.
+
+Run it locally instead until Sep 4:
+
+```
+make serve      # http://localhost:8000
+```
+
+**Actions minutes are metered.** Free gives 2,000 minutes/month on private repos; public repos
+are unmetered. Keep CI on push only and leave the watchdog cron disabled until the flip. It has
+nothing to watch before Week 1 anyway.
+
+## What private does not cost you
+
+**Pre-registration still works.** The track-record guarantee is that predictions were committed
+before kickoff, and git timestamps do not care about repo visibility. When you flip, the full
+history comes with it, and every pre-draft commit is dated and verifiable. Nothing is lost by
+waiting.
+
+## Flip checklist
+
+1. Draft ends Sep 3.
+2. `./scripts/preflight_public.sh` — must pass. It scans **every commit**, not just HEAD,
+   because flipping exposes the entire history. A cookie you committed on day one and deleted
+   on day two is still in the repo forever.
+3. If it fails on a credential: rewrite history with `git-filter-repo`, then rotate the
+   credential anyway. Assume anything ever committed is compromised.
+4. Flip to public.
+5. Settings > Pages > deploy from `main`.
+6. Re-enable the watchdog cron in `.github/workflows/watchdog.yml`.
+7. Run `scripts/bootstrap_project.sh` to seed the project board.
+
+## Scope: cut
+
+**CFB fantasy is permanently out.** Not on the roadmap, not "later." Removed so it stops
+consuming design attention.
+
+Still on the roadmap, sequenced late: awards and season futures, the staking module, player
+props. Note that props are roadmap-only in practice, since free-tier odds data cannot support
+them — the credit multiplier makes a props pull cost more than a month's quota.
+
+## Relationship to the World Cup sim
+
+Fully independent. No shared library, no monorepo, no imported tokenizer.
+
+Track B re-derives the football tokenizer from scratch rather than porting `event-tokenizer`.
+That is slower and it is the point: understanding the methods ranks second among this project's
+objectives, and football's structure differs enough from soccer's that a port would smuggle in
+the wrong assumptions anyway. Football has discrete downs, so down/distance/yardline/clock/score
+is a near-Markov state and you need far less history than a continuous-possession sport.

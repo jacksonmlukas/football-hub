@@ -1,0 +1,46 @@
+[project]
+name = "football-hub"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "nflreadpy>=0.1",
+  "polars>=1.0",
+  "pyarrow",
+  "requests",
+  "espn-api>=0.44",
+  "pulp",
+  "mapie>=1.0",
+  "scikit-learn",
+  "python-dotenv",
+  "typer",
+  "duckdb>=1.1",
+  "hydra-core>=1.3",
+]
+
+[project.optional-dependencies]
+bayes = ["numpyro", "jax", "arviz"]
+seq = ["torch"]
+dev = ["pytest", "pytest-cov", "ruff", "pyrefly>=1.0", "hypothesis"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hub"]
+
+
+[tool.ruff]
+line-length = 100
+
+[tool.pyrefly]
+project-includes = ["src", "tests"]
+# CRITICAL: an unconfigured project defaults to the `basic` preset, which silences most
+# type errors. A fast checker that finds nothing is worse than a slow one that finds bugs.
+preset = "default"
+# Third-party stubs are thin across nflreadpy / espn_api / duckdb; do not fail on them.
+ignore-missing-imports = ["nflreadpy.*", "espn_api.*", "duckdb.*", "hydra.*", "omegaconf.*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

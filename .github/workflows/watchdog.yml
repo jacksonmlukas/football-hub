@@ -1,0 +1,66 @@
+name: watchdog
+# External watchdog. Deliberately NOT running on the machine that hosts the poller --
+# a process that dies cannot report its own death.
+on:
+  schedule:
+    # Every 10 min during NFL windows (Sun 12:00-24:00 ET = 16:00-04:00 UTC) and Sat CFB.
+    - cron: "*/10 16-23 * * 0"
+    - cron: "*/10 0-4 * * 1"
+    - cron: "*/10 16-23 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check published heartbeat
+        id: check
+        run: |
+          set +e
+          URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/live.json"
+          TS=$(curl -sf --max-time 15 "$URL" | jq -r '.ts // 0')
+          NOW=$(date +%s)
+          AGE=$(( NOW - ${TS%.*} ))
+          echo "age=$AGE" >> "$GITHUB_OUTPUT"
+          # 600s of staleness during a game window means the poller is down.
+          if [ "$AGE" -gt 600 ]; then echo "stale=true" >> "$GITHUB_OUTPUT";
+          else echo "stale=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: File or update the incident issue
+        if: steps.check.outputs.stale == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Deduped by label: one open incident at a time, never 200 issues.
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" \
+            --label incident --state open --json number --jq '.[0].number')
+          BODY="Heartbeat is ${{ steps.check.outputs.age }}s stale (threshold 600s).
+
+          Live poller appears down. On your Mac:
+          \`\`\`
+          make live
+          \`\`\`
+          The dashboard is serving last-good state, so nothing is wrong — it is just frozen.
+          This issue auto-closes on the next healthy check."
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "$BODY"
+          else
+            gh issue create --repo "${{ github.repository }}" \
+              --title "Live poller down" --label incident --body "$BODY"
+          fi
+
+      - name: Close the incident on recovery
+        if: steps.check.outputs.stale == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for n in $(gh issue list --repo "${{ github.repository }}" \
+                      --label incident --state open --json number --jq '.[].number'); do
+            gh issue close "$n" --repo "${{ github.repository }}" --comment "Heartbeat healthy again."
+          done

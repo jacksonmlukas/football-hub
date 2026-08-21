@@ -1,0 +1,24 @@
+{
+  "extraKnownMarketplaces": {
+    "football-hub-local": {
+      "source": { "source": "directory", "path": "." }
+    }
+  },
+  "enabledPlugins": {
+    "football-hub@football-hub-local": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Bash",
+        "hooks": [{ "type": "command", "command": ".claude/hooks/guard_data_reads.py" }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [{ "type": "command", "command": ".claude/hooks/tdd_gate.sh" }]
+      }
+    ]
+  }
+}

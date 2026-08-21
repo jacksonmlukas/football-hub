@@ -1,0 +1,16 @@
+defaults:
+  - hub_config
+  - _self_
+
+# Overrides live here. Anything not listed uses the dataclass default in src/hub/config.py.
+# Sweep from the CLI:  python -m hub.draft.board -m draft.projection_lambda=0.04,0.08,0.16
+roster:
+  teams: 12
+  slot: 3
+  wr: 3
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: outputs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}

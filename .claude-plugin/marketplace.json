@@ -1,0 +1,11 @@
+{
+  "name": "football-hub-local",
+  "owner": { "name": "football-hub" },
+  "plugins": [
+    {
+      "name": "football-hub",
+      "source": "./plugins/football-hub",
+      "description": "Skills for building and operating the football forecasting hub: draft-day ops, the weekly slate ritual, model evaluation, and data-contract authoring."
+    }
+  ]
+}

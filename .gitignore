@@ -1,0 +1,11 @@
+.env
+data/raw/
+data/interim/
+__pycache__/
+*.pyc
+.venv/
+notes/
+!notes/README.md
+data/processed/*.duckdb
+data/processed/*.duckdb.wal
+outputs/
