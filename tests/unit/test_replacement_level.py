@@ -9,7 +9,10 @@ def _pool(n_per_pos=60):
     rows = []
     for pos, base in (("QB", 22.0), ("RB", 18.0), ("WR", 18.0), ("TE", 12.0)):
         for i in range(n_per_pos):
-            rows.append({"position": pos, "xfp_per_game": base - i * 0.2})
+            # `games` gained meaning when replacement_levels started requiring a real
+            # denominator: a one-game sample is not a per-game rate. Full seasons here,
+            # so every assertion below is unchanged by that filter.
+            rows.append({"position": pos, "xfp_per_game": base - i * 0.2, "games": 16})
     return pl.DataFrame(rows)
 
 

@@ -128,9 +128,42 @@ toward RB, so flex allocation is ~even (0.45 RB / 0.50 WR), not WR-dominant.
 | `site.api.espn.com` began 403ing scripted traffic Aug 2026 | Retry `site.web.api.espn.com` and non-browser User-Agents |
 | conda auto-activating shadows the venv Python | `conda config --set auto_activate_base false` |
 | CFBD quota dies if you loop over teams | Bulk week endpoints only |
+| ESPN does not retain historical ADP (past seasons return the sentinel) | `fit_espn_weight` is not identifiable; snapshot ADP pre-draft to fix next year |
+| FantasyPros and ffopportunity disagree on suffixes, so an exact join drops players | `_join_expected_points` matches on `state._norm` |
+| Replacement level set by 1-game samples put WR *above* RB | `MIN_GAMES = 10`; restores the documented three-WR effect |
+| Rookies have no prior-season xFP, so mu was 0 for top-168 picks | `_impute_xfp` interpolates from consensus rank within position |
+| Scoring the season on the same projection the greedy ranks on | Absolute P(win) is inflated; read `lift`, not the level |
 | `espn_api` has no ADP field at all | Raw `kona_player_info` -> `ownership.averageDraftPosition` |
 | ESPN parks undrafted players on a shared tail ADP (~170), not null | `_adp_saturation_cutoff()`: lowest value shared by >= `teams` players |
 | Subtracting ranks drawn from different populations | Rank consensus *within* the ADP pool before differencing |
+
+## Conflict: championship-leverage.md vs the live league
+
+`docs/championship-leverage.md` states **8 of 12 make the playoffs, 3 weeks, no byes**, and
+builds its central strategic argument on it. The live league says otherwise. From raw
+`mSettings.scheduleSettings`, verified Aug 21 2026:
+
+| Field | Value |
+|---|---|
+| `playoffTeamCount` | **6**, not 8 |
+| `matchupPeriodCount` | 14 |
+| `playoffMatchupPeriodLength` | 1 |
+| `playoffReseed` | False |
+| `playoffSeedingRule` | TOTAL_POINTS_SCORED |
+
+Six of twelve with three one-week rounds means **seeds 1-2 get byes**. Per the rule at the top
+of this file, the API wins and the doc is stale. The consequences invert its argument:
+
+- "Regular season is nearly a formality" -- false. Half the league misses.
+- "P(make playoffs) comfortably north of 85%" -- far lower at 6/12.
+- "dP(champ)/d(regular-season win) is close to zero" -- false; wins are the scarce good.
+- "Seeding buys marginally easier matchups and nothing else" -- false. A bye skips an entire
+  single-elimination round, which is the largest single seeding prize available.
+- The "uncomfortable corollary" (marginal value of wins possibly negative) does not follow.
+
+`hub/draft/season.py` implements the API's structure: 14 weeks, top 6, two byes, no reseed.
+The doc's downstream reasoning about ceiling-over-floor needs redoing against 6-of-12 before
+any of it drives a draft decision.
 
 ## Open questions
 

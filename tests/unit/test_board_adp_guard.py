@@ -5,7 +5,7 @@ primary fix. It stays because the original failure -- ESPN returning something
 structurally valid and semantically empty -- is the documented failure mode for
 this whole data source, not a one-off.
 
-Seam under test: whatever `player_adp` hands back, does the board degrade loudly
+Seam under test: whatever `player_market` hands back, does the board degrade loudly
 instead of shipping an edge column with nothing in it?
 """
 import polars as pl
@@ -22,7 +22,7 @@ def fake_adp(monkeypatch):
             if isinstance(frame_or_exc, Exception):
                 raise frame_or_exc
             return frame_or_exc
-        monkeypatch.setattr(espn, "player_adp", _fake)
+        monkeypatch.setattr(espn, "player_market", _fake)
     return _install
 
 

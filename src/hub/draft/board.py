@@ -13,11 +13,14 @@ Runs without cookies (ECR + xFP only). Add ESPN creds for the ADP diff.
 from __future__ import annotations
 import argparse, json
 from pathlib import Path
+import numpy as np
 import polars as pl
 
 from hub.contracts import ContractViolation
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
+from hub.draft.state import DraftState, _norm, remaining
+from hub.draft import state as state_mod
 import nflreadpy as nfl
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -56,6 +59,11 @@ def expected_points(season: int = 2025) -> pl.DataFrame:
 # full PPR, no superflex, no IDP. It is the only one that matches this league.
 CONSENSUS_PAGE = "redraft-overall"
 
+# The season being drafted for. xFP describes the season just gone; the simulation has to
+# be about the one ahead, or a strategy ranked on last year's numbers scores against last
+# year's truth and reads as clairvoyant.
+SEASON_AHEAD = 2026
+
 # On the board because you draft them off it. K and DST are rostered but taken late off
 # ESPN's own list, and their presence distorts every rank below the skill players.
 DRAFTED_POSITIONS = ("QB", "RB", "WR", "TE")
@@ -86,11 +94,24 @@ def consensus() -> pl.DataFrame:
     return _select_consensus(nfl.load_ff_rankings("draft"))
 
 
-def replacement_levels(df: pl.DataFrame, teams: int = 12) -> dict[str, float]:
+# A per-game rate needs a real denominator. Without this, a player with one big game
+# outranks every genuine starter and occupies a slot that defines replacement level --
+# which is how WR replacement came out ABOVE RB (11.14 vs 11.10), contradicting the
+# three-WR effect. At >= 10 games WR drops to 10.02 and the effect reappears; the sign
+# is stable from 8 games up, so it is not fitted to the threshold.
+MIN_GAMES = 10
+
+
+def replacement_levels(df: pl.DataFrame, teams: int = 12,
+                       min_games: int = MIN_GAMES) -> dict[str, float]:
     """Replacement = the xFP of the last startable player at each position.
 
     In full PPR with a 12-team flex, the flex is almost always a WR, which pushes WR
     replacement meaningfully deeper than a naive teams*slots calculation suggests.
+
+    Only players with at least `min_games` are eligible to set the level: replacement is
+    a statement about the quality freely available all season, and a one-game sample says
+    nothing about that.
     """
     # Flex allocation. In a 2WR league the flex is overwhelmingly a WR. With THREE required
     # WR slots the top of the WR pool is already consumed by starters, so the flex tilts back
@@ -100,7 +121,8 @@ def replacement_levels(df: pl.DataFrame, teams: int = 12) -> dict[str, float]:
     for pos in ("QB", "RB", "WR", "TE"):
         n = teams * SLOTS.get(pos, 0)
         n += round(teams * SLOTS.get("FLEX", 0) * flex_share.get(pos, 0)) if pos in FLEX_ELIGIBLE else 0
-        pool = df.filter(pl.col("position") == pos).sort("xfp_per_game", descending=True)
+        pool = (df.filter((pl.col("position") == pos) & (pl.col("games") >= min_games))
+                  .sort("xfp_per_game", descending=True))
         levels[pos] = float(pool["xfp_per_game"][min(n, pool.height) - 1]) if pool.height else 0.0
     return levels
 
@@ -114,8 +136,8 @@ def espn_adp(league_size: int = 12) -> pl.DataFrame | None:
     have meant anything even if it had not. Real overall ADP now comes from the fetch layer.
     """
     try:
-        from hub.fetch.espn import player_adp
-        adp = player_adp()
+        from hub.fetch.espn import player_market
+        adp = player_market(season=SEASON_AHEAD)
     except Exception as e:  # noqa: BLE001
         print(f"  ESPN ADP unavailable ({type(e).__name__}); running ECR-only mode.")
         return None
@@ -125,6 +147,7 @@ def espn_adp(league_size: int = 12) -> pl.DataFrame | None:
     # `edge` shipped as a column of empty lists with no crash and no warning. Keep asserting
     # on dtype and height here even though the fetch layer is now typed, because the failure
     # this catches is ESPN quietly changing a field, which is not a hypothetical.
+    adp = adp.filter(pl.col("adp").is_not_null())
     if adp.is_empty() or not adp["adp"].dtype.is_numeric():
         print(f"  ESPN ADP present but unusable "
               f"(dtype={adp['adp'].dtype}, rows={adp.height}); running ECR-only mode.")
@@ -180,6 +203,63 @@ def _attach_edge(board: pl.DataFrame, adp: pl.DataFrame, teams: int) -> pl.DataF
                  .with_columns((pl.col("adp") - pl.col("consensus_pick")).alias("edge")))
 
 
+def _join_expected_points(ecr: pl.DataFrame, xp: pl.DataFrame) -> pl.DataFrame:
+    """Attach expected points to the consensus board, matching on normalised names.
+
+    FantasyPros and ffopportunity disagree about suffixes and punctuation, and an exact
+    join silently drops the disagreements: 20 of the top 168 by ADP arrived with no xFP,
+    James Cook III and Michael Pittman Jr. among them. A null xFP is not a small gap --
+    it nulls VOR, so every VOR-ranked view skips the player, and the season simulation
+    scores him zero, turning a first-round RB into an empty roster slot.
+    """
+    norm = pl.col("player").map_elements(_norm, return_dtype=pl.Utf8).alias("_key")
+    right = (xp.with_columns(pl.col("full_name").map_elements(_norm, return_dtype=pl.Utf8)
+                               .alias("_key"))
+               .unique(subset=["_key"], keep="first")
+               .drop("full_name"))
+    return ecr.with_columns(norm).join(right, on="_key", how="left").drop("_key")
+
+
+def _impute_xfp(board: pl.DataFrame) -> pl.DataFrame:
+    """Fill missing expected points from consensus rank, within position.
+
+    Rookies have no prior-season xFP, but the market drafts them inside the top 168, so
+    the market plainly expects production. Leaving them null told every downstream model
+    they were worth zero: VOR skipped them and the season simulation treated a
+    second-round rookie RB as an empty roster slot, which is what put P(win) at 85%.
+
+    Consensus rank is the signal we have for what a player is expected to do. Interpolate
+    within position, because a TE and a WR at the same rank are not the same asset, and
+    smooth first so a single outlier does not set a rookie's projection.
+    """
+    if board["xfp_per_game"].is_null().sum() == 0:
+        return board
+    filled = board["xfp_per_game"].to_list()
+    ecr_all = board["ecr"].to_list()
+    for pos in board["pos"].unique().to_list():
+        rows = [i for i, p in enumerate(board["pos"].to_list()) if p == pos]
+        known = [(ecr_all[i], filled[i]) for i in rows if filled[i] is not None]
+        gaps = [i for i in rows if filled[i] is None]
+        if not gaps:
+            continue
+        if not known:
+            for i in gaps:
+                filled[i] = 0.0
+            continue
+        known.sort()
+        xs = np.array([k[0] for k in known], dtype=float)
+        ys = np.array([k[1] for k in known], dtype=float)
+        # Rolling median, then enforce monotone decline: a worse rank must never impute
+        # a better projection, which raw interpolation on noisy data will happily do.
+        win = max(3, min(15, len(ys) // 4 * 2 + 1))
+        sm = np.array([np.median(ys[max(0, j - win // 2): j + win // 2 + 1])
+                       for j in range(len(ys))])
+        sm = np.minimum.accumulate(sm)
+        for i in gaps:
+            filled[i] = float(np.interp(ecr_all[i], xs, sm))
+    return board.with_columns(pl.Series("xfp_per_game", filled, dtype=pl.Float64))
+
+
 def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
     print("  loading ffopportunity ...")
     xp = expected_points(season)
@@ -188,24 +268,45 @@ def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
     levels = replacement_levels(xp, league_size)
     print(f"  replacement (xFP/gm): " + ", ".join(f"{k}={v:.1f}" for k, v in levels.items()))
 
-    vor = xp.with_columns(
-        pl.struct(["position", "xfp_per_game"]).map_elements(
-            lambda s: s["xfp_per_game"] - levels.get(s["position"], 0.0),
-            return_dtype=pl.Float64).alias("vor")
+    # Impute before VOR, not after: a rookie with no prior-season xFP still has a
+    # consensus rank, and leaving him null propagates a zero all the way into the season
+    # simulation. VOR is then computed from the filled values so every drafted player is
+    # priced on the same basis.
+    board = _impute_xfp(_join_expected_points(ecr, xp))
+    board = board.with_columns(
+        (pl.col("xfp_per_game")
+         - pl.col("pos").replace_strict(levels, default=0.0)).alias("vor"),
+        pl.col("ecr").rank().alias("consensus_rank"),
     )
-    board = (ecr.join(vor, left_on="player", right_on="full_name", how="left")
-                .with_columns(pl.col("ecr").rank().alias("consensus_rank")))
 
     adp = espn_adp(league_size)
     if adp is not None:
         board = _attach_edge(board, adp, league_size)
+        # The forecast the optimiser plays on: the market's forward projection, nudged by
+        # the xFP regression signal. Keeping VOR on xFP alone would have the greedy rank
+        # players on last season while the simulation scores them on this one -- the two
+        # must share a basis or the "edge" is just the gap between the two signals.
+        board = board.with_columns(
+            pl.coalesce(
+                (pl.col("proj_ppg") + pl.col("xfp_per_game")) / 2.0,
+                pl.col("proj_ppg"), pl.col("xfp_per_game"),
+            ).alias("proj_blend"))
+        pb = replacement_levels(
+            board.rename({"pos": "position_", "proj_blend": "xfp_per_game_"})
+                 .with_columns(pl.col("position_").alias("position"),
+                               pl.col("xfp_per_game_").alias("xfp_per_game")),
+            league_size)
+        board = board.with_columns(
+            (pl.col("proj_blend")
+             - pl.col("pos").replace_strict(pb, default=0.0)).alias("vor_proj"))
         n = int(board["edge"].is_not_null().sum())
         print(f"  ESPN ADP: {n} drafted players priced; edge on a common scale")
     return board.sort("ecr")
 
 
 def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
-              w: float = DEFAULT_ESPN_WEIGHT, top: int = 10) -> tuple[str, pl.DataFrame]:
+              w: float = DEFAULT_ESPN_WEIGHT, top: int = 10,
+              state: DraftState | None = None) -> tuple[str, pl.DataFrame]:
     """Rank the board for one specific pick, under the rule that pick's wait implies.
 
     Slot 3 of 12 alternates a 19-pick wait and a 5-pick wait, and that alternation should
@@ -219,6 +320,8 @@ def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
     Ranking by `edge` is deliberately not offered. The largest edges sit on players
     consensus does not rate, so an edge-sorted board drafts replacement level.
     """
+    if state is not None:
+        board = remaining(board, state)
     # ECR-only mode drops the column entirely rather than nulling it, and blended_adp
     # reads it unconditionally. Degrading to consensus-only must still produce a board.
     if "adp" not in board.columns:
@@ -246,7 +349,39 @@ def main():
                     help="fraction of the room drafting off ESPN's board (0=all sharp)")
     ap.add_argument("--show-slots", action="store_true",
                     help="print league shape and your pick schedule, then exit")
+    ap.add_argument("--taken", default=None,
+                    help="comma-separated players just drafted; appends to draft state")
+    ap.add_argument("--sync", action="store_true",
+                    help="pull the live draft from ESPN instead of typing picks")
+    ap.add_argument("--undo", type=int, default=0, help="remove the last N picks")
+    ap.add_argument("--reset", action="store_true", help="clear the draft state")
+    ap.add_argument("--win-prob", action="store_true",
+                    help="rank candidates by P(win the league) instead of cost_of_waiting")
+    ap.add_argument("--sims", type=int, default=150, help="season sims per draft sim")
+    ap.add_argument("--fit-noise", action="store_true",
+                    help="fit sigma(mu) from your league's past drafts, then exit")
     a = ap.parse_args()
+
+    if a.fit_noise:
+        import os
+        from dotenv import load_dotenv
+        from hub.draft.availability import fit_pick_noise
+        load_dotenv()
+        fit_pick_noise(int(os.environ["ESPN_LEAGUE_ID"]), [a.season - 2, a.season - 1])
+        return
+
+    st = state_mod.load()
+    if a.reset:
+        st = DraftState()
+    if a.sync:
+        st = state_mod.sync_from_espn()
+    if a.undo:
+        st = state_mod.undo(st, a.undo)
+    if a.taken:
+        st = state_mod.take(st, *[n.strip() for n in a.taken.split(",") if n.strip()])
+    if a.reset or a.sync or a.undo or a.taken:
+        state_mod.save(st)
+        print(f"  draft state: {st.n_taken} picks recorded")
 
     if a.show_slots:
         picks = my_picks()
@@ -273,8 +408,14 @@ def main():
         print(f"    {r['player']:<24} {r['pos'] or '':<4} ECR {r['ecr']:>5.1f}  "
               f"xFP-FP {-r['fp_over_expected']:>6.1f}")
 
+    missing = state_mod.unmatched(board, st)
+    if missing:
+        print(f"\n  {len(missing)} recorded picks matched nobody on the board "
+              f"(K/DST are excluded by design): {', '.join(missing[:5])}"
+              + (" ..." if len(missing) > 5 else ""))
+
     if a.pick is not None:
-        mode, rec = recommend(board, a.pick, w=a.espn_weight)
+        mode, rec = recommend(board, a.pick, w=a.espn_weight, state=st)
         rule = ("19-pick wait ahead: take who will not survive it"
                 if mode == "scarcity" else "5-pick wait ahead: take the highest VOR")
         print(f"\n  Pick {a.pick} -- {mode.upper()} ({rule})")
@@ -284,6 +425,23 @@ def main():
             v = r["vor"]
             print(f"    {r['player']:<24} {r['pos'] or '':<4} "
                   f"VOR {0.0 if v is None else v:>5.1f}  {extra}")
+
+        if a.win_prob:
+            from hub.draft.optimize import win_probability
+            names = rec["player"].to_list()
+            print(f"\n  Championship equity over {len(names)} candidates "
+                  f"({a.sims} seasons x 6 drafts each) ...")
+            wp = win_probability(board, st, names, my_slot=MY_SLOT, teams=TEAMS,
+                                 n_season_sims=a.sims, w=a.espn_weight)
+            for r in wp.iter_rows(named=True):
+                lift, se = r["lift"] * 100, r["lift_se"] * 100
+                sig = "*" if abs(lift) > 2 * se else " "
+                print(f"    {r['player']:<24} P(win) {r['p_win']*100:>5.2f}%  "
+                      f"lift {lift:+5.2f} +/-{se:4.2f} {sig}")
+            print("    (* = lift exceeds 2 standard errors; anything else is noise)")
+            print("    NOTE: read the lift, not the level. Absolute P(win) is inflated --")
+            print("    the season is scored on the same projection the greedy ranks on.")
+            print("    See the module docstring in hub/draft/optimize.py.")
 
 
 if __name__ == "__main__":

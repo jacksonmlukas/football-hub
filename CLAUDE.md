@@ -34,3 +34,19 @@ file contents, stack traces already resolved, exploratory dead ends.
 
 Every module must produce a usable answer with zero attention. If a fetch fails, serve last-good
 state from `data/processed/` rather than erroring. Systems that need an operator die in October.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues in the private `football-hub` repo, driven by the `gh` CLI.
+See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, unchanged: `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

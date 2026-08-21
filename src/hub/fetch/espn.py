@@ -147,6 +147,52 @@ def _parse_adp(payload: dict) -> pl.DataFrame:
     return pl.DataFrame(rows, schema={"player": pl.Utf8, "adp": pl.Float64})
 
 
+def _parse_projection(player: dict, season: int) -> float | None:
+    """ESPN's own projected points per game for `season`.
+
+    statSourceId 1 is the projection (0 is actuals) and statSplitTypeId 0 is the season
+    split. Both matter: the same payload also carries a projection for the *current week*
+    and actuals for last season, and picking the wrong one silently substitutes a number
+    that is off by an order of magnitude.
+    """
+    for st in player.get("stats") or []:
+        if (st.get("statSourceId") == 1 and st.get("statSplitTypeId") == 0
+                and st.get("seasonId") == season):
+            avg = st.get("appliedAverage")
+            if isinstance(avg, (int, float)) and avg > 0:
+                return float(avg)
+    return None
+
+
+def player_market(limit: int = 500, season: int = 2026) -> pl.DataFrame:
+    """ADP and ESPN's projection together, from one request.
+
+    These are the two things the rest of the room can see, so they belong in one place:
+    ADP is where the room takes a player, the projection is why.
+    """
+    lg, _ = league_settings()
+    filters = {"players": {"limit": limit,
+                           "sortDraftRanks": {"sortPriority": 100, "sortAsc": True,
+                                              "value": "PPR"}}}
+    payload = lg.espn_request.league_get(params={"view": "kona_player_info"},
+                                         headers={"x-fantasy-filter": json.dumps(filters)})
+    rows = []
+    for entry in payload.get("players") or []:
+        pl_ = entry.get("player") or {}
+        name = pl_.get("fullName")
+        if not name:
+            continue
+        adp = (pl_.get("ownership") or {}).get("averageDraftPosition")
+        rows.append({
+            "player": name,
+            "adp": float(adp) if isinstance(adp, (int, float))
+                   and not isinstance(adp, bool) and adp > 0 else None,
+            "proj_ppg": _parse_projection(pl_, season),
+        })
+    return pl.DataFrame(rows, schema={"player": pl.Utf8, "adp": pl.Float64,
+                                      "proj_ppg": pl.Float64})
+
+
 def player_adp(limit: int = 500) -> pl.DataFrame:
     """ESPN's own average draft position -- what your room is actually drafting off.
 

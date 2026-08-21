@@ -18,6 +18,10 @@ import polars as pl
 # league's history with fit_espn_weight(); 0.5 is the "mixed room" prior.
 DEFAULT_ESPN_WEIGHT = 0.5
 
+# Sigma floor. Even the first overall pick is not perfectly predictable, and a zero or
+# negative sigma makes the availability simulation degenerate.
+MIN_SIGMA = 1.0
+
 
 def blended_adp(df: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT) -> pl.DataFrame:
     """Expected pick number under a mixed room.
@@ -84,32 +88,97 @@ def pick_value(df: pl.DataFrame, now: int, next_pick: int, **kw) -> pl.DataFrame
               .sort("cost_of_waiting", descending=True))
 
 
-def fit_espn_weight(league_id: int, years: list[int]) -> float:
-    """Estimate w from your own league's past drafts instead of guessing.
+def historical_picks(league_id: int, years: list[int]) -> pl.DataFrame:
+    """Actual pick number and contemporaneous ECR for every pick in past drafts.
 
-    For each historical pick, ask whether ESPN ADP or consensus rank predicted it better.
-    The share won by ESPN is a direct estimate of how much of your room uses the app board.
-    Needs cookies in .env; returns the DEFAULT prior if history is unavailable.
+    ECR is taken from the last scrape before that season opened, so it is what the room
+    could actually have seen -- not hindsight rankings.
     """
-    import nflreadpy as nfl
-    from espn_api.football import League
     import os
+
+    import nflreadpy as nfl
     from dotenv import load_dotenv
+    from espn_api.football import League
+
+    from hub.draft.state import _norm
 
     load_dotenv()
-    wins = total = 0
+    allr = nfl.load_ff_rankings("all")
+    rows = []
     for yr in years:
         try:
             lg = League(league_id=league_id, year=yr,
-                        espn_s2=os.environ.get("ESPN_S2"), swid=os.environ.get("ESPN_SWID"))
-            ecr = {r["player"]: r["ecr"] for r in nfl.load_ff_rankings("draft").to_dicts()}
-            for i, p in enumerate(lg.draft, start=1):
-                name = getattr(p.playerName, "strip", lambda: p.playerName)()
-                if name not in ecr:
-                    continue
-                espn_rank = getattr(p, "playerId", None) and i  # actual slot as ESPN proxy
-                total += 1
-                wins += abs((espn_rank or i) - i) <= abs(ecr[name] - i)
-        except Exception as e:  # noqa: BLE001
-            print(f"  {yr} draft history unavailable ({type(e).__name__}); skipping.")
-    return wins / total if total >= 50 else DEFAULT_ESPN_WEIGHT
+                        espn_s2=os.environ.get("ESPN_S2") or None,
+                        swid=os.environ.get("ESPN_SWID") or None)
+            snap = (allr.filter((pl.col("page_type") == "redraft-overall")
+                                # scrape_date is an ISO string, which sorts correctly
+                                # as text; casting it just to compare would be waste.
+                                & (pl.col("scrape_date") < f"{yr}-09-01")
+                                & (pl.col("ecr").is_not_null()))
+                        .sort("scrape_date", descending=True)
+                        .unique(subset=["player"], keep="first"))
+            ecr = {_norm(r["player"]): r["ecr"] for r in snap.iter_rows(named=True)}
+            for i, pick in enumerate(lg.draft or [], start=1):
+                e = ecr.get(_norm(pick.playerName))
+                if e is not None:
+                    rows.append({"year": yr, "pick": float(i), "ecr": float(e)})
+        except Exception as exc:  # noqa: BLE001
+            print(f"  {yr} draft history unavailable ({type(exc).__name__}); skipping.")
+    return pl.DataFrame(rows, schema={"year": pl.Int64, "pick": pl.Float64,
+                                      "ecr": pl.Float64})
+
+
+def fit_pick_noise(league_id: int, years: list[int],
+                   default: tuple[float, float] = (2.0, 0.18)) -> tuple[float, float]:
+    """Fit sigma(mu) = a + b*mu from how far your room's actual picks stray from ECR.
+
+    This is the half of the availability model that IS identifiable from league history.
+    The heuristic it replaces (2.0 + 0.18*mu) was never checked against a real draft, and
+    sigma drives every availability probability, so a wrong slope quietly mis-prices the
+    whole board.
+    """
+    df = historical_picks(league_id, years)
+    if df.height < 50:
+        print(f"  only {df.height} matched historical picks; keeping the {default} prior.")
+        return default
+    mu = df["ecr"].to_numpy()
+    # Absolute deviation of a normal is sigma*sqrt(2/pi); rescale to a real sigma.
+    sigma_hat = np.abs(df["pick"].to_numpy() - mu) * np.sqrt(np.pi / 2.0)
+    b, a = (float(x) for x in np.polyfit(mu, sigma_hat, 1))
+
+    # An unconstrained line through this data wants a negative intercept -- early picks
+    # are near-deterministic, so the fit pays for its slope by going below zero at the
+    # top of the board. Sigma cannot be negative, so pin the intercept at a floor and
+    # refit the slope through it rather than throwing an informative slope away.
+    if a < MIN_SIGMA:
+        a = MIN_SIGMA
+        b = float(np.dot(mu, np.maximum(sigma_hat - a, 0.0)) / np.dot(mu, mu))
+    if not (0.0 < a < 50.0 and 0.0 <= b < 2.0):
+        print(f"  fitted noise (a={a:.2f}, b={b:.3f}) is out of range; keeping {default}.")
+        return default
+    print(f"  fitted pick noise from {df.height} picks: sigma = {a:.2f} + {b:.3f} * mu")
+    return a, b
+
+
+def fit_espn_weight(league_id: int, years: list[int]) -> float:
+    """Not identifiable from available data. Returns the prior, loudly.
+
+    The intent was to ask, for each historical pick, whether ESPN ADP or consensus rank
+    predicted it better, and read w off the share ESPN won. That requires ESPN's ADP *as
+    it stood before those drafts*, and ESPN does not keep it: querying a past season
+    returns the saturation sentinel for every player (verified Aug 2026 -- Chase, Bijan
+    and Jefferson all come back 170.0 for 2025). With one side of the comparison
+    unavailable, w cannot be estimated this way.
+
+    The previous implementation did not fail, it returned ~1.0 every time -- a claim that
+    the entire room drafts off ESPN's board, which is the opposite of this league's
+    premise and would have driven every availability number. Returning the documented
+    prior and saying so is strictly better than a confident wrong answer.
+
+    If you want w fitted, the missing ingredient is a stored snapshot of ESPN ADP taken
+    *before* each draft. Start saving one now and this becomes fittable next season.
+    Meanwhile fit_pick_noise() calibrates the other half of the model from real history.
+    """
+    print("  fit_espn_weight: historical ESPN ADP is unavailable (ESPN returns the "
+          f"undrafted sentinel for past seasons); using the {DEFAULT_ESPN_WEIGHT} prior.")
+    return DEFAULT_ESPN_WEIGHT
