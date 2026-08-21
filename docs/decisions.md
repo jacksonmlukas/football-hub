@@ -43,7 +43,7 @@ multiplier makes one props pull cost more than a month's quota.
 
 ## Corrections issued during design
 
-Four things I got wrong then fixed. Do not revert to the earlier version.
+Five things I got wrong then fixed. Do not revert to the earlier version.
 
 1. **MCP is not categorically expensive.** Claude Code ships MCP Tool Search, which defers tool
    definitions and loads them semantically. Revised rule: MCP *definitions* are cheap, MCP
@@ -54,6 +54,16 @@ Four things I got wrong then fixed. Do not revert to the earlier version.
 3. **All 136 FBS fits on CFBD's free tier.** The quota only dies if you loop over teams.
 4. **The poller does not need concurrency.** One scoreboard request covers every game in a
    league. Only `summary` fans out, and it is tiered and capped.
+
+5. **espn_api exposes no ADP; ESPN's raw API does.** The board stood in `Player.posRank`,
+   which is a *positional* rank (WR5 -> 5) parsed from a `positionalRanking` key that
+   free-agent payloads omit -- so it was always `[]`, and subtracting a positional rank from
+   an overall consensus rank would have been meaningless even had it carried values.
+   `espn_api` reads `ownership.percentOwned` and discards the rest of that block, where
+   **`ownership.averageDraftPosition`** lives. Real ADP comes from the `kona_player_info`
+   view via `lg.espn_request.league_get`, one bulk request for the whole pool
+   (`hub/fetch/espn.py:player_adp`). Verified Aug 21 2026: 463 players, Gibbs at 1.49.
+   Do not go back to `posRank`, and do not add an ADP dependency -- ESPN has it.
 
 ## Alternatives rejected
 
@@ -102,6 +112,9 @@ toward RB, so flex allocation is ~even (0.45 RB / 0.50 WR), not WR-dominant.
 | `site.api.espn.com` began 403ing scripted traffic Aug 2026 | Retry `site.web.api.espn.com` and non-browser User-Agents |
 | conda auto-activating shadows the venv Python | `conda config --set auto_activate_base false` |
 | CFBD quota dies if you loop over teams | Bulk week endpoints only |
+| `espn_api` has no ADP field at all | Raw `kona_player_info` -> `ownership.averageDraftPosition` |
+| ESPN parks undrafted players on a shared tail ADP (~170), not null | `_adp_saturation_cutoff()`: lowest value shared by >= `teams` players |
+| Subtracting ranks drawn from different populations | Rank consensus *within* the ADP pool before differencing |
 
 ## Open questions
 

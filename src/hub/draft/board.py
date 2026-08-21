@@ -101,6 +101,48 @@ def espn_adp(league_size: int = 12) -> pl.DataFrame | None:
     return adp
 
 
+def _adp_saturation_cutoff(adp: pl.Series, teams: int) -> float | None:
+    """The ADP value at which ESPN stops actually knowing anything.
+
+    ESPN does not leave ADP null for players nobody drafts -- it parks them all on a
+    shared value at the tail (~170 in a 12-team league, where 27 players share 169.97).
+    A genuine ADP is near-unique; the sentinel is shared by dozens. So: the lowest value
+    shared by at least `teams` players is the cutoff, and it and everything above is
+    undrafted. Derived from the data rather than hardcoded, so it self-tunes if ESPN
+    moves the cluster or the league changes size.
+    """
+    if adp.is_empty():
+        return None
+    counts = adp.value_counts().sort(adp.name)
+    hits = counts.filter(pl.col("count") >= teams)
+    return float(hits[adp.name][0]) if hits.height else None
+
+
+def _attach_edge(board: pl.DataFrame, adp: pl.DataFrame, teams: int) -> pl.DataFrame:
+    """Join ADP and compute edge on a scale where the subtraction means something.
+
+    Both operands have to be pick numbers over the SAME population. `consensus_rank`
+    spans every row on the board (~1474) while ESPN ADP covers only the draftable pool
+    (~460, saturating near 170); subtracting those made edge a disguised restatement of
+    -consensus_rank, which sorts the board almost exactly backwards from the intent.
+
+    So: drop the saturated tail, then rank consensus *within* the surviving pool. Positive
+    edge then means what the docstring has always claimed -- your room lets him fall.
+    """
+    board = board.join(adp, on="player", how="left")
+    cut = _adp_saturation_cutoff(board["adp"].drop_nulls(), teams)
+    if cut is not None:
+        board = board.with_columns(
+            pl.when(pl.col("adp") >= cut).then(None).otherwise(pl.col("adp")).alias("adp"))
+    pool = (board.filter(pl.col("adp").is_not_null())
+                 .select(["player", "ecr"])
+                 .with_columns(pl.col("ecr").rank(method="min").cast(pl.Int64)
+                                 .alias("consensus_pick"))
+                 .select(["player", "consensus_pick"]))
+    return (board.join(pool, on="player", how="left")
+                 .with_columns((pl.col("adp") - pl.col("consensus_pick")).alias("edge")))
+
+
 def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
     print("  loading ffopportunity ...")
     xp = expected_points(season)
@@ -119,8 +161,9 @@ def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
 
     adp = espn_adp(league_size)
     if adp is not None:
-        board = board.join(adp, on="player", how="left").with_columns(
-            (pl.col("adp") - pl.col("consensus_rank")).alias("edge"))
+        board = _attach_edge(board, adp, league_size)
+        n = int(board["edge"].is_not_null().sum())
+        print(f"  ESPN ADP: {n} drafted players priced; edge on a common scale")
     return board.sort("ecr")
 
 
