@@ -81,10 +81,20 @@ def espn_adp(league_size: int = 12) -> pl.DataFrame | None:
         lg, _ = league_settings()
         rows = [{"player": p.name, "adp": p.posRank if hasattr(p, "posRank") else None}
                 for p in lg.free_agents(size=400)]
-        return pl.DataFrame(rows).filter(pl.col("adp").is_not_null())
+        adp = pl.DataFrame(rows).filter(pl.col("adp").is_not_null())
     except Exception as e:  # noqa: BLE001
         print(f"  ESPN ADP unavailable ({type(e).__name__}); running ECR-only mode.")
         return None
+
+    # Shape is not substance. espn_api fills posRank from a `positionalRanking` key that
+    # free-agent payloads omit, so it arrives as [] -- which is not null, so the filter
+    # above happily passes it through. Without this check `edge` ships as a column of
+    # empty lists: no crash, no warning, and a draft board that silently has no edge.
+    if adp.is_empty() or not adp["adp"].dtype.is_numeric():
+        print(f"  ESPN ADP present but unusable "
+              f"(dtype={adp['adp'].dtype}, rows={adp.height}); running ECR-only mode.")
+        return None
+    return adp
 
 
 def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
