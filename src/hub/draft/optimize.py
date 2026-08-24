@@ -42,6 +42,8 @@ both sides of it. Rank on `lift`, check it clears two standard errors, and ignor
 """
 from __future__ import annotations
 
+from typing import Callable
+
 import numpy as np
 import polars as pl
 
@@ -54,6 +56,17 @@ from hub.models.predict import WEEKLY_SKEW_POOLED, moments
 # Bench depth beyond the 8 starting slots. Deep enough that saturation is punished,
 # shallow enough that the simulated draft stays cheap.
 DEFAULT_ROUNDS = 14
+
+# What a pluggable draft strategy is handed, and what it returns.
+#
+#   pool   -- the frame `simulate_remaining_draft` is indexing into
+#   live   -- row indices still on the board
+#   counts -- how many of each position I already hold
+#   taken  -- every player already off the board, in pick order, so a strategy that needs a
+#             `DraftState` can rebuild one exactly
+#
+# It returns a row index into `pool`. Anything else is a programming error and will raise.
+MyPick = Callable[[pl.DataFrame, np.ndarray, dict[str, int], list[str]], int]
 
 
 def _need_score(counts: dict[str, int], pos: str) -> int:
@@ -84,8 +97,20 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
                              teams: int = 12, rounds: int = DEFAULT_ROUNDS,
                              forced: str | None = None,
                              w: float = DEFAULT_ESPN_WEIGHT, opp_noise: float = 1.0,
-                             rng: np.random.Generator | None = None) -> list[np.ndarray]:
-    """Play out the draft. Returns one array of draft_pool() row indices per team."""
+                             rng: np.random.Generator | None = None,
+                             my_pick: MyPick | None = None) -> list[np.ndarray]:
+    """Play out the draft. Returns one array of draft_pool() row indices per team.
+
+    Two separable things live here: the **room** -- eleven opponents following a noisy board
+    and filling their own starting slots -- and **my** strategy, which is greedy on lineup
+    value. `my_pick` replaces the second and leaves the first alone.
+
+    That seam exists because `hub.draft.backtest` needs to run other strategies against this
+    exact room. Copying the room into the backtest would have been the alternative, and a
+    copied room drifts: the thing being measured would slowly stop being the thing that
+    ships. Default is `None`, which keeps the greedy rule and every existing caller
+    unchanged.
+    """
     rng = rng or np.random.default_rng(0)
     pool = draft_pool(board, state, w)
 
@@ -118,12 +143,17 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
     counts_by_team: list[dict[str, int]] = [{} for _ in range(teams)]
     counts = counts_by_team[my_slot - 1]
     gone = np.zeros(pool.height, dtype=bool)
+    # Pick *order*, not pool order. `np.flatnonzero(gone)` would give the latter, and
+    # `state.my_roster` attributes picks to seats by walking the snake -- so a strategy
+    # rebuilding a DraftState from an unordered list would be handed someone else's roster.
+    order_taken: list[str] = list(state.taken)
 
     if forced is not None:
         f = names.index(forced)
         gone[f] = True
         rosters[my_slot - 1].append(f)
         counts[pos[f]] = counts.get(pos[f], 0) + 1
+        order_taken.append(names[f])
 
     start = state.n_taken + 1 + (1 if forced is not None else 0)
     for overall in range(start, teams * rounds + 1):
@@ -134,8 +164,14 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
             live = np.flatnonzero(~gone)
             if live.size == 0:
                 break
-            # Greedy on lineup value: an empty starting slot outranks raw VOR.
-            pick = max(live, key=lambda i: (_need_score(counts, pos[i]), vor[i]))
+            if my_pick is None:
+                # Greedy on lineup value: an empty starting slot outranks raw VOR.
+                pick = max(live, key=lambda i: (_need_score(counts, pos[i]), vor[i]))
+            else:
+                pick = int(my_pick(pool, live, dict(counts), list(order_taken)))
+                if gone[pick]:
+                    raise ValueError(
+                        f"my_pick returned {names[pick]!r}, who is already drafted")
         else:
             nxt = order[~gone[order]]
             if nxt.size == 0:
@@ -149,6 +185,7 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
         counts_by_team[team][pos[pick]] = counts_by_team[team].get(pos[pick], 0) + 1
         gone[pick] = True
         rosters[team].append(int(pick))
+        order_taken.append(names[pick])
 
     return [np.array(r, dtype=int) for r in rosters]
 
@@ -240,8 +277,9 @@ def tag_for(co_leader: bool, lift: float, lift_se: float) -> str:
     return ""
 
 
-def market_pick(pool: pl.DataFrame, counts: dict[str, int]) -> str | None:
-    """Best available by ADP that fills an unfilled starting slot.
+def market_pick(pool: pl.DataFrame, counts: dict[str, int],
+                by: str = "adp") -> str | None:
+    """Best available in a market, that fills an unfilled starting slot.
 
     What the board leads with. P0 measured this against championship equity on realised
     outcomes across three seasons: market +3.11 against the room, equity +3.15, difference
@@ -252,20 +290,26 @@ def market_pick(pool: pl.DataFrame, counts: dict[str, int]) -> str | None:
     from a run at a quarter of the optimizer's shipped budget and has been withdrawn.
 
     Lexicographic, matching `simulate_remaining_draft`: an unfilled starting slot outranks
-    any amount of ADP, and ADP breaks ties within a need tier.
+    any amount of market position, and the market breaks ties within a need tier.
+
+    `by` names which market. `adp` is the **draft market** -- where your room actually takes
+    a player -- and is what draft night uses. `ecr` is **consensus**, and is what a replay of
+    a past season has to use, because ESPN publishes ADP for the current season only. Both
+    are lower-is-better rankings, so one rule covers them; see `CONTEXT.md`, which keeps the
+    two markets apart on purpose.
     """
-    if pool.height == 0 or "adp" not in pool.columns:
+    if pool.height == 0 or by not in pool.columns:
         return None
-    # No ADP anywhere means the market has nothing to say, and ESPN is the first thing to
-    # fall over on draft night. Ranking by a column that is entirely null returns whichever
-    # row came first -- a confident-looking recommendation with nothing behind it, which is
-    # worse than admitting the input is missing.
-    if pool["adp"].null_count() == pool.height:
+    # An all-null column means that market has nothing to say, and ESPN is the first thing
+    # to fall over on draft night. Ranking by a column that is entirely null returns
+    # whichever row came first -- a confident-looking recommendation with nothing behind it,
+    # which is worse than admitting the input is missing.
+    if pool[by].null_count() == pool.height:
         return None
     names = pool["player"].to_list()
     pos = pool["pos"].fill_null("NA").to_list()
-    # a null ADP is an undrafted player, not the first pick of the round
-    adp = pool["adp"].fill_null(999.0).to_list()
+    # a null position is an undrafted player, not the first pick of the round
+    rank = pool[by].fill_null(999.0).to_list()
     best = min(range(len(names)),
-               key=lambda i: (-_need_score(counts, pos[i]), adp[i]))
+               key=lambda i: (-_need_score(counts, pos[i]), rank[i]))
     return names[best]

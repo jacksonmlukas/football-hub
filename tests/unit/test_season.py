@@ -7,7 +7,7 @@ simulate instead of ranking by VOR.
 import numpy as np
 import polars as pl
 import pytest
-from hub.draft.season import (REG_SEASON_WEEKS, _lineup_points, _round_robin,
+from hub.draft.season import (REG_SEASON_WEEKS, lineup_points, _round_robin,
                               champion_probability,
                               simulate_weeks)
 
@@ -26,14 +26,14 @@ def test_lineup_starts_the_legal_maximum():
     pos = np.array(["QB", "RB", "RB", "RB", "WR", "WR", "WR", "WR", "TE"])
     sc = np.array([[[10, 9, 8, 7, 6, 5, 4, 3, 2]]], dtype=float)
     # QB 10 | RB 9+8 | WR 6+5+4 | TE 2 | FLEX best leftover = RB 7
-    assert _lineup_points(sc, pos)[0, 0] == pytest.approx(10 + 9 + 8 + 6 + 5 + 4 + 2 + 7)
+    assert lineup_points(sc, pos)[0, 0] == pytest.approx(10 + 9 + 8 + 6 + 5 + 4 + 2 + 7)
 
 
 def test_flex_takes_the_best_leftover_across_positions():
     pos = np.array(["QB", "RB", "RB", "WR", "WR", "WR", "WR", "TE"])
     sc = np.array([[[1, 1, 1, 1, 1, 1, 9, 1]]], dtype=float)
     # the spare WR (9) must flex ahead of any other bench option
-    assert _lineup_points(sc, pos)[0, 0] == pytest.approx(1 * 7 + 9)
+    assert lineup_points(sc, pos)[0, 0] == pytest.approx(1 * 7 + 9)
 
 
 def test_a_surplus_player_is_worth_nothing():
@@ -44,11 +44,11 @@ def test_a_surplus_player_is_worth_nothing():
     """
     full = ["QB", "RB", "RB", "WR", "WR", "WR", "WR", "WR"]   # TE slot empty, flex used
     sc8 = np.array([[[10.0] * 8]])
-    baseline = _lineup_points(sc8, np.array(full))[0, 0]
+    baseline = lineup_points(sc8, np.array(full))[0, 0]
 
     sc9 = np.array([[[10.0] * 9]])
-    surplus = _lineup_points(sc9, np.array(full + ["WR"]))[0, 0]
-    fills_hole = _lineup_points(sc9, np.array(full + ["TE"]))[0, 0]
+    surplus = lineup_points(sc9, np.array(full + ["WR"]))[0, 0]
+    fills_hole = lineup_points(sc9, np.array(full + ["TE"]))[0, 0]
 
     assert surplus == pytest.approx(baseline), "a sixth WR must add nothing"
     assert fills_hole > baseline, "a TE fills the empty TE slot and must add its points"
@@ -56,7 +56,7 @@ def test_a_surplus_player_is_worth_nothing():
 
 def test_missing_position_does_not_crash():
     pos = np.array(["RB", "RB"])
-    assert _lineup_points(np.array([[[5.0, 5.0]]]), pos)[0, 0] == pytest.approx(10.0)
+    assert lineup_points(np.array([[[5.0, 5.0]]]), pos)[0, 0] == pytest.approx(10.0)
 
 
 # --- schedule -------------------------------------------------------------

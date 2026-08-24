@@ -31,7 +31,16 @@ def blended_adp(df: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT) -> pl.DataFram
     """
     if not 0.0 <= w <= 1.0:
         raise ValueError(f"espn weight must be in [0, 1], got {w}")
-    espn = pl.col("adp").fill_null(pl.col("ecr"))
+    # A *missing* adp column, not merely a null one. ECR-only mode drops it entirely rather
+    # than nulling it, and a historical board never has it at all -- ESPN publishes ADP for
+    # the current season only. `fill_null` needs the column to exist, so without this the
+    # board that degrades most gracefully everywhere else raises here.
+    #
+    # Note this makes `w` a no-op on such a board: espn falls back to ecr, so
+    # `w*ecr + (1-w)*ecr` is ecr for every weight. That is the correct reading of "half the
+    # room drafts off ESPN" when there is no ESPN board to draft off.
+    espn = (pl.col("adp").fill_null(pl.col("ecr")) if "adp" in df.columns
+            else pl.col("ecr"))
     return df.with_columns((w * espn + (1 - w) * pl.col("ecr")).alias("mu_pick"))
 
 

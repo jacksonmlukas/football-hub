@@ -111,9 +111,34 @@ def _select_consensus(r: pl.DataFrame) -> pl.DataFrame:
     return out
 
 
-def consensus() -> pl.DataFrame:
-    """FantasyPros ECR. `ecr_sd` is a crude prior on uncertainty until conformal lands."""
-    return _select_consensus(nfl.load_ff_rankings("draft"))
+def consensus(as_of: str | None = None) -> pl.DataFrame:
+    """FantasyPros ECR. `ecr_sd` is a crude prior on uncertainty until conformal lands.
+
+    `as_of` is an ISO date. Given one, this returns the board as it stood *before* that date
+    -- the latest scrape per player -- rather than today's. That is what makes a historical
+    replay honest: the room in 2022 could only see what had been published by then, and
+    scoring a 2022 draft against 2026 rankings would be hindsight wearing a backtest's
+    clothes.
+
+    The current path is untouched and still reads the small `draft` table. `all` is 1.8M rows
+    across 2020-10-16 onward, which is fine once per backtest and wrong on draft night.
+    """
+    if as_of is None:
+        return _select_consensus(nfl.load_ff_rankings("draft"))
+    allr = nfl.load_ff_rankings("all")
+    snap = (allr.filter((pl.col("page_type") == CONSENSUS_PAGE)
+                        # scrape_date is an ISO string, which sorts correctly as text;
+                        # casting it just to compare would be waste. Same technique as
+                        # `hub.draft.availability.historical_picks`.
+                        & (pl.col("scrape_date") < as_of)
+                        & (pl.col("ecr").is_not_null()))
+                .sort("scrape_date", descending=True)
+                .unique(subset=["player"], keep="first"))
+    if snap.is_empty():
+        raise ContractViolation(
+            f"ff_rankings: no `{CONSENSUS_PAGE}` rows scraped before {as_of}; the archive "
+            f"starts 2020-10-16, so a season before 2021 cannot be replayed")
+    return _select_consensus(snap)
 
 
 # A per-game rate needs a real denominator. Without this, a player with one big game
@@ -156,7 +181,7 @@ def replacement_levels(position: pl.Series, points: pl.Series, games: pl.Series,
     return levels
 
 
-def espn_adp(league_size: int = 12) -> pl.DataFrame | None:
+def espn_adp(league_size: int = 12, season: int = SEASON_AHEAD) -> pl.DataFrame | None:
     """ESPN's own ADP -- the thing your room is actually drafting off. Optional.
 
     Was built on espn_api's `posRank`, which is a *positional* rank (WR5 -> 5) parsed from
@@ -166,7 +191,7 @@ def espn_adp(league_size: int = 12) -> pl.DataFrame | None:
     """
     try:
         from hub.fetch.espn import player_market
-        adp = player_market(season=SEASON_AHEAD)
+        adp = player_market(season=season)
     except Exception as e:  # noqa: BLE001
         print(f"  ESPN ADP unavailable ({type(e).__name__}); running ECR-only mode.")
         return None
@@ -295,6 +320,15 @@ def _impute_xfp(board: pl.DataFrame) -> pl.DataFrame:
     return board.with_columns(pl.Series("xfp_per_game", filled, dtype=pl.Float64))
 
 
+class SkipHistorical(Exception):
+    """A stage that only exists for the current season, skipped on a historical board.
+
+    Raised inside the same `try` that handles a stage failing, so the "did it run" bookkeeping
+    stays in one place. It is not an error: `report.scoring_checked` staying False is the
+    correct record either way, since the stage genuinely did not run.
+    """
+
+
 @dataclass
 class BuildReport:
     """Which optional stages made it into the board.
@@ -322,11 +356,24 @@ class BuildReport:
         return tuple(k for k, v in vars(self).items() if not v)
 
 
-def build(league_size: int = 12, season: int = 2025) -> tuple[pl.DataFrame, BuildReport]:
+def build(league_size: int = 12, season: int = 2025, *,
+          season_ahead: int = SEASON_AHEAD,
+          as_of: str | None = None) -> tuple[pl.DataFrame, BuildReport]:
+    """The draft board. `season` is the season just gone; `season_ahead` is the one drafted for.
+
+    `as_of` reconstructs the board as it stood before an ISO date, for replaying a past
+    draft. It is one parameter rather than two because the ESPN skip *follows* from it: ESPN
+    publishes ADP, projections, scoring and roster slots for the current season only, so
+    asking for a 2022 board and then reading 2026 ADP onto it is not a configuration choice,
+    it is a contradiction. Historical mode is therefore consensus-and-nflverse only, and
+    `proj_blend` never forms -- `moments()` falls back to `xfp_per_game`, which is the prior
+    season's expected points and contemporaneous by construction.
+    """
+    live = as_of is None
     print("  loading ffopportunity ...")
     xp = expected_points(season)
-    print("  loading consensus rankings ...")
-    ecr = consensus()
+    print(f"  loading consensus rankings{'' if live else f' as of {as_of}'} ...")
+    ecr = consensus(as_of)
     levels = replacement_levels(xp["position"], xp["xfp_per_game"], xp["games"],
                                 league_size)
     print(f"  replacement (xFP/gm): " + ", ".join(f"{k}={v:.1f}" for k, v in levels.items()))
@@ -347,7 +394,7 @@ def build(league_size: int = 12, season: int = 2025) -> tuple[pl.DataFrame, Buil
     # ESPN app prices them, but last season's defence is a noisy guide to this one.
     report = BuildReport()
     try:
-        board = attach_sos(board, playoff_sos(season_ahead=SEASON_AHEAD, dvp_season=season))
+        board = attach_sos(board, playoff_sos(season_ahead=season_ahead, dvp_season=season))
         report.sos = True
     except Exception as e:  # noqa: BLE001
         print(f"  weeks 15-17 SoS unavailable ({type(e).__name__}); board built without it.")
@@ -364,9 +411,13 @@ def build(league_size: int = 12, season: int = 2025) -> tuple[pl.DataFrame, Buil
     # The league owns the scoring weights, so check ours against them rather than assuming.
     # Fantasy points are an aggregate of real stats; if the commissioner moves to half-PPR,
     # every projection and every pick is silently mis-scored until someone notices.
+    if not live:
+        print("  scoring check skipped: ESPN publishes settings for the current season only.")
     try:
         from hub.fetch import espn as espn_fetch
         from hub.models.components import scoring_mismatch
+        if not live:
+            raise SkipHistorical("scoring settings")
         bad = scoring_mismatch(espn_fetch.scoring_settings())
         if bad:
             print("  SCORING MISMATCH -- the league scores differently from hub.models."
@@ -376,14 +427,19 @@ def build(league_size: int = 12, season: int = 2025) -> tuple[pl.DataFrame, Buil
             print("  Every projection below is scored on the wrong weights until that is fixed.")
         report.scoring_checked = True
     except Exception as e:  # noqa: BLE001
-        print(f"  scoring check unavailable ({type(e).__name__}); assuming full PPR.")
+        if live:
+            print(f"  scoring check unavailable ({type(e).__name__}); assuming full PPR.")
 
     # The league owns the roster shape too, and for a long time nothing checked it: the
     # slots came back from `league_settings()` on every call and every caller discarded
     # them. A second flex would move replacement level at every position.
+    if not live:
+        print("  roster check skipped: ESPN publishes slots for the current season only.")
     try:
         from hub.config import roster_mismatch
         from hub.fetch import espn as espn_fetch
+        if not live:
+            raise SkipHistorical("roster slots")
         _, slots = espn_fetch.league_settings()
         bad_slots = roster_mismatch(slots or {})
         if bad_slots:
@@ -394,7 +450,8 @@ def build(league_size: int = 12, season: int = 2025) -> tuple[pl.DataFrame, Buil
             print("  Replacement level and every VOR below assume this repo's shape.")
         report.roster_checked = True
     except Exception as e:  # noqa: BLE001
-        print(f"  roster check unavailable ({type(e).__name__}); assuming {SLOTS}.")
+        if live:
+            print(f"  roster check unavailable ({type(e).__name__}); assuming {SLOTS}.")
 
     # Availability as a per-player trait. Its own try for the same reason as above.
     try:
@@ -403,7 +460,7 @@ def build(league_size: int = 12, season: int = 2025) -> tuple[pl.DataFrame, Buil
     except Exception as e:  # noqa: BLE001
         print(f"  durability unavailable ({type(e).__name__}); board built without it.")
 
-    adp = espn_adp(league_size)
+    adp = espn_adp(league_size, season_ahead) if live else None
     if adp is not None:
         report.adp = True
         board = _attach_edge(board, adp, league_size)
@@ -546,7 +603,7 @@ def held_positions(board: pl.DataFrame, state: DraftState, *,
 
 
 def pick_notes(row: dict) -> list[str]:
-    """Where this repo's measurements say the market is wrong about THE PICK.
+    """Where this repo's measurements say the draft market is wrong about THE PICK.
 
     Also a decision rather than a rendering -- each entry encodes a threshold for what is
     worth interrupting a drafter with, and those were previously spelled out inside an
@@ -745,7 +802,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if mp:
             row = board.filter(pl.col("player") == mp).row(0, named=True)
             notes = pick_notes(row)
-            print(f"\n  THE PICK -- best available the market values, filling a need")
+            print(f"\n  THE PICK -- best available the draft market values, filling a need")
             print(f"    {mp}  {row.get('pos') or ''}  ADP {row.get('adp') or float('nan'):.1f}"
                   + (f"   [{'; '.join(notes)}]" if notes else ""))
             print("    Corrections shown are where our measurements say the market is wrong;")

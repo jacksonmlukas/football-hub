@@ -54,11 +54,16 @@ _skewed = skewed
 _correlated_normal = correlated_normal
 
 
-def _lineup_points(scores: np.ndarray, pos: np.ndarray) -> np.ndarray:
+def lineup_points(scores: np.ndarray, pos: np.ndarray) -> np.ndarray:
     """Best legal lineup, vectorised over (sims, weeks).
 
     scores: (sims, weeks, roster) -- one draw per player per week
     pos:    (roster,) -- position string per player
+
+    Public because `hub.draft.backtest` scores realised seasons with it. A backtest using
+    its own lineup rule would answer a slightly different question than the simulator it is
+    auditing, and the difference would be invisible -- both would read as "best legal
+    lineup". One rule, one owner.
     """
     total = np.zeros(scores.shape[:2])
     leftovers = []
@@ -117,7 +122,7 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
     draws = _skewed(true_mu[:, None, :], sd_eff, skew[None, None, :], z)
     out = np.empty((n_sims, weeks, len(rosters)))
     for t, r in enumerate(rosters):
-        out[:, :, t] = _lineup_points(draws[:, :, r], pos[r]) if r.size else 0.0
+        out[:, :, t] = lineup_points(draws[:, :, r], pos[r]) if r.size else 0.0
     return out
 
 

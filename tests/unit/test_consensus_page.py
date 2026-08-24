@@ -91,3 +91,67 @@ def test_absent_page_type_column_raises():
     df = pl.DataFrame({"player": ["A"], "pos": ["RB"], "ecr": [1.0]})
     with pytest.raises(ContractViolation):
         _select_consensus(df)
+
+
+# --- the board as it stood on a past date ---------------------------------
+#
+# `consensus(as_of=...)` exists so a past draft can be replayed against rankings the room
+# could actually have seen. Scoring a 2022 draft on 2026 rankings would be hindsight, and
+# hindsight is the failure the whole realised-outcome backtest exists to escape.
+
+def _dated(*specs):
+    """(player, ecr, scrape_date) rows on the consensus page."""
+    return pl.DataFrame(
+        [{"player": p, "pos": "RB", "team": "X", "ecr": e, "sd": 1.0, "best": 1.0,
+          "worst": 9.0, "page_type": "redraft-overall", "scrape_date": d}
+         for p, e, d in specs])
+
+
+def _patch(monkeypatch, frame):
+    import hub.draft.board as board_mod
+    monkeypatch.setattr(board_mod.nfl, "load_ff_rankings", lambda which: frame)
+
+
+def test_as_of_takes_the_latest_scrape_before_the_date(monkeypatch):
+    from hub.draft.board import consensus
+    _patch(monkeypatch, _dated(("Guy", 30.0, "2022-07-01"),
+                               ("Guy", 12.0, "2022-08-28"),
+                               ("Guy", 99.0, "2026-08-20")))
+    got = consensus(as_of="2022-09-01")
+    assert got.height == 1
+    assert got["ecr"][0] == 12.0, "must be the last scrape before the draft, not the first"
+
+
+def test_as_of_excludes_anything_scraped_after(monkeypatch):
+    """The hindsight guard, stated directly."""
+    from hub.draft.board import consensus
+    _patch(monkeypatch, _dated(("Old", 5.0, "2022-08-01"),
+                               ("Future", 1.0, "2026-08-20")))
+    assert consensus(as_of="2022-09-01")["player"].to_list() == ["Old"]
+
+
+def test_the_live_path_is_untouched(monkeypatch):
+    """No `as_of` must still read the small `draft` table, not the 1.8M-row archive."""
+    from hub.draft.board import consensus
+    import hub.draft.board as board_mod
+    seen = []
+
+    def _spy(which):
+        seen.append(which)
+        return _dated(("Guy", 3.0, "2022-08-20"))
+
+    monkeypatch.setattr(board_mod.nfl, "load_ff_rankings", _spy)
+    consensus()
+    assert seen == ["draft"]
+    consensus(as_of="2022-09-01")
+    assert seen == ["draft", "all"]
+
+
+def test_a_date_before_the_archive_starts_is_a_contract_violation(monkeypatch):
+    """The archive begins 2020-10-16. Returning an empty board would be worse than raising:
+    every downstream stage would degrade quietly and produce a plausible empty result."""
+    from hub.contracts import ContractViolation
+    from hub.draft.board import consensus
+    _patch(monkeypatch, _dated(("Guy", 3.0, "2022-08-01")))
+    with pytest.raises(ContractViolation, match="scraped before"):
+        consensus(as_of="2019-09-01")

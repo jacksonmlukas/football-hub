@@ -199,6 +199,91 @@ Three outcomes, each with a clear action:
 Cost: expensive (nested simulation inside a backtest) but tractable with reduced sims. This
 is the one thing worth being slow about.
 
+## P0b — P0, built as code, with the shortlist its own design specified
+
+**Designed 2026-08-24, before any numbers.** P0's write-up above stays as it is: it is the
+record of a run that departed from its own spec twice without saying so, and that record is
+the justification for [ADR-0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md).
+
+### Why P1 does not fire
+
+P1 is gated on *"only if P0 says keep it"*, and P0's three branches give **fix the
+circularity** only to the branch where equity *beats* the market. P0 landed on the tie, whose
+action is "keep it for the roster-construction information, drop the claim, lead with the
+market". So the next test is not P1. It is the one P0 named itself: the shortlist was top-8 by
+VOR rather than `recommend()`'s scarcity/value logic, *"and with the result sitting on zero it
+is exactly the kind of thing that could tip it."*
+
+### What changed from P0
+
+| | P0 | P0b |
+|---|---|---|
+| Code | none committed | `hub.draft.backtest`, pure core + CLI shell |
+| Arm B shortlist | top-8 by VOR | `recommend()`'s top-10, as P0's design specified |
+| Picks arm B decides | 8 | all 16 — both arms play the draft out regardless |
+| n | 36 (design said 60, unexplained) | **80** — 20 drafts x 4 seasons |
+| Seasons | 2022, 2024, 2025 | + **2023**, whose exclusion was an ESPN-endpoint fact we no longer depend on |
+| Sims per optimizer call | 12 x 250 | **12 x 250, pinned** |
+| Data | unknown | pure nflverse; no ESPN, no cookies |
+| Arm A ranks on | ADP (unverifiable) | that season's consensus, via `consensus(as_of=...)` |
+| Result | prose only | parquet stamped with `config_digest` |
+
+MDE improves from about +/-3.6 to roughly +/-2.4 on n alone.
+
+### Decision rule, fixed before the numbers
+
+Asymmetric on purpose: the market already leads, and the burden is on the complicated thing.
+It is `backtest.verdict`, so it is executable and cannot be quietly reinterpreted afterwards.
+
+| result | action |
+|---|---|
+| CI excludes zero favouring **B** | promote championship equity back to the headline; **P1 now fires** |
+| **CI contains zero** | nothing changes |
+| CI excludes zero favouring **A** | **remove** equity from the draft-night output entirely |
+
+The third row is new. P0's rule would only ever promote on evidence, which is heads-I-win: if
+you will not demote on evidence too, the tiebreaker keeps steering close calls whatever the
+measurement says.
+
+### Limitations, written before the run
+
+1. Arm A follows **consensus**, not the **draft market**. ESPN publishes ADP for the current
+   season only and the FantasyPros archive carries none, so a replay cannot follow ADP. The
+   shipped THE PICK does.
+2. Arm B scores seasons on prior-season **xFP**; the live board scores on `proj_blend`, which
+   blends an ESPN projection that does not exist for past seasons.
+3. Arm B **breaks ties** by consensus. The shipped tool refuses to break them and asks you.
+4. The room is simulated — consensus plus fitted pick noise, lexicographic need — not the
+   eleven people actually in those drafts.
+
+### BLOCKED, 2026-08-24: the harness found a defect in the thing it measures
+
+Running it now would measure a broken optimizer.
+
+`win_probability` scores championship equity on a roster that **excludes the players you
+already hold**. `simulate_remaining_draft` builds rosters out of `draft_pool`, which is
+`remaining(board, state)` — so your existing picks are not in the pool, not in the simulated
+roster, and positional need arising from what you own is invisible to the objective.
+
+Demonstrated, holding one quarterback in a one-QB league: `win_probability` ranks a *second*
+quarterback above a startable running back (lift +0.0047 against −0.0047). Played out as a
+lead strategy, arm B finishes with **four quarterbacks**, and raising the simulation budget
+from 2x20 to 6x150 does not move it — it is structural, not noise.
+
+Live, the damage is bounded: the draft market leads, and equity only breaks ties over a
+shortlist `recommend()` has already ranked by VOR or cost-of-waiting. It is not bounded to
+zero, though — that shortlist is not need-filtered, so the tiebreaker can still name a
+redundant player at a filled position.
+
+Pinned as a strict `xfail` in `tests/unit/test_backtest.py`, which will fail the moment it is
+fixed and the marker needs removing.
+
+**The decision this forces, and it is not mine to take.** The design fixes arm B as "the
+optimizer as shipped". If `win_probability` is fixed first, arm B measures something better
+than what shipped — and no longer the same object P0 measured. Fix first and measure the
+improved optimizer, or measure what ships and treat the defect as part of the finding? Either
+is defensible; picking after seeing the numbers is not.
+
 ## P1 — Break the circularity *(only if P0 says keep it)*
 
 `optimize.py` scores the season on `proj_blend` and ranks candidates on `proj_blend`. The
