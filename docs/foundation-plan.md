@@ -60,7 +60,7 @@ Everything downstream reads from here. Build it once, correctly.
       Flags: `--schema`, `--head N --cols a,b,c`, `--describe`, `--nulls`.
       *Done when:* the hook's suggested command actually works, and it never prints more than
       ~40 lines regardless of input size.
-- [ ] **1.2 `hub.fetch.nflverse`** — thin wrapper over `nflreadpy` with column selection
+- [x] **1.2 `hub.fetch.nflverse`** _(done 2026-08-23)_ — thin wrapper over `nflreadpy` with column selection
       enforced, caching to `data/raw/`, and a `Contract` on every return.
       *Done when:* `python -m hub.fetch.nflverse --refresh` writes parquet through `hub.store`
       and prints a summary only. Loading full-width pbp without `--cols` must raise.

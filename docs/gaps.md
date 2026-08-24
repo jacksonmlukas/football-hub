@@ -35,7 +35,7 @@ of them dead-ends.
 | Symbol | Referenced from | Status | Decision (0.2) |
 |---|---|---|---|
 | `hub.inspect` | `.claude/hooks/guard_data_reads.py:31,32` | ~~MISSING~~ **DONE 2026-08-23** | Built. `--schema`, `--head N --cols`, `--describe`, `--nulls`, default overview. 95% covered. |
-| `hub.fetch.nflverse` | `Makefile:10`, `weekly-slate/SKILL.md:16` | MISSING | **Build.** Blocks `make slate`. |
+| `hub.fetch.nflverse` | `Makefile:10`, `weekly-slate/SKILL.md:16` | ~~MISSING~~ **DONE 2026-08-23** | Built. Refuses wide sources without `cols`, contracts on return, writes week partitions through `hub.store`. |
 | `hub.fetch.cfbd` | `Makefile:11,18`, `weekly-slate/SKILL.md:17` | MISSING | **Build.** Blocks `make slate` and `make check`. |
 | `hub.fetch.odds` | `weekly-slate/SKILL.md:18` | MISSING | **Build**, but after the draft. Nothing pre-Sep 3 needs odds. |
 | `hub.models.ratings` | `Makefile:12`, `weekly-slate/SKILL.md:20` | MISSING | **Build as passthrough.** Blocks `make slate`. |

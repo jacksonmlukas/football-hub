@@ -249,3 +249,39 @@ def test_main_routes_to_verify(fake_nflverse, monkeypatch, tmp_path):
     monkeypatch.setattr(store, "DATA", tmp_path)
     monkeypatch.setattr(store, "CATALOG", tmp_path / "hub.duckdb")
     assert store.main(["--verify", "--season", "2025"]) == 0
+
+
+# --- catalog discovery ----------------------------------------------------
+
+def test_any_table_written_becomes_queryable(base):
+    """write() accepts any table name, so connect() must expose any table name.
+
+    These were out of step: connect() enumerated four tables while write() took anything,
+    so `hub.fetch.nflverse --refresh` wrote 54,402 rows the catalog could not see.
+    """
+    store.write(pl.DataFrame({"game_id": ["g1"], "epa": [0.1]}),
+                "pbp", "nfl", 2025, 1, base=base)
+    assert store.sql("SELECT count(*) n FROM pbp", base=base)["n"][0] == 1
+
+
+def test_several_discovered_tables_coexist(base):
+    for table in ("pbp", "ff_opportunity", "preds"):
+        store.write(pl.DataFrame({"game_id": ["g1"]}), table, "nfl", 2025, 1, base=base)
+    with store.connect(base=base) as con:
+        names = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+    assert {"pbp", "ff_opportunity", "preds"} <= names
+
+
+def test_a_directory_with_no_parquet_is_not_a_table(base):
+    (base / "scratch").mkdir()
+    with store.connect(base=base) as con:
+        assert "scratch" not in {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+
+
+def test_a_directory_that_is_not_a_valid_identifier_is_skipped(base):
+    """Otherwise a stray folder name becomes an unquoted SQL identifier."""
+    odd = base / "not-an-identifier" / "league=nfl" / "season=2025" / "week=01"
+    odd.mkdir(parents=True)
+    pl.DataFrame({"a": [1]}).write_parquet(odd / "part.parquet")
+    with store.connect(base=base) as con:
+        con.execute("SELECT 1")  # must not have raised while building views

@@ -63,6 +63,20 @@ FF_OPPORTUNITY = Contract(
     min_rows=1000,
 )
 
+PBP = Contract(
+    name="pbp",
+    required={"game_id": pl.Utf8, "season": pl.Int32, "week": pl.Int32},
+    non_null=("game_id", "season", "week"),
+    # Ranges from three observed seasons (2023-25, 147,928 plays) widened ~20%, per the
+    # rule in the data-contracts skill: set them from history, not theory. Observed epa
+    # ran -12.69..8.88 and yards_gained -34..98.
+    #
+    # Deliberately NOT non_null: posteam. It is null on 8,080 of those plays -- kickoffs,
+    # timeouts, end-of-quarter rows -- so requiring it would fail every honest refresh.
+    ranges={"week": (1, 22), "epa": (-16, 12), "wp": (0, 1), "yards_gained": (-45, 120)},
+    min_rows=1000,
+)
+
 ESPN_SCOREBOARD = Contract(
     name="espn_scoreboard",
     required={"id": pl.Utf8, "state": pl.Utf8, "home": pl.Utf8, "away": pl.Utf8},

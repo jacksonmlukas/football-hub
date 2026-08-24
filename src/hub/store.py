@@ -48,13 +48,17 @@ def connect(read_only: bool = False, base: Path | None = None) -> duckdb.DuckDBP
     root.mkdir(parents=True, exist_ok=True)
     catalog = (root / "hub.duckdb") if base else CATALOG
     con = duckdb.connect(str(catalog), read_only=read_only)
-    for table in ("preds", "lines", "games", "ratings"):
-        d = root / table
-        if d.exists() and any(d.rglob("*.parquet")):
-            con.execute(f"""
-                CREATE OR REPLACE VIEW {table} AS
-                SELECT * FROM read_parquet('{d}/**/*.parquet', hive_partitioning := true)
-            """)
+    for d in sorted(p for p in root.iterdir() if p.is_dir()):
+        # Discovered, not enumerated. This used to be a hardcoded list of four tables
+        # while write() accepted any name, so `hub.fetch.nflverse --refresh` wrote 54,402
+        # rows of pbp and ff_opportunity that the catalog then could not see. Write and
+        # read have to agree on what a table is.
+        if not d.name.isidentifier() or not any(d.rglob("*.parquet")):
+            continue
+        con.execute(f"""
+            CREATE OR REPLACE VIEW {d.name} AS
+            SELECT * FROM read_parquet('{d}/**/*.parquet', hive_partitioning := true)
+        """)
     return con
 
 
