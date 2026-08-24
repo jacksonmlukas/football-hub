@@ -531,7 +531,7 @@ returns 200 and costs nothing**, so probing for coverage is free.
 
 | question | answer |
 |---|---|
-| Season-long player props? | **No.** Only sport keys are `nfl`, `nfl_preseason`, `nfl_super_bowl_winner` |
+| Season-long player totals? | **No.** Nine naming variants tested, all rejected as invalid markets |
 | Per-game player props in August? | **Yes, but only for the marquee opener** |
 | Coverage of the week-1 slate | **1 of 16 games** — 3 books, 24 players |
 | Two ordinary Sunday games | 0 books, 0 players |
@@ -542,9 +542,21 @@ The earlier caution here was right that season-long props do not exist, and wron
 would be available in August — the opener is priced early because it is a marquee game, and
 the rest of the slate arrives closer to kickoff.
 
-**Genuinely useful in-season, with a quota caveat.** The props on offer are
-`player_pass_yds`, `player_rush_yds`, `player_reception_yds`, `player_anytime_td` — which are
-exactly the components `hub/models/components.py` aggregates. That is the convergence of both
+**Season totals do not exist here, and that is settled.** Batch-probing
+`player_pass_yds_season`, `player_reception_yds_season`, `player_receptions_season`,
+`season_player_*`, `player_season_*` and four more all come back `INVALID_MARKET`. The only
+futures market is `outrights`, which is team-level (Super Bowl winner), not player-level.
+Some books do post season-long player lines; The Odds API does not carry them. Probing for
+this is free — invalid markets return 422 at zero cost.
+
+**Genuinely useful in-season, with a quota caveat.** The valid player markets are
+`player_pass_yds`, `player_rush_yds`, `player_reception_yds`, `player_anytime_td`,
+`player_receptions`, `player_rush_attempts`, `player_pass_tds`, `player_tds_over` and
+`player_pass_yds_alternate` — which is the **full component set, volume included**. That
+matters more than the yardage markets alone: volume is the persistent part (targets 0.805,
+carries 0.791 year over year) and touchdowns are the noise, so a market that prices
+`player_receptions` and `player_rush_attempts` is pricing exactly the half worth having.
+These are the components `hub/models/components.py` aggregates. That is the convergence of both
 of Jackson's directions: money-backed market prices, expressed as component stats rather than
 as a fantasy aggregate. But 64 credits/week against a 500/month plan covers about two weeks a
 month before the spread snapshots are counted, so weekly full-slate prop pulls do not fit the
