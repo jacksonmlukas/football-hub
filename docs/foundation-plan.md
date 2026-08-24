@@ -68,7 +68,7 @@ Everything downstream reads from here. Build it once, correctly.
       this month against the 1,000 budget. Never loops over teams (see `docs/cfbd-quota.md`).
       *Done when:* `make check` prints quota status; a per-team loop is impossible by
       construction, not by convention.
-- [ ] **1.4 `hub.fetch.odds`** — one market, one region, one pull. Logs
+- [x] **1.4 `hub.fetch.odds`** _(done 2026-08-23)_ — one market, one region, one pull. Logs
       `x-requests-remaining` and refuses to run if remaining credits fall below a floor.
       *Done when:* it stores a closing-line snapshot per game and cannot silently burn quota.
 - [ ] **1.5 Contracts for every source.** Each fetch function validates before returning.
@@ -111,11 +111,11 @@ This phase has a date attached. If Phase 1 slips, this still ships.
 
 ## Phase 3 — Model spine (after the draft)
 
-- [ ] **3.1 `MarketBaseline`** implementing `Forecaster`. Converts closing line to win
+- [x] **3.1 `MarketBaseline`** _(done 2026-08-23, brought forward: ratings needs something to pass through)_ implementing `Forecaster`. Converts closing line to win
       probability and margin. This is the benchmark everything else is scored against, so it
       must exist before any model does.
       *Done when:* it satisfies `isinstance(m, Forecaster)` and passes `validate_predictions`.
-- [ ] **3.2 `hub.models.ratings`** — starts as a passthrough returning the market prior. Real
+- [x] **3.2 `hub.models.ratings`** _(done 2026-08-23, passthrough)_ — starts as a passthrough returning the market prior. Real
       Bayesian work is Track A and comes later.
       *Done when:* `make slate` calls it without error and it writes versioned predictions.
 - [ ] **3.3 `hub.models.conformal`** — wire the existing `Conformalized` wrapper to a rolling

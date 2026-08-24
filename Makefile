@@ -7,8 +7,14 @@ draft:          ## Build the draft board (safe to re-run; cached)
 	uv run python -m hub.draft.board --league-size 12 --scoring ppr
 
 slate:          ## Weekly pregame refresh -> site/data/*.json
+# nflverse and ratings are the NFL spine: if either fails the slate is wrong, so they are
+# fatal. CFB and odds are optional sources -- both need a key this repo does not require,
+# and neither feeds the fantasy path. They report their own status and the slate continues,
+# because a weekly refresh that halts on an unconfigured extra is a system that needs an
+# operator, and those die in October.
 	uv run python -m hub.fetch.nflverse --refresh
-	uv run python -m hub.fetch.cfbd --week $(WEEK)
+	-uv run python -m hub.fetch.cfbd --week $(WEEK)
+	-uv run python -m hub.fetch.odds --snapshot
 	uv run python -m hub.models.ratings --fit
 
 live:           ## Sunday poller (local, not Actions)
