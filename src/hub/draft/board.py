@@ -19,6 +19,7 @@ import polars as pl
 from hub.contracts import ContractViolation
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
+from hub.draft import regression as td_regression
 from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.state import DraftState, _norm, remaining
 from hub.draft import state as state_mod
@@ -288,6 +289,14 @@ def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
     except Exception as e:  # noqa: BLE001
         print(f"  weeks 15-17 SoS unavailable ({type(e).__name__}); board built without it.")
 
+    # Touchdown luck from last season's actuals. Its own try: it reaches nflverse, and a
+    # board that will not build because one advisory column is unavailable is the
+    # operator-dependence CLAUDE.md warns about.
+    try:
+        board = td_regression.attach(board, td_regression.prior_season(season))
+    except Exception as e:  # noqa: BLE001
+        print(f"  touchdown luck unavailable ({type(e).__name__}); board built without it.")
+
     adp = espn_adp(league_size)
     if adp is not None:
         board = _attach_edge(board, adp, league_size)
@@ -345,6 +354,32 @@ def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
     else:
         ranked = pick_value(board, now, nxt, w=w)
     return mode, ranked.head(top)
+
+
+def _print_td_luck(board: pl.DataFrame) -> None:
+    """Players priced on touchdowns their yardage does not support.
+
+    A different cut from xFP-FP, and measurably so -- the two correlate at +0.16 on the live
+    board, and they are signed in opposite directions, so a real overlap would show as a
+    strong negative. See docs/td-luck.md, including how much of this is established
+    (quarterbacks) and how much is only directional (running backs, receivers).
+    """
+    if "td_luck" not in board.columns:
+        return
+    pool = board.filter(pl.col("td_luck").is_not_null()
+                        & pl.col("adp").is_not_null() & (pl.col("adp") <= 120))
+    if pool.height < 8:
+        return
+    print(f"\n  Touchdown luck, last season's actuals -- {pool.height} drafted players")
+    print("  Points per game above the touchdowns their yardage supports. Touchdown rate")
+    print("  has no year-over-year persistence, so this is the part least likely to repeat.")
+    for label, frame in (("FADE", pool.sort("td_luck", descending=True).head(5)),
+                         ("BUY ", pool.sort("td_luck").head(5))):
+        for r in frame.iter_rows(named=True):
+            print(f"    {label} {r['player']:<24} {r['pos'] or '':<4} "
+                  f"ADP {r['adp']:>5.1f}  {r['td_luck']:>+6.2f}/gm")
+    print("  Strongest for QB, where the room prices last year's touchdowns at 1.02 against")
+    print("  volume and their true predictive weight is -0.05. Directional elsewhere.")
 
 
 def main():
@@ -418,6 +453,8 @@ def main():
     for r in top.head(8).iter_rows(named=True):
         print(f"    {r['player']:<24} {r['pos'] or '':<4} ECR {r['ecr']:>5.1f}  "
               f"xFP-FP {-r['fp_over_expected']:>6.1f}")
+
+    _print_td_luck(board)
 
     if a.sos:
         pool = board.filter(pl.col("adp").is_not_null()

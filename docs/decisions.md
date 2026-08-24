@@ -352,6 +352,37 @@ the pick is the only input that knows it changed. Extrapolation clamped to each 
 observed pick range -- unclamped the TE curve claims 10.8 targets a game at pick 3, past
 every data point it has.
 
+**Touchdown luck shipped to the board (2026-08-24), `hub/draft/regression.py`.** The chain:
+TD rate per yard has zero year-over-year persistence (+0.004 rec, -0.030 rush), full
+regression is optimal, and the *market does not fully regress it*. Regressing draft position
+and next-season points on the same standardised prior-season yardage and touchdown points:
+for QB the room weights touchdowns at 1.02 against volume where their true predictive weight
+is -0.05 -- gap +1.07 [+0.21, +2.11], 98.9%. RB +0.25 (91%), WR +0.10 (83%), TE -0.14 (27%).
+
+Do **not** pool these: pooled it reverses sign, because QBs earn far more TD points and go
+much later. Simpson's paradox, and the first version of the test reported the pooled row.
+
+Honest strength: QB is a result, RB/WR are directional, TE is nothing. Shipped where the
+earlier QB-only volume win was not, because the mechanism was measured first and independently
+and predicts this sign, three of four positions show it, and the QB gap is twentyfold rather
+than marginal.
+
+Distinct from the board's existing `fp_over_expected` (realised vs *opportunity*-expected
+points): they correlate at +0.16 on the live board and are signed opposite, so a real overlap
+would show strongly negative. `docs/td-luck.md`.
+
+**Historic ADP: not used, and not worth using.** Checked while considering refitting the
+volume curves on ADP rather than realised pick. ESPN retains 169 as an "undrafted" sentinel
+for 78%/73%/69% of players in 2022-24 and **100% in 2025** -- the whole season is a constant
+170.0. Refitting on it would mean less data and a signal truncated at 169. More basically,
+historic ADP has no role in *predicting*: the curve is fitted once on history, where realised
+picks are the cleaner record, and what predicts 2026 is 2026 ADP, which is live and complete.
+
+**Decomposing a projection into components does not beat the sqrt law** for weekly spread:
+mean |error| 1.365 vs 1.140 predicting a player's observed weekly sd, P(components better)
+0.0%. It underestimates (6.22 vs 7.19 observed) because a decomposed line is the average
+player at that pick with no player-specific shape. `weekly_moments` unchanged.
+
 **Direction set: project components, aggregate to points.** Weekly *spread* now comes from
 the component structure; the weekly *mean* still arrives as a points projection. Doing the
 same to the mean is the next build -- volume persists where touchdowns do not, and it is the
