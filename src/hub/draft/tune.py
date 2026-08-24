@@ -236,7 +236,7 @@ def holdout(signal_season: int = 2024, board_season: int = 2025,
                      & pl.col("ecr").is_not_null())
              .sort("scrape_date", descending=True)
              .unique(subset=["player"], keep="first")
-             .select(pl.col("player"), pl.col("ecr")))
+             .select(pl.col("player"), pl.col("ecr"), pl.col("pos")))
 
     truth = (nfl.load_ff_opportunity(seasons=[board_season], stat_type="weekly")
              .filter(pl.col("player_id").is_not_null())

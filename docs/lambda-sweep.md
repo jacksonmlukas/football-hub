@@ -225,15 +225,83 @@ Three metrics, six seasons, one conclusion: there is no evidence for a nonzero l
 the strongest-looking evidence against one is partly an artefact of measuring ranks nobody
 uses.
 
+## Evaluating over simulated drafts
+
+The metric the other two could not be. `hub.draft.evaluate` plays a full sixteen-round
+snake per trial: I draft from the lambda-adjusted board, the room drafts consensus with
+noise, and the roster is scored on **starters only** -- QB1 RB2 WR3 TE1 FLEX1, because a
+surplus player scores zero. Each season is replayed from all twelve seats, paired so every
+lambda faces the same opponent draws from the same seat.
+
+There is no boundary for one injured player to sit on, and every pick reads the whole
+board.
+
+**Lift in starter points against the consensus board, 144 drafts per cell:**
+
+| lam | 19-20 | 20-21 | 21-22 | 22-23 | 23-24 | 24-25 | mean | t | neg |
+|---|---|---|---|---|---|---|---|---|---|
+| 0.02 | -49.0 | +10.3 | -4.7 | -20.2 | +12.3 | +28.9 | -3.7 | -0.33 | 3/6 |
+| 0.04 | -108.0 | +4.6 | -0.1 | -24.7 | +8.9 | +43.3 | -12.7 | -0.60 | 3/6 |
+| **0.08** | -189.3 | +18.7 | -70.4 | -87.2 | **-20.7** | +77.2 | **-45.3** | **-1.20** | 4/6 |
+| 0.16 | -171.1 | -12.9 | -148.6 | -158.5 | -36.3 | +24.3 | -83.8 | -2.41 | 5/6 |
+| 0.24 | -124.1 | -128.9 | -251.8 | -227.2 | -77.3 | +29.8 | -129.9 | -3.10 | 5/6 |
+| 0.32 | -55.3 | -219.3 | -288.7 | -276.6 | -96.3 | +18.6 | -153.0 | -2.96 | 5/6 |
+
+Best lambda per season: **0.00, 0.06, 0.00, 0.00, 0.00, 0.08** -- four of six select exactly
+zero, and the two that do not are the two seasons with positive lift.
+
+**2023-24 is finished as an anomaly.** Under top-50 points it was +184 and selected 0.12.
+Played out as actual drafts it is *negative* at every lambda from 0.06 up and selects 0.00.
+Drafting from the adjusted board produced fewer starter points even in the season that
+looked exceptional.
+
+### The three metrics disagree by season, and that is the finding
+
+| season | top-50 points | whole-board Spearman | simulated drafts |
+|---|---|---|---|
+| 2023-24 | **+184** (best) | -0.0093 (worst) | -20.7 |
+| 2024-25 | -94 (worst) | -0.0039 | **+77.2** (best) |
+
+The same season is the best year under one metric and the worst under another. That is not
+three metrics disagreeing about a real effect; it is three views of something too small to
+locate. The per-season number is noise whichever way it is measured, and only the pooled
+view means anything.
+
+### More simulation cannot help
+
+| draws per season | within-season se | between-season sd | pooled t |
+|---|---|---|---|
+| 144 | 15.6 | 92.3 | -1.20 |
+| 480 | 8.5 | 95.1 | -1.23 |
+
+Tripling the simulation halves the within-season error and moves the pooled t by 0.03. The
+binding constraint is **six seasons**, not compute, and 2019 is where the ranking record
+begins. This question cannot be answered better than it has been.
+
+## The answer, from three independent evaluations
+
+| evaluation | reads | pooled at 0.08 | seasons selecting 0 |
+|---|---|---|---|
+| top-50 points | 2-3 boundary players | -30.4, t -0.68 | 3 of 6 |
+| whole-board Spearman | all ~430 ranks | -0.0048, t -4.69 | 2 of 6 |
+| **simulated drafts** | **full 16-round roster** | **-45.3, t -1.20** | **4 of 6** |
+
+No evaluation selects a lambda above 0.08 in any season. None shows a significant positive
+effect at any lambda. The two that are significant are significant in the *negative*
+direction and only at large lambda, where all three agree the adjustment is harmful.
+
+**`projection_lambda = 0.0`**, and the draft-based evaluation is the one to trust: it is
+the only one that scores the thing the board is actually for.
+
 ## What would still change it
 
-A different kind of evaluation, not a different statistic. Every metric here scores one
-static ordering; a draft is a sequence of decisions against a depleting pool. Evaluating
-over many simulated drafts -- which `hub.draft.optimize` already does for championship
-equity -- would measure the thing that actually matters, and would not have a boundary for
-one injured player to sit on.
+More seasons, which do not exist. Not more lambda values, not a bigger bootstrap, not more
+simulated drafts -- all three have been shown not to bind.
 
-Post-draft work. Nothing here changes what to do on Sep 3.
+The one remaining avenue is a different signal rather than a better measurement of this
+one. Expected-versus-actual over a full season is coarse; a version weighted toward recent
+weeks, or restricted to a position where opportunity is more stable, would be a different
+hypothesis rather than a re-run of this one. Post-draft work.
 
 ## What changed in the code
 
