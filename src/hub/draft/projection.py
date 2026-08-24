@@ -33,8 +33,15 @@ import polars as pl
 # seasons are negative, t = -6.83, sign test p = 0.031. Spearman falls monotonically with
 # lambda in every season without exception.
 #
-# Six pairs is the whole available record -- load_ff_rankings("all") begins in 2019.
-# See docs/lambda-sweep.md, including two corrections made as seasons were added.
+# The decisive finding is not in those numbers, it is underneath them. At lam=0.08 the
+# adjustment moves only 2-3 players across the top-50 boundary per season, so the whole
+# delta is a handful of individual outcomes. In 2023->24 the biggest of them was Rashee
+# Rice: most negative z on the board, demoted hardest, then 64.9 points in 2024 -- because
+# he tore his ACL in week 3. Replay that season with Rice healthy and +184 becomes +26,
+# and the pooled six-season effect goes from t = -0.68 to t = -2.64.
+#
+# So the honest reason for zero is not "the signal is harmful". It is that a metric riding
+# on ~15 player-outcomes across six seasons cannot tell. See docs/lambda-sweep.md.
 DEFAULT_LAMBDA = 0.0
 
 

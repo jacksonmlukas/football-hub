@@ -102,15 +102,77 @@ Recording the sequence rather than only the conclusion, because the pattern is t
 part: each additional pair of seasons moved the interpretation, and the first two readings
 were both stated with more confidence than one and three seasons could support.
 
+## What was different about 2023-24
+
+Nothing systematic. It was one torn ACL.
+
+**The metric turns on two or three players a season.** At lambda 0.08 the adjustment moves
+only a handful of players across the top-50 boundary, so the whole delta is the points of
+those who entered minus those who left:
+
+| pair | swaps | in | out | net |
+|---|---|---|---|---|
+| 19-20 | 3 | 796 | 704 | +92 |
+| 20-21 | 3 | 585 | 781 | -197 |
+| 21-22 | 2 | 241 | 331 | -90 |
+| 22-23 | 3 | 589 | 483 | +106 |
+| 23-24 | 2 | 545 | 309 | **+236** |
+| 24-25 | 2 | 255 | 540 | -285 |
+
+**The two swaps in 2023-24:**
+
+| | player | ecr | z | 2024 pts |
+|---|---|---|---|---|
+| in | Terry McLaurin | 53.0 | +0.32 | 322.5 |
+| in | Tee Higgins | 54.0 | -0.26 | 222.1 |
+| out | Trey McBride | 51.8 | -0.80 | 243.8 |
+| out | **Rashee Rice** | 52.3 | **-2.71** | **64.9** |
+
+Rice had the most negative z on the board, so the adjustment demoted him hardest. He then
+scored 64.9 points -- **in three games. He tore his ACL, and his last appearance was week 3.**
+
+The signal did not predict regression. It demoted a player who got injured.
+
+### The counterfactual
+
+Replaying 2023-24 with Rice healthy and everything else untouched:
+
+| Rice 2024 | delta at lam 0.08 |
+|---|---|
+| 65 pts (what happened, 3 games) | **+183.7** |
+| 255 pts (healthy at a modest 15/gm) | +84.9 |
+| 368 pts (healthy at his own 2024 rate) | **+26.2** |
+
+About 86% of the only positive season in six is that one injury. At +26 it is
+indistinguishable from zero, and the pooled picture stops being ambiguous:
+
+| | 19-20 | 20-21 | 21-22 | 22-23 | 23-24 | 24-25 | mean | t |
+|---|---|---|---|---|---|---|---|---|
+| as it happened | -64 | -13 | -110 | -87 | **+184** | -94 | -30.5 | -0.68 |
+| Rice healthy | -64 | -13 | -110 | -87 | **+26** | -94 | -56.8 | **-2.64** |
+
+### The methodological lesson
+
+The bootstrap in `sweep()` resamples all ~430 players in a holdout, which made the precision
+look far better than it is. **The decision does not ride on 430 players. It rides on the two
+or three sitting closest to the top-50 boundary.** Across six seasons that is roughly fifteen
+player-outcomes, and one ACL moves the pooled mean by 26 points and t by nearly two units.
+
+That is the real reason to set lambda to zero, and it is a stronger one than any of the three
+readings that preceded it. The signal was never measured at a sample size that could support
+a conclusion in either direction. What looked like "mildly harmful with one anomalous year"
+is better described as **a coin flip on a handful of boundary players, reported to four
+significant figures.**
+
 ## What would still change it
 
-Not more lambda values, and not more seasons — 2019 is where `load_ff_rankings("all")`
-begins, so six pairs is the whole available record.
+Not more lambda values, not more seasons, and not a bigger bootstrap. A metric whose
+effective sample size is fifteen cannot answer this. What would: score the whole board
+instead of a top-50 cut -- Spearman already does, and it falls monotonically with lambda in
+all six seasons without exception -- or evaluate over many simulated drafts rather than one
+boundary.
 
-What is left is to ask what was different about 2023→24 rather than averaging it away. If
-the gain concentrates in one position or one band of the board, the whole-board top-50
-metric is hiding a real effect. That is post-draft work and it does not change what to do
-on Sep 3.
+Both are post-draft work. Neither changes what to do on Sep 3.
 
 ## What changed in the code
 
