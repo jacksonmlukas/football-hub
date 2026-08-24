@@ -107,7 +107,52 @@ question in the repo, and everything below is ordered around it.
 
 ## P0 — Settle whether the objective helps or hurts
 
-**Blocking. Nothing else matters as much.**
+**Blocking. Nothing else matters as much.** Started 2026-08-24.
+
+### Why it cannot be deferred
+
+The two candidates disagree at **8 of 8** of my picks, and the market's choice falls inside
+the P(win) TAKE tier only once. This is not a question about the third decimal place -- it
+changes the pick every time.
+
+### Design
+
+**Arms**, both using the same room and the same seed so the comparison is paired:
+
+- **A, market**: best available by ADP that fills an unfilled starting slot, lexicographically
+  -- need gates, ADP breaks ties. The competent market-follower from
+  [market-value.md](market-value.md), which lands on exactly 1/12 and is therefore a fair null
+  rather than a strawman.
+- **B, optimizer**: the top of `win_probability` over the `recommend()` shortlist.
+
+**Room**: opponents draft ADP with noise and fill their own roster, same lexicographic rule.
+
+**Seasons**: 2022, 2024, 2025. 2023 is excluded -- ESPN returns 92 projections for it against
+394-527 for the others, an upstream gap.
+
+**Outcome**: realised points. Best legal lineup from each roster using actual season
+production, scored per team game. Never a projection -- the whole point is escaping the
+circularity, which is structural now that one object both ranks and scores.
+
+**Power**: 20 drafts per season, 3 seasons, 60 paired observations. The strategy backtest
+detected a 5-point effect with 120 observations, so this can see an effect of that size but
+not a small one -- which is itself worth knowing, since an effect too small to detect is too
+small to headline.
+
+**Cost control**: `n_draft_sims=6, n_season_sims=120` inside each optimizer call, well below
+the shipped 24x300. Noisier per call, and that noise is part of what is being tested: if the
+recommendation is unstable at cheap settings it is not a usable recommendation.
+
+### Decision rule, fixed before the numbers are in
+
+| result | action |
+|---|---|
+| CI excludes zero, favouring **B** | keep championship equity as the headline, fix the circularity (P1) |
+| CI excludes zero, favouring **A** | lead with the market plus the measured corrections; demote equity to a tiebreaker |
+| **CI contains zero** | lead with the market. An objective that cannot demonstrate it beats ADP should not be the headline |
+
+The third row is the one worth pre-registering. A null is the most likely outcome at this
+sample size, and it has an action rather than being a disappointment to explain away.
 
 Extend the realised-outcome backtest from *strategies* to the actual optimiser. At each of my
 picks in 2022/2024/2025, compare what `win_probability` recommends against what the market
