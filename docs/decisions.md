@@ -523,16 +523,32 @@ all:
 - Things that are not about the player: your slot, who survives to your next pick, weeks 15-17
   schedule under a 6-of-12 bracket ([six-of-twelve.md](six-of-twelve.md)).
 
-**Practical note.** `ODDS_API_KEY` is present but **empty**, so no sportsbook data flows today
-and the "market" in use is ESPN ADP plus ESPN projections. `hub/models/market.py` and the
-survivor solver run on nflverse closing lines, which is fine; `hub/fetch/odds.py` is for
-in-season line movement and is simply unconfigured.
+**Practical note — odds API, checked 2026-08-24 after Jackson set the key.**
 
-If a sharper market input is ever wanted, book prices beat ESPN's fantasy projections on
-principle — real money, continuously updated. Two cautions before spending on it: the key is
-unset, and books price per-game props near gameday, so season-long player props are thin in
-August and may not reach a September draft even with a key. That second point is untested here
-and should be checked rather than assumed.
+Key works: 500 credits on the plan, 496 remaining after probing. `/sports` and `/events` are
+free and do not count against quota. Useful operational fact: **an event with no bookmakers
+returns 200 and costs nothing**, so probing for coverage is free.
+
+| question | answer |
+|---|---|
+| Season-long player props? | **No.** Only sport keys are `nfl`, `nfl_preseason`, `nfl_super_bowl_winner` |
+| Per-game player props in August? | **Yes, but only for the marquee opener** |
+| Coverage of the week-1 slate | **1 of 16 games** — 3 books, 24 players |
+| Two ordinary Sunday games | 0 books, 0 players |
+| Cost for a full week's props | ~4 credits/event, **64/week** |
+
+**Not usable for the Sep 3 draft.** 24 players priced against ~170 draftable is not a board.
+The earlier caution here was right that season-long props do not exist, and wrong that nothing
+would be available in August — the opener is priced early because it is a marquee game, and
+the rest of the slate arrives closer to kickoff.
+
+**Genuinely useful in-season, with a quota caveat.** The props on offer are
+`player_pass_yds`, `player_rush_yds`, `player_reception_yds`, `player_anytime_td` — which are
+exactly the components `hub/models/components.py` aggregates. That is the convergence of both
+of Jackson's directions: money-backed market prices, expressed as component stats rather than
+as a fantasy aggregate. But 64 credits/week against a 500/month plan covers about two weeks a
+month before the spread snapshots are counted, so weekly full-slate prop pulls do not fit the
+free tier. Pulling only the players on your roster and your opponent's would.
 
 ## Open questions
 
