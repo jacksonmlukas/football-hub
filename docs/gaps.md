@@ -92,7 +92,7 @@ Worse than missing in one respect: the module is present, so a reader assumes th
 
 | Path | Referenced from | Status | Decision (0.2) |
 |---|---|---|---|
-| `tests/golden/fixtures/` | `data-contracts/SKILL.md:29`, `tests/contracts/test_contracts.py:4` | `tests/golden/` exists but is **empty** | **Build** alongside the fetch modules — a golden test with no fixture is decorative. |
+| `tests/golden/fixtures/` | `data-contracts/SKILL.md:29`, `tests/contracts/test_contracts.py:4` | ~~empty~~ **DONE 2026-08-23** | 7 fixtures: 4 real captures, 3 hand-built for keyless sources. `pytest -m golden` runs the live diff. |
 | `site/index.html` | `make serve`, `going-public.md:17`, `SETUP.md:141`, `draft-day-ops/SKILL.md:49` | MISSING — `site/` holds only `data/draft_board.json` | **Build**, post-draft. `make serve` currently returns a directory listing, which is not an error but is not a dashboard either. |
 
 Not gaps, despite looking like ones:

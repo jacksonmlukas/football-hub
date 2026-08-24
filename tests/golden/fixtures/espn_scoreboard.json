@@ -1,0 +1,64 @@
+{
+  "events": [
+    {
+      "id": "401873297",
+      "date": "2026-08-24T00:00Z",
+      "name": "Seattle Seahawks at Tennessee Titans",
+      "status": {
+        "type": {
+          "state": "in"
+        }
+      },
+      "competitions": [
+        {
+          "competitors": [
+            {
+              "homeAway": "home",
+              "score": "3",
+              "team": {
+                "abbreviation": "TEN"
+              }
+            },
+            {
+              "homeAway": "away",
+              "score": "16",
+              "team": {
+                "abbreviation": "SEA"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "401873286",
+      "date": "2026-08-21T00:00Z",
+      "name": "Las Vegas Raiders at Houston Texans",
+      "status": {
+        "type": {
+          "state": "post"
+        }
+      },
+      "competitions": [
+        {
+          "competitors": [
+            {
+              "homeAway": "home",
+              "score": "20",
+              "team": {
+                "abbreviation": "HOU"
+              }
+            },
+            {
+              "homeAway": "away",
+              "score": "22",
+              "team": {
+                "abbreviation": "LV"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

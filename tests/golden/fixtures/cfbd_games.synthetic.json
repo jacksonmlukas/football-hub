@@ -1,0 +1,32 @@
+[
+  {
+    "id": 401628319,
+    "season": 2025,
+    "week": 1,
+    "seasonType": "regular",
+    "startDate": "2025-08-30T16:00:00.000Z",
+    "completed": true,
+    "neutralSite": false,
+    "homeTeam": "Alabama",
+    "homeConference": "SEC",
+    "homePoints": 31,
+    "awayTeam": "Wisconsin",
+    "awayConference": "Big Ten",
+    "awayPoints": 17
+  },
+  {
+    "id": 401628320,
+    "season": 2025,
+    "week": 1,
+    "seasonType": "regular",
+    "startDate": "2025-08-30T19:30:00.000Z",
+    "completed": true,
+    "neutralSite": true,
+    "homeTeam": "Georgia",
+    "homeConference": "SEC",
+    "homePoints": 24,
+    "awayTeam": "Clemson",
+    "awayConference": "ACC",
+    "awayPoints": 20
+  }
+]

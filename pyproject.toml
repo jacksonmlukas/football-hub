@@ -44,3 +44,7 @@ ignore-missing-imports = ["nflreadpy.*", "espn_api.*", "duckdb.*", "hydra.*", "o
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+# Golden tests hit live third-party APIs. Deselected by default so an upstream outage
+# cannot block a docs commit; run them deliberately with `uv run pytest -m golden`.
+addopts = "-m 'not golden'"
+markers = ["golden: hits a live API; nightly only, never on PRs"]

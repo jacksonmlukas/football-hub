@@ -71,7 +71,7 @@ Everything downstream reads from here. Build it once, correctly.
 - [x] **1.4 `hub.fetch.odds`** _(done 2026-08-23)_ — one market, one region, one pull. Logs
       `x-requests-remaining` and refuses to run if remaining credits fall below a floor.
       *Done when:* it stores a closing-line snapshot per game and cannot silently burn quota.
-- [ ] **1.5 Contracts for every source.** Each fetch function validates before returning.
+- [x] **1.5 Contracts for every source.** _(done 2026-08-23)_ Each fetch function validates before returning.
       Golden fixtures saved under `tests/golden/fixtures/`.
       *Done when:* `tests/contracts/` covers all four sources against frozen fixtures.
 - [x] **1.6 `hub.store` proven against real data.** _(done 2026-08-23)_ It has only ever seen a synthetic smoke

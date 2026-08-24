@@ -1,0 +1,98 @@
+[
+  {
+    "game_id": "2025_01_ARI_NO",
+    "season": 2025,
+    "week": 1,
+    "posteam": null,
+    "defteam": null,
+    "play_type": null,
+    "epa": -0.0,
+    "wp": 0.4332079589366913,
+    "yards_gained": null,
+    "success": 0.0
+  },
+  {
+    "game_id": "2025_01_ARI_NO",
+    "season": 2025,
+    "week": 1,
+    "posteam": "ARI",
+    "defteam": "NO",
+    "play_type": "kickoff",
+    "epa": -0.35269966581836343,
+    "wp": 0.4332079589366913,
+    "yards_gained": 0.0,
+    "success": 0.0
+  },
+  {
+    "game_id": "2025_01_ARI_NO",
+    "season": 2025,
+    "week": 1,
+    "posteam": "ARI",
+    "defteam": "NO",
+    "play_type": "run",
+    "epa": -0.19005232071503997,
+    "wp": 0.4339088201522827,
+    "yards_gained": 3.0,
+    "success": 0.0
+  },
+  {
+    "game_id": "2025_01_ARI_NO",
+    "season": 2025,
+    "week": 1,
+    "posteam": "ARI",
+    "defteam": "NO",
+    "play_type": "pass",
+    "epa": 1.3173398058861494,
+    "wp": 0.41990405321121216,
+    "yards_gained": 11.0,
+    "success": 1.0
+  },
+  {
+    "game_id": "2025_01_ARI_NO",
+    "season": 2025,
+    "week": 1,
+    "posteam": "ARI",
+    "defteam": "NO",
+    "play_type": "pass",
+    "epa": -1.6943599595688283,
+    "wp": 0.454899400472641,
+    "yards_gained": -11.0,
+    "success": 0.0
+  },
+  {
+    "game_id": "2025_01_ARI_NO",
+    "season": 2025,
+    "week": 1,
+    "posteam": "ARI",
+    "defteam": "NO",
+    "play_type": "run",
+    "epa": -1.2841495387256145,
+    "wp": 0.4042151868343353,
+    "yards_gained": -2.0,
+    "success": 0.0
+  },
+  {
+    "game_id": "2025_01_ARI_NO",
+    "season": 2025,
+    "week": 1,
+    "posteam": "ARI",
+    "defteam": "NO",
+    "play_type": "run",
+    "epa": -0.8405737169086933,
+    "wp": 0.3797571063041687,
+    "yards_gained": 1.0,
+    "success": 0.0
+  },
+  {
+    "game_id": "2025_01_ARI_NO",
+    "season": 2025,
+    "week": 1,
+    "posteam": "ARI",
+    "defteam": "NO",
+    "play_type": "punt",
+    "epa": 0.6505886446684599,
+    "wp": 0.34304213523864746,
+    "yards_gained": 0.0,
+    "success": 1.0
+  }
+]

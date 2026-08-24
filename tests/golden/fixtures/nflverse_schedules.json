@@ -1,0 +1,74 @@
+[
+  {
+    "game_id": "2025_01_DAL_PHI",
+    "season": 2025,
+    "week": 1,
+    "gameday": "2025-09-04",
+    "gametime": "20:20",
+    "home_team": "PHI",
+    "away_team": "DAL",
+    "spread_line": 8.5,
+    "total_line": 47.5,
+    "result": 4
+  },
+  {
+    "game_id": "2025_01_KC_LAC",
+    "season": 2025,
+    "week": 1,
+    "gameday": "2025-09-05",
+    "gametime": "20:00",
+    "home_team": "LAC",
+    "away_team": "KC",
+    "spread_line": -3.0,
+    "total_line": 47.5,
+    "result": 6
+  },
+  {
+    "game_id": "2025_01_TB_ATL",
+    "season": 2025,
+    "week": 1,
+    "gameday": "2025-09-07",
+    "gametime": "13:00",
+    "home_team": "ATL",
+    "away_team": "TB",
+    "spread_line": -1.5,
+    "total_line": 47.5,
+    "result": -3
+  },
+  {
+    "game_id": "2025_01_CIN_CLE",
+    "season": 2025,
+    "week": 1,
+    "gameday": "2025-09-07",
+    "gametime": "13:00",
+    "home_team": "CLE",
+    "away_team": "CIN",
+    "spread_line": -5.5,
+    "total_line": 47.5,
+    "result": -1
+  },
+  {
+    "game_id": "2025_01_MIA_IND",
+    "season": 2025,
+    "week": 1,
+    "gameday": "2025-09-07",
+    "gametime": "13:00",
+    "home_team": "IND",
+    "away_team": "MIA",
+    "spread_line": 1.5,
+    "total_line": 47.5,
+    "result": 25
+  },
+  {
+    "game_id": "2025_01_CAR_JAX",
+    "season": 2025,
+    "week": 1,
+    "gameday": "2025-09-07",
+    "gametime": "13:00",
+    "home_team": "JAX",
+    "away_team": "CAR",
+    "spread_line": 4.5,
+    "total_line": 45.5,
+    "result": 16
+  }
+]

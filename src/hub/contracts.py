@@ -77,6 +77,52 @@ PBP = Contract(
     min_rows=1000,
 )
 
+SCHEDULES = Contract(
+    name="nflverse_schedules",
+    required={"game_id": pl.Utf8, "season": pl.Int32, "week": pl.Int32,
+              "home_team": pl.Utf8, "away_team": pl.Utf8},
+    non_null=("game_id", "season", "week", "home_team", "away_team"),
+    unique=("game_id",),
+    # spread_line is the home side, positive when the home team is favoured. The widest
+    # NFL closing spreads on record sit around 26.5; 40 leaves room without admitting a
+    # sign flip, which would show as a plausible number on the wrong team.
+    ranges={"week": (1, 22), "spread_line": (-40, 40), "total_line": (20, 80)},
+    min_rows=1,
+)
+
+CFBD_GAMES = Contract(
+    name="cfbd_games",
+    required={"id": pl.Int64, "season": pl.Int64, "week": pl.Int64,
+              "homeTeam": pl.Utf8, "awayTeam": pl.Utf8},
+    non_null=("id", "season", "week", "homeTeam", "awayTeam"),
+    unique=("id",),
+    # CFB runs longer than the NFL: 15 regular-season weeks plus postseason.
+    ranges={"week": (1, 20), "homePoints": (0, 120), "awayPoints": (0, 120)},
+    min_rows=1,
+)
+
+CFBD_LINES = Contract(
+    name="cfbd_lines",
+    required={"id": pl.Int64, "season": pl.Int64, "week": pl.Int64,
+              "homeTeam": pl.Utf8, "awayTeam": pl.Utf8},
+    non_null=("id", "homeTeam", "awayTeam"),
+    unique=("id",),
+    # College spreads reach much further than NFL ones -- 50+ happens in September.
+    ranges={"week": (1, 20)},
+    min_rows=1,
+)
+
+ODDS_SNAPSHOT = Contract(
+    name="odds_snapshot",
+    required={"game_id": pl.Utf8, "close_spread": pl.Float64,
+              "captured_at": pl.Datetime},
+    non_null=("game_id", "close_spread", "captured_at"),
+    # Deliberately NOT unique on game_id: several snapshots per game is the entire point,
+    # and it is what makes AS_OF_LINES more than a normal join.
+    ranges={"close_spread": (-40, 40)},
+    min_rows=1,
+)
+
 ESPN_SCOREBOARD = Contract(
     name="espn_scoreboard",
     required={"id": pl.Utf8, "state": pl.Utf8, "home": pl.Utf8, "away": pl.Utf8},

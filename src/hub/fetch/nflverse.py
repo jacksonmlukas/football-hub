@@ -26,7 +26,7 @@ from typing import Callable, Sequence
 import polars as pl
 
 from hub import store
-from hub.contracts import FF_OPPORTUNITY, PBP, Contract
+from hub.contracts import FF_OPPORTUNITY, PBP, SCHEDULES, Contract
 
 ROOT = Path(__file__).resolve().parents[3]
 RAW = ROOT / "data" / "raw" / "nflverse"
@@ -87,7 +87,7 @@ def _raw_schedules(seasons: Sequence[int]) -> pl.DataFrame:
 SOURCES: dict[str, Contract | None] = {
     "pbp": PBP,
     "ff_opportunity": FF_OPPORTUNITY,
-    "schedules": None,
+    "schedules": SCHEDULES,
 }
 
 
