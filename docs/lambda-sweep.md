@@ -1,10 +1,10 @@
-# projection_lambda: three holdouts, and the answer
+# projection_lambda: six holdouts, and the answer
 
-Phase 2.4 of `docs/foundation-plan.md`. Single-season run 2026-08-23, extended to three
-season pairs the same day.
+Phase 2.4 of `docs/foundation-plan.md`. Run 2026-08-23: one season pair, then three, then
+six. The answer never changed. The reasoning changed twice, and both revisions are recorded
+because they are the point.
 
-**Result: `projection_lambda = 0.0`.** The decision is unchanged from the first run. The
-*reason* is not, and the difference matters.
+**Result: `projection_lambda = 0.0`.**
 
 ## The question
 
@@ -14,112 +14,118 @@ season pairs the same day.
 adj_ecr = ecr * exp(-lam * z)
 ```
 
-Human rankers anchor on realised fantasy points, which bake in touchdown variance that does
-not repeat. ffopportunity gives expected points from opportunity alone, so the gap is a
-signal consensus should in principle underweight. `lam` was 0.08 by judgment.
+Rankers anchor on realised fantasy points, which bake in touchdown variance that does not
+repeat. ffopportunity gives expected points from opportunity alone, so the gap is a signal
+consensus should in principle underweight. `lam` was 0.08 by judgment.
 
 ## Method
 
 - **Signal:** season N expected-vs-actual gap, standardised within position.
-- **Board:** the last FantasyPros redraft-overall ECR snapshot before season N+1 opened —
-  what a drafter would actually have had in hand. Window bounded on **both** sides, so a
-  player ranked in an earlier preseason but not this one cannot carry a stale rank forward.
+- **Board:** the last FantasyPros redraft snapshot before season N+1 opened — what a
+  drafter would have had in hand. Window bounded on both sides so no stale rank carries
+  forward.
 - **Truth:** season N+1 realised PPR points.
-- **Metric:** points captured by the top 50 of the resulting board, bootstrapped over 300
-  resamples. Spearman over the full board reported alongside.
+- **Metric:** top-50 points captured, bootstrapped over 300 resamples per season.
 
-## Three holdouts
+**Page taxonomy caveat.** FantasyPros used `redraft-offense` through 2020 and
+`redraft-overall` from 2021. The two never coexist in any preseason, so there is no overlap
+year in which to verify they are the same board. The 2019→2020 row therefore is not
+strictly interchangeable with the rest, and every pooled figure below is given with and
+without it.
 
-Delta in top-50 points against the untouched consensus board, bootstrap mean per season
-pair, then pooled across the three.
+## Six holdouts
 
-| lam | 22→23 | 23→24 | 24→25 | mean | sd | t |
+Bootstrap mean delta in top-50 points against the untouched consensus board.
+
+| lam | 19→20 | 20→21 | 21→22 | 22→23 | 23→24 | 24→25 |
 |---|---|---|---|---|---|---|
 | 0.00 | — | — | — | — | — | — |
-| 0.02 | +10.8 | +71.1 | −14.6 | +22.5 | 44.0 | +0.88 |
-| 0.04 | −22.0 | +126.6 | −35.6 | +23.0 | 90.0 | +0.44 |
-| 0.06 | −47.5 | +161.6 | −71.7 | +14.1 | 128.3 | +0.19 |
-| **0.08** | **−87.1** | **+183.7** | **−93.6** | **+1.0** | **158.3** | **+0.01** |
-| 0.12 | −77.9 | +232.8 | −168.6 | −4.6 | 210.5 | −0.04 |
-| 0.16 | −37.6 | +213.2 | −166.2 | +3.1 | 192.9 | +0.03 |
-| 0.24 | −80.0 | +122.3 | −193.3 | −50.3 | 159.9 | −0.55 |
-| 0.32 | −104.7 | −282.9 | −252.6 | −213.4 | 95.3 | **−3.88** |
+| 0.02 | +10 | +22 | −15 | +11 | +71 | −15 |
+| 0.04 | −14 | −10 | −37 | −22 | +127 | −36 |
+| 0.06 | −9 | −2 | −74 | −48 | +162 | −72 |
+| **0.08** | **−62** | **−13** | **−110** | **−87** | **+184** | **−94** |
+| 0.12 | −147 | −41 | −107 | −78 | +233 | −169 |
+| 0.16 | −202 | −34 | −170 | −38 | +213 | −166 |
+| 0.24 | −293 | −96 | −222 | −80 | +122 | −193 |
+| 0.32 | −300 | −216 | −378 | −105 | −283 | −253 |
 
-Best lambda by year: **0.02, 0.12, 0.00**.
+Best lambda per season: **0.00, 0.02, 0.00, 0.02, 0.12, 0.00**.
 
-## What this actually says
+### Pooled
 
-**The sign is not stable.** 2023→2024 is strongly positive at every moderate lambda, by as
-much as +233 points. The two seasons bracketing it are negative by comparable margins. One
-season in three, this adjustment was worth a great deal; the other two it cost.
+| lam | mean | sd | t | seasons negative |
+|---|---|---|---|---|
+| 0.02 | +14.1 | 31.6 | +1.09 | 2/6 |
+| 0.04 | +1.1 | 62.5 | +0.04 | 5/6 |
+| **0.08** | **−30.4** | **110.2** | **−0.68** | **5/6** |
+| 0.16 | −66.6 | 154.9 | −1.05 | 5/6 |
+| 0.24 | −127.1 | 145.9 | −2.13 | 5/6 |
+| **0.32** | **−255.8** | **91.7** | **−6.83** | **6/6** |
 
-**Pooled, the effect is indistinguishable from zero.** At the incumbent 0.08 the mean across
-three years is +1.0 points with a standard deviation of 158. Every lambda from 0.02 to 0.24
-has |t| < 0.9. There is no evidence here for any nonzero nudge.
+Dropping the legacy-page year leaves the picture unchanged: at 0.08, mean −23.9, t −0.44,
+4 of 5 negative.
 
-**The one thing all three years agree on is that a big nudge is bad.** At lambda 0.32 every
-season is negative, mean −213, t = −3.88. Spearman also falls monotonically with lambda in
-all three years (0.716→0.669, 0.741→0.666, 0.716→0.656) without exception.
+## What six seasons say
 
-That last pair of facts is worth sitting with, because they are in tension. The whole-board
-ordering gets *worse* with lambda in every season, including 2023→2024 — yet that season's
-top-50 points got substantially *better*. The adjustment is reshuffling inside the top of
-the board, and in one year out of three that reshuffle happened to be right. That is a
-description of variance, not of edge.
+**The direction is consistent; the magnitude is swamped by one year.** At lambda 0.08 five
+of six seasons are negative, but 2023→24 is +184 against a spread of roughly −13 to −110,
+which drags the pooled t to −0.68. The sign test is the more honest statistic here and it
+is not decisive either: 5 of 6 gives p = 0.22.
 
-## Correcting the single-season conclusion
+**2023→24 is an outlier, not a regime.** With three seasons it looked like the signal
+worked in some years and not others. With six it is one year in six, and every other season
+including the two added last points the same way.
 
-The first run used only 2024→2025 and I offered an explanation: that the regression is
-already priced by the time a preseason board is published, since ffopportunity is free and
-widely used.
+**One finding is unambiguous.** At lambda 0.32 all six seasons are negative, mean −256,
+t = −6.83, sign-test p = 0.031. A large nudge is reliably harmful. Spearman also falls
+monotonically with lambda in every season without exception.
 
-**Three seasons do not support that.** A fully priced signal would sit near zero every
-year. Instead one year shows a large positive effect. Whatever is happening is closer to
-regime dependence — or to nothing at all plus noise large enough to look like both.
+**Nothing supports a nonzero lambda.** The best value per season is 0.00 or 0.02 in four of
+six. No lambda is significantly positive pooled, under any grouping.
 
-Two numbers also moved between runs, because the first version of `holdout` bounded the ECR
-window on only one side and let players carry a stale rank forward. The 2024→2025 holdout
-went from 553 players to 430, and the 0.08 delta from −34.6 to −93.6. Same sign, larger
-magnitude. The earlier table in this file was computed on the leakier holdout and has been
-replaced.
+## Two corrections, in order
 
-## The trap, still worth recording
+**After one season** I reported the signal as clearly negative and offered an explanation:
+that the regression is already priced by preseason, since ffopportunity is free and widely
+used.
 
-On the 2024→2025 single realisation, lambda 0.12 looked like the winner at +44.5 points.
-Bootstrapped it was −37.3 ± 14.8. The first selection rule took the best point estimate and
-would have returned it — a confident, evidence-flavoured recommendation to make the board
-worse. The unit test that caught it builds a holdout from pure noise and asserts the sweep
-returns zero; that first implementation returned 0.05.
+**After three seasons** that explanation failed. 2023→24 was strongly positive, which a
+priced signal would not be. I revised to "the sign is unstable and the spread swamps the
+effect" — pooled t was +0.01 across three years.
 
-The three-season view is the same lesson one level up. A single holdout said "clearly
-negative, this signal is priced." Three say "unstable, and the single-season story was
-overconfident."
+**After six seasons** the instability reading is also too strong. One positive year in six
+is an outlier, not evidence of alternating regimes. The most defensible description is:
+*mildly harmful on average, with one anomalous season, and too noisy to call at the 0.05
+level either way.* The first reading was closest, and it was reached on the least evidence.
 
-## What would change the answer
+Recording the sequence rather than only the conclusion, because the pattern is the useful
+part: each additional pair of seasons moved the interpretation, and the first two readings
+were both stated with more confidence than one and three seasons could support.
 
-Not more lambda values. More seasons, and a reason. Specifically:
+## What would still change it
 
-- Extend to 2019→2020 and 2020→2021. `load_ff_rankings("all")` reaches back to 2019-12-27,
-  so two more pairs are available without new data.
-- Ask what was different about 2023→2024 rather than averaging it away. If the effect
-  concentrates in a particular position or a particular part of the board, that is a real
-  finding and the current whole-board metric is hiding it.
+Not more lambda values, and not more seasons — 2019 is where `load_ff_rankings("all")`
+begins, so six pairs is the whole available record.
 
-Both are post-draft work. Neither changes what to do on Sep 3.
+What is left is to ask what was different about 2023→24 rather than averaging it away. If
+the gain concentrates in one position or one band of the board, the whole-board top-50
+metric is hiding a real effect. That is post-draft work and it does not change what to do
+on Sep 3.
 
 ## What changed in the code
 
-- `projection_lambda` set to **0.0** in `conf/config.yaml` and `hub.config`.
-- `DEFAULT_LAMBDA` in `hub.draft.projection` set to 0.0, so the module is a no-op at its
-  default rather than silently applying an adjustment with an unstable sign.
-- `holdout()` now bounds the ECR window on both sides.
+- `projection_lambda` = **0.0** in `conf/config.yaml` and `hub.config`.
+- `DEFAULT_LAMBDA` = 0.0 in `hub.draft.projection`, so the module is a no-op by default.
+- `holdout()` bounds the ECR window on both sides.
+- `board_page()` selects the page by season and names the 2020 taxonomy change explicitly,
+  rather than silently comparing two different boards.
 
-`hub.draft.projection` is imported by nothing except its own test — the board has never
-used it. Given a signal whose sign flips year to year, that stays the right state.
+`hub.draft.projection` is imported by nothing except its own test. Given six seasons of
+this, that stays the right state.
 
 ## Reproduce
 
 ```bash
 uv run python -m hub.draft.tune --sweep
-uv run python -m hub.draft.tune --sweep --signal-season 2023 --board-season 2024
+uv run python -m hub.draft.tune --sweep --signal-season 2019 --board-season 2020
 ```

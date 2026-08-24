@@ -148,7 +148,22 @@ def best_lambda(swept: pl.DataFrame, top_n: int = TOP_N,
     return float(credible.sort(["delta_mean", "lam"], descending=[True, False])["lam"][0])
 
 
-def holdout(signal_season: int = 2024, board_season: int = 2025) -> pl.DataFrame:
+# FantasyPros changed its page taxonomy between 2020 and 2021. Before the change the
+# redraft board was `redraft-offense`; after, `redraft-overall`. The two never coexist in
+# any preseason, so there is no overlap year in which to check they are the same board.
+# A 2020 result is therefore NOT interchangeable with the others and must be reported
+# separately rather than pooled as if it were.
+BOARD_PAGE = "redraft-overall"
+LEGACY_BOARD_PAGE = "redraft-offense"
+LEGACY_THROUGH = 2020
+
+
+def board_page(board_season: int) -> str:
+    return LEGACY_BOARD_PAGE if board_season <= LEGACY_THROUGH else BOARD_PAGE
+
+
+def holdout(signal_season: int = 2024, board_season: int = 2025,
+            page: str | None = None) -> pl.DataFrame:
     """Last season's regression signal, this season's preseason board, this season's truth.
 
     The board is the LAST preseason ECR snapshot before the season opened, because that is
@@ -172,7 +187,7 @@ def holdout(signal_season: int = 2024, board_season: int = 2025) -> pl.DataFrame
     # the market still rated him. Harmless-looking, and it would quietly differ between
     # season pairs -- which is exactly what a multi-season comparison must not do.
     board = (nfl.load_ff_rankings("all")
-             .filter((pl.col("page_type") == "redraft-overall")
+             .filter((pl.col("page_type") == (page or board_page(board_season)))
                      & (pl.col("scrape_date") < f"{board_season}-09-01")
                      & (pl.col("scrape_date") >= f"{board_season}-07-01")
                      & pl.col("ecr").is_not_null())

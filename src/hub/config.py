@@ -36,9 +36,9 @@ class DraftConfig:
     # Fraction of the room drafting off ESPN's board. Fit from league history where possible.
     espn_weight: float = 0.5
     # Consensus adjustment strength. Multiplicative, so z=1 moves ~8% up the board.
-    # 0.0 by evidence, not by default. Across 2022->23, 2023->24 and 2024->25 the
-    # adjustment's sign flips (-87, +184, -94 top-50 points at 0.08) and the pooled
-    # effect is t = 0.01. See docs/lambda-sweep.md.
+    # 0.0 by evidence, not by default. Six holdouts (2019->20 .. 2024->25): five of six
+    # negative at 0.08, and at 0.32 all six are negative at t = -6.83. No lambda is
+    # significantly positive under any grouping. See docs/lambda-sweep.md.
     projection_lambda: float = 0.0
     z_clip: float = 3.0
     availability_sims: int = 5000

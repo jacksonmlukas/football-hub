@@ -22,16 +22,19 @@ import polars as pl
 # anchor on realised points, and expected points is a cleaner number. Three holdouts say
 # this particular adjustment cannot be relied on:
 #
-#   lam=0.08 delta, top-50 points   22->23  -87.1   23->24  +183.7   24->25  -93.6
+#   lam=0.08 delta, top-50 points, six holdouts 2019->20 through 2024->25:
+#     -62   -13   -110   -87   +184   -94
 #
-# One season in three it was worth a lot; the other two it cost. Pooled, +1.0 points with
-# a standard deviation of 158 -- t = 0.01, which is nothing. The only finding all three
-# seasons share is that a large nudge is reliably bad (lam=0.32, t = -3.88), and that
-# Spearman falls monotonically with lambda in every year.
+# Five of six negative. The one positive year, 2023->24, is large enough to drag the pooled
+# t to -0.68, so this is not significant either way -- but nothing supports a nonzero
+# lambda, and the best value per season is 0.00 or 0.02 in four of six.
 #
-# So zero is not "the signal is absent". It is "the sign is unstable and the spread swamps
-# the effect", which is a different and worse reason to leave it alone.
-# See docs/lambda-sweep.md.
+# The one unambiguous finding: a large nudge is reliably harmful. At lam=0.32 all six
+# seasons are negative, t = -6.83, sign test p = 0.031. Spearman falls monotonically with
+# lambda in every season without exception.
+#
+# Six pairs is the whole available record -- load_ff_rankings("all") begins in 2019.
+# See docs/lambda-sweep.md, including two corrections made as seasons were added.
 DEFAULT_LAMBDA = 0.0
 
 
