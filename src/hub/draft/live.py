@@ -27,7 +27,7 @@ from typing import Any, Sequence
 
 import polars as pl
 
-from hub.draft.board import DRAFTED_POSITIONS, MIN_GAMES, replacement_levels
+from hub.draft.board import DRAFTED_POSITIONS, MIN_GAMES, SLOTS, replacement_levels
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.state import DraftState, remaining, take
 
@@ -51,6 +51,29 @@ def detect_run(recent: Sequence[str]) -> str | None:
         return None
     pos, count = Counter(window).most_common(1)[0]
     return pos if count >= RUN_THRESHOLD else None
+
+
+def unfilled(counts: dict[str, int]) -> list[str]:
+    """Starting slots you cannot fill from what you hold.
+
+    `season.py` established that a surplus player scores exactly zero -- you can only
+    start three WRs -- so a board that offers a fourth while a starting slot sits empty is
+    recommending a player worth nothing. This is what the 2025 dry run walked into: pick
+    51, holding RB3 WR2, no QB and no TE, and the board offered another WR.
+    """
+    return [p for p in DRAFTED_POSITIONS if counts.get(p, 0) < SLOTS.get(p, 0)]
+
+
+def rank(view: dict[str, Any], key: str) -> pl.DataFrame:
+    """Candidates in order, with below-replacement players removed.
+
+    A negative VOR means the player is worse than what will be sitting on waivers all
+    season. No edge redeems that, and the dry run put Jordan Love at VOR -1.0 on top of a
+    round-4 board purely because his edge was large.
+    """
+    return (view["available"]
+            .filter(pl.col(key).is_not_null() & (pl.col("vor_live") > 0))
+            .sort(key, descending=True))
 
 
 def _live_replacement(available: pl.DataFrame, teams: int) -> dict[str, float]:
@@ -83,6 +106,12 @@ def refresh(board: pl.DataFrame, state: DraftState, *, my_slot: int = MY_SLOT,
         (pl.col("xfp_per_game") - pl.col("pos").replace_strict(levels, default=0.0))
         .alias("vor_live"))
 
+    from hub.draft.state import my_roster, unmatched as unmatched_picks
+
+    held = my_roster(state, slot=my_slot, teams=teams, rounds=rounds)
+    by_name = dict(zip(board["player"].to_list(), board["pos"].to_list()))
+    roster = Counter(by_name[n] for n in held if n in by_name)
+
     picks = my_picks(rounds)
     upcoming = [p for p in picks if p > state.n_taken]
     if upcoming:
@@ -100,6 +129,8 @@ def refresh(board: pl.DataFrame, state: DraftState, *, my_slot: int = MY_SLOT,
         "mode": mode,
         "taken": state.n_taken,
         "teams": teams,
+        "roster": dict(roster),
+        "unmatched": unmatched_picks(board, state),
     }
 
 
@@ -124,6 +155,11 @@ def render(view: dict[str, Any]) -> list[str]:
     changes which position to avoid, so it cannot be below a table.
     """
     out: list[str] = []
+    if view["unmatched"]:
+        names = ", ".join(view["unmatched"][:4])
+        out.append(f"  {len(view['unmatched'])} UNMATCHED pick(s): {names}"
+                   f" -- these players are still on the board below. Check the spelling"
+                   f" before trusting a recommendation.")
     if view["run"]:
         out.append(f"  RUN ON {view['run']} -- value there has already collapsed. "
                    f"Take the best player at a position nobody just drafted.")
@@ -139,16 +175,24 @@ def render(view: dict[str, Any]) -> list[str]:
     out.append("  replacement: " + ", ".join(
         f"{p}={view['replacement'].get(p, 0.0):.1f}" for p in DRAFTED_POSITIONS))
 
+    held = view["roster"]
+    need = unfilled(held)
+    shape = " ".join(f"{p}{held[p]}" for p in DRAFTED_POSITIONS if held.get(p))
+    out.append(f"  you hold: {shape or '(nothing yet)'}"
+               + (f" | need {', '.join(need)}" if need else " | starters complete"))
+
     key, why = _sort_key(view["next_pick"], view.get("teams", TEAMS))
-    top = (view["available"].filter(pl.col(key).is_not_null())
-           .sort(key, descending=True).head(TOP_N))
+    top = rank(view, key).head(TOP_N)
     out.append(f"  top {TOP_N} by {key} ({why}):")
     for r in top.iter_rows(named=True):
         edge = r.get("edge")
-        out.append(f"    {str(r['player'])[:22]:<22} {str(r['pos'] or ''):<3} "
+        fills = "*" if r["pos"] in need else " "
+        out.append(f"  {fills} {str(r['player'])[:22]:<22} {str(r['pos'] or ''):<3} "
                    f"vor {r['vor_live']:>5.1f}  "
                    f"edge {'-' if edge is None else format(edge, '>6.1f')}  "
                    f"sd {r.get('sd') or 0:>4.1f}")
+    if need:
+        out.append("  * fills an empty starting slot")
     return out[:MAX_LINES]
 
 

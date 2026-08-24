@@ -185,3 +185,56 @@ def test_a_first_round_board_is_not_topped_by_negative_vor():
     key, _ = live._sort_key(view["next_pick"], 12)
     top = view["available"].sort(key, descending=True).head(5)
     assert (top["vor_live"] > 0).all()
+
+
+# --- bugs found by the 2.5 dry run ---------------------------------------
+
+def test_unmatched_picks_are_surfaced():
+    """Dry-run bug 1. A pick whose name does not match leaves that player ON the board,
+    so the poller keeps recommending someone already drafted. board.py warned about this;
+    the poller -- the thing actually running during the draft -- said nothing."""
+    view = live.refresh(_board(), take(DraftState(), "Nobody At All"), my_slot=3)
+    assert view["unmatched"] == ["Nobody At All"]
+    assert "unmatched" in "\n".join(live.render(view)).lower()
+
+
+def test_a_matched_pick_raises_no_warning():
+    view = live.refresh(_board(), take(DraftState(), "P0"), my_slot=3)
+    assert view["unmatched"] == []
+    assert "unmatched" not in "\n".join(live.render(view)).lower()
+
+
+def test_the_poller_knows_what_i_already_hold():
+    """Dry-run bug 2. my_slot was accepted and never used. Replaying 2025 I reached pick
+    51 holding RB3 WR2 with no QB and no TE, and the board offered a fourth WR."""
+    state = take(DraftState(), *[f"P{i}" for i in range(22)])
+    view = live.refresh(_board(), state, my_slot=3)
+    assert sum(view["roster"].values()) == 2, "slot 3 has picked at 3 and 22"
+
+
+def test_unfilled_starting_slots_are_named():
+    state = take(DraftState(), *[f"P{i}" for i in range(22)])
+    view = live.refresh(_board(), state, my_slot=3)
+    text = "\n".join(live.render(view))
+    assert "need" in text.lower()
+
+
+def test_a_full_starting_lineup_reports_no_need():
+    counts = {"QB": 1, "RB": 2, "WR": 3, "TE": 1}
+    assert live.unfilled(counts) == []
+
+
+def test_a_missing_te_is_reported_even_with_a_deep_bench():
+    counts = {"QB": 1, "RB": 5, "WR": 6}
+    assert live.unfilled(counts) == ["TE"]
+
+
+def test_below_replacement_players_are_never_recommended():
+    """Dry-run bug 3. At pick 46 the edge board opened with Jordan Love at VOR -1.0 --
+    below replacement, so literally worse than a waiver pickup, however large the edge."""
+    board = _board()
+    state = take(DraftState(), *[f"P{i}" for i in range(40)])
+    view = live.refresh(board, state, my_slot=3)
+    key, _ = live._sort_key(view["next_pick"], 12)
+    shown = live.rank(view, key).head(live.TOP_N)
+    assert (shown["vor_live"] > 0).all()

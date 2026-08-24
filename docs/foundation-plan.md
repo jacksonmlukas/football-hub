@@ -104,7 +104,7 @@ This phase has a date attached. If Phase 1 slips, this still ships.
 - [ ] **2.4 Tune `projection_lambda`.** Hydra multirun over a 2024-to-2025 holdout.
       *Done when:* lambda is set from evidence rather than the 0.08 judgment call, and the
       sweep output is committed.
-- [ ] **2.5 Full dry run.** Replay last year's draft end to end with the live poller running.
+- [x] **2.5 Full dry run.** _(done 2026-08-23 — 3 bugs, see docs/dry-run-2025.md)_ Replay last year's draft end to end with the live poller running.
       *Done when:* you find at least one bug. If you find none, the dry run was not realistic.
 
 ---
