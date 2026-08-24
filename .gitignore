@@ -9,3 +9,5 @@ notes/
 data/processed/*.duckdb
 data/processed/*.duckdb.wal
 outputs/
+.coverage
+htmlcov/

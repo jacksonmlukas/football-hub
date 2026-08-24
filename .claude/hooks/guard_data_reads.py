@@ -7,7 +7,23 @@ back to Claude, which then routes through a summarizing CLI instead.
 import json, re, sys
 
 BLOCKED_READ = re.compile(r"(data/(raw|interim|processed)/|\.parquet$|\.csv$)")
-BLOCKED_BASH = re.compile(r"\b(cat|head|tail|less)\b[^|]*\b(data/|\.parquet|\.csv)")
+
+# `[^|\n]*` rather than `[^|]*`: a reader command and its argument live on ONE line, but
+# heredoc bodies and commit messages do not. Without the \n this matched a `tail` in a pipe
+# on line 1 against a `data/` mention twenty lines later, and refused to write any document
+# that merely describes the cache layout. A guard that fires while you are writing prose
+# teaches you to ignore it, which is how a guardrail stops working.
+# Accepted gap: a read split across a `\` line continuation slips through. Rare, and the
+# Read branch above still catches file reads.
+BLOCKED_BASH = re.compile(r"\b(cat|head|tail|less)\b[^|\n]*\b(data/|\.parquet|\.csv)")
+
+# The escape hatch cannot be caught by the trap. `hub.inspect --head 5 <path>.parquet`
+# matches the reader pattern -- `--head` contains `head` -- so without this the guard
+# refuses the exact command it tells you to run. Summarizing is the approved path by
+# definition, so a command that invokes it is allowed whatever else it mentions.
+# This is guidance, not a sandbox: someone determined to `cat` a parquet can still append
+# a mention of hub.inspect. Worth it to keep the recommended path unobstructed.
+ALLOWED = re.compile(r"\bhub\.inspect\b")
 
 try:
     ev = json.load(sys.stdin)
@@ -20,16 +36,21 @@ inp = ev.get("tool_input", {}) or {}
 hit = None
 if tool == "Read" and BLOCKED_READ.search(str(inp.get("file_path", ""))):
     hit = inp.get("file_path")
-elif tool == "Bash" and BLOCKED_BASH.search(str(inp.get("command", ""))):
-    hit = inp.get("command")
+elif tool == "Bash":
+    cmd = str(inp.get("command", ""))
+    if BLOCKED_BASH.search(cmd) and not ALLOWED.search(cmd):
+        hit = cmd
 
 if hit:
     print(
         f"BLOCKED: {hit}\n"
         "Reading data files into context costs 40k+ tokens (see CLAUDE.md rule 1).\n"
         "Use a CLI that prints a summary instead, e.g.:\n"
-        "  python -m hub.inspect <dataset> --schema\n"
-        "  python -m hub.inspect <dataset> --head 5 --cols a,b,c",
+        # `uv run`, not bare `python`: the modern-python PATH shim intercepts `python`,
+        # so an agent that follows this hint verbatim would hit a second wall.
+        "  uv run python -m hub.inspect <dataset> --schema\n"
+        "  uv run python -m hub.inspect <dataset> --head 5 --cols a,b,c\n"
+        "  uv run python -m hub.inspect <dataset> --nulls",
         file=sys.stderr,
     )
     sys.exit(2)

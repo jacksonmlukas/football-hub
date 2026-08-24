@@ -54,7 +54,7 @@ Do this first and in one session. It is cheap and it sizes everything else.
 
 Everything downstream reads from here. Build it once, correctly.
 
-- [ ] **1.1 `hub.inspect`** — the summarizing CLI that `.claude/hooks/guard_data_reads.py`
+- [x] **1.1 `hub.inspect`** _(done 2026-08-23)_ — the summarizing CLI that `.claude/hooks/guard_data_reads.py`
       already tells agents to use. It is referenced in an error message and does not exist,
       which is the worst kind of gap.
       Flags: `--schema`, `--head N --cols a,b,c`, `--describe`, `--nulls`.

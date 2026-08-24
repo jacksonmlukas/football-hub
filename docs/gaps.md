@@ -19,7 +19,7 @@ Audited 2026-08-23. **11 days to the draft.**
 
 | Status | Count |
 |---|---|
-| Missing module, referenced by something that runs | **9** |
+| Missing module, referenced by something that runs | **9** (1 resolved, 8 open) |
 | Exists but not invocable as documented | **2** |
 | Missing path | **2** |
 | Already built, plan is stale | **2** |
@@ -34,7 +34,7 @@ of them dead-ends.
 
 | Symbol | Referenced from | Status | Decision (0.2) |
 |---|---|---|---|
-| `hub.inspect` | `.claude/hooks/guard_data_reads.py:31,32` | MISSING | **Build.** Highest priority of the nine — see below. |
+| `hub.inspect` | `.claude/hooks/guard_data_reads.py:31,32` | ~~MISSING~~ **DONE 2026-08-23** | Built. `--schema`, `--head N --cols`, `--describe`, `--nulls`, default overview. 95% covered. |
 | `hub.fetch.nflverse` | `Makefile:10`, `weekly-slate/SKILL.md:16` | MISSING | **Build.** Blocks `make slate`. |
 | `hub.fetch.cfbd` | `Makefile:11,18`, `weekly-slate/SKILL.md:17` | MISSING | **Build.** Blocks `make slate` and `make check`. |
 | `hub.fetch.odds` | `weekly-slate/SKILL.md:18` | MISSING | **Build**, but after the draft. Nothing pre-Sep 3 needs odds. |
@@ -54,6 +54,26 @@ the agent is left to improvise — which is the behaviour this whole plan is try
 It fired during this audit, on a `cat > docs/foundation-plan.md` heredoc, because the *document
 text* contains the string `data/raw/`. So it also has a false-positive problem: it matches on
 command text rather than on an actual read of a file under `data/`.
+
+### Resolved 2026-08-23
+
+`src/hub/inspect.py` exists, and the hook was fixed alongside it. Three separate defects, all
+of which had to go for "the suggested command actually works" to be true:
+
+1. **`[^|]*` → `[^|\n]*`.** A reader command and its argument share a line; heredoc bodies and
+   commit messages do not. This was matching a `| tail -1` on line one against a `data/` mention
+   twenty lines later, and refused any command whose text merely described the cache layout.
+2. **The hint named bare `python`,** which the modern-python PATH shim intercepts. Following the
+   advice verbatim hit a second wall. Now `uv run python -m hub.inspect`.
+3. **The guard blocked the escape hatch it recommends.** `--head` contains `head`, so
+   `hub.inspect --head 5 <path>.parquet` matched the reader pattern. An `ALLOWED` pattern now
+   exempts any command invoking `hub.inspect`. This is guidance rather than a sandbox — someone
+   determined to `cat` a parquet can append a mention of `hub.inspect` — and keeping the
+   recommended path unobstructed is worth more than closing that.
+
+Found only by writing the verification commands from the plan and watching the hook refuse them.
+A guard that fires while you are writing prose teaches you to ignore it, which is how a
+guardrail stops working.
 
 ---
 
