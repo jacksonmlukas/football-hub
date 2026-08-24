@@ -3,6 +3,62 @@
 **Written 2026-08-24, 10 days before the draft.** Ordered by what would change a decision,
 not by what is interesting.
 
+## The architecture: one prediction module, many readers
+
+**Jackson's framing, and it is right.** Predict every stat for every player-game once, and
+let everything else read from it. `championship-leverage.md` called this "one object, three
+consumers"; the object is a distribution over *component stats*, not over fantasy points.
+
+Most of it already exists, scattered:
+
+| piece | where it lives today |
+|---|---|
+| stat → fantasy points | `models/components.py` |
+| count and yardage distributions | `models/components.py` |
+| pick → component decomposition | `models/volume.py` |
+| dispersion laws, skew, correlated draws | `draft/season.py` |
+| readers | `season/lineup.py`, `draft/optimize.py`, `season/survivor.py` |
+
+What is missing is that they are not *one object*. `weekly_moments` hands back two moments,
+the skewed correlated draw happens inside `simulate_weeks`, and `lineup.py` computes its own
+group spread. Three implementations of one idea, which is how they drift.
+
+### What unifying actually buys
+
+Consistency is the boring reason. The two real ones are **new consumers that do not exist
+yet**, and both are audits rather than edges:
+
+**Sportsbook props become a scoreboard.** If the module predicts stats, every player-week
+with a posted line is a money-backed test of it. Run once against the Week 1 opener:
+
+| | |
+|---|---|
+| stat-lines matched | 12 |
+| mean bias | **+3.5 yds, +16%** |
+| MAE | 8.8 yds |
+
+We over-project by about 16% against the market, and not uniformly — Darnold's passing line
+is 30 yards *above* our number while most receivers are below theirs. That is a calibration
+gap in us, and validating against history alone could never have shown it. It also does not
+violate the standing decision in [decisions.md](decisions.md): the aim is not to beat the
+book, it is to find out where we are wrong.
+
+**Team scores become derivable.** Aggregate every player on a team and you get a team-score
+distribution, and from two of them a game win probability — computed from stats rather than
+read off a spread. `models/market.py` currently takes the spread as given. Having both means
+they can be compared, which is a second audit surface.
+
+### What it does not buy
+
+It does not escape the circularity below. If one object both ranks candidates and scores the
+season, that dependence is structural rather than accidental. The only fix is scoring against
+*realised* outcomes, which is P0.
+
+**Sequencing.** Do not refactor before the draft. The pieces are consistent enough today, the
+draft tool works, and a refactor ten days out risks a working thing for a tidier one. The
+props audit is cheap and needs no refactor -- do that now. Unify after Sep 3, when every
+in-season consumer (lineup, waiver, props) reads from the same object anyway.
+
 ## The finding that reorders everything
 
 **The P(win) recommendation reproduces VOR, and VOR loses to the market.**
@@ -90,6 +146,13 @@ regular-season draws.
 
 Today SoS is a tiebreaker column the drafter reads by eye. Putting it in the objective is what
 would let it price a pick.
+
+## P4b — Props as a standing calibration check *(cheap, do now)*
+
+The one-game run above is n=12. Widen it as more of the Week 1 slate gets priced, and record
+the bias per stat and per position. If we are 16% high on receiving yards everywhere, that is
+a correction to make; if it is noise at n=12, that is worth knowing before trusting the
+number. Costs ~4 credits per event and errors are free.
 
 ## P5 — Market prices for weekly lineups *(after the draft)*
 
