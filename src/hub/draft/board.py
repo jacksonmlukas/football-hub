@@ -390,10 +390,15 @@ def _print_injuries(board: pl.DataFrame) -> None:
         ).sort("adp")
         if hurt.height:
             print(f"\n  Carrying a designation today -- {hurt.height} inside ADP 120")
-            print("  NOT priced into the projection: nothing to fit a coefficient on.")
+            print("  Out/Doubtful/IR are priced (-1.63 ppg, fitted on week-1 reports).")
+            print("  QUESTIONABLE is not: 12.6% of the August board carries it against")
+            print("  2.9% at week 1, so the fitted number is from a much sicker group.")
             for r in hurt.head(8).iter_rows(named=True):
+                st = str(r["injury_status"]).upper()
+                beta = durability.INJURY_BETA.get(st)
+                note = f"{beta:+.2f} ppg" if beta else "not priced"
                 print(f"    {r['player']:<24} {r['pos'] or '':<4} ADP {r['adp']:>5.1f}  "
-                      f"{r['injury_status']}")
+                      f"{st:<15} {note}")
 
     if "missed" in pool.columns:
         frail = pool.filter(pl.col("missed").is_not_null()

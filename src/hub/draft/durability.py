@@ -49,6 +49,27 @@ MIN_PPG = 5.0
 # Designations worth putting in front of a drafter. ACTIVE is not news.
 FLAG_STATUS = frozenset({"OUT", "DOUBTFUL", "QUESTIONABLE", "INJURY_RESERVE"})
 
+# Points per team game lost by carrying a designation *now*, beyond what the projection
+# prices. Fitted against week-1 injury reports, which are the closest historical analogue to
+# an August designation: `total_next/17 ~ proj_ppg + designation`, 1,263 player-seasons.
+#
+#   Out / Doubtful  -1.631  [-2.554, -0.736]  100.0%   applied
+#   Questionable    -0.949  [-2.495, +0.459]   90.2%   NOT applied
+#
+# Questionable is left out for two reasons, and the second is the stronger one. It does not
+# clear significance at n=36. And an August QUESTIONABLE is a different population from the
+# week-1 one this would be fitted on: 12.6% of the August board carries it against 2.9% at
+# week 1, **4.4x more common**. Pricing an eighth of the board on a coefficient estimated
+# from a much sicker group would be worse than leaving it for judgment.
+#
+# Out, Doubtful and IR transfer far better -- 4.1% of the August board against 2.1% at week
+# 1. IR has no coefficient of its own, since nobody on IR appears on a practice report;
+# starting a season there means missing at least four games by rule, so it is at least as
+# severe as Out and borrowing that number understates it.
+INJURY_BETA: dict[str, float] = {
+    "OUT": -1.631, "DOUBTFUL": -1.631, "INJURY_RESERVE": -1.631,
+}
+
 
 def is_flagworthy(status: str | None) -> bool:
     """Whether a current injury designation is worth surfacing."""
@@ -101,13 +122,18 @@ def correct_projection(board: pl.DataFrame, column: str = "proj_blend") -> pl.Da
     seasons against this column, so this is where a durability signal has to land to reach a
     pick -- one that is only printed does not change a decision.
 
-    Current injury status is deliberately *not* priced here. A player hurt today is a
-    different quantity from one who was fragile last year, and there is no history of
-    preseason designations against outcomes to fit a coefficient on. It is surfaced for
-    judgment instead of being given an invented number.
+    Today's designation is priced separately and only where it transfers -- Out, Doubtful
+    and IR. QUESTIONABLE is carried for judgment and not priced; see `INJURY_BETA`.
     """
-    if column not in board.columns or "missed" not in board.columns:
+    if column not in board.columns:
         return board
-    adjustment = pl.col("pos").replace_strict(
-        BETA, default=0.0, return_dtype=pl.Float64) * pl.col("missed").fill_null(0.0)
+    adjustment = pl.lit(0.0)
+    if "missed" in board.columns:
+        adjustment = adjustment + pl.col("pos").replace_strict(
+            BETA, default=0.0, return_dtype=pl.Float64) * pl.col("missed").fill_null(0.0)
+    if "injury_status" in board.columns:
+        # Applied at every position, unlike the durability trait: being ruled out is news,
+        # not a trait the market has had years to discount.
+        adjustment = adjustment + pl.col("injury_status").fill_null("").str.to_uppercase(
+        ).replace_strict(INJURY_BETA, default=0.0, return_dtype=pl.Float64)
     return board.with_columns((pl.col(column) + adjustment).clip(0.0).alias(column))

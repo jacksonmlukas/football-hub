@@ -88,15 +88,53 @@ def test_the_markdown_cannot_drive_a_projection_negative():
 
 # --- today's news, which is a different quantity ---------------------------
 
-def test_current_injury_status_is_carried_but_not_priced():
-    """A player hurt *now* is not the same as a player who was fragile *last year*, and
-    there is nothing here to fit a coefficient against -- no history of preseason
-    designations against outcomes. So it is surfaced for judgment and deliberately left out
-    of the projection, rather than given an invented number."""
+def test_a_player_ruled_out_is_marked_down():
+    """Fitted against week-1 injury designations, which are the closest historical analogue
+    to an August one: -1.631 points per team game, 95% CI [-2.554, -0.736], P(<0) = 100%.
+    Players carrying it played 7.7 games against 11.7 for the undesignated."""
     board = pl.DataFrame({"player": ["A"], "pos": ["WR"], "proj_blend": [14.0],
                           "injury_status": ["OUT"]})
     got = D.correct_projection(board)
-    assert got["proj_blend"][0] == pytest.approx(14.0)
+    assert got["proj_blend"][0] == pytest.approx(14.0 + D.INJURY_BETA["OUT"])
+    assert got["proj_blend"][0] < 14.0
+
+
+def test_injured_reserve_is_treated_as_at_least_as_bad_as_out():
+    """Nobody on IR appears on a practice report, so IR has no fitted coefficient of its
+    own. Starting a season on IR means missing at least four games by rule, so it is at
+    least as severe as Out -- borrowing that coefficient understates it, which is the
+    direction to be wrong in."""
+    board = pl.DataFrame({"player": ["A", "B"], "pos": ["WR", "WR"],
+                          "proj_blend": [14.0, 14.0],
+                          "injury_status": ["INJURY_RESERVE", "OUT"]})
+    got = D.correct_projection(board)["proj_blend"].to_list()
+    assert got[0] <= got[1] < 14.0
+
+
+def test_questionable_is_carried_but_deliberately_not_priced():
+    """Two reasons, and the second matters more than the first. The fitted coefficient does
+    not clear significance (-0.949, 90.2%, n=36). And an August QUESTIONABLE is a different
+    population from the week-1 one it would be fitted on -- 12.6% of the August board
+    against 2.9% at week 1, **4.4x more common**. Applying a week-1 number to it would price
+    an eighth of the board on a coefficient estimated from a much sicker group."""
+    board = pl.DataFrame({"player": ["A"], "pos": ["WR"], "proj_blend": [14.0],
+                          "injury_status": ["QUESTIONABLE"]})
+    assert D.correct_projection(board)["proj_blend"][0] == pytest.approx(14.0)
+
+
+def test_an_active_player_is_untouched():
+    board = pl.DataFrame({"player": ["A"], "pos": ["RB"], "proj_blend": [14.0],
+                          "injury_status": ["ACTIVE"]})
+    assert D.correct_projection(board)["proj_blend"][0] == pytest.approx(14.0)
+
+
+def test_the_injury_markdown_applies_to_every_position():
+    """Unlike the durability trait, which the market prices for running backs. Being ruled
+    out is not a trait the market has had a chance to discount -- it is news."""
+    board = pl.DataFrame({"player": ["A", "B"], "pos": ["RB", "TE"],
+                          "proj_blend": [14.0, 14.0], "injury_status": ["OUT", "OUT"]})
+    got = D.correct_projection(board)["proj_blend"].to_list()
+    assert all(v < 14.0 for v in got)
 
 
 def test_a_status_worth_flagging_is_recognised():

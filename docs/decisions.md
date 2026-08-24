@@ -423,10 +423,18 @@ points per *team* game, P(<0) = 100%. One season is enough -- two years scores R
 discounts RB durability because everyone knows RBs break, so there is no residual. The
 inefficiency is QB (-0.457, 100%) and WR (-0.151, 99.6%), which are applied. TE (89%) is not.
 
-**Current injury status is carried but deliberately not priced** -- a player hurt today is a
-different quantity from one fragile last year, and there is no history of preseason
-designations against outcomes to fit on. Also low-information at this date: 21 of the top 120
-by ADP are QUESTIONABLE in late August.
+**Current injury status is now priced too, for Out/Doubtful/IR only.** The first pass claimed
+nothing could be fitted; that was asserted without checking and was wrong -- nflverse
+publishes weekly injury reports back to 2019, and a week-1 designation is the closest
+analogue to an August one. Fitted: Out/Doubtful -1.631 [-2.554, -0.736], 100%; Questionable
+-0.949 [-2.495, +0.459], 90.2%.
+
+Questionable stays unpriced, and mainly not for the p-value: an August QUESTIONABLE is a
+different population from a week-1 one -- 12.6% of the August board against 2.9% at week 1,
+**4.4x more common**. Out/Doubtful/IR transfer far better (4.1% vs 2.1%) and are applied at
+every position, since being ruled out is news rather than a trait the market has discounted.
+IR borrows the Out coefficient -- nobody on IR is on a practice report, and starting there
+means missing 4+ games by rule, so it understates rather than overstates.
 
 On the pick-3 tie that prompted this: Nacua missed 1 game in 2025, McCaffrey 0. The trait
 flags neither, and RB is unpriced regardless, so the model says the concern is smaller than

@@ -66,15 +66,42 @@ again would be double-counting the market's own discount.
 The inefficiency is at quarterback and receiver, where durability is not the first thing a
 drafter thinks about.
 
-## Today's injury news is a different quantity, and is not priced
+## Today's injury news is a different quantity, and is priced separately
 
-A player hurt *now* is not the same as a player who was fragile *last year*. The board
-surfaces current designations from ESPN and deliberately leaves them out of the projection,
-because **there is nothing to fit a coefficient on** — no history of preseason designations
-against outcomes. Inventing a markdown would be worse than showing the drafter the flag.
+The first version of this said current status could not be priced because there was nothing
+to fit a coefficient on. That was asserted rather than checked, and it was wrong. nflverse
+publishes weekly injury reports back to 2019, and a **week-1 designation is the closest
+historical analogue to an August one** — so the coefficient can be fitted.
 
-It is also low-information at this date: **21 of the top 120 by ADP are QUESTIONABLE** in late
-August, which is close to saying nothing.
+`total_next/17 ~ proj_ppg + designation`, 1,263 player-seasons:
+
+| designation | n | beta | 95% CI | P(<0) | applied |
+|---|---|---|---|---|---|
+| **Out / Doubtful** | 27 | **−1.631** | [−2.554, −0.736] | **100.0%** | yes |
+| Questionable | 36 | −0.949 | [−2.495, +0.459] | 90.2% | **no** |
+
+Mean games played backs it up: 7.7 for Out and 6.7 for Doubtful, against 11.7 for the
+undesignated.
+
+**Questionable stays unpriced, and the reason is not mainly the p-value.** A week-1
+QUESTIONABLE and an August QUESTIONABLE are different populations:
+
+| designation | August 2026 board | historical week 1 |
+|---|---|---|
+| QUESTIONABLE | **12.6%** | **2.9%** |
+| OUT + DOUBTFUL + IR | 4.1% | 2.1% |
+
+August QUESTIONABLE is **4.4× more common**. Applying a coefficient estimated on the much
+sicker week-1 group to an eighth of the August board would be worse than leaving it for
+judgment. Out, Doubtful and IR transfer far better and are applied.
+
+**IR has no coefficient of its own** — nobody on injured reserve appears on a practice
+report. Starting a season there means missing at least four games by rule, so it is at least
+as severe as Out; borrowing that number understates it, which is the direction to be wrong
+in.
+
+Unlike the durability *trait*, the injury markdown applies at every position. Being ruled out
+is news, not a trait the market has had years to discount.
 
 ## What it says about the pick-3 tie
 
@@ -90,7 +117,8 @@ smaller than intuition suggests for both**. McCaffrey's reputation rests on 2023
 second prior season adds essentially nothing measurable over the most recent one. The pick-3
 verdict is unchanged.
 
-Current status remains genuinely unmodelled, and is exactly the kind of thing the board
+Both carry QUESTIONABLE, which is the one designation that is measured and deliberately not
+priced — so for these two it remains a judgment call, and exactly the kind of thing the board
 already suggests using to break a tie the simulation cannot.
 
 ## Biggest markdowns on the live board
