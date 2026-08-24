@@ -43,6 +43,7 @@ from typing import Iterator, Mapping, Sequence
 import polars as pl
 
 from hub.draft.season import FLEX_FROM, STARTERS
+from hub.models import components
 
 # Exhaustive enumeration is exact and, for a real 14-to-16 man roster, takes milliseconds
 # -- a few thousand legal lineups. The cap exists so that if a caller ever hands over
@@ -115,13 +116,17 @@ def _evaluate(players: pl.DataFrame, slots: Mapping[str, int] | None,
     pos = players["pos"].to_list()
     mu = players["mu"].to_numpy()
     sd = players["sd"].to_numpy()
-    var = sd ** 2
+    # A quarterback and his own pass catchers move together (+0.23), so a lineup holding
+    # both is more volatile than summed variances say. Ignoring it makes an 80% interval
+    # cover 72.9% of the time -- see docs/correlation.md.
+    teams = (players["nfl_team"].to_list() if "nfl_team" in players.columns
+             else [None] * players.height)
 
     best, best_score = None, -math.inf
     for idx in _legal_lineups(pos, slots, flex_from, max_lineups):
         i = list(idx)
         m = float(mu[i].sum())
-        s = float(math.sqrt(var[i].sum()))
+        s = components.group_sd((sd[k], pos[k], teams[k]) for k in i)
         v = score(m, s)
         if v > best_score:
             best, best_score = (i, m, s), v

@@ -252,3 +252,64 @@ def test_the_cli_fails_cleanly_when_the_roster_cannot_field_a_lineup(tmp_path, c
     path = _roster_file(tmp_path, BASE[:3])
     assert lineup.main(["--roster", path, "--opp-mu", "95"]) == 1
     assert "cannot fill" in capsys.readouterr().err
+
+
+# --- teammates are not independent ----------------------------------------
+
+def _stack():
+    """A lineup where the quarterback and one receiver play for the same NFL team."""
+    rows = [("qb", "QB", 18.0, 8.0, "KC"), ("rb1", "RB", 12.0, 6.0, "SF"),
+            ("rb2", "RB", 11.0, 6.0, "DAL"), ("wr1", "WR", 13.0, 7.0, "KC"),
+            ("wr2", "WR", 10.0, 6.0, "BUF"), ("wr3", "WR", 9.0, 6.0, "MIA"),
+            ("te", "TE", 8.0, 5.0, "NYJ"), ("flex", "RB", 7.0, 4.0, "LA")]
+    return pl.DataFrame({"player": [r[0] for r in rows], "pos": [r[1] for r in rows],
+                         "mu": [r[2] for r in rows], "sd": [r[3] for r in rows],
+                         "nfl_team": [r[4] for r in rows]})
+
+
+def test_a_stacked_lineup_is_more_volatile_than_independence_implies():
+    """Measured at +0.232 between a quarterback and a receiving teammate, and the L1 gate
+    in docs/correlation.md shows what ignoring it costs: an 80% interval that covers 72.9%
+    of the time. Treating a stack as independent is straightforwardly overconfident."""
+    stacked = lineup.optimize(_stack(), opp_mu=110.0, opp_sd=25.0)
+    apart = _stack().with_columns(
+        pl.when(pl.col("player") == "wr1").then(pl.lit("DEN"))
+          .otherwise(pl.col("nfl_team")).alias("nfl_team"))
+    assert stacked["sd"] > lineup.optimize(apart, opp_mu=110.0, opp_sd=25.0)["sd"]
+
+
+def test_two_receivers_on_one_team_are_treated_as_independent():
+    """Measured at +0.014. Only the quarterback edges carry real correlation, and the gate
+    shows a no-quarterback group is already well calibrated without it."""
+    # Move the quarterback off KC first, or putting wr2 there creates a QB pairing and the
+    # comparison stops being about two receivers at all. The first version of this test did
+    # exactly that and failed for the right reason.
+    no_qb_stack = _stack().with_columns(
+        pl.when(pl.col("player") == "qb").then(pl.lit("DEN"))
+          .otherwise(pl.col("nfl_team")).alias("nfl_team"))
+    together = no_qb_stack.with_columns(
+        pl.when(pl.col("player") == "wr2").then(pl.lit("KC"))
+          .otherwise(pl.col("nfl_team")).alias("nfl_team"))
+    assert (lineup.optimize(together, opp_mu=110.0, opp_sd=25.0)["sd"]
+            == pytest.approx(lineup.optimize(no_qb_stack, opp_mu=110.0,
+                                             opp_sd=25.0)["sd"], rel=1e-9))
+
+
+def test_a_roster_without_team_information_still_works():
+    """Back-compat, and the common case before the board carries NFL teams."""
+    got = lineup.optimize(_players(BASE), opp_mu=95.0, opp_sd=25.0)
+    assert got["sd"] > 0
+
+
+def test_the_underdog_prefers_the_stack_and_the_favourite_does_not():
+    """The payoff, and it is the same state-dependence as everywhere else: correlation is
+    volatility, so it helps when you need variance and hurts when you do not."""
+    stack = _stack()
+    apart = stack.with_columns(
+        pl.when(pl.col("player") == "wr1").then(pl.lit("DEN"))
+          .otherwise(pl.col("nfl_team")).alias("nfl_team"))
+    behind = (lineup.optimize(stack, opp_mu=145.0, opp_sd=20.0)["win_prob"]
+              > lineup.optimize(apart, opp_mu=145.0, opp_sd=20.0)["win_prob"])
+    ahead = (lineup.optimize(stack, opp_mu=60.0, opp_sd=20.0)["win_prob"]
+             < lineup.optimize(apart, opp_mu=60.0, opp_sd=20.0)["win_prob"])
+    assert behind and ahead

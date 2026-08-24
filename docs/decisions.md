@@ -310,6 +310,25 @@ touching zero, and shipping the slice that worked is the failure mode the screen
 avoid. Likely cause: shrinking toward one positional mean over-shrinks the studs; an
 ADP-implied prior is a different and untested thing. `project()` unchanged.
 
+**L1 teammate correlation gated and passed, narrowly (2026-08-24).** Measured within-game
+correlation of standardised weekly points: QB-WR1 +0.323, QB-WR2 +0.293, QB-TE1 +0.252,
+everything else within +/-0.06 of zero -- including WR1-WR2 at +0.025, against the doc's
++0.16. At position level: QB-WR +0.232, QB-TE +0.225, QB-RB +0.054, rest ~0.
+
+The gate (fit 2022-24, evaluate held-out 2025): for a lineup holding a QB and his own pass
+catchers, independence gives 72.9% coverage on a nominal 80% interval -- materially
+overconfident -- and correlation puts it at 80.4% with a better log score. For a lineup with
+no QB, independence is already calibrated (79.3% vs 79.1%) and correlation changes nothing.
+
+So L1 is three numbers, not a copula over six positions conditioned on game total and spread.
+`hub/season/lineup.py` now prices lineup spread with teammate covariance; stacking helps an
+underdog and hurts a favourite, worked out per matchup rather than as a view on stacking.
+`docs/correlation.md`.
+
+Still open: `simulate_weeks` has no NFL-team input, so the draft optimizer and leverage
+harness still treat a stacked roster as independent -- understating stack variance at draft
+time, in the weeks a stack is for. Opponent-side correlation is also unpriced.
+
 **Direction set: project components, aggregate to points.** Weekly *spread* now comes from
 the component structure; the weekly *mean* still arrives as a points projection. Doing the
 same to the mean is the next build -- volume persists where touchdowns do not, and it is the
