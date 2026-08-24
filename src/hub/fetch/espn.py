@@ -188,9 +188,14 @@ def player_market(limit: int = 500, season: int = 2026) -> pl.DataFrame:
             "adp": float(adp) if isinstance(adp, (int, float))
                    and not isinstance(adp, bool) and adp > 0 else None,
             "proj_ppg": _parse_projection(pl_, season),
+            # Today's designation, which is a different quantity from last season's
+            # durability and is carried for judgment rather than priced. See
+            # hub.draft.durability.
+            "injury_status": pl_.get("injuryStatus"),
         })
     return pl.DataFrame(rows, schema={"player": pl.Utf8, "adp": pl.Float64,
-                                      "proj_ppg": pl.Float64})
+                                      "proj_ppg": pl.Float64,
+                                      "injury_status": pl.Utf8})
 
 
 def player_adp(limit: int = 500) -> pl.DataFrame:

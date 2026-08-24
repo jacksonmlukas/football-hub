@@ -409,6 +409,29 @@ there, so correcting it would move the projection the wrong way. Effect: Josh Al
 only printed is decoration; `hub.draft.optimize` scores seasons against `proj_blend`, so this
 is where it had to go.
 
+**Durability priced per player (2026-08-24), `hub/draft/durability.py`.** `TALENT_CV`
+already carried availability, but only as a positional average, so every RB had identical
+injury risk. Games missed persists year over year at r = +0.407 -- stronger than the folklore
+-- and the practical form is a 35-point spread: a player who missed 6+ games last season
+misses 3+ this season 76% of the time against a 55% base rate, one who missed none 41%.
+
+The projection does not price it: `ppg_next ~ proj_ppg + missed` leaves -0.186 per game on
+points per *team* game, P(<0) = 100%. One season is enough -- two years scores R2 0.4597 vs
+0.4614 for one, second-year beta -0.040 vs -0.159.
+
+**The surprise is that running backs are already priced**: -0.065 at 71%, nothing. The market
+discounts RB durability because everyone knows RBs break, so there is no residual. The
+inefficiency is QB (-0.457, 100%) and WR (-0.151, 99.6%), which are applied. TE (89%) is not.
+
+**Current injury status is carried but deliberately not priced** -- a player hurt today is a
+different quantity from one fragile last year, and there is no history of preseason
+designations against outcomes to fit on. Also low-information at this date: 21 of the top 120
+by ADP are QUESTIONABLE in late August.
+
+On the pick-3 tie that prompted this: Nacua missed 1 game in 2025, McCaffrey 0. The trait
+flags neither, and RB is unpriced regardless, so the model says the concern is smaller than
+intuition suggests for both. Verdict unchanged. `docs/durability.md`.
+
 **Direction set: project components, aggregate to points.** Weekly *spread* now comes from
 the component structure; the weekly *mean* still arrives as a points projection. Doing the
 same to the mean is the next build -- volume persists where touchdowns do not, and it is the

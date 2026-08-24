@@ -19,6 +19,7 @@ import polars as pl
 from hub.contracts import ContractViolation
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
+from hub.draft import durability
 from hub.draft import regression as td_regression
 from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.state import DraftState, _norm, remaining
@@ -297,6 +298,12 @@ def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
     except Exception as e:  # noqa: BLE001
         print(f"  touchdown luck unavailable ({type(e).__name__}); board built without it.")
 
+    # Availability as a per-player trait. Its own try for the same reason as above.
+    try:
+        board = durability.attach(board, durability.prior_season(season))
+    except Exception as e:  # noqa: BLE001
+        print(f"  durability unavailable ({type(e).__name__}); board built without it.")
+
     adp = espn_adp(league_size)
     if adp is not None:
         board = _attach_edge(board, adp, league_size)
@@ -315,6 +322,9 @@ def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
         # display, because `hub.draft.optimize` scores seasons against proj_blend -- a bias
         # left in this column is a bias in every P(win) the optimiser reports.
         board = td_regression.correct_projection(board)
+        # And for his own availability history, where the market leaves a residual: QB and
+        # WR. Running backs are left alone -- the market already prices their durability.
+        board = durability.correct_projection(board)
         pb = replacement_levels(
             board.rename({"pos": "position_", "proj_blend": "xfp_per_game_"})
                  .with_columns(pl.col("position_").alias("position"),
@@ -360,6 +370,43 @@ def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
     else:
         ranked = pick_value(board, now, nxt, w=w)
     return mode, ranked.head(top)
+
+
+def _print_injuries(board: pl.DataFrame) -> None:
+    """Players carrying a designation right now, and last season's fragile ones.
+
+    Two different quantities kept visibly apart. Last season's missed games are priced into
+    the projection where the market leaves a residual (QB, WR). Today's designation is not
+    priced at all -- there is no history of preseason designations against outcomes to fit a
+    coefficient on, so inventing one would be worse than showing the drafter the flag.
+    """
+    if "injury_status" not in board.columns and "missed" not in board.columns:
+        return
+    pool = board.filter(pl.col("adp").is_not_null() & (pl.col("adp") <= 120))
+    if "injury_status" in pool.columns:
+        hurt = pool.filter(
+            pl.col("injury_status").map_elements(durability.is_flagworthy,
+                                                 return_dtype=pl.Boolean)
+        ).sort("adp")
+        if hurt.height:
+            print(f"\n  Carrying a designation today -- {hurt.height} inside ADP 120")
+            print("  NOT priced into the projection: nothing to fit a coefficient on.")
+            for r in hurt.head(8).iter_rows(named=True):
+                print(f"    {r['player']:<24} {r['pos'] or '':<4} ADP {r['adp']:>5.1f}  "
+                      f"{r['injury_status']}")
+
+    if "missed" in pool.columns:
+        frail = pool.filter(pl.col("missed").is_not_null()
+                            & (pl.col("missed") >= 4)).sort("missed", descending=True)
+        if frail.height:
+            print(f"\n  Missed time last season -- priced for QB and WR only")
+            print("  Running backs are left alone: the market already discounts them.")
+            for r in frail.head(6).iter_rows(named=True):
+                pos = r["pos"] or ""
+                beta = durability.BETA.get(pos, 0.0)
+                note = f"{beta * r['missed']:+.2f} ppg" if beta else "not priced"
+                print(f"    {r['player']:<24} {pos:<4} ADP {r['adp']:>5.1f}  "
+                      f"missed {int(r['missed']):>2}  {note}")
 
 
 def _print_td_luck(board: pl.DataFrame) -> None:
@@ -463,6 +510,7 @@ def main():
               f"xFP-FP {-r['fp_over_expected']:>6.1f}")
 
     _print_td_luck(board)
+    _print_injuries(board)
 
     if a.sos:
         pool = board.filter(pl.col("adp").is_not_null()
