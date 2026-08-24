@@ -122,3 +122,20 @@ def test_malformed_event_does_not_block():
     r = subprocess.run([sys.executable, str(HOOK)], input="not json",
                        capture_output=True, text=True)
     assert r.returncode == 0
+
+
+def test_a_commit_message_about_data_work_is_allowed():
+    """`-m` puts the message on the same line as any earlier pipe, so the newline fix
+    alone does not cover it. No git commit has ever read a parquet file."""
+    cmd = ('uv run pytest -q 2>&1 | tail -1 && git commit -m "untrack data/processed"')
+    assert bash(cmd).returncode == 0
+
+
+def test_commit_with_config_flags_is_still_allowed():
+    cmd = 'git -c user.email=a@b -c user.name=c commit -m "moved data/raw cache"'
+    assert bash(cmd).returncode == 0
+
+
+def test_the_word_commit_alone_does_not_exempt_a_read():
+    """A blanket substring match would let `cat data/x.parquet # commit` through."""
+    assert bash("cat data/processed/x.parquet  # about to commit").returncode == 2

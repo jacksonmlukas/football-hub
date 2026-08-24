@@ -29,8 +29,11 @@ else
 fi
 
 echo "==> Checking no raw third-party payloads are tracked"
-# CFBD prohibits redistribution. data/raw/ is gitignored, but verify nothing slipped in.
-TRACKED=$(git ls-files 'data/raw/*' 'data/interim/*' 2>/dev/null)
+# CFBD and nflverse both prohibit redistribution. These are gitignored, but verify
+# nothing slipped in. processed/ is included: it was NOT checked here until 2026-08-23,
+# and by then 45 parquet files (3.5MB of nflverse play-by-play) were tracked while this
+# gate reported PASS. Derived data is still redistributed data.
+TRACKED=$(git ls-files 'data/raw/*' 'data/interim/*' 'data/processed/*' 2>/dev/null)
 if [ -n "$TRACKED" ]; then
   echo "  FAIL: raw data tracked in git:" >&2; echo "$TRACKED" | head >&2; fail=1
 else

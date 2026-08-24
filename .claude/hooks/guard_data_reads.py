@@ -23,7 +23,12 @@ BLOCKED_BASH = re.compile(r"\b(cat|head|tail|less)\b[^|\n]*\b(data/|\.parquet|\.
 # definition, so a command that invokes it is allowed whatever else it mentions.
 # This is guidance, not a sandbox: someone determined to `cat` a parquet can still append
 # a mention of hub.inspect. Worth it to keep the recommended path unobstructed.
-ALLOWED = re.compile(r"\bhub\.inspect\b")
+#
+# `git commit` earns the same exemption for a different reason: a commit message that
+# describes data work puts words like `data/processed` on the same line as an unrelated
+# `| tail -1`, and no `git commit` invocation has ever read a parquet file. Writing about
+# the guard should not trip the guard.
+ALLOWED = re.compile(r"\bhub\.inspect\b|\bgit\s+(-c\s+\S+\s+)*commit\b")
 
 try:
     ev = json.load(sys.stdin)

@@ -6,8 +6,11 @@ __pycache__/
 .venv/
 notes/
 !notes/README.md
-data/processed/*.duckdb
-data/processed/*.duckdb.wal
+# Everything under processed/ is derived and reproducible: the DuckDB catalog, the
+# draft board, and the Hive tree hub.store writes. It is also redistributed
+# third-party data, which the repo cannot publish. Regenerate with `make draft` and
+# `hub.fetch.nflverse --refresh`.
+data/processed/
 outputs/
 .coverage
 htmlcov/
