@@ -118,9 +118,13 @@ This phase has a date attached. If Phase 1 slips, this still ships.
 - [x] **3.2 `hub.models.ratings`** _(done 2026-08-23, passthrough)_ — starts as a passthrough returning the market prior. Real
       Bayesian work is Track A and comes later.
       *Done when:* `make slate` calls it without error and it writes versioned predictions.
-- [ ] **3.3 `hub.models.conformal`** — wire the existing `Conformalized` wrapper to a rolling
-      calibration window driven by `conf/`.
-      *Done when:* `--recalibrate` runs and reports empirical vs nominal coverage.
+- [x] **3.3 `hub.models.conformal`** _(done 2026-08-24)_ — rolling calibration on strictly
+      earlier weeks, alpha from `conf/` (`model.conformal_alpha`), optional bounded window
+      since a season is not stationary.
+      *Done when:* `--recalibrate` runs and reports empirical vs nominal coverage. **Met.**
+      The load-bearing test is the leakage one: calibrating on the week being scored would
+      manufacture coverage out of nothing, so a spy asserts the calibration sets grow
+      strictly and never include the week being predicted.
 - [x] **3.4 `hub.models.eval`** _(done 2026-08-24)_ — `--compare a,b --split temporal`,
       log-loss delta with a paired bootstrap interval, reliability diagram, both models'
       absolute log loss and Brier so a delta cannot hide two bad models.
