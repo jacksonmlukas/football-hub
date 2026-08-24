@@ -167,6 +167,11 @@ over-shrinks the studs. A WR1 and a WR5 do not regress toward the same place, an
 already prices that. A volume model that shrank toward an *ADP-implied* prior rather than a
 positional average is a different and more promising thing, and is not what was tested here.
 
+**Since tested, and the diagnosis held** — [volume-model.md](volume-model.md). Swapping the
+positional mean for a pick-implied prior turns this null into a 99.9% result against the same
+baseline. It still does not beat simply reading the pick (87%), so what ships is a
+decomposition rather than a replacement projection.
+
 **So `project()` keeps carrying volume forward and regressing touchdowns**, which the screen
 says is the best of the options tried.
 

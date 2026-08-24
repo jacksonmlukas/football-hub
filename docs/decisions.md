@@ -329,6 +329,29 @@ Still open: `simulate_weeks` has no NFL-team input, so the draft optimizer and l
 harness still treat a stacked roster as independent -- understating stack variance at draft
 time, in the weeks a stack is for. Opponent-side correlation is also unpriced.
 
+**Volume model rebuilt on an ADP-implied prior (2026-08-24) -- the diagnosis held, the
+verdict is mixed.** The earlier null shrank volume toward a positional mean; swapping that
+for a prior implied by the market's own draft pick turns it into a 99.9% result against the
+same baseline (RMSE 3.474 vs 3.720, paired bootstrap -0.247 [-0.385, -0.104]). A WR1 and a
+WR5 really do not regress to the same place, and the market prices where each one does.
+
+But it does **not** beat simply reading the pick: market alone 3.578, model 3.474, 87% on a
+paired bootstrap -- below anything here counts as a result. It also ties a trivial blend of
+the two point predictions (3.482), which is the tell that the structure is not buying
+anything the arithmetic did not.
+
+So `hub/models/volume.py` ships as a **decomposition**: `decompose(pick, position,
+target_ppg)` reproduces the market's mean exactly and supplies only the shape. That shape is
+what `components.sample_weeks` needs and what a points projection cannot give -- the bridge
+between the board and the sampler. `docs/volume-model.md`.
+
+Fitted on 526 pairs from the league's own drafts joined to nflverse via the `ff_playerids`
+crosswalk (a real ID join, 90% match, not name matching), held out by season. Volume is
+trusted less than efficiency (keep 0.5 vs 0.7): volume is what a changed situation moves, and
+the pick is the only input that knows it changed. Extrapolation clamped to each position's
+observed pick range -- unclamped the TE curve claims 10.8 targets a game at pick 3, past
+every data point it has.
+
 **Direction set: project components, aggregate to points.** Weekly *spread* now comes from
 the component structure; the weekly *mean* still arrives as a points projection. Doing the
 same to the mean is the next build -- volume persists where touchdowns do not, and it is the
