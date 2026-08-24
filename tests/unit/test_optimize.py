@@ -7,7 +7,8 @@ probability rather than a score.
 import numpy as np
 import polars as pl
 import pytest
-from hub.draft.optimize import (draft_pool, rank_tiers, simulate_remaining_draft,
+from hub.draft.optimize import (draft_pool, market_pick, rank_tiers,
+                                simulate_remaining_draft,
                                 tag_for,
                                 win_probability, _need_score)
 from hub.draft.season import STARTERS
@@ -189,3 +190,35 @@ def test_a_candidate_indistinguishable_from_the_field_is_left_unmarked():
     got = {x["player"]: tag_for(x["co_leader"], x["lift"], x["lift_se"])
            for x in r.iter_rows(named=True)}
     assert got["B"] == ""
+
+
+# --- the market's pick, which is what the board now leads with -------------
+
+def test_the_market_pick_fills_an_unfilled_starting_slot_first():
+    """P0 measured this arm at +3.11 against the room, and championship equity at +3.15 --
+    no detectable difference, n=36, CI [-3.64, +3.58]. The simpler one leads because the
+    burden is on the complicated thing, not because the optimizer is bad."""
+    pool = pl.DataFrame({"player": ["QB1", "RB1", "RB2"], "pos": ["QB", "RB", "RB"],
+                         "adp": [1.0, 5.0, 6.0]})
+    # already holding the quarterback, so the best ADP available should not be another
+    got = market_pick(pool, {"QB": 1})
+    assert got == "RB1"
+
+
+def test_it_takes_the_best_available_once_every_slot_is_filled():
+    pool = pl.DataFrame({"player": ["A", "B"], "pos": ["QB", "RB"], "adp": [9.0, 4.0]})
+    full = {"QB": 1, "RB": 2, "WR": 3, "TE": 1}
+    assert market_pick(pool, full) == "B"
+
+
+def test_a_missing_adp_does_not_win_the_pick():
+    """Undrafted players carry a null ADP. Treating null as zero would put them first."""
+    pool = pl.DataFrame({"player": ["Known", "Nobody"], "pos": ["RB", "RB"],
+                         "adp": [12.0, None]})
+    assert market_pick(pool, {}) == "Known"
+
+
+def test_an_empty_pool_returns_nothing_rather_than_raising():
+    pool = pl.DataFrame({"player": [], "pos": [], "adp": []},
+                        schema={"player": pl.Utf8, "pos": pl.Utf8, "adp": pl.Float64})
+    assert market_pick(pool, {}) is None

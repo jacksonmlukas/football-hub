@@ -231,3 +231,28 @@ def tag_for(co_leader: bool, lift: float, lift_se: float) -> str:
     if lift < 0 and abs(lift) > 2 * (lift_se or 0.0):
         return "avoid"
     return ""
+
+
+def market_pick(pool: pl.DataFrame, counts: dict[str, int]) -> str | None:
+    """Best available by ADP that fills an unfilled starting slot.
+
+    What the board leads with. P0 measured this against championship equity on realised
+    outcomes across three seasons: market +3.11 against the room, equity +3.15, difference
+    +0.04 with a 95% interval of [-3.64, +3.58] at n=36. No detectable difference.
+
+    The simpler arm leads because it cannot be shown worse and is instant, and the burden
+    sits on the complicated thing -- not because the optimizer is bad. That claim was made
+    from a run at a quarter of the optimizer's shipped budget and has been withdrawn.
+
+    Lexicographic, matching `simulate_remaining_draft`: an unfilled starting slot outranks
+    any amount of ADP, and ADP breaks ties within a need tier.
+    """
+    if pool.height == 0:
+        return None
+    names = pool["player"].to_list()
+    pos = pool["pos"].fill_null("NA").to_list()
+    # a null ADP is an undrafted player, not the first pick of the round
+    adp = pool["adp"].fill_null(999.0).to_list() if "adp" in pool.columns else [999.0] * len(names)
+    best = min(range(len(names)),
+               key=lambda i: (-_need_score(counts, pos[i]), adp[i]))
+    return names[best]

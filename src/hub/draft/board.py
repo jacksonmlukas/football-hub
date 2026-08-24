@@ -11,7 +11,7 @@ your leaguemates, drafting off ESPN's default board, will let this player fall.
 Runs without cookies (ECR + xFP only). Add ESPN creds for the ADP diff.
 """
 from __future__ import annotations
-import argparse, json
+import argparse, collections, json
 from pathlib import Path
 import numpy as np
 import polars as pl
@@ -600,11 +600,38 @@ def main():
             print(f"    {r['player']:<24} {r['pos'] or '':<4} "
                   f"VOR {0.0 if v is None else v:>5.1f}  {extra}{tag}")
 
+        # Lead with the market. P0 measured it even with championship equity on realised
+        # outcomes -- +3.11 against the room versus +3.15, difference +0.04 [-3.64, +3.58]
+        # at n=36 -- so the simpler and instant arm leads and equity becomes a tiebreaker.
+        from hub.draft.optimize import draft_pool, market_pick
+        held = collections.Counter(
+            (state_mod.remaining(board, st).is_empty() and []) or
+            [r["pos"] for r in board.filter(
+                pl.col("player").is_in(state_mod.my_roster(st, MY_SLOT, TEAMS))
+            ).iter_rows(named=True)])
+        mp = market_pick(draft_pool(board, st, a.espn_weight), dict(held))
+        if mp:
+            row = board.filter(pl.col("player") == mp).row(0, named=True)
+            notes = []
+            if row.get("td_luck") is not None and abs(row["td_luck"]) > 0.5:
+                notes.append(f"td luck {row['td_luck']:+.2f}/gm")
+            if row.get("missed"):
+                notes.append(f"missed {int(row['missed'])} last season")
+            if durability.is_flagworthy(row.get("injury_status")):
+                notes.append(str(row["injury_status"]))
+            print(f"\n  THE PICK -- best available the market values, filling a need")
+            print(f"    {mp}  {row.get('pos') or ''}  ADP {row.get('adp') or float('nan'):.1f}"
+                  + (f"   [{'; '.join(notes)}]" if notes else ""))
+            print("    Corrections shown are where our measurements say the market is wrong;")
+            print("    they are not priced into ADP. Yours to weigh.")
+
         if not a.no_win_prob:
             from hub.draft.optimize import rank_tiers, tag_for, win_probability
             names = rec["player"].to_list()
-            print(f"\n  Championship equity -- {len(names)} candidates, "
+            print(f"\n  Championship equity (TIEBREAKER) -- {len(names)} candidates, "
                   f"{a.sims} seasons x 24 drafts each ...")
+            print("  Measured even with the market on realised outcomes: +0.04 pts/team-game,")
+            print("  95% CI [-3.64, +3.58], n=36. Use it to choose among close calls.")
             wp = rank_tiers(win_probability(board, st, names, my_slot=MY_SLOT,
                                             teams=TEAMS, n_season_sims=a.sims,
                                             w=a.espn_weight))
