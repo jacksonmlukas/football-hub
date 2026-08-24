@@ -221,3 +221,76 @@ def league_settings():
         swid=os.environ.get("ESPN_SWID") or None,
     )
     return lg, lg.settings.roster_slots if hasattr(lg.settings, "roster_slots") else {}
+
+
+# --- league transaction history -------------------------------------------
+#
+# `docs/championship-leverage.md` gates its trade evaluator on measuring whether this
+# league trades at all, and says not to guess. The obvious route does not work:
+# `espn_api`'s `recent_activity` returns HTTP 400 for every past season here, because it
+# reads `communication/` and ESPN 404s that endpoint for anything but the current season.
+# The per-team `transactionCounter` on the `mTeam` view survives in `leagueHistory`, so
+# that is what this reads.
+
+LM_API = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl"
+
+
+class NoLeagueHistory(Exception):
+    """ESPN returned no teams for a season."""
+
+
+def _league_history(season: int, view: str = "mTeam") -> dict:
+    """Raw `leagueHistory` payload for one past season. Needs the private-league cookies."""
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+    r = requests.get(
+        f"{LM_API}/leagueHistory/{os.environ['ESPN_LEAGUE_ID']}",
+        params={"view": view, "seasonId": season},
+        cookies={"espn_s2": os.environ.get("ESPN_S2", ""),
+                 "SWID": os.environ.get("ESPN_SWID", "")},
+        timeout=30)
+    r.raise_for_status()
+    body = r.json()
+    return body[0] if isinstance(body, list) and body else body
+
+
+def transaction_counts(seasons, fetch=None) -> pl.DataFrame:
+    """Per-team trade, acquisition and drop counts for each season."""
+    fetch = fetch or _league_history
+    rows = []
+    for season in seasons:
+        teams = (fetch(season) or {}).get("teams") or []
+        if not teams:
+            raise NoLeagueHistory(
+                f"no teams for season {season}. Counting that as zero activity would "
+                "argue from a network failure.")
+        for t in teams:
+            c = t.get("transactionCounter") or {}
+            rows.append({"season": int(season),
+                         "team": t.get("name") or str(t.get("id")),
+                         "trades": int(c.get("trades") or 0),
+                         "acquisitions": int(c.get("acquisitions") or 0),
+                         "drops": int(c.get("drops") or 0)})
+    return pl.DataFrame(rows)
+
+
+def trade_summary(counts: pl.DataFrame) -> dict:
+    """League totals per season.
+
+    A trade increments the counter on both sides, so the league total is half the sum --
+    but acquisitions and drops have one side each and must not be halved. An odd trade sum
+    means the two-sided assumption broke (a three-way deal, or a team missing from league
+    history), and that is surfaced rather than rounded away.
+    """
+    per = counts.group_by("season").agg(
+        pl.col("trades").sum().alias("t"), pl.col("acquisitions").sum().alias("a"),
+        pl.col("drops").sum().alias("d"),
+        (pl.col("trades") > 0).sum().alias("n")).sort("season")
+    return {
+        "trades": {int(r["season"]): int(r["t"]) // 2 for r in per.iter_rows(named=True)},
+        "acquisitions": {int(r["season"]): int(r["a"]) for r in per.iter_rows(named=True)},
+        "drops": {int(r["season"]): int(r["d"]) for r in per.iter_rows(named=True)},
+        "teams_trading": {int(r["season"]): int(r["n"]) for r in per.iter_rows(named=True)},
+        "uneven_seasons": [int(r["season"]) for r in per.iter_rows(named=True)
+                           if int(r["t"]) % 2],
+    }

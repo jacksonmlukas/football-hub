@@ -157,8 +157,12 @@ This phase has a date attached. If Phase 1 slips, this still ships.
       `docs/championship-leverage.md` from "8 make playoffs, no byes", and the live league is
       6 with two byes. Ceiling-vs-floor now falls out of whether you are favoured. See the
       resolution note in `docs/decisions.md`.
-- [ ] **5.4 League transaction-history spike** — count real trades in prior seasons via
-      `espn-api`. Twenty minutes, and it decides whether the trade evaluator is worth building.
+- [x] **5.4 League transaction-history spike** — done 2026-08-23, `docs/trade-spike.md`.
+      **15 trades across four seasons (3.75/yr, 1.4% of all player movement), so the trade
+      evaluator is not worth building** — you would consult it 0.6 times a season. `espn-api`'s
+      `recent_activity` 400s for past seasons; counts come from the per-team
+      `transactionCounter` via `hub.fetch.espn.transaction_counts`. The 271 waiver adds/season
+      say the effort belongs on the waiver layer instead.
 - [ ] **5.5 Enable the watchdog cron** after the repo goes public Sep 4.
 
 > **5.3 was dropped** (2026-08-23). It proposed `hub.draft.review` on the grounds that `SETUP.md`
