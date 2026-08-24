@@ -35,6 +35,21 @@ def blended_adp(df: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT) -> pl.DataFram
     return df.with_columns((w * espn + (1 - w) * pl.col("ecr")).alias("mu_pick"))
 
 
+# How far a real pick strays from consensus, fitted on 734 picks across this league's
+# 2022-25 drafts by `fit_pick_noise`. It replaces a heuristic of 2.0 + 0.18*mu that had
+# never been checked against a draft, and the two disagree where it matters: at ADP 100 the
+# heuristic says sigma is 20 and the fit says 26. Being over-confident about who survives
+# inflates cost_of_waiting and pushes the board toward taking a player now who would in fact
+# have lasted.
+PICK_NOISE_INTERCEPT = 1.00
+PICK_NOISE_SLOPE = 0.253
+
+
+def pick_noise(mu):
+    """Standard deviation of where a player actually goes, given consensus `mu`."""
+    return PICK_NOISE_INTERCEPT + PICK_NOISE_SLOPE * mu
+
+
 def _sigma(df: pl.DataFrame) -> np.ndarray:
     """Per-player pick uncertainty.
 
@@ -42,7 +57,7 @@ def _sigma(df: pl.DataFrame) -> np.ndarray:
     widens with ADP, because the back of the board is far less predictable than the front.
     """
     mu = df["mu_pick"].to_numpy()
-    heuristic = 2.0 + 0.18 * mu
+    heuristic = pick_noise(mu)
     if "sd" in df.columns:
         sd = df["sd"].fill_null(0.0).to_numpy()
         return np.where(sd > 0, np.maximum(sd, 1.0), heuristic)

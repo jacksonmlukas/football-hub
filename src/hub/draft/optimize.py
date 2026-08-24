@@ -97,7 +97,8 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
     # for the greedy. Scale it explicitly and treat the result as a sensitivity, not a
     # measurement -- the quantity that would settle it (deviation from historical ADP) is
     # exactly the one ESPN does not retain. See fit_espn_weight.
-    noise = rng.normal(0.0, opp_noise * (2.0 + 0.18 * mu_pick))
+    from hub.draft.availability import pick_noise
+    noise = rng.normal(0.0, opp_noise * pick_noise(mu_pick))
     order = np.argsort(mu_pick + noise)          # opponents' perceived board
 
     # Rank on the same forecast the season is scored against. Using a different signal
