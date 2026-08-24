@@ -184,6 +184,19 @@ of this file, the API wins and the doc is stale. The consequences invert its arg
 The doc's downstream reasoning about ceiling-over-floor needs redoing against 6-of-12 before
 any of it drives a draft decision.
 
+**Resolved for the lineup layer (2026-08-23), in `hub/season/lineup.py`.** The redo did not
+produce a new blanket rule. Inverting "never sacrifice ceiling" into "always take the floor"
+would be the same error pointed the other way, and the doc's own point 3 already says the
+right thing: variance preference is state-dependent and sign-flips. So the weekly objective
+is P(win this matchup), and ceiling-or-floor is an output rather than a setting. On a test
+roster a 35-point underdog quadruples his win probability (0.9% -> 3.6%) by starting the
+volatile player, and a 35-point favourite gives up three projected points to avoid him.
+
+Still open under 6-of-12: the *draft-time* ceiling argument, which is a different question
+from the weekly one. Two byes make seeding valuable, so the doc's "optimize the roster for
+weeks 15-17 and pay nothing for regular-season consistency" is not safe to act on as
+written.
+
 ## Open questions
 
 1. **Pool configuration** — entries, payout, rebuys. Under ~20 entries play near max win

@@ -152,8 +152,11 @@ This phase has a date attached. If Phase 1 slips, this still ships.
 - [ ] **5.1 Survivor IP solver** — `pulp`, 18-week assignment, use-each-team-once.
       *Done when:* it returns a feasible full-season assignment. Pool-aware objective is gated
       on getting pool config.
-- [ ] **5.2 Weekly lineup optimizer** with the ceiling preference from
-      `docs/championship-leverage.md`.
+- [x] **5.2 Weekly lineup optimizer** — `hub/season/lineup.py`. Built against P(win this
+      matchup) rather than the ceiling preference as written: that preference is derived in
+      `docs/championship-leverage.md` from "8 make playoffs, no byes", and the live league is
+      6 with two byes. Ceiling-vs-floor now falls out of whether you are favoured. See the
+      resolution note in `docs/decisions.md`.
 - [ ] **5.4 League transaction-history spike** — count real trades in prior seasons via
       `espn-api`. Twenty minutes, and it decides whether the trade evaluator is worth building.
 - [ ] **5.5 Enable the watchdog cron** after the repo goes public Sep 4.
