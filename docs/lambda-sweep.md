@@ -356,10 +356,12 @@ year-over-year persistence -- age curves, contract or depth-chart status, offens
 continuity -- is a separate hypothesis and would deserve this same treatment rather than
 inheriting its conclusion.
 
-**Depth-chart status was tried next and rejected in one screen** -- see
-`docs/depth-chart-signal.md`. It failed differently: the signal is real and strong within a
-season (r = +0.19, 7.4 sigma) but adds nothing to ECR for the following one (r = +0.01).
-Not too noisy to exist, like this one. Already priced.
+**Depth-chart status was tried next and rejected** -- see `docs/depth-chart-signal.md`.
+It is null at every horizon tested: next season beyond ECR (r = +0.01), rest-of-season
+beyond season-to-date, and among uncontested waiver candidates specifically. An earlier
+version of that document claimed the signal was real within a season at 7.4 sigma; that was
+lookahead, the climb having been measured inside the outcome window, and the corrected
+figure is r = -0.005.
 
 The apparatus is reusable and that is the durable part. `hub.draft.evaluate` scores any
 board by the roster it drafts, and it is the harness Phase 5's waiver and trade evaluators
