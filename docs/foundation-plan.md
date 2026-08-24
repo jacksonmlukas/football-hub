@@ -101,7 +101,7 @@ This phase has a date attached. If Phase 1 slips, this still ships.
       and replacement level, flags positional runs, prints the mode from `draft_mode()`.
       *Done when:* a dry run against last season's completed draft reproduces the pick sequence
       and never takes more than 2 seconds to refresh.
-- [ ] **2.4 Tune `projection_lambda`.** Hydra multirun over a 2024-to-2025 holdout.
+- [x] **2.4 Tune `projection_lambda`.** _(done 2026-08-23 — answer is 0.0, see docs/lambda-sweep.md)_ Hydra multirun over a 2024-to-2025 holdout.
       *Done when:* lambda is set from evidence rather than the 0.08 judgment call, and the
       sweep output is committed.
 - [x] **2.5 Full dry run.** _(done 2026-08-23 — 3 bugs, see docs/dry-run-2025.md)_ Replay last year's draft end to end with the live poller running.

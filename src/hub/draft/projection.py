@@ -16,9 +16,18 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 
-# Nudge strength. 0.08 moves a z=1 player about 8% up the board, which is ~1 rank at the top
-# and ~12 ranks at pick 150. That asymmetry is intentional -- see adjust_consensus.
-DEFAULT_LAMBDA = 0.08
+# Nudge strength, set to zero by measurement rather than judgment.
+#
+# The reasoning below is intact and may still be right in principle -- consensus does
+# anchor on realised points, and expected points is a cleaner number. But a 2024 -> 2025
+# holdout says this particular adjustment does not help: Spearman falls monotonically with
+# lambda, every value at or above 0.04 is significantly negative under bootstrap, and the
+# previous default of 0.08 was costing about 35 points of top-50 production at -3.0 sigma.
+#
+# Most likely explanation, untested: by the time a preseason board is published, rankers
+# have already priced the regression. See docs/lambda-sweep.md, including what would
+# distinguish "priced" from "decayed".
+DEFAULT_LAMBDA = 0.0
 
 
 def regression_signal(df: pl.DataFrame) -> pl.DataFrame:

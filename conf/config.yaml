@@ -3,7 +3,9 @@ defaults:
   - _self_
 
 # Overrides live here. Anything not listed uses the dataclass default in src/hub/config.py.
-# Sweep from the CLI:  python -m hub.draft.board -m draft.projection_lambda=0.04,0.08,0.16
+# Sweep from the CLI:  uv run python -m hub.draft.tune --sweep
+# (this used to document a Hydra multirun against hub.draft.board, which is
+#  argparse-only and rejects -m. The sweep lives in hub.draft.tune instead.)
 roster:
   teams: 12
   slot: 3
