@@ -589,17 +589,6 @@ def main():
 
     if a.pick is not None:
         mode, rec = recommend(board, a.pick, w=a.espn_weight, state=st)
-        rule = ("19-pick wait ahead: take who will not survive it"
-                if mode == "scarcity" else "5-pick wait ahead: take the highest VOR")
-        print(f"\n  Pick {a.pick} -- {mode.upper()} ({rule})")
-        for r in rec.iter_rows(named=True):
-            cw = r.get("cost_of_waiting")
-            extra = f"cost_of_waiting {cw:>5.1f}" if cw is not None else ""
-            v, sos = r["vor"], r.get("wk15_17_sos")
-            tag = f"  SoS {sos:.2f}" if sos is not None else ""
-            print(f"    {r['player']:<24} {r['pos'] or '':<4} "
-                  f"VOR {0.0 if v is None else v:>5.1f}  {extra}{tag}")
-
         # Lead with the market. P0 measured it even with championship equity on realised
         # outcomes -- +3.11 against the room versus +3.15, difference +0.04 [-3.64, +3.58]
         # at n=36 -- so the simpler and instant arm leads and equity becomes a tiebreaker.
@@ -627,6 +616,21 @@ def main():
                   + (f"   [{'; '.join(notes)}]" if notes else ""))
             print("    Corrections shown are where our measurements say the market is wrong;")
             print("    they are not priced into ADP. Yours to weigh.")
+
+        rule = ("long wait ahead: take who will not survive it"
+                if mode == "scarcity" else "short wait ahead: take the highest VOR")
+        # Labelled as the shortlist rather than the recommendation. VOR ordering was
+        # measured 5.06 pts/team-game worse than the market on realised outcomes
+        # (docs/market-value.md), so printing it first read as advice it has not earned.
+        print(f"\n  Candidates by VOR -- the shortlist the tiebreaker scores, "
+              f"{mode} ({rule})")
+        for r in rec.iter_rows(named=True):
+            cw = r.get("cost_of_waiting")
+            extra = f"cost_of_waiting {cw:>5.1f}" if cw is not None else ""
+            v, sos = r["vor"], r.get("wk15_17_sos")
+            tag = f"  SoS {sos:.2f}" if sos is not None else ""
+            print(f"    {r['player']:<24} {r['pos'] or '':<4} "
+                  f"VOR {0.0 if v is None else v:>5.1f}  {extra}{tag}")
 
         if not a.no_win_prob:
             from hub.draft.optimize import rank_tiers, tag_for, win_probability
