@@ -1,7 +1,7 @@
 {
   "name": "preds_wk01",
   "source": "preds",
-  "generated_at": "2026-08-24T04:39:06+00:00",
+  "generated_at": "2026-08-24T04:41:37+00:00",
   "n": 32,
   "rows": [
     {
@@ -240,7 +240,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_SF_LA",
@@ -254,7 +254,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_CHI_CAR",
@@ -268,7 +268,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_TB_CIN",
@@ -282,7 +282,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_NO_DET",
@@ -296,7 +296,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_BUF_HOU",
@@ -310,7 +310,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_BAL_IND",
@@ -324,7 +324,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_CLE_JAX",
@@ -338,7 +338,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_ATL_PIT",
@@ -352,7 +352,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_NYJ_TEN",
@@ -366,7 +366,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_ARI_LAC",
@@ -380,7 +380,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_MIA_LV",
@@ -394,7 +394,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_GB_MIN",
@@ -408,7 +408,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_WAS_PHI",
@@ -422,7 +422,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_DAL_NYG",
@@ -436,7 +436,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     },
     {
       "game_id": "2026_01_DEN_KC",
@@ -450,7 +450,7 @@
       "model": "market_baseline",
       "version": "market-31e09213",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-24 00:39:05"
+      "predicted_at": "2026-08-24 00:41:37"
     }
   ],
   "season": 2026,

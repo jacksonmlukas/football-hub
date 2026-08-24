@@ -1,7 +1,7 @@
 {
   "name": "survivor",
   "source": "hub.season.survivor",
-  "generated_at": "2026-08-24T04:39:06+00:00",
+  "generated_at": "2026-08-24T04:41:38+00:00",
   "n": 12,
   "rows": [
     {
@@ -65,9 +65,14 @@
       "win_prob": 0.5734581056840342
     }
   ],
-  "extra": {
-    "season": 2026,
-    "survival": 0.008351369999479396,
-    "unpriced_weeks": []
-  }
+  "season": 2026,
+  "survival": 0.008351369999479396,
+  "unpriced_weeks": [
+    8,
+    13,
+    14,
+    15,
+    17,
+    18
+  ]
 }

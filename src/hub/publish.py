@@ -31,6 +31,7 @@ from hub import store
 
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "site" / "data"
+NFL_WEEKS = 18
 
 
 def _now() -> str:
@@ -253,15 +254,17 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any]:
     out = out or SITE
     try:
         grid = sv.grid_from_schedule(season)
-        cov = sv.coverage(grid, sorted({int(w) for w in grid["week"].to_list()}))
+        # Against the full season, not against the weeks the grid happens to have -- asking
+        # coverage about its own weeks makes `missing` empty by construction, and the panel
+        # would never say a week still needs a pick.
+        cov = sv.coverage(grid, list(range(1, NFL_WEEKS + 1)))
         plan = sv.solve(grid, weeks=cov["covered"])
     except Exception as e:  # noqa: BLE001 -- any failure here is a stale panel, not a crash
         return {"name": "survivor", "present": False, "stale": True,
                 "reason": f"{type(e).__name__}: {e}"[:120], "generated_at": None}
     rows = plan.to_dicts()
-    art = _artifact("survivor", "hub.season.survivor", rows,
-                    extra={"season": season, "survival": sv.survival(plan),
-                           "unpriced_weeks": cov["missing"]})
+    art = _artifact("survivor", "hub.season.survivor", rows, season=season,
+                    survival=sv.survival(plan), unpriced_weeks=cov["missing"])
     _write(out, "survivor", art)
     return {"name": "survivor", "present": True, "stale": False,
             "reason": None, "generated_at": art["generated_at"]}

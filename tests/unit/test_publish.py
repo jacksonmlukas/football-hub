@@ -246,3 +246,21 @@ def test_a_survivor_solve_that_fails_leaves_the_panel_stale_not_broken(site, bas
     man = publish.publish_all(2026, 1, base=base, out=site)
     art = next(a for a in man["artifacts"] if a["name"] == "survivor")
     assert art["stale"] is True and art["reason"]
+
+
+def test_the_survivor_artifact_carries_survival_and_unpriced_weeks_at_top_level(
+        site, base, monkeypatch):
+    """`_artifact` takes **kwargs; passing `extra={...}` nests them under an "extra" key and
+    the page reads undefined. Caught by comparing the published JSON against what the
+    dashboard indexes."""
+    import hub.season.survivor as sv
+    monkeypatch.setattr(sv, "grid_from_schedule", lambda season, cache=None: pl.DataFrame(
+        {"week": [1, 1, 3, 3], "team": ["KC", "LV", "SF", "SEA"],
+         "win_prob": [0.8, 0.2, 0.7, 0.3]}))
+    publish.publish_all(2026, 1, base=base, out=site)
+    got = json.loads((site / "survivor.json").read_text())
+    assert "extra" not in got
+    assert got["survival"] == pytest.approx(0.8 * 0.7)
+    # Weeks 1 and 3 are priced; every other week of the season still needs a pick. Asking
+    # coverage only about the weeks the grid already has would report none missing.
+    assert got["unpriced_weeks"] == [2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]

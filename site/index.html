@@ -298,11 +298,32 @@ async function render() {
 
   // --- survivor
   const sArt = findArt(man, "survivor");
-  panel("p-survivor", {
-    age: "",
-    warn: sArt?.reason ? cap(sArt.reason) : "Not built yet (foundation-plan 5.1).",
-    html: `<p class="empty">The panel stays so the gap is visible rather than silently absent.</p>`,
-  });
+  const surv = await load("survivor");
+  const sRows = Array.isArray(surv?.rows) ? surv.rows : [];
+  if (sRows.length) {
+    // The unpriced weeks matter more than the plan does. In August the board runs a few
+    // weeks deep, so a plan covering 12 of 18 is the honest answer and a plan that did not
+    // say so would read as a season.
+    const missing = surv.unpriced_weeks ?? [];
+    panel("p-survivor", {
+      age: `${sRows.length} weeks planned · survives ${pct(surv.survival ?? 0)}`,
+      warn: sArt?.stale ? `Stale: ${sArt.reason ?? "unknown"}`
+          : (missing.length
+             ? `Weeks ${missing.join(", ")} have no posted spread yet and still need a pick.`
+             : null),
+      html: table([
+        { label: "week", get: r => r.week },
+        { label: "team", get: r => r.team ?? "" },
+        { label: "win", get: r => pct(r.win_prob) },
+      ], sRows),
+    });
+  } else {
+    panel("p-survivor", {
+      age: "",
+      warn: sArt?.reason ? cap(sArt.reason) : "No survivor plan published.",
+      html: `<p class="empty">The panel stays so the gap is visible rather than silently absent.</p>`,
+    });
+  }
 
   const stale = (man?.artifacts ?? []).filter(a => a.stale);
   document.getElementById("footer").innerHTML = stale.length
