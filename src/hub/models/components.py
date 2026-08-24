@@ -148,6 +148,29 @@ def _counts(rng: np.random.Generator, mean: float, phi: float, n: int) -> np.nda
     return rng.poisson(mean, n)
 
 
+def scoring_mismatch(league: Mapping[str, float]) -> dict[str, tuple]:
+    """Where a league's own scoring disagrees with `SCORING`, as {item: (league, ours)}.
+
+    Fantasy points are an aggregate of real stats, so the weights belong to the league
+    rather than to this repo. `SCORING` was hardcoded and assumed to be full PPR -- it does
+    match this league on all nine items, but that was unverified until it was checked, and a
+    commissioner moving to half-PPR would otherwise mis-score every projection, every
+    simulation and every pick without a word.
+
+    An item the league does not set is not a disagreement: ESPN omits anything worth zero.
+    An item the league scores and this module does not is reported, since that is the same
+    failure pointed the other way.
+    """
+    out: dict[str, tuple] = {}
+    for k, v in league.items():
+        ours = SCORING.get(k)
+        if ours is None:
+            out[k] = (v, None)
+        elif abs(float(v) - float(ours)) > 1e-9:
+            out[k] = (float(v), float(ours))
+    return out
+
+
 def td_rate(position: str, phase: str) -> float:
     """Touchdowns per yard for a position and phase, falling back where volume is too thin."""
     return TD_RATE.get(position, {}).get(phase, FALLBACK_TD_RATE[phase])

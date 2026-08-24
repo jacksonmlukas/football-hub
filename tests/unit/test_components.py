@@ -179,3 +179,39 @@ def test_projection_regresses_touchdowns_and_keeps_volume():
     assert got["receiving_yards"][0] == pytest.approx(1000.0 / 16)
     assert got["receiving_tds"][0] < 12.0 / 16
     assert got["proj_ppg"][0] > 0
+
+
+# --- the scoring weights belong to the league, not to us ------------------
+
+def test_the_scoring_table_can_be_checked_against_a_league():
+    """Fantasy points are an aggregate of real stats, so the *weights* are a league
+    setting. `SCORING` was hardcoded and merely assumed to be full PPR; it turns out to
+    match this league exactly on all nine items, but that was luck until it was checked.
+
+    A commissioner changing PPR to half-PPR would otherwise mis-score every projection,
+    every simulation and every pick, silently."""
+    league = {"passing_yards": 0.04, "passing_tds": 4.0, "interceptions": -2.0,
+              "rushing_yards": 0.1, "rushing_tds": 6.0, "receiving_yards": 0.1,
+              "receiving_tds": 6.0, "receptions": 1.0, "fumbles_lost": -2.0}
+    assert C.scoring_mismatch(league) == {}
+
+
+def test_a_changed_weight_is_reported_with_both_values():
+    """Half-PPR is the realistic version of this, and the report has to name the number so
+    the fix is obvious rather than a hunt."""
+    league = dict(C.SCORING, receptions=0.5)
+    got = C.scoring_mismatch(league)
+    assert got["receptions"] == (0.5, 1.0)
+
+
+def test_a_weight_the_league_does_not_set_is_not_a_mismatch():
+    """ESPN omits items worth zero, and an omission is not a disagreement."""
+    league = {k: v for k, v in C.SCORING.items() if k != "two_point_conversions"}
+    assert C.scoring_mismatch(league) == {}
+
+
+def test_a_scoring_item_we_do_not_model_is_reported_too():
+    """A league that scores something absent from SCORING is scoring something this repo
+    silently drops, which is the same failure pointed the other way."""
+    got = C.scoring_mismatch(dict(C.SCORING, tackles=1.0))
+    assert "tackles" in got

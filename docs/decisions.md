@@ -440,6 +440,34 @@ On the pick-3 tie that prompted this: Nacua missed 1 game in 2025, McCaffrey 0. 
 flags neither, and RB is unpriced regardless, so the model says the concern is smaller than
 intuition suggests for both. Verdict unchanged. `docs/durability.md`.
 
+**The market beats our decision layer on realised outcomes (2026-08-24).** Backtest: draft a
+past season off that season's market, score on what actually happened. Three seasons, 40
+drafts each, slot 3. Following the market (`adp_need`) lands at exactly 1/12 best-roster rate
+and beats value-over-replacement by **5.06 points per team game, [-7.90, -2.18], P(better) =
+0.0%**. Raw projected points is catastrophic (-18.6).
+
+**The in-simulation answer said the opposite and was an artifact.** Scored on `proj_blend`,
+vor_need reads +17.25 pp; scored on realised points it is negative. `optimize.py` always
+carried the caveat that the season is scored on the same projection the greedy ranks on --
+this quantifies it at ~17 pp, larger than any real effect measured here. An ADP-scored version
+is circular the other way, so neither in-sim column is evidence.
+
+Two harness bugs found and fixed en route, both of which produced a wrong answer first: a
+strawman opponent that drafted position-blind (five QBs, no TE) and handed every strategy
++24 pp; and an additive need weight on incomparable scales that had *my* VOR strategy drafting
+4.9 QBs in a one-QB league. `hub.draft.optimize`'s lexicographic rule (need gates, value
+breaks ties) is correct and was adopted. The result survived the fixes.
+
+Consequence: do not try to out-project or out-order the market. ADP already contains the
+scarcity argument VOR exists to make. The remaining edges are the corrections the projection
+demonstrably omits (TD luck, durability, current OUT/IR) and the things that are not about the
+player at all (slot, survival to next pick, weeks 15-17 SoS). `docs/market-value.md`.
+
+**Scoring weights are the league's, not ours.** `components.SCORING` was hardcoded full PPR
+and assumed. Verified against `mSettings`: matches on all nine items, no per-position
+overrides. `make draft` now reads the league's weights and prints a loud mismatch if they
+diverge -- half-PPR would otherwise silently mis-score everything.
+
 **Direction set: project components, aggregate to points.** Weekly *spread* now comes from
 the component structure; the weekly *mean* still arrives as a points projection. Doing the
 same to the mean is the next build -- volume persists where touchdowns do not, and it is the

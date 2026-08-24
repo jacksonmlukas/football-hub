@@ -313,3 +313,32 @@ def trade_summary(counts: pl.DataFrame) -> dict:
         "uneven_seasons": [int(r["season"]) for r in per.iter_rows(named=True)
                            if int(r["t"]) % 2],
     }
+
+
+# ESPN stat ids for the items `hub.models.components.SCORING` models. ESPN omits any item
+# worth zero, so an absent id means "not scored" rather than "disagrees".
+SCORING_STAT_IDS = {
+    3: "passing_yards", 4: "passing_tds", 20: "interceptions",
+    24: "rushing_yards", 25: "rushing_tds",
+    42: "receiving_yards", 43: "receiving_tds", 53: "receptions",
+    72: "fumbles_lost",
+}
+
+
+def scoring_settings() -> dict[str, float]:
+    """The league's own scoring weights, read from mSettings.
+
+    The aggregation weights are a league setting. Reading them is what turns
+    `components.SCORING` from an assumption into something checkable.
+    """
+    lg, _ = league_settings()
+    raw = lg.espn_request.league_get(params={"view": "mSettings"})
+    items = (((raw.get("settings") or {}).get("scoringSettings") or {})
+             .get("scoringItems") or [])
+    out: dict[str, float] = {}
+    for it in items:
+        name = SCORING_STAT_IDS.get(it.get("statId"))
+        pts = it.get("points")
+        if name and isinstance(pts, (int, float)) and pts:
+            out[name] = float(pts)
+    return out

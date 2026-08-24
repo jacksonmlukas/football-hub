@@ -298,6 +298,22 @@ def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
     except Exception as e:  # noqa: BLE001
         print(f"  touchdown luck unavailable ({type(e).__name__}); board built without it.")
 
+    # The league owns the scoring weights, so check ours against them rather than assuming.
+    # Fantasy points are an aggregate of real stats; if the commissioner moves to half-PPR,
+    # every projection and every pick is silently mis-scored until someone notices.
+    try:
+        from hub.fetch import espn as espn_fetch
+        from hub.models.components import scoring_mismatch
+        bad = scoring_mismatch(espn_fetch.scoring_settings())
+        if bad:
+            print("  SCORING MISMATCH -- the league scores differently from hub.models."
+                  "components.SCORING:")
+            for k, (theirs, ours) in sorted(bad.items()):
+                print(f"    {k}: league {theirs}, this repo {ours}")
+            print("  Every projection below is scored on the wrong weights until that is fixed.")
+    except Exception as e:  # noqa: BLE001
+        print(f"  scoring check unavailable ({type(e).__name__}); assuming full PPR.")
+
     # Availability as a per-player trait. Its own try for the same reason as above.
     try:
         board = durability.attach(board, durability.prior_season(season))
