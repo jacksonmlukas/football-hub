@@ -300,3 +300,51 @@ def test_simulate_weeks_scales_spread_by_the_root_of_realised_talent():
     mu, sd, pos = np.array([16.0]), np.array([8.0]), np.array(["WR"])
     full = simulate_weeks(r, mu, sd, pos, n_sims=20000, talent_cv=0.0)
     assert full.std() == pytest.approx(8.0, rel=0.08)
+
+
+# --- the simulator draws a skewed week, not a normal one ------------------
+
+def test_the_typical_simulated_week_is_below_the_projection():
+    """Real weekly scoring is right-skewed: the median week is about 0.90 of the mean,
+    because the mean is carried by touchdown spikes. Drawing normals made the simulator
+    believe the typical week *was* the projection, which flatters every floor-based
+    decision. Measured per position in docs/component-projection.md."""
+    got = simulate_weeks([np.array([0])], np.array([12.0]), np.array([7.0]),
+                         np.array(["WR"]), n_sims=40000, talent_cv=0.0)
+    w = got[:, :, 0].ravel()
+    assert 0.85 < float(np.median(w)) / w.mean() < 0.97
+
+
+def test_the_simulated_week_carries_the_measured_skew():
+    got = simulate_weeks([np.array([0])], np.array([12.0]), np.array([7.0]),
+                         np.array(["WR"]), n_sims=40000, talent_cv=0.0)
+    w = got[:, :, 0].ravel()
+    skew = float(((w - w.mean()) ** 3).mean() / w.std() ** 3)
+    assert 0.3 < skew < 1.1
+
+
+def test_a_quarterback_week_is_nearly_symmetric():
+    """QB 0.15 against WR 0.66 empirically -- passing yardage is high-volume and steady, so
+    the lumpy touchdown term is a smaller share of the total."""
+    qb = simulate_weeks([np.array([0])], np.array([18.0]), np.array([8.0]),
+                        np.array(["QB"]), n_sims=40000, talent_cv=0.0)[:, :, 0].ravel()
+    wr = simulate_weeks([np.array([0])], np.array([18.0]), np.array([8.0]),
+                        np.array(["WR"]), n_sims=40000, talent_cv=0.0)[:, :, 0].ravel()
+    sk = lambda x: float(((x - x.mean()) ** 3).mean() / x.std() ** 3)
+    assert sk(qb) < sk(wr)
+
+
+def test_skewing_the_draw_leaves_the_mean_and_spread_alone():
+    """The distribution changes shape, not location or scale. If this drifts, every
+    projection and every variance result in the repo moves with it."""
+    got = simulate_weeks([np.array([0])], np.array([12.0]), np.array([7.0]),
+                         np.array(["WR"]), n_sims=60000, talent_cv=0.0)[:, :, 0].ravel()
+    assert got.mean() == pytest.approx(12.0, rel=0.03)
+    assert got.std() == pytest.approx(7.0, rel=0.06)
+
+
+def test_scores_are_never_negative():
+    """A skewed draw with a long left shift could go below zero where a normal did not."""
+    got = simulate_weeks([np.array([0])], np.array([3.0]), np.array([4.0]),
+                         np.array(["RB"]), n_sims=20000, talent_cv=0.0)
+    assert got.min() >= 0.0

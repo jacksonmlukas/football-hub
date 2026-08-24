@@ -77,6 +77,39 @@ def talent_cv_for(pos: np.ndarray) -> np.ndarray:
 WEEKLY_K = {"QB": 1.88, "RB": 2.07, "WR": 2.13, "TE": 1.99}
 WEEKLY_K_POOLED = 2.04
 
+# Weekly scoring is right-skewed, measured within player-season across 2022-25. A normal
+# says 0.00, and drawing normals made the simulator believe the typical week was the
+# projection -- the observed median week is about 0.90 of the mean, because the mean is
+# carried by touchdown spikes. That flatters every floor-based decision.
+#
+# Quarterbacks are nearly symmetric because passing yardage is high volume and steady, so
+# the lumpy touchdown term is a smaller share of their total. See
+# docs/component-projection.md, where this falls out of sampling the components rather than
+# being imposed here.
+WEEKLY_SKEW = {"QB": 0.15, "RB": 0.67, "WR": 0.66, "TE": 0.72}
+WEEKLY_SKEW_POOLED = 0.60
+# Beyond this the gamma is indistinguishable from a normal and the shift gets numerically
+# silly, so fall back rather than push it.
+MIN_SKEW = 0.05
+
+
+def weekly_skew_for(pos: np.ndarray) -> np.ndarray:
+    """Per-player weekly skew; anything unfitted falls back to the pooled value."""
+    return np.array([WEEKLY_SKEW.get(str(p), WEEKLY_SKEW_POOLED) for p in pos], dtype=float)
+
+
+def _skewed(rng, mean, sd, skew, size):
+    """Draw from a shifted gamma matched to a mean, spread and skew.
+
+    A gamma's skew is 2/sqrt(shape), so the three moments pin the three parameters. Clipped
+    at zero because a shifted gamma has support below it and nobody scores negative points
+    often enough to matter.
+    """
+    shape = (2.0 / np.maximum(skew, MIN_SKEW)) ** 2
+    scale = sd / np.sqrt(shape)
+    shift = mean - shape * scale
+    return np.clip(shift + rng.gamma(shape, scale, size=size), 0.0, None)
+
 
 def weekly_moments(xp: pl.DataFrame, floor_sd: float = 0.0) -> pl.DataFrame:
     """Per-player weekly mean and dispersion.
@@ -162,10 +195,10 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
     # projection keeps half his weekly spread, not a quarter of it.
     ratio = np.divide(true_mu, mu[None, :], out=np.zeros_like(true_mu),
                       where=mu[None, :] > 0)
-    draws = rng.normal(true_mu[:, None, :],
-                       (sd[None, :] * np.sqrt(ratio))[:, None, :],
-                       size=(n_sims, weeks, mu.size))
-    np.clip(draws, 0.0, None, out=draws)
+    sd_eff = (sd[None, :] * np.sqrt(ratio))[:, None, :]
+    draws = _skewed(rng, true_mu[:, None, :], sd_eff,
+                    weekly_skew_for(pos)[None, None, :],
+                    size=(n_sims, weeks, mu.size))
     out = np.empty((n_sims, weeks, len(rosters)))
     for t, r in enumerate(rosters):
         out[:, :, t] = _lineup_points(draws[:, :, r], pos[r]) if r.size else 0.0

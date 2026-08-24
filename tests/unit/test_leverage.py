@@ -147,3 +147,34 @@ def test_the_headline_direction_survives_a_tiny_sample(capsys):
     narrow = leverage.simulate(k=leverage.calibrate(tgt, cv_mult=0.5), cv_mult=0.5, n_sims=1500)
     wide = leverage.simulate(k=leverage.calibrate(tgt, cv_mult=2.0), cv_mult=2.0, n_sims=1500)
     assert wide["title"] > narrow["title"]
+
+
+# --- the harness must not drift from the model it measures ----------------
+
+def test_it_draws_through_the_real_simulator():
+    """`_season` used to re-implement `simulate_weeks`' internals, and quietly kept the old
+    weekly model when that one moved: proportional spread, normal draws, spread keyed to
+    the projection rather than realised talent. Every number in docs/six-of-twelve.md was
+    then computed against a model the repo had stopped using.
+
+    Pinning it by behaviour rather than by inspection: the harness and the simulator, given
+    the same seed and inputs, must produce the same weekly points.
+    """
+    import numpy as np
+    from hub.draft.season import simulate_weeks
+    pts, _, _ = leverage._season(1.0, 1.0, 1.0, 64, 11)
+    direct = simulate_weeks(
+        leverage.ROSTERS, np.tile(leverage.MU, leverage.TEAMS),
+        np.tile(leverage.SD, leverage.TEAMS), leverage.POOL_POS,
+        n_sims=64, weeks=leverage.SIM_WEEKS, rng=np.random.default_rng(11),
+        talent_cv=leverage._talent_cv(1.0))
+    assert np.allclose(pts, direct)
+
+
+def test_the_harness_uses_the_square_root_spread_law():
+    """It hardcoded SD = MU * 0.55, which is the constant docs/weekly-spread.md replaced."""
+    import numpy as np
+    from hub.draft.season import WEEKLY_K
+    for i, p in enumerate(leverage.POS):
+        assert leverage.SD[i] == pytest.approx(
+            WEEKLY_K[str(p)] * np.sqrt(leverage.MU[i]), rel=1e-6)

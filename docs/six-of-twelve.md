@@ -1,8 +1,13 @@
 # What 6-of-12 with two byes rewards
 
-**Measured 2026-08-23** with `hub.draft.leverage`; numbers refreshed the same day after
-`TALENT_CV` was fitted ([talent-cv.md](talent-cv.md)), which moved every figure slightly and
-strengthened every conclusion. This replaces the draft-time argument in
+**Measured 2026-08-23** with `hub.draft.leverage`. Numbers refreshed 2026-08-24: the
+harness was found to be re-implementing `simulate_weeks` rather than calling it, so it had
+kept a superseded weekly model (proportional spread, normal draws). Every table below is now
+drawn through the real simulator, with the fitted `TALENT_CV`
+([talent-cv.md](talent-cv.md)), the square-root spread law
+([weekly-spread.md](weekly-spread.md)) and skewed weekly scoring
+([component-projection.md](component-projection.md)). Every conclusion survived; one
+refined, noted below. This replaces the draft-time argument in
 [championship-leverage.md](championship-leverage.md), which was derived from a playoff
 structure this league does not have.
 
@@ -23,11 +28,11 @@ head-to-head, top 6, byes for 1-2, three single-elimination rounds. 20,000 seaso
 
 | roster (mu x) | E[wins] | P(playoff) | P(bye) | P(title) | marginal |
 |---|---|---|---|---|---|
-| 0.85 | 4.19 | 13.7% | 1.8% | 0.9% | — |
-| 0.95 | 6.05 | 36.3% | 9.4% | 4.5% | +1.9 pp/win |
-| 1.00 | 7.00 | 50.1% | 16.5% | 8.3% | +4.1 pp/win |
-| 1.05 | 7.96 | 62.8% | 26.4% | 13.6% | +5.6 pp/win |
-| 1.15 | 9.67 | 82.3% | 49.5% | 28.3% | +8.5 pp/win |
+| 0.85 | 4.59 | 16.9% | 2.4% | 1.3% | — |
+| 0.95 | 6.17 | 38.0% | 9.9% | 4.8% | +2.2 pp/win |
+| 1.00 | 6.99 | 50.2% | 16.7% | 8.3% | +4.2 pp/win |
+| 1.05 | 7.81 | 61.5% | 25.2% | 12.9% | +5.7 pp/win |
+| 1.15 | 9.33 | 79.6% | 46.2% | 25.6% | +8.3 pp/win |
 
 A league-average roster makes the playoffs **50%** of the time, not 85%. You need roughly
 +15% of projected points — about ten wins — to reach the 85% the doc assumed as the
@@ -45,15 +50,15 @@ P(title | seed), twelve identical rosters, so none of this is the seeded team be
 
 | seed | P(title) |
 |---|---|
-| 1 (bye) | 41.3% |
-| 2 (bye) | 27.4% |
-| 3 | 12.5% |
-| 4 | 8.4% |
-| 5 | 5.7% |
-| 6 | 4.7% |
+| 1 (bye) | 38.7% |
+| 2 (bye) | 27.0% |
+| 3 | 12.8% |
+| 4 | 8.6% |
+| 5 | 6.9% |
+| 6 | 5.9% |
 
-Seed 2 is worth **2.2x** seed 3 across a one-place gap, because that gap is the bye. The bye
-seeds average 34.4% against 7.8% for seeds 3-6 — **4.4x**. "Seeding buys marginally easier
+Seed 2 is worth **2.1x** seed 3 across a one-place gap, because that gap is the bye. The bye
+seeds average 32.9% against 8.6% for seeds 3-6 — **3.8x**. "Seeding buys marginally easier
 matchups and nothing else" is the single most wrong sentence in the old doc.
 
 ## The ceiling argument, repaired
@@ -67,26 +72,31 @@ alone. See the trap section — this control is the whole measurement.
 
 | roster | variance kind | multiplier | P(playoff) | P(bye) | P(title) |
 |---|---|---|---|---|---|
-| weak | weekly | 0.7 | 22.5% | 4.8% | 2.2% |
-| weak | weekly | 1.8 | 27.0% | 4.0% | **2.2%** |
-| weak | season-long | 0.5 | 17.5% | 1.2% | 0.6% |
-| weak | season-long | 2.0 | 30.1% | 11.1% | **5.7%** |
-| strong | weekly | 0.7 | 72.6% | 38.9% | **21.1%** |
-| strong | weekly | 1.8 | 75.7% | 33.8% | 18.2% |
-| strong | season-long | 0.5 | 81.6% | 33.7% | 16.7% |
-| strong | season-long | 2.0 | 66.3% | 40.7% | **25.4%** |
+| weak | weekly | 0.7 | 25.0% | 5.4% | 2.5% |
+| weak | weekly | 1.8 | 29.3% | 5.6% | **3.1%** |
+| weak | season-long | 0.5 | 20.5% | 1.9% | 0.9% |
+| weak | season-long | 2.0 | 32.8% | 12.0% | **6.3%** |
+| strong | weekly | 0.7 | 71.5% | 37.0% | **19.8%** |
+| strong | weekly | 1.8 | 68.8% | 30.1% | 15.9% |
+| strong | season-long | 0.5 | 78.9% | 31.6% | 15.3% |
+| strong | season-long | 2.0 | 64.3% | 38.4% | **23.3%** |
 
 **Season-long outcome spread — how uncertain it is what a player *becomes* — is worth
-paying for, at every roster strength.** It is worth 9x to a weak roster (0.6% → 5.7%) and
-still worth +52% to a strong one (16.7% → 25.4%), *even though it costs the strong roster
-15 points of playoff probability* (81.6% → 66.3%). Trading berths for byes is a good trade
+paying for, at every roster strength.** It is worth 7x to a weak roster (0.9% → 6.3%) and
+still worth +52% to a strong one (15.3% → 23.3%), *even though it costs the strong roster
+15 points of playoff probability* (78.9% → 64.3%). Trading berths for byes is a good trade
 because the seeding payoff is convex: 37.9% at the top against 6.0% at the bottom.
 
-**Weekly boom-bust is not worth paying for.** At a fixed mean it is flat for a weak roster
-(2.2% → 2.2%) and clearly negative for a strong one (21.1% → 18.2%). Head-to-head wastes
-surplus: a spikier weekly distribution with the same mean has a lower median, so it loses
-more weeks than it wins. It does buy the weak roster a few more berths (22.5% → 27.0%) —
-but berths without byes are worth 6-12% each, so they do not convert into titles.
+**Weekly boom-bust is not worth paying for unless you are behind.** At a fixed mean it is
+clearly negative for a strong roster (19.8% → 15.9%), and mildly *positive* for a weak one
+(2.5% → 3.1%). Head-to-head wastes surplus, so for a favourite a spikier week loses more
+often than it wins; for a heavy underdog the upside is the only route to a win at all.
+
+That mild positive is a refinement from the 2026-08-24 rerun. It read as flat while the
+harness was drawing normals — once weekly scoring is drawn with its real right skew, the
+underdog's upside becomes visible. The same state-dependence
+[lineup.py](../src/hub/season/lineup.py) applies week to week is therefore present at draft
+level too, just far weaker than the season-long effect below.
 
 So the corrected rule is:
 

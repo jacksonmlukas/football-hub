@@ -40,8 +40,9 @@ from typing import Sequence
 
 import numpy as np
 
-from hub.draft.season import (PLAYOFF_TEAMS, REG_SEASON_WEEKS, _lineup_points,
-                              _round_robin, talent_cv_for)
+from hub.draft.season import (PLAYOFF_TEAMS, REG_SEASON_WEEKS, WEEKLY_K,
+                              WEEKLY_K_POOLED, _round_robin, simulate_weeks,
+                              talent_cv_for)
 
 TEAMS = 12
 CHUNK = 4000
@@ -52,7 +53,9 @@ CHUNK = 4000
 POS = np.array(["QB", "QB", "RB", "RB", "RB", "RB", "WR", "WR", "WR", "WR", "WR",
                 "TE", "TE", "RB"])
 MU = np.array([19., 11., 15., 12., 10., 7., 14., 12., 10., 8., 6., 9., 5., 5.])
-SD = MU * 0.55
+# The square-root law from docs/weekly-spread.md, not the constant it replaced. This file
+# used to hardcode MU * 0.55 and so kept simulating under a superseded model.
+SD = np.array([WEEKLY_K.get(str(p), WEEKLY_K_POOLED) for p in POS]) * np.sqrt(MU)
 
 N = len(POS)
 POOL_POS = np.tile(POS, TEAMS)
@@ -63,26 +66,30 @@ ROSTERS = [np.arange(t * N, (t + 1) * N) for t in range(TEAMS)]
 SIM_WEEKS = REG_SEASON_WEEKS + 3
 
 
+def _talent_cv(cv_mult: float) -> np.ndarray:
+    """Per-player talent dispersion for the pool, with team 0's scaled by `cv_mult`."""
+    cv = talent_cv_for(POOL_POS)
+    cv[:N] *= cv_mult
+    return cv
+
+
 def _season(k, vol, cv_mult, n, base_seed):
-    """Weekly points and seeds for one chunk of simulated seasons. Team 0 is the subject."""
+    """Weekly points and seeds for one chunk of simulated seasons. Team 0 is the subject.
+
+    Draws go through `simulate_weeks` rather than being re-implemented here. They were
+    re-implemented once, and this file silently kept the old weekly model -- proportional
+    spread, normal draws, spread keyed to the projection -- after the simulator moved on.
+    """
     mu = np.tile(MU, TEAMS).astype(float)
     sd = np.tile(SD, TEAMS).astype(float)
-    cv = talent_cv_for(POOL_POS)
     mu[:N] *= k
     sd[:N] *= vol
-    cv[:N] *= cv_mult
 
     # Common random numbers: the seed depends only on position in the run, so two
     # configurations see the same underlying stream and their difference is the change.
-    rng = np.random.default_rng(base_seed)
-    true_mu = mu[None, :] * (1.0 + rng.normal(0.0, cv, size=(n, mu.size)))
-    np.clip(true_mu, 0.0, None, out=true_mu)
-    draws = rng.normal(true_mu[:, None, :], sd[None, None, :], size=(n, SIM_WEEKS, mu.size))
-    np.clip(draws, 0.0, None, out=draws)
-
-    pts = np.empty((n, SIM_WEEKS, TEAMS))
-    for t, r in enumerate(ROSTERS):
-        pts[:, :, t] = _lineup_points(draws[:, :, r], POOL_POS[r])
+    pts = simulate_weeks(ROSTERS, mu, sd, POOL_POS, n_sims=n, weeks=SIM_WEEKS,
+                         rng=np.random.default_rng(base_seed),
+                         talent_cv=_talent_cv(cv_mult))
 
     wins = np.zeros((n, TEAMS))
     for w, pairs in enumerate(_round_robin(TEAMS, REG_SEASON_WEEKS)):
@@ -152,13 +159,10 @@ def team_mean(k: float = 1.0, vol: float = 1.0, cv_mult: float = 1.0,
     Not a diagnostic -- it is the control. See the module docstring on why a spread sweep
     without this measures points rather than variance.
     """
-    rng = np.random.default_rng(seed)
-    tm = (MU * k)[None, :] * (1.0 + rng.normal(0.0, talent_cv_for(POS) * cv_mult,
-                                              size=(n, N)))
-    np.clip(tm, 0.0, None, out=tm)
-    d = rng.normal(tm[:, None, :], (SD * vol)[None, None, :], size=(n, 1, N))
-    np.clip(d, 0.0, None, out=d)
-    return float(_lineup_points(d, POS)[:, 0].mean())
+    pts = simulate_weeks([np.arange(N)], MU * k, SD * vol, POS, n_sims=n, weeks=1,
+                         rng=np.random.default_rng(seed),
+                         talent_cv=talent_cv_for(POS) * cv_mult)
+    return float(pts[:, 0, 0].mean())
 
 
 def calibrate(target: float, vol: float = 1.0, cv_mult: float = 1.0,

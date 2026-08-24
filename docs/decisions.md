@@ -267,6 +267,38 @@ per-position by ~0.01, all inside their intervals, nothing downstream reversed. 
 anomaly flagged earlier resolved as suspected -- under the sqrt law QB sits at -0.0 se from
 the pool, so 0.55 had been over-subtracting for the steadiest position.
 
+**Component projection layer built (2026-08-24), `hub/models/components.py`.** Screened
+first: aggregating components and regressing touchdowns beats carrying points forward,
+RMSE 3.30 vs 3.38 over 1,049 player-season pairs, 99.7% on a paired bootstrap. Optimal shrink
+on a player's own TD rate is **1.0** -- it carries no information beyond his yardage. But the
+gain on the *mean* is only ~2%, concentrated in RB and WR, and QB is marginally worse. The
+payoff is the distribution, not the mean, and the doc says so.
+
+Distribution families are measured rather than assumed: volume counts are overdispersed
+(carries 2.39, attempts 2.45, receptions 1.20 -- usage moves with game script) so negative
+binomial; touchdowns are *under*dispersed (0.83-0.86, bounded scoring chances) so binomial.
+Yardage is compound -- a week's yards are a sum over catches -- and modelling it as constant-CV
+Gamma reimposes the proportional spread law this layer replaces. The first version did exactly
+that and produced spread growing as mu instead of sqrt(mu).
+
+Validated against 760 real player-seasons: mean unbiased to +0.05 ppg, sd 6.05 vs 6.76
+observed -- but 5.3% of the observed figure is within-season role drift, so detrended the gap
+is 2.7%. Skew 0.73 vs 0.60, overstated except at RB where it lands at 0.68 vs 0.67; likely
+cause is volume and efficiency co-moving within a game, recorded not fixed.
+`docs/component-projection.md`.
+
+**`simulate_weeks` now draws a shifted gamma** matched to (mean, spread, skew) rather than a
+normal. The median week is ~0.90 of the mean in reality and 1.00 under a normal, so the model
+had been flattering every floor-based decision.
+
+**Found: `hub.draft.leverage` was running a superseded model.** It re-implemented
+`simulate_weeks`' internals instead of calling it, and so kept proportional spread and normal
+draws long after the simulator moved on -- meaning every number in `six-of-twelve.md` was
+computed against a model the repo had stopped using. Now routed through the simulator with a
+behavioural test pinning them together. Conclusions all survived; one refined -- extra weekly
+spread mildly *helps* a weak roster (2.5% -> 3.1%) where it read as flat, because a skewed
+distribution gives an underdog upside a normal hid.
+
 **Direction set: project components, aggregate to points.** Weekly *spread* now comes from
 the component structure; the weekly *mean* still arrives as a points projection. Doing the
 same to the mean is the next build -- volume persists where touchdowns do not, and it is the
