@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-24T02:31:33+00:00",
+  "generated_at": "2026-08-24T04:39:06+00:00",
   "season": 2026,
   "week": 1,
   "artifacts": [
@@ -8,21 +8,21 @@
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-08-24T02:31:32+00:00"
+      "generated_at": "2026-08-24T04:39:06+00:00"
     },
     {
       "name": "track_record",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-08-24T02:31:33+00:00"
+      "generated_at": "2026-08-24T04:39:06+00:00"
     },
     {
       "name": "live",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-08-24T02:31:33+00:00"
+      "generated_at": "2026-08-24T04:39:06+00:00"
     },
     {
       "name": "draft_board",
@@ -33,10 +33,10 @@
     },
     {
       "name": "survivor",
-      "present": false,
-      "stale": true,
-      "reason": "not built yet (foundation-plan 5.1)",
-      "generated_at": null
+      "present": true,
+      "stale": false,
+      "reason": null,
+      "generated_at": "2026-08-24T04:39:06+00:00"
     }
   ]
 }

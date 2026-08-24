@@ -205,3 +205,44 @@ def test_scoring_accepts_numpy_arrays():
 def test_scoring_an_empty_set_is_not_an_error():
     import numpy as np
     assert publish.log_loss(np.array([]), np.array([])) != publish.log_loss([0.5], [1])
+
+
+def test_the_week_defaults_to_the_latest_one_predicted(base, site):
+    """`--week` defaulted to 1, so `make slate` with no week would have republished week 1
+    every Sunday all season -- and looked like it worked."""
+    store.write(_preds([("g1", 0.6, 3.0)], week=1), "preds", "nfl", 2026, 1, base=base)
+    store.write(_preds([("g2", 0.7, 4.0)], week=5), "preds", "nfl", 2026, 5, base=base)
+    assert publish.default_week(2026, base=base) == 5
+
+
+def test_the_week_falls_back_to_one_when_nothing_is_predicted_yet(base):
+    """Preseason. Falling back beats raising: a weekly refresh that needs an operator dies
+    in October, which is this repo's own rule."""
+    assert publish.default_week(2026, base=base) == 1
+
+
+def test_survivor_is_published_now_that_the_solver_exists(site, base, monkeypatch):
+    """The manifest hardcoded survivor as absent with "not built yet (foundation-plan 5.1)".
+    5.1 shipped, and a panel that says a built thing is missing is worse than no panel."""
+    import hub.season.survivor as sv
+    monkeypatch.setattr(sv, "grid_from_schedule", lambda season, cache=None: pl.DataFrame(
+        {"week": [1, 1, 2, 2], "team": ["KC", "LV", "SF", "SEA"],
+         "win_prob": [0.8, 0.2, 0.7, 0.3]}))
+    man = publish.publish_all(2026, 1, base=base, out=site)
+    art = next(a for a in man["artifacts"] if a["name"] == "survivor")
+    assert art["present"] is True and art["stale"] is False
+    rows = json.loads((site / "survivor.json").read_text())["rows"]
+    assert [r["team"] for r in rows] == ["KC", "SF"]
+
+
+def test_a_survivor_solve_that_fails_leaves_the_panel_stale_not_broken(site, base, monkeypatch):
+    """CLAUDE.md graceful degradation: a failing source marks stale and serves last-good,
+    it does not take the page down."""
+    import hub.season.survivor as sv
+
+    def _boom(season, cache=None):
+        raise RuntimeError("nflverse down")
+    monkeypatch.setattr(sv, "grid_from_schedule", _boom)
+    man = publish.publish_all(2026, 1, base=base, out=site)
+    art = next(a for a in man["artifacts"] if a["name"] == "survivor")
+    assert art["stale"] is True and art["reason"]

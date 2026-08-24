@@ -235,14 +235,54 @@ def publish_all(season: int, week: int, base: Path | None = None,
                  "stale": not board.exists(),
                  "reason": None if board.exists() else "run `make draft`",
                  "generated_at": None})
-    # Survivor is Phase 5.1 and deliberately absent. The page renders the panel as
-    # unavailable rather than pretending it is coming.
-    arts.append({"name": "survivor", "present": False, "stale": True,
-                 "reason": "not built yet (foundation-plan 5.1)", "generated_at": None})
+    arts.append(survivor(season, out=out))
 
     man = {"generated_at": _now(), "season": season, "week": week, "artifacts": arts}
     _write(out, "manifest", man)
     return man
+
+
+def survivor(season: int, out: Path | None = None) -> dict[str, Any]:
+    """The survivor plan, as its own artifact.
+
+    Wrapped rather than inlined because it reaches the network for a schedule. A failing
+    source marks the panel stale and leaves the last good plan in place -- taking the whole
+    page down over one panel is the operator-dependence CLAUDE.md warns about.
+    """
+    from hub.season import survivor as sv
+    out = out or SITE
+    try:
+        grid = sv.grid_from_schedule(season)
+        cov = sv.coverage(grid, sorted({int(w) for w in grid["week"].to_list()}))
+        plan = sv.solve(grid, weeks=cov["covered"])
+    except Exception as e:  # noqa: BLE001 -- any failure here is a stale panel, not a crash
+        return {"name": "survivor", "present": False, "stale": True,
+                "reason": f"{type(e).__name__}: {e}"[:120], "generated_at": None}
+    rows = plan.to_dicts()
+    art = _artifact("survivor", "hub.season.survivor", rows,
+                    extra={"season": season, "survival": sv.survival(plan),
+                           "unpriced_weeks": cov["missing"]})
+    _write(out, "survivor", art)
+    return {"name": "survivor", "present": True, "stale": False,
+            "reason": None, "generated_at": art["generated_at"]}
+
+
+def default_week(season: int, base: Path | None = None) -> int:
+    """The latest week already predicted, or 1 before the season starts.
+
+    `--week` used to default to 1, so `make slate` with no week set would republish week 1
+    every Sunday and look like it had worked. Read from the store rather than the network:
+    a weekly refresh that needs a live API to decide what week it is has one more way to
+    fail on a Sunday.
+    """
+    try:
+        got = store.sql("SELECT max(week) AS w FROM preds WHERE season = ?",
+                        params=[season], base=base)
+    except Exception:  # noqa: BLE001 -- no store yet is the preseason case
+        return 1
+    if got.height and got["w"][0] is not None:
+        return int(got["w"][0])
+    return 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -253,8 +293,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--track-record", action="store_true", help="calibration page data")
     ap.add_argument("--live", action="store_true", help="live scores overlay only")
     ap.add_argument("--season", type=int, default=2026)
-    ap.add_argument("--week", type=int, default=1)
+    ap.add_argument("--week", type=int, default=None,
+                    help="defaults to the latest week already predicted")
     a = ap.parse_args(argv)
+    if a.week is None:
+        a.week = default_week(a.season)
 
     if a.predictions:
         got = predictions(a.season, a.week)

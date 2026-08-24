@@ -12,11 +12,14 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 # and neither feeds the fantasy path. They report their own status and the slate continues,
 # because a weekly refresh that halts on an unconfigured extra is a system that needs an
 # operator, and those die in October.
+# WEEK is optional. Unset, it expands to nothing and the CLIs pick their own default --
+# `--week $(WEEK)` with WEEK unset passes a bare `--week` and argparse exits 2, which is how
+# `make slate` came to fail on a clean checkout.
 	uv run python -m hub.fetch.nflverse --refresh
-	-uv run python -m hub.fetch.cfbd --week $(WEEK)
+	-uv run python -m hub.fetch.cfbd $(if $(strip $(WEEK)),--week $(WEEK))
 	-uv run python -m hub.fetch.odds --snapshot
 	uv run python -m hub.models.ratings --fit
-	uv run python -m hub.publish --all --week $(WEEK)
+	uv run python -m hub.publish --all $(if $(strip $(WEEK)),--week $(WEEK))
 
 live:           ## Sunday poller (local, not Actions)
 	uv run python -m hub.fetch.espn --poll --interval 45

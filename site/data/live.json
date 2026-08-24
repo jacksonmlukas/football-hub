@@ -1,20 +1,9 @@
 {
   "name": "live",
   "source": "espn_scoreboard",
-  "generated_at": "2026-08-24T02:31:33+00:00",
+  "generated_at": "2026-08-24T04:39:06+00:00",
   "n": 16,
   "rows": [
-    {
-      "id": "401873297",
-      "state": "in",
-      "detail": "14:55 - 4th",
-      "home": "TEN",
-      "home_score": "12",
-      "away": "SEA",
-      "away_score": "16",
-      "possession": null,
-      "down_distance": "1st & 10 at SEA 35"
-    },
     {
       "id": "401873286",
       "state": "post",
@@ -177,6 +166,17 @@
       "home_score": "13",
       "away": "DAL",
       "away_score": "34",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873297",
+      "state": "post",
+      "detail": "Final",
+      "home": "TEN",
+      "home_score": "19",
+      "away": "SEA",
+      "away_score": "16",
       "possession": null,
       "down_distance": null
     }
