@@ -309,6 +309,12 @@ def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
                 (pl.col("proj_ppg") + pl.col("xfp_per_game")) / 2.0,
                 pl.col("proj_ppg"), pl.col("xfp_per_game"),
             ).alias("proj_blend"))
+        # Mark quarterbacks down for last season's touchdown luck. ESPN's projection carries
+        # the same bias the draft room does, but only at QB (-0.540 points per point of
+        # luck, 99.5%; see docs/td-luck.md). This has to happen here rather than in the
+        # display, because `hub.draft.optimize` scores seasons against proj_blend -- a bias
+        # left in this column is a bias in every P(win) the optimiser reports.
+        board = td_regression.correct_projection(board)
         pb = replacement_levels(
             board.rename({"pos": "position_", "proj_blend": "xfp_per_game_"})
                  .with_columns(pl.col("position_").alias("position"),
@@ -401,7 +407,9 @@ def main():
     ap.add_argument("--reset", action="store_true", help="clear the draft state")
     ap.add_argument("--win-prob", action="store_true",
                     help="rank candidates by P(win the league) instead of cost_of_waiting")
-    ap.add_argument("--sims", type=int, default=150, help="season sims per draft sim")
+    ap.add_argument("--sims", type=int, default=300, help="season sims per draft sim")
+    ap.add_argument("--no-win-prob", action="store_true",
+                    help="skip championship equity and show the VOR shortlist only")
     ap.add_argument("--sos", action="store_true",
                     help="show weeks 15-17 strength of schedule, softest and hardest")
     ap.add_argument("--fit-noise", action="store_true",
@@ -508,22 +516,29 @@ def main():
             print(f"    {r['player']:<24} {r['pos'] or '':<4} "
                   f"VOR {0.0 if v is None else v:>5.1f}  {extra}{tag}")
 
-        if a.win_prob:
-            from hub.draft.optimize import win_probability
+        if not a.no_win_prob:
+            from hub.draft.optimize import rank_tiers, win_probability
             names = rec["player"].to_list()
-            print(f"\n  Championship equity over {len(names)} candidates "
-                  f"({a.sims} seasons x 6 drafts each) ...")
-            wp = win_probability(board, st, names, my_slot=MY_SLOT, teams=TEAMS,
-                                 n_season_sims=a.sims, w=a.espn_weight)
+            print(f"\n  Championship equity -- {len(names)} candidates, "
+                  f"{a.sims} seasons x 24 drafts each ...")
+            wp = rank_tiers(win_probability(board, st, names, my_slot=MY_SLOT,
+                                            teams=TEAMS, n_season_sims=a.sims,
+                                            w=a.espn_weight))
+            lead = wp.filter(pl.col("co_leader"))["player"].to_list()
             for r in wp.iter_rows(named=True):
                 lift, se = r["lift"] * 100, r["lift_se"] * 100
-                sig = "*" if abs(lift) > 2 * se else " "
-                print(f"    {r['player']:<24} P(win) {r['p_win']*100:>5.2f}%  "
-                      f"lift {lift:+5.2f} +/-{se:4.2f} {sig}")
-            print("    (* = lift exceeds 2 standard errors; anything else is noise)")
-            print("    NOTE: read the lift, not the level. Absolute P(win) is inflated --")
+                tag = "TAKE" if r["co_leader"] else ("    " if abs(lift) < 2 * se else "avoid")
+                print(f"    {tag:<5} {r['player']:<24} P(win) {r['p_win']*100:>5.2f}%  "
+                      f"lift {lift:+5.2f} +/-{se:4.2f}")
+            if len(lead) == 1:
+                print(f"\n  --> {lead[0]}. Nothing else is within two standard errors.")
+            else:
+                print(f"\n  --> {' or '.join(lead)} -- the simulation cannot separate them.")
+                print("      Break the tie on something it does not model: bye weeks, the")
+                print("      weeks 15-17 SoS column, or who you would rather roster.")
+            print("\n    Read the lift, not the level. Absolute P(win) is inflated --")
             print("    the season is scored on the same projection the greedy ranks on.")
-            print("    See the module docstring in hub/draft/optimize.py.")
+            print("    The VOR list above is the shortlist this scored, not the answer.")
 
 
 if __name__ == "__main__":

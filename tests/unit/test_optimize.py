@@ -7,7 +7,7 @@ probability rather than a score.
 import numpy as np
 import polars as pl
 import pytest
-from hub.draft.optimize import (draft_pool, simulate_remaining_draft,
+from hub.draft.optimize import (draft_pool, rank_tiers, simulate_remaining_draft,
                                 win_probability, _need_score)
 from hub.draft.season import STARTERS
 from hub.draft.state import DraftState, take
@@ -113,3 +113,53 @@ def test_the_draft_optimizer_prices_stacks():
     from hub.draft import optimize as _opt
     src = _inspect.getsource(_opt.win_probability)
     assert "nfl_team" in src, "champion_probability must receive NFL team identity"
+
+
+# --- saying only what the simulation can resolve --------------------------
+
+def test_candidates_the_simulation_cannot_separate_are_marked_as_tied():
+    """At pick 3 the top two differ by 0.17 points of championship equity with standard
+    errors around 0.5. Printing a strict order there implies a distinction the simulation
+    cannot make, and the objective is to pick the best player -- which is sometimes two
+    players."""
+    df = pl.DataFrame({"player": ["A", "B", "C"], "p_win": [0.48, 0.479, 0.40],
+                       "lift": [0.035, 0.033, -0.050],
+                       "lift_se": [0.005, 0.005, 0.006]})
+    got = rank_tiers(df)
+    lead = dict(zip(got["player"].to_list(), got["co_leader"].to_list()))
+    assert lead["A"] and lead["B"], "0.002 apart with se 0.005 is not a distinction"
+    assert not lead["C"]
+
+
+def test_a_clear_winner_is_not_diluted_into_a_tie():
+    """The other direction. A tiering rule that called everything tied would be as useless
+    as one that called everything separable."""
+    df = pl.DataFrame({"player": ["A", "B"], "p_win": [0.50, 0.40],
+                       "lift": [0.05, -0.05], "lift_se": [0.004, 0.004]})
+    got = rank_tiers(df)
+    assert got.filter(pl.col("co_leader"))["player"].to_list() == ["A"]
+
+
+def test_the_gap_is_measured_in_pooled_standard_errors():
+    """Both candidates carry sampling error, so the comparison uses the standard error of
+    the difference, not the leader's alone."""
+    df = pl.DataFrame({"player": ["A", "B"], "p_win": [0.5, 0.45],
+                       "lift": [0.02, 0.0], "lift_se": [0.01, 0.01]})
+    got = rank_tiers(df)
+    b = got.filter(pl.col("player") == "B")["gap_se"][0]
+    assert b == pytest.approx(0.02 / (0.01 ** 2 + 0.01 ** 2) ** 0.5, rel=1e-6)
+
+
+def test_the_leader_is_zero_standard_errors_from_itself():
+    df = pl.DataFrame({"player": ["A", "B"], "p_win": [0.5, 0.4],
+                       "lift": [0.02, 0.0], "lift_se": [0.01, 0.01]})
+    got = rank_tiers(df)
+    assert got["gap_se"][0] == pytest.approx(0.0)
+
+
+def test_zero_error_estimates_do_not_divide_by_zero():
+    """One draft rollout gives a standard error of zero, and the CLI allows it."""
+    df = pl.DataFrame({"player": ["A", "B"], "p_win": [0.5, 0.4],
+                       "lift": [0.02, 0.0], "lift_se": [0.0, 0.0]})
+    got = rank_tiers(df)
+    assert all(v is not None for v in got["gap_se"].to_list())

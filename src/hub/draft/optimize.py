@@ -153,7 +153,7 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
 
 def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str], *,
                     my_slot: int, teams: int = 12, rounds: int = DEFAULT_ROUNDS,
-                    n_draft_sims: int = 12, n_season_sims: int = 150,
+                    n_draft_sims: int = 24, n_season_sims: int = 300,
                     w: float = DEFAULT_ESPN_WEIGHT, seed: int = 0) -> pl.DataFrame:
     """P(you win the league) for each candidate, averaged over simulated drafts."""
     pool = draft_pool(board, state, w)
@@ -194,3 +194,26 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
         "lift": diff.mean(axis=1),
         "lift_se": se,
     }).sort("lift", descending=True)
+
+
+def rank_tiers(wp: pl.DataFrame) -> pl.DataFrame:
+    """Mark which candidates the simulation cannot separate from the best one.
+
+    The objective is the player with the highest chance of winning the league, and sometimes
+    that is two players. At pick 3 the top two differ by 0.17 points of championship equity
+    with standard errors near 0.5 -- printing a strict order there asserts a distinction the
+    simulation cannot make, and re-running names a different one.
+
+    Gaps are in standard errors of the *difference*, since both candidates carry sampling
+    error, and anything inside two of them is reported as tied for the lead.
+    """
+    top = wp.sort("lift", descending=True)
+    lead_lift = float(top["lift"][0])
+    lead_se = float(top["lift_se"][0] or 0.0)
+    pooled = (pl.col("lift_se").fill_null(0.0) ** 2 + lead_se ** 2).sqrt()
+    gap = (pl.lit(lead_lift) - pl.col("lift"))
+    return top.with_columns(
+        pl.when(pooled > 0).then(gap / pooled).otherwise(
+            pl.when(gap.abs() > 0).then(pl.lit(float("inf"))).otherwise(pl.lit(0.0))
+        ).alias("gap_se")
+    ).with_columns((pl.col("gap_se") < 2.0).alias("co_leader"))

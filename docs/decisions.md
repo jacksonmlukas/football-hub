@@ -383,6 +383,30 @@ mean |error| 1.365 vs 1.140 predicting a player's observed weekly sd, P(componen
 0.0%. It underestimates (6.22 vs 7.19 observed) because a decomposed line is the average
 player at that pick with no player-specific shape. `weekly_moments` unchanged.
 
+**The board now leads with the objective (2026-08-24).** `--pick N` runs championship
+equity by default and prints the pick; `--no-win-prob` falls back to the VOR shortlist. The
+VOR list is labelled as the shortlist that feeds the simulation, not as the answer -- every
+selection should maximise P(win the league), and the board was leading with a proxy for it.
+
+**Two things had to change for that to be honest.** The defaults were too thin: at 12 draft
+rollouts x 150 seasons the ordering swung 3.5 places between runs, which is unusable. Raised
+to 24 x 300 (~15s end to end, fine on a draft clock), where the swing is 0.9 places.
+
+And even at 48 x 600 (50s/run) the top pick still alternated between Nacua and McCaffrey,
+because they are genuinely tied -- +2.72 vs +2.58 with standard errors near 0.4. Printing a
+strict order there asserts a distinction the simulation cannot make. `rank_tiers` now marks
+everything within two pooled standard errors of the leader as tied for the lead, and the
+board says so and suggests breaking the tie on something the simulation does not model. The
+TAKE tier contains both in 5 of 5 seeds; the strict top pick does not.
+
+**Touchdown luck now reaches the objective, at QB only.** ESPN's *projection* carries the
+same touchdown bias the draft room does, but only for quarterbacks: `ppg_next ~ proj_ppg +
+td_luck` gives -0.540 [-1.057, -0.125], 99.5%. RB comes back +0.253 (wrong sign, 17%) and WR
+-0.286 (89%, directional). So `proj_blend` is marked down for QB touchdown luck before the
+simulation scores it -- Josh Allen 22.0 -> 19.5 -- and left alone elsewhere. A signal that is
+only printed is decoration; `hub.draft.optimize` scores seasons against `proj_blend`, so this
+is where it had to go.
+
 **Direction set: project components, aggregate to points.** Weekly *spread* now comes from
 the component structure; the weekly *mean* still arrives as a points projection. Doing the
 same to the mean is the next build -- volume persists where touchdowns do not, and it is the

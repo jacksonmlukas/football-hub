@@ -33,6 +33,19 @@ from hub.models.components import td_rate
 # sample of touchdown luck is one red-zone target either way.
 MIN_GAMES = 6
 
+# Points of next-season scoring lost per point of prior-season touchdown luck, from
+# `ppg_next ~ proj_ppg + td_luck` on historical ESPN projections. A projection that already
+# regressed touchdowns would leave nothing for td_luck to explain and this would be zero.
+#
+# Only QB is here, and that is the finding rather than a shortcut. QB comes back at -0.540,
+# 95% CI [-1.057, -0.125], 99.5%. RB is +0.253 -- the wrong sign, 17% -- so ESPN is if
+# anything conservative there. WR is -0.286 at 89%, directional and below what this repo
+# ships on. Correcting all three would be acting on noise in the name of a mechanism.
+#
+# The level of the projections is fine: the coefficient on proj_ppg is 0.95-1.04 across
+# positions. This is specifically a touchdown bias, and specifically at quarterback.
+TD_LUCK_BETA: dict[str, float] = {"QB": -0.540}
+
 _PHASES = (("receiving_yards", "receiving_tds", "rec", 6.0),
            ("rushing_yards", "rushing_tds", "rush", 6.0),
            ("passing_yards", "passing_tds", "pass", 4.0))
@@ -101,3 +114,18 @@ def attach(board: pl.DataFrame, season: pl.DataFrame) -> pl.DataFrame:
                  .with_columns(
                      pl.col("player").map_elements(_norm, return_dtype=pl.Utf8).alias("_k"))
                  .join(keyed, on="_k", how="left").drop("_k"))
+
+
+def correct_projection(board: pl.DataFrame, column: str = "proj_blend") -> pl.DataFrame:
+    """Mark a projection down for touchdown luck, where the projection is known to carry it.
+
+    This is what connects the signal to the objective. `hub.draft.optimize` scores seasons
+    against `proj_blend`, so a bias left in that column is a bias in every P(win) it
+    reports -- and a signal that is only printed is decoration.
+    """
+    if column not in board.columns or "td_luck" not in board.columns:
+        return board
+    adjustment = pl.col("pos").replace_strict(
+        TD_LUCK_BETA, default=0.0, return_dtype=pl.Float64) * pl.col("td_luck").fill_null(0.0)
+    return board.with_columns(
+        (pl.col(column) + adjustment).clip(0.0).alias(column))

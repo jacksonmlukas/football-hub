@@ -100,3 +100,51 @@ def test_names_are_matched_on_a_normalised_form():
     board = pl.DataFrame({"player": ["A.J. Brown"], "pos": ["WR"]})
     got = R.attach(board, _season([("AJ Brown", "WR", 16, 1000.0, 12.0, 0.0, 0.0, 0.0, 0.0)]))
     assert got["td_luck"][0] is not None
+
+
+# --- correcting the projection the win-probability sim runs on ------------
+
+def test_a_lucky_quarterback_is_marked_down():
+    """The point of the whole exercise: the signal has to reach the objective. ESPN's
+    projection carries the same touchdown bias the draft room does, but only for
+    quarterbacks -- ppg_next ~ proj + td_luck gives a td_luck coefficient of -0.540,
+    95% CI [-1.057, -0.125], 99.5%. So the projection the simulator scores on is too high
+    for a quarterback who got lucky, by about half a point per point of luck."""
+    board = pl.DataFrame({"player": ["A"], "pos": ["QB"], "proj_blend": [22.0],
+                          "td_luck": [4.0]})
+    got = R.correct_projection(board)
+    assert got["proj_blend"][0] == pytest.approx(22.0 + R.TD_LUCK_BETA["QB"] * 4.0)
+    assert got["proj_blend"][0] < 22.0
+
+
+def test_an_unlucky_quarterback_is_marked_up():
+    board = pl.DataFrame({"player": ["A"], "pos": ["QB"], "proj_blend": [18.0],
+                          "td_luck": [-2.0]})
+    assert R.correct_projection(board)["proj_blend"][0] > 18.0
+
+
+def test_running_backs_and_receivers_are_left_alone():
+    """Measured and not applied. RB comes back at +0.253 with the wrong sign entirely
+    (17%), and WR at -0.286 is only directional (89%) -- below what this repo ships on.
+    Correcting them would be acting on noise in the name of a mechanism."""
+    board = pl.DataFrame({"player": ["A", "B"], "pos": ["RB", "WR"],
+                          "proj_blend": [14.0, 14.0], "td_luck": [3.0, 3.0]})
+    got = R.correct_projection(board)
+    assert got["proj_blend"].to_list() == [14.0, 14.0]
+
+
+def test_a_player_without_a_prior_season_is_untouched():
+    board = pl.DataFrame({"player": ["Rookie"], "pos": ["QB"], "proj_blend": [19.0],
+                          "td_luck": [None]})
+    assert R.correct_projection(board)["proj_blend"][0] == 19.0
+
+
+def test_the_correction_cannot_drive_a_projection_negative():
+    board = pl.DataFrame({"player": ["A"], "pos": ["QB"], "proj_blend": [1.0],
+                          "td_luck": [40.0]})
+    assert R.correct_projection(board)["proj_blend"][0] >= 0.0
+
+
+def test_a_board_without_the_signal_passes_through():
+    board = pl.DataFrame({"player": ["A"], "pos": ["QB"], "proj_blend": [22.0]})
+    assert R.correct_projection(board)["proj_blend"][0] == 22.0
