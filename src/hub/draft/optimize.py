@@ -161,6 +161,11 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     mu = moments["mu"].fill_null(0.0).to_numpy()
     sd = moments["sd"].fill_null(2.0).to_numpy()
     pos = pool["pos"].fill_null("NA").to_numpy()
+    # NFL team, so the simulator can correlate a quarterback with his own pass catchers.
+    # Without it a stacked roster is drawn independent and comes out less volatile than it
+    # is -- see docs/correlation.md, where independence gives a nominal 80% interval that
+    # covers 72.9%.
+    nfl_team = (pool["team"].to_numpy() if "team" in pool.columns else None)
 
     # Common random numbers. Every candidate is evaluated against the SAME simulated
     # futures -- same draft rollouts, same talent draws, same weekly scores -- so the
@@ -174,7 +179,8 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
                                                rounds=rounds, forced=c, w=w,
                                                rng=np.random.default_rng(seed + k))
             p = champion_probability(rosters, mu, sd, pos, n_sims=n_season_sims,
-                                     rng=np.random.default_rng(seed + 1000 + k))
+                                     rng=np.random.default_rng(seed + 1000 + k),
+                                     nfl_team=nfl_team)
             mat[i, k] = p[my_slot - 1]
 
     field = mat.mean(axis=0)                       # the field, per simulated future

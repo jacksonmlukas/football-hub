@@ -98,17 +98,51 @@ def weekly_skew_for(pos: np.ndarray) -> np.ndarray:
     return np.array([WEEKLY_SKEW.get(str(p), WEEKLY_SKEW_POOLED) for p in pos], dtype=float)
 
 
-def _skewed(rng, mean, sd, skew, size):
-    """Draw from a shifted gamma matched to a mean, spread and skew.
+def _skewed(mean, sd, skew, z):
+    """Map standard normal draws to a distribution with this mean, spread and skew.
 
-    A gamma's skew is 2/sqrt(shape), so the three moments pin the three parameters. Clipped
-    at zero because a shifted gamma has support below it and nobody scores negative points
+    Cornish-Fisher rather than a gamma, so that correlation can be applied to `z` before the
+    transform: a Gaussian latent is trivially correlatable and a gamma is not. The quadratic
+    term supplies the skew, and dividing by sqrt(1 + 2a^2) restores the variance the term
+    adds, so mean and spread come out exactly as asked.
+
+    Clipped at zero -- the transform has support below it and nobody scores negative points
     often enough to matter.
     """
-    shape = (2.0 / np.maximum(skew, MIN_SKEW)) ** 2
-    scale = sd / np.sqrt(shape)
-    shift = mean - shape * scale
-    return np.clip(shift + rng.gamma(shape, scale, size=size), 0.0, None)
+    a = np.maximum(skew, MIN_SKEW) / 6.0
+    y = (z + a * (z ** 2 - 1.0)) / np.sqrt(1.0 + 2.0 * a ** 2)
+    return np.clip(mean + sd * y, 0.0, None)
+
+
+def _correlated_normal(rng, size, pos, nfl_team):
+    """Standard normals correlated between teammates, independent otherwise.
+
+    Only the quarterback's edges carry anything -- QB-WR +0.232, QB-TE +0.225, QB-RB +0.054,
+    everything else within a few points of zero (docs/correlation.md). Applied by Cholesky
+    on each NFL team's own small block, which is exact and costs nothing at 32 teams.
+    """
+    from hub.models.components import teammate_rho
+
+    z = rng.standard_normal(size)
+    if nfl_team is None:
+        return z
+    teams = np.asarray(nfl_team, dtype=object)
+    for team in {t for t in teams.tolist() if t is not None}:
+        idx = np.flatnonzero(teams == team)
+        if idx.size < 2:
+            continue
+        r = np.eye(idx.size)
+        for i in range(idx.size):
+            for j in range(i + 1, idx.size):
+                r[i, j] = r[j, i] = teammate_rho(str(pos[idx[i]]), str(pos[idx[j]]))
+        if not np.any(r - np.eye(idx.size)):
+            continue
+        try:
+            chol = np.linalg.cholesky(r)
+        except np.linalg.LinAlgError:
+            continue
+        z[..., idx] = z[..., idx] @ chol.T
+    return z
 
 
 def weekly_moments(xp: pl.DataFrame, floor_sd: float = 0.0) -> pl.DataFrame:
@@ -169,7 +203,8 @@ def _lineup_points(scores: np.ndarray, pos: np.ndarray) -> np.ndarray:
 def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
                    pos: np.ndarray, n_sims: int, weeks: int = REG_SEASON_WEEKS,
                    rng: np.random.Generator | None = None,
-                   talent_cv: float | np.ndarray | None = None) -> np.ndarray:
+                   talent_cv: float | np.ndarray | None = None,
+                   nfl_team: np.ndarray | None = None) -> np.ndarray:
     """Weekly points for every team. Returns (sims, weeks, teams).
 
     Realised talent is drawn once per season, then weekly points are drawn around it.
@@ -196,9 +231,9 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
     ratio = np.divide(true_mu, mu[None, :], out=np.zeros_like(true_mu),
                       where=mu[None, :] > 0)
     sd_eff = (sd[None, :] * np.sqrt(ratio))[:, None, :]
-    draws = _skewed(rng, true_mu[:, None, :], sd_eff,
-                    weekly_skew_for(pos)[None, None, :],
-                    size=(n_sims, weeks, mu.size))
+    z = _correlated_normal(rng, (n_sims, weeks, mu.size), pos, nfl_team)
+    draws = _skewed(true_mu[:, None, :], sd_eff,
+                    weekly_skew_for(pos)[None, None, :], z)
     out = np.empty((n_sims, weeks, len(rosters)))
     for t, r in enumerate(rosters):
         out[:, :, t] = _lineup_points(draws[:, :, r], pos[r]) if r.size else 0.0
@@ -218,7 +253,8 @@ def _round_robin(teams: int, weeks: int) -> list[list[tuple[int, int]]]:
 def champion_probability(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
                          pos: np.ndarray, n_sims: int = 400,
                          rng: np.random.Generator | None = None,
-                         talent_cv: float | np.ndarray | None = None) -> np.ndarray:
+                         talent_cv: float | np.ndarray | None = None,
+                         nfl_team: np.ndarray | None = None) -> np.ndarray:
     """P(each team wins the league). Returns (teams,) summing to 1.
 
     14-week H2H regular season, top 6 seeds, two byes, then single elimination on
@@ -226,7 +262,8 @@ def champion_probability(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarr
     """
     rng = rng or np.random.default_rng(0)
     teams = len(rosters)
-    pts = simulate_weeks(rosters, mu, sd, pos, n_sims, REG_SEASON_WEEKS, rng, talent_cv)
+    pts = simulate_weeks(rosters, mu, sd, pos, n_sims, REG_SEASON_WEEKS, rng, talent_cv,
+                         nfl_team)
 
     wins = np.zeros((n_sims, teams))
     for w, pairs in enumerate(_round_robin(teams, REG_SEASON_WEEKS)):

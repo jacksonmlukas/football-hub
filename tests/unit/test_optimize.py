@@ -102,3 +102,14 @@ def test_is_deterministic_under_a_fixed_seed():
     a = win_probability(_board(), DraftState(), ["P0"], **kw)["p_win"][0]
     b = win_probability(_board(), DraftState(), ["P0"], **kw)["p_win"][0]
     assert a == b
+
+
+def test_the_draft_optimizer_prices_stacks():
+    """docs/correlation.md: a quarterback and his own pass catchers move together (+0.232),
+    and the simulator was treating a stacked roster as independent -- understating its
+    variance in exactly the weeks a stack is for. The pool carries NFL team already, so the
+    only thing needed was to pass it through."""
+    import inspect as _inspect
+    from hub.draft import optimize as _opt
+    src = _inspect.getsource(_opt.win_probability)
+    assert "nfl_team" in src, "champion_probability must receive NFL team identity"

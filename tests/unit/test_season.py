@@ -7,7 +7,8 @@ simulate instead of ranking by VOR.
 import numpy as np
 import polars as pl
 import pytest
-from hub.draft.season import (_lineup_points, _round_robin, champion_probability,
+from hub.draft.season import (REG_SEASON_WEEKS, _lineup_points, _round_robin,
+                              champion_probability,
                               simulate_weeks)
 
 
@@ -348,3 +349,60 @@ def test_scores_are_never_negative():
     got = simulate_weeks([np.array([0])], np.array([3.0]), np.array([4.0]),
                          np.array(["RB"]), n_sims=20000, talent_cv=0.0)
     assert got.min() >= 0.0
+
+
+# --- the simulator prices teammates -------------------------------------
+
+def test_a_stacked_roster_is_more_volatile_in_the_simulator():
+    """docs/correlation.md measured QB-WR at +0.232 and showed independence gives an 80%
+    interval that covers 72.9%. `lineup.py` prices it; until now the simulator did not, so
+    the draft optimizer understated the variance of a stacked roster in exactly the weeks a
+    stack is for."""
+    mu = np.array([18.0, 13.0])
+    sd = np.array([8.0, 7.0])
+    pos = np.array(["QB", "WR"])
+    r = [np.array([0, 1])]
+    same = simulate_weeks(r, mu, sd, pos, n_sims=20000, talent_cv=0.0,
+                          nfl_team=np.array(["KC", "KC"]))
+    apart = simulate_weeks(r, mu, sd, pos, n_sims=20000, talent_cv=0.0,
+                           nfl_team=np.array(["KC", "DEN"]))
+    assert same[:, :, 0].std() > apart[:, :, 0].std() * 1.03
+
+
+def test_correlation_does_not_move_the_mean():
+    mu, sd, pos = np.array([18.0, 13.0]), np.array([8.0, 7.0]), np.array(["QB", "WR"])
+    r = [np.array([0, 1])]
+    same = simulate_weeks(r, mu, sd, pos, n_sims=20000, talent_cv=0.0,
+                          nfl_team=np.array(["KC", "KC"]))
+    apart = simulate_weeks(r, mu, sd, pos, n_sims=20000, talent_cv=0.0,
+                           nfl_team=np.array(["KC", "DEN"]))
+    assert same.mean() == pytest.approx(apart.mean(), rel=0.02)
+
+
+def test_two_receivers_on_a_team_are_not_correlated_by_the_simulator():
+    """Measured at +0.014, so it must not pick up a spurious pairing."""
+    mu, sd, pos = np.array([13.0, 11.0]), np.array([7.0, 6.0]), np.array(["WR", "WR"])
+    r = [np.array([0, 1])]
+    same = simulate_weeks(r, mu, sd, pos, n_sims=20000, talent_cv=0.0,
+                          nfl_team=np.array(["KC", "KC"]))
+    apart = simulate_weeks(r, mu, sd, pos, n_sims=20000, talent_cv=0.0,
+                           nfl_team=np.array(["KC", "DEN"]))
+    assert same[:, :, 0].std() == pytest.approx(apart[:, :, 0].std(), rel=0.05)
+
+
+def test_omitting_team_information_behaves_as_before():
+    mu, sd, pos = np.array([18.0, 13.0]), np.array([8.0, 7.0]), np.array(["QB", "WR"])
+    got = simulate_weeks([np.array([0, 1])], mu, sd, pos, n_sims=2000, talent_cv=0.0)
+    assert got.shape == (2000, REG_SEASON_WEEKS, 1)
+
+
+def test_the_marginals_survive_correlation():
+    """Correlation changes the joint, never a player's own distribution. If a player's mean,
+    spread or skew moves when a teammate is added, every projection moves with it."""
+    mu, sd, pos = np.array([18.0, 13.0]), np.array([8.0, 7.0]), np.array(["QB", "WR"])
+    r = [np.array([0]), np.array([1])]
+    same = simulate_weeks(r, mu, sd, pos, n_sims=40000, talent_cv=0.0,
+                          nfl_team=np.array(["KC", "KC"]))
+    qb = same[:, :, 0].ravel()
+    assert qb.mean() == pytest.approx(18.0, rel=0.03)
+    assert qb.std() == pytest.approx(8.0, rel=0.07)

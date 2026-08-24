@@ -71,13 +71,28 @@ volatility, so **stacking your quarterback with his own receiver helps when you 
 underdog and hurts when you are favoured**, and the optimizer now works that out per matchup
 rather than taking a view on stacking in general.
 
-## What this does not cover
+## In the simulator too
 
-**The simulator still draws players independently.** `simulate_weeks` has no NFL-team input,
-so `champion_probability` and everything built on it — the draft optimizer, the leverage
-harness — still treat a stacked roster as uncorrelated. That understates the variance of a
-stacked roster at draft time, in exactly the weeks a stack is for. Wiring team identity
-through the simulator is the next step and is not done.
+`simulate_weeks` takes an `nfl_team` argument and correlates teammates by Cholesky on each
+team's own small block. `champion_probability` passes it through and `hub.draft.optimize`
+supplies it from the board's existing `team` column, so the draft optimizer now prices a
+stacked roster as the more volatile thing it is.
+
+That required one change to how a week is drawn. Weekly points were drawn from a shifted
+gamma matched to (mean, spread, skew); a gamma cannot easily be correlated, so the draw is
+now Cornish-Fisher on a Gaussian latent — the latent correlates trivially, and the quadratic
+term supplies the skew with the variance it adds divided back out. Mean and spread are
+unchanged by construction.
+
+One approximation worth naming: correlating through a shared quarterback implies a small
+positive correlation between two pass catchers on the same team, around +0.05 where the
+measured figure is +0.014. The star topology the data actually shows — the quarterback
+correlated with each catcher, catchers not with each other — is not exactly representable
+this way, because catchers compete for the same targets and would need a slightly negative
+conditional correlation. The overstatement is small and in the conservative direction for a
+roster holding two catchers from one team.
+
+## What this does not cover
 
 **Opponent correlation is not modelled.** `championship-leverage.md` makes the point that
 correlation matters twice: within your roster, and against your opponent's. Shared game
