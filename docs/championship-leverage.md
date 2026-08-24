@@ -3,6 +3,14 @@
 Optimizing for P(finish 1st) rather than expected points, and the one object that also
 produces player props and game probabilities.
 
+> **Corrected 2026-08-23.** This doc was written against "8 make playoffs, no byes". The
+> live league is **6 of 12 with byes for seeds 1-2**, and the sections below marked
+> *(corrected)* have been rewritten against measurements in
+> [six-of-twelve.md](six-of-twelve.md). The original draft-time argument concluded the
+> regular season was nearly a formality. It is not: a marginal win is worth 4-6 points of
+> championship equity. The ceiling advice survives in half — buy season-long upside, do not
+> buy weekly volatility — and the two were previously treated as one thing.
+
 ## Declared objective
 
 **Maximize P(finish 1st).** Explicitly do not hedge toward 2nd or 3rd, even if they pay.
@@ -13,7 +21,7 @@ quietly substitute E[payout].
 
 | Fact | Consequence |
 |---|---|
-| 12 teams, **8 make playoffs**, 3 weeks (15-17), no byes | Regular season is nearly a formality |
+| 12 teams, **6 make playoffs**, 3 one-week rounds (15-17), **byes for seeds 1-2** | Regular season decides everything; half the league misses |
 | Pure head-to-head | Surplus points above your opponent's score are wasted |
 | **Reverse-standings waivers**, weekly | A good team picks 10th-12th on the wire all season |
 | **6 bench, 1 IR** | ~2 speculative stashes at a time, after byes and a handcuff |
@@ -45,25 +53,54 @@ argument for building it.
    against your opponent's roster (shared game exposure shrinks *margin* variance, which helps
    whoever is favored). Nobody prices the second one.
 
-## What 8-of-12 does to the objective
+## What 6-of-12 with two byes does to the objective *(corrected)*
 
-Two-thirds of the league advances and there are no byes, so all eight survivors play the same
-three rounds. Seeding buys marginally easier matchups and nothing else. For a competent roster,
-P(make playoffs) is comfortably north of 85%, so **dP(champ)/d(regular-season win) is close to
-zero**.
+Half the league misses, and the two teams that finish top of the pile skip a
+single-elimination round. Measured over 20,000 simulated seasons in
+[six-of-twelve.md](six-of-twelve.md):
 
-Therefore: **optimize the roster for weeks 15 through 17 and pay nothing for regular-season
-consistency.**
+- A league-average roster makes the playoffs **50%** of the time, not "comfortably north of
+  85%". Reaching 85% takes roughly +15% of projected points.
+- **A marginal regular-season win is worth 4-6 percentage points of championship equity**
+  around the median, rising past 9 for a strong roster. Against a baseline title chance of
+  8.4%, one win is worth about half your equity.
+- The gradient *steepens* with roster strength, so wins matter most precisely where the
+  original argument said they stopped mattering.
+- P(title | seed) runs 37.9% / 26.9% for the bye seeds against 12.5% / 9.4% / 7.3% / 6.0%
+  for seeds 3-6. Seed 2 is worth **2.2x** seed 3 across a single place.
 
-### The uncomfortable corollary
+Therefore: **seeding is the prize, and the whole regular season buys it.** Weeks 15-17 still
+decide the title, but you reach them from a position the previous fourteen weeks set.
 
-Reverse-standings waivers mean winning regular-season games *costs* you wire access while buying
-almost nothing. The marginal value of your 7th through 10th win is plausibly negative.
+### The corollary is dead
 
-**This is not a license to tank.** Throwing games is bad faith and likely against league rules.
-The legitimate, narrower version: **never sacrifice ceiling for a marginal regular-season win.**
-Start the boom-bust player. Take the upside stash over the safe veteran. In this league a
-ceiling-for-floor trade is simply a bad trade.
+The old version argued that reverse-standings waivers make the marginal value of a win
+"plausibly negative". A win is worth 4-6 points of title equity; waiver priority in a league
+that runs about 23 acquisitions per team per season
+([trade-spike.md](trade-spike.md)) cannot be worth a fraction of that. Wins are the scarce
+good. There was never a case for tanking and there is now not even an argument to refuse.
+
+## Ceiling, split into the two things it was conflating *(corrected)*
+
+"Never sacrifice ceiling" ran together two different quantities. Held at a fixed mean, they
+point opposite ways:
+
+- **Season-long outcome spread** — how uncertain it is what a player *becomes* — is worth
+  paying for at every roster strength. Worth 10x to a weak roster and +39% to a strong one,
+  *even though it costs the strong roster 15 points of playoff probability*. Trading berths
+  for byes is a good trade because the seeding payoff is convex.
+- **Weekly boom-bust** — spread in what he does on a Sunday, given his talent — is not. Flat
+  for a weak roster, clearly negative for a strong one. Head-to-head wastes surplus, so a
+  spikier distribution with the same mean has a lower median and loses more weeks.
+
+> **Buy season-long upside. Do not buy weekly volatility.** The upside stash is right; the
+> boom-bust starter is not.
+
+"Start the boom-bust player" was also the wrong *kind* of rule: it is a lineup decision, and
+once you know your opponent it is state-dependent. `hub/season/lineup.py` optimises P(win
+this matchup), so a favourite declines volatility and an underdog takes it. That is
+consistent with the unconditional draft-time rule above — at draft time you do not know your
+matchups and the convexity of seeding dominates.
 
 ## The largest underexploited edge
 
@@ -71,8 +108,11 @@ ceiling-for-floor trade is simply a bad trade.
 (`nflreadpy.load_schedules()`). A player facing three soft defenses in the fantasy playoffs is
 worth materially more than his season-long projection implies.
 
-In a 4-team-playoff league this is secondary to securing a bye. Here it is close to primary, and
-no casual ESPN drafter prices it. Build the weeks 15-17 strength-of-schedule table before Sep 3
+**Downgraded from "close to primary" (corrected).** That ranking rested on seeding being
+worthless, which it is not: this league *does* have byes, and they are worth 2.2x a seed.
+Weeks 15-17 SoS still decides the title once you are there, but it now competes with
+full-season strength rather than dominating it. It stays a tiebreaker column on the board,
+not a primary sort. No casual ESPN drafter prices it either way. Build the weeks 15-17 strength-of-schedule table before Sep 3
 and carry it as a tiebreaker column on the draft board.
 
 ## Structural constraints that push weight back onto the draft
@@ -91,9 +131,12 @@ in weeks 15-17, you largely have to draft.** You will not fix it in October.
 
 ### Three consequences
 
-**The IR slot is unusually valuable here.** A player who misses eight weeks and returns for the
-stretch costs almost nothing: early losses are nearly free under 8-of-12, and IR does not consume
-bench space. It is close to a free option on a discounted asset. Worth one deliberate pick.
+**The IR slot is worth less than this doc originally claimed *(corrected)*.** The argument was
+that "early losses are nearly free under 8-of-12". They are not free at 6-of-12: each win is
+worth 4-6 points of title equity, so eight weeks of a hole is expensive. IR still does not
+consume bench space, which is real, and a stash that *returns* in time to lift your weeks
+15-17 roster can pay — but it is a priced option now, not a free one, and probably not worth
+a deliberate early pick. (Inferred from the measured win gradient, not directly simulated.)
 
 **You cannot stream K or DST.** Streaming assumes waiver access you do not have. Draft ones you
 will hold all season, or confirm via `espn-api` whether the league even uses those slots (it also
@@ -122,7 +165,9 @@ Note these are single-game correlations. Season-long correlation (e.g. QB-RB) is
 a different quantity — do not mix them.
 
 **L2 — League simulator.** Schedule, weekly lineup-setting for you *and* opponents, head-to-head,
-seeding, 8-team bracket. Output: P(champ) for a roster configuration.
+seeding, **6-team bracket with byes for seeds 1-2**. Output: P(champ) for a roster
+configuration. Implemented in `hub/draft/season.py`; `hub/draft/leverage.py` is the harness
+that measures the structure itself.
 
 Opponent lineup model: start from "they start their highest ESPN projection," then validate
 against actual historical lineups pulled from `espn-api`.
@@ -184,13 +229,15 @@ Named in advance so they are findings rather than surprises.
   marginals. **First thing to test.**
 - Opponent lineup prediction is a modeling problem that has not been scoped.
 - delta-P(champ) between candidate actions is smaller than upstream projection error.
-- 8-of-12 flattens P(champ) so much that most decisions barely move it, making the whole
-  objective insensitive. If so, pivot to optimizing P(win the weeks 15-17 bracket | qualified),
-  which is the same math with the formality removed.
+- ~~8-of-12 flattens P(champ) so much that most decisions barely move it.~~ **Tested and
+  dead.** At 6-of-12 with byes, P(champ) is highly sensitive: 0.6% to 31.1% across a +/-15%
+  band of roster strength. Insensitivity is not the risk; the risk is the opposite, that the
+  apparatus reads more into small roster differences than the projections support.
 
 ## Inputs still needed
 
 1. Weeks 15-17 NFL schedule mapped to your rostered players (`nflreadpy.load_schedules()`)
-2. League transaction history count (does this league trade?)
+2. ~~League transaction history count~~ — answered: no. 3.75 trades/season, see
+   [trade-spike.md](trade-spike.md).
 3. Exact starter composition including whether K and DST slots exist (`espn-api`)
 4. Payout structure (recorded for completeness; objective stays P(1st) regardless)

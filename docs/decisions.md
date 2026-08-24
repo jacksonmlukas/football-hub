@@ -192,10 +192,26 @@ is P(win this matchup), and ceiling-or-floor is an output rather than a setting.
 roster a 35-point underdog quadruples his win probability (0.9% -> 3.6%) by starting the
 volatile player, and a 35-point favourite gives up three projected points to avoid him.
 
-Still open under 6-of-12: the *draft-time* ceiling argument, which is a different question
-from the weekly one. Two byes make seeding valuable, so the doc's "optimize the roster for
-weeks 15-17 and pay nothing for regular-season consistency" is not safe to act on as
-written.
+**Resolved for the draft layer (2026-08-23), measured in `hub/draft/leverage.py` and written
+up in `docs/six-of-twelve.md`.** 20,000 simulated seasons against the real structure:
+
+- League-average roster makes the playoffs **50%**, not "north of 85%".
+- A marginal regular-season win is worth **4-6 pp of title equity** (9+ for a strong
+  roster), not "close to zero". The gradient steepens with strength.
+- P(title | seed) is 37.9% / 26.9% for the bye seeds vs 12.5-6.0% for seeds 3-6. Seed 2 is
+  worth 2.2x seed 3 across one place, so "seeding buys marginally easier matchups and
+  nothing else" is false.
+
+The ceiling advice split in two rather than inverting. At a fixed team mean, **season-long
+outcome spread pays at every roster strength** (10x for a weak roster, +39% for a strong one,
+even while costing it 15 pp of playoff probability — berths trade well for byes because the
+seeding payoff is convex), while **weekly boom-bust does not** (flat weak, negative strong,
+because head-to-head wastes surplus). The doc treated these as one quantity.
+
+Worth recording as a near-miss: the first sweep found variance helping everywhere, because
+a starting lineup is a max over the roster, so scaling player spread by 1.8x raised the
+team's *mean* by 15% before any variance effect. `calibrate` removes it and a test pins it.
+The correction reversed the sign of the answer.
 
 ## Open questions
 
