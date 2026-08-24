@@ -1,0 +1,12 @@
+{
+  "name": "track_record",
+  "source": "preds+results",
+  "generated_at": "2026-08-24T02:31:33+00:00",
+  "n_scored": 0,
+  "n_preregistered": 0,
+  "is_backtest": false,
+  "note": "No pre-registered predictions yet. A prediction counts only once its commit predates kickoff -- see docs/track-record.md.",
+  "bins": [],
+  "log_loss": null,
+  "brier": null
+}

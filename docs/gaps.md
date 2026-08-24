@@ -41,7 +41,7 @@ of them dead-ends.
 | `hub.models.ratings` | `Makefile:12`, `weekly-slate/SKILL.md:20` | ~~MISSING~~ **DONE 2026-08-23** | Passthrough over `MarketBaseline`. `make slate WEEK=1` now runs end to end. |
 | `hub.models.conformal` | `weekly-slate/SKILL.md:21` | MISSING | **Build.** `Conformalized` already exists in `models/base.py`; this is the CLI around it. |
 | `hub.models.eval` | `model-eval/SKILL.md:26` | MISSING | **Build**, post-draft. |
-| `hub.publish` | `track-record.md:12,24`, `weekly-slate/SKILL.md:22` | MISSING | **Build**, post-draft. |
+| `hub.publish` | `track-record.md:12,24`, `weekly-slate/SKILL.md:22` | ~~MISSING~~ **DONE 2026-08-24** | Writes preds/track_record/live plus a manifest; never blanks an artifact. |
 | `hub.draft.live` | `draft-day-ops/SKILL.md:25`, `SETUP.md:227` | ~~MISSING~~ **DONE 2026-08-23** | Built. Live replacement level, run detection, `--replay` rehearsal. 192 picks at 7ms/refresh. |
 
 ### Why `hub.inspect` is the worst one
@@ -93,7 +93,7 @@ Worse than missing in one respect: the module is present, so a reader assumes th
 | Path | Referenced from | Status | Decision (0.2) |
 |---|---|---|---|
 | `tests/golden/fixtures/` | `data-contracts/SKILL.md:29`, `tests/contracts/test_contracts.py:4` | ~~empty~~ **DONE 2026-08-23** | 7 fixtures: 4 real captures, 3 hand-built for keyless sources. `pytest -m golden` runs the live diff. |
-| `site/index.html` | `make serve`, `going-public.md:17`, `SETUP.md:141`, `draft-day-ops/SKILL.md:49` | MISSING — `site/` holds only `data/draft_board.json` | **Build**, post-draft. `make serve` currently returns a directory listing, which is not an error but is not a dashboard either. |
+| `site/index.html` | `make serve`, `going-public.md:17`, `SETUP.md:141`, `draft-day-ops/SKILL.md:49` | ~~MISSING~~ **DONE 2026-08-24** | Four panels, no build step, stale panels named individually. |
 
 Not gaps, despite looking like ones:
 

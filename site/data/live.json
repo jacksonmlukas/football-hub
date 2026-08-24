@@ -1,0 +1,185 @@
+{
+  "name": "live",
+  "source": "espn_scoreboard",
+  "generated_at": "2026-08-24T02:31:33+00:00",
+  "n": 16,
+  "rows": [
+    {
+      "id": "401873297",
+      "state": "in",
+      "detail": "14:55 - 4th",
+      "home": "TEN",
+      "home_score": "12",
+      "away": "SEA",
+      "away_score": "16",
+      "possession": null,
+      "down_distance": "1st & 10 at SEA 35"
+    },
+    {
+      "id": "401873286",
+      "state": "post",
+      "detail": "Final",
+      "home": "HOU",
+      "home_score": "20",
+      "away": "LV",
+      "away_score": "22",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873285",
+      "state": "post",
+      "detail": "Final",
+      "home": "LAC",
+      "home_score": "17",
+      "away": "SF",
+      "away_score": "41",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873288",
+      "state": "post",
+      "detail": "Final",
+      "home": "PIT",
+      "home_score": "0",
+      "away": "NYJ",
+      "away_score": "17",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873287",
+      "state": "post",
+      "detail": "Final",
+      "home": "JAX",
+      "home_score": "17",
+      "away": "CAR",
+      "away_score": "34",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873613",
+      "state": "post",
+      "detail": "Final",
+      "home": "DEN",
+      "home_score": "13",
+      "away": "GB",
+      "away_score": "33",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873601",
+      "state": "post",
+      "detail": "Final",
+      "home": "DET",
+      "home_score": "17",
+      "away": "WSH",
+      "away_score": "13",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873294",
+      "state": "post",
+      "detail": "Final",
+      "home": "CLE",
+      "home_score": "7",
+      "away": "BUF",
+      "away_score": "31",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873295",
+      "state": "post",
+      "detail": "Final",
+      "home": "IND",
+      "home_score": "6",
+      "away": "ATL",
+      "away_score": "34",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873291",
+      "state": "post",
+      "detail": "Final",
+      "home": "MIN",
+      "home_score": "3",
+      "away": "BAL",
+      "away_score": "13",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873290",
+      "state": "post",
+      "detail": "Final",
+      "home": "LAR",
+      "home_score": "34",
+      "away": "NO",
+      "away_score": "0",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873292",
+      "state": "post",
+      "detail": "Final",
+      "home": "MIA",
+      "home_score": "3",
+      "away": "NYG",
+      "away_score": "26",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873289",
+      "state": "post",
+      "detail": "Final",
+      "home": "CIN",
+      "home_score": "27",
+      "away": "CHI",
+      "away_score": "9",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873293",
+      "state": "post",
+      "detail": "Final",
+      "home": "NE",
+      "home_score": "24",
+      "away": "PHI",
+      "away_score": "21",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401873296",
+      "state": "post",
+      "detail": "Final",
+      "home": "TB",
+      "home_score": "16",
+      "away": "KC",
+      "away_score": "15",
+      "possession": null,
+      "down_distance": null
+    },
+    {
+      "id": "401874101",
+      "state": "post",
+      "detail": "Final",
+      "home": "ARI",
+      "home_score": "13",
+      "away": "DAL",
+      "away_score": "34",
+      "possession": null,
+      "down_distance": null
+    }
+  ],
+  "league": "nfl"
+}

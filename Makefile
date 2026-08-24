@@ -16,6 +16,7 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 	-uv run python -m hub.fetch.cfbd --week $(WEEK)
 	-uv run python -m hub.fetch.odds --snapshot
 	uv run python -m hub.models.ratings --fit
+	uv run python -m hub.publish --all --week $(WEEK)
 
 live:           ## Sunday poller (local, not Actions)
 	uv run python -m hub.fetch.espn --poll --interval 45

@@ -15,7 +15,11 @@ BLOCKED_READ = re.compile(r"(data/(raw|interim|processed)/|\.parquet$|\.csv$)")
 # teaches you to ignore it, which is how a guardrail stops working.
 # Accepted gap: a read split across a `\` line continuation slips through. Rare, and the
 # Read branch above still catches file reads.
-BLOCKED_BASH = re.compile(r"\b(cat|head|tail|less)\b[^|\n]*\b(data/|\.parquet|\.csv)")
+# Scoped to the same three directories as BLOCKED_READ. This used to match any `data/`,
+# which caught `ls site/data/` -- the site's own published JSON, small and meant to be read.
+# A guard that fires on the output directory teaches you to ignore it.
+BLOCKED_BASH = re.compile(
+    r"\b(cat|head|tail|less)\b[^|\n]*(data/(raw|interim|processed)/|\.parquet|\.csv)")
 
 # The escape hatch cannot be caught by the trap. `hub.inspect --head 5 <path>.parquet`
 # matches the reader pattern -- `--head` contains `head` -- so without this the guard

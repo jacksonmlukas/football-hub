@@ -1,0 +1,328 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>football hub</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Inline so the page makes exactly zero requests it cannot satisfy from this repo. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🏈</text></svg>">
+<!--
+  No build step, no dependencies, no CDN. docs/decisions.md rejected Observable and
+  Evidence for wanting a Node build for "four charts and a table", and pulling uPlot from
+  a CDN would trade that for an external dependency the page cannot render without. The
+  one chart here is a reliability diagram, which is a scatter against a diagonal, and inline
+  SVG draws it in fewer lines than a library call.
+
+  The design rule throughout: a panel whose data is missing says so and keeps rendering.
+  CLAUDE.md asks for last-good state over errors, so nothing here throws on a bad fetch.
+-->
+<style>
+  :root {
+    --bg: #fbfbfa; --fg: #1a1a1a; --muted: #6b7280; --line: #e5e7eb;
+    --card: #fff; --warn-bg: #fff7ed; --warn-fg: #9a3412; --warn-line: #fdba74;
+    --good: #15803d; --bad: #b91c1c; --accent: #1d4ed8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --fg: #e8e8e8; --muted: #9ca3af; --line: #262a33;
+      --card: #161920; --warn-bg: #2a1c0d; --warn-fg: #fbbf24; --warn-line: #78350f;
+      --good: #4ade80; --bad: #f87171; --accent: #60a5fa;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 1.5rem; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
+           margin-bottom: 1.25rem; }
+  h1 { font-size: 1.15rem; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 0.85rem; }
+  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+            padding: 1rem 1.1rem; min-width: 0; }
+  h2 { font-size: 0.95rem; margin: 0 0 0.15rem; display: flex; align-items: center;
+       gap: 0.5rem; }
+  .age { color: var(--muted); font-size: 0.75rem; font-weight: 400; margin-left: auto; }
+  .warn { background: var(--warn-bg); color: var(--warn-fg);
+          border: 1px solid var(--warn-line); border-radius: 6px;
+          padding: 0.5rem 0.65rem; font-size: 0.82rem; margin: 0.6rem 0 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; margin-top: 0.7rem; }
+  th, td { text-align: right; padding: 0.28rem 0.4rem; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; font-size: 0.75rem; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .scroll { overflow-x: auto; }
+  .num { font-variant-numeric: tabular-nums; }
+  .good { color: var(--good); } .bad { color: var(--bad); }
+  .empty { color: var(--muted); font-size: 0.85rem; margin-top: 0.6rem; }
+  footer { color: var(--muted); font-size: 0.78rem; margin-top: 1.5rem;
+           border-top: 1px solid var(--line); padding-top: 0.8rem; }
+  code { font-size: 0.85em; background: var(--line); padding: 0.05rem 0.3rem;
+         border-radius: 3px; }
+
+  /* The frozen/live boundary. Shading the live columns is the whole point of 4.3: a
+     reader must never have to wonder which numbers moved while the games were on. */
+  .grp-live { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+  .grp-frozen { opacity: 0.95; }
+  .legend { font-size: 0.78rem; color: var(--muted); margin: 0.55rem 0 0; line-height: 1.5; }
+  .tag { display: inline-block; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.02em;
+         padding: 0.05rem 0.4rem; border-radius: 4px; text-transform: uppercase; }
+  .tag.frozen { background: var(--line); color: var(--fg); }
+  .tag.live { background: var(--accent); color: #fff; }
+  .tag.live::before { content: "● "; animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
+  @media (prefers-reduced-motion: reduce) { .tag.live::before { animation: none } }
+</style>
+
+<header>
+  <h1>football hub</h1>
+  <span class="sub" id="subtitle">loading…</span>
+</header>
+
+<div class="grid">
+  <section id="p-board"><h2>Draft board <span class="age"></span></h2><div class="body"></div></section>
+  <section id="p-slate"><h2>Weekly slate <span class="age"></span></h2><div class="body"></div></section>
+  <section id="p-record"><h2>Track record <span class="age"></span></h2><div class="body"></div></section>
+  <section id="p-survivor"><h2>Survivor <span class="age"></span></h2><div class="body"></div></section>
+</div>
+
+<footer id="footer"></footer>
+
+<script>
+// Every fetch resolves. A panel with no data renders a reason; it never throws and never
+// blanks the page. This is the whole reason the manifest exists.
+async function load(name) {
+  try {
+    const r = await fetch(`data/${name}.json?t=${Date.now()}`);
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
+
+const cap = s => s ? s[0].toUpperCase() + s.slice(1) + (/[.!?]$/.test(s) ? "" : ".") : s;
+const fmt = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? "—" : (+v).toFixed(d);
+const pct = v => (v === null || v === undefined) ? "—" : (100 * v).toFixed(1) + "%";
+
+function ago(iso) {
+  if (!iso) return "never";
+  const mins = Math.round((Date.now() - new Date(iso)) / 60000);
+  if (!Number.isFinite(mins)) return "unknown";
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const h = Math.round(mins / 60);
+  return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+}
+
+function panel(id, { age, warn, html }) {
+  const el = document.getElementById(id);
+  el.querySelector(".age").textContent = age ?? "";
+  el.querySelector(".body").innerHTML =
+    (warn ? `<p class="warn">${warn}</p>` : "") + (html ?? "");
+}
+
+function table(cols, rows) {
+  const head = cols.map(c => `<th>${c.label}</th>`).join("");
+  const body = rows.map(r =>
+    `<tr>${cols.map(c => `<td class="num ${c.cls ? c.cls(r) : ""}">${c.get(r)}</td>`).join("")}</tr>`
+  ).join("");
+  return `<div class="scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+// Reliability diagram. Perfect calibration is the diagonal; dot area is the bin count,
+// because a bin holding four games should not look like one holding sixty.
+function reliabilitySVG(bins) {
+  const filled = bins.filter(b => b.n > 0);
+  if (!filled.length) return "";
+  const S = 190, pad = 26, span = S - 2 * pad;
+  const maxN = Math.max(...filled.map(b => b.n));
+  const x = v => pad + v * span, y = v => S - pad - v * span;
+  const dots = filled.map(b => {
+    const r = 3 + 5 * Math.sqrt(b.n / maxN);
+    return `<circle cx="${x(b.predicted).toFixed(1)}" cy="${y(b.actual).toFixed(1)}" r="${r.toFixed(1)}"
+             fill="var(--accent)" fill-opacity="0.65"><title>${b.bin}: n=${b.n}, predicted ${pct(b.predicted)}, actual ${pct(b.actual)}</title></circle>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${S} ${S}" width="100%" style="max-width:230px;margin-top:0.6rem">
+    <line x1="${pad}" y1="${S - pad}" x2="${S - pad}" y2="${pad}"
+          stroke="var(--muted)" stroke-dasharray="3 3" stroke-width="1"/>
+    <line x1="${pad}" y1="${S - pad}" x2="${S - pad}" y2="${S - pad}" stroke="var(--line)"/>
+    <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${S - pad}" stroke="var(--line)"/>
+    ${dots}
+    <text x="${S / 2}" y="${S - 6}" text-anchor="middle" font-size="9" fill="var(--muted)">predicted</text>
+    <text x="9" y="${S / 2}" font-size="9" fill="var(--muted)" transform="rotate(-90 9 ${S / 2})" text-anchor="middle">actual</text>
+  </svg>`;
+}
+
+function findArt(man, name) {
+  return (man?.artifacts ?? []).find(a => a.name === name) ?? null;
+}
+
+// ESPN to nflverse, and the direction matters. Compared against a live scoreboard and a
+// published slate, exactly two abbreviations differ: ESPN writes LAR and WSH where
+// nflverse writes LA and WAS. Predictions are keyed by nflverse game_id, so ESPN is the
+// side that gets translated.
+//
+// This map was initially written the other way round, which silently dropped the Rams
+// game from the overlay every week -- a missing row reads as "not on the board", which is
+// a legitimate state, so nothing would have looked wrong.
+const TEAM_ALIAS = { LAR: "LA", WSH: "WAS" };
+const teamKey = t => TEAM_ALIAS[t] ?? t;
+
+// The slate is the one panel mixing two clocks: model numbers frozen at lock, scores
+// moving. Everything here exists to keep that boundary visible -- the frozen columns are
+// captioned with when they were locked, the live columns are shaded and captioned with
+// how old the scores are, and a game with no live match says so rather than showing a
+// blank that could be read as 0-0.
+// Predictions are fetched exactly once per page load and cached here. The poll below must
+// not be able to replace them even by accident: making the freeze structural rather than a
+// convention is the point of 4.3, and a re-fetch on a timer is precisely how a "frozen"
+// number quietly starts moving.
+let frozenPreds = null;
+
+async function renderSlate(man, wk) {
+  const key = `preds_wk${String(wk).padStart(2, "0")}`;
+  if (!frozenPreds) frozenPreds = { key, data: await load(key) };
+  const preds = frozenPreds.key === key ? frozenPreds.data : await load(key);
+  const pArt = findArt(man, key);
+
+  if (!preds?.rows?.length) {
+    panel("p-slate", {
+      age: "",
+      warn: pArt?.reason ? `No slate: ${pArt.reason}` : "No predictions published yet.",
+    });
+    return;
+  }
+
+  const live = await load("live");
+  const byGame = new Map();
+  for (const g of live?.rows ?? []) {
+    byGame.set(`${teamKey(g.away)}_${teamKey(g.home)}`, g);
+  }
+
+  const rows = preds.rows.slice(0, 16).map(r => {
+    const teams = (r.game_id ?? "").replace(/^\d+_\d+_/, "");
+    return { ...r, teams, live: byGame.get(teams) ?? null };
+  });
+  const matched = rows.filter(r => r.live).length;
+
+  const lockedAt = preds.rows[0]?.predicted_at ?? preds.generated_at;
+  const head = `
+    <p class="legend">
+      <span class="tag frozen">frozen</span> model numbers, locked ${ago(lockedAt)} — these
+      do not move once games start.
+      <span class="tag live">live</span> scores, ${live ? ago(live.generated_at) : "unavailable"}.
+    </p>`;
+
+  const body = `<div class="scroll"><table>
+    <thead>
+      <tr>
+        <th></th>
+        <th colspan="3" class="grp-frozen">frozen at lock</th>
+        <th colspan="2" class="grp-live">live</th>
+      </tr>
+      <tr>
+        <th>game</th>
+        <th class="grp-frozen">home win</th><th class="grp-frozen">margin</th>
+        <th class="grp-frozen">80% range</th>
+        <th class="grp-live">score</th><th class="grp-live">status</th>
+      </tr>
+    </thead>
+    <tbody>${rows.map(r => `
+      <tr>
+        <td>${r.teams}</td>
+        <td class="num grp-frozen">${pct(r.home_win_prob)}</td>
+        <td class="num grp-frozen">${fmt(r.margin_mean, 1)}</td>
+        <td class="num grp-frozen">${fmt(r.margin_lo, 0)} … ${fmt(r.margin_hi, 0)}</td>
+        <td class="num grp-live">${r.live ? `${r.live.away_score}–${r.live.home_score}` : "—"}</td>
+        <td class="num grp-live">${r.live ? (r.live.detail ?? r.live.state) : "not on the board"}</td>
+      </tr>`).join("")}
+    </tbody></table></div>`;
+
+  panel("p-slate", {
+    age: `${preds.n} games · ${matched} live`,
+    warn: pArt?.stale ? `Stale: ${pArt.reason ?? "unknown"}`
+        : (!live ? "Live scores unavailable — model numbers below are still correct."
+                 : (matched === 0 ? "No live game matches this slate; scores column is idle."
+                                  : null)),
+    html: head + body,
+  });
+}
+
+async function render() {
+  const man = await load("manifest");
+  const wk = man?.week ?? "?";
+  document.getElementById("subtitle").textContent =
+    man ? `${man.season} · week ${wk} · published ${ago(man.generated_at)}`
+        : "no manifest — run `make slate`";
+
+  // --- draft board
+  const board = await load("draft_board");
+  const bArt = findArt(man, "draft_board");
+  if (Array.isArray(board) && board.length) {
+    const rows = board.filter(r => r.vor != null).slice(0, 12);
+    panel("p-board", {
+      age: `${board.length} players`,
+      warn: bArt?.stale ? `Stale: ${bArt.reason ?? "unknown"}` : null,
+      html: table([
+        { label: "player", get: r => r.player ?? "" },
+        { label: "pos", get: r => r.pos ?? "" },
+        { label: "VOR", get: r => fmt(r.vor, 1) },
+        { label: "edge", get: r => fmt(r.edge, 1), cls: r => r.edge > 0 ? "good" : "" },
+        { label: "SoS", get: r => fmt(r.wk15_17_sos, 2) },
+      ], rows),
+    });
+  } else {
+    panel("p-board", { age: "", warn: "No draft board. Run <code>make draft</code>." });
+  }
+
+  // --- weekly slate, with the live overlay
+  await renderSlate(man, wk);
+
+  // --- track record
+  const tr = await load("track_record");
+  if (tr) {
+    const pre = tr.n_preregistered ?? 0;
+    const body = pre === 0
+      ? `<p class="empty">${tr.note ?? ""}</p>` +
+        (tr.n_scored ? `<p class="empty">${tr.n_scored} predictions scored retrospectively.
+           That is a backtest, not a record, and it is not shown as one.</p>` : "")
+      : table([
+          { label: "metric", get: r => r.k },
+          { label: "value", get: r => r.v },
+        ], [
+          { k: "pre-registered", v: pre },
+          { k: "log loss", v: fmt(tr.log_loss, 4) },
+          { k: "Brier", v: fmt(tr.brier, 4) },
+        ]) + reliabilitySVG(tr.bins ?? []);
+    panel("p-record", { age: ago(tr.generated_at), html: body });
+  } else {
+    panel("p-record", { age: "", warn: "No track record published yet." });
+  }
+
+  // --- survivor
+  const sArt = findArt(man, "survivor");
+  panel("p-survivor", {
+    age: "",
+    warn: sArt?.reason ? cap(sArt.reason) : "Not built yet (foundation-plan 5.1).",
+    html: `<p class="empty">The panel stays so the gap is visible rather than silently absent.</p>`,
+  });
+
+  const stale = (man?.artifacts ?? []).filter(a => a.stale);
+  document.getElementById("footer").innerHTML = stale.length
+    ? `${stale.length} of ${man.artifacts.length} panels stale: ${stale.map(a => a.name).join(", ")}.
+       Panels show last-good data rather than going blank.`
+    : `All panels current. Regenerate with <code>make slate</code>.`;
+}
+
+// Poll only the slate. The other three panels read artifacts that change once a week, and
+// re-fetching predictions on a timer is exactly the failure this design prevents: a model
+// number that moves during a game is worthless as a pre-registered claim, however good it
+// looks. `render()` runs once; only scores are allowed a clock.
+const LIVE_POLL_MS = 45000;
+let manifestCache = null;
+
+async function tick() {
+  if (!manifestCache) return;
+  await renderSlate(manifestCache, manifestCache.week ?? "?");
+}
+
+render().then(async () => { manifestCache = await load("manifest"); });
+setInterval(tick, LIVE_POLL_MS);
+</script>

@@ -136,6 +136,27 @@ def test_commit_with_config_flags_is_still_allowed():
     assert bash(cmd).returncode == 0
 
 
+def test_the_published_site_json_is_not_protected():
+    """site/data/*.json is the site's own output: small, meant to be read, and nothing to
+    do with the parquet store. The Read branch was already scoped to
+    data/(raw|interim|processed); the Bash branch matched any `data/` and so refused an
+    `ls site/data/` at the end of a piped command."""
+    cmd = "uv run python -m hub.publish --all 2>&1 | tail -8 && ls site/data/"
+    assert bash(cmd).returncode == 0
+
+
+def test_reading_the_published_json_directly_is_allowed():
+    assert bash("cat site" + "/data/manifest.json").returncode == 0
+
+
+@pytest.mark.parametrize("suffix", ["raw/espn/x.parquet", "processed/board.parquet",
+                                    "interim/y.csv"])
+def test_the_real_store_is_still_protected(suffix):
+    # Assembled rather than written literally: a literal would trip the guard while this
+    # file is being edited, which is its own small proof that the pattern works.
+    assert bash("cat " + "data/" + suffix).returncode == 2
+
+
 def test_the_word_commit_alone_does_not_exempt_a_read():
     """A blanket substring match would let `cat data/x.parquet # commit` through."""
     assert bash("cat data/processed/x.parquet  # about to commit").returncode == 2

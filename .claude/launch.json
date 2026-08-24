@@ -1,16 +1,11 @@
 {
   "version": "0.0.1",
-  // Most edits here are Python pipeline code, not frontend. Auto-verify would screenshot a
-  // static page after every change and burn tokens for nothing. Ask for a preview explicitly.
-  "autoVerify": false,
   "configurations": [
     {
-      "name": "dashboard",
-      "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8000"],
-      "cwd": "site",
-      "port": 8000,
-      "autoPort": true
+      "name": "site",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "python", "-m", "http.server", "8000", "--directory", "site"],
+      "port": 8000
     }
   ]
 }

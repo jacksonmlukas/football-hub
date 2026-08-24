@@ -134,14 +134,14 @@ This phase has a date attached. If Phase 1 slips, this still ships.
 
 ## Phase 4 — Publish and dashboard
 
-- [ ] **4.1 `hub.publish`** — writes `site/data/*.json` from the processed store.
+- [x] **4.1 `hub.publish`** _(done 2026-08-24)_ — writes `site/data/*.json` from the processed store.
       *Done when:* `make slate` produces every JSON the site reads.
-- [ ] **4.2 The actual dashboard.** `site/index.html`, vanilla JS + uPlot, no build step.
+- [x] **4.2 The actual dashboard.** _(done 2026-08-24)_ `site/index.html`, vanilla JS + uPlot, no build step.
       Panels: draft board, weekly slate, survivor, track record. Serves last-good state and
       marks stale panels rather than erroring.
       *Done when:* `make serve` shows real data and a killed poller degrades visibly but does
       not break the page.
-- [ ] **4.3 Live overlay.** Browser polls `live.json`; model numbers stay frozen at Sunday lock.
+- [x] **4.3 Live overlay.** _(done 2026-08-24)_ Browser polls `live.json`; model numbers stay frozen at Sunday lock.
       *Done when:* the UI makes the frozen-vs-live distinction obvious. See the locked-number
       rule in `weekly-slate`.
 
