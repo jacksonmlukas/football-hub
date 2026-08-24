@@ -24,6 +24,7 @@ from typing import Sequence, cast
 import polars as pl
 
 from hub import store
+from hub.config import config_digest
 from hub.fetch import nflverse
 from hub.models.base import FitSpec, validate_predictions
 from hub.models.market import MarketBaseline
@@ -61,6 +62,22 @@ def target_week(games: pl.DataFrame) -> int:
     return int(cast(int, games["week"].max() or 1))
 
 
+# Stamped onto every prediction so a row can be traced to the exact model and configuration
+# that produced it. `docs/foundation-plan.md` 3.5: two runs differing only in a
+# hyperparameter must produce distinguishable rows, and the public claim is that a specific
+# model made a specific prediction -- not "the Bayesian model" as a category.
+PROVENANCE_COLUMNS = ("model", "version", "cfg_digest", "fit_digest")
+
+
+def live_config():
+    """The configuration this run is operating under.
+
+    Its own function so a test can substitute one, and so the digest has a single source.
+    """
+    from hub.config import HubConfig
+    return HubConfig()
+
+
 def fit(season: int = 2026, week: int | None = None, *, cache: Path | None = None,
         base: Path | None = None) -> pl.DataFrame:
     """Fit through week-1, predict `week`, validate, write versioned predictions."""
@@ -70,14 +87,23 @@ def fit(season: int = 2026, week: int | None = None, *, cache: Path | None = Non
     # Fit through the week before the one being predicted. The gap is the leakage
     # tripwire in validate_predictions, and it is load-bearing: leakage looks like
     # success rather than failure, so it has to be structural rather than remembered.
-    spec = FitSpec("nfl", season, wk - 1)
+    # The config digest has to actually reach the spec. It defaulted to "default", so every
+    # run under every configuration produced the same version string -- provenance that was
+    # present in the schema and absent in the data.
+    cfg = live_config()
+    digest = config_digest(cfg)
+    spec = FitSpec("nfl", season, wk - 1, cfg_digest=digest)
     slate = games.filter(pl.col("week") == wk).drop("result")
 
     preds = MarketBaseline().fit(spec).predict(slate)
     validate_predictions(preds, spec)
+    preds = preds.with_columns(pl.lit(digest).alias("cfg_digest"),
+                               pl.lit(spec.digest).alias("fit_digest"))
     if preds.height:
+        # The digest is in the filename as well as the rows: distinguishable rows are no use
+        # if the second run lands on the first one's file.
         store.write(preds, "preds", "nfl", season, wk, base=base,
-                    name=f"{preds['version'][0]}")
+                    name=f"{preds['version'][0]}-{digest}")
 
     print(f"  ratings (passthrough): season {season} week {wk}")
     print(f"    {preds.height} games priced from the market, "

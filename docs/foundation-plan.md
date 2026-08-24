@@ -40,11 +40,11 @@ system nobody can run in October.
 
 Do this first and in one session. It is cheap and it sizes everything else.
 
-- [ ] **0.1 Dangling-reference audit.** Grep the whole repo for `hub.` module paths, `make`
+- [x] **0.1 Dangling-reference audit.** _(done 2026-08-23, `docs/gaps.md`)_ Grep the whole repo for `hub.` module paths, `make`
       targets, and CLI flags mentioned in docs/skills. Produce `docs/gaps.md` listing every
       referenced-but-missing symbol with the file and line that references it.
       *Done when:* the list is exhaustive and each row says exists / missing / partial.
-- [ ] **0.2 Reconcile.** For each gap, decide: build it, or delete the reference. Deleting is a
+- [x] **0.2 Reconcile.** _(done 2026-08-23; 5.3 deleted rather than built)_ For each gap, decide: build it, or delete the reference. Deleting is a
       legitimate outcome and often the right one.
       *Done when:* every row has a decision and Phase 1-5 todos below are updated to match.
 
@@ -85,12 +85,12 @@ Everything downstream reads from here. Build it once, correctly.
 
 This phase has a date attached. If Phase 1 slips, this still ships.
 
-- [ ] **2.1 `--show-slots` on `hub.draft.board`** — referenced in `SETUP.md` step 5 and missing.
+- [x] **2.1 `--show-slots` on `hub.draft.board`** _(done 2026-08-23)_ — referenced in `SETUP.md` step 5 and missing.
       Reads roster composition from the league API, falls back to config, and prints which
       source it used.
       *Done when:* it reports 12 teams / 3 WR / slot 3 and flags disagreement with
       `conf/config.yaml`.
-- [ ] **2.2 Weeks 15-17 strength of schedule.** `hub.draft.playoff_sos` — map each NFL team's
+- [x] **2.2 Weeks 15-17 strength of schedule.** _(done 2026-08-23, `wk15_17_sos` on the board)_ `hub.draft.playoff_sos` — map each NFL team's
       weeks 15-17 opponents from `nflreadpy.load_schedules()`, score opposing defense strength,
       join onto the board as `wk15_17_sos`.
       *Highest-value pre-draft build.* See `docs/championship-leverage.md`.
@@ -132,9 +132,15 @@ This phase has a date attached. If Phase 1 slips, this still ships.
       an interval containing zero. **Met** — and the same work turned up a latent bug in
       `hub.publish.log_loss`, whose `if not probs` raised on a numpy array. It went unnoticed
       while every caller passed lists.
-- [ ] **3.5 Prediction provenance.** Every model writes to
-      `data/processed/preds/{model}/{ts}.parquet` with model hash and config digest.
+- [x] **3.5 Prediction provenance** _(done 2026-08-24)_ — every prediction carries model,
+      version, `cfg_digest` and `fit_digest`, and the config digest is in the filename too,
+      since distinguishable rows are no use if the second run lands on the first one's file.
       *Done when:* two runs differing only in a hyperparameter produce distinguishable rows.
+      **Met.** The schema had always had room for this and `MarketBaseline.version` already
+      returned `market-{digest}` — but `ratings.fit` built its `FitSpec` without passing the
+      live config, so `cfg_digest` took its `"default"` default and every run under every
+      configuration produced the same version. Provenance present in the schema and absent
+      in the data.
 
 ---
 
@@ -155,7 +161,7 @@ This phase has a date attached. If Phase 1 slips, this still ships.
 
 ## Phase 5 — Season operations
 
-- [ ] **5.1 Survivor IP solver** — `pulp`, 18-week assignment, use-each-team-once.
+- [x] **5.1 Survivor IP solver** _(done 2026-08-23)_ — `pulp`, 18-week assignment, use-each-team-once.
       *Done when:* it returns a feasible full-season assignment. Pool-aware objective is gated
       on getting pool config.
 - [x] **5.2 Weekly lineup optimizer** — `hub/season/lineup.py`. Built against P(win this
