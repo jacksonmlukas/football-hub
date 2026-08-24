@@ -40,6 +40,22 @@ else
   echo "  ok"
 fi
 
+echo "==> Checking no data file survives anywhere in history"
+# The index check above only sees the current tree. Flipping public exposes every commit,
+# and a file removed in commit N is still sitting in commit N-1 -- which is exactly what
+# happened on 2026-08-23: 45 parquet files were committed, untracked the next commit, and
+# this script reported PASS with 3.5MB of play-by-play still reachable by SHA.
+HIST=$(git rev-list --objects --all 2>/dev/null \
+       | grep -E ' data/(raw|interim|processed)/|\.parquet$' | head -20)
+if [ -n "$HIST" ]; then
+  echo "  FAIL: data files reachable in history:" >&2
+  echo "$HIST" | head -10 >&2
+  echo "  Rewrite with git-filter-repo before flipping public. Untracking is not enough." >&2
+  fail=1
+else
+  echo "  ok"
+fi
+
 echo "==> Checking gitleaks if available"
 if command -v gitleaks >/dev/null 2>&1; then
   gitleaks detect --no-banner --redact || fail=1
