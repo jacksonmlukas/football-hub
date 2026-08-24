@@ -562,6 +562,52 @@ as a fantasy aggregate. But 64 credits/week against a 500/month plan covers abou
 month before the spread snapshots are counted, so weekly full-slate prop pulls do not fit the
 free tier. Pulling only the players on your roster and your opponent's would.
 
+## Draft-night pick feed: what ESPN actually publishes
+
+**Tested 2026-08-24 against a live practice draft**, because the whole live path had never
+run against a draft in progress.
+
+### What is readable, and what is not
+
+| | readable via REST? |
+|---|---|
+| Real league, **completed** draft | **Yes** — 2025 replay pulled all 192 picks |
+| Mock/practice room, **mid-draft** | **No** — 52 picks made, every view returned zero |
+| Real league, **mid-draft** | **Untested**, and untestable without drafting |
+
+The mock finding is solid: with the draft at round 5, pick 53 on screen and the drafter
+holding 5 of 16 roster spots, `mDraftDetail`, `mRoster`, `mTransactions2` and `players_wl`
+all reported no picks and no rostered players. `draftapi.fantasy.espn.com` does not resolve,
+and `communication/` 404s for the room. ESPN serves a mock draft over a websocket to the
+client and writes nothing to the read API.
+
+**A retraction worth recording.** This was first concluded from a league id that was stale --
+the practice room had been recreated and the live one had a different id -- and from a draft
+that had not started. Both facts were consistent with "the API is blind" and neither was
+evidence for it. The conclusion happened to be right, and the reasoning was not. Re-tested
+against the live room with 52 picks down before it was recorded.
+
+### What this means for 2026-09-03
+
+The real draft is a persistent league, not an ephemeral lobby room, and its completed draft is
+demonstrably readable. Whether it publishes *during* the draft is genuinely unknown. So:
+
+1. Try `--sync` first on the night. If picks appear, draft night is automatic.
+2. If it returns zero, fall back to reading the room directly.
+
+### Reading the room
+
+Not screenshots. OCR over ~170 player names trades a solved problem for an unsolved one. The
+Claude-in-Chrome extension reads the DOM and returns exact strings, and can be polled.
+
+The efficient thing to read is **not the pick feed** but the player list itself: with ESPN's
+`Show Drafted` toggle off, the visible list *is* the available pool, so there is nothing to
+accumulate and no way to fall behind by missing a poll. Tracking picks incrementally is the
+version that breaks when a sync is missed.
+
+`hub.draft.state.sync_from_espn` now takes a `league_id`, so any room can be targeted; the
+configured league stays the default so draft night needs no extra argument.
+
 ## Open questions
 
 1. **Pool configuration** — entries, payout, rebuys. Under ~20 entries play near max win
