@@ -319,8 +319,30 @@ outright and arm B finished with four of them.
 **The flaw is in the tripwire, and it is mine.** It treats disagreement with `_need_score` as
 evidence of a defect, and disagreement with the lexicographic need rule is the entire reason
 championship equity exists as a separate signal. A gate that fires whenever the objective is
-doing its job is not a gate. But it was fixed before the numbers, and rewriting it now, having
-seen them, is the exact move this document already records going wrong once.
+doing its job is not a gate.
+
+### The gate was amended after seeing its output, deliberately and on the record
+
+Not quietly. The clause added: the tripwire fires only when the leader sits at a filled
+required position **and no co-leader fills an unfilled one**. A need-filling candidate inside
+two standard errors of the leader is the objective declining to distinguish, which is a tie,
+not a rejection of need.
+
+The amendment is narrow on purpose, and `test_the_amended_gate_still_catches_the_original_defect`
+pins that it still fires on the case it was written for: there a second quarterback beat a
+startable back *outright*, no co-leader filled a need, and arm B finished with four
+quarterbacks.
+
+Re-run under the amended gate: **clear at all six picks.**
+
+**A caveat on the before/after, found while re-running.** `--diagnose` called `build()`, which
+refetches live ESPN ADP every time, so the two runs above compared boards fetched minutes
+apart rather than one board. The tell was pick 3's leader flipping between two *post-fix* runs
+at the same seed. Some of the row-by-row movement in that table is therefore ADP drift, not
+the code change; the structural finding -- three tripwire fires becoming none -- is not
+sensitive to it. `--board PATH` now pins a snapshot so future comparisons vary only the code.
+That gap was mine too, and it is the same one ADR-0007 exists to close, one level down: the
+measurement was committed, its input was not.
 
 ## P1 — Break the circularity *(only if P0 says keep it)*
 

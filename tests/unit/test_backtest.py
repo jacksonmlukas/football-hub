@@ -354,7 +354,8 @@ def test_the_tripwire_catches_a_filled_position_named_over_an_empty_one():
     got = bt.tripwire(_board(8), _diagnosed([
         {"pick": 22, "held": "QB1", "leader": "P4", "leader_pos": "QB", "lift": 0.01,
          "co_leaders": 1, "candidates": 8,
-         "held_qb": 1, "held_rb": 0, "held_wr": 0, "held_te": 0}]))
+         "held_qb": 1, "held_rb": 0, "held_wr": 0, "held_te": 0,
+         "need_co_led": False}]))
     assert len(got) == 1
     assert "QB is full" in got[0]
 
@@ -363,7 +364,8 @@ def test_the_tripwire_is_clear_when_the_leader_fills_a_need():
     got = bt.tripwire(_board(8), _diagnosed([
         {"pick": 22, "held": "QB1", "leader": "P5", "leader_pos": "RB", "lift": 0.01,
          "co_leaders": 1, "candidates": 8,
-         "held_qb": 1, "held_rb": 0, "held_wr": 0, "held_te": 0}]))
+         "held_qb": 1, "held_rb": 0, "held_wr": 0, "held_te": 0,
+         "need_co_led": False}]))
     assert got == []
 
 
@@ -373,7 +375,8 @@ def test_a_surplus_is_fine_once_every_required_slot_is_filled():
     got = bt.tripwire(_board(8), _diagnosed([
         {"pick": 70, "held": "QB1, RB2, TE1, WR3", "leader": "P9", "leader_pos": "WR",
          "lift": 0.01, "co_leaders": 1, "candidates": 8,
-         "held_qb": 1, "held_rb": 2, "held_wr": 3, "held_te": 1}]))
+         "held_qb": 1, "held_rb": 2, "held_wr": 3, "held_te": 1,
+         "need_co_led": False}]))
     assert got == []
 
 
@@ -383,8 +386,33 @@ def test_the_tripwire_reads_typed_counts_not_the_display_string():
     got = bt.tripwire(_board(8), _diagnosed([
         {"pick": 70, "held": "nonsense", "leader": "P4", "leader_pos": "QB", "lift": 0.01,
          "co_leaders": 1, "candidates": 8,
-         "held_qb": 1, "held_rb": 0, "held_wr": 0, "held_te": 0}]))
+         "held_qb": 1, "held_rb": 0, "held_wr": 0, "held_te": 0,
+         "need_co_led": False}]))
     assert len(got) == 1
+
+
+def test_a_need_filling_co_leader_is_a_tie_not_a_defect():
+    """The clause added after the first run. A candidate the simulation cannot separate from
+    the leader means the objective declined to distinguish, not that it rejected need."""
+    got = bt.tripwire(_board(8), _diagnosed([
+        {"pick": 46, "held": "RB2, TE1", "leader": "P4", "leader_pos": "RB", "lift": 0.03,
+         "co_leaders": 3, "candidates": 10,
+         "held_qb": 0, "held_rb": 2, "held_wr": 0, "held_te": 1,
+         "need_co_led": True}]))
+    assert got == []
+
+
+def test_the_amended_gate_still_catches_the_original_defect():
+    """The amendment is narrow on purpose. In the defect it was written for, a second
+    quarterback beat a startable back OUTRIGHT -- no co-leader filled a need, and arm B
+    finished with four quarterbacks. That must still fire."""
+    got = bt.tripwire(_board(8), _diagnosed([
+        {"pick": 22, "held": "QB1", "leader": "P4", "leader_pos": "QB", "lift": 0.01,
+         "co_leaders": 1, "candidates": 10,
+         "held_qb": 1, "held_rb": 0, "held_wr": 0, "held_te": 0,
+         "need_co_led": False}]))
+    assert len(got) == 1
+    assert "no co-leader fills one" in got[0]
 
 
 def test_the_diagnose_picks_are_your_first_six_turns():

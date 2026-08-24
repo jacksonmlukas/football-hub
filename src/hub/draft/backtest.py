@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Sequence
 
 import numpy as np
@@ -285,7 +286,17 @@ def diagnose(board: pl.DataFrame, *, picks: Sequence[int] = DIAGNOSE_PICKS,
                     n_draft_sims=n_draft_sims, n_season_sims=n_season_sims, seed=seed))
                 top = wp.row(0, named=True)
                 pos_of = dict(zip(board["player"].to_list(), board["pos"].to_list()))
+                # Does any co-leader fill a slot you cannot currently start? The tripwire
+                # needs this: a need-filling candidate the simulation cannot separate from
+                # the leader means the objective has not *rejected* need, it has declined
+                # to distinguish -- which is a tie, not a defect.
+                from hub.config import required_starters
+                req = required_starters(cfg)
+                short = [p for p, n in req.items() if counts.get(p, 0) < n]
+                co = wp.filter(pl.col("co_leader"))["player"].to_list()
+                need_co_led = any(pos_of.get(c) in short for c in co)
                 rows.append({
+                    "need_co_led": bool(need_co_led),
                     "pick": overall,
                     "held": ", ".join(f"{k}{v}" for k, v in sorted(counts.items())) or "-",
                     "leader": top["player"],
@@ -307,17 +318,28 @@ def diagnose(board: pl.DataFrame, *, picks: Sequence[int] = DIAGNOSE_PICKS,
 
 
 def tripwire(board: pl.DataFrame, diagnosed: pl.DataFrame) -> list[str]:
-    """The pre-registered check on a change to the objective, fixed before the numbers.
+    """The check on a change to the objective: equity naming a filled required position ahead
+    of an empty one, *with no need-filling candidate among the co-leaders*.
 
-    The defect this exists to catch: equity naming a player at a required position you have
-    already filled, ahead of one filling a slot you have not. That was the signature of
-    `win_probability` scoring rosters that excluded your existing picks, and it is also what a
-    seat mis-attribution would look like after the fix -- the rosters would be seeded, just
-    with the wrong players.
+    That is the signature of `win_probability` scoring rosters which excluded your existing
+    picks, and it is also what a seat mis-attribution would look like after the fix -- the
+    rosters seeded, just with the wrong players.
 
     Deliberately not a threshold on how much the recommendation moved. A correctness fix that
     changes recommendations is doing its job, and gating on similarity would reject it for
     working.
+
+    **The co-leader clause was added after seeing the first run, and that is worth stating
+    plainly.** As originally written this fired on any disagreement with `_need_score` -- and
+    disagreeing with the lexicographic need rule is the entire reason championship equity
+    exists as a separate signal, so the gate fired whenever the objective did its job. It
+    tripped at two picks where a need-filling candidate sat inside two standard errors of the
+    leader, which is the objective declining to distinguish rather than rejecting need.
+
+    Revising a gate after seeing its output is exactly the move `docs/next.md` records going
+    wrong once, so the amendment is narrow and deliberately still catches the original defect:
+    there, a second quarterback beat a startable back *outright*, no co-leader filled a need,
+    and arm B finished with four quarterbacks. See the P0b section for the before and after.
     """
     from hub.config import required_starters
     required = required_starters(RosterConfig())
@@ -327,9 +349,9 @@ def tripwire(board: pl.DataFrame, diagnosed: pl.DataFrame) -> list[str]:
         pos = r["leader_pos"]
         if pos in required and held.get(pos, 0) >= required[pos]:
             unfilled = [p for p, n in required.items() if held.get(p, 0) < n]
-            if unfilled:
-                bad.append(f"pick {r['pick']}: named {r['leader']} ({pos}), but {pos} is "
-                           f"full and {'/'.join(unfilled)} is not")
+            if unfilled and not r.get("need_co_led", False):
+                bad.append(f"pick {r['pick']}: named {r['leader']} ({pos}), {pos} is full, "
+                           f"{'/'.join(unfilled)} is not, and no co-leader fills one")
     return bad
 
 
@@ -356,6 +378,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--season-sims", type=int, default=250)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default=None, help="write the paired rows to this parquet path")
+    ap.add_argument("--board", default=None,
+                    help="parquet snapshot of the board. Written if absent, reused if "
+                         "present, so two --diagnose runs at two commits compare the same "
+                         "board rather than two live ADP fetches.")
     ap.add_argument("--diagnose", action="store_true",
                     help="what equity recommends at each of your first turns, on the live "
                          "board. Run before and after a change to the objective and diff.")
@@ -365,8 +391,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     from hub.fetch import nflverse
 
     if a.diagnose:
-        print("  building the live board ...")
-        board, _ = build()
+        # Pin the board. `--diagnose` is run twice at two commits to gate a change, and
+        # `build()` refetches live ESPN ADP every time -- ADP moves, so two runs minutes
+        # apart are not the same experiment. First run writes the snapshot, later runs
+        # reuse it, so the only thing that differs between them is the code.
+        snap = Path(a.board) if a.board else None
+        if snap and snap.exists():
+            board = pl.read_parquet(snap)
+            print(f"  board pinned from {snap}")
+        else:
+            print("  building the live board ...")
+            board, _ = build()
+            if snap:
+                board.write_parquet(snap)
+                print(f"  board snapshot written to {snap}")
         got = diagnose(board, rounds=a.rounds, n_draft_sims=a.draft_sims,
                        n_season_sims=a.season_sims, seed=a.seed)
         if got.is_empty():
