@@ -40,8 +40,19 @@ import polars as pl
 # he tore his ACL in week 3. Replay that season with Rice healthy and +184 becomes +26,
 # and the pooled six-season effect goes from t = -0.68 to t = -2.64.
 #
-# So the honest reason for zero is not "the signal is harmful". It is that a metric riding
-# on ~15 player-outcomes across six seasons cannot tell. See docs/lambda-sweep.md.
+# The reason is simpler than any of that, and it is measurable directly. This signal
+# barely persists year over year:
+#
+#   corr(z in season N, z in season N+1), same player, four transitions:
+#     uniform  +0.209    8wk  +0.193    4wk  +0.147    2wk  +0.090
+#
+# r = 0.21 is about 4% shared variance. Roughly 96% of the expected-versus-actual gap does
+# not carry into the next season, so there was never enough here to tune. Recency weighting
+# makes it strictly worse -- shorter windows average fewer weeks, so more of what survives
+# is week-to-week noise, which is the signature of noise rather than of staleness.
+#
+# See docs/lambda-sweep.md for the full path: six seasons, three metrics, and a
+# recency-weighted variant, all arriving at zero.
 DEFAULT_LAMBDA = 0.0
 
 
@@ -56,6 +67,47 @@ def regression_signal(df: pl.DataFrame) -> pl.DataFrame:
         ((gap - gap.mean().over("position")) / gap.std().over("position"))
         .fill_nan(None).alias("z_regress")
     )
+
+
+def weighted_signal(weekly: pl.DataFrame, half_life: float | None = None,
+                    min_weeks: int = 1) -> pl.DataFrame:
+    """The regression signal with recent weeks weighted more heavily.
+
+    The season-total version treats week 1 and week 17 as equally informative about next
+    season. Roles change: a back who took over in November and one who lost the job in
+    October can post identical totals and be entirely different assets going forward.
+
+    `half_life` is in weeks -- 4.0 means a week four back counts half as much as the most
+    recent one. `None` is uniform weighting, and it reproduces `regression_signal` on
+    season totals exactly, so a comparison between the two is like-for-like rather than a
+    comparison between two different quantities.
+
+    Weights are renormalised to sum to the games played, so the signal keeps the scale of
+    a season total. Without that, a shorter half-life would shrink every value and a
+    lambda tuned on one weighting would mean something different on the other.
+    """
+    last = weekly["week"].max()
+    if half_life is None:
+        w = pl.lit(1.0)
+    else:
+        w = (0.5 ** ((pl.lit(last) - pl.col("week")) / half_life))
+
+    per = (weekly.with_columns(w.alias("_w"))
+           .group_by(["full_name", "position"])
+           .agg(((pl.col("fp") - pl.col("xfp")) * pl.col("_w")).sum().alias("_num"),
+                pl.col("_w").sum().alias("_den"),
+                pl.len().alias("_n")))
+
+    # Renormalise to season scale, then flip so underperformance is positive.
+    gap = -(pl.col("_num") / pl.col("_den") * pl.col("_n"))
+    scored = per.with_columns(
+        pl.when(pl.col("_n") >= min_weeks).then(gap).otherwise(None).alias("_gap"))
+
+    return (scored.with_columns(
+                ((pl.col("_gap") - pl.col("_gap").mean().over("position"))
+                 / pl.col("_gap").std().over("position"))
+                .fill_nan(None).alias("z_regress"))
+            .select("full_name", "position", "z_regress"))
 
 
 def adjust_consensus(df: pl.DataFrame, lam: float = DEFAULT_LAMBDA) -> pl.DataFrame:

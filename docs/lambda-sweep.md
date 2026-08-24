@@ -293,15 +293,72 @@ direction and only at large lambda, where all three agree the adjustment is harm
 **`projection_lambda = 0.0`**, and the draft-based evaluation is the one to trust: it is
 the only one that scores the thing the board is actually for.
 
+## The recency-weighted signal
+
+The season-total gap treats week 1 and week 17 as equally informative about next year.
+Roles change, so a different hypothesis: weight recent weeks more. `weighted_signal` does
+this with an exponential half-life, and at `half_life=None` it reproduces the season-total
+signal exactly, so the comparison is like-for-like rather than two different quantities.
+
+**Mean lift in starter points, pooled over six seasons, evaluated over simulated drafts:**
+
+| half-life | lam=0.04 | lam=0.08 | lam=0.16 |
+|---|---|---|---|
+| **uniform** | **-12.4** (t -0.60) | **-45.2** (t -1.20) | -83.8 (t -2.41) |
+| 8 wk | -23.5 (t -1.02) | -47.9 (t -1.25) | -122.8 (t -2.59) |
+| 6 wk | -23.2 (t -1.00) | -47.2 (t -1.25) | -129.8 (t -2.69) |
+| 4 wk | -25.6 (t -1.28) | -60.2 (t -1.67) | -113.1 (t -2.62) |
+| 3 wk | -25.8 (t -1.17) | -62.8 (t -1.90) | -93.2 (t -2.54) |
+| 2 wk | -28.7 (t -1.32) | -65.6 (t -1.62) | -90.4 (t -2.25) |
+
+**Recency makes it worse, and nearly monotonically.** No cell in the grid is positive. The
+best of twenty-four is uniform weighting at lambda 0.04, and that is still -12.4.
+
+### Why, measured rather than guessed
+
+If the signal were real but stale, recency would help. It hurts, which points the other
+way -- so measure the signal's own persistence directly. Correlation of a player's z in one
+season with the same player's z in the next:
+
+| half-life | 21-22 | 22-23 | 23-24 | 24-25 | mean |
+|---|---|---|---|---|---|
+| **uniform** | +0.249 | +0.152 | +0.192 | +0.242 | **+0.209** |
+| 8 wk | +0.221 | +0.177 | +0.190 | +0.184 | +0.193 |
+| 4 wk | +0.174 | +0.155 | +0.149 | +0.111 | +0.147 |
+| 2 wk | +0.127 | +0.107 | +0.070 | +0.057 | +0.090 |
+
+Two things fall out, and together they close the whole investigation.
+
+**Shortening the window makes the signal less stable, monotonically.** That is the
+signature of noise, not of staleness: a shorter window means fewer weeks averaged, so more
+of what survives is week-to-week variance. Recency weighting does not sharpen this signal,
+it thins it.
+
+**Even at its most stable the signal barely persists at all.** r = 0.21 year over year is
+about 4% shared variance. Whatever the expected-versus-actual gap measures, roughly
+96% of it does not carry into the next season.
+
+That is the answer to the whole thread. Not "lambda is mis-tuned", not "the metric was
+wrong", not "the signal decayed" -- **there was never enough signal to tune.** A quantity
+that reproduces itself at r = 0.21 cannot move a board built by hundreds of analysts, and
+six seasons of holdouts were measuring the absence of an effect rather than the size of
+one.
+
 ## What would still change it
 
-More seasons, which do not exist. Not more lambda values, not a bigger bootstrap, not more
-simulated drafts -- all three have been shown not to bind.
+Nothing available. Not more lambda values, not more seasons, not more simulated drafts, and
+not a different weighting -- each has now been shown not to bind, and the last one measured
+why.
 
-The one remaining avenue is a different signal rather than a better measurement of this
-one. Expected-versus-actual over a full season is coarse; a version weighted toward recent
-weeks, or restricted to a position where opportunity is more stable, would be a different
-hypothesis rather than a re-run of this one. Post-draft work.
+A genuinely different signal would need a different input, not a different transform of
+this one. Expected points from opportunity is one view of a player; something with more
+year-over-year persistence -- age curves, contract or depth-chart status, offensive line
+continuity -- is a separate hypothesis and would deserve this same treatment rather than
+inheriting its conclusion.
+
+The apparatus is reusable and that is the durable part. `hub.draft.evaluate` scores any
+board by the roster it drafts, and it is the harness Phase 5's waiver and trade evaluators
+want.
 
 ## What changed in the code
 

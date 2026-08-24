@@ -206,7 +206,7 @@ def board_page(board_season: int) -> str:
 
 
 def holdout(signal_season: int = 2024, board_season: int = 2025,
-            page: str | None = None) -> pl.DataFrame:
+            page: str | None = None, half_life: float | None = None) -> pl.DataFrame:
     """Last season's regression signal, this season's preseason board, this season's truth.
 
     The board is the LAST preseason ECR snapshot before the season opened, because that is
@@ -214,15 +214,16 @@ def holdout(signal_season: int = 2024, board_season: int = 2025,
     """
     import nflreadpy as nfl
 
-    from hub.draft.projection import regression_signal
+    from hub.draft.projection import weighted_signal
     from hub.draft.state import _norm
 
-    sig = (nfl.load_ff_opportunity(seasons=[signal_season], stat_type="weekly")
-           .filter(pl.col("player_id").is_not_null())
-           .group_by(["full_name", "position"])
-           .agg(pl.col("total_fantasy_points_exp").sum().alias("xfp"),
-                pl.col("total_fantasy_points").sum().alias("fp")))
-    sig = regression_signal(sig).select(
+    weekly = (nfl.load_ff_opportunity(seasons=[signal_season], stat_type="weekly")
+              .filter(pl.col("player_id").is_not_null())
+              .select(pl.col("full_name"), pl.col("position"), pl.col("week"),
+                      pl.col("total_fantasy_points_exp").alias("xfp"),
+                      pl.col("total_fantasy_points").alias("fp")))
+    # half_life=None is uniform, which reproduces the season-total signal exactly.
+    sig = weighted_signal(weekly, half_life=half_life).select(
         pl.col("full_name"), pl.col("z_regress"))
 
     # Bounded on BOTH sides. Without a lower bound, a player ranked in a previous
