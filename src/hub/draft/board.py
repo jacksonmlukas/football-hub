@@ -610,6 +610,9 @@ def main():
                 pl.col("player").is_in(state_mod.my_roster(st, MY_SLOT, TEAMS))
             ).iter_rows(named=True)])
         mp = market_pick(draft_pool(board, st, a.espn_weight), dict(held))
+        if not mp:
+            print("\n  THE PICK unavailable -- no ESPN ADP on the board. The market has")
+            print("    nothing to say without it; fall back to the equity table below.")
         if mp:
             row = board.filter(pl.col("player") == mp).row(0, named=True)
             notes = []

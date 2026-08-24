@@ -66,7 +66,26 @@ def save(state: DraftState, path: Path = STATE) -> None:
 
 
 def take(state: DraftState, *names: str) -> DraftState:
-    return replace(state, taken=[*state.taken, *names])
+    """Record picks, ignoring any already recorded.
+
+    Deduped because appending blindly corrupts the draft position, not merely the list:
+    `simulate_remaining_draft` starts from `state.n_taken + 1`, so a pick entered twice tells
+    the simulation the draft is further along than it is and every availability estimate
+    after it is wrong. Entering a pick twice is the obvious thing to do when catching up
+    mid-round, so it has to be safe.
+
+    Matching is on the normalised name, so `A.J. Brown` and `AJ Brown` are one pick. The
+    first spelling is kept, since that is the one the board already matched against.
+    """
+    seen = {_norm(n) for n in state.taken}
+    fresh = []
+    for n in names:
+        k = _norm(n)
+        if k in seen:
+            continue
+        seen.add(k)
+        fresh.append(n)
+    return DraftState(taken=[*state.taken, *fresh])
 
 
 def undo(state: DraftState, n: int = 1) -> DraftState:

@@ -222,3 +222,24 @@ def test_an_empty_pool_returns_nothing_rather_than_raising():
     pool = pl.DataFrame({"player": [], "pos": [], "adp": []},
                         schema={"player": pl.Utf8, "pos": pl.Utf8, "adp": pl.Float64})
     assert market_pick(pool, {}) is None
+
+
+def test_no_adp_at_all_returns_nothing_rather_than_an_arbitrary_player():
+    """ESPN is under load on draft night and ADP is the first thing to go. With no ADP the
+    ranking has nothing to order by, so it returned whichever row came first -- a confident
+    looking recommendation with nothing behind it, which is worse than saying so."""
+    pool = pl.DataFrame({"player": ["A", "B"], "pos": ["RB", "WR"], "adp": [None, None]},
+                        schema={"player": pl.Utf8, "pos": pl.Utf8, "adp": pl.Float64})
+    assert market_pick(pool, {}) is None
+
+
+def test_a_partial_adp_still_works():
+    """Losing some ADP is normal -- deep players never have one. Only losing all of it means
+    the market has nothing to say."""
+    pool = pl.DataFrame({"player": ["A", "B"], "pos": ["RB", "RB"], "adp": [None, 12.0]})
+    assert market_pick(pool, {}) == "B"
+
+
+def test_a_board_with_no_adp_column_returns_nothing():
+    pool = pl.DataFrame({"player": ["A"], "pos": ["RB"]})
+    assert market_pick(pool, {}) is None

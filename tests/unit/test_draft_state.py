@@ -216,3 +216,41 @@ def test_punctuation_and_suffixes_still_match():
     board = pl.DataFrame({"player": ["A.J. Brown", "Marvin Harrison Jr."],
                           "pos": ["WR", "WR"]})
     assert st.suggest_unmatched(board, ["AJ Brown", "Marvin Harrison"]) == {}
+
+
+# --- a pick entered twice ---------------------------------------------------
+
+def test_recording_the_same_pick_twice_does_not_advance_the_draft():
+    """Found in the draft-night rehearsal. `take` appended blindly, so entering a pick twice
+    -- the obvious thing to do when catching up mid-round -- left n_taken at 2 while only one
+    player left the pool.
+
+    That is not cosmetic: `simulate_remaining_draft` starts from `state.n_taken + 1`, so a
+    duplicate tells the simulation the draft is further along than it is, and every
+    availability estimate after it is wrong."""
+    import hub.draft.state as st
+    s = st.take(st.DraftState(taken=[]), "Bijan Robinson")
+    s = st.take(s, "Bijan Robinson")
+    assert s.n_taken == 1
+    assert s.taken == ["Bijan Robinson"]
+
+
+def test_a_duplicate_is_caught_across_spelling_differences():
+    """`A.J. Brown` and `AJ Brown` are the same pick, and the normaliser already knows it."""
+    import hub.draft.state as st
+    s = st.take(st.DraftState(taken=[]), "A.J. Brown")
+    assert st.take(s, "AJ Brown").n_taken == 1
+
+
+def test_distinct_picks_still_accumulate():
+    import hub.draft.state as st
+    s = st.take(st.DraftState(taken=[]), "Bijan Robinson", "Ja'Marr Chase")
+    assert s.n_taken == 2
+
+
+def test_the_first_spelling_is_the_one_kept():
+    """Whichever came first is what the board matched against, so keep it rather than
+    silently swapping to a later variant."""
+    import hub.draft.state as st
+    s = st.take(st.DraftState(taken=[]), "A.J. Brown")
+    assert st.take(s, "AJ Brown").taken == ["A.J. Brown"]

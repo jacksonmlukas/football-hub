@@ -247,12 +247,18 @@ def market_pick(pool: pl.DataFrame, counts: dict[str, int]) -> str | None:
     Lexicographic, matching `simulate_remaining_draft`: an unfilled starting slot outranks
     any amount of ADP, and ADP breaks ties within a need tier.
     """
-    if pool.height == 0:
+    if pool.height == 0 or "adp" not in pool.columns:
+        return None
+    # No ADP anywhere means the market has nothing to say, and ESPN is the first thing to
+    # fall over on draft night. Ranking by a column that is entirely null returns whichever
+    # row came first -- a confident-looking recommendation with nothing behind it, which is
+    # worse than admitting the input is missing.
+    if pool["adp"].null_count() == pool.height:
         return None
     names = pool["player"].to_list()
     pos = pool["pos"].fill_null("NA").to_list()
     # a null ADP is an undrafted player, not the first pick of the round
-    adp = pool["adp"].fill_null(999.0).to_list() if "adp" in pool.columns else [999.0] * len(names)
+    adp = pool["adp"].fill_null(999.0).to_list()
     best = min(range(len(names)),
                key=lambda i: (-_need_score(counts, pos[i]), adp[i]))
     return names[best]
