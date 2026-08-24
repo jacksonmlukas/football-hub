@@ -189,3 +189,19 @@ def test_scoring_against_itself_reports_no_edge():
     themselves must show a delta of zero."""
     p = [0.6, 0.3, 0.75]
     assert publish.log_loss(p, [1, 0, 1]) - publish.log_loss(p, [1, 0, 1]) == 0.0
+
+
+def test_scoring_accepts_numpy_arrays():
+    """`if not probs` is ambiguous for a numpy array and raises. It went unnoticed while
+    every caller passed lists; the model-comparison harness bootstraps over arrays, and hit
+    it 4,000 times a run."""
+    import numpy as np
+    p = np.array([0.6, 0.3, 0.75])
+    y = np.array([1, 0, 1])
+    assert publish.log_loss(p, y) == pytest.approx(publish.log_loss(list(p), list(y)))
+    assert publish.brier(p, y) == pytest.approx(publish.brier(list(p), list(y)))
+
+
+def test_scoring_an_empty_set_is_not_an_error():
+    import numpy as np
+    assert publish.log_loss(np.array([]), np.array([])) != publish.log_loss([0.5], [1])

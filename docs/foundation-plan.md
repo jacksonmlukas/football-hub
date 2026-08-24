@@ -121,11 +121,13 @@ This phase has a date attached. If Phase 1 slips, this still ships.
 - [ ] **3.3 `hub.models.conformal`** — wire the existing `Conformalized` wrapper to a rolling
       calibration window driven by `conf/`.
       *Done when:* `--recalibrate` runs and reports empirical vs nominal coverage.
-- [ ] **3.4 `hub.models.eval`** — the comparison harness from the `model-eval` skill.
-      `--compare a,b --split temporal`, log-loss delta with a bootstrap interval, reliability
-      diagram.
+- [x] **3.4 `hub.models.eval`** _(done 2026-08-24)_ — `--compare a,b --split temporal`,
+      log-loss delta with a paired bootstrap interval, reliability diagram, both models'
+      absolute log loss and Brier so a delta cannot hide two bad models.
       *Done when:* it can score `MarketBaseline` against itself and report a delta of zero with
-      an interval containing zero. That is the correctness test.
+      an interval containing zero. **Met** — and the same work turned up a latent bug in
+      `hub.publish.log_loss`, whose `if not probs` raised on a numpy array. It went unnoticed
+      while every caller passed lists.
 - [ ] **3.5 Prediction provenance.** Every model writes to
       `data/processed/preds/{model}/{ts}.parquet` with model hash and config digest.
       *Done when:* two runs differing only in a hyperparameter produce distinguishable rows.
