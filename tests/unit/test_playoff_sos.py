@@ -5,7 +5,7 @@ place on a team getting 1.0 and reading as "average playoff schedule".
 """
 import polars as pl
 import pytest
-from hub.draft.schedule import (PLAYOFF_WEEKS, _canon_team, _dvp_from_stats,
+from hub.draft.playoff_sos import (PLAYOFF_WEEKS, _canon_team, _dvp_from_stats,
                                 _opponents_from_schedule, _sos_from, attach_sos)
 
 
@@ -108,8 +108,8 @@ def _three_softs():
 
 def test_a_soft_playoff_slate_scores_above_one():
     s = _three_softs()
-    assert s.filter(pl.col("team") == "EASY")["sos_1517"][0] == pytest.approx(1.5)
-    assert s.filter(pl.col("team") == "HARD")["sos_1517"][0] == pytest.approx(0.5)
+    assert s.filter(pl.col("team") == "EASY")["wk15_17_sos"][0] == pytest.approx(1.5)
+    assert s.filter(pl.col("team") == "HARD")["wk15_17_sos"][0] == pytest.approx(0.5)
 
 
 def test_game_count_is_reported_so_a_partial_slate_is_visible():
@@ -120,20 +120,20 @@ def test_game_count_is_reported_so_a_partial_slate_is_visible():
 
 def test_board_join_uses_canonical_team_codes():
     board = pl.DataFrame({"player": ["A"], "team": ["JAC"], "pos": ["WR"]})
-    sos = pl.DataFrame({"team": ["JAX"], "pos": ["WR"], "sos_1517": [1.2],
+    sos = pl.DataFrame({"team": ["JAX"], "pos": ["WR"], "wk15_17_sos": [1.2],
                         "sos_games": [3]})
-    assert attach_sos(board, sos)["sos_1517"][0] == pytest.approx(1.2)
+    assert attach_sos(board, sos)["wk15_17_sos"][0] == pytest.approx(1.2)
 
 
 def test_unplaceable_player_gets_null_not_a_default():
     """A silent 1.0 would read as 'average schedule' for someone we could not place."""
     board = pl.DataFrame({"player": ["Free Agent"], "team": ["FA"], "pos": ["WR"]})
-    sos = pl.DataFrame({"team": ["JAX"], "pos": ["WR"], "sos_1517": [1.2],
+    sos = pl.DataFrame({"team": ["JAX"], "pos": ["WR"], "wk15_17_sos": [1.2],
                         "sos_games": [3]})
-    assert attach_sos(board, sos)["sos_1517"][0] is None
+    assert attach_sos(board, sos)["wk15_17_sos"][0] is None
 
 
 def test_helper_column_does_not_leak():
     board = pl.DataFrame({"player": ["A"], "team": ["KC"], "pos": ["WR"]})
-    sos = pl.DataFrame({"team": ["KC"], "pos": ["WR"], "sos_1517": [1.0], "sos_games": [3]})
+    sos = pl.DataFrame({"team": ["KC"], "pos": ["WR"], "wk15_17_sos": [1.0], "sos_games": [3]})
     assert not [c for c in attach_sos(board, sos).columns if c.startswith("_")]

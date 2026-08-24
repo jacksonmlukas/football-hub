@@ -90,13 +90,17 @@ Both were completed on 2026-08-21, before the plan was written.
 | Plan item | Reality |
 |---|---|
 | **2.1** `--show-slots` "referenced in SETUP.md step 5 and missing" | **Implemented.** Reports `teams 12 | slot 3 | QB1 RB2 WR3 TE1 FLEX1`, picks 3/22/27/46/51/70/75, and the 19-5 wait alternation. |
-| **2.2** playoff SoS as `hub.draft.playoff_sos`, column `wk15_17_sos` | **Implemented** as `hub.draft.schedule`, column `sos_1517`. 435 of 452 players placed, range 0.75–1.31, `--sos` view with same-tier swaps. |
+| **2.2** playoff SoS as `hub.draft.playoff_sos`, column `wk15_17_sos` | **Implemented.** 435 of 452 players placed, range 0.75–1.31, `--sos` view with same-tier swaps. |
 
-**Naming conflict to resolve:** the plan says `hub.draft.playoff_sos` / `wk15_17_sos`; the code
-says `hub.draft.schedule` / `sos_1517`. One of them should move. Renaming the code is a
-~10-minute change across three files and a test module; amending the plan is free. No opinion
-worth defending either way, but leaving both names in circulation is how the next session builds
-it a second time.
+**Naming conflict — resolved 2026-08-23 in the plan's favour.** The code shipped as
+`hub.draft.schedule` / `sos_1517` and was renamed to `hub.draft.playoff_sos` / `wk15_17_sos` to
+match. `schedule` was a poor name anyway: it suggested a schedule loader rather than a strength
+metric, and it collided conceptually with `nflreadpy.load_schedules()`, which the module calls.
+
+One thing worth knowing for future renames in this repo: the column rename silently no-op'd on
+the first attempt because BSD `sed` on macOS does not support `\b` word boundaries. The pattern
+matched nothing and `sed` exited 0. Grep for the old name afterwards rather than trusting the
+exit code.
 
 ---
 
@@ -104,7 +108,7 @@ it a second time.
 
 | Claim | Finding |
 |---|---|
-| **5.3** `hub.draft.review` — "Referenced in `SETUP.md`" | **It is not.** Grep for `review` in `SETUP.md` returns nothing. `hub.draft.review` appears nowhere in the repo except the plan. It is a new feature, not a dangling reference, and should be re-labelled as such — otherwise it competes for "foundation" priority it has not earned. |
+| **5.3** `hub.draft.review` — "Referenced in `SETUP.md`" | **It is not.** Grep for `review` in `SETUP.md` returns nothing. `hub.draft.review` appears nowhere in the repo except the plan. It was a new feature wearing a dangling reference's clothes. **Dropped from the plan 2026-08-23.** |
 
 ---
 

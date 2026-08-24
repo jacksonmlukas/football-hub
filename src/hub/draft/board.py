@@ -19,7 +19,7 @@ import polars as pl
 from hub.contracts import ContractViolation
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
-from hub.draft.schedule import attach_sos, playoff_sos
+from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.state import DraftState, _norm, remaining
 from hub.draft import state as state_mod
 import nflreadpy as nfl
@@ -421,15 +421,15 @@ def main():
 
     if a.sos:
         pool = board.filter(pl.col("adp").is_not_null()
-                            & pl.col("sos_1517").is_not_null())
+                            & pl.col("wk15_17_sos").is_not_null())
         print(f"\n  Weeks 15-17 strength of schedule -- {pool.height} drafted players")
         print("  1.00 = league-average defence for that position; higher is softer.\n")
-        for label, frame in (("SOFTEST", pool.sort("sos_1517", descending=True).head(8)),
-                             ("HARDEST", pool.sort("sos_1517").head(8))):
+        for label, frame in (("SOFTEST", pool.sort("wk15_17_sos", descending=True).head(8)),
+                             ("HARDEST", pool.sort("wk15_17_sos").head(8))):
             print(f"  {label}:")
             for r in frame.iter_rows(named=True):
                 print(f"    {r['player']:<24} {r['pos']:<3} {r['team'] or '':<4} "
-                      f"ADP {r['adp']:>6.1f}  SoS {r['sos_1517']:.3f}")
+                      f"ADP {r['adp']:>6.1f}  SoS {r['wk15_17_sos']:.3f}")
             print()
         # The actionable form: players the room prices the same, whose playoff slates
         # differ. Inside a tier this is a free upgrade; across tiers it is not.
@@ -441,10 +441,10 @@ def main():
             for y in rows[i + 1:]:
                 if y["adp"] - x["adp"] > 8:
                     break
-                if x["pos"] == y["pos"] and abs(x["sos_1517"] - y["sos_1517"]) > 0.15:
-                    hi, lo = (x, y) if x["sos_1517"] > y["sos_1517"] else (y, x)
-                    print(f"    {hi['player']:<22} ({hi['sos_1517']:.2f}) over "
-                          f"{lo['player']:<22} ({lo['sos_1517']:.2f})  "
+                if x["pos"] == y["pos"] and abs(x["wk15_17_sos"] - y["wk15_17_sos"]) > 0.15:
+                    hi, lo = (x, y) if x["wk15_17_sos"] > y["wk15_17_sos"] else (y, x)
+                    print(f"    {hi['player']:<22} ({hi['wk15_17_sos']:.2f}) over "
+                          f"{lo['player']:<22} ({lo['wk15_17_sos']:.2f})  "
                           f"{hi['pos']}, ADP {hi['adp']:.0f} vs {lo['adp']:.0f}")
                     shown += 1
                     break
@@ -466,7 +466,7 @@ def main():
         for r in rec.iter_rows(named=True):
             cw = r.get("cost_of_waiting")
             extra = f"cost_of_waiting {cw:>5.1f}" if cw is not None else ""
-            v, sos = r["vor"], r.get("sos_1517")
+            v, sos = r["vor"], r.get("wk15_17_sos")
             tag = f"  SoS {sos:.2f}" if sos is not None else ""
             print(f"    {r['player']:<24} {r['pos'] or '':<4} "
                   f"VOR {0.0 if v is None else v:>5.1f}  {extra}{tag}")

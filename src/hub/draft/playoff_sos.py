@@ -68,13 +68,13 @@ def _sos_from(dvp: pl.DataFrame, opponents: pl.DataFrame) -> pl.DataFrame:
     """Mean opponent dvp_ratio over the playoff weeks, per team and position."""
     joined = opponents.join(dvp, left_on="opponent", right_on="defense", how="inner")
     return (joined.group_by(["team", "pos"])
-                  .agg(pl.col("dvp_ratio").mean().alias("sos_1517"),
+                  .agg(pl.col("dvp_ratio").mean().alias("wk15_17_sos"),
                        pl.len().alias("sos_games"))
-                  .sort(["pos", "sos_1517"], descending=[False, True]))
+                  .sort(["pos", "wk15_17_sos"], descending=[False, True]))
 
 
 def attach_sos(board: pl.DataFrame, sos: pl.DataFrame) -> pl.DataFrame:
-    """Add sos_1517 to the board. Teamless or unmatched players get null, never a default.
+    """Add wk15_17_sos to the board. Teamless or unmatched players get null, never a default.
 
     A silent 1.0 would read as "average playoff schedule" for a player we simply could
     not place, which is the kind of quiet wrong answer this repo keeps finding.

@@ -154,11 +154,15 @@ This phase has a date attached. If Phase 1 slips, this still ships.
       on getting pool config.
 - [ ] **5.2 Weekly lineup optimizer** with the ceiling preference from
       `docs/championship-leverage.md`.
-- [ ] **5.3 `hub.draft.review`** — diffs your actual picks against the board's recommendation
-      and reports reach patterns. Referenced in `SETUP.md`.
 - [ ] **5.4 League transaction-history spike** — count real trades in prior seasons via
       `espn-api`. Twenty minutes, and it decides whether the trade evaluator is worth building.
 - [ ] **5.5 Enable the watchdog cron** after the repo goes public Sep 4.
+
+> **5.3 was dropped** (2026-08-23). It proposed `hub.draft.review` on the grounds that `SETUP.md`
+> referenced it. `SETUP.md` does not, and the symbol appears nowhere in the repo — it was a new
+> feature wearing a dangling reference's clothes, so it did not belong in a phase whose whole
+> premise is closing gaps. Numbering left as-is so the surrounding items keep their labels.
+> See `docs/gaps.md`.
 
 ---
 

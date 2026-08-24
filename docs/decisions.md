@@ -139,7 +139,7 @@ toward RB, so flex allocation is ~even (0.45 RB / 0.50 WR), not WR-dominant.
 
 ## Weeks 15-17 SoS (pre-draft gate: met)
 
-`hub/draft/schedule.py`, column `sos_1517` on the board, `--sos` to view. 1.00 is a
+`hub/draft/playoff_sos.py`, column `wk15_17_sos` on the board, `--sos` to view. 1.00 is a
 league-average defence *for that position*; the ratio is never collapsed across positions
 because a defence soft against WRs need not be soft against RBs. Built from two bulk pulls:
 2025 PPR points allowed per defence per position, and the published 2026 weeks 15-17
