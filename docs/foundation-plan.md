@@ -96,7 +96,7 @@ This phase has a date attached. If Phase 1 slips, this still ships.
       *Highest-value pre-draft build.* See `docs/championship-leverage.md`.
       *Done when:* the column appears on the board and the top and bottom five pass a sanity
       read.
-- [ ] **2.3 `hub.draft.live`** — the draft-day poller. Referenced by `draft-day-ops`, `SETUP.md`,
+- [x] **2.3 `hub.draft.live`** _(done 2026-08-23)_ — the draft-day poller. Referenced by `draft-day-ops`, `SETUP.md`,
       and the Makefile. Polls the ESPN draft endpoint, removes drafted players, recomputes VOR
       and replacement level, flags positional runs, prints the mode from `draft_mode()`.
       *Done when:* a dry run against last season's completed draft reproduces the pick sequence

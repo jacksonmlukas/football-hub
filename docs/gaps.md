@@ -42,7 +42,7 @@ of them dead-ends.
 | `hub.models.conformal` | `weekly-slate/SKILL.md:21` | MISSING | **Build.** `Conformalized` already exists in `models/base.py`; this is the CLI around it. |
 | `hub.models.eval` | `model-eval/SKILL.md:26` | MISSING | **Build**, post-draft. |
 | `hub.publish` | `track-record.md:12,24`, `weekly-slate/SKILL.md:22` | MISSING | **Build**, post-draft. |
-| `hub.draft.live` | `draft-day-ops/SKILL.md:25`, `SETUP.md:227` | MISSING | **Build.** Has a date: this is the draft-day poller. |
+| `hub.draft.live` | `draft-day-ops/SKILL.md:25`, `SETUP.md:227` | ~~MISSING~~ **DONE 2026-08-23** | Built. Live replacement level, run detection, `--replay` rehearsal. 192 picks at 7ms/refresh. |
 
 ### Why `hub.inspect` is the worst one
 
