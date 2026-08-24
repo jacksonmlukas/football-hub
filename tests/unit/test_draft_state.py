@@ -132,3 +132,38 @@ def test_empty_espn_draft_keeps_local_state(monkeypatch, capsys):
     monkeypatch.setattr(st, "load", lambda path=None: st.DraftState(taken=["Kept"]))
     assert st.sync_from_espn().taken == ["Kept"]
     assert "not started" in capsys.readouterr().out
+
+
+# --- pointing the sync at a different room --------------------------------
+
+def test_sync_can_target_another_league():
+    """ESPN mock-draft rooms are their own leagues with their own ids, so a sync hardcoded
+    to ESPN_LEAGUE_ID cannot see one. Being able to point it elsewhere is what makes a
+    practice draft a real test of the live path rather than a test of everything except it.
+    """
+    import hub.draft.state as st
+
+    seen = {}
+
+    class _Pick:
+        def __init__(self, name): self.playerName = name
+
+    class _League:
+        draft = [_Pick("Ja'Marr Chase"), _Pick("Bijan Robinson")]
+
+    def fake(year, league_id):
+        seen["year"], seen["league_id"] = year, league_id
+        return _League()
+
+    got = st.sync_from_espn(year=2026, league_id=999888, _league_factory=fake)
+    assert seen["league_id"] == 999888
+    assert got.taken == ["Ja'Marr Chase", "Bijan Robinson"]
+
+
+def test_omitting_the_league_id_still_uses_the_configured_league():
+    """Back-compat: draft night must not require an extra argument."""
+    import inspect
+
+    import hub.draft.state as st
+    sig = inspect.signature(st.sync_from_espn)
+    assert sig.parameters["league_id"].default is None

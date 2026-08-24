@@ -98,7 +98,8 @@ def my_roster(state: DraftState, slot: int, teams: int = 12, rounds: int = 16) -
     return [state.taken[p - 1] for p in mine if p <= state.n_taken]
 
 
-def sync_from_espn(year: int | None = None, quiet: bool = False) -> DraftState:
+def sync_from_espn(year: int | None = None, quiet: bool = False,
+                   league_id: int | None = None, _league_factory=None) -> DraftState:
     """Read the draft straight from ESPN instead of typing picks in.
 
     Preferred on draft night: it cannot drift from reality and needs no operator. Falls
@@ -107,7 +108,11 @@ def sync_from_espn(year: int | None = None, quiet: bool = False) -> DraftState:
     """
     try:
         from hub.fetch.espn import league_settings
-        lg, _ = league_settings() if year is None else (_league(year), {})
+        if league_id is not None or year is not None:
+            factory = _league_factory or _league
+            lg = factory(year or 2026, league_id)
+        else:
+            lg, _ = league_settings()
         picks = [p.playerName for p in (lg.draft or [])]
         if not picks:
             # `quiet` exists because the poller calls this every few seconds. Printing
@@ -123,11 +128,18 @@ def sync_from_espn(year: int | None = None, quiet: bool = False) -> DraftState:
         return load()
 
 
-def _league(year: int):
+def _league(year: int, league_id: int | None = None):
+    """A league handle. `league_id` overrides the configured one.
+
+    The override exists so a practice draft can be read: ESPN mock-draft rooms are separate
+    leagues with their own ids, and a sync locked to ESPN_LEAGUE_ID can only ever test
+    everything except the live path.
+    """
     import os
     from dotenv import load_dotenv
     from espn_api.football import League
     load_dotenv()
-    return League(league_id=int(os.environ["ESPN_LEAGUE_ID"]), year=year,
+    return League(league_id=int(league_id if league_id is not None
+                                else os.environ["ESPN_LEAGUE_ID"]), year=year,
                   espn_s2=os.environ.get("ESPN_S2") or None,
                   swid=os.environ.get("ESPN_SWID") or None)
