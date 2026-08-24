@@ -143,3 +143,94 @@ def test_zero_cv_reproduces_deterministic_talent():
     r, mu, sd, pos = _league([10.0] * 12)
     p = champion_probability(r, mu, sd, pos, n_sims=200, talent_cv=0.0)
     assert p.sum() == pytest.approx(1.0)
+
+
+# --- weekly spread has to follow realised talent, not the projection -------
+
+def test_a_player_whose_talent_collapses_scores_close_to_nothing():
+    """The model could not produce a bust.
+
+    Weekly points were drawn as N(realised talent, 0.55 * *projection*) and clipped at zero.
+    For a player projected at 15 whose talent went to zero, that is N(0, 8.25) clipped --
+    a half-normal averaging 3.3 points a game, 22% of his preseason projection, out of
+    nothing but the clip. Every drafted bust in the simulation was quietly a useful bench
+    player, and TALENT_CV was being asked to absorb the difference.
+
+    Weekly spread scales with realised talent instead, so a player who loses his job loses
+    his variance with it.
+    """
+    mu, sd = np.array([15.0]), np.array([15.0 * 0.55])
+    got = simulate_weeks([np.array([0])], mu, sd, np.array(["RB"]),
+                         n_sims=20000, talent_cv=0.45)
+    season = got[:, :, 0].mean(axis=1)
+    # At cv=0.45, P(talent below 20% of projection) = Phi(-0.8/0.45) = 3.8%, so seasons
+    # that bad have to be reachable. Under the old formulation the floor was 22% of the
+    # projection and this fraction was zero by construction.
+    assert (season < 0.2 * 15.0).mean() > 0.02
+
+
+def test_weekly_spread_still_scales_with_the_player():
+    """The other half: a good player must stay volatile in absolute terms, or the model
+    loses the week-to-week noise that head-to-head is made of."""
+    r = [np.array([0])]
+    big = simulate_weeks(r, np.array([20.0]), np.array([11.0]), np.array(["RB"]),
+                         n_sims=2000, talent_cv=0.0)
+    small = simulate_weeks(r, np.array([5.0]), np.array([2.75]), np.array(["RB"]),
+                           n_sims=2000, talent_cv=0.0)
+    assert big.std() > 2.5 * small.std()
+
+
+def test_an_average_player_is_unaffected_by_the_change():
+    """Regression guard: at realised talent equal to projection the two formulations are
+    identical, so ordinary players must be untouched."""
+    got = simulate_weeks([np.array([0])], np.array([12.0]), np.array([6.6]),
+                         np.array(["RB"]), n_sims=4000, talent_cv=0.0)
+    assert got.mean() == pytest.approx(12.0, rel=0.06)
+
+
+# --- TALENT_CV varies by position -----------------------------------------
+
+def test_each_position_gets_its_own_fitted_dispersion():
+    """Fitted in `hub.draft.calibrate`, written up in `docs/talent-cv.md`. Only RB and TE
+    are far enough from the pool to differ: RB at +2.6 se and TE at -3.8 se, while QB and
+    WR sit within one standard error and shrink back onto the pooled value."""
+    from hub.draft.season import TALENT_CV, TALENT_CV_BY_POS, talent_cv_for
+    assert TALENT_CV_BY_POS["RB"] > TALENT_CV > TALENT_CV_BY_POS["TE"]
+    got = talent_cv_for(np.array(["RB", "TE", "QB"]))
+    assert got.tolist() == [TALENT_CV_BY_POS["RB"], TALENT_CV_BY_POS["TE"],
+                            TALENT_CV_BY_POS["QB"]]
+
+
+def test_an_unknown_position_falls_back_to_the_pooled_value():
+    """K and DST are not drafted here and were never fitted. Falling back beats a KeyError
+    in the middle of a draft."""
+    from hub.draft.season import TALENT_CV, talent_cv_for
+    assert talent_cv_for(np.array(["K", "DST"])).tolist() == [TALENT_CV, TALENT_CV]
+
+
+def test_a_running_back_roster_is_more_of_a_lottery_than_a_tight_end_roster():
+    """The behavioural consequence, and the whole point of doing this per position: at the
+    same projection, a roster of RBs has a wider spread of seasons than a roster of TEs."""
+    mu, sd = np.full(6, 12.0), np.full(6, 6.6)
+    r = [np.arange(6)]
+    rb = simulate_weeks(r, mu, sd, np.array(["RB"] * 6), n_sims=6000)
+    te = simulate_weeks(r, mu, sd, np.array(["TE"] * 6), n_sims=6000)
+    assert rb.mean(axis=1).std() > 1.15 * te.mean(axis=1).std()
+
+
+def test_passing_a_single_number_still_works():
+    """Back-compat, and the escape hatch every sweep in `hub.draft.leverage` uses."""
+    r = [np.arange(2)]
+    mu, sd, pos = np.full(2, 12.0), np.full(2, 6.6), np.array(["RB", "TE"])
+    a = simulate_weeks(r, mu, sd, pos, n_sims=500, talent_cv=0.0)
+    b = simulate_weeks(r, mu, sd, pos, n_sims=500, talent_cv=0.0)
+    assert np.allclose(a, b)
+
+
+def test_the_fitted_constants_are_inside_their_fitted_intervals():
+    """Guard against a silent revert to a guessed value, same as the pooled one."""
+    from hub.draft.season import TALENT_CV, TALENT_CV_BY_POS
+    from hub.draft.calibrate import FITTED_CI95, FITTED_BY_POS
+    assert FITTED_CI95[0] <= TALENT_CV <= FITTED_CI95[1]
+    for pos, v in TALENT_CV_BY_POS.items():
+        assert v == pytest.approx(FITTED_BY_POS[pos], abs=0.01)

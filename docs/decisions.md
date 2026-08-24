@@ -228,8 +228,24 @@ of its drafted players have retired out of ESPN's universe and those are the bus
 second moment was fitted; the quantiles and near-zero skew came out right unprompted, which
 is the model's normal-multiplicative talent assumption validating itself.
 
-Still open, and flagged rather than done: a single scalar spans RB at 0.474 and TE at 0.288,
-and `weekly_moments`' `sd = 0.55*mu` is the next constant of the same kind.
+**Made per-position the same day.** `TALENT_CV_BY_POS = {QB 0.41, RB 0.49, WR 0.41, TE 0.32}`,
+shrunk toward the pool in proportion to each estimate's noise -- 51 tight ends do not support
+an independent number. Only RB (+2.6 se) and TE (-3.8 se) really differ; QB and WR sit inside
+one standard error and shrink back onto the pooled value, which is the honest answer rather
+than a tidier one. Effect on valuation is real but small: two rosters with identical
+projections, one RB-tilted and one TE-tilted, move about 0.4 pp of title equity apart beyond
+what slot eligibility already explains.
+
+**It also surfaced a model bug the constant had been absorbing.** Weekly points were drawn as
+N(realised talent, 0.55 * *projection*) and clipped at zero, so a player projected at 15 whose
+talent collapsed still averaged 3.3 points a game -- 22% of his projection, manufactured
+entirely by the clip. The simulation could not produce a bust, and the calibration kept asking
+for a larger constant (0.457) to make the aggregate dispersion come out right. `simulate_weeks`
+now scales weekly spread by realised talent; an average player is unchanged, and the gap
+between the fit and what the model needs collapses from 10% to under 2%.
+
+Still open: `weekly_moments`' `sd = 0.55*mu` is the next constant of the same kind, and it is
+what the noise correction leans on.
 
 ## Open questions
 

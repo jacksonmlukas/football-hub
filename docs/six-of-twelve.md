@@ -23,11 +23,11 @@ head-to-head, top 6, byes for 1-2, three single-elimination rounds. 20,000 seaso
 
 | roster (mu x) | E[wins] | P(playoff) | P(bye) | P(title) | marginal |
 |---|---|---|---|---|---|
-| 0.85 | 4.17 | 12.9% | 1.6% | 0.7% | — |
-| 0.95 | 6.05 | 35.8% | 9.2% | 4.4% | +2.0 pp/win |
-| 1.00 | 7.01 | 50.0% | 16.5% | 8.3% | +4.0 pp/win |
-| 1.05 | 7.96 | 63.1% | 26.8% | 14.0% | +6.0 pp/win |
-| 1.15 | 9.70 | 83.1% | 50.5% | 29.5% | +8.9 pp/win |
+| 0.85 | 4.19 | 13.7% | 1.8% | 0.9% | — |
+| 0.95 | 6.05 | 36.3% | 9.4% | 4.5% | +1.9 pp/win |
+| 1.00 | 7.00 | 50.1% | 16.5% | 8.3% | +4.1 pp/win |
+| 1.05 | 7.96 | 62.8% | 26.4% | 13.6% | +5.6 pp/win |
+| 1.15 | 9.67 | 82.3% | 49.5% | 28.3% | +8.5 pp/win |
 
 A league-average roster makes the playoffs **50%** of the time, not 85%. You need roughly
 +15% of projected points — about ten wins — to reach the 85% the doc assumed as the
@@ -45,15 +45,15 @@ P(title | seed), twelve identical rosters, so none of this is the seeded team be
 
 | seed | P(title) |
 |---|---|
-| 1 (bye) | 40.5% |
-| 2 (bye) | 27.2% |
-| 3 | 12.4% |
-| 4 | 8.6% |
-| 5 | 6.1% |
-| 6 | 5.1% |
+| 1 (bye) | 41.3% |
+| 2 (bye) | 27.4% |
+| 3 | 12.5% |
+| 4 | 8.4% |
+| 5 | 5.7% |
+| 6 | 4.7% |
 
 Seed 2 is worth **2.2x** seed 3 across a one-place gap, because that gap is the bye. The bye
-seeds average 33.9% against 8.1% for seeds 3-6 — **4.2x**. "Seeding buys marginally easier
+seeds average 34.4% against 7.8% for seeds 3-6 — **4.4x**. "Seeding buys marginally easier
 matchups and nothing else" is the single most wrong sentence in the old doc.
 
 ## The ceiling argument, repaired
@@ -67,25 +67,25 @@ alone. See the trap section — this control is the whole measurement.
 
 | roster | variance kind | multiplier | P(playoff) | P(bye) | P(title) |
 |---|---|---|---|---|---|
-| weak | weekly | 0.7 | 22.2% | 4.6% | 2.2% |
-| weak | weekly | 1.8 | 26.4% | 3.9% | **2.1%** |
-| weak | season-long | 0.5 | 17.0% | 1.2% | 0.6% |
-| weak | season-long | 2.0 | 29.6% | 10.9% | **5.6%** |
-| strong | weekly | 0.7 | 73.1% | 39.8% | **21.6%** |
-| strong | weekly | 1.8 | 75.9% | 33.9% | 18.5% |
-| strong | season-long | 0.5 | 82.1% | 34.9% | 17.4% |
-| strong | season-long | 2.0 | 66.6% | 41.4% | **25.7%** |
+| weak | weekly | 0.7 | 22.5% | 4.8% | 2.2% |
+| weak | weekly | 1.8 | 27.0% | 4.0% | **2.2%** |
+| weak | season-long | 0.5 | 17.5% | 1.2% | 0.6% |
+| weak | season-long | 2.0 | 30.1% | 11.1% | **5.7%** |
+| strong | weekly | 0.7 | 72.6% | 38.9% | **21.1%** |
+| strong | weekly | 1.8 | 75.7% | 33.8% | 18.2% |
+| strong | season-long | 0.5 | 81.6% | 33.7% | 16.7% |
+| strong | season-long | 2.0 | 66.3% | 40.7% | **25.4%** |
 
 **Season-long outcome spread — how uncertain it is what a player *becomes* — is worth
-paying for, at every roster strength.** It is worth 9x to a weak roster (0.6% → 5.6%) and
-still worth +48% to a strong one (17.4% → 25.7%), *even though it costs the strong roster
-15 points of playoff probability* (82.1% → 66.6%). Trading berths for byes is a good trade
+paying for, at every roster strength.** It is worth 9x to a weak roster (0.6% → 5.7%) and
+still worth +52% to a strong one (16.7% → 25.4%), *even though it costs the strong roster
+15 points of playoff probability* (81.6% → 66.3%). Trading berths for byes is a good trade
 because the seeding payoff is convex: 37.9% at the top against 6.0% at the bottom.
 
 **Weekly boom-bust is not worth paying for.** At a fixed mean it is flat for a weak roster
-(2.2% → 2.1%) and clearly negative for a strong one (21.6% → 18.5%). Head-to-head wastes
+(2.2% → 2.2%) and clearly negative for a strong one (21.1% → 18.2%). Head-to-head wastes
 surplus: a spikier weekly distribution with the same mean has a lower median, so it loses
-more weeks than it wins. It does buy the weak roster a few more berths (22.2% → 26.4%) —
+more weeks than it wins. It does buy the weak roster a few more berths (22.5% → 27.0%) —
 but berths without byes are worth 6-12% each, so they do not convert into titles.
 
 So the corrected rule is:
@@ -136,10 +136,12 @@ mispriced. The directions are the finding. The decimals are not.
 
 `TALENT_CV` **has now been fitted** — it was named here as the one number that would change
 the conclusions, so it was measured against this league's own past drafts and came back at
-0.411 against the 0.35 guess, a 4.6 se gap. Every table above is at the fitted value and
-nothing reversed. See [talent-cv.md](talent-cv.md), which also flags the next unfitted
-constant: `weekly_moments`' `sd = 0.55·mu`, a scalar that fits QBs and RBs about equally
-badly.
+0.41 against the 0.35 guess, a 4.6 se gap — and is now **per position** (RB 0.49, TE 0.32,
+QB and WR 0.41). Every table above is at the fitted per-position values and nothing
+reversed. Fitting it also surfaced a model bug it had been absorbing: weekly spread was
+keyed to the preseason projection, which put a floor of ~22% of projection under every
+bust. See [talent-cv.md](talent-cv.md), which also flags the next unfitted constant,
+`weekly_moments`' `sd = 0.55·mu`.
 
 ## Reproduce
 

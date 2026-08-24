@@ -40,8 +40,8 @@ from typing import Sequence
 
 import numpy as np
 
-from hub.draft.season import (PLAYOFF_TEAMS, REG_SEASON_WEEKS, TALENT_CV, _lineup_points,
-                              _round_robin)
+from hub.draft.season import (PLAYOFF_TEAMS, REG_SEASON_WEEKS, _lineup_points,
+                              _round_robin, talent_cv_for)
 
 TEAMS = 12
 CHUNK = 4000
@@ -67,7 +67,7 @@ def _season(k, vol, cv_mult, n, base_seed):
     """Weekly points and seeds for one chunk of simulated seasons. Team 0 is the subject."""
     mu = np.tile(MU, TEAMS).astype(float)
     sd = np.tile(SD, TEAMS).astype(float)
-    cv = np.full(TEAMS * N, TALENT_CV)
+    cv = talent_cv_for(POOL_POS)
     mu[:N] *= k
     sd[:N] *= vol
     cv[:N] *= cv_mult
@@ -153,7 +153,8 @@ def team_mean(k: float = 1.0, vol: float = 1.0, cv_mult: float = 1.0,
     without this measures points rather than variance.
     """
     rng = np.random.default_rng(seed)
-    tm = (MU * k)[None, :] * (1.0 + rng.normal(0.0, TALENT_CV * cv_mult, size=(n, N)))
+    tm = (MU * k)[None, :] * (1.0 + rng.normal(0.0, talent_cv_for(POS) * cv_mult,
+                                              size=(n, N)))
     np.clip(tm, 0.0, None, out=tm)
     d = rng.normal(tm[:, None, :], (SD * vol)[None, None, :], size=(n, 1, N))
     np.clip(d, 0.0, None, out=d)

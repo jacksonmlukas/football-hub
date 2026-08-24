@@ -45,6 +45,19 @@ PLAYOFF_TEAMS = 6
 # difference and not noise; see the doc.
 TALENT_CV = 0.41
 
+# Per position, from the same fit. Only two of these are really different from the pool:
+# RB sits +2.6 se above it and TE -3.8 se below, while QB and WR are within one standard
+# error and shrink back onto 0.41. That is the honest reading -- an early running back is
+# more of a lottery than his projection suggests, and a tight end less of one -- and it is
+# why these are shrunk estimates rather than the four raw numbers, which would treat every
+# difference between 51 and 200 players as real.
+TALENT_CV_BY_POS = {"QB": 0.41, "RB": 0.49, "WR": 0.41, "TE": 0.32}
+
+
+def talent_cv_for(pos: np.ndarray) -> np.ndarray:
+    """Per-player talent dispersion. Anything unfitted (K, DST) falls back to the pool."""
+    return np.array([TALENT_CV_BY_POS.get(str(p), TALENT_CV) for p in pos], dtype=float)
+
 
 def weekly_moments(xp: pl.DataFrame, floor_sd: float = 2.0) -> pl.DataFrame:
     """Per-player weekly mean and dispersion.
@@ -89,7 +102,7 @@ def _lineup_points(scores: np.ndarray, pos: np.ndarray) -> np.ndarray:
 def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
                    pos: np.ndarray, n_sims: int, weeks: int = REG_SEASON_WEEKS,
                    rng: np.random.Generator | None = None,
-                   talent_cv: float = TALENT_CV) -> np.ndarray:
+                   talent_cv: float | np.ndarray | None = None) -> np.ndarray:
     """Weekly points for every team. Returns (sims, weeks, teams).
 
     Realised talent is drawn once per season, then weekly points are drawn around it.
@@ -98,9 +111,20 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
     not -- which is not an edge, it is a leak.
     """
     rng = rng or np.random.default_rng(0)
+    # None means per position; a scalar is still accepted, which is what the sweeps in
+    # hub.draft.leverage need in order to vary one thing at a time.
+    if talent_cv is None:
+        talent_cv = talent_cv_for(pos)
     true_mu = mu[None, :] * (1.0 + rng.normal(0.0, talent_cv, size=(n_sims, mu.size)))
     np.clip(true_mu, 0.0, None, out=true_mu)
-    draws = rng.normal(true_mu[:, None, :], sd[None, None, :],
+    # Weekly spread follows *realised* talent, not the projection. Keying it to the
+    # projection made busts impossible: a player projected at 15 whose talent went to zero
+    # was drawn from N(0, 8.25) and clipped, which is a half-normal averaging 3.3 points a
+    # game -- 22% of his projection, manufactured entirely by the clip. Scaling by the
+    # realised ratio leaves an average player untouched and lets a collapsed one score
+    # nothing, which is what a bust is.
+    cv_w = np.divide(sd, mu, out=np.zeros_like(sd, dtype=float), where=mu > 0)
+    draws = rng.normal(true_mu[:, None, :], (true_mu * cv_w)[:, None, :],
                        size=(n_sims, weeks, mu.size))
     np.clip(draws, 0.0, None, out=draws)
     out = np.empty((n_sims, weeks, len(rosters)))
@@ -122,7 +146,7 @@ def _round_robin(teams: int, weeks: int) -> list[list[tuple[int, int]]]:
 def champion_probability(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
                          pos: np.ndarray, n_sims: int = 400,
                          rng: np.random.Generator | None = None,
-                         talent_cv: float = TALENT_CV) -> np.ndarray:
+                         talent_cv: float | np.ndarray | None = None) -> np.ndarray:
     """P(each team wins the league). Returns (teams,) summing to 1.
 
     14-week H2H regular season, top 6 seeds, two byes, then single elimination on
