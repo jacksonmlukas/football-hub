@@ -5,6 +5,7 @@ responds correctly to roster construction -- because that is the entire reason t
 simulate instead of ranking by VOR.
 """
 import numpy as np
+import polars as pl
 import pytest
 from hub.draft.season import (_lineup_points, _round_robin, champion_probability,
                               simulate_weeks)
@@ -234,3 +235,68 @@ def test_the_fitted_constants_are_inside_their_fitted_intervals():
     assert FITTED_CI95[0] <= TALENT_CV <= FITTED_CI95[1]
     for pos, v in TALENT_CV_BY_POS.items():
         assert v == pytest.approx(FITTED_BY_POS[pos], abs=0.01)
+
+
+# --- weekly spread follows a square-root law, not a proportional one -------
+
+def test_weekly_spread_scales_with_the_square_root_of_the_mean():
+    """`sd = 0.55 * mu` assumed spread is proportional to the mean. Fitted against 1,174
+    player-seasons of nflverse weekly scoring, the exponent is 0.498 +/- 0.012 -- flat on
+    the Poisson value and about 42 standard errors from 1.
+
+    That is not a curve-fitting accident, it is what aggregating component stats produces:
+    weekly points are a sum of count-driven pieces (receptions, carries, touchdowns) whose
+    variance grows with their mean, so the spread of the total grows with its square root.
+    See docs/weekly-spread.md.
+    """
+    from hub.draft.season import weekly_moments
+    xp = pl.DataFrame({"proj_ppg": [4.0, 16.0], "position": ["WR", "WR"]})
+    got = weekly_moments(xp)
+    # four times the mean is twice the spread, not four times
+    assert got["sd"][1] / got["sd"][0] == pytest.approx(2.0, rel=0.01)
+
+
+def test_a_boom_bust_profile_is_a_property_of_the_level_not_a_setting():
+    """The consequence that matters for the draft board: relative volatility falls as
+    projection rises. A 5-point-a-game flier really is nearly twice the lottery, per point,
+    that a 20-point-a-game starter is -- and the old constant said they were identical."""
+    from hub.draft.season import weekly_moments
+    xp = pl.DataFrame({"proj_ppg": [5.0, 20.0], "position": ["RB", "RB"]})
+    got = weekly_moments(xp)
+    cv = (got["sd"] / got["mu"]).to_list()
+    assert cv[0] > 1.8 * cv[1]
+
+
+def test_positions_keep_their_own_coefficient():
+    from hub.draft.season import WEEKLY_K, weekly_moments
+    xp = pl.DataFrame({"proj_ppg": [10.0, 10.0], "position": ["QB", "WR"]})
+    got = weekly_moments(xp)
+    assert got["sd"][0] < got["sd"][1]
+    assert WEEKLY_K["WR"] > WEEKLY_K["QB"]
+
+
+def test_a_missing_position_falls_back_to_the_pooled_coefficient():
+    from hub.draft.season import WEEKLY_K_POOLED, weekly_moments
+    xp = pl.DataFrame({"proj_ppg": [9.0]},
+                      schema={"proj_ppg": pl.Float64}).with_columns(
+        pl.lit(None, dtype=pl.Utf8).alias("position"))
+    got = weekly_moments(xp)
+    assert got["sd"][0] == pytest.approx(WEEKLY_K_POOLED * 3.0, rel=1e-6)
+
+
+def test_a_player_projected_at_nothing_has_no_spread():
+    """Under the old floor a zero-projection player still carried sd = 2.0, which the
+    best-lineup rule turned into free points. sqrt(0) is 0."""
+    from hub.draft.season import weekly_moments
+    got = weekly_moments(pl.DataFrame({"proj_ppg": [0.0], "position": ["WR"]}))
+    assert got["sd"][0] == 0.0
+
+
+def test_simulate_weeks_scales_spread_by_the_root_of_realised_talent():
+    """Consequence of the same law inside the simulation. Spread follows realised talent,
+    and under a square-root law that means sqrt(realised/projected), not the ratio itself.
+    A player who realises a quarter of his projection keeps half his spread."""
+    r = [np.array([0])]
+    mu, sd, pos = np.array([16.0]), np.array([8.0]), np.array(["WR"])
+    full = simulate_weeks(r, mu, sd, pos, n_sims=20000, talent_cv=0.0)
+    assert full.std() == pytest.approx(8.0, rel=0.08)

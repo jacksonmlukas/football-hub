@@ -34,16 +34,18 @@ PLAYOFF_TEAMS = 6
 #
 # FITTED 2026-08-23 against this league's own past drafts -- `hub.draft.calibrate`, written
 # up in `docs/talent-cv.md`. 460 drafted skill players over 2023-25: 0.411, 95% CI
-# [0.384, 0.437]. The previous value of 0.35 was a guess and sat 4.6 se low.
+# [0.380, 0.434]. The previous value of 0.35 was a guess and sat 4.6 se low. Refitted the
+# same day once `weekly_moments` moved to the square-root law, since the fit subtracts
+# weekly sampling and therefore depends on it -- the two constants are coupled.
 #
 # A draft pick is market opinion recorded before week 1, so E[realized | pick, position] is
 # the market's projection and cannot have been revised after the fact. Availability is
 # inside the number on purpose: scoring is measured per team game, and the simulator benches
 # a low-talent player the same way you bench an injured one.
 #
-# A single scalar is a compromise. RB fits at 0.474 and TE at 0.288, which is a real
+# A single scalar is a compromise. RB fits at 0.50 and TE at 0.32, which is a real
 # difference and not noise; see the doc.
-TALENT_CV = 0.41
+TALENT_CV = 0.42
 
 # Per position, from the same fit. Only two of these are really different from the pool:
 # RB sits +2.6 se above it and TE -3.8 se below, while QB and WR are within one standard
@@ -51,7 +53,7 @@ TALENT_CV = 0.41
 # more of a lottery than his projection suggests, and a tight end less of one -- and it is
 # why these are shrunk estimates rather than the four raw numbers, which would treat every
 # difference between 51 and 200 players as real.
-TALENT_CV_BY_POS = {"QB": 0.41, "RB": 0.49, "WR": 0.41, "TE": 0.32}
+TALENT_CV_BY_POS = {"QB": 0.42, "RB": 0.50, "WR": 0.42, "TE": 0.32}
 
 
 def talent_cv_for(pos: np.ndarray) -> np.ndarray:
@@ -59,23 +61,55 @@ def talent_cv_for(pos: np.ndarray) -> np.ndarray:
     return np.array([TALENT_CV_BY_POS.get(str(p), TALENT_CV) for p in pos], dtype=float)
 
 
-def weekly_moments(xp: pl.DataFrame, floor_sd: float = 2.0) -> pl.DataFrame:
+# Weekly spread follows sqrt(mean), not the mean. `sd = 0.55 * mu` assumed proportional;
+# fitted against 1,174 player-seasons of nflverse weekly scoring the exponent is
+# 0.498 +/- 0.012, which is the Poisson value and about 42 se from 1.
+#
+# This is derived rather than fitted-for-its-own-sake. Weekly points are a sum of
+# count-driven components -- receptions, carries, touchdowns -- whose variance grows with
+# their mean, so the spread of the total grows with its square root. Touchdowns are the
+# lumpy part: 54% of a quarterback's weekly variance and 21% of a receiver's, against 32%
+# and 17% of their points. See docs/weekly-spread.md.
+#
+# Predicting a player's weekly sd this way cuts RMSE about a third versus the old constant.
+# Note how little is left between positions once the law is right: most of what looked like
+# a position effect in weekly CV was position differences in mean points.
+WEEKLY_K = {"QB": 1.88, "RB": 2.07, "WR": 2.13, "TE": 1.99}
+WEEKLY_K_POOLED = 2.04
+
+
+def weekly_moments(xp: pl.DataFrame, floor_sd: float = 0.0) -> pl.DataFrame:
     """Per-player weekly mean and dispersion.
 
     mu comes from expected points rather than realised: xFP already strips the
     week-to-week luck we are about to re-add, so using realised points would double-count
     variance and make every roster look more volatile than it is.
+
+    `floor_sd` defaults to zero now. The old floor of 2.0 gave a player projected at
+    nothing a real weekly spread, which the best-lineup rule -- a max over the roster --
+    turned into free points off the end of the bench. sqrt(0) is 0, which is what an
+    unprojected player should carry.
     """
     # Prefer the market's projection for the season being drafted. xFP describes the
     # season just gone, and using it as truth makes any strategy ranked on xFP look
     # prescient: it is scoring against the very data it optimised. Fall back to xFP only
     # where no projection exists.
-    cols = [pl.col(c) for c in ("proj_blend", "proj_ppg") if c in xp.columns]
-    mu = pl.coalesce(*cols, pl.col("xfp_per_game")).fill_null(0.0)
-    return xp.with_columns(
-        mu.alias("mu"),
-        pl.max_horizontal(mu * 0.55, pl.lit(floor_sd)).alias("sd"),
-    )
+    cols = [pl.col(c) for c in ("proj_blend", "proj_ppg", "xfp_per_game")
+            if c in xp.columns]
+    if not cols:
+        raise ValueError(
+            "weekly_moments needs one of proj_blend, proj_ppg or xfp_per_game; "
+            f"got {sorted(xp.columns)}")
+    mu = pl.coalesce(*cols).fill_null(0.0)
+    pos_col = ("position" if "position" in xp.columns
+               else ("pos" if "pos" in xp.columns else None))
+    # cast + fill_null: an all-null position column comes through as dtype Null, which
+    # replace_strict refuses outright rather than defaulting.
+    k = (pl.col(pos_col).cast(pl.Utf8).fill_null("")
+         .replace_strict(WEEKLY_K, default=WEEKLY_K_POOLED, return_dtype=pl.Float64)
+         if pos_col else pl.lit(WEEKLY_K_POOLED))
+    return xp.with_columns(mu.alias("mu")).with_columns(
+        pl.max_horizontal(k * pl.col("mu").clip(0.0).sqrt(), pl.lit(floor_sd)).alias("sd"))
 
 
 def _lineup_points(scores: np.ndarray, pos: np.ndarray) -> np.ndarray:
@@ -123,8 +157,13 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
     # game -- 22% of his projection, manufactured entirely by the clip. Scaling by the
     # realised ratio leaves an average player untouched and lets a collapsed one score
     # nothing, which is what a bust is.
-    cv_w = np.divide(sd, mu, out=np.zeros_like(sd, dtype=float), where=mu > 0)
-    draws = rng.normal(true_mu[:, None, :], (true_mu * cv_w)[:, None, :],
+    # Spread follows *realised* talent. Under sd = k*sqrt(mu) that means scaling by
+    # sqrt(realised/projected), not by the ratio -- a player who realises a quarter of his
+    # projection keeps half his weekly spread, not a quarter of it.
+    ratio = np.divide(true_mu, mu[None, :], out=np.zeros_like(true_mu),
+                      where=mu[None, :] > 0)
+    draws = rng.normal(true_mu[:, None, :],
+                       (sd[None, :] * np.sqrt(ratio))[:, None, :],
                        size=(n_sims, weeks, mu.size))
     np.clip(draws, 0.0, None, out=draws)
     out = np.empty((n_sims, weeks, len(rosters)))

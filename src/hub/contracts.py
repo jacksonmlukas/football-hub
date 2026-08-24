@@ -77,6 +77,17 @@ PBP = Contract(
     min_rows=1000,
 )
 
+PLAYER_STATS = Contract(
+    name="nflverse_player_stats",
+    required={"player_id": pl.Utf8, "position": pl.Utf8, "season": pl.Int32,
+              "week": pl.Int32, "fantasy_points_ppr": pl.Float64},
+    non_null=("player_id", "season", "week"),
+    # A single full-PPR week has run past 60 points and, with fumbles and interceptions,
+    # can go negative. 100 leaves room for an outlier without admitting a units change.
+    ranges={"week": (1, 22), "fantasy_points_ppr": (-30, 100)},
+    min_rows=1,
+)
+
 SCHEDULES = Contract(
     name="nflverse_schedules",
     required={"game_id": pl.Utf8, "season": pl.Int32, "week": pl.Int32,

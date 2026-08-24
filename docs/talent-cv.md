@@ -179,10 +179,15 @@ out too low. The first version did exactly that and returned a correction of zer
 
 ## What is still wrong with it
 
-**The weekly-spread constant is the next unfitted number.** `sd = 0.55·mu` is a guess of
-the same kind, it varies by position at least as much — the per-game-played fit returns an
-implausible 0.041 for QBs precisely because 0.55 over-subtracts for them — and it is what
-the noise correction above leans on.
+**The weekly-spread constant has since been fitted too** —
+[weekly-spread.md](weekly-spread.md). It came back the wrong *shape*, not the wrong value:
+spread goes as `k·√mu`, not `0.55·mu`. Since the fit above subtracts weekly sampling, the
+two constants are coupled and TALENT_CV was refitted against the new law; pooled moved
+0.41 → 0.42 and the per-position values by about 0.01, all inside their intervals.
+
+The QB anomaly flagged here — an implausible 0.041 from the per-game-played variant —
+resolved exactly as suspected. Under the √ law quarterbacks land at −0.0 se from the pool;
+0.55 had been over-subtracting for the steadiest position.
 
 **One league, three seasons, 460 players.** The CI is honest about sampling error within
 that, but this is one room's drafts, and a room that drafts unusually would move the number.

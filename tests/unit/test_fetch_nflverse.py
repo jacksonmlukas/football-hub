@@ -220,3 +220,75 @@ def test_unattributed_rows_are_dropped():
 def test_cleaning_keeps_everything_when_nothing_is_unattributed():
     df = pl.DataFrame({"player_id": ["p1", "p2"], "total_fantasy_points_exp": [1.0, 2.0]})
     assert nv._clean_ff_opportunity(df).height == 2
+
+
+# --- weekly player stats ---------------------------------------------------
+
+def test_player_stats_is_refused_whole():
+    """150 columns. Same rule as play-by-play: a source wide enough that handing it back
+    entire is the mistake has to be asked for by column."""
+    with pytest.raises(nv.WideFrameRefused):
+        nv.load("player_stats", seasons=[2024])
+
+
+def test_player_stats_has_a_named_default_slice():
+    """The CLI has to stay usable. `PLAYER_STATS_COLS` is what `--refresh` takes, and it
+    has to carry what the weekly-spread fit needs: who, when, and how much he scored."""
+    assert {"player_id", "position", "season", "week", "fantasy_points_ppr"} <= set(
+        nv.PLAYER_STATS_COLS)
+
+
+def _weekly(**over):
+    base = {"player_id": ["a", "b"], "player_display_name": ["A", "B"],
+            "position": ["RB", "WR"], "season": pl.Series([2024, 2024], dtype=pl.Int32),
+            "week": pl.Series([1, 1], dtype=pl.Int32), "season_type": ["REG", "REG"],
+            "fantasy_points_ppr": [12.5, 8.0]}
+    base.update(over)
+    return pl.DataFrame(base)
+
+
+def test_player_stats_passes_its_contract(monkeypatch, tmp_path):
+    monkeypatch.setattr(nv, "_raw_player_stats", lambda seasons: _weekly())
+    got = nv.load("player_stats", seasons=[2024], cols=nv.PLAYER_STATS_COLS,
+                  cache=tmp_path)
+    assert got.height == 2
+
+
+def test_a_renamed_points_column_is_caught(monkeypatch, tmp_path):
+    """The failure this exists for: nv renames the column between releases and every
+    weekly-spread number goes quietly wrong for a month."""
+    bad = _weekly().rename({"fantasy_points_ppr": "fantasy_points_full_ppr"})
+    monkeypatch.setattr(nv, "_raw_player_stats", lambda seasons: bad)
+    with pytest.raises(nv.WideFrameRefused):
+        # tmp cache, or the previous test's cached parquet is served and nothing is
+        # validated -- which is how this test first passed for the wrong reason.
+        nv.load("player_stats", seasons=[2024], cols=nv.PLAYER_STATS_COLS,
+                cache=tmp_path)
+
+
+def test_rows_belonging_to_no_player_are_dropped(monkeypatch, tmp_path):
+    """nflverse ships exactly 22 rows a season with player_id, position and name all null
+    and zero points -- residue, not players. The PLAYER_STATS contract declares player_id
+    non-null and is right to, so these go at the boundary rather than weakening it. Same
+    call as `_clean_ff_opportunity` makes for the same reason."""
+    raw = pl.concat([_weekly(), pl.DataFrame({
+        "player_id": [None], "player_display_name": [None], "position": [None],
+        "season": pl.Series([2024], dtype=pl.Int32),
+        "week": pl.Series([1], dtype=pl.Int32),
+        "season_type": ["REG"], "fantasy_points_ppr": [0.0]})])
+    monkeypatch.setattr(nv, "_raw_player_stats",
+                        lambda seasons: nv._clean_player_stats(raw))
+    got = nv.load("player_stats", seasons=[2024], cols=nv.PLAYER_STATS_COLS, cache=tmp_path)
+    assert got.height == 2
+
+
+def test_a_real_player_carrying_points_is_never_dropped(monkeypatch):
+    """The guard on the guard. If upstream ever ships a scoring row with a null id, that is
+    a break to surface, not residue to sweep -- and the drop must not hide it."""
+    raw = pl.concat([_weekly(), pl.DataFrame({
+        "player_id": [None], "player_display_name": ["Somebody"], "position": ["WR"],
+        "season": pl.Series([2024], dtype=pl.Int32),
+        "week": pl.Series([1], dtype=pl.Int32),
+        "season_type": ["REG"], "fantasy_points_ppr": [14.0]})])
+    with pytest.raises(nv.UnattributedPoints):
+        nv._clean_player_stats(raw)

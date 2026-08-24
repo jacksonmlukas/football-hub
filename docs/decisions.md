@@ -244,8 +244,35 @@ for a larger constant (0.457) to make the aggregate dispersion come out right. `
 now scales weekly spread by realised talent; an average player is unchanged, and the gap
 between the fit and what the model needs collapses from 10% to under 2%.
 
-Still open: `weekly_moments`' `sd = 0.55*mu` is the next constant of the same kind, and it is
-what the noise correction leans on.
+**Weekly spread fitted (2026-08-23), and it was the wrong shape rather than the wrong value.**
+`sd = 0.55*mu` assumed spread proportional to the mean. Across 1,174 player-seasons of
+nflverse weekly scoring the exponent in `sd = k*mu^b` is **b = 0.498 +/- 0.012** -- the
+Poisson value, ~42 se from the assumed 1. Shipped as `sd = k*sqrt(mu)` with
+k = {QB 1.88, RB 2.07, WR 2.13, TE 1.99}; RMSE predicting a player's weekly sd falls 31-36%.
+`docs/weekly-spread.md`.
+
+That exponent is derived, not fitted-and-hoped: fantasy points aggregate count-driven
+components, and a sum of counts has spread growing with the square root of its mean.
+Touchdowns are 54% of a QB's weekly variance off 32% of his points.
+
+Three consequences. Relative volatility is now a property of the projection rather than a
+setting -- a 5 ppg flier is nearly twice the per-point lottery a 20 ppg starter is, where
+the old constant called them identical. Most of the apparent *position* difference in weekly
+CV (0.47 to 0.73) was positions differing in mean points; once the law is right, k spans only
+1.88-2.13. And the sd floor of 2.0 is gone -- it gave an unprojected player real spread,
+which the best-lineup max turned into free points off the bench.
+
+`TALENT_CV` was refitted against the new law since the two are coupled: pooled 0.41 -> 0.42,
+per-position by ~0.01, all inside their intervals, nothing downstream reversed. The QB
+anomaly flagged earlier resolved as suspected -- under the sqrt law QB sits at -0.0 se from
+the pool, so 0.55 had been over-subtracting for the steadiest position.
+
+**Direction set: project components, aggregate to points.** Weekly *spread* now comes from
+the component structure; the weekly *mean* still arrives as a points projection. Doing the
+same to the mean is the next build -- volume persists where touchdowns do not, and it is the
+only route to the component-level correlation `championship-leverage.md` calls L1.
+`hub.fetch.nflverse` now carries `player_stats` (weekly, per player, all components), and
+full-PPR reconstructs from them to within 0.01 for 99.4% of player-weeks.
 
 ## Open questions
 

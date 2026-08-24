@@ -40,19 +40,20 @@ from typing import Sequence
 import numpy as np
 import polars as pl
 
-# The weekly spread the model assumes, from `hub.draft.season.weekly_moments`: sd = 0.55*mu.
-# The noise correction is only as good as this, and it is itself an unfitted constant --
-# see the caveat in docs/talent-cv.md before reading the per-position numbers closely.
-WEEKLY_CV = 0.55
+# The weekly spread the model assumes, from `hub.draft.season.weekly_moments`:
+# sd = k * sqrt(mu), fitted in docs/weekly-spread.md. This used to be an unfitted 0.55*mu,
+# which the per-game-played variant of this fit flagged by returning an implausible 0.041
+# for quarterbacks -- 0.55 over-subtracts badly for the steadiest position.
+from hub.draft.season import WEEKLY_K, WEEKLY_K_POOLED
 TEAM_GAMES = 17
 DRAFTED_THROUGH = 168          # 14 rounds x 12 teams: the roster the simulator holds
 SKILL = ("QB", "RB", "WR", "TE")
 
 # Recorded so `test_the_current_constant_is_inside_the_fitted_interval` can guard against a
 # silent revert to a guessed value.
-FITTED_CI95 = (0.384, 0.440)
+FITTED_CI95 = (0.380, 0.434)
 # Shrunk, debiased per-position values behind `season.TALENT_CV_BY_POS`.
-FITTED_BY_POS = {"QB": 0.410, "RB": 0.490, "WR": 0.406, "TE": 0.319}
+FITTED_BY_POS = {"QB": 0.419, "RB": 0.501, "WR": 0.418, "TE": 0.321}
 
 
 def _curve(sub: pl.DataFrame) -> np.ndarray:
@@ -75,7 +76,7 @@ def _curve(sub: pl.DataFrame) -> np.ndarray:
 
 
 def simulate_seasons(mu: np.ndarray, cv: float, games: np.ndarray,
-                     rng: np.random.Generator) -> np.ndarray:
+                     rng: np.random.Generator, k: float = WEEKLY_K_POOLED) -> np.ndarray:
     """Season totals under the model exactly as `hub.draft.season` writes it.
 
     Talent is multiplicative-normal and clipped at zero; weekly points are normal around
@@ -86,12 +87,19 @@ def simulate_seasons(mu: np.ndarray, cv: float, games: np.ndarray,
     true_mu = np.clip(mu * (1.0 + rng.normal(0.0, cv, mu.size)), 0.0, None)
     total = np.zeros(mu.size)
     for w in range(int(games.max()) if games.size else 0):
-        # WEEKLY_CV applies to realised talent, matching `simulate_weeks`. Keying it to the
-        # projection would put a floor under busts and this fixture would stop representing
-        # the model it exists to invert.
-        draw = np.clip(rng.normal(true_mu, WEEKLY_CV * true_mu), 0.0, None)
+        # sd = k * sqrt(realised talent), matching `simulate_weeks`. Keying spread to the
+        # projection instead would put a floor under busts and this fixture would stop
+        # representing the model it exists to invert.
+        draw = np.clip(rng.normal(true_mu, k * np.sqrt(true_mu)), 0.0, None)
         total += np.where(games > w, draw, 0.0)
     return total
+
+
+def _k_of(positions: np.ndarray) -> float:
+    """Weekly coefficient for a set of players, pooled when they are mixed."""
+    uniq = set(str(p) for p in positions)
+    return WEEKLY_K[uniq.pop()] if len(uniq) == 1 and next(iter(uniq), None) in WEEKLY_K \
+        else WEEKLY_K_POOLED
 
 
 def nominal_for(target: float, mu: np.ndarray, games: np.ndarray, picks: np.ndarray,
@@ -114,7 +122,7 @@ def nominal_for(target: float, mu: np.ndarray, games: np.ndarray, picks: np.ndar
 
     def fitted(cv):
         rng = np.random.default_rng(seed)
-        total = simulate_seasons(mu, cv, full, rng)
+        total = simulate_seasons(mu, cv, full, rng, k=_k_of(positions))
         df = pl.DataFrame({"season": np.full(mu.size, 2024), "pick": picks,
                            "pos": positions, "total": total, "games": full})
         return fit_talent_cv(df, bootstrap=1, debias=False)["talent_cv"]
@@ -182,14 +190,14 @@ def fit_talent_cv(df: pl.DataFrame, bootstrap: int = 2000, seed: int = 0,
         # `g` weekly draws, so its spread shrinks with games played and has to come off
         # player by player rather than at some average rate.
         #
-        # The scale is the *projection*, not realised output, because that is what the model
-        # does: `weekly_moments` sets sd = 0.55 * mu from the projection, so weekly spread
-        # does not grow for a player who turns out good. Keying it to realised output
-        # instead makes the correction quadratic in the outcome, over-subtracts from the
-        # right tail, and biases the fit down -- visibly so at high CV, which is where the
-        # recovery test caught it (0.50 came back as 0.445).
+        # Under sd = k*sqrt(talent), a season total over g games has variance
+        # g * k^2 * talent, so as a share of the squared prediction the correction is
+        # linear in realised scoring rather than quadratic in it. That linearity is why
+        # the residual bias this leaves is small enough for `nominal_for` to mop up.
         mean_g = float(g.mean()) or 1.0
-        nv = WEEKLY_CV ** 2 * g / mean_g ** 2
+        kk = WEEKLY_K.get(pos, WEEKLY_K_POOLED)
+        ppg = np.where(g > 0, sub["total"].to_numpy() / np.maximum(g, 1), 0.0)
+        nv = kk ** 2 * g * ppg / (TEAM_GAMES ** 2 * np.maximum(pred, 1e-6) ** 2)
         by_pos[pos] = float(np.sqrt(max(r.var(ddof=1) - nv.mean(), 1e-9)))
         per_pos[pos] = (r / r.mean(), nv)
         # projected per-game points, for the debias step: pred is per *team* game

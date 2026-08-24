@@ -26,14 +26,15 @@ from typing import Callable, Sequence
 import polars as pl
 
 from hub import store
-from hub.contracts import FF_OPPORTUNITY, PBP, SCHEDULES, Contract
+from hub.contracts import (FF_OPPORTUNITY, PBP, PLAYER_STATS, SCHEDULES,
+                           Contract)
 
 ROOT = Path(__file__).resolve().parents[3]
 RAW = ROOT / "data" / "raw" / "nflverse"
 
 # Sources wide enough that handing one back whole is the mistake. Anything listed here
 # must be asked for by column.
-WIDE: dict[str, int] = {"pbp": 372}
+WIDE: dict[str, int] = {"pbp": 372, "player_stats": 150}
 
 # The default slice `--refresh` takes of play-by-play. Named explicitly rather than
 # defaulted inside load(), so the library API stays strict while the CLI stays usable:
@@ -41,6 +42,14 @@ WIDE: dict[str, int] = {"pbp": 372}
 PBP_COLS: tuple[str, ...] = (
     "game_id", "season", "week", "posteam", "defteam",
     "play_type", "epa", "wp", "yards_gained", "success",
+)
+
+
+# The default slice of weekly player stats. 150 columns of box score, of which the weekly
+# spread fit wants one: what he actually scored, in this league's scoring.
+PLAYER_STATS_COLS: tuple[str, ...] = (
+    "player_id", "player_display_name", "position", "season", "week", "season_type",
+    "fantasy_points_ppr",
 )
 
 
@@ -79,6 +88,43 @@ def _raw_ff_opportunity(seasons: Sequence[int]) -> pl.DataFrame:
     return clean
 
 
+class UnattributedPoints(Exception):
+    """Scoring rows that belong to no player -- an upstream break, not residue."""
+
+
+def _clean_player_stats(df: pl.DataFrame) -> pl.DataFrame:
+    """Drop rows that belong to no player, and refuse if any of them scored.
+
+    nflverse ships exactly 22 rows a season with player_id, position and name all null and
+    zero fantasy points. They are residue, and the PLAYER_STATS contract declares player_id
+    non-null, so they go here rather than by weakening the contract -- the same call
+    `_clean_ff_opportunity` makes.
+
+    The difference from that one: this refuses if an unattributed row carries points. There
+    the residue genuinely held expected points with nobody to assign them to; here a null-id
+    row that scored would mean nflverse had changed something, and silently dropping real
+    points is how a projection goes quietly wrong for a month.
+    """
+    orphan = df.filter(pl.col("player_id").is_null())
+    scoring = orphan.filter(pl.col("fantasy_points_ppr").fill_null(0.0) != 0.0)
+    if scoring.height:
+        raise UnattributedPoints(
+            f"{scoring.height} rows with no player_id carry "
+            f"{scoring['fantasy_points_ppr'].sum():.1f} fantasy points. Historically these "
+            "rows are empty residue; points in them means the upstream shape changed.")
+    return df.filter(pl.col("player_id").is_not_null())
+
+
+def _raw_player_stats(seasons: Sequence[int]) -> pl.DataFrame:
+    import nflreadpy as nfl
+    raw = nfl.load_player_stats(seasons=list(seasons), summary_level="week")
+    clean = _clean_player_stats(raw)
+    if clean.height < raw.height:
+        print(f"    player_stats: dropped {raw.height - clean.height:,} unattributed "
+              f"rows of {raw.height:,}")
+    return clean
+
+
 def _raw_schedules(seasons: Sequence[int]) -> pl.DataFrame:
     import nflreadpy as nfl
     return nfl.load_schedules().filter(pl.col("season").is_in(list(seasons)))
@@ -87,6 +133,7 @@ def _raw_schedules(seasons: Sequence[int]) -> pl.DataFrame:
 SOURCES: dict[str, Contract | None] = {
     "pbp": PBP,
     "ff_opportunity": FF_OPPORTUNITY,
+    "player_stats": PLAYER_STATS,
     "schedules": SCHEDULES,
 }
 
@@ -101,6 +148,7 @@ def _fetch(source: str, seasons: Sequence[int]) -> pl.DataFrame:
     fetchers: dict[str, Callable[[Sequence[int]], pl.DataFrame]] = {
         "pbp": _raw_pbp,
         "ff_opportunity": _raw_ff_opportunity,
+        "player_stats": _raw_player_stats,
         "schedules": _raw_schedules,
     }
     return fetchers[source](seasons)
@@ -132,9 +180,11 @@ def load(source: str, seasons: Sequence[int], cols: Sequence[str] | None = None,
             f"unknown source {source!r}. Known: {', '.join(sorted(SOURCES))}")
 
     if source in WIDE and not cols:
+        standard = {"pbp": "PBP_COLS", "player_stats": "PLAYER_STATS_COLS"}.get(source)
         raise WideFrameRefused(
-            f"{source} is {WIDE[source]} columns wide; name the ones you need via cols=. "
-            f"For the standard slice use hub.fetch.nflverse.PBP_COLS.")
+            f"{source} is {WIDE[source]} columns wide; name the ones you need via cols=."
+            + (f" For the standard slice use hub.fetch.nflverse.{standard}."
+               if standard else ""))
 
     path = _cache_path(source, seasons, cols, cache)
     if path.exists() and not refresh:
