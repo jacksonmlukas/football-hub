@@ -238,23 +238,52 @@ def _load_board() -> pl.DataFrame:
     return _pl.read_parquet(path)
 
 
-def poll(interval: int = 10, *, my_slot: int = MY_SLOT, teams: int = TEAMS) -> int:
-    """Re-read the ESPN draft every `interval` seconds and reprint the view."""
+def poll(interval: int = 10, *, my_slot: int = MY_SLOT, teams: int = TEAMS,
+         heartbeat_s: int = 120) -> int:
+    """Re-read the ESPN draft every `interval` seconds and reprint on change.
+
+    Three things here are draft-night ergonomics rather than logic, and all three came
+    from running this against the live league rather than from a test:
+
+    * every print flushes. Python block-buffers a pipe, so `--poll 10 | tee draft.log`
+      produced twenty-two seconds of nothing.
+    * the sync is quiet. It used to announce "draft not started" on every pass, which over
+      three hours is a thousand lines scrolling the board out of view.
+    * a heartbeat every couple of minutes, because a silent poller and a hung poller look
+      identical at 2am and you have ninety seconds to decide.
+    """
+    import signal
+
     from hub.draft import state as state_mod
 
     board = _load_board()
-    last = -1
-    print(f"  polling ESPN every {interval}s. Ctrl-C to stop.")
+    last, last_beat = -1, 0.0
+    stopping = False
+
+    def _stop(*_: Any) -> None:
+        nonlocal stopping
+        stopping = True
+
+    # SIGTERM as well as Ctrl-C: a poller killed by a window closing should still say
+    # where the fallback board is.
+    signal.signal(signal.SIGTERM, _stop)
+
+    print(f"  polling ESPN every {interval}s. Ctrl-C to stop.", flush=True)
     try:
-        while True:
-            st = state_mod.sync_from_espn()
+        while not stopping:
+            st = state_mod.sync_from_espn(quiet=True)
+            now = time.monotonic()
             if st.n_taken != last:
-                last = st.n_taken
+                last, last_beat = st.n_taken, now
                 print("\n" + "\n".join(render(refresh(board, st, my_slot=my_slot,
-                                                      teams=teams))))
+                                                      teams=teams))), flush=True)
+            elif now - last_beat >= heartbeat_s:
+                last_beat = now
+                print(f"  watching... {st.n_taken} picks, no change", flush=True)
             time.sleep(interval)
     except KeyboardInterrupt:
-        print("\n  stopped. site/data/draft_board.json is still correct.")
+        pass
+    print("\n  stopped. site/data/draft_board.json is still correct.", flush=True)
     return 0
 
 

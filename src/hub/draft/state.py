@@ -98,7 +98,7 @@ def my_roster(state: DraftState, slot: int, teams: int = 12, rounds: int = 16) -
     return [state.taken[p - 1] for p in mine if p <= state.n_taken]
 
 
-def sync_from_espn(year: int | None = None) -> DraftState:
+def sync_from_espn(year: int | None = None, quiet: bool = False) -> DraftState:
     """Read the draft straight from ESPN instead of typing picks in.
 
     Preferred on draft night: it cannot drift from reality and needs no operator. Falls
@@ -110,11 +110,16 @@ def sync_from_espn(year: int | None = None) -> DraftState:
         lg, _ = league_settings() if year is None else (_league(year), {})
         picks = [p.playerName for p in (lg.draft or [])]
         if not picks:
-            print("  ESPN draft is empty (not started?); keeping local state.")
+            # `quiet` exists because the poller calls this every few seconds. Printing
+            # "not started" on each pass buried the board under ~1000 identical lines
+            # over a three-hour draft -- the one thing on screen you actually read.
+            if not quiet:
+                print("  ESPN draft is empty (not started?); keeping local state.")
             return load()
         return DraftState(taken=picks)
     except Exception as e:  # noqa: BLE001
-        print(f"  ESPN draft unavailable ({type(e).__name__}); keeping local state.")
+        if not quiet:
+            print(f"  ESPN draft unavailable ({type(e).__name__}); keeping local state.")
         return load()
 
 

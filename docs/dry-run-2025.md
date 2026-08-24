@@ -68,10 +68,52 @@ from round 4.
   a full-PPR room does.
 - **Pick schedule and mode.** 3, 22, 27, 46, 51 with scarcity/value alternating correctly.
 
+## Live poller run (2026-08-23)
+
+The section below used to say `--poll` had never run against a live draft. It has now been
+run against the real 2026 league, in the state it is actually in: authenticated, reachable,
+draft not yet started. Three more bugs, none of which replay could have surfaced because
+they are all about the loop rather than the board.
+
+### 4. Twenty-two seconds of nothing when piped
+
+Run with stdout to a pipe, the poller produced **no output at all**. Python block-buffers a
+pipe, and nothing in the loop flushed. In a terminal it is line-buffered and fine, which is
+exactly why replay and the unit tests never caught it -- but `--poll 10 | tee draft.log` is
+a reasonable way to keep a record of draft night, and it would have shown a blank file.
+
+**Fix:** every print in the loop flushes.
+
+### 5. The board scrolled off screen
+
+`sync_from_espn` announced "draft is empty (not started?)" on every pass. At 10s over a
+three-hour draft that is roughly a thousand identical lines pushing the one thing you need
+to read out of view. The change guard suppressed re-rendering the board but not the sync
+message underneath it.
+
+**Fix:** the poller syncs quietly and prints a heartbeat every two minutes instead --
+enough to tell a working poller from a hung one at 2am, which is a distinction worth
+ninety seconds.
+
+### 6. SIGTERM skipped the fallback message
+
+Only `KeyboardInterrupt` was handled. A poller killed rather than Ctrl-C'd exited without
+saying where the static board is -- which is the one thing you need at the moment it dies.
+
+**Fix:** `SIGTERM` handled too; both paths print the fallback and exit 0.
+
+### The degradation chain, verified
+
+If ESPN sync fails mid-draft the operator records picks by hand and the poller keeps
+working: `board --taken "..."` writes to disk, `sync_from_espn` falls back to that on an
+empty or unreachable draft, and the board reprices. Confirmed end to end -- two manual
+picks removed the right players and repriced the top of the board.
+
 ## What this did not test
 
-`--poll` has never run against a live draft, because there is not one until Sep 3. Replay
-drives the same `refresh()` and `render()`, but the ESPN sync path, the polling loop and
-the interval behaviour are exercised only by unit tests with a fake league. That is the
-remaining unrehearsed surface, and it is the part that will be running while the clock is
-going.
+The poller has now run against the live league, but **not against a live draft** -- there
+is not one until Sep 3. What remains unexercised is the only part that needs picks to
+arrive: the transition when `n_taken` starts moving, mid-draft reconnection after a dropped
+request, and behaviour if ESPN returns a partial pick list. The sync, the loop, the
+interval, the flush, the shutdown path and the manual fallback are all now confirmed
+against the real league.

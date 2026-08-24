@@ -238,3 +238,69 @@ def test_below_replacement_players_are_never_recommended():
     key, _ = live._sort_key(view["next_pick"], 12)
     shown = live.rank(view, key).head(live.TOP_N)
     assert (shown["vor_live"] > 0).all()
+
+
+# --- bugs found running the poller against the live league ---------------
+
+def test_sync_can_be_quiet():
+    """Live-run bug: sync printed 'draft is empty' on every poll. At 10s over a three
+    hour draft that is ~1000 lines pushing the board you need off the screen."""
+    import hub.fetch.espn as espn
+    from hub.draft import state as st_mod
+
+    class _L:
+        draft = []
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    try:
+        mp.setattr(espn, "league_settings", lambda: (_L(), {}))
+        mp.setattr(st_mod, "load", lambda path=None: DraftState())
+        st_mod.sync_from_espn(quiet=True)
+    finally:
+        mp.undo()
+
+
+def test_quiet_sync_prints_nothing(capsys):
+    import hub.fetch.espn as espn
+    from hub.draft import state as st_mod
+    import pytest as _pytest
+
+    class _L:
+        draft = []
+    mp = _pytest.MonkeyPatch()
+    try:
+        mp.setattr(espn, "league_settings", lambda: (_L(), {}))
+        mp.setattr(st_mod, "load", lambda path=None: DraftState())
+        st_mod.sync_from_espn(quiet=True)
+        assert capsys.readouterr().out == ""
+    finally:
+        mp.undo()
+
+
+def test_loud_sync_still_reports_by_default(capsys):
+    import hub.fetch.espn as espn
+    from hub.draft import state as st_mod
+    import pytest as _pytest
+
+    class _L:
+        draft = []
+    mp = _pytest.MonkeyPatch()
+    try:
+        mp.setattr(espn, "league_settings", lambda: (_L(), {}))
+        mp.setattr(st_mod, "load", lambda path=None: DraftState())
+        st_mod.sync_from_espn()
+        assert "not started" in capsys.readouterr().out
+    finally:
+        mp.undo()
+
+
+def test_the_poller_flushes_every_line_it_prints():
+    """Live-run bug: 22 seconds against the real league produced zero output when piped.
+    Python block-buffers a pipe, so `--poll 10 | tee draft.log` -- a reasonable way to keep
+    a record of draft night -- shows nothing at all."""
+    import inspect
+    src = inspect.getsource(live.poll)
+    prints = [ln for ln in src.splitlines() if "print(" in ln]
+    assert prints, "poll must report something"
+    joined = "\n".join(src.splitlines())
+    assert "flush=True" in joined, "every print in the poll loop must flush"
