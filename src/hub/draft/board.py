@@ -517,7 +517,7 @@ def main():
                   f"VOR {0.0 if v is None else v:>5.1f}  {extra}{tag}")
 
         if not a.no_win_prob:
-            from hub.draft.optimize import rank_tiers, win_probability
+            from hub.draft.optimize import rank_tiers, tag_for, win_probability
             names = rec["player"].to_list()
             print(f"\n  Championship equity -- {len(names)} candidates, "
                   f"{a.sims} seasons x 24 drafts each ...")
@@ -527,7 +527,7 @@ def main():
             lead = wp.filter(pl.col("co_leader"))["player"].to_list()
             for r in wp.iter_rows(named=True):
                 lift, se = r["lift"] * 100, r["lift_se"] * 100
-                tag = "TAKE" if r["co_leader"] else ("    " if abs(lift) < 2 * se else "avoid")
+                tag = tag_for(r["co_leader"], r["lift"], r["lift_se"])
                 print(f"    {tag:<5} {r['player']:<24} P(win) {r['p_win']*100:>5.2f}%  "
                       f"lift {lift:+5.2f} +/-{se:4.2f}")
             if len(lead) == 1:

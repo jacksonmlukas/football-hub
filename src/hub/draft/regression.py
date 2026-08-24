@@ -37,14 +37,22 @@ MIN_GAMES = 6
 # `ppg_next ~ proj_ppg + td_luck` on historical ESPN projections. A projection that already
 # regressed touchdowns would leave nothing for td_luck to explain and this would be zero.
 #
-# Only QB is here, and that is the finding rather than a shortcut. QB comes back at -0.540,
-# 95% CI [-1.057, -0.125], 99.5%. RB is +0.253 -- the wrong sign, 17% -- so ESPN is if
-# anything conservative there. WR is -0.286 at 89%, directional and below what this repo
-# ships on. Correcting all three would be acting on noise in the name of a mechanism.
+# QB is the clear case: -0.540, 95% CI [-1.057, -0.125], 99.5%.
 #
-# The level of the projections is fine: the coefficient on proj_ppg is 0.95-1.04 across
-# positions. This is specifically a touchdown bias, and specifically at quarterback.
-TD_LUCK_BETA: dict[str, float] = {"QB": -0.540}
+# WR is applied at Jackson's direction and is a judgment call, which is worth stating
+# plainly rather than letting a future reader assume it cleared the same bar. It comes back
+# at -0.286 with a 95% interval of [-0.797, +0.170] -- 89% of the bootstrap on the right
+# side, but the interval contains zero. What makes it defensible rather than fishing is that
+# the mechanism was measured first and independently (touchdown rate has no year-over-year
+# persistence) and predicts this sign for every position before any of it was fitted.
+#
+# RB stays out, and that is not a threshold call: it comes back at +0.253, the wrong sign
+# entirely, so ESPN is if anything conservative about running back touchdowns. Correcting it
+# would move the projection the wrong way.
+#
+# The level of the projections is fine -- the coefficient on proj_ppg is 0.95-1.04 across
+# positions. This is specifically a touchdown bias, not a calibration problem.
+TD_LUCK_BETA: dict[str, float] = {"QB": -0.540, "WR": -0.286}
 
 _PHASES = (("receiving_yards", "receiving_tds", "rec", 6.0),
            ("rushing_yards", "rushing_tds", "rush", 6.0),

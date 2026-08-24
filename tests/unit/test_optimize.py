@@ -8,6 +8,7 @@ import numpy as np
 import polars as pl
 import pytest
 from hub.draft.optimize import (draft_pool, rank_tiers, simulate_remaining_draft,
+                                tag_for,
                                 win_probability, _need_score)
 from hub.draft.season import STARTERS
 from hub.draft.state import DraftState, take
@@ -163,3 +164,28 @@ def test_zero_error_estimates_do_not_divide_by_zero():
                        "lift": [0.02, 0.0], "lift_se": [0.0, 0.0]})
     got = rank_tiers(df)
     assert all(v is not None for v in got["gap_se"].to_list())
+
+
+def test_a_significantly_positive_candidate_is_never_labelled_avoid():
+    """Found on the live board: Ja'Marr Chase came out at +0.95 lift with a standard error
+    of 0.37 and was tagged `avoid`, because the tag fired on "significantly different from
+    zero" without checking the sign. He is significantly *better* than the field. On a draft
+    board that is not a cosmetic bug."""
+    df = pl.DataFrame({"player": ["A", "B", "C"], "p_win": [0.50, 0.46, 0.41],
+                       "lift": [0.04, 0.0095, -0.030],
+                       "lift_se": [0.004, 0.0037, 0.005]})
+    r = rank_tiers(df)
+    got = {x["player"]: tag_for(x["co_leader"], x["lift"], x["lift_se"])
+           for x in r.iter_rows(named=True)}
+    assert got["A"] == "TAKE"
+    assert got["B"] != "avoid", "positive lift must never read as avoid"
+    assert got["C"] == "avoid"
+
+
+def test_a_candidate_indistinguishable_from_the_field_is_left_unmarked():
+    df = pl.DataFrame({"player": ["A", "B"], "p_win": [0.50, 0.45],
+                       "lift": [0.04, 0.001], "lift_se": [0.004, 0.004]})
+    r = rank_tiers(df)
+    got = {x["player"]: tag_for(x["co_leader"], x["lift"], x["lift_se"])
+           for x in r.iter_rows(named=True)}
+    assert got["B"] == ""

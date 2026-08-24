@@ -399,11 +399,13 @@ everything within two pooled standard errors of the leader as tied for the lead,
 board says so and suggests breaking the tie on something the simulation does not model. The
 TAKE tier contains both in 5 of 5 seeds; the strict top pick does not.
 
-**Touchdown luck now reaches the objective, at QB only.** ESPN's *projection* carries the
+**Touchdown luck now reaches the objective, at QB and WR.** ESPN's *projection* carries the
 same touchdown bias the draft room does, but only for quarterbacks: `ppg_next ~ proj_ppg +
-td_luck` gives -0.540 [-1.057, -0.125], 99.5%. RB comes back +0.253 (wrong sign, 17%) and WR
--0.286 (89%, directional). So `proj_blend` is marked down for QB touchdown luck before the
-simulation scores it -- Josh Allen 22.0 -> 19.5 -- and left alone elsewhere. A signal that is
+td_luck` gives -0.540 [-1.057, -0.125], 99.5%. WR is -0.286 [-0.797,
++0.170], 89% -- applied at Jackson's direction, and recorded as a judgment call rather than a
+95% result. RB stays out on sign, not threshold: +0.253 means ESPN is if anything conservative
+there, so correcting it would move the projection the wrong way. Effect: Josh Allen
+22.0 -> 19.5, Davante Adams -1.13, CeeDee Lamb +0.47. A signal that is
 only printed is decoration; `hub.draft.optimize` scores seasons against `proj_blend`, so this
 is where it had to go.
 

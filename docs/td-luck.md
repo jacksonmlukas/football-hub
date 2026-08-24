@@ -87,6 +87,44 @@ their yardage supports:
 Jefferson appearing here *and* topping the xFP−FP list is the two independent instruments
 agreeing on him, which is worth more than either alone.
 
+## Feeding it back into the objective
+
+A signal that is only printed is decoration. `hub.draft.optimize` scores seasons against
+`proj_blend`, so the correction has to land in that column or it never reaches a pick.
+
+The question is not whether the *room* misprices touchdowns — it is whether **ESPN's
+projection** does, since that is what the simulation runs on. Regressing next-season points
+on the projection *plus* touchdown luck, a projection that already regressed touchdowns
+leaves nothing for luck to explain:
+
+| position | n | beta(proj) | beta(td_luck) | 95% CI | P(<0) | applied |
+|---|---|---|---|---|---|---|
+| **QB** | 53 | 1.032 | **−0.540** | [−1.057, −0.125] | **99.5%** | yes |
+| **WR** | 153 | 1.036 | **−0.286** | [−0.797, +0.170] | 89.3% | yes, by decision |
+| RB | 110 | 0.946 | +0.253 | [−0.245, +0.808] | 17.2% | no |
+
+`beta(proj)` sits at 0.95–1.04 throughout, so the projections are well calibrated in level.
+This is specifically a touchdown bias.
+
+**QB is a result.** **WR is a judgment call, applied at Jackson's direction** — 89% of the
+bootstrap is on the right side but the interval contains zero, and that is worth stating
+plainly rather than letting a later reader assume it cleared the same bar. What makes it
+defensible rather than fishing is that the mechanism was measured first and independently,
+and predicted this sign for every position before any of it was fitted.
+
+**RB stays out, and that is not a threshold call** — the sign is wrong. ESPN is, if anything,
+conservative about running back touchdowns, so correcting it would move the projection the
+wrong way.
+
+Effect on the live board: Josh Allen 22.0 → 19.5, Davante Adams −1.13 ppg, CeeDee Lamb and
+Justin Jefferson **+0.47 and +0.44**.
+
+One honest note on that last pair. The WR correction was applied partly to see whether it
+would move Lamb out of `avoid` at pick 3. It did not — he goes from −1.57 to −1.80 lift,
+which is inside the run-to-run noise either way. Half a point per game of projection is small
+against a two-point deficit in championship equity, and the correction lifts his competitors
+too. The signal is real and the pick did not change.
+
 ## What this does not say
 
 It does not say Josh Allen is a bad pick. It says the part of his 2025 that came from an

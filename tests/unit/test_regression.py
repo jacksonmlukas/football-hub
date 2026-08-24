@@ -123,14 +123,33 @@ def test_an_unlucky_quarterback_is_marked_up():
     assert R.correct_projection(board)["proj_blend"][0] > 18.0
 
 
-def test_running_backs_and_receivers_are_left_alone():
-    """Measured and not applied. RB comes back at +0.253 with the wrong sign entirely
-    (17%), and WR at -0.286 is only directional (89%) -- below what this repo ships on.
-    Correcting them would be acting on noise in the name of a mechanism."""
-    board = pl.DataFrame({"player": ["A", "B"], "pos": ["RB", "WR"],
-                          "proj_blend": [14.0, 14.0], "td_luck": [3.0, 3.0]})
+def test_receivers_are_corrected_too():
+    """Applied at Jackson's direction, and it is a judgment call rather than a 95% result:
+    WR comes back at -0.286 with a 95% interval of [-0.797, +0.170], so 89% of the
+    bootstrap is on the right side but the interval still contains zero.
+
+    What makes it defensible rather than fishing is that the mechanism was measured first
+    and independently -- touchdown rate has no year-over-year persistence -- and predicts
+    this sign for every position before any of this was fitted."""
+    board = pl.DataFrame({"player": ["A"], "pos": ["WR"], "proj_blend": [14.0],
+                          "td_luck": [3.0]})
     got = R.correct_projection(board)
-    assert got["proj_blend"].to_list() == [14.0, 14.0]
+    assert got["proj_blend"][0] == pytest.approx(14.0 + R.TD_LUCK_BETA["WR"] * 3.0)
+    assert got["proj_blend"][0] < 14.0
+
+
+def test_running_backs_are_left_alone():
+    """Not a threshold call -- the sign is wrong. RB comes back at +0.253, meaning ESPN is
+    if anything conservative about running back touchdowns. Correcting it would move the
+    projection the wrong way."""
+    board = pl.DataFrame({"player": ["B"], "pos": ["RB"], "proj_blend": [14.0],
+                          "td_luck": [3.0]})
+    assert R.correct_projection(board)["proj_blend"][0] == 14.0
+
+
+def test_the_quarterback_correction_is_the_larger_one():
+    """QB -0.540 against WR -0.286. If these ever invert, something upstream has changed."""
+    assert abs(R.TD_LUCK_BETA["QB"]) > abs(R.TD_LUCK_BETA["WR"])
 
 
 def test_a_player_without_a_prior_season_is_untouched():

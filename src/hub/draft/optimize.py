@@ -217,3 +217,17 @@ def rank_tiers(wp: pl.DataFrame) -> pl.DataFrame:
             pl.when(gap.abs() > 0).then(pl.lit(float("inf"))).otherwise(pl.lit(0.0))
         ).alias("gap_se")
     ).with_columns((pl.col("gap_se") < 2.0).alias("co_leader"))
+
+
+def tag_for(co_leader: bool, lift: float, lift_se: float) -> str:
+    """How a candidate should be labelled on the board.
+
+    Three states, and the sign matters. `avoid` is for candidates significantly *worse* than
+    the field -- an earlier version fired it on any candidate significantly different from
+    zero, which labelled a player at +0.95 lift as one to avoid.
+    """
+    if co_leader:
+        return "TAKE"
+    if lift < 0 and abs(lift) > 2 * (lift_se or 0.0):
+        return "avoid"
+    return ""
