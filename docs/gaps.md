@@ -122,6 +122,28 @@ My first pass flagged these because `github.` contains the substring `hub.`.
 
 ---
 
+## Coverage against definition-of-done item 4
+
+Target is 80%. Actual is **69%** (171 tests, 888 statements, 274 uncovered).
+
+| Module | Cover | Note |
+|---|---|---|
+| `hub/store.py` | **0%** | No test file references it at all |
+| `hub/fetch/espn.py` | 26% | Network paths; the parsers are covered, the fetchers are not |
+| `hub/draft/board.py` | 45% | Almost all of the miss is `main()` — the CLI has no test |
+| `hub/draft/availability.py` | 72% | `historical_picks` is network-bound |
+| everything else | 81–100% | |
+
+Two corrections to the plan fall out of this:
+
+- **1.6 says `hub.store` "has only ever seen a synthetic smoke test."** There is no smoke test.
+  Coverage is zero and no test imports it. The ASOF join (`AS_OF_LINES`) has never executed in
+  CI. That raises 1.6 from "prove it against real data" to "test it at all", and it is the one
+  module every Phase 1 fetch item is supposed to write through.
+- **The 80% gate is a Phase 1 blocker, not a finishing touch.** Three of the four worst-covered
+  modules are exactly what Phase 1 builds on. Writing the fetch modules first and back-filling
+  tests later would bake the gap in.
+
 ## What this implies for sequencing
 
 `make slate WEEK=1` — the plan's definition-of-done item 2 — requires **three** missing modules
