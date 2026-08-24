@@ -64,6 +64,16 @@ wait, so rank by who will not survive it; value means a short wait, so rank by V
 VOR multiplied by the probability a player is gone before your next pick. The scarcity-mode
 ranking.
 
+**Room**:
+The eleven opponents, as a model: each follows consensus with fitted pick noise and fills its
+own starting slots before taking depth. Not the eleven actual people — a simulated room is
+what makes a draft replayable.
+
+**Slot**:
+A draft position, 1 to `teams`. Yours is 3. `roster_for(state, slot)` reconstructs any seat's
+roster from the snake order rather than tracking it.
+_Avoid_: seat, pick position.
+
 **Run**:
 Three or more picks at one position inside the last five — the moment replacement level at
 that position moves and a static board goes stale.

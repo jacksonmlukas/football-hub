@@ -136,7 +136,7 @@ def suggest_unmatched(board: pl.DataFrame, names) -> dict[str, str | None]:
     return out
 
 
-def my_roster(state: DraftState, slot: int, teams: int = 12, rounds: int = 16) -> list[str]:
+def roster_for(state: DraftState, slot: int, teams: int = 12, rounds: int = 16) -> list[str]:
     """Your players, derived from the snake order rather than tracked separately."""
     mine = snake_picks(slot, teams, rounds)
     return [state.taken[p - 1] for p in mine if p <= state.n_taken]

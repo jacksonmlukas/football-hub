@@ -59,6 +59,9 @@ LIMITATIONS = (
     "arm B breaks ties by consensus; the shipped tool refuses to break them and asks you",
     "the room is simulated -- consensus plus fitted pick noise, lexicographic need -- not "
     "the eleven people who were actually in those drafts",
+    "arm B is the POST-FIX optimizer: win_probability now seeds every seat with the roster "
+    "it already holds. P0 measured the pre-fix one, which was blind to your own roster, so "
+    "any movement from P0's +0.04 cannot be read as 'the shortlist tipped it'",
 )
 
 # The paired bootstrap, matching `hub.models.eval.compare`.
@@ -161,15 +164,12 @@ def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds:
 def play(board: pl.DataFrame, strategy, *, my_slot: int, teams: int, rounds: int,
          rng: np.random.Generator) -> tuple[list[str], list[str]]:
     """Play one draft with `strategy` in my seat. Returns (my player names, my positions)."""
-    pool_names = board["player"].to_list()
     rosters = simulate_remaining_draft(board, DraftState(taken=[]), my_slot=my_slot,
                                        teams=teams, rounds=rounds, rng=rng,
                                        my_pick=strategy)
-    from hub.draft.optimize import draft_pool
-    pool = draft_pool(board, DraftState(taken=[]))
     mine = rosters[my_slot - 1]
-    names = [pool["player"][int(i)] for i in mine]
-    pos = [pool["pos"][int(i)] or "NA" for i in mine]
+    names = [board["player"][int(i)] for i in mine]
+    pos = [board["pos"][int(i)] or "NA" for i in mine]
     return names, pos
 
 

@@ -7,7 +7,7 @@ probability rather than a score.
 import numpy as np
 import polars as pl
 import pytest
-from hub.draft.optimize import (draft_pool, market_pick, rank_tiers,
+from hub.draft.optimize import (market_pick, rank_tiers,
                                 simulate_remaining_draft,
                                 tag_for,
                                 win_probability, _need_score)
@@ -50,26 +50,66 @@ def test_every_team_is_filled_and_nobody_is_drafted_twice():
 
 
 def test_forced_candidate_lands_on_my_roster():
-    rosters = simulate_remaining_draft(_board(), DraftState(), my_slot=3, teams=12,
+    board = _board()
+    rosters = simulate_remaining_draft(board, DraftState(), my_slot=3, teams=12,
                                        rounds=6, forced="P42")
-    pool = draft_pool(_board(), DraftState())
-    mine = [pool["player"][int(i)] for i in rosters[2]]
+    mine = [board["player"][int(i)] for i in rosters[2]]
     assert "P42" in mine
 
 
-def test_already_drafted_players_are_never_selected():
+def test_already_drafted_players_are_never_drafted_again():
+    """They now appear once, on the seat that took them -- see the seeding test below --
+    but nobody may take them a second time."""
+    board = _board()
     st = take(DraftState(), *[f"P{i}" for i in range(20)])
-    rosters = simulate_remaining_draft(_board(), st, my_slot=3, teams=12, rounds=6)
-    pool = draft_pool(_board(), st)
-    picked = {pool["player"][int(i)] for r in rosters for i in r}
-    assert not (picked & {f"P{i}" for i in range(20)})
+    rosters = simulate_remaining_draft(board, st, my_slot=3, teams=12, rounds=6)
+    picked = [board["player"][int(i)] for r in rosters for i in r]
+    assert len(picked) == len(set(picked)), "a player was drafted twice"
+
+
+def test_every_seat_starts_from_the_roster_it_already_holds():
+    """The defect this shape fixes. Rosters used to contain only picks made *during* the
+    simulation, so championship equity could not see what you already owned -- holding a
+    quarterback, it ranked a second one above a startable back."""
+    from hub.draft.state import roster_for
+    board = _board()
+    st = take(DraftState(), *[f"P{i}" for i in range(20)])
+    rosters = simulate_remaining_draft(board, st, my_slot=3, teams=12, rounds=6)
+    for seat in range(1, 13):
+        held = set(roster_for(st, seat, 12, 6))
+        got = {board["player"][int(i)] for i in rosters[seat - 1]}
+        assert held <= got, f"seat {seat} lost the players it already held"
+
+
+def test_seeding_covers_opponents_not_just_me():
+    """Seeding only my seat would leave eleven opponents fielding future picks alone,
+    making them weaker than they are and inflating my p_win."""
+    from hub.draft.state import roster_for
+    board = _board()
+    st = take(DraftState(), *[f"P{i}" for i in range(20)])
+    rosters = simulate_remaining_draft(board, st, my_slot=3, teams=12, rounds=6)
+    other = [s for s in range(1, 13) if s != 3 and roster_for(st, s, 12, 6)]
+    assert other, "fixture should have opponents holding players"
+    for seat in other:
+        got = {board["player"][int(i)] for i in rosters[seat - 1]}
+        assert set(roster_for(st, seat, 12, 6)) <= got
+
+
+def test_a_recorded_pick_not_on_the_board_is_skipped():
+    """K and DST are drafted but deliberately off the board, and a typed pick can be
+    misspelled. Raising here would make the simulator unusable from round 13 of every real
+    draft; `suggest_unmatched` already flags a misspelling where a human can fix it."""
+    board = _board()
+    st = take(DraftState(), "P0", "Some Kicker", "P1")
+    rosters = simulate_remaining_draft(board, st, my_slot=3, teams=12, rounds=6)
+    assert sum(len(r) for r in rosters) > 0
 
 
 def test_my_greedy_fills_its_starting_slots():
     """A roster that never drafts a QB cannot be a serious opponent model."""
-    rosters = simulate_remaining_draft(_board(), DraftState(), my_slot=3, teams=12, rounds=10)
-    pool = draft_pool(_board(), DraftState())
-    mine = [pool["pos"][int(i)] for i in rosters[2]]
+    board = _board()
+    rosters = simulate_remaining_draft(board, DraftState(), my_slot=3, teams=12, rounds=10)
+    mine = [board["pos"][int(i)] for i in rosters[2]]
     for p, n in STARTERS.items():
         assert mine.count(p) >= min(n, 1), f"no {p} drafted"
 

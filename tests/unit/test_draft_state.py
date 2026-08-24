@@ -93,12 +93,12 @@ def test_empty_state_returns_the_whole_board():
 def test_my_roster_is_derived_from_slot_and_pick_order():
     """Picks 3 and 22 are mine from slot 3 of 12; nothing else in the first round is."""
     s = st.DraftState(taken=[f"P{i}" for i in range(1, 23)])
-    assert st.my_roster(s, slot=3, teams=12) == ["P3", "P22"]
+    assert st.roster_for(s, slot=3, teams=12) == ["P3", "P22"]
 
 
 def test_my_roster_is_empty_before_my_first_pick():
     s = st.DraftState(taken=["P1", "P2"])
-    assert st.my_roster(s, slot=3, teams=12) == []
+    assert st.roster_for(s, slot=3, teams=12) == []
 
 
 # --- espn sync ------------------------------------------------------------

@@ -595,7 +595,7 @@ def held_positions(board: pl.DataFrame, state: DraftState, *,
     `or` always takes the right branch. The guard never fired, and it called `remaining()`
     on the whole board to throw the answer away.
     """
-    mine = state_mod.my_roster(state, my_slot, teams)
+    mine = state_mod.roster_for(state, my_slot, teams)
     if not mine:
         return {}
     got = board.filter(pl.col("player").is_in(mine))["pos"].drop_nulls().to_list()
@@ -793,9 +793,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Lead with the market. P0 measured it even with championship equity on realised
         # outcomes -- +3.11 against the room versus +3.15, difference +0.04 [-3.64, +3.58]
         # at n=36 -- so the simpler and instant arm leads and equity becomes a tiebreaker.
-        from hub.draft.optimize import draft_pool, market_pick
+        from hub.draft.optimize import market_pick
         held = held_positions(board, st)
-        mp = market_pick(draft_pool(board, st, a.espn_weight), held)
+        # `remaining`, not a priced pool: market_pick ranks on adp (or ecr) and never
+        # reads the mu_pick blend that `draft_pool` existed to attach.
+        mp = market_pick(state_mod.remaining(board, st), held)
         if not mp:
             print("\n  THE PICK unavailable -- no ESPN ADP on the board. The market has")
             print("    nothing to say without it; fall back to the equity table below.")

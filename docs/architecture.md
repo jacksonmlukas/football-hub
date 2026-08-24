@@ -16,6 +16,7 @@ a superseded decision keep its original text instead of being edited in place.
 | [0005](adr/0005-tiered-sync-polling.md) | Tiered sync polling, no async | accepted |
 | [0006](adr/0006-fitted-constants-live-with-their-provenance.md) | Fitted constants live with their provenance, not in the config | accepted |
 | [0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md) | A measurement that steers the product must be committed code | accepted |
+| [0008](adr/0008-the-simulator-indexes-the-board.md) | The draft simulator indexes the board | accepted |
 
 Related, and deliberately not ADRs:
 

@@ -278,11 +278,49 @@ redundant player at a filled position.
 Pinned as a strict `xfail` in `tests/unit/test_backtest.py`, which will fail the moment it is
 fixed and the marker needs removing.
 
-**The decision this forces, and it is not mine to take.** The design fixes arm B as "the
-optimizer as shipped". If `win_probability` is fixed first, arm B measures something better
-than what shipped — and no longer the same object P0 measured. Fix first and measure the
-improved optimizer, or measure what ships and treat the defect as part of the finding? Either
-is defensible; picking after seeing the numbers is not.
+**Resolved 2026-08-24: fix first.** `win_probability` now scores equity over the whole board
+with every seat seeded from the roster it already holds. Arm B therefore measures the post-fix
+optimizer, which is a fifth limitation below.
+
+### The fix, and the before/after that gated it
+
+`--diagnose` was committed *before* the fix so it could be run against both, at
+`75f800f` (pre-fix) and the commit that follows it. The draft is advanced by the market in
+both runs, so the path is identical and the only thing that can differ is what equity says.
+
+| pick | held | leader BEFORE | leader AFTER |
+|---|---|---|---|
+| 3 | — | Puka Nacua (WR) | Christian McCaffrey (RB) |
+| 22 | RB1 | Chris Olave (WR) | Chris Olave (WR) |
+| 27 | RB2 | **Cam Skattebo (RB)** | Emeka Egbuka (WR) |
+| 46 | RB2, TE1 | **Javonte Williams (RB)** | **Javonte Williams (RB)** |
+| 51 | RB2, TE1, WR1 | Wan'Dale Robinson (WR) | Parker Washington (WR) |
+| 70 | RB2, TE1, WR2 | **Travis Etienne Jr. (RB)** | **Travis Etienne Jr. (RB)** |
+
+Bold rows are where the tripwire fires. Three before, two after.
+
+**The tripwire, pre-registered before the run:** equity must never name a player at an
+already-filled required position ahead of one filling an empty slot. That is the old defect's
+signature and also what a seat mis-attribution would look like after the fix.
+
+**It still fires, so by the rule the fix is not cleared to ship.** What the rule does not say,
+and what the run shows:
+
+    pick 46, holding RB2 TE1        pick 70, holding RB2 TE1 WR2
+      CO-LED Javonte Williams  RB     CO-LED Travis Etienne Jr. RB  +2.03% +/-1.10
+      CO-LED Josh Jacobs       RB     CO-LED Dak Prescott       QB  +1.30% +/-0.82
+      CO-LED Emeka Egbuka      WR     CO-LED Trevor Lawrence    QB  +0.56% +/-0.67
+
+At both tripped picks the need-filling alternative is a **co-leader** — inside two standard
+errors of the named leader. So this is "equity prefers running-back depth, within noise", not
+the decisive pathology the fix removed, where a second quarterback beat a startable back
+outright and arm B finished with four of them.
+
+**The flaw is in the tripwire, and it is mine.** It treats disagreement with `_need_score` as
+evidence of a defect, and disagreement with the lexicographic need rule is the entire reason
+championship equity exists as a separate signal. A gate that fires whenever the objective is
+doing its job is not a gate. But it was fixed before the numbers, and rewriting it now, having
+seen them, is the exact move this document already records going wrong once.
 
 ## P1 — Break the circularity *(only if P0 says keep it)*
 

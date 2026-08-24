@@ -274,10 +274,10 @@ def test_a_strategy_that_returns_a_drafted_player_raises():
 
 
 def test_the_strategy_sees_picks_in_order_so_it_can_rebuild_the_state():
-    """`my_roster` walks the snake to attribute picks to seats, so an unordered list would
+    """`roster_for` walks the snake to attribute picks to seats, so an unordered list would
     hand a strategy someone else's roster."""
     from hub.draft.optimize import simulate_remaining_draft
-    from hub.draft.state import DraftState, my_roster
+    from hub.draft.state import DraftState, roster_for
     board = _board(60)
     seen = {}
 
@@ -292,8 +292,8 @@ def test_the_strategy_sees_picks_in_order_so_it_can_rebuild_the_state():
     assert sorted(seen) == [2, 21, 26]
     # By my second pick the state must attribute exactly one player to me, and by my third,
     # two. An unordered list would attribute someone else's.
-    assert len(my_roster(DraftState(taken=seen[21]), 3, 12)) == 1
-    assert len(my_roster(DraftState(taken=seen[26]), 3, 12)) == 2
+    assert len(roster_for(DraftState(taken=seen[21]), 3, 12)) == 1
+    assert len(roster_for(DraftState(taken=seen[26]), 3, 12)) == 2
 
 
 # --- limitations are recorded before the numbers, not after ---------------
@@ -301,26 +301,25 @@ def test_the_strategy_sees_picks_in_order_so_it_can_rebuild_the_state():
 def test_the_named_gaps_between_harness_and_product_are_recorded():
     """A limitation discovered after the result is a rationalisation. These are the four
     the design fixed in advance."""
-    assert len(bt.LIMITATIONS) == 4
+    assert len(bt.LIMITATIONS) == 5
     joined = " ".join(bt.LIMITATIONS)
-    for expected in ("consensus", "xFP", "ties", "simulated"):
+    for expected in ("consensus", "xFP", "ties", "simulated", "POST-FIX"):
         assert expected in joined
 
 
 # --- a defect this harness found in shipped code --------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "win_probability scores championship equity on a roster that EXCLUDES the players you "
-    "already hold. `simulate_remaining_draft` builds rosters from `draft_pool`, which is "
-    "`remaining(board, state)` -- so your existing picks are not in the pool and not in the "
-    "simulated roster, and positional need from what you own is invisible. Live the damage "
-    "is bounded, because the draft market leads and equity only breaks ties over an "
-    "already-VOR-filtered shortlist. As a lead strategy it is fatal: arm B drafts four "
-    "quarterbacks in a one-QB league, and more simulations do not help. Remove this marker "
-    "when it is fixed."))
-def test_equity_should_see_the_roster_you_already_hold():
+def test_equity_sees_the_roster_you_already_hold():
+    """The defect this harness found on its first run, now fixed.
+
+    `win_probability` scored equity on a roster that EXCLUDED your existing picks, because
+    `simulate_remaining_draft` built rosters from a pool of only-available players. Holding a
+    quarterback, it ranked a second one above a startable back -- and on the live 2026 board
+    it named a third and fourth running back at three of your first six turns while QB, WR
+    and TE sat empty.
+    """
     from hub.draft.optimize import win_probability
-    from hub.draft.state import DraftState, my_roster
+    from hub.draft.state import DraftState, roster_for
 
     n = 48
     board = pl.DataFrame({
@@ -330,7 +329,7 @@ def test_equity_should_see_the_roster_you_already_hold():
         "vor": [float(n - i) for i in range(n)],
         "proj_ppg": [float(max(20 - i * 0.3, 1.0)) for i in range(n)]})
     state = DraftState(taken=["P1", "P2", "P0"])
-    assert my_roster(state, 3, 12) == ["P0"], "I hold exactly one quarterback"
+    assert roster_for(state, 3, 12) == ["P0"], "I hold exactly one quarterback"
 
     wp = win_probability(board, state, ["P4", "P5"], my_slot=3, teams=12, rounds=6,
                          n_draft_sims=8, n_season_sims=200, seed=0)

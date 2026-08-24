@@ -103,9 +103,9 @@ def refresh(board: pl.DataFrame, state: DraftState, *, my_slot: int = MY_SLOT,
         (pl.col("xfp_per_game") - pl.col("pos").replace_strict(levels, default=0.0))
         .alias("vor_live"))
 
-    from hub.draft.state import my_roster, unmatched as unmatched_picks
+    from hub.draft.state import roster_for, unmatched as unmatched_picks
 
-    held = my_roster(state, slot=my_slot, teams=teams, rounds=rounds)
+    held = roster_for(state, slot=my_slot, teams=teams, rounds=rounds)
     by_name = dict(zip(board["player"].to_list(), board["pos"].to_list()))
     roster = Counter(by_name[n] for n in held if n in by_name)
 

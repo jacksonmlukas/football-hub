@@ -50,7 +50,7 @@ import polars as pl
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, blended_adp
 from hub.draft.picks import snake_picks
 from hub.draft.season import FLEX_CAPACITY, FLEX_FROM, STARTERS, champion_probability
-from hub.draft.state import DraftState, remaining
+from hub.draft.state import DraftState, _norm, remaining, roster_for
 from hub.models.predict import WEEKLY_SKEW_POOLED, moments
 
 # Bench depth beyond the 8 starting slots. Deep enough that saturation is punished,
@@ -59,13 +59,13 @@ DEFAULT_ROUNDS = 14
 
 # What a pluggable draft strategy is handed, and what it returns.
 #
-#   pool   -- the frame `simulate_remaining_draft` is indexing into
+#   pool   -- the board, with `mu_pick` attached; indices are board rows
 #   live   -- row indices still on the board
 #   counts -- how many of each position I already hold
 #   taken  -- every player already off the board, in pick order, so a strategy that needs a
 #             `DraftState` can rebuild one exactly
 #
-# It returns a row index into `pool`. Anything else is a programming error and will raise.
+# It returns a row index into `pool`, i.e. into the board. Anything else raises.
 MyPick = Callable[[pl.DataFrame, np.ndarray, dict[str, int], list[str]], int]
 
 
@@ -82,24 +82,13 @@ def _need_score(counts: dict[str, int], pos: str) -> int:
     return 0
 
 
-def draft_pool(board: pl.DataFrame, state: DraftState,
-               w: float = DEFAULT_ESPN_WEIGHT) -> pl.DataFrame:
-    """Players still available, in the one canonical order.
-
-    Roster indices returned by simulate_remaining_draft() index THIS frame, not the full
-    board. Everything that consumes those rosters -- mu, sd, pos -- must be taken from
-    here too, or the simulation silently scores the wrong players.
-    """
-    return blended_adp(remaining(board, state), w)
-
-
 def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot: int,
                              teams: int = 12, rounds: int = DEFAULT_ROUNDS,
                              forced: str | None = None,
                              w: float = DEFAULT_ESPN_WEIGHT, opp_noise: float = 1.0,
                              rng: np.random.Generator | None = None,
                              my_pick: MyPick | None = None) -> list[np.ndarray]:
-    """Play out the draft. Returns one array of draft_pool() row indices per team.
+    """Play out the draft. Returns one array of `board` row indices per team.
 
     Two separable things live here: the **room** -- eleven opponents following a noisy board
     and filling their own starting slots -- and **my** strategy, which is greedy on lineup
@@ -110,9 +99,15 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
     copied room drifts: the thing being measured would slowly stop being the thing that
     ships. Default is `None`, which keeps the greedy rule and every existing caller
     unchanged.
+
+    **Indices are into `board`.** They used to index a derived frame of only-available
+    players, which carried a standing warning that everything consuming a roster had to be
+    read from that same frame. Indexing the board removes the class of error rather than
+    warning about it, and it is what lets every seat start from the roster it already holds
+    -- see below, which is the bug this shape exists to fix.
     """
     rng = rng or np.random.default_rng(0)
-    pool = draft_pool(board, state, w)
+    pool = blended_adp(board, w)
 
     mu_pick = pool["mu_pick"].fill_null(999.0).to_numpy()
     # How loosely opponents follow their own board. The fitted sigma in availability.py
@@ -143,8 +138,35 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
     counts_by_team: list[dict[str, int]] = [{} for _ in range(teams)]
     counts = counts_by_team[my_slot - 1]
     gone = np.zeros(pool.height, dtype=bool)
+
+    # Every seat starts from the roster it already holds.
+    #
+    # This is the fix for a defect that shipped: rosters used to be built only from picks
+    # made *during* the simulation, because the pool was `remaining(board, state)` and your
+    # existing players were not in it. Championship equity was therefore blind to what you
+    # already owned -- holding a quarterback, it ranked a second quarterback above a
+    # startable back, and on the live 2026 board it named a third and fourth running back at
+    # three of your first six turns while QB, WR and TE sat empty.
+    #
+    # All twelve seats, not just mine: seeding only mine would leave eleven opponents
+    # fielding future picks alone, making them weaker than they are and inflating my p_win
+    # -- a number the output already has to apologise for.
+    #
+    # A recorded pick that is not on the board (K, DST, or a misspelling) is skipped. Those
+    # are expected -- `DRAFTED_POSITIONS` excludes kickers and defences on purpose -- and
+    # `suggest_unmatched` already flags a misspelling where a human can still fix it.
+    by_norm = {_norm(n): i for i, n in enumerate(names)}
+    for seat in range(1, teams + 1):
+        for held_name in roster_for(state, seat, teams, rounds):
+            i = by_norm.get(_norm(held_name))
+            if i is None or gone[i]:
+                continue
+            gone[i] = True
+            rosters[seat - 1].append(i)
+            counts_by_team[seat - 1][pos[i]] = (
+                counts_by_team[seat - 1].get(pos[i], 0) + 1)
     # Pick *order*, not pool order. `np.flatnonzero(gone)` would give the latter, and
-    # `state.my_roster` attributes picks to seats by walking the snake -- so a strategy
+    # `state.roster_for` attributes picks to seats by walking the snake -- so a strategy
     # rebuilding a DraftState from an unordered list would be handed someone else's roster.
     order_taken: list[str] = list(state.taken)
 
@@ -194,8 +216,14 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
                     my_slot: int, teams: int = 12, rounds: int = DEFAULT_ROUNDS,
                     n_draft_sims: int = 24, n_season_sims: int = 300,
                     w: float = DEFAULT_ESPN_WEIGHT, seed: int = 0) -> pl.DataFrame:
-    """P(you win the league) for each candidate, averaged over simulated drafts."""
-    pool = draft_pool(board, state, w)
+    """P(you win the league) for each candidate, averaged over simulated drafts.
+
+    Scored over the *whole board*, and rosters include the players each seat already holds.
+    They used to include only picks made during the simulation, which made the objective
+    blind to your own roster: holding a quarterback, it ranked a second one above a
+    startable back.
+    """
+    pool = blended_adp(board, w)
     pred = moments(pool)
     mu = pred["mu"].fill_null(0.0).to_numpy()
     sd = pred["sd"].fill_null(2.0).to_numpy()
