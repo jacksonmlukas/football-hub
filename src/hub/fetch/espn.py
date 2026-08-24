@@ -239,19 +239,33 @@ class NoLeagueHistory(Exception):
     """ESPN returned no teams for a season."""
 
 
-def _league_history(season: int, view: str = "mTeam") -> dict:
+# kona_player_info returns nothing without a filter naming how many players to send and in
+# what order. `filterIds` looks like the precise way to ask for the drafted players only and
+# returns HTTP 400 here, so take the top of the draft-rank ordering in one request and match
+# locally -- which is also the rule against looping over players.
+PLAYER_FILTER = {"players": {"limit": 800,
+                            "sortDraftRanks": {"sortPriority": 100, "sortAsc": True,
+                                               "value": "PPR"}}}
+
+
+def league_history(season: int, view: str = "mTeam") -> dict:
     """Raw `leagueHistory` payload for one past season. Needs the private-league cookies."""
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).resolve().parents[3] / ".env")
     r = requests.get(
         f"{LM_API}/leagueHistory/{os.environ['ESPN_LEAGUE_ID']}",
         params={"view": view, "seasonId": season},
+        headers=({"x-fantasy-filter": json.dumps(PLAYER_FILTER)}
+                 if view == "kona_player_info" else None),
         cookies={"espn_s2": os.environ.get("ESPN_S2", ""),
                  "SWID": os.environ.get("ESPN_SWID", "")},
-        timeout=30)
+        timeout=60)
     r.raise_for_status()
     body = r.json()
     return body[0] if isinstance(body, list) and body else body
+
+
+_league_history = league_history
 
 
 def transaction_counts(seasons, fetch=None) -> pl.DataFrame:

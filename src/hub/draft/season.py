@@ -31,10 +31,19 @@ PLAYOFF_TEAMS = 6
 # his projected per-game points. This is the single most important number in the model:
 # at 0 the projection is truth and drafting on it is clairvoyance; the larger it gets, the
 # more a draft is a lottery and the flatter every candidate's championship equity becomes.
-# 0.35 is in line with the historical spread between preseason ranks and end-of-season
-# finishes for skill players. It has NOT been fitted here -- see the note in the module
-# docstring of optimize.py before reading small differences as real.
-TALENT_CV = 0.35
+#
+# FITTED 2026-08-23 against this league's own past drafts -- `hub.draft.calibrate`, written
+# up in `docs/talent-cv.md`. 460 drafted skill players over 2023-25: 0.411, 95% CI
+# [0.384, 0.437]. The previous value of 0.35 was a guess and sat 4.6 se low.
+#
+# A draft pick is market opinion recorded before week 1, so E[realized | pick, position] is
+# the market's projection and cannot have been revised after the fact. Availability is
+# inside the number on purpose: scoring is measured per team game, and the simulator benches
+# a low-talent player the same way you bench an injured one.
+#
+# A single scalar is a compromise. RB fits at 0.474 and TE at 0.288, which is a real
+# difference and not noise; see the doc.
+TALENT_CV = 0.41
 
 
 def weekly_moments(xp: pl.DataFrame, floor_sd: float = 2.0) -> pl.DataFrame:

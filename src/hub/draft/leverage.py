@@ -23,9 +23,12 @@ that variance helps enormously at every strength. `calibrate` rescales projectio
 the team's mean weekly score back where it was, so the sweep moves one quantity at a time.
 `team_mean` at two spreads shows the size of the trap: 1.8x spread is worth +15% of mean.
 
-Everything here is inside the model. Opponents are twelve copies of one synthetic roster,
-players are independent (the correlation layer does not exist), and `TALENT_CV` was never
-fitted -- `hub.draft.season` says so. Read the directions, not the decimals.
+Everything here is inside the model. Opponents are twelve copies of one synthetic roster
+and players are independent, so the correlation layer does not exist. `TALENT_CV` -- which
+the season-long sweep below is a sweep in -- was fitted on 2026-08-23 against this league's
+own past drafts (`hub.draft.calibrate`, `docs/talent-cv.md`); refitting it from 0.35 to 0.41
+strengthened every conclusion here rather than changing one. Read the directions, not the
+decimals.
 
     uv run python -m hub.draft.leverage
 """

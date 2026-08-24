@@ -213,6 +213,24 @@ a starting lineup is a max over the roster, so scaling player spread by 1.8x rai
 team's *mean* by 15% before any variance effect. `calibrate` removes it and a test pins it.
 The correction reversed the sign of the answer.
 
+**`TALENT_CV` fitted (2026-08-23), 0.35 -> 0.41.** `six-of-twelve.md` named it as the one
+number that would overturn its conclusions, since the season-long sweep is a sweep in
+exactly that quantity. Fitted against this league's own past drafts -- a pick is market
+opinion recorded before week 1, so it cannot be revised after the fact the way a stored
+projection can. 460 drafted skill players over 2023-25: **0.411, 95% CI [0.384, 0.437]**,
+putting the old guess 4.6 se low. Rerunning at the fitted value moved every number slightly
+and strengthened every conclusion; nothing reversed. `hub.draft.calibrate`,
+`docs/talent-cv.md`.
+
+Two things that would have biased it and are handled: weekly sampling noise is subtracted
+per player (it is 0.154 of the 0.439 raw dispersion), and 2022 is excluded because a quarter
+of its drafted players have retired out of ESPN's universe and those are the busts. Only the
+second moment was fitted; the quantiles and near-zero skew came out right unprompted, which
+is the model's normal-multiplicative talent assumption validating itself.
+
+Still open, and flagged rather than done: a single scalar spans RB at 0.474 and TE at 0.288,
+and `weekly_moments`' `sd = 0.55*mu` is the next constant of the same kind.
+
 ## Open questions
 
 1. **Pool configuration** — entries, payout, rebuys. Under ~20 entries play near max win
