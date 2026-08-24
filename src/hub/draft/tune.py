@@ -167,9 +167,14 @@ def holdout(signal_season: int = 2024, board_season: int = 2025) -> pl.DataFrame
     sig = regression_signal(sig).select(
         pl.col("full_name"), pl.col("z_regress"))
 
+    # Bounded on BOTH sides. Without a lower bound, a player ranked in a previous
+    # preseason but not this one carries his stale rank forward and is scored as though
+    # the market still rated him. Harmless-looking, and it would quietly differ between
+    # season pairs -- which is exactly what a multi-season comparison must not do.
     board = (nfl.load_ff_rankings("all")
              .filter((pl.col("page_type") == "redraft-overall")
                      & (pl.col("scrape_date") < f"{board_season}-09-01")
+                     & (pl.col("scrape_date") >= f"{board_season}-07-01")
                      & pl.col("ecr").is_not_null())
              .sort("scrape_date", descending=True)
              .unique(subset=["player"], keep="first")

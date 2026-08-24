@@ -19,14 +19,19 @@ import polars as pl
 # Nudge strength, set to zero by measurement rather than judgment.
 #
 # The reasoning below is intact and may still be right in principle -- consensus does
-# anchor on realised points, and expected points is a cleaner number. But a 2024 -> 2025
-# holdout says this particular adjustment does not help: Spearman falls monotonically with
-# lambda, every value at or above 0.04 is significantly negative under bootstrap, and the
-# previous default of 0.08 was costing about 35 points of top-50 production at -3.0 sigma.
+# anchor on realised points, and expected points is a cleaner number. Three holdouts say
+# this particular adjustment cannot be relied on:
 #
-# Most likely explanation, untested: by the time a preseason board is published, rankers
-# have already priced the regression. See docs/lambda-sweep.md, including what would
-# distinguish "priced" from "decayed".
+#   lam=0.08 delta, top-50 points   22->23  -87.1   23->24  +183.7   24->25  -93.6
+#
+# One season in three it was worth a lot; the other two it cost. Pooled, +1.0 points with
+# a standard deviation of 158 -- t = 0.01, which is nothing. The only finding all three
+# seasons share is that a large nudge is reliably bad (lam=0.32, t = -3.88), and that
+# Spearman falls monotonically with lambda in every year.
+#
+# So zero is not "the signal is absent". It is "the sign is unstable and the spread swamps
+# the effect", which is a different and worse reason to leave it alone.
+# See docs/lambda-sweep.md.
 DEFAULT_LAMBDA = 0.0
 
 
