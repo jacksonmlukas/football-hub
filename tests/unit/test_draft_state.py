@@ -167,3 +167,52 @@ def test_omitting_the_league_id_still_uses_the_configured_league():
     import hub.draft.state as st
     sig = inspect.signature(st.sync_from_espn)
     assert sig.parameters["league_id"].default is None
+
+
+# --- catching a mistyped pick ---------------------------------------------
+
+def test_a_typo_is_reported_with_the_name_it_probably_meant():
+    """The draft-night failure that costs a pick. `--taken` records whatever it is given
+    and saves it; a name that does not match the board leaves that player sitting on the
+    board as available, and the next recommendation can hand back someone already gone.
+
+    ESPN publishes nothing mid-draft for a mock (docs/decisions.md), so typing picks is the
+    primary path and this is its sharp edge."""
+    import polars as pl
+
+    import hub.draft.state as st
+    board = pl.DataFrame({"player": ["Bijan Robinson", "Ja'Marr Chase"],
+                          "pos": ["RB", "WR"]})
+    got = st.suggest_unmatched(board, ["Bijan Robinsen"])
+    assert got == {"Bijan Robinsen": "Bijan Robinson"}
+
+
+def test_a_name_matching_nothing_is_reported_without_a_guess():
+    """Kickers and defences are drafted and the board excludes them by design, so they are
+    always unmatched. Offering a wild guess for them would train the reader to ignore the
+    warning, which is worse than no warning."""
+    import polars as pl
+
+    import hub.draft.state as st
+    board = pl.DataFrame({"player": ["Bijan Robinson"], "pos": ["RB"]})
+    got = st.suggest_unmatched(board, ["Steelers D/ST"])
+    assert got == {"Steelers D/ST": None}
+
+
+def test_a_name_that_matches_is_not_reported_at_all():
+    import polars as pl
+
+    import hub.draft.state as st
+    board = pl.DataFrame({"player": ["Bijan Robinson"], "pos": ["RB"]})
+    assert st.suggest_unmatched(board, ["bijan robinson"]) == {}
+
+
+def test_punctuation_and_suffixes_still_match():
+    """The normaliser already handles these; this pins that the check uses it rather than
+    doing its own comparison and crying wolf on `A.J. Brown`."""
+    import polars as pl
+
+    import hub.draft.state as st
+    board = pl.DataFrame({"player": ["A.J. Brown", "Marvin Harrison Jr."],
+                          "pos": ["WR", "WR"]})
+    assert st.suggest_unmatched(board, ["AJ Brown", "Marvin Harrison"]) == {}

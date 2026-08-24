@@ -608,6 +608,41 @@ version that breaks when a sync is missed.
 `hub.draft.state.sync_from_espn` now takes a `league_id`, so any room can be targeted; the
 configured league stays the default so draft night needs no extra argument.
 
+### How FantasyPros solves this, and what we would build
+
+Their Draft Assistant syncs with ESPN mock drafts, which the REST API cannot support -- so
+whatever they do is client-side. Their own setup instructions give it away: the ESPN draft
+room must be open **in a Chrome tab**, the assistant in another, and the documented fix for a
+broken sync is to **reload the draft room tab**. That is a content script attaching at page
+load, not an API integration.
+
+Three ways such a script can get picks, in increasing robustness: scraping the DOM with a
+`MutationObserver` (breaks on any reskin, and the player list is virtualised so only rendered
+rows exist); reading the app's own JS state; or wrapping `window.WebSocket` before ESPN's
+bundle runs and reading the frames the client itself renders from. The last cannot drift from
+what is on screen, and is what we would build.
+
+**Decided (Jackson, 2026-08-24): nice-to-have, not draft-night infrastructure.** It is more
+moving parts than anything else in the repo with ten days to the draft, and two unknowns are
+unresolved -- whether ESPN uses a websocket or long-polling, and whether picks carry player
+ids or names. A half-built socket interceptor at 9:01 PM on Sep 3 is worse than typing names.
+
+### So typing picks is the primary path, and it had a sharp edge
+
+`--taken` recorded whatever it was given and said only "N picks recorded". A mistyped name
+matched nothing, so the misspelt player stayed on the board as available and the next
+recommendation could hand back someone already drafted -- silently, which is the worst
+version of it.
+
+It now checks each name against the board and says so, with a suggestion when one is close:
+
+    NOT ON THE BOARD: 'Bijan Robinsen' -- did you mean 'Bijan Robinson'?
+      until that is fixed, 'Bijan Robinson' is still shown as available
+
+A name matching nothing gets no guess, because kickers and defences are drafted every round or
+two and the board excludes them by design -- guessing at those would train the reader to
+ignore the warning.
+
 ## Open questions
 
 1. **Pool configuration** — entries, payout, rebuys. Under ~20 entries play near max win

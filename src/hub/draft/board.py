@@ -505,6 +505,7 @@ def main():
         state_mod.save(st)
         print(f"  draft state: {st.n_taken} picks recorded")
 
+
     if a.show_slots:
         picks = my_picks()
         waits = [b - x for x, b in zip(picks, picks[1:])]
@@ -518,6 +519,20 @@ def main():
         return
 
     board = build(a.league_size, a.season)
+
+    # A mistyped pick is silent otherwise: the misspelt player stays on the board as
+    # available and the next recommendation can hand back someone already drafted. ESPN
+    # publishes nothing mid-draft for a practice room, so typing picks is the primary path
+    # and this is its sharp edge. Checked here rather than where the picks are recorded,
+    # because the board does not exist yet at that point.
+    if a.taken:
+        for name, guess in state_mod.suggest_unmatched(
+                board, [n.strip() for n in a.taken.split(",") if n.strip()]).items():
+            if guess:
+                print(f"\n  NOT ON THE BOARD: {name!r} -- did you mean {guess!r}?")
+                print(f"    until that is fixed, {guess!r} is still shown as available")
+            else:
+                print(f"\n  not on the board: {name!r} (kicker or defence, most likely)")
     OUT.mkdir(parents=True, exist_ok=True)
     board.write_parquet(ROOT / "data" / "processed" / "draft_board.parquet")
     OUT.joinpath("draft_board.json").write_text(json.dumps(board.head(300).to_dicts(), default=str))

@@ -92,6 +92,31 @@ def unmatched(board: pl.DataFrame, state: DraftState) -> list[str]:
     return [n for n in state.taken if _norm(n) not in known]
 
 
+def suggest_unmatched(board: pl.DataFrame, names) -> dict[str, str | None]:
+    """Names that are not on the board, each with the board name it probably meant.
+
+    A mistyped pick is the sharp edge of typing picks by hand: `take` records whatever it
+    is given, so the misspelt player stays on the board as available and the next
+    recommendation can hand back someone already drafted.
+
+    A close match gets a suggestion. A name matching nothing gets `None` rather than a wild
+    guess -- kickers and defences are drafted every round or two and the board excludes them
+    by design, so they are always unmatched, and guessing at them would train the reader to
+    ignore the warning.
+    """
+    import difflib
+
+    known = {_norm(p): p for p in board["player"].to_list()}
+    out: dict[str, str | None] = {}
+    for name in names:
+        key = _norm(name)
+        if key in known:
+            continue
+        close = difflib.get_close_matches(key, list(known), n=1, cutoff=0.85)
+        out[name] = known[close[0]] if close else None
+    return out
+
+
 def my_roster(state: DraftState, slot: int, teams: int = 12, rounds: int = 16) -> list[str]:
     """Your players, derived from the snake order rather than tracked separately."""
     mine = snake_picks(slot, teams, rounds)
