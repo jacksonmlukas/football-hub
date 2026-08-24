@@ -54,10 +54,32 @@ It does not escape the circularity below. If one object both ranks candidates an
 season, that dependence is structural rather than accidental. The only fix is scoring against
 *realised* outcomes, which is P0.
 
-**Sequencing.** Do not refactor before the draft. The pieces are consistent enough today, the
-draft tool works, and a refactor ten days out risks a working thing for a tidier one. The
-props audit is cheap and needs no refactor -- do that now. Unify after Sep 3, when every
-in-season consumer (lineup, waiver, props) reads from the same object anyway.
+**Started 2026-08-24 at Jackson's direction**, against my recommendation to wait until after
+the draft. Done as a pure refactor -- no number changes -- so the test suite is the proof that
+the draft tool still works.
+
+`hub/models/predict.py` now owns everything about what a player does in a week: `TALENT_CV`
+and its per-position table, the square-root spread law, per-position skew, the Cornish-Fisher
+draw, teammate correlation, and the component line behind a projection. `hub/draft/season.py`
+keeps what a *league* does -- rosters, schedule, bracket, lineups -- and re-exports the moved
+names, because breaking `calibrate`, `leverage`, `optimize` and the tests to be tidier is not
+an improvement.
+
+Teammate correlation moved too. It was defined in `components.py` and used two ways:
+analytically by `lineup.py` for a closed-form spread, and by sampling in the simulator. Two
+uses of one table is fine; the table living in the *scoring* module was not, since scoring is
+how stats become points and who moves together is a prediction.
+
+**The constraint this had to respect**, and did: component-derived spread is measurably
+*worse* than the fitted square-root law (mean error 1.365 against 1.140, P(better) 0.0%), so
+the object keeps the fitted laws for its moments and exposes components alongside them. A
+unification that quietly swapped a validated number for a tidier derivation would be a
+regression wearing a refactor's clothes.
+
+Still to move, and deliberately not moved yet: the distribution constants in `components.py`
+(`COUNT_DISPERSION`, `TD_DISPERSION`, `PER_UNIT_CV`) and `sample_weeks` belong here too, on
+the same reasoning. That would leave `components.py` as pure scoring. Left for after the
+draft -- it touches the props audit path and there is no reason to move it under a deadline.
 
 ## The finding that reorders everything
 

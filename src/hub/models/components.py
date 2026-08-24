@@ -82,41 +82,10 @@ COUNT_DISPERSION: dict[str, float] = {"pass": 2.45, "rush": 2.39, "rec": 1.20}
 # right family is binomial: var/mean = 1 - p, so p follows directly from the measurement.
 TD_DISPERSION: dict[str, float] = {"pass": 0.85, "rush": 0.86, "rec": 0.83}
 
-# Within-game correlation between teammates, measured on standardised weekly points,
-# 2022-25. Only the quarterback edges carry anything: a quarterback and a receiving
-# teammate move together (+0.23), and everything else is inside +/-0.06 of zero --
-# including two receivers on the same team, at +0.014, which is not what the folklore says.
-#
-# The gate in docs/correlation.md is what makes this worth carrying: for a lineup holding a
-# quarterback and his own pass catchers, treating them as independent gives an 80% interval
-# that covers 72.9% of the time. Adding these puts it at 80.4%. For a lineup with no
-# quarterback, independence is already calibrated and this changes nothing.
-TEAMMATE_RHO: dict[tuple[str, str], float] = {
-    ("QB", "WR"): 0.232, ("QB", "TE"): 0.225, ("QB", "RB"): 0.054,
-}
-
-
-def teammate_rho(a: str, b: str) -> float:
-    """Correlation between two teammates by position. Zero for anything unmeasured."""
-    return TEAMMATE_RHO.get((a, b), TEAMMATE_RHO.get((b, a), 0.0))
-
-
-def group_sd(mu_sd_pos_team) -> float:
-    """Spread of a group's combined score, counting teammate covariance.
-
-    `mu_sd_pos_team` is an iterable of (sd, position, nfl_team). Players on different NFL
-    teams contribute no covariance; a summed variance that ignores the ones who do is the
-    overconfidence the L1 gate measured.
-    """
-    rows = list(mu_sd_pos_team)
-    var = sum(float(sd) ** 2 for sd, _, _ in rows)
-    for i in range(len(rows)):
-        for j in range(i + 1, len(rows)):
-            sd_i, pos_i, team_i = rows[i]
-            sd_j, pos_j, team_j = rows[j]
-            if team_i is not None and team_i == team_j:
-                var += 2.0 * teammate_rho(str(pos_i), str(pos_j)) * float(sd_i) * float(sd_j)
-    return float(max(var, 0.0) ** 0.5)
+# Teammate correlation is owned by `hub.models.predict` -- who moves together is a
+# prediction, where this module is about how stats become points. Re-exported because
+# `hub/season/lineup.py` imports them from here.
+from hub.models.predict import TEAMMATE_RHO, group_sd, teammate_rho  # noqa: F401,E402
 
 
 _PHASE_YARDS = {"pass": "passing_yards", "rush": "rushing_yards", "rec": "receiving_yards"}
