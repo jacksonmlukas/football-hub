@@ -45,6 +45,9 @@ DEFAULT_GRID: tuple[float, ...] = (0.0, 0.02, 0.04, 0.06, 0.08, 0.12, 0.16, 0.24
 # whole board would let deep-bench noise drown the part that matters.
 TOP_N = 50
 
+# A 12-team league drafts 16 rounds. Beyond that the ordering is not a draft decision.
+DRAFTABLE = 192
+
 
 def apply(df: pl.DataFrame, lam: float) -> pl.DataFrame:
     """The projection adjustment, as a pure function of (ecr, z, lam)."""
@@ -60,7 +63,8 @@ def score(df: pl.DataFrame, lam: float, top_n: int = TOP_N) -> dict[str, float]:
     the first N names on this board, how many points do I end up with?
     """
     if df.is_empty():
-        return {"spearman": float("nan"), f"top{top_n}_points": 0.0}
+        return {"spearman": float("nan"), "spearman_pool": float("nan"),
+                f"top{top_n}_points": 0.0}
 
     ranked = apply(df, lam).sort("adj_ecr")
     pred = np.arange(1, ranked.height + 1, dtype=float)
@@ -74,7 +78,17 @@ def score(df: pl.DataFrame, lam: float, top_n: int = TOP_N) -> dict[str, float]:
     else:
         rho = -float(np.corrcoef(pred, actual_rank)[0, 1])
 
+    # Spearman restricted to the draftable pool as well as over everything. A 12-team
+    # league makes 192 picks, so the ordering of players ranked 400th is noise no draft
+    # ever consults -- but it is a third of the board and it can dominate a full-board
+    # correlation. Reporting both keeps that visible instead of choosing silently.
+    pool = min(DRAFTABLE, ranked.height)
+    pr, ar = pred[:pool], actual_rank[:pool]
+    rho_pool = (float("nan") if pr.std() == 0 or ar.std() == 0
+                else -float(np.corrcoef(pr, ar)[0, 1]))
+
     return {"spearman": rho,
+            "spearman_pool": rho_pool,
             f"top{top_n}_points": float(actual[:top_n].sum())}
 
 
@@ -101,28 +115,57 @@ def sweep(df: pl.DataFrame, lams: Sequence[float] = DEFAULT_GRID,
     col = f"top{top_n}_points"
 
     deltas: dict[float, np.ndarray] = {}
+    rho_deltas: dict[float, np.ndarray] = {}
     if not df.is_empty() and bootstrap:
         rng = np.random.default_rng(seed)
         idx = [rng.integers(0, df.height, df.height) for _ in range(bootstrap)]
         samples = [df[list(i)] for i in idx]
+        base_scores = [score(x, 0.0, top_n) for x in samples]
         for lam in lams:
+            got = [score(x, lam, top_n) for x in samples]
             deltas[float(lam)] = np.array(
-                [score(s, lam, top_n)[col] - score(s, 0.0, top_n)[col] for s in samples])
+                [g[col] - b[col] for g, b in zip(got, base_scores)])
+            rho_deltas[float(lam)] = np.array(
+                [g["spearman"] - b["spearman"] for g, b in zip(got, base_scores)])
 
     rows = []
     for lam in lams:
         s = score(df, lam, top_n)
-        d = deltas.get(float(lam))
+        d, rd = deltas.get(float(lam)), rho_deltas.get(float(lam))
         rows.append({
             "lam": float(lam),
             "spearman": s["spearman"],
+            "spearman_pool": s["spearman_pool"],
             col: s[col],
             "delta_vs_consensus": s[col] - base,
             "delta_mean": float(d.mean()) if d is not None else 0.0,
             "delta_se": float(d.std(ddof=1) / np.sqrt(len(d))) if d is not None and len(d) > 1
                         else 0.0,
+            "rho_delta_mean": float(rd.mean()) if rd is not None else 0.0,
+            "rho_delta_se": (float(rd.std(ddof=1) / np.sqrt(len(rd)))
+                             if rd is not None and len(rd) > 1 else 0.0),
         })
     return pl.DataFrame(rows)
+
+
+def best_lambda_spearman(swept: pl.DataFrame, min_sigma: float = MIN_SIGMA) -> float:
+    """Select on whole-board rank correlation rather than top-50 points.
+
+    This is the better-powered criterion and the reason is structural: Spearman reads every
+    player, while top-50 points rides on the two or three sitting nearest the cut. Six
+    seasons of the points metric came to roughly fifteen player-outcomes; the same six
+    seasons of Spearman come to six times the whole board.
+    """
+    if swept.is_empty() or "rho_delta_mean" not in swept.columns:
+        return 0.0
+    credible = swept.filter(
+        (pl.col("lam") > 0)
+        & (pl.col("rho_delta_mean") > min_sigma * pl.col("rho_delta_se"))
+        & (pl.col("rho_delta_mean") > 0))
+    if credible.is_empty():
+        return 0.0
+    return float(credible.sort(["rho_delta_mean", "lam"],
+                               descending=[True, False])["lam"][0])
 
 
 def best_lambda(swept: pl.DataFrame, top_n: int = TOP_N,

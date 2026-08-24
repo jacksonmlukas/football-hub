@@ -121,3 +121,27 @@ def test_an_empty_holdout_does_not_crash():
     empty = pl.DataFrame(schema={"player": pl.Utf8, "ecr": pl.Float64,
                                  "z_regress": pl.Float64, "actual_points": pl.Float64})
     assert tune.sweep(empty, lams=[0.0]).height == 1
+
+
+# --- selecting on rank correlation ----------------------------------------
+
+def test_spearman_selection_finds_a_planted_signal():
+    """Whole-board Spearman reads every player, so it should recover a signal the
+    top-50 metric can only see through two or three boundary swaps."""
+    h = _holdout(signal_strength=1.0, seed=11)
+    assert tune.best_lambda_spearman(tune.sweep(h, lams=[0.0, 0.05, 0.1, 0.2])) > 0.0
+
+
+def test_spearman_selection_returns_zero_on_noise():
+    h = _holdout(signal_strength=0.0, seed=12)
+    assert tune.best_lambda_spearman(tune.sweep(h, lams=[0.0, 0.05, 0.1, 0.2])) == 0.0
+
+
+def test_spearman_selection_is_not_fooled_by_a_single_boundary_swap():
+    """The 2023-24 failure mode, in miniature. One player at the top-50 edge scoring
+    enormously must not move a whole-board criterion."""
+    h = _holdout(signal_strength=0.0, seed=13)
+    spiked = h.with_columns(
+        pl.when(pl.col("player") == "P51").then(5000.0)
+          .otherwise(pl.col("actual_points")).alias("actual_points"))
+    assert tune.best_lambda_spearman(tune.sweep(spiked, lams=[0.0, 0.05, 0.1])) == 0.0

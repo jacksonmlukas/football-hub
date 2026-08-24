@@ -164,15 +164,76 @@ a conclusion in either direction. What looked like "mildly harmful with one anom
 is better described as **a coin flip on a handful of boundary players, reported to four
 significant figures.**
 
+## Scoring the whole board instead
+
+The top-50 points metric rides on 2-3 boundary swaps. Spearman reads every player, so it
+is the properly powered criterion and it settles the question the other metric could not.
+
+**Change in whole-board Spearman against the untouched board, bootstrapped, six seasons:**
+
+| lam | 19-20 | 20-21 | 21-22 | 22-23 | 23-24 | 24-25 | mean | t |
+|---|---|---|---|---|---|---|---|---|
+| 0.02 | -0.0003 | +0.0007 | +0.0005 | +0.0008 | -0.0013 | +0.0003 | +0.0001 | +0.37 |
+| 0.04 | -0.0010 | +0.0010 | -0.0012 | +0.0007 | -0.0035 | -0.0002 | -0.0007 | -1.08 |
+| **0.06** | -0.0023 | -0.0006 | -0.0033 | -0.0011 | -0.0058 | -0.0015 | **-0.0025** | **-3.18** |
+| **0.08** | -0.0038 | -0.0023 | -0.0063 | -0.0035 | -0.0093 | -0.0039 | **-0.0048** | **-4.69** |
+| 0.16 | -0.0130 | -0.0123 | -0.0176 | -0.0116 | -0.0250 | -0.0193 | -0.0165 | -7.78 |
+| 0.32 | -0.0418 | -0.0469 | -0.0523 | -0.0478 | -0.0747 | -0.0614 | -0.0541 | -11.03 |
+
+**The 2023-24 anomaly is gone.** Under top-50 points it was the one positive season, +184
+and the only one selecting a large lambda. Under Spearman it is the **worst** season at
+every lambda, and the lambda it selects drops from 0.12 to 0.00:
+
+| season | selected by top-50 points | selected by Spearman |
+|---|---|---|
+| 2019-20 | 0.00 | 0.00 |
+| 2020-21 | 0.02 | 0.04 |
+| 2021-22 | 0.00 | 0.02 |
+| 2022-23 | 0.02 | 0.02 |
+| **2023-24** | **0.12** | **0.00** |
+| 2024-25 | 0.00 | 0.02 |
+
+That is the Rashee Rice swap, and nothing else. Remove the top-50 boundary and the season
+that looked exceptional becomes ordinary -- worse than ordinary.
+
+### Where full-board Spearman is itself misleading
+
+It is not a clean win, and the reason is worth stating rather than banking the result.
+
+The adjustment is multiplicative, so `exp(-lam * z)` moves a player at pick 400 far further
+than one at pick 5 -- by design, and the design is defensible. But full-board Spearman reads
+those deep ranks at full weight, and **nobody drafts pick 400.** A large share of the
+measured damage is in a region no draft consults.
+
+Restricting to the draftable pool -- the top 192, a 12-team 16-round draft -- the effect
+largely vanishes:
+
+| lam | 0.00 | 0.04 | 0.08 | 0.16 | 0.32 |
+|---|---|---|---|---|---|
+| mean pool Spearman | 0.4529 | 0.4609 | 0.4605 | 0.4607 | 0.4455 |
+
+Flat, with no consistent ordering across seasons. So the honest reading is not "the
+adjustment is significantly harmful". It is:
+
+- **No metric selects a lambda above 0.04, in any season.** Best per season is 0.00-0.04
+  under Spearman and 0.00-0.02 under points once the Rice swap is discounted.
+- **Whole-board Spearman falls sharply**, but a large part of that is the undrafted tail.
+- **Draftable-pool Spearman is flat**, which is the most decision-relevant view and it
+  shows nothing worth acting on either way.
+
+Three metrics, six seasons, one conclusion: there is no evidence for a nonzero lambda, and
+the strongest-looking evidence against one is partly an artefact of measuring ranks nobody
+uses.
+
 ## What would still change it
 
-Not more lambda values, not more seasons, and not a bigger bootstrap. A metric whose
-effective sample size is fifteen cannot answer this. What would: score the whole board
-instead of a top-50 cut -- Spearman already does, and it falls monotonically with lambda in
-all six seasons without exception -- or evaluate over many simulated drafts rather than one
-boundary.
+A different kind of evaluation, not a different statistic. Every metric here scores one
+static ordering; a draft is a sequence of decisions against a depleting pool. Evaluating
+over many simulated drafts -- which `hub.draft.optimize` already does for championship
+equity -- would measure the thing that actually matters, and would not have a boundary for
+one injured player to sit on.
 
-Both are post-draft work. Neither changes what to do on Sep 3.
+Post-draft work. Nothing here changes what to do on Sep 3.
 
 ## What changed in the code
 
