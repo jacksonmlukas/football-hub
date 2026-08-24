@@ -64,7 +64,7 @@ Everything downstream reads from here. Build it once, correctly.
       enforced, caching to `data/raw/`, and a `Contract` on every return.
       *Done when:* `python -m hub.fetch.nflverse --refresh` writes parquet through `hub.store`
       and prints a summary only. Loading full-width pbp without `--cols` must raise.
-- [ ] **1.3 `hub.fetch.cfbd`** — bulk week endpoints only, plus `--quota` reporting calls used
+- [x] **1.3 `hub.fetch.cfbd`** _(done 2026-08-23)_ — bulk week endpoints only, plus `--quota` reporting calls used
       this month against the 1,000 budget. Never loops over teams (see `docs/cfbd-quota.md`).
       *Done when:* `make check` prints quota status; a per-team loop is impossible by
       construction, not by convention.
