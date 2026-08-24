@@ -83,9 +83,9 @@ COUNT_DISPERSION: dict[str, float] = {"pass": 2.45, "rush": 2.39, "rec": 1.20}
 TD_DISPERSION: dict[str, float] = {"pass": 0.85, "rush": 0.86, "rec": 0.83}
 
 # Teammate correlation is owned by `hub.models.predict` -- who moves together is a
-# prediction, where this module is about how stats become points. Re-exported because
-# `hub/season/lineup.py` imports them from here.
-from hub.models.predict import TEAMMATE_RHO, group_sd, teammate_rho  # noqa: F401,E402
+# prediction, where this module is about how stats become points. It used to be re-exported
+# from here, which made `predict` import its own symbol back through this module; callers
+# now take it from `predict` directly.
 
 
 _PHASE_YARDS = {"pass": "passing_yards", "rush": "rushing_yards", "rec": "receiving_yards"}

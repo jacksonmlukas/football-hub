@@ -6,6 +6,12 @@ from hub.draft.board import replacement_levels
 
 
 def _pool(n_per_pos=60):
+    """The three Series `replacement_levels` takes, ready to splat.
+
+    It used to take a frame, and the frame's *column names* were the real interface -- so
+    every caller, tests included, had to know that `position`/`xfp_per_game`/`games` were
+    the magic words. Now the names are the caller's business.
+    """
     rows = []
     for pos, base in (("QB", 22.0), ("RB", 18.0), ("WR", 18.0), ("TE", 12.0)):
         for i in range(n_per_pos):
@@ -13,12 +19,13 @@ def _pool(n_per_pos=60):
             # denominator: a one-game sample is not a per-game rate. Full seasons here,
             # so every assertion below is unchanged by that filter.
             rows.append({"position": pos, "xfp_per_game": base - i * 0.2, "games": 16})
-    return pl.DataFrame(rows)
+    df = pl.DataFrame(rows)
+    return df["position"], df["xfp_per_game"], df["games"]
 
 
 def test_replacement_deepens_with_league_size():
-    small = replacement_levels(_pool(), teams=8)
-    large = replacement_levels(_pool(), teams=14)
+    small = replacement_levels(*_pool(), teams=8)
+    large = replacement_levels(*_pool(), teams=14)
     for pos in ("RB", "WR", "TE"):
         assert large[pos] < small[pos], f"{pos} replacement must fall as leagues grow"
 
@@ -26,12 +33,12 @@ def test_replacement_deepens_with_league_size():
 def test_flex_pushes_wr_replacement_deeper_than_rb_in_ppr():
     """Given identical talent curves, full-PPR flex allocation is WR-heavy, so WR
     replacement should sit deeper into its pool than RB does."""
-    lv = replacement_levels(_pool(), teams=12)
+    lv = replacement_levels(*_pool(), teams=12)
     assert lv["WR"] < lv["RB"]
 
 
 def test_qb_unaffected_by_flex():
-    lv12 = replacement_levels(_pool(), teams=12)
+    lv12 = replacement_levels(*_pool(), teams=12)
     assert abs(lv12["QB"] - (22.0 - (12 - 1) * 0.2)) < 1e-6
 
 
@@ -40,7 +47,7 @@ def test_three_wr_league_pushes_wr_replacement_deep():
     sits far deeper into the pool than the 2WR default would put it."""
     from hub.draft.board import SLOTS
     assert SLOTS["WR"] == 3, "this league starts three WRs"
-    lv = replacement_levels(_pool(n_per_pos=60), teams=12)
+    lv = replacement_levels(*_pool(n_per_pos=60), teams=12)
     # WR replacement should be at least 10 slots deeper than RB replacement given
     # identical talent curves (36+flex WR vs 24+flex RB).
     assert lv["RB"] - lv["WR"] > 1.5

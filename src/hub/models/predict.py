@@ -119,8 +119,6 @@ def correlated_normal(rng, size, pos, nfl_team):
     everything else within a few points of zero (docs/correlation.md). Applied by Cholesky
     on each NFL team's own small block, which is exact and costs nothing at 32 teams.
     """
-    from hub.models.components import teammate_rho
-
     z = rng.standard_normal(size)
     if nfl_team is None:
         return z
@@ -141,42 +139,6 @@ def correlated_normal(rng, size, pos, nfl_team):
             continue
         z[..., idx] = z[..., idx] @ chol.T
     return z
-
-
-def weekly_moments(xp: pl.DataFrame, floor_sd: float = 0.0) -> pl.DataFrame:
-    """Per-player weekly mean and dispersion.
-
-    mu comes from expected points rather than realised: xFP already strips the
-    week-to-week luck we are about to re-add, so using realised points would double-count
-    variance and make every roster look more volatile than it is.
-
-    `floor_sd` defaults to zero now. The old floor of 2.0 gave a player projected at
-    nothing a real weekly spread, which the best-lineup rule -- a max over the roster --
-    turned into free points off the end of the bench. sqrt(0) is 0, which is what an
-    unprojected player should carry.
-    """
-    # Prefer the market's projection for the season being drafted. xFP describes the
-    # season just gone, and using it as truth makes any strategy ranked on xFP look
-    # prescient: it is scoring against the very data it optimised. Fall back to xFP only
-    # where no projection exists.
-    cols = [pl.col(c) for c in ("proj_blend", "proj_ppg", "xfp_per_game")
-            if c in xp.columns]
-    if not cols:
-        raise ValueError(
-            "weekly_moments needs one of proj_blend, proj_ppg or xfp_per_game; "
-            f"got {sorted(xp.columns)}")
-    mu = pl.coalesce(*cols).fill_null(0.0)
-    pos_col = ("position" if "position" in xp.columns
-               else ("pos" if "pos" in xp.columns else None))
-    # cast + fill_null: an all-null position column comes through as dtype Null, which
-    # replace_strict refuses outright rather than defaulting.
-    k = (pl.col(pos_col).cast(pl.Utf8).fill_null("")
-         .replace_strict(WEEKLY_K, default=WEEKLY_K_POOLED, return_dtype=pl.Float64)
-         if pos_col else pl.lit(WEEKLY_K_POOLED))
-    return xp.with_columns(mu.alias("mu")).with_columns(
-        pl.max_horizontal(k * pl.col("mu").clip(0.0).sqrt(), pl.lit(floor_sd)).alias("sd"))
-
-
 
 
 # Within-game correlation between teammates, measured on standardised weekly points,

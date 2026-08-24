@@ -79,16 +79,13 @@ def rank(view: dict[str, Any], key: str) -> pl.DataFrame:
 def _live_replacement(available: pl.DataFrame, teams: int) -> dict[str, float]:
     """Replacement level over the players still on the board.
 
-    `replacement_levels` speaks the ffopportunity column names, so the board is renamed
-    into that shape rather than duplicating the logic -- the flex allocation and the
-    minimum-games rule both live there and should have one home.
+    The flex allocation and the minimum-games rule live in `replacement_levels` and should
+    have one home, so this names its three inputs rather than duplicating the logic. It used
+    to have to rename `pos` into `position` first, because the function's real interface was
+    a set of column names rather than its signature.
     """
-    shaped = available.select(
-        pl.col("pos").alias("position"),
-        pl.col("xfp_per_game"),
-        pl.col("games"),
-    )
-    return replacement_levels(shaped, teams=teams, min_games=MIN_GAMES)
+    return replacement_levels(available["pos"], available["xfp_per_game"],
+                              available["games"], teams=teams, min_games=MIN_GAMES)
 
 
 def refresh(board: pl.DataFrame, state: DraftState, *, my_slot: int = MY_SLOT,
@@ -190,7 +187,7 @@ def render(view: dict[str, Any]) -> list[str]:
         out.append(f"  {fills} {str(r['player'])[:22]:<22} {str(r['pos'] or ''):<3} "
                    f"vor {r['vor_live']:>5.1f}  "
                    f"edge {'-' if edge is None else format(edge, '>6.1f')}  "
-                   f"sd {r.get('sd') or 0:>4.1f}")
+                   f"sd {r.get('ecr_sd') or 0:>4.1f}")
     if need:
         out.append("  * fills an empty starting slot")
     return out[:MAX_LINES]

@@ -23,6 +23,14 @@ def _rows(*specs):
           "best": 1.0, "worst": 9.0, "page_type": page} for p, pos, e, page in specs])
 
 
+def test_the_consensus_spread_is_named_for_what_it_measures():
+    """FantasyPros calls it `sd`, which is also what a weekly *points* spread is called.
+    Renamed at the producer so the two never share a column name on the same frame."""
+    df = _select_consensus(_rows(("Guy", "RB", 5.0, "redraft-overall")))
+    assert "ecr_sd" in df.columns
+    assert "sd" not in df.columns
+
+
 def test_only_the_redraft_ppr_page_survives():
     df = _select_consensus(_rows(
         ("Redraft Guy", "RB", 5.0, "redraft-overall"),

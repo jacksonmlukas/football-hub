@@ -117,12 +117,53 @@ wrappers so the CLI keeps working either way.
 **Trigger to migrate.** The first time you need to backfill more than two weeks by hand. That is
 the moment make stops being cheaper than the alternative.
 
+> **Note, 2026-08-24.** `hub.draft.board.build` is the one step that does not match the
+> "pure function taking explicit inputs" rule, and it is the module with the most churn in
+> the repo. It fetches, prints, and degrades in four independent `except Exception` handlers.
+>
+> Partly addressed rather than fixed. `build` now returns a `BuildReport` alongside the
+> frame, so the report layer asks which optional stages ran instead of inferring it from
+> which columns exist — a stage that ran and returned an all-null column used to be
+> indistinguishable from one that never ran. The decisions that had been living inside print
+> blocks (`held_positions`, `pick_notes`) are pure functions with tests, `replacement_levels`
+> takes its three inputs instead of a frame with three magic column names, and `main` takes
+> `argv` like the other sixteen CLIs. Coverage went 25% → 46%.
+>
+> Still true: `build` prints and fetches. Splitting it properly means separating the fetch
+> from the assembly, which is the Dagster port's job — the asset boundary wants to be
+> between them anyway. Not worth doing twice before a draft that is ten days out.
+
 ---
 
 ## ADR-004: Hydra structured config, digest folded into the model version
 
-**Decision.** Every number that changes a prediction lives in `src/hub/config.py` as a
-dataclass, registered with Hydra's `ConfigStore`. YAML overrides in `conf/`.
+**Decision.** Every number that changes a prediction is *covered by the digest*. Settings live
+in `src/hub/config.py` as dataclasses registered with Hydra's `ConfigStore`, with YAML
+overrides in `conf/`; fitted constants live beside their provenance in the modules listed in
+`config.FITTED_MODULES`, and `config_digest` hashes them from there.
+
+> **Amended 2026-08-24.** The original decision was "every number that changes a prediction
+> lives in `config.py`, and nowhere else", which the repo never actually followed: 17 fitted
+> constants sat outside it, and `config_digest`'s docstring claimed to hash "everything that
+> can change a prediction" while hashing only `HubConfig`. Refitting `TALENT_CV` from 0.35 to
+> 0.42 changed every prediction in the repo and left the model version identical — so the
+> track record claimed one model had produced both sets of rows. That is the precise failure
+> this ADR exists to prevent, committed by the ADR's own file.
+>
+> The amendment does not relax the rule, it separates two kinds of number that the original
+> conflated:
+>
+> * A **setting** is a choice — `projection_lambda`, `conformal_alpha`, the roster shape. It
+>   belongs in `config.py`, where Hydra can override it from a command line.
+> * A **fitted constant** is a measurement with a confidence interval and a write-up in
+>   `docs/`. Moving it into `HubConfig` would make it Hydra-overridable, so
+>   `draft.talent_cv=0.9` on a command line would silently replace a measurement with a
+>   preference — and would strand thirty lines of provenance that belong next to the number.
+>
+> Both are hashed. `config.NOT_FITTED` names the modules whose measured floats are
+> deliberately excluded (offline harnesses, fixtures, operational budgets) with a reason for
+> each, and a test walks `hub/models` and `hub/draft` asserting every module holding a
+> measured float is in one list or the other.
 
 **Why structured configs rather than plain YAML.** `mypy strict` is already on. Plain
 `OmegaConf` gives you `Any` everywhere, so a typo in `conf/config.yaml` surfaces at runtime in
@@ -148,7 +189,9 @@ python -m hub.draft.board -m draft.projection_lambda=0.02,0.04,0.08,0.16,0.32
 
 Each run lands in its own `outputs/multirun/` directory with its config snapshot beside it.
 
-**Rule.** If you are typing a float into a module, it belongs in `config.py`.
+**Rule.** If you are typing a float into a module, ask which kind it is. A choice belongs in
+`config.py`. A measurement belongs beside the evidence for it, in a module `FITTED_MODULES`
+hashes — never in a module that is in neither list.
 
 ---
 

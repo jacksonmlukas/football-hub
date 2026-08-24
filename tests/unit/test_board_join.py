@@ -32,6 +32,15 @@ def test_punctuation_mismatch_still_joins():
     assert out["xfp_per_game"][0] == 10.0
 
 
+def test_the_join_does_not_bring_a_second_position_column():
+    """The board already has `pos` from FantasyPros, always populated. ffopportunity's
+    `position` arrives through a left join, so it is null for exactly the players the join
+    missed -- the same players whose xFP is null. Carrying both meant a reader who reached
+    for the more natural-looking name got a column that silently disagreed with `pos`."""
+    out = _join_expected_points(_ecr(["Nobody At All"]), _xp(["Someone Else"]))
+    assert "position" not in out.columns
+
+
 def test_genuinely_absent_player_stays_null():
     out = _join_expected_points(_ecr(["Nobody At All"]), _xp(["Someone Else"]))
     assert out["xfp_per_game"][0] is None

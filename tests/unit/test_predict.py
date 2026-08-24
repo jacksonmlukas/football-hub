@@ -35,10 +35,51 @@ def test_moments_carry_mean_spread_and_skew():
 
 
 def test_spread_still_follows_the_square_root_law():
-    """The law is fitted (exponent 0.498 +/- 0.012) and must survive the move."""
+    """`sd = 0.55 * mu` assumed spread is proportional to the mean. Fitted against 1,174
+    player-seasons of nflverse weekly scoring, the exponent is 0.498 +/- 0.012 -- flat on
+    the Poisson value and about 42 standard errors from 1.
+
+    That is not a curve-fitting accident, it is what aggregating component stats produces:
+    weekly points are a sum of count-driven pieces (receptions, carries, touchdowns) whose
+    variance grows with their mean, so the spread of the total grows with its square root.
+    See docs/weekly-spread.md.
+    """
     got = predict.moments(pl.DataFrame({"proj_ppg": [4.0, 16.0],
                                         "position": ["WR", "WR"]}))
+    # four times the mean is twice the spread, not four times
     assert got["sd"][1] / got["sd"][0] == pytest.approx(2.0, rel=0.01)
+
+
+def test_a_boom_bust_profile_is_a_property_of_the_level_not_a_setting():
+    """The consequence that matters for the draft board: relative volatility falls as
+    projection rises. A 5-point-a-game flier really is nearly twice the lottery, per point,
+    that a 20-point-a-game starter is -- and the old constant said they were identical."""
+    got = predict.moments(pl.DataFrame({"proj_ppg": [5.0, 20.0],
+                                        "position": ["RB", "RB"]}))
+    cv = (got["sd"] / got["mu"]).to_list()
+    assert cv[0] > 1.8 * cv[1]
+
+
+def test_positions_keep_their_own_coefficient():
+    got = predict.moments(pl.DataFrame({"proj_ppg": [10.0, 10.0],
+                                        "position": ["QB", "WR"]}))
+    assert got["sd"][0] < got["sd"][1]
+    assert predict.WEEKLY_K["WR"] > predict.WEEKLY_K["QB"]
+
+
+def test_a_missing_position_falls_back_to_the_pooled_coefficient():
+    xp = pl.DataFrame({"proj_ppg": [9.0]},
+                      schema={"proj_ppg": pl.Float64}).with_columns(
+        pl.lit(None, dtype=pl.Utf8).alias("position"))
+    got = predict.moments(xp)
+    assert got["sd"][0] == pytest.approx(predict.WEEKLY_K_POOLED * 3.0, rel=1e-6)
+
+
+def test_a_player_projected_at_nothing_has_no_spread():
+    """Under the old floor a zero-projection player still carried sd = 2.0, which the
+    best-lineup rule turned into free points. sqrt(0) is 0."""
+    got = predict.moments(pl.DataFrame({"proj_ppg": [0.0], "position": ["WR"]}))
+    assert got["sd"][0] == 0.0
 
 
 def test_skew_is_carried_per_position():
@@ -47,14 +88,25 @@ def test_skew_is_carried_per_position():
     assert by["QB"] < by["RB"]
 
 
-def test_the_numbers_are_unchanged_by_the_move():
-    """A refactor that changes a number is not a refactor. `hub.draft.season` re-exports
-    these, and both routes must agree exactly."""
-    from hub.draft import season
-    a = predict.moments(_frame())
-    b = season.weekly_moments(_frame())
-    assert a["mu"].to_list() == b["mu"].to_list()
-    assert a["sd"].to_list() == b["sd"].to_list()
+def test_the_numbers_are_pinned():
+    """A refactor that changes a number is not a refactor.
+
+    This assertion used to compare `predict.moments` against `season.weekly_moments`, which
+    was an *alias for the same object* -- it compared a function with itself and could not
+    fail. Pin the values instead, so a change to the law has to be deliberate.
+    """
+    got = predict.moments(_frame())
+    assert got["mu"].to_list() == [18.0, 12.0, 5.0]
+    assert got["sd"].to_list() == pytest.approx(
+        [7.976164491784255, 7.170690343335151, 4.762824792074552], rel=1e-12)
+    assert got["skew"].to_list() == [0.15, 0.67, 0.66]
+
+
+def test_there_is_only_one_implementation_of_the_weekly_moments():
+    """`predict.weekly_moments` was a dead twin of `predict.moments` -- same law, no skew,
+    zero callers. Two functions for one quantity is how they drift, and the drift is silent
+    because whichever one a caller picked still returned plausible numbers."""
+    assert not hasattr(predict, "weekly_moments")
 
 
 def test_season_still_re_exports_for_back_compat():
@@ -118,7 +170,10 @@ def test_group_spread_counts_teammate_covariance():
     assert stack > lone
 
 
-def test_components_still_re_exports_correlation_for_back_compat():
+def test_the_scoring_module_does_not_re_export_correlation():
+    """It briefly did, for one caller in `lineup.py`. That re-export made `predict` import
+    its own symbol back out of `components` -- a cycle that only stayed legal because the
+    import sat inside a function body. One owner, no round trip."""
     from hub.models import components as C
-    assert C.teammate_rho("QB", "TE") == predict.teammate_rho("QB", "TE")
-    assert C.group_sd([(5.0, "QB", None)]) == predict.group_sd([(5.0, "QB", None)])
+    assert not hasattr(C, "teammate_rho")
+    assert not hasattr(C, "group_sd")

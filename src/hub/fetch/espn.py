@@ -125,28 +125,6 @@ def poll(interval: int = 45, league: str = "nfl", out: Path | None = None,
         time.sleep(interval)
 
 
-def _parse_adp(payload: dict) -> pl.DataFrame:
-    """Pull (player, adp) out of a kona_player_info response.
-
-    Split out from the fetch so the parsing is testable without a network call, and
-    because this is where every silent-failure mode lives. ESPN writes 0.0 for a
-    player with no draft history; that is a sentinel for undrafted, not the first
-    overall pick, so it is dropped rather than allowed to invert the top of the board.
-
-    The empty frame is explicitly typed. The board's substance guard checks dtype, and
-    an untyped empty frame comes back as Null -- which is exactly the failure this
-    whole path is meant to stop.
-    """
-    rows = []
-    for entry in payload.get("players") or []:
-        p = entry.get("player") or {}
-        name = p.get("fullName")
-        adp = (p.get("ownership") or {}).get("averageDraftPosition")
-        if name and isinstance(adp, (int, float)) and not isinstance(adp, bool) and adp > 0:
-            rows.append({"player": name, "adp": float(adp)})
-    return pl.DataFrame(rows, schema={"player": pl.Utf8, "adp": pl.Float64})
-
-
 def _parse_projection(player: dict, season: int) -> float | None:
     """ESPN's own projected points per game for `season`.
 
@@ -164,44 +142,55 @@ def _parse_projection(player: dict, season: int) -> float | None:
     return None
 
 
-def player_market(limit: int = 500, season: int = 2026) -> pl.DataFrame:
-    """ADP and ESPN's projection together, from one request.
+def _parse_market(payload: dict, season: int) -> pl.DataFrame:
+    """Pull (player, adp, proj_ppg, injury_status) out of a kona_player_info response.
 
-    These are the two things the rest of the room can see, so they belong in one place:
-    ADP is where the room takes a player, the projection is why.
+    Split out from the fetch so the parsing is testable without a network call, and
+    because this is where every silent-failure mode lives.
+
+    **ESPN writes 0.0 for a player with no draft history.** That is a sentinel for
+    undrafted, not the first overall pick, and letting it through would invert the top of
+    the board. It becomes a null `adp` rather than dropping the row, because the row still
+    carries a projection and an injury status that the board wants -- an undrafted player
+    is unpriced, not unknown.
+
+    The empty frame is explicitly typed. The board's substance guard checks dtype, and
+    an untyped empty frame comes back as Null -- which is exactly the failure this
+    whole path is meant to stop.
+
+    There used to be a second parser here, `_parse_adp`. It was the one with the seven
+    tests, and it had no production callers: `player_market` reimplemented the same parse
+    inline, so the tested code was dead and the live code was untested.
     """
-    lg, _ = league_settings()
-    filters = {"players": {"limit": limit,
-                           "sortDraftRanks": {"sortPriority": 100, "sortAsc": True,
-                                              "value": "PPR"}}}
-    payload = lg.espn_request.league_get(params={"view": "kona_player_info"},
-                                         headers={"x-fantasy-filter": json.dumps(filters)})
     rows = []
     for entry in payload.get("players") or []:
-        pl_ = entry.get("player") or {}
-        name = pl_.get("fullName")
+        p = entry.get("player") or {}
+        name = p.get("fullName")
         if not name:
             continue
-        adp = (pl_.get("ownership") or {}).get("averageDraftPosition")
+        adp = (p.get("ownership") or {}).get("averageDraftPosition")
         rows.append({
             "player": name,
             "adp": float(adp) if isinstance(adp, (int, float))
                    and not isinstance(adp, bool) and adp > 0 else None,
-            "proj_ppg": _parse_projection(pl_, season),
+            "proj_ppg": _parse_projection(p, season),
             # Today's designation, which is a different quantity from last season's
             # durability and is carried for judgment rather than priced. See
             # hub.draft.durability.
-            "injury_status": pl_.get("injuryStatus"),
+            "injury_status": p.get("injuryStatus"),
         })
     return pl.DataFrame(rows, schema={"player": pl.Utf8, "adp": pl.Float64,
                                       "proj_ppg": pl.Float64,
                                       "injury_status": pl.Utf8})
 
 
-def player_adp(limit: int = 500) -> pl.DataFrame:
-    """ESPN's own average draft position -- what your room is actually drafting off.
+def player_market(limit: int = 500, season: int = 2026) -> pl.DataFrame:
+    """ADP and ESPN's projection together, from one request.
 
-    espn_api cannot give you this. It reads `ownership.percentOwned` and discards the
+    These are the two things the rest of the room can see, so they belong in one place:
+    ADP is where the room takes a player, the projection is why.
+
+    espn_api cannot give you the ADP. It reads `ownership.percentOwned` and discards the
     rest of the block, where `averageDraftPosition` lives, so we go to the raw view.
     One bulk request covers the whole draftable pool; do not loop over players.
     """
@@ -211,7 +200,7 @@ def player_adp(limit: int = 500) -> pl.DataFrame:
                                               "value": "PPR"}}}
     payload = lg.espn_request.league_get(params={"view": "kona_player_info"},
                                          headers={"x-fantasy-filter": json.dumps(filters)})
-    return _parse_adp(payload)
+    return _parse_market(payload, season)
 
 
 def league_settings():

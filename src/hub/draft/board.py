@@ -1,7 +1,7 @@
 """Full-PPR draft board for a 12-team ESPN redraft league.
 
 Three signals, joined:
-  1. FantasyPros ECR      -- consensus rank, with sd/best/worst as a free uncertainty band
+  1. FantasyPros ECR      -- consensus rank, with ecr_sd/best/worst as a free uncertainty band
   2. ffopportunity xFP    -- expected fantasy points, separating opportunity from efficiency
   3. ESPN ADP             -- what YOUR room will actually do (optional; needs cookies)
 
@@ -11,12 +11,15 @@ your leaguemates, drafting off ESPN's default board, will let this player fall.
 Runs without cookies (ECR + xFP only). Add ESPN creds for the ADP diff.
 """
 from __future__ import annotations
-import argparse, collections, json
+import argparse, collections, json, sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 import numpy as np
 import polars as pl
 
-from hub.contracts import ContractViolation
+from hub.config import RosterConfig, flex_positions, flex_share, starters
+from hub.contracts import DRAFT_BOARD, ContractViolation
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft import durability
@@ -29,14 +32,23 @@ import nflreadpy as nfl
 ROOT = Path(__file__).resolve().parents[3]
 OUT = ROOT / "site" / "data"
 
-# Full PPR. Sourced from league settings when cookies are present; this is the ESPN default.
-PPR = dict(pass_yd=0.04, pass_td=4, pass_int=-2, rush_yd=0.1, rush_td=6,
-           rec=1.0, rec_yd=0.1, rec_td=6, fumble=-2)
+# A `PPR` scoring table used to sit here, keyed `pass_yd`/`rec_td`, with nothing reading it.
+# `hub.models.components.SCORING` is the live one, keyed by nflverse's own column names
+# (`passing_yards`, `receiving_tds`) and checked against the league by `scoring_mismatch`.
+# Two vocabularies for one league's scoring, one of them unread, is how the wrong one gets
+# picked up later.
 
 # Starters per team. THREE WR slots plus a flex -- confirmed for this league, not the ESPN
-# default. Overridden by league_settings() when cookies are present.
-SLOTS = {"QB": 1, "RB": 2, "WR": 3, "TE": 1, "FLEX": 1}
-FLEX_ELIGIBLE = ("RB", "WR", "TE")
+# default. Derived from `hub.config.RosterConfig`, which is the one declaration of the
+# league's shape.
+#
+# This used to say "Overridden by league_settings() when cookies are present", which was not
+# true: `espn.league_settings()` does return the league's own roster slots, but all four
+# callers spell it `lg, _ = league_settings()` and throw them away. `roster_mismatch` below
+# is what actually checks them now, the same way `scoring_mismatch` checks the scoring.
+ROSTER = RosterConfig()
+SLOTS = starters(ROSTER)
+FLEX_ELIGIBLE = flex_positions(ROSTER)
 
 
 def expected_points(season: int = 2025) -> pl.DataFrame:
@@ -78,9 +90,16 @@ def _select_consensus(r: pl.DataFrame) -> pl.DataFrame:
         raise ContractViolation(
             "ff_rankings: no `page_type` column; cannot tell which ranking page each row "
             "came from, and blending pages silently produces a mongrel ECR scale")
+    # FantasyPros calls the consensus rank's spread `sd`. It is renamed on the way in
+    # because `sd` is also what `hub.models.predict.moments` calls a player's *weekly points*
+    # spread, and both land on frames derived from this board -- one measured in picks, one
+    # in points, three times apart in magnitude and neither obviously wrong on inspection.
+    # `_sigma` in `hub.draft.availability` reads this one and would have silently read the
+    # other the first time anyone ran an availability sim on a scored frame.
     keep = [c for c in ("player", "pos", "team", "ecr", "sd", "best", "worst") if c in r.columns]
     out = (r.filter(pl.col("page_type") == CONSENSUS_PAGE)
             .select(keep)
+            .rename({"sd": "ecr_sd"} if "sd" in keep else {})
             .filter(pl.col("ecr").is_not_null())
             .filter(pl.col("pos").is_in(DRAFTED_POSITIONS))
             .unique(subset=["player"], keep="first")
@@ -93,7 +112,7 @@ def _select_consensus(r: pl.DataFrame) -> pl.DataFrame:
 
 
 def consensus() -> pl.DataFrame:
-    """FantasyPros ECR. `sd` is a crude prior on uncertainty until conformal lands."""
+    """FantasyPros ECR. `ecr_sd` is a crude prior on uncertainty until conformal lands."""
     return _select_consensus(nfl.load_ff_rankings("draft"))
 
 
@@ -105,28 +124,35 @@ def consensus() -> pl.DataFrame:
 MIN_GAMES = 10
 
 
-def replacement_levels(df: pl.DataFrame, teams: int = 12,
+def replacement_levels(position: pl.Series, points: pl.Series, games: pl.Series,
+                       teams: int = 12,
                        min_games: int = MIN_GAMES) -> dict[str, float]:
-    """Replacement = the xFP of the last startable player at each position.
+    """Replacement = the points of the last startable player at each position.
 
     In full PPR with a 12-team flex, the flex is almost always a WR, which pushes WR
     replacement meaningfully deeper than a naive teams*slots calculation suggests.
 
     Only players with at least `min_games` are eligible to set the level: replacement is
     a statement about the quality freely available all season, and a one-game sample says
-    nothing about that.
+    nothing about that. A null `games` is therefore not eligible either, which is what
+    keeps a rookie with no prior season from setting a level he has no evidence for -- he
+    is still *priced* against it, he just does not define it.
+
+    Three Series rather than a frame. The signature used to be `(df, teams, min_games)`, but
+    the real interface was "a frame with columns named exactly `position`, `games` and
+    `xfp_per_game`" -- so `build()` renamed `pos` to `position_` and `proj_blend` to
+    `xfp_per_game_`, then aliased both back, to satisfy a function forty lines above it in
+    the same file. Naming the three inputs is the whole job.
     """
-    # Flex allocation. In a 2WR league the flex is overwhelmingly a WR. With THREE required
-    # WR slots the top of the WR pool is already consumed by starters, so the flex tilts back
-    # toward RB. Roughly even here, not WR-dominant.
-    flex_share = {"RB": 0.45, "WR": 0.50, "TE": 0.05}
+    share = flex_share(ROSTER)
+    df = pl.DataFrame({"position": position, "points": points, "games": games})
     levels = {}
     for pos in ("QB", "RB", "WR", "TE"):
         n = teams * SLOTS.get(pos, 0)
-        n += round(teams * SLOTS.get("FLEX", 0) * flex_share.get(pos, 0)) if pos in FLEX_ELIGIBLE else 0
+        n += round(teams * SLOTS.get("FLEX", 0) * share.get(pos, 0)) if pos in FLEX_ELIGIBLE else 0
         pool = (df.filter((pl.col("position") == pos) & (pl.col("games") >= min_games))
-                  .sort("xfp_per_game", descending=True))
-        levels[pos] = float(pool["xfp_per_game"][min(n, pool.height) - 1]) if pool.height else 0.0
+                  .sort("points", descending=True))
+        levels[pos] = float(pool["points"][min(n, pool.height) - 1]) if pool.height else 0.0
     return levels
 
 
@@ -219,7 +245,13 @@ def _join_expected_points(ecr: pl.DataFrame, xp: pl.DataFrame) -> pl.DataFrame:
     right = (xp.with_columns(pl.col("full_name").map_elements(_norm, return_dtype=pl.Utf8)
                                .alias("_key"))
                .unique(subset=["_key"], keep="first")
-               .drop("full_name"))
+               # `position` duplicates `pos`, which the board already has from FantasyPros.
+               # It is dropped rather than carried because it is the *worse* of the two: it
+               # arrives through this left join, so it is null for exactly the players the
+               # join missed, while `pos` is always populated. Two columns for one concept,
+               # one of them silently sparser, is a trap for whoever reaches for the
+               # familiar-looking name.
+               .drop("full_name", "position"))
     return ecr.with_columns(norm).join(right, on="_key", how="left").drop("_key")
 
 
@@ -263,12 +295,40 @@ def _impute_xfp(board: pl.DataFrame) -> pl.DataFrame:
     return board.with_columns(pl.Series("xfp_per_game", filled, dtype=pl.Float64))
 
 
-def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
+@dataclass
+class BuildReport:
+    """Which optional stages made it into the board.
+
+    `build` degrades on purpose: a board that will not build because one advisory column is
+    unavailable is the operator-dependence CLAUDE.md warns about. But the report layer used
+    to *infer* what had happened by sniffing for columns -- `"td_luck" not in board.columns`
+    at one site, `"adp" not in board.columns` at another, `"injury_status" ... and "missed"`
+    at a third. Four independent `except Exception` handlers, four separate guesses at what
+    they had done, and no single place that said what the board actually contains.
+
+    Sniffing gets the common case right and the interesting case wrong: a stage that ran and
+    returned an all-null column is indistinguishable from one that never ran, and the
+    difference is exactly what an operator on the clock needs to know.
+    """
+    sos: bool = False
+    td_luck: bool = False
+    durability: bool = False
+    adp: bool = False
+    scoring_checked: bool = False
+    roster_checked: bool = False
+
+    def degraded(self) -> tuple[str, ...]:
+        """Stages that did not make it, in declaration order."""
+        return tuple(k for k, v in vars(self).items() if not v)
+
+
+def build(league_size: int = 12, season: int = 2025) -> tuple[pl.DataFrame, BuildReport]:
     print("  loading ffopportunity ...")
     xp = expected_points(season)
     print("  loading consensus rankings ...")
     ecr = consensus()
-    levels = replacement_levels(xp, league_size)
+    levels = replacement_levels(xp["position"], xp["xfp_per_game"], xp["games"],
+                                league_size)
     print(f"  replacement (xFP/gm): " + ", ".join(f"{k}={v:.1f}" for k, v in levels.items()))
 
     # Impute before VOR, not after: a rookie with no prior-season xFP still has a
@@ -285,8 +345,10 @@ def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
     # Weeks 15-17 strength of schedule. A tiebreaker column, not a ranking: the fantasy
     # playoffs are three known games against known defences and nobody drafting off the
     # ESPN app prices them, but last season's defence is a noisy guide to this one.
+    report = BuildReport()
     try:
         board = attach_sos(board, playoff_sos(season_ahead=SEASON_AHEAD, dvp_season=season))
+        report.sos = True
     except Exception as e:  # noqa: BLE001
         print(f"  weeks 15-17 SoS unavailable ({type(e).__name__}); board built without it.")
 
@@ -295,6 +357,7 @@ def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
     # operator-dependence CLAUDE.md warns about.
     try:
         board = td_regression.attach(board, td_regression.prior_season(season))
+        report.td_luck = True
     except Exception as e:  # noqa: BLE001
         print(f"  touchdown luck unavailable ({type(e).__name__}); board built without it.")
 
@@ -311,17 +374,38 @@ def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
             for k, (theirs, ours) in sorted(bad.items()):
                 print(f"    {k}: league {theirs}, this repo {ours}")
             print("  Every projection below is scored on the wrong weights until that is fixed.")
+        report.scoring_checked = True
     except Exception as e:  # noqa: BLE001
         print(f"  scoring check unavailable ({type(e).__name__}); assuming full PPR.")
+
+    # The league owns the roster shape too, and for a long time nothing checked it: the
+    # slots came back from `league_settings()` on every call and every caller discarded
+    # them. A second flex would move replacement level at every position.
+    try:
+        from hub.config import roster_mismatch
+        from hub.fetch import espn as espn_fetch
+        _, slots = espn_fetch.league_settings()
+        bad_slots = roster_mismatch(slots or {})
+        if bad_slots:
+            print("  ROSTER MISMATCH -- the league starts a different lineup from "
+                  "hub.config.RosterConfig:")
+            for k, (theirs, ours) in sorted(bad_slots.items()):
+                print(f"    {k}: league {theirs}, this repo {ours}")
+            print("  Replacement level and every VOR below assume this repo's shape.")
+        report.roster_checked = True
+    except Exception as e:  # noqa: BLE001
+        print(f"  roster check unavailable ({type(e).__name__}); assuming {SLOTS}.")
 
     # Availability as a per-player trait. Its own try for the same reason as above.
     try:
         board = durability.attach(board, durability.prior_season(season))
+        report.durability = True
     except Exception as e:  # noqa: BLE001
         print(f"  durability unavailable ({type(e).__name__}); board built without it.")
 
     adp = espn_adp(league_size)
     if adp is not None:
+        report.adp = True
         board = _attach_edge(board, adp, league_size)
         # The forecast the optimiser plays on: the market's forward projection, nudged by
         # the xFP regression signal. Keeping VOR on xFP alone would have the greedy rank
@@ -341,17 +425,21 @@ def build(league_size: int = 12, season: int = 2025) -> pl.DataFrame:
         # And for his own availability history, where the market leaves a residual: QB and
         # WR. Running backs are left alone -- the market already prices their durability.
         board = durability.correct_projection(board)
-        pb = replacement_levels(
-            board.rename({"pos": "position_", "proj_blend": "xfp_per_game_"})
-                 .with_columns(pl.col("position_").alias("position"),
-                               pl.col("xfp_per_game_").alias("xfp_per_game")),
-            league_size)
+        # Replacement on the projection scale rather than the xFP one, so `vor_proj` and
+        # `proj_blend` are the same currency.
+        pb = replacement_levels(board["pos"], board["proj_blend"], board["games"],
+                                league_size)
         board = board.with_columns(
             (pl.col("proj_blend")
              - pl.col("pos").replace_strict(pb, default=0.0)).alias("vor_proj"))
         n = int(board["edge"].is_not_null().sum())
         print(f"  ESPN ADP: {n} drafted players priced; edge on a common scale")
-    return board.sort("ecr")
+
+    # The board's columns are its interface -- roughly fourteen modules read them by name --
+    # and this contract was declared in `hub.contracts` and applied to nothing at all. It
+    # covers only what something downstream reads *unconditionally*; the optional columns
+    # are deliberately absent so a degraded fetch still produces a usable board.
+    return DRAFT_BOARD.validate(board.sort("ecr")), report
 
 
 def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
@@ -388,7 +476,7 @@ def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
     return mode, ranked.head(top)
 
 
-def _print_injuries(board: pl.DataFrame) -> None:
+def _print_injuries(board: pl.DataFrame, report: BuildReport) -> None:
     """Players carrying a designation right now, and last season's fragile ones.
 
     Two different quantities kept visibly apart. Last season's missed games are priced into
@@ -396,7 +484,7 @@ def _print_injuries(board: pl.DataFrame) -> None:
     priced at all -- there is no history of preseason designations against outcomes to fit a
     coefficient on, so inventing one would be worse than showing the drafter the flag.
     """
-    if "injury_status" not in board.columns and "missed" not in board.columns:
+    if not (report.durability or report.adp):
         return
     pool = board.filter(pl.col("adp").is_not_null() & (pl.col("adp") <= 120))
     if "injury_status" in pool.columns:
@@ -430,7 +518,55 @@ def _print_injuries(board: pl.DataFrame) -> None:
                       f"missed {int(r['missed']):>2}  {note}")
 
 
-def _print_td_luck(board: pl.DataFrame) -> None:
+# Show a touchdown-luck note beside THE PICK only when it is worth a drafter's attention.
+# Private and lower-cased in intent: this is a display threshold, not a fitted constant, so
+# it must not move the model version. See `hub.config.FITTED_MODULES`.
+_TD_LUCK_NOTE = 0.5
+
+
+def held_positions(board: pl.DataFrame, state: DraftState, *,
+                   my_slot: int = MY_SLOT, teams: int = TEAMS) -> dict[str, int]:
+    """How many of each position you already hold. Feeds positional need.
+
+    Pulled out of the print block in `main` because it is a decision, not a rendering: it
+    is what makes THE PICK fill a need rather than take the best player left. Inline, it
+    read
+
+        (state_mod.remaining(board, st).is_empty() and []) or [ ... ]
+
+    and `(x and []) or y` is `y` for every value of `x` -- an empty list is falsy, so the
+    `or` always takes the right branch. The guard never fired, and it called `remaining()`
+    on the whole board to throw the answer away.
+    """
+    mine = state_mod.my_roster(state, my_slot, teams)
+    if not mine:
+        return {}
+    got = board.filter(pl.col("player").is_in(mine))["pos"].drop_nulls().to_list()
+    return dict(collections.Counter(got))
+
+
+def pick_notes(row: dict) -> list[str]:
+    """Where this repo's measurements say the market is wrong about THE PICK.
+
+    Also a decision rather than a rendering -- each entry encodes a threshold for what is
+    worth interrupting a drafter with, and those were previously spelled out inside an
+    f-string block where nothing could test them.
+
+    Deliberately not a score. These are corrections the market has not priced, shown so the
+    drafter weighs them; folding them into a single number would hide which one fired.
+    """
+    notes = []
+    luck = row.get("td_luck")
+    if luck is not None and abs(luck) > _TD_LUCK_NOTE:
+        notes.append(f"td luck {luck:+.2f}/gm")
+    if row.get("missed"):
+        notes.append(f"missed {int(row['missed'])} last season")
+    if durability.is_flagworthy(row.get("injury_status")):
+        notes.append(str(row["injury_status"]))
+    return notes
+
+
+def _print_td_luck(board: pl.DataFrame, report: BuildReport) -> None:
     """Players priced on touchdowns their yardage does not support.
 
     A different cut from xFP-FP, and measurably so -- the two correlate at +0.16 on the live
@@ -438,7 +574,7 @@ def _print_td_luck(board: pl.DataFrame) -> None:
     strong negative. See docs/td-luck.md, including how much of this is established
     (quarterbacks) and how much is only directional (running backs, receivers).
     """
-    if "td_luck" not in board.columns:
+    if not report.td_luck:
         return
     pool = board.filter(pl.col("td_luck").is_not_null()
                         & pl.col("adp").is_not_null() & (pl.col("adp") <= 120))
@@ -456,7 +592,13 @@ def _print_td_luck(board: pl.DataFrame) -> None:
     print("  volume and their true predictive weight is -0.05. Directional elsewhere.")
 
 
-def main():
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI. `argv` is threaded through so this is callable from a test.
+
+    Every other CLI in the repo already took it; this one did not, which is why the module
+    with the most churn in the repo also had the least covered entry point. All three bugs
+    found in the draft-night rehearsal lived below this line.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--league-size", type=int, default=12)
     ap.add_argument("--scoring", default="ppr")
@@ -482,7 +624,7 @@ def main():
                     help="show weeks 15-17 strength of schedule, softest and hardest")
     ap.add_argument("--fit-noise", action="store_true",
                     help="fit sigma(mu) from your league's past drafts, then exit")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     if a.fit_noise:
         import os
@@ -490,7 +632,7 @@ def main():
         from hub.draft.availability import fit_pick_noise
         load_dotenv()
         fit_pick_noise(int(os.environ["ESPN_LEAGUE_ID"]), [a.season - 2, a.season - 1])
-        return
+        return 0
 
     st = state_mod.load()
     if a.reset:
@@ -516,9 +658,11 @@ def main():
         print(f"  waits: {', '.join(map(str, waits[:7]))} ...")
         for pk in picks[:6]:
             print(f"    pick {pk:>3}  ->  {draft_mode(pk)}")
-        return
+        return 0
 
-    board = build(a.league_size, a.season)
+    board, report = build(a.league_size, a.season)
+    if report.degraded():
+        print(f"  built without: {', '.join(report.degraded())}")
 
     # A mistyped pick is silent otherwise: the misspelt player stays on the board as
     # available and the next recommendation can hand back someone already drafted. ESPN
@@ -545,8 +689,8 @@ def main():
         print(f"    {r['player']:<24} {r['pos'] or '':<4} ECR {r['ecr']:>5.1f}  "
               f"xFP-FP {-r['fp_over_expected']:>6.1f}")
 
-    _print_td_luck(board)
-    _print_injuries(board)
+    _print_td_luck(board, report)
+    _print_injuries(board, report)
 
     if a.sos:
         pool = board.filter(pl.col("adp").is_not_null()
@@ -579,7 +723,7 @@ def main():
                     break
             if shown >= 8:
                 break
-        return
+        return 0
 
     missing = state_mod.unmatched(board, st)
     if missing:
@@ -593,24 +737,14 @@ def main():
         # outcomes -- +3.11 against the room versus +3.15, difference +0.04 [-3.64, +3.58]
         # at n=36 -- so the simpler and instant arm leads and equity becomes a tiebreaker.
         from hub.draft.optimize import draft_pool, market_pick
-        held = collections.Counter(
-            (state_mod.remaining(board, st).is_empty() and []) or
-            [r["pos"] for r in board.filter(
-                pl.col("player").is_in(state_mod.my_roster(st, MY_SLOT, TEAMS))
-            ).iter_rows(named=True)])
-        mp = market_pick(draft_pool(board, st, a.espn_weight), dict(held))
+        held = held_positions(board, st)
+        mp = market_pick(draft_pool(board, st, a.espn_weight), held)
         if not mp:
             print("\n  THE PICK unavailable -- no ESPN ADP on the board. The market has")
             print("    nothing to say without it; fall back to the equity table below.")
         if mp:
             row = board.filter(pl.col("player") == mp).row(0, named=True)
-            notes = []
-            if row.get("td_luck") is not None and abs(row["td_luck"]) > 0.5:
-                notes.append(f"td luck {row['td_luck']:+.2f}/gm")
-            if row.get("missed"):
-                notes.append(f"missed {int(row['missed'])} last season")
-            if durability.is_flagworthy(row.get("injury_status")):
-                notes.append(str(row["injury_status"]))
+            notes = pick_notes(row)
             print(f"\n  THE PICK -- best available the market values, filling a need")
             print(f"    {mp}  {row.get('pos') or ''}  ADP {row.get('adp') or float('nan'):.1f}"
                   + (f"   [{'; '.join(notes)}]" if notes else ""))
@@ -658,6 +792,8 @@ def main():
             print("    the season is scored on the same projection the greedy ranks on.")
             print("    The VOR list above is the shortlist this scored, not the answer.")
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -238,59 +238,41 @@ def test_the_fitted_constants_are_inside_their_fitted_intervals():
         assert v == pytest.approx(FITTED_BY_POS[pos], abs=0.01)
 
 
-# --- weekly spread follows a square-root law, not a proportional one -------
+# The square-root spread law itself is `hub.models.predict`'s, and its tests moved to
+# `tests/unit/test_predict.py` with it. What stays here is the law's consequence *inside a
+# simulated season*, which is this module's subject.
 
-def test_weekly_spread_scales_with_the_square_root_of_the_mean():
-    """`sd = 0.55 * mu` assumed spread is proportional to the mean. Fitted against 1,174
-    player-seasons of nflverse weekly scoring, the exponent is 0.498 +/- 0.012 -- flat on
-    the Poisson value and about 42 standard errors from 1.
-
-    That is not a curve-fitting accident, it is what aggregating component stats produces:
-    weekly points are a sum of count-driven pieces (receptions, carries, touchdowns) whose
-    variance grows with their mean, so the spread of the total grows with its square root.
-    See docs/weekly-spread.md.
-    """
-    from hub.draft.season import weekly_moments
-    xp = pl.DataFrame({"proj_ppg": [4.0, 16.0], "position": ["WR", "WR"]})
-    got = weekly_moments(xp)
-    # four times the mean is twice the spread, not four times
-    assert got["sd"][1] / got["sd"][0] == pytest.approx(2.0, rel=0.01)
-
-
-def test_a_boom_bust_profile_is_a_property_of_the_level_not_a_setting():
-    """The consequence that matters for the draft board: relative volatility falls as
-    projection rises. A 5-point-a-game flier really is nearly twice the lottery, per point,
-    that a 20-point-a-game starter is -- and the old constant said they were identical."""
-    from hub.draft.season import weekly_moments
-    xp = pl.DataFrame({"proj_ppg": [5.0, 20.0], "position": ["RB", "RB"]})
-    got = weekly_moments(xp)
-    cv = (got["sd"] / got["mu"]).to_list()
-    assert cv[0] > 1.8 * cv[1]
+def test_the_caller_can_supply_the_skew_it_already_computed():
+    """`predict.moments` returns a skew column, and the simulator used to throw it away and
+    recompute skew from position. The two agreed, which is exactly why nobody noticed: they
+    would go on agreeing until skew stopped being a function of position alone."""
+    from hub.draft.season import simulate_weeks
+    r = [np.array([0])]
+    mu, sd, pos = np.array([14.0]), np.array([7.0]), np.array(["WR"])
+    flat = simulate_weeks(r, mu, sd, pos, n_sims=400, weeks=14,
+                          rng=np.random.default_rng(3), skew=np.array([0.05]))
+    lumpy = simulate_weeks(r, mu, sd, pos, n_sims=400, weeks=14,
+                           rng=np.random.default_rng(3), skew=np.array([1.20]))
+    assert scipy_skew(flat.ravel()) < scipy_skew(lumpy.ravel())
 
 
-def test_positions_keep_their_own_coefficient():
-    from hub.draft.season import WEEKLY_K, weekly_moments
-    xp = pl.DataFrame({"proj_ppg": [10.0, 10.0], "position": ["QB", "WR"]})
-    got = weekly_moments(xp)
-    assert got["sd"][0] < got["sd"][1]
-    assert WEEKLY_K["WR"] > WEEKLY_K["QB"]
+def test_omitting_the_skew_falls_back_to_the_positional_table():
+    """Every caller that predates the parameter must keep its numbers exactly."""
+    from hub.draft.season import simulate_weeks, weekly_skew_for
+    r = [np.array([0, 1])]
+    mu, sd = np.array([14.0, 9.0]), np.array([7.0, 5.0])
+    pos = np.array(["WR", "QB"])
+    kw = dict(n_sims=50, weeks=14)
+    implicit = simulate_weeks(r, mu, sd, pos, rng=np.random.default_rng(7), **kw)
+    explicit = simulate_weeks(r, mu, sd, pos, rng=np.random.default_rng(7),
+                              skew=weekly_skew_for(pos), **kw)
+    assert np.array_equal(implicit, explicit)
 
 
-def test_a_missing_position_falls_back_to_the_pooled_coefficient():
-    from hub.draft.season import WEEKLY_K_POOLED, weekly_moments
-    xp = pl.DataFrame({"proj_ppg": [9.0]},
-                      schema={"proj_ppg": pl.Float64}).with_columns(
-        pl.lit(None, dtype=pl.Utf8).alias("position"))
-    got = weekly_moments(xp)
-    assert got["sd"][0] == pytest.approx(WEEKLY_K_POOLED * 3.0, rel=1e-6)
-
-
-def test_a_player_projected_at_nothing_has_no_spread():
-    """Under the old floor a zero-projection player still carried sd = 2.0, which the
-    best-lineup rule turned into free points. sqrt(0) is 0."""
-    from hub.draft.season import weekly_moments
-    got = weekly_moments(pl.DataFrame({"proj_ppg": [0.0], "position": ["WR"]}))
-    assert got["sd"][0] == 0.0
+def scipy_skew(x: np.ndarray) -> float:
+    """Sample skewness, without pulling scipy in for one moment."""
+    d = x - x.mean()
+    return float((d ** 3).mean() / x.std() ** 3)
 
 
 def test_simulate_weeks_scales_spread_by_the_root_of_realised_talent():

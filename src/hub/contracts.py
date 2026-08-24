@@ -46,10 +46,21 @@ class Contract:
         return df
 
 
+# The board frame is the widest interface in the repo: ~14 modules read columns off it by
+# name, and for a long time this contract declared three of them and was applied to none.
+# The columns below are the ones something downstream reads *unconditionally* -- anything
+# optional (edge, proj_blend, td_luck, sos) stays out, because those legitimately go missing
+# when a fetch degrades and `build` is written to keep going.
+#
+# `ecr_sd` is here under that name on purpose. FantasyPros calls it `sd`, which is also what
+# `hub.models.predict.moments` calls a weekly points spread; both landed on frames derived
+# from this one.
 DRAFT_BOARD = Contract(
     name="draft_board",
-    required={"player": pl.Utf8, "pos": pl.Utf8, "ecr": pl.Float64},
-    non_null=("player", "ecr"),
+    required={"player": pl.Utf8, "pos": pl.Utf8, "ecr": pl.Float64,
+              "xfp_per_game": pl.Float64, "games": pl.UInt32, "vor": pl.Float64,
+              "consensus_rank": pl.Float64},
+    non_null=("player", "ecr", "pos"),
     unique=("player",),
     ranges={"ecr": (1, 1000)},
     min_rows=300,

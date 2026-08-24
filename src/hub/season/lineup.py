@@ -43,7 +43,7 @@ from typing import Iterator, Mapping, Sequence
 import polars as pl
 
 from hub.draft.season import FLEX_FROM, STARTERS
-from hub.models import components
+from hub.models.predict import group_sd
 
 # Exhaustive enumeration is exact and, for a real 14-to-16 man roster, takes milliseconds
 # -- a few thousand legal lineups. The cap exists so that if a caller ever hands over
@@ -126,7 +126,7 @@ def _evaluate(players: pl.DataFrame, slots: Mapping[str, int] | None,
     for idx in _legal_lineups(pos, slots, flex_from, max_lineups):
         i = list(idx)
         m = float(mu[i].sum())
-        s = components.group_sd((sd[k], pos[k], teams[k]) for k in i)
+        s = group_sd((sd[k], pos[k], teams[k]) for k in i)
         v = score(m, s)
         if v > best_score:
             best, best_score = (i, m, s), v

@@ -58,8 +58,12 @@ def _sigma(df: pl.DataFrame) -> np.ndarray:
     """
     mu = df["mu_pick"].to_numpy()
     heuristic = pick_noise(mu)
-    if "sd" in df.columns:
-        sd = df["sd"].fill_null(0.0).to_numpy()
+    # `ecr_sd`, not `sd`. This is the spread of the *consensus rank*, in picks. It was
+    # called `sd` on the board, which is also what a player's weekly points spread is
+    # called; reading the wrong one here would have produced a confident, plausible and
+    # entirely wrong availability curve, since both are small positive floats.
+    if "ecr_sd" in df.columns:
+        sd = df["ecr_sd"].fill_null(0.0).to_numpy()
         return np.where(sd > 0, np.maximum(sd, 1.0), heuristic)
     return heuristic
 

@@ -98,3 +98,49 @@ def test_sigma_uses_the_fitted_law_when_there_is_no_consensus_spread():
     got = _sigma(df)
     assert got[0] == pytest.approx(A + B * 10.0)
     assert got[1] == pytest.approx(A + B * 100.0)
+
+
+# --- which column the consensus spread is read from -----------------------
+#
+# Only the fallback above was ever tested, so the branch that reads the consensus spread ran
+# in production untested. That is why the column could be renamed with the whole suite green
+# -- and why the collision below could have gone live without anything failing.
+
+def test_sigma_prefers_the_consensus_spread_when_it_is_there():
+    import polars as pl
+
+    from hub.draft.availability import _sigma
+    df = pl.DataFrame({"mu_pick": [10.0, 100.0], "ecr_sd": [7.0, 40.0]})
+    assert _sigma(df).tolist() == [7.0, 40.0]
+
+
+def test_a_zero_or_null_consensus_spread_falls_back_per_player():
+    """A player FantasyPros has no spread for must not come out as sigma 0 -- certainty
+    about where he goes, from an absence of data."""
+    import polars as pl
+
+    from hub.draft.availability import PICK_NOISE_INTERCEPT as A
+    from hub.draft.availability import PICK_NOISE_SLOPE as B
+    from hub.draft.availability import _sigma
+    df = pl.DataFrame({"mu_pick": [10.0, 20.0], "ecr_sd": [0.0, None]})
+    got = _sigma(df)
+    assert got[0] == pytest.approx(A + B * 10.0)
+    assert got[1] == pytest.approx(A + B * 20.0)
+
+
+def test_a_points_spread_is_not_mistaken_for_a_pick_spread():
+    """The collision this rename exists to prevent.
+
+    `sd` meant two different things on frames in this pipeline: the spread of a player's
+    consensus *rank*, in picks, and the spread of his weekly *points*. Both are small
+    positive floats and neither looks wrong. `hub.models.predict.moments` writes the points
+    one onto a board-derived frame, so an availability sim run on a scored frame would have
+    read points as picks and produced a confident, plausible, entirely wrong curve.
+    """
+    import polars as pl
+
+    from hub.draft.availability import PICK_NOISE_INTERCEPT as A
+    from hub.draft.availability import PICK_NOISE_SLOPE as B
+    from hub.draft.availability import _sigma
+    scored = pl.DataFrame({"mu_pick": [10.0], "sd": [7.9]})   # weekly points, not picks
+    assert _sigma(scored)[0] == pytest.approx(A + B * 10.0)

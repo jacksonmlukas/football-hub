@@ -47,8 +47,9 @@ import polars as pl
 
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, blended_adp
 from hub.draft.picks import snake_picks
-from hub.draft.season import STARTERS, champion_probability, weekly_moments
+from hub.draft.season import FLEX_CAPACITY, FLEX_FROM, STARTERS, champion_probability
 from hub.draft.state import DraftState, remaining
+from hub.models.predict import WEEKLY_SKEW_POOLED, moments
 
 # Bench depth beyond the 8 starting slots. Deep enough that saturation is punished,
 # shallow enough that the simulated draft stays cheap.
@@ -63,7 +64,7 @@ def _need_score(counts: dict[str, int], pos: str) -> int:
     """
     if pos in STARTERS and counts.get(pos, 0) < STARTERS[pos]:
         return 2
-    if pos in ("RB", "WR", "TE") and sum(counts.get(p, 0) for p in ("RB", "WR", "TE")) < 7:
+    if pos in FLEX_FROM and sum(counts.get(p, 0) for p in FLEX_FROM) < FLEX_CAPACITY:
         return 1
     return 0
 
@@ -158,9 +159,14 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
                     w: float = DEFAULT_ESPN_WEIGHT, seed: int = 0) -> pl.DataFrame:
     """P(you win the league) for each candidate, averaged over simulated drafts."""
     pool = draft_pool(board, state, w)
-    moments = weekly_moments(pool)
-    mu = moments["mu"].fill_null(0.0).to_numpy()
-    sd = moments["sd"].fill_null(2.0).to_numpy()
+    pred = moments(pool)
+    mu = pred["mu"].fill_null(0.0).to_numpy()
+    sd = pred["sd"].fill_null(2.0).to_numpy()
+    # Read the skew off the same frame that produced mu and sd. The simulator used to
+    # recompute it from `pos`, which agreed only because both routes read one table --
+    # a per-player skew (from components, say) would have been computed here and silently
+    # dropped on the way in.
+    skew = pred["skew"].fill_null(WEEKLY_SKEW_POOLED).to_numpy()
     pos = pool["pos"].fill_null("NA").to_numpy()
     # NFL team, so the simulator can correlate a quarterback with his own pass catchers.
     # Without it a stacked roster is drawn independent and comes out less volatile than it
@@ -181,7 +187,7 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
                                                rng=np.random.default_rng(seed + k))
             p = champion_probability(rosters, mu, sd, pos, n_sims=n_season_sims,
                                      rng=np.random.default_rng(seed + 1000 + k),
-                                     nfl_team=nfl_team)
+                                     nfl_team=nfl_team, skew=skew)
             mat[i, k] = p[my_slot - 1]
 
     field = mat.mean(axis=0)                       # the field, per simulated future

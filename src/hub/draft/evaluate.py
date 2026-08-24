@@ -24,10 +24,10 @@ from typing import Sequence
 import numpy as np
 import polars as pl
 
+from hub.draft.season import FLEX_FROM, STARTERS  # noqa: F401 -- the league's one shape
+
 TEAMS = 12
 ROUNDS = 16
-STARTERS = {"QB": 1, "RB": 2, "WR": 3, "TE": 1}
-FLEX_FROM = ("RB", "WR", "TE")
 
 # How loosely opponents follow their board. Nobody drafts strictly off a list, and a room
 # of perfect consensus-followers would make any deviation look better than it is.

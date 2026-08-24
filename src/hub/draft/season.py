@@ -21,21 +21,34 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 
+from hub.config import (RosterConfig, flex_capacity, flex_positions,
+                        required_starters)
+
 # QB1 / RB2 / WR3 / TE1 / FLEX1 -- confirmed against the live league, not the ESPN default.
-STARTERS = {"QB": 1, "RB": 2, "WR": 3, "TE": 1}
-FLEX_FROM = ("RB", "WR", "TE")
+# Derived from `hub.config.RosterConfig` rather than restated: this module is "how a league
+# works", so it is the right place to *read* the shape and the wrong place to declare it.
+ROSTER = RosterConfig()
+STARTERS = required_starters(ROSTER)
+FLEX_FROM = flex_positions(ROSTER)
+FLEX_SLOTS = ROSTER.flex
+# The most flex-eligible players a team can start at once. Was a bare `7` in optimize.py.
+FLEX_CAPACITY = flex_capacity(ROSTER)
 REG_SEASON_WEEKS = 14
 PLAYOFF_TEAMS = 6
 
 # Player-level prediction lives in `hub.models.predict`: what a player does in a week, as
-# opposed to how a league works, which is this module. These names are re-exported because
-# calibrate, leverage, optimize and the tests import them from here, and a refactor that
+# opposed to how a league works, which is this module. These constants are re-exported
+# because calibrate, leverage and the tests import them from here, and a refactor that
 # breaks its callers to be tidier is not an improvement.
+#
+# `moments` is deliberately NOT re-exported. It was, under the old name `weekly_moments`,
+# and that alias outlived the function it named: `moments` returns three moments, so the
+# name promised a shape the object no longer had. Callers wanting a player-level
+# prediction import it from `hub.models.predict`, which is where it lives.
 from hub.models.predict import (  # noqa: F401
     MIN_SKEW, TALENT_CV, TALENT_CV_BY_POS, WEEKLY_K, WEEKLY_K_POOLED, WEEKLY_SKEW,
     WEEKLY_SKEW_POOLED, correlated_normal, skewed, talent_cv_for, weekly_skew_for,
 )
-from hub.models.predict import moments as weekly_moments  # noqa: F401
 
 _skewed = skewed
 _correlated_normal = correlated_normal
@@ -66,7 +79,8 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
                    pos: np.ndarray, n_sims: int, weeks: int = REG_SEASON_WEEKS,
                    rng: np.random.Generator | None = None,
                    talent_cv: float | np.ndarray | None = None,
-                   nfl_team: np.ndarray | None = None) -> np.ndarray:
+                   nfl_team: np.ndarray | None = None,
+                   skew: np.ndarray | None = None) -> np.ndarray:
     """Weekly points for every team. Returns (sims, weeks, teams).
 
     Realised talent is drawn once per season, then weekly points are drawn around it.
@@ -94,8 +108,13 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
                       where=mu[None, :] > 0)
     sd_eff = (sd[None, :] * np.sqrt(ratio))[:, None, :]
     z = _correlated_normal(rng, (n_sims, weeks, mu.size), pos, nfl_team)
-    draws = _skewed(true_mu[:, None, :], sd_eff,
-                    weekly_skew_for(pos)[None, None, :], z)
+    # Skew comes from the caller when it has it. `hub.models.predict.moments` already
+    # returns a skew column alongside mu and sd; recomputing it here from `pos` agreed only
+    # because both routes read the same table, and would go on agreeing right up until one
+    # of them stopped being a function of position alone.
+    if skew is None:
+        skew = weekly_skew_for(pos)
+    draws = _skewed(true_mu[:, None, :], sd_eff, skew[None, None, :], z)
     out = np.empty((n_sims, weeks, len(rosters)))
     for t, r in enumerate(rosters):
         out[:, :, t] = _lineup_points(draws[:, :, r], pos[r]) if r.size else 0.0
@@ -116,7 +135,8 @@ def champion_probability(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarr
                          pos: np.ndarray, n_sims: int = 400,
                          rng: np.random.Generator | None = None,
                          talent_cv: float | np.ndarray | None = None,
-                         nfl_team: np.ndarray | None = None) -> np.ndarray:
+                         nfl_team: np.ndarray | None = None,
+                         skew: np.ndarray | None = None) -> np.ndarray:
     """P(each team wins the league). Returns (teams,) summing to 1.
 
     14-week H2H regular season, top 6 seeds, two byes, then single elimination on
@@ -125,7 +145,7 @@ def champion_probability(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarr
     rng = rng or np.random.default_rng(0)
     teams = len(rosters)
     pts = simulate_weeks(rosters, mu, sd, pos, n_sims, REG_SEASON_WEEKS, rng, talent_cv,
-                         nfl_team)
+                         nfl_team, skew)
 
     wins = np.zeros((n_sims, teams))
     for w, pairs in enumerate(_round_robin(teams, REG_SEASON_WEEKS)):
