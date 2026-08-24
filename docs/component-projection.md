@@ -119,12 +119,58 @@ distribution gives an underdog real upside. It still clearly hurts a strong rost
 (19.8% → 15.9%). The state-dependence that [lineup.py](../src/hub/season/lineup.py) applies
 weekly is now visible at draft level too.
 
-## What is still missing
+## The volume model was screened and came back null
 
-**The volume model.** `project()` carries volume forward per game and regresses touchdowns.
-That is the aggregation layer, not a projection model — a real one would work in target
-share, backfield share and depth-chart position, which is what this makes possible rather
-than replaces. It is the obvious next build and where the remaining mean accuracy is.
+The obvious next step was to stop carrying volume forward and model it: shrink volume and
+efficiency toward positional means by their measured persistence, then aggregate. Year-over
+-year persistence says exactly how much to shrink each piece, with no free parameters —
+the optimal keep-weight is the correlation itself:
+
+| quantity | year-over-year r |
+|---|---|
+| targets | 0.805 |
+| carries | 0.791 |
+| receiving yards | 0.805 |
+| **points per game** | **0.775** |
+| pass attempts | 0.745 |
+| catch rate | 0.402 |
+| yards per target | 0.369 |
+| yards per carry | 0.108 |
+| **receiving TD rate** | **−0.004** |
+| **rushing TD rate** | **−0.030** |
+
+Two things worth reading twice. **Volume persists better than points do** (targets 0.805
+against 0.775), which is the premise of the whole approach and it holds. And **touchdown
+rate per yard has literally zero persistence** — −0.004 and −0.030 — which independently
+confirms the full-shrink result from the fit above by a completely different route.
+
+So the premise is right. The model built on it is still not worth shipping:
+
+| | RMSE, TD regression only | RMSE, + volume/efficiency shrinkage | gain |
+|---|---|---|---|
+| QB | 3.764 | 3.397 | +9.7% |
+| RB | 3.772 | 3.868 | −2.6% |
+| WR | 3.265 | 3.301 | −1.1% |
+| TE | 2.454 | 2.476 | −0.9% |
+| **all** | **3.303** | **3.311** | **−0.2%** |
+
+Paired bootstrap on the difference: **+0.008 RMSE, 95% CI [−0.057, +0.070], P(better)
+40.2%.** A null, and slightly the wrong way.
+
+QB alone comes back at −0.354 [−0.724, 0.000], P(better) 97.5%, and it is tempting. It is
+not taken, for two reasons: it is one of four positions tested, so under the null you would
+expect one to cross 97.5% about 10% of the time, and its interval touches zero at the top.
+Shipping the one slice that worked is the failure mode this repo screens to avoid.
+
+The likely reason shrinking hurts skill positions: shrinking toward a single positional mean
+over-shrinks the studs. A WR1 and a WR5 do not regress toward the same place, and the market
+already prices that. A volume model that shrank toward an *ADP-implied* prior rather than a
+positional average is a different and more promising thing, and is not what was tested here.
+
+**So `project()` keeps carrying volume forward and regressing touchdowns**, which the screen
+says is the best of the options tried.
+
+## What is still missing
 
 **Correlation between players.** Every draw here is independent. A quarterback and his WR1
 share touchdowns, and that term is exactly what

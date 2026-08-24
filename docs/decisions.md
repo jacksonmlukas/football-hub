@@ -299,6 +299,17 @@ behavioural test pinning them together. Conclusions all survived; one refined --
 spread mildly *helps* a weak roster (2.5% -> 3.1%) where it read as flat, because a skewed
 distribution gives an underdog upside a normal hid.
 
+**Volume model screened (2026-08-24) and came back null.** Year-over-year persistence
+confirms the premise -- volume persists better than points (targets 0.805, carries 0.791 vs
+ppg 0.775) and touchdown rate per yard has *zero* persistence (-0.004 receiving, -0.030
+rushing), independently confirming the full-shrink result by a different route. But shrinking
+volume and efficiency by their measured persistence does not beat regressing touchdowns
+alone: RMSE 3.311 vs 3.303, paired bootstrap +0.008 [-0.057, +0.070], P(better) 40.2%.
+QB alone shows +9.7% at P=97.5%, and is *not* taken -- one of four positions tested, interval
+touching zero, and shipping the slice that worked is the failure mode the screens exist to
+avoid. Likely cause: shrinking toward one positional mean over-shrinks the studs; an
+ADP-implied prior is a different and untested thing. `project()` unchanged.
+
 **Direction set: project components, aggregate to points.** Weekly *spread* now comes from
 the component structure; the weekly *mean* still arrives as a points projection. Doing the
 same to the mean is the next build -- volume persists where touchdowns do not, and it is the
