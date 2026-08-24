@@ -439,9 +439,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     for yr in seasons:
         print(f"  building the {yr} board as of {yr}-09-01 ...")
         boards[yr], _ = build(season=yr - 1, season_ahead=yr, as_of=f"{yr}-09-01")
+        # `position` and `season` are in the PLAYER_STATS contract's required set, so they
+        # are narrowed *in* rather than out -- the contract is validated after the narrowing.
         stats = nflverse.load("player_stats", [yr],
-                              cols=["player_id", "player_display_name", "week",
-                                    "fantasy_points_ppr"])
+                              cols=["player_id", "player_display_name", "position",
+                                    "season", "week", "fantasy_points_ppr"])
         realised[yr] = realised_ppg(stats)
 
     print(f"  playing {a.drafts} drafts x {len(seasons)} seasons, "
