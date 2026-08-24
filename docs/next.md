@@ -143,6 +143,36 @@ small to headline.
 the shipped 24x300. Noisier per call, and that noise is part of what is being tested: if the
 recommendation is unstable at cheap settings it is not a usable recommendation.
 
+### Result (2026-08-24): no detectable difference, and a self-correction
+
+| run | optimizer settings | n | optimizer − market | 95% CI | P(better) |
+|---|---|---|---|---|---|
+| first | 6 × 120 | 60 | **−5.79** | [−9.17, −2.45] | 0.0% |
+| check | 12 × 250 | 15 | −1.91 | [−7.85, +3.14] | 27.1% |
+| **powered** | **12 × 250** | **36** | **+0.04** | **[−3.64, +3.58]** | **51.0%** |
+
+**The first result was an artifact of running the optimizer at a quarter of its shipped
+budget** (6 draft rollouts × 120 seasons, against 24 × 300 live). The gap shrank as the
+budget rose and vanished at adequate power. The risk was flagged in this document before the
+run and nearly acted on anyway, which is the more useful lesson: a pre-registered caveat is
+worthless unless it is actually checked before the conclusion ships.
+
+At realistic settings both arms beat the room by about the same amount — market +3.11,
+optimizer +3.15. **This is not "the market wins."** It is "no effect larger than about 3.6
+points is detectable at n=36", which is absence of evidence rather than evidence of
+equivalence.
+
+**Action, per the rule fixed below:** lead with the market, keep championship equity as a
+tiebreaker. Not because the optimizer is harmful — it is not, and the earlier claim that it
+might be is withdrawn — but because it cannot demonstrate an edge over an alternative that is
+instant and far simpler, and the burden is on the complicated thing.
+
+**What this does not settle.** The candidate shortlist was top-8 by VOR rather than
+`recommend()`'s scarcity/value logic, so all three runs may understate the optimizer. That
+limitation does not shrink with more samples, and with the result sitting on zero it is
+exactly the kind of thing that could tip it. It is the obvious next test if the tiebreaker
+role is ever revisited.
+
 ### Decision rule, fixed before the numbers are in
 
 | result | action |
