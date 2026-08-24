@@ -475,6 +475,65 @@ only route to the component-level correlation `championship-leverage.md` calls L
 `hub.fetch.nflverse` now carries `player_stats` (weekly, per player, all components), and
 full-PPR reconstructs from them to within 0.01 for 99.4% of player-weeks.
 
+## Why we backtest: to audit ourselves, not to find edges
+
+**Decided 2026-08-24 (Jackson).** Standing direction, so a future session does not relitigate
+it.
+
+**Do not backtest looking for an edge over the market.** Sportsbooks and the drafting room
+have already done that work, and their price is the aggregated result of everyone who has
+tried. Four independent attempts in this repo have now failed the same way:
+
+| attempt | result |
+|---|---|
+| Component projections vs carrying points forward | +2% RMSE, real but tiny |
+| Volume model shrunk to a positional mean | null (3.311 vs 3.303) |
+| Volume model shrunk to an ADP-implied prior | beats history 99.9%, **does not beat the pick** (87%) |
+| Value-over-replacement draft ordering | **loses** to drafting the market, -5.06 pts/team-game, P(better) 0.0% |
+
+Jackson's framing, and it is right: *the market prices outcomes well.* Trying to out-project
+or out-order it is arbitrage against people with more money and better data.
+
+**Do keep backtesting to audit our own machinery**, which is a different job and the one that
+has repeatedly paid. Sportsbooks price player and game outcomes; nobody prices "which pick
+maximises P(win) from slot 3 in a 12-team, 6-of-12 league", so that question can only be
+answered against realised outcomes. In one session the backtest:
+
+- Overturned a **+17.25 pp** in-simulation result that was pure circularity — the season was
+  scored on the same projection the greedy ranked on, and we would otherwise still be acting
+  on it ([market-value.md](market-value.md)).
+- Caught a strawman opponent model that drafted position-blind, finishing with five
+  quarterbacks and no tight end, and handed every strategy +24 pp for beating it.
+- Caught an additive roster-need weight on incomparable scales that had *our own* VOR
+  strategy drafting **4.9 quarterbacks** in a one-quarterback league.
+
+All three produced confident, wrong answers first. No market price would have caught any of
+them.
+
+**So the rule:** a backtest whose hypothesis is "we beat the market" is not worth running.
+A backtest whose hypothesis is "our code does what we think" is worth running every time.
+
+**Where the remaining edge is**, given all of the above — narrow, and all of it either a
+correction the market's projection demonstrably omits or something the market never priced at
+all:
+
+- Corrections measured *against* the market rather than replacing it: touchdown luck at QB and
+  WR ([td-luck.md](td-luck.md)), durability at QB and WR, being ruled out today
+  ([durability.md](durability.md)).
+- Things that are not about the player: your slot, who survives to your next pick, weeks 15-17
+  schedule under a 6-of-12 bracket ([six-of-twelve.md](six-of-twelve.md)).
+
+**Practical note.** `ODDS_API_KEY` is present but **empty**, so no sportsbook data flows today
+and the "market" in use is ESPN ADP plus ESPN projections. `hub/models/market.py` and the
+survivor solver run on nflverse closing lines, which is fine; `hub/fetch/odds.py` is for
+in-season line movement and is simply unconfigured.
+
+If a sharper market input is ever wanted, book prices beat ESPN's fantasy projections on
+principle — real money, continuously updated. Two cautions before spending on it: the key is
+unset, and books price per-game props near gameday, so season-long player props are thin in
+August and may not reach a September draft even with a key. That second point is untested here
+and should be checked rather than assumed.
+
 ## Open questions
 
 1. **Pool configuration** — entries, payout, rebuys. Under ~20 entries play near max win
