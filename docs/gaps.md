@@ -152,7 +152,7 @@ Target is 80%. Actual is **69%** (171 tests, 888 statements, 274 uncovered).
 
 | Module | Cover | Note |
 |---|---|---|
-| `hub/store.py` | **0%** | No test file references it at all |
+| `hub/store.py` | ~~0%~~ **97%** | Resolved 2026-08-23 by plan item 1.6 |
 | `hub/fetch/espn.py` | 26% | Network paths; the parsers are covered, the fetchers are not |
 | `hub/draft/board.py` | 45% | Almost all of the miss is `main()` — the CLI has no test |
 | `hub/draft/availability.py` | 72% | `historical_picks` is network-bound |
@@ -160,10 +160,15 @@ Target is 80%. Actual is **69%** (171 tests, 888 statements, 274 uncovered).
 
 Two corrections to the plan fall out of this:
 
-- **1.6 says `hub.store` "has only ever seen a synthetic smoke test."** There is no smoke test.
-  Coverage is zero and no test imports it. The ASOF join (`AS_OF_LINES`) has never executed in
-  CI. That raises 1.6 from "prove it against real data" to "test it at all", and it is the one
-  module every Phase 1 fetch item is supposed to write through.
+- **1.6 said `hub.store` "has only ever seen a synthetic smoke test."** There was no smoke
+  test: coverage was zero and nothing imported it. **Resolved 2026-08-23.** Three defects
+  surfaced once it was exercised: `sql()` took no parameters, so `AS_OF_LINES` -- the module's
+  own canonical query, carrying a `?` -- could not be run through the module's own helper;
+  there was no injection point for the data root, so nothing could be tested without
+  reassigning module globals; and the `:02d` zero-padding in `LAYOUT` turned out to be
+  load-bearing for week ordering (Hive keys arrive as strings, so an unpadded week 9 sorts
+  after week 10) with nothing documenting or testing it. `--verify` now round-trips 285 real
+  2025 games through the catalog and the as-of join.
 - **The 80% gate is a Phase 1 blocker, not a finishing touch.** Three of the four worst-covered
   modules are exactly what Phase 1 builds on. Writing the fetch modules first and back-filling
   tests later would bake the gap in.

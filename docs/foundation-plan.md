@@ -74,7 +74,7 @@ Everything downstream reads from here. Build it once, correctly.
 - [ ] **1.5 Contracts for every source.** Each fetch function validates before returning.
       Golden fixtures saved under `tests/golden/fixtures/`.
       *Done when:* `tests/contracts/` covers all four sources against frozen fixtures.
-- [ ] **1.6 `hub.store` proven against real data.** It has only ever seen a synthetic smoke
+- [x] **1.6 `hub.store` proven against real data.** _(done 2026-08-23)_ It has only ever seen a synthetic smoke
       test. Run the ASOF join (`AS_OF_LINES`) against real predictions and real lines.
       *Done when:* the as-of join returns correct results on a case built to break a naive
       week-level join.
