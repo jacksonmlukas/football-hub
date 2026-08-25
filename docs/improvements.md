@@ -87,7 +87,20 @@ advertise it; that has been fixed, but the module still reads as shipped.
 
 ---
 
-## 3. Correlation covers teammates and nothing else
+## 3. Correlation covers teammates and nothing else — MEASURED 2026-08-25
+
+**Done, and it is real:** opposing quarterbacks correlate at **+0.148** (4.5 se), larger than
+the QB-RB teammate edge the simulator already models. QB-TE +0.066, QB-WR +0.055, both past
+four se; RB-RB *negative* at −0.024. See [opponent-correlation.md](opponent-correlation.md).
+
+**Deliberately not wired.** Both consumers are inert — `lineup.optimize` per ADR-0012 and
+`simulate_weeks` per ADR-0009 — so a correlation term would be a parameter plus plumbing
+bought for nothing. It becomes worth wiring when the usage layer gives the optimiser real
+variance to work with.
+
+The method was validated by reproducing `TEAMMATE_RHO` to within 0.02 on all three edges.
+
+### Original text
 
 **Model.** `TEAMMATE_RHO` carries three edges — QB-WR +0.232, QB-TE +0.225, QB-RB +0.054 —
 measured within a team.

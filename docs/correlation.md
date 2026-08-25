@@ -99,6 +99,14 @@ correlation matters twice: within your roster, and against your opponent's. Shar
 exposure shrinks *margin* variance, which helps whoever is favoured. Nobody prices it here
 either.
 
+> **Measured 2026-08-25** — [opponent-correlation.md](opponent-correlation.md). It is real and
+> concentrated on the passing game: two opposing quarterbacks correlate at **+0.148** (4.5 se),
+> which is larger than the QB-RB *teammate* edge this document fits. QB-TE +0.066 and QB-WR
+> +0.055 both clear four standard errors, and RB-RB goes *negative* at −0.024, which is what
+> game script implies. Still not priced, and deliberately: the two consumers of a correlation
+> term — `lineup.optimize` and `simulate_weeks` — are both inert (ADR-0012, ADR-0009), so
+> wiring it would add a parameter and its plumbing to buy nothing measurable.
+
 **QB–opposing-DST (~−0.45 per the doc) is unmeasured**, since this league's DST handling was
 never in scope for the component layer.
 
