@@ -160,3 +160,31 @@ def test_the_real_store_is_still_protected(suffix):
 def test_the_word_commit_alone_does_not_exempt_a_read():
     """A blanket substring match would let `cat data/x.parquet # commit` through."""
     assert bash("cat data/processed/x.parquet  # about to commit").returncode == 2
+
+
+# --- a chained command is not one command ---------------------------------
+#
+# `&&` and `;` join commands on ONE line, so the earlier newline fix did not reach them: a
+# reader in the first command matched a path several commands later that was being WRITTEN.
+# This blocked the command that produced the lineup gate's results, which is the failure mode
+# the newline fix was written for, one separator down.
+
+def test_a_write_target_after_a_chained_reader_is_not_a_read():
+    cmd = ("uv run pytest -q | tail -2 && uv run python -m hub.season.lineup_gate "
+           "--out " + "/tmp/scratch/gate." + "parquet")
+    assert bash(cmd).returncode == 0, "writing a parquet is not reading one"
+
+
+def test_a_semicolon_also_ends_the_match():
+    assert bash("tail -1 log.txt; uv run python -m hub.publish --out "
+                + "out." + "parquet").returncode == 0
+
+
+def test_a_real_read_after_a_pipe_is_still_blocked():
+    """The narrowing must not open the door the guard exists to close."""
+    assert bash("ls | " + "tail " + "data/processed/board.parquet").returncode == 2
+
+
+def test_a_real_read_after_a_chain_is_still_blocked():
+    """The reader and its argument are still adjacent -- only the span between them shrank."""
+    assert bash("make draft && " + "cat " + "data/processed/board.parquet").returncode == 2

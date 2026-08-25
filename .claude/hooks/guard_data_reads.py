@@ -18,8 +18,12 @@ BLOCKED_READ = re.compile(r"(data/(raw|interim|processed)/|\.parquet$|\.csv$)")
 # Scoped to the same three directories as BLOCKED_READ. This used to match any `data/`,
 # which caught `ls site/data/` -- the site's own published JSON, small and meant to be read.
 # A guard that fires on the output directory teaches you to ignore it.
+# The class also stops at `&` and `;`, not just `|` and newline. Those chain commands on ONE
+# line, so the newline fix did not reach them: a reader in the first command matched a path
+# three commands later that was being WRITTEN, not read. Same failure as the newline one, one
+# separator down, and it blocked the command that produced a gate's results.
 BLOCKED_BASH = re.compile(
-    r"\b(cat|head|tail|less)\b[^|\n]*(data/(raw|interim|processed)/|\.parquet|\.csv)")
+    r"\b(cat|head|tail|less)\b[^|&;\n]*(data/(raw|interim|processed)/|\.parquet|\.csv)")
 
 # The escape hatch cannot be caught by the trap. `hub.inspect --head 5 <path>.parquet`
 # matches the reader pattern -- `--head` contains `head` -- so without this the guard

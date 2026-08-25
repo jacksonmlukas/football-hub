@@ -477,6 +477,29 @@ the bias per stat and per position. If we are 16% high on receiving yards everyw
 a correction to make; if it is noise at n=12, that is worth knowing before trusting the
 number. Costs ~4 credits per event and errors are free.
 
+## Lineup gate (2026-08-24): start your projections, and why that is actionable
+
+`hub.season.lineup_gate`, four seasons, 80 rosters, both arms seeing only projections:
+
+    n=80   optimiser - projections = +0.00 points per game
+           95% CI [-0.00, +0.00]      P(optimiser better) 72.7%
+
+A structural zero, not a small effect. `sd = WEEKLY_K[pos] * sqrt(mu)`, so within a position
+`sd` is a deterministic increasing function of `mu` (correlation 0.985), and ranking by `mu`
+gives the same order as ranking by any increasing function of `(mu, sd)`. The optimiser's one
+advantage -- reading variance -- is handed no variance to read.
+
+**This is the strongest argument yet for the usage and component layers.** Not "it would be
+more accurate": it would make an existing, tested, currently-inert piece of the system do
+something for the first time. Two players projected at 12 points a game are not equally
+volatile, and the square-root law cannot say so because it only knows the mean. See
+[ADR-0012](adr/0012-the-lineup-optimiser-waits-for-real-variance.md).
+
+**The gate's first version could not fail**, and that is recorded rather than quietly fixed:
+the optimiser arm chose each week from *realised* scores while the baseline used projections,
+returned +31.15 [+29.35, +32.93], and measured the value of perfect foresight. A treatment arm
+with information the control arm lacks is not a comparison.
+
 ## P5 — Market prices for weekly lineups *(after the draft)*
 
 The odds key now works, and the API carries the **full component set including volume** —

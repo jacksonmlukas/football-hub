@@ -20,6 +20,7 @@ a superseded decision keep its original text instead of being edited in place.
 | [0009](adr/0009-championship-equity-does-not-pick.md) | Championship equity does not pick | accepted |
 | [0010](adr/0010-edge-is-displayed-but-never-ranked-on.md) | `edge` is displayed but never ranked on | accepted |
 | [0011](adr/0011-the-pick-ranks-on-corrected-adp.md) | THE PICK ranks on corrected ADP | accepted |
+| [0012](adr/0012-the-lineup-optimiser-waits-for-real-variance.md) | The lineup optimiser waits for real variance | accepted |
 
 Related, and deliberately not ADRs:
 
