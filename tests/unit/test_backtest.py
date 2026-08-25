@@ -564,7 +564,6 @@ def test_compare_is_deterministic_under_a_seed():
 def test_the_optimizer_arm_returns_a_live_player():
     """It ranks `recommend()`'s shortlist by equity and breaks ties on consensus. The failure
     it must not have is returning someone already drafted."""
-    from hub.draft.state import DraftState
     board = _full_board()
     strategy = bt.optimizer_strategy(board, my_slot=3, teams=12, rounds=4,
                                      n_draft_sims=2, n_season_sims=10, seed=0)
