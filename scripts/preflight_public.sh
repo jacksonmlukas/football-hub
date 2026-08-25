@@ -66,7 +66,14 @@ fi
 echo
 if [ $fail -eq 0 ]; then
   echo "PASS. Safe to flip public."
-  echo "Then: enable Pages (Settings > Pages > main branch), and the watchdog cron starts working."
+  echo
+  echo "Then, in this order -- none of these happen on their own:"
+  echo "  1. Flip the repo public."
+  echo "  2. Uncomment the 'schedule:' block in .github/workflows/watchdog.yml."
+  echo "     The cron is commented out, so the watchdog does NOT start on its own."
+  echo "  3. Uncomment the 'schedule:' block in .github/workflows/ci.yml, which is what"
+  echo "     runs the golden tests against the live APIs."
+  echo "  4. Enable Pages (Settings > Pages > main branch)."
 else
   echo "BLOCKED. Fix the above before making this repo public." >&2
 fi

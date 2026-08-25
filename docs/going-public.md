@@ -41,6 +41,15 @@ waiting.
 6. Re-enable the watchdog cron in `.github/workflows/watchdog.yml`, **and** the
    `schedule:` trigger in `.github/workflows/ci.yml` — the `golden` job gates on
    `event_name == 'schedule'` and has never once run, because the trigger was absent.
+
+   It had a *second* reason to do nothing, found and fixed 2026-08-25: the step ran
+   `pytest tests/golden`, which the `addopts = "-m 'not golden'"` in `pyproject.toml`
+   deselects entirely, so it would have gone green having run zero tests. It now runs
+   `pytest -m golden`, and the job also accepts `workflow_dispatch` so it can be exercised
+   before the flip rather than debugged after it. Verified locally: 6 passed, 1 skipped
+   (CFBD, no key). **If you want the CFBD shape check to actually run in Actions, add
+   `CFBD_API_KEY` as a repository secret and pass it to that job** — otherwise it skips
+   there too, which is the test's designed behaviour, not a failure.
 7. Run `scripts/bootstrap_project.sh` to seed the project board.
 
 ## Scope: cut
