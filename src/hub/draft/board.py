@@ -680,6 +680,26 @@ def _print_td_luck(board: pl.DataFrame, report: BuildReport) -> None:
     print("  volume and their true predictive weight is -0.05. Directional elsewhere.")
 
 
+def _persist(board: pl.DataFrame, *, out: Path = OUT,
+             path: Path = BOARD_PARQUET) -> None:
+    """Write the board and the site's copy of it, creating both parents first.
+
+    `data/processed/` gets created by `hub.store`, and the board does not go through
+    `hub.store` -- that is improvements.md #8, filed as a tidiness issue. It is not one: on a
+    machine where nothing has written to the store yet the directory does not exist, and
+    `write_parquet` fails with a bare polars FileNotFoundError.
+
+    Every developer machine already has that directory, which is exactly why `make draft`
+    had never once worked on a fresh clone -- the first command in the README, on the repo
+    that goes public on 2026-09-04.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
+    board.write_parquet(path)
+    out.joinpath("draft_board.json").write_text(
+        json.dumps(board.head(300).to_dicts(), default=str))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """The CLI. `argv` is threaded through so this is callable from a test.
 
@@ -766,10 +786,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # above would immediately become a lie, and every later run would report a fresh board
     # that is actually as stale as the first failure.
     if stale_h is None:
-        OUT.mkdir(parents=True, exist_ok=True)
-        board.write_parquet(BOARD_PARQUET)
-        OUT.joinpath("draft_board.json").write_text(
-            json.dumps(board.head(300).to_dicts(), default=str))
+        _persist(board)
 
         # Keep a dated copy of today's ADP before the next build overwrites it. ESPN does
         # not retain historical ADP, so this is the only chance to record it -- and its

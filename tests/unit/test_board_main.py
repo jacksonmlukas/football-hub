@@ -141,3 +141,22 @@ def test_the_age_is_reported_in_hours(tmp_path):
     os.utime(p, (1000.0, 1000.0))
     _, age = board.last_good(path=p, now=1000.0 + 7200)
     assert age == 7200 / 3600.0
+
+
+def test_persisting_creates_both_parents(tmp_path):
+    """`make draft` had never worked on a fresh clone: `data/processed/` is created by
+    `hub.store`, the board does not go through `hub.store`, and every developer machine
+    already had the directory. The first command in the README."""
+    out = tmp_path / "site" / "data"
+    path = tmp_path / "data" / "processed" / "draft_board.parquet"
+    board._persist(_board(["A"], pos=["RB"]), out=out, path=path)
+    assert path.exists(), "the board parquet's parent must be created"
+    assert (out / "draft_board.json").exists()
+
+
+def test_persisting_is_safe_to_repeat(tmp_path):
+    out, path = tmp_path / "s", tmp_path / "d" / "b.parquet"
+    df = _board(["A"], pos=["RB"])
+    board._persist(df, out=out, path=path)
+    board._persist(df, out=out, path=path)
+    assert path.exists()
