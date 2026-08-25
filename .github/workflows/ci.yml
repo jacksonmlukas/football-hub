@@ -11,6 +11,11 @@ on:
   # schedule:
   #   - cron: "0 9 * * *"
 
+  # So the golden job can be exercised on demand while the schedule is off. Without this it
+  # is unreachable until the flip, which is how it went from being written to being fixed
+  # twice without ever having run.
+  workflow_dispatch:
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -29,10 +34,15 @@ jobs:
     # Hits the real APIs and diffs against frozen fixtures. Scheduled, not on PRs, because a
     # third-party schema change should not block a docs commit. Dormant until the schedule
     # trigger above is uncommented.
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --all-extras
-      - run: uv run pytest tests/golden -q
+      # `-m golden`, NOT `tests/golden`. pyproject sets `addopts = "-m 'not golden'"`, so
+      # naming the directory deselects all seven and exits 0 -- a green job that ran nothing.
+      # This job was already fixed once, on 2026-08-24, for a trigger that could never fire;
+      # the trigger was the reason it never ran, and this was the reason it would not have
+      # tested anything when it did.
+      - run: uv run pytest -m golden -q
