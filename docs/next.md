@@ -386,6 +386,26 @@ sd 16.2, twenty drafts separate -19.66 from +0.04 at better than five standard e
 
 **P1 does not fire.** It was gated on equity beating the market. It loses.
 
+### Did the roster-seeding fix cause this? No -- it helped slightly
+
+Run at `75f800f` (pre-fix) plus the one fetch fix it needed, same seasons, same seeds, n=20.
+Arm A comes out **byte-identical** across the two runs, which confirms the comparison isolates
+arm B: seeding is a no-op at an empty draft state and only bites inside `win_probability`'s
+nested rollouts.
+
+| | arm B | market |
+|---|---|---|
+| pre-fix (`75f800f`) | 102.11 | 127.73 |
+| post-fix | 105.19 | 127.73 |
+
+Paired, arm B post-fix minus pre-fix: **+3.08 points per team game** (sd 10.14, n=20, so the
+interval spans zero), better in 13 of 20 drafts.
+
+So the defect was real and fixing it moved equity in the right direction; it simply was not
+worth twenty points. The fix stands on its own merits -- an objective blind to your own roster
+is wrong regardless of whether correcting it changes a verdict -- and none of the -19.66 is
+attributable to it. That closes the confound flagged as limitation 5.
+
 ## P1 — Break the circularity *(only if P0 says keep it)*
 
 `optimize.py` scores the season on `proj_blend` and ranks candidates on `proj_blend`. The
