@@ -193,3 +193,36 @@ def test_those_reports_still_run_when_adp_is_present():
     df = _ecr_only().with_columns(pl.Series("adp", [10.0, 20.0]))
     board._print_injuries(df, board.BuildReport(durability=True, adp=True))
     board._print_td_luck(df, board.BuildReport(td_luck=True, adp=True))
+
+
+def test_the_corrections_note_is_route_aware():
+    """"bounded at 20% of ADP" printed against a board with no ADP is the kind of sentence
+    that gets believed at 9pm. Corrections move a player relative to ADP; ECR has none."""
+    from hub.draft.optimize import ThePick
+
+    def _tp(via, notes=("missed 1 last season",)):
+        return ThePick(player="A", pos="WR", via=via, rank=1.5, rank_label="ECR",
+                       notes=list(notes))
+
+    corrected = "\n".join(board.corrections_note(_tp("draft market, corrected")))
+    assert "bounded at 20% of ADP" in corrected
+
+    ecr = "\n".join(board.corrections_note(_tp("consensus (ECR) -- no ADP today")))
+    assert "bounded at 20% of ADP" not in ecr
+    assert "NOT folded into this" in ecr
+
+
+def test_the_uncorrected_adp_route_does_not_claim_corrections_either():
+    """`by draft market (ADP)` means the board predates corrected ADP -- nothing was folded
+    in there either, and saying otherwise would misdescribe the ranking."""
+    from hub.draft.optimize import ThePick
+    tp = ThePick(player="A", pos="WR", via="draft market (ADP)", rank=3.0,
+                 rank_label="ADP", notes=["td luck +2.0/gm"])
+    assert "bounded at 20% of ADP" not in "\n".join(board.corrections_note(tp))
+
+
+def test_a_pick_with_no_notes_says_nothing():
+    from hub.draft.optimize import ThePick
+    tp = ThePick(player="A", pos="WR", via="consensus (ECR) -- no ADP today",
+                 rank=1.5, rank_label="ECR", notes=[])
+    assert board.corrections_note(tp) == []

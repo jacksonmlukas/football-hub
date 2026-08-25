@@ -19,6 +19,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import nflreadpy as nfl
 import numpy as np
@@ -33,6 +34,9 @@ from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.state import DraftState, _norm, remaining
+
+if TYPE_CHECKING:                      # `optimize` imports from here, so runtime would cycle
+    from hub.draft.optimize import ThePick
 
 ROOT = Path(__file__).resolve().parents[3]
 OUT = ROOT / "site" / "data"
@@ -687,6 +691,27 @@ def _print_td_luck(board: pl.DataFrame, report: BuildReport) -> None:
     print("  volume and their true predictive weight is -0.05. Directional elsewhere.")
 
 
+def corrections_note(tp: ThePick) -> list[str]:
+    """What to say about the bracketed notes, which depends on the route that chose the pick.
+
+    Only the corrected route folds them into the ranking. On the ECR fallback there is no ADP
+    for a correction to move a player *relative to*, and "bounded at 20% of ADP" printed
+    against a board with no ADP is the kind of sentence that gets believed at 9pm.
+
+    Extracted rather than inlined for the reason the rest of this module's decisions were:
+    an expression inside an f-string block is not reachable from a test.
+    """
+    if "corrected" in tp.via:
+        return ["    Corrections are where our measurements say the market is wrong. They",
+                "    are folded into the ranking, bounded at 20% of ADP, and shown here",
+                "    because the size matters to you even where the clamp limits the move."]
+    if tp.notes:
+        return ["    The bracketed notes are measurements, shown but NOT folded into this",
+                "    ranking: corrections move a player relative to ADP, and this board",
+                "    has none. Weigh them yourself."]
+    return []
+
+
 def _persist(board: pl.DataFrame, *, out: Path = OUT,
              path: Path = BOARD_PARQUET) -> None:
     """Write the board and the site's copy of it, creating both parents first.
@@ -875,9 +900,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"    {tp.player}  {tp.pos or ''}  "
                   + (f"{tp.rank_label} {tp.rank:.1f}" if tp.rank is not None else "")
                   + (f"   [{'; '.join(tp.notes)}]" if tp.notes else ""))
-            print("    Corrections are where our measurements say the market is wrong. They")
-            print("    are folded into the ranking, bounded at 20% of ADP, and shown here")
-            print("    because the size matters to you even where the clamp limits the move.")
+            for line in corrections_note(tp):
+                print(line)
         else:
             print("\n  THE PICK unavailable -- the board carries neither ADP nor ECR, which "
                   "means it did not build. Serve site/data/draft_board.json instead.")
