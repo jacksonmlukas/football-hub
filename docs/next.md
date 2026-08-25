@@ -539,6 +539,14 @@ Reopens only if a source retaining historical ADP appears.
 
 ---
 
+## Researched backlog
+
+[improvements.md](improvements.md), written 2026-08-24 once the draft path was frozen-ready.
+Ten items, each grounded in something measured in this repo rather than in general advice. The
+sharpest: **`MARGIN_SD` is asserted at 13.5 and this repo's own schedule data says 12.470 over
+854 games, 3.4 standard errors away** -- and it is registered in `FITTED_MODULES` as though it
+had been fitted.
+
 ## Explicitly not doing
 
 - **More projection modelling.** Four documented nulls and a standing decision

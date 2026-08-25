@@ -100,6 +100,9 @@ agent's context, which is the most expensive mistake available in this repo.
 - [`docs/decisions.md`](docs/decisions.md) — the working journal, including corrections issued
   against this project's own conclusions.
 - [`docs/next.md`](docs/next.md) — what is open, what is closed, and why.
+- [`docs/improvements.md`](docs/improvements.md) — a researched backlog. Every item is
+  grounded in a number computed in this repo, and names whether it is a signal to
+  screen or a model to gate.
 
 ## Data sources and licensing
 
