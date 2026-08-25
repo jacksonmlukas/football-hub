@@ -118,6 +118,11 @@ well-described by any of this.
 **Within-season trend counts as spread.** A player whose role grows across a season shows
 that growth as weekly variance. Some of k is really usage drift.
 
+*Tested 2026-08-25* ([player-spread.md](player-spread.md)): drift is in the feature set of a
+fitted per-player spread model, and that model does not beat this constant out of sample. The
+larger finding is that there is almost nothing to win — a season's realised sd is 85% sampling
+noise, leaving 0.085 MAE of total headroom above `K[position]`.
+
 **Normal, still.** The model draws weekly points from a normal. Real weekly scoring is
 right-skewed — that is what the touchdown share of variance above is telling you — and a
 normal with the right spread still puts the mass in the wrong places. Component aggregation

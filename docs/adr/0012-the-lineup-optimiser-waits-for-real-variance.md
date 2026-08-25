@@ -1,6 +1,6 @@
 # The lineup optimiser waits for real variance
 
-**Status:** accepted 2026-08-24.
+**Status:** accepted 2026-08-24. Decision unchanged; its forecast was measured 2026-08-25 and did not hold — see *What would change the verdict*, below.
 
 **Decision.** Start your highest projections in Week 1. `hub.season.lineup.optimize` stays in
 the repo and does not set lineups, until per-player variance exists that is not a function of
@@ -49,6 +49,23 @@ than a positional constant. When `sd` stops being a function of `mu`, re-run thi
 Note this is a *stronger* reason to build that layer than "it would be more accurate". It
 would make an existing, working, well-tested piece of the system do something for the first
 time.
+
+### Measured 2026-08-25: it would not
+
+[player-spread.md](../player-spread.md) tested exactly this claim and it does not survive.
+Per-player weekly volatility beyond the positional constant is **real but tiny and not
+estimable**: the true spread is ±9.3% in `sd`, a single season recovers 15% of it, and the
+shipped `K[position]·sqrt(mu)` already sits within 0.085 MAE of the *irreducible* floor set by
+sampling noise in the outcome itself. A player's own prior-season `k` beat the constant in all
+five held-out seasons and still missed the significance bar at 1.8 se, gaining 0.0065.
+
+So the sentence above — "two players projected at 12 points a game are not equally volatile in
+reality" — is true and much weaker than it reads. They differ by about ±9%, and nothing
+observable tells you reliably which is which.
+
+**The decision stands, and now stands on firmer ground.** Start your highest projections. The
+instruction to "re-run this gate when `sd` stops being a function of `mu`" is withdrawn: there
+is no known route to that, and the headroom would not justify one.
 
 ## Also recorded: the gate's first version could not fail
 

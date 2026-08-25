@@ -176,7 +176,7 @@ does not beat one number is not an improvement, it is a liability with more para
 
 ---
 
-## 6. `sd = k·sqrt(mu)` makes half the system inert
+## 6. `sd = k·sqrt(mu)` makes half the system inert — MEASURED 2026-08-25, RETIRED
 
 **Model, and already documented.** [ADR-0012](adr/0012-the-lineup-optimiser-waits-for-real-variance.md)
 measured the lineup optimiser at +0.00 points a game because within a position `sd` is a
@@ -186,6 +186,24 @@ are not equally volatile in reality, and the square-root law cannot say so.
 This is the strongest argument for the usage and component layers, and worth restating here
 because it is easy to file the null under "the optimiser does not work". It works. It is being
 handed nothing to work with.
+
+**Outcome: retired.** [player-spread.md](player-spread.md) measured whether per-player weekly
+spread exists beyond the positional constant, and it barely does — ±9.3% in `sd`, with 85% of
+any one season's estimate being noise. The shipped model is already within 0.085 MAE of the
+irreducible floor set by sampling error in the outcome, so **the total prize for every future
+variance model combined is 8% of the error that remains.** Nothing was adopted.
+
+The sentence above stays as written because it was the honest reading at the time, and it was
+wrong in a specific way worth keeping: two 12-ppg players really are not equally volatile, but
+the gap is small and individually unmeasurable. This retires what looked like the highest-
+leverage remaining item.
+
+**Still open, on different grounds:** a usage layer may improve the *mean* (component
+projection already beats points projection on skew — see
+[weekly-spread.md](weekly-spread.md)). That is a separate claim with separate evidence, and it
+is not what ADR-0012 was waiting for.
+
+### Original text
 
 **Do:** the usage model, gated against pick-anchored volume, with `volume.py` demoted to the
 cold-start path for rookies. Then re-run `hub.season.lineup_gate`.

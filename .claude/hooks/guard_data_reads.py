@@ -4,7 +4,9 @@
 CLAUDE.md asks. This enforces. Exit 2 blocks the tool call and hands the reason
 back to Claude, which then routes through a summarizing CLI instead.
 """
-import json, re, sys
+import json
+import re
+import sys
 
 BLOCKED_READ = re.compile(r"(data/(raw|interim|processed)/|\.parquet$|\.csv$)")
 
