@@ -52,6 +52,41 @@ waiting.
    there too, which is the test's designed behaviour, not a failure.
 7. Run `scripts/bootstrap_project.sh` to seed the project board.
 
+## Verify on a fresh clone first — this is not optional
+
+Added 2026-08-25, after doing it once and finding three bugs that only exist on a machine
+without local state:
+
+```bash
+git clone <this repo> /tmp/freshclone && cd /tmp/freshclone
+uv sync --all-extras
+uv run pytest tests/unit tests/contracts -q --cov=hub --cov-fail-under=80
+make draft && uv run python -m hub.draft.board --pick 3
+make slate
+```
+
+What that found, all of it invisible here:
+
+* **`make draft` had never worked on a fresh clone.** `data/processed/` is created by
+  `hub.store`, the board does not go through `hub.store`, and every developer machine already
+  had the directory. The first command in the README.
+* **The ECR-only fallback crashed before THE PICK.** Two report sections read `adp` while
+  guarding on a different flag, so a board built without an ESPN key — which is every
+  stranger, and this repo too if ESPN is down on draft night — exited 1 on
+  `ColumnNotFoundError`.
+* **Two tests passed only because this machine has data.** They monkeypatched `store.sql`
+  while a `store.tables()` guard returned before reaching it. They would have failed in CI,
+  which also checks out fresh.
+
+Note the fresh clone resolves to **Python 3.13**, while this working copy runs 3.11 —
+`requires-python = ">=3.11"` and there is no `.python-version`. Both pass, but they are not the
+same interpreter, and the public gets the one nobody develops on. Either pin it or keep running
+this check.
+
+The good news from the same run: with no keys at all, `make slate` completes and publishes all
+five artifacts, CFBD and the odds API degrade with a sentence each, and the board builds 452
+players on consensus alone.
+
 ## Scope: cut
 
 **CFB fantasy is permanently out.** Not on the roadmap, not "later." Removed so it stops
