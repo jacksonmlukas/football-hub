@@ -313,3 +313,25 @@ def test_the_underdog_prefers_the_stack_and_the_favourite_does_not():
     ahead = (lineup.optimize(stack, opp_mu=60.0, opp_sd=20.0)["win_prob"]
              < lineup.optimize(apart, opp_mu=60.0, opp_sd=20.0)["win_prob"])
     assert behind and ahead
+
+
+# --- the CLI's missing input ----------------------------------------------
+
+def test_an_absent_roster_is_a_sentence_not_a_traceback(tmp_path, capsys):
+    """Nothing in this repo writes a roster, so the default path is absent until after the
+    draft. It used to surface as a bare polars FileNotFoundError."""
+    from hub.season import lineup as L
+    assert L.main(["--opp-mu", "110", "--roster", str(tmp_path / "nope.parquet")]) == 1
+    err = capsys.readouterr().err
+    assert "no roster at" in err
+    assert "player, pos, mu, sd" in err, "it has to say what the file should contain"
+
+
+def test_a_roster_missing_columns_names_them(tmp_path, capsys):
+    import polars as pl
+
+    from hub.season import lineup as L
+    p = tmp_path / "r.parquet"
+    pl.DataFrame({"player": ["a"], "pos": ["RB"]}).write_parquet(p)
+    assert L.main(["--opp-mu", "110", "--roster", str(p)]) == 1
+    assert "'mu'" in capsys.readouterr().err

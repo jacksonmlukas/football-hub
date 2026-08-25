@@ -187,7 +187,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--opp-sd", type=float, default=25.0)
     a = ap.parse_args(argv)
 
-    players = pl.read_parquet(a.roster)
+    # Nothing in this repo writes a roster yet, so the default path is absent until after
+    # the draft. It used to arrive as a bare polars FileNotFoundError traceback, which tells
+    # an operator neither what the file is nor that it is optional.
+    import pathlib
+    path = pathlib.Path(a.roster)
+    if not path.exists():
+        print(f"hub.season.lineup: no roster at {path}.\n"
+              "  It wants one row per rostered player, with columns: player, pos, mu, sd.\n"
+              "  Nothing in this repo writes one yet -- see docs/gaps.md.\n"
+              "  Not on any critical path: ADR-0012 measured this optimiser at +0.00 points\n"
+              "  a game against simply starting your highest projections.", file=sys.stderr)
+        return 1
+    players = pl.read_parquet(path)
+    missing = {"player", "pos", "mu", "sd"} - set(players.columns)
+    if missing:
+        print(f"hub.season.lineup: roster is missing {sorted(missing)}", file=sys.stderr)
+        return 1
     try:
         got = optimize(players, opp_mu=a.opp_mu, opp_sd=a.opp_sd)
     except (NoLegalLineup, TooManyLineups) as e:

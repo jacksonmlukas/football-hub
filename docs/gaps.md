@@ -93,6 +93,7 @@ Worse than missing in one respect: the module is present, so a reader assumes th
 
 | Path | Referenced from | Status | Decision (0.2) |
 |---|---|---|---|
+| `data/processed/roster.parquet` | `hub/season/lineup.py:183` (the `--roster` default) | **MISSING, recorded 2026-08-25** | Nothing writes it. The weekly lineup CLI has therefore never been runnable end to end, and used to exit with a bare polars `FileNotFoundError`. It now prints what the file should contain and that the optimiser is [+0.00 against starting your highest projections](adr/0012-the-lineup-optimiser-waits-for-real-variance.md), so building the producer is not urgent. Post-draft: the roster is knowable only after Sep 3. |
 | `tests/golden/fixtures/` | `data-contracts/SKILL.md:29`, `tests/contracts/test_contracts.py:4` | ~~empty~~ **DONE 2026-08-23** | 7 fixtures: 4 real captures, 3 hand-built for keyless sources. `pytest -m golden` runs the live diff. |
 | `site/index.html` | `make serve`, `going-public.md:17`, `SETUP.md:141`, `draft-day-ops/SKILL.md:49` | ~~MISSING~~ **DONE 2026-08-24** | Four panels, no build step, stale panels named individually. |
 
