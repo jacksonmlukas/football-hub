@@ -68,7 +68,7 @@ fit is no longer asserted.
 
 ---
 
-## 2. Conformal is built, tested, and connected to nothing
+## 2. Conformal is built, tested, and connected to nothing — PARTLY DIAGNOSED 2026-08-25
 
 **Model, currently inert — the same category the lineup optimiser was in before ADR-0012.**
 
@@ -84,6 +84,30 @@ in the weekly slate asks for an interval.
 slate publishing intervals alongside probabilities, or nothing. If nothing, say so in an ADR
 rather than leaving a well-tested module implying it is in the pipeline. The README used to
 advertise it; that has been fixed, but the module still reads as shipped.
+
+### 2026-08-25: it also could not run
+
+Running the documented CLI for the first time against the real store:
+
+    _duckdb.BinderException: Referenced column "margin_actual" not found
+
+`load_scored` selected `margin_actual` from `preds`, and there is no such column. `hub.publish`
+writes a prediction before kickoff and never revisits it, so `preds` records what was predicted
+and never what happened. The realised margin is in nflverse's schedules as `result`. Scoring a
+prediction is a **join**, not a column, and 88% test coverage did not catch it because every
+test supplied its own frame.
+
+Fixed: `load_scored` now joins on `game_id` and an unplayed game does not survive the join. Run
+again, it says the true thing:
+
+    hub.models.conformal: never reached 40 calibration points;
+    the data has 0 rows across 0 weeks
+
+**Which settles the sequencing, if not the decision.** All 48 stored predictions are for 2026
+games that have not been played. There is nothing to calibrate against and cannot be until
+Week 1, so "what consumes an interval" is not answerable on evidence yet — any consumer built
+now would be wired to a module that has never produced a number. Revisit once a few weeks are
+scored; the coverage report is the evidence that decision needs.
 
 ---
 

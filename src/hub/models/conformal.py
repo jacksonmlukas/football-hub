@@ -96,12 +96,36 @@ def rolling_coverage(df: pl.DataFrame, alpha: float = DEFAULT_ALPHA,
     }
 
 
-def load_scored(model: str, base: Path | None = None) -> pl.DataFrame:
-    """Predictions with realised margins, for one model."""
+def load_scored(model: str, base: Path | None = None,
+                schedules: pl.DataFrame | None = None) -> pl.DataFrame:
+    """Predictions with realised margins, for one model.
+
+    This used to select `margin_actual` straight out of `preds`, and there is no such column
+    -- the CLI in this module died on a DuckDB binder error every time it was run, which is
+    the practical reason nothing consumes conformal intervals.
+
+    `preds` records what was predicted and never what happened: `hub.publish` writes a row
+    before kickoff and does not revisit it. The realised margin lives in nflverse's schedules
+    as `result`, home score minus away. So scoring a prediction is a join, not a column, and
+    an unplayed game simply does not survive it.
+    """
     from hub import store
-    return store.sql(
-        "SELECT week, margin_mean, margin_actual FROM preds "
-        "WHERE model = ? AND margin_actual IS NOT NULL", params=[model], base=base)
+    preds = store.sql(
+        "SELECT game_id, week, margin_mean FROM preds WHERE model = ?",
+        params=[model], base=base)
+    empty = preds.head(0).with_columns(pl.lit(None, pl.Float64).alias("margin_actual"))
+    if preds.is_empty():
+        return empty.select("week", "margin_mean", "margin_actual")
+    if schedules is None:                                       # pragma: no cover
+        import nflreadpy as nfl
+        schedules = nfl.load_schedules()
+    if "result" not in schedules.columns:
+        raise ValueError("schedules is missing `result`, the realised margin")
+    actual = (schedules.select("game_id",
+                               pl.col("result").cast(pl.Float64).alias("margin_actual"))
+              .drop_nulls("margin_actual"))
+    return preds.join(actual, on="game_id", how="inner").select(
+        "week", "margin_mean", "margin_actual")
 
 
 def main(argv: Sequence[str] | None = None) -> int:

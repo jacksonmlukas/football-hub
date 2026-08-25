@@ -135,3 +135,60 @@ def test_the_cli_reports_empirical_against_nominal(capsys, monkeypatch):
     assert conformal.main(["--recalibrate", "--model", "market_baseline"]) == 0
     out = capsys.readouterr().out.lower()
     assert "empirical" in out and "nominal" in out
+
+
+# --- scoring a prediction is a join ----------------------------------------
+#
+# `load_scored` used to `SELECT margin_actual FROM preds`, and no such column exists. The
+# CLI died on a DuckDB binder error on every real invocation, which is the practical reason
+# nothing in the repo consumes a conformal interval.
+
+def _preds(rows):
+    """(game_id, week, margin_mean)."""
+    return pl.DataFrame({"game_id": [r[0] for r in rows], "week": [r[1] for r in rows],
+                         "margin_mean": [r[2] for r in rows]})
+
+
+def _sched(rows):
+    """(game_id, result) -- nflverse's realised margin, home minus away."""
+    return pl.DataFrame({"game_id": [r[0] for r in rows],
+                         "result": [r[1] for r in rows]},
+                        schema={"game_id": pl.Utf8, "result": pl.Float64})
+
+
+def test_a_played_game_gets_its_realised_margin(monkeypatch):
+    import hub.store as store
+    monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([("g1", 1, 3.0)]))
+    got = conformal.load_scored("m", schedules=_sched([("g1", 7.0)]))
+    assert got["margin_actual"].to_list() == [7.0]
+    assert got.columns == ["week", "margin_mean", "margin_actual"]
+
+
+def test_an_unplayed_game_does_not_survive_the_join(monkeypatch):
+    """The whole 2026 board is unplayed games. They must not arrive as zeros -- a zero
+    margin is a tie, not a missing result, and it would calibrate against fiction."""
+    import hub.store as store
+    monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([("g1", 1, 3.0)]))
+    assert conformal.load_scored("m", schedules=_sched([("g1", None)])).is_empty()
+
+
+def test_a_prediction_with_no_matching_game_is_dropped(monkeypatch):
+    import hub.store as store
+    monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([("ghost", 1, 3.0)]))
+    assert conformal.load_scored("m", schedules=_sched([("g1", 7.0)])).is_empty()
+
+
+def test_no_predictions_returns_the_right_shape_not_a_crash(monkeypatch):
+    """Before any game is published this is the normal state, and it has to flow through to
+    the `not enough calibration` message rather than blowing up on a missing column."""
+    import hub.store as store
+    monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([]))
+    got = conformal.load_scored("m", schedules=_sched([]))
+    assert got.is_empty() and got.columns == ["week", "margin_mean", "margin_actual"]
+
+
+def test_schedules_without_a_result_column_says_so(monkeypatch):
+    import hub.store as store
+    monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([("g1", 1, 3.0)]))
+    with pytest.raises(ValueError, match="result"):
+        conformal.load_scored("m", schedules=pl.DataFrame({"game_id": ["g1"]}))
