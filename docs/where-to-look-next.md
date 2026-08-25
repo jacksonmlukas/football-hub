@@ -1,11 +1,12 @@
-# Where to look next, and what twelve measurements say about it
+# Where to look next, and what fourteen measurements say about it
 
 **Written 2026-08-25**, after the per-player spread null. This is a research note, not a plan:
 nothing here is committed to, and every proposal carries the gate it would have to clear.
 
 ## The record
 
-Twelve things have now been measured properly in this repo. One worked.
+Fourteen things have now been measured properly in this repo. Two worked, and both worked for
+the same reason.
 
 | # | attempt | horizon | result |
 |---|---|---|---|
@@ -21,6 +22,8 @@ Twelve things have now been measured properly in this repo. One worked.
 | 10 | Lineup optimiser | weekly | **+0.00** — a structural zero |
 | 11 | Per-player weekly spread | weekly | null — 0.085 MAE of headroom exists at all |
 | 12 | **Weekly injury retention** | weekly | **+0.170 MAE at 3.8 se, wins 5/5 seasons** |
+| 13 | Injury *type* on top of that | weekly | null by the gate — +0.032 at 3.1 se but 2/3 seasons |
+| 14 | **Snap-share trend** | next 3 weeks, in season | **partial r +0.24 beyond PPG *and* ECR, 12/12 cells** |
 
 ## What separates #12 from the other eleven
 
@@ -40,8 +43,14 @@ The thesis the record supports:
 > **Edge came from timeliness and granularity, not from better processing of shared
 > information.** Every attempt to out-think a market with the market's own inputs failed.
 
-That is not a claim about what is true in general. It is what these twelve measurements say,
-and it is a much better prior for the thirteenth than "try a fancier model".
+That is not a claim about what is true in general. It is what these measurements say, and it is
+a much better prior for the next one than "try a fancier model".
+
+**Written before #14 was run, and #14 is the test of it.** The snap-share screen was proposed
+below on exactly this reasoning — snap counts are published on a Monday, which is not enough
+time for a consensus to absorb them — and it came back positive, with the ECR control removing
+less than 0.01 of the effect. One confirmed prediction is not a law, but it is better than the
+thesis had before.
 
 ## It also says something about the calendar
 
