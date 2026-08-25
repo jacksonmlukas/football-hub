@@ -42,13 +42,16 @@ both sides of it. Rank on `lift`, check it clears two standard errors, and ignor
 """
 from __future__ import annotations
 
+import collections
+from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
 import polars as pl
 
+from hub.draft import durability
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, blended_adp
-from hub.draft.picks import snake_picks
+from hub.draft.picks import MY_SLOT, TEAMS, snake_picks
 from hub.draft.season import FLEX_CAPACITY, FLEX_FROM, STARTERS, champion_probability
 from hub.draft.state import DraftState, _norm, remaining, roster_for
 from hub.models.predict import WEEKLY_SKEW_POOLED, moments
@@ -268,6 +271,46 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     }).sort("lift", descending=True)
 
 
+@dataclass(frozen=True)
+class ThePick:
+    """The recommendation, and everything a renderer needs to explain it."""
+    player: str
+    pos: str | None
+    via: str            # which market chose it, for the screen
+    rank: float | None  # its ADP, or its ECR on the fallback
+    notes: list[str]    # corrections the market has not priced
+
+
+def the_pick(board: pl.DataFrame, state: DraftState, *,
+             my_slot: int = MY_SLOT, teams: int = TEAMS) -> ThePick | None:
+    """What to draft right now. The one recommendation, for every tool that gives one.
+
+    Draft market first, consensus behind it -- the same lexicographic rule either way, so
+    the fallback is not a consolation prize: consensus-following is arm A of P0b, the arm
+    that beat championship equity by twenty points a team-game.
+
+    **This exists because there were two answers.** `hub.draft.board` led with this rule
+    while `hub.draft.live` -- the poller you actually have open on the clock -- ranked by
+    `edge` from round four and by `vor_live` before it, with no need term in the ordering
+    at all; need was printed as a `*` and never sorted on. Two draft-night tools, two
+    different recommendations, and no test could see the disagreement because they shared
+    no code. They share this.
+
+    Returns None only when the board carries neither ADP nor ECR, which means it did not
+    build.
+    """
+    avail = remaining(board, state)
+    held = held_positions(board, state, my_slot=my_slot, teams=teams)
+    for by, via in (("adp", "draft market (ADP)"), ("ecr", "consensus (ECR) -- no ADP today")):
+        name = market_pick(avail, held, by=by)
+        if name is None:
+            continue
+        row = board.filter(pl.col("player") == name).row(0, named=True)
+        return ThePick(player=name, pos=row.get("pos"), via=via,
+                       rank=row.get(by), notes=pick_notes(row))
+    return None
+
+
 def rank_tiers(wp: pl.DataFrame) -> pl.DataFrame:
     """Mark which candidates the simulation cannot separate from the best one.
 
@@ -303,6 +346,62 @@ def tag_for(co_leader: bool, lift: float, lift_se: float) -> str:
     if lift < 0 and abs(lift) > 2 * (lift_se or 0.0):
         return "avoid"
     return ""
+
+
+# --- the decision layer -----------------------------------------------------
+#
+# `held_positions` and `pick_notes` moved here from `hub.draft.board` on 2026-08-24. They
+# were pulled out of print blocks that morning because they are decisions rather than
+# rendering; this finishes the move, so that both draft-night tools can reach them without
+# `hub.draft.live` importing a CLI. `board` and `live` render what this module decides.
+
+
+# Show a touchdown-luck note beside THE PICK only when it is worth a drafter's attention.
+# Private and lower-cased in intent: this is a display threshold, not a fitted constant, so
+# it must not move the model version. See `hub.config.FITTED_MODULES`.
+_TD_LUCK_NOTE = 0.5
+
+
+def held_positions(board: pl.DataFrame, state: DraftState, *,
+                   my_slot: int = MY_SLOT, teams: int = TEAMS) -> dict[str, int]:
+    """How many of each position you already hold. Feeds positional need.
+
+    Pulled out of the print block in `main` because it is a decision, not a rendering: it
+    is what makes THE PICK fill a need rather than take the best player left. Inline, it
+    read
+
+        (remaining(board, st).is_empty() and []) or [ ... ]
+
+    and `(x and []) or y` is `y` for every value of `x` -- an empty list is falsy, so the
+    `or` always takes the right branch. The guard never fired, and it called `remaining()`
+    on the whole board to throw the answer away.
+    """
+    mine = roster_for(state, my_slot, teams)
+    if not mine:
+        return {}
+    got = board.filter(pl.col("player").is_in(mine))["pos"].drop_nulls().to_list()
+    return dict(collections.Counter(got))
+
+
+def pick_notes(row: dict) -> list[str]:
+    """Where this repo's measurements say the draft market is wrong about THE PICK.
+
+    Also a decision rather than a rendering -- each entry encodes a threshold for what is
+    worth interrupting a drafter with, and those were previously spelled out inside an
+    f-string block where nothing could test them.
+
+    Deliberately not a score. These are corrections the market has not priced, shown so the
+    drafter weighs them; folding them into a single number would hide which one fired.
+    """
+    notes = []
+    luck = row.get("td_luck")
+    if luck is not None and abs(luck) > _TD_LUCK_NOTE:
+        notes.append(f"td luck {luck:+.2f}/gm")
+    if row.get("missed"):
+        notes.append(f"missed {int(row['missed'])} last season")
+    if durability.is_flagworthy(row.get("injury_status")):
+        notes.append(str(row["injury_status"]))
+    return notes
 
 
 def market_pick(pool: pl.DataFrame, counts: dict[str, int],

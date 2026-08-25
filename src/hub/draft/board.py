@@ -575,54 +575,6 @@ def _print_injuries(board: pl.DataFrame, report: BuildReport) -> None:
                       f"missed {int(r['missed']):>2}  {note}")
 
 
-# Show a touchdown-luck note beside THE PICK only when it is worth a drafter's attention.
-# Private and lower-cased in intent: this is a display threshold, not a fitted constant, so
-# it must not move the model version. See `hub.config.FITTED_MODULES`.
-_TD_LUCK_NOTE = 0.5
-
-
-def held_positions(board: pl.DataFrame, state: DraftState, *,
-                   my_slot: int = MY_SLOT, teams: int = TEAMS) -> dict[str, int]:
-    """How many of each position you already hold. Feeds positional need.
-
-    Pulled out of the print block in `main` because it is a decision, not a rendering: it
-    is what makes THE PICK fill a need rather than take the best player left. Inline, it
-    read
-
-        (state_mod.remaining(board, st).is_empty() and []) or [ ... ]
-
-    and `(x and []) or y` is `y` for every value of `x` -- an empty list is falsy, so the
-    `or` always takes the right branch. The guard never fired, and it called `remaining()`
-    on the whole board to throw the answer away.
-    """
-    mine = state_mod.roster_for(state, my_slot, teams)
-    if not mine:
-        return {}
-    got = board.filter(pl.col("player").is_in(mine))["pos"].drop_nulls().to_list()
-    return dict(collections.Counter(got))
-
-
-def pick_notes(row: dict) -> list[str]:
-    """Where this repo's measurements say the draft market is wrong about THE PICK.
-
-    Also a decision rather than a rendering -- each entry encodes a threshold for what is
-    worth interrupting a drafter with, and those were previously spelled out inside an
-    f-string block where nothing could test them.
-
-    Deliberately not a score. These are corrections the market has not priced, shown so the
-    drafter weighs them; folding them into a single number would hide which one fired.
-    """
-    notes = []
-    luck = row.get("td_luck")
-    if luck is not None and abs(luck) > _TD_LUCK_NOTE:
-        notes.append(f"td luck {luck:+.2f}/gm")
-    if row.get("missed"):
-        notes.append(f"missed {int(row['missed'])} last season")
-    if durability.is_flagworthy(row.get("injury_status")):
-        notes.append(str(row["injury_status"]))
-    return notes
-
-
 def _print_td_luck(board: pl.DataFrame, report: BuildReport) -> None:
     """Players priced on touchdowns their yardage does not support.
 
@@ -791,27 +743,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         # across 2022-25: -19.66 points per team game, 95% CI [-23.16, -16.20] at n=80,
         # losing in all four seasons and winning 9 of 80 drafts. Per the rule fixed before
         # that run, equity leaves this output. See docs/adr/0009.
-        from hub.draft.optimize import market_pick
-        held = held_positions(board, st)
-        # `remaining`, not a priced pool: market_pick ranks on adp (or ecr) and never
-        # reads the mu_pick blend that `draft_pool` existed to attach.
-        avail = state_mod.remaining(board, st)
-        # Draft market first, consensus behind it. Same lexicographic rule either way, so
-        # the old "THE PICK unavailable" branch was never about *what to do* -- only about
-        # which column was present, which market_pick already reports by returning None.
-        # Consensus-following is not a consolation prize here: it is arm A of P0b, the arm
-        # that beat championship equity by twenty points a game.
-        mp, via = market_pick(avail, held, by="adp"), "draft market (ADP)"
-        if not mp:
-            mp, via = market_pick(avail, held, by="ecr"), "consensus (ECR) -- no ADP today"
-        if mp:
-            row = board.filter(pl.col("player") == mp).row(0, named=True)
-            notes = pick_notes(row)
-            adp = row.get("adp")
-            print(f"\n  THE PICK -- best available filling a need, by {via}")
-            print(f"    {mp}  {row.get('pos') or ''}  "
-                  + (f"ADP {adp:.1f}" if adp is not None else f"ECR {row.get('ecr'):.1f}")
-                  + (f"   [{'; '.join(notes)}]" if notes else ""))
+        from hub.draft.optimize import the_pick
+        tp = the_pick(board, st, my_slot=MY_SLOT, teams=TEAMS)
+        if tp:
+            print(f"\n  THE PICK -- best available filling a need, by {tp.via}")
+            print(f"    {tp.player}  {tp.pos or ''}  "
+                  + (f"{'ADP' if 'ADP' in tp.via else 'ECR'} {tp.rank:.1f}"
+                     if tp.rank is not None else "")
+                  + (f"   [{'; '.join(tp.notes)}]" if tp.notes else ""))
             print("    Corrections shown are where our measurements say the market is wrong;")
             print("    they are not priced in. Yours to weigh.")
         else:

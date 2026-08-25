@@ -117,7 +117,10 @@ def refresh(board: pl.DataFrame, state: DraftState, *, my_slot: int = MY_SLOT,
     else:
         now, nxt, mode = None, None, None
 
+    from hub.draft.optimize import the_pick
+
     return {
+        "the_pick": the_pick(board, state, my_slot=my_slot, teams=teams),
         "available": available,
         "replacement": levels,
         "run": detect_run(taken_pos),
@@ -178,9 +181,17 @@ def render(view: dict[str, Any]) -> list[str]:
     out.append(f"  you hold: {shape or '(nothing yet)'}"
                + (f" | need {', '.join(need)}" if need else " | starters complete"))
 
-    key, why = _sort_key(view["next_pick"], view.get("teams", TEAMS))
+    tp = view["the_pick"]
+    if tp:
+        out.append(f"  THE PICK: {tp.player} ({tp.pos or '?'}) by {tp.via}"
+                   + (f"  [{'; '.join(tp.notes)}]" if tp.notes else ""))
+
+    key, why = _sort_key(view["next_pick"], view["teams"])
     top = rank(view, key).head(TOP_N)
-    out.append(f"  top {TOP_N} by {key} ({why}):")
+    # Context, not the recommendation. This table has no need term in its ordering -- need
+    # is the `*` below, never the sort -- and P0b measured a need-blind objective losing by
+    # 19.66 points a team-game. It is here to show what else is close, and how close.
+    out.append(f"  also close, by {key} ({why}) -- context, not a ranking to draft off:")
     for r in top.iter_rows(named=True):
         edge = r.get("edge")
         fills = "*" if r["pos"] in need else " "
@@ -221,6 +232,22 @@ def replay(board: pl.DataFrame, picks: Sequence[str], *, my_slot: int = MY_SLOT,
             counts = Counter(runs)
             print("  runs seen: " + ", ".join(f"{p} x{n}" for p, n in counts.most_common()))
     return runs if collect_runs else seen
+
+
+def next_action(n_taken: int, last: int, since_beat: float,
+                heartbeat_s: int) -> str | None:
+    """What the poller should do this tick: "board", "heartbeat", or nothing.
+
+    The one decision inside `poll`, extracted so it can be tested without a socket, a sleep
+    and two signal handlers. It was previously three conditions welded into a `while` loop,
+    which meant the only way to exercise "a silent poller and a hung poller look identical
+    at 2am" was to sit through it during a real draft.
+    """
+    if n_taken != last:
+        return "board"
+    if since_beat >= heartbeat_s:
+        return "heartbeat"
+    return None
 
 
 def _load_board() -> pl.DataFrame:
@@ -270,11 +297,12 @@ def poll(interval: int = 10, *, my_slot: int = MY_SLOT, teams: int = TEAMS,
         while not stopping:
             st = state_mod.sync_from_espn(quiet=True)
             now = time.monotonic()
-            if st.n_taken != last:
+            action = next_action(st.n_taken, last, now - last_beat, heartbeat_s)
+            if action == "board":
                 last, last_beat = st.n_taken, now
                 print("\n" + "\n".join(render(refresh(board, st, my_slot=my_slot,
                                                       teams=teams))), flush=True)
-            elif now - last_beat >= heartbeat_s:
+            elif action == "heartbeat":
                 last_beat = now
                 print(f"  watching... {st.n_taken} picks, no change", flush=True)
             time.sleep(interval)

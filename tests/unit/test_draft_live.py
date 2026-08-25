@@ -304,3 +304,92 @@ def test_the_poller_flushes_every_line_it_prints():
     assert prints, "poll must report something"
     joined = "\n".join(src.splitlines())
     assert "flush=True" in joined, "every print in the poll loop must flush"
+
+
+# --- the two draft-night tools give the same answer -----------------------
+#
+# They did not. `board.py --pick` led with THE PICK -- best available filling a need,
+# lexicographically. `live.py --poll`, the one you actually have open on the clock, sorted by
+# `edge` from round four and `vor_live` before it, with no need term in the ordering at all:
+# need was printed as a `*` and never sorted on. Nothing could catch the disagreement,
+# because the two shared no code. They share `optimize.the_pick` now.
+
+def _agree_board(n=60):
+    import polars as pl
+    return pl.DataFrame({
+        "player": [f"P{i}" for i in range(n)],
+        "pos": [["RB", "WR", "WR", "TE", "QB"][i % 5] for i in range(n)],
+        "ecr": [float(i + 1) for i in range(n)],
+        "adp": [float(i + 1) for i in range(n)],
+        "vor": [float(n - i) for i in range(n)],
+        "xfp_per_game": [float(max(20 - i * 0.2, 1.0)) for i in range(n)],
+        "games": pl.Series([16] * n, dtype=pl.UInt32),
+    })
+
+
+def test_both_draft_night_tools_recommend_the_same_player():
+    """The test that could not pass before. One rule, two renderers."""
+    from hub.draft.optimize import the_pick
+    board = _agree_board()
+    st = take(DraftState(), *[f"P{i}" for i in range(8)])
+
+    from_optimize = the_pick(board, st, my_slot=3, teams=12)
+    in_live = live.refresh(board, st, my_slot=3, teams=12)["the_pick"]
+    assert from_optimize is not None
+    assert in_live.player == from_optimize.player
+
+
+def test_the_live_poller_leads_with_the_pick():
+    """It used to lead with a table sorted by edge."""
+    board = _agree_board()
+    st = take(DraftState(), *[f"P{i}" for i in range(8)])
+    text = "\n".join(live.render(live.refresh(board, st, my_slot=3, teams=12)))
+    assert "THE PICK:" in text
+
+
+def test_the_live_table_is_labelled_as_context():
+    """`top 8 by edge` read as a recommendation. It has no need term in its ordering, and
+    P0b measured a need-blind objective losing by 19.66 points a team-game."""
+    board = _agree_board()
+    st = take(DraftState(), *[f"P{i}" for i in range(8)])
+    text = "\n".join(live.render(live.refresh(board, st, my_slot=3, teams=12)))
+    assert "context, not a ranking to draft off" in text
+
+
+def test_the_recommendation_fills_a_need_where_the_table_need_not():
+    """The substance of the disagreement, not just the wording. Holding two RBs and nothing
+    else, THE PICK must not be a third running back while QB/WR/TE sit empty."""
+    from hub.draft.optimize import the_pick
+    import polars as pl
+    board = _agree_board()
+    # my picks at slot 3 of 12 are 3 and 22; make both of mine running backs
+    taken = [f"P{i}" for i in range(22)]
+    taken[2], taken[21] = "P0", "P5"        # P0 and P5 are both RB
+    st = DraftState(taken=taken)
+    tp = the_pick(board, st, my_slot=3, teams=12)
+    assert tp is not None
+    assert tp.pos != "RB", "RB is full; the pick must fill an empty slot"
+
+
+# --- the poll loop's one decision ----------------------------------------
+
+def test_a_new_pick_prints_the_board():
+    assert live.next_action(n_taken=5, last=4, since_beat=1.0, heartbeat_s=120) == "board"
+
+
+def test_no_change_stays_silent():
+    """Over three hours, announcing every quiet pass scrolls the board out of view."""
+    assert live.next_action(n_taken=5, last=5, since_beat=1.0, heartbeat_s=120) is None
+
+
+def test_silence_past_the_heartbeat_says_so():
+    """A silent poller and a hung poller look identical at 2am, and you have ninety
+    seconds to decide which one you are looking at."""
+    assert live.next_action(n_taken=5, last=5, since_beat=200.0,
+                            heartbeat_s=120) == "heartbeat"
+
+
+def test_a_pick_beats_a_due_heartbeat():
+    """Both conditions true at once: the board is the more useful thing to print."""
+    assert live.next_action(n_taken=6, last=5, since_beat=999.0,
+                            heartbeat_s=120) == "board"

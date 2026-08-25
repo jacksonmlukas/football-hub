@@ -7,6 +7,7 @@ probability rather than a score.
 import numpy as np
 import polars as pl
 import pytest
+from hub.draft import optimize
 from hub.draft.optimize import (market_pick, rank_tiers,
                                 simulate_remaining_draft,
                                 tag_for,
@@ -283,3 +284,100 @@ def test_a_partial_adp_still_works():
 def test_a_board_with_no_adp_column_returns_nothing():
     pool = pl.DataFrame({"player": ["A"], "pos": ["RB"]})
     assert market_pick(pool, {}) is None
+
+
+def _dboard(names, pos=None, **cols):
+    """A tiny board for the decision tests, distinct from `_board()` above which builds the
+    180-row fixture the simulation tests need."""
+    n = len(names)
+    df = pl.DataFrame({"player": names, "pos": pos or ["RB"] * n})
+    return df.with_columns(**cols) if cols else df
+
+
+# --- held_positions: the decision behind "filling a need" ------------------
+
+def test_held_positions_counts_your_roster_by_position():
+    b = _dboard(["A", "B", "C", "D"], pos=["RB", "RB", "WR", "TE"])
+    st = DraftState(taken=["A", "B", "C"])
+    got = optimize.held_positions(b, st, my_slot=1, teams=1)
+    assert got == {"RB": 2, "WR": 1}
+
+
+def test_held_positions_is_empty_before_you_have_picked():
+    assert optimize.held_positions(_dboard(["A"]), DraftState(taken=[])) == {}
+
+
+def test_held_positions_ignores_players_drafted_by_other_teams():
+    """`my_roster` walks the snake; only your own picks count toward your need."""
+    b = _dboard(["A", "B", "C", "D"], pos=["RB", "WR", "TE", "QB"])
+    st = DraftState(taken=["A", "B", "C", "D"])
+    got = optimize.held_positions(b, st, my_slot=1, teams=2)
+    assert sum(got.values()) < 4
+
+
+def test_a_pick_not_on_the_board_does_not_become_a_null_position():
+    """Kickers and defences are taken but never on the board. Counting a null `pos` would
+    put a phantom position into the need calculation."""
+    b = _dboard(["A"], pos=["RB"])
+    st = DraftState(taken=["A", "Some Kicker"])
+    assert optimize.held_positions(b, st, my_slot=1, teams=1) == {"RB": 1}
+
+
+def test_the_dead_guard_is_gone():
+    """It read `(remaining(board, st).is_empty() and []) or [...]`, and `(x and []) or y`
+    is `y` for every x -- so the guard never fired and `remaining()` ran for nothing. The
+    behaviour it *looked* like it wanted, an empty count once the board is exhausted, was
+    never what it did; this pins what it actually does."""
+    b = _dboard(["A"], pos=["RB"])
+    st = DraftState(taken=["A"])           # board fully exhausted
+    assert optimize.held_positions(b, st, my_slot=1, teams=1) == {"RB": 1}
+
+
+# --- pick_notes: what is worth interrupting a drafter with -----------------
+
+def test_no_notes_for_a_clean_player():
+    assert optimize.pick_notes({"td_luck": 0.1, "missed": 0, "injury_status": "ACTIVE"}) == []
+
+
+def test_touchdown_luck_is_noted_in_both_directions():
+    """An `avoid` tag that ignored sign is a bug this repo has already had once."""
+    up = optimize.pick_notes({"td_luck": 1.2})
+    down = optimize.pick_notes({"td_luck": -1.2})
+    assert "+1.20" in up[0]
+    assert "-1.20" in down[0]
+
+
+def test_touchdown_luck_below_the_threshold_is_not_worth_saying():
+    assert optimize.pick_notes({"td_luck": 0.4}) == []
+    assert optimize.pick_notes({"td_luck": -0.4}) == []
+
+
+def test_a_null_touchdown_luck_is_not_an_extreme_one():
+    """`abs(None)` raises; a degraded board carries nulls here."""
+    assert optimize.pick_notes({"td_luck": None}) == []
+
+
+def test_missed_games_are_noted():
+    assert "missed 6 last season" in optimize.pick_notes({"missed": 6})
+
+
+def test_a_player_who_missed_nothing_gets_no_note():
+    assert optimize.pick_notes({"missed": 0}) == []
+
+
+def test_only_flagworthy_designations_are_surfaced():
+    """ACTIVE is not news. QUESTIONABLE is, even though it is not priced."""
+    assert optimize.pick_notes({"injury_status": "ACTIVE"}) == []
+    assert optimize.pick_notes({"injury_status": "QUESTIONABLE"}) == ["QUESTIONABLE"]
+    assert optimize.pick_notes({"injury_status": "OUT"}) == ["OUT"]
+
+
+def test_an_empty_row_is_not_a_crash():
+    """A board built with every optional stage degraded still has to reach THE PICK."""
+    assert optimize.pick_notes({}) == []
+
+
+def test_notes_stack_in_a_stable_order():
+    got = optimize.pick_notes({"td_luck": 1.5, "missed": 4, "injury_status": "OUT"})
+    assert len(got) == 3
+    assert got[0].startswith("td luck") and got[2] == "OUT"
