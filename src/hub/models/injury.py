@@ -67,6 +67,29 @@ MIN_CELL = 60
 _PS_WIDTH = 7
 
 
+def _injury_type(injuries: pl.DataFrame) -> pl.Expr:
+    """`report_primary_injury`, normalised, because the raw field is three fields.
+
+    nflverse passes the club's own wording straight through, so `Shoulder`, `Right Shoulder`
+    and `left Shoulder` are three separate categories for one injury -- 110 distinct values
+    across 2022-25, collapsing to 74 on casefolding and stripping laterality, which roughly
+    doubles the evidence behind each cell. One "category" is a free-text sentence beginning
+    "Player was ill this morning".
+
+    Laterality is dropped rather than kept because nothing here is lateral: this prices what a
+    designation costs in fantasy points, and a right hamstring costs what a left one costs.
+
+    53% of rows carry no type at all, and those become "unknown" -- a real category. Dropping
+    them would price injuries among the players whose injury happened to be reported.
+    """
+    if "report_primary_injury" not in injuries.columns:
+        return pl.lit("unknown", pl.Utf8)
+    return (pl.col("report_primary_injury").fill_null("unknown")
+              .str.strip_chars().str.to_lowercase()
+              .str.replace(r"^(right|left|r\.|l\.)\s+", "")
+              .replace("", "unknown"))
+
+
 def observations(injuries: pl.DataFrame, stats: pl.DataFrame, *,
                  min_healthy: int = MIN_HEALTHY_WEEKS) -> pl.DataFrame:
     """One row per designated player-week: (status, practice, points, baseline, delta).
@@ -85,9 +108,7 @@ def observations(injuries: pl.DataFrame, stats: pl.DataFrame, *,
                            # table throws away. 53% of rows are null upstream, so "Unknown"
                            # is a real category here rather than a drop: dropping them would
                            # price injuries among players whose injury was reported.
-                           (pl.col("report_primary_injury") if "report_primary_injury"
-                            in injuries.columns else pl.lit(None, pl.Utf8))
-                           .fill_null("Unknown").str.strip_chars().alias("injury")))
+                           _injury_type(injuries).alias("injury")))
     st = (stats.filter(pl.col("position").is_in(POSITIONS))
                .select("season", "week", pl.col("player_id").alias("gsis_id"),
                        pl.col("fantasy_points_ppr").fill_null(0.0).alias("pts")))

@@ -123,18 +123,41 @@ Above 1.0 the reading is different and worth stating — these are conditional o
 *designated and still playing*, so an Achilles or an illness that did not rule a player out is
 a milder thing than the word suggests.
 
-### Why it might be losing on a technicality, and why that is not being fixed here
+### The type field was three fields, and fixing it did not change the answer
 
-The type field is dirty. `Shoulder`, `Right Shoulder` and `right Thumb` are three separate
-categories in the raw data, so laterality and capitalisation split the evidence for the same
-injury across cells — and 2,601 of the designated player-weeks are `Unknown` because nflverse
-carries no type at all for 53% of rows.
+The numbers above were measured on the raw field, and it is dirty. nflverse passes the club's
+own wording through, so `Shoulder`, `Right Shoulder` and `left Shoulder` are three categories
+for one injury: **110 distinct values across 2022-25, collapsing to 74** on casefolding and
+stripping laterality. One of them is a free-text sentence beginning "Player was ill this
+morning". A further 2,601 designated player-weeks carry no type at all.
 
-Normalising that (strip laterality, casefold) would pool the evidence and quite plausibly push
-this over the line. **It is not being done now.** Changing the encoding after seeing that the
-candidate narrowly lost is retuning a gate against its own result, which is the failure this
-repo has documented three times. It is a legitimate *pre-registered* follow-up: normalise
-first, declare the same gate, run once.
+That is a defect in the feature extraction, not a modelling choice — a right hamstring costs
+what a left one costs — so it was fixed and **the same gate re-run, unchanged**:
+
+| held-out season | n | `retention` | type-adjusted, raw | type-adjusted, cleaned |
+|---|---|---|---|---|
+| 2023 | 1,191 | 4.0336 | 3.9942 | **3.9829** |
+| 2024 | 1,247 | 4.3477 | 4.2951 | **4.2875** |
+| 2025 | 1,249 | **3.7943** | 3.8125 | 3.8093 |
+| | | | +0.0244 at 2.5 se | **+0.0317 at 3.1 se** |
+
+Pooling the evidence helped, by about what you would expect. **The verdict did not move**:
+still 2/3 seasons, still losing 2025.
+
+Stating the obvious risk plainly, because this was the second run of one hypothesis: had the
+answer flipped, it would have been much weaker evidence than a single pre-registered run, and
+would have had to be reported as such. It did not flip.
+
+### The sign flips in the most recent season, which this repo has a rule about
+
+[depth-chart-signal.md](depth-chart-signal.md) records, from a screen that went wrong:
+
+> A significant result whose sign flips between seasons is a bug, not a finding.
+
+That is this shape. The type adjustment helps in 2023 and 2024 and hurts in 2025, and 3.1 se
+is computed by pooling all three. The every-season half of the gate is not an arbitrary
+second hurdle here — it is the half that catches exactly this, and it is why the gate has two
+halves.
 
 ## What it is not
 

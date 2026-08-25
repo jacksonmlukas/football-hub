@@ -231,7 +231,7 @@ def test_the_injury_type_is_carried_through():
     st = _stats([(2024, w, "a", "WR", 10.0) for w in range(1, 9)]
                 + [(2024, 9, "a", "WR", 4.0)])
     inj = _inj_typed([(2024, 9, "a", "WR", "Questionable", "Limited", "Hamstring")])
-    assert injury.observations(inj, st)["injury"].to_list() == ["Hamstring"]
+    assert injury.observations(inj, st)["injury"].to_list() == ["hamstring"]
 
 
 def test_a_missing_injury_type_is_unknown_not_dropped():
@@ -240,7 +240,7 @@ def test_a_missing_injury_type_is_unknown_not_dropped():
     st = _stats([(2024, w, "a", "WR", 10.0) for w in range(1, 9)]
                 + [(2024, 9, "a", "WR", 4.0)])
     obs = injury.observations(_inj([(2024, 9, "a", "WR", "Questionable", "Limited")]), st)
-    assert obs.height == 1 and obs["injury"].to_list() == ["Unknown"]
+    assert obs.height == 1 and obs["injury"].to_list() == ["unknown"]
 
 
 def test_an_absent_column_degrades_rather_than_raising():
@@ -270,7 +270,7 @@ def test_a_type_that_underperforms_the_table_gets_a_multiplier_below_one():
     obs = _typed_obs()
     tab = injury.retention_table(obs, min_cell=1)
     adj = injury.type_adjustment(obs, tab, fallback=0.6, k=1.0)
-    assert adj["Hamstring"] < 0.9 < adj["Ankle"]
+    assert adj["hamstring"] < 0.9 < adj["ankle"]
 
 
 def test_shrinkage_pulls_a_thin_type_toward_no_adjustment():
@@ -280,7 +280,7 @@ def test_shrinkage_pulls_a_thin_type_toward_no_adjustment():
     tab = injury.retention_table(obs, min_cell=1)
     loose = injury.type_adjustment(obs, tab, fallback=0.6, k=1.0)
     tight = injury.type_adjustment(obs, tab, fallback=0.6, k=100000.0)
-    assert abs(tight["Hamstring"] - 1.0) < abs(loose["Hamstring"] - 1.0)
+    assert abs(tight["hamstring"] - 1.0) < abs(loose["hamstring"] - 1.0)
 
 
 def test_an_empty_adjustment_is_exactly_the_incumbent():
@@ -349,3 +349,24 @@ def test_the_type_walk_forward_fits_only_on_earlier_seasons():
             rows_inj.append((season, 9, pid, "WR", "Questionable", "Limited", "Knee"))
     obs = injury.observations(_inj_typed(rows_inj), _stats(rows_st))
     assert injury.walk_forward_type(obs, min_cell=1)["season"].unique().to_list() == [2024]
+
+
+def test_laterality_and_case_collapse_to_one_category():
+    """nflverse passes the club's wording straight through: `Shoulder`, `Right Shoulder` and
+    `left Shoulder` were three categories for one injury, splitting its evidence three ways.
+    110 distinct raw values across 2022-25, 74 after this."""
+    st = _stats([(2024, w, p, "WR", 10.0) for p in ("a", "b", "c") for w in range(1, 9)]
+                + [(2024, 9, p, "WR", 4.0) for p in ("a", "b", "c")])
+    inj = _inj_typed([(2024, 9, "a", "WR", "Questionable", "Limited", "Shoulder"),
+                      (2024, 9, "b", "WR", "Questionable", "Limited", "Right Shoulder"),
+                      (2024, 9, "c", "WR", "Questionable", "Limited", "left Shoulder")])
+    assert set(injury.observations(inj, st)["injury"].to_list()) == {"shoulder"}
+
+
+def test_laterality_is_only_stripped_from_the_front():
+    """`right Thumb` is a thumb; a hypothetical injury whose name merely contains the word
+    should not be mangled."""
+    st = _stats([(2024, w, "a", "WR", 10.0) for w in range(1, 9)]
+                + [(2024, 9, "a", "WR", 4.0)])
+    inj = _inj_typed([(2024, 9, "a", "WR", "Questionable", "Limited", "Upper right arm")])
+    assert injury.observations(inj, st)["injury"].to_list() == ["upper right arm"]

@@ -126,12 +126,12 @@ hypothesis, and the mechanism is the one already shown to work.
 **Gate.** The same one #12 cleared, and note the incumbent has moved: the arm to beat is now
 `retention`, not `out_zero`. Held-out MAE, every season, 2 se paired.
 
-**Result: KEEP `retention`.** +0.0244 MAE at 2.5 se, but 2/3 seasons — it loses 2025, the
-most recent. Clears the significance half and fails the every-season half, the mirror image of
+**Result: KEEP `retention`.** +0.0317 MAE at 3.1 se after fixing a feature-extraction bug
+(the raw type field held 110 categories for 74 injuries, laterality splitting each one up to
+three ways), but 2/3 seasons — it loses 2025, the most recent, both before and after the fix. Clears the significance half and fails the every-season half, the mirror image of
 the spread null. Hamstring came out at 0.691, the largest multiplier and the one folk wisdom
-predicts. Full write-up in [weekly-injury.md](weekly-injury.md), including why normalising the
-dirty type field (`Shoulder` vs `Right Shoulder`) is a legitimate pre-registered follow-up and
-not something to do after seeing this number.
+predicts. Full write-up in [weekly-injury.md](weekly-injury.md), including why an effect that reverses
+in the most recent season is the exact shape this repo already has a written rule about.
 
 **Two things that will bite.** 53% of rows have a null primary injury, so any encoding needs an
 explicit unknown category rather than a drop — dropping them would measure the cost of an
