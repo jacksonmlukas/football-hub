@@ -114,7 +114,10 @@ passed on, which usually means consensus has not priced something real.
 
 Fix is `hub/draft/availability.py`: blend both boards by room composition, model pick position as
 a distribution, rank by `cost_of_waiting` = VOR × P(gone by next pick). Run `fit_espn_weight()`
-before the draft to estimate the blend from league history rather than the 0.5 prior.
+before the draft to estimate the blend from league history rather than the 0.5 prior — though
+it will return the prior and say so, because ESPN does not retain the historical ADP it needs.
+`hub/draft/adp_history.py` has been archiving a dated copy since 2026-08-25 so that this is a
+real fit next season rather than the same paragraph.
 
 **Slot 3 rule** (`draft_mode()`): rounds 1/3/5/7 (picks 3, 27, 51, 75) have a 19-pick wait after,
 so take who will not survive. Rounds 2/4/6 (picks 22, 46, 70) have a 5-pick wait, so take the
@@ -137,7 +140,7 @@ toward RB, so flex allocation is ~even (0.45 RB / 0.50 WR), not WR-dominant.
 | `site.api.espn.com` began 403ing scripted traffic Aug 2026 | Retry `site.web.api.espn.com` and non-browser User-Agents |
 | conda auto-activating shadows the venv Python | `conda config --set auto_activate_base false` |
 | CFBD quota dies if you loop over teams | Bulk week endpoints only |
-| ESPN does not retain historical ADP (past seasons return the sentinel) | `fit_espn_weight` is not identifiable; snapshot ADP pre-draft to fix next year |
+| ESPN does not retain historical ADP (past seasons return the sentinel) | `fit_espn_weight` is not identifiable. **Snapshots now kept, from 2026-08-25** — `hub/draft/adp_history.py` writes a dated copy on every successful board build, so this is fittable in 2027. Until then the 0.5 prior stands. |
 | FantasyPros and ffopportunity disagree on suffixes, so an exact join drops players | `_join_expected_points` matches on `state._norm` |
 | Replacement level set by 1-game samples put WR *above* RB | `MIN_GAMES = 10`; restores the documented three-WR effect |
 | Rookies have no prior-season xFP, so mu was 0 for top-168 picks | `_impute_xfp` interpolates from consensus rank within position |

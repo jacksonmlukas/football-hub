@@ -205,8 +205,10 @@ def fit_espn_weight(league_id: int, years: list[int]) -> float:
     prior and saying so is strictly better than a confident wrong answer.
 
     If you want w fitted, the missing ingredient is a stored snapshot of ESPN ADP taken
-    *before* each draft. Start saving one now and this becomes fittable next season.
-    Meanwhile fit_pick_noise() calibrates the other half of the model from real history.
+    *before* each draft. Since 2026-08-25 `hub.draft.adp_history` writes one on every
+    successful board build, so this becomes a real fit next season rather than this
+    docstring again. Meanwhile fit_pick_noise() calibrates the other half of the model from
+    real history.
     """
     print("  fit_espn_weight: historical ESPN ADP is unavailable (ESPN returns the "
           f"undrafted sentinel for past seasons); using the {DEFAULT_ESPN_WEIGHT} prior.")

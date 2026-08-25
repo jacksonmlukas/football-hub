@@ -18,6 +18,13 @@ picks from a rehearsal is a silent way to be wrong all night.
 Once that has run once, **the venue's wifi can fail and the tool still works.** Every later
 command falls back to the board written by this build. Which is the real reason to run it.
 
+It also archives the day's ADP (`  adp archived: N days on file`). ESPN does not retain
+historical ADP, so **the build you run on draft morning is the only record that will ever
+exist of what the room was drafting against** — and it is what makes `fit_espn_weight`, the
+opponent model and validating `edge` possible in 2027. The archive lives in
+`data/processed/adp_history/`, which is gitignored, so it is on this machine only. Back it up
+after the draft.
+
 **Rebuild the board on the day.** ADP moves. The poller prints the board's age at startup for
 exactly this reason — if it says anything other than a small number of hours, you are drafting
 off stale market data and nothing else will tell you.

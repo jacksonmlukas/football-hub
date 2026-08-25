@@ -771,6 +771,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         OUT.joinpath("draft_board.json").write_text(
             json.dumps(board.head(300).to_dicts(), default=str))
 
+        # Keep a dated copy of today's ADP before the next build overwrites it. ESPN does
+        # not retain historical ADP, so this is the only chance to record it -- and its
+        # absence is what blocks fit_espn_weight, the opponent model, and validating `edge`.
+        # Imported here rather than at module scope because it reads ROOT from this module.
+        #
+        # Never allowed to break the build: this is an archival side effect, not the
+        # product, and a board that will not print because an archive write failed is
+        # exactly the operator-dependence CLAUDE.md warns about.
+        from hub.draft import adp_history
+        try:
+            if adp_history.snapshot(board) is not None:
+                print(f"  adp archived: {len(adp_history.days())} days on file")
+        except Exception as exc:
+            print(f"  adp archive skipped: {type(exc).__name__}: {exc}")
+
     # Summary only. Never print the frame -- that is the token rule in CLAUDE.md.
     print(f"\n  {board.height} players | {board['vor'].null_count()} missing xFP")
     top = board.filter(pl.col("fp_over_expected").is_not_null()).sort("fp_over_expected")
