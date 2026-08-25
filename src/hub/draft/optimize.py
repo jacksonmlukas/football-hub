@@ -309,13 +309,14 @@ def market_pick(pool: pl.DataFrame, counts: dict[str, int],
                 by: str = "adp") -> str | None:
     """Best available in a market, that fills an unfilled starting slot.
 
-    What the board leads with. P0 measured this against championship equity on realised
-    outcomes across three seasons: market +3.11 against the room, equity +3.15, difference
-    +0.04 with a 95% interval of [-3.64, +3.58] at n=36. No detectable difference.
+    What the board leads with, and now the only thing that picks.
 
-    The simpler arm leads because it cannot be shown worse and is instant, and the burden
-    sits on the complicated thing -- not because the optimizer is bad. That claim was made
-    from a run at a quarter of the optimizer's shipped budget and has been withdrawn.
+    P0 could not separate this from championship equity (+0.04, 95% CI [-3.64, +3.58],
+    n=36), so equity was demoted to a tiebreaker. P0b -- the same question asked with a
+    committed harness, `recommend()`'s shortlist as the design had always specified, four
+    seasons and n=80 -- separated them decisively: **-19.66 points per team game, 95% CI
+    [-23.16, -16.20]**, equity losing in every season and winning 9 of 80 drafts. Per the
+    rule fixed before that run, equity left the output. See docs/adr/0009.
 
     Lexicographic, matching `simulate_remaining_draft`: an unfilled starting slot outranks
     any amount of market position, and the market breaks ties within a need tier.

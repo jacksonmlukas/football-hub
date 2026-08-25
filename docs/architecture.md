@@ -17,6 +17,7 @@ a superseded decision keep its original text instead of being edited in place.
 | [0006](adr/0006-fitted-constants-live-with-their-provenance.md) | Fitted constants live with their provenance, not in the config | accepted |
 | [0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md) | A measurement that steers the product must be committed code | accepted |
 | [0008](adr/0008-the-simulator-indexes-the-board.md) | The draft simulator indexes the board | accepted |
+| [0009](adr/0009-championship-equity-does-not-pick.md) | Championship equity does not pick | accepted |
 
 Related, and deliberately not ADRs:
 

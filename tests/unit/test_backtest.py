@@ -391,28 +391,32 @@ def test_the_tripwire_reads_typed_counts_not_the_display_string():
     assert len(got) == 1
 
 
-def test_a_need_filling_co_leader_is_a_tie_not_a_defect():
-    """The clause added after the first run. A candidate the simulation cannot separate from
-    the leader means the objective declined to distinguish, not that it rejected need."""
+def test_a_need_filling_co_leader_is_not_a_defence():
+    """The clause that was added after the first run and then reverted.
+
+    Read as a regression gate it looked right -- a tie is not a rejection. Read as a check on
+    whether the objective is fit to pick with, it is backwards: an objective that cannot
+    separate filling a hole from not filling one is telling you something, and P0b priced
+    that same preference at -19.66 points per team game."""
     got = bt.tripwire(_board(8), _diagnosed([
         {"pick": 46, "held": "RB2, TE1", "leader": "P4", "leader_pos": "RB", "lift": 0.03,
          "co_leaders": 3, "candidates": 10,
          "held_qb": 0, "held_rb": 2, "held_wr": 0, "held_te": 1,
          "need_co_led": True}]))
-    assert got == []
+    assert len(got) == 1
+    assert "not a defence" in got[0]
 
 
-def test_the_amended_gate_still_catches_the_original_defect():
-    """The amendment is narrow on purpose. In the defect it was written for, a second
-    quarterback beat a startable back OUTRIGHT -- no co-leader filled a need, and arm B
-    finished with four quarterbacks. That must still fire."""
+def test_the_gate_catches_the_defect_it_was_written_for():
+    """A second quarterback beating a startable back, with nothing tied. Arm B finished with
+    four quarterbacks in a one-QB league."""
     got = bt.tripwire(_board(8), _diagnosed([
         {"pick": 22, "held": "QB1", "leader": "P4", "leader_pos": "QB", "lift": 0.01,
          "co_leaders": 1, "candidates": 10,
          "held_qb": 1, "held_rb": 0, "held_wr": 0, "held_te": 0,
          "need_co_led": False}]))
     assert len(got) == 1
-    assert "no co-leader fills one" in got[0]
+    assert "QB is full" in got[0]
 
 
 def test_the_diagnose_picks_are_your_first_six_turns():

@@ -672,11 +672,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="pull the live draft from ESPN instead of typing picks")
     ap.add_argument("--undo", type=int, default=0, help="remove the last N picks")
     ap.add_argument("--reset", action="store_true", help="clear the draft state")
-    ap.add_argument("--win-prob", action="store_true",
-                    help="rank candidates by P(win the league) instead of cost_of_waiting")
-    ap.add_argument("--sims", type=int, default=300, help="season sims per draft sim")
-    ap.add_argument("--no-win-prob", action="store_true",
-                    help="skip championship equity and show the VOR shortlist only")
     ap.add_argument("--sos", action="store_true",
                     help="show weeks 15-17 strength of schedule, softest and hardest")
     ap.add_argument("--fit-noise", action="store_true",
@@ -790,33 +785,45 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if a.pick is not None:
         mode, rec = recommend(board, a.pick, w=a.espn_weight, state=st)
-        # Lead with the market. P0 measured it even with championship equity on realised
-        # outcomes -- +3.11 against the room versus +3.15, difference +0.04 [-3.64, +3.58]
-        # at n=36 -- so the simpler and instant arm leads and equity becomes a tiebreaker.
+        # The market picks, and nothing else does.
+        #
+        # P0b measured championship equity against consensus-following on realised outcomes
+        # across 2022-25: -19.66 points per team game, 95% CI [-23.16, -16.20] at n=80,
+        # losing in all four seasons and winning 9 of 80 drafts. Per the rule fixed before
+        # that run, equity leaves this output. See docs/adr/0009.
         from hub.draft.optimize import market_pick
         held = held_positions(board, st)
         # `remaining`, not a priced pool: market_pick ranks on adp (or ecr) and never
         # reads the mu_pick blend that `draft_pool` existed to attach.
-        mp = market_pick(state_mod.remaining(board, st), held)
+        avail = state_mod.remaining(board, st)
+        # Draft market first, consensus behind it. Same lexicographic rule either way, so
+        # the old "THE PICK unavailable" branch was never about *what to do* -- only about
+        # which column was present, which market_pick already reports by returning None.
+        # Consensus-following is not a consolation prize here: it is arm A of P0b, the arm
+        # that beat championship equity by twenty points a game.
+        mp, via = market_pick(avail, held, by="adp"), "draft market (ADP)"
         if not mp:
-            print("\n  THE PICK unavailable -- no ESPN ADP on the board. The market has")
-            print("    nothing to say without it; fall back to the equity table below.")
+            mp, via = market_pick(avail, held, by="ecr"), "consensus (ECR) -- no ADP today"
         if mp:
             row = board.filter(pl.col("player") == mp).row(0, named=True)
             notes = pick_notes(row)
-            print(f"\n  THE PICK -- best available the draft market values, filling a need")
-            print(f"    {mp}  {row.get('pos') or ''}  ADP {row.get('adp') or float('nan'):.1f}"
+            adp = row.get("adp")
+            print(f"\n  THE PICK -- best available filling a need, by {via}")
+            print(f"    {mp}  {row.get('pos') or ''}  "
+                  + (f"ADP {adp:.1f}" if adp is not None else f"ECR {row.get('ecr'):.1f}")
                   + (f"   [{'; '.join(notes)}]" if notes else ""))
             print("    Corrections shown are where our measurements say the market is wrong;")
-            print("    they are not priced into ADP. Yours to weigh.")
+            print("    they are not priced in. Yours to weigh.")
+        else:
+            print("\n  THE PICK unavailable -- the board carries neither ADP nor ECR, which "
+                  "means it did not build. Serve site/data/draft_board.json instead.")
 
         rule = ("long wait ahead: take who will not survive it"
                 if mode == "scarcity" else "short wait ahead: take the highest VOR")
-        # Labelled as the shortlist rather than the recommendation. VOR ordering was
-        # measured 5.06 pts/team-game worse than the market on realised outcomes
-        # (docs/market-value.md), so printing it first read as advice it has not earned.
-        print(f"\n  Candidates by VOR -- the shortlist the tiebreaker scores, "
-              f"{mode} ({rule})")
+        # Context, not a recommendation. VOR ordering was measured 5.06 pts/team-game worse
+        # than the market (docs/market-value.md), so this is here to show what else is close
+        # -- and how close -- rather than to be drafted off.
+        print(f"\n  Also close, for context -- not a ranking to draft off ({mode}: {rule})")
         for r in rec.iter_rows(named=True):
             cw = r.get("cost_of_waiting")
             extra = f"cost_of_waiting {cw:>5.1f}" if cw is not None else ""
@@ -824,32 +831,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             tag = f"  SoS {sos:.2f}" if sos is not None else ""
             print(f"    {r['player']:<24} {r['pos'] or '':<4} "
                   f"VOR {0.0 if v is None else v:>5.1f}  {extra}{tag}")
-
-        if not a.no_win_prob:
-            from hub.draft.optimize import rank_tiers, tag_for, win_probability
-            names = rec["player"].to_list()
-            print(f"\n  Championship equity (TIEBREAKER) -- {len(names)} candidates, "
-                  f"{a.sims} seasons x 24 drafts each ...")
-            print("  Measured even with the market on realised outcomes: +0.04 pts/team-game,")
-            print("  95% CI [-3.64, +3.58], n=36. Use it to choose among close calls.")
-            wp = rank_tiers(win_probability(board, st, names, my_slot=MY_SLOT,
-                                            teams=TEAMS, n_season_sims=a.sims,
-                                            w=a.espn_weight))
-            lead = wp.filter(pl.col("co_leader"))["player"].to_list()
-            for r in wp.iter_rows(named=True):
-                lift, se = r["lift"] * 100, r["lift_se"] * 100
-                tag = tag_for(r["co_leader"], r["lift"], r["lift_se"])
-                print(f"    {tag:<5} {r['player']:<24} P(win) {r['p_win']*100:>5.2f}%  "
-                      f"lift {lift:+5.2f} +/-{se:4.2f}")
-            if len(lead) == 1:
-                print(f"\n  --> {lead[0]}. Nothing else is within two standard errors.")
-            else:
-                print(f"\n  --> {' or '.join(lead)} -- the simulation cannot separate them.")
-                print("      Break the tie on something it does not model: bye weeks, the")
-                print("      weeks 15-17 SoS column, or who you would rather roster.")
-            print("\n    Read the lift, not the level. Absolute P(win) is inflated --")
-            print("    the season is scored on the same projection the greedy ranks on.")
-            print("    The VOR list above is the shortlist this scored, not the answer.")
 
     return 0
 

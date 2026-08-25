@@ -86,6 +86,8 @@ market that fills an unfilled starting slot.
 
 **Championship equity**:
 A candidate's probability of winning the league, from simulating the season to a champion.
+Measured worse than consensus at actually picking — −19.66 points per team game across
+2022–25 — so it does not choose the pick; see [ADR-0009](docs/adr/0009-championship-equity-does-not-pick.md).
 _Avoid_: P(win) as a standalone term — say championship equity, and reserve `p_win` for the
 column.
 

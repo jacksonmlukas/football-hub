@@ -1,0 +1,58 @@
+# Championship equity does not pick
+
+**Status:** accepted 2026-08-24.
+
+**Decision.** The draft market picks, with consensus behind it when ESPN publishes no ADP.
+Championship equity — the nested draft-and-season simulation in `hub.draft.optimize` — is not
+in the draft-night output at all. The code stays, because the harness calls it and because
+retesting it later should not start from nothing.
+
+## Why, in one number
+
+P0b, 2026-08-24. Two arms on the same room and the same seed, over 2022–25, scored on realised
+weekly points:
+
+    n=80   optimizer - market = -19.66 points per team game
+           95% CI [-23.16, -16.20]      P(optimizer better) 0.0%
+
+Losing in all four seasons, winning 9 of 80 drafts. `config_digest` 9975101f; paired rows in
+`data/processed/p0b_paired.parquet`; harness in `hub.draft.backtest`.
+
+The rule that produced this action was fixed before the run, and had three branches, including
+one that would have promoted equity back to the headline.
+
+## Why this is surprising, which is why it is written down
+
+The repo contains a real season simulator: talent drawn once per season, a square-root weekly
+spread law fitted at an exponent of 0.498, per-position skew, teammate correlation applied by
+Cholesky, a 14-week schedule, a six-team playoff. Every piece of it is measured. It is
+reasonable to assume that something that elaborate must pick better than "take the best
+available player who fills a hole".
+
+It does not, and the reason is visible in the rosters it builds. In one 2024 draft it took
+McCaffrey, Kamara, Mixon, Ekeler and Conner — five running backs — and finished with four
+receivers in a three-receiver league. The simulator is not broken. Its *lift ordering* is not
+accurate enough to beat following consensus and filling your starting slots.
+
+## What was considered and rejected
+
+- **Blame the inputs.** Arm B scores seasons on prior-season xFP while the live board uses
+  `proj_blend`, so the tested optimizer is fed worse numbers than the shipped one. Real, and
+  listed in `backtest.LIMITATIONS` before the run. But a twenty-point gap is not an
+  input-quality gap: better `mu` sharpens *which* running back, not *how many*.
+- **Keep it as a tiebreaker.** That was its role, and it is the worst place for it. A
+  tiebreaker only acts when the objective is the sole thing deciding, so a bad one is wrong
+  precisely when it matters most.
+- **Wait for P1.** P1 (break the circularity) was gated on equity beating the market. It
+  loses, so P1 does not fire.
+
+## Consequences
+
+- The no-ADP path improves rather than degrading. It used to point at the equity table; it now
+  falls back to `market_pick(by="ecr")` — which is arm A, the arm that won.
+- `--win-prob`, `--no-win-prob` and `--sims` are gone from the board CLI.
+- `tripwire` in `hub.draft.backtest` is the standing check on whether an objective is fit to
+  pick with. It fired on this preference the same morning and was talked past once; see its
+  docstring, which records that.
+- Reopening this means re-running `hub.draft.backtest`, not re-arguing from first principles
+  about how good a season simulator ought to be.

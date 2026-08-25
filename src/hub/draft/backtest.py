@@ -318,28 +318,24 @@ def diagnose(board: pl.DataFrame, *, picks: Sequence[int] = DIAGNOSE_PICKS,
 
 
 def tripwire(board: pl.DataFrame, diagnosed: pl.DataFrame) -> list[str]:
-    """The check on a change to the objective: equity naming a filled required position ahead
-    of an empty one, *with no need-filling candidate among the co-leaders*.
+    """Whether an objective is fit to pick with: does it ever name a player at a required
+    position you have already filled, ahead of one filling a slot you have not?
 
-    That is the signature of `win_probability` scoring rosters which excluded your existing
-    picks, and it is also what a seat mis-attribution would look like after the fix -- the
-    rosters seeded, just with the wrong players.
+    **This is a quality check on the objective, not a regression gate on a code change**, and
+    conflating those two jobs is how it got talked past. On 2026-08-24 it fired at picks 46
+    and 70 for naming a running back while WR and QB sat empty. Read as a regression gate --
+    "did my refactor break something?" -- that looked like a false positive, because the
+    need-filling alternatives were co-leaders and a tie is not a rejection. So a co-leader
+    clause was added and the gate went quiet.
 
-    Deliberately not a threshold on how much the recommendation moved. A correctness fix that
-    changes recommendations is doing its job, and gating on similarity would reject it for
-    working.
+    Read as a quality check, it was correct and the clause was wrong. P0b then measured that
+    same running-back-over-need preference at **-19.66 points per team game** against
+    consensus-following, across four seasons, losing in all of them. The clause is reverted:
+    a need-filling co-leader means the objective cannot tell the difference between filling a
+    hole and not filling one, which is exactly the thing worth knowing.
 
-    **The co-leader clause was added after seeing the first run, and that is worth stating
-    plainly.** As originally written this fired on any disagreement with `_need_score` -- and
-    disagreeing with the lexicographic need rule is the entire reason championship equity
-    exists as a separate signal, so the gate fired whenever the objective did its job. It
-    tripped at two picks where a need-filling candidate sat inside two standard errors of the
-    leader, which is the objective declining to distinguish rather than rejecting need.
-
-    Revising a gate after seeing its output is exactly the move `docs/next.md` records going
-    wrong once, so the amendment is narrow and deliberately still catches the original defect:
-    there, a second quarterback beat a startable back *outright*, no co-leader filled a need,
-    and arm B finished with four quarterbacks. See the P0b section for the before and after.
+    Deliberately still not a threshold on how much a recommendation moved. A correctness fix
+    that changes recommendations is doing its job.
     """
     from hub.config import required_starters
     required = required_starters(RosterConfig())
@@ -349,9 +345,11 @@ def tripwire(board: pl.DataFrame, diagnosed: pl.DataFrame) -> list[str]:
         pos = r["leader_pos"]
         if pos in required and held.get(pos, 0) >= required[pos]:
             unfilled = [p for p, n in required.items() if held.get(p, 0) < n]
-            if unfilled and not r.get("need_co_led", False):
-                bad.append(f"pick {r['pick']}: named {r['leader']} ({pos}), {pos} is full, "
-                           f"{'/'.join(unfilled)} is not, and no co-leader fills one")
+            if unfilled:
+                co = " (a co-leader fills one, which is not a defence)" if r.get(
+                    "need_co_led", False) else ""
+                bad.append(f"pick {r['pick']}: named {r['leader']} ({pos}), but {pos} is "
+                           f"full and {'/'.join(unfilled)} is not{co}")
     return bad
 
 
