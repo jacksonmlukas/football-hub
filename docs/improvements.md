@@ -10,7 +10,22 @@ works. Every item names which it is.
 
 ---
 
-## 1. `MARGIN_SD` is asserted, and the data disagrees
+## 1. `MARGIN_SD` is asserted, and the data disagrees — DONE 2026-08-24
+
+**Fitted and adopted: 13.5 to 12.741.** See [margin-sd.md](margin-sd.md). Two corrections to
+what this item originally claimed, both found by doing the work:
+
+* The full-sample sd is **13.214**, not the 12.470 quoted below — that was a three-season
+  slice, and per-season sd runs 11.5 to 14.4. The direction held at every window (13.5 sits
+  2.6 to 4.6 se high) but the magnitude did not.
+* **The predictive gain is negligible**: +0.0002 held-out log-loss, about 0.057 nats a season.
+  This item implied the error mattered for accuracy. It does not. It mattered for provenance —
+  a number hashed into every model version as fitted, which had never been fitted.
+
+The original text follows.
+
+### Original text
+
 
 **Model. The strongest finding here, and the cheapest to act on.**
 

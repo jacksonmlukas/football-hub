@@ -20,11 +20,29 @@ import polars as pl
 
 from hub.models.base import FitSpec
 
-# Standard deviation of the actual margin around the closing spread. Stable across decades
-# of NFL results and the reason a 3-point favourite is a ~59% shot rather than a ~90% one.
-# Lower it and the model claims precision the market does not have; raise it and every
-# game drifts toward a coin flip.
-MARGIN_SD = 13.5
+# Standard deviation of the actual margin around the closing spread, and the reason a 3-point
+# favourite is a ~60% shot rather than a ~90% one. Lower it and the model claims precision the
+# market does not have; raise it and every game drifts toward a coin flip.
+#
+# FITTED 2026-08-24 by `hub.models.margin`, written up in `docs/margin-sd.md`. Trailing ten
+# seasons, n=3018: 12.741 +/- 0.164. It was 13.5 before, asserted under a comment claiming it
+# was "stable across decades" -- with no fit, no interval and no write-up, while sitting in
+# `config.FITTED_MODULES` and being hashed into every model version as though it had been
+# measured. ADR-0006 draws that line; this number was on the wrong side of it.
+#
+# Two things the fit found that the assertion could not:
+#
+#   * It is NOT stable. Per-season sd runs 11.5 to 14.4 and trends down 0.037 a year
+#     (-2.4 se) -- the market has got sharper. A trailing window beat all-history on
+#     held-out log-loss, which is why this is a decade rather than the full 1999-2025 record.
+#   * The accuracy gain is real but small: +0.0002 mean held-out log-loss over 26
+#     walk-forward seasons, about 0.057 nats a season. The win here is provenance, not
+#     precision.
+#
+# **This is a trailing window, so it goes stale.** Re-run `python -m hub.models.margin --fit`
+# after each season; a fixed constant fitted to a moving target needs a refit date, and a
+# full-history value would not have.
+MARGIN_SD = 12.741
 
 # 80% interval. z for the two-sided 80% of a normal.
 Z_80 = 1.2816

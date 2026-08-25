@@ -166,6 +166,9 @@ NOT_FITTED: dict[str, str] = {
     "hub.draft.live": "operational -- a refresh budget in seconds, same class as `poll`",
     "hub.draft.tune": "hyperparameter search grid, run offline and never at predict time",
     "hub.models.eval": "model-comparison harness; it reads predictions, never makes them",
+    "hub.models.margin": "the recorded output of the MARGIN_SD fit, used by a test to guard "
+                         "the live constant -- an assertion about a prediction, not an input. "
+                         "The live number lives in hub.models.market, which IS registered.",
 }
 
 
