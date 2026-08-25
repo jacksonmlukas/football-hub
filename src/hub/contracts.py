@@ -88,6 +88,36 @@ PBP = Contract(
     min_rows=1000,
 )
 
+# Play-level personnel and alignment. The scheme layer's foundation: who was on the field,
+# what shape they were in, and what the defence showed.
+#
+# `offense_formation` is null on ~20% of plays (9,237 of 45,919 in 2024) -- special teams and
+# plays the charter did not resolve -- so it is required but explicitly NOT non_null. Nor is
+# there a `season` column: rows key on `nflverse_game_id` and `play_id`, and the season is a
+# load-time argument. Declaring one would fail every honest refresh.
+PARTICIPATION = Contract(
+    name="nflverse_participation",
+    required={"nflverse_game_id": pl.Utf8, "play_id": pl.Float64,
+              "offense_personnel": pl.Utf8, "defense_personnel": pl.Utf8,
+              "defenders_in_box": pl.Int32, "offense_formation": pl.Utf8},
+    non_null=("nflverse_game_id", "play_id"),
+    ranges={"defenders_in_box": (0, 12)},
+    min_rows=1000,
+)
+
+# FTN's charting: motion, play action, screens, blitzers, box count. Complements
+# PARTICIPATION rather than duplicating it -- that one is personnel, this one is intent.
+FTN_CHARTING = Contract(
+    name="nflverse_ftn_charting",
+    required={"nflverse_game_id": pl.Utf8, "nflverse_play_id": pl.Int32,
+              "season": pl.Int32, "week": pl.Int32,
+              "is_play_action": pl.Boolean, "is_motion": pl.Boolean,
+              "n_defense_box": pl.Int32},
+    non_null=("nflverse_game_id", "nflverse_play_id", "season", "week"),
+    ranges={"week": (1, 22), "n_defense_box": (0, 12), "n_blitzers": (0, 11)},
+    min_rows=1000,
+)
+
 PLAYER_STATS = Contract(
     name="nflverse_player_stats",
     required={"player_id": pl.Utf8, "position": pl.Utf8, "season": pl.Int32,

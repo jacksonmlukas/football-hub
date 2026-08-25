@@ -26,8 +26,8 @@ from typing import Callable, Sequence
 import polars as pl
 
 from hub import store
-from hub.contracts import (FF_OPPORTUNITY, PBP, PLAYER_STATS, SCHEDULES,
-                           Contract)
+from hub.contracts import (FF_OPPORTUNITY, FTN_CHARTING, PARTICIPATION, PBP,
+                           PLAYER_STATS, SCHEDULES, Contract)
 
 ROOT = Path(__file__).resolve().parents[3]
 RAW = ROOT / "data" / "raw" / "nflverse"
@@ -130,11 +130,24 @@ def _raw_schedules(seasons: Sequence[int]) -> pl.DataFrame:
     return nfl.load_schedules().filter(pl.col("season").is_in(list(seasons)))
 
 
+def _raw_participation(seasons: Sequence[int]) -> pl.DataFrame:
+    import nflreadpy as nfl
+    return nfl.load_participation(seasons=list(seasons))
+
+
+def _raw_ftn_charting(seasons: Sequence[int]) -> pl.DataFrame:
+    import nflreadpy as nfl
+    return nfl.load_ftn_charting(seasons=list(seasons))
+
+
 SOURCES: dict[str, Contract | None] = {
     "pbp": PBP,
     "ff_opportunity": FF_OPPORTUNITY,
     "player_stats": PLAYER_STATS,
     "schedules": SCHEDULES,
+    # The scheme layer. Neither is WIDE -- 26 and 29 columns -- so both come back whole.
+    "participation": PARTICIPATION,
+    "ftn_charting": FTN_CHARTING,
 }
 
 
@@ -150,6 +163,8 @@ def _fetch(source: str, seasons: Sequence[int]) -> pl.DataFrame:
         "ff_opportunity": _raw_ff_opportunity,
         "player_stats": _raw_player_stats,
         "schedules": _raw_schedules,
+        "participation": _raw_participation,
+        "ftn_charting": _raw_ftn_charting,
     }
     return fetchers[source](seasons)
 

@@ -292,3 +292,74 @@ def test_a_real_player_carrying_points_is_never_dropped(monkeypatch):
         "season_type": ["REG"], "fantasy_points_ppr": [14.0]})])
     with pytest.raises(nv.UnattributedPoints):
         nv._clean_player_stats(raw)
+
+
+# --- the scheme layer -----------------------------------------------------
+#
+# `participation` (personnel, formation, box count, coverage) and `ftn_charting` (motion,
+# play action, screens, blitzers) are the foundation for the game-level model. Added
+# 2026-08-24; neither is WIDE, so both come back whole.
+
+def _participation_rows(n=1200, **over):
+    base = {
+        "nflverse_game_id": [f"2024_01_A_B" for _ in range(n)],
+        "play_id": [float(i) for i in range(n)],
+        "offense_personnel": ["1 RB, 1 TE, 3 WR"] * n,
+        "defense_personnel": ["4 DL, 2 LB, 5 DB"] * n,
+        "defenders_in_box": pl.Series([6] * n, dtype=pl.Int32),
+        "offense_formation": ["SHOTGUN"] * n,
+    }
+    base.update(over)
+    return pl.DataFrame(base)
+
+
+def test_participation_is_a_known_source():
+    from hub.fetch.nflverse import SOURCES
+    assert "participation" in SOURCES and "ftn_charting" in SOURCES
+
+
+def test_participation_tolerates_a_null_formation():
+    """~20% of plays have none -- 9,237 of 45,919 in 2024, special teams and plays the
+    charter did not resolve. Requiring it non-null would fail every honest refresh."""
+    from hub.contracts import PARTICIPATION
+    df = _participation_rows(offense_formation=[None] * 1200)
+    assert PARTICIPATION.validate(df).height == 1200
+
+
+def test_participation_requires_the_play_key():
+    """There is no `season` column -- rows key on game and play, and the season is a
+    load-time argument -- so these two are the only identity the frame has."""
+    from hub.contracts import PARTICIPATION, ContractViolation
+    df = _participation_rows().drop("play_id")
+    with pytest.raises(ContractViolation, match="missing columns"):
+        PARTICIPATION.validate(df)
+
+
+def test_an_impossible_box_count_is_caught():
+    """Eleven defenders on the field, so a box of 40 means the upstream shape changed."""
+    from hub.contracts import PARTICIPATION, ContractViolation
+    df = _participation_rows(defenders_in_box=pl.Series([40] * 1200, dtype=pl.Int32))
+    with pytest.raises(ContractViolation, match="range"):
+        PARTICIPATION.validate(df)
+
+
+def test_ftn_charting_contract_holds_on_a_well_formed_frame():
+    from hub.contracts import FTN_CHARTING
+    n = 1200
+    df = pl.DataFrame({
+        "nflverse_game_id": ["2024_01_A_B"] * n,
+        "nflverse_play_id": pl.Series(range(n), dtype=pl.Int32),
+        "season": pl.Series([2024] * n, dtype=pl.Int32),
+        "week": pl.Series([1] * n, dtype=pl.Int32),
+        "is_play_action": [False] * n,
+        "is_motion": [True] * n,
+        "n_defense_box": pl.Series([6] * n, dtype=pl.Int32),
+    })
+    assert FTN_CHARTING.validate(df).height == n
+
+
+def test_the_scheme_sources_are_not_wide():
+    """26 and 29 columns. `pbp` is 372 and `player_stats` 150, and those must be narrowed;
+    these need not be, so a caller is not forced to guess a column list."""
+    from hub.fetch.nflverse import WIDE
+    assert "participation" not in WIDE and "ftn_charting" not in WIDE
