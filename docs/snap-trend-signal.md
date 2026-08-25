@@ -120,6 +120,29 @@ everywhere is usually a bug.
 * Snap counts key on `pfr_player_id` and everything else keys on `gsis_id`; the crosswalk
   matches 99.8%, and the missing 0.2% is not characterised.
 
+## Gated as a decision, 2026-08-25: shown, never ranked on
+
+The screen is not the decision. Acting on it was gated against the obvious alternative — best
+available by consensus rank — over 40 paired weekly claims among players owned in under 50% of
+leagues, scored on the next three weeks:
+
+    top-1 by snap delta   -3.81 points vs by ECR, wins 1/4 seasons
+    top-3 by snap delta   -3.35 points vs by ECR, wins 1/4 seasons
+
+**Worse than the thing it was meant to improve on**, and the reason is structural: a *partial*
+correlation says delta adds information **given** ECR. Ranking by delta alone throws ECR away.
+
+The rule the screen does support — ECR chooses the candidate set, delta chooses within it —
+comes out at +0.66 to +1.32 points at 0.2 to 0.5 se, positive at every pool size and
+significant at none. A single waiver decision has a standard deviation near 20 points over
+three weeks, so resolving a one-point edge would take about **1,800 decisions, or 44 seasons**.
+
+That is an inconclusive result, not a negative one, and the asymmetry is worth stating plainly:
+the *screen* is well powered because it sees ~1,400 players per anchor; the *decision* is not,
+because it makes one claim a week.
+
+See [ADR-0013](adr/0013-the-snap-trend-is-shown-and-never-ranked-on.md).
+
 ## What was built: nothing, yet
 
 Per the protocol and the precedent in [depth-chart-signal.md](depth-chart-signal.md), a screen

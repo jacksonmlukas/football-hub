@@ -21,6 +21,7 @@ a superseded decision keep its original text instead of being edited in place.
 | [0010](adr/0010-edge-is-displayed-but-never-ranked-on.md) | `edge` is displayed but never ranked on | accepted |
 | [0011](adr/0011-the-pick-ranks-on-corrected-adp.md) | THE PICK ranks on corrected ADP | accepted |
 | [0012](adr/0012-the-lineup-optimiser-waits-for-real-variance.md) | The lineup optimiser waits for real variance | accepted |
+| [0013](adr/0013-the-snap-trend-is-shown-and-never-ranked-on.md) | The snap trend is shown, and never ranked on | accepted |
 
 Related, and deliberately not ADRs:
 
