@@ -14,7 +14,7 @@ Operating procedure for a live 12-team full-PPR ESPN draft. Latency matters: you
 2. Verify `.env` has `ESPN_S2`, `ESPN_SWID`, `ESPN_LEAGUE_ID`. Without them the ADP diff is dark
    and you lose the main edge.
 3. Confirm roster slots came from the league API rather than the hardcoded default:
-   `python -m hub.draft.board --show-slots`
+   `uv run python -m hub.draft.board --show-slots`
 
 ## During the draft
 
@@ -22,7 +22,7 @@ Run the live board in a second terminal. Do not ask Claude to recompute mid-draf
 already does it.
 
 ```
-python -m hub.draft.live --poll 10
+uv run python -m hub.draft.live --poll 10
 ```
 
 Answer picks from three columns, in priority order:

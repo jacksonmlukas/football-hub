@@ -19,7 +19,7 @@ Audited 2026-08-23. **11 days to the draft.**
 
 | Status | Count |
 |---|---|
-| Missing module, referenced by something that runs | **9** (1 resolved, 8 open) |
+| Missing module, referenced by something that runs | **9** (all 9 resolved as of 2026-08-25) |
 | Exists but not invocable as documented | **2** |
 | Missing path | **2** |
 | Already built, plan is stale | **2** |
@@ -39,8 +39,8 @@ of them dead-ends.
 | `hub.fetch.cfbd` | `Makefile:11,18`, `weekly-slate/SKILL.md:17` | ~~MISSING~~ **DONE 2026-08-23** | Built. Three independent loop guards, per-month quota accounting, `make check` works with no key. |
 | `hub.fetch.odds` | `weekly-slate/SKILL.md:18` | ~~MISSING~~ **DONE 2026-08-23** | Built. One market, one region, credit floor, maps to nflverse game ids. |
 | `hub.models.ratings` | `Makefile:12`, `weekly-slate/SKILL.md:20` | ~~MISSING~~ **DONE 2026-08-23** | Passthrough over `MarketBaseline`. `make slate WEEK=1` now runs end to end. |
-| `hub.models.conformal` | `weekly-slate/SKILL.md:21` | MISSING | **Build.** `Conformalized` already exists in `models/base.py`; this is the CLI around it. |
-| `hub.models.eval` | `model-eval/SKILL.md:26` | MISSING | **Build**, post-draft. |
+| `hub.models.conformal` | `weekly-slate/SKILL.md:21` | ~~MISSING~~ **DONE 2026-08-24** | Built. Rolling calibration, `--recalibrate --model --alpha --window`. Exists and runs; what it still lacks is a *consumer* — [improvements.md #2](improvements.md). |
+| `hub.models.eval` | `model-eval/SKILL.md:26` | ~~MISSING~~ **DONE** | Built. `--compare a,b --split temporal`, exactly as the SKILL.md invokes it. |
 | `hub.publish` | `track-record.md:12,24`, `weekly-slate/SKILL.md:22` | ~~MISSING~~ **DONE 2026-08-24** | Writes preds/track_record/live plus a manifest; never blanks an artifact. |
 | `hub.draft.live` | `draft-day-ops/SKILL.md:25`, `SETUP.md:227` | ~~MISSING~~ **DONE 2026-08-23** | Built. Live replacement level, run detection, `--replay` rehearsal. 192 picks at 7ms/refresh. |
 
@@ -85,6 +85,7 @@ Worse than missing in one respect: the module is present, so a reader assumes th
 |---|---|---|---|
 | `hub.fetch.espn` | No `__main__`, no argparse. | ~~`Makefile:15` (`make live`)~~ | **Resolved 2026-08-24 by deletion.** The `make live` target was removed rather than the CLI built: a documented command that silently does nothing is worse than an absent one, and the repo goes public on Sep 4. `poll()` still exists and is real; the entry point is post-draft work, when the in-season path is the live one. |
 | `make setup` | Runs `uv pip install -e .` — the legacy interface, blocked by the `trailofbits/modern-python` PATH shim. Also omits `[dev]`, so it installs no test tooling. | ~~`Makefile:4`~~ | **Resolved 2026-08-24.** Both `Makefile` and `SETUP.md` now use `uv sync --all-extras`, which also creates the venv. The stale `46 passed` check in SETUP.md was refreshed at the same time. |
+| Three SKILL.md commands | Invoked bare `python -m hub....`, which the `trailofbits/modern-python` PATH shim intercepts: it prints `ERROR: Use `uv run python -m ...`` and does nothing. Same defect the hook message had. | ~~`model-eval/SKILL.md:26`, `draft-day-ops/SKILL.md:17,25`~~ | **Resolved 2026-08-25.** All three now say `uv run python`. `draft-day-ops` is the one used on draft night, so it was the one that mattered. The remaining bare-`python` mentions in `gaps.md`, `foundation-plan.md` and ADR-0004 are historical narrative and are left alone. |
 
 ---
 

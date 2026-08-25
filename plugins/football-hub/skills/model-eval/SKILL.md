@@ -23,7 +23,7 @@ Extends `sim-eval` to football. Same metric machinery, different acceptance thre
 Not "is the model accurate." It is: **does the model add anything over the closing line alone?**
 
 ```
-python -m hub.models.eval --compare market_only,market_plus_residual --split temporal
+uv run python -m hub.models.eval --compare market_only,market_plus_residual --split temporal
 ```
 
 Report the log-loss delta with a bootstrap interval. If the interval crosses zero, you have no
