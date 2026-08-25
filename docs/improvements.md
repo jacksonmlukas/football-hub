@@ -255,6 +255,26 @@ manifest.
 
 Low urgency, but it is why `hub.inspect` has a special case for a bare-name dataset.
 
+**Reassessed 2026-08-25: this is not tidiness, and it already cost real data.** Compare the two
+paths on the same question — what happens to yesterday's numbers?
+
+    data/processed/lines/league=nfl/season=2026/week=02/snap-20260825T045821.parquet
+    data/processed/draft_board.parquet
+
+The odds fetcher goes through `hub.store.write`, so every snapshot lands in its own timestamped
+file inside a week partition and **nothing is ever overwritten**. The board does not, so it has
+exactly one file, and every `make draft` destroyed the previous day's ADP — the one input that
+`fit_espn_weight`, the opponent model and validating `edge` all need, and the one ESPN does not
+retain. Three documented dead ends, one root cause, and the fetch layer had already solved it.
+
+Patched around on 2026-08-25 by `hub/draft/adp_history.py`, which keeps a dated copy. That is a
+second bespoke archive sitting next to a general one that already works, which is an argument
+for doing this properly rather than against it.
+
+Two further consequences found the same day: `make draft` had never worked on a fresh clone,
+because `data/processed/` is created by `hub.store` and the board does not call it (fixed); and
+the board is the reason `hub.inspect` needs its bare-name special case at all.
+
 ### 9. One naive datetime in production — FIXED 2026-08-25
 
 `market.py` stamped `predicted_at` — the provenance timestamp on every prediction row — in
