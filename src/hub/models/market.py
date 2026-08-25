@@ -14,7 +14,7 @@ what three-point home favourites actually do.
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import UTC, datetime
 
 import polars as pl
 
@@ -99,5 +99,11 @@ class MarketBaseline:
             pl.lit(self.name).alias("model"),
             pl.lit(self.version).alias("version"),
             pl.lit(self._spec.through_week).cast(pl.Int32).alias("fit_through_week"),
-            pl.lit(datetime.now().replace(microsecond=0)).alias("predicted_at"),
+            # UTC, not local. `predicted_at` is the provenance stamp on every prediction
+            # row and the whole claim is that December can audit August -- a naive local
+            # timestamp is ambiguous the moment the machine or the season changes. Written
+            # tz-naive after conversion so the column dtype is unchanged, which is the same
+            # shape `hub.fetch.odds` already uses.
+            pl.lit(datetime.now(UTC).replace(tzinfo=None, microsecond=0))
+              .alias("predicted_at"),
         )

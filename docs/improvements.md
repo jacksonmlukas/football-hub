@@ -196,7 +196,17 @@ manifest.
 
 Low urgency, but it is why `hub.inspect` has a special case for a bare-name dataset.
 
-### 9. One naive datetime in production
+### 9. One naive datetime in production — FIXED 2026-08-25
+
+`market.py` stamped `predicted_at` — the provenance timestamp on every prediction row — in
+naive *local* time, while `publish.py` used UTC. Now UTC, written tz-naive after conversion so
+the column dtype is unchanged, matching the pattern `hub.fetch.odds` already used.
+
+`src/` is clean of DTZ, so `DTZ` is now in the ruff select and stays clean. Test fixtures are
+per-file-ignored: a timezone on a literal that exists only to be compared to another literal
+is noise.
+
+### Original text
 
 `market.py:84` calls `datetime.now()` without a timezone. Twenty-five more are in tests and do
 not matter. One does: a prediction timestamped without a zone is ambiguous in a repo whose

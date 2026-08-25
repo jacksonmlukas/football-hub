@@ -39,15 +39,19 @@ line-length = 100
 # CI runs) reported 186 errors under 0.16 against 31 under the documented E4/E7/E9/F. A gate
 # whose strictness changes when a dependency updates is not a gate.
 #
-# DTZ is deliberately NOT selected yet: 26 naive `datetime.now()` calls are real -- a
-# prediction timestamped without a timezone is ambiguous in a repo that audits itself by date
-# -- but fixing them changes stored values, which is not freeze-week work. Tracked in
-# docs/next.md.
-select = ["E", "F", "I", "UP", "B", "C4", "RUF"]
+# DTZ is selected, and `src/` is clean of it as of 2026-08-25. The one production site was
+# `market.py`'s `predicted_at` -- the provenance stamp on every prediction row -- written in
+# naive local time while `publish.py` used UTC. A repo whose claim is that December can audit
+# August cannot have an ambiguous timestamp on the audit trail.
+select = ["E", "F", "I", "UP", "B", "C4", "RUF", "DTZ"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests build frames inline and shadow fixtures deliberately.
 "tests/*" = ["E501"]
+# Test fixtures build fixed datetimes to assert against. A timezone on a literal that exists
+# only to be compared to another literal is noise, and changing them would churn stored
+# fixtures for no gain.
+"tests/**/*.py" = ["E501", "DTZ001", "DTZ005"]
 
 [tool.pyrefly]
 project-includes = ["src", "tests"]
