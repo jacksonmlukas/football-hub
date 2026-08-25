@@ -555,7 +555,7 @@ def test_compare_is_deterministic_under_a_seed():
     """Same seed, same rooms, same answer -- or the paired design means nothing."""
     board, real = _full_board(), None
     real = _flat_realised(board)
-    kw = dict(n_drafts=1, rounds=4, n_draft_sims=2, n_season_sims=10, seed=7)
+    kw = {"n_drafts": 1, "rounds": 4, "n_draft_sims": 2, "n_season_sims": 10, "seed": 7}
     a = bt.compare({2024: board}, {2024: real}, **kw)
     b = bt.compare({2024: board}, {2024: real}, **kw)
     assert a.equals(b)
@@ -583,6 +583,6 @@ def test_diagnose_reports_one_row_per_requested_pick():
 def test_diagnose_advances_by_the_market_so_both_runs_share_a_path():
     """Two runs at two commits must walk the same draft, or the comparison is not one."""
     board = _full_board(n=140)
-    kw = dict(picks=(3, 22), my_slot=3, teams=12, rounds=3,
-              n_draft_sims=2, n_season_sims=10, seed=0)
+    kw = {"picks": (3, 22), "my_slot": 3, "teams": 12, "rounds": 3,
+              "n_draft_sims": 2, "n_season_sims": 10, "seed": 0}
     assert bt.diagnose(board, **kw)["held"].to_list() == bt.diagnose(board, **kw)["held"].to_list()
