@@ -302,7 +302,7 @@ def test_a_real_player_carrying_points_is_never_dropped(monkeypatch):
 
 def _participation_rows(n=1200, **over):
     base = {
-        "nflverse_game_id": [f"2024_01_A_B" for _ in range(n)],
+        "nflverse_game_id": ["2024_01_A_B" for _ in range(n)],
         "play_id": [float(i) for i in range(n)],
         "offense_personnel": ["1 RB, 1 TE, 3 WR"] * n,
         "defense_personnel": ["4 DL, 2 LB, 5 DB"] * n,

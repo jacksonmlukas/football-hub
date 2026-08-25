@@ -17,7 +17,6 @@ import polars as pl
 
 from hub.draft.state import _norm
 
-
 # The paired bootstrap, matching `hub.models.eval.compare`.
 BOOTSTRAP = 4000
 

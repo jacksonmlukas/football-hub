@@ -11,6 +11,7 @@ distribution, blend the two boards by how much of the room uses each, and answer
 question that actually drives a pick: will he still be there at my next turn?
 """
 from __future__ import annotations
+
 import numpy as np
 import polars as pl
 
@@ -150,7 +151,7 @@ def historical_picks(league_id: int, years: list[int]) -> pl.DataFrame:
                 e = ecr.get(_norm(pick.playerName))
                 if e is not None:
                     rows.append({"year": yr, "pick": float(i), "ecr": float(e)})
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"  {yr} draft history unavailable ({type(exc).__name__}); skipping.")
     return pl.DataFrame(rows, schema={"year": pl.Int64, "pick": pl.Float64,
                                       "ecr": pl.Float64})

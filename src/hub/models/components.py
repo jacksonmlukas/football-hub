@@ -27,7 +27,7 @@ fitted coefficient of variation.
 """
 from __future__ import annotations
 
-from typing import Iterable, Mapping
+from collections.abc import Iterable, Mapping
 
 import numpy as np
 import polars as pl
@@ -112,7 +112,7 @@ def _counts(rng: np.random.Generator, mean: float, phi: float, n: int) -> np.nda
         # var/mean = 1 - p for a binomial, so p is fixed by the dispersion and the number
         # of trials by the mean.
         p = 1.0 - phi
-        trials = int(round(mean / p))
+        trials = round(mean / p)
         return rng.binomial(max(trials, 1), min(mean / max(trials, 1), 1.0), n)
     return rng.poisson(mean, n)
 

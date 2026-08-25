@@ -10,6 +10,7 @@ is within position, because a TE and a WR at the same rank are not the same asse
 """
 import polars as pl
 import pytest
+
 from hub.draft.board import _impute_xfp
 
 

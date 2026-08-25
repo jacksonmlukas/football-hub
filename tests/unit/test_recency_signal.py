@@ -49,12 +49,12 @@ def test_recent_weeks_dominate_a_short_half_life():
     wk = _weekly(early + late + filler)
 
     uniform = weighted_signal(wk, half_life=None)
-    zu = dict(zip(uniform["full_name"].to_list(), uniform["z_regress"].to_list()))
+    zu = dict(zip(uniform["full_name"].to_list(), uniform["z_regress"].to_list(), strict=True))
     assert zu["early"] == pytest.approx(zu["late"]), \
         "identical season totals must give an identical uniform signal"
 
     recent = weighted_signal(wk, half_life=2.0).sort("full_name")
-    z = dict(zip(recent["full_name"].to_list(), recent["z_regress"].to_list()))
+    z = dict(zip(recent["full_name"].to_list(), recent["z_regress"].to_list(), strict=True))
     # "late" overperformed recently, so its underperformance signal is the lower one
     assert z["late"] < z["early"]
 

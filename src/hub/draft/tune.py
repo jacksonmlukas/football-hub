@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 import polars as pl
@@ -124,9 +124,9 @@ def sweep(df: pl.DataFrame, lams: Sequence[float] = DEFAULT_GRID,
         for lam in lams:
             got = [score(x, lam, top_n) for x in samples]
             deltas[float(lam)] = np.array(
-                [g[col] - b[col] for g, b in zip(got, base_scores)])
+                [g[col] - b[col] for g, b in zip(got, base_scores, strict=True)])
             rho_deltas[float(lam)] = np.array(
-                [g["spearman"] - b["spearman"] for g, b in zip(got, base_scores)])
+                [g["spearman"] - b["spearman"] for g, b in zip(got, base_scores, strict=True)])
 
     rows = []
     for lam in lams:

@@ -5,11 +5,15 @@ responds correctly to roster construction -- because that is the entire reason t
 simulate instead of ranking by VOR.
 """
 import numpy as np
-import polars as pl
 import pytest
-from hub.draft.season import (REG_SEASON_WEEKS, lineup_points, _round_robin,
-                              champion_probability,
-                              simulate_weeks)
+
+from hub.draft.season import (
+    REG_SEASON_WEEKS,
+    _round_robin,
+    champion_probability,
+    lineup_points,
+    simulate_weeks,
+)
 
 
 def _roster(spec):
@@ -47,8 +51,8 @@ def test_a_surplus_player_is_worth_nothing():
     baseline = lineup_points(sc8, np.array(full))[0, 0]
 
     sc9 = np.array([[[10.0] * 9]])
-    surplus = lineup_points(sc9, np.array(full + ["WR"]))[0, 0]
-    fills_hole = lineup_points(sc9, np.array(full + ["TE"]))[0, 0]
+    surplus = lineup_points(sc9, np.array([*full, "WR"]))[0, 0]
+    fills_hole = lineup_points(sc9, np.array([*full, "TE"]))[0, 0]
 
     assert surplus == pytest.approx(baseline), "a sixth WR must add nothing"
     assert fills_hole > baseline, "a TE fills the empty TE slot and must add its points"
@@ -231,8 +235,8 @@ def test_passing_a_single_number_still_works():
 
 def test_the_fitted_constants_are_inside_their_fitted_intervals():
     """Guard against a silent revert to a guessed value, same as the pooled one."""
+    from hub.draft.calibrate import FITTED_BY_POS, FITTED_CI95
     from hub.draft.season import TALENT_CV, TALENT_CV_BY_POS
-    from hub.draft.calibrate import FITTED_CI95, FITTED_BY_POS
     assert FITTED_CI95[0] <= TALENT_CV <= FITTED_CI95[1]
     for pos, v in TALENT_CV_BY_POS.items():
         assert v == pytest.approx(FITTED_BY_POS[pos], abs=0.01)
@@ -262,7 +266,7 @@ def test_omitting_the_skew_falls_back_to_the_positional_table():
     r = [np.array([0, 1])]
     mu, sd = np.array([14.0, 9.0]), np.array([7.0, 5.0])
     pos = np.array(["WR", "QB"])
-    kw = dict(n_sims=50, weeks=14)
+    kw = {"n_sims": 50, "weeks": 14}
     implicit = simulate_weeks(r, mu, sd, pos, rng=np.random.default_rng(7), **kw)
     explicit = simulate_weeks(r, mu, sd, pos, rng=np.random.default_rng(7),
                               skew=weekly_skew_for(pos), **kw)
@@ -313,7 +317,8 @@ def test_a_quarterback_week_is_nearly_symmetric():
                         np.array(["QB"]), n_sims=40000, talent_cv=0.0)[:, :, 0].ravel()
     wr = simulate_weeks([np.array([0])], np.array([18.0]), np.array([8.0]),
                         np.array(["WR"]), n_sims=40000, talent_cv=0.0)[:, :, 0].ravel()
-    sk = lambda x: float(((x - x.mean()) ** 3).mean() / x.std() ** 3)
+    def sk(x):
+        return float(((x - x.mean()) ** 3).mean() / x.std() ** 3)
     assert sk(qb) < sk(wr)
 
 

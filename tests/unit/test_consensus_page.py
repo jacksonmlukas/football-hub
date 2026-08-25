@@ -13,6 +13,7 @@ K or DST off this board.
 """
 import polars as pl
 import pytest
+
 from hub.contracts import ContractViolation
 from hub.draft.board import _select_consensus
 
@@ -132,8 +133,8 @@ def test_as_of_excludes_anything_scraped_after(monkeypatch):
 
 def test_the_live_path_is_untouched(monkeypatch):
     """No `as_of` must still read the small `draft` table, not the 1.8M-row archive."""
-    from hub.draft.board import consensus
     import hub.draft.board as board_mod
+    from hub.draft.board import consensus
     seen = []
 
     def _spy(which):

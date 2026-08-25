@@ -8,7 +8,6 @@ works, which here is "start your highest projections".
 Everything below runs offline. The statistics have to be exercisable without nflverse, or the
 gate is one nobody re-runs -- which is how P0 ended up unreproducible.
 """
-import numpy as np
 import polars as pl
 import pytest
 
@@ -163,3 +162,24 @@ def test_an_empty_roster_does_not_crash_the_gate():
     got = lg.compare({2024: [[]]}, {2024: _realised([])})
     assert got.height == 1
     assert got["projection"][0] == 0.0
+
+
+# --- the gate reads its inputs the way the live tool does -----------------
+
+def test_the_gate_uses_the_same_moments_object_the_simulator_does():
+    """mu and sd come from `predict.moments`, not a private copy -- so the optimiser is fed
+    exactly what it is fed live, and the gate cannot pass by being handed nicer numbers."""
+    import inspect
+
+    from hub.season import lineup_gate
+    src = inspect.getsource(lineup_gate.main)
+    assert "from hub.models.predict import moments" in src
+
+
+def test_a_roster_of_one_position_still_reports():
+    """Nine quarterbacks fills no RB slot, so the optimiser has no legal lineup. The paired
+    frame must still have a row -- a gate that drops its failures overstates its arm."""
+    r = [(f"QB{i}", "QB", 10.0, 2.0) for i in range(9)]
+    got = lg.compare({2024: [r]}, {2024: _flat(r)})
+    assert got.height == 1
+    assert got["optimiser"][0] == 0.0

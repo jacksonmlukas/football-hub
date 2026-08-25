@@ -23,7 +23,8 @@ import argparse
 import sys
 import time
 from collections import Counter
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import polars as pl
 
@@ -95,7 +96,7 @@ def refresh(board: pl.DataFrame, state: DraftState, *, my_slot: int = MY_SLOT,
 
     taken_pos: list[str] = []
     if state.taken:
-        by_name = dict(zip(board["player"].to_list(), board["pos"].to_list()))
+        by_name = dict(zip(board["player"].to_list(), board["pos"].to_list(), strict=True))
         taken_pos = [by_name[n] for n in state.taken if n in by_name]
 
     levels = _live_replacement(available, teams)
@@ -103,10 +104,11 @@ def refresh(board: pl.DataFrame, state: DraftState, *, my_slot: int = MY_SLOT,
         (pl.col("xfp_per_game") - pl.col("pos").replace_strict(levels, default=0.0))
         .alias("vor_live"))
 
-    from hub.draft.state import roster_for, unmatched as unmatched_picks
+    from hub.draft.state import roster_for
+    from hub.draft.state import unmatched as unmatched_picks
 
     held = roster_for(state, slot=my_slot, teams=teams, rounds=rounds)
-    by_name = dict(zip(board["player"].to_list(), board["pos"].to_list()))
+    by_name = dict(zip(board["player"].to_list(), board["pos"].to_list(), strict=True))
     roster = Counter(by_name[n] for n in held if n in by_name)
 
     picks = my_picks(rounds)
@@ -194,7 +196,7 @@ def render(view: dict[str, Any]) -> list[str]:
     for r in top.iter_rows(named=True):
         edge = r.get("edge")
         fills = "*" if r["pos"] in need else " "
-        out.append(f"  {fills} {str(r['player'])[:22]:<22} {str(r['pos'] or ''):<3} "
+        out.append(f"  {fills} {str(r['player'])[:22]:<22} {r['pos'] or ''!s:<3} "
                    f"vor {r['vor_live']:>5.1f}  "
                    f"edge {'-' if edge is None else format(edge, '>6.1f')}  "
                    f"sd {r.get('ecr_sd') or 0:>4.1f}")

@@ -65,7 +65,7 @@ def test_positions_are_respected():
 
 def test_a_quarterback_cannot_fill_the_flex():
     """FLEX is RB/WR/TE. A second QB on the roster must stay on the bench however good."""
-    roster = BASE + [("qb2", "QB", 40.0, 2.0)]
+    roster = [*BASE, ("qb2", "QB", 40.0, 2.0)]
     got = lineup.optimize(_players(roster), opp_mu=90.0, opp_sd=25.0)
     assert got["starters"].filter(pl.col("pos") == "QB").height == 1
 
@@ -84,7 +84,7 @@ def _matchup_roster():
     `safe` has the higher mean and almost no spread. `boom` is worse on average and wildly
     volatile. Which one starts is the entire question this module exists to answer.
     """
-    return BASE[:-1] + [("safe", "RB", 10.0, 1.0), ("boom", "RB", 8.0, 14.0)]
+    return [*BASE[:-1], ("safe", "RB", 10.0, 1.0), ("boom", "RB", 8.0, 14.0)]
 
 
 def test_a_heavy_underdog_starts_the_boom_player():
@@ -99,7 +99,7 @@ def _favourite_roster():
     the higher spread. A max-points optimizer starts him unconditionally, so this is the
     roster that tells the two objectives apart when you are ahead.
     """
-    return BASE[:-1] + [("steady", "RB", 10.0, 1.0), ("risky", "RB", 13.0, 16.0)]
+    return [*BASE[:-1], ("steady", "RB", 10.0, 1.0), ("risky", "RB", 13.0, 16.0)]
 
 
 def test_a_heavy_favourite_declines_projected_points_for_a_floor():
@@ -188,13 +188,13 @@ def test_the_opponent_is_modelled_as_starting_their_best_projection():
     """`docs/championship-leverage.md`: start from "they start their highest ESPN
     projection". Assuming they optimise against *you* would be modelling an opponent
     nobody in this league is."""
-    opp = lineup.opponent_moments(_players(BASE + [("bench", "WR", 1.0, 1.0)]))
+    opp = lineup.opponent_moments(_players([*BASE, ("bench", "WR", 1.0, 1.0)]))
     assert opp["mu"] == pytest.approx(lineup.best_by_points(_players(BASE))["mu"])
 
 
 def test_a_bigger_roster_never_lowers_the_opponents_projection():
     small = lineup.opponent_moments(_players(BASE))
-    big = lineup.opponent_moments(_players(BASE + [("star", "WR", 25.0, 6.0)]))
+    big = lineup.opponent_moments(_players([*BASE, ("star", "WR", 25.0, 6.0)]))
     assert big["mu"] >= small["mu"]
 
 
@@ -211,7 +211,7 @@ def test_an_absurd_roster_is_refused_rather_than_silently_sampled():
 
 
 def test_a_player_on_bye_does_not_start_over_a_playable_one():
-    roster = BASE[:-1] + [("bye", "RB", 0.0, 0.0), ("plays", "RB", 6.0, 3.0)]
+    roster = [*BASE[:-1], ("bye", "RB", 0.0, 0.0), ("plays", "RB", 6.0, 3.0)]
     got = lineup.optimize(_players(roster), opp_mu=90.0, opp_sd=25.0)
     assert "bye" not in got["starters"]["player"].to_list()
 

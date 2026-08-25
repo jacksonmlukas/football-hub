@@ -33,6 +33,22 @@ packages = ["src/hub"]
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.lint]
+# Selected explicitly. With no `select`, the lint contract is whatever the installed ruff
+# version happens to default to -- and that default has drifted: `ruff check src tests` (what
+# CI runs) reported 186 errors under 0.16 against 31 under the documented E4/E7/E9/F. A gate
+# whose strictness changes when a dependency updates is not a gate.
+#
+# DTZ is deliberately NOT selected yet: 26 naive `datetime.now()` calls are real -- a
+# prediction timestamped without a timezone is ambiguous in a repo that audits itself by date
+# -- but fixing them changes stored values, which is not freeze-week work. Tracked in
+# docs/next.md.
+select = ["E", "F", "I", "UP", "B", "C4", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests build frames inline and shadow fixtures deliberately.
+"tests/*" = ["E501"]
+
 [tool.pyrefly]
 project-includes = ["src", "tests"]
 # CRITICAL: an unconfigured project defaults to the `basic` preset, which silences most

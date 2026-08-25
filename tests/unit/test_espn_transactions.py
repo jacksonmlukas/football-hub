@@ -13,7 +13,6 @@ The one arithmetic trap is that a trade increments the counter on *both* teams, 
 league total is half the sum. Getting that wrong doubles the answer and could flip the
 build/skip decision, so it is pinned here.
 """
-import polars as pl
 import pytest
 
 from hub.fetch import espn

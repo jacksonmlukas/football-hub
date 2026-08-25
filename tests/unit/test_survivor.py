@@ -65,7 +65,7 @@ def test_it_beats_the_greedy_pick():
     grid = _grid([(1, "A", 0.90), (1, "B", 0.85),
                   (2, "A", 0.90), (2, "B", 0.50)])
     plan = survivor.solve(grid, weeks=[1, 2])
-    picks = dict(zip(plan["week"].to_list(), plan["team"].to_list()))
+    picks = dict(zip(plan["week"].to_list(), plan["team"].to_list(), strict=True))
     assert picks == {1: "B", 2: "A"}
 
 
@@ -83,7 +83,7 @@ def test_survival_is_multiplicative_not_additive():
     grid = _grid([(1, "X", 0.50), (1, "Y", 0.70),
                   (2, "X", 0.75), (2, "Y", 0.99)])
     plan = survivor.solve(grid, weeks=[1, 2])
-    picks = dict(zip(plan["week"].to_list(), plan["team"].to_list()))
+    picks = dict(zip(plan["week"].to_list(), plan["team"].to_list(), strict=True))
     assert picks == {1: "Y", 2: "X"}
     assert survivor.survival(plan) == pytest.approx(0.525)
 
@@ -188,7 +188,7 @@ def test_the_home_favourite_is_the_one_with_the_higher_win_probability():
     with pytest.MonkeyPatch.context() as m:
         m.setattr(nflverse, "load", lambda *a, **k: sched)
         grid = survivor.grid_from_schedule(2026)
-    p = dict(zip(grid["team"].to_list(), grid["win_prob"].to_list()))
+    p = dict(zip(grid["team"].to_list(), grid["win_prob"].to_list(), strict=True))
     assert p["KC"] > 0.5 < 1.0 and p["LV"] < 0.5
     assert p["KC"] + p["LV"] == pytest.approx(1.0)
 

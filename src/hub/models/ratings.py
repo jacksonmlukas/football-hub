@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence, cast
+from typing import cast
 
 import polars as pl
 
@@ -127,7 +128,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     try:
         fit(a.season, a.week)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"hub.models.ratings: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
     return 0

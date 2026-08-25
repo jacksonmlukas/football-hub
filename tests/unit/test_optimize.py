@@ -7,11 +7,16 @@ probability rather than a score.
 import numpy as np
 import polars as pl
 import pytest
+
 from hub.draft import optimize
-from hub.draft.optimize import (market_pick, rank_tiers,
-                                simulate_remaining_draft,
-                                tag_for,
-                                win_probability, _need_score)
+from hub.draft.optimize import (
+    _need_score,
+    market_pick,
+    rank_tiers,
+    simulate_remaining_draft,
+    tag_for,
+    win_probability,
+)
 from hub.draft.season import STARTERS
 from hub.draft.state import DraftState, take
 
@@ -141,7 +146,7 @@ def test_output_is_sorted_and_carries_a_field_baseline():
 
 
 def test_is_deterministic_under_a_fixed_seed():
-    kw = dict(my_slot=3, rounds=8, n_draft_sims=2, n_season_sims=40, seed=7)
+    kw = {"my_slot": 3, "rounds": 8, "n_draft_sims": 2, "n_season_sims": 40, "seed": 7}
     a = win_probability(_board(), DraftState(), ["P0"], **kw)["p_win"][0]
     b = win_probability(_board(), DraftState(), ["P0"], **kw)["p_win"][0]
     assert a == b
@@ -153,6 +158,7 @@ def test_the_draft_optimizer_prices_stacks():
     variance in exactly the weeks a stack is for. The pool carries NFL team already, so the
     only thing needed was to pass it through."""
     import inspect as _inspect
+
     from hub.draft import optimize as _opt
     src = _inspect.getsource(_opt.win_probability)
     assert "nfl_team" in src, "champion_probability must receive NFL team identity"
@@ -169,7 +175,7 @@ def test_candidates_the_simulation_cannot_separate_are_marked_as_tied():
                        "lift": [0.035, 0.033, -0.050],
                        "lift_se": [0.005, 0.005, 0.006]})
     got = rank_tiers(df)
-    lead = dict(zip(got["player"].to_list(), got["co_leader"].to_list()))
+    lead = dict(zip(got["player"].to_list(), got["co_leader"].to_list(), strict=True))
     assert lead["A"] and lead["B"], "0.002 apart with se 0.005 is not a distinction"
     assert not lead["C"]
 
@@ -450,7 +456,7 @@ def test_the_curve_is_monotone_in_projection():
     import numpy as np
     noisy = _corr_board().with_columns(
         pl.Series("adp", [float(i + 1) + (30.0 if i == 60 else 0.0) for i in range(120)]))
-    xs, ys = optimize.market_curve(noisy["adp"].to_numpy(), noisy["proj_blend"].to_numpy())
+    _xs, ys = optimize.market_curve(noisy["adp"].to_numpy(), noisy["proj_blend"].to_numpy())
     assert (np.diff(ys) <= 1e-9).all(), "curve must be non-increasing in projection"
 
 

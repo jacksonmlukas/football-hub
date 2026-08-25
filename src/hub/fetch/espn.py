@@ -7,10 +7,14 @@ Both break without notice. Every call here retries across hostname and User-Agen
 variants before giving up, and falls back to last-good cached state.
 """
 from __future__ import annotations
-import json, os, time
+
+import json
+import os
+import time
 from pathlib import Path
-import requests
+
 import polars as pl
+import requests
 
 CACHE = Path(__file__).resolve().parents[3] / "data" / "raw" / "espn"
 CACHE.mkdir(parents=True, exist_ok=True)
@@ -39,7 +43,7 @@ def _get(path: str, params: dict | None = None, cache_key: str | None = None) ->
                 if cache_key:
                     (CACHE / f"{cache_key}.json").write_text(json.dumps(data))
                 return data
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 last = e
     # Graceful degradation: serve last-good rather than raising into the dashboard.
     if cache_key and (CACHE / f"{cache_key}.json").exists():
@@ -113,13 +117,13 @@ def poll(interval: int = 45, league: str = "nfl", out: Path | None = None,
                         s = summary(gid, league)
                         wp = (s.get("winprobability") or [{}])[-1]
                         detail[gid] = {"home_win_prob": wp.get("homeWinPercentage")}
-                    except Exception:  # noqa: BLE001, S112
+                    except Exception:
                         continue
             out.write_text(json.dumps({"ts": time.time(), "games": state, "detail": detail}))
             live = sum(g["state"] == "in" for g in state)
             print(f"[{time.strftime('%H:%M:%S')}] {len(state)} games, {live} live"
                   f"{f', {len(detail)} detailed' if detail else ''}", flush=True)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"poll error (serving stale): {e!r}", flush=True)
         tick += 1
         time.sleep(interval)

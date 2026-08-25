@@ -21,8 +21,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import polars as pl
 
@@ -60,7 +60,7 @@ def rolling_coverage(df: pl.DataFrame, alpha: float = DEFAULT_ALPHA,
     """
     df = df.with_columns(
         (pl.col("margin_actual") - pl.col("margin_mean")).alias("residual"))
-    weeks = sorted(set(int(w) for w in df["week"].to_list()))
+    weeks = sorted({int(w) for w in df["week"].to_list()})
 
     by_week, covered, total, widths, cal_ns = [], 0, 0, [], []
     for w in weeks:

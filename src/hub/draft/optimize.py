@@ -43,8 +43,8 @@ both sides of it. Rank on `lift`, check it clears two standard errors, and ignor
 from __future__ import annotations
 
 import collections
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 import numpy as np
 import polars as pl

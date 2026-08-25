@@ -14,6 +14,7 @@ Two properties carry that:
 """
 import polars as pl
 import pytest
+
 from hub import inspect as ins
 
 

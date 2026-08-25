@@ -11,23 +11,28 @@ your leaguemates, drafting off ESPN's default board, will let this player fall.
 Runs without cookies (ECR + xFP only). Add ESPN creds for the ADP diff.
 """
 from __future__ import annotations
-import argparse, collections, json, sys
+
+import argparse
+import itertools
+import json
+import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+
+import nflreadpy as nfl
 import numpy as np
 import polars as pl
 
 from hub.config import RosterConfig, flex_positions, flex_share, starters
 from hub.contracts import DRAFT_BOARD, ContractViolation
-from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
-from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft import durability
 from hub.draft import regression as td_regression
+from hub.draft import state as state_mod
+from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
+from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.state import DraftState, _norm, remaining
-from hub.draft import state as state_mod
-import nflreadpy as nfl
 
 ROOT = Path(__file__).resolve().parents[3]
 OUT = ROOT / "site" / "data"
@@ -192,7 +197,7 @@ def espn_adp(league_size: int = 12, season: int = SEASON_AHEAD) -> pl.DataFrame 
     try:
         from hub.fetch.espn import player_market
         adp = player_market(season=season)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  ESPN ADP unavailable ({type(e).__name__}); running ECR-only mode.")
         return None
 
@@ -376,7 +381,7 @@ def build(league_size: int = 12, season: int = 2025, *,
     ecr = consensus(as_of)
     levels = replacement_levels(xp["position"], xp["xfp_per_game"], xp["games"],
                                 league_size)
-    print(f"  replacement (xFP/gm): " + ", ".join(f"{k}={v:.1f}" for k, v in levels.items()))
+    print("  replacement (xFP/gm): " + ", ".join(f"{k}={v:.1f}" for k, v in levels.items()))
 
     # Impute before VOR, not after: a rookie with no prior-season xFP still has a
     # consensus rank, and leaving him null propagates a zero all the way into the season
@@ -396,7 +401,7 @@ def build(league_size: int = 12, season: int = 2025, *,
     try:
         board = attach_sos(board, playoff_sos(season_ahead=season_ahead, dvp_season=season))
         report.sos = True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  weeks 15-17 SoS unavailable ({type(e).__name__}); board built without it.")
 
     # Touchdown luck from last season's actuals. Its own try: it reaches nflverse, and a
@@ -405,7 +410,7 @@ def build(league_size: int = 12, season: int = 2025, *,
     try:
         board = td_regression.attach(board, td_regression.prior_season(season))
         report.td_luck = True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  touchdown luck unavailable ({type(e).__name__}); board built without it.")
 
     # The league owns the scoring weights, so check ours against them rather than assuming.
@@ -426,7 +431,7 @@ def build(league_size: int = 12, season: int = 2025, *,
                 print(f"    {k}: league {theirs}, this repo {ours}")
             print("  Every projection below is scored on the wrong weights until that is fixed.")
         report.scoring_checked = True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         if live:
             print(f"  scoring check unavailable ({type(e).__name__}); assuming full PPR.")
 
@@ -449,7 +454,7 @@ def build(league_size: int = 12, season: int = 2025, *,
                 print(f"    {k}: league {theirs}, this repo {ours}")
             print("  Replacement level and every VOR below assume this repo's shape.")
         report.roster_checked = True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         if live:
             print(f"  roster check unavailable ({type(e).__name__}); assuming {SLOTS}.")
 
@@ -457,7 +462,7 @@ def build(league_size: int = 12, season: int = 2025, *,
     try:
         board = durability.attach(board, durability.prior_season(season))
         report.durability = True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  durability unavailable ({type(e).__name__}); board built without it.")
 
     adp = espn_adp(league_size, season_ahead) if live else None
@@ -578,7 +583,7 @@ def _print_injuries(board: pl.DataFrame, report: BuildReport) -> None:
         frail = pool.filter(pl.col("missed").is_not_null()
                             & (pl.col("missed") >= 4)).sort("missed", descending=True)
         if frail.height:
-            print(f"\n  Missed time last season -- priced for QB and WR only")
+            print("\n  Missed time last season -- priced for QB and WR only")
             print("  Running backs are left alone: the market already discounts them.")
             for r in frail.head(6).iter_rows(named=True):
                 pos = r["pos"] or ""
@@ -645,7 +650,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if a.fit_noise:
         import os
+
         from dotenv import load_dotenv
+
         from hub.draft.availability import fit_pick_noise
         load_dotenv()
         fit_pick_noise(int(os.environ["ESPN_LEAGUE_ID"]), [a.season - 2, a.season - 1])
@@ -667,7 +674,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if a.show_slots:
         picks = my_picks()
-        waits = [b - x for x, b in zip(picks, picks[1:])]
+        waits = [b - x for x, b in itertools.pairwise(picks)]
         print(f"  teams {TEAMS} | slot {MY_SLOT} | starters "
               + " ".join(f"{k}{v}" for k, v in SLOTS.items()))
         print(f"  drafted positions: {'/'.join(DRAFTED_POSITIONS)}")

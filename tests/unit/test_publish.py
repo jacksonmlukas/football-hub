@@ -128,7 +128,7 @@ def test_a_perfectly_calibrated_set_shows_it():
     won = [1] * (n // 4) + [0] * (n - n // 4)
     bins = publish.reliability(pl.DataFrame({"home_win_prob": probs, "home_won": won}),
                                n_bins=4)
-    hit = [b for b in bins if b["n"]][0]
+    hit = next(b for b in bins if b["n"])
     assert abs(hit["predicted"] - hit["actual"]) < 0.02
 
 

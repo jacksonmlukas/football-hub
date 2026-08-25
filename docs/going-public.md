@@ -38,7 +38,9 @@ waiting.
    credential anyway. Assume anything ever committed is compromised.
 4. Flip to public.
 5. Settings > Pages > deploy from `main`.
-6. Re-enable the watchdog cron in `.github/workflows/watchdog.yml`.
+6. Re-enable the watchdog cron in `.github/workflows/watchdog.yml`, **and** the
+   `schedule:` trigger in `.github/workflows/ci.yml` — the `golden` job gates on
+   `event_name == 'schedule'` and has never once run, because the trigger was absent.
 7. Run `scripts/bootstrap_project.sh` to seed the project board.
 
 ## Scope: cut

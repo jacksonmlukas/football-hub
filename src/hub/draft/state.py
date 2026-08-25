@@ -9,6 +9,7 @@ State is an ordered list of picks, which is all we need: your roster is derivabl
 your slot and the snake order, so there is nothing to keep in sync.
 """
 from __future__ import annotations
+
 import json
 import re
 import unicodedata
@@ -55,7 +56,7 @@ def load(path: Path = STATE) -> DraftState:
     """
     try:
         return DraftState(taken=list(json.loads(Path(path).read_text())["taken"]))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return DraftState()
 
 
@@ -166,7 +167,7 @@ def sync_from_espn(year: int | None = None, quiet: bool = False,
                 print("  ESPN draft is empty (not started?); keeping local state.")
             return load()
         return DraftState(taken=picks)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         if not quiet:
             print(f"  ESPN draft unavailable ({type(e).__name__}); keeping local state.")
         return load()
@@ -180,6 +181,7 @@ def _league(year: int, league_id: int | None = None):
     everything except the live path.
     """
     import os
+
     from dotenv import load_dotenv
     from espn_api.football import League
     load_dotenv()

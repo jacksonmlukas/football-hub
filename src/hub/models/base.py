@@ -9,9 +9,11 @@ The payoff is that "does the Bayesian model beat the market" becomes a compariso
 objects implementing the same protocol, rather than a bespoke script per model.
 """
 from __future__ import annotations
+
+import hashlib
 from dataclasses import dataclass
 from typing import Literal, Protocol, cast, runtime_checkable
-import hashlib
+
 import polars as pl
 
 League = Literal["nfl", "cfb"]
@@ -65,7 +67,7 @@ class Forecaster(Protocol):
 
     name: str
 
-    def fit(self, spec: FitSpec) -> "Forecaster":
+    def fit(self, spec: FitSpec) -> Forecaster:
         """Fit on data through spec.through_week. Returns self for chaining."""
         ...
 
@@ -126,11 +128,11 @@ class Conformalized:
     def version(self) -> str:
         return f"{self.base.version}+cp{self.alpha}"
 
-    def fit(self, spec: FitSpec) -> "Conformalized":
+    def fit(self, spec: FitSpec) -> Conformalized:
         self.base.fit(spec)
         return self
 
-    def calibrate(self, residuals: pl.Series) -> "Conformalized":
+    def calibrate(self, residuals: pl.Series) -> Conformalized:
         """Split-conformal quantile of absolute residuals on a held-out window."""
         n = residuals.len()
         if n < 20:

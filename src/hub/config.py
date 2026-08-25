@@ -18,9 +18,11 @@ So: if you find yourself typing a float into a module, ask which kind it is. A c
 in this file. A measurement belongs beside the evidence for it, in a module this file hashes.
 """
 from __future__ import annotations
+
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, cast
-import hashlib
+
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 

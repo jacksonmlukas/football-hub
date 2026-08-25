@@ -11,6 +11,7 @@ fitted is sigma, which is what these tests cover.
 import numpy as np
 import polars as pl
 import pytest
+
 from hub.draft import availability as av
 
 

@@ -83,7 +83,11 @@ def test_a_correction_does_not_overwrite_the_original(base):
 
 
 def test_querying_an_absent_table_fails_loudly(base):
-    with pytest.raises(Exception):
+    """Named, not blind. `pytest.raises(Exception)` also passes when the import is wrong or
+    the fixture is broken, so it can go green while testing nothing."""
+    import duckdb
+
+    with pytest.raises(duckdb.CatalogException, match="lines"):
         store.sql("SELECT * FROM lines", base=base)
 
 
@@ -235,7 +239,7 @@ def test_verify_converts_spread_to_a_probability_on_the_right_side(fake_nflverse
                    ("dog", -7.0, "2025-09-04", "13:00")])
     store.verify(season=2025, base=base)
     got = store.sql("SELECT game_id, home_win_prob FROM preds ORDER BY game_id", base=base)
-    probs = dict(zip(got["game_id"].to_list(), got["home_win_prob"].to_list()))
+    probs = dict(zip(got["game_id"].to_list(), got["home_win_prob"].to_list(), strict=True))
     assert probs["fav"] > 0.5 > probs["dog"]
 
 

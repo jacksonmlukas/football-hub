@@ -10,6 +10,7 @@ instead of shipping an edge column with nothing in it?
 """
 import polars as pl
 import pytest
+
 from hub.draft import board
 
 

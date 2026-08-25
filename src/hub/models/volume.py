@@ -25,7 +25,7 @@ edge that nobody demonstrated.
 from __future__ import annotations
 
 import math
-from typing import Mapping
+from collections.abc import Mapping
 
 from hub.models import components as C
 
@@ -162,6 +162,6 @@ def decompose(pick: float, position: str, target_ppg: float) -> dict[str, float]
     prior = pick_prior(pick, position)
     base = C.points(prior)
     if not prior or base <= 0 or target_ppg <= 0:
-        return {k: 0.0 for k in prior} if prior else {}
+        return dict.fromkeys(prior, 0.0) if prior else {}
     scale = float(target_ppg) / base
     return {k: v * scale for k, v in prior.items()}

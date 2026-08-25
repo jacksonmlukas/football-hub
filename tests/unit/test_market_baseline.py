@@ -12,12 +12,11 @@ naive-but-real beats sophisticated-but-absent: returning the market prior unchan
 The interesting tests are the sign convention and the leakage tripwire. Both are the kind
 of error that leaves a backtest running happily while being exactly wrong.
 """
-import datetime as dt
 
 import polars as pl
 import pytest
 
-from hub.models.base import FitSpec, Forecaster, PREDICTION_SCHEMA, validate_predictions
+from hub.models.base import PREDICTION_SCHEMA, FitSpec, Forecaster, validate_predictions
 from hub.models.market import MarketBaseline
 
 

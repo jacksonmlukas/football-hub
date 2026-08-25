@@ -19,10 +19,8 @@ everyone's scores roughly equally, so it distorts P(win) far less than it distor
 from __future__ import annotations
 
 import numpy as np
-import polars as pl
 
-from hub.config import (RosterConfig, flex_capacity, flex_positions,
-                        required_starters)
+from hub.config import RosterConfig, flex_capacity, flex_positions, required_starters
 
 # QB1 / RB2 / WR3 / TE1 / FLEX1 -- confirmed against the live league, not the ESPN default.
 # Derived from `hub.config.RosterConfig` rather than restated: this module is "how a league
@@ -45,9 +43,18 @@ PLAYOFF_TEAMS = 6
 # and that alias outlived the function it named: `moments` returns three moments, so the
 # name promised a shape the object no longer had. Callers wanting a player-level
 # prediction import it from `hub.models.predict`, which is where it lives.
-from hub.models.predict import (  # noqa: F401
-    MIN_SKEW, TALENT_CV, TALENT_CV_BY_POS, WEEKLY_K, WEEKLY_K_POOLED, WEEKLY_SKEW,
-    WEEKLY_SKEW_POOLED, correlated_normal, skewed, talent_cv_for, weekly_skew_for,
+from hub.models.predict import (  # noqa: F401,E402
+    MIN_SKEW,
+    TALENT_CV,
+    TALENT_CV_BY_POS,
+    WEEKLY_K,
+    WEEKLY_K_POOLED,
+    WEEKLY_SKEW,
+    WEEKLY_SKEW_POOLED,
+    correlated_normal,
+    skewed,
+    talent_cv_for,
+    weekly_skew_for,
 )
 
 _skewed = skewed

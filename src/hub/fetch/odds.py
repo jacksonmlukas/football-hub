@@ -28,9 +28,10 @@ import json
 import os
 import statistics
 import sys
-from datetime import datetime, timezone
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import polars as pl
 
@@ -68,7 +69,7 @@ def _api_key() -> str | None:
 def _read_state(path: Path | None) -> dict[str, Any]:
     try:
         return json.loads(Path(path or STATE).read_text())
-    except Exception:  # noqa: BLE001
+    except Exception:
         return {}
 
 
@@ -105,7 +106,7 @@ def _team_abbrs() -> dict[str, str]:
     """
     import nflreadpy as nfl
     t = nfl.load_teams()
-    return dict(zip(t["team_name"].to_list(), t["team_abbr"].to_list()))
+    return dict(zip(t["team_name"].to_list(), t["team_abbr"].to_list(), strict=True))
 
 
 def _schedule(season: int) -> pl.DataFrame:
@@ -150,7 +151,7 @@ def snapshot(season: int = 2026, *, markets: str = MARKET, regions: str = REGION
             f"regions={regions!r}: cost is markets x regions, so this is "
             f"{len(regions.split(','))} credits per call instead of one.")
 
-    when = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    when = now or datetime.now(UTC).replace(tzinfo=None)
     have = credits_remaining(state_path)
     if have is not None and have < floor:
         raise QuotaFloor(

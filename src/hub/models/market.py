@@ -47,7 +47,7 @@ class MarketBaseline:
         self.margin_sd = margin_sd
         self._spec: FitSpec | None = None
 
-    def fit(self, spec: FitSpec) -> "MarketBaseline":
+    def fit(self, spec: FitSpec) -> MarketBaseline:
         self._spec = spec
         return self
 

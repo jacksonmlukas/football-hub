@@ -14,7 +14,6 @@ writing indistinguishable rows into a public track record that claims a specific
 a specific prediction.
 """
 import polars as pl
-import pytest
 
 from hub.config import HubConfig, ModelConfig, config_digest
 from hub.models import ratings

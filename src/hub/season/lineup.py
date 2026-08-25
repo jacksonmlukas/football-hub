@@ -38,7 +38,7 @@ import argparse
 import itertools
 import math
 import sys
-from typing import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 
 import polars as pl
 
@@ -102,7 +102,7 @@ def _legal_lineups(pos: Sequence[str], slots: Mapping[str, int],
         for f in flex_pool:
             if f not in used:
                 found = True
-                yield base + (f,)
+                yield (*base, f)
     if not found:
         raise NoLegalLineup("no player is left over to fill the flex")
 

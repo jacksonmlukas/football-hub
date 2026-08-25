@@ -14,7 +14,6 @@ A skip is honest; a pass would claim verification that did not happen.
 import json
 from pathlib import Path
 
-import polars as pl
 import pytest
 
 from hub.contracts import FF_OPPORTUNITY, PBP, SCHEDULES

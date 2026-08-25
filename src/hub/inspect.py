@@ -24,8 +24,9 @@ from __future__ import annotations
 import argparse
 import sys
 from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence, cast
+from typing import cast
 
 import polars as pl
 
@@ -83,6 +84,18 @@ def resolve(name: str, base: Path | None = None) -> list[Path]:
 
 def _scan(paths: Sequence[Path]) -> pl.LazyFrame:
     return pl.scan_parquet([str(p) for p in paths])
+
+
+# Aggregation key separator. A NUL cannot occur in a column name, so `col + SEP + stat`
+# round-trips unambiguously however the column is spelled.
+#
+# It is a named constant rather than an inline "\x00" because a backslash escape inside an
+# f-string *expression* is Python 3.12 syntax, and this project supports 3.11 -- so the
+# inline version made `hub.inspect` a SyntaxError on the floor version. That matters more
+# here than anywhere else: this module is what the data-read guard tells every agent to use
+# instead of `cat`, so on 3.11 the recommended escape hatch failed to import.
+SEP = chr(0)
+_STATS = ("count", "mean", "std", "min", "max")
 
 
 def _schema(paths: Sequence[Path]) -> dict[str, pl.DataType]:
@@ -172,13 +185,7 @@ def describe_lines(paths: Sequence[Path]) -> list[str]:
 
     aggs = []
     for c in numeric:
-        aggs += [
-            pl.col(c).count().alias(f"{c}\x00count"),
-            pl.col(c).mean().alias(f"{c}\x00mean"),
-            pl.col(c).std().alias(f"{c}\x00std"),
-            pl.col(c).min().alias(f"{c}\x00min"),
-            pl.col(c).max().alias(f"{c}\x00max"),
-        ]
+        aggs += [getattr(pl.col(c), stat)().alias(c + SEP + stat) for stat in _STATS]
     got = _scan(paths).select(aggs).collect().row(0, named=True)
 
     def num(key: str) -> str:
@@ -187,9 +194,8 @@ def describe_lines(paths: Sequence[Path]) -> list[str]:
 
     out = [f"  {'column':<24} {'count':>8} {'mean':>10} {'std':>10} {'min':>10} {'max':>10}"]
     for c in numeric:
-        out.append(f"  {c[:24]:<24} {num(f'{c}\x00count'):>8} {num(f'{c}\x00mean'):>10} "
-                   f"{num(f'{c}\x00std'):>10} {num(f'{c}\x00min'):>10} "
-                   f"{num(f'{c}\x00max'):>10}")
+        cells = " ".join(f"{num(c + SEP + stat):>10}" for stat in _STATS[1:])
+        out.append(f"  {c[:24]:<24} {num(c + SEP + 'count'):>8} {cells}")
     return out
 
 

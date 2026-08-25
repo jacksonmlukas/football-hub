@@ -1,9 +1,21 @@
 """The config exists to make model versions honest. These tests pin that."""
-import pytest
-from hub.config import (FITTED_EXTRA, FITTED_MODULES, NOT_FITTED, DraftConfig, HubConfig, PollConfig,
-                        RosterConfig, config_digest, fitted_constants, fitted_digest,
-                        flex_capacity, flex_positions, flex_share, required_starters,
-                        roster_mismatch, starters)
+from hub.config import (
+    FITTED_MODULES,
+    NOT_FITTED,
+    DraftConfig,
+    HubConfig,
+    PollConfig,
+    RosterConfig,
+    config_digest,
+    fitted_constants,
+    fitted_digest,
+    flex_capacity,
+    flex_positions,
+    flex_share,
+    required_starters,
+    roster_mismatch,
+    starters,
+)
 
 
 def test_digest_is_stable_across_identical_configs():
@@ -92,9 +104,9 @@ def test_every_module_holding_a_fitted_constant_is_registered():
             tree = ast.parse(path.read_text())
             for node in tree.body:
                 if isinstance(node, ast.Assign):
-                    targets, value = node.targets, node.value
+                    targets = node.targets
                 elif isinstance(node, ast.AnnAssign) and node.value is not None:
-                    targets, value = [node.target], node.value
+                    targets = [node.target]
                 else:
                     continue
                 for t in targets:

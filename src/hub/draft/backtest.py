@@ -1,6 +1,7 @@
 """Does championship equity beat the draft market? Measured on realised outcomes.
 
-This is P0 built as code, per [ADR-0007](../../../docs/adr/0007-measurements-that-steer-the-product-are-committed-code.md).
+This is P0 built as code, per ADR-0007 (a measurement that steers the product must be
+committed code).
 The original P0 ran in an afternoon and committed nothing: both its commits touch
 `docs/next.md` and nothing else, so the +0.04 [-3.64, +3.58] that demoted championship equity
 to a tiebreaker cannot be reproduced. Two departures from its own pre-registered design went
@@ -38,18 +39,23 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 import polars as pl
 
-from hub.config import DraftConfig, RosterConfig, config_digest, HubConfig
-from hub.draft.optimize import (DEFAULT_ROUNDS, market_pick, rank_tiers,
-                                simulate_remaining_draft, win_probability)
+from hub.config import DraftConfig, HubConfig, RosterConfig, config_digest
+from hub.draft.optimize import (
+    DEFAULT_ROUNDS,
+    market_pick,
+    rank_tiers,
+    simulate_remaining_draft,
+    win_probability,
+)
 from hub.draft.season import REG_SEASON_WEEKS, lineup_points
-from hub.models.measure import BOOTSTRAP, realised_ppg, summarise  # noqa: F401
 from hub.draft.state import DraftState, _norm
+from hub.models.measure import BOOTSTRAP, realised_ppg, summarise  # noqa: F401
 
 # Gaps between this harness and the tool it audits. Written here rather than in the result,
 # because a limitation discovered after the numbers is a rationalisation.
@@ -98,7 +104,7 @@ def _pool_index(pool: pl.DataFrame, name: str) -> int:
 def market_strategy(by: str = "ecr"):
     """Arm A. Best available in `by` that fills an unfilled starting slot."""
     def pick(pool, live, counts, taken):
-        avail = pool[list(int(i) for i in live)]
+        avail = pool[[int(i) for i in live]]
         name = market_pick(avail, counts, by=by)
         if name is None:
             return int(live[0])
@@ -126,9 +132,9 @@ def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds:
         try:
             _, rec = recommend(board, overall, rounds=rounds, state=state)
         except ValueError:
-            rec = pool[list(int(i) for i in live)].head(10)
+            rec = pool[[int(i) for i in live]].head(10)
         names = [n for n in rec["player"].to_list()
-                 if n in set(pool["player"][list(int(i) for i in live)].to_list())]
+                 if n in set(pool["player"][[int(i) for i in live]].to_list())]
         if not names:
             return int(live[0])
         if len(names) == 1:
@@ -244,7 +250,7 @@ def diagnose(board: pl.DataFrame, *, picks: Sequence[int] = DIAGNOSE_PICKS,
                     board, state, names, my_slot=my_slot, teams=teams, rounds=rounds,
                     n_draft_sims=n_draft_sims, n_season_sims=n_season_sims, seed=seed))
                 top = wp.row(0, named=True)
-                pos_of = dict(zip(board["player"].to_list(), board["pos"].to_list()))
+                pos_of = dict(zip(board["player"].to_list(), board["pos"].to_list(), strict=True))
                 # Does any co-leader fill a slot you cannot currently start? The tripwire
                 # needs this: a need-filling candidate the simulation cannot separate from
                 # the leader means the objective has not *rejected* need, it has declined
@@ -408,7 +414,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  {'player':<24} {'pos':<4} {'ADP':>6} {'->':>2} {'corrected':>9} "
               f"{'move':>7} {'ppg corr':>9}")
         for r in rep.head(20).iter_rows(named=True):
-            print(f"  {str(r['player'])[:24]:<24} {str(r['pos'] or ''):<4} "
+            print(f"  {str(r['player'])[:24]:<24} {r['pos'] or ''!s:<4} "
                   f"{r['adp']:>6.1f} {'->':>2} {r['adp_corrected']:>9.1f} "
                   f"{r['move']:>+7.1f} {r['proj_correction']:>+9.2f}")
         if rep.height > 20:
@@ -455,7 +461,7 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"{'lift':>7}  {'co-led':>6}  {'cands':>5}")
         for r in got.iter_rows(named=True):
             print(f"  {r['pick']:>4}  {r['held']:<16} {str(r['leader'])[:24]:<24} "
-                  f"{str(r['leader_pos'] or ''):<4} {r['lift']*100:>+6.2f}%  "
+                  f"{r['leader_pos'] or ''!s:<4} {r['lift']*100:>+6.2f}%  "
                   f"{r['co_leaders']:>6}  {r['candidates']:>5}")
         bad = tripwire(board, got)
         print()

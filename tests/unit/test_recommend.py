@@ -10,6 +10,7 @@ on players consensus does not rate, which is exactly the mixed-room dynamic.
 """
 import polars as pl
 import pytest
+
 from hub.draft.board import recommend
 
 

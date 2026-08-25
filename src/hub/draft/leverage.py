@@ -36,13 +36,19 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
-from hub.draft.season import (PLAYOFF_TEAMS, REG_SEASON_WEEKS, WEEKLY_K,
-                              WEEKLY_K_POOLED, _round_robin, simulate_weeks,
-                              talent_cv_for)
+from hub.draft.season import (
+    PLAYOFF_TEAMS,
+    REG_SEASON_WEEKS,
+    WEEKLY_K,
+    WEEKLY_K_POOLED,
+    _round_robin,
+    simulate_weeks,
+    talent_cv_for,
+)
 
 TEAMS = 12
 CHUNK = 4000

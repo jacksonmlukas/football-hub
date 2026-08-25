@@ -6,7 +6,8 @@ which is what actually catches ESPN renaming a field.
 """
 import polars as pl
 import pytest
-from hub.contracts import Contract, ContractViolation, DRAFT_BOARD
+
+from hub.contracts import DRAFT_BOARD, Contract, ContractViolation
 
 
 def _board(n=300, **override):

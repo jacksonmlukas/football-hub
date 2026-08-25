@@ -25,8 +25,15 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from hub.contracts import (CFBD_GAMES, CFBD_LINES, ContractViolation, FF_OPPORTUNITY,
-                           ODDS_SNAPSHOT, PBP, SCHEDULES)
+from hub.contracts import (
+    CFBD_GAMES,
+    CFBD_LINES,
+    FF_OPPORTUNITY,
+    ODDS_SNAPSHOT,
+    PBP,
+    SCHEDULES,
+    ContractViolation,
+)
 
 FIXTURES = Path(__file__).resolve().parents[1] / "golden" / "fixtures"
 
@@ -92,8 +99,9 @@ def test_cfbd_lines_contract_holds_on_the_documented_shape():
 
 def test_odds_fixture_parses_to_the_lines_table_shape():
     """The parser, not just the contract: the snapshot has to land in `lines`."""
-    from hub.fetch.odds import _median_home_spread
     import datetime as dt
+
+    from hub.fetch.odds import _median_home_spread
 
     events = load("odds_spreads.synthetic.json")
     rows = [{"game_id": "2025_01_DAL_PHI",

@@ -18,7 +18,6 @@ import pytest
 from hub.models import components as C
 from hub.models import volume as V
 
-
 # --- the pick-implied prior -----------------------------------------------
 
 def test_an_earlier_pick_implies_more_volume():

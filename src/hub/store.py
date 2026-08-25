@@ -13,8 +13,10 @@ where silent lookahead bugs come from.
 Why not Postgres: single user, no concurrent writers, no network. Nothing to buy.
 """
 from __future__ import annotations
+
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
+
 import duckdb
 import polars as pl
 
@@ -150,7 +152,7 @@ def verify(season: int = 2025, base: Path | None = None) -> int:
     return 0 if matched == got.height and ahead == 0 else 1
 
 
-def main(argv: "Sequence[str] | None" = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     import argparse
 
     ap = argparse.ArgumentParser(prog="hub.store",

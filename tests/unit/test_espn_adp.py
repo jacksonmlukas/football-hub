@@ -15,6 +15,7 @@ difference in behaviour is real and deliberate: an undrafted player keeps his ro
 wanted. Unpriced is not the same as unknown.
 """
 import polars as pl
+
 from hub.fetch.espn import _parse_market
 
 SEASON = 2026

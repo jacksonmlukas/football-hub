@@ -28,9 +28,10 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import polars as pl
 
@@ -94,7 +95,7 @@ def _api_key() -> str | None:
 
 
 def _month_key(now: datetime | None = None) -> str:
-    return (now or datetime.now(timezone.utc)).strftime("%Y-%m")
+    return (now or datetime.now(UTC)).strftime("%Y-%m")
 
 
 def quota_used(path: Path | None = None) -> int:
@@ -106,7 +107,7 @@ def quota_used(path: Path | None = None) -> int:
     p = Path(path or QUOTA)
     try:
         return int(json.loads(p.read_text()).get(_month_key(), 0))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return 0
 
 
@@ -114,7 +115,7 @@ def _record_call(path: Path | None = None) -> None:
     p = Path(path or QUOTA)
     try:
         counts = json.loads(p.read_text())
-    except Exception:  # noqa: BLE001
+    except Exception:
         counts = {}
     counts[_month_key()] = int(counts.get(_month_key(), 0)) + 1
     p.parent.mkdir(parents=True, exist_ok=True)

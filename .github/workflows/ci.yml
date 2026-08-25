@@ -1,23 +1,38 @@
 name: ci
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  # SCHEDULE DISABLED UNTIL 2026-09-04, for the same reason as watchdog.yml: Actions minutes
+  # are metered on private repos (2,000/month free) and unmetered on public ones.
+  #
+  # Until 2026-08-24 this trigger was absent entirely while the `golden` job below gated on
+  # `github.event_name == 'schedule'` -- so the job could never fire, had never once run, and
+  # its own comment described it as nightly. README claimed the same. Uncomment at the flip.
+  # schedule:
+  #   - cron: "0 9 * * *"
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv venv && uv pip install -e ".[dev]"
+      # `uv sync`, not `uv venv && uv pip install -e .`: the latter is the legacy interface,
+      # and matching what SETUP.md and the Makefile tell a human to run means CI exercises
+      # the documented path rather than a parallel one.
+      - run: uv sync --all-extras
       - run: uv run ruff check src tests
       - run: uv run pyrefly check
       - run: uv run pytest tests/unit tests/contracts -q --cov=hub --cov-fail-under=80
 
   golden:
-    # Hits the real APIs and diffs against frozen fixtures. Nightly, not on PRs,
-    # because a third-party schema change should not block a docs commit.
+    # Hits the real APIs and diffs against frozen fixtures. Scheduled, not on PRs, because a
+    # third-party schema change should not block a docs commit. Dormant until the schedule
+    # trigger above is uncommented.
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv venv && uv pip install -e ".[dev]"
+      - run: uv sync --all-extras
       - run: uv run pytest tests/golden -q

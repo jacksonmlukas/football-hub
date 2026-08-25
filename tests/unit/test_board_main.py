@@ -12,13 +12,10 @@ Two things are tested here that were previously unreachable:
     were expressions inside f-string blocks, which is why the dead guard in the first one
     survived so long.
 """
-import collections
 
 import polars as pl
-import pytest
 
 from hub.draft import board
-from hub.draft.state import DraftState
 
 
 def _board(names, pos=None, **cols):

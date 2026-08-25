@@ -166,7 +166,7 @@ def _fetch(picks, players, season=2024):
 def test_picks_are_matched_to_what_the_player_actually_scored():
     df = calibrate.draft_outcomes(
         [2024], fetch=_fetch([(11, 1), (22, 5)], [(11, 2, 170.0, 10.0), (22, 3, 96.0, 8.0)]))
-    assert dict(zip(df["pick"].to_list(), df["total"].to_list())) == {1: 170.0, 5: 96.0}
+    assert dict(zip(df["pick"].to_list(), df["total"].to_list(), strict=True)) == {1: 170.0, 5: 96.0}
     assert sorted(df["pos"].to_list()) == ["RB", "WR"]
 
 
@@ -218,7 +218,7 @@ def test_the_cli_does_not_hardcode_which_positions_differ(capsys, monkeypatch):
     monkeypatch.setattr(calibrate, "draft_outcomes", lambda seasons, fetch=None:
                         _by_pos({"QB": 0.35, "RB": 0.35, "WR": 0.62, "TE": 0.35}, n_each=400))
     calibrate.main(["--seasons", "2024"])
-    flagged = [ln for ln in capsys.readouterr().out.splitlines() if "Beyond 2 se" in ln][0]
+    flagged = next(ln for ln in capsys.readouterr().out.splitlines() if "Beyond 2 se" in ln)
     # WR is the position above the pool here; RB is the one the shipped constants flag, so
     # its absence from the positive side is what shows the line follows the data.
     assert "WR (+" in flagged and "RB (+" not in flagged
@@ -261,7 +261,7 @@ def test_shrunk_estimates_sit_between_the_raw_one_and_the_pool():
 def test_positions_that_do_not_really_differ_are_pulled_together():
     """The case that matters for not overfitting: when every position has the same true
     CV, the spread between the fitted ones is noise and shrinkage should mostly erase it."""
-    got = calibrate.fit_talent_cv(_by_pos({p: 0.35 for p in ("QB", "RB", "WR", "TE")},
+    got = calibrate.fit_talent_cv(_by_pos(dict.fromkeys(("QB", "RB", "WR", "TE"), 0.35),
                                           n_each=90))
     raw = list(got["by_position"].values())
     shrunk = list(got["by_position_shrunk"].values())
@@ -278,6 +278,6 @@ def test_real_position_differences_survive_shrinkage():
 
 
 def test_a_standard_error_is_reported_per_position():
-    got = calibrate.fit_talent_cv(_by_pos({p: 0.35 for p in ("QB", "RB", "WR", "TE")}))
+    got = calibrate.fit_talent_cv(_by_pos(dict.fromkeys(("QB", "RB", "WR", "TE"), 0.35)))
     assert set(got["se_by_position"]) == {"QB", "RB", "WR", "TE"}
     assert all(0 < v < 0.2 for v in got["se_by_position"].values())

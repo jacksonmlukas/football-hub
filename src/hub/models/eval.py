@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 import polars as pl
@@ -52,8 +52,8 @@ def _paired(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
     model chose to touch, and easy games are not evenly spread.
     """
     keys = [c for c in ("game_id", "season", "week") if c in a.columns and c in b.columns]
-    j = (a.select(keys + ["home_win_prob", "home_won"])
-          .join(b.select(keys + ["home_win_prob"]), on=keys, how="inner",
+    j = (a.select([*keys, "home_win_prob", "home_won"])
+          .join(b.select([*keys, "home_win_prob"]), on=keys, how="inner",
                 suffix="_b"))
     if j.height == 0:
         raise NoOverlap("the two models share no scored games")
@@ -61,8 +61,8 @@ def _paired(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
 
 
 def _holdout_weeks(weeks: Sequence[int], holdout: float) -> list[int]:
-    uniq = sorted(set(int(w) for w in weeks))
-    n = max(1, int(round(len(uniq) * holdout)))
+    uniq = sorted({int(w) for w in weeks})
+    n = max(1, round(len(uniq) * holdout))
     return uniq[-n:]
 
 

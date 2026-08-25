@@ -13,7 +13,6 @@ import pytest
 
 from hub.draft import backtest as bt
 
-
 # --- the pre-registered decision rule, as executable code ------------------
 #
 # The most valuable assertions in this file. The rule was fixed before the numbers; these
@@ -250,7 +249,7 @@ def test_the_default_strategy_is_unchanged_by_the_seam():
     from hub.draft.optimize import simulate_remaining_draft
     from hub.draft.state import DraftState
     board = _board(60)
-    kw = dict(my_slot=3, teams=12, rounds=3)
+    kw = {"my_slot": 3, "teams": 12, "rounds": 3}
     a = simulate_remaining_draft(board, DraftState(taken=[]),
                                  rng=np.random.default_rng(4), **kw)
     b = simulate_remaining_draft(board, DraftState(taken=[]), my_pick=None,
@@ -333,7 +332,7 @@ def test_equity_sees_the_roster_you_already_hold():
 
     wp = win_probability(board, state, ["P4", "P5"], my_slot=3, teams=12, rounds=6,
                          n_draft_sims=8, n_season_sims=200, seed=0)
-    by = dict(zip(wp["player"].to_list(), wp["lift"].to_list()))
+    by = dict(zip(wp["player"].to_list(), wp["lift"].to_list(), strict=True))
     # P4 is a second QB in a one-QB league; P5 is a running back.
     assert by["P5"] > by["P4"], "a redundant quarterback must not outrank a startable back"
 
@@ -421,8 +420,8 @@ def test_the_gate_catches_the_defect_it_was_written_for():
 
 def test_the_diagnose_picks_are_your_first_six_turns():
     """Fixed rather than read from live state, because the two runs happen at two commits."""
-    from hub.draft.picks import snake_picks
     from hub.config import RosterConfig
+    from hub.draft.picks import snake_picks
     cfg = RosterConfig()
     assert list(bt.DIAGNOSE_PICKS) == snake_picks(cfg.slot, cfg.teams, 16)[:6]
 
@@ -496,3 +495,95 @@ def test_a_board_without_the_columns_reports_nothing():
     b = pl.DataFrame({"player": ["A"], "pos": ["RB"], "adp": [1.0]})
     assert bt.correction_report(b).is_empty()
     assert bt.correction_tripwire(b) == []
+
+
+# --- the orchestration, offline -------------------------------------------
+#
+# `compare`, `play`, `diagnose` and the two strategies were the untested half of this module,
+# which is exactly the failure it exists to prevent: a harness nobody can run is a harness
+# nobody re-runs. All of this uses synthetic frames and tiny sim counts.
+
+def _full_board(n=80):
+    """Everything `build()` emits that the harness reads."""
+    return pl.DataFrame({
+        "player": [f"P{i}" for i in range(n)],
+        "pos": [["RB", "WR", "WR", "TE", "QB"][i % 5] for i in range(n)],
+        "ecr": [float(i + 1) for i in range(n)],
+        "adp": [float(i + 1) for i in range(n)],
+        "vor": [float(n - i) for i in range(n)],
+        "proj_ppg": [float(max(20 - i * 0.2, 1.0)) for i in range(n)],
+        "xfp_per_game": [float(max(20 - i * 0.2, 1.0)) for i in range(n)],
+        "games": pl.Series([16] * n, dtype=pl.UInt32),
+    })
+
+
+def _flat_realised(board, pts=10.0):
+    from hub.draft.state import _norm
+    names = board["player"].to_list()
+    return pl.DataFrame({"player": [_norm(n) for n in names for _ in range(14)],
+                         "week": [w for _ in names for w in range(1, 15)],
+                         "points": [pts for _ in names for _ in range(14)]},
+                        schema={"player": pl.Utf8, "week": pl.Int64, "points": pl.Float64})
+
+
+def test_play_returns_my_roster_and_positions():
+    board = _full_board()
+    names, pos = bt.play(board, bt.market_strategy(), my_slot=3, teams=12, rounds=4,
+                         rng=np.random.default_rng(0))
+    assert len(names) == len(pos) == 4
+    assert set(names) <= set(board["player"].to_list())
+
+
+def test_the_market_arm_fills_its_starting_slots_before_taking_depth():
+    board = _full_board()
+    _, pos = bt.play(board, bt.market_strategy(), my_slot=3, teams=12, rounds=8,
+                     rng=np.random.default_rng(0))
+    assert "QB" in pos and "TE" in pos, "a lexicographic need gate must fill both"
+
+
+def test_compare_produces_one_paired_row_per_draft():
+    board = _full_board()
+    real = _flat_realised(board)
+    got = bt.compare({2024: board}, {2024: real}, n_drafts=2, rounds=4,
+                     n_draft_sims=2, n_season_sims=10)
+    assert got.height == 2
+    assert set(got.columns) >= {"season", "draft", "market", "optimizer", "diff"}
+    assert (got["diff"] == got["optimizer"] - got["market"]).all()
+
+
+def test_compare_is_deterministic_under_a_seed():
+    """Same seed, same rooms, same answer -- or the paired design means nothing."""
+    board, real = _full_board(), None
+    real = _flat_realised(board)
+    kw = dict(n_drafts=1, rounds=4, n_draft_sims=2, n_season_sims=10, seed=7)
+    a = bt.compare({2024: board}, {2024: real}, **kw)
+    b = bt.compare({2024: board}, {2024: real}, **kw)
+    assert a.equals(b)
+
+
+def test_the_optimizer_arm_returns_a_live_player():
+    """It ranks `recommend()`'s shortlist by equity and breaks ties on consensus. The failure
+    it must not have is returning someone already drafted."""
+    from hub.draft.state import DraftState
+    board = _full_board()
+    strategy = bt.optimizer_strategy(board, my_slot=3, teams=12, rounds=4,
+                                     n_draft_sims=2, n_season_sims=10, seed=0)
+    live = np.arange(board.height)
+    got = strategy(board, live, {}, [])
+    assert 0 <= got < board.height
+
+
+def test_diagnose_reports_one_row_per_requested_pick():
+    board = _full_board(n=140)
+    got = bt.diagnose(board, picks=(3, 22), my_slot=3, teams=12, rounds=3,
+                      n_draft_sims=2, n_season_sims=10)
+    assert set(got["pick"].to_list()) <= {3, 22}
+    assert {"leader", "lift", "co_leaders", "need_co_led"} <= set(got.columns)
+
+
+def test_diagnose_advances_by_the_market_so_both_runs_share_a_path():
+    """Two runs at two commits must walk the same draft, or the comparison is not one."""
+    board = _full_board(n=140)
+    kw = dict(picks=(3, 22), my_slot=3, teams=12, rounds=3,
+              n_draft_sims=2, n_season_sims=10, seed=0)
+    assert bt.diagnose(board, **kw)["held"].to_list() == bt.diagnose(board, **kw)["held"].to_list()

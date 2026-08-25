@@ -160,7 +160,6 @@ def test_it_draws_through_the_real_simulator():
     Pinning it by behaviour rather than by inspection: the harness and the simulator, given
     the same seed and inputs, must produce the same weekly points.
     """
-    import numpy as np
     from hub.draft.season import simulate_weeks
     pts, _, _ = leverage._season(1.0, 1.0, 1.0, 64, 11)
     direct = simulate_weeks(
@@ -173,7 +172,6 @@ def test_it_draws_through_the_real_simulator():
 
 def test_the_harness_uses_the_square_root_spread_law():
     """It hardcoded SD = MU * 0.55, which is the constant docs/weekly-spread.md replaced."""
-    import numpy as np
     from hub.draft.season import WEEKLY_K
     for i, p in enumerate(leverage.POS):
         assert leverage.SD[i] == pytest.approx(

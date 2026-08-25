@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
-from datetime import datetime, timezone
+from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Sequence, cast
+from typing import Any, cast
 
 import numpy as np
 import polars as pl
@@ -35,7 +35,7 @@ NFL_WEEKS = 18
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def _write(out: Path, name: str, payload: dict[str, Any]) -> Path:
@@ -66,7 +66,7 @@ def predictions(season: int, week: int, base: Path | None = None,
         df = store.sql(
             "SELECT * FROM preds WHERE season = ? AND week = ?",
             params=[season, f"{week:02d}"], base=base)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
     if df.is_empty():
         return None
@@ -133,7 +133,7 @@ def _scored(base: Path | None) -> pl.DataFrame:
                                  "home_won": pl.Int64, "predicted_at": pl.Utf8})
     try:
         preds = store.sql("SELECT * FROM preds", base=base)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return empty
     if preds.is_empty():
         return empty
@@ -144,7 +144,7 @@ def _scored(base: Path | None) -> pl.DataFrame:
                  .filter(pl.col("result").is_not_null())
                  .select(pl.col("game_id"),
                          (pl.col("result") > 0).cast(pl.Int64).alias("home_won")))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return empty
     return preds.join(sched, on="game_id", how="inner")
 
@@ -199,7 +199,7 @@ def live(out: Path | None = None, league: str = "nfl") -> dict[str, Any] | None:
     try:
         from hub.fetch.espn import live_state
         rows = live_state(league)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  live: ESPN unavailable ({type(e).__name__}); leaving last-good in place")
         return None
     payload = _artifact("live", "espn_scoreboard", rows, league=league)
@@ -259,7 +259,7 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any]:
         # would never say a week still needs a pick.
         cov = sv.coverage(grid, list(range(1, NFL_WEEKS + 1)))
         plan = sv.solve(grid, weeks=cov["covered"])
-    except Exception as e:  # noqa: BLE001 -- any failure here is a stale panel, not a crash
+    except Exception as e:
         return {"name": "survivor", "present": False, "stale": True,
                 "reason": f"{type(e).__name__}: {e}"[:120], "generated_at": None}
     rows = plan.to_dicts()
@@ -281,7 +281,7 @@ def default_week(season: int, base: Path | None = None) -> int:
     try:
         got = store.sql("SELECT max(week) AS w FROM preds WHERE season = ?",
                         params=[season], base=base)
-    except Exception:  # noqa: BLE001 -- no store yet is the preseason case
+    except Exception:
         return 1
     if got.height and got["w"][0] is not None:
         return int(got["w"][0])
@@ -309,7 +309,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if a.live:
         got = live()
-        print(f"  live: " + (f"{got['n']} games" if got else "unavailable; last-good kept"))
+        print("  live: " + (f"{got['n']} games" if got else "unavailable; last-good kept"))
         return 0
     if a.track_record:
         got = track_record()

@@ -13,6 +13,7 @@ computed against a preseason baseline quietly overvalues a position after a run 
 a run is precisely when the number is being consulted.
 """
 import time
+from typing import ClassVar
 
 import polars as pl
 import pytest
@@ -251,7 +252,7 @@ def test_sync_can_be_quiet():
     from hub.draft import state as st_mod
 
     class _L:
-        draft = []
+        draft: ClassVar[list] = []
     import pytest as _pytest
     mp = _pytest.MonkeyPatch()
     try:
@@ -263,12 +264,13 @@ def test_sync_can_be_quiet():
 
 
 def test_quiet_sync_prints_nothing(capsys):
-    import hub.fetch.espn as espn
-    from hub.draft import state as st_mod
     import pytest as _pytest
 
+    import hub.fetch.espn as espn
+    from hub.draft import state as st_mod
+
     class _L:
-        draft = []
+        draft: ClassVar[list] = []
     mp = _pytest.MonkeyPatch()
     try:
         mp.setattr(espn, "league_settings", lambda: (_L(), {}))
@@ -280,12 +282,13 @@ def test_quiet_sync_prints_nothing(capsys):
 
 
 def test_loud_sync_still_reports_by_default(capsys):
-    import hub.fetch.espn as espn
-    from hub.draft import state as st_mod
     import pytest as _pytest
 
+    import hub.fetch.espn as espn
+    from hub.draft import state as st_mod
+
     class _L:
-        draft = []
+        draft: ClassVar[list] = []
     mp = _pytest.MonkeyPatch()
     try:
         mp.setattr(espn, "league_settings", lambda: (_L(), {}))
@@ -361,8 +364,8 @@ def test_the_live_table_is_labelled_as_context():
 def test_the_recommendation_fills_a_need_where_the_table_need_not():
     """The substance of the disagreement, not just the wording. Holding two RBs and nothing
     else, THE PICK must not be a third running back while QB/WR/TE sit empty."""
+
     from hub.draft.optimize import the_pick
-    import polars as pl
     board = _agree_board()
     # my picks at slot 3 of 12 are 3 and 22; make both of mine running backs
     taken = [f"P{i}" for i in range(22)]
@@ -411,7 +414,6 @@ def test_board_age_is_reported_in_hours(tmp_path):
 def test_a_board_from_the_future_is_zero_not_negative():
     """Clock skew between a build host and the poller should read as fresh, not as a
     negative age that formats into nonsense on the one screen you are reading."""
-    import pathlib
 
     class _F:
         def stat(self):

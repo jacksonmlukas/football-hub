@@ -1,4 +1,7 @@
+import itertools
+
 import pytest
+
 from hub.draft.picks import next_two, snake_picks
 
 
@@ -13,7 +16,7 @@ def test_last_slot_gets_the_wheel():
 
 
 def test_middle_slot_is_evenly_spaced():
-    gaps = [b - a for a, b in zip(snake_picks(6, 12, 6), snake_picks(6, 12, 6)[1:])]
+    gaps = [b - a for a, b in itertools.pairwise(snake_picks(6, 12, 6))]
     assert max(gaps) - min(gaps) <= 2  # no long wait, no back-to-back
 
 
@@ -33,7 +36,7 @@ def test_next_two_after_some_picks():
 
 def test_slot_three_alternates_long_and_short_waits():
     from hub.draft.picks import my_picks
-    gaps = [b - a for a, b in zip(my_picks(8), my_picks(8)[1:])]
+    gaps = [b - a for a, b in itertools.pairwise(my_picks(8))]
     assert gaps == [19, 5, 19, 5, 19, 5, 19]
 
 

@@ -10,8 +10,9 @@ Two ways this has already been wrong:
 Both are the same underlying error: subtracting two numbers that are not on a
 common scale. These tests pin the scale, not just the arithmetic.
 """
-import polars as pl
 from typing import cast
+
+import polars as pl
 
 from hub.draft.board import _adp_saturation_cutoff, _attach_edge
 
@@ -44,7 +45,7 @@ def test_jittered_band_is_caught_not_just_the_exact_spike():
     every one of these would be priced as a genuine round-14 pick.
     """
     band = [169.0 + i / 100 for i in range(20)]
-    s = pl.Series("adp", [1.0, 2.0, 3.0] + band)
+    s = pl.Series("adp", [1.0, 2.0, 3.0, *band])
     assert _adp_saturation_cutoff(s, teams=12) == 169.0
 
 

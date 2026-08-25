@@ -13,6 +13,7 @@ So: start from ECR and nudge it. Shrink the nudge hard, because consensus is a s
 and your signal is one noisy season.
 """
 from __future__ import annotations
+
 import numpy as np
 import polars as pl
 

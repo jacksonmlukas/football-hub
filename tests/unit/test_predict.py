@@ -84,7 +84,7 @@ def test_a_player_projected_at_nothing_has_no_spread():
 
 def test_skew_is_carried_per_position():
     got = predict.moments(_frame())
-    by = dict(zip(got["position"].to_list(), got["skew"].to_list()))
+    by = dict(zip(got["position"].to_list(), got["skew"].to_list(), strict=True))
     assert by["QB"] < by["RB"]
 
 

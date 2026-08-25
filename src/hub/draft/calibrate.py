@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 import polars as pl
@@ -45,6 +45,7 @@ import polars as pl
 # which the per-game-played variant of this fit flagged by returning an implausible 0.041
 # for quarterbacks -- 0.55 over-subtracts badly for the steadiest position.
 from hub.draft.season import WEEKLY_K, WEEKLY_K_POOLED
+
 TEAM_GAMES = 17
 DRAFTED_THROUGH = 168          # 14 rounds x 12 teams: the roster the simulator holds
 SKILL = ("QB", "RB", "WR", "TE")
@@ -97,7 +98,7 @@ def simulate_seasons(mu: np.ndarray, cv: float, games: np.ndarray,
 
 def _k_of(positions: np.ndarray) -> float:
     """Weekly coefficient for a set of players, pooled when they are mixed."""
-    uniq = set(str(p) for p in positions)
+    uniq = {str(p) for p in positions}
     return WEEKLY_K[uniq.pop()] if len(uniq) == 1 and next(iter(uniq), None) in WEEKLY_K \
         else WEEKLY_K_POOLED
 
@@ -275,7 +276,7 @@ def draft_outcomes(seasons: Sequence[int], fetch=None) -> pl.DataFrame:
             rows.append({"season": int(season), "pick": int(pick_of[p["id"]]),
                          "pos": POSN.get(p.get("defaultPositionId") or 0, "?"),
                          "total": float(st["appliedTotal"]),
-                         "games": int(round(st["appliedTotal"] / avg)) if avg else 0})
+                         "games": round(st["appliedTotal"] / avg) if avg else 0})
     return pl.DataFrame(rows)
 
 
@@ -310,7 +311,10 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"{TALENT_CV_BY_POS.get(pos, TALENT_CV):>7.2f} {d:>+8.1f}se")
     # Which positions differ is a property of the data, not a sentence to hardcode: this
     # has to stay true when it is re-run next August with another season added.
-    apart = [f"{p} ({(got['by_position'][p] - got['talent_cv']) / got['se_by_position'][p]:+.1f} se)"
+    def _se_away(p: str) -> float:
+        return (got["by_position"][p] - got["talent_cv"]) / got["se_by_position"][p]
+
+    apart = [f"{p} ({_se_away(p):+.1f} se)"
              for p in ("QB", "RB", "WR", "TE")
              if abs(got["by_position"][p] - got["talent_cv"]) > 2 * got["se_by_position"][p]]
     print("\n  shrunk toward the pool in proportion to noise -- 51 tight ends do not")

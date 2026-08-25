@@ -28,7 +28,7 @@ def _frame(n_weeks=12, per_week=16, bias=0.0, noise=13.0, seed=0):
     for w in range(1, n_weeks + 1):
         mean = rng.normal(0.0, 7.0, per_week)
         actual = mean + bias + rng.normal(0.0, noise, per_week)
-        for m, a in zip(mean, actual):
+        for m, a in zip(mean, actual, strict=True):
             rows.append({"week": w, "margin_mean": float(m), "margin_actual": float(a)})
     return pl.DataFrame(rows)
 

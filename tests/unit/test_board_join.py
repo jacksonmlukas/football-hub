@@ -9,6 +9,7 @@ them, and the season simulation scores them at zero, so a first-round RB reads a
 empty roster spot.
 """
 import polars as pl
+
 from hub.draft.board import _join_expected_points
 
 

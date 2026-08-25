@@ -1,9 +1,16 @@
 from datetime import datetime
 from typing import cast
+
 import polars as pl
 import pytest
-from hub.models.base import (Conformalized, FitSpec, Forecaster,
-                             PREDICTION_SCHEMA, validate_predictions)
+
+from hub.models.base import (
+    PREDICTION_SCHEMA,
+    Conformalized,
+    FitSpec,
+    Forecaster,
+    validate_predictions,
+)
 
 
 class Dummy:
@@ -23,7 +30,6 @@ class Dummy:
         return self
 
     def predict(self, games: pl.DataFrame) -> pl.DataFrame:
-        n = games.height
         return games.select(["game_id", "league", "season", "week"]).with_columns([
             pl.lit(0.6).alias("home_win_prob"),
             pl.lit(self.margin).alias("margin_mean"),

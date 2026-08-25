@@ -23,8 +23,8 @@ from __future__ import annotations
 import argparse
 import math
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import polars as pl
 
@@ -52,7 +52,7 @@ def _solver():
         coin = pulp.COIN_CMD(msg=False)
         if coin.available():
             return coin
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     with warnings.catch_warnings():
         # Suppressed narrowly: the fallback is deliberate and the warning is about a

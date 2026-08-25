@@ -1,5 +1,6 @@
 import polars as pl
 import pytest
+
 from hub.draft.projection import adjust_consensus, build, regression_signal
 
 
@@ -42,7 +43,7 @@ def test_adjustment_is_larger_deeper_in_the_board():
         # identical z by construction; only ecr differs
     }).with_columns(pl.lit(1.0).alias("z_regress"))
     out = adjust_consensus(df, lam=0.08)
-    moved = dict(zip(out["player"], out["ranks_moved"]))
+    moved = dict(zip(out["player"], out["ranks_moved"], strict=True))
     assert moved["Late"] > moved["Early"] * 5
 
 

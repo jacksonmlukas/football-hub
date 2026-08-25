@@ -26,7 +26,6 @@ import pytest
 
 from hub.models import components as C
 
-
 # --- the aggregation is exact ---------------------------------------------
 
 def test_points_reproduce_full_ppr():
@@ -144,7 +143,8 @@ def test_a_quarterback_is_less_skewed_than_a_receiver():
                          "interceptions": 0.7, "rushing_yards": 15.0,
                          "rushing_tds": 0.15}, "QB", n=60000, rng=rng)
     wr = C.sample_weeks(_wr(12.0), "WR", n=60000, rng=rng)
-    sk = lambda x: float(((x - x.mean()) ** 3).mean() / x.std() ** 3)
+    def sk(x):
+        return float(((x - x.mean()) ** 3).mean() / x.std() ** 3)
     assert sk(qb) < sk(wr)
 
 

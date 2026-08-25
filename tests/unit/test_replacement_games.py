@@ -10,6 +10,7 @@ the three-WR effect in docs/decisions.md. With a minimum-games filter WR drops t
 not knife-edge fitting.
 """
 import polars as pl
+
 from hub.draft.board import replacement_levels
 
 

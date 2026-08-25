@@ -5,8 +5,15 @@ place on a team getting 1.0 and reading as "average playoff schedule".
 """
 import polars as pl
 import pytest
-from hub.draft.playoff_sos import (PLAYOFF_WEEKS, _canon_team, _dvp_from_stats,
-                                _opponents_from_schedule, _sos_from, attach_sos)
+
+from hub.draft.playoff_sos import (
+    PLAYOFF_WEEKS,
+    _canon_team,
+    _dvp_from_stats,
+    _opponents_from_schedule,
+    _sos_from,
+    attach_sos,
+)
 
 
 def _stats(rows):

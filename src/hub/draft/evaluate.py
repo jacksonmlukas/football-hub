@@ -19,12 +19,12 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 import polars as pl
 
-from hub.draft.season import FLEX_FROM, STARTERS  # noqa: F401 -- the league's one shape
+from hub.draft.season import FLEX_FROM, STARTERS
 
 TEAMS = 12
 ROUNDS = 16

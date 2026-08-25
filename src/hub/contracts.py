@@ -5,8 +5,10 @@ Every fetch function asserts its contract at the boundary. Violations raise loud
 and the pipeline serves last-good state rather than propagating bad data.
 """
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import cast
+
 import polars as pl
 
 

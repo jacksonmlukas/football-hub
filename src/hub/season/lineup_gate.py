@@ -31,12 +31,12 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 import polars as pl
 
-from hub.draft.season import REG_SEASON_WEEKS, STARTERS, lineup_points
+from hub.draft.season import REG_SEASON_WEEKS, STARTERS
 from hub.draft.state import _norm
 from hub.models.measure import realised_ppg, summarise
 
@@ -183,8 +183,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # what it is fed live -- the fitted square-root spread law, per position.
         from hub.models.predict import moments
         pred = moments(board)
-        proj_of = dict(zip(pred["player"].to_list(), pred["mu"].fill_null(0.0).to_list()))
-        sd_of = dict(zip(pred["player"].to_list(), pred["sd"].fill_null(0.0).to_list()))
+        who = pred["player"].to_list()
+        proj_of = dict(zip(who, pred["mu"].fill_null(0.0).to_list(), strict=True))
+        sd_of = dict(zip(who, pred["sd"].fill_null(0.0).to_list(), strict=True))
         stats = nflverse.load("player_stats", [yr],
                               cols=["player_id", "player_display_name", "position",
                                     "season", "week", "fantasy_points_ppr"])
@@ -194,7 +195,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             names, pos = play(board, market_strategy(), my_slot=cfg.slot, teams=cfg.teams,
                               rounds=14, rng=np.random.default_rng(a.seed + 1000 * yr + k))
             made.append([(n, p, proj_of.get(n, 0.0), sd_of.get(n, 0.0))
-                         for n, p in zip(names, pos)])
+                         for n, p in zip(names, pos, strict=True)])
         rosters[yr] = made
 
     paired = compare(rosters, realised)

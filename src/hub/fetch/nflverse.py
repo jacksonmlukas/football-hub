@@ -20,14 +20,21 @@ from __future__ import annotations
 import argparse
 import hashlib
 import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Callable, Sequence
 
 import polars as pl
 
 from hub import store
-from hub.contracts import (FF_OPPORTUNITY, FTN_CHARTING, PARTICIPATION, PBP,
-                           PLAYER_STATS, SCHEDULES, Contract)
+from hub.contracts import (
+    FF_OPPORTUNITY,
+    FTN_CHARTING,
+    PARTICIPATION,
+    PBP,
+    PLAYER_STATS,
+    SCHEDULES,
+    Contract,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 RAW = ROOT / "data" / "raw" / "nflverse"

@@ -4,8 +4,11 @@ Name matching is the whole problem. ESPN says "Marvin Harrison Jr.", FantasyPros
 "Marvin Harrison", and a draft board that silently fails to match leaves a drafted
 player sitting at the top of your recommendations all night.
 """
+from typing import ClassVar
+
 import polars as pl
 import pytest
+
 from hub.draft import state as st
 
 
@@ -118,7 +121,7 @@ def test_sync_reads_picks_in_order(monkeypatch):
     class _P:
         def __init__(self, n): self.playerName = n
     class _L:
-        draft = [_P("First"), _P("Second")]
+        draft: ClassVar[list] = [_P("First"), _P("Second")]
     import hub.fetch.espn as espn
     monkeypatch.setattr(espn, "league_settings", lambda: (_L(), {}))
     assert st.sync_from_espn().taken == ["First", "Second"]
@@ -126,7 +129,7 @@ def test_sync_reads_picks_in_order(monkeypatch):
 
 def test_empty_espn_draft_keeps_local_state(monkeypatch, capsys):
     class _L:
-        draft = []
+        draft: ClassVar[list] = []
     import hub.fetch.espn as espn
     monkeypatch.setattr(espn, "league_settings", lambda: (_L(), {}))
     monkeypatch.setattr(st, "load", lambda path=None: st.DraftState(taken=["Kept"]))
@@ -149,7 +152,7 @@ def test_sync_can_target_another_league():
         def __init__(self, name): self.playerName = name
 
     class _League:
-        draft = [_Pick("Ja'Marr Chase"), _Pick("Bijan Robinson")]
+        draft: ClassVar[list] = [_Pick("Ja'Marr Chase"), _Pick("Bijan Robinson")]
 
     def fake(year, league_id):
         seen["year"], seen["league_id"] = year, league_id
