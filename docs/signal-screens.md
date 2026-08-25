@@ -1,7 +1,8 @@
 # Signal screens
 
-Four hypotheses for beating consensus, all screened, all null. This is the index; the two
-with longer stories have their own documents.
+Six hypotheses for beating consensus. Five null, **one not** — the snap-share trend, screened
+2026-08-25, which is the first thing in this repo to survive a control for ECR. This is the
+index; the ones with longer stories have their own documents.
 
 Kept because a record of what does not work is worth more than a fifth attempt at the same
 thing, and because two of these produced errors worth not repeating.
@@ -13,6 +14,8 @@ thing, and because two of these produced errors worth not repeating.
 | Depth-chart climb | next season | **null** — partial r = +0.008 beyond ECR | [depth-chart-signal.md](depth-chart-signal.md) |
 | Depth-chart climb | rest of season | **null** — within 1 se of zero at weeks 6/8/10/12 | [depth-chart-signal.md](depth-chart-signal.md) |
 | Age | next season | **null** — see below | this document |
+| **Snap-share trend** | next 3 weeks, in season | **POSITIVE** — partial r **+0.24** beyond PPG *and* ECR, 12/12 season-anchor cells, placebo-clean | [snap-trend-signal.md](snap-trend-signal.md) |
+| Snap-share trend | next 3 weeks, before week 8 | **null** — sign flips between seasons | [snap-trend-signal.md](snap-trend-signal.md) |
 
 ## Age
 
@@ -88,8 +91,11 @@ Assembled from the errors these produced, not from foresight.
 
 ## Where this leaves the modelling
 
-Consensus has survived every attempt so far, which is the expected outcome and the reason
-`MarketBaseline` exists as the benchmark. `docs/decisions.md` sets the order: win the
+Consensus survived every *preseason* attempt, which is the expected outcome and the reason
+`MarketBaseline` exists as the benchmark. It did **not** survive the in-season snap-share
+screen, and the difference between those two facts is the most useful thing in this file:
+every null here asked consensus about information it had all summer to price. The one
+positive asked about something published on a Monday. `docs/decisions.md` sets the order: win the
 league first, understand the techniques second, edge last. Four null screens are consistent
 with that ordering rather than a setback to it.
 

@@ -143,7 +143,7 @@ empties most of them, so this wants pooling or an additive term, not a bigger lo
 practice trajectories. nflverse does not carry them — there is one `practice_status` per row and
 at most two rows per player-week. The proposal above is what the data actually supports.
 
-### M3. Snap-share *trend* as a waiver signal
+### M3. Snap-share *trend* as a waiver signal — SCREENED 2026-08-25, POSITIVE
 
 **The idea.** The trade press claims snap-share jumps precede production by one to two weeks.
 That is a testable claim and this repo can test it in an afternoon.
@@ -155,6 +155,17 @@ first is weak evidence about the second.
 
 **Gate.** Does Δ snap share through week *w* predict points in *w+1…w+3*, **beyond** season-to-
 date PPG? Partial correlation, walk-forward.
+
+**Result: it survives.** Partial r **+0.236** at anchor week 10, controlling for season-to-date
+PPG *and* rest-of-season ECR — and adding the ECR control changes it by less than 0.01, so
+consensus prices none of it. Twelve of twelve season-anchor cells positive, placebo-clean,
+stronger in the waiver-relevant tail (ECR outside the top 100, pooled +0.254). A >15pp snap
+jump there is worth 1.2–2.5 points a game over the next three weeks. Null before week 8. Full
+write-up in [snap-trend-signal.md](snap-trend-signal.md).
+
+**This is the first screen in the repo to come back positive**, and it is the thesis above
+paying out: snap counts are published Monday, and the consensus that gets rebuilt around them
+is not doing so fast enough to price them.
 
 **Read `docs/depth-chart-signal.md` first.** It documents two methodology errors made on exactly
 this shape of question — a leakage bug, and treating eight weeks of one player as eight
