@@ -82,3 +82,62 @@ def test_the_report_distinguishes_a_stage_that_ran_from_one_that_did_not():
 
 # `held_positions` and `pick_notes` moved to `hub.draft.optimize` with the code they test:
 # they are decisions, and both draft-night tools need them. See tests/unit/test_optimize.py.
+
+
+# --- the offline fallback --------------------------------------------------
+#
+# `build` degrades stage by stage, but only for advisory stages. The two spine fetches have
+# no fallback inside it, so with no network the CLI raised ConnectionError and printed a
+# traceback instead of a pick -- on the one night the repo exists for.
+
+def _stub_board(tmp_path):
+    """A minimal board on disk, standing in for the last good one."""
+    p = tmp_path / "draft_board.parquet"
+    pl.DataFrame({"player": ["A"], "pos": ["RB"], "vor": [1.0]}).write_parquet(p)
+    return p
+
+
+def test_a_failed_build_serves_the_last_good_board(monkeypatch, tmp_path, capsys):
+    def boom(*a, **k):
+        raise ConnectionError("ffopportunity is down")
+    monkeypatch.setattr(board, "build", boom)
+    got, _, age = board.build_or_last_good(path=_stub_board(tmp_path))
+    assert got.height == 1
+    assert age is not None and age >= 0.0
+    out = capsys.readouterr().out
+    assert "BUILD FAILED" in out and "ConnectionError" in out
+    assert "ffopportunity is down" in out, "the operator has to know what actually broke"
+
+
+def test_a_successful_build_reports_no_staleness(monkeypatch, tmp_path):
+    """`age is None` is how the caller tells the two apart, so it has to mean fresh."""
+    fresh = pl.DataFrame({"player": ["B"], "pos": ["WR"]})
+    monkeypatch.setattr(board, "build", lambda *a, **k: (fresh, board.BuildReport()))
+    got, _, age = board.build_or_last_good(path=_stub_board(tmp_path))
+    assert age is None and got["player"].to_list() == ["B"]
+
+
+def test_serving_last_good_does_not_rewrite_the_file(monkeypatch, tmp_path):
+    """Rewriting resets the mtime, so the age just printed becomes a lie and every later
+    run reports a fresh board that is as stale as the first failure."""
+    p = _stub_board(tmp_path)
+    import os
+    os.utime(p, (1000.0, 1000.0))
+    monkeypatch.setattr(board, "build", lambda *a, **k: (_ for _ in ()).throw(OSError("no net")))
+    board.build_or_last_good(path=p)
+    assert p.stat().st_mtime == 1000.0
+
+
+def test_no_board_at_all_says_what_to_run(tmp_path):
+    """The genuinely unrecoverable case still has to be a sentence, not a traceback."""
+    import pytest
+    with pytest.raises(FileNotFoundError, match="make draft"):
+        board.last_good(path=tmp_path / "absent.parquet")
+
+
+def test_the_age_is_reported_in_hours(tmp_path):
+    import os
+    p = _stub_board(tmp_path)
+    os.utime(p, (1000.0, 1000.0))
+    _, age = board.last_good(path=p, now=1000.0 + 7200)
+    assert age == 7200 / 3600.0

@@ -334,6 +334,67 @@ class SkipHistorical(Exception):
     """
 
 
+BOARD_PARQUET = ROOT / "data" / "processed" / "draft_board.parquet"
+
+
+def board_age_hours(path: Path, now: float) -> float:
+    """How old the board file is, in hours. Separate so it can be tested without a clock."""
+    return max(now - path.stat().st_mtime, 0.0) / 3600.0
+
+
+def last_good(path: Path = BOARD_PARQUET,
+              now: float | None = None) -> tuple[pl.DataFrame, float]:
+    """The board as last written to disk, with its age in hours.
+
+    Two callers make this a real seam rather than a hypothetical one: the poller, which has
+    always read the board rather than building it, and `main`'s offline fallback below.
+    """
+    import time
+    if not path.exists():
+        raise FileNotFoundError(
+            f"no board at {path}. Run `make draft` first -- the poller reads the board, "
+            f"it does not build one.")
+    return pl.read_parquet(path), board_age_hours(
+        path, time.time() if now is None else now)
+
+
+def build_or_last_good(league_size: int = 12, season: int = 2025, *,
+                       path: Path = BOARD_PARQUET, now: float | None = None,
+                       ) -> tuple[pl.DataFrame, BuildReport, float | None]:
+    """Build the board, and if the build cannot happen at all, serve the last good one.
+
+    `build` degrades stage by stage, but only for *advisory* stages. The two spine fetches --
+    ffopportunity and the consensus ranks -- have no fallback inside `build`, because a board
+    with neither expected points nor consensus ranks is not a board. Until now that meant a
+    `ConnectionError` traceback and no recommendation.
+
+    That is the wrong failure on the one night this repo exists for. CLAUDE.md:
+
+        If a fetch fails, serve last-good state from `data/processed/` rather than erroring.
+        Systems that need an operator die in October.
+
+    The runbook already says to rebuild the board on the day, so the board on disk at 9pm is
+    hours old, not weeks. Hours-old ADP beats a stack trace.
+
+    Returns the age in hours when serving last-good, and `None` when the build succeeded --
+    so the caller can say which of the two happened, loudly.
+
+    The exception is deliberately broad. Any failure to build is a failure to build, and
+    falling back to a board that is *known* to have been good is safe in a way that guessing
+    at which exception types are transient is not.
+    """
+    try:
+        board, report = build(league_size, season)
+    except Exception as exc:
+        board, age = last_good(path, now)
+        print(f"\n  BUILD FAILED: {type(exc).__name__}: {exc}")
+        print(f"  serving the last good board instead, built {age:.1f}h ago.")
+        print("  ADP is that old. Everything else on it is a season-long number "
+              "and does not move.")
+        return board, BuildReport(), age
+    return board, report, None
+
+
 @dataclass
 class BuildReport:
     """Which optional stages made it into the board.
@@ -684,8 +745,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"    pick {pk:>3}  ->  {draft_mode(pk)}")
         return 0
 
-    board, report = build(a.league_size, a.season)
-    if report.degraded():
+    board, report, stale_h = build_or_last_good(a.league_size, a.season)
+    if stale_h is None and report.degraded():
         print(f"  built without: {', '.join(report.degraded())}")
 
     # A mistyped pick is silent otherwise: the misspelt player stays on the board as
@@ -701,9 +762,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"    until that is fixed, {guess!r} is still shown as available")
             else:
                 print(f"\n  not on the board: {name!r} (kicker or defence, most likely)")
-    OUT.mkdir(parents=True, exist_ok=True)
-    board.write_parquet(ROOT / "data" / "processed" / "draft_board.parquet")
-    OUT.joinpath("draft_board.json").write_text(json.dumps(board.head(300).to_dicts(), default=str))
+    # Not when serving last-good: rewriting the file resets its mtime, so the age printed
+    # above would immediately become a lie, and every later run would report a fresh board
+    # that is actually as stale as the first failure.
+    if stale_h is None:
+        OUT.mkdir(parents=True, exist_ok=True)
+        board.write_parquet(BOARD_PARQUET)
+        OUT.joinpath("draft_board.json").write_text(
+            json.dumps(board.head(300).to_dicts(), default=str))
 
     # Summary only. Never print the frame -- that is the token rule in CLAUDE.md.
     print(f"\n  {board.height} players | {board['vor'].null_count()} missing xFP")

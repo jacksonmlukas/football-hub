@@ -1,6 +1,9 @@
 # Draft night runbook — Thu Sep 3, 9:00 PM, slot 3
 
-Rehearsed 2026-08-24. Every command below was timed and every failure path was tried.
+Rehearsed 2026-08-24. **Re-rehearsed end to end 2026-08-25**, which corrected the timings
+below and found one real failure: with no network the board did not degrade, it raised
+`ConnectionError` and printed a traceback instead of a pick. Fixed — see *no network at all*
+under [When something breaks](#when-something-breaks).
 
 ## Before you sit down
 
@@ -11,6 +14,9 @@ uv run python -m hub.draft.board --reset
 
 The reset matters. Draft state persists on disk, and starting a real draft on top of leftover
 picks from a rehearsal is a silent way to be wrong all night.
+
+Once that has run once, **the venue's wifi can fail and the tool still works.** Every later
+command falls back to the board written by this build. Which is the real reason to run it.
 
 **Rebuild the board on the day.** ADP moves. The poller prints the board's age at startup for
 exactly this reason — if it says anything other than a small number of hours, you are drafting
@@ -51,13 +57,21 @@ It reads the board; it does not build one. If it dies, the board and `--pick` st
 
 | command | time |
 |---|---|
-| `--pick N` | **0.4s** |
-| `--taken "..."` | **0.4s** |
-| `make draft` | **4s** warm |
+| `--pick N` | **5.0s** |
+| `--taken "..." --pick N` | **4.6s** |
+| `make draft` | **5.2s** |
+| any of the above, no network | **0.5s** (serves the last good board) |
 
-A 90-second clock has room for all of it several times over. This used to read *16s with
-championship equity, 3s without*; equity was removed on 2026-08-24
-([ADR-0009](adr/0009-championship-equity-does-not-pick.md)) and the flags with it.
+A 90-second clock has room for all of it several times over, which is why this still is not
+worth optimising.
+
+**The earlier 0.4s figures were wrong and did not reproduce.** Every invocation rebuilds the
+board from source — there is no cached fast path, and `--pick` prints `loading ffopportunity`
+every time — so the real cost is a full build. Measured three consecutive runs at 5.10 / 4.91 /
+5.11s. The conclusion is unchanged and the number is now honest.
+
+This used to read *16s with championship equity, 3s without*; equity was removed on
+2026-08-24 ([ADR-0009](adr/0009-championship-equity-does-not-pick.md)) and the flags with it.
 
 ## Reading the output
 
@@ -101,6 +115,7 @@ which ESPN does not retain ([ADR-0010](adr/0010-edge-is-displayed-but-never-rank
 | `THE PICK unavailable` | the board has neither ADP nor ECR, so it did not build | serve `site/data/draft_board.json` — the top 300 by ECR, which covers all 192 picks |
 | `NOT ON THE BOARD: 'x'` | mistyped pick | re-enter with the suggested spelling, then `--undo 1` the bad one |
 | board build fails on a source | SoS, touchdown luck, durability and the two league checks each degrade on their own | it will say which, and print `built without: ...`; the board still builds |
+| `BUILD FAILED: ...` then `serving the last good board` | **no network at all**, or ffverse/ESPN down. The two spine fetches have no in-build fallback, so the whole build is skipped | nothing. It prints how old the board is and carries on to THE PICK. ADP is that stale; every other column is a season-long number and does not move. Rebuild when the network returns |
 | poller says the board is many hours old | you did not rebuild today | `make draft`, then restart the poller |
 | wrong pick recorded | — | `--undo N` removes the last N |
 

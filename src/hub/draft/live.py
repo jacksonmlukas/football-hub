@@ -28,7 +28,7 @@ from typing import Any
 
 import polars as pl
 
-from hub.draft.board import DRAFTED_POSITIONS, MIN_GAMES, SLOTS, replacement_levels
+from hub.draft.board import DRAFTED_POSITIONS, MIN_GAMES, SLOTS, last_good, replacement_levels
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.state import DraftState, remaining, take
 
@@ -251,20 +251,10 @@ def next_action(n_taken: int, last: int, since_beat: float,
     return None
 
 
-def board_age_hours(path, now: float) -> float:
-    """How old the board file is, in hours. Separate so it can be tested without a clock."""
-    return max(now - path.stat().st_mtime, 0.0) / 3600.0
+
 
 
 def _load_board(now: float | None = None) -> pl.DataFrame:
-    import polars as _pl
-
-    from hub.draft.board import ROOT
-    path = ROOT / "data" / "processed" / "draft_board.parquet"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"no board at {path}. Run `make draft` first -- the poller reads the board, "
-            f"it does not build one.")
     # Print the age, always, with no threshold.
     #
     # `exists()` was the only check, so a board built on Tuesday and a build that failed on
@@ -272,9 +262,9 @@ def _load_board(now: float | None = None) -> pl.DataFrame:
     # nothing on screen to say so. A threshold would be a magic number wrong in one direction
     # or the other; the age is one line, has no failure mode, and at 9pm "when did I last
     # build this" is exactly what you will not remember.
-    age = board_age_hours(path, time.time() if now is None else now)
-    print(f"  board built {age:.1f}h ago ({path.name})", flush=True)
-    return _pl.read_parquet(path)
+    board, age = last_good(now=now)
+    print(f"  board built {age:.1f}h ago (draft_board.parquet)", flush=True)
+    return board
 
 
 def poll(interval: int = 10, *, my_slot: int = MY_SLOT, teams: int = TEAMS,

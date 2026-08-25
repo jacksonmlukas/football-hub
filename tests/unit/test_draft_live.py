@@ -18,6 +18,7 @@ from typing import ClassVar
 import polars as pl
 import pytest
 
+from hub.draft import board as board_mod
 from hub.draft import live
 from hub.draft.state import DraftState, take
 
@@ -408,17 +409,14 @@ def test_board_age_is_reported_in_hours(tmp_path):
     f = tmp_path / "b.parquet"
     f.write_bytes(b"x")
     mtime = f.stat().st_mtime
-    assert live.board_age_hours(f, mtime + 7200) == pytest.approx(2.0)
+    assert board_mod.board_age_hours(f, mtime + 7200) == pytest.approx(2.0)
 
 
-def test_a_board_from_the_future_is_zero_not_negative():
+def test_a_board_from_the_future_is_zero_not_negative(tmp_path):
     """Clock skew between a build host and the poller should read as fresh, not as a
     negative age that formats into nonsense on the one screen you are reading."""
-
-    class _F:
-        def stat(self):
-            class _S:
-                st_mtime = 1000.0
-            return _S()
-
-    assert live.board_age_hours(_F(), 500.0) == 0.0
+    import os
+    f = tmp_path / "b.parquet"
+    f.write_bytes(b"x")
+    os.utime(f, (1000.0, 1000.0))
+    assert board_mod.board_age_hours(f, 500.0) == 0.0
