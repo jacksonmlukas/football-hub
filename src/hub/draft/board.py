@@ -761,11 +761,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if tp:
             print(f"\n  THE PICK -- best available filling a need, by {tp.via}")
             print(f"    {tp.player}  {tp.pos or ''}  "
-                  + (f"{'ADP' if 'ADP' in tp.via else 'ECR'} {tp.rank:.1f}"
-                     if tp.rank is not None else "")
+                  + (f"{tp.rank_label} {tp.rank:.1f}" if tp.rank is not None else "")
                   + (f"   [{'; '.join(tp.notes)}]" if tp.notes else ""))
-            print("    Corrections shown are where our measurements say the market is wrong;")
-            print("    they are not priced in. Yours to weigh.")
+            print("    Corrections are where our measurements say the market is wrong. They")
+            print("    are folded into the ranking, bounded at 20% of ADP, and shown here")
+            print("    because the size matters to you even where the clamp limits the move.")
         else:
             print("\n  THE PICK unavailable -- the board carries neither ADP nor ECR, which "
                   "means it did not build. Serve site/data/draft_board.json instead.")

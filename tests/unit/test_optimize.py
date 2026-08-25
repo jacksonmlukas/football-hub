@@ -480,3 +480,26 @@ def test_the_reported_rank_is_his_adp_not_the_corrected_number():
     assert tp is not None
     row = b.filter(pl.col("player") == tp.player).row(0, named=True)
     assert tp.rank == row["adp"]
+
+
+def test_the_rank_label_travels_with_the_value():
+    """It used to be inferred in board.py with `"ADP" in via`, which silently labelled an
+    ADP value "ECR" the moment the prose changed to "draft market, corrected". A unit
+    recovered from a human-readable sentence is a unit waiting to be wrong."""
+    b = _corr_board(corrections={"P3": -5.0})
+    b = b.with_columns(optimize.corrected_adp(b).alias("adp_corrected"),
+                       pl.Series("ecr", [float(i + 1) for i in range(b.height)]))
+    tp = optimize.the_pick(b, DraftState(taken=[]), my_slot=1, teams=1)
+    assert tp is not None
+    assert tp.rank_label == "ADP"
+    row = b.filter(pl.col("player") == tp.player).row(0, named=True)
+    assert tp.rank == row["adp"]
+
+
+def test_the_consensus_fallback_reports_ecr_and_says_so():
+    b = _corr_board().drop("adp").with_columns(
+        pl.Series("ecr", [float(i + 1) for i in range(120)]))
+    tp = optimize.the_pick(b, DraftState(taken=[]), my_slot=1, teams=1)
+    assert tp is not None
+    assert tp.rank_label == "ECR"
+    assert "consensus" in tp.via

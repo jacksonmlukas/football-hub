@@ -31,9 +31,18 @@ Given, not assumptions to re-litigate.
 1. Win the fantasy league and pools
 2. Actually understand the modeling techniques
 3. Portfolio artifact that lands interviews
-4. Demonstrable market edge (positive CLV)
 
-Edge ranks last. That is why gates route rather than kill: a model failing its gate becomes a
+**Demonstrable market edge (positive CLV) was objective 4 until 2026-08-24. It is now an
+explicit non-goal.** The standing decision below -- backtest to audit ourselves, not to find
+edges -- had already retired it in practice, and the list had not caught up. Six measured
+attempts have now failed to beat a market: four screens, VOR ordering at -5.06 points per
+team-game, and championship equity at -19.66. Leaving it stated invites the move this document
+records going wrong twice in one day: when a pre-registered rule fires against the complicated
+thing, an ambition to find edge is what makes "the test was unfair" feel reasonable.
+
+The system measures itself against markets. It does not try to beat them.
+
+Edge ranked last. That is why gates route rather than kill: a model failing its gate becomes a
 documented study, not a deletion. It is also why we derive before importing (hand-roll split
 conformal before MAPIE, the survivor DP before pulp) — the slower path serves objective 2.
 

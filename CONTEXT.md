@@ -28,7 +28,19 @@ _Avoid_: the market, the book, Vegas.
 
 **Edge**:
 Consensus rank minus draft-market pick, on a common scale. Positive means your leaguemates,
-drafting off ESPN's board, will let this player fall past his consensus value.
+drafting off ESPN's board, will let this player fall past his consensus value. Displayed and
+never sorted on — it needs historical ADP to validate and none exists
+([ADR-0010](docs/adr/0010-edge-is-displayed-but-never-ranked-on.md)).
+
+**Corrected ADP**:
+The draft market's ordering, moved by the corrections this repo has measured and the market
+has not priced, bounded at 20% of a player's own ADP. What THE PICK ranks on.
+_Avoid_: adjusted ADP, our ADP.
+
+**Correction**:
+A fitted markdown or markup to a projection, in points per game, where a measurement says the
+market is wrong — touchdown luck, durability, current designation. Each carries a coefficient
+with an interval. An unfitted quantity is not a correction, however useful.
 
 ### The board
 
@@ -81,6 +93,23 @@ that position moves and a static board goes stale.
 **THE PICK**:
 The single recommendation the draft-night output leads with: best available in the draft
 market that fills an unfilled starting slot.
+
+### How a thing earns its place
+
+**Signal**:
+A claim that some quantity predicts outcomes *beyond what consensus already knows*. Tested by
+a **screen**: partial correlation against ECR. Five have been screened; five were null.
+
+**Model**:
+A component that produces a projection or a decision. Tested by a **gate**: does it beat the
+simplest thing that already works? Championship equity was gated against following the market
+and lost by 19.66 points a team-game.
+
+**Screen** / **Gate**:
+The two tests, and they are not interchangeable. A screen asks "is this real?"; a gate asks
+"is this better than what it replaces?" Confusing them is how a well-built, well-tested model
+ships while being confidently worse than a one-line rule.
+_Avoid_: validate, backtest — both hide which question is being asked.
 
 ### Season simulation
 

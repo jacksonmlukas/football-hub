@@ -353,9 +353,10 @@ class ThePick:
     """The recommendation, and everything a renderer needs to explain it."""
     player: str
     pos: str | None
-    via: str            # which market chose it, for the screen
-    rank: float | None  # its ADP, or its ECR on the fallback
-    notes: list[str]    # corrections the market has not priced
+    via: str            # which market chose it, prose for the screen
+    rank: float | None  # the number, in `rank_label` units
+    rank_label: str     # what `rank` IS -- carried, never inferred from `via`
+    notes: list[str]    # corrections, in points per game
 
 
 def the_pick(board: pl.DataFrame, state: DraftState, *,
@@ -380,18 +381,23 @@ def the_pick(board: pl.DataFrame, state: DraftState, *,
     held = held_positions(board, state, my_slot=my_slot, teams=teams)
     # Corrected ADP first: the market's pick, moved by what we have measured it to miss.
     # Raw ADP behind it, for a board built before `adp_corrected` existed. Consensus last.
-    for by, via in (("adp_corrected", "draft market, corrected"),
-                    ("adp", "draft market (ADP)"),
-                    ("ecr", "consensus (ECR) -- no ADP today")):
+    # (column to rank on, prose for the screen, column to *report*, its unit).
+    #
+    # Reported separately from ranked: on corrected ADP the drafter is comparing against a
+    # room that sees raw ADP, so raw ADP is the useful number. The unit travels with the
+    # value instead of being recovered from the prose -- `board.main` used to infer it with
+    # `"ADP" in via`, which silently labelled an ADP value "ECR" the moment the prose changed
+    # to "draft market, corrected".
+    routes = (("adp_corrected", "draft market, corrected", "adp", "ADP"),
+              ("adp", "draft market (ADP)", "adp", "ADP"),
+              ("ecr", "consensus (ECR) -- no ADP today", "ecr", "ECR"))
+    for by, via, report, label in routes:
         name = market_pick(avail, held, by=by)
         if name is None:
             continue
         row = board.filter(pl.col("player") == name).row(0, named=True)
-        # Report his ADP, not the corrected number: the drafter is comparing against a room
-        # that sees ADP. The correction is shown separately, in the notes.
-        shown = row.get("adp") if by == "adp_corrected" else row.get(by)
         return ThePick(player=name, pos=row.get("pos"), via=via,
-                       rank=shown, notes=pick_notes(row))
+                       rank=row.get(report), rank_label=label, notes=pick_notes(row))
     return None
 
 
