@@ -166,6 +166,10 @@ NOT_FITTED: dict[str, str] = {
     "hub.draft.live": "operational -- a refresh budget in seconds, same class as `poll`",
     "hub.draft.tune": "hyperparameter search grid, run offline and never at predict time",
     "hub.models.eval": "model-comparison harness; it reads predictions, never makes them",
+    "hub.models.injury": "the retention table is fitted at run time from nflverse and never "
+                        "frozen into the module, so nothing here is a fitted constant. "
+                        "TYPE_MIN_SE and SHRINK_GRID are a significance bar and a search "
+                        "grid -- both settings. See docs/weekly-injury.md",
     "hub.models.spread": "a measurement that adopted nothing -- it tested whether per-player "
                          "weekly spread beats K[position] and kept the incumbent. MIN_PPG and "
                          "MIN_SE are a sample threshold and a significance bar, both settings. "

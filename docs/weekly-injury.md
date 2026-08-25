@@ -81,6 +81,61 @@ That second candidate was declared before being run, and it clears:
 Better in **all three** held-out seasons. Paired across 3,687 held-out player-weeks it beats
 `out_zero` by **0.170 MAE at 3.8 se**.
 
+## Does *what is wrong with him* add anything? Measured 2026-08-25: not by the gate
+
+The table above prices a designation by `report_status` × `practice_status` and ignores
+`report_primary_injury` entirely. A hamstring is not an ankle is not a concussion, so the
+obvious extension is a per-type multiplier on what the table already predicts.
+
+**The gate was declared before running, and the incumbent moved.** The arm to beat is
+`retention` — the thing that already won — not `out_zero`. To be adopted it had to beat it in
+**every** held-out season **and** clear 2 se on the paired difference.
+
+| held-out season | n | `retention` | type-adjusted |
+|---|---|---|---|
+| 2023 | 1,191 | 4.0336 | **3.9942** |
+| 2024 | 1,247 | 4.3477 | **4.2951** |
+| 2025 | 1,249 | **3.7943** | 3.8125 |
+
+    KEEP 'retention': what is wrong with him adds nothing measurable to how he practised.
+      type-adjusted: mean gain +0.0244 MAE at 2.5 se, wins 2/3 seasons
+
+**This is the closest call in the repo, and it is the mirror image of
+[player-spread.md](player-spread.md).** There, `own_k` won every season and missed on
+significance at 1.8 se. Here the type adjustment clears significance at 2.5 se and loses a
+season — and the season it loses is 2025, the most recent one, which is the one you would
+weight most.
+
+Not adopted. Two halves, both required, and this is exactly the case the two-halves rule is
+for: a mean gain of 0.024 points on a 4.0 baseline is 0.6%, and one bad season out of three is
+most of what there was to see.
+
+### The multipliers, which are the interesting part
+
+Fitted on all four seasons, shrunk toward 1.0 (`k` came out at 25 on every fold):
+
+    Hamstring 0.691   Forearm 0.744   Right Shoulder 0.745
+    Foot 1.190        Illness 1.416   Achilles 1.469
+
+**Hamstring is the largest and the mechanism is the folk one**: a hamstring keeps 31% less than
+his practice report implies, which is what everyone who has ever been burned by one believes.
+Above 1.0 the reading is different and worth stating — these are conditional on being
+*designated and still playing*, so an Achilles or an illness that did not rule a player out is
+a milder thing than the word suggests.
+
+### Why it might be losing on a technicality, and why that is not being fixed here
+
+The type field is dirty. `Shoulder`, `Right Shoulder` and `right Thumb` are three separate
+categories in the raw data, so laterality and capitalisation split the evidence for the same
+injury across cells — and 2,601 of the designated player-weeks are `Unknown` because nflverse
+carries no type at all for 53% of rows.
+
+Normalising that (strip laterality, casefold) would pool the evidence and quite plausibly push
+this over the line. **It is not being done now.** Changing the encoding after seeing that the
+candidate narrowly lost is retuning a gate against its own result, which is the failure this
+repo has documented three times. It is a legitimate *pre-registered* follow-up: normalise
+first, declare the same gate, run once.
+
 ## What it is not
 
 It wins on 51.5% of individual observations — a small edge applied consistently, not a

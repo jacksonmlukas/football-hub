@@ -6,6 +6,7 @@ answer different questions and are not comparable.
 
 All offline.
 """
+import numpy as np
 import polars as pl
 import pytest
 
@@ -212,3 +213,139 @@ def test_the_fit_path_runs_offline(monkeypatch, capsys, tmp_path):
     text = capsys.readouterr().out
     assert "designated player-weeks" in text
     assert out.exists()
+
+
+# --- does what is wrong with him add anything? ------------------------------
+#
+# `retention` prices a designation by (status, practice) and ignores the injury type. The gate
+# for adding it is stricter than the one `retention` itself cleared, because the incumbent is
+# now the thing that already won: every held-out season AND 2 se on the paired difference.
+
+def _inj_typed(rows):
+    """(season, week, gsis_id, position, report_status, practice_status, injury)."""
+    base = _inj([r[:6] for r in rows])
+    return base.with_columns(pl.Series("report_primary_injury", [r[6] for r in rows]))
+
+
+def test_the_injury_type_is_carried_through():
+    st = _stats([(2024, w, "a", "WR", 10.0) for w in range(1, 9)]
+                + [(2024, 9, "a", "WR", 4.0)])
+    inj = _inj_typed([(2024, 9, "a", "WR", "Questionable", "Limited", "Hamstring")])
+    assert injury.observations(inj, st)["injury"].to_list() == ["Hamstring"]
+
+
+def test_a_missing_injury_type_is_unknown_not_dropped():
+    """53% of rows are null upstream. Dropping them would price injuries among the players
+    whose injury happened to be reported."""
+    st = _stats([(2024, w, "a", "WR", 10.0) for w in range(1, 9)]
+                + [(2024, 9, "a", "WR", 4.0)])
+    obs = injury.observations(_inj([(2024, 9, "a", "WR", "Questionable", "Limited")]), st)
+    assert obs.height == 1 and obs["injury"].to_list() == ["Unknown"]
+
+
+def test_an_absent_column_degrades_rather_than_raising():
+    """Older nflverse slices, and every existing fixture in this file."""
+    st = _stats([(2024, w, "a", "WR", 10.0) for w in range(1, 9)]
+                + [(2024, 9, "a", "WR", 4.0)])
+    obs = injury.observations(_inj([(2024, 9, "a", "WR", "Questionable", "Limited")]), st)
+    assert injury.predict_with_type(obs, injury.retention_table(obs, min_cell=1),
+                                    {}, fallback=0.5).shape == (1,)
+
+
+# --- the multiplier -------------------------------------------------------
+
+def _typed_obs(n_per_type=40):
+    rows_st, rows_inj = [], []
+    for t, mult in (("Hamstring", 0.5), ("Ankle", 1.0)):
+        for i in range(n_per_type):
+            pid = f"{t}{i}"
+            for w in range(1, 9):
+                rows_st.append((2024, w, pid, "WR", 10.0))
+            rows_st.append((2024, 9, pid, "WR", 10.0 * 0.6 * mult))
+            rows_inj.append((2024, 9, pid, "WR", "Questionable", "Limited", t))
+    return injury.observations(_inj_typed(rows_inj), _stats(rows_st))
+
+
+def test_a_type_that_underperforms_the_table_gets_a_multiplier_below_one():
+    obs = _typed_obs()
+    tab = injury.retention_table(obs, min_cell=1)
+    adj = injury.type_adjustment(obs, tab, fallback=0.6, k=1.0)
+    assert adj["Hamstring"] < 0.9 < adj["Ankle"]
+
+
+def test_shrinkage_pulls_a_thin_type_toward_no_adjustment():
+    """A type with little evidence must change nothing, which is what lets thin types
+    contribute in proportion to their evidence instead of being trusted or dropped."""
+    obs = _typed_obs()
+    tab = injury.retention_table(obs, min_cell=1)
+    loose = injury.type_adjustment(obs, tab, fallback=0.6, k=1.0)
+    tight = injury.type_adjustment(obs, tab, fallback=0.6, k=100000.0)
+    assert abs(tight["Hamstring"] - 1.0) < abs(loose["Hamstring"] - 1.0)
+
+
+def test_an_empty_adjustment_is_exactly_the_incumbent():
+    """The candidate can only win by earning it: no adjustment reproduces `retention`."""
+    obs = _typed_obs()
+    tab = injury.retention_table(obs, min_cell=1)
+    base = injury.predict_retention(obs, tab, fallback=0.6)
+    assert injury.predict_with_type(obs, tab, {}, fallback=0.6) == pytest.approx(base)
+
+
+def test_shrinkage_is_chosen_on_training_rows_only():
+    obs = _typed_obs()
+    tab = injury.retention_table(obs, min_cell=1)
+    assert injury.fit_shrink(obs, tab, fallback=0.6) in injury.SHRINK_GRID
+
+
+# --- the gate -------------------------------------------------------------
+
+def _errs(gain, noise, seasons=(2024, 2025), n=400, seed=0):
+    """Antithetic noise, so each season's mean difference is exactly `gain`."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for si, season in enumerate(seasons):
+        e = rng.normal(0, noise, n // 2)
+        for d in np.concatenate([e, -e]):
+            rows.append((season, 5.0, 5.0 - gain[si] + float(d)))
+    return pl.DataFrame({"season": [r[0] for r in rows], "k": [50.0] * len(rows),
+                         "err_retention": [r[1] for r in rows],
+                         "err_type": [r[2] for r in rows]})
+
+
+def test_the_incumbent_is_retention_not_out_zero():
+    """The thing to beat is what already won, not what it beat."""
+    _, text = injury.type_verdict(_errs([0.0, 0.0], noise=1.0))
+    assert "retention" in text and "out_zero" not in text
+
+
+def test_a_type_effect_that_wins_everywhere_and_clears_two_se_is_adopted():
+    winner, text = injury.type_verdict(_errs([0.5, 0.5], noise=1.0))
+    assert winner == "type" and text.startswith("ADOPT")
+
+
+def test_losing_one_season_is_not_enough():
+    winner, text = injury.type_verdict(_errs([2.0, -0.5], noise=1.0))
+    assert winner == "retention" and text.startswith("KEEP")
+
+
+def test_a_gain_too_small_to_distinguish_from_noise_is_not_adopted():
+    winner, _ = injury.type_verdict(_errs([0.2, 0.2], noise=3.0))
+    assert winner == "retention"
+
+
+def test_no_held_out_season_reports_nothing_measured():
+    winner, text = injury.type_verdict(pl.DataFrame())
+    assert winner == "retention" and "nothing measured" in text
+
+
+def test_the_type_walk_forward_fits_only_on_earlier_seasons():
+    rows_st, rows_inj = [], []
+    for season in (2023, 2024):
+        for i in range(30):
+            pid = f"p{season}{i}"
+            for w in range(1, 9):
+                rows_st.append((season, w, pid, "WR", 10.0))
+            rows_st.append((season, 9, pid, "WR", 5.0))
+            rows_inj.append((season, 9, pid, "WR", "Questionable", "Limited", "Knee"))
+    obs = injury.observations(_inj_typed(rows_inj), _stats(rows_st))
+    assert injury.walk_forward_type(obs, min_cell=1)["season"].unique().to_list() == [2024]

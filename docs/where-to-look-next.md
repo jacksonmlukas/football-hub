@@ -102,7 +102,7 @@ So M1 splits cleanly in two, and the second half is free:
 **This is the strongest untested idea in the repo**, and the only one whose blocker is a
 purchase rather than a measurement.
 
-### M2. Extend the one thing that worked, using the column it ignores
+### M2. Extend the one thing that worked, using the column it ignores — MEASURED 2026-08-25, not adopted
 
 **The idea.** #12 prices a designation by `report_status` × `practice_status` and throws away
 *what is actually wrong with the player*. `load_injuries` carries `report_primary_injury` and
@@ -125,6 +125,13 @@ hypothesis, and the mechanism is the one already shown to work.
 
 **Gate.** The same one #12 cleared, and note the incumbent has moved: the arm to beat is now
 `retention`, not `out_zero`. Held-out MAE, every season, 2 se paired.
+
+**Result: KEEP `retention`.** +0.0244 MAE at 2.5 se, but 2/3 seasons — it loses 2025, the
+most recent. Clears the significance half and fails the every-season half, the mirror image of
+the spread null. Hamstring came out at 0.691, the largest multiplier and the one folk wisdom
+predicts. Full write-up in [weekly-injury.md](weekly-injury.md), including why normalising the
+dirty type field (`Shoulder` vs `Right Shoulder`) is a legitimate pre-registered follow-up and
+not something to do after seeing this number.
 
 **Two things that will bite.** 53% of rows have a null primary injury, so any encoding needs an
 explicit unknown category rather than a drop — dropping them would measure the cost of an

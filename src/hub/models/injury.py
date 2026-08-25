@@ -80,7 +80,14 @@ def observations(injuries: pl.DataFrame, stats: pl.DataFrame, *,
                    .select("season", "week", "gsis_id",
                            pl.col("report_status").fill_null("None").alias("status"),
                            pl.col("practice_status").fill_null("None")
-                             .str.slice(0, _PS_WIDTH).alias("practice")))
+                             .str.slice(0, _PS_WIDTH).alias("practice"),
+                           # What is actually wrong with him, which the (status, practice)
+                           # table throws away. 53% of rows are null upstream, so "Unknown"
+                           # is a real category here rather than a drop: dropping them would
+                           # price injuries among players whose injury was reported.
+                           (pl.col("report_primary_injury") if "report_primary_injury"
+                            in injuries.columns else pl.lit(None, pl.Utf8))
+                           .fill_null("Unknown").str.strip_chars().alias("injury")))
     st = (stats.filter(pl.col("position").is_in(POSITIONS))
                .select("season", "week", pl.col("player_id").alias("gsis_id"),
                        pl.col("fantasy_points_ppr").fill_null(0.0).alias("pts")))
@@ -173,6 +180,118 @@ def _mean(df: pl.DataFrame, col: str) -> float:
 
 
 CANDIDATES = ("baseline", "out_zero", "table", "retention")
+
+# --- does what is wrong with him add anything? ------------------------------
+#
+# `retention` prices a designation by (status, practice) and ignores `report_primary_injury`
+# entirely. A hamstring is not an ankle is not a concussion: hamstrings re-injure, concussions
+# are protocol-governed and resolve on a schedule that has little to do with Friday practice.
+#
+# THE GATE, FIXED BEFORE THIS WAS RUN. The incumbent is `retention` -- the thing that already
+# won -- not `out_zero`. To be adopted, the type-adjusted model must beat it on held-out MAE
+# in EVERY held-out season AND clear 2 standard errors on the paired difference. Beating it on
+# the mean while losing a season is how a fit gets adopted on one lucky year, and this repo has
+# eleven nulls behind it precisely because that bar is kept where it is.
+TYPE_MIN_SE = 2.0
+
+# Shrinkage grid for the per-type multiplier, chosen on TRAINING rows only. Shrinking toward
+# 1.0 rather than imposing a cell minimum is what lets a thin type (Groin, n=450 across four
+# seasons, far fewer inside any one training window) contribute in proportion to its evidence
+# instead of being either trusted outright or dropped outright.
+SHRINK_GRID = (25.0, 50.0, 100.0, 200.0, 400.0)
+
+
+def type_adjustment(obs: pl.DataFrame, table: pl.DataFrame, *, fallback: float,
+                    k: float) -> dict[str, float]:
+    """Multiplier per injury type on what the base table already predicts.
+
+    Fitted as a ratio of totals for the same reason `retention_table` is -- a per-row ratio
+    blows up wherever the base prediction is near zero, and an Out player's prediction is
+    exactly zero by construction.
+
+    Shrunk toward 1.0 by `k`, so a type with little evidence changes nothing.
+    """
+    if obs.is_empty() or "injury" not in obs.columns:
+        return {}
+    pred = predict_retention(obs, table, fallback=fallback)
+    df = obs.select("injury").with_columns(
+        pl.Series("pred", pred),
+        pl.Series("act", obs["pts"].to_numpy().astype(float)))
+    g = (df.group_by("injury")
+           .agg(pl.len().alias("n"), pl.col("pred").sum().alias("p"),
+                pl.col("act").sum().alias("a"))
+           .filter(pl.col("p") > 0))
+    return {r["injury"]: float((r["n"] * (r["a"] / r["p"]) + k) / (r["n"] + k))
+            for r in g.iter_rows(named=True)}
+
+
+def predict_with_type(obs: pl.DataFrame, table: pl.DataFrame,
+                      adj: dict[str, float], *, fallback: float) -> np.ndarray:
+    """The base prediction, scaled by the player's injury type. Empty `adj` is a no-op."""
+    base = predict_retention(obs, table, fallback=fallback)
+    if not adj or "injury" not in obs.columns:
+        return base
+    mult = np.array([adj.get(i, 1.0) for i in obs["injury"].to_list()])
+    return base * mult
+
+
+def fit_shrink(train: pl.DataFrame, table: pl.DataFrame, *, fallback: float) -> float:
+    """Pick `k` on training rows only. Never sees a held-out season."""
+    actual = train["pts"].to_numpy().astype(float)
+    best, best_mae = SHRINK_GRID[-1], np.inf
+    for k in SHRINK_GRID:
+        adj = type_adjustment(train, table, fallback=fallback, k=k)
+        mae = float(np.abs(predict_with_type(train, table, adj, fallback=fallback)
+                           - actual).mean())
+        if mae < best_mae:
+            best, best_mae = float(k), mae
+    return best
+
+
+def walk_forward_type(obs: pl.DataFrame, *, min_cell: int = MIN_CELL) -> pl.DataFrame:
+    """One row per held-out observation: `retention`'s error and the type-adjusted one.
+
+    Per observation rather than per season so the gate can be paired -- the same player-week
+    scored by both arms, which is a far tighter comparison than two independent means.
+    """
+    frames = []
+    for yr in sorted(obs["season"].unique().to_list())[1:]:
+        past = obs.filter(pl.col("season") < yr)
+        now = obs.filter(pl.col("season") == yr)
+        if past.is_empty() or now.is_empty():
+            continue
+        ret = retention_table(past, min_cell=min_cell)
+        pb = float(past["baseline"].sum() or 0.0)
+        pooled = float(past["pts"].sum() or 0.0) / pb if pb > 0 else 1.0
+        k = fit_shrink(past, ret, fallback=pooled)
+        adj = type_adjustment(past, ret, fallback=pooled, k=k)
+        actual = now["pts"].to_numpy().astype(float)
+        frames.append(pl.DataFrame({
+            "season": [yr] * now.height, "k": [k] * now.height,
+            "err_retention": np.abs(predict_retention(now, ret, fallback=pooled) - actual),
+            "err_type": np.abs(predict_with_type(now, ret, adj, fallback=pooled) - actual),
+        }))
+    return pl.concat(frames) if frames else pl.DataFrame()
+
+
+def type_verdict(errs: pl.DataFrame) -> tuple[str, str]:
+    """The gate declared above: every held-out season, and 2 se on the paired difference."""
+    if errs.is_empty() or "err_type" not in errs.columns:
+        return "retention", "nothing measured -- no held-out season"
+    per = (errs.group_by("season")
+               .agg(pl.len().alias("n"), pl.col("err_retention").mean().alias("mae_retention"),
+                    pl.col("err_type").mean().alias("mae_type"))
+               .sort("season"))
+    d = errs["err_retention"].to_numpy().astype(float) - errs["err_type"].to_numpy().astype(float)
+    se = float(d.std(ddof=1) / np.sqrt(len(d))) if len(d) > 1 else 0.0
+    t = float(d.mean() / se) if se > 0 else 0.0
+    wins = int((per["mae_type"].to_numpy() < per["mae_retention"].to_numpy()).sum())
+    line = (f"  type-adjusted: mean gain {d.mean():+.4f} MAE at {t:.1f} se, "
+            f"wins {wins}/{per.height} seasons")
+    if wins == per.height and t >= TYPE_MIN_SE:
+        return "type", (f"ADOPT 'type': the injury type adds to (status, practice).\n{line}")
+    return "retention", (f"KEEP 'retention': what is wrong with him adds nothing measurable "
+                         f"to how he practised.\n{line}")
 
 
 def walk_forward(obs: pl.DataFrame, *, min_cell: int = MIN_CELL) -> pl.DataFrame:
@@ -275,6 +394,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  {'mean':>6} {'':>5}  "
               + "  ".join(f"{_mean(wf, 'mae_' + c):>10.4f}" for c in CANDIDATES))
     print(f"\n  {verdict(wf)[1]}")
+
+    # Does what is wrong with him add to how he practised? Gate declared at TYPE_MIN_SE.
+    errs = walk_forward_type(obs)
+    if not errs.is_empty():
+        top = (obs.group_by("injury").agg(pl.len().alias("n"))
+                  .sort("n", descending=True).head(8))
+        print("\n  Injury types by volume: "
+              + ", ".join(f"{r['injury']} {r['n']}" for r in top.iter_rows(named=True)))
+        print(f"  {type_verdict(errs)[1]}")
     if a.out:
         table.write_parquet(a.out)
         print(f"  wrote {table.height} rows to {a.out}")
