@@ -232,6 +232,7 @@ def test_the_fit_path_keeps_the_incumbent_when_it_is_right(monkeypatch, capsys):
     """The branch that matters more: an asserted number that survives a fit is no longer
     asserted, and the CLI has to be able to say so."""
     import nflreadpy as nfl
+
     from hub.models.market import MARGIN_SD as live
     sched = _synthetic(seasons=range(2010, 2021), per=200, sd=live)
     monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: sched)
