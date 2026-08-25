@@ -202,3 +202,39 @@ def test_the_old_asserted_value_would_now_fail_that_guard():
     lo = margin.FITTED_SD - 2 * margin.FITTED_SE
     hi = margin.FITTED_SD + 2 * margin.FITTED_SE
     assert not (lo <= 13.5 <= hi)
+
+
+# --- the CLI, offline -----------------------------------------------------
+
+def test_help_path_needs_no_network():
+    assert margin.main([]) == 0
+
+
+def test_the_fit_path_reports_and_gates(monkeypatch, capsys, tmp_path):
+    """The whole reporting path, on synthetic seasons, with the fetch patched out. A gate
+    whose CLI is only exercisable against the live API is one nobody re-runs."""
+    import nflreadpy as nfl
+    sched = _synthetic(seasons=range(2010, 2021), per=200, sd=11.0)
+    monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: sched)
+
+    out = tmp_path / "wf.parquet"
+    assert margin.main(["--fit", "--out", str(out)]) == 0
+    text = capsys.readouterr().out
+    assert "full sample" in text
+    assert "Walk-forward" in text
+    # true dispersion 11 against an incumbent of 13.5: a fitted candidate must win
+    assert "ADOPT" in text
+    assert "Value to adopt" in text
+    assert out.exists()
+
+
+def test_the_fit_path_keeps_the_incumbent_when_it_is_right(monkeypatch, capsys):
+    """The branch that matters more: an asserted number that survives a fit is no longer
+    asserted, and the CLI has to be able to say so."""
+    import nflreadpy as nfl
+    from hub.models.market import MARGIN_SD as live
+    sched = _synthetic(seasons=range(2010, 2021), per=200, sd=live)
+    monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: sched)
+
+    assert margin.main(["--fit"]) == 0
+    assert "KEEP" in capsys.readouterr().out
