@@ -160,3 +160,36 @@ def test_persisting_is_safe_to_repeat(tmp_path):
     board._persist(df, out=out, path=path)
     board._persist(df, out=out, path=path)
     assert path.exists()
+
+
+# --- the ECR-only path, which is a documented fallback and used to crash ----
+#
+# `docs/draft-night.md` lists `by consensus (ECR) -- no ADP today` as "a good fallback, not a
+# degraded one". It was unreachable: two report sections read `adp` while guarding on a
+# different flag, so a board with no ESPN ADP raised ColumnNotFoundError before THE PICK.
+
+def _ecr_only():
+    """What `build` returns with no ESPN key: everything but ADP."""
+    return pl.DataFrame({"player": ["A", "B"], "pos": ["RB", "WR"],
+                         "td_luck": [1.0, -1.0], "missed": [5, 6],
+                         "injury_status": ["QUESTIONABLE", None]})
+
+
+def test_the_injury_report_is_skipped_without_adp():
+    """Both halves are scoped to `inside ADP 120` and both print an ADP, so there is nothing
+    to show -- and the filter used to raise."""
+    r = board.BuildReport(durability=True, adp=False)
+    board._print_injuries(_ecr_only(), r)          # must not raise
+
+
+def test_the_touchdown_luck_report_is_skipped_without_adp():
+    """It reaches nflverse, so it can succeed while ESPN ADP fails."""
+    r = board.BuildReport(td_luck=True, adp=False)
+    board._print_td_luck(_ecr_only(), r)           # must not raise
+
+
+def test_those_reports_still_run_when_adp_is_present():
+    """The guard must not have turned them off altogether."""
+    df = _ecr_only().with_columns(pl.Series("adp", [10.0, 20.0]))
+    board._print_injuries(df, board.BuildReport(durability=True, adp=True))
+    board._print_td_luck(df, board.BuildReport(td_luck=True, adp=True))

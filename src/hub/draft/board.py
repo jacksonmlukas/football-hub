@@ -620,7 +620,12 @@ def _print_injuries(board: pl.DataFrame, report: BuildReport) -> None:
     priced at all -- there is no history of preseason designations against outcomes to fit a
     coefficient on, so inventing one would be worse than showing the drafter the flag.
     """
-    if not (report.durability or report.adp):
+    # `report.adp`, not `durability or adp`. Both halves of this report are scoped to
+    # "inside ADP 120" and both print an ADP, so without that column there is nothing here
+    # to show -- and the `or` meant a board with durability but no ADP reached the filter
+    # below and died on ColumnNotFoundError. That is the whole ECR-only path, which
+    # docs/draft-night.md documents as a designed fallback.
+    if not report.adp:
         return
     pool = board.filter(pl.col("adp").is_not_null() & (pl.col("adp") <= 120))
     if "injury_status" in pool.columns:
@@ -662,7 +667,9 @@ def _print_td_luck(board: pl.DataFrame, report: BuildReport) -> None:
     strong negative. See docs/td-luck.md, including how much of this is established
     (quarterbacks) and how much is only directional (running backs, receivers).
     """
-    if not report.td_luck:
+    # `report.td_luck` alone was not enough: this reaches nflverse and can succeed while
+    # ESPN ADP fails, and the filter below reads `adp`.
+    if not (report.td_luck and report.adp):
         return
     pool = board.filter(pl.col("td_luck").is_not_null()
                         & pl.col("adp").is_not_null() & (pl.col("adp") <= 120))
