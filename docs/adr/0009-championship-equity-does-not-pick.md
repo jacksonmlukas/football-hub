@@ -15,6 +15,16 @@ weekly points:
     n=80   optimizer - market = -19.66 points per team game
            95% CI [-23.16, -16.20]      P(optimizer better) 0.0%
 
+**Re-run 2026-08-25**, unchanged code path, after a day of work elsewhere in the repo:
+
+    n=80   optimizer - market = -19.13 points per team game
+           95% CI [-22.31, -15.75]   P(optimizer better) 0.0%
+
+The original -19.66 sits well inside that interval, so the verdict reproduces. The two are not
+identical because the historical boards are rebuilt from live ffopportunity and consensus each
+run, and both move as nflverse backfills; the seed fixes the simulation, not the inputs. Worth
+knowing that this gate is a re-measurement and not a recorded constant.
+
 Losing in all four seasons, winning 9 of 80 drafts. `config_digest` 9975101f; paired rows in
 `data/processed/p0b_paired.parquet`; harness in `hub.draft.backtest`.
 
