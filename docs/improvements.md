@@ -139,7 +139,24 @@ is the half of the signal that already carries forward.
 
 ---
 
-## 5. Injury pricing is one coefficient for three states
+## 5. Injury pricing is one coefficient for three states — MEASURED 2026-08-25
+
+**Done, and it is the first model in this repo to clear its gate.** See
+[weekly-injury.md](weekly-injury.md).
+
+The item below conflated two quantities, and the work separated them. `INJURY_BETA` prices a
+*preseason* designation against a *season-long* projection — a draft question, unchanged. What
+was missing is the *weekly* cost, and it is large and monotone in the practice report:
+Questionable + did-not-practise keeps **41%** of a player's own production, Questionable + full
+keeps **72%**, Out keeps **0%**.
+
+Gated against "bench anyone ruled out", the rule a manager already follows for free. The first
+attempt — an *additive* penalty table — **lost** (4.978 against 4.229), because an Out player
+scores exactly zero and no additive penalty can say so. A multiplicative retention table,
+declared before being run, wins at **4.059**, better in all three held-out seasons and by 0.170
+MAE at 3.8 se across 3,687 player-weeks.
+
+### Original text
 
 **Model.** `INJURY_BETA` prices OUT, DOUBTFUL and INJURY_RESERVE at the same −1.631 ppg, and
 `durability.py` says why: IR has no coefficient of its own, so it borrows Out's and thereby

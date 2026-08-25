@@ -18,6 +18,7 @@ Every one of these was built, measured against a rule fixed before the numbers, 
 | `edge` (consensus vs ADP), the repo's original signal | **Displayed, never sorted on** | Structurally unmeasurable — needs historical ADP that ESPN does not retain ([ADR-0010](docs/adr/0010-edge-is-displayed-but-never-ranked-on.md)) |
 | Lineup optimiser | **Inert until variance is real** | +0.00 pts/game; `sd = k·√mu`, so it is handed no information sorting lacks ([ADR-0012](docs/adr/0012-the-lineup-optimiser-waits-for-real-variance.md)) |
 | Five candidate draft signals (expected-vs-actual points, recency-weighted, depth-chart climb ×2, age) | **All null** | Screened before any implementation ([signal-screens.md](docs/signal-screens.md)) |
+| Weekly injury cost — retention by designation and practice report | **Adopted** — the one that cleared its gate | Beats bench-the-ruled-out by 0.170 MAE at 3.8 se, n=3687 ([weekly-injury.md](docs/weekly-injury.md)) |
 
 What survives and decides the pick is the draft market, corrected for three effects with
 fitted coefficients and a bounded adjustment ([ADR-0011](docs/adr/0011-the-pick-ranks-on-corrected-adp.md)).
