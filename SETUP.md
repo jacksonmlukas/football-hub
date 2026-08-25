@@ -51,12 +51,14 @@ All three print without error.
 ## 2. Install and run the tests
 
 ```bash
-uv venv
-uv pip install -e ".[dev]"
+uv sync --all-extras
 uv run pytest -q
 ```
 
-**Check:** `46 passed`. If anything fails, stop and paste the output to Claude before continuing.
+`uv pip install -e .` is the legacy interface and the `trailofbits/modern-python` PATH shim
+blocks it; `uv sync` also creates the venv, so `uv venv` is redundant.
+
+**Check:** `796 passed`. If anything fails, stop and paste the output to Claude before continuing.
 
 ```bash
 uv run pyrefly check

@@ -478,10 +478,23 @@ def build(league_size: int = 12, season: int = 2025, *,
         # luck, 99.5%; see docs/td-luck.md). This has to happen here rather than in the
         # display, because `hub.draft.optimize` scores seasons against proj_blend -- a bias
         # left in this column is a bias in every P(win) the optimiser reports.
+        #
+        # The size of the correction is kept, not just its effect. `proj_correction` is what
+        # our measurements say the market is wrong by, in points per game, and it is what
+        # `optimize.corrected_adp` converts into a pick shift. Recovering it as a delta
+        # rather than recomputing it means the number THE PICK ranks on and the number
+        # printed beside it can never disagree.
+        raw = board["proj_blend"]
         board = td_regression.correct_projection(board)
         # And for his own availability history, where the market leaves a residual: QB and
         # WR. Running backs are left alone -- the market already prices their durability.
         board = durability.correct_projection(board)
+        board = board.with_columns(
+            (pl.col("proj_blend") - raw).alias("proj_correction"))
+        # What THE PICK ranks on: ADP moved by the correction, bounded. See
+        # `optimize.corrected_adp` and ADR-0011.
+        from hub.draft.optimize import corrected_adp
+        board = board.with_columns(corrected_adp(board).alias("adp_corrected"))
         # Replacement on the projection scale rather than the xFP one, so `vor_proj` and
         # `proj_blend` are the same currency.
         pb = replacement_levels(board["pos"], board["proj_blend"], board["games"],

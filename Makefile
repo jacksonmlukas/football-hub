@@ -1,7 +1,7 @@
-.PHONY: setup draft slate live check serve preflight
+.PHONY: setup draft slate check serve preflight
 
-setup:
-	uv venv && uv pip install -e .
+setup:           ## Create the venv and install, dev extras included
+	uv sync --all-extras
 
 draft:          ## Build the draft board (safe to re-run; cached)
 	uv run python -m hub.draft.board --league-size 12 --scoring ppr
@@ -20,9 +20,6 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 	-uv run python -m hub.fetch.odds --snapshot
 	uv run python -m hub.models.ratings --fit
 	uv run python -m hub.publish --all $(if $(strip $(WEEK)),--week $(WEEK))
-
-live:           ## Sunday poller (local, not Actions)
-	uv run python -m hub.fetch.espn --poll --interval 45
 
 check:          ## Quota + cache health, prints a summary only
 	uv run python -m hub.fetch.cfbd --quota

@@ -65,6 +65,11 @@ class DraftConfig:
     availability_sims: int = 5000
     # A pick with a longer wait than this after it is in "scarcity" mode.
     long_wait_threshold: int = 10
+    # How far a fitted correction may move a player from his ADP, as a fraction of that ADP.
+    # A *choice*, not a measurement, so it lives here rather than beside a coefficient --
+    # ADR-0006's distinction. Fixed at 0.20 before anything was fitted: about one round at
+    # ADP 60, and 0.6 picks at ADP 3 where consensus is tightest. See ADR-0011.
+    correction_clamp_frac: float = 0.20
 
 
 @dataclass

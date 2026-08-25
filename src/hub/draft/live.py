@@ -134,18 +134,18 @@ def refresh(board: pl.DataFrame, state: DraftState, *, my_slot: int = MY_SLOT,
     }
 
 
-# Rounds 1-3 rank on value over replacement, not edge. draft-day-ops/SKILL.md is explicit:
-# consensus is tight at the top, so a large edge there usually means a name-matching
-# failure rather than an opportunity. Sorting by edge at pick 3 surfaced Godwin, Downs and
-# Jordan Love -- all with NEGATIVE VOR -- as the top three names on a first-round board.
-EDGE_FROM_ROUND = 4
-
-
-def _sort_key(pick: int, teams: int) -> tuple[str, str]:
-    rnd = (pick - 1) // teams + 1
-    if rnd < EDGE_FROM_ROUND:
-        return "vor_live", f"round {rnd}: edge is unreliable this early"
-    return "edge", f"round {rnd}: the room lets these fall"
+# The context table used to switch to sorting by `edge` from round four. It no longer does.
+#
+# `edge` -- consensus rank minus ADP -- is the repo's original draft signal and the only one
+# that has never been tested against outcomes. It cannot be: `edge` needs ADP, ESPN publishes
+# ADP for the current season only, and the historical archive returns a 169 sentinel for
+# 69-78% of players. The backtest harness builds boards with no `adp` column at all, so the
+# column it would rank on does not exist on any frame that can be scored.
+#
+# The column stays -- it is information, and cheap. The sort order does not: a sort order is
+# advice, and this repo demoted VOR to context on evidence and removed championship equity on
+# evidence. `edge` is weaker than either, because there is no evidence and there cannot be.
+# See docs/adr/0010.
 
 
 def render(view: dict[str, Any]) -> list[str]:
@@ -186,12 +186,11 @@ def render(view: dict[str, Any]) -> list[str]:
         out.append(f"  THE PICK: {tp.player} ({tp.pos or '?'}) by {tp.via}"
                    + (f"  [{'; '.join(tp.notes)}]" if tp.notes else ""))
 
-    key, why = _sort_key(view["next_pick"], view["teams"])
-    top = rank(view, key).head(TOP_N)
+    top = rank(view, "vor_live").head(TOP_N)
     # Context, not the recommendation. This table has no need term in its ordering -- need
     # is the `*` below, never the sort -- and P0b measured a need-blind objective losing by
     # 19.66 points a team-game. It is here to show what else is close, and how close.
-    out.append(f"  also close, by {key} ({why}) -- context, not a ranking to draft off:")
+    out.append("  also close, by value over replacement -- context, not a ranking to draft off:")
     for r in top.iter_rows(named=True):
         edge = r.get("edge")
         fills = "*" if r["pos"] in need else " "
@@ -250,7 +249,12 @@ def next_action(n_taken: int, last: int, since_beat: float,
     return None
 
 
-def _load_board() -> pl.DataFrame:
+def board_age_hours(path, now: float) -> float:
+    """How old the board file is, in hours. Separate so it can be tested without a clock."""
+    return max(now - path.stat().st_mtime, 0.0) / 3600.0
+
+
+def _load_board(now: float | None = None) -> pl.DataFrame:
     import polars as _pl
 
     from hub.draft.board import ROOT
@@ -259,6 +263,15 @@ def _load_board() -> pl.DataFrame:
         raise FileNotFoundError(
             f"no board at {path}. Run `make draft` first -- the poller reads the board, "
             f"it does not build one.")
+    # Print the age, always, with no threshold.
+    #
+    # `exists()` was the only check, so a board built on Tuesday and a build that failed on
+    # Thursday were indistinguishable -- you would poll all night against Tuesday's ADP with
+    # nothing on screen to say so. A threshold would be a magic number wrong in one direction
+    # or the other; the age is one line, has no failure mode, and at 9pm "when did I last
+    # build this" is exactly what you will not remember.
+    age = board_age_hours(path, time.time() if now is None else now)
+    print(f"  board built {age:.1f}h ago ({path.name})", flush=True)
     return _pl.read_parquet(path)
 
 

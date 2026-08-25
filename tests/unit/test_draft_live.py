@@ -154,36 +154,39 @@ def test_replay_of_an_empty_draft_is_not_an_error():
     assert live.replay(_board(), [], my_slot=3, quiet=True) == []
 
 
-# --- the round-3 rule -----------------------------------------------------
+# --- the context table never ranks on `edge` ------------------------------
+#
+# It used to, from round four. `edge` is the repo's original draft signal and the only one
+# never tested against outcomes -- and it cannot be, because it needs ADP and no historical
+# ADP exists. The column is information and stays; the sort order is advice and does not.
 
-def test_early_rounds_do_not_rank_on_edge():
-    """draft-day-ops: consensus is tight at the top, so a large edge in round 1 is
-    usually a name-matching failure. Ranking by it surfaced three negative-VOR players
-    as the top of a first-round board."""
-    key, _ = live._sort_key(3, teams=12)
-    assert key == "vor_live"
-
-
-def test_edge_takes_over_from_round_four():
-    key, _ = live._sort_key(46, teams=12)   # round 4
-    assert key == "edge"
-
-
-def test_the_boundary_is_where_the_skill_puts_it():
-    assert live._sort_key(36, teams=12)[0] == "vor_live"   # round 3
-    assert live._sort_key(37, teams=12)[0] == "edge"       # round 4
+def test_no_round_ranks_on_edge():
+    """Every round, including the ones that used to switch."""
+    board, state = _board(), DraftState()
+    for taken in (0, 36, 37, 100):
+        st = take(DraftState(), *[f"P{i}" for i in range(taken)]) if taken else state
+        text = "\n".join(live.render(live.refresh(board, st, my_slot=3)))
+        assert "by value over replacement" in text
+        assert "by edge" not in text
 
 
-def test_the_view_says_why_it_ranked_that_way():
+def test_the_edge_column_is_still_shown():
+    """Retiring the sort is not retiring the number."""
     text = "\n".join(live.render(live.refresh(_board(), DraftState(), my_slot=3)))
-    assert "unreliable this early" in text
+    assert "edge" in text
+
+
+def test_the_sort_key_switch_is_gone():
+    """`_sort_key` existed only to choose between two keys. With one key it is a
+    pass-through, and `EDGE_FROM_ROUND` was a threshold with a story but no measurement."""
+    assert not hasattr(live, "_sort_key")
+    assert not hasattr(live, "EDGE_FROM_ROUND")
 
 
 def test_a_first_round_board_is_not_topped_by_negative_vor():
-    """The actual failure this rule prevents."""
+    """The failure the old round-3 rule prevented, which must still not happen."""
     view = live.refresh(_board(), DraftState(), my_slot=3)
-    key, _ = live._sort_key(view["next_pick"], 12)
-    top = view["available"].sort(key, descending=True).head(5)
+    top = live.rank(view, "vor_live").head(5)
     assert (top["vor_live"] > 0).all()
 
 
@@ -235,8 +238,7 @@ def test_below_replacement_players_are_never_recommended():
     board = _board()
     state = take(DraftState(), *[f"P{i}" for i in range(40)])
     view = live.refresh(board, state, my_slot=3)
-    key, _ = live._sort_key(view["next_pick"], 12)
-    shown = live.rank(view, key).head(live.TOP_N)
+    shown = live.rank(view, "vor_live").head(live.TOP_N)
     assert (shown["vor_live"] > 0).all()
 
 
@@ -393,3 +395,28 @@ def test_a_pick_beats_a_due_heartbeat():
     """Both conditions true at once: the board is the more useful thing to print."""
     assert live.next_action(n_taken=6, last=5, since_beat=999.0,
                             heartbeat_s=120) == "board"
+
+
+# --- the board's age is always visible ------------------------------------
+
+def test_board_age_is_reported_in_hours(tmp_path):
+    """`exists()` was the only check, so a board built Tuesday and a Thursday build that
+    failed looked identical -- you would poll all night against stale ADP."""
+    f = tmp_path / "b.parquet"
+    f.write_bytes(b"x")
+    mtime = f.stat().st_mtime
+    assert live.board_age_hours(f, mtime + 7200) == pytest.approx(2.0)
+
+
+def test_a_board_from_the_future_is_zero_not_negative():
+    """Clock skew between a build host and the poller should read as fresh, not as a
+    negative age that formats into nonsense on the one screen you are reading."""
+    import pathlib
+
+    class _F:
+        def stat(self):
+            class _S:
+                st_mtime = 1000.0
+            return _S()
+
+    assert live.board_age_hours(_F(), 500.0) == 0.0

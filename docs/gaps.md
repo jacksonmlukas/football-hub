@@ -83,8 +83,8 @@ Worse than missing in one respect: the module is present, so a reader assumes th
 
 | Symbol | Problem | Referenced from | Decision (0.2) |
 |---|---|---|---|
-| `hub.fetch.espn` | No `__main__`, no argparse. `python -m hub.fetch.espn --poll --interval 45` does nothing. | `Makefile:15` (`make live`) | **Build the CLI.** The `poll()` function already exists; it just has no entry point. |
-| `make setup` | Runs `uv pip install -e .` — the legacy interface, blocked by the `trailofbits/modern-python` PATH shim. Also omits `[dev]`, so it installs no test tooling. | `Makefile:4` | **Fix to `uv sync`.** Same issue in `SETUP.md:55`. |
+| `hub.fetch.espn` | No `__main__`, no argparse. | ~~`Makefile:15` (`make live`)~~ | **Resolved 2026-08-24 by deletion.** The `make live` target was removed rather than the CLI built: a documented command that silently does nothing is worse than an absent one, and the repo goes public on Sep 4. `poll()` still exists and is real; the entry point is post-draft work, when the in-season path is the live one. |
+| `make setup` | Runs `uv pip install -e .` — the legacy interface, blocked by the `trailofbits/modern-python` PATH shim. Also omits `[dev]`, so it installs no test tooling. | ~~`Makefile:4`~~ | **Resolved 2026-08-24.** Both `Makefile` and `SETUP.md` now use `uv sync --all-extras`, which also creates the venv. The stale `46 passed` check in SETUP.md was refreshed at the same time. |
 
 ---
 

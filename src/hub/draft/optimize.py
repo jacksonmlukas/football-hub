@@ -49,6 +49,7 @@ from typing import Callable
 import numpy as np
 import polars as pl
 
+from hub.config import DraftConfig
 from hub.draft import durability
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, blended_adp
 from hub.draft.picks import MY_SLOT, TEAMS, snake_picks
@@ -271,6 +272,82 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     }).sort("lift", descending=True)
 
 
+# How far a correction may move a player, as a fraction of his own ADP.
+#
+# Proportional rather than absolute on purpose: an absolute clamp is least protective exactly
+# where damage is worst. Twelve picks at ADP 150 is noise; twelve picks at ADP 3 is
+# catastrophic. At 20% the bound is 0.6 picks at the top of round one -- where consensus is
+# tightest and a correction has least to add -- and about one round at ADP 60. A round is the
+# unit that means something: a correction may say "this player is a round cheaper than the
+# market thinks", not "he is a different tier".
+#
+# It lives in `config.DraftConfig` because it is a choice rather than a measurement, which is
+# ADR-0006's line -- and the test that walks the tree for unregistered fitted constants
+# caught it sitting here as a bare float.
+
+
+def market_curve(adp: np.ndarray, proj: np.ndarray, window: int = 15):
+    """The pick the market takes a given projection at. Returns (proj_asc, adp) for interp.
+
+    Built from the board itself rather than fitted, because the relationship is steeply
+    non-linear: near the top, players are separated by small projection gaps and few picks,
+    so a point of projection is worth a handful of picks; by round twelve the same point
+    spans dozens. A single fitted slope would over-move the top of the board and barely move
+    the bottom, which is the opposite of where a correction can be trusted.
+
+    Smoothed with a rolling median and forced monotone -- a higher projection never maps to
+    a later pick -- so that noise in one player's ADP cannot bend the curve under everyone.
+    """
+    ok = np.isfinite(adp) & np.isfinite(proj)
+    a, pr = np.asarray(adp)[ok], np.asarray(proj)[ok]
+    if a.size == 0:
+        return np.array([0.0]), np.array([0.0])
+    order = np.argsort(pr)
+    pr, a = pr[order], a[order]
+    if window > 1 and a.size >= window:
+        pad = window // 2
+        a = np.array([np.median(a[max(0, i - pad):i + pad + 1]) for i in range(a.size)])
+    # non-increasing in projection: better projection, never a later pick
+    a = np.maximum.accumulate(a[::-1])[::-1]
+    return pr, a
+
+
+def corrected_adp(board: pl.DataFrame, clamp_frac: float | None = None) -> pl.Series:
+    """ADP adjusted for the corrections this repo has measured and the market has not priced.
+
+    THE PICK ranks on this. Ranking on raw ADP while *printing* a fitted correction beside it
+    was an inconsistency: it said "our measurements show the market is wrong about this
+    player", and then ordered the board by the market anyway.
+
+    Every input carries a fitted coefficient with an interval -- touchdown luck (-0.540 QB,
+    -0.286 WR), durability (-0.457 QB, -0.151 WR), current designation (-1.631 OUT/DOUBTFUL/
+    IR). What is *not* validated is the assembly, and it cannot be: scoring a ranking against
+    outcomes needs historical ADP, which ESPN does not retain (see ADR-0010). Hence the clamp
+    -- the pieces are measured, the combination is bounded.
+
+    A player with no correction does not move. That is by construction and it is the first
+    half of the tripwire in `hub.draft.backtest`.
+    """
+    if clamp_frac is None:
+        clamp_frac = DraftConfig().correction_clamp_frac
+    if not {"adp", "proj_blend", "proj_correction"} <= set(board.columns):
+        return board["adp"] if "adp" in board.columns else pl.Series("adp", [], pl.Float64)
+
+    adp = board["adp"].to_numpy().astype(float)
+    proj = board["proj_blend"].to_numpy().astype(float)
+    corr = board["proj_correction"].fill_null(0.0).to_numpy().astype(float)
+
+    xs, ys = market_curve(adp, proj)
+    # Both sides read off the curve, so a player whose own ADP already differs from it keeps
+    # that difference -- the shift is the correction's effect, not a re-pricing of the player.
+    shift = np.interp(proj + corr, xs, ys) - np.interp(proj, xs, ys)
+    shift = np.where(np.isfinite(shift), shift, 0.0)
+    bound = clamp_frac * np.abs(np.nan_to_num(adp, nan=0.0))
+    shift = np.clip(shift, -bound, bound)
+    out = adp + np.where(np.isfinite(adp), shift, 0.0)
+    return pl.Series("adp_corrected", out)
+
+
 @dataclass(frozen=True)
 class ThePick:
     """The recommendation, and everything a renderer needs to explain it."""
@@ -301,13 +378,20 @@ def the_pick(board: pl.DataFrame, state: DraftState, *,
     """
     avail = remaining(board, state)
     held = held_positions(board, state, my_slot=my_slot, teams=teams)
-    for by, via in (("adp", "draft market (ADP)"), ("ecr", "consensus (ECR) -- no ADP today")):
+    # Corrected ADP first: the market's pick, moved by what we have measured it to miss.
+    # Raw ADP behind it, for a board built before `adp_corrected` existed. Consensus last.
+    for by, via in (("adp_corrected", "draft market, corrected"),
+                    ("adp", "draft market (ADP)"),
+                    ("ecr", "consensus (ECR) -- no ADP today")):
         name = market_pick(avail, held, by=by)
         if name is None:
             continue
         row = board.filter(pl.col("player") == name).row(0, named=True)
+        # Report his ADP, not the corrected number: the drafter is comparing against a room
+        # that sees ADP. The correction is shown separately, in the notes.
+        shown = row.get("adp") if by == "adp_corrected" else row.get(by)
         return ThePick(player=name, pos=row.get("pos"), via=via,
-                       rank=row.get(by), notes=pick_notes(row))
+                       rank=shown, notes=pick_notes(row))
     return None
 
 

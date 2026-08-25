@@ -28,7 +28,7 @@ make slate WEEK=<n>
 | Tue | Full refit. Research and refactors belong here, not later in the week. |
 | Wed | Waivers, using `xfp` trend rather than last week's points. |
 | Sun AM | Odds snapshot, lineup lock, survivor and pickem submit. Nothing else. |
-| Sun PM | `make live` locally. Watch only. |
+| Sun PM | Watch only. (`make live` was removed 2026-08-24: it invoked a CLI that does not exist. `hub.fetch.espn.poll()` is real; its entry point is roadmap -- see docs/gaps.md.) |
 
 **Reserve Sunday's token budget.** The weekly cap bites before the 5-hour window does. If the
 meter is past 70% on Wednesday, stop building and coast to lineup day.

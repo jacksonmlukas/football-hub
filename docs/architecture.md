@@ -18,6 +18,8 @@ a superseded decision keep its original text instead of being edited in place.
 | [0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md) | A measurement that steers the product must be committed code | accepted |
 | [0008](adr/0008-the-simulator-indexes-the-board.md) | The draft simulator indexes the board | accepted |
 | [0009](adr/0009-championship-equity-does-not-pick.md) | Championship equity does not pick | accepted |
+| [0010](adr/0010-edge-is-displayed-but-never-ranked-on.md) | `edge` is displayed but never ranked on | accepted |
+| [0011](adr/0011-the-pick-ranks-on-corrected-adp.md) | THE PICK ranks on corrected ADP | accepted |
 
 Related, and deliberately not ADRs:
 

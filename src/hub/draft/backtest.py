@@ -44,7 +44,7 @@ from typing import Sequence
 import numpy as np
 import polars as pl
 
-from hub.config import RosterConfig, config_digest, HubConfig
+from hub.config import DraftConfig, RosterConfig, config_digest, HubConfig
 from hub.draft.optimize import (DEFAULT_ROUNDS, market_pick, rank_tiers,
                                 simulate_remaining_draft, win_probability)
 from hub.draft.season import REG_SEASON_WEEKS, lineup_points
@@ -353,6 +353,55 @@ def tripwire(board: pl.DataFrame, diagnosed: pl.DataFrame) -> list[str]:
     return bad
 
 
+def correction_report(board: pl.DataFrame) -> pl.DataFrame:
+    """Which players corrected ADP moves, and by how much. Sorted by size of move.
+
+    The diagnostic for ADR-0011, and the shape is deliberately the same as the one that
+    gated the roster-seeding fix: run it, read it, and check the tripwire below before
+    shipping a change to what the draft ranks on.
+    """
+    need = {"player", "pos", "adp", "adp_corrected", "proj_correction"}
+    if not need <= set(board.columns):
+        return pl.DataFrame(schema={"player": pl.Utf8, "pos": pl.Utf8, "adp": pl.Float64,
+                                    "adp_corrected": pl.Float64, "move": pl.Float64,
+                                    "proj_correction": pl.Float64})
+    return (board.select("player", "pos", "adp", "adp_corrected", "proj_correction")
+                 .drop_nulls("adp")
+                 .with_columns((pl.col("adp_corrected") - pl.col("adp")).alias("move"))
+                 .filter(pl.col("move").abs() > 1e-9)
+                 .sort(pl.col("move").abs(), descending=True))
+
+
+def correction_tripwire(board: pl.DataFrame, clamp_frac: float | None = None) -> list[str]:
+    """Fixed before the numbers. Fires only on things that cannot happen if the code is right.
+
+    Deliberately NOT "did the recommendation change" -- it is supposed to change, and gating
+    on that would reject the change for working. That was the mistake made with the
+    seeding-fix tripwire on the morning of 2026-08-24 and corrected the same day.
+
+    Two impossibilities:
+      * a player carrying no fitted correction moves at all -- the shift is a function of the
+        correction, so zero in must give zero out;
+      * any move exceeds the clamp -- the clamp is applied unconditionally.
+
+    Either means the exchange rate or the clamp is wrong, not that the corrections disagree
+    with the market.
+    """
+    from hub.config import DraftConfig
+    if clamp_frac is None:
+        clamp_frac = DraftConfig().correction_clamp_frac
+    rep = correction_report(board)
+    bad: list[str] = []
+    for r in rep.iter_rows(named=True):
+        if abs(r["proj_correction"] or 0.0) < 1e-12:
+            bad.append(f"{r['player']} has no correction but moved "
+                       f"{r['move']:+.2f} picks")
+        if abs(r["move"]) > clamp_frac * abs(r["adp"]) + 1e-6:
+            bad.append(f"{r['player']} moved {r['move']:+.2f} picks, past the "
+                       f"{clamp_frac:.0%} clamp of {clamp_frac * abs(r['adp']):.2f}")
+    return bad
+
+
 def verdict(summary: dict[str, float]) -> str:
     """The pre-registered action, read off the interval. Fixed before the numbers."""
     if summary["lo"] > 0:
@@ -380,6 +429,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="parquet snapshot of the board. Written if absent, reused if "
                          "present, so two --diagnose runs at two commits compare the same "
                          "board rather than two live ADP fetches.")
+    ap.add_argument("--diagnose-corrections", action="store_true",
+                    help="which players corrected ADP moves and by how much, on the live "
+                         "board, plus the pre-registered tripwire. Gates ADR-0011.")
     ap.add_argument("--diagnose", action="store_true",
                     help="what equity recommends at each of your first turns, on the live "
                          "board. Run before and after a change to the objective and diff.")
@@ -387,6 +439,34 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from hub.draft.board import build
     from hub.fetch import nflverse
+
+    if a.diagnose_corrections:
+        print("  building the live board ...")
+        board, _ = build()
+        rep = correction_report(board)
+        print(f"\n  Corrected ADP moves {rep.height} of {board.height} players.")
+        print(f"  Clamp: {DraftConfig().correction_clamp_frac:.0%} of each player's own ADP.\n")
+        print(f"  {'player':<24} {'pos':<4} {'ADP':>6} {'->':>2} {'corrected':>9} "
+              f"{'move':>7} {'ppg corr':>9}")
+        for r in rep.head(20).iter_rows(named=True):
+            print(f"  {str(r['player'])[:24]:<24} {str(r['pos'] or ''):<4} "
+                  f"{r['adp']:>6.1f} {'->':>2} {r['adp_corrected']:>9.1f} "
+                  f"{r['move']:>+7.1f} {r['proj_correction']:>+9.2f}")
+        if rep.height > 20:
+            print(f"  ... and {rep.height - 20} more")
+        bad = correction_tripwire(board)
+        print()
+        if bad:
+            print("  TRIPWIRE TRIPPED -- these are impossible if the code is right:")
+            for line in bad:
+                print(f"    {line}")
+            return 1
+        print("  tripwire clear: every move is a function of a real correction, "
+              "and none exceeds the clamp.")
+        if a.out:
+            rep.write_parquet(a.out)
+            print(f"  wrote {rep.height} rows to {a.out}")
+        return 0
 
     if a.diagnose:
         # Pin the board. `--diagnose` is run twice at two commits to gate a change, and

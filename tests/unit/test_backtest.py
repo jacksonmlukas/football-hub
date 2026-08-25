@@ -434,3 +434,65 @@ def test_diagnose_advances_the_draft_by_the_market_not_by_equity():
     src = inspect.getsource(bt.diagnose)
     assert "market_pick" in src
     assert "Advance by the market" in src
+
+
+# --- the corrected-ADP gate (ADR-0011) ------------------------------------
+#
+# Fixed before the numbers, and deliberately NOT "did the recommendation change" -- it is
+# supposed to change. That was the mistake made with the seeding tripwire earlier the same
+# day: a gate that fires whenever the change works is not a gate.
+
+def _corrected(moves):
+    """A board with explicit (adp, adp_corrected, proj_correction) rows."""
+    n = len(moves)
+    return pl.DataFrame({
+        "player": [f"P{i}" for i in range(n)],
+        "pos": ["RB"] * n,
+        "adp": [float(a) for a, _, _ in moves],
+        "adp_corrected": [float(c) for _, c, _ in moves],
+        "proj_correction": [float(p) for _, _, p in moves],
+    })
+
+
+def test_a_clean_board_trips_nothing():
+    b = _corrected([(10.0, 11.5, -0.5), (50.0, 50.0, 0.0), (100.0, 92.0, +1.0)])
+    assert bt.correction_tripwire(b) == []
+
+
+def test_an_uncorrected_player_moving_is_a_bug():
+    """The shift is a function of the correction, so zero in must give zero out."""
+    b = _corrected([(50.0, 53.0, 0.0)])
+    got = bt.correction_tripwire(b)
+    assert len(got) == 1 and "no correction but moved" in got[0]
+
+
+def test_a_move_past_the_clamp_is_a_bug():
+    """The clamp is applied unconditionally, so exceeding it means the clamp is wrong."""
+    b = _corrected([(10.0, 40.0, -5.0)])          # 30 picks on an ADP of 10, far past 20%
+    got = bt.correction_tripwire(b)
+    assert len(got) == 1 and "past the" in got[0]
+
+
+def test_the_gate_does_not_fire_merely_because_the_pick_moved():
+    """The lesson from the seeding tripwire, encoded. A large but legal move is fine."""
+    b = _corrected([(100.0, 119.9, -2.0)])        # 19.9 picks, just inside 20% of 100
+    assert bt.correction_tripwire(b) == []
+
+
+def test_the_report_lists_only_players_who_moved():
+    b = _corrected([(10.0, 10.0, 0.0), (20.0, 23.0, -1.0)])
+    rep = bt.correction_report(b)
+    assert rep["player"].to_list() == ["P1"]
+    assert rep["move"][0] == pytest.approx(3.0)
+
+
+def test_the_report_is_ordered_by_size_of_move():
+    b = _corrected([(10.0, 11.0, -0.2), (50.0, 58.0, -2.0), (30.0, 31.5, -0.4)])
+    assert bt.correction_report(b)["player"].to_list() == ["P1", "P2", "P0"]
+
+
+def test_a_board_without_the_columns_reports_nothing():
+    """A degraded board must not crash the gate."""
+    b = pl.DataFrame({"player": ["A"], "pos": ["RB"], "adp": [1.0]})
+    assert bt.correction_report(b).is_empty()
+    assert bt.correction_tripwire(b) == []

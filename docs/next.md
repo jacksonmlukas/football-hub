@@ -406,7 +406,14 @@ worth twenty points. The fix stands on its own merits -- an objective blind to y
 is wrong regardless of whether correcting it changes a verdict -- and none of the -19.66 is
 attributable to it. That closes the confound flagged as limitation 5.
 
-## P1 — Break the circularity *(only if P0 says keep it)*
+## P1 — Break the circularity *(CLOSED 2026-08-24: gate not met)*
+
+Gated on championship equity beating the market. It lost by 19.66 points per team-game
+([ADR-0009](adr/0009-championship-equity-does-not-pick.md)), so this does not fire. It reopens
+only if the objective returns, which needs a better prediction layer and a re-run of the
+harness -- not a re-argument.
+
+### Original text
 
 `optimize.py` scores the season on `proj_blend` and ranks candidates on `proj_blend`. The
 size of that bias is now measured: 17.25 pp of apparent championship equity, which is larger
@@ -441,7 +448,19 @@ The deadline is real and untested end to end under failure.
 
 Cheap, and the only item here whose value is certain.
 
-## P4 — Playoff schedule into the objective
+## P4 — Playoff schedule into the objective *(RE-SCOPED 2026-08-24)*
+
+The premise below -- "putting SoS in the objective is what would let it price a pick" -- died
+with the objective: championship equity no longer picks. THE PICK is lexicographic, so SoS
+cannot enter the *ranking* without breaking the rule that won.
+
+**Re-scoped to: SoS becomes information beside THE PICK**, outside the corrections list. It
+gets its own framing rather than joining touchdown luck, durability and injury status, because
+each of those carries a fitted coefficient against outcomes and SoS carries none. Shelving an
+unfitted index among fitted ones borrows credibility it has not earned. Post-draft work; it
+adds something new rather than fixing something wrong, and that is what a freeze keeps out.
+
+### Original text
 
 `championship-leverage.md` calls weeks 15-17 strength of schedule "the largest underexploited
 edge", and [six-of-twelve.md](six-of-twelve.md) showed seeding is worth 4.4x under 6-of-12.
@@ -472,10 +491,28 @@ for the seventeen weeks *after* the draft, so it does not compete with P0-P3.
 Quota is the constraint: 64 credits a week for a full slate against 500 a month. Pulling only
 your roster and your opponent's fits comfortably, and is all a lineup decision needs.
 
-## P6 — Validate the `edge` column
+## P6 — Validate the `edge` column *(CLOSED 2026-08-24: unmeasurable)*
 
 `edge` (expert consensus rank against ADP) is the repo's original draft edge and has never
-been tested against outcomes. The P0 harness tests it for free once it exists.
+been tested against outcomes. **It cannot be.**
+
+The claim above -- "the P0 harness tests it for free once it exists" -- was wrong, and was
+checked rather than assumed once the harness existed:
+
+    historical board cols with edge/adp: []
+    edge present: False
+
+`edge` needs ADP. ESPN publishes ADP for the current season only and the archive returns a 169
+sentinel for 69-78% of players, so `board.build(as_of=...)` produces historical boards with no
+`adp` column -- the same wall P2 hit. Prospective validation needs outcomes that arrive after
+the decision it would inform.
+
+**Action taken:** the column stays, the sort order goes. `live._sort_key` and
+`EDGE_FROM_ROUND` are deleted and the context table ranks on `vor_live` throughout. A
+displayed number and a sort order make different claims; only the second needed evidence.
+See [ADR-0010](adr/0010-edge-is-displayed-but-never-ranked-on.md).
+
+Reopens only if a source retaining historical ADP appears.
 
 ---
 

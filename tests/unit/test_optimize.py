@@ -381,3 +381,102 @@ def test_notes_stack_in_a_stable_order():
     got = optimize.pick_notes({"td_luck": 1.5, "missed": 4, "injury_status": "OUT"})
     assert len(got) == 3
     assert got[0].startswith("td luck") and got[2] == "OUT"
+
+
+# --- corrected ADP: what THE PICK ranks on --------------------------------
+#
+# Ranking on raw ADP while printing a fitted correction beside it said "our measurements show
+# the market is wrong about this player", then ordered the board by the market anyway. Every
+# input here carries a fitted coefficient; the assembly is bounded because it cannot be
+# validated end to end -- scoring a ranking needs historical ADP, which does not exist.
+
+def _corr_board(n=120, corrections=None):
+    """A board with a realistic, curved ADP-to-projection relationship."""
+    proj = [max(22.0 - 2.6 * (i ** 0.5), 1.0) for i in range(n)]
+    df = pl.DataFrame({
+        "player": [f"P{i}" for i in range(n)],
+        "pos": [["RB", "WR", "WR", "TE", "QB"][i % 5] for i in range(n)],
+        "adp": [float(i + 1) for i in range(n)],
+        "proj_blend": proj,
+        "proj_correction": [0.0] * n,
+    })
+    if corrections:
+        df = df.with_columns(pl.Series("proj_correction",
+                                       [corrections.get(f"P{i}", 0.0) for i in range(n)]))
+    return df
+
+
+def test_a_player_with_no_correction_does_not_move():
+    """By construction, and the first half of the backtest tripwire."""
+    b = _corr_board()
+    got = optimize.corrected_adp(b).to_list()
+    assert got == pytest.approx(b["adp"].to_list())
+
+
+def test_a_marked_down_player_falls():
+    b = _corr_board(corrections={"P10": -3.0})
+    got = optimize.corrected_adp(b)
+    assert got[10] > b["adp"][10], "a negative correction must push him later"
+
+
+def test_a_marked_up_player_rises():
+    b = _corr_board(corrections={"P40": +3.0})
+    got = optimize.corrected_adp(b)
+    assert got[40] < b["adp"][40]
+
+
+def test_no_move_exceeds_the_clamp():
+    """The second half of the tripwire. A huge correction must not reorder the board."""
+    from hub.config import DraftConfig
+    frac = DraftConfig().correction_clamp_frac
+    b = _corr_board(corrections={f"P{i}": -25.0 for i in range(120)})
+    got = optimize.corrected_adp(b).to_numpy()
+    adp = b["adp"].to_numpy()
+    assert (abs(got - adp) <= frac * adp + 1e-9).all()
+
+
+def test_the_clamp_binds_hardest_at_the_top():
+    """Why proportional and not absolute: twelve picks at ADP 150 is noise, twelve picks at
+    ADP 3 is catastrophic."""
+    b = _corr_board(corrections={"P0": -20.0, "P100": -20.0})
+    got = optimize.corrected_adp(b).to_numpy()
+    adp = b["adp"].to_numpy()
+    assert abs(got[0] - adp[0]) < 1.0, "the top of round one barely moves"
+    assert abs(got[100] - adp[100]) > 5.0, "a late player can move a round or more"
+
+
+def test_the_curve_is_monotone_in_projection():
+    """A better projection must never map to a later pick, however noisy one player's ADP."""
+    import numpy as np
+    noisy = _corr_board().with_columns(
+        pl.Series("adp", [float(i + 1) + (30.0 if i == 60 else 0.0) for i in range(120)]))
+    xs, ys = optimize.market_curve(noisy["adp"].to_numpy(), noisy["proj_blend"].to_numpy())
+    assert (np.diff(ys) <= 1e-9).all(), "curve must be non-increasing in projection"
+
+
+def test_a_board_without_the_columns_falls_back_to_raw_adp():
+    """A board built before `proj_correction` existed, or one that degraded."""
+    b = _corr_board().drop("proj_correction")
+    assert optimize.corrected_adp(b).to_list() == pytest.approx(b["adp"].to_list())
+
+
+def test_the_pick_prefers_corrected_adp_over_raw():
+    """The whole point: a player the market likes but our measurements mark down should lose
+    the pick to one it does not."""
+    b = _corr_board(corrections={"P0": -8.0})
+    b = b.with_columns(optimize.corrected_adp(b).alias("adp_corrected"),
+                       pl.Series("ecr", [float(i + 1) for i in range(b.height)]))
+    tp = optimize.the_pick(b, DraftState(taken=[]), my_slot=1, teams=1)
+    assert tp is not None
+    assert tp.via == "draft market, corrected"
+
+
+def test_the_reported_rank_is_his_adp_not_the_corrected_number():
+    """The drafter compares against a room that sees ADP."""
+    b = _corr_board(corrections={"P3": -5.0})
+    b = b.with_columns(optimize.corrected_adp(b).alias("adp_corrected"),
+                       pl.Series("ecr", [float(i + 1) for i in range(b.height)]))
+    tp = optimize.the_pick(b, DraftState(taken=[]), my_slot=1, teams=1)
+    assert tp is not None
+    row = b.filter(pl.col("player") == tp.player).row(0, named=True)
+    assert tp.rank == row["adp"]
