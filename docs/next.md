@@ -344,6 +344,48 @@ sensitive to it. `--board PATH` now pins a snapshot so future comparisons vary o
 That gap was mine too, and it is the same one ADR-0007 exists to close, one level down: the
 measurement was committed, its input was not.
 
+### Result (2026-08-24): the objective is decisively worse than consensus
+
+    n=80   optimizer - market = -19.66 points per team game
+           95% CI [-23.16, -16.20]      P(optimizer better) 0.0%
+
+| season | market | optimizer | diff | drafts B won |
+|---|---|---|---|---|
+| 2022 | 125.4 | 104.1 | -21.32 | 0 / 20 |
+| 2023 | 127.0 | 106.6 | -20.38 | 1 / 20 |
+| 2024 | 120.3 | 112.1 | -8.15 | 8 / 20 |
+| 2025 | 125.1 | 96.3 | -28.79 | 0 / 20 |
+
+Every season, same direction. Arm B wins 9 of 80 drafts. `config_digest` 9975101f;
+paired rows in `data/processed/p0b_paired.parquet`.
+
+**Checked before believing it.** An effect this size where P0 measured +0.04 is a bug until
+shown otherwise. It is not a scoring artifact: both arms draft real players who post real
+seasons, with no name-mismatch zeros. Arm B simply builds worse rosters. In 2024 draft 0 it
+took McCaffrey, Kamara, Mixon, Ekeler and Conner -- five running backs -- and finished with
+four receivers in a three-receiver league, scoring 115.2 against the market's 127.0.
+
+**Action, per the rule fixed before the numbers: REMOVE.** Championship equity leaves the
+draft-night output. Not because the simulator is broken -- it is not -- but because its lift
+ordering is measurably worse at picking than following consensus and filling needs, and a
+tiebreaker worse than the thing it breaks ties for steers close calls the wrong way.
+
+**The tripwire was right and I amended it away.** Earlier the same day it fired at picks 46
+and 70 for naming a running back while WR and QB sat empty. I judged that a miscalibrated
+gate, because need-filling alternatives were co-leaders, and narrowed it. That RB-over-need
+preference is exactly what costs ~20 points per team game here. The amendment is still
+defensible on its own terms -- a co-leader is a tie, not a rejection -- but the conclusion it
+licensed ("clear at all six picks") read as reassurance the objective had not earned. A gate
+that embarrasses a change is doing its job; that is the second time in one day this document
+records a pre-registered check being talked past.
+
+**What this does not settle.** Three things changed between P0 and P0b -- the shortlist, the
+seasons and n, and the roster-seeding fix -- so none of the -19.66 can be attributed to any
+one of them. Isolating the fix means re-running arm B at `75f800f`. Cheap at reduced n: with
+sd 16.2, twenty drafts separate -19.66 from +0.04 at better than five standard errors.
+
+**P1 does not fire.** It was gated on equity beating the market. It loses.
+
 ## P1 — Break the circularity *(only if P0 says keep it)*
 
 `optimize.py` scores the season on `proj_blend` and ranks candidates on `proj_blend`. The
