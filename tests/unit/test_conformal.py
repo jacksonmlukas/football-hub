@@ -158,6 +158,7 @@ def _sched(rows):
 
 def test_a_played_game_gets_its_realised_margin(monkeypatch):
     import hub.store as store
+    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
     monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([("g1", 1, 3.0)]))
     got = conformal.load_scored("m", schedules=_sched([("g1", 7.0)]))
     assert got["margin_actual"].to_list() == [7.0]
@@ -168,12 +169,14 @@ def test_an_unplayed_game_does_not_survive_the_join(monkeypatch):
     """The whole 2026 board is unplayed games. They must not arrive as zeros -- a zero
     margin is a tie, not a missing result, and it would calibrate against fiction."""
     import hub.store as store
+    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
     monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([("g1", 1, 3.0)]))
     assert conformal.load_scored("m", schedules=_sched([("g1", None)])).is_empty()
 
 
 def test_a_prediction_with_no_matching_game_is_dropped(monkeypatch):
     import hub.store as store
+    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
     monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([("ghost", 1, 3.0)]))
     assert conformal.load_scored("m", schedules=_sched([("g1", 7.0)])).is_empty()
 
@@ -182,6 +185,7 @@ def test_no_predictions_returns_the_right_shape_not_a_crash(monkeypatch):
     """Before any game is published this is the normal state, and it has to flow through to
     the `not enough calibration` message rather than blowing up on a missing column."""
     import hub.store as store
+    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
     monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([]))
     got = conformal.load_scored("m", schedules=_sched([]))
     assert got.is_empty() and got.columns == ["week", "margin_mean", "margin_actual"]
@@ -189,6 +193,22 @@ def test_no_predictions_returns_the_right_shape_not_a_crash(monkeypatch):
 
 def test_schedules_without_a_result_column_says_so(monkeypatch):
     import hub.store as store
+    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
     monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([("g1", 1, 3.0)]))
     with pytest.raises(ValueError, match="result"):
         conformal.load_scored("m", schedules=pl.DataFrame({"game_id": ["g1"]}))
+
+
+def test_a_store_with_no_preds_at_all_is_empty_not_a_catalog_error(monkeypatch):
+    """A fresh clone has no `data/` directory, so `preds` is not an empty table -- there is
+    no view, and DuckDB raises CatalogException. This is the guard that flows that through
+    to the `not enough calibration` message.
+
+    The tests above must declare `tables` too, or they exercise *this* path by accident and
+    pass or fail on whether the developer's machine happens to have a preds directory. That
+    is how they came to pass here and fail on a fresh clone.
+    """
+    import hub.store as store
+    monkeypatch.setattr(store, "tables", lambda *a, **k: set())
+    got = conformal.load_scored("m", schedules=_sched([("g1", 7.0)]))
+    assert got.is_empty() and got.columns == ["week", "margin_mean", "margin_actual"]
