@@ -38,6 +38,12 @@ class NoOverlap(Exception):
 def load_predictions(model: str, base: Path | None = None) -> pl.DataFrame:
     """Scored predictions for one model, from the prediction store."""
     from hub import store
+    if "preds" not in store.tables(base):
+        # A fresh clone has no store at all, so `preds` is not merely empty -- the view does
+        # not exist and DuckDB raises CatalogException. Returning the shape `_paired` needs
+        # lets that flow through to the NoOverlap message, which is the true answer.
+        return pl.DataFrame(schema={"game_id": pl.Utf8, "season": pl.Int64, "week": pl.Int64,
+                                    "home_win_prob": pl.Float64, "home_won": pl.Int64})
     df = store.sql(
         "SELECT * FROM preds WHERE model = ?", params=[model], base=base)
     if "home_won" not in df.columns:
@@ -110,6 +116,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--compare", required=True, help="two model names, comma separated")
     ap.add_argument("--split", default="temporal", choices=("temporal", "all"))
     ap.add_argument("--holdout", type=float, default=DEFAULT_HOLDOUT)
+    ap.add_argument("--store", default=None,
+                    help="processed-store root; defaults to this repo's. Overridable "
+                         "so the CLI can be driven against an empty or backup store")
     args = ap.parse_args(argv)
 
     names = [s.strip() for s in args.compare.split(",")]
@@ -117,7 +126,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("hub.models.eval: --compare takes exactly two model names", file=sys.stderr)
         return 2
     try:
-        got = compare(load_predictions(names[0]), load_predictions(names[1]),
+        base = Path(args.store) if args.store else None
+        got = compare(load_predictions(names[0], base), load_predictions(names[1], base),
                       split=args.split, holdout=args.holdout)
     except NoOverlap as e:
         print(f"hub.models.eval: {e}", file=sys.stderr)

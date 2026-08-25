@@ -289,3 +289,26 @@ def test_a_directory_that_is_not_a_valid_identifier_is_skipped(base):
     pl.DataFrame({"a": [1]}).write_parquet(odd / "part.parquet")
     with store.connect(base=base) as con:
         con.execute("SELECT 1")  # must not have raised while building views
+
+
+# --- what the catalog can actually see -------------------------------------
+
+def test_an_empty_store_has_no_tables(tmp_path):
+    """Not an empty `preds` table -- no `preds` view at all, because `connect` builds one per
+    directory that exists. Querying it raises CatalogException, which is how a fresh clone
+    answered `conformal --recalibrate` with a stack trace."""
+    assert store.tables(tmp_path) == set()
+
+
+def test_tables_agrees_with_what_connect_actually_creates(base):
+    """The whole point of `tables`. If it and `connect` disagree about what exists, a caller
+    that checks before querying is checking the wrong thing -- which is worse than not
+    checking, because it looks safe."""
+    (base / "scratch").mkdir(exist_ok=True)          # a directory with no parquet
+    with store.connect(base=base) as con:
+        seen = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+    assert store.tables(base) == seen
+
+
+def test_an_absent_root_is_no_tables_not_a_crash(tmp_path):
+    assert store.tables(tmp_path / "nothing") == set()

@@ -64,6 +64,24 @@ def connect(read_only: bool = False, base: Path | None = None) -> duckdb.DuckDBP
     return con
 
 
+def tables(base: Path | None = None) -> set[str]:
+    """Which datasets the catalog can actually see.
+
+    `connect` builds a view per directory that exists and holds parquet, so a store with no
+    predictions in it has no `preds` view at all -- and querying one raises DuckDB's
+    `CatalogException`, not an empty frame. That is the state of a fresh clone, and it is
+    how `hub.models.conformal` and `hub.models.eval` came to answer a clean checkout with a
+    stack trace. Callers that tolerate an absent dataset should ask first.
+
+    Discovered the same way `connect` discovers them, so the two cannot disagree.
+    """
+    root = base or DATA
+    if not root.exists():
+        return set()
+    return {d.name for d in root.iterdir()
+            if d.is_dir() and d.name.isidentifier() and any(d.rglob("*.parquet"))}
+
+
 def sql(query: str, params: Sequence[object] | None = None,
         base: Path | None = None) -> pl.DataFrame:
     """Run a query against the catalog.

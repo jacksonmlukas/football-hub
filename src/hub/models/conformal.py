@@ -110,6 +110,9 @@ def load_scored(model: str, base: Path | None = None,
     an unplayed game simply does not survive it.
     """
     from hub import store
+    if "preds" not in store.tables(base):
+        return pl.DataFrame(schema={"week": pl.Int64, "margin_mean": pl.Float64,
+                                    "margin_actual": pl.Float64})
     preds = store.sql(
         "SELECT game_id, week, margin_mean FROM preds WHERE model = ?",
         params=[model], base=base)
@@ -128,6 +131,10 @@ def load_scored(model: str, base: Path | None = None,
         "week", "margin_mean", "margin_actual")
 
 
+def _root(v: str | None) -> Path | None:
+    return Path(v) if v else None
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.models.conformal",
@@ -139,13 +146,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--window", type=int, default=None,
                     help="weeks of history to calibrate on; unbounded if omitted")
     ap.add_argument("--min-calibration", type=int, default=DEFAULT_MIN_CALIBRATION)
+    ap.add_argument("--store", default=None,
+                    help="processed-store root; defaults to this repo's. Overridable "
+                         "so the CLI can be driven against an empty or backup store")
     a = ap.parse_args(argv)
 
     if not a.recalibrate:
         ap.print_help()
         return 0
     try:
-        got = rolling_coverage(load_scored(a.model), alpha=a.alpha,
+        got = rolling_coverage(load_scored(a.model, base=_root(a.store)), alpha=a.alpha,
                                min_calibration=a.min_calibration, window=a.window)
     except NotEnoughCalibration as e:
         print(f"hub.models.conformal: {e}", file=sys.stderr)

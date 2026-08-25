@@ -17,13 +17,17 @@ the state most of this repo is in right now.
 These tests are deliberately shallow and wide: they assert the *shape* of the failure, not
 what any command computes. Nothing here touches the network.
 
-**Known gap, stated rather than papered over.** The store-backed CLIs -- `conformal
---recalibrate`, `eval --compare`, `publish` -- are not in `ABSENT_INPUT`, because none of them
-can be pointed at an empty temp store: `main()` reads the repo's own `ROOT` and offers no way
-to override it. That is precisely where the conformal bug lived, so this file does not yet
-close the class it was written for. `load_scored` is covered directly in
-`tests/unit/test_conformal.py` instead. Threading a `--store` through those three CLIs would
-close it properly, and is the actual fix.
+The store-backed CLIs were initially excluded, because `main()` read the repo's own `ROOT`
+with no override -- and that is exactly where the conformal bug lived, so the file did not
+close the class it was written for. Threading `--store` through them fixed that, and doing so
+immediately found a further bug of the same family: against a genuinely empty store, both
+`conformal --recalibrate` and `eval --compare` raised
+
+    _duckdb.CatalogException: Table with name preds does not exist!
+
+An empty store does not have an empty `preds` table, it has no `preds` view at all, because
+`store.connect` builds a view per directory that exists. **That is the state of a fresh
+clone** -- which is what the public gets when this repo flips on 2026-09-04.
 """
 import importlib
 
@@ -68,6 +72,8 @@ def test_help_needs_no_network_and_no_data(name, capsys):
 ABSENT_INPUT = [
     ("hub.season.lineup", ["--opp-mu", "110", "--roster", "{tmp}/nope.parquet"]),
     ("hub.inspect", ["{tmp}/nope"]),
+    ("hub.models.conformal", ["--recalibrate", "--store", "{tmp}"]),
+    ("hub.models.eval", ["--compare", "a,b", "--store", "{tmp}"]),
 ]
 
 

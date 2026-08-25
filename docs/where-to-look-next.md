@@ -178,10 +178,21 @@ Three bugs of one shape were found on 2026-08-25, all in code at or above 80% co
 **Coverage did not catch any of them, because coverage measures lines executed, not whether the
 seam between a module and the real world exists.** All three lived at that seam.
 
-**Proposal.** A contract test that runs every module CLI against an empty store and a temp data
-root, asserting the process exits with a message rather than a traceback. Empty is the state
-the repo is in *right now* for most of them, and it is the state a fresh clone is in — which
-matters on 2026-09-04.
+**Done 2026-08-25.** `tests/contracts/test_cli_surface.py` runs every module CLI against a temp
+data root and asserts a message rather than a traceback, and rescans `src/hub` so the list
+cannot silently drift.
+
+Writing it found a fourth bug of the same family. Threading `--store` through the store-backed
+CLIs so they *could* be tested revealed that against a genuinely empty store both
+`conformal --recalibrate` and `eval --compare` raised
+
+    _duckdb.CatalogException: Table with name preds does not exist!
+
+An empty store does not have an empty `preds` table; it has no `preds` view at all, because
+`store.connect` builds one per directory that exists. **That is the state of a fresh clone** —
+what the public gets on 2026-09-04. Fixed with `store.tables()`, discovered the same way
+`connect` discovers views, with a test that the two agree: a caller checking the wrong thing
+before querying is worse than not checking, because it looks safe.
 
 ### C2. `board.py` is still the hot spot
 
