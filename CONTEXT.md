@@ -98,7 +98,10 @@ market that fills an unfilled starting slot.
 
 **Signal**:
 A claim that some quantity predicts outcomes *beyond what consensus already knows*. Tested by
-a **screen**: partial correlation against ECR. Five have been screened; five were null.
+a **screen**: partial correlation against ECR. Six have been screened; five were null and one —
+the in-season snap-share trend — survived. Note what separates it: the five nulls all asked
+consensus about information it had had all summer, and the one that survived asked about
+something published on a Monday.
 
 **Model**:
 A component that produces a projection or a decision. Tested by a **gate**: does it beat the
@@ -107,7 +110,10 @@ and lost by 19.66 points a team-game.
 
 **Screen** / **Gate**:
 The two tests, and they are not interchangeable. A screen asks "is this real?"; a gate asks
-"is this better than what it replaces?" Confusing them is how a well-built, well-tested model
+"is this better than what it replaces?" A signal can pass one and fail the other: the snap-share
+trend screened positive and then lost its gate to consensus rank, because a partial correlation
+says a quantity *adds* to the board and never that it should *be* the board
+([ADR-0013](docs/adr/0013-the-snap-trend-is-shown-and-never-ranked-on.md)). Confusing them is how a well-built, well-tested model
 ships while being confidently worse than a one-line rule.
 _Avoid_: validate, backtest — both hide which question is being asked.
 
