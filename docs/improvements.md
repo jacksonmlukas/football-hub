@@ -306,7 +306,7 @@ a measurement nobody can re-run is worthless. Its orchestration got offline test
 
 ---
 
-### 11. The roster shape is half-parameterised
+### 11. The roster shape is half-parameterised — FIXED 2026-08-25
 
 **Explored 2026-08-25** as part of the architecture review.
 
@@ -334,14 +334,17 @@ lineup score in the repo kept fielding seven. `config.py:32-38` says the roster 
 live in five places and "nothing made them agree"; the unification reached `STARTERS`,
 `FLEX_FROM` and `FLEX_CAPACITY` and stopped one constant short.
 
-**Not urgent** — the league is a 1-flex league and a commissioner change is what triggers it.
-**Do:** have the four scorers read `FLEX_CAPACITY`/`FLEX_FROM`, and either give `FLEX_SLOTS` a
-reader or delete it. `lineup_gate.py:82` also inlines `("RB", "WR", "TE")` while importing
-`STARTERS` from the module where `FLEX_FROM` sits.
+**Fixed.** All four read `FLEX_SLOTS`, and `lineup_gate` reads `FLEX_FROM` instead of inlining
+`("RB", "WR", "TE")`. Two needed more than a constant swap: taking one leftover per position
+and then the best of those is correct only for a single flex, since with two slots the best
+pair can come from one position. The vectorised and greedy scorers now take the top
+`FLEX_SLOTS` across all leftovers, and the exhaustive enumerator yields combinations. At
+`FLEX_SLOTS = 1` every one reduces to what it did before, which is why the existing suite
+passed untouched. Seven tests in `tests/unit/test_flex_arity.py`.
 
 ---
 
-### 12. Five fitted constants describe code nothing can reach
+### 12. Five fitted constants describe code nothing can reach — FIXED 2026-08-25
 
 **Explored 2026-08-25.** Two modules are reachable only from their own tests, and both are
 registered in `FITTED_MODULES`, so their constants move the digest that identifies a
@@ -370,12 +373,25 @@ The digest, counted rather than asserted:
 So **5 of 35** describe code no prediction can reach. `SCORING`, `TD_RATE` and
 `FALLBACK_TD_RATE` are genuinely live and stay.
 
-**Do:** delete the projection adjustment — the deletion test is unambiguous, no caller
-absorbs anything. For `components`, the deletion is a real question against
-[ADR-0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md), which is why
-a losing measurement is in the tree at all. **The registry question is separate and does not
-need that decision made:** a measurement that lost should not move the fitted digest either
-way.
+**Fixed, and the two halves were separable exactly as expected.**
+
+`projection.adjusted(df, lam)` is now the only implementation; `tune.score` and
+`evaluate.simulate_draft` call it, `adjust_consensus` and `build` are gone along with the
+`ranks_moved` column nothing read, and the clip is a named `Z_CLIP` rather than a bare -3/3
+written twice.
+
+The digest is 35 → 30. `hub.draft.projection` moved to `NOT_FITTED`;
+`hub.models.components` is no longer registered wholesale, its three live constants are named
+in `FITTED_EXTRA`, and the four that are not live are named in a new `NOT_IN_DIGEST` with
+their reason. **The code is kept** — ADR-0007 says a measurement that steered a decision stays
+in the tree — it simply stops identifying predictions that cannot reach it. Naming the
+exclusions one at a time keeps that a decision on the record rather than a module quietly
+falling off a list, and the registry guard was taught about both mechanisms so it still
+catches a genuinely new unregistered constant.
+
+Also fixed on the way: `test_underperformer_moves_up_the_board` called `build()` at the
+shipped lambda of 0.0, where both players get identical `adj_ecr` — it was asserting stable
+sort order and nothing about the adjustment.
 
 Minor, same family: `predict.components()` is a two-line delegate to `volume.decompose` whose
 only callers are its own tests, and `components.moments` and `predict.moments` are two
@@ -383,7 +399,7 @@ different functions of the same name one import apart.
 
 ---
 
-### 13. ESPN's league year is hardcoded twice, and the failure is absorbed
+### 13. ESPN's league year is hardcoded twice, and the failure is absorbed — FIXED 2026-08-25
 
 **Explored 2026-08-25.** `fetch/espn.py:210` builds `League(..., year=2026)` as a literal.
 `player_market(limit, season=2026)` takes a season parameter, passes it to `_parse_market`,
@@ -413,9 +429,19 @@ It is also why that module has **three** different injection seams for one depen
 `league_settings` rather than pass an adapter. Every call site also discards half its tuple
 return (`lg, _` at three sites, `_, slots` at one).
 
-**Do:** parameterise year and league id, return one object rather than a tuple both callers
-half-ignore, and let the three seams collapse into it. Post-draft: this is the in-season
-fetch path, and the 2027 trigger is a year away.
+**Fixed — and the season turned out to be hardcoded five times, not two:**
+`board.SEASON_AHEAD`, `league_settings`'s `League(year=2026)`, `state.sync_from_espn`'s
+`year or 2026`, `playoff_sos`'s default and `publish --season`. Parameterising the year alone
+would have put the same defect in a new place.
+
+`hub.config.SEASON_AHEAD` is the owner and all five read it. `league_settings(year,
+league_id)` takes both and returns a `LeagueView` rather than a tuple every call site was
+discarding half of. `player_market` passes its season through as the year, which is the fix.
+
+Three regression tests, one asserting both that the League is built for the season asked for
+*and* that the projection survives the filter — so it cannot pass by the filter being
+removed. Verified against live ESPN: 165 drafted players priced, roster and scoring checks
+both running.
 
 ---
 
