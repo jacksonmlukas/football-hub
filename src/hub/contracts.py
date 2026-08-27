@@ -7,13 +7,39 @@ and the pipeline serves last-good state rather than propagating bad data.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Any, cast
 
 import polars as pl
 
 
 class ContractViolation(Exception):
     pass
+
+
+def _family(dt: Any) -> str:
+    """The dtype family a column belongs to.
+
+    Families, not exact dtypes, because the exact one is not the invariant anybody holds:
+    nflverse ships a count as `Int32` one season and `Int64` the next and nothing downstream
+    cares, while a count arriving as `Utf8` breaks every arithmetic expression that touches
+    it. Comparing families catches the second and ignores the first.
+
+    `Null` is its own family and matches nothing. That is the case this check exists for: a
+    source that returns no rows, or a column of all nulls, comes back typed `Null`, passes
+    every column-presence check, and then silently produces nulls wherever it is used.
+    `fetch/espn.py:161` hand-wrote a `schema=` to work around exactly that.
+    """
+    if dt == pl.Null:
+        return "null"
+    if dt == pl.Boolean:                       # before numeric: a flag is not a count
+        return "bool"
+    if dt.is_temporal():
+        return "temporal"
+    if dt.is_numeric():
+        return "numeric"
+    if dt == pl.Utf8:
+        return "string"
+    return str(dt)
 
 
 @dataclass(frozen=True)
@@ -32,6 +58,16 @@ class Contract:
         missing = set(self.required) - set(df.columns)
         if missing:
             problems.append(f"missing columns: {sorted(missing)}")
+        # The dtypes in `required` were declared from the start and read by nothing -- the
+        # mapping was used as `set(self.required)` and never for its values, so a retyped or
+        # all-null column passed every contract in the repo. The module docstring names
+        # renaming as the failure mode; retyping is the same failure with a quieter symptom.
+        for col, declared in self.required.items():
+            if col not in df.columns:
+                continue                        # already reported as missing
+            got, want = _family(df.schema[col]), _family(declared)
+            if got != want:
+                problems.append(f"{col} is {df.schema[col]} ({got}), declared {want}")
         for c in self.non_null:
             if c in df.columns and df[c].null_count():
                 problems.append(f"{c} has {df[c].null_count()} nulls")

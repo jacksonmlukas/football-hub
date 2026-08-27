@@ -320,9 +320,44 @@ def test_participation_is_a_known_source():
 
 def test_participation_tolerates_a_null_formation():
     """~20% of plays have none -- 9,237 of 45,919 in 2024, special teams and plays the
-    charter did not resolve. Requiring it non-null would fail every honest refresh."""
+    charter did not resolve. Requiring it non-null would fail every honest refresh.
+
+    Typed explicitly, because that is what the real frame looks like: a `Utf8` column with
+    nulls in it. This fixture used to pass `[None] * 1200`, which polars types as `Null` --
+    a column with no type at all, which is a different failure and is now caught below.
+    """
     from hub.contracts import PARTICIPATION
+    df = _participation_rows(
+        offense_formation=pl.Series([None] * 1200, dtype=pl.Utf8))
+    assert PARTICIPATION.validate(df).height == 1200
+
+
+def test_a_column_that_arrives_untyped_is_caught():
+    """The silent degradation the dtype check exists for. A source returning nothing, or a
+    join that matched nothing, yields an all-null column typed `Null`. It passes every
+    column-presence check and then produces nulls wherever it is used --
+    `fetch/espn.py:161` hand-wrote a `schema=` to work around exactly this."""
+    from hub.contracts import PARTICIPATION, ContractViolation
     df = _participation_rows(offense_formation=[None] * 1200)
+    assert df.schema["offense_formation"] == pl.Null, "the fixture must be untyped"
+    with pytest.raises(ContractViolation, match="declared string"):
+        PARTICIPATION.validate(df)
+
+
+def test_a_retyped_column_is_caught():
+    """The other half. Renaming was already caught; retyping was not, and the module
+    docstring names both as the same Week 7 failure."""
+    from hub.contracts import PARTICIPATION, ContractViolation
+    df = _participation_rows(play_id=[str(i) for i in range(1200)])
+    with pytest.raises(ContractViolation, match="declared numeric"):
+        PARTICIPATION.validate(df)
+
+
+def test_a_wider_integer_is_not_a_violation():
+    """Families, not exact dtypes. nflverse ships a count as Int32 one season and Int64 the
+    next; nothing downstream cares, and failing on it would be noise."""
+    from hub.contracts import PARTICIPATION
+    df = _participation_rows(defenders_in_box=pl.Series([6] * 1200, dtype=pl.Int64))
     assert PARTICIPATION.validate(df).height == 1200
 
 
