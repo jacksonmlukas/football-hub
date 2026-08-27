@@ -25,7 +25,7 @@ identical because the historical boards are rebuilt from live ffopportunity and 
 run, and both move as nflverse backfills; the seed fixes the simulation, not the inputs. Worth
 knowing that this gate is a re-measurement and not a recorded constant.
 
-**Spot-checked again 2026-08-25 after the bracket fix**, and *not* re-measured. Giving the
+**Spot-checked again 2026-08-27 after the bracket fix**, and *not* re-measured. Giving the
 playoffs their own draws (see `season.seed_table` / `season.champion`) changes
 `champion_probability`, which is arm B's objective and nothing arm A touches -- so unlike the
 re-run above, this one could genuinely have moved the number.

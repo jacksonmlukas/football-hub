@@ -54,6 +54,13 @@ it uses one claim per week.
 * The signal may be shown next to a waiver decision, with its size.
 * Nothing sorts on it. A future review proposing a waiver module ranked by snap delta should
   read the middle section: that was measured and it is worse than consensus.
+* **Amended 2026-08-27.** The combined rule -- ECR chooses the candidate set, snap delta
+  chooses within it -- is now adopted as a **provisional rule** under
+  [ADR-0014](0014-a-provisional-rule-may-act-where-no-gate-can-run.md), logged per claim. That
+  does not contradict this ADR: nothing sorts on snap delta, which is what "never ranked on"
+  meant and still means. What changed is that declining to use a screened signal *forever*,
+  because its horizon never arrives, was itself a decision -- and it was being made by default
+  rather than deliberately.
 * The combined rule is not refuted, and is not adoptable either. If it is ever wanted, the
   honest path is a decision rule declared in advance and left to accumulate across real seasons,
   not another retrospective slice of the same four.

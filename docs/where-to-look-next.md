@@ -111,6 +111,11 @@ So M1 splits cleanly in two, and the second half is free:
 **This is the strongest untested idea in the repo**, and the only one whose blocker is a
 purchase rather than a measurement.
 
+**Declined 2026-08-27.** Its entire payoff is a future season, and the horizon rule fixed in
+[decisions.md](decisions.md) refuses anything of that shape unless it is nearly free. The paid
+backfill is off. Forward archiving of weekly odds continues, because it costs nothing and
+`hub.store` already does it correctly — which is the half that was free all along.
+
 ### M2. Extend the one thing that worked, using the column it ignores — MEASURED 2026-08-25, not adopted
 
 **The idea.** #12 prices a designation by `report_status` × `practice_status` and throws away

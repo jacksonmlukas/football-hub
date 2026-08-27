@@ -108,6 +108,14 @@ A component that produces a projection or a decision. Tested by a **gate**: does
 simplest thing that already works? Championship equity was gated against following the market
 and lost by 19.66 points a team-game.
 
+**Provisional rule**:
+A decision rule adopted *without* a gate, because no gate can run at available n — never
+because one ran and was failed. It requires a signal that passed a screen, a rule written down
+before use, a log of every application, and a stated horizon. It is reported as judgment and
+never as validated. Exactly one thing qualifies today: the snap-share trend as a waiver
+tiebreaker. See [ADR-0014](docs/adr/0014-a-provisional-rule-may-act-where-no-gate-can-run.md).
+_Avoid_: heuristic, hunch — both hide that it is pre-registered and logged.
+
 **Screen** / **Gate**:
 The two tests, and they are not interchangeable. A screen asks "is this real?"; a gate asks
 "is this better than what it replaces?" A signal can pass one and fail the other: the snap-share
@@ -115,6 +123,9 @@ trend screened positive and then lost its gate to consensus rank, because a part
 says a quantity *adds* to the board and never that it should *be* the board
 ([ADR-0013](docs/adr/0013-the-snap-trend-is-shown-and-never-ranked-on.md)). Confusing them is how a well-built, well-tested model
 ships while being confidently worse than a one-line rule.
+
+A third case exists and is not a third test: a signal passes a screen and its decision cannot
+be gated at any n this project will see. That is a **provisional rule**, above.
 _Avoid_: validate, backtest — both hide which question is being asked.
 
 ### Season simulation

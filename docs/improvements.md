@@ -306,9 +306,9 @@ a measurement nobody can re-run is worthless. Its orchestration got offline test
 
 ---
 
-### 11. The roster shape is half-parameterised — FIXED 2026-08-25
+### 11. The roster shape is half-parameterised — FIXED 2026-08-27
 
-**Explored 2026-08-25** as part of the architecture review.
+**Explored 2026-08-27** as part of the architecture review.
 
 `FLEX_CAPACITY` and `FLEX_FROM` are read: `optimize._need_score`, `evaluate.starter_points`,
 `season.lineup_points` and `season/lineup.py` all consult them. `FLEX_SLOTS` — the count
@@ -344,9 +344,9 @@ passed untouched. Seven tests in `tests/unit/test_flex_arity.py`.
 
 ---
 
-### 12. Five fitted constants describe code nothing can reach — FIXED 2026-08-25
+### 12. Five fitted constants describe code nothing can reach — FIXED 2026-08-27
 
-**Explored 2026-08-25.** Two modules are reachable only from their own tests, and both are
+**Explored 2026-08-27.** Two modules are reachable only from their own tests, and both are
 registered in `FITTED_MODULES`, so their constants move the digest that identifies a
 prediction.
 
@@ -399,9 +399,9 @@ different functions of the same name one import apart.
 
 ---
 
-### 13. ESPN's league year is hardcoded twice, and the failure is absorbed — FIXED 2026-08-25
+### 13. ESPN's league year is hardcoded twice, and the failure is absorbed — FIXED 2026-08-27
 
-**Explored 2026-08-25.** `fetch/espn.py:210` builds `League(..., year=2026)` as a literal.
+**Explored 2026-08-27.** `fetch/espn.py:210` builds `League(..., year=2026)` as a literal.
 `player_market(limit, season=2026)` takes a season parameter, passes it to `_parse_market`,
 and that filters `st.get("seasonId") == season`. The two numbers are independent.
 

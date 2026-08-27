@@ -42,6 +42,104 @@ thing, an ambition to find edge is what makes "the test was unfair" feel reasona
 
 The system measures itself against markets. It does not try to beat them.
 
+### How objective 1 is judged (fixed 2026-08-27, before the draft)
+
+Objective 1 is the only claim in this repo that **cannot be measured**. It resolves once, in
+January, at n=1 — and in a 12-team league a genuinely excellent system takes the title maybe
+15% of the time against an 8.3% baseline. The outcome cannot distinguish a good system from a
+lucky one in either direction, which is exactly the confusion the rest of this document exists
+to prevent, sitting at the top of the list.
+
+So it is judged on **decisions, not the result**, against thresholds fixed here before the
+draft rather than chosen in January:
+
+| | threshold | available |
+|---|---|---|
+| **Draft adherence** | took THE PICK on **≥ 12 of 16**, and every deviation written down *at the time* with its reason | Sep 3 |
+| **Points for** | **top 4 of 12** | end of season |
+| **Waiver log** | followed the logged rule, or beat it, on **≥ 10 of ~14** claims | weekly |
+
+Deviations are not failures. *Unrecorded* deviations are — a deviation you can explain is a
+decision, and one you cannot is a story told afterwards.
+
+Points-for is included over the objection that it is an outcome and rewards a lucky draft. It
+is kept because a rank is less noisy than the title and the threshold is fixed in advance; it
+is not the primary read.
+
+### "and pools" is real (confirmed 2026-08-27)
+
+Both survivor and pickem/spreads are entered this season, which closes half of the *Pool sizes
+— Unknown* blocker above: **the survivor pool is mid-sized, 20–100 entries.**
+
+That inverts the survivor objective. `hub.season.survivor` maximises P(survive every week),
+which the live board prices at **1.0%** — and that is arithmetic, not a defect: the twelve
+weekly win probabilities are 0.55–0.86 and their product is 0.0097. Nobody survives a survivor
+pool. You win by outlasting the field, and surviving week 6 alongside forty other entries is
+worth nothing.
+
+At 20–100 entries the play is **mostly chalk, with one or two deliberate differentiation weeks
+late** — take the lower-probability team when the cost is small, because the value is in the
+weeks where the field is concentrated on one side. A proper field model was considered and
+declined: it would need its own gate, and at one pool per season that is another 44-season
+problem. The crude threshold is a **provisional rule** under
+[ADR-0014](adr/0014-a-provisional-rule-may-act-where-no-gate-can-run.md).
+
+Still needed before Week 1: whether one loss eliminates, and whether rivals' picks are visible
+— the second decides whether differentiation is even observable. Pickem scoring format is also
+outstanding; under straight-up or against-the-spread the market baseline is already the play and
+nothing needs building, and only confidence points would require work.
+
+### The deep-simulation programme is objective 2, not objective 1
+
+The stated vision — simulate every fantasy-relevant statistic for every game, down to offensive
+and defensive schemes — has now met a gate four times and lost four times:
+
+| | result |
+|---|---|
+| Component-derived weekly spread | lost to `k·sqrt(mu)`, 1.365 vs 1.140, P(better) **0.0%** |
+| Championship equity, the deepest simulation here | **−19.66** pts/team-game |
+| The usage layer | retired: per-player spread is ±9.3%, 85% noise, total headroom 0.085 MAE |
+| Depth-chart climb | null at both horizons |
+
+Every time the deep thing met the simple thing, the simple thing won, and the pattern is not
+"we built it cheaply" — it is that the market already contains what these layers reconstruct.
+
+**It stays in the tree, under objective 2, scoped to the one niche nothing else fills:
+distributional shape.** `k·sqrt(mu)` gives a spread and cannot give a skew. That is a
+distribution question, not a scheme question, and it is the only part with a claim on future
+effort. It is no longer a route to objective 1 and should not be proposed as one.
+
+### Killed by these answers, so they stay killed
+
+* **M1's paid odds backfill** (~1,400 credits, paid plan only). Its entire payoff is a future
+  season. Forward archiving continues because it is free; the purchase is declined.
+* **The survivor field model.** Superseded by the crude contrarian threshold above.
+* **The deep-simulation programme as a route to winning.** See above; it is objective 2 work.
+
+### Horizon: assume one season, keep only cheap accruals
+
+Whether this runs again in 2027 is genuinely unknown, so the rule is: **keep accruals that cost
+nothing ongoing, refuse anything whose entire payoff is a season away.** The ADP archive and the
+waiver log qualify — forty lines and a few hundred rows a day. A paid data backfill does not.
+
+"Start saving now, it becomes fittable next season" is no longer sufficient justification on its
+own unless the thing is nearly free.
+
+### Objective 3's audience, and its deadline
+
+The reader is **ML/DS hiring**, which is what the repo is already shaped for: the README leads
+with what was measured and then *removed*, and that is the pitch. The gap is that the method —
+pre-registration, screens versus gates, tripwires, what a provisional rule is — is scattered
+across `signal-screens.md`, `CONTEXT.md` and fourteen ADRs with no single page stating it.
+
+Note the ordering that falls out of the calendar: **the third-ranked objective has the nearest
+deadline.** Draft Sep 3, repo public Sep 4, Week 1 around Sep 10. The method page wants to exist
+before the repo is public, and Sep 4-10 is the only quiet window before Sundays are consumed. It
+also degrades fastest — nobody remembers in November why the tripwire was amended, or why the
+additive injury table lost.
+
+Sequence: **method page (by Sep 4) → Week 1 dependencies (by Sep 10) → everything else.**
+
 Edge ranked last. That is why gates route rather than kill: a model failing its gate becomes a
 documented study, not a deletion. It is also why we derive before importing (hand-roll split
 conformal before MAPIE, the survivor DP before pulp) — the slower path serves objective 2.
