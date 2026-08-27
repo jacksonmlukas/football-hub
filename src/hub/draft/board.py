@@ -25,7 +25,7 @@ import nflreadpy as nfl
 import numpy as np
 import polars as pl
 
-from hub.config import RosterConfig, flex_positions, flex_share, starters
+from hub.config import SEASON_AHEAD, RosterConfig, flex_positions, flex_share, starters
 from hub.contracts import DRAFT_BOARD, ContractViolation
 from hub.draft import durability
 from hub.draft import regression as td_regression
@@ -87,7 +87,7 @@ CONSENSUS_PAGE = "redraft-overall"
 # The season being drafted for. xFP describes the season just gone; the simulation has to
 # be about the one ahead, or a strategy ranked on last year's numbers scores against last
 # year's truth and reads as clairvoyant.
-SEASON_AHEAD = 2026
+
 
 # On the board because you draft them off it. K and DST are rostered but taken late off
 # ESPN's own list, and their presence distorts every rank below the skill players.
@@ -511,7 +511,7 @@ def build(league_size: int = 12, season: int = 2025, *,
         from hub.fetch import espn as espn_fetch
         if not live:
             raise SkipHistorical("roster slots")
-        _, slots = espn_fetch.league_settings()
+        slots = espn_fetch.league_settings().roster_slots
         bad_slots = roster_mismatch(slots or {})
         if bad_slots:
             print("  ROSTER MISMATCH -- the league starts a different lineup from "

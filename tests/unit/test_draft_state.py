@@ -123,7 +123,7 @@ def test_sync_reads_picks_in_order(monkeypatch):
     class _L:
         draft: ClassVar[list] = [_P("First"), _P("Second")]
     import hub.fetch.espn as espn
-    monkeypatch.setattr(espn, "league_settings", lambda: (_L(), {}))
+    monkeypatch.setattr(espn, "league_settings", lambda: espn.LeagueView(_L(), {}))
     assert st.sync_from_espn().taken == ["First", "Second"]
 
 
@@ -131,7 +131,7 @@ def test_empty_espn_draft_keeps_local_state(monkeypatch, capsys):
     class _L:
         draft: ClassVar[list] = []
     import hub.fetch.espn as espn
-    monkeypatch.setattr(espn, "league_settings", lambda: (_L(), {}))
+    monkeypatch.setattr(espn, "league_settings", lambda: espn.LeagueView(_L(), {}))
     monkeypatch.setattr(st, "load", lambda path=None: st.DraftState(taken=["Kept"]))
     assert st.sync_from_espn().taken == ["Kept"]
     assert "not started" in capsys.readouterr().out

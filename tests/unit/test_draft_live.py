@@ -257,7 +257,7 @@ def test_sync_can_be_quiet():
     import pytest as _pytest
     mp = _pytest.MonkeyPatch()
     try:
-        mp.setattr(espn, "league_settings", lambda: (_L(), {}))
+        mp.setattr(espn, "league_settings", lambda: espn.LeagueView(_L(), {}))
         mp.setattr(st_mod, "load", lambda path=None: DraftState())
         st_mod.sync_from_espn(quiet=True)
     finally:
@@ -274,7 +274,7 @@ def test_quiet_sync_prints_nothing(capsys):
         draft: ClassVar[list] = []
     mp = _pytest.MonkeyPatch()
     try:
-        mp.setattr(espn, "league_settings", lambda: (_L(), {}))
+        mp.setattr(espn, "league_settings", lambda: espn.LeagueView(_L(), {}))
         mp.setattr(st_mod, "load", lambda path=None: DraftState())
         st_mod.sync_from_espn(quiet=True)
         assert capsys.readouterr().out == ""
@@ -292,7 +292,7 @@ def test_loud_sync_still_reports_by_default(capsys):
         draft: ClassVar[list] = []
     mp = _pytest.MonkeyPatch()
     try:
-        mp.setattr(espn, "league_settings", lambda: (_L(), {}))
+        mp.setattr(espn, "league_settings", lambda: espn.LeagueView(_L(), {}))
         mp.setattr(st_mod, "load", lambda path=None: DraftState())
         st_mod.sync_from_espn()
         assert "not started" in capsys.readouterr().out

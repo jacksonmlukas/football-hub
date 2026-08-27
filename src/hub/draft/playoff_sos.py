@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import polars as pl
 
+from hub.config import SEASON_AHEAD
+
 PLAYOFF_WEEKS = (15, 16, 17)
 SCORING_POSITIONS = ("QB", "RB", "WR", "TE")
 
@@ -85,7 +87,7 @@ def attach_sos(board: pl.DataFrame, sos: pl.DataFrame) -> pl.DataFrame:
                  .drop("_team"))
 
 
-def playoff_sos(season_ahead: int = 2026, dvp_season: int = 2025,
+def playoff_sos(season_ahead: int = SEASON_AHEAD, dvp_season: int = 2025,
                 weeks: tuple[int, ...] = PLAYOFF_WEEKS) -> pl.DataFrame:
     """Fetch both inputs and build the table. Two bulk pulls, no per-team loop."""
     import nflreadpy as nfl

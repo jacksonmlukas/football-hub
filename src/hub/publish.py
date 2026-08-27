@@ -28,6 +28,7 @@ import numpy as np
 import polars as pl
 
 from hub import store
+from hub.config import SEASON_AHEAD
 
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "site" / "data"
@@ -295,7 +296,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--predictions", action="store_true", help="one week's predictions")
     ap.add_argument("--track-record", action="store_true", help="calibration page data")
     ap.add_argument("--live", action="store_true", help="live scores overlay only")
-    ap.add_argument("--season", type=int, default=2026)
+    ap.add_argument("--season", type=int, default=SEASON_AHEAD)
     ap.add_argument("--week", type=int, default=None,
                     help="defaults to the latest week already predicted")
     a = ap.parse_args(argv)

@@ -11,10 +11,14 @@ from __future__ import annotations
 import json
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 import requests
+
+from hub.config import SEASON_AHEAD
 
 CACHE = Path(__file__).resolve().parents[3] / "data" / "raw" / "espn"
 CACHE.mkdir(parents=True, exist_ok=True)
@@ -188,7 +192,7 @@ def _parse_market(payload: dict, season: int) -> pl.DataFrame:
                                       "injury_status": pl.Utf8})
 
 
-def player_market(limit: int = 500, season: int = 2026) -> pl.DataFrame:
+def player_market(limit: int = 500, season: int = SEASON_AHEAD) -> pl.DataFrame:
     """ADP and ESPN's projection together, from one request.
 
     These are the two things the rest of the room can see, so they belong in one place:
@@ -198,7 +202,7 @@ def player_market(limit: int = 500, season: int = 2026) -> pl.DataFrame:
     rest of the block, where `averageDraftPosition` lives, so we go to the raw view.
     One bulk request covers the whole draftable pool; do not loop over players.
     """
-    lg, _ = league_settings()
+    lg = league_settings(year=season).league
     filters = {"players": {"limit": limit,
                            "sortDraftRanks": {"sortPriority": 100, "sortAsc": True,
                                               "value": "PPR"}}}
@@ -207,18 +211,37 @@ def player_market(limit: int = 500, season: int = 2026) -> pl.DataFrame:
     return _parse_market(payload, season)
 
 
-def league_settings():
-    """Read roster slots straight from your league instead of hardcoding them."""
+@dataclass(frozen=True)
+class LeagueView:
+    """A league handle and the settings read off it, together.
+
+    One object rather than a tuple, because every call site discarded half of it -- three
+    spelled it `lg, _` and one `_, slots` -- so the tuple was never carrying two things
+    anybody wanted at once.
+    """
+    league: Any
+    roster_slots: dict[str, int]
+
+
+def league_settings(year: int = SEASON_AHEAD, league_id: int | None = None) -> LeagueView:
+    """Read roster slots straight from your league instead of hardcoding them.
+
+    `year` is a parameter because it used to be the literal 2026 while `player_market` took a
+    `season` argument and filtered stat blocks by it. The two were independent: asking for
+    2027 fetched the 2026 league, matched no stat block, and returned a full frame with
+    `proj_ppg` all null -- and `proj_blend` coalesces to `xfp_per_game`, so the board built,
+    THE PICK worked, and ESPN's projection had silently stopped contributing.
+    """
     from dotenv import load_dotenv
     from espn_api.football import League
     load_dotenv()
     lg = League(
-        league_id=int(os.environ["ESPN_LEAGUE_ID"]),
-        year=2026,
+        league_id=int(league_id if league_id is not None else os.environ["ESPN_LEAGUE_ID"]),
+        year=year,
         espn_s2=os.environ.get("ESPN_S2") or None,
         swid=os.environ.get("ESPN_SWID") or None,
     )
-    return lg, lg.settings.roster_slots if hasattr(lg.settings, "roster_slots") else {}
+    return LeagueView(lg, getattr(lg.settings, "roster_slots", {}) or {})
 
 
 # --- league transaction history -------------------------------------------
@@ -324,7 +347,7 @@ def scoring_settings() -> dict[str, float]:
     The aggregation weights are a league setting. Reading them is what turns
     `components.SCORING` from an assumption into something checkable.
     """
-    lg, _ = league_settings()
+    lg = league_settings().league
     raw = lg.espn_request.league_get(params={"view": "mSettings"})
     items = (((raw.get("settings") or {}).get("scoringSettings") or {})
              .get("scoringItems") or [])

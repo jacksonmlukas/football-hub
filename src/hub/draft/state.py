@@ -152,12 +152,13 @@ def sync_from_espn(year: int | None = None, quiet: bool = False,
     stale board still beats a traceback while you are on the clock.
     """
     try:
+        from hub.config import SEASON_AHEAD
         from hub.fetch.espn import league_settings
         if league_id is not None or year is not None:
             factory = _league_factory or _league
-            lg = factory(year or 2026, league_id)
+            lg = factory(year or SEASON_AHEAD, league_id)
         else:
-            lg, _ = league_settings()
+            lg = league_settings().league
         picks = [p.playerName for p in (lg.draft or [])]
         if not picks:
             # `quiet` exists because the poller calls this every few seconds. Printing

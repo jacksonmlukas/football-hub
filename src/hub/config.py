@@ -54,6 +54,15 @@ class RosterConfig:
     flex_te: float = 0.05
 
 
+# The season being drafted for. One owner, because it was five: `board.SEASON_AHEAD`,
+# `espn.league_settings`'s `League(year=...)`, `state.sync_from_espn`'s `year or 2026`,
+# `playoff_sos`'s default, and `publish --season`'s default. Nothing made them agree, and
+# two of them sat on the same call path: `player_market(season=...)` filtered stats by a
+# season the League object had never been asked for, so passing 2027 fetched the 2026 league,
+# matched no stat block, and returned proj_ppg as all-null with no error.
+SEASON_AHEAD = 2026
+
+
 @dataclass
 class DraftConfig:
     # Fraction of the room drafting off ESPN's board. Fit from league history where possible.
