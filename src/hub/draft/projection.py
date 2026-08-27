@@ -56,6 +56,11 @@ import polars as pl
 # recency-weighted variant, all arriving at zero.
 DEFAULT_LAMBDA = 0.0
 
+# Evidence is clipped before it moves anybody. Three standard deviations is already far past
+# anything the signal supports, and without a clip one bad `z_regress` becomes an unbounded
+# multiplier on a player's rank.
+Z_CLIP = 3.0
+
 
 def regression_signal(df: pl.DataFrame) -> pl.DataFrame:
     """Positive means the player underperformed his opportunity: a buy candidate.
@@ -111,24 +116,25 @@ def weighted_signal(weekly: pl.DataFrame, half_life: float | None = None,
             .select("full_name", "position", "z_regress"))
 
 
-def adjust_consensus(df: pl.DataFrame, lam: float = DEFAULT_LAMBDA) -> pl.DataFrame:
-    """adjusted_ecr = ecr * exp(-lam * z)
+def adjusted(df: pl.DataFrame, lam: float = DEFAULT_LAMBDA) -> pl.DataFrame:
+    """`adj_ecr = ecr * exp(-lam * z)`, the one implementation of it.
 
     Multiplicative rather than additive on purpose. One standard deviation of evidence should
     move a player further at pick 150 than at pick 5, because consensus is tightly packed and
     well-informed at the top and loose at the bottom. Additive adjustment gets this backwards
     and will shove a fringe signal into your first round.
 
-    Players with no signal (rookies, anyone without 2025 snaps) keep their ECR untouched.
+    Players with no signal (rookies, anyone without prior-season snaps) keep their ECR.
+
+    This formula was written three times -- here, in `tune.apply`, and inline in
+    `evaluate.simulate_draft` -- and the copy that had no caller was the one the other two
+    were copies of. Changing the clip, or making the adjustment additive, meant finding three
+    sites and a passing test on the version nothing ran.
+
+    `adjust_consensus` and `build` are gone with it. They also produced a `ranks_moved`
+    column, which nothing outside its own test ever read.
     """
     if lam < 0:
         raise ValueError("lambda must be non-negative")
-    z = pl.col("z_regress").fill_null(0.0).clip(-3.0, 3.0)
-    return df.with_columns([
-        (pl.col("ecr") * np.e ** (-lam * z)).alias("adj_ecr"),
-        (pl.col("ecr") - pl.col("ecr") * np.e ** (-lam * z)).alias("ranks_moved"),
-    ])
-
-
-def build(df: pl.DataFrame, lam: float = DEFAULT_LAMBDA) -> pl.DataFrame:
-    return adjust_consensus(regression_signal(df), lam).sort("adj_ecr")
+    z = pl.col("z_regress").fill_null(0.0).clip(-Z_CLIP, Z_CLIP)
+    return df.with_columns((pl.col("ecr") * np.e ** (-lam * z)).alias("adj_ecr"))

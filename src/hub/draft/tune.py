@@ -34,6 +34,8 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from hub.draft.projection import adjusted
+
 ROOT = Path(__file__).resolve().parents[3]
 SWEEP_OUT = ROOT / "docs" / "lambda-sweep.md"
 
@@ -49,12 +51,6 @@ TOP_N = 50
 DRAFTABLE = 192
 
 
-def apply(df: pl.DataFrame, lam: float) -> pl.DataFrame:
-    """The projection adjustment, as a pure function of (ecr, z, lam)."""
-    z = pl.col("z_regress").fill_null(0.0).clip(-3.0, 3.0)
-    return df.with_columns((pl.col("ecr") * np.e ** (-lam * z)).alias("adj_ecr"))
-
-
 def score(df: pl.DataFrame, lam: float, top_n: int = TOP_N) -> dict[str, float]:
     """How good a board this lambda produces, against what actually happened.
 
@@ -66,7 +62,7 @@ def score(df: pl.DataFrame, lam: float, top_n: int = TOP_N) -> dict[str, float]:
         return {"spearman": float("nan"), "spearman_pool": float("nan"),
                 f"top{top_n}_points": 0.0}
 
-    ranked = apply(df, lam).sort("adj_ecr")
+    ranked = adjusted(df, lam).sort("adj_ecr")
     pred = np.arange(1, ranked.height + 1, dtype=float)
     actual = ranked["actual_points"].fill_null(0.0).to_numpy()
 

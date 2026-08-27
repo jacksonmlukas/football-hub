@@ -13,6 +13,7 @@ import polars as pl
 import pytest
 
 from hub.draft import tune
+from hub.draft.projection import adjusted
 
 
 def _holdout(n=300, *, signal_strength=0.0, seed=0):
@@ -38,7 +39,7 @@ def test_zero_lambda_is_exactly_the_consensus_board():
     h = _holdout()
     scored = tune.score(h, lam=0.0)
     assert scored["spearman"] == pytest.approx(tune.score(h, lam=0.0)["spearman"])
-    ranked = tune.apply(h, lam=0.0)
+    ranked = adjusted(h, lam=0.0)
     assert ranked["adj_ecr"].to_list() == h["ecr"].to_list()
 
 
@@ -69,7 +70,7 @@ def test_an_inverted_signal_is_not_rewarded():
 def test_an_underperformer_moves_up_the_board():
     h = pl.DataFrame({"player": ["a", "b"], "ecr": [50.0, 50.0],
                       "z_regress": [2.0, -2.0], "actual_points": [0.0, 0.0]})
-    out = tune.apply(h, lam=0.1)
+    out = adjusted(h, lam=0.1)
     up = out.filter(pl.col("player") == "a")["adj_ecr"][0]
     down = out.filter(pl.col("player") == "b")["adj_ecr"][0]
     assert up < 50.0 < down, "positive z means underperformed, which is a buy"
@@ -80,7 +81,7 @@ def test_the_nudge_is_larger_deep_in_the_board():
     150 than at pick 5, because consensus is tight at the top and loose at the bottom."""
     h = pl.DataFrame({"player": ["top", "deep"], "ecr": [5.0, 150.0],
                       "z_regress": [1.0, 1.0], "actual_points": [0.0, 0.0]})
-    out = tune.apply(h, lam=0.1)
+    out = adjusted(h, lam=0.1)
     moved = (out["ecr"] - out["adj_ecr"]).to_list()
     assert moved[1] > moved[0] * 5
 
@@ -89,7 +90,7 @@ def test_players_without_a_signal_keep_their_rank():
     """Rookies have no prior season. Inventing a nudge for them is worse than none."""
     h = pl.DataFrame({"player": ["rook"], "ecr": [40.0], "z_regress": [None],
                       "actual_points": [0.0]})
-    assert tune.apply(h, lam=0.2)["adj_ecr"][0] == 40.0
+    assert adjusted(h, lam=0.2)["adj_ecr"][0] == 40.0
 
 
 # --- the sweep ------------------------------------------------------------

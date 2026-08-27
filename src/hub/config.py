@@ -132,12 +132,10 @@ cs.store(name="hub_config", node=HubConfig)
 # register it. `test_config.py` holds the line that this list is complete.
 FITTED_MODULES: tuple[str, ...] = (
     "hub.models.predict",
-    "hub.models.components",
     "hub.models.market",
     "hub.models.volume",
     "hub.draft.availability",
     "hub.draft.durability",
-    "hub.draft.projection",
     "hub.draft.regression",
 )
 
@@ -147,8 +145,18 @@ FITTED_MODULES: tuple[str, ...] = (
 # digest depend on where the repo is checked out. But `MIN_GAMES` is a real fitted threshold
 # -- it decides who is eligible to set replacement level, so it moves every VOR on the board
 # -- and it was chosen from data ("the sign is stable from 8 games up").
+# `hub.models.components` is deliberately NOT registered wholesale. Half of it --
+# `sample_weeks`, `moments`, `project` and the four dispersions they read -- has no
+# production caller: component-derived spread was measured worse than the fitted square-root
+# law (1.365 against 1.140, P(better) 0.0%, see predict.py) and the losing measurement is
+# kept per ADR-0007. Keeping it is right; letting it move the digest that identifies a
+# *prediction* is not, because no prediction can reach it. The three constants that are
+# reachable are named individually below.
 FITTED_EXTRA: tuple[str, ...] = (
     "hub.draft.board:MIN_GAMES",
+    "hub.models.components:SCORING",
+    "hub.models.components:TD_RATE",
+    "hub.models.components:FALLBACK_TD_RATE",
 )
 
 # Modules that hold measured floats which nonetheless must NOT move a model version, and why.
@@ -158,12 +166,30 @@ FITTED_EXTRA: tuple[str, ...] = (
 # The distinction throughout: a fitted constant is an *input* to a published prediction. A
 # number that scores, tunes or illustrates predictions is not, and folding it in would make
 # every version bump meaningless -- the same reason `poll` and `quota` are excluded above.
+# Constants that sit in a module the digest otherwise touches and that deliberately do NOT
+# move it, each with its reason. Named one by one on purpose: an exclusion should be a
+# decision on the record, not a module quietly falling off FITTED_MODULES.
+NOT_IN_DIGEST: dict[str, str] = {
+    "components.PER_UNIT_CV": "read only by components.sample_weeks",
+    "components.YARDS_PER_UNIT": "read only by components.sample_weeks",
+    "components.COUNT_DISPERSION": "read only by components.sample_weeks",
+    "components.TD_DISPERSION": "read only by components.sample_weeks",
+}
+# ... and why those four: component-derived spread lost its gate to the fitted square-root
+# law (1.365 against 1.140, P(better) 0.0% -- see hub/models/predict.py). ADR-0007 says a
+# measurement that steered a decision stays in the tree, so the code is kept. But a
+# prediction cannot reach these numbers, so they must not identify one.
+
 NOT_FITTED: dict[str, str] = {
     "hub.draft.calibrate": "the recorded output of a fit, used by tests to guard the live "
                            "constants -- an assertion about predictions, not an input",
     "hub.draft.evaluate": "offline harness for scoring draft strategies against each other",
     "hub.draft.leverage": "a synthetic fixture league for the variance sweep",
     "hub.draft.live": "operational -- a refresh budget in seconds, same class as `poll`",
+    "hub.draft.projection": "the consensus adjustment and its lambda. DEFAULT_LAMBDA is "
+                           "0.0 -- the sweep found nothing to tune (docs/lambda-sweep.md) -- "
+                           "and its only callers are hub.draft.tune and hub.draft.evaluate, "
+                           "both offline harnesses. Nothing at predict time reads it.",
     "hub.draft.tune": "hyperparameter search grid, run offline and never at predict time",
     "hub.models.eval": "model-comparison harness; it reads predictions, never makes them",
     "hub.draft.report": "renders the draft-night output as lines; SOS_GAP and "

@@ -24,6 +24,7 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.draft.projection import adjusted
 from hub.draft.season import FLEX_FROM, STARTERS
 
 TEAMS = 12
@@ -57,8 +58,9 @@ def simulate_draft(pool: pl.DataFrame, lam: float, my_slot: int,
     comparison that matters -- does the adjustment help against a room following ECR?
     """
     ecr = pool["ecr"].to_numpy()
-    z = np.nan_to_num(pool["z_regress"].fill_null(0.0).to_numpy(), nan=0.0).clip(-3, 3)
-    mine = ecr * np.exp(-lam * z)
+    # One implementation of the adjustment, in `hub.draft.projection`. This was a fourth
+    # spelling of it, in numpy, with its own clip written as a bare -3/3.
+    mine = adjusted(pool, lam)["adj_ecr"].to_numpy()
     theirs = ecr + rng.normal(0.0, opp_noise, ecr.size)
 
     my_order = np.argsort(mine)

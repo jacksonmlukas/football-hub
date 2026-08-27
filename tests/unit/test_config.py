@@ -1,7 +1,9 @@
 """The config exists to make model versions honest. These tests pin that."""
 from hub.config import (
+    FITTED_EXTRA,
     FITTED_MODULES,
     NOT_FITTED,
+    NOT_IN_DIGEST,
     DraftConfig,
     HubConfig,
     PollConfig,
@@ -93,6 +95,12 @@ def test_every_module_holding_a_fitted_constant_is_registered():
     src = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
     registered = {m.rsplit(".", 1)[-1] for m in FITTED_MODULES}
     registered |= {m.rsplit(".", 1)[-1] for m in NOT_FITTED}
+    # A module can also be covered constant-by-constant rather than wholesale: registered
+    # into the digest through FITTED_EXTRA, or deliberately excluded through NOT_IN_DIGEST.
+    # `hub.models.components` is both -- three of its constants are live and four describe
+    # code no prediction can reach.
+    by_name = {f"{spec.split(':')[0].rsplit('.', 1)[-1]}.{spec.split(':')[1]}"
+               for spec in FITTED_EXTRA} | set(NOT_IN_DIGEST)
     # Where fitted constants actually live: the prediction layer, plus the draft modules
     # that fit their own coefficients. Anything else is a CLI, a fetcher or a store.
     searched = [src / "models", src / "draft"]
@@ -115,7 +123,7 @@ def test_every_module_holding_a_fitted_constant_is_registered():
                         continue
                     # A fitted constant is a measured *number*. String and bool settings,
                     # paths and column lists are not, and live in these modules legitimately.
-                    if _holds_a_float(node.value):
+                    if _holds_a_float(node.value) and f"{path.stem}.{t.id}" not in by_name:
                         missing.append(f"{path.stem}.{t.id}")
     assert not missing, (
         f"fitted constants outside FITTED_MODULES, so config_digest does not cover them: "
