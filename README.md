@@ -7,6 +7,9 @@ are any good, in a domain with ~285 NFL games a season, an efficient market as t
 and no ability to run an A/B test. This repo is organised around that problem — and the most
 useful thing in it is the record of what got measured and then *removed*.
 
+**The method is written up in one place: [docs/method.md](docs/method.md)** — the two tests,
+the twelve rules, and the specific mistake behind each one.
+
 ## What this repo has actually concluded
 
 Every one of these was built, measured against a rule fixed before the numbers, and acted on.
@@ -55,6 +58,10 @@ Confusing the two is how a well-built, well-tested model ships while being confi
 than a one-line rule. `CONTEXT.md` defines both.
 
 ## Evaluation methodology
+
+The short version. The long version, with the incident behind each rule, is
+[docs/method.md](docs/method.md).
+
 
 - **Decision rules are pre-registered.** Every gate's branches are fixed, in code, before the
   numbers — including the branch where the elaborate thing loses. `verdict()` functions are
