@@ -306,6 +306,119 @@ a measurement nobody can re-run is worthless. Its orchestration got offline test
 
 ---
 
+### 11. The roster shape is half-parameterised
+
+**Explored 2026-08-25** as part of the architecture review.
+
+`FLEX_CAPACITY` and `FLEX_FROM` are read: `optimize._need_score`, `evaluate.starter_points`,
+`season.lineup_points` and `season/lineup.py` all consult them. `FLEX_SLOTS` — the count
+itself — is defined at `season.py:31` and read by **nobody**.
+
+Which means the flex arity is hardcoded in four places at once:
+
+| where | how |
+|---|---|
+| `season.lineup_points:86` | `np.max(np.stack(leftovers))` |
+| `season/lineup.py:102` | `yield (*base, f)` for a single `f` |
+| `season/lineup_gate.py:84` | `flex.append(flex[0])` |
+| `draft/evaluate.py:47` | `max(leftovers)` |
+
+The consequence is precise, and worse than four copies of one rule. Set `RosterConfig.flex = 2`
+and the halves disagree:
+
+    FLEX_CAPACITY   7 -> 8      (the draft-side need logic adapts)
+    the four scorers            (still field exactly one flex)
+
+So the draft would correctly stop calling for flex-eligible players at eight, while every
+lineup score in the repo kept fielding seven. `config.py:32-38` says the roster shape used to
+live in five places and "nothing made them agree"; the unification reached `STARTERS`,
+`FLEX_FROM` and `FLEX_CAPACITY` and stopped one constant short.
+
+**Not urgent** — the league is a 1-flex league and a commissioner change is what triggers it.
+**Do:** have the four scorers read `FLEX_CAPACITY`/`FLEX_FROM`, and either give `FLEX_SLOTS` a
+reader or delete it. `lineup_gate.py:82` also inlines `("RB", "WR", "TE")` while importing
+`STARTERS` from the module where `FLEX_FROM` sits.
+
+---
+
+### 12. Five fitted constants describe code nothing can reach
+
+**Explored 2026-08-25.** Two modules are reachable only from their own tests, and both are
+registered in `FITTED_MODULES`, so their constants move the digest that identifies a
+prediction.
+
+**`draft/projection.py`.** `adjust_consensus` and `build` have no production caller —
+`grep` for importers finds `config.py` naming the module and `tune.py:217` taking
+`weighted_signal`, and nothing else. The formula `ecr * exp(-lam * z)` is written three
+times: here, in `tune.apply`, and inline in `evaluate.simulate_draft:61`. The copy that is
+*not* called is the one the other two are copies of. And `DEFAULT_LAMBDA = 0.0`, matching
+`DraftConfig.projection_lambda = 0.0`, so even if something called it the result is
+`adj_ecr == ecr` identically.
+
+**`models/components.py`.** `SCORING`, `td_rate`, `points` and `scoring_mismatch` are
+reachable. `sample_weeks`, `moments`, `project`, `regress_touchdowns`, `points_expr` and
+`_counts` are not. `predict.py:17-21` records why: component-derived spread was measured
+worse than the fitted square-root law, 1.365 against 1.140, P(better) 0.0%.
+
+The digest, counted rather than asserted:
+
+    35 fitted constants total
+     4 unreachable  PER_UNIT_CV, YARDS_PER_UNIT, COUNT_DISPERSION, TD_DISPERSION
+                    (all used only inside sample_weeks)
+     1 unreachable  projection.DEFAULT_LAMBDA
+
+So **5 of 35** describe code no prediction can reach. `SCORING`, `TD_RATE` and
+`FALLBACK_TD_RATE` are genuinely live and stay.
+
+**Do:** delete the projection adjustment — the deletion test is unambiguous, no caller
+absorbs anything. For `components`, the deletion is a real question against
+[ADR-0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md), which is why
+a losing measurement is in the tree at all. **The registry question is separate and does not
+need that decision made:** a measurement that lost should not move the fitted digest either
+way.
+
+Minor, same family: `predict.components()` is a two-line delegate to `volume.decompose` whose
+only callers are its own tests, and `components.moments` and `predict.moments` are two
+different functions of the same name one import apart.
+
+---
+
+### 13. ESPN's league year is hardcoded twice, and the failure is absorbed
+
+**Explored 2026-08-25.** `fetch/espn.py:210` builds `League(..., year=2026)` as a literal.
+`player_market(limit, season=2026)` takes a season parameter, passes it to `_parse_market`,
+and that filters `st.get("seasonId") == season`. The two numbers are independent.
+
+Confirmed offline rather than reasoned about:
+
+    _parse_market(payload, 2026) -> proj_ppg 14.2
+    _parse_market(payload, 2027) -> proj_ppg None      # full frame, no error
+
+**The interesting part is what happens next.** The board's substance guard checks `adp`, not
+`proj_ppg`. And `proj_blend` is a coalesce:
+
+    pl.coalesce((proj_ppg + xfp_per_game) / 2.0, proj_ppg, xfp_per_game)
+
+so an all-null `proj_ppg` silently falls through to `xfp_per_game`. The board builds, THE
+PICK works, nothing warns, and ESPN's projection has simply stopped contributing. The new
+dtype contract check does not catch it either: the column is correctly typed `Float64`, it
+just has no values.
+
+This fires exactly once, on the 2027 rollover, for whoever updates `SEASON_AHEAD` and not
+`league_settings`.
+
+It is also why that module has **three** different injection seams for one dependency —
+`transaction_counts(fetch=...)`, the `_parse_market` parse/fetch split, and
+`state.sync_from_espn(_league_factory=...)` — and why the tests monkeypatch
+`league_settings` rather than pass an adapter. Every call site also discards half its tuple
+return (`lg, _` at three sites, `_, slots` at one).
+
+**Do:** parameterise year and league id, return one object rather than a tuple both callers
+half-ignore, and let the three seams collapse into it. Post-draft: this is the in-season
+fetch path, and the 2027 trigger is a year away.
+
+---
+
 ## What is deliberately not on this list
 
 **Anything that tries to beat a market.** Objective 4 was retired on 2026-08-24 after six
