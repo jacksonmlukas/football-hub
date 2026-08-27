@@ -7,6 +7,7 @@ simulate instead of ranking by VOR.
 import numpy as np
 import pytest
 
+from hub.draft import season
 from hub.draft.season import (
     REG_SEASON_WEEKS,
     _round_robin,
@@ -393,3 +394,75 @@ def test_the_marginals_survive_correlation():
     qb = same[:, :, 0].ravel()
     assert qb.mean() == pytest.approx(18.0, rel=0.03)
     assert qb.std() == pytest.approx(8.0, rel=0.07)
+
+
+# --- the bracket gets its own weeks ----------------------------------------
+#
+# `champion_probability` exposed eight knobs and not `weeks`, and `_week_winner` resolved a
+# playoff week as `week % pts.shape[1]` -- so a 14-week simulation replayed weeks 1-3 as the
+# three playoff rounds. None of the assertions below could be written against that interface,
+# which is why `leverage.py` forked the whole bracket instead.
+
+def _pts(n_sims=1, weeks=None, teams=12, seed=0):
+    weeks = weeks or (season.REG_SEASON_WEEKS + season.PLAYOFF_ROUNDS)
+    rng = np.random.default_rng(seed)
+    return rng.normal(110.0, 20.0, size=(n_sims, weeks, teams))
+
+
+def test_the_champion_ignores_the_regular_season_once_seeded():
+    """The property the old code violated. Given the seeds, the title is decided by the
+    playoff weeks alone -- so overwriting every regular-season week must change nothing.
+    Under `week % pts.shape[1]` it changed the champion, because the bracket was reading
+    weeks 0-2."""
+    pts = _pts()
+    _, seeds = season.seed_table(pts)
+    before = season.champion(pts, seeds, 0)
+    scrambled = pts.copy()
+    scrambled[:, :season.REG_SEASON_WEEKS, :] = 0.0
+    assert season.champion(scrambled, seeds, 0) == before
+
+
+def test_changing_a_playoff_week_can_change_the_champion():
+    """The other direction, so the test above cannot pass by the bracket ignoring `pts`."""
+    pts = _pts(seed=3)
+    _, seeds = season.seed_table(pts)
+    winner = season.champion(pts, seeds, 0)
+    rigged = pts.copy()
+    loser = next(t for t in seeds[0] if t != winner)
+    rigged[0, season.REG_SEASON_WEEKS:, loser] = 10_000.0
+    assert season.champion(rigged, seeds, 0) == loser
+
+
+def test_seeding_ignores_the_playoff_weeks():
+    """The tiebreak is total points, and `champion_probability` summed the whole array. Once
+    the array carries playoff weeks, that would let a semi-final decide the seed a team
+    entered the playoffs with."""
+    pts = _pts(n_sims=4)
+    _, seeds = season.seed_table(pts)
+    loud = pts.copy()
+    loud[:, season.REG_SEASON_WEEKS:, :] = 9_999.0
+    _, seeds_loud = season.seed_table(loud)
+    assert (seeds == seeds_loud).all()
+
+
+def test_champion_probability_simulates_the_playoff_weeks():
+    rosters = [np.arange(t * 3, (t + 1) * 3) for t in range(12)]
+    mu = np.full(36, 12.0)
+    sd = np.full(36, 5.0)
+    pos = np.array(["RB"] * 36)
+    p = season.champion_probability(rosters, mu, sd, pos, n_sims=200,
+                                    rng=np.random.default_rng(0))
+    assert p.shape == (12,)
+    assert p.sum() == pytest.approx(1.0)
+    assert (p > 0).sum() >= 6, "twelve identical teams should spread the title around"
+
+
+def test_leverage_and_season_share_one_bracket():
+    """`leverage.py` re-implemented the seeding loop line for line and the bracket beside it.
+    A copy that drifts is how this file's own docstring says the weekly model went stale."""
+    import inspect
+
+    from hub.draft import leverage
+    src = inspect.getsource(leverage)
+    assert "_champion" not in src, "leverage must not carry its own bracket"
+    assert "seed_table" in src and "champion(" in src

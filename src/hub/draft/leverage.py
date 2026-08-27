@@ -41,11 +41,13 @@ from collections.abc import Sequence
 import numpy as np
 
 from hub.draft.season import (
+    PLAYOFF_ROUNDS,
     PLAYOFF_TEAMS,
     REG_SEASON_WEEKS,
     WEEKLY_K,
     WEEKLY_K_POOLED,
-    _round_robin,
+    champion,
+    seed_table,
     simulate_weeks,
     talent_cv_for,
 )
@@ -66,10 +68,11 @@ SD = np.array([WEEKLY_K.get(str(p), WEEKLY_K_POOLED) for p in POS]) * np.sqrt(MU
 N = len(POS)
 POOL_POS = np.tile(POS, TEAMS)
 ROSTERS = [np.arange(t * N, (t + 1) * N) for t in range(TEAMS)]
-# Seventeen weeks so the three playoff rounds get their own draws. `champion_probability`
-# recycles regular-season weeks 1-3, which is fine for ranking rosters but would couple a
-# team's title odds to its week 1 result -- not something to measure a bye against.
-SIM_WEEKS = REG_SEASON_WEEKS + 3
+# `champion_probability` used to recycle regular-season weeks 1-3 as the three playoff
+# rounds, so this file simulated its own seventeen weeks and forked the seeding loop and the
+# bracket to escape it. season.py now gives the playoffs their own draws, and both live
+# there -- this is the same constant, no longer a workaround.
+SIM_WEEKS = REG_SEASON_WEEKS + PLAYOFF_ROUNDS
 
 
 def _talent_cv(cv_mult: float) -> np.ndarray:
@@ -97,28 +100,8 @@ def _season(k, vol, cv_mult, n, base_seed):
                          rng=np.random.default_rng(base_seed),
                          talent_cv=_talent_cv(cv_mult))
 
-    wins = np.zeros((n, TEAMS))
-    for w, pairs in enumerate(_round_robin(TEAMS, REG_SEASON_WEEKS)):
-        for a, b in pairs:
-            a_won = pts[:, w, a] > pts[:, w, b]
-            wins[:, a] += a_won
-            wins[:, b] += ~a_won
-
-    # Seed on wins, tie-break on total points -- playoffSeedingRule TOTAL_POINTS_SCORED.
-    key = wins * 10_000.0 + pts[:, :REG_SEASON_WEEKS, :].sum(axis=1)
-    return pts, wins, np.argsort(-key, axis=1)[:, :PLAYOFF_TEAMS]
-
-
-def _champion(pts, seeds, s):
-    """Winner of one bracket: seeds 1-2 bye, 3v6 and 4v5, then semis, then the final."""
-    f = seeds[s]
-    w = REG_SEASON_WEEKS
-    alive = [f[0], f[1]]
-    for a, b in ((f[2], f[5]), (f[3], f[4])):
-        alive.append(a if pts[s, w, a] > pts[s, w, b] else b)
-    semi = [alive[0] if pts[s, w + 1, alive[0]] > pts[s, w + 1, alive[3]] else alive[3],
-            alive[1] if pts[s, w + 1, alive[1]] > pts[s, w + 1, alive[2]] else alive[2]]
-    return semi[0] if pts[s, w + 2, semi[0]] > pts[s, w + 2, semi[1]] else semi[1]
+    wins, seeds = seed_table(pts)
+    return pts, wins, seeds
 
 
 def simulate(k: float = 1.0, vol: float = 1.0, cv_mult: float = 1.0,
@@ -135,7 +118,7 @@ def simulate(k: float = 1.0, vol: float = 1.0, cv_mult: float = 1.0,
         made += int((seeds == 0).any(axis=1).sum())
         bye += int((seeds[:, :2] == 0).sum())
         wins_sum += float(wins[:, 0].sum())
-        champ += sum(_champion(pts, seeds, s) == 0 for s in range(n))
+        champ += sum(champion(pts, seeds, s) == 0 for s in range(n))
         done += n
     return {"playoff": made / n_sims, "bye": bye / n_sims, "title": champ / n_sims,
             "wins": wins_sum / n_sims}
@@ -153,7 +136,7 @@ def seed_value(n_sims: int = 20000, seed: int = 0) -> np.ndarray:
         n = min(CHUNK, n_sims - done)
         pts, _, seeds = _season(1.0, 1.0, 1.0, n, seed * 1_000_003 + done)
         for s in range(n):
-            won[list(seeds[s]).index(_champion(pts, seeds, s))] += 1
+            won[list(seeds[s]).index(champion(pts, seeds, s))] += 1
         done += n
     return won / n_sims
 

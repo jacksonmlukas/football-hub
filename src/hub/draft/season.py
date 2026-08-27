@@ -33,6 +33,9 @@ FLEX_SLOTS = ROSTER.flex
 FLEX_CAPACITY = flex_capacity(ROSTER)
 REG_SEASON_WEEKS = 14
 PLAYOFF_TEAMS = 6
+# Quarter-final, semi-final, final. The bracket needs its own weeks: scoring the playoffs on
+# draws that already decided seeding couples a team's title odds to its week 1 result.
+PLAYOFF_ROUNDS = 3
 
 # Player-level prediction lives in `hub.models.predict`: what a player does in a week, as
 # opposed to how a league works, which is this module. These constants are re-exported
@@ -143,6 +146,47 @@ def _round_robin(teams: int, weeks: int) -> list[list[tuple[int, int]]]:
     return [base[w % len(base)] for w in range(weeks)]
 
 
+def seed_table(pts: np.ndarray, *, reg_weeks: int = REG_SEASON_WEEKS,
+               playoff_teams: int = PLAYOFF_TEAMS) -> tuple[np.ndarray, np.ndarray]:
+    """Regular-season wins and the playoff field, from weekly points.
+
+    Seeds on wins, ties broken on total points -- ESPN's `playoffSeedingRule
+    TOTAL_POINTS_SCORED`. **Regular-season points only**: `pts` now carries playoff weeks
+    too, and summing those into the tiebreak would let a team's semi-final performance
+    decide the seed it entered the playoffs with.
+
+    Shared rather than duplicated. `leverage.py` re-implemented this loop line for line
+    because `champion_probability` gave it no way to ask for the pieces.
+    """
+    n_sims, _, teams = pts.shape
+    wins = np.zeros((n_sims, teams))
+    for w, pairs in enumerate(_round_robin(teams, reg_weeks)):
+        for a, b in pairs:
+            a_won = pts[:, w, a] > pts[:, w, b]
+            wins[:, a] += a_won
+            wins[:, b] += ~a_won
+    key = wins * 10_000.0 + pts[:, :reg_weeks, :].sum(axis=1)
+    return wins, np.argsort(-key, axis=1)[:, :playoff_teams]
+
+
+def champion(pts: np.ndarray, seeds: np.ndarray, sim: int, *,
+             reg_weeks: int = REG_SEASON_WEEKS) -> int:
+    """Winner of one bracket: seeds 1-2 bye, 3v6 and 4v5, then semis, then the final.
+
+    Playoff weeks index `pts` directly. They used to be taken modulo the array width, so a
+    14-week simulation replayed weeks 1-3 as the three playoff rounds -- meaning the games
+    that decided the title were the same draws that had already set the seeding.
+    """
+    f = seeds[sim]
+    w = reg_weeks
+    alive = [f[0], f[1]]
+    for a, b in ((f[2], f[5]), (f[3], f[4])):
+        alive.append(a if pts[sim, w, a] > pts[sim, w, b] else b)
+    semi = [alive[0] if pts[sim, w + 1, alive[0]] > pts[sim, w + 1, alive[3]] else alive[3],
+            alive[1] if pts[sim, w + 1, alive[1]] > pts[sim, w + 1, alive[2]] else alive[2]]
+    return int(semi[0] if pts[sim, w + 2, semi[0]] > pts[sim, w + 2, semi[1]] else semi[1])
+
+
 def champion_probability(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
                          pos: np.ndarray, n_sims: int = 400,
                          rng: np.random.Generator | None = None,
@@ -151,44 +195,16 @@ def champion_probability(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarr
                          skew: np.ndarray | None = None) -> np.ndarray:
     """P(each team wins the league). Returns (teams,) summing to 1.
 
-    14-week H2H regular season, top 6 seeds, two byes, then single elimination on
-    one-week matchups -- read off the live league, not assumed.
+    14-week H2H regular season, top 6 seeds, two byes, then single elimination on one-week
+    matchups -- read off the live league, not assumed. Three further weeks are simulated so
+    the bracket has draws of its own.
     """
     rng = rng or np.random.default_rng(0)
     teams = len(rosters)
-    pts = simulate_weeks(rosters, mu, sd, pos, n_sims, REG_SEASON_WEEKS, rng, talent_cv,
-                         nfl_team, skew)
-
-    wins = np.zeros((n_sims, teams))
-    for w, pairs in enumerate(_round_robin(teams, REG_SEASON_WEEKS)):
-        for a, b in pairs:
-            a_won = pts[:, w, a] > pts[:, w, b]
-            wins[:, a] += a_won
-            wins[:, b] += ~a_won
-
-    # Seed on wins, break ties on total points -- the standard ESPN rule.
-    total = pts.sum(axis=1)
-    key = wins * 10_000.0 + total
-    seeds = np.argsort(-key, axis=1)[:, :PLAYOFF_TEAMS]
-
-    champs = np.empty(n_sims, dtype=int)
-    for s in range(n_sims):
-        field = list(seeds[s])
-        wk = REG_SEASON_WEEKS
-        # Seeds 1-2 bye; 3v6 and 4v5 in round one.
-        alive = [field[0], field[1]]
-        for a, b in ((field[2], field[5]), (field[3], field[4])):
-            alive.append(a if _week_winner(pts, s, wk, a, b) else b)
-        wk += 1
-        semi = [alive[0] if _week_winner(pts, s, wk, alive[0], alive[3]) else alive[3],
-                alive[1] if _week_winner(pts, s, wk, alive[1], alive[2]) else alive[2]]
-        wk += 1
-        champs[s] = semi[0] if _week_winner(pts, s, wk, semi[0], semi[1]) else semi[1]
-
+    pts = simulate_weeks(rosters, mu, sd, pos, n_sims,
+                         REG_SEASON_WEEKS + PLAYOFF_ROUNDS, rng, talent_cv, nfl_team, skew)
+    _, seeds = seed_table(pts)
+    champs = np.array([champion(pts, seeds, s) for s in range(n_sims)])
     return np.bincount(champs, minlength=teams) / n_sims
 
 
-def _week_winner(pts: np.ndarray, sim: int, week: int, a: int, b: int) -> bool:
-    """True if `a` beats `b`. Playoff weeks reuse regular-season draws cyclically."""
-    w = week % pts.shape[1]
-    return bool(pts[sim, w, a] > pts[sim, w, b])
