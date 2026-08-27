@@ -25,7 +25,7 @@ import numpy as np
 import polars as pl
 
 from hub.draft.projection import adjusted
-from hub.draft.season import FLEX_FROM, STARTERS
+from hub.draft.season import FLEX_FROM, FLEX_SLOTS, STARTERS
 
 TEAMS = 12
 ROUNDS = 16
@@ -39,14 +39,14 @@ MIN_SIGMA = 2.0
 
 def starter_points(roster: pl.DataFrame) -> float:
     """Season points from the best legal lineup this roster can field."""
-    total, leftovers = 0.0, []
+    total, bench = 0.0, []
     for pos, n in STARTERS.items():
         got = sorted(roster.filter(pl.col("pos") == pos)["actual_points"].to_list(),
                      reverse=True)
         total += sum(got[:n])
         if pos in FLEX_FROM and len(got) > n:
-            leftovers.append(got[n])
-    return total + (max(leftovers) if leftovers else 0.0)
+            bench.extend(got[n:n + FLEX_SLOTS])
+    return total + sum(sorted(bench, reverse=True)[:FLEX_SLOTS])
 
 
 def simulate_draft(pool: pl.DataFrame, lam: float, my_slot: int,

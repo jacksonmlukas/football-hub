@@ -42,7 +42,7 @@ from collections.abc import Iterator, Mapping, Sequence
 
 import polars as pl
 
-from hub.draft.season import FLEX_FROM, STARTERS
+from hub.draft.season import FLEX_FROM, FLEX_SLOTS, STARTERS
 from hub.models.predict import group_sd
 
 # Exhaustive enumeration is exact and, for a real 14-to-16 man roster, takes milliseconds
@@ -73,7 +73,8 @@ def win_probability(mu: float, sd: float, opp_mu: float, opp_sd: float) -> float
 
 
 def _legal_lineups(pos: Sequence[str], slots: Mapping[str, int],
-                   flex_from: Sequence[str], max_lineups: int) -> Iterator[tuple[int, ...]]:
+                   flex_from: Sequence[str], max_lineups: int,
+                   flex_slots: int = FLEX_SLOTS) -> Iterator[tuple[int, ...]]:
     """Every legal assignment of roster indices to starting slots, as index tuples.
 
     Yields combinations rather than permutations: which player fills which of two RB slots
@@ -89,7 +90,7 @@ def _legal_lineups(pos: Sequence[str], slots: Mapping[str, int],
             + "; has " + ", ".join(f"{len(by_pos.get(p, []))} {p}" for p in slots))
 
     flex_pool = [i for p in flex_from for i in by_pos.get(p, [])]
-    total = math.prod(len(c) for c in per_slot) * max(len(flex_pool), 1)
+    total = math.prod(len(c) for c in per_slot) * (math.comb(len(flex_pool), flex_slots) or 1)
     if total > max_lineups:
         raise TooManyLineups(
             f"{total} legal lineups exceeds max_lineups={max_lineups}. Exhaustive search "
@@ -99,17 +100,21 @@ def _legal_lineups(pos: Sequence[str], slots: Mapping[str, int],
     for combo in itertools.product(*per_slot):
         base = tuple(i for c in combo for i in c)
         used = set(base)
-        for f in flex_pool:
-            if f not in used:
-                found = True
-                yield (*base, f)
+        # Combinations of `flex_slots`, not one player: with two flex slots both can come
+        # from the same position, and picking one candidate at a time cannot express that.
+        # At flex_slots=1 this yields exactly `(*base, f)` per eligible f, as it always did.
+        for extra in itertools.combinations([f for f in flex_pool if f not in used],
+                                            flex_slots):
+            found = True
+            yield (*base, *extra)
     if not found:
-        raise NoLegalLineup("no player is left over to fill the flex")
+        raise NoLegalLineup(
+            f"fewer than {flex_slots} players are left over to fill the flex")
 
 
 def _evaluate(players: pl.DataFrame, slots: Mapping[str, int] | None,
               flex_from: Sequence[str] | None, max_lineups: int,
-              score) -> dict:
+              score, flex_slots: int = FLEX_SLOTS) -> dict:
     slots = dict(slots if slots is not None else STARTERS)
     flex_from = tuple(flex_from if flex_from is not None else FLEX_FROM)
 
@@ -123,7 +128,7 @@ def _evaluate(players: pl.DataFrame, slots: Mapping[str, int] | None,
              else [None] * players.height)
 
     best, best_score = None, -math.inf
-    for idx in _legal_lineups(pos, slots, flex_from, max_lineups):
+    for idx in _legal_lineups(pos, slots, flex_from, max_lineups, flex_slots):
         i = list(idx)
         m = float(mu[i].sum())
         s = group_sd((sd[k], pos[k], teams[k]) for k in i)

@@ -36,7 +36,7 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
-from hub.draft.season import REG_SEASON_WEEKS, STARTERS
+from hub.draft.season import FLEX_FROM, FLEX_SLOTS, REG_SEASON_WEEKS, STARTERS
 from hub.draft.state import _norm
 from hub.models.measure import realised_ppg, summarise
 
@@ -79,10 +79,12 @@ def projection_lineup_points(grid: np.ndarray, pos: Sequence[str],
         if p in STARTERS and counts.get(p, 0) < STARTERS[p]:
             counts[p] = counts.get(p, 0) + 1
             starters.append(i)
-        elif p in ("RB", "WR", "TE"):
+        elif p in FLEX_FROM:
             flex.append(i)
-    if flex:
-        starters.append(flex[0])
+    # `order` is already descending by projection, so the first FLEX_SLOTS leftovers are the
+    # best ones. This inlined ("RB", "WR", "TE") while importing STARTERS from the module
+    # where FLEX_FROM sits beside it.
+    starters.extend(flex[:FLEX_SLOTS])
     if not starters:
         return 0.0
     return float(grid[starters, :].sum() / grid.shape[1])

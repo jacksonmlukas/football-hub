@@ -76,7 +76,7 @@ def lineup_points(scores: np.ndarray, pos: np.ndarray) -> np.ndarray:
     lineup". One rule, one owner.
     """
     total = np.zeros(scores.shape[:2])
-    leftovers = []
+    bench = []
     for p, n in STARTERS.items():
         idx = np.flatnonzero(pos == p)
         if idx.size == 0:
@@ -84,9 +84,12 @@ def lineup_points(scores: np.ndarray, pos: np.ndarray) -> np.ndarray:
         block = -np.sort(-scores[:, :, idx], axis=2)      # descending
         total += block[:, :, :n].sum(axis=2)
         if p in FLEX_FROM and block.shape[2] > n:
-            leftovers.append(block[:, :, n])              # best bench player at this slot
-    if leftovers:
-        total += np.max(np.stack(leftovers, axis=-1), axis=-1)
+            # Up to FLEX_SLOTS of them, not one: with two flex slots the best pair can come
+            # from the same position, and taking one candidate per position cannot see that.
+            bench.append(block[:, :, n:n + FLEX_SLOTS])
+    if bench and FLEX_SLOTS:
+        pool = np.concatenate(bench, axis=2)
+        total += -np.sort(-pool, axis=2)[:, :, :FLEX_SLOTS].sum(axis=2)
     return total
 
 
