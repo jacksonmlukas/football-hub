@@ -29,6 +29,7 @@ from hub.config import RosterConfig, flex_positions, flex_share, starters
 from hub.contracts import DRAFT_BOARD, ContractViolation
 from hub.draft import durability
 from hub.draft import regression as td_regression
+from hub.draft import report as report_mod
 from hub.draft import state as state_mod
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
@@ -36,7 +37,7 @@ from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.state import DraftState, _norm, remaining
 
 if TYPE_CHECKING:                      # `optimize` imports from here, so runtime would cycle
-    from hub.draft.optimize import ThePick
+    pass
 
 ROOT = Path(__file__).resolve().parents[3]
 OUT = ROOT / "site" / "data"
@@ -616,100 +617,14 @@ def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
     return mode, ranked.head(top)
 
 
-def _print_injuries(board: pl.DataFrame, report: BuildReport) -> None:
-    """Players carrying a designation right now, and last season's fragile ones.
+def _emit(lines: list[str]) -> None:
+    """Print what a renderer returned. The only place in this module that writes to stdout.
 
-    Two different quantities kept visibly apart. Last season's missed games are priced into
-    the projection where the market leaves a residual (QB, WR). Today's designation is not
-    priced at all -- there is no history of preseason designations against outcomes to fit a
-    coefficient on, so inventing one would be worse than showing the drafter the flag.
+    Renderers return lines so they can be tested; this is the one adapter that turns them
+    into output, which is what `live.py` has always done with its own `render()`.
     """
-    # `report.adp`, not `durability or adp`. Both halves of this report are scoped to
-    # "inside ADP 120" and both print an ADP, so without that column there is nothing here
-    # to show -- and the `or` meant a board with durability but no ADP reached the filter
-    # below and died on ColumnNotFoundError. That is the whole ECR-only path, which
-    # docs/draft-night.md documents as a designed fallback.
-    if not report.adp:
-        return
-    pool = board.filter(pl.col("adp").is_not_null() & (pl.col("adp") <= 120))
-    if "injury_status" in pool.columns:
-        hurt = pool.filter(
-            pl.col("injury_status").map_elements(durability.is_flagworthy,
-                                                 return_dtype=pl.Boolean)
-        ).sort("adp")
-        if hurt.height:
-            print(f"\n  Carrying a designation today -- {hurt.height} inside ADP 120")
-            print("  Out/Doubtful/IR are priced (-1.63 ppg, fitted on week-1 reports).")
-            print("  QUESTIONABLE is not: 12.6% of the August board carries it against")
-            print("  2.9% at week 1, so the fitted number is from a much sicker group.")
-            for r in hurt.head(8).iter_rows(named=True):
-                st = str(r["injury_status"]).upper()
-                beta = durability.INJURY_BETA.get(st)
-                note = f"{beta:+.2f} ppg" if beta else "not priced"
-                print(f"    {r['player']:<24} {r['pos'] or '':<4} ADP {r['adp']:>5.1f}  "
-                      f"{st:<15} {note}")
-
-    if "missed" in pool.columns:
-        frail = pool.filter(pl.col("missed").is_not_null()
-                            & (pl.col("missed") >= 4)).sort("missed", descending=True)
-        if frail.height:
-            print("\n  Missed time last season -- priced for QB and WR only")
-            print("  Running backs are left alone: the market already discounts them.")
-            for r in frail.head(6).iter_rows(named=True):
-                pos = r["pos"] or ""
-                beta = durability.BETA.get(pos, 0.0)
-                note = f"{beta * r['missed']:+.2f} ppg" if beta else "not priced"
-                print(f"    {r['player']:<24} {pos:<4} ADP {r['adp']:>5.1f}  "
-                      f"missed {int(r['missed']):>2}  {note}")
-
-
-def _print_td_luck(board: pl.DataFrame, report: BuildReport) -> None:
-    """Players priced on touchdowns their yardage does not support.
-
-    A different cut from xFP-FP, and measurably so -- the two correlate at +0.16 on the live
-    board, and they are signed in opposite directions, so a real overlap would show as a
-    strong negative. See docs/td-luck.md, including how much of this is established
-    (quarterbacks) and how much is only directional (running backs, receivers).
-    """
-    # `report.td_luck` alone was not enough: this reaches nflverse and can succeed while
-    # ESPN ADP fails, and the filter below reads `adp`.
-    if not (report.td_luck and report.adp):
-        return
-    pool = board.filter(pl.col("td_luck").is_not_null()
-                        & pl.col("adp").is_not_null() & (pl.col("adp") <= 120))
-    if pool.height < 8:
-        return
-    print(f"\n  Touchdown luck, last season's actuals -- {pool.height} drafted players")
-    print("  Points per game above the touchdowns their yardage supports. Touchdown rate")
-    print("  has no year-over-year persistence, so this is the part least likely to repeat.")
-    for label, frame in (("FADE", pool.sort("td_luck", descending=True).head(5)),
-                         ("BUY ", pool.sort("td_luck").head(5))):
-        for r in frame.iter_rows(named=True):
-            print(f"    {label} {r['player']:<24} {r['pos'] or '':<4} "
-                  f"ADP {r['adp']:>5.1f}  {r['td_luck']:>+6.2f}/gm")
-    print("  Strongest for QB, where the room prices last year's touchdowns at 1.02 against")
-    print("  volume and their true predictive weight is -0.05. Directional elsewhere.")
-
-
-def corrections_note(tp: ThePick) -> list[str]:
-    """What to say about the bracketed notes, which depends on the route that chose the pick.
-
-    Only the corrected route folds them into the ranking. On the ECR fallback there is no ADP
-    for a correction to move a player *relative to*, and "bounded at 20% of ADP" printed
-    against a board with no ADP is the kind of sentence that gets believed at 9pm.
-
-    Extracted rather than inlined for the reason the rest of this module's decisions were:
-    an expression inside an f-string block is not reachable from a test.
-    """
-    if "corrected" in tp.via:
-        return ["    Corrections are where our measurements say the market is wrong. They",
-                "    are folded into the ranking, bounded at 20% of ADP, and shown here",
-                "    because the size matters to you even where the clamp limits the move."]
-    if tp.notes:
-        return ["    The bracketed notes are measurements, shown but NOT folded into this",
-                "    ranking: corrections move a player relative to ADP, and this board",
-                "    has none. Weigh them yourself."]
-    return []
+    for line in lines:
+        print(line)
 
 
 def _persist(board: pl.DataFrame, *, out: Path = OUT,
@@ -788,18 +703,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.show_slots:
         picks = my_picks()
         waits = [b - x for x, b in itertools.pairwise(picks)]
-        print(f"  teams {TEAMS} | slot {MY_SLOT} | starters "
-              + " ".join(f"{k}{v}" for k, v in SLOTS.items()))
-        print(f"  drafted positions: {'/'.join(DRAFTED_POSITIONS)}")
-        print(f"  picks: {', '.join(map(str, picks[:8]))} ...")
-        print(f"  waits: {', '.join(map(str, waits[:7]))} ...")
-        for pk in picks[:6]:
-            print(f"    pick {pk:>3}  ->  {draft_mode(pk)}")
+        _emit(report_mod.slots(TEAMS, MY_SLOT, SLOTS, DRAFTED_POSITIONS, picks, waits,
+                               draft_mode))
         return 0
 
     board, report, stale_h = build_or_last_good(a.league_size, a.season)
-    if stale_h is None and report.degraded():
-        print(f"  built without: {', '.join(report.degraded())}")
+    if stale_h is None:
+        _emit(report_mod.degraded(report.degraded()))
 
     # A mistyped pick is silent otherwise: the misspelt player stays on the board as
     # available and the next recommendation can hand back someone already drafted. ESPN
@@ -807,13 +717,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     # and this is its sharp edge. Checked here rather than where the picks are recorded,
     # because the board does not exist yet at that point.
     if a.taken:
-        for name, guess in state_mod.suggest_unmatched(
-                board, [n.strip() for n in a.taken.split(",") if n.strip()]).items():
-            if guess:
-                print(f"\n  NOT ON THE BOARD: {name!r} -- did you mean {guess!r}?")
-                print(f"    until that is fixed, {guess!r} is still shown as available")
-            else:
-                print(f"\n  not on the board: {name!r} (kicker or defence, most likely)")
+        _emit(report_mod.mistyped(state_mod.suggest_unmatched(
+            board, [n.strip() for n in a.taken.split(",") if n.strip()])))
     # Not when serving last-good: rewriting the file resets its mtime, so the age printed
     # above would immediately become a lie, and every later run would report a fresh board
     # that is actually as stale as the first failure.
@@ -835,91 +740,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         except Exception as exc:
             print(f"  adp archive skipped: {type(exc).__name__}: {exc}")
 
-    # Summary only. Never print the frame -- that is the token rule in CLAUDE.md.
-    print(f"\n  {board.height} players | {board['vor'].null_count()} missing xFP")
-    top = board.filter(pl.col("fp_over_expected").is_not_null()).sort("fp_over_expected")
-    print("\n  Biggest positive regression candidates (underperformed expectation):")
-    for r in top.head(8).iter_rows(named=True):
-        print(f"    {r['player']:<24} {r['pos'] or '':<4} ECR {r['ecr']:>5.1f}  "
-              f"xFP-FP {-r['fp_over_expected']:>6.1f}")
-
-    _print_td_luck(board, report)
-    _print_injuries(board, report)
+    _emit(report_mod.header(board))
+    _emit(report_mod.regression(board))
+    _emit(report_mod.td_luck(board, has_td_luck=report.td_luck, has_adp=report.adp))
+    _emit(report_mod.injuries(board, has_adp=report.adp))
 
     if a.sos:
-        pool = board.filter(pl.col("adp").is_not_null()
-                            & pl.col("wk15_17_sos").is_not_null())
-        print(f"\n  Weeks 15-17 strength of schedule -- {pool.height} drafted players")
-        print("  1.00 = league-average defence for that position; higher is softer.\n")
-        for label, frame in (("SOFTEST", pool.sort("wk15_17_sos", descending=True).head(8)),
-                             ("HARDEST", pool.sort("wk15_17_sos").head(8))):
-            print(f"  {label}:")
-            for r in frame.iter_rows(named=True):
-                print(f"    {r['player']:<24} {r['pos']:<3} {r['team'] or '':<4} "
-                      f"ADP {r['adp']:>6.1f}  SoS {r['wk15_17_sos']:.3f}")
-            print()
-        # The actionable form: players the room prices the same, whose playoff slates
-        # differ. Inside a tier this is a free upgrade; across tiers it is not.
-        print("  Same-tier swaps (ADP within 8, SoS gap > 0.15):")
-        rows = pool.sort("adp").iter_rows(named=True)
-        rows = list(rows)
-        shown = 0
-        for i, x in enumerate(rows):
-            for y in rows[i + 1:]:
-                if y["adp"] - x["adp"] > 8:
-                    break
-                if x["pos"] == y["pos"] and abs(x["wk15_17_sos"] - y["wk15_17_sos"]) > 0.15:
-                    hi, lo = (x, y) if x["wk15_17_sos"] > y["wk15_17_sos"] else (y, x)
-                    print(f"    {hi['player']:<22} ({hi['wk15_17_sos']:.2f}) over "
-                          f"{lo['player']:<22} ({lo['wk15_17_sos']:.2f})  "
-                          f"{hi['pos']}, ADP {hi['adp']:.0f} vs {lo['adp']:.0f}")
-                    shown += 1
-                    break
-            if shown >= 8:
-                break
+        _emit(report_mod.sos(board))
         return 0
 
-    missing = state_mod.unmatched(board, st)
-    if missing:
-        print(f"\n  {len(missing)} recorded picks matched nobody on the board "
-              f"(K/DST are excluded by design): {', '.join(missing[:5])}"
-              + (" ..." if len(missing) > 5 else ""))
+    _emit(report_mod.unmatched(state_mod.unmatched(board, st)))
 
     if a.pick is not None:
         mode, rec = recommend(board, a.pick, w=a.espn_weight, state=st)
-        # The market picks, and nothing else does.
-        #
-        # P0b measured championship equity against consensus-following on realised outcomes
-        # across 2022-25: -19.66 points per team game, 95% CI [-23.16, -16.20] at n=80,
-        # losing in all four seasons and winning 9 of 80 drafts. Per the rule fixed before
-        # that run, equity leaves this output. See docs/adr/0009.
         from hub.draft.optimize import the_pick
-        tp = the_pick(board, st, my_slot=MY_SLOT, teams=TEAMS)
-        if tp:
-            print(f"\n  THE PICK -- best available filling a need, by {tp.via}")
-            print(f"    {tp.player}  {tp.pos or ''}  "
-                  + (f"{tp.rank_label} {tp.rank:.1f}" if tp.rank is not None else "")
-                  + (f"   [{'; '.join(tp.notes)}]" if tp.notes else ""))
-            for line in corrections_note(tp):
-                print(line)
-        else:
-            print("\n  THE PICK unavailable -- the board carries neither ADP nor ECR, which "
-                  "means it did not build. Serve site/data/draft_board.json instead.")
-
-        rule = ("long wait ahead: take who will not survive it"
-                if mode == "scarcity" else "short wait ahead: take the highest VOR")
-        # Context, not a recommendation. VOR ordering was measured 5.06 pts/team-game worse
-        # than the market (docs/market-value.md), so this is here to show what else is close
-        # -- and how close -- rather than to be drafted off.
-        print(f"\n  Also close, for context -- not a ranking to draft off ({mode}: {rule})")
-        for r in rec.iter_rows(named=True):
-            cw = r.get("cost_of_waiting")
-            extra = f"cost_of_waiting {cw:>5.1f}" if cw is not None else ""
-            v, sos = r["vor"], r.get("wk15_17_sos")
-            tag = f"  SoS {sos:.2f}" if sos is not None else ""
-            print(f"    {r['player']:<24} {r['pos'] or '':<4} "
-                  f"VOR {0.0 if v is None else v:>5.1f}  {extra}{tag}")
-
+        _emit(report_mod.the_pick(the_pick(board, st, my_slot=MY_SLOT, teams=TEAMS)))
+        _emit(report_mod.also_close(mode, rec))
     return 0
 
 
