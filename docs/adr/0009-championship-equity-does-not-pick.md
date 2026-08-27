@@ -25,6 +25,35 @@ identical because the historical boards are rebuilt from live ffopportunity and 
 run, and both move as nflverse backfills; the seed fixes the simulation, not the inputs. Worth
 knowing that this gate is a re-measurement and not a recorded constant.
 
+**Spot-checked again 2026-08-25 after the bracket fix**, and *not* re-measured. Giving the
+playoffs their own draws (see `season.seed_table` / `season.champion`) changes
+`champion_probability`, which is arm B's objective and nothing arm A touches -- so unlike the
+re-run above, this one could genuinely have moved the number.
+
+A full re-run was started and abandoned: a single draft across four seasons exceeds ten
+minutes, so the 20-draft harness is a multi-hour job, not the ~30 minutes assumed when it was
+launched. `--diagnose` exists for exactly this question -- "run before and after a change to
+the objective and diff" -- and answers it for a thousandth of the cost:
+
+| pick | before | after |
+|---|---|---|
+| 3 | Christian McCaffrey RB +5.39% | Christian McCaffrey RB +4.98% |
+| 22 | Chris Olave WR +1.84% | Chris Olave WR +1.88% |
+| 27 | Travis Etienne Jr. RB +1.44% | Travis Etienne Jr. RB +1.02% |
+| 46 | Javonte Williams RB +3.12% | Javonte Williams RB +2.94% |
+| 51 | Parker Washington WR +1.20% | **Michael Wilson WR** +1.48% |
+| 70 | Travis Etienne Jr. RB +2.31% | Travis Etienne Jr. RB +3.25% |
+
+Five of six turns name the same player, the sixth swaps one mid-round receiver for another,
+and the lifts move by less than half a point against a 250-sim standard error. The tripwire
+trips identically in both -- equity names a filled RB over an empty QB/WR/TE at 27, 46 and 70.
+
+**So the decision stands, and the honest statement of its evidence is unchanged: -19.66 and
+-19.13 are both measurements of the old bracket.** No point estimate exists for the new one.
+That is a gap worth naming rather than papering over, and closing it means budgeting hours for
+the harness, not minutes. What the spot-check establishes is narrower and sufficient: the fix
+does not move what equity recommends, so it cannot plausibly move a 19-point verdict.
+
 Losing in all four seasons, winning 9 of 80 drafts. `config_digest` 9975101f; paired rows in
 `data/processed/p0b_paired.parquet`; harness in `hub.draft.backtest`.
 
