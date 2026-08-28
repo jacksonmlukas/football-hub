@@ -520,6 +520,22 @@ Pre-stated: shrinkage should help the churn gate materially and the frozen gate 
 frozen rosters are all thick-sample. If it helps the frozen gate too, something else changed
 and the run is suspect.
 
+#### Result, 2026-08-28: the frozen half held, the material half failed
+
+| shrinkage | frozen | churn |
+|---|---|---|
+| none | −0.304 | −3.790 |
+| **as pre-registered** | −0.235 | **−3.773** |
+| aggressive (exploratory) | −0.474 | −12.442 |
+
+The pre-registered fit chose **`volume_k = 0` in all four held-out seasons** — no shrinkage at
+all — because the projection is already unbiased at every sample size and **mean error cannot
+see a winner's curse**. The objective and the defect were never matched. The aggressive variant
+fixes the tail bias and costs 16% of MAE, tripling the loss.
+
+The suspect-run tripwire did not fire, which is the good news: nothing moved that should not
+have. Full write-up in [weekly-shrinkage.md](weekly-shrinkage.md).
+
 ---
 
 ## What is settled, and by whom

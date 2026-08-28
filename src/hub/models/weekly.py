@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from typing import NamedTuple, cast
 
 import numpy as np
 import polars as pl
@@ -60,6 +61,11 @@ MULTIPLIER_LO, MULTIPLIER_HI = 0.6, 1.6
 
 # Usage counts the multiplier applies to, and the phase each one scores through.
 VOLUME: tuple[str, ...] = ("targets", "carries", "attempts")
+
+# (yards, units) pairs whose ratio is the efficiency held at the player's own rate.
+EFFICIENCY_PAIRS: tuple[tuple[str, str], ...] = (
+    ("receiving_yards", "receptions"), ("rushing_yards", "carries"),
+    ("passing_yards", "attempts"))
 
 # Accumulated units -- games played times units per game -- below which a per-unit efficiency
 # rate is a handful of plays and the ratio is noise. It is a *total*, not a per-game figure:
@@ -99,22 +105,122 @@ def multiplier(feature: np.ndarray, coef: float, *, lo: float = MULTIPLIER_LO,
     return np.clip(np.exp(coef * x), lo, hi)
 
 
-def efficiency(df: pl.DataFrame, yards: str, units: str) -> np.ndarray:
-    """Yards per unit from the player's own prior weeks, falling back to the sample rate.
+# Grids for the two shrinkage constants, searched on TRAINING seasons only. Both are in the
+# units of the thing they temper: games for a volume prior, accumulated units for an
+# efficiency rate. Zero is in each grid so "no shrinkage" is a candidate the fit can pick,
+# which is what makes this an experiment rather than an assumption.
+VOLUME_SHRINK_GRID: tuple[float, ...] = (0.0, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0)
+EFF_SHRINK_GRID: tuple[float, ...] = (0.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0)
+
+
+class Shrink(NamedTuple):
+    """How hard to pull a thin sample toward its position, and toward what."""
+    volume_k: float
+    eff_k: float
+    volume_mean: dict[tuple[str, str], float]     # (position, component) -> mean per game
+    eff_mean: dict[tuple[str, str], float]        # (position, yards) -> yards per unit
+
+
+def _pos_means(train: pl.DataFrame) -> tuple[dict, dict]:
+    """Positional means for every Usage count and every efficiency rate."""
+    vol, eff = {}, {}
+    for pos in sorted(set(train["position"].to_list())):
+        d = train.filter(pl.col("position") == pos)
+        for c in (*VOLUME, "receptions"):
+            v = d[c].mean()
+            vol[(pos, c)] = float(cast(float, v)) if v is not None else 0.0
+        for yards, units in EFFICIENCY_PAIRS:
+            u, y = float(d[units].sum() or 0.0), float(d[yards].sum() or 0.0)
+            eff[(pos, yards)] = y / u if u > 0 else 0.0
+    return vol, eff
+
+
+# The share of the projection's top end the tail objective scores. A waiver pick is roughly
+# the best of a few hundred, so a decile is the coarsest slice that is still about the top.
+TAIL_Q = 0.90
+
+
+def fit_shrink(train: pl.DataFrame, coefs: dict[str, float], *,
+               objective: str = "mae") -> Shrink:
+    """Fit both constants by grid search on `train`. Zero is in both grids.
+
+    Fitted rather than chosen, and on training seasons only, because a shrinkage picked after
+    seeing a held-out result is the thing `docs/method.md` rule #1 exists to stop.
+
+    **Two objectives, and which one you pick is the whole experiment.**
+
+    `mae` minimises the projection's mean absolute error. It is what
+    `docs/weekly-projection-plan.md` pre-registered, and it fits `volume_k = 0` in every
+    season -- no shrinkage at all -- because the projection is *already unbiased at every
+    sample size*. Mean error cannot see a winner's curse: the curse lives at the maximum over
+    hundreds of candidates and the mean is dominated by the bulk. The pre-registered objective
+    was blind to the defect the shrinkage was meant to fix.
+
+    `tail` minimises the absolute bias among the **top decile by projection** in training,
+    which is where a waiver decision reads. It was specified *after* seeing `mae` return a
+    null, so it is exploratory and is reported as such -- but it is still fitted on training
+    seasons only and never on the held-out ones.
+    """
+    vol_mean, eff_mean = _pos_means(train)
+    actual = train["fantasy_points_ppr"].to_numpy().astype(float)
+    best = Shrink(0.0, 0.0, vol_mean, eff_mean)
+    best_loss = float("inf")
+    for vk in VOLUME_SHRINK_GRID:
+        for ek in EFF_SHRINK_GRID:
+            cand = Shrink(vk, ek, vol_mean, eff_mean)
+            mu = project(train, coefs, shrink=cand)["mu"].to_numpy().astype(float)
+            if objective == "mae":
+                loss = float(np.abs(mu - actual).mean())
+            else:
+                cut = float(np.quantile(mu, TAIL_Q))
+                top = mu >= cut
+                loss = abs(float((mu[top] - actual[top]).mean())) if top.any() else np.inf
+            if loss < best_loss:
+                best, best_loss = cand, loss
+    return best
+
+
+def _shrunk(df: pl.DataFrame, col: str, k: float, means: dict, key: str) -> np.ndarray:
+    """`n/(n+k)` of his own, the rest of his position's. `k = 0` returns his own untouched."""
+    own = np.nan_to_num(df[f"{col}_prior"].to_numpy().astype(float), nan=0.0)
+    if k <= 0:
+        return own
+    n = np.nan_to_num(df["games_before"].to_numpy().astype(float), nan=0.0)
+    target = np.array([means.get((p, key), 0.0) for p in df["position"].to_list()])
+    w = n / (n + k)
+    return w * own + (1.0 - w) * target
+
+
+def efficiency(df: pl.DataFrame, yards: str, units: str,
+               shrink: Shrink | None = None) -> np.ndarray:
+    """Yards per unit from the player's own prior weeks, tempered toward the sample.
 
     Held rather than projected: year over year, yards per carry persists at r = 0.108 and
     yards per target at 0.369, so there is nothing here a week-level model could add.
+
+    Without `shrink` this is a hard threshold at `MIN_UNITS` accumulated units -- his own rate
+    above it, the pooled rate below. With one it is the smooth version, `n/(n+k)` of his own,
+    which subsumes the threshold and is what the shrinkage experiment tests.
     """
     y = df[f"{yards}_prior"].to_numpy().astype(float)
     u = df[f"{units}_prior"].to_numpy().astype(float)
     games = df["games_before"].to_numpy().astype(float)
+    acc = np.nan_to_num(u * games, nan=0.0)
     pooled = float(np.nansum(y) / np.nansum(u)) if np.nansum(u) > 0 else 0.0
-    enough = np.nan_to_num(u * games, nan=0.0) >= MIN_UNITS
-    out = np.where(enough, np.divide(y, np.maximum(u, 1e-9)), pooled)
-    return np.nan_to_num(out, nan=pooled)
+    own = np.nan_to_num(np.divide(y, np.maximum(u, 1e-9)), nan=pooled)
+    if shrink is None or shrink.eff_k <= 0:
+        # `eff_k = 0` must be the *shipped* estimator, not "always his own rate", or the zero
+        # point of the grid would be a third model and the fit could not decline to change
+        # anything.
+        return np.where(acc >= MIN_UNITS, own, pooled)
+    target = np.array([shrink.eff_mean.get((p, yards), pooled)
+                       for p in df["position"].to_list()])
+    w = acc / (acc + shrink.eff_k)
+    return w * own + (1.0 - w) * target
 
 
-def project(now: pl.DataFrame, coefs: dict[str, float]) -> pl.DataFrame:
+def project(now: pl.DataFrame, coefs: dict[str, float],
+            *, shrink: Shrink | None = None) -> pl.DataFrame:
     """Weekly Usage, yards and touchdowns, and the points they add up to.
 
     Touchdowns come from projected yards times the **position's** rate, never the player's
@@ -131,18 +237,22 @@ def project(now: pl.DataFrame, coefs: dict[str, float]) -> pl.DataFrame:
     m = {c: multiplier(trend, coefs.get(c, 0.0)) for c in VOLUME}
     pos = now["position"].to_list()
 
-    tgt = now["targets_prior"].to_numpy().astype(float) * m["targets"]
-    car = now["carries_prior"].to_numpy().astype(float) * m["carries"]
-    att = now["attempts_prior"].to_numpy().astype(float) * m["attempts"]
+    def prior(col: str) -> np.ndarray:
+        if shrink is None:
+            return np.nan_to_num(now[f"{col}_prior"].to_numpy().astype(float), nan=0.0)
+        return _shrunk(now, col, shrink.volume_k, shrink.volume_mean, col)
+
+    tgt = prior("targets") * m["targets"]
+    car = prior("carries") * m["carries"]
+    att = prior("attempts") * m["attempts"]
 
     catch = np.clip(np.nan_to_num(
-        now["receptions_prior"].to_numpy().astype(float)
-        / np.maximum(now["targets_prior"].to_numpy().astype(float), 1e-9), nan=0.0), 0.0, 1.0)
+        prior("receptions") / np.maximum(prior("targets"), 1e-9), nan=0.0), 0.0, 1.0)
     rec = tgt * catch
 
-    rec_y = rec * efficiency(now, "receiving_yards", "receptions")
-    rush_y = car * efficiency(now, "rushing_yards", "carries")
-    pass_y = att * efficiency(now, "passing_yards", "attempts")
+    rec_y = rec * efficiency(now, "receiving_yards", "receptions", shrink)
+    rush_y = car * efficiency(now, "rushing_yards", "carries", shrink)
+    pass_y = att * efficiency(now, "passing_yards", "attempts", shrink)
 
     rec_td = rec_y * np.array([td_rate(p, "rec") for p in pos])
     rush_td = rush_y * np.array([td_rate(p, "rush") for p in pos])

@@ -27,6 +27,10 @@ def _rows(n=200, week=10, season=2024, seed=0, **over):
         "targets": list(rng.poisson(6, n).astype(float)),
         "carries": list(rng.poisson(1, n).astype(float)),
         "attempts": [0.0] * n,
+        "receptions": list(rng.poisson(4, n).astype(float)),
+        "receiving_yards": list(rng.normal(50, 20, n)),
+        "rushing_yards": list(rng.normal(4, 3, n)),
+        "passing_yards": [0.0] * n,
     }
     base.update({k: [v] * n if not isinstance(v, list) else v for k, v in over.items()})
     return pl.DataFrame(base)
@@ -196,3 +200,101 @@ def test_the_diagnostic_reports_all_three_contrasts_and_says_it_decides_nothing(
 
 def test_an_empty_walk_forward_reports_rather_than_crashing():
     assert "nothing measured" in "\n".join(W.diagnostic(pl.DataFrame()))
+
+
+# --- shrinkage, and the objective that could not see the defect -------------
+
+def _train(n=600, seed=7):
+    """A population with thick- and thin-sample players at two very different levels."""
+    frames = []
+    for i, (games, tgt, yds) in enumerate([(10.0, 8.0, 100.0), (1.0, 8.0, 100.0),
+                                           (10.0, 2.0, 20.0), (1.0, 2.0, 20.0)]):
+        d = _rows(n=n // 4, seed=seed + i, games_before=games, targets_prior=tgt,
+                  receptions_prior=tgt * 0.7, receiving_yards_prior=yds)
+        frames.append(d)
+    return pl.concat(frames)
+
+
+def test_a_zero_constant_leaves_the_projection_untouched():
+    """Zero is in both grids on purpose, so 'no shrinkage' is a candidate the fit can pick --
+    which is what makes this an experiment rather than an assumption. It picked it."""
+    t = _train()
+    coefs = dict.fromkeys(W.VOLUME, 0.0)
+    plain = W.project(t, coefs)["mu"].to_numpy()
+    vm, em = W._pos_means(t)
+    zeroed = W.project(t, coefs, shrink=W.Shrink(0.0, 0.0, vm, em))["mu"].to_numpy()
+    assert np.allclose(plain, zeroed)
+
+
+def test_shrinkage_pulls_a_thin_sample_toward_its_position_and_leaves_a_thick_one():
+    t = _train()
+    vm, em = W._pos_means(t)
+    sh = W.Shrink(8.0, 0.0, vm, em)
+    got = W._shrunk(t, "targets", sh.volume_k, vm, "targets")
+    thin = t["games_before"].to_numpy() == 1.0
+    thick = t["games_before"].to_numpy() == 10.0
+    own = t["targets_prior"].to_numpy()
+    assert np.abs(got[thin] - own[thin]).mean() > np.abs(got[thick] - own[thick]).mean(), \
+        "one game is pulled further than ten"
+
+
+def test_the_pull_is_n_over_n_plus_k():
+    t = _rows(n=10, games_before=4.0, targets_prior=10.0, position="WR")
+    means = {("WR", "targets"): 0.0}
+    got = W._shrunk(t, "targets", 4.0, means, "targets")
+    assert got[0] == pytest.approx(5.0), "4/(4+4) of his own, the rest of a zero mean"
+
+
+def test_the_efficiency_shrink_subsumes_the_hard_threshold():
+    """Without a `Shrink` this is a step at MIN_UNITS; with one it is the smooth version."""
+    t = _rows(n=20, receptions_prior=5.0, receiving_yards_prior=75.0, games_before=10.0)
+    vm, em = {}, {("WR", "receiving_yards"): 5.0}
+    hard = W.efficiency(t, "receiving_yards", "receptions")
+    smooth = W.efficiency(t, "receiving_yards", "receptions", W.Shrink(0.0, 50.0, vm, em))
+    assert hard[0] == pytest.approx(15.0)
+    assert 5.0 < smooth[0] < 15.0, "pulled toward the positional rate, not snapped to it"
+
+
+def test_each_objective_optimises_its_own_loss():
+    """The two are different questions, which is the whole experiment. `mae` minimises mean
+    error; `tail` minimises bias among the top decile by projection, where a waiver decision
+    reads. On the real panel `mae` fitted `volume_k = 0` in every held-out season -- the
+    projection is already unbiased at every sample size, so mean error had nothing to reward,
+    and the objective was blind to the defect the shrinkage was meant to fix.
+    """
+    t = _train()
+    coefs = dict.fromkeys(W.VOLUME, 0.0)
+    actual = t["fantasy_points_ppr"].to_numpy().astype(float)
+
+    def loss(sh, kind):
+        mu = W.project(t, coefs, shrink=sh)["mu"].to_numpy().astype(float)
+        if kind == "mae":
+            return float(np.abs(mu - actual).mean())
+        top = mu >= float(np.quantile(mu, W.TAIL_Q))
+        return abs(float((mu[top] - actual[top]).mean()))
+
+    vm, em = W._pos_means(t)
+    for kind in ("mae", "tail"):
+        fitted = W.fit_shrink(t, coefs, objective=kind)
+        best = loss(fitted, kind)
+        for vk in W.VOLUME_SHRINK_GRID:
+            for ek in W.EFF_SHRINK_GRID:
+                assert loss(W.Shrink(vk, ek, vm, em), kind) >= best - 1e-12, \
+                    f"{kind} did not find its own minimum at ({vk}, {ek})"
+
+
+def test_both_objectives_fit_on_training_rows_only():
+    """A shrinkage fitted on the season it is scored against is the treatment arm reading its
+    own answer sheet -- the defect ADR-0012 records the first lineup gate dying of."""
+    import inspect
+    src = inspect.getsource(W.fit_shrink)
+    assert "train" in inspect.signature(W.fit_shrink).parameters
+    assert "held-out" in src or "training" in src
+
+
+def test_the_shrink_target_is_per_position():
+    t = pl.concat([_rows(n=50, position="WR", targets_prior=8.0, targets=8.0),
+                   _rows(n=50, position="RB", targets_prior=2.0, targets=2.0)])
+    vm, _ = W._pos_means(t)
+    assert vm[("WR", "targets")] != vm[("RB", "targets")], \
+        "a receiver and a back do not regress toward the same place"

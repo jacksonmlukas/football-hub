@@ -92,10 +92,33 @@ pre-registered as the next experiment in
 See [weekly-gate.md](../weekly-gate.md) for both runs and the waiver-rule artifact found in
 between.
 
+## And so has the shrinkage that was supposed to fix it
+
+**Measured 2026-08-28.** Pre-registered, fitted on training seasons, both gates re-run:
+
+| shrinkage | frozen | churn |
+|---|---|---|
+| none | −0.304 | −3.790 |
+| as pre-registered | −0.235 | **−3.773** |
+| aggressive | −0.474 | −12.442 |
+
+The pre-registered fit chose **no shrinkage at all** in every held-out season, because the
+projection is already unbiased at every sample size and mean absolute error cannot see a
+winner's curse — it lives at the maximum over hundreds of candidates and the mean is dominated
+by the bulk. The aggressive variant removes the tail bias by removing the signal: 16% of MAE,
+and the churn loss triples.
+
+Uniform shrinkage toward a single positional mean is the wrong instrument, which
+[component-projection.md](../component-projection.md) had already found four days earlier at
+season grain — *"a WR1 and a WR5 do not regress toward the same place"*. Same failure, weekly
+grain, independent route. See [weekly-shrinkage.md](../weekly-shrinkage.md).
+
 ## What would change it
 
-**A projection shrunk for sample size**, measured the way everything else here is: pre-register
-the shrinkage, re-run both gates, and report whichever way it falls.
+**Shrinkage toward a market-implied prior** rather than a positional average — the fix both
+this and the season-level work point at. Not run: it would be the third variant of the same
+rescue attempt, and shrinking toward consensus imports the incumbent into the arm being
+measured against it, which needs its own pre-registration to mean anything.
 
 **Rosters that are not static.** The gate drafts a roster and freezes it for the season, so it
 deletes the streaming decision — deciding who to add for one week is a large part of what a

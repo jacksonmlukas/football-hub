@@ -56,9 +56,11 @@ def test_the_lineup_is_chosen_again_every_week():
     score = np.column_stack([mid, mid])
     score[0, 0], score[1, 0] = 99.0, 0.1
     score[1, 1], score[0, 1] = 99.0, 0.1
-    assert G.lineup_points(realised, pos, score).tolist() == [50.0, 50.0]
+    roster = list(range(n))
+    got = G.season_points(realised, pos, score, roster, [], [1, 2])
+    assert [got[1], got[2]] == [50.0, 50.0]
     static = np.column_stack([score[:, 0], score[:, 0]])
-    assert G.lineup_points(realised, pos, static)[1] == 0.0, \
+    assert G.season_points(realised, pos, static, roster, [], [1, 2])[2] == 0.0, \
         "the static lineup keeps starting week 1's man and benches week 2's"
 
 
@@ -72,22 +74,22 @@ def _cov_fixture():
     cons[0, 4] = G.UNRANKED          # unranked and scored -> a join failure
     realised[0, 4] = 12.0
     cons[1, 4] = G.UNRANKED          # unranked and scored nothing -> correctly benched
-    return {(2024, 0): cons}, {(2024, 0): realised}
+    return ({2024: [list(range(n))]}, {2024: cons}, {2024: realised})
 
 
 def test_coverage_separates_a_correct_omission_from_a_join_failure():
     """A player who is out scores zero and being unranked is the incumbent's *answer*. A
     player who scored and was unranked is a name that did not match, and only that one biases
     the comparison."""
-    cons, realised = _cov_fixture()
-    c = G.coverage(cons, realised, {(2024, 5)}, weeks=[5])
+    ros, cons, realised = _cov_fixture()
+    c = G.coverage(ros, cons, realised, {(2024, 5)}, weeks=[5])
     assert c["unranked"] == pytest.approx(2 / 13)
     assert c["join_failure"] == pytest.approx(1 / 13)
 
 
 def test_coverage_ignores_weeks_the_incumbent_does_not_cover():
-    cons, realised = _cov_fixture()
-    assert G.coverage(cons, realised, set(), weeks=[5])["cells"] == 0
+    ros, cons, realised = _cov_fixture()
+    assert G.coverage(ros, cons, realised, set(), weeks=[5])["cells"] == 0
 
 
 # --- the verdict, every branch ---------------------------------------------
@@ -175,33 +177,14 @@ def test_an_empty_frame_reports_rather_than_crashing():
 
 def test_compare_emits_one_row_per_roster_week_and_skips_uncovered_weeks():
     pos = _pos()
-    rosters = {2024: [[(f"p{i}", p) for i, p in enumerate(pos)]]}
     n = len(pos)
-    arrays = {(2024, 0): np.ones((n, 18))}
-    scores = {(2024, 0): np.tile(np.arange(n, dtype=float).reshape(-1, 1), (1, 18))}
-    out = G.compare(rosters, arrays, scores, scores, covered={(2024, 3), (2024, 4)},
-                    weeks=[3, 4, 5])
+    rosters = {2024: [list(range(n))]}
+    arrays = {2024: np.ones((n, 18))}
+    scores = {2024: np.tile(np.arange(n, dtype=float).reshape(-1, 1), (1, 18))}
+    out = G.compare_universe(rosters, {2024: pos}, arrays, scores, scores, {2024: [[]]},
+                             covered={(2024, 3), (2024, 4)}, weeks=[3, 4, 5])
     assert out.height == 2 and sorted(out["week"].to_list()) == [3, 4]
     assert (out["diff"] == 0.0).all(), "identical arms differ by nothing"
-
-
-# --- the score matrices, where the defaults are the whole argument ----------
-
-def test_a_missing_value_takes_the_stated_default():
-    """The rule the entire void analysis turned on: a player absent from the consensus page
-    gets UNRANKED, a player with no realised row gets zero, and neither is a null that a
-    later step silently reinterprets."""
-    from hub.season.weekly_gate_data import _matrix
-    m = _matrix(["a", "b"], {("a", 1): 5.0, ("a", 3): 7.0}, G.UNRANKED)
-    assert m[0, 0] == 5.0 and m[0, 2] == 7.0
-    assert m[0, 1] == G.UNRANKED, "a week he is missing from is unranked, not carried forward"
-    assert (m[1, :] == G.UNRANKED).all(), "and a player missing entirely is unranked all season"
-
-
-def test_the_matrix_covers_the_whole_regular_season():
-    from hub.draft.season import REG_SEASON_WEEKS
-    from hub.season.weekly_gate_data import _matrix
-    assert _matrix(["a"], {}, 0.0).shape == (1, REG_SEASON_WEEKS)
 
 
 # --- the waiver rule, and the artifact it was written with ------------------

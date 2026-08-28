@@ -61,37 +61,6 @@ UNRANKED = -1e9
 VOID_FLOOR = 0.02
 
 
-def coverage(consensus: dict[tuple[int, int], np.ndarray],
-             realised: dict[tuple[int, int], np.ndarray],
-             covered: set[tuple[int, int]],
-             weeks: Sequence[int] = GATE_WEEKS) -> dict[str, float]:
-    """How much of the incumbent's arm is missing, and how much of that is a defect.
-
-    Two different things, and conflating them would either void every run or none:
-
-      * **unranked** -- the player is not on that week's page. Usually because he is out, and
-        then the absence is the incumbent's *answer* and benching him is correct.
-      * **join failure** -- unranked *and he scored*. Consensus would have ranked a player who
-        played; the name did not match. This is the one that biases the comparison, and it is
-        what `VOID_FLOOR` is measured against.
-    """
-    cells = unranked = failed = 0
-    for key, cons in consensus.items():
-        season, _ = key
-        for w in weeks:
-            if (season, w) not in covered:
-                continue
-            col, points = cons[:, w - 1], realised[key][:, w - 1]
-            cells += col.size
-            un = col == UNRANKED
-            unranked += int(un.sum())
-            failed += int((un & (points > 0)).sum())
-    if not cells:
-        return {"cells": 0, "unranked": float("nan"), "join_failure": float("nan")}
-    return {"cells": float(cells), "unranked": unranked / cells,
-            "join_failure": failed / cells}
-
-
 def starters_by_score(pos: Sequence[str], score: np.ndarray) -> list[int]:
     """Indices of the lineup: fill each required slot with the best available, then the flex.
 
@@ -114,26 +83,6 @@ def starters_by_score(pos: Sequence[str], score: np.ndarray) -> list[int]:
     return starters
 
 
-def lineup_points(realised: np.ndarray, pos: Sequence[str],
-                  score: np.ndarray) -> np.ndarray:
-    """Points scored per week by the lineup each week's `score` picks.
-
-    `realised` and `score` are both (roster, weeks). One lineup per week, chosen from that
-    week's scores only -- which is what makes this different from the static arm, and what a
-    weekly projection is *for*.
-    """
-    weeks = realised.shape[1]
-    out = np.zeros(weeks)
-    for w in range(weeks):
-        idx = starters_by_score(pos, score[:, w])
-        if idx:
-            out[w] = float(realised[idx, w].sum())
-    return out
-
-
-# How many free agents to consider each week. The pool is hundreds deep and the decision is
-# evaluated pairwise against every droppable player, so it is capped -- and a free agent
-# outside the top fifteen by this arm's own score is not the one being missed.
 WAIVER_LOOK = 15
 
 
@@ -221,42 +170,6 @@ def season_points(realised: np.ndarray, pos: Sequence[str], score: np.ndarray,
         chosen = [cur[j] for j in idx]
         out[w] = float(realised[chosen, w - 1].sum()) if chosen else 0.0
     return out
-
-
-def compare(rosters: dict[int, list],
-            realised: dict[tuple[int, int], np.ndarray],
-            consensus: dict[tuple[int, int], np.ndarray],
-            weekly: dict[tuple[int, int], np.ndarray],
-            covered: set[tuple[int, int]] | None = None,
-            weeks: Sequence[int] = GATE_WEEKS) -> pl.DataFrame:
-    """One row per **roster-week**, carrying both arms and their difference.
-
-    `covered` restricts to weeks the incumbent actually has a ranking for, and it is not an
-    optimisation. Historical `weekly-op` scrapes miss whole weeks -- 2024 has nothing before
-    week 5, and 2022, 2023 and 2025 miss weeks 1 and 2 -- and on such a week *every* rostered
-    player is UNRANKED, so the consensus arm picks an arbitrary lineup while the weekly arm
-    has a projection. Including those weeks is not a hard comparison, it is no comparison:
-    there is no incumbent to beat.
-
-    Pure -- arrays in, a frame out, no network -- so the statistics are testable offline, the
-    same reason `lineup_gate.compare` and `backtest.compare` are.
-    """
-    rows = []
-    cols = [w - 1 for w in weeks]
-    for season in sorted(rosters):
-        for k, roster in enumerate(rosters[season]):
-            pos = [p for _, p in roster]
-            a = lineup_points(realised[(season, k)], pos, consensus[(season, k)])
-            b = lineup_points(realised[(season, k)], pos, weekly[(season, k)])
-            for w in cols:
-                if covered is not None and (season, w + 1) not in covered:
-                    continue
-                rows.append({"season": season, "roster": k, "week": w + 1,
-                             "consensus": a[w], "weekly": b[w]})
-    out = pl.DataFrame(rows)
-    if out.is_empty():
-        return out
-    return out.with_columns((pl.col("weekly") - pl.col("consensus")).alias("diff"))
 
 
 def compare_universe(rosters: dict[int, list[list[int]]], pos: dict[int, Sequence[str]],
@@ -359,11 +272,20 @@ def verdict(summary: dict, seasons: pl.DataFrame,
                     "evidence of equivalence.")
 
 
-def coverage_universe(rosters: dict[int, list[list[int]]],
+def coverage(rosters: dict[int, list[list[int]]],
                       consensus: dict[int, np.ndarray], realised: dict[int, np.ndarray],
                       covered: set[tuple[int, int]],
                       weeks: Sequence[int] = GATE_WEEKS) -> dict[str, float]:
-    """`coverage`, over the universe representation. Same two quantities, same distinction."""
+    """How much of the incumbent's arm is missing, and how much of that is a defect.
+
+    Two different things, and conflating them would either void every run or none:
+
+      * **unranked** -- the player is not on that week's page. Usually because he is out, and
+        then the absence is the incumbent's *answer* and benching him is correct.
+      * **join failure** -- unranked *and he scored*. Consensus would have ranked a player who
+        played; the name did not match. This is the one that biases the comparison, and it is
+        what `VOID_FLOOR` is measured against.
+    """
     cells = unranked = failed = 0
     for season, made in rosters.items():
         for roster in made:
@@ -391,6 +313,9 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                     help="one waiver add/drop a week, both arms, from a pool both can score")
     ap.add_argument("--open-pool", action="store_true",
                     help=argparse.SUPPRESS)   # the asymmetric pool: NOT the gate
+    ap.add_argument("--shrink", choices=("mae", "tail"), default=None,
+                    help="shrink thin-sample projections toward the positional mean; "
+                         "'mae' is the pre-registered fit, 'tail' the exploratory one")
     ap.add_argument("--seasons", default="2022,2023,2024,2025")
     ap.add_argument("--drafts", type=int, default=20, help="rosters per season")
     ap.add_argument("--seed", type=int, default=0)
@@ -401,8 +326,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     from hub.season.weekly_gate_data import assemble_universe
     ros, pos, realised, consensus, weekly, pool, addable, covered = assemble_universe(
-        seasons, drafts=a.drafts, seed=a.seed)
-    cover = coverage_universe(ros, consensus, realised, covered)
+        seasons, drafts=a.drafts, seed=a.seed, shrink=a.shrink)
+    cover = coverage(ros, consensus, realised, covered)
     paired = compare_universe(ros, pos, realised, consensus, weekly, pool, covered,
                               None if a.open_pool else addable, churn=a.churn)
     s = cluster_bootstrap(paired, seed=a.seed)
@@ -410,6 +335,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     mode = ("one add/drop a week, pool both arms can score" if a.churn and not a.open_pool
             else "one add/drop a week, OPEN POOL -- not the gate" if a.churn
             else "frozen rosters")
+    if a.shrink:
+        mode += f", shrink={a.shrink}"
     print(f"\n  {int(s['n'])} roster-weeks over {int(s['clusters'])} rosters, "
           f"on the {len(covered)} weeks consensus covers   [{mode}]")
     print(f"  unranked {cover['unranked']:.1%}, of which a join failure "

@@ -26,6 +26,14 @@ thing, and because two of these produced errors worth not repeating.
 | Wind | next week | **null** — 4/5 seasons | [weekly-screen.md](weekly-screen.md) |
 | Rest days | next week | **null** — −0.014, 3/5 seasons | [weekly-screen.md](weekly-screen.md) |
 
+## Where the weekly work landed
+
+Four features cleared the weekly screen; two carried into a model; the model beat the flat
+projection on accuracy and lost the lineup decision to a free consensus ranking, harder with
+waivers than without, and a pre-registered shrinkage did not rescue it.
+[weekly-screen.md](weekly-screen.md) → [weekly-projection.md](weekly-projection.md) →
+[weekly-gate.md](weekly-gate.md) → [weekly-shrinkage.md](weekly-shrinkage.md).
+
 ## Age
 
 **Hypothesis.** Consensus anchors on production and underweights aging. Running backs fall

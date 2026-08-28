@@ -237,8 +237,10 @@ NOT_FITTED: dict[str, str] = {
                            "a count of games. Both are settings; the win probabilities "
                            "themselves come from hub.models.market at run time.",
     "hub.models.weekly": "the Weekly projection. MULTIPLIER_LO/HI bound a fitted "
-                         "multiplier and MIN_UNITS is a volume floor below which a per-unit "
-                         "efficiency rate is noise -- both settings. The multiplier's "
+                         "multiplier, MIN_UNITS is a volume floor below which a per-unit "
+                         "efficiency rate is noise, TAIL_Q is the slice the shrinkage "
+                         "experiment scores and the two SHRINK_GRIDs are search grids -- all "
+                         "settings. The multiplier's "
                          "coefficients are fitted at run time from the panel and never frozen "
                          "into the module, the same shape as hub.models.injury. See "
                          "docs/weekly-screen.md",
