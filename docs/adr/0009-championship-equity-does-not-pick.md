@@ -48,11 +48,35 @@ Five of six turns name the same player, the sixth swaps one mid-round receiver f
 and the lifts move by less than half a point against a 250-sim standard error. The tripwire
 trips identically in both -- equity names a filled RB over an empty QB/WR/TE at 27, 46 and 70.
 
-**So the decision stands, and the honest statement of its evidence is unchanged: -19.66 and
--19.13 are both measurements of the old bracket.** No point estimate exists for the new one.
-That is a gap worth naming rather than papering over, and closing it means budgeting hours for
-the harness, not minutes. What the spot-check establishes is narrower and sufficient: the fix
-does not move what equity recommends, so it cannot plausibly move a 19-point verdict.
+The spot-check establishes something narrower than a re-measurement and sufficient for the
+decision: the fix does not move what equity recommends, so it cannot plausibly move a 19-point
+verdict.
+
+### Measured on the new bracket, 2026-08-27: -17.30
+
+The full harness was then run to completion on the fixed bracket -- 3h20m, same 20 drafts x 4
+seasons, same board snapshot, n=80:
+
+    n=80   optimizer - market = -17.30 points per team game
+           95% CI [-20.45, -14.07]   P(optimizer better) 0.0%
+           REMOVE
+
+| measurement | bracket | result |
+|---|---|---|
+| original | recycled weeks | **-19.66**, CI [-23.16, -16.20] |
+| re-run 2026-08-27 | recycled weeks | **-19.13**, CI [-22.31, -15.75] |
+| **this run** | **own weeks** | **-17.30**, CI [-20.45, -14.07] |
+
+**The verdict is unchanged and the gap named above is now closed.** The point estimate moved
+1.83 points between the two brackets, which is well inside every interval here -- each of the
+three sits comfortably in the other two's CI -- so this is not evidence that the bracket
+mattered much. It moved in the direction the fix predicts, though: giving the playoffs their
+own draws decouples a title from a week 1 result, and that helps the arm whose objective is
+championship probability. Helping arm B by two points against a seventeen-point deficit is the
+shape of a real but small correction.
+
+Nothing about ADR-0009 changes. What changes is that its number is now a measurement of the
+code that exists.
 
 Losing in all four seasons, winning 9 of 80 drafts. `config_digest` 9975101f; paired rows in
 `data/processed/p0b_paired.parquet`; harness in `hub.draft.backtest`.
