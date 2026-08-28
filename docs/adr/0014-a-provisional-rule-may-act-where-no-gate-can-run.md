@@ -69,6 +69,55 @@ is an exception rather than a policy.
 **One.** If that column ever fills up, the mechanism has stopped being an exception and this
 ADR should be revisited rather than stretched.
 
+## The horizons and the logs, stated
+
+Requirements 4 and 5 above are obligations on *this document*, not aspirations. Until 2026-08-27
+it did not meet them, which made the horizon clause the one part of its own rule the ADR
+violated. Here they are, per rule.
+
+### The waiver tiebreaker
+
+**Horizon: 150 logged claims, whenever that arrives.** A count, not a calendar — power is what
+determines when you may conclude, and the number of Januaries is not. At roughly 14 claims a
+season that is about a decade, and it is deliberately not reachable early: a January judgement
+on fourteen claims would conclude something from nothing, which is the failure this whole
+document exists to prevent.
+
+**And 150 is not 1,800.** It is the point at which *looking* becomes informative, not the point
+at which the question resolves. If the accumulated difference at 150 is not clearly signed, the
+honest report is still "unresolved" — reaching a horizon is permission to look, not permission
+to decide.
+
+**What is logged, per claim** — and only this:
+
+| field | why |
+|---|---|
+| date, week | orders the record |
+| the rule's recommendation | the top of the ECR-chosen set by snap delta |
+| what was actually claimed | the decision |
+| why, if those differ | **unrecoverable by any replay** |
+
+**What is deliberately not logged.** Points scored afterwards by anyone claimed or passed over:
+nflverse carries those forever, and typing them at 11pm on a Tuesday buys nothing. The candidate
+pool: reconstructible from the board plus rosters, so it belongs in the replay rather than the
+log.
+
+The principle is the one the draft-night deviation protocol reached independently a day later:
+**log only what no replay can recover.** A log heavier than that stops being kept by week five —
+and a log that stops being kept is worse than no log, because it still looks like evidence.
+
+### The survivor contrarian threshold
+
+**Horizon: none that is reachable, and saying so is the point.** One pool a season, eighteen
+decisions a year, each resolving to a binary outcome dominated by a single game. There is no
+count at which this becomes measurable on any timescale this project will see.
+
+It is adopted anyway, because the alternative — maximising P(survive every week) in a 20-100
+entry pool — is *known* to be answering the wrong question, and a rule that is probably right
+beats one that is definitely mis-specified. But it is the weaker of the two provisional rules by
+some distance, and if this mechanism is ever questioned it should be the first thing
+reconsidered.
+
 ## Consequences
 
 * The waiver tiebreaker — ECR chooses the candidate set, snap delta chooses within it — becomes

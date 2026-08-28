@@ -140,6 +140,23 @@ additive injury table lost.
 
 Sequence: **method page (by Sep 4) → Week 1 dependencies (by Sep 10) → everything else.**
 
+### The two provisional rules, and when they get judged
+
+Both are adopted under
+[ADR-0014](adr/0014-a-provisional-rule-may-act-where-no-gate-can-run.md), which requires a
+stated horizon and a log. Fixed 2026-08-27:
+
+| rule | horizon | log |
+|---|---|---|
+| Waiver tiebreaker — ECR picks the set, snap delta picks within it | **150 logged claims**, a count and not a calendar (~a decade at 14/season) | date, week, the rule's pick, what you claimed, and why if they differ |
+| Survivor contrarian threshold | **none reachable** — one pool a season, and it is stated rather than hidden | the week, the chalk pick, yours, and the probability cost accepted |
+
+Two things follow that are easy to get wrong. **150 is not 1,800**: it is permission to look, not
+permission to decide, and "unresolved" remains an available answer at the horizon. And **nothing
+that a replay can recover is logged** — outcomes come from nflverse, the candidate pool comes
+from the board plus rosters. A log heavier than that stops being kept by week five, and one that
+stops being kept is worse than none because it still looks like evidence.
+
 Edge ranked last. That is why gates route rather than kill: a model failing its gate becomes a
 documented study, not a deletion. It is also why we derive before importing (hand-roll split
 conformal before MAPIE, the survivor DP before pulp) — the slower path serves objective 2.
