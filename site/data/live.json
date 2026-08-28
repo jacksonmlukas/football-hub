@@ -1,39 +1,39 @@
 {
   "name": "live",
   "source": "espn_scoreboard",
-  "generated_at": "2026-08-27T21:25:33+00:00",
+  "generated_at": "2026-08-28T02:01:39+00:00",
   "n": 16,
   "rows": [
     {
-      "id": "401873298",
-      "state": "pre",
-      "detail": "8/27 - 7:00 PM EDT",
-      "home": "BUF",
-      "home_score": "0",
-      "away": "PIT",
-      "away_score": "0",
-      "possession": null,
-      "down_distance": null
-    },
-    {
       "id": "401873299",
-      "state": "pre",
-      "detail": "8/27 - 8:00 PM EDT",
+      "state": "in",
+      "detail": "8:10 - 3rd",
       "home": "CLE",
-      "home_score": "0",
+      "home_score": "27",
       "away": "NE",
-      "away_score": "0",
-      "possession": null,
-      "down_distance": null
+      "away_score": "13",
+      "possession": "5",
+      "down_distance": "1st & 10 at CLE 2"
     },
     {
       "id": "401873641",
-      "state": "pre",
-      "detail": "8/27 - 8:00 PM EDT",
+      "state": "in",
+      "detail": "1:25 - 3rd",
       "home": "LV",
-      "home_score": "0",
+      "home_score": "9",
       "away": "SF",
-      "away_score": "0",
+      "away_score": "6",
+      "possession": "25",
+      "down_distance": "2nd & Goal at LV 30"
+    },
+    {
+      "id": "401873298",
+      "state": "post",
+      "detail": "Final",
+      "home": "BUF",
+      "home_score": "28",
+      "away": "PIT",
+      "away_score": "27",
       "possession": null,
       "down_distance": null
     },

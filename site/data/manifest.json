@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-27T21:25:33+00:00",
+  "generated_at": "2026-08-28T02:01:39+00:00",
   "season": 2026,
   "week": 1,
   "artifacts": [
@@ -8,21 +8,21 @@
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-08-27T21:25:32+00:00"
+      "generated_at": "2026-08-28T02:01:39+00:00"
     },
     {
       "name": "track_record",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-08-27T21:25:33+00:00"
+      "generated_at": "2026-08-28T02:01:39+00:00"
     },
     {
       "name": "live",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-08-27T21:25:33+00:00"
+      "generated_at": "2026-08-28T02:01:39+00:00"
     },
     {
       "name": "draft_board",
@@ -36,7 +36,7 @@
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-08-27T21:25:33+00:00"
+      "generated_at": "2026-08-28T02:01:39+00:00"
     }
   ]
 }
