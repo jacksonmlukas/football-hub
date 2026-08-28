@@ -50,17 +50,26 @@ Each surviving feature permuted within its own cell:
     snap_trend      -0.0022   t -0.18   2/5
     td_rate_prior   -0.0127   t -1.43   1/5
 
-### Own spread is not a separate signal
+### The joint screen: which of these are separate signals?
 
-`implied_total = total_line/2 + own_spread/2`, and the two correlate at **+0.83**. Controlling
-own spread for implied total leaves **−0.001, t −0.13, 2/5 seasons** — it vanishes. The
-surviving piece is the *offensive environment*, not who is favoured.
+Four features are a signal on their own. Re-screening each with the others added to its
+controls — **each keeping its own week range**, controlled only for survivors that exist over
+it — is what separates findings from shadows:
 
-### The three survivors are independent of each other
+| feature | alone | controlled for the others | |
+|---|---|---|---|
+| snap-share trend | +0.070, 5/5 | **+0.074, t +5.05, 5/5** | survives everything |
+| prior TD rate | −0.045, 5/5 | **−0.047, t −5.93, 5/5** | survives everything |
+| implied team total | +0.044, 5/5 | +0.026, t +2.31, **3/5** | dies |
+| own spread | +0.036, 5/5 | −0.002, t −0.19, **3/5** | dies |
 
-    implied_total | + snap_trend     +0.043   t +2.84   5/5
-    snap_trend    | + implied_total  +0.071   t +4.94   5/5
-    td_rate_prior | + implied_total  -0.046   t -5.99   5/5
+**`implied_total = total_line/2 + own_spread/2`, and the two correlate at +0.83.** They are one
+finding wearing two hats. Neither *residual* clears once the other is controlled for, which is
+the honest statement: the market's game-level forecast predicts a player's week, and the split
+between "how many points are in this game" and "who is favoured" is not separable at this n.
+
+**Independent signals: the snap-share trend and the prior TD rate.** Both are computed entirely
+from games already played.
 
 ## The confound that changes the reading
 
@@ -80,10 +89,11 @@ alone. That splits the survivors in two:
 entirely from games already played when the ranking was scraped. Consensus had every input on
 Monday and did not price them. These are the honest positives.
 
-**Confounded.** The **implied team total** is the *closing* line, which by construction absorbs
-six days of news the control never saw. The screen as run cannot separate "adds beyond
+**Confounded.** The **implied team total** is the *closing* line, which by construction
+absorbs six days of news the control never saw. The screen as run cannot separate "adds beyond
 consensus" from "is newer than consensus", and **there is no fresher historical consensus in
-nflverse to control with**, so the confound is not removable with available data.
+nflverse to control with**, so the confound is not removable with available data. It is also
+the feature that did not survive the joint screen, so nothing rests on it either way.
 
 Weak evidence against staleness being the whole story: injury severity is also post-scrape
 information and it did *not* clear (4/5). But that encoding is crude — a max-severity ordinal,
@@ -112,10 +122,13 @@ Recorded because the predictions were written down before the run and two of the
 
 ## What this does and does not license
 
-It licenses **Phase 2 with three features**: snap-share trend (week ≥ 8), prior TD rate, and
-the implied team total carried with its confound written down. Plus the injury designation,
-which enters unscreened by the plan's own pre-registered rule, having been measured at
-player-week grain at +0.170 MAE and 3.8 se.
+It licenses **Phase 2 with two features**: the **snap-share trend** (week ≥ 8) and the
+**prior TD rate**. Plus the injury designation, which enters unscreened by the plan's own
+pre-registered rule, having been measured at player-week grain at +0.170 MAE and 3.8 se.
+
+The implied team total is **not** carried. It fails the joint screen on the every-season half,
+and even the part that survives is confounded with a six-day-stale control. Two independent
+reasons to leave it out, and either alone would be enough.
 
 It licenses **nothing about lineups**. A partial correlation says a quantity adds to the board
 and never that it should be the board
@@ -131,7 +144,22 @@ snapshot we are measuring against.
 
 ## Reproduce
 
-Ad hoc, in the scratchpad, per the protocol — exploration may be. **Not yet citable**:
-[ADR-0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md) requires a
-committed harness the moment a number becomes a reason, and these numbers are about to steer
-Phase 2.
+```bash
+uv run python -m hub.models.weekly_screen --run
+```
+
+`src/hub/models/weekly_screen.py`, committed 2026-08-27 because these numbers steer Phase 2 and
+[ADR-0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md)'s trigger is
+citation. The statistics, the cell structure, the pre-registered verdict — every branch,
+including the losing ones — and the joint screen are unit-tested offline; only the nflverse
+assembly needs the network.
+
+Two defects the harness found that the scratchpad version had:
+
+* **The player control was career-to-date, not season-to-date.** Routing the expanding
+  aggregate through `experiment.expanding_weeks` widened the past to every earlier season,
+  which is a *stronger* control than the one pre-registered and made weeks 1–3 eligible where
+  they had not been. Narrowed back, and the scope choice is now explicit at the call site.
+* **`partial_r` correlated rounding error.** A feature that is an exact linear function of a
+  control residualises to ~1e-16 rather than to 0, and `rx.std() == 0` does not catch that.
+  It now returns NaN below a relative tolerance, so the cell is dropped rather than reported.

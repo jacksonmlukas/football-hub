@@ -230,6 +230,11 @@ NOT_FITTED: dict[str, str] = {
     "hub.season.survivor": "MIN_PROB is a floor that keeps a zero out of a log, and THIN_WEEK "
                            "a count of games. Both are settings; the win probabilities "
                            "themselves come from hub.models.market at run time.",
+    "hub.models.weekly_screen": "the Phase 1 screen for week-level features. DEGENERATE is a "
+                                "floating-point tolerance -- below it a residual is rounding "
+                                "error rather than a signal -- and nothing here predicts: it "
+                                "reads outcomes and reports correlations. See "
+                                "docs/weekly-screen.md",
     "hub.models.experiment": "MIN_SE is the significance bar every gate reads -- a setting, "
                              "and the one this module exists to stop being declared twice. "
                              "Nothing here predicts; it holds the walk-forward protocol.",

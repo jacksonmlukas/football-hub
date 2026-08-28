@@ -40,7 +40,8 @@ CLI_MODULES = (
     "hub.draft.leverage", "hub.draft.live", "hub.draft.tune", "hub.fetch.cfbd",
     "hub.fetch.nflverse", "hub.fetch.odds", "hub.inspect", "hub.models.conformal",
     "hub.models.correlate", "hub.models.eval", "hub.models.injury", "hub.models.margin",
-    "hub.models.ratings", "hub.models.spread", "hub.publish", "hub.season.lineup",
+    "hub.models.ratings", "hub.models.spread",
+    "hub.models.weekly_screen", "hub.publish", "hub.season.lineup",
     "hub.season.lineup_gate", "hub.season.survivor", "hub.store",
 )
 

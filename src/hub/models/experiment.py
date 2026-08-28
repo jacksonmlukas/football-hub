@@ -20,7 +20,7 @@ every caller of one was a caller of the other, on adjacent import lines -- the s
 the line an earlier extraction happened to stop at rather than along any invariant. Its two
 functions are used only inside this experiment.
 
-`expanding_seasons` and `paired_gain` were pulled in on 2026-08-27. Both are the *mechanics*
+`expanding_seasons`, `expanding_weeks` and `paired_gain` live here. Both are the *mechanics*
 of a walk-forward gate rather than any gate's decision. The split loop was written out four
 times -- `margin.walk_forward`, `injury.walk_forward`, `injury.walk_forward_type`,
 `spread.walk_forward` -- and had already drifted three ways; it is `docs/method.md` rule #2,
@@ -110,6 +110,38 @@ def expanding_seasons(
         if past.height < min_past or now.is_empty():
             continue
         yield int(yr), past, now
+
+
+def expanding_weeks(
+    df: pl.DataFrame, *, min_past: int = 1, season_col: str = "season",
+    week_col: str = "week",
+) -> Iterator[tuple[int, int, pl.DataFrame, pl.DataFrame]]:
+    """`(season, week, past, now)` for each week that has enough history to be scored.
+
+    The within-season sibling of `expanding_seasons`, and the same invariant one grain finer:
+    `past` is everything strictly earlier in `(season, week)` order -- every earlier season in
+    full, plus this season's earlier weeks -- and `now` is exactly that week. A weekly model
+    has seventeen times the surface for the leakage that made depth-chart climb read at 7.4
+    sigma, so the split belongs here rather than in each harness.
+
+    Ordering is lexicographic on `(season, week)`, not on week alone: week 3 of 2024 is later
+    than week 14 of 2023, and a naive sort on the week column would put them the other way
+    round and quietly train on the future.
+
+    A caller wanting *within-season* history only filters `past` itself. That is deliberately
+    not a flag: the two rules differ by one `filter`, and a boolean parameter that silently
+    changes what counts as the past is the kind of thing this function exists to prevent.
+    """
+    keys = (df.select(season_col, week_col).unique()
+              .sort([season_col, week_col]).rows())
+    for season, week in keys:
+        earlier = (pl.col(season_col) < season) | (
+            (pl.col(season_col) == season) & (pl.col(week_col) < week))
+        past = df.filter(earlier)
+        now = df.filter((pl.col(season_col) == season) & (pl.col(week_col) == week))
+        if past.height < min_past or now.is_empty():
+            continue
+        yield int(season), int(week), past, now
 
 
 class Gain(NamedTuple):
