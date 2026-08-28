@@ -48,20 +48,24 @@ class DraftState:
         return len(self.taken)
 
 
-def load(path: Path = STATE) -> DraftState:
+def load(path: Path | None = None) -> DraftState:
     """Missing or unreadable state is an empty draft, never an exception.
 
     Draft night is the worst possible moment to surface a traceback, and an empty
     board is a recoverable state the operator can see and correct in one command.
     """
+    # Resolved at call time. `path: Path = STATE` binds the module constant when the
+    # function is defined, so monkeypatching `state.STATE` never reaches it and a test that
+    # believes it redirected the state file writes to the real one instead.
+    path = path if path is not None else STATE
     try:
         return DraftState(taken=list(json.loads(Path(path).read_text())["taken"]))
     except Exception:
         return DraftState()
 
 
-def save(state: DraftState, path: Path = STATE) -> None:
-    p = Path(path)
+def save(state: DraftState, path: Path | None = None) -> None:
+    p = Path(path if path is not None else STATE)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"taken": state.taken}, indent=2))
 

@@ -347,7 +347,7 @@ def board_age_hours(path: Path, now: float) -> float:
     return max(now - path.stat().st_mtime, 0.0) / 3600.0
 
 
-def last_good(path: Path = BOARD_PARQUET,
+def last_good(path: Path | None = None,
               now: float | None = None) -> tuple[pl.DataFrame, float]:
     """The board as last written to disk, with its age in hours.
 
@@ -355,6 +355,7 @@ def last_good(path: Path = BOARD_PARQUET,
     always read the board rather than building it, and `main`'s offline fallback below.
     """
     import time
+    path = path if path is not None else BOARD_PARQUET
     if not path.exists():
         raise FileNotFoundError(
             f"no board at {path}. Run `make draft` first -- the poller reads the board, "
@@ -364,7 +365,7 @@ def last_good(path: Path = BOARD_PARQUET,
 
 
 def build_or_last_good(league_size: int = 12, season: int = 2025, *,
-                       path: Path = BOARD_PARQUET, now: float | None = None,
+                       path: Path | None = None, now: float | None = None,
                        ) -> tuple[pl.DataFrame, BuildReport, float | None]:
     """Build the board, and if the build cannot happen at all, serve the last good one.
 
@@ -627,8 +628,8 @@ def _emit(lines: list[str]) -> None:
         print(line)
 
 
-def _persist(board: pl.DataFrame, *, out: Path = OUT,
-             path: Path = BOARD_PARQUET) -> None:
+def _persist(board: pl.DataFrame, *, out: Path | None = None,
+             path: Path | None = None) -> None:
     """Write the board and the site's copy of it, creating both parents first.
 
     `data/processed/` gets created by `hub.store`, and the board does not go through
@@ -640,6 +641,12 @@ def _persist(board: pl.DataFrame, *, out: Path = OUT,
     had never once worked on a fresh clone -- the first command in the README, on the repo
     that goes public on 2026-09-04.
     """
+    # Resolved at call time, not bound as a default. A module-level path used as a default
+    # argument is fixed when the function is defined, so monkeypatching the module attribute
+    # does not reach it -- and a test that believes it redirected the output writes to the
+    # real board instead. That happened.
+    out = out if out is not None else OUT
+    path = path if path is not None else BOARD_PARQUET
     path.parent.mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True, exist_ok=True)
     board.write_parquet(path)

@@ -105,3 +105,34 @@ def test_every_cli_module_is_covered_here():
     assert found == set(CLI_MODULES), (
         f"CLI_MODULES is stale. missing={sorted(found - set(CLI_MODULES))} "
         f"stale={sorted(set(CLI_MODULES) - found)}")
+
+
+# --- module paths must be resolvable at call time ---------------------------
+#
+# `def f(path: Path = STATE)` binds the module constant when the function is DEFINED, so
+# monkeypatching the module attribute never reaches it. A test that believes it redirected
+# its output writes to the real file instead -- which happened on 2026-08-27, overwriting the
+# live draft board with a 320-row fixture and the draft state with a test pick.
+
+def test_no_module_level_path_is_bound_as_a_default_argument():
+    """The whole class, not the two instances that were found."""
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
+    # Module-level names that are filesystem paths. Binding one as a default makes the
+    # function write somewhere a caller cannot redirect.
+    pathish = {"STATE", "BOARD_PARQUET", "OUT", "ROOT", "DATA", "CATALOG", "ARCHIVE",
+               "AS_DRAFTED", "STORE"}
+    bad = []
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            args = node.args
+            for default in (*args.defaults, *(d for d in args.kw_defaults if d)):
+                if isinstance(default, ast.Name) and default.id in pathish:
+                    bad.append(f"{path.name}:{node.name}() default={default.id}")
+    assert not bad, (
+        "module-level paths bound as default arguments -- monkeypatching the module "
+        f"attribute will not reach these, so tests silently write to the real file: {bad}")

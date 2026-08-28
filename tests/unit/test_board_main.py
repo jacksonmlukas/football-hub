@@ -14,6 +14,7 @@ Two things are tested here that were previously unreachable:
 """
 
 import polars as pl
+import pytest
 
 from hub.draft import board
 
@@ -160,3 +161,109 @@ def test_persisting_is_safe_to_repeat(tmp_path):
     board._persist(df, out=out, path=path)
     board._persist(df, out=out, path=path)
     assert path.exists()
+
+
+# --- main(), driven offline -------------------------------------------------
+#
+# `main` was the last uncovered block in this module: state transitions, persistence, the ADP
+# archive and the report composition, none of which need a network once `build` is stubbed.
+
+def _full_board(n=320):
+    pos = ["QB", "RB", "WR", "WR", "TE", "RB", "WR"]
+    return pl.DataFrame({
+        "player": [f"Player {i:03d}" for i in range(n)],
+        "pos": [pos[i % len(pos)] for i in range(n)],
+        "team": ["KC"] * n,
+        "ecr": [float(i + 1) for i in range(n)],
+        "vor": [float(n - i) / 10 for i in range(n)],
+        "xfp_per_game": [20.0 - i * 0.05 for i in range(n)],
+        "fp_over_expected": [float(i % 11) - 5 for i in range(n)],
+        "adp": [float(i + 1) for i in range(n)],
+        "proj_blend": [18.0 - i * 0.04 for i in range(n)],
+        "consensus_rank": [float(i + 1) for i in range(n)],
+        "games": pl.Series([14] * n, dtype=pl.UInt32),
+    })
+
+
+@pytest.fixture
+def cli(monkeypatch, tmp_path):
+    """`main` with the network, the state file and the output paths all redirected."""
+    b = _full_board()
+    monkeypatch.setattr(board, "build_or_last_good",
+                        lambda *a, **k: (b, board.BuildReport(adp=True), None))
+    monkeypatch.setattr(board, "BOARD_PARQUET", tmp_path / "board.parquet")
+    monkeypatch.setattr(board, "OUT", tmp_path / "site")
+    from hub.draft import adp_history, state as state_mod
+    monkeypatch.setattr(adp_history, "ARCHIVE", tmp_path / "adp")
+    monkeypatch.setattr(state_mod, "STATE", tmp_path / "state.json")
+    return b
+
+
+def test_main_writes_the_board_and_the_site_copy(cli, tmp_path, capsys):
+    assert board.main([]) == 0
+    assert (tmp_path / "board.parquet").exists()
+    assert (tmp_path / "site" / "draft_board.json").exists()
+    assert "320 players" in capsys.readouterr().out
+
+
+def test_main_archives_the_day_s_adp(cli, tmp_path, capsys):
+    """ESPN does not retain historical ADP, so the build is the only chance to record it."""
+    assert board.main([]) == 0
+    assert "adp archived" in capsys.readouterr().out
+    assert list((tmp_path / "adp").glob("date=*/adp.parquet"))
+
+
+def test_a_recorded_pick_updates_the_state(cli, tmp_path, capsys):
+    assert board.main(["--taken", "Player 000, Player 001"]) == 0
+    assert "2 picks recorded" in capsys.readouterr().out
+
+
+def test_a_mistyped_pick_is_warned_about(cli, capsys):
+    """The misspelt player stays on the board as available, and the next recommendation can
+    hand back someone already drafted."""
+    assert board.main(["--taken", "Playr 000"]) == 0
+    assert "NOT ON THE BOARD" in capsys.readouterr().out
+
+
+def test_undo_removes_the_last_picks(cli, capsys):
+    board.main(["--taken", "Player 000, Player 001"])
+    capsys.readouterr()
+    assert board.main(["--undo", "1"]) == 0
+    assert "1 picks recorded" in capsys.readouterr().out
+
+
+def test_reset_clears_the_state(cli, capsys):
+    board.main(["--taken", "Player 000"])
+    capsys.readouterr()
+    assert board.main(["--reset"]) == 0
+    assert "0 picks recorded" in capsys.readouterr().out
+
+
+def test_the_pick_path_renders(cli, capsys):
+    assert board.main(["--pick", "3"]) == 0
+    out = capsys.readouterr().out
+    assert "THE PICK" in out and "Also close" in out
+
+
+def test_the_sos_path_renders(cli, capsys):
+    b = cli.with_columns(pl.Series("wk15_17_sos", [1.0 + (i % 5) * 0.1 for i in range(cli.height)]))
+    from hub.draft import board as bm
+    import pytest as _pt
+    mp = _pt.MonkeyPatch()
+    mp.setattr(bm, "build_or_last_good", lambda *a, **k: (b, bm.BuildReport(adp=True), None))
+    assert board.main(["--sos"]) == 0
+    assert "strength of schedule" in capsys.readouterr().out
+    mp.undo()
+
+
+def test_a_stale_board_is_not_rewritten(monkeypatch, tmp_path, capsys):
+    """Rewriting resets the mtime, so the age just printed becomes a lie."""
+    b = _full_board()
+    monkeypatch.setattr(board, "build_or_last_good",
+                        lambda *a, **k: (b, board.BuildReport(), 3.5))
+    monkeypatch.setattr(board, "BOARD_PARQUET", tmp_path / "board.parquet")
+    monkeypatch.setattr(board, "OUT", tmp_path / "site")
+    from hub.draft import state as state_mod
+    monkeypatch.setattr(state_mod, "STATE", tmp_path / "state.json")
+    assert board.main([]) == 0
+    assert not (tmp_path / "board.parquet").exists(), "serving last-good must not rewrite it"
