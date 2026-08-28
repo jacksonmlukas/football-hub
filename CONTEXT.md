@@ -137,6 +137,22 @@ A third case exists and is not a third test: a signal passes a screen and its de
 be gated at any n this project will see. That is a **provisional rule**, above.
 _Avoid_: validate, backtest — both hide which question is being asked.
 
+### In-season
+
+**Usage**:
+The count vector a player's week produces — targets, carries, pass attempts, receptions. The
+quantity a weekly model predicts, because volume persists (targets r = 0.805) and efficiency
+does not (yards per carry r = 0.108, touchdowns per yard r ≈ 0).
+_Avoid_: opportunity (which is what **xFP** already prices), volume (which names only half of
+it — a carry and a target are not the same unit).
+
+**Weekly projection**:
+A player's expected points for one *named* week, against a named opponent. Distinct from
+**xFP**, which is per-game and season-long: today the repo has only the latter, and applies it
+flat to all seventeen weeks.
+_Avoid_: projection unqualified — say weekly projection or xFP, since the whole open question
+is whether the week adds anything.
+
 ### Season simulation
 
 **Championship equity**:
