@@ -110,7 +110,7 @@ def test_conformal_rejects_bad_alpha():
 
 def test_conformal_needs_enough_calibration_points():
     c = Conformalized(Dummy()).fit(FitSpec("nfl", 2026, 6))
-    with pytest.raises(ValueError, match=">=20"):
+    with pytest.raises(ValueError, match=">=40"):
         c.calibrate(pl.Series([1.0, 2.0, 3.0]))
 
 
@@ -119,3 +119,22 @@ def test_config_digest_participates_in_model_version():
     a = Dummy().fit(FitSpec("nfl", 2026, 6, cfg_digest="aaaa1111")).version
     b = Dummy().fit(FitSpec("nfl", 2026, 6, cfg_digest="bbbb2222")).version
     assert a != b
+
+
+def test_the_two_conformal_implementations_are_one():
+    """`Conformalized.calibrate` and `conformal.interval` computed the same split-conformal
+    quantile with the same finite-sample correction -- and disagreed on the minimum-n
+    invariant, 20 against 40. Two copies of a formula are a nuisance; two copies with
+    different invariants are a defect waiting for whoever reads the wrong one."""
+    import inspect
+
+    from hub.models import base as base_mod
+    from hub.models import conformal
+
+    residuals = pl.Series([float(x) for x in range(-40, 41)])
+    alpha = 0.2
+    c = Conformalized(Dummy(), alpha=alpha).calibrate(residuals)
+    assert c._q == conformal.interval(residuals, alpha)
+    src = inspect.getsource(base_mod.Conformalized.calibrate)
+    assert "quantile(" not in src, "the statistic must not be written out here as well"
+    assert base_mod.MIN_CALIBRATION == conformal.DEFAULT_MIN_CALIBRATION

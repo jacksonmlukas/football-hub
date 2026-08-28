@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from hub.publish import brier, log_loss, reliability
+from hub.models.scoring_rules import brier, log_loss, reliability
 
 BOOTSTRAP = 4000
 DEFAULT_HOLDOUT = 0.3

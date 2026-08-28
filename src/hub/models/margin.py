@@ -35,6 +35,7 @@ import polars as pl
 
 # The incumbent. Imported rather than restated so the two cannot drift apart.
 from hub.models.market import MARGIN_SD
+from hub.models.scoring_rules import log_loss
 
 # What the 2026-08-24 fit found, kept so a test can guard the live constant against it -- the
 # same pattern `hub.draft.calibrate.FITTED_CI95` uses for TALENT_CV. A refit updates both.
@@ -92,10 +93,7 @@ def home_win_prob(spread: np.ndarray, sd: float) -> np.ndarray:
     return 0.5 * (1.0 + np.array([erf(v) for v in z]))
 
 
-def log_loss(probs: np.ndarray, won: np.ndarray, eps: float = 1e-12) -> float:
-    p = np.clip(np.asarray(probs, dtype=float), eps, 1 - eps)
-    y = np.asarray(won, dtype=float)
-    return float(-(y * np.log(p) + (1 - y) * np.log(1 - p)).mean())
+
 
 
 def walk_forward(resid: pl.DataFrame, *, trailing: int = TRAILING) -> pl.DataFrame:

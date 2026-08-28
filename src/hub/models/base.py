@@ -16,6 +16,9 @@ from typing import Literal, Protocol, cast, runtime_checkable
 
 import polars as pl
 
+from hub.models.conformal import DEFAULT_MIN_CALIBRATION as MIN_CALIBRATION
+from hub.models.conformal import interval
+
 League = Literal["nfl", "cfb"]
 
 # Every forecaster returns exactly this. Enforced by contract at write time, which is what
@@ -133,12 +136,19 @@ class Conformalized:
         return self
 
     def calibrate(self, residuals: pl.Series) -> Conformalized:
-        """Split-conformal quantile of absolute residuals on a held-out window."""
+        """Split-conformal quantile of absolute residuals on a held-out window.
+
+        Delegates to `hub.models.conformal.interval`, which is the one implementation of
+        this statistic. It used to be written out here as well -- same finite-sample
+        correction, same docstring explaining that the correction is not decoration, and a
+        *different* minimum-n invariant: 20 here against 40 there. Two copies of a formula
+        are a nuisance; two copies with disagreeing invariants are a defect waiting for the
+        first caller who reads the wrong one.
+        """
         n = residuals.len()
-        if n < 20:
-            raise ValueError(f"need >=20 calibration points, got {n}")
-        k = min(1.0, (1 - self.alpha) * (n + 1) / n)   # finite-sample correction
-        self._q = float(cast(float, residuals.abs().quantile(k)))
+        if n < MIN_CALIBRATION:
+            raise ValueError(f"need >={MIN_CALIBRATION} calibration points, got {n}")
+        self._q = interval(residuals, self.alpha)
         return self
 
     def predict(self, games: pl.DataFrame) -> pl.DataFrame:

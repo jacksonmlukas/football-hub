@@ -22,13 +22,13 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-import numpy as np
 import polars as pl
 
 from hub import store
 from hub.config import SEASON_AHEAD
+from hub.models.scoring_rules import brier, log_loss, reliability
 
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "site" / "data"
@@ -79,55 +79,9 @@ def predictions(season: int, week: int, base: Path | None = None,
 
 # --- calibration ----------------------------------------------------------
 
-def log_loss(probs: Sequence[float] | np.ndarray,
-             outcomes: Sequence[int] | np.ndarray, eps: float = 1e-15) -> float:
-    """Mean negative log likelihood.
-
-    Clipped at eps because a model that said 1.0 and was wrong would otherwise put an
-    infinity on the page. Clipping bounds the penalty at ~34 per game, which is still
-    ruinous and still renders.
-    """
-    # len() rather than truthiness: `if not probs` raises on a numpy array, which went
-    # unnoticed while every caller passed lists. Vectorised because hub.models.eval
-    # bootstraps this thousands of times per comparison.
-    q = np.clip(np.asarray(probs, dtype=float), eps, 1.0 - eps)
-    if q.size == 0:
-        return float("nan")
-    y = np.asarray(outcomes, dtype=float)
-    return float(np.mean(-(y * np.log(q) + (1.0 - y) * np.log(1.0 - q))))
-
-
-def brier(probs: Sequence[float] | np.ndarray,
-          outcomes: Sequence[int] | np.ndarray) -> float:
-    q = np.asarray(probs, dtype=float)
-    if q.size == 0:
-        return float("nan")
-    return float(np.mean((q - np.asarray(outcomes, dtype=float)) ** 2))
-
-
-def reliability(df: pl.DataFrame, n_bins: int = 10) -> list[dict[str, Any]]:
-    """Reliability diagram: predicted versus actual, with the count in each bin.
-
-    Counts are not decoration. `docs/track-record.md` asks for them because a bin holding
-    four games says nothing, and a diagram that hides its bin sizes invites exactly the
-    over-reading the page exists to prevent.
-    """
-    if df.is_empty():
-        return []
-    out = []
-    for i in range(n_bins):
-        lo, hi = i / n_bins, (i + 1) / n_bins
-        sel = df.filter((pl.col("home_win_prob") >= lo)
-                        & (pl.col("home_win_prob") < (hi if i < n_bins - 1 else 1.01)))
-        n = sel.height
-        out.append({
-            "bin": f"{lo:.1f}-{hi:.1f}", "n": n,
-            "predicted": float(cast(float, sel["home_win_prob"].mean())) if n else None,
-            "actual": float(cast(float, sel["home_won"].mean())) if n else None,
-        })
-    return out
-
-
+# The scoring rules moved to `hub.models.scoring_rules`; `hub.models.eval` was importing
+# them from here, which meant model evaluation could not be read without the site writer.
+# Re-exported because `publish` still uses all three and the site's own tests name them here.
 def _scored(base: Path | None) -> pl.DataFrame:
     """Predictions joined to results. Empty frame when either side is missing."""
     empty = pl.DataFrame(schema={"game_id": pl.Utf8, "home_win_prob": pl.Float64,
