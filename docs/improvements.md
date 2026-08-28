@@ -445,6 +445,29 @@ both running.
 
 ---
 
+### 14. The poll loop catches only KeyboardInterrupt
+
+**Found 2026-08-27 while covering the poller; deliberately not fixed before the freeze.**
+
+`live.poll`'s loop is wrapped in `except KeyboardInterrupt`. Anything else — a render error on
+an unexpected board shape, a disk error inside `save` — propagates, kills the poller, and skips
+the line that tells you where the fallback is:
+
+    stopped. site/data/draft_board.json is still correct.
+
+`hub.fetch.espn.poll` already has the right shape for this and prints
+`poll error (serving stale)` rather than dying, so there is precedent in the repo.
+
+**Severity is low and that is why it waits.** `sync_from_espn` swallows its own failures by
+design and returns last-good, so the common case — ESPN unreachable — is already survived, and
+there is a test for it. The runbook already says "If it dies, the board and `--pick` still
+work". What is lost is the reminder, not the fallback.
+
+**Do:** after the draft, catch `Exception` in the loop, print it, and keep polling. Three lines.
+It is draft-path code and the freeze holds until 2026-08-31.
+
+---
+
 ## What is deliberately not on this list
 
 **Anything that tries to beat a market.** Objective 4 was retired on 2026-08-24 after six

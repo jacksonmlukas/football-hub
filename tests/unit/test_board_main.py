@@ -193,7 +193,8 @@ def cli(monkeypatch, tmp_path):
                         lambda *a, **k: (b, board.BuildReport(adp=True), None))
     monkeypatch.setattr(board, "BOARD_PARQUET", tmp_path / "board.parquet")
     monkeypatch.setattr(board, "OUT", tmp_path / "site")
-    from hub.draft import adp_history, state as state_mod
+    from hub.draft import adp_history
+    from hub.draft import state as state_mod
     monkeypatch.setattr(adp_history, "ARCHIVE", tmp_path / "adp")
     monkeypatch.setattr(state_mod, "STATE", tmp_path / "state.json")
     return b
@@ -247,8 +248,9 @@ def test_the_pick_path_renders(cli, capsys):
 
 def test_the_sos_path_renders(cli, capsys):
     b = cli.with_columns(pl.Series("wk15_17_sos", [1.0 + (i % 5) * 0.1 for i in range(cli.height)]))
-    from hub.draft import board as bm
     import pytest as _pt
+
+    from hub.draft import board as bm
     mp = _pt.MonkeyPatch()
     mp.setattr(bm, "build_or_last_good", lambda *a, **k: (b, bm.BuildReport(adp=True), None))
     assert board.main(["--sos"]) == 0

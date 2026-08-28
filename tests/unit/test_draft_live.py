@@ -420,3 +420,94 @@ def test_a_board_from_the_future_is_zero_not_negative(tmp_path):
     f.write_bytes(b"x")
     os.utime(f, (1000.0, 1000.0))
     assert board_mod.board_age_hours(f, 500.0) == 0.0
+
+
+# --- the poll loop and the CLI, driven offline ------------------------------
+#
+# The poller is the draft-night path with no operator: it must survive ESPN being down, print
+# only when something changed, and say where the fallback board is on the way out.
+
+def _stub_board(n=320):
+    pos = ["QB", "RB", "WR", "WR", "TE", "RB", "WR"]
+    return pl.DataFrame({
+        "player": [f"Player {i:03d}" for i in range(n)],
+        "pos": [pos[i % len(pos)] for i in range(n)],
+        "team": ["KC"] * n,
+        "ecr": [float(i + 1) for i in range(n)],
+        "ecr_sd": [2.0] * n,
+        "vor": [float(n - i) / 10 for i in range(n)],
+        "xfp_per_game": [20.0 - i * 0.05 for i in range(n)],
+        "adp": [float(i + 1) for i in range(n)],
+        "proj_blend": [18.0 - i * 0.04 for i in range(n)],
+        "games": pl.Series([14] * n, dtype=pl.UInt32),
+    })
+
+
+def _poll_once(monkeypatch, taken, capsys, interval=0):
+    """Run `poll` for a single pass by making the second sleep raise."""
+    board_df = _stub_board()
+    monkeypatch.setattr(live, "_load_board", lambda now=None: board_df)
+    from hub.draft import state as state_mod
+    monkeypatch.setattr(state_mod, "sync_from_espn",
+                        lambda *a, **k: state_mod.DraftState(taken=list(taken)))
+    calls = {"n": 0}
+
+    def _sleep(_):
+        calls["n"] += 1
+        raise KeyboardInterrupt
+    monkeypatch.setattr(live.time, "sleep", _sleep)
+    live.poll(interval, my_slot=3)
+    return capsys.readouterr().out
+
+
+def test_the_poller_prints_a_board_and_stops_cleanly(monkeypatch, capsys):
+    out = _poll_once(monkeypatch, [f"Player {i:03d}" for i in range(5)], capsys)
+    assert "polling ESPN" in out
+    assert "stopped" in out and "draft_board.json" in out, \
+        "on the way out it must say where the fallback board is"
+
+
+def test_the_poller_survives_espn_being_unreachable(monkeypatch, capsys):
+    """The real path: `sync_from_espn` swallows its own failure and returns whatever is on
+    disk, so the poller keeps going against stale state. A traceback at 2am is the failure
+    that matters; a stale board is recoverable."""
+    board_df = _stub_board()
+    monkeypatch.setattr(live, "_load_board", lambda now=None: board_df)
+    from hub.draft import state as state_mod
+    from hub.fetch import espn as espn_fetch
+
+    def _unreachable(*a, **k):
+        raise RuntimeError("403")
+    monkeypatch.setattr(espn_fetch, "league_settings", _unreachable)
+    monkeypatch.setattr(state_mod, "load", lambda path=None: state_mod.DraftState(
+        taken=[f"Player {i:03d}" for i in range(4)]))
+
+    def _sleep(_):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(live.time, "sleep", _sleep)
+    live.poll(0, my_slot=3)
+    out = capsys.readouterr().out
+    assert "stopped" in out, "ESPN being down must not kill the poller"
+
+
+def test_replay_needs_a_draft_to_replay(monkeypatch, capsys):
+    monkeypatch.setattr(live, "_load_board", lambda now=None: _stub_board())
+    from hub.draft import state as state_mod
+    monkeypatch.setattr(state_mod, "sync_from_espn",
+                        lambda *a, **k: state_mod.DraftState(taken=[]))
+    assert live.main(["--replay", "2025"]) == 1
+    assert "no 2025 draft to replay" in capsys.readouterr().err
+
+
+def test_replay_runs_against_todays_board(monkeypatch, capsys):
+    monkeypatch.setattr(live, "_load_board", lambda now=None: _stub_board())
+    from hub.draft import state as state_mod
+    monkeypatch.setattr(state_mod, "sync_from_espn", lambda *a, **k: state_mod.DraftState(
+        taken=[f"Player {i:03d}" for i in range(60)]))
+    assert live.main(["--replay", "2025"]) == 0
+    assert "replaying the 2025 draft" in capsys.readouterr().out
+
+
+def test_no_arguments_prints_help(capsys):
+    assert live.main([]) == 0
+    assert "usage:" in capsys.readouterr().out

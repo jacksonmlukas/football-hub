@@ -146,3 +146,24 @@ def test_spearman_selection_is_not_fooled_by_a_single_boundary_swap():
         pl.when(pl.col("player") == "P51").then(5000.0)
           .otherwise(pl.col("actual_points")).alias("actual_points"))
     assert tune.best_lambda_spearman(tune.sweep(spiked, lams=[0.0, 0.05, 0.1])) == 0.0
+
+
+# --- the CLI ---------------------------------------------------------------
+
+def test_no_sweep_flag_prints_help(capsys):
+    assert tune.main([]) == 0
+    assert "usage:" in capsys.readouterr().out
+
+
+def test_the_sweep_runs_offline(monkeypatch, capsys):
+    """`holdout` is the only network-touching part; the sweep and the report are arithmetic."""
+    h = pl.DataFrame({
+        "player": [f"P{i}" for i in range(60)],
+        "ecr": [float(i + 1) for i in range(60)],
+        "z_regress": [((i % 7) - 3) / 2.0 for i in range(60)],
+        "actual_points": [100.0 - i for i in range(60)],
+    })
+    monkeypatch.setattr(tune, "holdout", lambda s, b: h)
+    assert tune.main(["--sweep"]) == 0
+    out = capsys.readouterr().out
+    assert "projection_lambda sweep" in out

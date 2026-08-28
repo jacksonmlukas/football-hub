@@ -15,7 +15,6 @@ import pytest
 
 from hub.draft import board
 
-
 # The DRAFT_BOARD contract requires 300 rows, so these are league-sized rather than toy.
 # `games` is UInt32 because the contract declares it and now checks it.
 N = 320
@@ -145,7 +144,7 @@ def test_proj_blend_falls_back_when_espn_has_no_projection(offline):
 def test_a_historical_board_skips_the_espn_stages(offline, capsys):
     """ESPN publishes ADP, scoring and roster slots for the current season only, so asking
     for a 2022 board and reading 2026 ADP onto it is a contradiction, not a config choice."""
-    b, report = board.build(season=2022, as_of="2022-09-01")
+    _, report = board.build(season=2022, as_of="2022-09-01")
     assert report.adp is False and report.scoring_checked is False
     out = capsys.readouterr().out
     assert "current season only" in out
@@ -182,7 +181,7 @@ def test_a_scoring_mismatch_is_shouted_not_swallowed(offline, capsys):
     the few things allowed to interrupt the operator."""
     from hub.fetch import espn as espn_fetch
     offline.setattr(espn_fetch, "scoring_settings", lambda: {"rec": 0.5})
-    b, report = board.build()
+    _, report = board.build()
     assert report.scoring_checked is True
     out = capsys.readouterr().out
     assert "SCORING MISMATCH" in out and "wrong weights" in out
@@ -210,7 +209,7 @@ def test_a_roster_mismatch_is_shouted(offline, capsys):
 def test_a_matching_roster_says_nothing(offline, capsys):
     from hub.config import RosterConfig, starters
     from hub.fetch import espn as espn_fetch
-    slots = {k: v for k, v in starters(RosterConfig()).items()}
+    slots = dict(starters(RosterConfig()))
     offline.setattr(espn_fetch, "league_settings",
                     lambda *a, **k: espn_fetch.LeagueView(None, slots))
     _, report = board.build()
