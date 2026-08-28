@@ -478,6 +478,68 @@ def _stage(board: pl.DataFrame, report: BuildReport, flag: str, label: str,
         return board
 
 
+def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
+                   season: int, season_ahead: int) -> pl.DataFrame:
+    """Everything the market contributes once ADP is in hand.
+
+    Extracted so it can run under `_stage` like the other five. It used to sit inline
+    under no `try` at all -- forty-odd lines including `_attach_edge`, `proj_blend`, both
+    corrections and `corrected_adp` -- while `report.adp = True` was set by hand above it.
+    So the one stage whose flag two renderers read was the one stage the degradation
+    policy did not cover, and a failure anywhere in here did not degrade: it propagated to
+    `build_or_last_good` and served YESTERDAY'S board, which is a far bigger hammer than
+    degrading for a stage that is advisory by design.
+
+    On failure `_stage` returns the board it was handed, so the `adp` column is not on it
+    either -- the outcome is exactly ECR-only mode, which is why the failure note uses the
+    same words `espn_adp` uses when the fetch itself comes back empty. One outcome, one
+    vocabulary.
+    """
+    board = _attach_edge(board, adp, league_size)
+    # The forecast the optimiser plays on: the market's forward projection, nudged by
+    # the xFP regression signal. Keeping VOR on xFP alone would have the greedy rank
+    # players on last season while the simulation scores them on this one -- the two
+    # must share a basis or the "edge" is just the gap between the two signals.
+    board = board.with_columns(
+        pl.coalesce(
+            (pl.col("proj_ppg") + pl.col("xfp_per_game")) / 2.0,
+            pl.col("proj_ppg"), pl.col("xfp_per_game"),
+        ).alias("proj_blend"))
+    # Mark quarterbacks down for last season's touchdown luck. ESPN's projection carries
+    # the same bias the draft room does, but only at QB (-0.540 points per point of
+    # luck, 99.5%; see docs/td-luck.md). This has to happen here rather than in the
+    # display, because `hub.draft.optimize` scores seasons against proj_blend -- a bias
+    # left in this column is a bias in every P(win) the optimiser reports.
+    #
+    # The size of the correction is kept, not just its effect. `proj_correction` is what
+    # our measurements say the market is wrong by, in points per game, and it is what
+    # `optimize.corrected_adp` converts into a pick shift. Recovering it as a delta
+    # rather than recomputing it means the number THE PICK ranks on and the number
+    # printed beside it can never disagree.
+    raw = board["proj_blend"]
+    board = td_regression.correct_projection(board)
+    # And for his own availability history, where the market leaves a residual: QB and
+    # WR. Running backs are left alone -- the market already prices their durability.
+    board = durability.correct_projection(board)
+    board = board.with_columns(
+        (pl.col("proj_blend") - raw).alias("proj_correction"))
+    # What THE PICK ranks on: ADP moved by the correction, bounded. See
+    # `optimize.corrected_adp` and ADR-0011.
+    from hub.draft.optimize import corrected_adp
+    board = board.with_columns(corrected_adp(board).alias("adp_corrected"))
+    # Replacement on the projection scale rather than the xFP one, so `vor_proj` and
+    # `proj_blend` are the same currency.
+    pb = replacement_levels(board["pos"], board["proj_blend"], board["games"],
+                            league_size)
+    board = board.with_columns(
+        (pl.col("proj_blend")
+         - pl.col("pos").replace_strict(pb, default=0.0)).alias("vor_proj"))
+    n = int(board["edge"].is_not_null().sum())
+    print(f"  ESPN ADP: {n} drafted players priced; edge on a common scale")
+
+    return board
+
+
 def build(league_size: int = 12, season: int = 2025, *,
           season_ahead: int = SEASON_AHEAD,
           as_of: str | None = None) -> tuple[pl.DataFrame, BuildReport]:
@@ -548,49 +610,10 @@ def build(league_size: int = 12, season: int = 2025, *,
 
     adp = espn_adp(league_size, season_ahead) if live else None
     if adp is not None:
-        report.adp = True
-        board = _attach_edge(board, adp, league_size)
-        # The forecast the optimiser plays on: the market's forward projection, nudged by
-        # the xFP regression signal. Keeping VOR on xFP alone would have the greedy rank
-        # players on last season while the simulation scores them on this one -- the two
-        # must share a basis or the "edge" is just the gap between the two signals.
-        board = board.with_columns(
-            pl.coalesce(
-                (pl.col("proj_ppg") + pl.col("xfp_per_game")) / 2.0,
-                pl.col("proj_ppg"), pl.col("xfp_per_game"),
-            ).alias("proj_blend"))
-        # Mark quarterbacks down for last season's touchdown luck. ESPN's projection carries
-        # the same bias the draft room does, but only at QB (-0.540 points per point of
-        # luck, 99.5%; see docs/td-luck.md). This has to happen here rather than in the
-        # display, because `hub.draft.optimize` scores seasons against proj_blend -- a bias
-        # left in this column is a bias in every P(win) the optimiser reports.
-        #
-        # The size of the correction is kept, not just its effect. `proj_correction` is what
-        # our measurements say the market is wrong by, in points per game, and it is what
-        # `optimize.corrected_adp` converts into a pick shift. Recovering it as a delta
-        # rather than recomputing it means the number THE PICK ranks on and the number
-        # printed beside it can never disagree.
-        raw = board["proj_blend"]
-        board = td_regression.correct_projection(board)
-        # And for his own availability history, where the market leaves a residual: QB and
-        # WR. Running backs are left alone -- the market already prices their durability.
-        board = durability.correct_projection(board)
-        board = board.with_columns(
-            (pl.col("proj_blend") - raw).alias("proj_correction"))
-        # What THE PICK ranks on: ADP moved by the correction, bounded. See
-        # `optimize.corrected_adp` and ADR-0011.
-        from hub.draft.optimize import corrected_adp
-        board = board.with_columns(corrected_adp(board).alias("adp_corrected"))
-        # Replacement on the projection scale rather than the xFP one, so `vor_proj` and
-        # `proj_blend` are the same currency.
-        pb = replacement_levels(board["pos"], board["proj_blend"], board["games"],
-                                league_size)
-        board = board.with_columns(
-            (pl.col("proj_blend")
-             - pl.col("pos").replace_strict(pb, default=0.0)).alias("vor_proj"))
-        n = int(board["edge"].is_not_null().sum())
-        print(f"  ESPN ADP: {n} drafted players priced; edge on a common scale")
-
+        board = _stage(board, report, "adp", "market corrections",
+                       lambda b: _attach_market(b, adp, league_size=league_size,
+                                                season=season, season_ahead=season_ahead),
+                       on_fail="running ECR-only mode.")
     # The board's columns are its interface -- roughly fourteen modules read them by name --
     # and this contract was declared in `hub.contracts` and applied to nothing at all. It
     # covers only what something downstream reads *unconditionally*; the optional columns

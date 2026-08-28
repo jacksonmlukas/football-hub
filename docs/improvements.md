@@ -528,6 +528,30 @@ spelled four ways.
 
 ---
 
+### 17. `ROOT` is declared eight times, and it does not matter much
+
+**Investigated 2026-08-27; recorded rather than fixed.** The review flagged three
+declarations of the repo root; there are eight — `store`, `publish`, `board`, `tune`, `state`,
+`nflverse`, `cfbd`, `odds` — at two different `parents[]` depths.
+
+**Checked at runtime rather than argued: all eight resolve to the same path**, and each depth
+is correct for its own nesting (2 for top-level modules, 3 for package modules). Each has one
+or two uses. There is no drift and no latent bug, so the case for a shared declaration is
+tidiness, and tidiness alone does not earn a change to eight files.
+
+**The part that is real** is narrower. `hub/draft/adp_history.py` and `hub/draft/adherence.py`
+take `ROOT` and `BOARD_PARQUET` from `board.py` — a 780-line module that pulls in nflreadpy,
+numpy, polars, contracts, durability, regression, report, state, availability, picks and
+playoff_sos — purely to learn a `Path`. The cost shows up immediately: `board.main` has to
+import `adp_history` inside the function body, with a comment saying why.
+
+**Do, if anything:** a `hub/paths.py` leaf holding `ROOT` and the two or three derived paths,
+so a module wanting a filename does not import a board builder. That removes two
+function-local imports. It is the smallest item on this list and is here so the next review
+does not rediscover the eight declarations and overrate them.
+
+---
+
 ## What is deliberately not on this list
 
 **Anything that tries to beat a market.** Objective 4 was retired on 2026-08-24 after six
