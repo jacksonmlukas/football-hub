@@ -252,7 +252,10 @@ def test_the_sos_path_renders(cli, capsys):
 
     from hub.draft import board as bm
     mp = _pt.MonkeyPatch()
-    mp.setattr(bm, "build_or_last_good", lambda *a, **k: (b, bm.BuildReport(adp=True), None))
+    # both flags: `sos` needs the stage to have run AND ADP to be present, which is the
+    # gate it was missing until 2026-08-27.
+    mp.setattr(bm, "build_or_last_good",
+               lambda *a, **k: (b, bm.BuildReport(adp=True, sos=True), None))
     assert board.main(["--sos"]) == 0
     assert "strength of schedule" in capsys.readouterr().out
     mp.undo()
