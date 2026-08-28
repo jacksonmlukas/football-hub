@@ -16,6 +16,14 @@ thing, and because two of these produced errors worth not repeating.
 | Age | next season | **null** — see below | this document |
 | **Snap-share trend** | next 3 weeks, in season | **POSITIVE** — partial r **+0.24** beyond PPG *and* ECR, 12/12 season-anchor cells, placebo-clean | [snap-trend-signal.md](snap-trend-signal.md) |
 | Snap-share trend | next 3 weeks, before week 8 | **null** — sign flips between seasons | [snap-trend-signal.md](snap-trend-signal.md) |
+| **Snap-share trend** | **next week**, week ≥ 8 | **POSITIVE** — partial r **+0.070** beyond PPG *and* weekly ECR, 5/5 seasons, placebo-clean | [weekly-screen.md](weekly-screen.md) |
+| **Prior TD rate per yard** | next week | **POSITIVE, negative sign** — partial r **−0.045**, 5/5 seasons. TD-carried scoring predicts *less* next week | [weekly-screen.md](weekly-screen.md) |
+| Implied team total | next week | **positive but confounded** — +0.044, 5/5, against a consensus scraped 6 days before kickoff | [weekly-screen.md](weekly-screen.md) |
+| Own spread | next week | **null** — vanishes controlling for the implied total (r = +0.83) | [weekly-screen.md](weekly-screen.md) |
+| Defence vs position | next week | **null** — +0.038 but 4/5 seasons | [weekly-screen.md](weekly-screen.md) |
+| Target-share trend | next week | **null** — +0.023, 4/5 seasons | [weekly-screen.md](weekly-screen.md) |
+| Wind | next week | **null** — sign flips between seasons | [weekly-screen.md](weekly-screen.md) |
+| Rest days | next week | **null** — −0.003 | [weekly-screen.md](weekly-screen.md) |
 
 ## Age
 
