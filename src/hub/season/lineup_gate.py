@@ -38,7 +38,8 @@ import polars as pl
 
 from hub.draft.season import FLEX_FROM, FLEX_SLOTS, REG_SEASON_WEEKS, STARTERS
 from hub.draft.state import _norm
-from hub.models.measure import realised_ppg, summarise
+from hub.models.experiment import paired_report, walk_forward_inputs
+from hub.models.measure import summarise
 
 # What the optimiser is assumed to be playing against each week. The league's own weekly team
 # scores would be better and are not reconstructable for a simulated roster, so this is a
@@ -170,17 +171,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from hub.config import RosterConfig
     from hub.draft.backtest import market_strategy, play
-    from hub.draft.board import build
-    from hub.fetch import nflverse
 
     cfg = RosterConfig()
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     rosters: dict[int, list] = {}
-    realised: dict[int, pl.DataFrame] = {}
 
+    boards, realised = walk_forward_inputs(
+        seasons, on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
     for yr in seasons:
-        print(f"  building the {yr} board as of {yr}-09-01 ...")
-        board, _ = build(season=yr - 1, season_ahead=yr, as_of=f"{yr}-09-01")
+        board = boards[yr]
         # mu and sd from the same object the simulator uses, so the optimiser is fed exactly
         # what it is fed live -- the fitted square-root spread law, per position.
         from hub.models.predict import moments
@@ -188,10 +187,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         who = pred["player"].to_list()
         proj_of = dict(zip(who, pred["mu"].fill_null(0.0).to_list(), strict=True))
         sd_of = dict(zip(who, pred["sd"].fill_null(0.0).to_list(), strict=True))
-        stats = nflverse.load("player_stats", [yr],
-                              cols=["player_id", "player_display_name", "position",
-                                    "season", "week", "fantasy_points_ppr"])
-        realised[yr] = realised_ppg(stats)
         made = []
         for k in range(a.drafts):
             names, pos = play(board, market_strategy(), my_slot=cfg.slot, teams=cfg.teams,
@@ -202,9 +197,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     paired = compare(rosters, realised)
     s = summarise(paired, seed=a.seed)
-    print(f"\n  n={int(s['n'])}  optimiser - projections = {s['mean']:+.2f} points per game")
-    print(f"  95% CI [{s['lo']:+.2f}, {s['hi']:+.2f}]   "
-          f"P(optimiser better) {s['p_better']*100:.1f}%")
+    for line in paired_report(s, arm_a="optimiser", arm_b="projections",
+                              unit="points per game"):
+        print(line)
     print(f"\n  {verdict(s)}")
     print("\n  Both arms see only projections. The optimiser's sole advantage is that it")
     print("  reads `sd` as well as `mu`, so it can start upside when the matchup wants it.")

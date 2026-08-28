@@ -55,6 +55,7 @@ from hub.draft.optimize import (
 )
 from hub.draft.season import REG_SEASON_WEEKS, lineup_points
 from hub.draft.state import DraftState, _norm
+from hub.models.experiment import paired_report, walk_forward_inputs
 from hub.models.measure import BOOTSTRAP, realised_ppg, summarise  # noqa: F401
 
 # Gaps between this harness and the tool it audits. Written here rather than in the result,
@@ -403,7 +404,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     a = ap.parse_args(argv)
 
     from hub.draft.board import build
-    from hub.fetch import nflverse
 
     if a.diagnose_corrections:
         print("  building the live board ...")
@@ -478,16 +478,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
-    boards, realised = {}, {}
-    for yr in seasons:
-        print(f"  building the {yr} board as of {yr}-09-01 ...")
-        boards[yr], _ = build(season=yr - 1, season_ahead=yr, as_of=f"{yr}-09-01")
-        # `position` and `season` are in the PLAYER_STATS contract's required set, so they
-        # are narrowed *in* rather than out -- the contract is validated after the narrowing.
-        stats = nflverse.load("player_stats", [yr],
-                              cols=["player_id", "player_display_name", "position",
-                                    "season", "week", "fantasy_points_ppr"])
-        realised[yr] = realised_ppg(stats)
+    boards, realised = walk_forward_inputs(
+        seasons, on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
 
     print(f"  playing {a.drafts} drafts x {len(seasons)} seasons, "
           f"{a.draft_sims} x {a.season_sims} sims per optimizer call ...")
@@ -495,9 +487,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                      n_draft_sims=a.draft_sims, n_season_sims=a.season_sims)
     s = summarise(paired, seed=a.seed)
 
-    print(f"\n  n={int(s['n'])}  optimizer - market = {s['mean']:+.2f} points per team game")
-    print(f"  95% CI [{s['lo']:+.2f}, {s['hi']:+.2f}]   "
-          f"P(optimizer better) {s['p_better']*100:.1f}%")
+    for line in paired_report(s, arm_a="optimizer", arm_b="market"):
+        print(line)
     print(f"\n  {verdict(s)}")
     print("\n  Limitations, fixed before the run:")
     for line in LIMITATIONS:

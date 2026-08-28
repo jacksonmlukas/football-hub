@@ -468,6 +468,60 @@ It is draft-path code and the freeze holds until 2026-08-31.
 
 ---
 
+### 15. `durability` and `regression` are one module written twice
+
+**Explored 2026-08-27.** Both files are the same four functions in the same order:
+`prior_season(season, cache)` → `<signal>(season)` → `attach(board, season)` →
+`correct_projection(board, column="proj_blend")`, each with a per-position `BETA` dict.
+`attach` differs by three tokens; `correct_projection` is the same
+`pos.replace_strict(BETA) * col` then `.clip(0.0)`. The `_norm` join dance is written twice.
+
+**One claim from the review does not survive checking, and it was the severe one.** The
+concern was that either signal could silently fail to attach while `correct_projection` still
+ran and contributed zero. It cannot: `correct_projection` opens with
+`if column not in board.columns or "td_luck" not in board.columns: return board`, and
+`BuildReport` reports the missing stage as `built without: td_luck`. Guarded, and surfaced.
+
+**What is real** is the duplication, and one measurable cost. `nflverse._cache_path` keys on
+the sorted column set — deliberately, so a caller asking for six columns is never served an
+earlier caller's five — so callers asking for different slices of `player_stats` download it
+separately. There were four slices: durability 7 columns, regression 13, backtest 6,
+lineup_gate 6. **Two of those four were merged on 2026-08-27** when `hub.models.experiment`
+took ownership of the column list; durability and regression remain distinct.
+
+**Do, post-draft:** one prior-season-correction shape parameterised by signal and coefficient.
+Low urgency — the duplication costs a reader's time and one extra download, not correctness.
+
+---
+
+### 16. `store.tables()` is one commit old and already used inconsistently
+
+**Explored 2026-08-27.** Two things, both small, both about a seam that exists and is bypassed.
+
+**The predicate is written twice.** `store.connect()` (store.py:58) and `store.tables()`
+(store.py:82) each carry their own copy of "a directory that is an identifier and holds
+parquet". `tables()`'s own docstring claims it is "discovered the same way `connect` discovers
+them, **so the two cannot disagree**" — which nothing enforces. The invariant is asserted in
+prose, not in code.
+
+**And `publish.py` ignores the seam.** `store.tables` was added earlier the same day to fix
+CLIs that raised `CatalogException` against a fresh clone. `publish.py` has the identical
+exposure and uses it **zero** times, handling the case with four bare `except Exception:`
+blocks instead (publish.py:70, 91, 102, 239). So a genuine schema break, a DuckDB lock and a
+typo in the SQL all reach the manifest as `"stale": true, "reason": "no predictions"`.
+
+**Adjacent, and the reason it is worth doing together:** `store.LAYOUT` owns the
+`week={week:02d}` zero-padding, and `publish` re-derives it three times
+(`f"preds_wk{week:02d}"` at :65 and :184, `f"{week:02d}"` as a query param at :69) then reads
+it back as `int(got["w"][0])` at :242. Four encodings of one partition key in a 333-line file,
+because the format is not part of any query helper's interface.
+
+**Do, post-draft:** one predicate, shared. `publish` asks `store.tables` like its two
+neighbours do. The partition format becomes part of a query helper rather than a convention
+spelled four ways.
+
+---
+
 ## What is deliberately not on this list
 
 **Anything that tries to beat a market.** Objective 4 was retired on 2026-08-24 after six
