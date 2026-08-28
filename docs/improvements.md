@@ -588,6 +588,34 @@ does not rediscover the eight declarations and overrate them.
 
 ---
 
+### 18. `board_as_of` is not reproducible
+
+**Found 2026-08-28 while building the waiver gate.** Two calls to `board_as_of(2024)` in one
+process return the same 1,103 players in a **different row order**, and `wk15_17_sos` differs
+below 1e-6 — an aggregation-order effect, most likely a threaded sum inside the SoS join.
+
+It matters because the draft indexes the board by **row**: an unstable order moves picks, which
+moves rosters, which moves every downstream measurement. `hub.season.weekly_gate` wobbled by
+~0.04 points a team-week between identical runs, and the first number published from it
+(−0.684) was one draw from an unstable process rather than a result.
+
+**This is not confined to the weekly gate.** `hub.draft.backtest` and `hub.season.lineup_gate`
+both draft from `board_as_of`, so their published numbers carry the same wobble. ADR-0009's
+−17.30 and the lineup gate's structural zero are both large enough that ±0.04 changes nothing,
+but "large enough not to matter" is a judgement that should be on the record rather than
+assumed.
+
+**Worked around, not fixed:** the weekly gate sorts the board by player before drafting, which
+made it deterministic across three consecutive runs. Sorted in the gate rather than in
+`board.build`, deliberately — that is draft-path code six days from a live draft and its
+tie-breaking must not move tonight.
+
+**Do, after the draft:** find the unstable aggregation and make `build` return a deterministically
+ordered frame, then drop the workaround. A measurement that cannot be reproduced to the last bit
+is one ADR-0007 says should not be steering anything.
+
+---
+
 ## What is deliberately not on this list
 
 **Anything that tries to beat a market.** Objective 4 was retired on 2026-08-24 after six

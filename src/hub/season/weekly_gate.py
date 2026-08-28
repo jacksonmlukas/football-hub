@@ -131,6 +131,98 @@ def lineup_points(realised: np.ndarray, pos: Sequence[str],
     return out
 
 
+# How many free agents to consider each week. The pool is hundreds deep and the decision is
+# evaluated pairwise against every droppable player, so it is capped -- and a free agent
+# outside the top fifteen by this arm's own score is not the one being missed.
+WAIVER_LOOK = 15
+
+
+def lineup_projection(roster: Sequence[int], pos: Sequence[str],
+                      score: np.ndarray) -> float:
+    """What this roster's best legal lineup *projects* to score, by this arm's own numbers."""
+    idx = starters_by_score([pos[i] for i in roster], score[list(roster)])
+    return float(sum(score[roster[j]] for j in idx))
+
+
+def waiver_swap(roster: list[int], pool: list[int], pos: Sequence[str],
+                score: np.ndarray, starters: int,
+                *, look: int = WAIVER_LOOK) -> tuple[int, int] | None:
+    """One add/drop for a week, chosen by **what it does to the starting lineup**.
+
+    The obvious rule -- add the highest-scoring free agent, drop the lowest-scoring bench
+    player -- is wrong, and wrong in a way that only bites one arm. Absolute weekly points are
+    much larger at quarterback than anywhere else, so it adds a backup quarterback every week:
+    the first run of this experiment picked up Russell Wilson at a projected 24.4 (he scored
+    5.1), Marcus Mariota at 16.5 (-2.1), Jayden Daniels at 18.5 (2.7), for a mean add of 19.6
+    projected against 13.7 realised. You start one quarterback. A second is a roster spot spent
+    on somebody who will never play.
+
+    Consensus rank does not make that mistake, because a weekly *ranking* already prices
+    positional scarcity -- so the naive rule handed the incumbent a free win that had nothing
+    to do with either arm's forecasting. Scoring the swap by the projected starting lineup
+    removes it: a backup quarterback cannot improve a lineup whose quarterback slot is already
+    filled by someone better.
+
+    Both arms run this identically over an identical pool. Only `score` differs.
+    """
+    from hub.draft.season import STARTERS
+    if not pool or len(roster) <= starters:
+        return None
+    held: dict[str, int] = {}
+    for i in roster:
+        held[pos[i]] = held.get(pos[i], 0) + 1
+    droppable = [i for i in roster
+                 if pos[i] not in STARTERS or held.get(pos[i], 0) > STARTERS[pos[i]]]
+    if not droppable:
+        return None
+
+    base = lineup_projection(roster, pos, score)
+    best, gain = None, 0.0
+    for add in sorted(pool, key=lambda i: score[i], reverse=True)[:look]:
+        for drop in droppable:
+            trial = [i for i in roster if i != drop] + [add]
+            lift = lineup_projection(trial, pos, score) - base
+            if lift > gain:
+                best, gain = (add, drop), lift
+    return best
+
+
+def season_points(realised: np.ndarray, pos: Sequence[str], score: np.ndarray,
+                  roster: Sequence[int], pool: Sequence[int], weeks: Sequence[int],
+                  *, churn: bool = False,
+                  addable: np.ndarray | None = None) -> dict[int, float]:
+    """Points per week for one arm, optionally streaming a player a week.
+
+    `realised`, `score` and `pos` are over the whole **universe** of board players, and a
+    roster is a list of indices into it that evolves. With `churn=False` the roster never
+    changes and this is the frozen-roster gate.
+
+    `addable` masks the *pool* -- never the roster -- to the players both arms can score that
+    week. Restricting it is what keeps this able to fail: consensus ranks only 35.8% of a
+    935-player free-agent pool, so an unmasked pool would let the arm under test add six
+    hundred players the incumbent cannot score at all. Masking the roster instead would bench
+    a rostered player for being unranked, which is a different rule and the wrong one.
+    """
+    from hub.draft.season import STARTERS
+    need = sum(STARTERS.values())
+    cur, free = list(roster), list(pool)
+    out: dict[int, float] = {}
+    for w in weeks:
+        col = score[:, w - 1]
+        if churn:
+            eligible = ([i for i in free if addable[i, w - 1]]
+                        if addable is not None else free)
+            swap = waiver_swap(cur, eligible, pos, col, need)
+            if swap is not None:
+                add, drop = swap
+                cur = [i for i in cur if i != drop] + [add]
+                free = [i for i in free if i != add] + [drop]
+        idx = starters_by_score([pos[i] for i in cur], col[cur])
+        chosen = [cur[j] for j in idx]
+        out[w] = float(realised[chosen, w - 1].sum()) if chosen else 0.0
+    return out
+
+
 def compare(rosters: dict[int, list],
             realised: dict[tuple[int, int], np.ndarray],
             consensus: dict[tuple[int, int], np.ndarray],
@@ -160,6 +252,40 @@ def compare(rosters: dict[int, list],
                 if covered is not None and (season, w + 1) not in covered:
                     continue
                 rows.append({"season": season, "roster": k, "week": w + 1,
+                             "consensus": a[w], "weekly": b[w]})
+    out = pl.DataFrame(rows)
+    if out.is_empty():
+        return out
+    return out.with_columns((pl.col("weekly") - pl.col("consensus")).alias("diff"))
+
+
+def compare_universe(rosters: dict[int, list[list[int]]], pos: dict[int, Sequence[str]],
+                     realised: dict[int, np.ndarray], consensus: dict[int, np.ndarray],
+                     weekly: dict[int, np.ndarray], pool: dict[int, list[list[int]]],
+                     covered: set[tuple[int, int]],
+                     addable: dict[int, np.ndarray] | None = None,
+                     weeks: Sequence[int] = GATE_WEEKS,
+                     *, churn: bool = False) -> pl.DataFrame:
+    """One row per roster-week, on the universe representation, with or without churn.
+
+    `churn=False` reproduces `compare` exactly -- and it is checked against the published
+    frozen result rather than assumed, because a churn number is only worth reading if the
+    machinery underneath it gives the same answer as the machinery that produced the last one.
+    """
+    rows = []
+    for season in sorted(rosters):
+        wks = [w for w in weeks if (season, w) in covered]
+        add = None if addable is None else addable[season]
+        for k, roster in enumerate(rosters[season]):
+            # The pool is per draft: who is a free agent depends on what the other eleven
+            # teams took in that room.
+            free = pool[season][k]
+            a = season_points(realised[season], pos[season], consensus[season], roster,
+                              free, wks, churn=churn, addable=add)
+            b = season_points(realised[season], pos[season], weekly[season], roster,
+                              free, wks, churn=churn, addable=add)
+            for w in wks:
+                rows.append({"season": season, "roster": k, "week": w,
                              "consensus": a[w], "weekly": b[w]})
     out = pl.DataFrame(rows)
     if out.is_empty():
@@ -226,9 +352,34 @@ def verdict(summary: dict, seasons: pl.DataFrame,
     if summary["hi"] < 0 and won == 0:
         return "REMOVE", ("REMOVE: worse than a free ranking in every season. Delete the "
                           "module rather than shipping it as an option.")
+    zero = "the interval contains zero" if summary["lo"] <= 0 <= summary["hi"] else (
+        "the interval excludes zero but the sign is not consistent across seasons")
     return "SHOW", ("SHOW, NEVER RANK ON: printed beside consensus, never sorted on. "
-                    f"Won {won}/{total} seasons and the interval contains zero -- absence of "
-                    "evidence, not evidence of equivalence.")
+                    f"Won {won}/{total} seasons and {zero} -- absence of evidence, not "
+                    "evidence of equivalence.")
+
+
+def coverage_universe(rosters: dict[int, list[list[int]]],
+                      consensus: dict[int, np.ndarray], realised: dict[int, np.ndarray],
+                      covered: set[tuple[int, int]],
+                      weeks: Sequence[int] = GATE_WEEKS) -> dict[str, float]:
+    """`coverage`, over the universe representation. Same two quantities, same distinction."""
+    cells = unranked = failed = 0
+    for season, made in rosters.items():
+        for roster in made:
+            for w in weeks:
+                if (season, w) not in covered:
+                    continue
+                col = consensus[season][roster, w - 1]
+                pts = realised[season][roster, w - 1]
+                cells += col.size
+                un = col == UNRANKED
+                unranked += int(un.sum())
+                failed += int((un & (pts > 0)).sum())
+    if not cells:
+        return {"cells": 0, "unranked": float("nan"), "join_failure": float("nan")}
+    return {"cells": float(cells), "unranked": unranked / cells,
+            "join_failure": failed / cells}
 
 
 def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - network
@@ -236,6 +387,10 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         prog="hub.season.weekly_gate",
         description="Does the Weekly projection beat weekly consensus rank at setting lineups?")
     ap.add_argument("--run", action="store_true")
+    ap.add_argument("--churn", action="store_true",
+                    help="one waiver add/drop a week, both arms, from a pool both can score")
+    ap.add_argument("--open-pool", action="store_true",
+                    help=argparse.SUPPRESS)   # the asymmetric pool: NOT the gate
     ap.add_argument("--seasons", default="2022,2023,2024,2025")
     ap.add_argument("--drafts", type=int, default=20, help="rosters per season")
     ap.add_argument("--seed", type=int, default=0)
@@ -243,16 +398,20 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     if not a.run:
         ap.print_help()
         return 0
-    from hub.season.weekly_gate_data import assemble
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
-    rosters, realised, consensus, weekly, covered = assemble(
+    from hub.season.weekly_gate_data import assemble_universe
+    ros, pos, realised, consensus, weekly, pool, addable, covered = assemble_universe(
         seasons, drafts=a.drafts, seed=a.seed)
-    cover = coverage(consensus, realised, covered)
-    paired = compare(rosters, realised, consensus, weekly, covered)
+    cover = coverage_universe(ros, consensus, realised, covered)
+    paired = compare_universe(ros, pos, realised, consensus, weekly, pool, covered,
+                              None if a.open_pool else addable, churn=a.churn)
     s = cluster_bootstrap(paired, seed=a.seed)
     seasons_tbl = per_season(paired)
+    mode = ("one add/drop a week, pool both arms can score" if a.churn and not a.open_pool
+            else "one add/drop a week, OPEN POOL -- not the gate" if a.churn
+            else "frozen rosters")
     print(f"\n  {int(s['n'])} roster-weeks over {int(s['clusters'])} rosters, "
-          f"on the {len(covered)} weeks consensus covers")
+          f"on the {len(covered)} weeks consensus covers   [{mode}]")
     print(f"  unranked {cover['unranked']:.1%}, of which a join failure "
           f"{cover['join_failure']:.1%} (floor {VOID_FLOOR:.0%})")
     print(seasons_tbl)

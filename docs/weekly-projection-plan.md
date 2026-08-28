@@ -457,6 +457,71 @@ measurement, and it belongs in [signal-screens.md](signal-screens.md) beside the
 
 ---
 
+## Gate B with waiver churn — pre-registered 2026-08-28, before it ran
+
+[ADR-0016](adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md) named this as the
+one experiment that could flip the result: the first gate freezes a roster for the season,
+which deletes the streaming decision — and deciding who to add for one week is where a
+week-specific number should have its clearest edge over a season-long rank.
+
+**The design, fixed here before any number exists.**
+
+| | |
+|---|---|
+| Cadence | **one add/drop per week per arm**, identical for both |
+| Pool | free agents: board players **no team drafted**, plus anyone an arm has dropped |
+| Rule | add the best free agent by *that arm's own* score for that week; drop that arm's lowest-scoring bench player; swap only if the add scores higher |
+| Legality | never drop below the players needed to field each required slot |
+| Timing | the add uses only that week's pre-kickoff scores, the same ones that set the lineup |
+| Rosters | diverge across arms after week one. That is the experiment |
+| Metric | unchanged: points per team-week, paired by roster-week, clustered by roster |
+
+**The addable pool is restricted to players *both* arms can score that week** — a consensus
+rank **and** a Weekly projection. This is the decision that keeps the gate able to fail, and it
+costs the arm under test its most attractive advantage, so it is stated first.
+
+Measured before choosing: consensus ranks only **35.8%** of a 935-player free-agent pool, and
+67% of the top 120. So an unrestricted pool would let the Weekly arm add roughly six hundred
+players the incumbent cannot score at all. Three reasons that is not the experiment:
+
+1. **Symmetry is the rule a gate dies on.** An arm adding from a pool the other cannot score is
+   the defect that made the first `lineup_gate` unable to fail, pointed the other way.
+2. **A player absent from the page is absent because it truncates at ~460**, not because
+   consensus declined him. We cannot know the incumbent's answer, so we must not invent one.
+3. **It is conservative.** It removes the speculative half of the edge. A win under it is real.
+
+The unrestricted version will be reported alongside and labelled as **not the gate**, so the
+size of what is being given up is visible rather than assumed.
+
+**Pre-stated expectation.** Churn helps the Weekly arm more than the incumbent, because a
+Usage spike is exactly what a season-long rank is slow to price — but not by the 0.68 points a
+team-week it is behind. Expected outcome: still SHOW, with a smaller gap.
+
+### Result, 2026-08-28: wrong, and by a factor of twelve in the wrong direction
+
+**−3.790 points per team-week, CI [−5.243, −2.382], 0 of 3 seasons.** The gap went from −0.30
+to −3.79. Unrestricting the pool — the version pre-registered as *not the gate* — gives −3.661,
+so the masking decision was right and not load-bearing.
+
+The cause is a **winner's curse**: the projection is unbiased at every sample size, but a
+waiver pick is the *maximum* of a noisy estimator over hundreds of candidates, and among
+players with ≤4 games the top 400 by projection project 23.00 and score 17.12. See
+[weekly-gate.md](weekly-gate.md).
+
+### The next experiment, pre-registered here rather than applied tonight
+
+**Shrink each player's projection toward his positional mean by his sample size**, the way
+`TALENT_CV` already shrinks a season projection, and re-run both gates. Written down now
+because doing it tonight would be a model change made after seeing a gate fail —
+[ADR-0009](adr/0009-championship-equity-does-not-pick.md)'s tripwire lesson, *do not touch it
+after you have seen what it caught*.
+
+Pre-stated: shrinkage should help the churn gate materially and the frozen gate barely, since
+frozen rosters are all thick-sample. If it helps the frozen gate too, something else changed
+and the run is suspect.
+
+---
+
 ## What is settled, and by whom
 
 Every decision above was fixed on 2026-08-27 in a grilling session, before any measurement.

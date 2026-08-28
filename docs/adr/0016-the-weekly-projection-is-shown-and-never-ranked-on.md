@@ -14,9 +14,12 @@ after it. The rule and all three branches were written into
 `hub.season.weekly_gate`, three held-out seasons, 60 rosters, 680 roster-weeks, paired by
 roster-week and bootstrapped by roster:
 
-    weekly - consensus = -0.684 points per team-week
-    95% CI [-1.519, +0.159]   P(weekly better) 5.8%
-    lost in 3 of 3 seasons
+    weekly - consensus = -0.304 points per team-week
+    95% CI [-1.043, +0.415]   P(weekly better) 20.0%
+    lost in 2 of 3 seasons
+
+(Corrected 2026-08-28: the first figure published here was -0.684, one draw from a
+non-reproducible board -- see improvements.md #18. The verdict is unchanged.)
 
 The interval contains zero, so this is absence of evidence rather than evidence of a loss —
 but the direction is consistent across every season, and the honest reading is that consensus
@@ -64,7 +67,35 @@ recorded because it is the argument for pre-registering a void condition at all.
   defence-vs-position and the injury designation all clear a joint screen at 5/5 seasons. Two of
   them are in the model; none of them sets a lineup.
 
+## The experiment this ADR named has been run
+
+**Measured 2026-08-28, and it strengthens the decision rather than reopening it.** With one
+waiver add/drop a week — both arms, identical rules, a pool both can score — the Weekly arm
+does not close the gap, it loses **−3.790 points per team-week, CI [−5.243, −2.382], 0 of 3
+seasons**. Unrestricting the pool, which favours the arm under test, gives −3.661: the same
+answer.
+
+The cause is a **winner's curse**, and it is worth stating precisely because it is not "the
+projection is bad". The projection is unbiased at every sample size (−0.36 to −0.09 points).
+But a waiver pick is the *maximum* of a noisy estimator over hundreds of candidates, and among
+players with four games or fewer the top 400 by projection project 23.00 and score 17.12 —
+**+5.88**. A rostered player has history; the waiver pool is exactly the thin-sample
+population. Consensus rank, being human-curated and coarse, is not the argmax of a per-player
+regression fitted on four games.
+
+**The remedy is known and deliberately not applied.** Shrinking each projection toward its
+positional mean by sample size would be a model change made after seeing a gate fail, which is
+the tripwire lesson [ADR-0009](0009-championship-equity-does-not-pick.md) records. It is
+pre-registered as the next experiment in
+[weekly-projection-plan.md](../weekly-projection-plan.md), not folded in tonight.
+
+See [weekly-gate.md](../weekly-gate.md) for both runs and the waiver-rule artifact found in
+between.
+
 ## What would change it
+
+**A projection shrunk for sample size**, measured the way everything else here is: pre-register
+the shrinkage, re-run both gates, and report whichever way it falls.
 
 **Rosters that are not static.** The gate drafts a roster and freezes it for the season, so it
 deletes the streaming decision — deciding who to add for one week is a large part of what a

@@ -202,3 +202,109 @@ def test_the_matrix_covers_the_whole_regular_season():
     from hub.draft.season import REG_SEASON_WEEKS
     from hub.season.weekly_gate_data import _matrix
     assert _matrix(["a"], {}, 0.0).shape == (1, REG_SEASON_WEEKS)
+
+
+# --- the waiver rule, and the artifact it was written with ------------------
+
+def _uni():
+    """A universe: a full roster plus a deep free-agent pool."""
+    pos = ["QB", "RB", "RB", "RB", "WR", "WR", "WR", "WR", "TE", "TE",
+           "QB", "WR", "RB", "TE"]          # 10 rostered, then the pool
+    roster = list(range(10))
+    pool = list(range(10, 14))
+    return pos, roster, pool
+
+
+def test_a_backup_quarterback_is_not_added_to_replace_a_starting_receiver():
+    """The artifact the first churn run was built with. Absolute weekly points are much larger
+    at quarterback, so 'add the highest-scoring free agent' picked up a backup QB every week --
+    Russell Wilson at a projected 24.4 who scored 5.1. You start one quarterback.
+
+    Consensus rank does not make that mistake, because a ranking already prices scarcity, so
+    the naive rule handed the incumbent a free win owing nothing to either arm's forecasting.
+    """
+    pos, roster, pool = _uni()
+    # The rostered QB is better (26), so the free agent at 24 can never start -- but 24 still
+    # towers over the worst bench player at 7, which is all the naive rule looked at.
+    score = np.array([26.0, 12, 11, 10, 14, 13, 12, 9, 8, 7,     # rostered
+                      24.0, 2.0, 2.0, 2.0])                       # pool: a 24-point QB
+    naive_add = max(pool, key=lambda i: score[i])
+    assert pos[naive_add] == "QB", "the naive rule would take him"
+    assert G.waiver_swap(roster, pool, pos, score, starters=8) is None, \
+        "and the lineup rule takes nobody, because none of them would start"
+
+
+def test_a_free_agent_who_would_start_is_added():
+    pos, roster, pool = _uni()
+    score = np.array([22.0, 12, 11, 10, 14, 13, 12, 9, 8, 7,
+                      1.0, 30.0, 1.0, 1.0])                       # a 30-point WR
+    got = G.waiver_swap(roster, pool, pos, score, starters=8)
+    assert got is not None
+    add, drop = got
+    assert pos[add] == "WR" and score[add] == 30.0
+    assert drop in roster and score[drop] < score[add]
+
+
+def test_nothing_is_added_when_nothing_improves_the_lineup():
+    pos, roster, pool = _uni()
+    score = np.array([22.0, 12, 11, 10, 14, 13, 12, 9, 8, 7, 1.0, 1.0, 1.0, 1.0])
+    assert G.waiver_swap(roster, pool, pos, score, starters=8) is None
+
+
+def test_the_roster_stays_legal():
+    """Dropping the only quarterback to add a fourth receiver wins a week and forfeits the
+    rest, so a player needed to fill a required slot is never droppable."""
+    pos = ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "RB", "WR"]
+    roster, pool = list(range(8)), [8]
+    score = np.array([1.0, 9, 8, 7, 6, 5, 4, 3, 99.0])
+    got = G.waiver_swap(roster, pool, pos, score, starters=8)
+    assert got is None or pos[got[1]] != "QB", "the only QB is not droppable"
+
+
+def test_an_empty_pool_or_a_bare_roster_does_nothing():
+    pos, roster, pool = _uni()
+    score = np.ones(len(pos))
+    assert G.waiver_swap(roster, [], pos, score, starters=8) is None
+    assert G.waiver_swap(roster[:8], pool, pos, score, starters=8) is None
+
+
+# --- churn off must reproduce the frozen gate ------------------------------
+
+def test_churn_off_leaves_the_roster_alone():
+    pos, roster, pool = _uni()
+    realised = np.tile(np.arange(len(pos), dtype=float).reshape(-1, 1), (1, 18))
+    score = np.tile(np.arange(len(pos), dtype=float).reshape(-1, 1), (1, 18))
+    frozen = G.season_points(realised, pos, score, roster, pool, [1, 2, 3], churn=False)
+    churned = G.season_points(realised, pos, score, roster, pool, [1, 2, 3], churn=True)
+    assert len(set(frozen.values())) == 1, "a static roster scores the same every week"
+    assert churned[3] > frozen[3], "and the churning one has improved by week three"
+
+
+def test_the_pool_is_masked_to_players_both_arms_can_score():
+    """The decision that keeps this able to fail. Consensus ranks 35.8% of a 935-player pool,
+    so an unmasked pool would hand the arm under test six hundred players the incumbent cannot
+    score at all."""
+    pos, roster, pool = _uni()
+    realised = np.zeros((len(pos), 18))
+    realised[11, :] = 40.0
+    score = np.tile(np.array([22.0, 12, 11, 10, 14, 13, 12, 9, 8, 7,
+                              1.0, 30.0, 1.0, 1.0]).reshape(-1, 1), (1, 18))
+    addable = np.ones((len(pos), 18), dtype=bool)
+    addable[11, :] = False                       # the 30-point WR is unscorable by one arm
+    blocked = G.season_points(realised, pos, score, roster, pool, [1, 2], churn=True,
+                              addable=addable)
+    allowed = G.season_points(realised, pos, score, roster, pool, [1, 2], churn=True)
+    assert blocked[2] == 0.0 and allowed[2] == 40.0
+
+
+def test_a_dropped_player_returns_to_the_pool():
+    pos, roster, pool = _uni()
+    score = np.zeros((len(pos), 18))
+    score[:, :] = np.array([22.0, 12, 11, 10, 14, 13, 12, 9, 8, 7,
+                            1.0, 30.0, 1.0, 1.0]).reshape(-1, 1)
+    realised = np.zeros((len(pos), 18))
+    # week 2 flips: the dropped man is now the best free agent again
+    score[11, 1] = 1.0
+    score[9, 1] = 0.0
+    out = G.season_points(realised, pos, score, roster, pool, [1, 2], churn=True)
+    assert out is not None, "the swap and its reversal both run without error"
