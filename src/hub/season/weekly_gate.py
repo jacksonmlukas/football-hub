@@ -1,0 +1,267 @@
+"""Does a lineup set off the **Weekly projection** beat one set off weekly consensus rank?
+
+This is **the** gate for `hub.models.weekly`.
+[ADR-0015](../../../docs/adr/0015-the-weekly-gate-is-a-decision-not-an-accuracy-test.md)
+records why it has to be a decision and not an accuracy test: six seasons of historical
+weekly FantasyPros consensus ship `ecr` and no `r2p_pts`, so the only incumbent worth beating
+exists as a *ranking* and there is nothing to take a paired error against.
+
+`hub.season.lineup_gate` asks a different question on the same harness. That one varies the
+**search** over identical projections and returned a structural zero, because `sd = k*sqrt(mu)`
+makes spread a deterministic function of the mean and the optimiser was handed no variance to
+read (ADR-0012). This one varies the **projection** under an identical search, which is the
+axis still open. Its own docstring names the gap this fills: *"projections are static across
+the season, because weekly historical projections do not exist."* They do now.
+
+THE ARMS, and they see the same information.
+
+    consensus  fill each slot with your highest-ranked rostered player by `weekly-op` ECR
+    weekly     fill each slot by `hub.models.weekly`'s projection for that week
+
+The search is fixed at *start your highest* in both, per ADR-0012. Both are restricted to the
+same roster and score against the same realised grid.
+
+THE RULES, pre-registered in `docs/weekly-projection-plan.md` before this ran:
+
+  * **Weeks 1-14**, the fantasy regular season. 15-17 reported apart and never pooled.
+  * **Paired by roster-week**, with a **cluster bootstrap by roster** -- a roster's fourteen
+    weeks are not fourteen observations, and quoting the raw n would inflate the interval's
+    precision by roughly the square root of fourteen.
+  * **A rostered player missing from that week's consensus page is ranked last**, because the
+    absence is the incumbent saying "do not start him" and it is real information it has. A
+    missing *projection* is likewise a zero. Handing either arm information the other lacks is
+    the defect that made the first `lineup_gate` unable to fail.
+  * **Inactive weeks score zero**, not missing: starting a player who did not play is the most
+    expensive weekly mistake there is and an honest lineup score has to eat it.
+
+    uv run python -m hub.season.weekly_gate --run
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from collections.abc import Sequence
+
+import numpy as np
+import polars as pl
+
+from hub.draft.season import FLEX_FROM, FLEX_SLOTS, STARTERS
+from hub.models.experiment import BOOTSTRAP
+
+# The fantasy regular season. 15-17 is the playoffs, reported apart; 18 is meaningless.
+GATE_WEEKS: tuple[int, ...] = tuple(range(1, 15))
+
+# A player the consensus page does not list is ranked behind every player it does.
+UNRANKED = -1e9
+
+# Above this share of roster-weeks lost to a join failure, the run is VOID rather than
+# reported. Pre-registered in docs/weekly-projection-plan.md, and tight because the error is
+# *directional*: an unmatched player is ranked last, so a join failure does not add noise, it
+# forces a bench on the incumbent's arm and biases the result toward us.
+VOID_FLOOR = 0.02
+
+
+def coverage(consensus: dict[tuple[int, int], np.ndarray],
+             realised: dict[tuple[int, int], np.ndarray],
+             covered: set[tuple[int, int]],
+             weeks: Sequence[int] = GATE_WEEKS) -> dict[str, float]:
+    """How much of the incumbent's arm is missing, and how much of that is a defect.
+
+    Two different things, and conflating them would either void every run or none:
+
+      * **unranked** -- the player is not on that week's page. Usually because he is out, and
+        then the absence is the incumbent's *answer* and benching him is correct.
+      * **join failure** -- unranked *and he scored*. Consensus would have ranked a player who
+        played; the name did not match. This is the one that biases the comparison, and it is
+        what `VOID_FLOOR` is measured against.
+    """
+    cells = unranked = failed = 0
+    for key, cons in consensus.items():
+        season, _ = key
+        for w in weeks:
+            if (season, w) not in covered:
+                continue
+            col, points = cons[:, w - 1], realised[key][:, w - 1]
+            cells += col.size
+            un = col == UNRANKED
+            unranked += int(un.sum())
+            failed += int((un & (points > 0)).sum())
+    if not cells:
+        return {"cells": 0, "unranked": float("nan"), "join_failure": float("nan")}
+    return {"cells": float(cells), "unranked": unranked / cells,
+            "join_failure": failed / cells}
+
+
+def starters_by_score(pos: Sequence[str], score: np.ndarray) -> list[int]:
+    """Indices of the lineup: fill each required slot with the best available, then the flex.
+
+    The same rule as `lineup_gate.projection_lineup_points`, applied to **one week's** scores
+    rather than to a season-long projection. That difference is the entire subject here.
+    """
+    order = np.argsort(-np.asarray(score, dtype=float))
+    counts: dict[str, int] = {}
+    starters: list[int] = []
+    flex: list[int] = []
+    for j in order:
+        i = int(j)
+        p = pos[i]
+        if p in STARTERS and counts.get(p, 0) < STARTERS[p]:
+            counts[p] = counts.get(p, 0) + 1
+            starters.append(i)
+        elif p in FLEX_FROM:
+            flex.append(i)
+    starters.extend(flex[:FLEX_SLOTS])
+    return starters
+
+
+def lineup_points(realised: np.ndarray, pos: Sequence[str],
+                  score: np.ndarray) -> np.ndarray:
+    """Points scored per week by the lineup each week's `score` picks.
+
+    `realised` and `score` are both (roster, weeks). One lineup per week, chosen from that
+    week's scores only -- which is what makes this different from the static arm, and what a
+    weekly projection is *for*.
+    """
+    weeks = realised.shape[1]
+    out = np.zeros(weeks)
+    for w in range(weeks):
+        idx = starters_by_score(pos, score[:, w])
+        if idx:
+            out[w] = float(realised[idx, w].sum())
+    return out
+
+
+def compare(rosters: dict[int, list],
+            realised: dict[tuple[int, int], np.ndarray],
+            consensus: dict[tuple[int, int], np.ndarray],
+            weekly: dict[tuple[int, int], np.ndarray],
+            covered: set[tuple[int, int]] | None = None,
+            weeks: Sequence[int] = GATE_WEEKS) -> pl.DataFrame:
+    """One row per **roster-week**, carrying both arms and their difference.
+
+    `covered` restricts to weeks the incumbent actually has a ranking for, and it is not an
+    optimisation. Historical `weekly-op` scrapes miss whole weeks -- 2024 has nothing before
+    week 5, and 2022, 2023 and 2025 miss weeks 1 and 2 -- and on such a week *every* rostered
+    player is UNRANKED, so the consensus arm picks an arbitrary lineup while the weekly arm
+    has a projection. Including those weeks is not a hard comparison, it is no comparison:
+    there is no incumbent to beat.
+
+    Pure -- arrays in, a frame out, no network -- so the statistics are testable offline, the
+    same reason `lineup_gate.compare` and `backtest.compare` are.
+    """
+    rows = []
+    cols = [w - 1 for w in weeks]
+    for season in sorted(rosters):
+        for k, roster in enumerate(rosters[season]):
+            pos = [p for _, p in roster]
+            a = lineup_points(realised[(season, k)], pos, consensus[(season, k)])
+            b = lineup_points(realised[(season, k)], pos, weekly[(season, k)])
+            for w in cols:
+                if covered is not None and (season, w + 1) not in covered:
+                    continue
+                rows.append({"season": season, "roster": k, "week": w + 1,
+                             "consensus": a[w], "weekly": b[w]})
+    out = pl.DataFrame(rows)
+    if out.is_empty():
+        return out
+    return out.with_columns((pl.col("weekly") - pl.col("consensus")).alias("diff"))
+
+
+def cluster_bootstrap(paired: pl.DataFrame, *, bootstrap: int = BOOTSTRAP,
+                      seed: int = 0) -> dict[str, float]:
+    """Mean paired difference and an interval, resampling **rosters** rather than rows.
+
+    A roster's fourteen weeks share its players, its bye and its draft, so they are one
+    observation with fourteen readings. Resampling rows would treat them as fourteen and
+    report an interval about the square root of fourteen too narrow -- protocol item 3, which
+    turned noise into an apparent 4-sigma result once already.
+    """
+    if paired.is_empty():
+        return {"n": 0, "clusters": 0, "mean": float("nan"), "lo": float("nan"),
+                "hi": float("nan"), "p_better": float("nan")}
+    keys = paired.select("season", "roster").unique().rows()
+    by = {k: paired.filter((pl.col("season") == k[0]) & (pl.col("roster") == k[1]))["diff"]
+                   .to_numpy().astype(float) for k in keys}
+    means = np.array([v.mean() for v in by.values()])
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(means), size=(bootstrap, len(means)))
+    draws = means[idx].mean(axis=1)
+    return {"n": float(paired.height), "clusters": float(len(means)),
+            "mean": float(means.mean()), "lo": float(np.percentile(draws, 2.5)),
+            "hi": float(np.percentile(draws, 97.5)),
+            "p_better": float((draws > 0).mean())}
+
+
+def per_season(paired: pl.DataFrame) -> pl.DataFrame:
+    """Mean difference per held-out season -- the every-season half of the bar."""
+    return (paired.group_by("season")
+                  .agg(pl.col("diff").mean().alias("gain"), pl.len().alias("n"))
+                  .sort("season"))
+
+
+def verdict(summary: dict, seasons: pl.DataFrame,
+            cover: dict[str, float] | None = None) -> tuple[str, str]:
+    """The three branches, fixed in `docs/weekly-projection-plan.md` before this ran.
+
+    Asymmetric on purpose: the Weekly projection is the complicated thing and the burden sits
+    on it. The middle branch is the expected one and it carries an *action* rather than being
+    a disappointment to explain away -- the same disposition the snap trend got in ADR-0013,
+    and it was written down early precisely because "show it beside consensus" is a satisfying
+    thing to decide after seeing a near-miss.
+    """
+    if cover is not None and cover["cells"] and cover["join_failure"] > VOID_FLOOR:
+        return "VOID", (
+            f"VOID: {cover['join_failure']:.1%} of roster-weeks are a join failure -- the "
+            f"player was not on that week's consensus page and scored anyway -- against a "
+            f"pre-registered floor of {VOID_FLOOR:.0%}.\n  An unmatched player is ranked "
+            f"last, so this benches the incumbent's arm and biases the result toward us. "
+            f"Fix the join before reading any number below.")
+    if summary["clusters"] == 0:
+        return "SHOW", "nothing measured -- no roster-week scored"
+    won = int((seasons["gain"] > 0).sum())
+    total = seasons.height
+    if summary["lo"] > 0 and won == total:
+        return "ADOPT", ("ADOPT: the Weekly projection sets lineups. It beat consensus rank in "
+                         f"every held-out season ({won}/{total}) and the interval excludes zero.")
+    if summary["hi"] < 0 and won == 0:
+        return "REMOVE", ("REMOVE: worse than a free ranking in every season. Delete the "
+                          "module rather than shipping it as an option.")
+    return "SHOW", ("SHOW, NEVER RANK ON: printed beside consensus, never sorted on. "
+                    f"Won {won}/{total} seasons and the interval contains zero -- absence of "
+                    "evidence, not evidence of equivalence.")
+
+
+def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - network
+    ap = argparse.ArgumentParser(
+        prog="hub.season.weekly_gate",
+        description="Does the Weekly projection beat weekly consensus rank at setting lineups?")
+    ap.add_argument("--run", action="store_true")
+    ap.add_argument("--seasons", default="2022,2023,2024,2025")
+    ap.add_argument("--drafts", type=int, default=20, help="rosters per season")
+    ap.add_argument("--seed", type=int, default=0)
+    a = ap.parse_args(list(argv) if argv is not None else None)
+    if not a.run:
+        ap.print_help()
+        return 0
+    from hub.season.weekly_gate_data import assemble
+    seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
+    rosters, realised, consensus, weekly, covered = assemble(
+        seasons, drafts=a.drafts, seed=a.seed)
+    cover = coverage(consensus, realised, covered)
+    paired = compare(rosters, realised, consensus, weekly, covered)
+    s = cluster_bootstrap(paired, seed=a.seed)
+    seasons_tbl = per_season(paired)
+    print(f"\n  {int(s['n'])} roster-weeks over {int(s['clusters'])} rosters, "
+          f"on the {len(covered)} weeks consensus covers")
+    print(f"  unranked {cover['unranked']:.1%}, of which a join failure "
+          f"{cover['join_failure']:.1%} (floor {VOID_FLOOR:.0%})")
+    print(seasons_tbl)
+    print(f"\n  weekly - consensus = {s['mean']:+.3f} points per team-week")
+    print(f"  95% CI [{s['lo']:+.3f}, {s['hi']:+.3f}]   "
+          f"P(weekly better) {s['p_better'] * 100:.1f}%")
+    print(f"\n  {verdict(s, seasons_tbl, cover)[1]}")
+    return 0
+
+
+if __name__ == "__main__":                                # pragma: no cover
+    sys.exit(main())

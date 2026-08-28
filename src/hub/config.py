@@ -223,6 +223,12 @@ NOT_FITTED: dict[str, str] = {
     "hub.draft.adherence": "STALE_HOURS is how old the as-drafted board copy may be before "
                            "the replay says it is a rehearsal leftover -- an operational "
                            "freshness check on a file, not a quantity any prediction reads.",
+    "hub.season.weekly_gate": "Gate B for the Weekly projection. VOID_FLOOR is the share of "
+                              "roster-weeks lost to a join failure above which a run is not "
+                              "reported at all -- a pre-registered guard, not a fitted "
+                              "quantity. See docs/weekly-projection-plan.md",
+    "hub.season.weekly_gate_data": "assembly for Gate B: rosters, realised points and both "
+                                   "arms' scores. It reads outcomes and never predicts.",
     "hub.season.lineup_gate": "the walk-forward gate for the lineup optimiser. OPP_MU and "
                               "OPP_SD describe the *opponent* a simulated week is played "
                               "against -- a fixture for scoring two arms against each other, "
