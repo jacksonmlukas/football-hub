@@ -18,7 +18,9 @@ Then, once, before the first pick:
 cp data/processed/draft_board.parquet data/processed/draft_board.AS-DRAFTED.parquet
 ```
 
-**That copy is the only honest input to the adherence score.** Every `--pick` and `--taken`
+`hub.draft.adherence` prints that copy's age and refuses to be quiet about one more than a
+day old, since a copy that predates the draft is a rehearsal leftover and grades you against a
+board you never saw. **That copy is the only honest input to the adherence score.** Every `--pick` and `--taken`
 rebuilds the board from source, so it drifts as ADP moves during the night, and the ADP archive
 keys by *day* — it keeps the last build of the evening, not the one you opened with. Without
 this copy, the replay grades you against a board you never saw.
@@ -59,6 +61,12 @@ uv run python -m hub.draft.board --taken "Ja'Marr Chase, Bijan Robinson" --pick 
 Names are matched loosely — punctuation, suffixes and case do not matter — and a name that
 does not match the board is reported with a suggestion. **Read that warning.** An unmatched
 pick leaves that player on your board as available.
+
+It *does* still count as a pick, which is deliberate: the pick happened in the room, so the
+snake position stays right even though we do not know who went. That is why the poller reprints
+`N UNMATCHED pick(s): ...` on every refresh rather than warning once. Do not `--undo` an
+unmatched pick to "clear" it — that puts your turn count one behind the room. Re-enter it with
+the right spelling and the duplicate is ignored.
 
 Duplicates are safe: entering a pick twice is ignored rather than double-counted.
 

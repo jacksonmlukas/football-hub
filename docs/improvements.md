@@ -300,7 +300,22 @@ whole claim is that December can audit August.
 `DTZ` is deliberately excluded from the ruff select for now, because fixing the test sites
 changes stored fixtures. Fix the production site; leave the rest.
 
-### 10. Coverage floors that mean something
+### 10. Coverage floors that mean something — LARGELY ADDRESSED 2026-08-27
+
+**Superseded numbers, kept because the reasoning still holds.** Coverage is now **91%** against
+the 80% gate, and every module named in the original text has moved: `backtest` 30% → **68%**,
+`board` 46% → **96%**, `espn` 58% → **100%**, `live` 64% → **94%**, `tune` 64% → **86%**.
+
+The remaining floor is `season/lineup_gate` 70%, `publish` 77%, `availability` 75% and
+`backtest` 68%. None is on the draft path. `espn` was the one that mattered this week — it is
+the module `--poll` talks to on the night, and its graceful-degradation path (four host/UA
+combinations, then the cache) was the repo's own hard rule with no test on it at all.
+
+**The gate itself is still the point, and it is still 80.** A gate set just under where the
+repo sits is a gate that fails on noise; a gate set far under is decorative. Raising it is a
+decision to make after the draft, when the number has stopped moving daily.
+
+### Original text
 
 Coverage is 80.2% against an 80% gate — passing by 0.2 points, which is a gate about to start
 failing on noise. The low modules are `backtest` 30%, `board` 46%, `espn` 58%, `live` 64%,
@@ -451,7 +466,26 @@ both running.
 
 ---
 
-### 14. The poll loop catches only KeyboardInterrupt
+### 14. The poll loop catches only KeyboardInterrupt — FIXED 2026-08-27
+
+**Fixed the evening of 2026-08-27, seven days out.** The loop now catches `Exception`, prints
+`poll error (serving stale, the board is unaffected): ...`, and keeps polling.
+
+Two things beyond the three lines this item asked for:
+
+* **Repeated identical errors print once**, with a `recovered after N failed polls` line when
+  the sync comes back. The reason is the one already in `poll`'s own docstring — the sync was
+  made quiet because a thousand lines over three hours scrolls the board out of view, and a
+  traceback repeating every ten seconds does exactly that.
+* **`KeyboardInterrupt` is no longer named in the loop.** It is a `BaseException`, so
+  `except Exception` cannot swallow it; the clause was dead code. There is a test that says so,
+  since the loop no longer says it itself.
+
+Four tests, each checked to fail against the old loop. The related `fetch/espn` coverage gap
+went with it: 63% → 100%, including the `_get` degradation ladder, which was the repo's own
+hard rule with nothing exercising it.
+
+### Original text
 
 **Found 2026-08-27 while covering the poller; deliberately not fixed before the freeze.**
 
@@ -471,6 +505,8 @@ work". What is lost is the reminder, not the fallback.
 
 **Do:** after the draft, catch `Exception` in the loop, print it, and keep polling. Three lines.
 It is draft-path code and the freeze holds until 2026-08-31.
+
+*(The freeze was lifted on 2026-08-27, which retired the only reason this was waiting.)*
 
 ---
 

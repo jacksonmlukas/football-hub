@@ -25,7 +25,7 @@ from pathlib import Path
 
 import polars as pl
 
-from hub.draft.board import BOARD_PARQUET
+from hub.draft.board import BOARD_PARQUET, board_age_hours
 from hub.draft.optimize import the_pick
 from hub.draft.picks import MY_SLOT, TEAMS, my_picks
 from hub.draft.state import DraftState
@@ -92,6 +92,30 @@ def verdict(scored: pl.DataFrame, threshold: int = THRESHOLD) -> tuple[bool, str
                 f"at the time:\n" + "\n".join(lines))
 
 
+# A copy older than this is almost certainly left over from a rehearsal rather than made
+# before the first pick. A day is generous: the runbook says to rebuild on the morning of the
+# draft, so the honest copy is hours old, never days.
+STALE_HOURS = 24.0
+
+
+def age_note(path: Path, now: float | None = None) -> list[str]:
+    """How old the as-drafted copy is, and a warning if it cannot be this draft's.
+
+    Found by rehearsing the runbook on 2026-08-27: a *missing* copy is reported loudly, but a
+    *stale* one is not, and the stale case is the silent-plausible-wrong one -- a copy left
+    behind by a rehearsal grades you against a board you never saw, with the ADP drift the
+    copy exists to eliminate, and says nothing.
+    """
+    import time
+    age = board_age_hours(path, time.time() if now is None else now)
+    line = f"  as-drafted copy: {age:.1f}h old"
+    if age <= STALE_HOURS:
+        return [line]
+    return [line, f"  WARNING: that predates the draft by {age / 24:.1f} days, so it is a "
+                  f"rehearsal leftover, not the board you opened with.\n"
+                  f"  Re-copy it from the draft-morning build, or pass --board explicitly."]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.draft.adherence",
@@ -111,6 +135,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  WARNING: replaying against {path.name}, which every --pick rebuilds. The "
               f"board has drifted since the draft.\n  The runbook copies "
               f"{AS_DRAFTED.name} before the first pick; without it this is approximate.")
+    else:
+        print(*age_note(path), sep="\n")
     state = load_state(Path(a.state)) if a.state else load_state()
     scored = replay(pl.read_parquet(path), state)
     print(f"\n  {scored.height} of your turns, replayed against {path.name}\n")

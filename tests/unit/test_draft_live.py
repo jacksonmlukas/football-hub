@@ -511,3 +511,86 @@ def test_replay_runs_against_todays_board(monkeypatch, capsys):
 def test_no_arguments_prints_help(capsys):
     assert live.main([]) == 0
     assert "usage:" in capsys.readouterr().out
+
+
+# --- the loop survives its own exceptions (improvements.md #14) ------------
+#
+# It caught only KeyboardInterrupt. A render error on an unexpected board shape, or a disk
+# error inside `save`, propagated, killed the poller, and skipped the line saying where the
+# fallback is. `sync_from_espn` already swallows *its* failure, so the surviving hole was
+# everything after it.
+
+
+def _poll_with(monkeypatch, capsys, sync, *, passes=1, interval=0):
+    """Run `poll` for `passes` passes, then Ctrl-C out of the sleep."""
+    monkeypatch.setattr(live, "_load_board", lambda now=None: _stub_board())
+    from hub.draft import state as state_mod
+    monkeypatch.setattr(state_mod, "sync_from_espn", sync)
+    n = {"i": 0}
+
+    def _sleep(_):
+        n["i"] += 1
+        if n["i"] >= passes:
+            raise KeyboardInterrupt
+    monkeypatch.setattr(live.time, "sleep", _sleep)
+    live.poll(interval, my_slot=3)
+    return capsys.readouterr().out
+
+
+def test_a_failure_after_the_sync_does_not_kill_the_poller(monkeypatch, capsys):
+    """The hole #14 names. `sync_from_espn` survives its own failures; nothing else did."""
+    def _boom(*a, **k):
+        raise ValueError("unexpected board shape")
+    out = _poll_with(monkeypatch, capsys, _boom, passes=3)
+    assert "poll error" in out
+    assert "stopped" in out and "draft_board.json" in out, \
+        "the line saying where the fallback is must survive the failure"
+
+
+def test_a_repeating_failure_prints_once_not_every_interval(monkeypatch, capsys):
+    """Three hours of a repeating traceback scrolls the board out of view."""
+    def _boom(*a, **k):
+        raise ValueError("same every time")
+    out = _poll_with(monkeypatch, capsys, _boom, passes=20)
+    assert out.count("poll error") == 1, "a repeating error is one line, not twenty"
+
+
+def test_a_different_failure_is_reported(monkeypatch, capsys):
+    """Deduping on the message, not on 'has failed before' -- a new fault is news."""
+    seen = {"n": 0}
+
+    def _boom(*a, **k):
+        seen["n"] += 1
+        raise ValueError(f"fault {(seen['n'] - 1) // 3}")
+    out = _poll_with(monkeypatch, capsys, _boom, passes=9)
+    assert out.count("poll error") == 3
+
+
+def test_recovery_is_announced_with_a_count(monkeypatch, capsys):
+    """A poller that went quiet and came back should say so; you have ninety seconds."""
+    from hub.draft import state as state_mod
+    calls = {"n": 0}
+
+    def _flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise OSError("disk")
+        return state_mod.DraftState(taken=[f"Player {i:03d}" for i in range(5)])
+    out = _poll_with(monkeypatch, capsys, _flaky, passes=4)
+    assert "recovered after 2 failed polls" in out
+    assert "THE PICK:" in out, "and the board comes back with it"
+
+
+def test_ctrl_c_inside_the_loop_body_still_stops_it(monkeypatch, capsys):
+    """KeyboardInterrupt is a BaseException, so `except Exception` cannot swallow it. This is
+    the test that says so, since the loop no longer names it."""
+    def _interrupt(*a, **k):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(live, "_load_board", lambda now=None: _stub_board())
+    from hub.draft import state as state_mod
+    monkeypatch.setattr(state_mod, "sync_from_espn", _interrupt)
+    monkeypatch.setattr(live.time, "sleep", lambda _: None)
+    assert live.poll(0, my_slot=3) == 0
+    out = capsys.readouterr().out
+    assert "stopped" in out and "poll error" not in out, \
+        "Ctrl-C is not a poll failure"

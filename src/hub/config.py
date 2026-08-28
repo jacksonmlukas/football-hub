@@ -220,6 +220,9 @@ NOT_FITTED: dict[str, str] = {
                          "weekly spread beats K[position] and kept the incumbent. MIN_PPG and "
                          "MIN_SE are a sample threshold and a significance bar, both settings. "
                          "See docs/player-spread.md",
+    "hub.draft.adherence": "STALE_HOURS is how old the as-drafted board copy may be before "
+                           "the replay says it is a rehearsal leftover -- an operational "
+                           "freshness check on a file, not a quantity any prediction reads.",
     "hub.season.lineup_gate": "the walk-forward gate for the lineup optimiser. OPP_MU and "
                               "OPP_SD describe the *opponent* a simulated week is played "
                               "against -- a fixture for scoring two arms against each other, "

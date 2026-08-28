@@ -139,3 +139,51 @@ def test_replaying_against_the_live_board_warns(tmp_path, capsys):
     assert "drifted since the draft" in capsys.readouterr().out
     monkey.undo()
     assert board_mod.BOARD_PARQUET
+
+
+# --- a stale as-drafted copy (found rehearsing the runbook, 2026-08-27) -----
+#
+# A *missing* copy is reported loudly. A *stale* one was not, and that is the
+# silent-plausible-wrong case: a copy left behind by a rehearsal grades you against a board
+# you never saw, carrying exactly the ADP drift the copy exists to eliminate.
+
+
+def _touch(tmp_path, hours_old):
+    import os
+    import time
+    p = tmp_path / "draft_board.AS-DRAFTED.parquet"
+    p.write_bytes(b"x")
+    t = time.time() - hours_old * 3600
+    os.utime(p, (t, t))
+    return p
+
+
+def test_a_fresh_copy_reports_its_age_and_nothing_else(tmp_path):
+    lines = adherence.age_note(_touch(tmp_path, 2.0))
+    assert len(lines) == 1 and "2.0h old" in lines[0]
+
+
+def test_a_copy_from_last_week_says_it_is_a_rehearsal_leftover(tmp_path):
+    lines = adherence.age_note(_touch(tmp_path, 7 * 24.0))
+    assert len(lines) == 2
+    assert "WARNING" in lines[1] and "7.0 days" in lines[1]
+    assert "--board" in lines[1], "and says how to override it"
+
+
+def test_the_boundary_is_a_day(tmp_path):
+    assert len(adherence.age_note(_touch(tmp_path, adherence.STALE_HOURS - 0.1))) == 1
+    assert len(adherence.age_note(_touch(tmp_path, adherence.STALE_HOURS + 0.1))) == 2
+
+
+def test_the_live_board_gets_the_drift_warning_not_an_age(tmp_path, monkeypatch, capsys):
+    """The two warnings are for different mistakes and must not be swapped."""
+    import polars as pl
+    board = tmp_path / "draft_board.parquet"
+    pl.DataFrame({"player": ["A"], "pos": ["RB"], "adp": [1.0], "ecr": [1.0],
+                  "vor": [1.0], "proj_blend": [10.0]}).write_parquet(board)
+    monkeypatch.setattr(adherence, "BOARD_PARQUET", board)
+    monkeypatch.setattr(adherence, "AS_DRAFTED", tmp_path / "nope.parquet")
+    monkeypatch.setattr(adherence, "load_state", lambda *a, **k: DraftState(taken=[]))
+    adherence.main([])
+    out = capsys.readouterr().out
+    assert "every --pick rebuilds" in out and "as-drafted copy:" not in out

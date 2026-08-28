@@ -280,6 +280,17 @@ def poll(interval: int = 10, *, my_slot: int = MY_SLOT, teams: int = TEAMS,
       three hours is a thousand lines scrolling the board out of view.
     * a heartbeat every couple of minutes, because a silent poller and a hung poller look
       identical at 2am and you have ninety seconds to decide.
+
+    A fourth, added 2026-08-27: the loop survives its own exceptions. It used to catch only
+    `KeyboardInterrupt`, so a render error on an unexpected board shape or a disk error inside
+    `save` propagated, killed the poller, and skipped the line saying where the fallback is.
+    `hub.fetch.espn.poll` already had the right shape. Repeated identical errors print once
+    rather than every `interval` seconds, for the same reason the sync is quiet: three hours of
+    a repeating traceback scrolls the board out of view, and the board is the point.
+
+    Ctrl-C still stops it: `KeyboardInterrupt` is a `BaseException`, so the loop's
+    `except Exception` cannot swallow it and it reaches the outer handler that prints where
+    the fallback board is.
     """
     import signal
 
@@ -298,18 +309,29 @@ def poll(interval: int = 10, *, my_slot: int = MY_SLOT, teams: int = TEAMS,
     signal.signal(signal.SIGTERM, _stop)
 
     print(f"  polling ESPN every {interval}s. Ctrl-C to stop.", flush=True)
+    fails, last_err = 0, ""
     try:
         while not stopping:
-            st = state_mod.sync_from_espn(quiet=True)
-            now = time.monotonic()
-            action = next_action(st.n_taken, last, now - last_beat, heartbeat_s)
-            if action == "board":
-                last, last_beat = st.n_taken, now
-                print("\n" + "\n".join(render(refresh(board, st, my_slot=my_slot,
-                                                      teams=teams))), flush=True)
-            elif action == "heartbeat":
-                last_beat = now
-                print(f"  watching... {st.n_taken} picks, no change", flush=True)
+            try:
+                st = state_mod.sync_from_espn(quiet=True)
+                now = time.monotonic()
+                action = next_action(st.n_taken, last, now - last_beat, heartbeat_s)
+                if fails:
+                    print(f"  recovered after {fails} failed polls", flush=True)
+                    fails, last_err = 0, ""
+                if action == "board":
+                    last, last_beat = st.n_taken, now
+                    print("\n" + "\n".join(render(refresh(board, st, my_slot=my_slot,
+                                                          teams=teams))), flush=True)
+                elif action == "heartbeat":
+                    last_beat = now
+                    print(f"  watching... {st.n_taken} picks, no change", flush=True)
+            except Exception as e:
+                fails += 1
+                if repr(e) != last_err:
+                    last_err = repr(e)
+                    print(f"  poll error (serving stale, the board is unaffected): "
+                          f"{last_err}", flush=True)
             time.sleep(interval)
     except KeyboardInterrupt:
         pass
