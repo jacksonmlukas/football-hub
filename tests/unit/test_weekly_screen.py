@@ -219,3 +219,76 @@ def test_a_late_starting_feature_does_not_shrink_the_others_sample():
     assert late["cells"] == 6, "and the week-8 feature keeps only its own"
     assert early["controls"] == "-", "a week-1 feature cannot be controlled for a week-8 one"
     assert late["controls"] == "a"
+
+
+# --- Usage, and the lagging-control problem ---------------------------------
+
+def _usage_panel(seasons=(2023, 2024), weeks=range(1, 13), players=60, seed=5):
+    rng = np.random.default_rng(seed)
+    rows = []
+    for s in seasons:
+        for w in weeks:
+            for i in range(players):
+                rows.append({"season": s, "week": w, "player_id": f"p{i}",
+                             "ecr": float(i + 1), "ppg_before": 12.0,
+                             "targets": float(rng.poisson(5)),
+                             "fantasy_points_ppr": float(rng.normal(12, 6)),
+                             "feat": float(rng.normal())})
+    return pl.DataFrame(rows)
+
+
+def test_recent_mean_is_strictly_prior():
+    """Week w's control may not contain week w. The whole screen rests on it."""
+    p = pl.DataFrame({"player_id": ["a"] * 5, "season": [2024] * 5,
+                      "week": [1, 2, 3, 4, 5],
+                      "targets": [10.0, 0.0, 0.0, 0.0, 99.0]})
+    out = ws.recent_mean(p, "targets").sort("week")
+    assert out["targets_recent"].to_list()[4] == pytest.approx(0.0), \
+        "weeks 2-4 are zeros; week 5's own 99 must not reach its own control"
+    assert out["targets_recent"].to_list()[0] is None, "week 1 has no history"
+
+
+def test_recent_mean_counts_calendar_weeks_not_appearances():
+    """A player who missed week 3 has a two-week window, not one padded from week 1."""
+    p = pl.DataFrame({"player_id": ["a"] * 3, "season": [2024] * 3,
+                      "week": [1, 2, 4], "targets": [10.0, 10.0, 4.0]})
+    out = ws.recent_mean(p, "targets").sort("week")
+    assert out["targets_recent"].to_list()[2] == pytest.approx(10.0), \
+        "week 4 averages weeks 1-3, of which only 1 and 2 exist"
+
+
+def test_the_usage_screen_controls_for_the_count_not_for_points():
+    """Controlling this week's targets on season-to-date *points* would let a change in role
+    show up as a target signal."""
+    p = _usage_panel()
+    p = ws.recent_mean(ws.prior_means(p, ["player_id"], ["targets"], within_season=True)
+                       .join(p, on=["player_id", "season", "week"], how="right"), "targets")
+    out = ws.screen_usage(p, [ws.Feature("feat", "+", 1)], components=("targets",))
+    assert out.height == 1 and out["component"][0] == "targets"
+
+
+def test_a_feature_that_is_recent_form_leaves_nothing():
+    """Why `recent_mean` is in the control set at all. Tested where it is deterministic: a
+    feature that IS the last three weeks' level residualises away entirely, so the screen
+    reports nothing rather than re-discovering its own control.
+
+    The noisy version of this is the real finding and lives in docs/weekly-screen.md --
+    `snap_trend` on carries falls from +0.127 to +0.049 once recent form is controlled for,
+    so most of that effect was form, and what is left is still 5/5 seasons.
+    """
+    rng = np.random.default_rng(11)
+    rows = [{"season": 2024, "week": w, "player_id": f"p{i}", "ecr": float(i + 1),
+             "targets": float(rng.poisson(4 + (i % 5)))}
+            for w in range(1, 13) for i in range(80)]
+    p = pl.DataFrame(rows)
+    p = p.join(ws.prior_means(p, ["player_id"], ["targets"], within_season=True),
+               on=["player_id", "season", "week"], how="left")
+    p = (ws.recent_mean(p, "targets")
+           .drop_nulls(["targets_prior", "targets_recent"])
+           .with_columns(pl.col("targets_recent").alias("form")))
+    cells = ws.cell_correlations(p, "form", outcome="targets",
+                                 controls=("targets_prior", "targets_recent", "ecr"))
+    assert cells.is_empty(), "a feature identical to a control has no residual left"
+    alone = ws.cell_correlations(p, "form", outcome="targets",
+                                 controls=("targets_prior", "ecr"))
+    assert not alone.is_empty(), "and against the lagging control alone it is measurable"

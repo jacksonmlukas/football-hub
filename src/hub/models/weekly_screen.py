@@ -86,6 +86,12 @@ FEATURES: tuple[Feature, ...] = (
 CONTROLS: tuple[str, ...] = ("ppg_before", "ecr")
 OUTCOME = "fantasy_points_ppr"
 
+# **Usage**, in the `CONTEXT.md` sense: the count vector a week produces. The panel carries
+# each of these and its own season-to-date mean, so a feature can be screened against the
+# counts and not only against the total. That is the premise of the multiplier form -- a
+# feature that moves points without moving counts cannot be applied as a Usage multiplier.
+USAGE: tuple[str, ...] = ("targets", "receptions", "carries", "attempts", "tds")
+
 # A verdict is one of three, not two. A pre-stated null that comes back significant in every
 # season is a *finding* -- it is why the prediction was written down -- and folding it in with
 # the rejections would lose the most informative outcome the screen can produce.
@@ -126,16 +132,22 @@ def partial_r(y: np.ndarray, x: np.ndarray, controls: np.ndarray) -> float:
 
 
 def cell_correlations(panel: pl.DataFrame, feature: str, *, min_week: int = 1,
-                      min_cell: int = MIN_CELL,
+                      min_cell: int = MIN_CELL, outcome: str = OUTCOME,
                       controls: Sequence[str] = CONTROLS) -> pl.DataFrame:
-    """One partial correlation per (season, week). No player appears twice inside a cell."""
-    need = [OUTCOME, feature, *controls]
+    """One partial correlation per (season, week). No player appears twice inside a cell.
+
+    `outcome` is a parameter because the same screen has to run against **Usage** -- targets,
+    carries, attempts -- and not only against points. That is the premise of the multiplier
+    form: a feature that moves points but not counts cannot be applied as a Usage multiplier,
+    whatever it does to the total.
+    """
+    need = [outcome, feature, *controls]
     d = panel.filter(pl.col("week") >= min_week).drop_nulls(need)
     rows = []
     for (season, week), cell in d.group_by(["season", "week"]):
         if cell.height < min_cell:
             continue
-        r = partial_r(cell[OUTCOME].to_numpy().astype(float),
+        r = partial_r(cell[outcome].to_numpy().astype(float),
                       cell[feature].to_numpy().astype(float),
                       np.column_stack([cell[c].to_numpy().astype(float) for c in controls]))
         if not np.isnan(r):
@@ -236,7 +248,8 @@ def weekly_stats(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - 
     ps = nfl.load_player_stats(seasons=list(seasons), summary_level="week")
     want = ["player_id", "player_display_name", "position", "season", "week", "team",
             "opponent_team", OUTCOME, "target_share", "receiving_yards", "rushing_yards",
-            "passing_yards", "receiving_tds", "rushing_tds", "passing_tds", "season_type"]
+            "passing_yards", "receiving_tds", "rushing_tds", "passing_tds", "season_type",
+            "targets", "receptions", "carries", "attempts", "completions"]
     ps = ps.select([c for c in want if c in ps.columns])
     if "season_type" in ps.columns:
         ps = ps.filter(pl.col("season_type") == "REG").drop("season_type")
@@ -298,6 +311,30 @@ def trend(df: pl.DataFrame, col: str, key: str, out: str, weeks: int = 18) -> pl
                  .alias(out)))
     return df.join(g.select(key, "season", "week", out), on=[key, "season", "week"],
                    how="left")
+
+
+def recent_mean(df: pl.DataFrame, col: str, key: str = "player_id", *, window: int = 3,
+                weeks: int = 18) -> pl.DataFrame:
+    """`<col>_recent`: the mean over the previous `window` calendar weeks, strictly prior.
+
+    A season-to-date mean is a *lagging* control -- by week 12 it is eleven games of history
+    against which three weeks of new form barely register, so a feature that is really "he has
+    been busier lately" would clear against it while adding nothing a person watching could
+    not see. This is the control that tests that, and `snap_trend` survives it: on carries it
+    falls from +0.127 to +0.049, so most of that effect *was* recent form, and on targets from
+    +0.124 to +0.087. Five of five seasons either way.
+
+    Reindexed onto a complete calendar grid for the same reason `trend` is.
+    """
+    grid = (df.select(key, "season").unique()
+              .join(pl.DataFrame({"week": list(range(1, weeks + 1))},
+                                 schema={"week": pl.Int64}), how="cross"))
+    g = (grid.join(df.select(key, "season", "week", col), on=[key, "season", "week"], how="left")
+             .sort([key, "season", "week"])
+             .with_columns(pl.col(col).shift(1).rolling_mean(window, min_samples=2)
+                             .over([key, "season"]).alias(f"{col}_recent")))
+    return df.join(g.select(key, "season", "week", f"{col}_recent"),
+                   on=[key, "season", "week"], how="left")
 
 
 def snap_share(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
@@ -390,11 +427,13 @@ def build_panel(seasons: Sequence[int] = SEASONS) -> pl.DataFrame:  # pragma: no
         pl.col("player_display_name").map_elements(player_key, return_dtype=pl.Utf8).alias("key"))
     p = stats.join(game_context(seasons), on=["season", "week", "team"], how="left")
 
-    own = prior_means(stats.with_columns(
+    counted = stats.with_columns(
         (pl.col("receiving_tds") + pl.col("rushing_tds") + pl.col("passing_tds")).alias("tds"),
         (pl.col("receiving_yards") + pl.col("rushing_yards")
-         + pl.col("passing_yards")).alias("yds")),
-        ["player_id"], [OUTCOME, "tds", "yds"], within_season=True)
+         + pl.col("passing_yards")).alias("yds"))
+    p = p.join(counted.select("player_id", "season", "week", "tds", "yds"),
+               on=["player_id", "season", "week"], how="left")
+    own = prior_means(counted, ["player_id"], [OUTCOME, "yds", *USAGE], within_season=True)
     p = p.join(own, on=["player_id", "season", "week"], how="left").rename(
         {f"{OUTCOME}_prior": "ppg_before", "prior_n": "games_before"})
     p = p.with_columns(
@@ -415,6 +454,8 @@ def build_panel(seasons: Sequence[int] = SEASONS) -> pl.DataFrame:  # pragma: no
     p = trend(p, "target_share", "player_id", "tgt_trend")
     p = p.join(injury_severity(seasons), on=["season", "week", "key"], how="left")
     p = p.with_columns(pl.col("inj_sev").fill_null(0.0))
+    for c in USAGE:
+        p = recent_mean(p, c)
     return p.join(weekly_consensus(seasons), on=["season", "week", "key"], how="inner")
 
 
@@ -458,11 +499,35 @@ def screen_joint(panel: pl.DataFrame, survivors: Sequence[Feature]) -> pl.DataFr
     return pl.DataFrame(rows).sort("r", descending=True)
 
 
+def screen_usage(panel: pl.DataFrame, features: Sequence[Feature],
+                 components: Sequence[str] = USAGE) -> pl.DataFrame:
+    """Each feature against each Usage count, controlled for that count's own recent level.
+
+    The controls are that count's own **season-to-date** mean and its **last three weeks**,
+    plus consensus ECR. Not `ppg_before`: asking whether a feature predicts this week's targets
+    beyond his season-to-date *points* would let a change in role show up as a target signal.
+    And not the season-to-date mean alone, which lags -- see `recent_mean`.
+    """
+    rows = []
+    for f in features:
+        for c in components:
+            cells = cell_correlations(panel, f.name, min_week=f.min_week, outcome=c,
+                                      controls=(f"{c}_prior", f"{c}_recent", "ecr"))
+            s = summarise(cells)
+            status, note = verdict(s, f.sign)
+            rows.append({"feature": f.name, "component": c, "sign": f.sign,
+                         "r": s["r"], "t": s["t"], "cells": s["cells"],
+                         "status": status, "note": note})
+    return pl.DataFrame(rows)
+
+
 def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - network
     ap = argparse.ArgumentParser(
         prog="hub.models.weekly_screen",
         description="Screen week-level features beyond weekly consensus.")
     ap.add_argument("--run", action="store_true", help="build the panel and screen")
+    ap.add_argument("--usage", action="store_true",
+                    help="screen the survivors against Usage counts, not points")
     ap.add_argument("--seasons", default=",".join(str(s) for s in SEASONS))
     a = ap.parse_args(list(argv) if argv is not None else None)
     if not a.run:
@@ -489,6 +554,12 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         print("\n".join(report(joint.to_dicts())))
         left = joint.filter(pl.col("status").is_in(list(FINDINGS)))["feature"].to_list()
         print(f"\n  independent signals: {', '.join(left) if left else 'nothing'}")
+        if a.usage and left:
+            print("\n  and against Usage rather than points:")
+            u = screen_usage(sample, [f for f in FEATURES if f.name in left])
+            for row in u.iter_rows(named=True):
+                print(f"  {row['feature']:16} {row['component']:11} {row['r']:+7.4f} "
+                      f"{row['t']:+6.2f}  {row['status']}")
     return 0
 
 

@@ -120,10 +120,46 @@ Recorded because the predictions were written down before the run and two of the
    volume alone" appearing at weekly grain by an independent route — the season-level version
    is r = −0.004 for receiving and −0.030 for rushing TD rate.
 
+## Against Usage, not points — the premise of the multiplier form
+
+The plan applies these features as a multiplier on **Usage**, so they were screened again
+against the counts themselves. Controls are that count's **season-to-date** mean, its **last
+three weeks**, and consensus ECR.
+
+The second control matters and is not decoration. A season-to-date mean *lags*: by week 12 it
+is eleven games against which three weeks of new form barely register, so a feature that is
+really "he has been busier lately" clears against it while adding nothing a person watching
+could not see. Against the recent mean, `snap_trend` on carries falls from **+0.127 to +0.049**
+— so most of that effect *was* form — and on targets from +0.124 to +0.087. Five of five
+seasons either way.
+
+Under the stronger control:
+
+| | targets | receptions | carries | attempts | **touchdowns** |
+|---|---|---|---|---|---|
+| **snap-share trend** | +0.094 (8.5) | +0.077 (6.3) | +0.062 (4.6) | +0.032 (2.7) | **+0.018 (1.5) — killed** |
+| **prior TD rate** | +0.008 (1.0) | −0.000 (0.0) | −0.005 (0.7) | +0.005 (1.8) | **−0.120 (−14.2)** |
+
+**The two survivors are orthogonal, and each is exactly the thing it was supposed to be.** The
+snap trend moves every volume count and does not move touchdowns. The prior TD rate moves
+touchdowns, hard, and moves no volume count at all.
+
+That is the structural claim `weekly-projection-plan.md` made before any of this was measured —
+*week-level information moves Usage and barely touches efficiency* — confirmed by a screen that
+could have refuted it. It also fixes the form of the model: a **Usage multiplier** carrying the
+snap trend, and a **touchdown regression** carrying the prior TD rate, with nothing crossing
+between them.
+
+Note that the snap trend is roughly twice as strong against volume (+0.094 on targets) as
+against points (+0.070). Volume is the persistent part and points add touchdown noise on top —
+[component-projection.md](component-projection.md)'s year-over-year table (targets 0.805 against
+points 0.775) at weekly grain.
+
 ## What this does and does not license
 
-It licenses **Phase 2 with two features**: the **snap-share trend** (week ≥ 8) and the
-**prior TD rate**. Plus the injury designation, which enters unscreened by the plan's own
+It licenses **Phase 2 with two features, in two separate places**: the **snap-share trend**
+as a Usage multiplier (week ≥ 8), and the **prior TD rate** as a touchdown regression. The
+Usage screen says they do not cross. Plus the injury designation, which enters unscreened by the plan's own
 pre-registered rule, having been measured at player-week grain at +0.170 MAE and 3.8 se.
 
 The implied team total is **not** carried. It fails the joint screen on the every-season half,
