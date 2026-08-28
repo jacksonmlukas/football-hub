@@ -38,8 +38,7 @@ import polars as pl
 
 from hub.config import DRAFTED_POSITIONS, SEASON_COMPLETED
 from hub.models.experiment import MIN_SE, expanding_weeks
-from hub.models.injury import _PS_WIDTH
-from hub.names import player_key
+from hub.names import player_key, practice_key
 
 # 2021 is the first season `ff_opportunity` covers in the store; weekly consensus starts 2020,
 # so the overlap is what bounds this.
@@ -391,8 +390,7 @@ def injury_severity(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover
     # Practice") and the first seven characters separate the three cases, which is the
     # normalisation `injury.observations` already uses.
     prac = cols.get("practice_status")
-    practice = (pl.col(prac).fill_null("None").str.slice(0, _PS_WIDTH)
-                if prac else pl.lit("None"))
+    practice = practice_key(prac) if prac else pl.lit("None")
     return (inj.select(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64),
                        pl.col(name).map_elements(player_key, return_dtype=pl.Utf8).alias("key"),
                        sev.alias("inj_sev"),

@@ -54,6 +54,7 @@ import polars as pl
 
 from hub.config import DRAFTED_POSITIONS
 from hub.models.experiment import MIN_SE, expanding_seasons, paired_gain
+from hub.names import practice_key
 
 # Positions this league drafts.
 
@@ -64,9 +65,6 @@ MIN_HEALTHY_WEEKS = 6
 # Cells thinner than this are folded into their status's pooled value rather than reported.
 MIN_CELL = 60
 
-# Practice status arrives as long prose ("Did Not Participate In Practice"); the first seven
-# characters separate the three cases and nothing else collides.
-_PS_WIDTH = 7
 
 
 def _injury_type(injuries: pl.DataFrame) -> pl.Expr:
@@ -104,8 +102,7 @@ def observations(injuries: pl.DataFrame, stats: pl.DataFrame, *,
                    .unique(["season", "week", "gsis_id"])
                    .select("season", "week", "gsis_id",
                            pl.col("report_status").fill_null("None").alias("status"),
-                           pl.col("practice_status").fill_null("None")
-                             .str.slice(0, _PS_WIDTH).alias("practice"),
+                           practice_key().alias("practice"),
                            # What is actually wrong with him, which the (status, practice)
                            # table throws away. 53% of rows are null upstream, so "Unknown"
                            # is a real category here rather than a drop: dropping them would
