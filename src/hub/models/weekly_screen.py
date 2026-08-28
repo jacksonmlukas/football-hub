@@ -457,8 +457,9 @@ def weekly_consensus(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cove
                                 pl.col("week").cast(pl.Int64)))
 
 
-def build_panel(seasons: Sequence[int] = SEASONS, *,
-                consensus: bool = True) -> pl.DataFrame:  # pragma: no cover - network
+def build_panel(seasons: Sequence[int] = SEASONS, *, consensus: bool = True,
+                ranks: pl.DataFrame | None = None,
+                ) -> pl.DataFrame:  # pragma: no cover - network
     """One row per (player, season, week), with every feature measured before its outcome.
 
     **This panel contains only weeks a player took a snap**, because `player_stats` has no row
@@ -514,6 +515,11 @@ def build_panel(seasons: Sequence[int] = SEASONS, *,
                        pl.col("practice").fill_null("Healthy"))
     for c in USAGE:
         p = recent_mean(p, c)
+    if ranks is not None:
+        # Injected rather than fetched. A board lives under `draft/`, and six `draft/` modules
+        # import `models/` while nothing goes the other way -- inverting that to save one
+        # caller a parameter is the mistake `board_as_of` was moved out of `models/` to fix.
+        p = p.join(ranks, on=["key", "season"], how="left")
     if not consensus:
         # The gate needs a projection for every rostered player, including the ones consensus
         # does not list -- being unranked is the incumbent's *answer*, not a reason to have no

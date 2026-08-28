@@ -313,7 +313,9 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                     help="one waiver add/drop a week, both arms, from a pool both can score")
     ap.add_argument("--open-pool", action="store_true",
                     help=argparse.SUPPRESS)   # the asymmetric pool: NOT the gate
-    ap.add_argument("--shrink", choices=("mae", "tail"), default=None,
+    ap.add_argument("--shrink",
+                    choices=("mae", "tail", "mae-market", "tail-market", "market-only"),
+                    default=None,
                     help="shrink thin-sample projections toward the positional mean; "
                          "'mae' is the pre-registered fit, 'tail' the exploratory one")
     ap.add_argument("--seasons", default="2022,2023,2024,2025")

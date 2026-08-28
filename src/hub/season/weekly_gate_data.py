@@ -16,6 +16,26 @@ from hub.models.experiment import realised_ppg
 from hub.names import player_key
 from hub.season.weekly_gate import UNRANKED
 
+
+def preseason_ranks(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
+    """Each player's **August** consensus rank, from the board as it stood before the season.
+
+    Deliberately not the weekly ranking: this is the market's opinion four months before the
+    week, which is a different quantity from the Friday page Gate B measures against. It is
+    what the market-implied shrinkage regresses toward.
+    """
+    from hub.draft.board import board_as_of
+    frames = []
+    for yr in seasons:
+        b = board_as_of(yr)[0]
+        frames.append(b.select(
+            pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("key"),
+            pl.lit(yr).cast(pl.Int64).alias("season"),
+            pl.col("ecr").cast(pl.Float64).alias("preseason_ecr")))
+    return (pl.concat(frames).drop_nulls("preseason_ecr")
+              .group_by(["key", "season"]).agg(pl.col("preseason_ecr").min()))
+
+
 WEEKS = REG_SEASON_WEEKS
 
 
@@ -56,7 +76,9 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     from hub.models.weekly_screen import build_panel, weekly_consensus
 
     cfg = RosterConfig()
-    panel = build_panel(seasons, consensus=False)
+    want_ranks = shrink is not None and shrink is not None and "market" in shrink
+    panel = build_panel(seasons, consensus=False,
+                        ranks=preseason_ranks(seasons) if want_ranks else None)
     ecr = weekly_consensus(seasons)
 
     projected = []
@@ -64,7 +86,10 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         coefs = {c: fit_multiplier(past, c) for c in VOLUME}
         # Fitted on `past` only, like the multiplier. A shrinkage fitted on the season it is
         # scored against would be the treatment arm reading its own answer sheet.
-        sh = None if shrink is None else fit_shrink(past, coefs, objective=shrink)
+        sh = None if shrink is None else fit_shrink(
+            past, coefs, objective=shrink.split("-")[0],
+            target=("market-only" if shrink == "market-only"
+                    else "market" if shrink is not None and "market" in shrink else "position"))
         projected.append(project(now, coefs, shrink=sh).select("key", "season", "week", "mu"))
     proj = pl.concat(projected) if projected else pl.DataFrame(
         schema={"key": pl.Utf8, "season": pl.Int64, "week": pl.Int64, "mu": pl.Float64})

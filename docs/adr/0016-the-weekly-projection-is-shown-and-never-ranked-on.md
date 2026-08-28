@@ -113,12 +113,32 @@ Uniform shrinkage toward a single positional mean is the wrong instrument, which
 season grain — *"a WR1 and a WR5 do not regress toward the same place"*. Same failure, weekly
 grain, independent route. See [weekly-shrinkage.md](../weekly-shrinkage.md).
 
+## And so has the market-implied variant
+
+**Measured 2026-08-28**, at the user's request, as the fourth attempt at the same rescue.
+Shrinking toward what a player's *preseason* rank implies — refitted per fold, never the
+weekly ranking — gives the **first positive point estimate in the programme**: frozen
+**+0.159** [−0.433, +0.736], churn **−2.450** [−3.637, −1.290].
+
+**It does not change this decision, for two reasons stated before the run.** The interval
+contains zero and it won 2 of 3 seasons, so the verdict is SHOW either way. And the
+pre-registered tripwire *fired*: the frozen gate was to move less than 0.3 and moved 0.46,
+which correctly identifies that `w = n/(n+k)` never reaches 1 and so this blends market
+information into every projection rather than regularising thin ones. It is a different model,
+not a shrunk one.
+
+A probe rules out the obvious confound: the market prior *alone* scores −1.146, worse than
+either the model alone (−0.304) or the blend (+0.159). The gain is complementarity, not
+import.
+
+**What it licenses is a new pre-registration, not an amendment to this one.** The market/Usage
+blend is a model in its own right and should be gated as one, once, cleanly. See
+[weekly-market-shrinkage.md](../weekly-market-shrinkage.md).
+
 ## What would change it
 
-**Shrinkage toward a market-implied prior** rather than a positional average — the fix both
-this and the season-level work point at. Not run: it would be the third variant of the same
-rescue attempt, and shrinking toward consensus imports the incumbent into the arm being
-measured against it, which needs its own pre-registration to mean anything.
+A clean, single, pre-registered run of the market/Usage blend clearing both halves of the bar.
+Four variants of a rescue do not add up to one.
 
 **Rosters that are not static.** The gate drafts a roster and freezes it for the season, so it
 deletes the streaming decision — deciding who to add for one week is a large part of what a

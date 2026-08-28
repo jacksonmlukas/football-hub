@@ -32,7 +32,8 @@ Four features cleared the weekly screen; two carried into a model; the model bea
 projection on accuracy and lost the lineup decision to a free consensus ranking, harder with
 waivers than without, and a pre-registered shrinkage did not rescue it.
 [weekly-screen.md](weekly-screen.md) → [weekly-projection.md](weekly-projection.md) →
-[weekly-gate.md](weekly-gate.md) → [weekly-shrinkage.md](weekly-shrinkage.md).
+[weekly-gate.md](weekly-gate.md) → [weekly-shrinkage.md](weekly-shrinkage.md) →
+[weekly-market-shrinkage.md](weekly-market-shrinkage.md).
 
 ## Age
 

@@ -298,3 +298,84 @@ def test_the_shrink_target_is_per_position():
     vm, _ = W._pos_means(t)
     assert vm[("WR", "targets")] != vm[("RB", "targets")], \
         "a receiver and a back do not regress toward the same place"
+
+
+# --- the market-implied target ----------------------------------------------
+
+def _ranked(n=400, seed=13):
+    """Players spread across preseason ranks, with volume falling as rank rises."""
+    frames = []
+    for r in (2.0, 10.0, 40.0, 120.0):
+        d = _rows(n=n // 4, seed=int(r), targets=float(max(11 - r / 12, 1.0)),
+                  targets_prior=float(max(11 - r / 12, 1.0)))
+        frames.append(d.with_columns(pl.lit(r).alias("preseason_ecr")))
+    return pl.concat(frames)
+
+
+def test_the_market_prior_falls_with_rank():
+    """Log-log in the pick, the shape volume-model.md fitted: volume is roughly a power law
+    in the market's opinion and strictly non-negative."""
+    t = _ranked()
+    m = W.fit_market_prior(t)
+    assert ("WR", "targets") in m
+    lo = W.market_target(_rows(n=1, preseason_ecr=3.0), "targets", m)[0]
+    hi = W.market_target(_rows(n=1, preseason_ecr=150.0), "targets", m)[0]
+    assert lo > hi > 0, "a third-ranked receiver is projected more volume than a 150th"
+
+
+def test_the_rank_is_clamped_to_the_fitted_range():
+    """What stops a 599th-ranked player being extrapolated off the end of a log curve."""
+    t = _ranked()
+    m = W.fit_market_prior(t)
+    edge = W.market_target(_rows(n=1, preseason_ecr=120.0), "targets", m)[0]
+    beyond = W.market_target(_rows(n=1, preseason_ecr=5000.0), "targets", m)[0]
+    assert beyond == pytest.approx(edge)
+
+
+def test_a_player_with_no_rank_falls_back_to_his_position():
+    t = _rows(n=4).with_columns(pl.lit(None, dtype=pl.Float64).alias("preseason_ecr"))
+    means = {("WR", "targets"): 3.0}
+    got = W._shrunk(t, "targets", 1e9, means, "targets", market={("WR", "targets"): (1., -1., 1., 9.)})
+    assert got[0] == pytest.approx(3.0), "no rank, so the positional mean is the target"
+
+
+def test_the_market_target_reads_the_preseason_rank_and_ignores_a_weekly_one():
+    """The distinction the whole variant rests on. Shrinking toward the *weekly* ranking would
+    make the arm partly be the incumbent Gate B measures it against; the preseason rank is a
+    different quantity, published four months earlier. Tested by handing it both and checking
+    which one moves the answer."""
+    m = W.fit_market_prior(_ranked())
+    a = _rows(n=1, preseason_ecr=3.0).with_columns(pl.lit(400.0).alias("ecr"))
+    b = _rows(n=1, preseason_ecr=3.0).with_columns(pl.lit(1.0).alias("ecr"))
+    assert W.market_target(a, "targets", m)[0] == W.market_target(b, "targets", m)[0], \
+        "a weekly rank must not move it"
+    c = _rows(n=1, preseason_ecr=120.0).with_columns(pl.lit(400.0).alias("ecr"))
+    assert W.market_target(c, "targets", m)[0] != W.market_target(a, "targets", m)[0], \
+        "and the preseason rank must"
+
+
+def test_the_curves_are_refitted_not_imported():
+    """`volume.VOLUME_CURVE` is frozen at a 2022-25 fit, which is the span held out here, so
+    importing it would evaluate a prior on the seasons it was fitted on."""
+    import ast
+    import inspect
+    tree = ast.parse(inspect.getsource(W))
+    imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+                for a in n.names}
+    assert "VOLUME_CURVE" not in imported and "volume" not in imported
+    assert "train" in inspect.signature(W.fit_market_prior).parameters
+
+    # and two different training sets give two different curves
+    one = W.fit_market_prior(_ranked(seed=1))
+    two = W.fit_market_prior(_ranked(seed=2).with_columns(pl.col("targets") * 2))
+    assert one[("WR", "targets")] != two[("WR", "targets")]
+
+
+def test_pure_market_ignores_the_players_own_history():
+    """The probe that asks how much of a gain is the market's rather than the model's."""
+    t = _ranked()
+    m = W.fit_market_prior(t)
+    own = t.with_columns(pl.lit(99.0).alias("targets_prior"))
+    got = W._shrunk(own, "targets", W.PURE_MARKET_K, {("WR", "targets"): 0.0},
+                    "targets", market=m)
+    assert got.max() < 20.0, "a 99-target prior is ignored entirely"

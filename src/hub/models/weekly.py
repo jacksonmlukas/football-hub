@@ -114,11 +114,62 @@ EFF_SHRINK_GRID: tuple[float, ...] = (0.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0)
 
 
 class Shrink(NamedTuple):
-    """How hard to pull a thin sample toward its position, and toward what."""
+    """How hard to pull a thin sample toward the target, and what the target is."""
     volume_k: float
     eff_k: float
     volume_mean: dict[tuple[str, str], float]     # (position, component) -> mean per game
     eff_mean: dict[tuple[str, str], float]        # (position, yards) -> yards per unit
+    # (position, component) -> (a, b, lo, hi) in log(1 + count) = a + b*log(rank). When
+    # present the pull is toward what the player's *preseason* rank implies rather than
+    # toward his position's average, which is the market-implied variant.
+    market: dict[tuple[str, str], tuple[float, float, float, float]] | None = None
+
+
+def fit_market_prior(train: pl.DataFrame,
+                     ) -> dict[tuple[str, str], tuple[float, float, float, float]]:
+    """`log(1 + count per game) = a + b*log(preseason rank)`, per position, per Usage count.
+
+    The same functional form as `hub.models.volume.VOLUME_CURVE` -- log-log in the pick, which
+    `docs/volume-model.md` fitted because volume is roughly a power law in the market's
+    opinion and strictly non-negative -- but **refitted here on training seasons only**. The
+    shipped constants are frozen at a 2022-25 fit, which is exactly the span held out, so
+    importing them would evaluate a prior on the seasons it was fitted on.
+
+    Against the board's preseason `ecr` rather than an actual draft pick, because that is what
+    a historical board carries. The rank is clamped to the fitted range, which is what stops a
+    599th-ranked player being extrapolated off the end of a log curve.
+    """
+    out: dict[tuple[str, str], tuple[float, float, float, float]] = {}
+    d = train.drop_nulls("preseason_ecr").filter(pl.col("preseason_ecr") > 0)
+    for pos in sorted(set(d["position"].to_list())):
+        sub = d.filter(pl.col("position") == pos)
+        if sub.height < 100:
+            continue
+        rank = sub["preseason_ecr"].to_numpy().astype(float)
+        lo, hi = float(rank.min()), float(rank.max())
+        x = np.log(rank)
+        for c in (*VOLUME, "receptions"):
+            y = np.log1p(np.clip(sub[c].to_numpy().astype(float), 0.0, None))
+            if x.std() == 0:
+                continue
+            a, b = float(np.polyfit(x, y, 1)[1]), float(np.polyfit(x, y, 1)[0])
+            out[(pos, c)] = (a, b, lo, hi)
+    return out
+
+
+def market_target(df: pl.DataFrame, col: str,
+                  market: dict[tuple[str, str], tuple[float, float, float, float]],
+                  ) -> np.ndarray:
+    """What each player's preseason rank implies for `col`, per game. NaN where unfitted."""
+    ranks = df["preseason_ecr"].to_numpy().astype(float)
+    out = np.full(len(ranks), np.nan)
+    for i, (pos, r) in enumerate(zip(df["position"].to_list(), ranks, strict=True)):
+        fit = market.get((pos, col))
+        if fit is None or not np.isfinite(r) or r <= 0:
+            continue
+        a, b, lo, hi = fit
+        out[i] = max(float(np.expm1(a + b * np.log(min(max(r, lo), hi)))), 0.0)
+    return out
 
 
 def _pos_means(train: pl.DataFrame) -> tuple[dict, dict]:
@@ -141,7 +192,7 @@ TAIL_Q = 0.90
 
 
 def fit_shrink(train: pl.DataFrame, coefs: dict[str, float], *,
-               objective: str = "mae") -> Shrink:
+               objective: str = "mae", target: str = "position") -> Shrink:
     """Fit both constants by grid search on `train`. Zero is in both grids.
 
     Fitted rather than chosen, and on training seasons only, because a shrinkage picked after
@@ -156,18 +207,25 @@ def fit_shrink(train: pl.DataFrame, coefs: dict[str, float], *,
     hundreds of candidates and the mean is dominated by the bulk. The pre-registered objective
     was blind to the defect the shrinkage was meant to fix.
 
+    `target="market"` regresses toward what each player's **preseason** consensus rank implies
+    rather than toward his position's average -- refitted per fold, never imported from the
+    frozen `volume.VOLUME_CURVE`, which was fitted on the seasons held out here.
+
     `tail` minimises the absolute bias among the **top decile by projection** in training,
     which is where a waiver decision reads. It was specified *after* seeing `mae` return a
     null, so it is exploratory and is reported as such -- but it is still fitted on training
     seasons only and never on the held-out ones.
     """
     vol_mean, eff_mean = _pos_means(train)
+    market = fit_market_prior(train) if target.startswith("market") else None
+    if target == "market-only":
+        return Shrink(PURE_MARKET_K, PURE_MARKET_K, vol_mean, eff_mean, market)
     actual = train["fantasy_points_ppr"].to_numpy().astype(float)
-    best = Shrink(0.0, 0.0, vol_mean, eff_mean)
+    best = Shrink(0.0, 0.0, vol_mean, eff_mean, market)
     best_loss = float("inf")
     for vk in VOLUME_SHRINK_GRID:
         for ek in EFF_SHRINK_GRID:
-            cand = Shrink(vk, ek, vol_mean, eff_mean)
+            cand = Shrink(vk, ek, vol_mean, eff_mean, market)
             mu = project(train, coefs, shrink=cand)["mu"].to_numpy().astype(float)
             if objective == "mae":
                 loss = float(np.abs(mu - actual).mean())
@@ -180,13 +238,29 @@ def fit_shrink(train: pl.DataFrame, coefs: dict[str, float], *,
     return best
 
 
-def _shrunk(df: pl.DataFrame, col: str, k: float, means: dict, key: str) -> np.ndarray:
-    """`n/(n+k)` of his own, the rest of his position's. `k = 0` returns his own untouched."""
+# A `volume_k` this large makes `n/(n+k)` ~ 0 for any real sample, so the projection becomes
+# the market prior and nothing else. Not a candidate in any grid -- it exists so a run can ask
+# "how much of this gain is ours and how much is the market's?" and get a number.
+PURE_MARKET_K = 1e9
+
+
+def _shrunk(df: pl.DataFrame, col: str, k: float, means: dict, key: str,
+            market: dict | None = None) -> np.ndarray:
+    """`n/(n+k)` of his own, the rest of the target. `k = 0` returns his own untouched.
+
+    The target is his position's average, or -- in the market-implied variant -- what his
+    preseason rank implies, falling back to the positional average where the rank is missing
+    or the position was never fitted. A WR1 and a WR5 do not regress toward the same place,
+    which is the diagnosis `component-projection.md` made of the positional-mean version.
+    """
     own = np.nan_to_num(df[f"{col}_prior"].to_numpy().astype(float), nan=0.0)
     if k <= 0:
         return own
     n = np.nan_to_num(df["games_before"].to_numpy().astype(float), nan=0.0)
     target = np.array([means.get((p, key), 0.0) for p in df["position"].to_list()])
+    if market is not None and "preseason_ecr" in df.columns:
+        implied = market_target(df, key, market)
+        target = np.where(np.isnan(implied), target, implied)
     w = n / (n + k)
     return w * own + (1.0 - w) * target
 
@@ -240,7 +314,8 @@ def project(now: pl.DataFrame, coefs: dict[str, float],
     def prior(col: str) -> np.ndarray:
         if shrink is None:
             return np.nan_to_num(now[f"{col}_prior"].to_numpy().astype(float), nan=0.0)
-        return _shrunk(now, col, shrink.volume_k, shrink.volume_mean, col)
+        return _shrunk(now, col, shrink.volume_k, shrink.volume_mean, col,
+                       shrink.market)
 
     tgt = prior("targets") * m["targets"]
     car = prior("carries") * m["carries"]

@@ -538,6 +538,59 @@ have. Full write-up in [weekly-shrinkage.md](weekly-shrinkage.md).
 
 ---
 
+## Market-implied shrinkage — pre-registered 2026-08-28, before it ran
+
+**The third attempt at the same rescue, run at the user's request.** Saying so is the point:
+[weekly-shrinkage.md](weekly-shrinkage.md) closed by declining it precisely because a rescue
+tried three times is a result being negotiated with. It is run anyway, and it is reported with
+that written on it.
+
+**The prior is the *preseason* market, never the weekly one.** Each player is shrunk toward what
+his **August consensus rank** implies about his Usage, not toward the Friday ranking Gate B
+measures against. Shrinking toward the incumbent would make the arm partly *be* the incumbent,
+and a win could be entirely the borrowed half. The two are different quantities published four
+months apart.
+
+**The curves are refitted per fold, not imported.** `hub.models.volume`'s `VOLUME_CURVE` is the
+right shape — log-log in the pick, per position, from `docs/volume-model.md` — but it is a
+**frozen constant fitted on 2022-25**, which is exactly the span held out here. Using it would
+be evaluating a prior on the seasons it was fitted on. So the same functional form is refitted
+inside each walk-forward fold on strictly earlier seasons, against the board's preseason
+`ecr` rather than an actual draft pick, which is what a historical board carries.
+
+| | |
+|---|---|
+| Prior | `log(1 + count per game) = a + b·log(rank)`, per position, per Usage count |
+| Fitted on | strictly earlier seasons, refit every fold, rank clamped to the fitted range |
+| Shrink | `n/(n+k)` of his in-season rate, the rest of the market prior |
+| `k` fitted by | the same two objectives as before, `mae` and `tail`, on training rows only |
+| Gates | both, frozen and churn, exactly as before |
+
+**Pre-stated expectation.** This should work where the positional mean did not, because a WR1
+and a WR5 do not regress to the same place and a preseason rank knows which is which — the
+diagnosis `component-projection.md` made and `volume-model.md` confirmed at season grain.
+Concretely: **the churn gate at least halves its loss, from −3.79 to better than −1.9, and
+stays negative. The frozen gate moves less than 0.3.** If the frozen gate moves more than that,
+something other than thin-sample shrinkage changed and the run is suspect.
+
+#### Result, 2026-08-28: missed on one half, and the tripwire fired on the other
+
+| | predicted | measured | |
+|---|---|---|---|
+| churn | better than −1.9 | **−2.450** | missed — 35% better, not halved |
+| frozen | moves < 0.3 | **+0.159, a move of 0.46** | **tripwire fired** |
+
+The tripwire was right and about something real: `w = n/(n+k)` never reaches 1, so this blends
+a market signal into *every* projection rather than regularising thin ones. It is a new model,
+not a shrinkage — which is why a frozen gate full of thick-sample players moved half a point.
+Not explained away, and the frozen figure is not reported as a gate result.
+
+A probe shows the gain is **not** the market being imported: market prior alone is −1.146, the
+in-season model alone −0.304, the blend **+0.159**. The blend beats both components. Full
+write-up in [weekly-market-shrinkage.md](weekly-market-shrinkage.md).
+
+---
+
 ## What is settled, and by whom
 
 Every decision above was fixed on 2026-08-27 in a grilling session, before any measurement.
