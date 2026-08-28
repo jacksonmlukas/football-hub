@@ -149,6 +149,10 @@ parameter-free — fill each slot with your highest-ranked eligible rostered pla
 `weekly-op` ECR — which is the same shape as the incumbent that beat the snap trend at −3.81
 points ([ADR-0013](adr/0013-the-snap-trend-is-shown-and-never-ranked-on.md)), one level down.
 
+This is recorded as
+[ADR-0015](adr/0015-the-weekly-gate-is-a-decision-not-an-accuracy-test.md), because "just fit a
+rank→points curve and run a proper accuracy gate" is exactly what a future review will suggest.
+
 **Gate A is demoted to a reported diagnostic**: paired absolute error on player-week points
 against the *flat* projection only, per-observation, via
 [`experiment.paired_gain`](../src/hub/models/experiment.py). It cannot run against consensus,
@@ -464,7 +468,7 @@ recorded with their reasons so they need not be:
 
 | decision | why |
 |---|---|
-| Gate B primary, Gate A a diagnostic | historical weekly consensus ships ECR and no `r2p_pts`; a rank→points curve would put free parameters on the incumbent's side |
+| Gate B primary, Gate A a diagnostic | historical weekly consensus ships ECR and no `r2p_pts`; a rank→points curve would put free parameters on the incumbent's side — [ADR-0015](adr/0015-the-weekly-gate-is-a-decision-not-an-accuracy-test.md) |
 | search fixed at *start your highest projections* | ADR-0012 is accepted and withdrawn its own re-run clause; this varies the projection, not the search |
 | `sd = k·√mu` untouched | the component-spread measurement is closed at P(better) 0.0% |
 | multiplier form, `f ≡ 1` is the null | the model cannot be much worse than the projection it adjusts |
