@@ -183,3 +183,22 @@ def test_compare_emits_one_row_per_roster_week_and_skips_uncovered_weeks():
                     weeks=[3, 4, 5])
     assert out.height == 2 and sorted(out["week"].to_list()) == [3, 4]
     assert (out["diff"] == 0.0).all(), "identical arms differ by nothing"
+
+
+# --- the score matrices, where the defaults are the whole argument ----------
+
+def test_a_missing_value_takes_the_stated_default():
+    """The rule the entire void analysis turned on: a player absent from the consensus page
+    gets UNRANKED, a player with no realised row gets zero, and neither is a null that a
+    later step silently reinterprets."""
+    from hub.season.weekly_gate_data import _matrix
+    m = _matrix(["a", "b"], {("a", 1): 5.0, ("a", 3): 7.0}, G.UNRANKED)
+    assert m[0, 0] == 5.0 and m[0, 2] == 7.0
+    assert m[0, 1] == G.UNRANKED, "a week he is missing from is unranked, not carried forward"
+    assert (m[1, :] == G.UNRANKED).all(), "and a player missing entirely is unranked all season"
+
+
+def test_the_matrix_covers_the_whole_regular_season():
+    from hub.draft.season import REG_SEASON_WEEKS
+    from hub.season.weekly_gate_data import _matrix
+    assert _matrix(["a"], {}, 0.0).shape == (1, REG_SEASON_WEEKS)
