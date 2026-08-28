@@ -24,17 +24,23 @@ derived from play uses weeks < *w* only.
 
 ## Result
 
+**Corrected 2026-08-28.** The first run of this screen was wrong: the as-of join attached each
+consensus scrape to the week *after* the one it ranked. See *The off-by-one*, below. Every
+number here is post-fix.
+
 | feature | pre-stated | partial r | t | seasons with the stated sign | verdict |
 |---|---|---|---|---|---|
-| **snap-share trend** | + | **+0.070** | 4.8 | **5/5** | **clears** |
-| **prior TD rate per yard** | *null* | **−0.045** | −6.0 | **5/5** | **clears, sign as the component work predicts** |
-| implied team total | + | +0.044 | 4.6 | 5/5 | **confounded — see below** |
-| own spread | ? | +0.036 | 3.9 | 5/5 | **killed**: it is the implied total in disguise |
-| defence vs position | + | +0.038 | 4.8 | 4/5 (2024 −0.004) | killed on the every-season half |
-| target-share trend | + | +0.023 | 2.0 | 4/5 | killed on the every-season half |
-| injury severity | − | −0.030 | −3.2 | 4/5 (2025 +0.001) | killed on the every-season half |
-| wind | − | −0.024 | −2.1 | 2/5, sign flips | killed — protocol item 4 |
-| rest days | ? | −0.003 | −0.3 | 2/5 | null |
+| implied team total | + | +0.048 | 5.7 | 5/5 | clears alone |
+| **snap-share trend** | + | **+0.038** | 2.8 | **5/5** | **clears** |
+| own spread | ? | +0.037 | 4.4 | 5/5 | clears alone |
+| **defence vs position** | + | **+0.033** | 4.4 | **5/5** | **clears** |
+| **injury severity** | − | **−0.025** | −3.0 | **5/5** | **clears** |
+| **prior TD rate per yard** | *null* | **−0.038** | −5.4 | **5/5** | **pre-stated null broken** |
+| wind | − | −0.024 | −2.2 | 4/5 | killed |
+| rest days | ? | −0.014 | −1.7 | 3/5 | killed |
+| target-share trend | + | +0.006 | 0.6 | 1/5 | killed |
+
+Sample: **14,370 player-weeks, 847 players, 55 cells.**
 
 ### The controls are real
 
@@ -52,73 +58,67 @@ Each surviving feature permuted within its own cell:
 
 ### The joint screen: which of these are separate signals?
 
-Four features are a signal on their own. Re-screening each with the others added to its
+Six features are a signal on their own. Re-screening each with the others added to its
 controls — **each keeping its own week range**, controlled only for survivors that exist over
-it — is what separates findings from shadows:
+it — separates findings from shadows:
 
 | feature | alone | controlled for the others | |
 |---|---|---|---|
-| snap-share trend | +0.070, 5/5 | **+0.074, t +5.05, 5/5** | survives everything |
-| prior TD rate | −0.045, 5/5 | **−0.047, t −5.93, 5/5** | survives everything |
-| implied team total | +0.044, 5/5 | +0.026, t +2.31, **3/5** | dies |
-| own spread | +0.036, 5/5 | −0.002, t −0.19, **3/5** | dies |
+| prior TD rate | −0.038, 5/5 | **−0.040, t −5.47, 5/5** | survives |
+| snap-share trend | +0.038, 5/5 | **+0.043, t +3.04, 5/5** | survives |
+| defence vs position | +0.033, 5/5 | **+0.028, t +3.74, 5/5** | survives |
+| injury severity | −0.025, 5/5 | **−0.023, t −2.78, 5/5** | survives |
+| implied team total | +0.048, 5/5 | +0.028, t +2.77, **4/5** | dies |
+| own spread | +0.037, 5/5 | −0.006, t −0.55, **4/5** | dies |
 
 **`implied_total = total_line/2 + own_spread/2`, and the two correlate at +0.83.** They are one
-finding wearing two hats. Neither *residual* clears once the other is controlled for, which is
-the honest statement: the market's game-level forecast predicts a player's week, and the split
-between "how many points are in this game" and "who is favoured" is not separable at this n.
+finding wearing two hats, and neither *residual* clears once the other is controlled for. The
+market's game-level forecast predicts a player's week; the split between "how many points are
+in this game" and "who is favoured" is not separable at this n.
 
-**Independent signals: the snap-share trend and the prior TD rate.** Both are computed entirely
-from games already played.
+**Four independent signals: the prior TD rate, the snap-share trend, defence vs position, and
+the injury designation.**
 
-## The confound that changes the reading
+## The staleness question, and why it is smaller than first reported
 
-**The consensus control is scraped a median of six days before kickoff.**
+The consensus control is FantasyPros' `weekly-op` page, and the first version of this document
+said it was scraped **six days before kickoff** — making it a stale control that any
+Tuesday-to-Sunday news would beat for that reason alone.
 
-| lead time, scrape → first kickoff | scrapes |
-|---|---|
-| 6 days | 72 |
-| 8 days | 4 |
-| 1, 2, 5 days | 5 |
+**That was the off-by-one talking.** Measured against the week it actually ranks, the median
+lead is **3 days**: a Friday scrape for that Sunday's games. It is a *fresh* control, not a
+stale one, and the confound is correspondingly smaller.
 
-`weekly-op` is FantasyPros' **Monday/Tuesday** ranking. So the control is a *stale* one, and any
-feature carrying information published between Tuesday and Sunday will beat it for that reason
-alone. That splits the survivors in two:
+What survives of the concern: a Friday scrape is after its own week's **Thursday** game, so for
+a Thursday-night player the ranking is not strictly pre-kickoff. That hands the *incumbent* one
+game of hindsight per team-week, which biases against the arm being tested — conservative
+rather than dangerous, and it is stated in `assign_weeks` where the rule lives.
 
-**Not explained by staleness.** The **snap-share trend** and **prior TD rate** are both computed
-entirely from games already played when the ranking was scraped. Consensus had every input on
-Monday and did not price them. These are the honest positives.
+The feature the staleness story was about — the implied team total, which is a closing line —
+**fails the joint screen anyway**, so nothing carried forward rests on it either way.
 
-**Confounded.** The **implied team total** is the *closing* line, which by construction
-absorbs six days of news the control never saw. The screen as run cannot separate "adds beyond
-consensus" from "is newer than consensus", and **there is no fresher historical consensus in
-nflverse to control with**, so the confound is not removable with available data. It is also
-the feature that did not survive the joint screen, so nothing rests on it either way.
+## The off-by-one
 
-Weak evidence against staleness being the whole story: injury severity is also post-scrape
-information and it did *not* clear (4/5). But that encoding is crude — a max-severity ordinal,
-not the fitted retention table — so it is a hint, not a control.
+An NFL week runs Thursday to Monday, and the scrapes land mid-week. `assign_weeks` mapped each
+scrape to the week whose **first** kickoff came next. So 2024-10-04, a Friday *inside* week 5
+(Oct 3–7), ranking week 5's Sunday games, was attached to **week 6**.
 
-## Against the pre-registration
+The tell came from the gate, not the screen: Saquon Barkley, CeeDee Lamb and Patrick Mahomes
+were each missing from exactly one week, and it was the week **after** their team's bye — a
+page that correctly omits a bye-week player, attached to the following week.
 
-Recorded because the predictions were written down before the run and two of them are wrong.
+It moved real numbers in both directions:
 
-1. *"The model beats the flat incumbent by a wide margin."* Not tested here — this screen
-   controls for consensus, not for the flat projection.
-2. *"It does not beat weekly consensus on market-derived features alone."* **Wrong as stated.**
-   The implied total clears at 5/5 beyond consensus ECR. **Right in substance**: it beats a
-   six-day-stale consensus, which is the timeliness thesis restated, not a claim to process
-   shared information better.
-3. *"If anything survives it is the snap-share trend and the injury designation."* **Half
-   right.** The snap trend survives — and this doubles as the one-week re-screen the plan
-   required before it could enter Phase 2, since its established result was a three-week
-   horizon. The injury designation does not, on this encoding.
-4. *"Week-over-week TD rate comes back null."* **Wrong, and informatively.** It is a strong
-   **negative** in every season: given the same season-to-date scoring and the same consensus
-   rank, a player whose points came from touchdowns rather than yards scores *less* next week.
-   That is [component-projection.md](component-projection.md)'s "regress touchdowns, leave
-   volume alone" appearing at weekly grain by an independent route — the season-level version
-   is r = −0.004 for receiving and −0.030 for rushing TD rate.
+| | before | after |
+|---|---|---|
+| snap-share trend, joint | +0.074 | **+0.043** |
+| defence vs position | 4/5, killed | **5/5, clears** |
+| injury severity | 4/5, killed | **5/5, clears** |
+| consensus lead time | "6 days" | **3 days** |
+| Gate B join failures | 6.2% (VOID) | **0.0%** |
+
+The rule now joins on the week's **last** kickoff — the first week whose games are not all
+played — and there are five tests on it.
 
 ## Against Usage, not points — the premise of the multiplier form
 
@@ -137,21 +137,28 @@ Under the stronger control:
 
 | | targets | receptions | carries | attempts | **touchdowns** |
 |---|---|---|---|---|---|
-| **snap-share trend** | +0.094 (8.5) | +0.077 (6.3) | +0.062 (4.6) | +0.032 (2.7) | **+0.018 (1.5) — killed** |
-| **prior TD rate** | +0.008 (1.0) | −0.000 (0.0) | −0.005 (0.7) | +0.005 (1.8) | **−0.120 (−14.2)** |
+| **snap-share trend** | +0.088 (8.1) | +0.072 (6.1) | +0.055 (4.1) | +0.030 (2.6) | **+0.018 (1.5) — killed** |
+| **prior TD rate** | +0.005 (0.8) | −0.004 (0.6) | −0.003 (0.5) | +0.005 (1.9) | **−0.118 (−14.4)** |
+| defence vs position | +0.027 killed | +0.029 killed | +0.020 clears | +0.019 killed | +0.020 killed |
+| injury severity | −0.004 killed | −0.011 killed | −0.025 clears | +0.004 killed | −0.024 clears |
 
-**The two survivors are orthogonal, and each is exactly the thing it was supposed to be.** The
-snap trend moves every volume count and does not move touchdowns. The prior TD rate moves
-touchdowns, hard, and moves no volume count at all.
+**The two that carry into the model are orthogonal, and each is exactly the thing it was
+supposed to be.** The snap trend moves every volume count and does not move touchdowns. The
+prior TD rate moves touchdowns, hard, and moves no volume count at all.
 
 That is the structural claim `weekly-projection-plan.md` made before any of this was measured —
 *week-level information moves Usage and barely touches efficiency* — confirmed by a screen that
-could have refuted it. It also fixes the form of the model: a **Usage multiplier** carrying the
-snap trend, and a **touchdown regression** carrying the prior TD rate, with nothing crossing
-between them.
+could have refuted it. It fixes the form of the model: a **Usage multiplier** carrying the snap
+trend, and a **touchdown regression** carrying the prior TD rate, with nothing crossing between
+them.
 
-Note that the snap trend is roughly twice as strong against volume (+0.094 on targets) as
-against points (+0.070). Volume is the persistent part and points add touchdown noise on top —
+**Defence-vs-position and injury severity clear against points but not against Usage.** Only
+one count each survives — carries for both — so neither has a clean home in the multiplier
+form, and neither is carried into `hub.models.weekly`. They are real and unused, which is worth
+saying plainly rather than quietly widening the model to accommodate them.
+
+Note that the snap trend is more than twice as strong against volume (+0.088 on targets) as
+against points (+0.038). Volume is the persistent part and points add touchdown noise on top —
 [component-projection.md](component-projection.md)'s year-over-year table (targets 0.805 against
 points 0.775) at weekly grain.
 
@@ -159,12 +166,12 @@ points 0.775) at weekly grain.
 
 It licenses **Phase 2 with two features, in two separate places**: the **snap-share trend**
 as a Usage multiplier (week ≥ 8), and the **prior TD rate** as a touchdown regression. The
-Usage screen says they do not cross. Plus the injury designation, which enters unscreened by the plan's own
+Usage screen says they do not cross, and it says defence-vs-position and the injury designation
+do not belong in either. Plus the injury designation, which enters unscreened by the plan's own
 pre-registered rule, having been measured at player-week grain at +0.170 MAE and 3.8 se.
 
-The implied team total is **not** carried. It fails the joint screen on the every-season half,
-and even the part that survives is confounded with a six-day-stale control. Two independent
-reasons to leave it out, and either alone would be enough.
+The implied team total is **not** carried: it fails the joint screen on the every-season half,
+being the own-spread finding in another hat.
 
 It licenses **nothing about lineups**. A partial correlation says a quantity adds to the board
 and never that it should be the board

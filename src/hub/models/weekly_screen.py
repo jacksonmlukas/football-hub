@@ -403,28 +403,40 @@ def injury_severity(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover
 
 
 def week_windows(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
+    """First and **last** kickoff per (season, week). The last one is what the join uses."""
     import nflreadpy as nfl
     s = (nfl.load_schedules()
            .filter(pl.col("season").is_in(list(seasons)) & (pl.col("game_type") == "REG")))
     return (s.group_by(["season", "week"])
-             .agg(pl.col("gameday").str.to_date().min().alias("first_kick"))
-             .sort("first_kick"))
+             .agg(pl.col("gameday").str.to_date().min().alias("first_kick"),
+                  pl.col("gameday").str.to_date().max().alias("last_kick"))
+             .sort("last_kick"))
 
 
 def assign_weeks(scrapes: pl.DataFrame, windows: pl.DataFrame,
                  max_lead: int = CONSENSUS_MAX_LEAD_DAYS) -> pl.DataFrame:
-    """Map each scrape date to the week whose games are the NEXT ones after it.
+    """Map each scrape to the first week whose games are **not all played yet**.
 
-    Forward, not backward: a ranking published on Tuesday is a forecast of the coming Sunday,
-    and joining it to the Sunday just gone would be scoring a projection against a game it had
-    already seen. `max_lead` drops scrapes too far from any kickoff to be that week's ranking.
+    On the week's *last* kickoff, not its first, and getting that wrong is an off-by-one that
+    silently shifts the whole control by a week. An NFL week runs Thursday to Monday, and
+    FantasyPros scrapes land mid-week: 2024-10-04 is a Friday, inside week 5 (Oct 3-7), and it
+    ranks week 5's Sunday games. Joining on the next *first* kickoff sent it to week 6.
+
+    The tell was that Saquon Barkley, CeeDee Lamb and Patrick Mahomes were each missing from
+    exactly one week -- and it was the week after their team's bye, because a page that
+    correctly omits a bye-week player was being attached to the following week.
+
+    **Known and accepted:** a Friday scrape is after its own week's Thursday game, so for a
+    Thursday-night player the ranking is not strictly pre-kickoff. That hands the *incumbent*
+    one game of hindsight a team-week, which biases against the arm being tested, so it is
+    conservative rather than dangerous.
     """
     out = (scrapes.sort("scrape_date")
-                  .join_asof(windows.sort("first_kick"), left_on="scrape_date",
-                             right_on="first_kick", strategy="forward")
+                  .join_asof(windows.sort("last_kick"), left_on="scrape_date",
+                             right_on="last_kick", strategy="forward")
                   .drop_nulls(["season", "week"]))
     return out.with_columns(
-        (pl.col("first_kick") - pl.col("scrape_date")).dt.total_days().alias("lead_days")
+        (pl.col("last_kick") - pl.col("scrape_date")).dt.total_days().alias("lead_days")
     ).filter(pl.col("lead_days") <= max_lead)
 
 

@@ -16,14 +16,15 @@ thing, and because two of these produced errors worth not repeating.
 | Age | next season | **null** — see below | this document |
 | **Snap-share trend** | next 3 weeks, in season | **POSITIVE** — partial r **+0.24** beyond PPG *and* ECR, 12/12 season-anchor cells, placebo-clean | [snap-trend-signal.md](snap-trend-signal.md) |
 | Snap-share trend | next 3 weeks, before week 8 | **null** — sign flips between seasons | [snap-trend-signal.md](snap-trend-signal.md) |
-| **Snap-share trend** | **next week**, week ≥ 8 | **POSITIVE** — partial r **+0.070** beyond PPG *and* weekly ECR, 5/5 seasons, placebo-clean | [weekly-screen.md](weekly-screen.md) |
-| **Prior TD rate per yard** | next week | **POSITIVE, negative sign** — partial r **−0.045**, 5/5 seasons. TD-carried scoring predicts *less* next week | [weekly-screen.md](weekly-screen.md) |
-| Implied team total | next week | **null on the joint screen** — +0.044 alone, but 3/5 seasons once own spread is controlled for, and confounded with a consensus scraped 6 days before kickoff | [weekly-screen.md](weekly-screen.md) |
-| Own spread | next week | **null on the joint screen** — +0.036 alone, −0.002 controlling for the implied total (r = +0.83). One signal, two hats | [weekly-screen.md](weekly-screen.md) |
-| Defence vs position | next week | **null** — +0.038 but 4/5 seasons | [weekly-screen.md](weekly-screen.md) |
-| Target-share trend | next week | **null** — +0.023, 4/5 seasons | [weekly-screen.md](weekly-screen.md) |
-| Wind | next week | **null** — sign flips between seasons | [weekly-screen.md](weekly-screen.md) |
-| Rest days | next week | **null** — −0.003 | [weekly-screen.md](weekly-screen.md) |
+| **Snap-share trend** | **next week**, week ≥ 8 | **POSITIVE** — partial r **+0.043** beyond PPG *and* weekly ECR, joint-screened, 5/5 seasons | [weekly-screen.md](weekly-screen.md) |
+| **Prior TD rate per yard** | next week | **POSITIVE, negative sign** — **−0.040**, 5/5 seasons. TD-carried scoring predicts *less* next week | [weekly-screen.md](weekly-screen.md) |
+| **Defence vs position** | next week | **POSITIVE** — **+0.028** joint, 5/5 seasons. Clears against points, not against Usage | [weekly-screen.md](weekly-screen.md) |
+| **Injury severity** | next week | **POSITIVE, negative sign** — **−0.023** joint, 5/5 seasons | [weekly-screen.md](weekly-screen.md) |
+| Implied team total | next week | **null on the joint screen** — +0.048 alone, 4/5 once own spread is controlled for | [weekly-screen.md](weekly-screen.md) |
+| Own spread | next week | **null on the joint screen** — one signal with the implied total, two hats (r = +0.83) | [weekly-screen.md](weekly-screen.md) |
+| Target-share trend | next week | **null** — +0.006, 1/5 seasons | [weekly-screen.md](weekly-screen.md) |
+| Wind | next week | **null** — 4/5 seasons | [weekly-screen.md](weekly-screen.md) |
+| Rest days | next week | **null** — −0.014, 3/5 seasons | [weekly-screen.md](weekly-screen.md) |
 
 ## Age
 

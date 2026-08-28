@@ -40,10 +40,10 @@ on strictly earlier seasons. Stable across the walk-forward:
 
 | held-out season | coef targets | coef carries |
 |---|---|---|
-| 2022 | 0.313 | 0.486 |
-| 2023 | 0.382 | 0.534 |
-| 2024 | 0.508 | 0.550 |
-| 2025 | 0.550 | 0.528 |
+| 2022 | 0.373 | 0.465 |
+| 2023 | 0.414 | 0.503 |
+| 2024 | 0.512 | 0.546 |
+| 2025 | 0.542 | 0.523 |
 
 Snap share is a fraction, so a **ten-point** rise in snap share is `exp(0.5 × 0.10) ≈ 1.05` —
 about **five per cent** more targets. Small, which is the honest size of it, and the clip at
@@ -55,9 +55,9 @@ Three arms, because the first version had two and could not see its own subject.
 
 | contrast | gain | se | seasons |
 |---|---|---|---|
-| **the week** — weekly vs `f = 1` | **+0.0103 MAE** | +2.7 | **4/4** |
-| the rebuild — `f = 1` vs flat | +0.0624 MAE | +5.0 | 4/4 |
-| both together — weekly vs flat | +0.0727 MAE | +5.6 | 4/4 |
+| **the week** — weekly vs `f = 1` | **+0.0103 MAE** | +2.8 | **4/4** |
+| the rebuild — `f = 1` vs flat | +0.0634 MAE | +5.3 | 4/4 |
+| both together — weekly vs flat | +0.0737 MAE | +5.9 | 4/4 |
 
 All three clear both halves of the repo's usual bar. **None of them is the gate**: the flat
 projection has no week-level term at all, so beating it is nearly free, and what decides
@@ -99,9 +99,11 @@ The overall bias was −0.002 the whole time. Pooling hid all four.
 
 ## What is not done
 
-**Gate B has not been run**, so nothing here sets a lineup. That needs the roster harness in
-`hub/season/lineup_gate.py` pointed at weekly consensus as the incumbent, and it is the only
-thing that decides whether this ships.
+**Gate B has been run and this does not set a lineup.** A lineup set off the Weekly projection
+lost to one set off weekly consensus rank by **−0.684 points per team-week**, in all three
+held-out seasons, CI [−1.519, +0.159] — *SHOW, NEVER RANK ON*. See
+[weekly-gate.md](weekly-gate.md). Beating the flat projection on accuracy and losing the lineup
+decision to a free public ranking is the screen/gate distinction at its sharpest.
 
 **The injury designation is not in the model, and it cannot go in here.** The plan admits it
 to Phase 2 unscreened, having been measured at +0.170 MAE and 3.8 se. But the Gate A panel is

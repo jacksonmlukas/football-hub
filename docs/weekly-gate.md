@@ -1,75 +1,83 @@
-# Gate B: VOID on the first run
+# Gate B: the Weekly projection loses to consensus rank
 
 **Run 2026-08-28.** `hub.season.weekly_gate` asks the question that decides whether the Weekly
-projection ships: does a lineup set off it beat a lineup set off weekly consensus rank?
+projection ships — does a lineup set off it beat a lineup set off weekly consensus rank? — and
+this is the answer.
 
-**It has not been answered.** The first run returned **+11.14 points per team-week, 95% CI
-[+10.08, +12.25], P(weekly better) 100.0%**, and was **VOID**.
+    680 roster-weeks over 60 rosters, on the weeks consensus covers
+    unranked 16.3%, of which a join failure 0.0% (floor 2%)
 
-## Why void
+    season   gain
+      2023  -0.709
+      2024  -0.383
+      2025  -0.961
 
-Pre-registered in [weekly-projection-plan.md](weekly-projection-plan.md) before any of this ran:
+    weekly - consensus = -0.684 points per team-week
+    95% CI [-1.519, +0.159]   P(weekly better) 5.8%
 
-> Void the run above 2% of roster-weeks unmatched … Tight because the error is *directional*:
-> a player missing from consensus is ranked last, so a join failure does not add noise, it
-> forces a bench on the incumbent's arm.
+**Verdict: SHOW, NEVER RANK ON.** Lost in every held-out season, and the interval contains
+zero. Printed beside consensus, never sorted on — the pre-registered middle branch, and the
+same disposition the snap trend got in
+[ADR-0013](adr/0013-the-snap-trend-is-shown-and-never-ranked-on.md).
 
-Measured: **6.2%**, against a 2% floor.
+## The first run said +11.1 and was void
 
-The guard is worth the words it took. +11 points a week is a tenth of a lineup's score, from
-*selection alone*, against a strong public incumbent — which is the repo's own rule that a
-result too large to believe is a bug, and it was.
+Before the join was fixed this returned **+11.14 points per team-week, CI [+10.08, +12.25],
+P(weekly better) 100.0%** — a tenth of a lineup's score from selection alone, against a strong
+public incumbent. It was reported **VOID**, not adopted, because 6.2% of roster-weeks were a
+join failure against a floor of 2% pre-registered in
+[weekly-projection-plan.md](weekly-projection-plan.md) hours earlier:
 
-## Two separate defects, and only one of them is a defect
+> Tight because the error is *directional*: a player missing from consensus is ranked last, so
+> a join failure does not add noise, it forces a bench on the incumbent's arm.
 
-**Whole weeks have no incumbent.** Historical `weekly-op` coverage is not complete:
+That is exactly what it was doing, and the guard is the only reason the number was not believed.
 
-| season | weeks 1–14 present |
-|---|---|
-| 2021 | 13 (no week 1) |
-| 2022 | 12 (no weeks 1–2) |
-| 2023 | 12 (no weeks 1–2) |
-| **2024** | **10 (nothing before week 5)** |
-| 2025 | 12 (no weeks 1–2) |
+**The cause was an off-by-one in the as-of join.** Consensus scrapes were being attached to the
+week *after* the one they ranked, so a page that correctly omits a bye-week player was benching
+him the following week instead. The tell: Saquon Barkley, CeeDee Lamb and Patrick Mahomes were
+each missing from exactly one week, and each was the week after their team's bye. Joining on the
+week's **last** kickoff rather than its first took join failures from **6.2% to 0.0%** — and
+turned +11.14 into −0.68. See [weekly-screen.md](weekly-screen.md#the-off-by-one).
 
-On a week with no scrape, *every* rostered player is unranked and the consensus arm picks an
-arbitrary lineup while the weekly arm has projections. That is not a hard comparison, it is no
-comparison. `compare` now takes the set of covered weeks and the sample is restricted to them —
-stated as a sample definition rather than applied quietly.
+## What the sample is
 
-**And a name join that misses.** Restricted to covered weeks, 15.7% of roster-weeks are
-unranked. Most of that is correct: FantasyPros drops players who are **out**, and the absence
-*is* the incumbent saying "do not start him" — the pre-registered treatment. The 2024 week-5
-unmatched list reads Christian McCaffrey, Cooper Kupp, Puka Nacua, Isiah Pacheco, Austin
-Ekeler: injured, every one.
+**Weeks the incumbent actually covers.** Historical `weekly-op` scrapes miss whole weeks — 2024
+has nothing before week 4 — and on a week with no scrape *every* rostered player is unranked, so
+the consensus arm picks an arbitrary lineup. That is not a hard comparison, it is no comparison,
+and `compare` takes the covered set explicitly rather than applying the restriction quietly.
 
-So the two are separated by what the player actually did:
+**16.3% of roster-weeks remain unranked and that is correct.** FantasyPros drops players who are
+out or on bye, and the absence *is* the incumbent saying "do not start him" — the pre-registered
+treatment. What counts against the floor is only *unranked **and** scored*, which is now zero.
 
-| | share of roster-weeks | what it is |
-|---|---|---|
-| unranked | 15.7% | mostly players who were out, correctly benched |
-| **unranked *and scored*** | **6.2%** | consensus would have ranked a player who played. **A defect.** |
+**Paired by roster-week, bootstrapped by roster.** A roster's weeks share its players, its bye
+and its draft, so they are one observation with fourteen readings.
 
-Only the second biases the comparison, and it is the one `VOID_FLOOR` is measured against.
+## What this means
 
-## What has to happen before this number means anything
+The Weekly projection beats the flat projection on accuracy — **+0.074 MAE at 5.9 se, 4/4
+seasons** ([weekly-projection.md](weekly-projection.md)) — and still loses the lineup decision
+to a free public ranking. That is the screen/gate distinction at its sharpest, and it is the
+fifteenth measurement in a repo where consensus has now won fourteen of them.
 
-1. **Fix the join.** 6.2% → under 2%. Board names come from FantasyPros' draft pages and weekly
-   names from its weekly pages, so `player_key` should already agree; that it does not is the
-   thing to find. Report the unmatched **by name**, per the plan, not as a count.
-2. **Decide what weeks 1–2 are.** Four of five seasons have no week-1 consensus and 2024 has
-   none before week 5. The pre-registered window is weeks 1–14; the honest options are to
-   report the covered subset as the sample, or to find an incumbent that covers week 1.
-3. **Only then read the result.**
+It is also exactly what was written down before the run:
 
-## What is already known to be right
+> Gate B fails even where Gate A passes, because a lineup is a max over a roster and most
+> projection error never reaches the decision. This is now the *primary* gate, so this
+> prediction is the one that decides whether anything ships.
 
-The machinery under it is tested: the lineup rule, the per-week re-selection that is the whole
-subject, the separation of an absence from a defect, the cluster bootstrap over rosters rather
-than rows, and all four verdict branches including the losing ones. 15 tests, offline.
+**One thing keeps it from being a clean null.** The interval touches zero at +0.159 and the loss
+is −0.68, so this is "absence of evidence" — but the *direction* is consistent across all three
+seasons, and the honest reading is that consensus is probably better, not that the two are
+equivalent.
 
-The pre-registered rules held where it counted. The floor was written down hours before a
-number existed, and it caught one that would otherwise have been reported as an enormous win.
+## The limitation that would change it
+
+The rosters are **static all season**. A large part of what a weekly projection is worth is
+deciding who to stream into the flex, and a frozen roster deletes that decision — which the plan
+said before this ran, and which makes this a *conservative* design rather than a clean negative.
+A version with waiver churn is the one experiment that could plausibly flip it.
 
 ## Reproduce
 

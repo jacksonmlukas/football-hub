@@ -321,3 +321,51 @@ def test_the_designation_columns_survive_a_player_with_no_injury_row():
                               pl.col("practice").fill_null("Healthy")))
     assert out.filter(pl.col("key") == "fine")["status"][0] == "Healthy"
     assert out.height == 2
+
+
+# --- the as-of week assignment, and the off-by-one that shifted everything ---
+
+def _windows():
+    """Two NFL weeks: Thursday to Monday, a week apart."""
+    import datetime as dt
+    return pl.DataFrame({
+        "season": [2024, 2024],
+        "week": [5, 6],
+        "first_kick": [dt.date(2024, 10, 3), dt.date(2024, 10, 10)],
+        "last_kick": [dt.date(2024, 10, 7), dt.date(2024, 10, 14)]})
+
+
+def _scrape(day):
+    import datetime as dt
+    return pl.DataFrame({"scrape_date": [dt.date(*day)], "key": ["x"], "ecr": [1.0]})
+
+
+def test_a_midweek_scrape_belongs_to_the_week_it_is_inside():
+    """The bug that shifted the whole control by a week. An NFL week runs Thursday to Monday
+    and FantasyPros scrapes land mid-week: 2024-10-04 is a Friday, *inside* week 5 (Oct 3-7),
+    and it ranks week 5's Sunday games. Joining on the next *first* kickoff sent it to week 6.
+
+    The tell was that Saquon Barkley, CeeDee Lamb and Patrick Mahomes were each missing from
+    exactly one week -- and it was the week after their team's bye, because a page that
+    correctly omits a bye-week player was being attached to the following week.
+    """
+    got = ws.assign_weeks(_scrape((2024, 10, 4)), _windows())
+    assert got["week"].to_list() == [5], "a Friday inside week 5 is week 5's ranking"
+
+
+def test_a_scrape_before_a_week_opens_still_belongs_to_it():
+    assert ws.assign_weeks(_scrape((2024, 10, 1)), _windows())["week"].to_list() == [5]
+
+
+def test_a_scrape_after_a_week_closes_belongs_to_the_next():
+    assert ws.assign_weeks(_scrape((2024, 10, 8)), _windows())["week"].to_list() == [6]
+
+
+def test_a_scrape_too_far_from_any_week_is_dropped():
+    """Pre-season and post-season scrapes rank no week that exists here."""
+    assert ws.assign_weeks(_scrape((2024, 9, 1)), _windows()).is_empty()
+
+
+def test_lead_days_is_measured_to_the_week_being_ranked():
+    got = ws.assign_weeks(_scrape((2024, 10, 4)), _windows())
+    assert got["lead_days"].to_list() == [3], "Friday to the following Monday"
