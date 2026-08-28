@@ -34,6 +34,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from hub.config import SEASON_COMPLETED
 from hub.draft.projection import adjusted
 from hub.names import player_key
 
@@ -202,7 +203,7 @@ def board_page(board_season: int) -> str:
     return LEGACY_BOARD_PAGE if board_season <= LEGACY_THROUGH else BOARD_PAGE
 
 
-def holdout(signal_season: int = 2024, board_season: int = 2025,
+def holdout(signal_season: int = SEASON_COMPLETED - 1, board_season: int = SEASON_COMPLETED,
             page: str | None = None, half_life: float | None = None) -> pl.DataFrame:
     """Last season's regression signal, this season's preseason board, this season's truth.
 
@@ -280,8 +281,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog="hub.draft.tune",
         description="Set projection_lambda from a holdout instead of judgment.")
     ap.add_argument("--sweep", action="store_true", help="run the holdout sweep")
-    ap.add_argument("--signal-season", type=int, default=2024)
-    ap.add_argument("--board-season", type=int, default=2025)
+    ap.add_argument("--signal-season", type=int, default=SEASON_COMPLETED - 1)
+    ap.add_argument("--board-season", type=int, default=SEASON_COMPLETED)
     a = ap.parse_args(argv)
     if not a.sweep:
         ap.print_help()

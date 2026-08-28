@@ -20,16 +20,28 @@ every caller of one was a caller of the other, on adjacent import lines -- the s
 the line an earlier extraction happened to stop at rather than along any invariant. Its two
 functions are used only inside this experiment.
 
+`expanding_seasons` and `paired_gain` were pulled in on 2026-08-27. Both are the *mechanics*
+of a walk-forward gate rather than any gate's decision. The split loop was written out four
+times -- `margin.walk_forward`, `injury.walk_forward`, `injury.walk_forward_type`,
+`spread.walk_forward` -- and had already drifted three ways; it is `docs/method.md` rule #2,
+the invariant the repo records violating at 7.4 sigma, and four hand-written copies is four
+places a `<` can become a `<=` silently, because a leaking model does not crash. The paired
+statistic was written twice, three of five lines byte-identical, under two names for one bar.
+
 What still deliberately does NOT live here: `verdict`. Its branches name a specific incumbent,
 so it belongs to the harness asking the question. Every gate writes its own, which is the
 point -- a pre-registered rule is specific to what it decides, and a shared one would drift
-toward being decorative.
+toward being decorative. The line is between the *statistic* and the *rule*: `paired_gain`
+returns numbers and decides nothing, and each `verdict` still spells out its own thresholds,
+its own incumbent and its own sentences.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from typing import NamedTuple
 
 import numpy as np
+import numpy.typing as npt
 import polars as pl
 
 from hub.names import player_key
@@ -69,6 +81,66 @@ def walk_forward_inputs(
         realised[yr] = realised_ppg((load_stats or _stats)(yr))
     return boards, realised
 
+
+
+# The repo's usual significance bar, in standard errors of the paired difference. One name,
+# because it was two -- `spread.MIN_SE` and `injury.TYPE_MIN_SE`, both 2.0, both commented
+# "the repo's usual bar". A gate wanting a different bar passes its own; what it must not do
+# is declare a second 2.0.
+MIN_SE = 2.0
+
+
+def expanding_seasons(
+    df: pl.DataFrame, *, min_past: int = 1, season_col: str = "season",
+) -> Iterator[tuple[int, pl.DataFrame, pl.DataFrame]]:
+    """`(season, past, now)` for each season that has enough history to be scored.
+
+    The one statement of `docs/method.md` rule #2 in code: `past` is strictly earlier than
+    `now`, never the same season, so nothing fitted can have seen what it is scored on. The
+    earliest season on record is only ever training data.
+
+    `min_past` is a row count, not a season count -- `margin` needs two residuals before
+    `fit` has a standard deviation to give, the others only need one row. A season whose
+    `past` falls short is skipped rather than raising, because a walk-forward that stopped at
+    the first thin year would report nothing at all.
+    """
+    for yr in sorted(df[season_col].unique().to_list()):
+        past = df.filter(pl.col(season_col) < yr)
+        now = df.filter(pl.col(season_col) == yr)
+        if past.height < min_past or now.is_empty():
+            continue
+        yield int(yr), past, now
+
+
+class Gain(NamedTuple):
+    """The four numbers a two-half gate reads. Numbers only -- it decides nothing."""
+    mean: float
+    se: float
+    t: float
+    wins: int
+    seasons: int
+
+
+def paired_gain(base_err: npt.ArrayLike, arm_err: npt.ArrayLike, *,
+                base_mae: npt.ArrayLike, arm_mae: npt.ArrayLike) -> Gain:
+    """Mean paired gain of `arm` over `base`, its standard error, t, and seasons won.
+
+    Both halves of the repo's usual gate come from here: `t` for the significance half and
+    `wins`/`seasons` for the every-season half. Positive `mean` means the arm has the smaller
+    error, since the difference is taken as base minus arm.
+
+    The errors are *per observation* and paired -- the same player-week scored by both arms --
+    which is why the standard error is of the difference rather than of either arm, and why
+    the two arms' seasonal composition cannot contaminate the comparison. The per-season means
+    come in separately rather than being regrouped here, because each caller already has them
+    for its own printing.
+    """
+    d = np.asarray(base_err, dtype=float) - np.asarray(arm_err, dtype=float)
+    se = float(d.std(ddof=1) / np.sqrt(len(d))) if len(d) > 1 else 0.0
+    t = float(d.mean() / se) if se > 0 else 0.0
+    per = np.asarray(arm_mae, dtype=float)
+    wins = int((per < np.asarray(base_mae, dtype=float)).sum())
+    return Gain(float(d.mean()) if len(d) else 0.0, se, t, wins, len(per))
 
 def _stats(season: int) -> pl.DataFrame:                        # pragma: no cover - network
     from hub.fetch import nflverse

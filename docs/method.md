@@ -52,12 +52,29 @@ exactly the preference it had flagged, at −19.66 points per team-game. Both th
 its vindication are in the record ([ADR-0009](adr/0009-championship-equity-does-not-pick.md)).
 The rule is not "have a tripwire". It is *do not touch it after you have seen what it caught.*
 
+**Where the rule lives in code.** The *statistic* is shared and the *rule* is not.
+`hub.models.experiment.paired_gain` returns the four numbers a two-half gate reads — mean, se,
+t, and seasons won — and decides nothing; each `verdict()` still spells out its own incumbent,
+its own thresholds and its own sentences, because a pre-registered rule is specific to what it
+decides and a shared one would drift toward being decorative. The significance bar is
+`experiment.MIN_SE`, one name, after being declared twice as 2.0 (`spread.MIN_SE` and
+`injury.TYPE_MIN_SE`), each commented "the repo's usual bar".
+
 ### 2. Measure the predictor strictly before the outcome window
 
 **The incident.** Depth-chart climb appeared real at **7.4 sigma** — because the climb was
 measured *inside* the window it was predicting. Honestly measured, it is null at every horizon:
 partial r = +0.008 beyond consensus. Obvious, embarrassing to restate, and it happened anyway in
 an analysis that bypassed the store layer built to prevent it.
+
+**Where the rule lives in code.** `hub.models.experiment.expanding_seasons` — one generator
+yielding `(season, past, now)` where `past` is strictly earlier, and the only place in `src/`
+allowed to write a `<` against the season column. It was written out four times until
+2026-08-27 (`margin.walk_forward`, `injury.walk_forward`, `injury.walk_forward_type`,
+`spread.walk_forward`), already differing three ways, and only one copy was pinned by a test.
+Four hand-written copies of a leakage invariant is four places a `<` can become a `<=` — and
+it would be silent, because a leaking model does not crash, it looks good. The AST guard
+`test_the_split_is_written_once` is what stops the four copies coming back.
 
 ### 3. Repeated measures are not independent observations
 

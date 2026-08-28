@@ -20,10 +20,9 @@ from __future__ import annotations
 
 import polars as pl
 
-from hub.config import SEASON_AHEAD
+from hub.config import DRAFTED_POSITIONS, SEASON_AHEAD, SEASON_COMPLETED
 
 PLAYOFF_WEEKS = (15, 16, 17)
-SCORING_POSITIONS = ("QB", "RB", "WR", "TE")
 
 # FantasyPros and nflverse disagree on three codes. FA is genuinely teamless.
 TEAM_ALIASES = {"JAC": "JAX", "LAR": "LA", "LV": "LV", "WSH": "WAS", "ARZ": "ARI"}
@@ -43,7 +42,7 @@ def _dvp_from_stats(stats: pl.DataFrame) -> pl.DataFrame:
     rows instead would reward defences that face deeper rotations.
     """
     per_week = (stats
-                .filter(pl.col("position").is_in(SCORING_POSITIONS))
+                .filter(pl.col("position").is_in(DRAFTED_POSITIONS))
                 .group_by(["opponent_team", "position", "week"])
                 .agg(pl.col("fantasy_points_ppr").sum().alias("allowed")))
     dvp = (per_week.group_by(["opponent_team", "position"])
@@ -87,7 +86,7 @@ def attach_sos(board: pl.DataFrame, sos: pl.DataFrame) -> pl.DataFrame:
                  .drop("_team"))
 
 
-def playoff_sos(season_ahead: int = SEASON_AHEAD, dvp_season: int = 2025,
+def playoff_sos(season_ahead: int = SEASON_AHEAD, dvp_season: int = SEASON_COMPLETED,
                 weeks: tuple[int, ...] = PLAYOFF_WEEKS) -> pl.DataFrame:
     """Fetch both inputs and build the table. Two bulk pulls, no per-team loop."""
     import nflreadpy as nfl

@@ -45,9 +45,9 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.config import DRAFTED_POSITIONS
+from hub.models.experiment import MIN_SE, expanding_seasons, paired_gain
 from hub.models.predict import WEEKLY_K, WEEKLY_K_POOLED
-
-POSITIONS = ("QB", "RB", "WR", "TE")
 
 # Matching docs/weekly-spread.md's sample exactly, so the two measurements are comparable.
 # Below 8 games the sd is a handful of numbers; below 3 ppg the ratio sd/sqrt(mu) is
@@ -57,9 +57,10 @@ MIN_PPG = 3.0
 
 CANDIDATES = ("positional", "own_k", "usage")
 
-# Standard errors the paired difference must clear before a candidate replaces the shipped
-# model. Two is the repo's usual bar; the gain has to be real, not just consistently signed.
-MIN_SE = 2.0
+# `MIN_SE` -- standard errors the paired difference must clear before a candidate replaces
+# the shipped model -- is imported rather than declared. It was declared here as 2.0 and again
+# in `injury` as `TYPE_MIN_SE = 2.0`, two names for one bar, each commented "the repo's usual
+# bar". The gain has to be real, not just consistently signed.
 
 # Prior-season role features for the `usage` arm. `drift` is the within-season slope of
 # snap share, which is the term docs/weekly-spread.md accuses of masquerading as spread.
@@ -107,7 +108,7 @@ def snap_usage(snaps: pl.DataFrame, crosswalk: pl.DataFrame) -> pl.DataFrame:
 
     s = snaps
     if "position" in s.columns:
-        s = s.filter(pl.col("position").is_in(POSITIONS))
+        s = s.filter(pl.col("position").is_in(DRAFTED_POSITIONS))
     pct = pl.col("offense_pct").cast(pl.Float64)
     # nflverse has shipped this both as a fraction and as a percentage. Detect rather than
     # assume: a share above 1.5 can only be the percent form.
@@ -138,7 +139,7 @@ def player_seasons(stats: pl.DataFrame, snaps: pl.DataFrame | None = None,
     w = stats
     if "season_type" in w.columns:
         w = w.filter(pl.col("season_type") == "REG")
-    w = w.filter(pl.col("position").is_in(POSITIONS))
+    w = w.filter(pl.col("position").is_in(DRAFTED_POSITIONS))
 
     have = [c for c in _TD_COLS if c in w.columns]
     tds = (sum((pl.col(c).cast(pl.Float64).fill_null(0.0) for c in have),
@@ -278,11 +279,7 @@ def walk_forward(pr: pl.DataFrame) -> pl.DataFrame:
     error is of the difference, which is far tighter than the error of either arm.
     """
     frames = []
-    for season in sorted(pr["season"].unique().to_list()):
-        train = pr.filter(pl.col("season") < season)
-        test = pr.filter(pl.col("season") == season)
-        if train.is_empty() or test.is_empty():
-            continue
+    for season, train, test in expanding_seasons(pr):
         train = train.with_columns(
             (pl.col("sd_next") / pl.col("mu_next").sqrt()).alias("k_next_implied"))
         w, coef = fit_shrinkage(train), fit_usage(train)
@@ -322,14 +319,13 @@ def verdict(errs: pl.DataFrame) -> tuple[str, str]:
     for c in CANDIDATES:
         if c == "positional":
             continue
-        d = base - errs[f"err_{c}"].to_numpy().astype(float)
-        se = float(d.std(ddof=1) / np.sqrt(len(d))) if len(d) > 1 else 0.0
-        t = float(d.mean() / se) if se > 0 else 0.0
-        wins = int((per[f"mae_{c}"].to_numpy() < per["mae_positional"].to_numpy()).sum())
-        lines.append(f"  {c}: mean gain {d.mean():+.4f} MAE at {t:.1f} se, "
-                     f"wins {wins}/{seasons} seasons")
-        if wins == seasons and t >= MIN_SE and d.mean() > best:
-            winner, best = c, float(d.mean())
+        g = paired_gain(base, errs[f"err_{c}"].to_numpy(),
+                        base_mae=per["mae_positional"].to_numpy(),
+                        arm_mae=per[f"mae_{c}"].to_numpy())
+        lines.append(f"  {c}: mean gain {g.mean:+.4f} MAE at {g.t:.1f} se, "
+                     f"wins {g.wins}/{seasons} seasons")
+        if g.wins == seasons and g.t >= MIN_SE and g.mean > best:
+            winner, best = c, g.mean
     body = "\n".join(lines)
     if winner == "positional":
         return winner, ("KEEP 'positional': no candidate cleared both halves of the gate "

@@ -36,6 +36,7 @@ from typing import Any
 import polars as pl
 
 from hub import store
+from hub.config import SEASON_AHEAD
 
 ROOT = Path(__file__).resolve().parents[3]
 STATE = ROOT / "data" / "raw" / "odds" / "state.json"
@@ -138,7 +139,7 @@ def _median_home_spread(event: Mapping[str, Any], home: str) -> float | None:
     return -statistics.median(points) if points else None
 
 
-def snapshot(season: int = 2026, *, markets: str = MARKET, regions: str = REGION,
+def snapshot(season: int = SEASON_AHEAD, *, markets: str = MARKET, regions: str = REGION,
              state_path: Path | None = None, base: Path | None = None,
              floor: int = CREDIT_FLOOR, now: datetime | None = None) -> pl.DataFrame:
     """One pull, one market, one region. Appends a dated line per matched game."""
@@ -228,7 +229,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="One market, one region, one pull. Cost is markets x regions.")
     ap.add_argument("--snapshot", action="store_true", help="take one dated line snapshot")
     ap.add_argument("--credits", action="store_true", help="report the stored balance")
-    ap.add_argument("--season", type=int, default=2026)
+    ap.add_argument("--season", type=int, default=SEASON_AHEAD)
     ap.add_argument("--state-path", default=None, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     spath = Path(a.state_path) if a.state_path else None

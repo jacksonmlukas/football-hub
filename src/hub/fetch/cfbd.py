@@ -35,6 +35,8 @@ from typing import Any
 
 import polars as pl
 
+from hub.config import SEASON_AHEAD
+
 ROOT = Path(__file__).resolve().parents[3]
 CACHE = ROOT / "data" / "raw" / "cfbd"
 QUOTA = CACHE / "quota.json"
@@ -217,7 +219,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="CFBD bulk fetch. Week-level endpoints only, by construction.")
     ap.add_argument("--quota", action="store_true", help="report calls used this month")
     ap.add_argument("--week", type=int, default=None, help="pull one week's bulk slate")
-    ap.add_argument("--year", type=int, default=2026)
+    ap.add_argument("--year", type=int, default=SEASON_AHEAD)
     ap.add_argument("--quota-path", default=None, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     reset_run_budget()

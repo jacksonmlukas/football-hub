@@ -32,6 +32,8 @@ from collections.abc import Iterable, Mapping
 import numpy as np
 import polars as pl
 
+from hub.config import drafted_positions
+
 # Full PPR, matching the league. Reconstructs nflverse's own fantasy_points_ppr to within
 # 0.01 for 99.4% of player-weeks; the rest are return and special-teams scores, which no
 # drafted skill player is rostered for.
@@ -258,7 +260,7 @@ def project(prior: pl.DataFrame) -> pl.DataFrame:
         if yards_key not in out.columns:
             continue
         rate = pl.col("position").replace_strict(
-            {p: td_rate(p, phase) for p in ("QB", "RB", "WR", "TE")},
+            {p: td_rate(p, phase) for p in drafted_positions()},
             default=FALLBACK_TD_RATE[phase], return_dtype=pl.Float64)
         out = out.with_columns((pl.col(yards_key) * rate).alias(_PHASE_TDS[phase]))
 

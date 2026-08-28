@@ -25,7 +25,15 @@ import nflreadpy as nfl
 import numpy as np
 import polars as pl
 
-from hub.config import SEASON_AHEAD, RosterConfig, flex_positions, flex_share, starters
+from hub.config import (
+    DRAFTED_POSITIONS,
+    SEASON_AHEAD,
+    SEASON_COMPLETED,
+    RosterConfig,
+    flex_positions,
+    flex_share,
+    starters,
+)
 from hub.contracts import DRAFT_BOARD, ContractViolation
 from hub.draft import durability
 from hub.draft import regression as td_regression
@@ -62,7 +70,7 @@ SLOTS = starters(ROSTER)
 FLEX_ELIGIBLE = flex_positions(ROSTER)
 
 
-def expected_points(season: int = 2025) -> pl.DataFrame:
+def expected_points(season: int = SEASON_COMPLETED) -> pl.DataFrame:
     """Season-total expected vs actual PPR points. The gap is the regression signal."""
     o = nfl.load_ff_opportunity(seasons=[season], stat_type="weekly")
     agg = o.group_by(["player_id", "full_name", "position"]).agg([
@@ -92,7 +100,6 @@ CONSENSUS_PAGE = "redraft-overall"
 
 # On the board because you draft them off it. K and DST are rostered but taken late off
 # ESPN's own list, and their presence distorts every rank below the skill players.
-DRAFTED_POSITIONS = ("QB", "RB", "WR", "TE")
 
 
 def _select_consensus(r: pl.DataFrame) -> pl.DataFrame:
@@ -183,7 +190,7 @@ def replacement_levels(position: pl.Series, points: pl.Series, games: pl.Series,
     share = flex_share(ROSTER)
     df = pl.DataFrame({"position": position, "points": points, "games": games})
     levels = {}
-    for pos in ("QB", "RB", "WR", "TE"):
+    for pos in DRAFTED_POSITIONS:
         n = teams * SLOTS.get(pos, 0)
         n += round(teams * SLOTS.get("FLEX", 0) * share.get(pos, 0)) if pos in FLEX_ELIGIBLE else 0
         pool = (df.filter((pl.col("position") == pos) & (pl.col("games") >= min_games))
@@ -356,7 +363,7 @@ def last_good(path: Path | None = None,
         path, time.time() if now is None else now)
 
 
-def build_or_last_good(league_size: int = 12, season: int = 2025, *,
+def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,
                        path: Path | None = None, now: float | None = None,
                        ) -> tuple[pl.DataFrame, BuildReport, float | None]:
     """Build the board, and if the build cannot happen at all, serve the last good one.
@@ -540,7 +547,7 @@ def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
     return board
 
 
-def build(league_size: int = 12, season: int = 2025, *,
+def build(league_size: int = 12, season: int = SEASON_COMPLETED, *,
           season_ahead: int = SEASON_AHEAD,
           as_of: str | None = None) -> tuple[pl.DataFrame, BuildReport]:
     """The draft board. `season` is the season just gone; `season_ahead` is the one drafted for.
@@ -717,7 +724,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--league-size", type=int, default=12)
     ap.add_argument("--scoring", default="ppr")
-    ap.add_argument("--season", type=int, default=2025)
+    ap.add_argument("--season", type=int, default=SEASON_COMPLETED)
     ap.add_argument("--pick", type=int, default=None,
                     help="rank the board for this pick of yours (e.g. 3, 22, 27)")
     ap.add_argument("--espn-weight", type=float, default=DEFAULT_ESPN_WEIGHT,

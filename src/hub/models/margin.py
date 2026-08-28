@@ -34,6 +34,7 @@ import numpy as np
 import polars as pl
 
 # The incumbent. Imported rather than restated so the two cannot drift apart.
+from hub.models.experiment import expanding_seasons
 from hub.models.market import MARGIN_SD
 from hub.models.scoring_rules import log_loss
 
@@ -101,14 +102,10 @@ def walk_forward(resid: pl.DataFrame, *, trailing: int = TRAILING) -> pl.DataFra
 
     Expanding window, one season at a time, never peeking. The first season with any history
     is the first that can be scored, so the earliest season on record is used only for fitting.
+    `min_past=2` because `fit` needs two residuals before it has a standard deviation.
     """
-    seasons = sorted(resid["season"].unique().to_list())
     rows = []
-    for yr in seasons[1:]:
-        past = resid.filter(pl.col("season") < yr)
-        now = resid.filter(pl.col("season") == yr)
-        if past.height < 2 or now.height == 0:
-            continue
+    for yr, past, now in expanding_seasons(resid, min_past=2):
         sds = {
             "incumbent": MARGIN_SD,
             "all": fit(past)["sd"],
@@ -116,7 +113,7 @@ def walk_forward(resid: pl.DataFrame, *, trailing: int = TRAILING) -> pl.DataFra
         }
         spread = now["spread_line"].to_numpy().astype(float)
         won = (now["result"].to_numpy().astype(float) > 0).astype(float)
-        row = {"season": yr, "n": now.height}
+        row: dict[str, float] = {"season": yr, "n": now.height}
         for name, sd in sds.items():
             row[f"sd_{name}"] = sd
             row[f"ll_{name}"] = log_loss(home_win_prob(spread, sd), won)

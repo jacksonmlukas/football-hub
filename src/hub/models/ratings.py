@@ -25,7 +25,7 @@ from typing import cast
 import polars as pl
 
 from hub import store
-from hub.config import config_digest
+from hub.config import SEASON_AHEAD, config_digest
 from hub.fetch import nflverse
 from hub.models.base import FitSpec, validate_predictions
 from hub.models.market import MarketBaseline
@@ -79,7 +79,7 @@ def live_config():
     return HubConfig()
 
 
-def fit(season: int = 2026, week: int | None = None, *, cache: Path | None = None,
+def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | None = None,
         base: Path | None = None) -> pl.DataFrame:
     """Fit through week-1, predict `week`, validate, write versioned predictions."""
     games = games_for(season, cache=cache)
@@ -119,7 +119,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog="hub.models.ratings",
         description="Passthrough ratings: writes the market prior as versioned predictions.")
     ap.add_argument("--fit", action="store_true", help="fit and write predictions")
-    ap.add_argument("--season", type=int, default=2026)
+    ap.add_argument("--season", type=int, default=SEASON_AHEAD)
     ap.add_argument("--week", type=int, default=None,
                     help="default: the first week not yet played")
     a = ap.parse_args(argv)

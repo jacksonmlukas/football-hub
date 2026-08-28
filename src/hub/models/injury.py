@@ -52,8 +52,10 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.config import DRAFTED_POSITIONS
+from hub.models.experiment import MIN_SE, expanding_seasons, paired_gain
+
 # Positions this league drafts.
-POSITIONS = ("QB", "RB", "WR", "TE")
 
 # Weeks of healthy play needed before a player's own baseline means anything. Below this, one
 # good game defines the level everything else is measured against.
@@ -98,7 +100,7 @@ def observations(injuries: pl.DataFrame, stats: pl.DataFrame, *,
     outcome this is trying to price, and dropping him would measure the cost of an injury
     among players who played through it.
     """
-    inj = (injuries.filter(pl.col("position").is_in(POSITIONS))
+    inj = (injuries.filter(pl.col("position").is_in(DRAFTED_POSITIONS))
                    .unique(["season", "week", "gsis_id"])
                    .select("season", "week", "gsis_id",
                            pl.col("report_status").fill_null("None").alias("status"),
@@ -109,7 +111,7 @@ def observations(injuries: pl.DataFrame, stats: pl.DataFrame, *,
                            # is a real category here rather than a drop: dropping them would
                            # price injuries among players whose injury was reported.
                            _injury_type(injuries).alias("injury")))
-    st = (stats.filter(pl.col("position").is_in(POSITIONS))
+    st = (stats.filter(pl.col("position").is_in(DRAFTED_POSITIONS))
                .select("season", "week", pl.col("player_id").alias("gsis_id"),
                        pl.col("fantasy_points_ppr").fill_null(0.0).alias("pts")))
 
@@ -213,7 +215,6 @@ CANDIDATES = ("baseline", "out_zero", "table", "retention")
 # in EVERY held-out season AND clear 2 standard errors on the paired difference. Beating it on
 # the mean while losing a season is how a fit gets adopted on one lucky year, and this repo has
 # eleven nulls behind it precisely because that bar is kept where it is.
-TYPE_MIN_SE = 2.0
 
 # Shrinkage grid for the per-type multiplier, chosen on TRAINING rows only. Shrinking toward
 # 1.0 rather than imposing a cell minimum is what lets a thin type (Groin, n=450 across four
@@ -276,11 +277,7 @@ def walk_forward_type(obs: pl.DataFrame, *, min_cell: int = MIN_CELL) -> pl.Data
     scored by both arms, which is a far tighter comparison than two independent means.
     """
     frames = []
-    for yr in sorted(obs["season"].unique().to_list())[1:]:
-        past = obs.filter(pl.col("season") < yr)
-        now = obs.filter(pl.col("season") == yr)
-        if past.is_empty() or now.is_empty():
-            continue
+    for yr, past, now in expanding_seasons(obs):
         ret = retention_table(past, min_cell=min_cell)
         pb = float(past["baseline"].sum() or 0.0)
         pooled = float(past["pts"].sum() or 0.0) / pb if pb > 0 else 1.0
@@ -303,13 +300,12 @@ def type_verdict(errs: pl.DataFrame) -> tuple[str, str]:
                .agg(pl.len().alias("n"), pl.col("err_retention").mean().alias("mae_retention"),
                     pl.col("err_type").mean().alias("mae_type"))
                .sort("season"))
-    d = errs["err_retention"].to_numpy().astype(float) - errs["err_type"].to_numpy().astype(float)
-    se = float(d.std(ddof=1) / np.sqrt(len(d))) if len(d) > 1 else 0.0
-    t = float(d.mean() / se) if se > 0 else 0.0
-    wins = int((per["mae_type"].to_numpy() < per["mae_retention"].to_numpy()).sum())
-    line = (f"  type-adjusted: mean gain {d.mean():+.4f} MAE at {t:.1f} se, "
-            f"wins {wins}/{per.height} seasons")
-    if wins == per.height and t >= TYPE_MIN_SE:
+    g = paired_gain(errs["err_retention"].to_numpy(), errs["err_type"].to_numpy(),
+                    base_mae=per["mae_retention"].to_numpy(),
+                    arm_mae=per["mae_type"].to_numpy())
+    line = (f"  type-adjusted: mean gain {g.mean:+.4f} MAE at {g.t:.1f} se, "
+            f"wins {g.wins}/{g.seasons} seasons")
+    if g.wins == g.seasons and g.t >= MIN_SE:
         return "type", (f"ADOPT 'type': the injury type adds to (status, practice).\n{line}")
     return "retention", (f"KEEP 'retention': what is wrong with him adds nothing measurable "
                          f"to how he practised.\n{line}")
@@ -327,13 +323,8 @@ def walk_forward(obs: pl.DataFrame, *, min_cell: int = MIN_CELL) -> pl.DataFrame
 
     Fitting is on strictly earlier seasons only.
     """
-    seasons = sorted(obs["season"].unique().to_list())
     rows = []
-    for yr in seasons[1:]:
-        past = obs.filter(pl.col("season") < yr)
-        now = obs.filter(pl.col("season") == yr)
-        if past.is_empty() or now.is_empty():
-            continue
+    for yr, past, now in expanding_seasons(obs):
         table = penalty_table(past, min_cell=min_cell)
         ret = retention_table(past, min_cell=min_cell)
         pooled = _mean(past, "delta")
@@ -416,7 +407,7 @@ def main(argv: Sequence[str] | None = None) -> int:
               + "  ".join(f"{_mean(wf, 'mae_' + c):>10.4f}" for c in CANDIDATES))
     print(f"\n  {verdict(wf)[1]}")
 
-    # Does what is wrong with him add to how he practised? Gate declared at TYPE_MIN_SE.
+    # Does what is wrong with him add to how he practised? Gate declared at MIN_SE.
     errs = walk_forward_type(obs)
     if not errs.is_empty():
         top = (obs.group_by("injury").agg(pl.len().alias("n"))

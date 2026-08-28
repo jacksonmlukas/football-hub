@@ -62,6 +62,13 @@ class RosterConfig:
 # matched no stat block, and returned proj_ppg as all-null with no error.
 SEASON_AHEAD = 2026
 
+# The last completed season -- the one every model is *fitted* on, as against the one being
+# drafted for. Split out on 2026-08-27 because only half the SEASON_AHEAD fix had landed:
+# `playoff_sos` read `SEASON_AHEAD` from here and then carried `dvp_season: int = 2025` as a
+# literal beside it, so a rollover had to move two numbers in lockstep or the defence-adjusted
+# ratios would silently come from a two-year-stale season. Six more sites said 2025 by hand.
+SEASON_COMPLETED = SEASON_AHEAD - 1
+
 
 @dataclass
 class DraftConfig:
@@ -206,12 +213,23 @@ NOT_FITTED: dict[str, str] = {
                        "not fitted quantities -- nothing downstream reads them",
     "hub.models.injury": "the retention table is fitted at run time from nflverse and never "
                         "frozen into the module, so nothing here is a fitted constant. "
-                        "TYPE_MIN_SE and SHRINK_GRID are a significance bar and a search "
-                        "grid -- both settings. See docs/weekly-injury.md",
+                        "SHRINK_GRID is a search grid, and the significance bar it "
+                        "gates on now lives in hub.models.experiment as MIN_SE -- both "
+                        "settings. See docs/weekly-injury.md",
     "hub.models.spread": "a measurement that adopted nothing -- it tested whether per-player "
                          "weekly spread beats K[position] and kept the incumbent. MIN_PPG and "
                          "MIN_SE are a sample threshold and a significance bar, both settings. "
                          "See docs/player-spread.md",
+    "hub.season.lineup_gate": "the walk-forward gate for the lineup optimiser. OPP_MU and "
+                              "OPP_SD describe the *opponent* a simulated week is played "
+                              "against -- a fixture for scoring two arms against each other, "
+                              "not an input any published prediction can reach.",
+    "hub.season.survivor": "MIN_PROB is a floor that keeps a zero out of a log, and THIN_WEEK "
+                           "a count of games. Both are settings; the win probabilities "
+                           "themselves come from hub.models.market at run time.",
+    "hub.models.experiment": "MIN_SE is the significance bar every gate reads -- a setting, "
+                             "and the one this module exists to stop being declared twice. "
+                             "Nothing here predicts; it holds the walk-forward protocol.",
     "hub.models.margin": "the recorded output of the MARGIN_SD fit, used by a test to guard "
                          "the live constant -- an assertion about a prediction, not an input. "
                          "The live number lives in hub.models.market, which IS registered.",
@@ -302,6 +320,26 @@ def required_starters(cfg: RosterConfig) -> dict[str, int]:
 def flex_positions(cfg: RosterConfig) -> tuple[str, ...]:
     """Positions eligible for the flex."""
     return tuple(cfg.flex_from)
+
+
+def drafted_positions(cfg: RosterConfig | None = None) -> tuple[str, ...]:
+    """The positions this league actually drafts, in board order.
+
+    Exactly `required_starters`' keys: a position with no starting slot is not drafted, and
+    kickers and defences have none here on purpose (ADR-0008). The same tuple was written out
+    twelve times under four names -- `DRAFTED_POSITIONS`, `SKILL`, `POSITIONS` and
+    `SCORING_POSITIONS` -- which is the defect this module was written to fix for the roster
+    shape, one level down: a superflex or a K/DST league would move `RosterConfig` and none of
+    the twelve, and deleting any one copy breaks only its own module, which is how there came
+    to be four names.
+    """
+    return tuple(required_starters(cfg or RosterConfig()))
+
+
+# The league's own answer, for the modules that want a constant rather than a call. Callers
+# inside `FITTED_MODULES` must use the function instead: an upper-case module-level name in
+# one of those files is swept into `config_digest`, and the roster shape is a setting.
+DRAFTED_POSITIONS: tuple[str, ...] = drafted_positions()
 
 
 def flex_capacity(cfg: RosterConfig) -> int:

@@ -30,13 +30,14 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.config import DRAFTED_POSITIONS
+
 # A player needs a real sample before his own mean and spread mean anything. Eight weeks is
 # half a season; below it, one big game defines the standardisation.
 MIN_WEEKS = 8
 
 # Positions this league drafts. K and DST are excluded for the same reason they are excluded
 # from the board.
-POSITIONS = ("QB", "RB", "WR", "TE")
 
 # A correlation on fewer pairs than this is not reported. At n=200 the standard error is
 # already 0.071, which is wider than every effect the teammate measurement found.
@@ -54,7 +55,7 @@ def standardised(stats: pl.DataFrame, *, min_weeks: int = MIN_WEEKS) -> pl.DataF
     if missing:
         raise ValueError(f"player stats missing {missing}")
 
-    d = (stats.filter(pl.col("position").is_in(POSITIONS))
+    d = (stats.filter(pl.col("position").is_in(DRAFTED_POSITIONS))
               .select("season", "week", "game_id", "team", "player_id", "position",
                       pl.col("fantasy_points_ppr").fill_null(0.0).alias("pts")))
     if "season_type" in stats.columns:

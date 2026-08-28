@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from hub.config import drafted_positions
 from hub.models.components import td_rate
 from hub.names import player_key
 
@@ -71,7 +72,7 @@ def prior_season(season: int, cache=None) -> pl.DataFrame:
             "rushing_yards", "rushing_tds", "passing_yards", "passing_tds")
     w = nflverse.load("player_stats", seasons=[season], cols=cols, cache=cache).filter(
         (pl.col("season_type") == "REG")
-        & pl.col("position").is_in(["QB", "RB", "WR", "TE"]))
+        & pl.col("position").is_in(list(drafted_positions())))
     return (w.group_by(["player_display_name", "position"])
              .agg(pl.len().alias("g"),
                   *[pl.col(c).sum().alias(c) for c in
@@ -97,7 +98,7 @@ def td_luck(season: pl.DataFrame) -> pl.DataFrame:
     actual = sum((pts * pl.col(td) for _, td, _, pts in _PHASES), start=pl.lit(0.0))
     expected = sum(
         (pts * pl.col(yd) * pl.col("pos").replace_strict(
-            {p: td_rate(p, phase) for p in ("QB", "RB", "WR", "TE")},
+            {p: td_rate(p, phase) for p in drafted_positions()},
             default=0.0, return_dtype=pl.Float64)
          for yd, _, phase, pts in _PHASES), start=pl.lit(0.0))
 

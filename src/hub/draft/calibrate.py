@@ -40,6 +40,8 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.config import DRAFTED_POSITIONS
+
 # The weekly spread the model assumes, from `hub.draft.season.weekly_moments`:
 # sd = k * sqrt(mu), fitted in docs/weekly-spread.md. This used to be an unfitted 0.55*mu,
 # which the per-game-played variant of this fit flagged by returning an implausible 0.041
@@ -48,7 +50,6 @@ from hub.draft.season import WEEKLY_K, WEEKLY_K_POOLED
 
 TEAM_GAMES = 17
 DRAFTED_THROUGH = 168          # 14 rounds x 12 teams: the roster the simulator holds
-SKILL = ("QB", "RB", "WR", "TE")
 
 # Recorded so `test_the_current_constant_is_inside_the_fitted_interval` can guard against a
 # silent revert to a guessed value.
@@ -177,9 +178,9 @@ def fit_talent_cv(df: pl.DataFrame, bootstrap: int = 2000, seed: int = 0,
     the model reproduces the dispersion measured here. They differ by about 10% because the
     model clips talent and weekly points at zero. See `nominal_for`.
     """
-    df = df.filter(pl.col("pos").is_in(SKILL) & (pl.col("pick") <= DRAFTED_THROUGH))
+    df = df.filter(pl.col("pos").is_in(DRAFTED_POSITIONS) & (pl.col("pick") <= DRAFTED_THROUGH))
     ratios, noise, by_pos, per_pos, shape = [], [], {}, {}, {}
-    for pos in SKILL:
+    for pos in DRAFTED_POSITIONS:
         sub = df.filter(pl.col("pos") == pos)
         if sub.height < 20:
             continue
@@ -303,7 +304,7 @@ def main(argv: Sequence[str] | None = None) -> int:
           f"(in use: {TALENT_CV})")
     print(f"\n  {'pos':>4} {'raw':>7} {'se':>6} {'shrunk':>8} {'nominal':>8} "
           f"{'in use':>7} {'vs pool':>9}")
-    for pos in ("QB", "RB", "WR", "TE"):
+    for pos in DRAFTED_POSITIONS:
         d = (got["by_position"][pos] - got["talent_cv"]) / got["se_by_position"][pos]
         print(f"  {pos:>4} {got['by_position'][pos]:>7.3f} {got['se_by_position'][pos]:>6.3f} "
               f"{got['by_position_shrunk'][pos]:>8.3f} "
@@ -315,7 +316,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return (got["by_position"][p] - got["talent_cv"]) / got["se_by_position"][p]
 
     apart = [f"{p} ({_se_away(p):+.1f} se)"
-             for p in ("QB", "RB", "WR", "TE")
+             for p in DRAFTED_POSITIONS
              if abs(got["by_position"][p] - got["talent_cv"]) > 2 * got["se_by_position"][p]]
     print("\n  shrunk toward the pool in proportion to noise -- 51 tight ends do not")
     print("  support an independent number. Beyond 2 se from the pool: "

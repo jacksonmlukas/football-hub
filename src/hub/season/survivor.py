@@ -28,6 +28,8 @@ from pathlib import Path
 
 import polars as pl
 
+from hub.config import SEASON_AHEAD
+
 # Below this a team is treated as unpickable rather than fed to log(). A survivor pick at
 # 1% is never the answer, and log(0) is negative infinity.
 MIN_PROB = 1e-4
@@ -163,7 +165,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.season.survivor",
         description="Plan a full survivor season as one assignment problem.")
-    ap.add_argument("--season", type=int, default=2026)
+    ap.add_argument("--season", type=int, default=SEASON_AHEAD)
     ap.add_argument("--weeks", type=int, default=18)
     a = ap.parse_args(argv)
 

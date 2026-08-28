@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from hub.config import drafted_positions
 from hub.names import player_key
 
 TEAM_GAMES = 17
@@ -92,7 +93,7 @@ def prior_season(season: int, cache=None) -> pl.DataFrame:
             "season_type", "fantasy_points_ppr")
     w = nflverse.load("player_stats", seasons=[season], cols=cols, cache=cache).filter(
         (pl.col("season_type") == "REG")
-        & pl.col("position").is_in(["QB", "RB", "WR", "TE"]))
+        & pl.col("position").is_in(list(drafted_positions())))
     return (w.group_by(["player_display_name", "position"])
              .agg(pl.len().alias("g"),
                   pl.col("fantasy_points_ppr").mean().alias("ppg"))

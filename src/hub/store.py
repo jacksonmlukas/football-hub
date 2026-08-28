@@ -20,6 +20,8 @@ from pathlib import Path
 import duckdb
 import polars as pl
 
+from hub.config import SEASON_COMPLETED
+
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data" / "processed"
 CATALOG = DATA / "hub.duckdb"
@@ -107,7 +109,7 @@ WHERE p.league = ?
 """
 
 
-def verify(season: int = 2025, base: Path | None = None) -> int:
+def verify(season: int = SEASON_COMPLETED, base: Path | None = None) -> int:
     """Exercise the whole path against real games and real closing lines.
 
     The unit tests prove the as-of semantics on a case built to break a naive join. This
@@ -177,7 +179,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                  description="Storage layer for predictions and lines.")
     ap.add_argument("--verify", action="store_true",
                     help="round-trip real games through the catalog and the as-of join")
-    ap.add_argument("--season", type=int, default=2025)
+    ap.add_argument("--season", type=int, default=SEASON_COMPLETED)
     a = ap.parse_args(argv)
     if not a.verify:
         ap.print_help()

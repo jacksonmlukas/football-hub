@@ -101,30 +101,37 @@ def test_every_module_holding_a_fitted_constant_is_registered():
     # code no prediction can reach.
     by_name = {f"{spec.split(':')[0].rsplit('.', 1)[-1]}.{spec.split(':')[1]}"
                for spec in FITTED_EXTRA} | set(NOT_IN_DIGEST)
-    # Where fitted constants actually live: the prediction layer, plus the draft modules
-    # that fit their own coefficients. Anything else is a CLI, a fetcher or a store.
-    searched = [src / "models", src / "draft"]
+    # Every module under `src/hub`, with no directory filter. It used to read
+    # `searched = [src / "models", src / "draft"]`, which was a fourth exclusion mechanism
+    # beside the three `config.py` names -- and a silent one, which is exactly what that
+    # module says an exclusion must not be: "a decision on the record, not a module quietly
+    # falling off FITTED_MODULES". A directory list inside a test is the quiet kind, and it
+    # was hiding `lineup_gate.OPP_MU` and `OPP_SD`, in none of the three registries.
+    #
+    # Scanning everything rather than widening the list by one package is what stops it
+    # coming back: a new package is covered the day it lands, and the only way out is a named
+    # entry with a reason. Nothing outside `models/`, `draft/` and `season/` holds a
+    # module-level float today, so the exhaustive scan costs nothing and closes the hole.
     missing = []
-    for d in searched:
-        for path in sorted(d.glob("*.py")):
-            if path.stem in registered or path.stem.startswith("_"):
+    for path in sorted(src.rglob("*.py")):
+        if path.stem in registered or path.stem.startswith("_"):
+            continue
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                targets = [node.target]
+            else:
                 continue
-            tree = ast.parse(path.read_text())
-            for node in tree.body:
-                if isinstance(node, ast.Assign):
-                    targets = node.targets
-                elif isinstance(node, ast.AnnAssign) and node.value is not None:
-                    targets = [node.target]
-                else:
+            for t in targets:
+                if not (isinstance(t, ast.Name) and t.id.isupper()
+                        and not t.id.startswith("_")):
                     continue
-                for t in targets:
-                    if not (isinstance(t, ast.Name) and t.id.isupper()
-                            and not t.id.startswith("_")):
-                        continue
-                    # A fitted constant is a measured *number*. String and bool settings,
-                    # paths and column lists are not, and live in these modules legitimately.
-                    if _holds_a_float(node.value) and f"{path.stem}.{t.id}" not in by_name:
-                        missing.append(f"{path.stem}.{t.id}")
+                # A fitted constant is a measured *number*. String and bool settings,
+                # paths and column lists are not, and live in these modules legitimately.
+                if _holds_a_float(node.value) and f"{path.stem}.{t.id}" not in by_name:
+                    missing.append(f"{path.stem}.{t.id}")
     assert not missing, (
         f"fitted constants outside FITTED_MODULES, so config_digest does not cover them: "
         f"{sorted(set(missing))}")
@@ -217,3 +224,106 @@ def test_slots_we_do_not_draft_are_not_a_disagreement():
 def test_a_league_that_reports_nothing_is_not_a_disagreement():
     """Degradation: no cookies means no slots, which must not print a false alarm."""
     assert roster_mismatch({}) == {}
+
+
+# --- one owner for the roster shape, one level down ------------------------
+#
+# The drafted-position tuple was written out twelve times under four names --
+# `DRAFTED_POSITIONS`, `SKILL`, `POSITIONS`, `SCORING_POSITIONS`. That is the defect this
+# module was written to fix for `RosterConfig` itself ("it used to be five"), repeated one
+# level down: a superflex or a K/DST league would move the roster and none of the twelve.
+
+
+def test_drafted_positions_are_the_positions_with_a_starting_slot():
+    from hub.config import DRAFTED_POSITIONS, drafted_positions
+    assert DRAFTED_POSITIONS == tuple(required_starters(RosterConfig()))
+    assert drafted_positions() == DRAFTED_POSITIONS
+
+
+def test_drafted_positions_track_the_roster_they_are_derived_from():
+    """The whole point: change the league and the tuple follows, in one edit."""
+    from dataclasses import replace
+
+    from hub.config import drafted_positions
+    superflex = replace(RosterConfig(), qb=2)
+    assert drafted_positions(superflex) == drafted_positions()
+    assert required_starters(superflex)["QB"] == 2
+
+
+def test_the_drafted_positions_are_written_once():
+    """The AST guard that stops the four names coming back."""
+    import ast
+    import pathlib
+
+    src = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
+    offenders = []
+    for path in sorted(src.rglob("*.py")):
+        if path.name == "config.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, (ast.Tuple, ast.List)):
+                continue
+            vals = [e.value for e in node.elts
+                    if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            # Exactly four, each once. `leverage.POS` is a 14-slot archetype roster whose
+            # *values* are these positions with multiplicity -- a fixture league's shape, not
+            # a second declaration of which positions the league drafts.
+            if len(node.elts) == 4 and sorted(vals) == ["QB", "RB", "TE", "WR"]:
+                offenders.append(f"{path.relative_to(src)}:{node.lineno}")
+    assert not offenders, (
+        "the drafted positions written outside hub.config -- they are "
+        f"required_starters(RosterConfig()).keys() and belong to the roster: {offenders}")
+
+
+# --- one owner for the season ----------------------------------------------
+#
+# `SEASON_AHEAD` got one owner because it was declared five times. Only half of that landed:
+# `playoff_sos` read it from here and then carried `dvp_season: int = 2025` beside it, so a
+# rollover had to move two numbers in lockstep or the defence-adjusted ratios would come from
+# a two-year-stale season with no warning. Eleven more sites said the year by hand.
+
+
+def test_the_completed_season_is_the_one_before_the_drafted_one():
+    from hub.config import SEASON_AHEAD, SEASON_COMPLETED
+    assert SEASON_COMPLETED == SEASON_AHEAD - 1
+
+
+def test_playoff_sos_reads_both_seasons_from_config():
+    """The half of the SEASON_AHEAD fix that did not land the first time."""
+    import inspect
+
+    from hub.config import SEASON_AHEAD, SEASON_COMPLETED
+    from hub.draft import playoff_sos
+    sig = inspect.signature(playoff_sos.playoff_sos)
+    assert sig.parameters["season_ahead"].default == SEASON_AHEAD
+    assert sig.parameters["dvp_season"].default == SEASON_COMPLETED
+
+
+def test_no_default_hardcodes_the_current_season():
+    """A literal that happens to equal this season is the rollover bug waiting to happen.
+
+    Deliberately scoped to the *current* two years rather than to any four-digit year:
+    `evaluate`'s 2023/2024 defaults pin a sweep that was actually run and recorded, and a
+    fixed past year is a historical pin, not a season that has to move in September.
+    """
+    import ast
+    import pathlib
+
+    from hub.config import SEASON_AHEAD, SEASON_COMPLETED
+    live = {SEASON_AHEAD, SEASON_COMPLETED}
+    src = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
+    offenders = []
+    for path in sorted(src.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            found = []
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found = list(node.args.defaults) + [d for d in node.args.kw_defaults if d]
+            elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                  and node.func.attr == "add_argument"):
+                found = [kw.value for kw in node.keywords if kw.arg == "default"]
+            for d in found:
+                if isinstance(d, ast.Constant) and d.value in live and d.value is not True:
+                    offenders.append(f"{path.relative_to(src)}:{d.lineno} = {d.value}")
+    assert not offenders, (
+        "a season default written by hand -- use SEASON_AHEAD or SEASON_COMPLETED so the "
+        f"rollover is one edit: {offenders}")

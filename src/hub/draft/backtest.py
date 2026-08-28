@@ -45,7 +45,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from hub.config import DraftConfig, HubConfig, RosterConfig, config_digest
+from hub.config import DraftConfig, HubConfig, RosterConfig, config_digest, drafted_positions
 from hub.draft.board import board_as_of
 from hub.draft.optimize import (
     DEFAULT_ROUNDS,
@@ -279,7 +279,7 @@ def diagnose(board: pl.DataFrame, *, picks: Sequence[int] = DIAGNOSE_PICKS,
                     "candidates": len(names),
                     # Typed rather than parsed back out of `held`, which is for reading.
                     **{f"held_{p.lower()}": int(counts.get(p, 0))
-                       for p in ("QB", "RB", "WR", "TE")},
+                       for p in drafted_positions()},
                 })
         # Advance by the market so the path is identical across runs.
         name = market_pick(avail, counts, by="adp" if "adp" in avail.columns else "ecr")

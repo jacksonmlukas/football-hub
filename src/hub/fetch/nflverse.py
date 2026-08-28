@@ -26,6 +26,7 @@ from pathlib import Path
 import polars as pl
 
 from hub import store
+from hub.config import SEASON_COMPLETED
 from hub.contracts import (
     FF_OPPORTUNITY,
     FTN_CHARTING,
@@ -246,7 +247,7 @@ def _write_by_week(df: pl.DataFrame, table: str, season: int,
     return len(weeks), df.height
 
 
-def refresh(season: int = 2025, cache: Path | None = None,
+def refresh(season: int = SEASON_COMPLETED, cache: Path | None = None,
             base: Path | None = None) -> int:
     """Pull play-by-play and ff_opportunity, write both through the store.
 
@@ -272,7 +273,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="Fetch nflverse data, narrowed at the boundary and contract-checked.")
     ap.add_argument("--refresh", action="store_true",
                     help="pull this season's pbp and ff_opportunity into the store")
-    ap.add_argument("--season", type=int, default=2025)
+    ap.add_argument("--season", type=int, default=SEASON_COMPLETED)
     a = ap.parse_args(argv)
     if not a.refresh:
         ap.print_help()
