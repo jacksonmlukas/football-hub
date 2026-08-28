@@ -103,9 +103,21 @@ The overall bias was −0.002 the whole time. Pooling hid all four.
 `hub/season/lineup_gate.py` pointed at weekly consensus as the incumbent, and it is the only
 thing that decides whether this ships.
 
-**The injury designation is not in the model.** The plan's pre-registered rule admits it to
-Phase 2 unscreened, having been measured at player-week grain at +0.170 MAE and 3.8 se. It
-belongs in the Usage multiplier and is not there yet.
+**The injury designation is not in the model, and it cannot go in here.** The plan admits it
+to Phase 2 unscreened, having been measured at +0.170 MAE and 3.8 se. But the Gate A panel is
+built from `player_stats`, which has no row for a player who did not play — so of **5,473 "Out"
+designations across 2021-25, six reach the panel**. Doubtful is 764 against 2.
+
+`hub.models.injury` scores an injury row with no stat row as *zero*: the player who did not
+play is its entire subject, and here he is structurally absent. Fitting retention on these rows
+would measure something much weaker — "what a Questionable player who played anyway retains" —
+and would report it under the stronger result's name.
+
+This is a direct consequence of the pre-registered treatment of inactive weeks (excluded from
+Gate A, zero in Gate B), and it means **the injury term belongs in Gate B's construction**,
+which builds a complete player-week grid where a missing row is a zero. `status` and `practice`
+are carried on the panel for that purpose. There is a test pinning the constraint so it is not
+quietly fitted here later.
 
 ## Reproduce
 

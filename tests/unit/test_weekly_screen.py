@@ -292,3 +292,32 @@ def test_a_feature_that_is_recent_form_leaves_nothing():
     alone = ws.cell_correlations(p, "form", outcome="targets",
                                  controls=("targets_prior", "ecr"))
     assert not alone.is_empty(), "and against the lagging control alone it is measurable"
+
+
+def test_the_panel_carries_the_designation_but_cannot_fit_retention_on_it():
+    """A pin on a structural fact, so nobody quietly fits the injury term on this panel.
+
+    `player_stats` has no row for a player who did not play, so of 5,473 "Out" designations
+    across 2021-25 exactly six reach the panel. `hub.models.injury` scores an injury row with
+    no stat row as zero -- the player who did not play is its whole subject -- so retention
+    fitted here would measure "what a Questionable player who played anyway retains" and
+    report it under the stronger result's name. The term belongs in Gate B, which builds a
+    complete grid where a missing row is a zero.
+    """
+    import inspect
+    src = inspect.getsource(ws.build_panel)
+    assert "CANNOT be fitted here" in src, "the constraint must stay stated where it is read"
+    assert "status" in src and "practice" in src, "and the columns are carried for Gate B"
+
+
+def test_the_designation_columns_survive_a_player_with_no_injury_row():
+    """A healthy player must come through as Healthy, not as a null that a group_by drops."""
+    inj = pl.DataFrame({"season": [2024], "week": [5], "key": ["hurt"],
+                        "inj_sev": [1.0], "status": ["Questionable"], "practice": ["Limited"]})
+    stats = pl.DataFrame({"season": [2024, 2024], "week": [5, 5],
+                          "key": ["hurt", "fine"], "x": [1.0, 2.0]})
+    out = (stats.join(inj, on=["season", "week", "key"], how="left")
+                .with_columns(pl.col("status").fill_null("Healthy"),
+                              pl.col("practice").fill_null("Healthy")))
+    assert out.filter(pl.col("key") == "fine")["status"][0] == "Healthy"
+    assert out.height == 2

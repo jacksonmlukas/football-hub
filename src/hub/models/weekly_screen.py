@@ -38,6 +38,7 @@ import polars as pl
 
 from hub.config import DRAFTED_POSITIONS, SEASON_COMPLETED
 from hub.models.experiment import MIN_SE, expanding_weeks
+from hub.models.injury import _PS_WIDTH
 from hub.names import player_key
 
 # 2021 is the first season `ff_opportunity` covers in the store; weekly consensus starts 2020,
@@ -384,10 +385,23 @@ def injury_severity(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover
     sev = (pl.when(pl.col(status) == "Out").then(3.0)
              .when(pl.col(status) == "Doubtful").then(2.0)
              .when(pl.col(status) == "Questionable").then(1.0).otherwise(0.0))
+    # `status` and `practice` are carried alongside the ordinal because they are the cells
+    # `hub.models.injury` fits its retention table on -- the ordinal is for the screen, the
+    # pair is for the model. Practice status arrives as prose ("Did Not Participate In
+    # Practice") and the first seven characters separate the three cases, which is the
+    # normalisation `injury.observations` already uses.
+    prac = cols.get("practice_status")
+    practice = (pl.col(prac).fill_null("None").str.slice(0, _PS_WIDTH)
+                if prac else pl.lit("None"))
     return (inj.select(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64),
                        pl.col(name).map_elements(player_key, return_dtype=pl.Utf8).alias("key"),
-                       sev.alias("inj_sev"))
-               .group_by(["season", "week", "key"]).agg(pl.col("inj_sev").max()))
+                       sev.alias("inj_sev"),
+                       pl.col(status).fill_null("None").alias("status"),
+                       practice.alias("practice"))
+               .sort("inj_sev", descending=True)
+               .group_by(["season", "week", "key"])
+               .agg(pl.col("inj_sev").max(), pl.col("status").first(),
+                    pl.col("practice").first()))
 
 
 def week_windows(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
@@ -434,7 +448,25 @@ def weekly_consensus(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cove
 
 
 def build_panel(seasons: Sequence[int] = SEASONS) -> pl.DataFrame:  # pragma: no cover - network
-    """One row per (player, season, week), with every feature measured before its outcome."""
+    """One row per (player, season, week), with every feature measured before its outcome.
+
+    **This panel contains only weeks a player took a snap**, because `player_stats` has no row
+    for a player who did not. That is the pre-registered Gate A treatment -- inactive weeks are
+    excluded from the projection comparison and scored as zero in the lineup gate -- and it has
+    one consequence worth stating where it will be read:
+
+        the injury retention term CANNOT be fitted here.
+
+    Of 5,473 "Out" designations across 2021-25, **six** reach this panel: 0.11%. Doubtful is
+    764 against 2. The model `hub.models.injury` fitted at +0.170 MAE and 3.8 se prices an
+    injury row with no stat row as *zero* -- the player who did not play is its entire subject
+    -- and here he is structurally absent. Fitting retention on these rows would measure
+    something much weaker, "what a Questionable player who played anyway retains", and would
+    report it under the stronger result's name.
+
+    `status` and `practice` are carried regardless, because Gate B builds a complete
+    player-week grid where a missing row is a zero, and that is where the term belongs.
+    """
     stats = weekly_stats(seasons).with_columns(
         pl.col("player_display_name").map_elements(player_key, return_dtype=pl.Utf8).alias("key"))
     p = stats.join(game_context(seasons), on=["season", "week", "team"], how="left")
@@ -466,7 +498,9 @@ def build_panel(seasons: Sequence[int] = SEASONS) -> pl.DataFrame:  # pragma: no
     p = trend(p, "offense_pct", "key", "snap_trend")
     p = trend(p, "target_share", "player_id", "tgt_trend")
     p = p.join(injury_severity(seasons), on=["season", "week", "key"], how="left")
-    p = p.with_columns(pl.col("inj_sev").fill_null(0.0))
+    p = p.with_columns(pl.col("inj_sev").fill_null(0.0),
+                       pl.col("status").fill_null("Healthy"),
+                       pl.col("practice").fill_null("Healthy"))
     for c in USAGE:
         p = recent_mean(p, c)
     return p.join(weekly_consensus(seasons), on=["season", "week", "key"], how="inner")
