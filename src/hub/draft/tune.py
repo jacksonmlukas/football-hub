@@ -35,6 +35,7 @@ import numpy as np
 import polars as pl
 
 from hub.draft.projection import adjusted
+from hub.names import player_key
 
 ROOT = Path(__file__).resolve().parents[3]
 SWEEP_OUT = ROOT / "docs" / "lambda-sweep.md"
@@ -211,8 +212,6 @@ def holdout(signal_season: int = 2024, board_season: int = 2025,
     import nflreadpy as nfl
 
     from hub.draft.projection import weighted_signal
-    from hub.draft.state import _norm
-
     weekly = (nfl.load_ff_opportunity(seasons=[signal_season], stat_type="weekly")
               .filter(pl.col("player_id").is_not_null())
               .select(pl.col("full_name"), pl.col("position"), pl.col("week"),
@@ -240,11 +239,13 @@ def holdout(signal_season: int = 2024, board_season: int = 2025,
              .group_by("full_name")
              .agg(pl.col("total_fantasy_points").sum().alias("actual_points")))
 
-    key = pl.col("player").map_elements(_norm, return_dtype=pl.Utf8).alias("_k")
+    key = pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("_k")
     sig_k = sig.with_columns(
-        pl.col("full_name").map_elements(_norm, return_dtype=pl.Utf8).alias("_k")).drop("full_name")
+        pl.col("full_name").map_elements(player_key, return_dtype=pl.Utf8)
+          .alias("_k")).drop("full_name")
     truth_k = truth.with_columns(
-        pl.col("full_name").map_elements(_norm, return_dtype=pl.Utf8).alias("_k")).drop("full_name")
+        pl.col("full_name").map_elements(player_key, return_dtype=pl.Utf8)
+            .alias("_k")).drop("full_name")
 
     return (board.with_columns(key)
             .join(sig_k, on="_k", how="left")

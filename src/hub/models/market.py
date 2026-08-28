@@ -48,7 +48,7 @@ MARGIN_SD = 12.741
 Z_80 = 1.2816
 
 
-def _norm_cdf(x: float) -> float:
+def normal_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
@@ -84,7 +84,7 @@ class MarketBaseline:
         priced = games.filter(pl.col("close_spread").is_not_null())
 
         spread = priced["close_spread"].to_numpy()
-        probs = [_norm_cdf(float(s) / self.margin_sd) for s in spread]
+        probs = [normal_cdf(float(s) / self.margin_sd) for s in spread]
         half = Z_80 * self.margin_sd
 
         return priced.select(

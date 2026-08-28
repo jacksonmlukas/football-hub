@@ -28,8 +28,9 @@ import polars as pl
 from hub.draft.board import BOARD_PARQUET
 from hub.draft.optimize import the_pick
 from hub.draft.picks import MY_SLOT, TEAMS, my_picks
-from hub.draft.state import DraftState, _norm
+from hub.draft.state import DraftState
 from hub.draft.state import load as load_state
+from hub.names import player_key
 
 # docs/decisions.md, fixed 2026-08-27 before the draft rather than chosen in January.
 THRESHOLD = 12
@@ -63,7 +64,7 @@ def replay(board: pl.DataFrame, state: DraftState, *, my_slot: int = MY_SLOT,
             "took": took,
             # Loose match, for the same reason the board matches loosely: a suffix or an
             # apostrophe should not read as a deviation.
-            "followed": bool(tp and _norm(tp.player) == _norm(took)),
+            "followed": bool(tp and player_key(tp.player) == player_key(took)),
         })
     return pl.DataFrame(rows) if rows else pl.DataFrame(
         schema={"round": pl.Int64, "overall": pl.Int64, "the_pick": pl.Utf8,

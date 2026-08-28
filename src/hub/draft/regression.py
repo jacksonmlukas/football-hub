@@ -26,8 +26,8 @@ from __future__ import annotations
 
 import polars as pl
 
-from hub.draft.state import _norm
 from hub.models.components import td_rate
+from hub.names import player_key
 
 # Fewer games than this and the number is noise wearing a number's clothes: a two-game
 # sample of touchdown luck is one red-zone target either way.
@@ -116,11 +116,11 @@ def attach(board: pl.DataFrame, season: pl.DataFrame) -> pl.DataFrame:
         return board.with_columns(pl.lit(None, dtype=pl.Float64).alias("td_luck"))
 
     keyed = (luck.with_columns(
-                pl.col("player").map_elements(_norm, return_dtype=pl.Utf8).alias("_k"))
+                pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("_k"))
              .select("_k", "td_luck").unique(subset=["_k"], keep="first"))
     return (board.drop("td_luck", strict=False)
                  .with_columns(
-                     pl.col("player").map_elements(_norm, return_dtype=pl.Utf8).alias("_k"))
+                     pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("_k"))
                  .join(keyed, on="_k", how="left").drop("_k"))
 
 

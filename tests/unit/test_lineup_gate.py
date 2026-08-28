@@ -11,12 +11,12 @@ gate is one nobody re-runs -- which is how P0 ended up unreproducible.
 import polars as pl
 import pytest
 
+from hub.names import player_key
 from hub.season import lineup_gate as lg
 
 
 def _realised(rows):
-    from hub.draft.state import _norm
-    return pl.DataFrame({"player": [_norm(r[0]) for r in rows],
+    return pl.DataFrame({"player": [player_key(r[0]) for r in rows],
                          "week": [r[1] for r in rows],
                          "points": [r[2] for r in rows]},
                         schema={"player": pl.Utf8, "week": pl.Int64, "points": pl.Float64})

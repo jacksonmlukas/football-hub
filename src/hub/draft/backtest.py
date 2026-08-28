@@ -46,6 +46,7 @@ import numpy as np
 import polars as pl
 
 from hub.config import DraftConfig, HubConfig, RosterConfig, config_digest
+from hub.draft.board import board_as_of
 from hub.draft.optimize import (
     DEFAULT_ROUNDS,
     market_pick,
@@ -54,9 +55,15 @@ from hub.draft.optimize import (
     win_probability,
 )
 from hub.draft.season import REG_SEASON_WEEKS, lineup_points
-from hub.draft.state import DraftState, _norm
-from hub.models.experiment import paired_report, walk_forward_inputs
-from hub.models.measure import BOOTSTRAP, realised_ppg, summarise  # noqa: F401
+from hub.draft.state import DraftState
+from hub.models.experiment import (
+    BOOTSTRAP,  # noqa: F401 -- re-exported: tests reach it as `bt.BOOTSTRAP`
+    paired_report,
+    realised_ppg,  # noqa: F401 -- same
+    summarise,
+    walk_forward_inputs,
+)
+from hub.names import player_key
 
 # Gaps between this harness and the tool it audits. Written here rather than in the result,
 # because a limitation discovered after the numbers is a rationalisation.
@@ -86,7 +93,7 @@ def score_roster(names: Sequence[str], pos: Sequence[str], realised: pl.DataFram
     """
     if not names:
         return 0.0
-    keys = [_norm(n) for n in names]
+    keys = [player_key(n) for n in names]
     grid = np.zeros((len(keys), weeks))
     idx = {k: i for i, k in enumerate(keys)}
     for row in realised.filter(pl.col("player").is_in(keys)).iter_rows(named=True):
@@ -479,7 +486,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     boards, realised = walk_forward_inputs(
-        seasons, on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
+        seasons, board_as_of,
+        on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
 
     print(f"  playing {a.drafts} drafts x {len(seasons)} seasons, "
           f"{a.draft_sims} x {a.season_sims} sims per optimizer call ...")

@@ -34,7 +34,7 @@ def _stats(season, n=8):
 def test_inputs_are_gathered_per_season():
     boards, realised = experiment.walk_forward_inputs(
         [2023, 2024],
-        build_board=lambda yr: (_board(), None),
+        lambda yr: (_board(), None),
         load_stats=_stats)
     assert set(boards) == {2023, 2024} and set(realised) == {2023, 2024}
     assert boards[2023].height == 8 and realised[2024].height > 0
@@ -42,25 +42,40 @@ def test_inputs_are_gathered_per_season():
 
 def test_the_board_is_built_as_of_that_season_s_opening():
     """A strategy scored against rankings published after the season is hindsight wearing a
-    backtest's clothes. The temporal rule lives here rather than in each harness."""
+    backtest's clothes. The rule lives in `hub.draft.board`, beside the `build` that enforces
+    it -- it started here, which put draft-domain knowledge under `models/` and inverted the
+    tree's one consistent direction."""
     import inspect
-    src = inspect.getsource(experiment.board_as_of)
+
+    from hub.draft import board
+    src = inspect.getsource(board.board_as_of)
     assert 'as_of=f"{season}-09-01"' in src
     assert "season=season - 1" in src
+
+
+def test_experiment_does_not_reach_into_draft():
+    """Six `draft/` modules import `models/`; nothing should point back. A function-local
+    import is the tell that one does."""
+    import ast
+    import inspect
+    tree = ast.parse(inspect.getsource(experiment))
+    reaches = [n.module for n in ast.walk(tree)
+               if isinstance(n, ast.ImportFrom) and n.module and n.module.startswith("hub.draft")]
+    assert reaches == [], f"experiment reaches into draft: {reaches}"
 
 
 def test_the_progress_hook_is_a_hook_not_a_print(capsys):
     """A caller under a line cap must be able to stay quiet, and this module must not own
     stdout -- the same reason `hub.draft.report` returns lines."""
     seen = []
-    experiment.walk_forward_inputs([2024], build_board=lambda yr: (_board(), None),
+    experiment.walk_forward_inputs([2024], lambda yr: (_board(), None),
                                    load_stats=_stats, on_season=seen.append)
     assert seen == [2024]
     assert capsys.readouterr().out == ""
 
 
 def test_no_hook_is_silent(capsys):
-    experiment.walk_forward_inputs([2024], build_board=lambda yr: (_board(), None),
+    experiment.walk_forward_inputs([2024], lambda yr: (_board(), None),
                                    load_stats=_stats)
     assert capsys.readouterr().out == ""
 

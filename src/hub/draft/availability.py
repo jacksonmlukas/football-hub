@@ -15,6 +15,8 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 
+from hub.names import player_key
+
 # Fraction of the room drafting off ESPN's default board. Estimate it from your own
 # league's history with fit_espn_weight(); 0.5 is the "mixed room" prior.
 DEFAULT_ESPN_WEIGHT = 0.5
@@ -129,8 +131,6 @@ def historical_picks(league_id: int, years: list[int]) -> pl.DataFrame:
     from dotenv import load_dotenv
     from espn_api.football import League
 
-    from hub.draft.state import _norm
-
     load_dotenv()
     allr = nfl.load_ff_rankings("all")
     rows = []
@@ -146,9 +146,9 @@ def historical_picks(league_id: int, years: list[int]) -> pl.DataFrame:
                                 & (pl.col("ecr").is_not_null()))
                         .sort("scrape_date", descending=True)
                         .unique(subset=["player"], keep="first"))
-            ecr = {_norm(r["player"]): r["ecr"] for r in snap.iter_rows(named=True)}
+            ecr = {player_key(r["player"]): r["ecr"] for r in snap.iter_rows(named=True)}
             for i, pick in enumerate(lg.draft or [], start=1):
-                e = ecr.get(_norm(pick.playerName))
+                e = ecr.get(player_key(pick.playerName))
                 if e is not None:
                     rows.append({"year": yr, "pick": float(i), "ecr": float(e)})
         except Exception as exc:

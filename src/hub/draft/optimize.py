@@ -54,8 +54,9 @@ from hub.draft import durability
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, blended_adp
 from hub.draft.picks import MY_SLOT, TEAMS, snake_picks
 from hub.draft.season import FLEX_CAPACITY, FLEX_FROM, STARTERS, champion_probability
-from hub.draft.state import DraftState, _norm, remaining, roster_for
+from hub.draft.state import DraftState, remaining, roster_for
 from hub.models.predict import WEEKLY_SKEW_POOLED, moments
+from hub.names import player_key
 
 # Bench depth beyond the 8 starting slots. Deep enough that saturation is punished,
 # shallow enough that the simulated draft stays cheap.
@@ -159,10 +160,10 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
     # A recorded pick that is not on the board (K, DST, or a misspelling) is skipped. Those
     # are expected -- `DRAFTED_POSITIONS` excludes kickers and defences on purpose -- and
     # `suggest_unmatched` already flags a misspelling where a human can still fix it.
-    by_norm = {_norm(n): i for i, n in enumerate(names)}
+    by_norm = {player_key(n): i for i, n in enumerate(names)}
     for seat in range(1, teams + 1):
         for held_name in roster_for(state, seat, teams, rounds):
-            i = by_norm.get(_norm(held_name))
+            i = by_norm.get(player_key(held_name))
             if i is None or gone[i]:
                 continue
             gone[i] = True

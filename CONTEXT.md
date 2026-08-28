@@ -42,6 +42,15 @@ A fitted markdown or markup to a projection, in points per game, where a measure
 market is wrong — touchdown luck, durability, current designation. Each carries a coefficient
 with an interval. An unfitted quantity is not a correction, however useful.
 
+**Player key**:
+The comparable form of a player's name, so that one player named three ways by three sources
+is one player. Lower-cased, accents folded, punctuation and generational suffixes dropped:
+`A.J. Brown` and `AJ Brown` share a key, `Marvin Harrison Jr.` and `Marvin Harrison` share a
+key. `hub.names.player_key`, and every cross-source join in the repo goes through it —
+`docs/decisions.md` records an exact join silently dropping players as the bug it fixes.
+_Avoid_: normalised name, `_norm` — it was private and lived in `hub.draft.state` until
+2026-08-27, which is why ten modules across three packages imported a private helper.
+
 ### The board
 
 **Board**:

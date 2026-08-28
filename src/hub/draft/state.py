@@ -3,7 +3,7 @@
 The draft board is worthless on draft night if it keeps recommending players who are
 already gone, and the thing that silently breaks that is name matching: ESPN says
 "Marvin Harrison Jr.", FantasyPros says "Marvin Harrison". So every comparison goes
-through _norm(), and anything that fails to match is reported rather than dropped.
+through player_key(), and anything that fails to match is reported rather than dropped.
 
 State is an ordered list of picks, which is all we need: your roster is derivable from
 your slot and the snake order, so there is nothing to keep in sync.
@@ -11,32 +11,16 @@ your slot and the snake order, so there is nothing to keep in sync.
 from __future__ import annotations
 
 import json
-import re
-import unicodedata
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import polars as pl
 
 from hub.draft.picks import snake_picks
+from hub.names import player_key
 
 ROOT = Path(__file__).resolve().parents[3]
 STATE = ROOT / "data" / "processed" / "draft_state.json"
-
-# Generational suffixes carry no identity: no league contains both a Marvin Harrison
-# and a Marvin Harrison Jr. Dropping them is safe and fixes the most common mismatch.
-_SUFFIX = re.compile(r"\b(jr|sr|ii|iii|iv|v)\b")
-
-
-def _norm(name: str) -> str:
-    """Collapse a display name to a comparable key."""
-    s = unicodedata.normalize("NFKD", name or "")
-    s = "".join(c for c in s if not unicodedata.combining(c)).lower()
-    s = s.replace("-", " ")
-    s = re.sub(r"[^a-z0-9 ]", "", s)          # punctuation: Ja'Marr -> jamarr, D.J. -> dj
-    s = _SUFFIX.sub(" ", s)
-    return " ".join(s.split())
-
 
 @dataclass(frozen=True)
 class DraftState:
@@ -82,10 +66,10 @@ def take(state: DraftState, *names: str) -> DraftState:
     Matching is on the normalised name, so `A.J. Brown` and `AJ Brown` are one pick. The
     first spelling is kept, since that is the one the board already matched against.
     """
-    seen = {_norm(n) for n in state.taken}
+    seen = {player_key(n) for n in state.taken}
     fresh = []
     for n in names:
-        k = _norm(n)
+        k = player_key(n)
         if k in seen:
             continue
         seen.add(k)
@@ -101,8 +85,8 @@ def remaining(board: pl.DataFrame, state: DraftState) -> pl.DataFrame:
     """The board minus everyone already drafted."""
     if not state.taken:
         return board
-    gone = {_norm(n) for n in state.taken}
-    keep = [_norm(p) not in gone for p in board["player"].to_list()]
+    gone = {player_key(n) for n in state.taken}
+    keep = [player_key(p) not in gone for p in board["player"].to_list()]
     return board.filter(pl.Series(keep))
 
 
@@ -112,8 +96,8 @@ def unmatched(board: pl.DataFrame, state: DraftState) -> list[str]:
     Surfaced rather than swallowed: an unmatched pick means a player you think is gone
     is still being recommended, which is exactly the failure this module exists to stop.
     """
-    known = {_norm(p) for p in board["player"].to_list()}
-    return [n for n in state.taken if _norm(n) not in known]
+    known = {player_key(p) for p in board["player"].to_list()}
+    return [n for n in state.taken if player_key(n) not in known]
 
 
 def suggest_unmatched(board: pl.DataFrame, names) -> dict[str, str | None]:
@@ -130,10 +114,10 @@ def suggest_unmatched(board: pl.DataFrame, names) -> dict[str, str | None]:
     """
     import difflib
 
-    known = {_norm(p): p for p in board["player"].to_list()}
+    known = {player_key(p): p for p in board["player"].to_list()}
     out: dict[str, str | None] = {}
     for name in names:
-        key = _norm(name)
+        key = player_key(name)
         if key in known:
             continue
         close = difflib.get_close_matches(key, list(known), n=1, cutoff=0.85)

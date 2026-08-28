@@ -12,6 +12,7 @@ import polars as pl
 import pytest
 
 from hub.draft import backtest as bt
+from hub.names import player_key
 
 # --- the pre-registered decision rule, as executable code ------------------
 #
@@ -97,8 +98,7 @@ def _realised(rows):
     handed in production. A fixture carrying raw names would have made the join look fine
     while silently matching nothing.
     """
-    from hub.draft.state import _norm
-    return pl.DataFrame({"player": [_norm(r[0]) for r in rows],
+    return pl.DataFrame({"player": [player_key(r[0]) for r in rows],
                          "week": [r[1] for r in rows],
                          "points": [r[2] for r in rows]},
                         schema={"player": pl.Utf8, "week": pl.Int64,
@@ -175,8 +175,7 @@ def test_realised_points_are_keyed_the_way_the_board_joins():
     stats = pl.DataFrame({"player_display_name": ["A.J. Brown"], "week": [1],
                           "fantasy_points_ppr": [22.5]})
     got = bt.realised_ppg(stats)
-    from hub.draft.state import _norm
-    assert got["player"][0] == _norm("AJ Brown")
+    assert got["player"][0] == player_key("AJ Brown")
 
 
 def test_a_null_score_is_zero_not_missing():
@@ -518,9 +517,8 @@ def _full_board(n=80):
 
 
 def _flat_realised(board, pts=10.0):
-    from hub.draft.state import _norm
     names = board["player"].to_list()
-    return pl.DataFrame({"player": [_norm(n) for n in names for _ in range(14)],
+    return pl.DataFrame({"player": [player_key(n) for n in names for _ in range(14)],
                          "week": [w for _ in names for w in range(1, 15)],
                          "points": [pts for _ in names for _ in range(14)]},
                         schema={"player": pl.Utf8, "week": pl.Int64, "points": pl.Float64})

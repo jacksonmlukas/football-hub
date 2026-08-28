@@ -136,3 +136,38 @@ def test_no_module_level_path_is_bound_as_a_default_argument():
     assert not bad, (
         "module-level paths bound as default arguments -- monkeypatching the module "
         f"attribute will not reach these, so tests silently write to the real file: {bad}")
+
+
+def test_no_private_name_crosses_a_module_line():
+    """A private name imported elsewhere is a seam without an address.
+
+    `hub.draft.state._norm` was imported by ten modules across three packages -- two of them
+    inside a function body, which is what a caller does when an import feels wrong. It is now
+    `hub.names.player_key`, with a term in CONTEXT.md. `market._norm_cdf` went public at the
+    same time. Nothing should reintroduce the pattern.
+    """
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
+    bad = []
+    for path in root.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("hub"):
+                bad += [f"{path.name} imports {node.module}.{a.name}"
+                        for a in node.names if a.name.startswith("_")]
+    assert not bad, f"private names imported across modules: {bad}"
+
+
+def test_models_does_not_reach_into_draft():
+    """The tree's one consistent direction is `draft -> models`, in six places. A module
+    under `models/` importing `draft/` inverts it, and both instances that existed needed a
+    function-local import to get away with it."""
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub" / "models"
+    bad = []
+    for path in root.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("hub.draft"):
+                bad.append(f"{path.name} -> {node.module}")
+    assert not bad, f"models/ reaches into draft/: {bad}"

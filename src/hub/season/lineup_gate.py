@@ -36,10 +36,10 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.draft.board import board_as_of
 from hub.draft.season import FLEX_FROM, FLEX_SLOTS, REG_SEASON_WEEKS, STARTERS
-from hub.draft.state import _norm
-from hub.models.experiment import paired_report, walk_forward_inputs
-from hub.models.measure import summarise
+from hub.models.experiment import paired_report, summarise, walk_forward_inputs
+from hub.names import player_key
 
 # What the optimiser is assumed to be playing against each week. The league's own weekly team
 # scores would be better and are not reconstructable for a simulated roster, so this is a
@@ -52,7 +52,7 @@ OPP_SD = 25.0
 def weekly_grid(names: Sequence[str], realised: pl.DataFrame,
                 weeks: int = REG_SEASON_WEEKS) -> np.ndarray:
     """(roster, weeks) of realised points. A player with no row scored nothing that week."""
-    keys = [_norm(n) for n in names]
+    keys = [player_key(n) for n in names]
     grid = np.zeros((len(keys), weeks))
     idx = {k: i for i, k in enumerate(keys)}
     for row in realised.filter(pl.col("player").is_in(keys)).iter_rows(named=True):
@@ -177,7 +177,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     rosters: dict[int, list] = {}
 
     boards, realised = walk_forward_inputs(
-        seasons, on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
+        seasons, board_as_of,
+        on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
     for yr in seasons:
         board = boards[yr]
         # mu and sd from the same object the simulator uses, so the optimiser is fed exactly

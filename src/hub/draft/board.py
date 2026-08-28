@@ -34,7 +34,8 @@ from hub.draft import state as state_mod
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.playoff_sos import attach_sos, playoff_sos
-from hub.draft.state import DraftState, _norm, remaining
+from hub.draft.state import DraftState, remaining
+from hub.names import player_key
 
 if TYPE_CHECKING:                      # `optimize` imports from here, so runtime would cycle
     pass
@@ -276,8 +277,8 @@ def _join_expected_points(ecr: pl.DataFrame, xp: pl.DataFrame) -> pl.DataFrame:
     it nulls VOR, so every VOR-ranked view skips the player, and the season simulation
     scores him zero, turning a first-round RB into an empty roster slot.
     """
-    norm = pl.col("player").map_elements(_norm, return_dtype=pl.Utf8).alias("_key")
-    right = (xp.with_columns(pl.col("full_name").map_elements(_norm, return_dtype=pl.Utf8)
+    norm = pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("_key")
+    right = (xp.with_columns(pl.col("full_name").map_elements(player_key, return_dtype=pl.Utf8)
                                .alias("_key"))
                .unique(subset=["_key"], keep="first")
                # `position` duplicates `pos`, which the board already has from FantasyPros.
@@ -595,6 +596,22 @@ def build(league_size: int = 12, season: int = 2025, *,
     # covers only what something downstream reads *unconditionally*; the optional columns
     # are deliberately absent so a degraded fetch still produces a usable board.
     return DRAFT_BOARD.validate(board.sort("ecr")), report
+
+
+def board_as_of(season: int) -> tuple[pl.DataFrame, BuildReport]:
+    """The board for `season`, built from the last consensus scrape before it opened.
+
+    Lives here rather than in `hub.models.experiment`, which is where it started. Every line
+    of it is draft-domain knowledge -- `season - 1`, `season_ahead`, the September cutoff --
+    and putting it under `models/` inverted the tree's one consistent direction (six `draft/`
+    modules import `models/`; nothing went the other way) to save two callers a lambda each.
+    It also needed a function-local import to dodge the cycle that inversion created.
+
+    The temporal rule itself is `build`'s, documented on `build`, and now stated next to it: a
+    strategy scored against rankings published after the season is hindsight wearing a
+    backtest's clothes.
+    """
+    return build(season=season - 1, season_ahead=season, as_of=f"{season}-09-01")
 
 
 def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,

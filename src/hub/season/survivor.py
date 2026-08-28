@@ -146,13 +146,13 @@ def grid_from_schedule(season: int, cache: Path | None = None) -> pl.DataFrame:
     and a weekly prediction cannot disagree about the same game.
     """
     from hub.fetch import nflverse
-    from hub.models.market import MARGIN_SD, _norm_cdf
+    from hub.models.market import MARGIN_SD, normal_cdf
 
     sched = nflverse.load("schedules", seasons=[season], cache=cache)
     rows = []
     for r in sched.filter(pl.col("spread_line").is_not_null()).iter_rows(named=True):
         # spread_line is positive when the home team is favoured.
-        home_p = _norm_cdf(float(r["spread_line"]) / MARGIN_SD)
+        home_p = normal_cdf(float(r["spread_line"]) / MARGIN_SD)
         rows.append((int(r["week"]), r["home_team"], home_p))
         rows.append((int(r["week"]), r["away_team"], 1.0 - home_p))
     return pl.DataFrame({"week": [r[0] for r in rows], "team": [r[1] for r in rows],

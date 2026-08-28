@@ -10,6 +10,7 @@ import polars as pl
 import pytest
 
 from hub.draft import state as st
+from hub.names import player_key
 
 
 @pytest.fixture
@@ -58,12 +59,12 @@ def test_undo_on_empty_is_a_noop():
     ("  Amon-Ra  St. Brown ", "Amon-Ra St. Brown"),
 ])
 def test_names_that_must_match(a, b):
-    assert st._norm(a) == st._norm(b)
+    assert player_key(a) == player_key(b)
 
 
 def test_distinct_players_do_not_collide():
-    assert st._norm("Justin Jefferson") != st._norm("Justin Herbert")
-    assert st._norm("Josh Allen") != st._norm("Keenan Allen")
+    assert player_key("Justin Jefferson") != player_key("Justin Herbert")
+    assert player_key("Josh Allen") != player_key("Keenan Allen")
 
 
 # --- filtering the board --------------------------------------------------

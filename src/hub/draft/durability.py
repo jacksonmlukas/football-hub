@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from hub.draft.state import _norm
+from hub.names import player_key
 
 TEAM_GAMES = 17
 
@@ -107,11 +107,11 @@ def attach(board: pl.DataFrame, season: pl.DataFrame) -> pl.DataFrame:
     """
     m = games_missed(season)
     keyed = (m.with_columns(
-                pl.col("player").map_elements(_norm, return_dtype=pl.Utf8).alias("_k"))
+                pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("_k"))
              .select("_k", "missed").unique(subset=["_k"], keep="first"))
     return (board.drop("missed", strict=False)
                  .with_columns(
-                     pl.col("player").map_elements(_norm, return_dtype=pl.Utf8).alias("_k"))
+                     pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("_k"))
                  .join(keyed, on="_k", how="left").drop("_k"))
 
 
