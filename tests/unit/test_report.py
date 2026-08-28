@@ -20,6 +20,12 @@ def _board(**cols):
     return pl.DataFrame({**base, **cols})
 
 
+def _rep(**flags):
+    """A BuildReport with the named stages marked as having run."""
+    from hub.draft.board import BuildReport
+    return BuildReport(**flags)
+
+
 def _ecr_only():
     """What `build` returns with no ESPN key: everything but ADP."""
     return pl.DataFrame({"player": ["A", "B"], "pos": ["RB", "WR"],
@@ -32,18 +38,18 @@ def _ecr_only():
 def test_the_injury_report_is_skipped_without_adp():
     """Both halves are scoped to `inside ADP 120` and both print an ADP, so there is nothing
     to show -- and the filter used to raise ColumnNotFoundError."""
-    assert report.injuries(_ecr_only(), has_adp=False) == []
+    assert report.injuries(_ecr_only(), _rep(adp=False)) == []
 
 
 def test_the_touchdown_luck_report_is_skipped_without_adp():
     """It reaches nflverse, so it can succeed while ESPN ADP fails."""
-    assert report.td_luck(_ecr_only(), has_td_luck=True, has_adp=False) == []
+    assert report.td_luck(_ecr_only(), _rep(td_luck=True, adp=False)) == []
 
 
 def test_those_reports_still_run_when_adp_is_present():
     """The guard must not have turned them off altogether."""
     df = _ecr_only().with_columns(pl.Series("adp", [10.0, 20.0]))
-    assert report.injuries(df, has_adp=True), "the designation report should have content"
+    assert report.injuries(df, _rep(adp=True)), "the designation report should have content"
 
 
 # --- corrections depend on the route that chose the pick --------------------
@@ -185,3 +191,15 @@ def test_nothing_here_prints():
     import inspect
     src = inspect.getsource(report)
     assert "print(" not in src
+
+
+def test_the_renderers_take_the_report_not_loose_booleans():
+    """Destructuring `BuildReport` at the call site is what let two consumers pick different
+    flag combinations, which is how the ECR-only crash shipped. A sixth build stage must not
+    change these signatures."""
+    import inspect
+    for fn in (report.td_luck, report.injuries):
+        params = list(inspect.signature(fn).parameters)
+        assert "report" in params, f"{fn.__name__} should take the report"
+        assert not any(p.startswith("has_") for p in params), \
+            f"{fn.__name__} still destructures the report"

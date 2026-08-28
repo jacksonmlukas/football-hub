@@ -215,3 +215,89 @@ def test_a_matching_roster_says_nothing(offline, capsys):
     _, report = board.build()
     assert report.roster_checked is True
     assert "ROSTER MISMATCH" not in capsys.readouterr().out
+
+
+# --- the degradation policy, now in one place ------------------------------
+#
+# This rule was written out five times, 48 lines, 31% of build(). The cost was never the
+# duplication: `BuildReport` exists because consumers used to sniff for columns, and with
+# five producers and no shared shape the consumers' guards drifted anyway -- one read
+# `durability or adp`, another read `td_luck`, and a board built without an ESPN key raised
+# ColumnNotFoundError before printing THE PICK.
+
+def _rep():
+    return board.BuildReport()
+
+
+def test_a_failing_stage_leaves_the_board_and_the_flag_alone(capsys):
+    b = pl.DataFrame({"player": ["A"]})
+    rep = _rep()
+
+    def _boom(_):
+        raise RuntimeError("nope")
+    out = board._stage(b, rep, "sos", "weeks 15-17 SoS", _boom)
+    assert out is b and rep.sos is False
+    assert capsys.readouterr().out == \
+        "  weeks 15-17 SoS unavailable (RuntimeError); board built without it.\n"
+
+
+def test_a_succeeding_stage_returns_the_new_board_and_flags_it(capsys):
+    b = pl.DataFrame({"player": ["A"]})
+    rep = _rep()
+    out = board._stage(b, rep, "td_luck", "touchdown luck",
+                       lambda x: x.with_columns(pl.lit(1.0).alias("td_luck")))
+    assert "td_luck" in out.columns and rep.td_luck is True
+    assert capsys.readouterr().out == ""
+
+
+def test_a_check_stage_returns_none_and_keeps_the_board(capsys):
+    """The two league checks warn rather than transform, and must not blank the board."""
+    b = pl.DataFrame({"player": ["A"]})
+    rep = _rep()
+    out = board._stage(b, rep, "scoring_checked", "scoring check", lambda _: None)
+    assert out is b and rep.scoring_checked is True
+
+
+def test_a_historical_stage_is_announced_and_skipped(capsys):
+    """ESPN publishes settings for the current season only. Outside a live build the stage is
+    skipped rather than attempted and caught -- and the flag stays false either way, which is
+    the correct record: it genuinely did not run."""
+    b = pl.DataFrame({"player": ["A"]})
+    rep = _rep()
+    ran = []
+    out = board._stage(b, rep, "scoring_checked", "scoring check", lambda x: ran.append(1),
+                       live=False, skip_note="ESPN publishes settings for the current "
+                                             "season only.")
+    assert out is b and rep.scoring_checked is False and ran == []
+    assert capsys.readouterr().out == (
+        "  scoring check skipped: ESPN publishes settings for the current season only.\n")
+
+
+def test_the_same_stage_runs_on_a_live_build(capsys):
+    b = pl.DataFrame({"player": ["A"]})
+    rep = _rep()
+    board._stage(b, rep, "roster_checked", "roster check", lambda _: None,
+                 live=True, skip_note="anything", on_fail="assuming this repo's shape.")
+    assert rep.roster_checked is True
+
+
+def test_the_failure_note_is_the_caller_s(capsys):
+    """`assuming full PPR` and `board built without it` say different things to an operator
+    on the clock, and the wording is draft-night output."""
+    b = pl.DataFrame({"player": ["A"]})
+
+    def _boom(_):
+        raise KeyError("k")
+    board._stage(b, _rep(), "scoring_checked", "scoring check", _boom,
+                 on_fail="assuming full PPR.")
+    assert capsys.readouterr().out == \
+        "  scoring check unavailable (KeyError); assuming full PPR.\n"
+
+
+def test_build_has_no_hand_rolled_degrade_blocks_left():
+    """The property, not the instance: a sixth stage should be a declaration, not a block."""
+    import ast
+    import inspect
+    fn = next(n for n in ast.walk(ast.parse(inspect.getsource(board)))
+              if isinstance(n, ast.FunctionDef) and n.name == "build")
+    assert not [n for n in ast.walk(fn) if isinstance(n, ast.Try)]

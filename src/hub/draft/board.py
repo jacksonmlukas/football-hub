@@ -16,7 +16,7 @@ import argparse
 import itertools
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -330,15 +330,6 @@ def _impute_xfp(board: pl.DataFrame) -> pl.DataFrame:
     return board.with_columns(pl.Series("xfp_per_game", filled, dtype=pl.Float64))
 
 
-class SkipHistorical(Exception):
-    """A stage that only exists for the current season, skipped on a historical board.
-
-    Raised inside the same `try` that handles a stage failing, so the "did it run" bookkeeping
-    stays in one place. It is not an error: `report.scoring_checked` staying False is the
-    correct record either way, since the stage genuinely did not run.
-    """
-
-
 BOARD_PARQUET = ROOT / "data" / "processed" / "draft_board.parquet"
 
 
@@ -428,6 +419,64 @@ class BuildReport:
         return tuple(k for k, v in vars(self).items() if not v)
 
 
+def _check_scoring(board: pl.DataFrame) -> None:
+    """Compare the league's own scoring weights against this repo's."""
+    from hub.fetch import espn as espn_fetch
+    from hub.models.components import scoring_mismatch
+    bad = scoring_mismatch(espn_fetch.scoring_settings())
+    if bad:
+        print("  SCORING MISMATCH -- the league scores differently from hub.models."
+              "components.SCORING:")
+        for k, (theirs, ours) in sorted(bad.items()):
+            print(f"    {k}: league {theirs}, this repo {ours}")
+        print("  Every projection below is scored on the wrong weights until that is fixed.")
+
+
+def _check_roster(board: pl.DataFrame) -> None:
+    """Compare the league's own starting slots against `hub.config.RosterConfig`."""
+    from hub.config import roster_mismatch
+    from hub.fetch import espn as espn_fetch
+    bad_slots = roster_mismatch(espn_fetch.league_settings().roster_slots or {})
+    if bad_slots:
+        print("  ROSTER MISMATCH -- the league starts a different lineup from "
+              "hub.config.RosterConfig:")
+        for k, (theirs, ours) in sorted(bad_slots.items()):
+            print(f"    {k}: league {theirs}, this repo {ours}")
+        print("  Replacement level and every VOR below assume this repo's shape.")
+
+
+def _stage(board: pl.DataFrame, report: BuildReport, flag: str, label: str,
+           run: Callable[[pl.DataFrame], pl.DataFrame | None], *, live: bool = True,
+           skip_note: str | None = None,
+           on_fail: str = "board built without it.") -> pl.DataFrame:
+    """Run one optional build stage under the repo's degradation policy.
+
+    A board that will not build because one advisory column is unavailable is the
+    operator-dependence CLAUDE.md warns about, so every stage here fails soft: say what
+    broke, leave the flag false, carry on.
+
+    This was written out five times -- 48 lines, 31% of `build()` -- and the cost was not the
+    duplication. `BuildReport` exists because the *consumers* used to infer what had happened
+    by sniffing for columns, and with five producers and no shared shape the consumers' guards
+    drifted anyway: on 2026-08-27 one read `durability or adp` and another read `td_luck`, so a
+    board built without an ESPN key raised `ColumnNotFoundError` before printing THE PICK.
+
+    `run` returns the new board, or None when the stage only checks something.
+    `skip_note` marks a stage ESPN publishes for the current season only: outside a live
+    build it is announced and skipped rather than attempted and caught.
+    """
+    if skip_note is not None and not live:
+        print(f"  {label} skipped: {skip_note}")
+        return board
+    try:
+        out = run(board)
+        setattr(report, flag, True)
+        return board if out is None else out
+    except Exception as e:
+        print(f"  {label} unavailable ({type(e).__name__}); {on_fail}")
+        return board
+
+
 def build(league_size: int = 12, season: int = 2025, *,
           season_ahead: int = SEASON_AHEAD,
           as_of: str | None = None) -> tuple[pl.DataFrame, BuildReport]:
@@ -461,76 +510,40 @@ def build(league_size: int = 12, season: int = 2025, *,
         pl.col("ecr").rank().alias("consensus_rank"),
     )
 
+    # Every optional stage goes through `_stage`, which owns the degradation policy: try it,
+    # flag it if it worked, say what broke if it did not, and never let an advisory column
+    # stop the board building. That rule used to be written out five times, and the guards
+    # its consumers read had already drifted apart -- see `_stage`.
+    report = BuildReport()
+
     # Weeks 15-17 strength of schedule. A tiebreaker column, not a ranking: the fantasy
     # playoffs are three known games against known defences and nobody drafting off the
     # ESPN app prices them, but last season's defence is a noisy guide to this one.
-    report = BuildReport()
-    try:
-        board = attach_sos(board, playoff_sos(season_ahead=season_ahead, dvp_season=season))
-        report.sos = True
-    except Exception as e:
-        print(f"  weeks 15-17 SoS unavailable ({type(e).__name__}); board built without it.")
+    board = _stage(board, report, "sos", "weeks 15-17 SoS",
+                   lambda b: attach_sos(b, playoff_sos(season_ahead=season_ahead,
+                                                       dvp_season=season)))
 
-    # Touchdown luck from last season's actuals. Its own try: it reaches nflverse, and a
-    # board that will not build because one advisory column is unavailable is the
-    # operator-dependence CLAUDE.md warns about.
-    try:
-        board = td_regression.attach(board, td_regression.prior_season(season))
-        report.td_luck = True
-    except Exception as e:
-        print(f"  touchdown luck unavailable ({type(e).__name__}); board built without it.")
+    # Touchdown luck from last season's actuals. Reaches nflverse, so it can fail on its own.
+    board = _stage(board, report, "td_luck", "touchdown luck",
+                   lambda b: td_regression.attach(b, td_regression.prior_season(season)))
 
     # The league owns the scoring weights, so check ours against them rather than assuming.
     # Fantasy points are an aggregate of real stats; if the commissioner moves to half-PPR,
     # every projection and every pick is silently mis-scored until someone notices.
-    if not live:
-        print("  scoring check skipped: ESPN publishes settings for the current season only.")
-    try:
-        from hub.fetch import espn as espn_fetch
-        from hub.models.components import scoring_mismatch
-        if not live:
-            raise SkipHistorical("scoring settings")
-        bad = scoring_mismatch(espn_fetch.scoring_settings())
-        if bad:
-            print("  SCORING MISMATCH -- the league scores differently from hub.models."
-                  "components.SCORING:")
-            for k, (theirs, ours) in sorted(bad.items()):
-                print(f"    {k}: league {theirs}, this repo {ours}")
-            print("  Every projection below is scored on the wrong weights until that is fixed.")
-        report.scoring_checked = True
-    except Exception as e:
-        if live:
-            print(f"  scoring check unavailable ({type(e).__name__}); assuming full PPR.")
+    board = _stage(board, report, "scoring_checked", "scoring check", _check_scoring,
+                   live=live, skip_note="ESPN publishes settings for the current season only.",
+                   on_fail="assuming full PPR.")
 
-    # The league owns the roster shape too, and for a long time nothing checked it: the
-    # slots came back from `league_settings()` on every call and every caller discarded
-    # them. A second flex would move replacement level at every position.
-    if not live:
-        print("  roster check skipped: ESPN publishes slots for the current season only.")
-    try:
-        from hub.config import roster_mismatch
-        from hub.fetch import espn as espn_fetch
-        if not live:
-            raise SkipHistorical("roster slots")
-        slots = espn_fetch.league_settings().roster_slots
-        bad_slots = roster_mismatch(slots or {})
-        if bad_slots:
-            print("  ROSTER MISMATCH -- the league starts a different lineup from "
-                  "hub.config.RosterConfig:")
-            for k, (theirs, ours) in sorted(bad_slots.items()):
-                print(f"    {k}: league {theirs}, this repo {ours}")
-            print("  Replacement level and every VOR below assume this repo's shape.")
-        report.roster_checked = True
-    except Exception as e:
-        if live:
-            print(f"  roster check unavailable ({type(e).__name__}); assuming {SLOTS}.")
+    # The league owns the roster shape too, and for a long time nothing checked it: the slots
+    # came back from `league_settings()` on every call and every caller discarded them. A
+    # second flex would move replacement level at every position.
+    board = _stage(board, report, "roster_checked", "roster check", _check_roster,
+                   live=live, skip_note="ESPN publishes slots for the current season only.",
+                   on_fail=f"assuming {SLOTS}.")
 
-    # Availability as a per-player trait. Its own try for the same reason as above.
-    try:
-        board = durability.attach(board, durability.prior_season(season))
-        report.durability = True
-    except Exception as e:
-        print(f"  durability unavailable ({type(e).__name__}); board built without it.")
+    # Availability as a per-player trait.
+    board = _stage(board, report, "durability", "durability",
+                   lambda b: durability.attach(b, durability.prior_season(season)))
 
     adp = espn_adp(league_size, season_ahead) if live else None
     if adp is not None:
@@ -749,8 +762,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     _emit(report_mod.header(board))
     _emit(report_mod.regression(board))
-    _emit(report_mod.td_luck(board, has_td_luck=report.td_luck, has_adp=report.adp))
-    _emit(report_mod.injuries(board, has_adp=report.adp))
+    _emit(report_mod.td_luck(board, report))
+    _emit(report_mod.injuries(board, report))
 
     if a.sos:
         _emit(report_mod.sos(board))

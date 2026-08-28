@@ -21,7 +21,8 @@ import polars as pl
 
 from hub.draft import durability
 
-if TYPE_CHECKING:                      # `optimize` imports from `board`, so runtime cycles
+if TYPE_CHECKING:                      # both import from `board`, so runtime would cycle
+    from hub.draft.board import BuildReport
     from hub.draft.optimize import ThePick
 
 SOS_GAP = 0.15
@@ -60,17 +61,21 @@ def regression(board: pl.DataFrame, n: int = 8) -> list[str]:
     return out
 
 
-def td_luck(board: pl.DataFrame, *, has_td_luck: bool, has_adp: bool) -> list[str]:
+def td_luck(board: pl.DataFrame, report: BuildReport) -> list[str]:
     """Players priced on touchdowns their yardage does not support.
 
     A different cut from xFP-FP, and measurably so -- the two correlate at +0.16 on the live
     board, and they are signed in opposite directions, so a real overlap would show as a
     strong negative. See docs/td-luck.md.
 
-    Both flags, not just `has_td_luck`: this reaches nflverse and can succeed while ESPN ADP
+    Both flags, not just `td_luck`: this reaches nflverse and can succeed while ESPN ADP
     fails, and the filter below reads `adp`. That was the ECR-only crash.
+
+    Takes the whole `BuildReport` rather than the two booleans it needs. Destructuring it at
+    the call site is what let two consumers pick different flag combinations in the first
+    place, and a sixth stage should not change this signature.
     """
-    if not (has_td_luck and has_adp):
+    if not (report.td_luck and report.adp):
         return []
     pool = board.filter(pl.col("td_luck").is_not_null()
                         & pl.col("adp").is_not_null() & (pl.col("adp") <= 120))
@@ -90,7 +95,7 @@ def td_luck(board: pl.DataFrame, *, has_td_luck: bool, has_adp: bool) -> list[st
     return out
 
 
-def injuries(board: pl.DataFrame, *, has_adp: bool) -> list[str]:
+def injuries(board: pl.DataFrame, report: BuildReport) -> list[str]:
     """Players carrying a designation right now, and last season's fragile ones.
 
     Two different quantities kept visibly apart. Last season's missed games are priced into
@@ -98,10 +103,10 @@ def injuries(board: pl.DataFrame, *, has_adp: bool) -> list[str]:
     priced at all -- there is no history of preseason designations against outcomes to fit a
     coefficient on, so inventing one would be worse than showing the drafter the flag.
 
-    Gated on `has_adp` alone: both halves are scoped to "inside ADP 120" and both print an
-    ADP, so without that column there is nothing here to show.
+    Gated on `report.adp` alone: both halves are scoped to "inside ADP 120" and both print
+    an ADP, so without that column there is nothing here to show.
     """
-    if not has_adp:
+    if not report.adp:
         return []
     out: list[str] = []
     pool = board.filter(pl.col("adp").is_not_null() & (pl.col("adp") <= 120))

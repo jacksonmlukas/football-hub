@@ -236,7 +236,7 @@ cold-start path for rookies. Then re-run `hub.season.lineup_gate`.
 
 ## Codebase
 
-### 7. `board.py` is still the hot spot
+### 7. `board.py` is still the hot spot — PARTLY ADDRESSED 2026-08-27
 
 367 statements, **46% covered**, and `build()` still fetches, prints and degrades in one
 function — the one deviation from ADR-0003 that this session only partly addressed. Its
@@ -245,6 +245,12 @@ uncovered lines are the network path and the report block.
 The honest split is between fetching and assembling, and
 [ADR-0003](adr/0003-make-now-dagster-in-october.md) already says the Dagster port wants that
 seam anyway. Doing it twice would be waste; doing it as part of the port would not.
+
+**Two of the three jobs have since left, without touching that seam.** Rendering moved to
+`hub/draft/report.py`, and the degradation policy moved into `_stage`. `board.py` is 927 →
+~740 lines and 61% → 96% covered, and `build()` is 154 → 118 lines with zero `try/except`
+blocks in it. What remains for the port is exactly the fetch/assemble split ADR-0003 names,
+which is the right thing to have left.
 
 ### 8. The board bypasses `hub.store`
 
