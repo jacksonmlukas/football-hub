@@ -92,6 +92,17 @@ OUTCOME = "fantasy_points_ppr"
 # feature that moves points without moving counts cannot be applied as a Usage multiplier.
 USAGE: tuple[str, ...] = ("targets", "receptions", "carries", "attempts", "tds")
 
+# Yardage is not Usage -- it is Usage times an efficiency the repo deliberately does not
+# project (yards per carry persists at r = 0.108). Its prior is carried anyway because
+# `hub.models.weekly` needs a per-unit rate to turn projected counts into projected yards.
+YARDS: tuple[str, ...] = ("receiving_yards", "rushing_yards", "passing_yards")
+
+# The two negative scoring components. Not Usage and not yardage, but `components.SCORING`
+# prices both at -2 and a projection that omits them is not projecting fantasy points -- it
+# over-projected quarterbacks by +1.44 a week until these went in, which is almost exactly an
+# interception a game.
+TURNOVERS: tuple[str, ...] = ("passing_interceptions", "fumbles_lost_total")
+
 # A verdict is one of three, not two. A pre-stated null that comes back significant in every
 # season is a *finding* -- it is why the prediction was written down -- and folding it in with
 # the rejections would lose the most informative outcome the screen can produce.
@@ -249,7 +260,8 @@ def weekly_stats(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - 
     want = ["player_id", "player_display_name", "position", "season", "week", "team",
             "opponent_team", OUTCOME, "target_share", "receiving_yards", "rushing_yards",
             "passing_yards", "receiving_tds", "rushing_tds", "passing_tds", "season_type",
-            "targets", "receptions", "carries", "attempts", "completions"]
+            "targets", "receptions", "carries", "attempts", "completions",
+            "passing_interceptions", "fumbles_lost_total"]
     ps = ps.select([c for c in want if c in ps.columns])
     if "season_type" in ps.columns:
         ps = ps.filter(pl.col("season_type") == "REG").drop("season_type")
@@ -433,7 +445,8 @@ def build_panel(seasons: Sequence[int] = SEASONS) -> pl.DataFrame:  # pragma: no
          + pl.col("passing_yards")).alias("yds"))
     p = p.join(counted.select("player_id", "season", "week", "tds", "yds"),
                on=["player_id", "season", "week"], how="left")
-    own = prior_means(counted, ["player_id"], [OUTCOME, "yds", *USAGE], within_season=True)
+    own = prior_means(counted, ["player_id"],
+                      [OUTCOME, "yds", *USAGE, *YARDS, *TURNOVERS], within_season=True)
     p = p.join(own, on=["player_id", "season", "week"], how="left").rename(
         {f"{OUTCOME}_prior": "ppg_before", "prior_n": "games_before"})
     p = p.with_columns(

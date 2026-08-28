@@ -230,6 +230,12 @@ NOT_FITTED: dict[str, str] = {
     "hub.season.survivor": "MIN_PROB is a floor that keeps a zero out of a log, and THIN_WEEK "
                            "a count of games. Both are settings; the win probabilities "
                            "themselves come from hub.models.market at run time.",
+    "hub.models.weekly": "the Weekly projection. MULTIPLIER_LO/HI bound a fitted "
+                         "multiplier and MIN_UNITS is a volume floor below which a per-unit "
+                         "efficiency rate is noise -- both settings. The multiplier's "
+                         "coefficients are fitted at run time from the panel and never frozen "
+                         "into the module, the same shape as hub.models.injury. See "
+                         "docs/weekly-screen.md",
     "hub.models.weekly_screen": "the Phase 1 screen for week-level features. DEGENERATE is a "
                                 "floating-point tolerance -- below it a residual is rounding "
                                 "error rather than a signal -- and nothing here predicts: it "
