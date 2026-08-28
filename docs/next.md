@@ -477,6 +477,23 @@ the bias per stat and per position. If we are 16% high on receiving yards everyw
 a correction to make; if it is noise at n=12, that is worth knowing before trusting the
 number. Costs ~4 credits per event and errors are free.
 
+## Weekly gate (2026-08-28): the Weekly projection is shown, never ranked on
+
+`hub.season.weekly_gate`, three held-out seasons, 60 rosters, 680 roster-weeks:
+
+    weekly - consensus = -0.684 points per team-week
+    95% CI [-1.519, +0.159]   P(weekly better) 5.8%    lost 3 of 3 seasons
+
+A projection that beats the flat one this repo ships by +0.074 MAE at 5.9 se, losing the lineup
+decision to a free public ranking. A lineup is a max over a roster, so most projection error
+never reaches the decision -- which is what [ADR-0015](adr/0015-the-weekly-gate-is-a-decision-not-an-accuracy-test.md)
+predicted when it made this the primary gate, and what
+[ADR-0016](adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md) records.
+
+**The first run said +11.14 at P 100% and was VOID** -- 6.2% join failures against a floor
+pre-registered hours earlier. An off-by-one attached each consensus scrape to the week after the
+one it ranked. The floor is the only reason a spurious ten-point win was not written up.
+
 ## Lineup gate (2026-08-24): start your projections, and why that is actionable
 
 `hub.season.lineup_gate`, four seasons, 80 rosters, both arms seeing only projections:

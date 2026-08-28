@@ -148,8 +148,10 @@ it — a carry and a target are not the same unit).
 
 **Weekly projection**:
 A player's expected points for one *named* week, against a named opponent. Distinct from
-**xFP**, which is per-game and season-long: today the repo has only the latter, and applies it
-flat to all seventeen weeks.
+**xFP**, which is per-game and season-long. It is **shown and never ranked on**: measurably more
+accurate than the flat projection (+0.074 MAE at 5.9 se) and it still lost the lineup decision
+to consensus rank at −0.68 points a team-week, see
+[ADR-0016](docs/adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md).
 _Avoid_: projection unqualified — say weekly projection or xFP, since the whole open question
 is whether the week adds anything.
 
