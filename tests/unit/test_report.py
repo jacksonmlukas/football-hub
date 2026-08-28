@@ -171,7 +171,7 @@ def test_sos_reports_both_ends_and_the_swaps():
     df = _board(pos=["RB"] * 4, team=["A", "B", "C", "D"],
                 adp=[10.0, 12.0, 60.0, 90.0],
                 wk15_17_sos=[1.30, 0.90, 1.00, 1.00])
-    out = "\n".join(report.sos(df))
+    out = "\n".join(report.sos(df, _rep(adp=True, sos=True)))
     assert "SOFTEST" in out and "HARDEST" in out
     assert "Same-tier swaps" in out
     assert "P0" in out.split("Same-tier swaps")[1], "ADP 10 vs 12, SoS gap 0.40 -> a swap"
@@ -181,7 +181,7 @@ def test_a_swap_needs_both_a_close_adp_and_a_real_sos_gap():
     """Two players a round apart are not a swap, however different their slates."""
     df = _board(pos=["RB", "RB"], team=["A", "B"], adp=[10.0, 90.0],
                 wk15_17_sos=[1.40, 0.80])
-    out = "\n".join(report.sos(df)).split("Same-tier swaps")[1]
+    out = "\n".join(report.sos(df, _rep(adp=True, sos=True))).split("Same-tier swaps")[1]
     assert "over" not in out
 
 
@@ -203,3 +203,31 @@ def test_the_renderers_take_the_report_not_loose_booleans():
         assert "report" in params, f"{fn.__name__} should take the report"
         assert not any(p.startswith("has_") for p in params), \
             f"{fn.__name__} still destructures the report"
+
+
+def test_the_sos_report_is_skipped_without_adp():
+    """It was the one renderer with no gate, and it failed exactly as the other two did:
+    `make draft --sos` with no ESPN key raised ColumnNotFoundError before printing anything.
+    Every line below is scoped to a drafted player and prints an ADP."""
+    df = _board(pos=["RB"], team=["A"], wk15_17_sos=[1.1])
+    assert report.sos(df, _rep(adp=False, sos=True)) == []
+
+
+def test_the_sos_report_is_skipped_when_the_stage_did_not_run():
+    """`wk15_17_sos` exists only when the SoS stage succeeded."""
+    df = _board(pos=["RB"], team=["A"], adp=[10.0])
+    assert report.sos(df, _rep(adp=True, sos=False)) == []
+
+
+def test_every_renderer_reading_an_optional_column_takes_the_report():
+    """The property, not the instance. `adp`, `wk15_17_sos`, `td_luck`, `missed` and
+    `injury_status` are all absent from a degraded board and none is in DRAFT_BOARD.required,
+    so any renderer touching one must be handed the flags rather than trusting the frame."""
+    import inspect
+    optional = ("adp", "wk15_17_sos", "td_luck", "missed", "injury_status")
+    for name in ("sos", "td_luck", "injuries"):
+        fn = getattr(report, name)
+        src = inspect.getsource(fn)
+        if any(f'"{c}"' in src for c in optional):
+            assert "report" in inspect.signature(fn).parameters, \
+                f"{name} reads an optional column without being handed the report"

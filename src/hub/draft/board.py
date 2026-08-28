@@ -766,7 +766,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _emit(report_mod.injuries(board, report))
 
     if a.sos:
-        _emit(report_mod.sos(board))
+        _emit(report_mod.sos(board, report))
         return 0
 
     _emit(report_mod.unmatched(state_mod.unmatched(board, st)))

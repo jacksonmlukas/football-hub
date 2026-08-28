@@ -141,8 +141,19 @@ def injuries(board: pl.DataFrame, report: BuildReport) -> list[str]:
     return out
 
 
-def sos(board: pl.DataFrame) -> list[str]:
-    """Weeks 15-17 strength of schedule, and the swaps it makes actionable."""
+def sos(board: pl.DataFrame, report: BuildReport) -> list[str]:
+    """Weeks 15-17 strength of schedule, and the swaps it makes actionable.
+
+    Needs *both* flags. `wk15_17_sos` exists only when the SoS stage ran, and every line
+    below is scoped to a drafted player and prints an ADP, so without ESPN there is nothing
+    to show. This renderer was the one that had no gate at all, and it failed exactly as the
+    other two did on 2026-08-25: `make draft --sos` with no ESPN key raised
+    ColumnNotFoundError before printing anything. The module docstring names that crash as
+    the reason this module exists, which is the part worth remembering -- extracting the
+    renderers made the gating testable and did not make it correct.
+    """
+    if not (report.adp and report.sos):
+        return []
     pool = board.filter(pl.col("adp").is_not_null() & pl.col("wk15_17_sos").is_not_null())
     out = [f"\n  Weeks 15-17 strength of schedule -- {pool.height} drafted players",
            "  1.00 = league-average defence for that position; higher is softer.\n"]
