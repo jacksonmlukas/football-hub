@@ -185,6 +185,12 @@ not built.
 
 **Within-game correlation between volume and efficiency**, per the skew gap above.
 
+**Anything week-specific.** Everything here is a season-long per-game mean and the weekly
+*shape* around it. There is no week-level term anywhere: the same player scores the same
+projection in Week 1 and Week 12, against any opponent, in any game script. That is the gap
+[weekly-projection-plan.md](weekly-projection-plan.md) pre-registers a screen and two gates
+for — and the thing it has to earn is the *week*, not the decomposition, which is this file.
+
 ## Reproduce
 
 ```bash
