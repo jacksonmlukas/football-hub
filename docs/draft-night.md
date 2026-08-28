@@ -12,6 +12,17 @@ make draft                 # rebuild the board; ~4s warm, ~40s on a cold nflvers
 uv run python -m hub.draft.board --reset
 ```
 
+Then, once, before the first pick:
+
+```bash
+cp data/processed/draft_board.parquet data/processed/draft_board.AS-DRAFTED.parquet
+```
+
+**That copy is the only honest input to the adherence score.** Every `--pick` and `--taken`
+rebuilds the board from source, so it drifts as ADP moves during the night, and the ADP archive
+keys by *day* — it keeps the last build of the evening, not the one you opened with. Without
+this copy, the replay grades you against a board you never saw.
+
 The reset matters. Draft state persists on disk, and starting a real draft on top of leftover
 picks from a rehearsal is a silent way to be wrong all night.
 
@@ -125,6 +136,33 @@ which ESPN does not retain ([ADR-0010](adr/0010-edge-is-displayed-but-never-rank
 | `BUILD FAILED: ...` then `serving the last good board` | **no network at all**, or ffverse/ESPN down. The two spine fetches have no in-build fallback, so the whole build is skipped | nothing. It prints how old the board is and carries on to THE PICK. ADP is that stale; every other column is a season-long number and does not move. Rebuild when the network returns |
 | poller says the board is many hours old | you did not rebuild today | `make draft`, then restart the poller |
 | wrong pick recorded | — | `--undo N` removes the last N |
+
+## Deviating from THE PICK
+
+Objective 1 is judged on **taking THE PICK at 12 of 16 turns, with every deviation written down
+at the time** ([decisions.md](decisions.md)). Adherence is reconstructible afterwards; *why* you
+deviated is not. So it gets written down in the moment — **on paper, beside the laptop**, not
+typed. At slot 3 you have a 19-pick wait after rounds 1, 3, 5 and 7; that is where a considered
+note gets written. A reason typed inside 90 seconds is a shrug.
+
+**What licenses a deviation, fixed 2026-08-27 before the draft:**
+
+1. **News that postdates the board build.** A player ruled out after `make draft` ran. The board
+   cannot know.
+2. **A run the poller flagged.** Three or more at one position inside the last five picks moves
+   replacement level, and a board built at 8pm cannot see it.
+3. **A roster constraint the board does not model.** Keepers, an IR slot, anything structural.
+4. **A degraded board.** You are in ECR-only mode and hold information ADP would have carried.
+5. **Stacking or exposure.** Declining a third player from one NFL team — the simulator models
+   teammate correlation, the board does not enforce it.
+
+Note that 1 and 2 are things the tool *already tells you*. The licence mostly says: trust the
+tool's own warnings over the tool's own ranking.
+
+**Not licensed:** "I don't like him", "he has been busy", "I have him on two other teams". Take
+them if you want — but write them down as gut calls, because that is what they are. The count is
+an observation, not a budget: never follow a recommendation you disbelieve in round 14 to protect
+a metric.
 
 ## What is deliberately not automated
 

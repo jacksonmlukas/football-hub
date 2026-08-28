@@ -36,7 +36,7 @@ import pytest
 # Every module with a CLI. A new one missing from this list is caught by
 # `test_every_cli_module_is_covered_here` below rather than by nobody.
 CLI_MODULES = (
-    "hub.draft.backtest", "hub.draft.board", "hub.draft.calibrate", "hub.draft.evaluate",
+    "hub.draft.adherence", "hub.draft.backtest", "hub.draft.board", "hub.draft.calibrate", "hub.draft.evaluate",
     "hub.draft.leverage", "hub.draft.live", "hub.draft.tune", "hub.fetch.cfbd",
     "hub.fetch.nflverse", "hub.fetch.odds", "hub.inspect", "hub.models.conformal",
     "hub.models.correlate", "hub.models.eval", "hub.models.injury", "hub.models.margin",
