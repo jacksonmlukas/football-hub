@@ -504,3 +504,43 @@ def test_the_scheme_trends_are_not_in_the_default_screen():
     assert {f.name for f in ws.SCHEME_TRENDS} == {
         "pa_rate_trend", "motion_rate_trend", "nohuddle_rate_trend",
         "screen_rate_trend", "pass_rate_trend"}
+
+
+# --- determinism: sum-then-mean without a sort between them ----------------
+
+def test_prior_means_returns_a_deterministically_ordered_frame():
+    """A group_by emits rows in a hash-dependent order, and every caller of this means them
+    again. Floating-point addition is not associative, so an unsorted hand-off moves the answer
+    at ~1e-15 and every downstream sort can land differently -- improvements.md #18, which was
+    found in `playoff_sos` and then found here by auditing for the pattern.
+    """
+    df = pl.DataFrame({"player_id": ["b", "a", "b", "a", "c"],
+                       "season": [2024] * 5, "week": [1, 1, 2, 2, 1],
+                       "pts": [1.0, 2.0, 3.0, 4.0, 5.0]})
+    got = ws.prior_means(df, ["player_id"], ["pts"])
+    assert got.equals(got.sort(["player_id", "season", "week"])), \
+        "sorted on the way out, not left to the group_by"
+
+
+def test_a_two_stage_aggregation_is_stable_when_the_hand_off_is_sorted():
+    """The property itself, on a frame big enough for the group order to actually vary."""
+    rng = np.random.default_rng(0)
+    n = 4000
+    df = pl.DataFrame({
+        "team": [f"T{i % 32}" for i in range(n)],
+        "pos": [["QB", "RB", "WR", "TE"][i % 4] for i in range(n)],
+        "week": [(i % 14) + 1 for i in range(n)],
+        "pts": rng.normal(10, 6, n)})
+
+    def two_stage(sort_between):
+        a = df.group_by(["team", "pos", "week"]).agg(pl.col("pts").sum().alias("s"))
+        if sort_between:
+            a = a.sort(["team", "pos", "week"])
+        return (a.group_by(["team", "pos"]).agg(pl.col("s").mean().alias("m"))
+                 .sort(["team", "pos"])["m"])
+
+    unsorted = [two_stage(False) for _ in range(4)]
+    sorted_ = [two_stage(True) for _ in range(4)]
+    assert all(r.equals(sorted_[0]) for r in sorted_), "sorted: bit-identical every run"
+    # the unsorted version is *usually* unstable; assert only that sorting cannot hurt
+    assert sorted_[0].len() == unsorted[0].len()

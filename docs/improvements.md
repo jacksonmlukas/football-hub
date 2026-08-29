@@ -687,7 +687,21 @@ the draft reads.
 **Do, after the draft:** insert the sort, and add a test that runs the pipeline twice and
 compares. Then drop the workaround in `weekly_gate_data`. The class of bug is worth a moment's
 thought beyond this instance — **any `group_by` feeding a float aggregation to another
-`group_by` has it**, and the repo has more than one.
+`group_by` has it**.
+
+**Audited 2026-08-29**, by AST, for functions containing two or more aggregations. Three:
+
+| | |
+|---|---|
+| `playoff_sos._dvp_from_stats` | the original. Draft path, **not fixed**, fixed after the draft |
+| `weekly_screen.route_share_from_plays` | **safe** — the aggregations are `len()` counts and a `max()`, and both are exact |
+| `weekly_screen.build_panel` / `prior_means` | **the same defect, in code written the night before**. Fixed |
+
+The third is the useful part of the audit: sum-then-mean without a sort between them, written
+while diagnosing the identical bug elsewhere. `prior_means` now sorts on the way out, which
+fixes every consumer at once rather than each separately, and three consecutive panel builds
+are bit-identical on `ppg_before`, `dvp`, `td_rate_prior` and `targets_prior` where `dvp` was
+not before. The published screen is unchanged.
 
 It matters because the draft indexes the board by **row**: an unstable order moves picks, which
 moves rosters, which moves every downstream measurement. `hub.season.weekly_gate` wobbled by

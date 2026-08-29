@@ -346,7 +346,11 @@ def prior_means(df: pl.DataFrame, keys: Sequence[str], values: Sequence[str], *,
         frames.append(agg)
     if not frames:
         return df.head(0)
-    return pl.concat(frames)
+    # Sorted on the way out, not left to the group_by. Every caller either means these rows
+    # again or joins them into something that is sorted later, and a hash-ordered frame under
+    # a float aggregation moves at ~1e-15 -- improvements.md #18. One sort here fixes every
+    # consumer rather than each of them separately.
+    return pl.concat(frames).sort([*keys, "season", "week"])
 
 
 def trend(df: pl.DataFrame, col: str, key: str, out: str, weeks: int = 18) -> pl.DataFrame:
@@ -688,15 +692,22 @@ def build_panel(seasons: Sequence[int] = SEASONS, *, consensus: bool = True,
          + pl.col("passing_yards")).alias("yds"))
     p = p.join(counted.select("player_id", "season", "week", "tds", "yds"),
                on=["player_id", "season", "week"], how="left")
-    own = prior_means(counted, ["player_id"],
+    own = prior_means(counted.sort(["player_id", "season", "week"]), ["player_id"],
                       [OUTCOME, "yds", *USAGE, *YARDS, *TURNOVERS], within_season=True)
     p = p.join(own, on=["player_id", "season", "week"], how="left").rename(
         {f"{OUTCOME}_prior": "ppg_before", "prior_n": "games_before"})
     p = p.with_columns(
         (pl.col("tds_prior") / (pl.col("yds_prior") + 1e-9)).alias("td_rate_prior"))
 
+    # Sorted before it feeds `prior_means`, which takes a mean over these rows. A group_by
+    # emits rows in a hash-dependent order that varies between calls, and floating-point
+    # addition is not associative, so sum-then-mean without a sort between them moves at
+    # ~1e-15 and every downstream sort can land differently. Same defect as
+    # `playoff_sos._dvp_from_stats` -- improvements.md #18 -- found by auditing for the
+    # pattern after diagnosing that one.
     allowed = (stats.group_by(["opponent_team", "position", "season", "week"])
-                    .agg(pl.col(OUTCOME).sum().alias("allowed")))
+                    .agg(pl.col(OUTCOME).sum().alias("allowed"))
+                    .sort(["opponent_team", "position", "season", "week"]))
     d = prior_means(allowed, ["opponent_team", "position"], ["allowed"])
     lg = d.group_by(["position", "season", "week"]).agg(
         pl.col("allowed_prior").mean().alias("lg"))
