@@ -24,6 +24,7 @@ thing, and because two of these produced errors worth not repeating.
 | Own spread | next week | **null on the joint screen** — one signal with the implied total, two hats (r = +0.83) | [weekly-screen.md](weekly-screen.md) |
 | Target-share trend | next week | **null** — +0.006, 1/5 seasons | [weekly-screen.md](weekly-screen.md) |
 | Pass-play participation trend | next week | **null against snap share** — clears alone (+0.034, 5/5) and correlates with it at **0.917**; snap share is stronger | [expected-and-routes.md](expected-and-routes.md) |
+| Waiver adds by a lower confidence bound | next week | **null** — recovers 0.14 of a 2.0-point deficit; the curse is real and is not the mechanism | [parameter-uncertainty.md](parameter-uncertainty.md) |
 | Expected points in the priors | next week | **null, slightly negative** — the rebuild loses 0.005 MAE and the frozen gate falls +0.711 → +0.082 | [expected-and-routes.md](expected-and-routes.md) |
 | Wind | next week | **null** — 4/5 seasons | [weekly-screen.md](weekly-screen.md) |
 | Rest days | next week | **null** — −0.014, 3/5 seasons | [weekly-screen.md](weekly-screen.md) |

@@ -356,6 +356,39 @@ def project(now: pl.DataFrame, coefs: dict[str, float],
         pl.Series("mu", np.nan_to_num(mu, nan=0.0)))
 
 
+def positional_sd(train: pl.DataFrame) -> dict[str, float]:
+    """Median within-player weekly sd, per position, from training seasons only.
+
+    The *outcome* spread of a week, which is the numerator of the standard error below. Median
+    rather than mean because a handful of player-seasons with two games produce sd estimates
+    that are themselves noise.
+    """
+    d = (train.group_by(["player_id", "season", "position"])
+              .agg(pl.col("fantasy_points_ppr").std().alias("sd"), pl.len().alias("n"))
+              .filter(pl.col("n") >= 6).drop_nulls("sd"))
+    out = {}
+    for pos in sorted(set(d["position"].to_list())):
+        v = d.filter(pl.col("position") == pos)["sd"].median()
+        if v is not None:
+            out[pos] = float(cast(float, v))
+    pooled = d["sd"].median()
+    out["__pooled__"] = float(cast(float, pooled)) if pooled is not None else 0.0
+    return out
+
+
+def standard_error(now: pl.DataFrame, sigma: dict[str, float]) -> np.ndarray:
+    """`sigma_pos / sqrt(n)`: how well we know his mean, not how much his weeks vary.
+
+    ADR-0012 measured per-player *volatility* beyond the positional constant at +/-9.3% and
+    called it not estimable. This is the other quantity, it is +36% at one game played against
+    twelve, and it is estimable because it is just `n`. See docs/parameter-uncertainty.md.
+    """
+    n = np.clip(np.nan_to_num(now["games_before"].to_numpy().astype(float), nan=0.0), 1.0, None)
+    pooled = sigma.get("__pooled__", 0.0)
+    s = np.array([sigma.get(p, pooled) for p in now["position"].to_list()])
+    return s / np.sqrt(n)
+
+
 def flat(now: pl.DataFrame) -> np.ndarray:
     """The incumbent: his season-to-date points per game, applied unchanged to this week."""
     return np.nan_to_num(now["ppg_before"].to_numpy().astype(float), nan=0.0)

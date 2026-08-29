@@ -67,6 +67,30 @@ observable tells you reliably which is which.
 instruction to "re-run this gate when `sd` stops being a function of `mu`" is withdrawn: there
 is no known route to that, and the headroom would not justify one.
 
+### Amended 2026-08-29: there was a route, and it was one line
+
+The withdrawal above is wrong on its own terms, and the decision it defends is not.
+
+`player-spread.md` measured per-player **outcome volatility** — how much a player's weeks vary
+around his own mean — and correctly found it real, tiny and not estimable. **How well we know
+that mean is a different quantity**, it is `sigma_pos/√games`, and it is **+36% at one game
+played against twelve**. It is not a function of `mu`; it is a function of `n`. That is the
+condition this ADR named.
+
+Re-run with `sd = √((k·√mu)² + se²)`:
+
+    as shipped                    +0.00  CI [-0.00, +0.00]   P(better) 72.7%
+    with parameter uncertainty    +0.18  CI [-0.28, +0.79]   P(better) 75.5%
+
+**The zero stops being structural.** The interval was [−0.00, +0.00] because the optimiser was
+choosing among orderings that could not differ; it now spans a point in each direction because
+the optimiser finally has variance to read. Reading it is worth +0.18 points a game and is not
+significant.
+
+**So: start your highest projections, unchanged — but because it was measured, not because no
+route existed.** `hub.season.lineup_gate --parameter-uncertainty` reproduces it. See
+[parameter-uncertainty.md](../parameter-uncertainty.md).
+
 ## Also recorded: the gate's first version could not fail
 
 The optimiser arm originally chose each week's lineup from **realised** scores while the

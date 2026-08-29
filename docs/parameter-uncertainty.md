@@ -53,6 +53,44 @@ exploratory sensitivity and never as the result.
 decisions. **If the frozen gate moves by more than 0.05, something is wired wrong**, since the
 change is unreachable from that path.
 
+### Result, 2026-08-29: the curse is real and is not what costs the two points
+
+| z | churn |
+|---|---|
+| 0 (baseline) | −2.006 |
+| 0.5 | **−1.866** |
+| **1.0** *(pre-registered)* | **−1.926** |
+| 2.0 | −2.470 |
+| 3.0 | −2.642 |
+
+**The prediction is wrong.** −1.926 against a pre-stated "better than −1.0", and the
+exploratory sweep is non-monotone with a shallow optimum near z = 0.5 worth 0.14 points out of
+a two-point deficit. **The tripwire is clean**: the frozen gate returned +0.711, unchanged to
+three decimals.
+
+So the winner's curse is real — the +5.88 tail bias is still there — and correcting for it
+recovers about a fourteenth of the loss. It was diagnosed correctly and it is not the
+mechanism.
+
+### What is: we simply pick worse players
+
+Both arms churning under identical rules, ten rosters a season, 2021–2025:
+
+| arm | adds | the added player scored | the dropped player scored | net |
+|---|---|---|---|---|
+| consensus | 443 | **16.42** | 6.77 | **+9.65** |
+| weekly | 477 | **13.74** | 6.93 | +6.81 |
+
+Both churn about as often and both gain from churning. **The weekly arm's adds simply score 2.7
+points less.** It is not that we churn too much, or drop the wrong people, or read our own
+estimate too optimistically — three things fixed and none of them mattered. We identify worse
+waiver adds.
+
+Which is the timeliness thesis pointing the other way for once. A waiver-pool player has almost
+no history to process, so a model that reads only box scores is competing against a human
+ranking that reads a coach's press conference. **This is the one place in the system where
+consensus's information advantage is largest, and it is exactly where the model loses.**
+
 ## Experiment B — give the lineup optimiser the variance it was promised
 
 **The change.** Per-player predictive spread becomes
@@ -70,6 +108,27 @@ assumed.
 
 Running it anyway because ADR-0012's withdrawal rests on a quantity it never measured, and
 "we checked and it is still nothing" is worth more than an unexamined clause.
+
+### Result, 2026-08-29: no longer a *structural* zero, still a null
+
+| | optimiser − projections | 95% CI | P(better) |
+|---|---|---|---|
+| as shipped | **+0.00** | **[−0.00, +0.00]** | 72.7% |
+| with parameter uncertainty | **+0.18** | **[−0.28, +0.79]** | 75.5% |
+
+**The verdict is unchanged and the structure is not.** ADR-0012's zero was *structural* — the
+interval was [−0.00, +0.00] because `sd` was a deterministic function of `mu` and the optimiser
+was choosing among orderings that could not differ. Adding `sigma_pos/√games` opens the interval
+to [−0.28, +0.79]: the optimiser now has variance to read, and reading it is worth **+0.18
+points per game and not significant**.
+
+My pre-stated range was "better than −0.02 and worse than +0.10", so the magnitude half is
+wrong — it moved more than I said — and the verdict half held: *START YOUR PROJECTIONS*.
+
+**This amends ADR-0012's reasoning without touching its decision.** The re-run clause was
+withdrawn on the grounds that *"there is no known route to that, and the headroom would not
+justify one."* There is a route, it is one line, and the headroom is +0.18 [−0.28, +0.79] —
+which is a measured null rather than an assumed one, and that is the difference worth having.
 
 ## What would make either adoptable
 

@@ -138,13 +138,19 @@ def waiver_swap(roster: list[int], pool: list[int], pos: Sequence[str],
 
 def season_points(realised: np.ndarray, pos: Sequence[str], score: np.ndarray,
                   roster: Sequence[int], pool: Sequence[int], weeks: Sequence[int],
-                  *, churn: bool = False,
-                  addable: np.ndarray | None = None) -> dict[int, float]:
+                  *, churn: bool = False, addable: np.ndarray | None = None,
+                  add_score: np.ndarray | None = None) -> dict[int, float]:
     """Points per week for one arm, optionally streaming a player a week.
 
     `realised`, `score` and `pos` are over the whole **universe** of board players, and a
     roster is a list of indices into it that evolves. With `churn=False` the roster never
     changes and this is the frozen-roster gate.
+
+    `add_score` is what the **waiver decision** reads, where `score` is what the **lineup**
+    reads. They differ when adds are ranked by a lower confidence bound: a waiver pick is the
+    maximum over hundreds of candidates and so is biased upward, while a lineup is a choice
+    among players you already hold and has no such selection. Defaults to `score`, which is
+    the behaviour every earlier run had.
 
     `addable` masks the *pool* -- never the roster -- to the players both arms can score that
     week. Restricting it is what keeps this able to fail: consensus ranks only 35.8% of a
@@ -155,13 +161,14 @@ def season_points(realised: np.ndarray, pos: Sequence[str], score: np.ndarray,
     from hub.draft.season import STARTERS
     need = sum(STARTERS.values())
     cur, free = list(roster), list(pool)
+    decide = score if add_score is None else add_score
     out: dict[int, float] = {}
     for w in weeks:
         col = score[:, w - 1]
         if churn:
             eligible = ([i for i in free if addable[i, w - 1]]
                         if addable is not None else free)
-            swap = waiver_swap(cur, eligible, pos, col, need)
+            swap = waiver_swap(cur, eligible, pos, decide[:, w - 1], need)
             if swap is not None:
                 add, drop = swap
                 cur = [i for i in cur if i != drop] + [add]
@@ -178,7 +185,8 @@ def compare_universe(rosters: dict[int, list[list[int]]], pos: dict[int, Sequenc
                      covered: set[tuple[int, int]],
                      addable: dict[int, np.ndarray] | None = None,
                      weeks: Sequence[int] = GATE_WEEKS,
-                     *, churn: bool = False) -> pl.DataFrame:
+                     *, churn: bool = False, z: float = 0.0,
+                     se: dict[int, np.ndarray] | None = None) -> pl.DataFrame:
     """One row per roster-week, on the universe representation, with or without churn.
 
     `churn=False` reproduces `compare` exactly -- and it is checked against the published
@@ -189,6 +197,10 @@ def compare_universe(rosters: dict[int, list[list[int]]], pos: dict[int, Sequenc
     for season in sorted(rosters):
         wks = [w for w in weeks if (season, w) in covered]
         add = None if addable is None else addable[season]
+        # Only the arm under test gets a lower confidence bound. Consensus is a *ranking* with
+        # no uncertainty attached to subtract, so there is nothing to hand it -- and this is
+        # our arm being more careful with its own estimate, not the incumbent being handicapped.
+        lcb = (weekly[season] - z * se[season]) if (z and se is not None) else None
         for k, roster in enumerate(rosters[season]):
             # The pool is per draft: who is a free agent depends on what the other eleven
             # teams took in that room.
@@ -196,7 +208,7 @@ def compare_universe(rosters: dict[int, list[list[int]]], pos: dict[int, Sequenc
             a = season_points(realised[season], pos[season], consensus[season], roster,
                               free, wks, churn=churn, addable=add)
             b = season_points(realised[season], pos[season], weekly[season], roster,
-                              free, wks, churn=churn, addable=add)
+                              free, wks, churn=churn, addable=add, add_score=lcb)
             for w in wks:
                 rows.append({"season": season, "roster": k, "week": w,
                              "consensus": a[w], "weekly": b[w]})
@@ -313,6 +325,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                     help="one waiver add/drop a week, both arms, from a pool both can score")
     ap.add_argument("--open-pool", action="store_true",
                     help=argparse.SUPPRESS)   # the asymmetric pool: NOT the gate
+    ap.add_argument("--lcb", type=float, default=0.0, metavar="Z",
+                    help="rank waiver adds by mu - Z*se; the pre-registered value is 1.0")
     ap.add_argument("--expected", action="store_true",
                     help="expected receptions and yardage in the priors, not realised")
     ap.add_argument("--shrink",
@@ -329,11 +343,12 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         return 0
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     from hub.season.weekly_gate_data import assemble_universe
-    ros, pos, realised, consensus, weekly, pool, addable, covered = assemble_universe(
+    ros, pos, realised, consensus, weekly, pool, addable, se, covered = assemble_universe(
         seasons, drafts=a.drafts, seed=a.seed, shrink=a.shrink, expected=a.expected)
     cover = coverage(ros, consensus, realised, covered)
     paired = compare_universe(ros, pos, realised, consensus, weekly, pool, covered,
-                              None if a.open_pool else addable, churn=a.churn)
+                              None if a.open_pool else addable, churn=a.churn,
+                              z=a.lcb, se=se)
     s = cluster_bootstrap(paired, seed=a.seed)
     seasons_tbl = per_season(paired)
     mode = ("one add/drop a week, pool both arms can score" if a.churn and not a.open_pool
@@ -343,6 +358,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         mode += f", shrink={a.shrink}"
     if a.expected:
         mode += ", expected priors"
+    if a.lcb:
+        mode += f", waiver LCB z={a.lcb}"
     print(f"\n  {int(s['n'])} roster-weeks over {int(s['clusters'])} rosters, "
           f"on the {len(covered)} weeks consensus covers   [{mode}]")
     print(f"  unranked {cover['unranked']:.1%}, of which a join failure "

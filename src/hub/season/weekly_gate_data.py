@@ -60,7 +60,7 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     waiver arm adds and drops, and a per-roster matrix cannot represent a player who was not
     on the roster when the matrix was built.
 
-    Returns `(rosters, pos, realised, consensus, weekly, pool, addable, covered)`.
+    Returns `(rosters, pos, realised, consensus, weekly, pool, addable, se, covered)`.
     """
     from collections.abc import Sequence as _Seq
 
@@ -72,7 +72,14 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     from hub.draft.optimize import simulate_remaining_draft
     from hub.draft.state import DraftState
     from hub.models.experiment import PLAYER_STATS_COLS, expanding_seasons
-    from hub.models.weekly import VOLUME, fit_multiplier, fit_shrink, project
+    from hub.models.weekly import (
+        VOLUME,
+        fit_multiplier,
+        fit_shrink,
+        positional_sd,
+        project,
+        standard_error,
+    )
     from hub.models.weekly_screen import build_panel, weekly_consensus
 
     cfg = RosterConfig()
@@ -84,15 +91,19 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     projected = []
     for _season, past, now in expanding_seasons(panel):
         coefs = {c: fit_multiplier(past, c) for c in VOLUME}
+        sigma = positional_sd(past)
         # Fitted on `past` only, like the multiplier. A shrinkage fitted on the season it is
         # scored against would be the treatment arm reading its own answer sheet.
         sh = None if shrink is None else fit_shrink(
             past, coefs, objective=shrink.split("-")[0],
             target=("market-only" if shrink == "market-only"
                     else "market" if shrink is not None and "market" in shrink else "position"))
-        projected.append(project(now, coefs, shrink=sh).select("key", "season", "week", "mu"))
+        projected.append(project(now, coefs, shrink=sh)
+                         .with_columns(pl.Series("se", standard_error(now, sigma)))
+                         .select("key", "season", "week", "mu", "se"))
     proj = pl.concat(projected) if projected else pl.DataFrame(
-        schema={"key": pl.Utf8, "season": pl.Int64, "week": pl.Int64, "mu": pl.Float64})
+        schema={"key": pl.Utf8, "season": pl.Int64, "week": pl.Int64,
+                "mu": pl.Float64, "se": pl.Float64})
 
     rosters: dict[int, list[list[int]]] = {}
     pos: dict[int, _Seq[str]] = {}
@@ -101,6 +112,7 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     weekly: dict[int, np.ndarray] = {}
     pool: dict[int, list[list[int]]] = {}
     addable: dict[int, np.ndarray] = {}
+    se: dict[int, np.ndarray] = {}
 
     for yr in sorted(set(proj["season"].unique().to_list()) & set(seasons)):
         print(f"  building the {yr} board as of {yr}-09-01 ...", flush=True)
@@ -121,8 +133,9 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
                   for r in realised_ppg(stats).iter_rows(named=True)}
         ecr_of = {(r["key"], int(r["week"])): -float(r["ecr"])
                   for r in ecr.filter(pl.col("season") == yr).iter_rows(named=True)}
-        mu_of = {(r["key"], int(r["week"])): float(r["mu"])
-                 for r in proj.filter(pl.col("season") == yr).iter_rows(named=True)}
+        rows = list(proj.filter(pl.col("season") == yr).iter_rows(named=True))
+        mu_of = {(r["key"], int(r["week"])): float(r["mu"]) for r in rows}
+        se_of = {(r["key"], int(r["week"])): float(r["se"]) for r in rows}
 
         realised[yr] = _matrix(keys, pts_of, 0.0)
         cons = _matrix(keys, ecr_of, UNRANKED)
@@ -133,6 +146,9 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         # docs/weekly-projection-plan.md: consensus ranks 35.8% of the pool, so an unmasked
         # pool would hand the arm under test six hundred players the incumbent cannot see.
         addable[yr] = (cons > UNRANKED) & ~np.isnan(mu)
+        # A player with no projection has no standard error either; zero means the lower
+        # confidence bound leaves the consensus fallback exactly where it was.
+        se[yr] = np.nan_to_num(_matrix(keys, se_of, float("nan")), nan=0.0)
 
         made, pools = [], []
         for k in range(drafts):
@@ -143,7 +159,8 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
             made.append([int(i) for i in room[cfg.slot - 1]])
             pools.append([i for i in range(n) if i not in drafted])
         rosters[yr], pool[yr] = made, pools
-    return rosters, pos, realised, consensus, weekly, pool, addable, covered_weeks(ecr)
+    return (rosters, pos, realised, consensus, weekly, pool, addable, se,
+            covered_weeks(ecr))
 
 
 def covered_weeks(ecr: pl.DataFrame) -> set[tuple[int, int]]:

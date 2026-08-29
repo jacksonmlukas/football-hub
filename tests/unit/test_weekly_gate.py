@@ -291,3 +291,51 @@ def test_a_dropped_player_returns_to_the_pool():
     score[9, 1] = 0.0
     out = G.season_points(realised, pos, score, roster, pool, [1, 2], churn=True)
     assert out is not None, "the swap and its reversal both run without error"
+
+
+# --- the waiver decision is separable from the lineup decision --------------
+
+def test_the_waiver_decision_can_read_a_different_score_from_the_lineup():
+    """A waiver pick is the maximum over hundreds of candidates and so is biased upward; a
+    lineup is a choice among players you already hold and has no such selection. So the add
+    may be ranked on a lower confidence bound while the lineup stays on the mean."""
+    pos, roster, pool = _uni()
+    n = len(pos)
+    score = np.tile(np.array([22.0, 12, 11, 10, 14, 13, 12, 9, 8, 7,
+                              1.0, 30.0, 1.0, 1.0]).reshape(-1, 1), (1, 18))
+    realised = np.zeros((n, 18))
+    realised[11, :] = 40.0
+    optimistic = G.season_points(realised, pos, score, roster, pool, [1, 2], churn=True)
+    # the same lineup scores, but the 30-point free agent is penalised out of contention
+    cautious_add = score.copy()
+    cautious_add[11, :] = 0.0
+    careful = G.season_points(realised, pos, score, roster, pool, [1, 2], churn=True,
+                              add_score=cautious_add)
+    assert optimistic[2] == 40.0, "on the mean he is added and pays off"
+    assert careful[2] == 0.0, "penalised, he is never added"
+
+
+def test_add_score_defaults_to_the_lineup_score():
+    """Every run before the lower confidence bound existed had one score for both, and the
+    default must reproduce it exactly."""
+    pos, roster, pool = _uni()
+    n = len(pos)
+    score = np.tile(np.arange(n, dtype=float).reshape(-1, 1), (1, 18))
+    realised = np.tile(np.arange(n, dtype=float).reshape(-1, 1), (1, 18))
+    a = G.season_points(realised, pos, score, roster, pool, [1, 2, 3], churn=True)
+    b = G.season_points(realised, pos, score, roster, pool, [1, 2, 3], churn=True,
+                        add_score=score)
+    assert a == b
+
+
+def test_a_frozen_roster_cannot_see_the_waiver_score_at_all():
+    """The pre-registered tripwire: the lower confidence bound is unreachable without churn,
+    so a frozen gate that moves means something is wired wrong. It did not move."""
+    pos, roster, pool = _uni()
+    n = len(pos)
+    score = np.tile(np.arange(n, dtype=float).reshape(-1, 1), (1, 18))
+    realised = np.ones((n, 18))
+    plain = G.season_points(realised, pos, score, roster, pool, [1, 2], churn=False)
+    with_lcb = G.season_points(realised, pos, score, roster, pool, [1, 2], churn=False,
+                               add_score=np.zeros_like(score))
+    assert plain == with_lcb

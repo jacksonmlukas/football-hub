@@ -167,6 +167,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="rosters per season, drafted by the market arm")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--parameter-uncertainty", action="store_true",
+                    help="add sigma_pos/sqrt(games) to sd -- the quantity ADR-0012 never "
+                         "measured; see docs/parameter-uncertainty.md")
     a = ap.parse_args(argv)
 
     from hub.config import RosterConfig
@@ -185,6 +188,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         # what it is fed live -- the fitted square-root spread law, per position.
         from hub.models.predict import moments
         pred = moments(board)
+        if a.parameter_uncertainty:
+            # ADR-0012 closed this gate because sd = k*sqrt(mu) is a deterministic increasing
+            # function of the mean, so the optimiser was handed no variance to read. It then
+            # withdrew its re-run clause because per-player *volatility* beyond the positional
+            # constant is +/-9.3% and not estimable. How well we know a player's mean is a
+            # different quantity: it is sigma_pos/sqrt(games), it is +36% at one game against
+            # twelve, and it is not a function of mu. This is that clause, tested rather than
+            # assumed.
+            sig = {"QB": 7.10, "RB": 5.21, "WR": 5.11, "TE": 3.76}
+            games = pred["games"].fill_null(1).cast(pl.Float64).to_numpy()
+            se = np.array([sig.get(str(p), 5.06) for p in pred["pos"].to_list()]) \
+                / np.sqrt(np.clip(games, 1.0, None))
+            pred = pred.with_columns(
+                (pl.col("sd") ** 2 + pl.Series("se2", se ** 2)).sqrt().alias("sd"))
         who = pred["player"].to_list()
         proj_of = dict(zip(who, pred["mu"].fill_null(0.0).to_list(), strict=True))
         sd_of = dict(zip(who, pred["sd"].fill_null(0.0).to_list(), strict=True))

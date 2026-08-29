@@ -379,3 +379,36 @@ def test_pure_market_ignores_the_players_own_history():
     got = W._shrunk(own, "targets", W.PURE_MARKET_K, {("WR", "targets"): 0.0},
                     "targets", market=m)
     assert got.max() < 20.0, "a 99-target prior is ignored entirely"
+
+
+# --- parameter uncertainty, which is not outcome volatility -----------------
+
+def test_the_standard_error_falls_with_games_played():
+    """+36% predictive sd at one game against twelve, and it is just `n`. ADR-0012 measured
+    per-player *volatility* beyond the positional constant and called it not estimable; this
+    is how well we know his mean, which is a different quantity."""
+    t = pl.concat([_rows(n=5, games_before=float(g)) for g in (1, 4, 16)])
+    se = W.standard_error(t, {"WR": 5.0, "__pooled__": 5.0})
+    assert se[0] == pytest.approx(5.0)
+    assert se[5] == pytest.approx(2.5)
+    assert se[10] == pytest.approx(1.25)
+
+
+def test_a_player_with_no_games_is_not_divided_by_zero():
+    t = _rows(n=3, games_before=0.0)
+    assert np.isfinite(W.standard_error(t, {"__pooled__": 5.0})).all()
+
+
+def test_the_positional_sd_is_per_position_and_falls_back():
+    rng = np.random.default_rng(4)
+    frames = []
+    for pos, spread in (("QB", 9.0), ("TE", 3.0)):
+        for i in range(12):
+            frames.append(_rows(n=8, position=pos, seed=i).with_columns(
+                pl.lit(f"{pos}{i}").alias("player_id"),
+                pl.Series("fantasy_points_ppr", rng.normal(10, spread, 8))))
+    sig = W.positional_sd(pl.concat(frames))
+    assert sig["QB"] > sig["TE"], "quarterbacks vary more week to week than tight ends"
+    assert "__pooled__" in sig, "and an unseen position falls back rather than raising"
+    assert W.standard_error(_rows(n=1, position="K", games_before=1.0), sig)[0] == \
+        pytest.approx(sig["__pooled__"]), "an unseen position falls back to the pool"
