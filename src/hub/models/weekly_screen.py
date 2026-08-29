@@ -357,6 +357,12 @@ def trend(df: pl.DataFrame, col: str, key: str, out: str, weeks: int = 18) -> pl
     leakage, but not the quantity `docs/snap-trend-signal.md` defines either, and missed games
     are exactly the interesting case for a usage trend.
     """
+    if df.select(key, "season", "week").is_duplicated().any():
+        raise ValueError(
+            f"trend() needs one row per ({key}, season, week) and got duplicates. Called with "
+            f"a team key on a player-week panel, each join fans out by the roster size and "
+            f"five chained calls take the process out on memory -- which is how this guard "
+            f"came to exist. Compute the trend on the unique frame, then join it on.")
     grid = (df.select(key, "season").unique()
               .join(pl.DataFrame({"week": list(range(1, weeks + 1))},
                                  schema={"week": pl.Int64}), how="cross"))
@@ -384,6 +390,12 @@ def recent_mean(df: pl.DataFrame, col: str, key: str = "player_id", *, window: i
 
     Reindexed onto a complete calendar grid for the same reason `trend` is.
     """
+    if df.select(key, "season", "week").is_duplicated().any():
+        raise ValueError(
+            f"trend() needs one row per ({key}, season, week) and got duplicates. Called with "
+            f"a team key on a player-week panel, each join fans out by the roster size and "
+            f"five chained calls take the process out on memory -- which is how this guard "
+            f"came to exist. Compute the trend on the unique frame, then join it on.")
     grid = (df.select(key, "season").unique()
               .join(pl.DataFrame({"week": list(range(1, weeks + 1))},
                                  schema={"week": pl.Int64}), how="cross"))
@@ -393,6 +405,80 @@ def recent_mean(df: pl.DataFrame, col: str, key: str = "player_id", *, window: i
                              .over([key, "season"]).alias(f"{col}_recent")))
     return df.join(g.select(key, "season", "week", f"{col}_recent"),
                    on=[key, "season", "week"], how="left")
+
+
+# Team scheme, per (team, season, week), from `ftn_charting`. Screened as trends and not as
+# levels: scheme is stable within a season and a player's own recent usage already absorbs the
+# level, so what would be new information is a scheme *changing*. See improvements.md #4.
+SCHEME: dict[str, str] = {
+    "pa_rate": "is_play_action",
+    "motion_rate": "is_motion",
+    "nohuddle_rate": "is_no_huddle",
+    "screen_rate": "is_screen_pass",
+}
+
+
+def scheme_rates_from_plays(charting: pl.DataFrame, plays: pl.DataFrame) -> pl.DataFrame:
+    """Per (team, season, week) scheme rates. Pure, so it exercises without a network.
+
+    `charting` is play-level FTN booleans; `plays` supplies the possession team and a pass-play
+    marker, which FTN does not carry. That second frame is **participation**, not play-by-play:
+    one narrowed `load_pbp` for four seasons was killed by the OOM reaper, and participation
+    already carries `possession_team` and a non-empty `route` marks a charted pass play --
+    which is the same definition `route_share` uses, so the two agree by construction.
+    """
+    if charting.is_empty() or plays.is_empty():
+        cols = {"posteam": pl.Utf8, "season": pl.Int64, "week": pl.Int64,
+                "pass_rate": pl.Float64, **dict.fromkeys(SCHEME, pl.Float64)}
+        return pl.DataFrame(schema=cols)
+    # FTN types the play id as an integer and nflverse's as a float, so the join needs both
+    # sides cast or it raises rather than silently matching nothing.
+    left = charting.with_columns(pl.col("nflverse_play_id").cast(pl.Int64))
+    right = plays.with_columns(pl.col("play_id").cast(pl.Int64))
+    d = (left.join(right, left_on=["nflverse_game_id", "nflverse_play_id"],
+                   right_on=["nflverse_game_id", "play_id"], how="inner")
+             .drop_nulls("possession_team"))
+    return (d.group_by(["possession_team", "season", "week"])
+             .agg(
+                 pl.col("is_pass").cast(pl.Float64).mean().alias("pass_rate"),
+                 *[pl.col(col).cast(pl.Float64).mean().alias(rate)
+                   for rate, col in SCHEME.items()])
+             .rename({"possession_team": "posteam"})
+             .with_columns(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64)))
+
+
+# FTN charting begins in 2022, so the scheme features have four held-out seasons where
+# everything else has five. That is a real narrowing of the every-season half of the bar and
+# is stated rather than absorbed.
+FTN_FIRST_SEASON = 2022
+
+
+def scheme_rates(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
+    """`scheme_rates_from_plays` over real seasons, skipping those FTN does not cover."""
+    import nflreadpy as nfl
+    frames = []
+    for yr in seasons:
+        if yr < FTN_FIRST_SEASON:
+            continue
+        c = nfl.load_ftn_charting(seasons=[yr]).select(
+            "nflverse_game_id", "nflverse_play_id", *SCHEME.values())
+        wk = (nfl.load_schedules().filter(pl.col("season") == yr)
+                .select(pl.col("game_id").alias("nflverse_game_id"),
+                        pl.col("week").cast(pl.Int64)))
+        pa = (nfl.load_participation(seasons=[yr])
+                .select("nflverse_game_id", "play_id", "possession_team",
+                        (pl.col("route").is_not_null()
+                         & (pl.col("route") != "")).alias("is_pass"))
+                .join(wk, on="nflverse_game_id", how="inner")
+                .with_columns(pl.lit(yr).cast(pl.Int64).alias("season")))
+        frames.append(scheme_rates_from_plays(c, pa))
+    return pl.concat(frames) if frames else scheme_rates_from_plays(
+        pl.DataFrame(), pl.DataFrame())
+
+
+SCHEME_TRENDS: tuple[Feature, ...] = tuple(
+    Feature(f"{r}_trend", "?" if r != "nohuddle_rate" else "+", TREND_MIN_WEEK)
+    for r in (*SCHEME, "pass_rate"))
 
 
 def route_share_from_plays(plays: pl.DataFrame, season: int) -> pl.DataFrame:
@@ -563,7 +649,7 @@ def weekly_consensus(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cove
 
 def build_panel(seasons: Sequence[int] = SEASONS, *, consensus: bool = True,
                 ranks: pl.DataFrame | None = None, expected: bool = False,
-                routes: bool = False,
+                routes: bool = False, scheme: bool = False,
                 ) -> pl.DataFrame:  # pragma: no cover - network
     """One row per (player, season, week), with every feature measured before its outcome.
 
@@ -629,6 +715,14 @@ def build_panel(seasons: Sequence[int] = SEASONS, *, consensus: bool = True,
         p = p.join(route_share(seasons), on=["season", "week", "player_id"], how="left")
         p = trend(p, "route_pct", "player_id", "route_trend")
     p = trend(p, "target_share", "player_id", "tgt_trend")
+    if scheme:
+        # Trended on the unique team-week frame and joined once. Trending on the panel would
+        # call `trend` with a team key against thirty players a team-week -- see its guard.
+        rates = scheme_rates(seasons)
+        for r in (*SCHEME, "pass_rate"):
+            rates = trend(rates, r, "posteam", f"{r}_trend")
+        p = p.join(rates, left_on=["team", "season", "week"],
+                   right_on=["posteam", "season", "week"], how="left")
     p = p.join(injury_severity(seasons), on=["season", "week", "key"], how="left")
     p = p.with_columns(pl.col("inj_sev").fill_null(0.0),
                        pl.col("status").fill_null("Healthy"),
@@ -715,6 +809,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         prog="hub.models.weekly_screen",
         description="Screen week-level features beyond weekly consensus.")
     ap.add_argument("--run", action="store_true", help="build the panel and screen")
+    ap.add_argument("--scheme", action="store_true",
+                    help="add the team scheme trends -- improvements.md #4")
     ap.add_argument("--routes", action="store_true",
                     help="add route_trend -- reproduces the null against snap_trend")
     ap.add_argument("--usage", action="store_true",
@@ -725,7 +821,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         ap.print_help()
         return 0
     seasons = [int(x) for x in a.seasons.split(",") if x]
-    panel = build_panel(seasons, routes=a.routes)
+    panel = build_panel(seasons, routes=a.routes, scheme=a.scheme)
     sample = panel.filter(pl.col("week").is_in(list(GATE_WEEKS))
                           & (pl.col("games_before") >= MIN_GAMES_BEFORE))
     sample = sample.drop_nulls([OUTCOME, *CONTROLS])
@@ -734,12 +830,13 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     lead = panel["lead_days"]
     print(f"  consensus scraped a median {lead.median():.0f} days before kickoff "
           f"(the confound: see docs/weekly-screen.md)")
-    out = screen(sample, (*FEATURES, ROUTE_TREND) if a.routes else FEATURES)
+    extra = ((ROUTE_TREND,) if a.routes else ()) + (SCHEME_TRENDS if a.scheme else ())
+    out = screen(sample, (*FEATURES, *extra))
     print("\n".join(report(out.to_dicts())))
     found = out.filter(pl.col("status").is_in(list(FINDINGS)))["feature"].to_list()
     print(f"\n  a signal on its own: {', '.join(found) if found else 'nothing'}")
     if len(found) > 1:
-        pool = (*FEATURES, ROUTE_TREND) if a.routes else FEATURES
+        pool = (*FEATURES, *extra)
         survivors = [f for f in pool if f.name in found]
         joint = screen_joint(sample, survivors)
         print("\n  each one, controlled for the others that exist over its weeks:")

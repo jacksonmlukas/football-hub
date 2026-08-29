@@ -432,3 +432,75 @@ def test_the_expected_columns_are_the_ff_opportunity_names():
     assert ws.EXPECTED["receptions"] == "receptions_exp"
     assert ws.EXPECTED["receiving_yards"] == "rec_yards_gained_exp"
     assert ws.XFP_WEEK == "total_fantasy_points_exp"
+
+
+# --- team scheme, and the guard that came out of building it ----------------
+
+def test_scheme_rates_are_per_team_week():
+    charting = pl.DataFrame({
+        "nflverse_game_id": ["g1"] * 4,
+        "nflverse_play_id": [1, 2, 3, 4],
+        "is_play_action": [True, False, True, False],
+        "is_motion": [True, True, True, True],
+        "is_no_huddle": [False, False, False, False],
+        "is_screen_pass": [True, False, False, False]})
+    plays = pl.DataFrame({
+        "nflverse_game_id": ["g1"] * 4, "play_id": [1, 2, 3, 4],
+        "possession_team": ["PHI"] * 4, "is_pass": [True, True, False, False],
+        "week": [3] * 4, "season": [2024] * 4})
+    got = ws.scheme_rates_from_plays(charting, plays).to_dicts()[0]
+    assert got["posteam"] == "PHI" and got["week"] == 3
+    assert got["pa_rate"] == pytest.approx(0.5)
+    assert got["motion_rate"] == pytest.approx(1.0)
+    assert got["nohuddle_rate"] == pytest.approx(0.0)
+    assert got["pass_rate"] == pytest.approx(0.5)
+
+
+def test_a_play_charted_but_not_participated_is_dropped():
+    """An inner join, so a play FTN charted and participation did not is not a null team."""
+    charting = pl.DataFrame({"nflverse_game_id": ["g1", "g1"], "nflverse_play_id": [1, 99],
+                             "is_play_action": [True, True], "is_motion": [True, True],
+                             "is_no_huddle": [False, False], "is_screen_pass": [False, False]})
+    plays = pl.DataFrame({"nflverse_game_id": ["g1"], "play_id": [1],
+                          "possession_team": ["PHI"], "is_pass": [True],
+                          "week": [3], "season": [2024]})
+    assert ws.scheme_rates_from_plays(charting, plays).height == 1
+
+
+def test_the_play_id_dtypes_are_reconciled():
+    """FTN types it as an integer and nflverse as a float; unreconciled the join raises."""
+    charting = pl.DataFrame({"nflverse_game_id": ["g1"], "nflverse_play_id": [1],
+                             "is_play_action": [True], "is_motion": [True],
+                             "is_no_huddle": [False], "is_screen_pass": [False]})
+    plays = pl.DataFrame({"nflverse_game_id": ["g1"], "play_id": [1.0],
+                          "possession_team": ["PHI"], "is_pass": [True],
+                          "week": [3], "season": [2024]})
+    assert ws.scheme_rates_from_plays(charting, plays).height == 1
+
+
+def test_an_empty_side_yields_the_right_empty_shape():
+    got = ws.scheme_rates_from_plays(pl.DataFrame(), pl.DataFrame())
+    assert got.is_empty() and "pass_rate" in got.columns and "pa_rate" in got.columns
+
+
+def test_trend_refuses_a_key_that_is_not_unique_per_week():
+    """The guard that came out of the scheme build. `trend` fans out on a left join, so a team
+    key against a player-week panel multiplies by the roster size -- and five chained calls
+    took the process out on memory before this existed."""
+    dup = pl.DataFrame({"team": ["PHI", "PHI"], "season": [2024, 2024],
+                        "week": [3, 3], "pa_rate": [0.3, 0.4]})
+    with pytest.raises(ValueError, match="one row per"):
+        ws.trend(dup, "pa_rate", "team", "pa_rate_trend")
+
+
+def test_trend_accepts_the_unique_frame_it_asks_for():
+    ok = pl.DataFrame({"team": ["PHI"] * 3, "season": [2024] * 3,
+                       "week": [1, 2, 3], "pa_rate": [0.3, 0.4, 0.5]})
+    assert "pa_rate_trend" in ws.trend(ok, "pa_rate", "team", "pa_rate_trend").columns
+
+
+def test_the_scheme_trends_are_not_in_the_default_screen():
+    assert all(f not in ws.FEATURES for f in ws.SCHEME_TRENDS)
+    assert {f.name for f in ws.SCHEME_TRENDS} == {
+        "pa_rate_trend", "motion_rate_trend", "nohuddle_rate_trend",
+        "screen_rate_trend", "pass_rate_trend"}

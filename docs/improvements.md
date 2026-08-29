@@ -143,7 +143,7 @@ measure a correlation already exists.
 
 ---
 
-## 4. The scheme layer is fetched and unused
+## 4. The scheme layer is fetched and unused — SCREENED 2026-08-29, null
 
 **Signal, unscreened.** `participation` and `ftn_charting` landed today: personnel, formation,
 box count, coverage shell, man/zone, motion, play action, screens, blitzers, pressure,
@@ -189,6 +189,45 @@ taken back out ([expected-and-routes.md](expected-and-routes.md)).
 team scheme is among the least persistent things available, and a trend over three weeks of a
 stable quantity is mostly noise. The honest reason to run it is that it is the last unscreened
 asset in the tree and leaving it unscreened is how it becomes folklore.
+
+### Result, 2026-08-29: null, exactly as pre-stated
+
+Against **points**, beyond season-to-date PPG and that week's consensus ECR:
+
+| feature | partial r | t | seasons with the stated sign |
+|---|---|---|---|
+| play-action rate trend | +0.0229 | +1.62 | 3/4 |
+| no-huddle rate trend | −0.0035 | −0.29 | 2/4 |
+| pass rate trend | −0.0063 | −0.46 | 2/4 |
+| motion rate trend | −0.0169 | −1.55 | 3/4 |
+| screen rate trend | −0.0223 | −1.87 | 3/4 |
+
+**Nothing clears either half of the bar**, and the default screen is untouched — the
+independent signals are still snap_trend, dvp, inj_sev and td_rate_prior.
+
+Against **volume**, which is the framing this item itself proposed as the more promising one:
+**one cell of fifteen** clears — `pass_rate_trend` against pass attempts, **−0.0324 at −2.61
+se**. One of fifteen tests crossing two standard errors is what the null predicts, the sign is
+a *reversion* story rather than a scheme story, and it applies only to quarterbacks. Read as
+the multiple-comparisons artifact `component-projection.md` already has a lesson about, not as
+a finding.
+
+**Six of six scheme-adjacent screens are now null.** The prior written down before the run was
+right, which is the whole reason it was written down first.
+
+Only FTN charting's coverage narrows the sample — it begins in **2022**, so these features get
+four held-out seasons where everything else gets five. Stated rather than absorbed.
+
+**Two defects found building it**, both now guarded:
+
+* `trend()` silently assumed one row per (key, season, week). Called with a *team* key against
+  a player-week panel it fans out by the roster size on every left join, and five chained calls
+  took the process out on memory — exit 137, twice, with no output to explain it. It now raises
+  with the reason, and the scheme trends are computed on the unique team-week frame and joined
+  once.
+* A narrowed `load_pbp` over four seasons was also killed by the OOM reaper. It was not needed:
+  `participation` already carries `possession_team`, and a non-empty `route` marks a charted
+  pass play — the same definition `route_share` uses, so the two agree by construction.
 
 ---
 
