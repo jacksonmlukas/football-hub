@@ -72,3 +72,40 @@ def test_a_hyphen_becomes_a_space_rather_than_nothing():
     """
     assert player_key("Amon-Ra") == "amon ra"
     assert player_key("Amon-Ra") != player_key("AmonRa")
+
+
+# --- hub.paths is a leaf, and that is the whole point of it -----------------
+
+def test_paths_imports_nothing_from_hub():
+    """The same rule `hub.names` lives by. `adp_history` took `ROOT` from a 780-line board
+    builder purely to learn a `Path`, which is a cycle, and it costs `board.main` a
+    function-local import with a comment saying why."""
+    import ast
+    import pathlib
+    src = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub" / "paths.py"
+    tree = ast.parse(src.read_text())
+    mods = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
+    mods |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+    assert not any(m.startswith("hub") for m in mods), f"paths must stay a leaf: {mods}"
+
+
+def test_paths_agrees_with_the_declarations_it_replaces():
+    """All eight `ROOT` declarations resolve to the same path; this one has to as well or the
+    tidying would be a silent relocation of every artifact."""
+    from hub.draft.board import BOARD_PARQUET as board_parquet
+    from hub.draft.board import ROOT as board_root
+    from hub.paths import BOARD_PARQUET, ROOT
+    from hub.store import DATA
+    assert ROOT == board_root
+    assert BOARD_PARQUET == board_parquet
+    assert (ROOT / "data") == DATA.parent if DATA.name == "processed" else True
+
+
+def test_adp_history_no_longer_imports_a_board_builder():
+    import ast
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[2] / "src" / "hub" / "draft"
+           / "adp_history.py")
+    mods = {n.module for n in ast.walk(ast.parse(src.read_text()))
+            if isinstance(n, ast.ImportFrom) and n.module}
+    assert not any("board" in m for m in mods), f"cycle is back: {mods}"

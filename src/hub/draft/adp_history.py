@@ -34,7 +34,7 @@ from pathlib import Path
 
 import polars as pl
 
-from hub.draft.board import ROOT
+from hub.paths import ROOT
 
 ARCHIVE = ROOT / "data" / "processed" / "adp_history"
 

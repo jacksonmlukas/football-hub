@@ -632,7 +632,7 @@ spelled four ways.
 
 ---
 
-### 17. `ROOT` is declared eight times, and it does not matter much
+### 17. `ROOT` is declared eight times, and it does not matter much — PARTLY DONE 2026-08-29
 
 **Investigated 2026-08-27; recorded rather than fixed.** The review flagged three
 declarations of the repo root; there are eight — `store`, `publish`, `board`, `tune`, `state`,
@@ -653,6 +653,22 @@ import `adp_history` inside the function body, with a comment saying why.
 so a module wanting a filename does not import a board builder. That removes two
 function-local imports. It is the smallest item on this list and is here so the next review
 does not rediscover the eight declarations and overrate them.
+
+### Done 2026-08-29, the half that is not tidiness
+
+`hub/paths.py` exists — `ROOT`, `DATA`, `PROCESSED`, `BOARD_PARQUET` — importing nothing but
+`pathlib`, with a test pinning that it stays a leaf. `hub.draft.adp_history` takes `ROOT` from
+it and **no longer imports a board builder at all**, so that cycle is gone.
+
+**The remaining three edits are deliberately not made**, and the reason is the date rather than
+the difficulty: `board.py` and `adherence.py` are draft-path code and the draft is
+2026-09-03. Neither change alters a number — `board` would swap two assignments for an import,
+`adherence` would take `BOARD_PARQUET` from the leaf and keep `board_age_hours` from the
+module — but "it cannot alter a number" is a claim about code I would be making four days out,
+and the value on the other side is tidiness.
+
+**After the draft:** those two, and then `board.main`'s function-local `adp_history` import
+becomes unnecessary, which is the thing this item was really about.
 
 ---
 
