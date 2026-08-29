@@ -68,6 +68,10 @@ fixed (2021–2025 scoring 2022–2025, 40 rosters, `mae-market`).
 on a feature substitution, treat the run as suspect: nothing in fifteen measurements suggests
 one join is worth that.
 
+> **Result, 2026-08-29: null, slightly negative.** The rebuild got *worse* by 0.005 and the
+> frozen gate fell from +0.711 to +0.082. The accuracy half of the prediction is wrong; the
+> verdict half held. [expected-and-routes.md](expected-and-routes.md).
+
 ---
 
 ## 2. Route participation is the sharper version of the one signal that lasted
@@ -113,6 +117,11 @@ one of them should survive.
 **Pre-stated expectation.** `route_trend` clears, and **`snap_trend` dies once controlled for
 it** — access dominating presence. If both survive independently, they are measuring different
 things and the framing above is wrong.
+
+> **Result, 2026-08-29: null, and neither of the two outcomes I enumerated.** They correlate at
+> **0.917** and annihilate each other in a joint screen; against the *other* survivors both
+> clear and **snap share is the stronger**. A trend differences out the level the literature's
+> distinction is about. [expected-and-routes.md](expected-and-routes.md).
 
 ---
 

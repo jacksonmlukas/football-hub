@@ -83,6 +83,15 @@ FEATURES: tuple[Feature, ...] = (
     Feature("tgt_trend", "+", TREND_MIN_WEEK),
 )
 
+# Screened 2026-08-29 and **not** in FEATURES, deliberately. `route_trend` clears on its own
+# (+0.034 at 2.5 se, 5/5 seasons) and is a *null against `snap_trend`*: the two correlate at
+# **0.917**, their underlying shares at **0.963**, and put in the same joint screen they
+# annihilate each other and leave nothing. Snap share is the stronger of the two (+0.043
+# against +0.034), so the literature's access-beats-presence distinction does not survive
+# here. Kept in the tree with its harness per ADR-0007, out of the default screen because a
+# collinear twin in the control set destroys a real signal. `--routes` reproduces it.
+ROUTE_TREND = Feature("route_trend", "+", TREND_MIN_WEEK)
+
 CONTROLS: tuple[str, ...] = ("ppg_before", "ecr")
 OUTCOME = "fantasy_points_ppr"
 
@@ -254,6 +263,43 @@ def game_context(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - 
         pl.col("wind").fill_null(0.0))
 
 
+# The expected counterpart of each realised quantity, from `ff_opportunity`. Opportunity
+# counts have no expected version and should not: a target is not an estimate, he was thrown at
+# or he was not. Everything below the opportunity is an efficiency, and efficiency is what
+# regresses -- which this repo measured from the other side as `td_rate_prior` at -0.040 across
+# five of five seasons. See docs/what-the-field-knows.md.
+EXPECTED: dict[str, str] = {
+    "receptions": "receptions_exp",
+    "receiving_yards": "rec_yards_gained_exp",
+    "rushing_yards": "rush_yards_gained_exp",
+    "passing_yards": "pass_yards_gained_exp",
+}
+
+# Required by the `ff_opportunity` contract, and carried rather than merely satisfied: it is
+# weekly xFP itself, the quantity `xfp_per_game` is the season-long average of.
+XFP_WEEK = "total_fantasy_points_exp"
+
+
+def expected_weekly(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
+    """Weekly *expected* receptions and yardage, keyed to join onto the panel.
+
+    `ff_opportunity` prices each opportunity by its situation -- air yards, target depth, field
+    position -- so a six-target week at three yards downfield and one at fifteen stop being the
+    same number. The store has had this table the whole time and the weekly model never opened
+    it.
+    """
+    from hub.fetch import nflverse
+    cols = ["season", "week", "player_id", "full_name", "position", XFP_WEEK,
+            *EXPECTED.values()]
+    d = nflverse.load("ff_opportunity", list(seasons), cols=cols)
+    return (d.select(
+                pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Float64).cast(pl.Int64),
+                pl.col("full_name").map_elements(player_key, return_dtype=pl.Utf8).alias("key"),
+                *[pl.col(c).cast(pl.Float64) for c in (*EXPECTED.values(), XFP_WEEK)])
+              .group_by(["season", "week", "key"])
+              .agg([pl.col(c).sum() for c in (*EXPECTED.values(), XFP_WEEK)]))
+
+
 def weekly_stats(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
     import nflreadpy as nfl
     ps = nfl.load_player_stats(seasons=list(seasons), summary_level="week")
@@ -347,6 +393,64 @@ def recent_mean(df: pl.DataFrame, col: str, key: str = "player_id", *, window: i
                              .over([key, "season"]).alias(f"{col}_recent")))
     return df.join(g.select(key, "season", "week", f"{col}_recent"),
                    on=[key, "season", "week"], how="left")
+
+
+def route_share_from_plays(plays: pl.DataFrame, season: int) -> pl.DataFrame:
+    """The arithmetic, separated from the fetch so it can be exercised without a network.
+
+    `plays` is one row per charted pass play with `week`, `possession_team` and a
+    semicolon-separated `offense_players`. Out comes one row per (season, week, player_id)
+    with the share of his team's charted pass plays he was on the field for.
+    """
+    if plays.is_empty():
+        return pl.DataFrame(schema={"season": pl.Int64, "week": pl.Int64,
+                                    "player_id": pl.Utf8, "route_pct": pl.Float64})
+    denom = plays.group_by(["week", "possession_team"]).agg(pl.len().alias("team_pass_plays"))
+    num = (plays.select("week", "possession_team",
+                        pl.col("offense_players").str.split(";").alias("player_id"))
+                .explode("player_id", empty_as_null=True)
+                .filter(pl.col("player_id").is_not_null() & (pl.col("player_id") != ""))
+                .group_by(["week", "possession_team", "player_id"])
+                .agg(pl.len().alias("plays_on")))
+    return (num.join(denom, on=["week", "possession_team"])
+               .with_columns(pl.lit(season).cast(pl.Int64).alias("season"),
+                             (pl.col("plays_on") / pl.col("team_pass_plays")).alias("route_pct"))
+               .group_by(["season", "week", "player_id"])
+               .agg(pl.col("route_pct").max()))
+
+
+def route_share(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
+    """Share of his team's *pass* plays a player was on the field for, per game.
+
+    Snap share tells you presence, this tells you **access**, and target share tells you
+    whether the quarterback used the access. The repo's one durable in-season signal is a
+    snap-share trend, and snap share counts run snaps a receiver was never going to be thrown
+    to -- so this ought to be the same quantity measured better. Measured 2026-08-29, it is
+    not: the two trends correlate at **0.917** and the snap version is the stronger. See
+    `docs/what-the-field-knows.md` and the note on `ROUTE_TREND`.
+
+    **Named for what it is.** `participation.route` is one value per *play*, not per player, so
+    a per-player route type is not derivable and calling this "route participation" would claim
+    a precision the data does not have. A non-empty `route` marks a charted pass play, and this
+    is the share of those a player was on the field for. `offense_players` is populated for
+    91-100% of plays across 2021-25.
+    """
+    import nflreadpy as nfl
+    frames = []
+    for yr in seasons:
+        p = (nfl.load_participation(seasons=[yr])
+               .filter(pl.col("route").is_not_null() & (pl.col("route") != "")
+                       & pl.col("offense_players").is_not_null()
+                       & (pl.col("offense_players") != "")))
+        if p.is_empty():
+            continue
+        wk = (nfl.load_schedules().filter(pl.col("season") == yr)
+                .select(pl.col("game_id").alias("nflverse_game_id"),
+                        pl.col("week").cast(pl.Int64)))
+        frames.append(route_share_from_plays(p.join(wk, on="nflverse_game_id", how="inner"), yr))
+    if not frames:
+        return route_share_from_plays(pl.DataFrame(), 0)
+    return pl.concat(frames)
 
 
 def snap_share(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
@@ -458,7 +562,8 @@ def weekly_consensus(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cove
 
 
 def build_panel(seasons: Sequence[int] = SEASONS, *, consensus: bool = True,
-                ranks: pl.DataFrame | None = None,
+                ranks: pl.DataFrame | None = None, expected: bool = False,
+                routes: bool = False,
                 ) -> pl.DataFrame:  # pragma: no cover - network
     """One row per (player, season, week), with every feature measured before its outcome.
 
@@ -482,6 +587,14 @@ def build_panel(seasons: Sequence[int] = SEASONS, *, consensus: bool = True,
     stats = weekly_stats(seasons).with_columns(
         pl.col("player_display_name").map_elements(player_key, return_dtype=pl.Utf8).alias("key"))
     p = stats.join(game_context(seasons), on=["season", "week", "team"], how="left")
+
+    if expected:
+        stats = stats.join(expected_weekly(seasons), on=["season", "week", "key"], how="left")
+        # Where `ff_opportunity` has no row for him, the realised value stands in rather than
+        # a null propagating into every prior downstream.
+        stats = stats.with_columns(
+            [pl.coalesce(pl.col(exp), pl.col(real)).alias(real)
+             for real, exp in EXPECTED.items()])
 
     counted = stats.with_columns(
         (pl.col("receiving_tds") + pl.col("rushing_tds") + pl.col("passing_tds")).alias("tds"),
@@ -508,6 +621,13 @@ def build_panel(seasons: Sequence[int] = SEASONS, *, consensus: bool = True,
 
     p = p.join(snap_share(seasons), on=["season", "week", "key"], how="left")
     p = trend(p, "offense_pct", "key", "snap_trend")
+    if routes:
+        # Joined on the gsis id rather than a normalised name: `participation` and
+        # `player_stats` key on the same identifier, so this one needs no crosswalk at all.
+        # Opt-in because loading five seasons of play-level participation is the slowest
+        # thing in the panel and the feature it produces is a measured null.
+        p = p.join(route_share(seasons), on=["season", "week", "player_id"], how="left")
+        p = trend(p, "route_pct", "player_id", "route_trend")
     p = trend(p, "target_share", "player_id", "tgt_trend")
     p = p.join(injury_severity(seasons), on=["season", "week", "key"], how="left")
     p = p.with_columns(pl.col("inj_sev").fill_null(0.0),
@@ -595,6 +715,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         prog="hub.models.weekly_screen",
         description="Screen week-level features beyond weekly consensus.")
     ap.add_argument("--run", action="store_true", help="build the panel and screen")
+    ap.add_argument("--routes", action="store_true",
+                    help="add route_trend -- reproduces the null against snap_trend")
     ap.add_argument("--usage", action="store_true",
                     help="screen the survivors against Usage counts, not points")
     ap.add_argument("--seasons", default=",".join(str(s) for s in SEASONS))
@@ -603,7 +725,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         ap.print_help()
         return 0
     seasons = [int(x) for x in a.seasons.split(",") if x]
-    panel = build_panel(seasons)
+    panel = build_panel(seasons, routes=a.routes)
     sample = panel.filter(pl.col("week").is_in(list(GATE_WEEKS))
                           & (pl.col("games_before") >= MIN_GAMES_BEFORE))
     sample = sample.drop_nulls([OUTCOME, *CONTROLS])
@@ -612,12 +734,13 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     lead = panel["lead_days"]
     print(f"  consensus scraped a median {lead.median():.0f} days before kickoff "
           f"(the confound: see docs/weekly-screen.md)")
-    out = screen(sample)
+    out = screen(sample, (*FEATURES, ROUTE_TREND) if a.routes else FEATURES)
     print("\n".join(report(out.to_dicts())))
     found = out.filter(pl.col("status").is_in(list(FINDINGS)))["feature"].to_list()
     print(f"\n  a signal on its own: {', '.join(found) if found else 'nothing'}")
     if len(found) > 1:
-        survivors = [f for f in FEATURES if f.name in found]
+        pool = (*FEATURES, ROUTE_TREND) if a.routes else FEATURES
+        survivors = [f for f in pool if f.name in found]
         joint = screen_joint(sample, survivors)
         print("\n  each one, controlled for the others that exist over its weeks:")
         print("\n".join(report(joint.to_dicts())))
@@ -625,7 +748,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         print(f"\n  independent signals: {', '.join(left) if left else 'nothing'}")
         if a.usage and left:
             print("\n  and against Usage rather than points:")
-            u = screen_usage(sample, [f for f in FEATURES if f.name in left])
+            u = screen_usage(sample, [f for f in pool if f.name in left])
             for row in u.iter_rows(named=True):
                 print(f"  {row['feature']:16} {row['component']:11} {row['r']:+7.4f} "
                       f"{row['t']:+6.2f}  {row['status']}")

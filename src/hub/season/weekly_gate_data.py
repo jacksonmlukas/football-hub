@@ -52,7 +52,7 @@ def _matrix(keys: Sequence[str], lookup: dict[tuple[str, int], float],
 
 
 def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0,
-                      shrink: str | None = None):
+                      shrink: str | None = None, expected: bool = False):
     # pragma: no cover - network
     """Rosters, realised points and both arms' scores, over the whole board.
 
@@ -77,7 +77,7 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
 
     cfg = RosterConfig()
     want_ranks = shrink is not None and shrink is not None and "market" in shrink
-    panel = build_panel(seasons, consensus=False,
+    panel = build_panel(seasons, consensus=False, expected=expected,
                         ranks=preseason_ranks(seasons) if want_ranks else None)
     ecr = weekly_consensus(seasons)
 

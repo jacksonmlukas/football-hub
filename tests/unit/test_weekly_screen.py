@@ -369,3 +369,66 @@ def test_a_scrape_too_far_from_any_week_is_dropped():
 def test_lead_days_is_measured_to_the_week_being_ranked():
     got = ws.assign_weeks(_scrape((2024, 10, 4)), _windows())
     assert got["lead_days"].to_list() == [3], "Friday to the following Monday"
+
+
+# --- pass-play participation, and the twin it turned out to be --------------
+
+def test_route_share_is_plays_on_over_team_pass_plays():
+    plays = pl.DataFrame({
+        "week": [1, 1, 1, 1],
+        "possession_team": ["PHI"] * 4,
+        "offense_players": ["a;b;c", "a;b", "a;c", "a"]})
+    got = ws.route_share_from_plays(plays, 2024).sort("player_id")
+    share = dict(zip(got["player_id"], got["route_pct"], strict=True))
+    assert share["a"] == pytest.approx(1.0), "on every pass play"
+    assert share["b"] == pytest.approx(0.5)
+    assert share["c"] == pytest.approx(0.5)
+
+
+def test_the_denominator_is_per_team_per_week():
+    """A player's share is of *his own* team's pass plays, not the league's."""
+    plays = pl.DataFrame({
+        "week": [1, 1, 1],
+        "possession_team": ["PHI", "DAL", "DAL"],
+        "offense_players": ["a", "b", "b"]})
+    got = ws.route_share_from_plays(plays, 2024)
+    assert set(got["route_pct"].to_list()) == {1.0}, "each is on all of his own team's plays"
+
+
+def test_an_empty_slate_yields_an_empty_frame_with_the_right_shape():
+    got = ws.route_share_from_plays(pl.DataFrame(), 2024)
+    assert got.is_empty()
+    assert set(got.columns) == {"season", "week", "player_id", "route_pct"}
+
+
+def test_blank_ids_in_the_player_list_are_dropped():
+    plays = pl.DataFrame({"week": [1], "possession_team": ["PHI"],
+                          "offense_players": ["a;;b;"]})
+    assert sorted(ws.route_share_from_plays(plays, 2024)["player_id"].to_list()) == ["a", "b"]
+
+
+def test_route_trend_is_not_in_the_default_screen():
+    """A pin on a decision, not on a preference. `route_trend` clears alone (+0.034 at 2.5 se,
+    5/5 seasons) and correlates with `snap_trend` at **0.917** -- put in the same joint screen
+    the two annihilate each other and leave nothing, which is a fact about collinearity and not
+    about either signal. Snap share is the stronger, so it is the one that stays."""
+    assert ws.ROUTE_TREND.name == "route_trend"
+    assert ws.ROUTE_TREND not in ws.FEATURES
+    assert "snap_trend" in [f.name for f in ws.FEATURES]
+
+
+# --- expected values replace efficiency, never opportunity ------------------
+
+def test_only_efficiency_quantities_get_an_expected_variant():
+    """A target is not an estimate -- he was thrown at or he was not. Everything below the
+    opportunity is an efficiency, and efficiency is what regresses."""
+    assert set(ws.EXPECTED) == {"receptions", "receiving_yards", "rushing_yards",
+                                "passing_yards"}
+    for opportunity in ("targets", "carries", "attempts"):
+        assert opportunity not in ws.EXPECTED
+
+
+def test_the_expected_columns_are_the_ff_opportunity_names():
+    assert ws.EXPECTED["receptions"] == "receptions_exp"
+    assert ws.EXPECTED["receiving_yards"] == "rec_yards_gained_exp"
+    assert ws.XFP_WEEK == "total_fantasy_points_exp"

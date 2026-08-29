@@ -444,6 +444,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         prog="hub.models.weekly",
         description="Fit the Weekly projection and report the Gate A diagnostic.")
     ap.add_argument("--fit", action="store_true", help="build the panel, fit, walk forward")
+    ap.add_argument("--expected", action="store_true",
+                    help="use ff_opportunity's expected receptions and yardage in the priors")
     a = ap.parse_args(list(argv) if argv is not None else None)
     if not a.fit:
         ap.print_help()
@@ -454,7 +456,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         SEASONS,
         build_panel,
     )
-    panel = build_panel(SEASONS).filter(
+    panel = build_panel(SEASONS, expected=a.expected).filter(
         pl.col("week").is_in(list(GATE_WEEKS))
         & (pl.col("games_before") >= MIN_GAMES_BEFORE))
     print(f"  {panel.height} player-weeks over {panel['season'].n_unique()} seasons")

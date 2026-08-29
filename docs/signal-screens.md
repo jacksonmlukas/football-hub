@@ -23,6 +23,8 @@ thing, and because two of these produced errors worth not repeating.
 | Implied team total | next week | **null on the joint screen** — +0.048 alone, 4/5 once own spread is controlled for | [weekly-screen.md](weekly-screen.md) |
 | Own spread | next week | **null on the joint screen** — one signal with the implied total, two hats (r = +0.83) | [weekly-screen.md](weekly-screen.md) |
 | Target-share trend | next week | **null** — +0.006, 1/5 seasons | [weekly-screen.md](weekly-screen.md) |
+| Pass-play participation trend | next week | **null against snap share** — clears alone (+0.034, 5/5) and correlates with it at **0.917**; snap share is stronger | [expected-and-routes.md](expected-and-routes.md) |
+| Expected points in the priors | next week | **null, slightly negative** — the rebuild loses 0.005 MAE and the frozen gate falls +0.711 → +0.082 | [expected-and-routes.md](expected-and-routes.md) |
 | Wind | next week | **null** — 4/5 seasons | [weekly-screen.md](weekly-screen.md) |
 | Rest days | next week | **null** — −0.014, 3/5 seasons | [weekly-screen.md](weekly-screen.md) |
 

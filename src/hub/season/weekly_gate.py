@@ -313,6 +313,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                     help="one waiver add/drop a week, both arms, from a pool both can score")
     ap.add_argument("--open-pool", action="store_true",
                     help=argparse.SUPPRESS)   # the asymmetric pool: NOT the gate
+    ap.add_argument("--expected", action="store_true",
+                    help="expected receptions and yardage in the priors, not realised")
     ap.add_argument("--shrink",
                     choices=("mae", "tail", "mae-market", "tail-market", "market-only"),
                     default=None,
@@ -328,7 +330,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     from hub.season.weekly_gate_data import assemble_universe
     ros, pos, realised, consensus, weekly, pool, addable, covered = assemble_universe(
-        seasons, drafts=a.drafts, seed=a.seed, shrink=a.shrink)
+        seasons, drafts=a.drafts, seed=a.seed, shrink=a.shrink, expected=a.expected)
     cover = coverage(ros, consensus, realised, covered)
     paired = compare_universe(ros, pos, realised, consensus, weekly, pool, covered,
                               None if a.open_pool else addable, churn=a.churn)
@@ -339,6 +341,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
             else "frozen rosters")
     if a.shrink:
         mode += f", shrink={a.shrink}"
+    if a.expected:
+        mode += ", expected priors"
     print(f"\n  {int(s['n'])} roster-weeks over {int(s['clusters'])} rosters, "
           f"on the {len(covered)} weeks consensus covers   [{mode}]")
     print(f"  unranked {cover['unranked']:.1%}, of which a join failure "
