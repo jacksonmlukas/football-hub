@@ -604,7 +604,7 @@ Low urgency — the duplication costs a reader's time and one extra download, no
 
 ---
 
-### 16. `store.tables()` is one commit old and already used inconsistently
+### 16. `store.tables()` is one commit old and already used inconsistently — DONE 2026-08-29
 
 **Explored 2026-08-27.** Two things, both small, both about a seam that exists and is bypassed.
 
@@ -629,6 +629,30 @@ because the format is not part of any query helper's interface.
 **Do, post-draft:** one predicate, shared. `publish` asks `store.tables` like its two
 neighbours do. The partition format becomes part of a query helper rather than a convention
 spelled four ways.
+
+### Done 2026-08-29, ahead of the flip rather than the draft
+
+Brought forward because `publish` is the module that writes the **public** artifacts and the
+repo goes public on 2026-09-04 with a scheduled watchdog. It touches nothing the draft reads.
+
+**One predicate.** `store.is_table(dir)` — an identifier, holding parquet — and both `connect`
+and `tables` call it. The docstring claim that the two "cannot disagree" is now enforced by
+there being one of them, with a test that compares `connect`'s actual view list against
+`tables()` on the same store.
+
+**`publish` asks instead of catching.** Three of the four bare `except Exception` blocks were
+guarding "this clone has no `preds` yet", which is exactly the question `store.tables` answers.
+They are now `if "preds" not in store.tables(base)`, and **a genuine failure surfaces**: there
+is a test that a broken query raises rather than arriving on the page as
+`stale: true, reason: no predictions`. The fourth wraps a network call on an unattended
+schedule and stays broad — but it now prints which failure it was.
+
+**One spelling for the partition.** `store.week_key(week)` owns the zero-padding, and a test
+pins it against `LAYOUT`'s own `week={week:02d}`. It was spelled four ways in one 333-line
+file — two filenames, a query parameter, and the read-back — because the format belonged to
+nobody.
+
+`store` coverage 97%, `publish` 76%.
 
 ---
 

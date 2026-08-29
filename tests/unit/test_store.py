@@ -312,3 +312,25 @@ def test_tables_agrees_with_what_connect_actually_creates(base):
 
 def test_an_absent_root_is_no_tables_not_a_crash(tmp_path):
     assert store.tables(tmp_path / "nothing") == set()
+
+
+def test_one_predicate_decides_what_a_table_is(tmp_path):
+    """`connect` and `tables` each carried a copy, and `tables`' docstring claimed the two
+    "cannot disagree" -- an invariant asserted in prose and enforced by nothing. Write and read
+    have to agree on what a table is: a hardcoded list here against a `write()` that accepted
+    any name is how 54,402 rows landed in the store and invisible to the catalog."""
+    (tmp_path / "preds" / "league=nfl").mkdir(parents=True)
+    pl.DataFrame({"a": [1]}).write_parquet(tmp_path / "preds" / "league=nfl" / "x.parquet")
+    (tmp_path / "empty_dir").mkdir()
+    (tmp_path / "not-an-identifier").mkdir()
+    pl.DataFrame({"a": [1]}).write_parquet(tmp_path / "not-an-identifier" / "x.parquet")
+
+    assert store.is_table(tmp_path / "preds")
+    assert not store.is_table(tmp_path / "empty_dir"), "a directory with no parquet is not one"
+    assert not store.is_table(tmp_path / "not-an-identifier"), "nor is an unquotable name"
+    assert store.tables(tmp_path) == {"preds"}
+    with store.connect(base=tmp_path) as con:
+        # `internal` excludes DuckDB's own information_schema views, which are not ours.
+        views = {r[0] for r in con.execute(
+            "SELECT view_name FROM duckdb_views() WHERE internal = false").fetchall()}
+    assert views == store.tables(tmp_path), "connect and tables cannot disagree"

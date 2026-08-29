@@ -62,13 +62,15 @@ def predictions(season: int, week: int, base: Path | None = None,
     the caller records it as stale rather than publishing an empty page.
     """
     out = out or SITE
-    name = f"preds_wk{week:02d}"
-    try:
-        df = store.sql(
-            "SELECT * FROM preds WHERE season = ? AND week = ?",
-            params=[season, f"{week:02d}"], base=base)
-    except Exception:
+    name = f"preds_wk{store.week_key(week)}"
+    # Asked, not caught. `store.tables` exists precisely so a caller can tell "this clone has
+    # no predictions yet" from "the query is broken", and a bare `except Exception` here made
+    # a schema break, a DuckDB lock and a typo in the SQL all arrive as
+    # `"stale": true, "reason": "no predictions"`.
+    if "preds" not in store.tables(base):
         return None
+    df = store.sql("SELECT * FROM preds WHERE season = ? AND week = ?",
+                   params=[season, store.week_key(week)], base=base)
     if df.is_empty():
         return None
 
@@ -86,10 +88,9 @@ def _scored(base: Path | None) -> pl.DataFrame:
     """Predictions joined to results. Empty frame when either side is missing."""
     empty = pl.DataFrame(schema={"game_id": pl.Utf8, "home_win_prob": pl.Float64,
                                  "home_won": pl.Int64, "predicted_at": pl.Utf8})
-    try:
-        preds = store.sql("SELECT * FROM preds", base=base)
-    except Exception:
+    if "preds" not in store.tables(base):
         return empty
+    preds = store.sql("SELECT * FROM preds", base=base)
     if preds.is_empty():
         return empty
 
@@ -99,7 +100,11 @@ def _scored(base: Path | None) -> pl.DataFrame:
                  .filter(pl.col("result").is_not_null())
                  .select(pl.col("game_id"),
                          (pl.col("result") > 0).cast(pl.Int64).alias("home_won")))
-    except Exception:
+    except Exception as e:
+        # This one stays broad -- it is a network call on a schedule that runs unattended --
+        # but it says which failure it was rather than presenting every cause as "no results".
+        print(f"  schedules unavailable ({type(e).__name__}); track record served without "
+              f"results", flush=True)
         return empty
     return preds.join(sched, on="game_id", how="inner")
 
@@ -181,7 +186,7 @@ def publish_all(season: int, week: int, base: Path | None = None,
                 json.loads(path.read_text()).get("generated_at") if present else None),
         })
 
-    record(f"preds_wk{week:02d}", predictions(season, week, base=base, out=out),
+    record(f"preds_wk{store.week_key(week)}", predictions(season, week, base=base, out=out),
            f"no predictions in the store for {season} week {week}")
     record("track_record", track_record(base=base, out=out), "no scored predictions")
     record("live", live(out=out), "ESPN scoreboard unavailable")
@@ -233,11 +238,10 @@ def default_week(season: int, base: Path | None = None) -> int:
     a weekly refresh that needs a live API to decide what week it is has one more way to
     fail on a Sunday.
     """
-    try:
-        got = store.sql("SELECT max(week) AS w FROM preds WHERE season = ?",
-                        params=[season], base=base)
-    except Exception:
+    if "preds" not in store.tables(base):
         return 1
+    got = store.sql("SELECT max(week) AS w FROM preds WHERE season = ?",
+                    params=[season], base=base)
     if got.height and got["w"][0] is not None:
         return int(got["w"][0])
     return 1

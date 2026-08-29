@@ -264,3 +264,38 @@ def test_the_survivor_artifact_carries_survival_and_unpriced_weeks_at_top_level(
     # Weeks 1 and 3 are priced; every other week of the season still needs a pick. Asking
     # coverage only about the weeks the grid already has would report none missing.
     assert got["unpriced_weeks"] == [2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+
+
+# --- a broken query is not "no predictions" --------------------------------
+
+def test_an_empty_store_reports_absence_by_asking_not_by_catching(tmp_path):
+    """`store.tables` exists so a caller can tell "this clone has no predictions yet" from
+    "the query is broken". A bare `except Exception` made a schema break, a DuckDB lock and a
+    typo in the SQL all arrive as `stale: true, reason: no predictions`."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert "preds" not in store.tables(empty)
+    assert publish.predictions(2026, 1, base=empty, out=tmp_path / "site") is None
+    assert publish.default_week(2026, base=empty) == 1
+
+
+def test_a_real_query_failure_now_surfaces(site, base, monkeypatch):
+    """The behaviour that changed. With predictions present, a broken query must raise rather
+    than be reported to the page as an absence."""
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    assert "preds" in store.tables(base), "the fixture store has predictions"
+
+    def boom(*a, **k):
+        raise RuntimeError("schema drift")
+    monkeypatch.setattr(store, "sql", boom)
+    with pytest.raises(RuntimeError, match="schema drift"):
+        publish.predictions(2026, 1, base=base, out=site)
+
+
+def test_the_week_partition_has_one_spelling():
+    """It had four in one 333-line file -- two filenames, a query parameter and the read-back
+    -- because the format belonged to nobody."""
+    assert store.week_key(1) == "01"
+    assert store.week_key(14) == "14"
+    assert store.LAYOUT.format(table="preds", league="nfl", season=2026, week=1,
+                               name="x").split("/")[3] == f"week={store.week_key(1)}"

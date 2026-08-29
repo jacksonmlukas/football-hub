@@ -47,17 +47,25 @@ def write(df: pl.DataFrame, table: str, league: str, season: int, week: int,
     return p
 
 
+def is_table(d: Path) -> bool:
+    """Whether a directory is a dataset the catalog can see: an identifier, holding parquet.
+
+    One predicate, because there were two. `connect` and `tables` each carried a copy, and
+    `tables`' own docstring claimed the two "cannot disagree" -- an invariant asserted in prose
+    and enforced by nothing. Write and read have to agree on what a table is: a hardcoded list
+    of four here, against a `write()` that accepted any name, is how 54,402 rows of pbp and
+    ff_opportunity ended up in the store and invisible to the catalog.
+    """
+    return d.is_dir() and d.name.isidentifier() and any(d.rglob("*.parquet"))
+
+
 def connect(read_only: bool = False, base: Path | None = None) -> duckdb.DuckDBPyConnection:
     root = base or DATA
     root.mkdir(parents=True, exist_ok=True)
     catalog = (root / "hub.duckdb") if base else CATALOG
     con = duckdb.connect(str(catalog), read_only=read_only)
     for d in sorted(p for p in root.iterdir() if p.is_dir()):
-        # Discovered, not enumerated. This used to be a hardcoded list of four tables
-        # while write() accepted any name, so `hub.fetch.nflverse --refresh` wrote 54,402
-        # rows of pbp and ff_opportunity that the catalog then could not see. Write and
-        # read have to agree on what a table is.
-        if not d.name.isidentifier() or not any(d.rglob("*.parquet")):
+        if not is_table(d):
             continue
         con.execute(f"""
             CREATE OR REPLACE VIEW {d.name} AS
@@ -75,13 +83,25 @@ def tables(base: Path | None = None) -> set[str]:
     how `hub.models.conformal` and `hub.models.eval` came to answer a clean checkout with a
     stack trace. Callers that tolerate an absent dataset should ask first.
 
-    Discovered the same way `connect` discovers them, so the two cannot disagree.
+    Discovered by the same `is_table` predicate `connect` uses, so the two cannot disagree --
+    which is now enforced by there being one of it rather than asserted here in prose.
     """
     root = base or DATA
     if not root.exists():
         return set()
-    return {d.name for d in root.iterdir()
-            if d.is_dir() and d.name.isidentifier() and any(d.rglob("*.parquet"))}
+    return {d.name for d in root.iterdir() if is_table(d)}
+
+
+def week_key(week: int) -> str:
+    """The partition value for a week, zero-padded, as `LAYOUT` writes it.
+
+    Part of the query interface rather than a convention. `publish` spelled this four ways in
+    one 333-line file -- `f"preds_wk{week:02d}"` twice for filenames, `f"{week:02d}"` as a
+    query parameter, and `int(got["w"][0])` reading it back -- because the format belonged to
+    nobody. A partition key that a caller has to remember to pad is one a caller will
+    eventually not pad.
+    """
+    return f"{week:02d}"
 
 
 def sql(query: str, params: Sequence[object] | None = None,
