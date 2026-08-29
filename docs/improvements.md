@@ -656,11 +656,38 @@ does not rediscover the eight declarations and overrate them.
 
 ---
 
-### 18. `board_as_of` is not reproducible
+### 18. `board_as_of` is not reproducible — DIAGNOSED 2026-08-29, fix verified, not applied
 
 **Found 2026-08-28 while building the waiver gate.** Two calls to `board_as_of(2024)` in one
 process return the same 1,103 players in a **different row order**, and `wk15_17_sos` differs
-below 1e-6 — an aggregation-order effect, most likely a threaded sum inside the SoS join.
+below 1e-6.
+
+**Diagnosed 2026-08-29, and it is not what the first guess said.** Not a threaded sum: it
+reproduces with `POLARS_MAX_THREADS=1`. It is in `playoff_sos._dvp_from_stats`, and it is a
+**two-stage aggregation where each stage is deterministic and the pair is not**:
+
+```
+per_week = stats.group_by([defence, position, week]).agg(points.sum())   # stage 1
+dvp      = per_week.group_by([defence, position]).agg(allowed.mean())    # stage 2
+```
+
+Stage 1 emits its rows in a hash-dependent order that varies between calls. Stage 2 then takes
+a **mean over those rows**, and floating-point addition is not associative — so a different row
+order inside each group gives a different answer at **7.1e-15**. Either stage run twice on a
+fixed frame is identical; the composition is not, four times out of four.
+
+**The fix is one `sort` between the stages, and it is verified**: with
+`.sort([defence, position, week])` inserted, four consecutive runs are bit-identical; without
+it, they are not.
+
+**Not applied.** `playoff_sos` is on the draft path and the draft is 2026-09-03. The weekly
+gate works around it by sorting the board before drafting, which is local and touches nothing
+the draft reads.
+
+**Do, after the draft:** insert the sort, and add a test that runs the pipeline twice and
+compares. Then drop the workaround in `weekly_gate_data`. The class of bug is worth a moment's
+thought beyond this instance — **any `group_by` feeding a float aggregation to another
+`group_by` has it**, and the repo has more than one.
 
 It matters because the draft indexes the board by **row**: an unstable order moves picks, which
 moves rosters, which moves every downstream measurement. `hub.season.weekly_gate` wobbled by
@@ -678,9 +705,11 @@ made it deterministic across three consecutive runs. Sorted in the gate rather t
 `board.build`, deliberately — that is draft-path code six days from a live draft and its
 tie-breaking must not move tonight.
 
-**Do, after the draft:** find the unstable aggregation and make `build` return a deterministically
-ordered frame, then drop the workaround. A measurement that cannot be reproduced to the last bit
-is one ADR-0007 says should not be steering anything.
+A measurement that cannot be reproduced to the last bit is one ADR-0007 says should not be
+steering anything — and `backtest` and `lineup_gate` both draft from this function, so ADR-0009's
+−17.30 and the lineup gate's structural zero carry the same wobble. Both are large enough that
+±0.04 changes nothing, but "large enough not to matter" should be on the record rather than
+assumed.
 
 ---
 
