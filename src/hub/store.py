@@ -67,9 +67,18 @@ def connect(read_only: bool = False, base: Path | None = None) -> duckdb.DuckDBP
     for d in sorted(p for p in root.iterdir() if p.is_dir()):
         if not is_table(d):
             continue
+        # `union_by_name` because the store is append-only and its schemas evolve: a
+        # partition written before `cfg_digest` existed has twelve columns where a later one
+        # has fourteen, and without this DuckDB refuses the whole glob rather than filling
+        # nulls. Found 2026-08-29 rehearsing `make slate`, where it took `publish --all` down
+        # -- and only *after* #16 stopped `publish` swallowing it as "no scored predictions".
+        # Schema evolution is the design here: "immutable dated partitions; corrections write
+        # a new file", so a reader that cannot span two schemas cannot read this store.
         con.execute(f"""
             CREATE OR REPLACE VIEW {d.name} AS
-            SELECT * FROM read_parquet('{d}/**/*.parquet', hive_partitioning := true)
+            SELECT * FROM read_parquet('{d}/**/*.parquet',
+                                       hive_partitioning := true,
+                                       union_by_name := true)
         """)
     return con
 

@@ -334,3 +334,22 @@ def test_one_predicate_decides_what_a_table_is(tmp_path):
         views = {r[0] for r in con.execute(
             "SELECT view_name FROM duckdb_views() WHERE internal = false").fetchall()}
     assert views == store.tables(tmp_path), "connect and tables cannot disagree"
+
+
+def test_the_catalog_spans_partitions_written_under_different_schemas(tmp_path):
+    """The store is append-only and its schemas evolve -- "immutable dated partitions;
+    corrections write a new file" -- so a partition written before a column existed has fewer
+    columns than a later one. Without `union_by_name` DuckDB refuses the whole glob rather
+    than filling nulls, and it took `publish --all` down on a real store: a 2026 week-1 file
+    with twelve columns against a 2025 week-18 file with fourteen.
+    """
+    old = pl.DataFrame({"game_id": ["g1"], "home_win_prob": [0.6]})
+    new = pl.DataFrame({"game_id": ["g2"], "home_win_prob": [0.4],
+                        "cfg_digest": ["abc123"]})
+    store.write(old, "preds", "nfl", 2025, 18, base=tmp_path)
+    store.write(new, "preds", "nfl", 2026, 1, base=tmp_path)
+
+    got = store.sql("SELECT game_id, cfg_digest FROM preds ORDER BY game_id", base=tmp_path)
+    assert got.height == 2, "both partitions read, not one or an exception"
+    assert got["cfg_digest"].to_list() == [None, "abc123"], \
+        "the older partition fills null for a column it predates"
