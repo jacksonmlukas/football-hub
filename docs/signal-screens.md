@@ -30,10 +30,13 @@ thing, and because two of these produced errors worth not repeating.
 
 Four features cleared the weekly screen; two carried into a model; the model beat the flat
 projection on accuracy and lost the lineup decision to a free consensus ranking, harder with
-waivers than without, and a pre-registered shrinkage did not rescue it.
+waivers than without. A market/Usage blend finally beat consensus on average — **+0.711 points
+a team-week, interval excluding zero** — and lost the every-season half, with the gain decaying
+to negative in the most recent season. **Shown, never ranked on; the programme is closed.**
 [weekly-screen.md](weekly-screen.md) → [weekly-projection.md](weekly-projection.md) →
 [weekly-gate.md](weekly-gate.md) → [weekly-shrinkage.md](weekly-shrinkage.md) →
-[weekly-market-shrinkage.md](weekly-market-shrinkage.md).
+[weekly-market-shrinkage.md](weekly-market-shrinkage.md) →
+[weekly-blend-gate.md](weekly-blend-gate.md).
 
 ## Age
 

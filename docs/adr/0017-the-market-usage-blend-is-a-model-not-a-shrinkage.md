@@ -1,6 +1,8 @@
 # The market/Usage blend is a model, and gets one clean gate
 
-**Status:** proposed 2026-08-29, **before the run**. To be resolved by the result.
+**Status:** accepted 2026-08-29. **Resolved: SHOW.** Run under these rules the same day; the
+result is in [weekly-blend-gate.md](../weekly-blend-gate.md) and summarised at the foot of this
+file. The proposal was committed before the run, so the commit order is the record.
 
 **Decision.** The market/Usage blend stops being treated as a repair to the Weekly projection
 and is gated once, as a model in its own right, under rules fixed here.
@@ -92,3 +94,23 @@ Frozen: **positive but small, interval containing zero — SHOW.** Churn: **nega
 - **SHOW**: ADR-0016 stands, the blend is printed beside consensus, and **the rescue attempts
   end.** Five variants is where a negotiation with a result becomes a search for one.
 - **REMOVE**: delete it.
+
+
+---
+
+## Resolved, 2026-08-29: SHOW
+
+    frozen  +0.711  CI [+0.313, +1.129]  3/4 seasons   <- primary
+    churn   -2.006  CI [-2.761, -1.229]  1/4 seasons
+
+2,000 roster-weeks over 160 rosters, four held-out seasons, join failure 0.1%. **The interval
+excludes zero and favours the blend, for the first time in the programme** — and the
+every-season half fails, losing 2025 by −0.497. No tripwire fired.
+
+**The decisive detail is not the pooled figure.** The frozen gain decays monotonically —
+**+1.894, +0.961, +0.487, −0.497** across 2022 to 2025 — and is negative in the season closest
+to the one being drafted. Whatever this is, it was worth two points a team-week in 2022 and is
+worth nothing now. No mechanism is asserted for the decay.
+
+**Consequence, as fixed above:** ADR-0016 stands, the blend is printed beside consensus and
+never sorted on, and **the rescue attempts end.**

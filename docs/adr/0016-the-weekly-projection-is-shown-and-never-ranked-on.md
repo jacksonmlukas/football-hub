@@ -135,10 +135,22 @@ import.
 blend is a model in its own right and should be gated as one, once, cleanly. See
 [weekly-market-shrinkage.md](../weekly-market-shrinkage.md).
 
+## Closed, 2026-08-29
+
+That clean run happened, under [ADR-0017](0017-the-market-usage-blend-is-a-model-not-a-shrinkage.md):
+frozen **+0.711** CI [+0.313, +1.129] on four held-out seasons, churn **−2.006**. The interval
+excludes zero for the first time and the every-season half still fails — it lost 2025. And the
+frozen gain decays monotonically across the four seasons, **+1.894 → −0.497**, negative in the
+one closest to the season being drafted.
+
+**Verdict SHOW on both gates. This decision stands and the weekly programme is closed.**
+
 ## What would change it
 
-A clean, single, pre-registered run of the market/Usage blend clearing both halves of the bar.
-Four variants of a rescue do not add up to one.
+New evidence, not a new variant: a season measured *forward* from here. The 2026 season will
+produce one, and the blend can be scored against consensus as it happens without any of the
+data being spent in advance. That is the only remaining honest test, and it costs nothing but
+waiting.
 
 **Rosters that are not static.** The gate drafts a roster and freezes it for the season, so it
 deletes the streaming decision — deciding who to add for one week is a large part of what a
