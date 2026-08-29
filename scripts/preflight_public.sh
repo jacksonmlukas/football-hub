@@ -56,6 +56,34 @@ else
   echo "  ok"
 fi
 
+# Flipping public exposes the AUTHOR of every commit, not only its contents, and an address
+# in a commit object cannot be edited without rewriting every SHA after it. This is a warning
+# rather than a failure: publishing under a real address is a choice many people make on
+# purpose, and it is only a problem if it is a surprise.
+echo "==> Checking commit author addresses"
+NOREPLY=$(git config user.email 2>/dev/null | grep -c 'users\.noreply\.github\.com' || true)
+OTHER=$(git log --all --format='%ae%n%ce' 2>/dev/null | sort -u \
+        | grep -v 'users\.noreply\.github\.com' | grep -v '^$' || true)
+if [ -n "$OTHER" ]; then
+  echo "  WARNING: history carries addresses that are not GitHub noreply:"
+  echo "$OTHER" | sed 's/^/    /'
+  git log --all --format='%ae' 2>/dev/null | sort | uniq -c | sort -rn | sed 's/^/    /'
+  echo "    Flipping public publishes these. To change them you must rewrite history"
+  echo "    (git filter-repo --mailmap), which changes every SHA -- and docs/ references"
+  echo "    $(grep -rho '\`[0-9a-f]\{7\}\`' docs/ 2>/dev/null | sort -u | wc -l | tr -d ' ') of them."
+  echo "    Not a failure. A decision, and one that is far cheaper before the flip."
+else
+  echo "  ok: every commit is authored from a noreply address"
+fi
+if [ "$NOREPLY" -eq 0 ]; then
+  echo "  WARNING: git config user.email is not a noreply address, so new commits will add more"
+fi
+NAME=$(git config user.name 2>/dev/null || echo "")
+case "$NAME" in
+  "Your Name"|""|"user"|"root")
+    echo "  WARNING: git config user.name is '$NAME' -- a placeholder, on a public repo" ;;
+esac
+
 echo "==> Checking gitleaks if available"
 if command -v gitleaks >/dev/null 2>&1; then
   gitleaks detect --no-banner --redact || fail=1

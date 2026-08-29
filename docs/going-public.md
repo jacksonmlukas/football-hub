@@ -105,3 +105,37 @@ That is slower and it is the point: understanding the methods ranks second among
 objectives, and football's structure differs enough from soccer's that a port would smuggle in
 the wrong assumptions anyway. Football has discrete downs, so down/distance/yardline/clock/score
 is a near-Markov state and you need far less history than a continuous-possession sport.
+
+
+## Author identity, found 2026-08-29
+
+`scripts/preflight_public.sh` passes on secrets — no credential patterns in any commit, `.env`
+never committed, no raw payloads or data files anywhere in history. `gitleaks` is still the one
+unrun check and needs `brew install gitleaks`.
+
+**What the preflight did not check until today, and now does.** Flipping public exposes the
+*author* of every commit, not only its contents:
+
+| | commits |
+|---|---|
+| `103243720+jacksonmlukas@users.noreply.github.com` | 141 |
+| **`jlukas3313@gmail.com`** | **34** |
+
+`git config user.email` is already the noreply address, so this is historical and not growing.
+**It is a decision rather than a defect** — publishing under a real address is a choice many
+people make deliberately — and the only reason it is raised now is that it is *far* cheaper
+before the flip than after.
+
+**If you want them changed**, it is `git filter-repo --mailmap` and it rewrites every SHA after
+the first affected commit. The cost is bounded and small: **three** short SHAs are referenced
+in `docs/`, across six mentions in `docs/next.md` and
+[ADR-0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md). Nothing else in
+the repo hard-codes one.
+
+**If you do not**, nothing needs doing and the warning is informational.
+
+Also flagged: `git config user.name` is **"Your Name"**, a placeholder. Cosmetic, and it is on
+every commit of a repo about to be public.
+
+**Neither is changed here.** Rewriting history and editing an identity are the user's calls,
+not something to do while they are asleep.
