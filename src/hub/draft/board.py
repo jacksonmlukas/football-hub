@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import itertools
-import json
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -25,6 +24,7 @@ import nflreadpy as nfl
 import numpy as np
 import polars as pl
 
+from hub import jsonio
 from hub.config import (
     DRAFTED_POSITIONS,
     SEASON_AHEAD,
@@ -710,8 +710,10 @@ def _persist(board: pl.DataFrame, *, out: Path | None = None,
     path.parent.mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True, exist_ok=True)
     board.write_parquet(path)
+    # Through `hub.jsonio`, not `json`, because a bare `NaN` is not JSON and the page that
+    # reads this file is the draft-night fallback -- see that module's docstring.
     out.joinpath("draft_board.json").write_text(
-        json.dumps(board.head(300).to_dicts(), default=str))
+        jsonio.dumps(board.head(300).to_dicts()))
 
 
 def main(argv: Sequence[str] | None = None) -> int:

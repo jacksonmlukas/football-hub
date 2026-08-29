@@ -26,7 +26,7 @@ from typing import Any
 
 import polars as pl
 
-from hub import store
+from hub import jsonio, store
 from hub.config import SEASON_AHEAD
 from hub.models.scoring_rules import brier, log_loss, reliability
 
@@ -42,7 +42,7 @@ def _now() -> str:
 def _write(out: Path, name: str, payload: dict[str, Any]) -> Path:
     out.mkdir(parents=True, exist_ok=True)
     p = out / f"{name}.json"
-    p.write_text(json.dumps(payload, indent=2, default=str))
+    p.write_text(jsonio.dumps(payload, indent=2))
     return p
 
 

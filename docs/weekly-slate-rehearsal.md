@@ -48,6 +48,31 @@ filling null for the column it predates.
     survivor         ok
 ```
 
+## And then the page could not read the board
+
+Opening `site/index.html` — which nobody had done either — the draft-board panel said
+**"No draft board. Run `make draft`"** against a present, fresh, 199KB `draft_board.json`, with
+the manifest reporting it not stale.
+
+The file contained **135 bare `NaN`s**. Python's `json` emits them by default and reads them
+back happily; **JSON has no such literal and neither does JavaScript**, so `JSON.parse` throws
+on the whole document, `load()` catches it, and the panel renders as absent.
+
+That artifact is what [draft-night.md](draft-night.md) names as the **last-resort fallback**:
+*"serve `site/data/draft_board.json` — the top 300 by ECR, which covers all 192 picks"*, for
+the case where the board itself will not build. **The safety net was unreadable by the only
+thing that reads it**, five days before the draft.
+
+`hub/jsonio.py` is now the one writer — `finite()` scrubs non-finite floats at any depth and
+`allow_nan=False` makes a future one raise here rather than ship a document that fails to parse
+in the field. Both `hub.publish` and `hub.draft.board` go through it, which a test pins, and
+the panel now renders 300 players.
+
+**The draft path was re-verified end to end afterwards**, since this touched `board.py`: board
+builds 449 players, THE PICK renders, 192 picks replay at 16ms against a 2000ms budget,
+`--taken` records and `--reset` restores, and the no-network path still prints BUILD FAILED →
+last good → THE PICK.
+
 ## What is still unrehearsed
 
 `make slate` also runs `hub.fetch.cfbd` and `hub.fetch.odds`, both of which need keys this

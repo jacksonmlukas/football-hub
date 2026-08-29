@@ -1,19 +1,19 @@
 {
   "name": "live",
   "source": "espn_scoreboard",
-  "generated_at": "2026-08-29T18:44:33+00:00",
+  "generated_at": "2026-08-29T18:47:34+00:00",
   "n": 16,
   "rows": [
     {
       "id": "401873308",
       "state": "in",
-      "detail": "14:25 - 3rd",
+      "detail": "13:40 - 3rd",
       "home": "IND",
       "home_score": "13",
       "away": "DET",
       "away_score": "19",
-      "possession": "8",
-      "down_distance": "3rd & 10 at DET 35"
+      "possession": "11",
+      "down_distance": "1st & 10 at DET 30"
     },
     {
       "id": "401874394",
