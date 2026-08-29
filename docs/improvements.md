@@ -161,6 +161,35 @@ correlation beyond ECR, pre-registered, no `src/` written until it clears. The m
 framing is not "does scheme predict points" but "does scheme predict **volume**", since volume
 is the half of the signal that already carries forward.
 
+### Pre-registered 2026-08-29, before the run
+
+**The features**, per (team, season, week), from `ftn_charting`, and their **trends** — the
+last three weeks against the three before, the same shape `snap_trend` uses and dark before
+week 8 for the same reason:
+
+| feature | what it is | pre-stated sign |
+|---|---|---|
+| `pa_rate` | share of dropbacks with play action | ? |
+| `motion_rate` | share of plays with pre-snap motion | ? |
+| `nohuddle_rate` | share of plays no-huddle | + — more plays, more volume |
+| `screen_rate` | share of dropbacks that are screens | ? |
+| `pass_rate` | dropbacks over all plays | + for receivers |
+
+**A level is not the test; a trend is.** Team scheme is stable within a season and a player's
+own recent usage already absorbs the level. What would be new information is a scheme
+*changing* — the thing a coordinator change or an injury to a quarterback actually does — and
+that is what a trend measures.
+
+**Screened as an opt-in set** (`--scheme`), never merged into the default `FEATURES`, because
+a collinear addition to the control set destroys real signals. That is not caution in the
+abstract: adding `route_trend` to the default screen cost this repo `snap_trend` until it was
+taken back out ([expected-and-routes.md](expected-and-routes.md)).
+
+**Pre-stated expectation: null.** Five of five previous scheme-adjacent screens came back null,
+team scheme is among the least persistent things available, and a trend over three weeks of a
+stable quantity is mostly noise. The honest reason to run it is that it is the last unscreened
+asset in the tree and leaving it unscreened is how it becomes folklore.
+
 ---
 
 ## 5. Injury pricing is one coefficient for three states — MEASURED 2026-08-25
