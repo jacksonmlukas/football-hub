@@ -14,7 +14,7 @@ import polars as pl
 from hub.draft.season import REG_SEASON_WEEKS
 from hub.models.experiment import realised_ppg
 from hub.names import player_key
-from hub.season.weekly_gate import UNRANKED
+from hub.season.weekly_gate import UNRANKED, GateInputs
 
 
 def preseason_ranks(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
@@ -60,7 +60,7 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     waiver arm adds and drops, and a per-roster matrix cannot represent a player who was not
     on the roster when the matrix was built.
 
-    Returns `(rosters, pos, realised, consensus, weekly, pool, addable, se, covered)`.
+    Returns a `GateInputs`: nine aligned collections that used to be a positional tuple.
     """
     from collections.abc import Sequence as _Seq
 
@@ -156,8 +156,8 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
             made.append([int(i) for i in room[cfg.slot - 1]])
             pools.append([i for i in range(n) if i not in drafted])
         rosters[yr], pool[yr] = made, pools
-    return (rosters, pos, realised, consensus, weekly, pool, addable, se,
-            covered_weeks(ecr))
+    return GateInputs(rosters, pos, realised, consensus, weekly, pool, addable, se,
+                      covered_weeks(ecr))
 
 
 def covered_weeks(ecr: pl.DataFrame) -> set[tuple[int, int]]:

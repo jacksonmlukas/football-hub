@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from typing import NamedTuple
 
 import numpy as np
 import polars as pl
@@ -62,6 +63,30 @@ VOID_FLOOR = 0.02
 
 
 WAIVER_LOOK = 15
+
+
+class GateInputs(NamedTuple):
+    """Everything one gate run reads, as one thing rather than nine.
+
+    These were returned as a nine-value positional tuple, unpacked by name at the call site,
+    and threaded on: `compare_universe` took **twelve parameters** to run thirty-six lines, and
+    `coverage` took five of the same nine. The *ordering* was knowledge duplicated across the
+    return, the unpack and two call sites, and checked nowhere -- swapping `consensus` and
+    `weekly` is a silent inversion of the entire result, and nothing would have said so.
+
+    Every array is over the season's **universe** -- every player on that season's board -- so
+    a roster is a list of indices into it and can change week to week, which is what waiver
+    churn needs and what a per-roster matrix cannot express.
+    """
+    rosters: dict[int, list[list[int]]]         # season -> one index list per drafted roster
+    pos: dict[int, Sequence[str]]               # season -> position per universe index
+    realised: dict[int, np.ndarray]             # season -> (universe, weeks) points scored
+    consensus: dict[int, np.ndarray]            # season -> (universe, weeks) -ecr, the incumbent
+    weekly: dict[int, np.ndarray]               # season -> (universe, weeks) the arm under test
+    pool: dict[int, list[list[int]]]            # season -> free agents, per drafted roster
+    addable: dict[int, np.ndarray]              # season -> mask: both arms can score him
+    se: dict[int, np.ndarray]                   # season -> standard error of the weekly mean
+    covered: set[tuple[int, int]]               # the (season, week) pairs consensus ranks
 
 
 def lineup_projection(roster: Sequence[int], pos: Sequence[str],
@@ -155,35 +180,29 @@ def season_points(realised: np.ndarray, pos: Sequence[str], score: np.ndarray,
     return out
 
 
-def compare_universe(rosters: dict[int, list[list[int]]], pos: dict[int, Sequence[str]],
-                     realised: dict[int, np.ndarray], consensus: dict[int, np.ndarray],
-                     weekly: dict[int, np.ndarray], pool: dict[int, list[list[int]]],
-                     covered: set[tuple[int, int]],
-                     addable: dict[int, np.ndarray] | None = None,
-                     weeks: Sequence[int] = GATE_WEEKS,
-                     *, churn: bool = False, z: float = 0.0,
-                     se: dict[int, np.ndarray] | None = None) -> pl.DataFrame:
-    """One row per roster-week, on the universe representation, with or without churn.
+def compare(g: GateInputs, *, weeks: Sequence[int] = GATE_WEEKS, churn: bool = False,
+            z: float = 0.0, mask_pool: bool = True) -> pl.DataFrame:
+    """One row per roster-week, with or without waiver churn.
 
-    `churn=False` reproduces `compare` exactly -- and it is checked against the published
-    frozen result rather than assumed, because a churn number is only worth reading if the
-    machinery underneath it gives the same answer as the machinery that produced the last one.
+    `churn=False` is the frozen gate. `z` ranks waiver adds by a lower confidence bound rather
+    than by the mean; `mask_pool=False` opens the pool to players the incumbent cannot score,
+    which is the sensitivity that is explicitly **not** the gate.
     """
     rows = []
-    for season in sorted(rosters):
-        wks = [w for w in weeks if (season, w) in covered]
-        add = None if addable is None else addable[season]
+    for season in sorted(g.rosters):
+        wks = [w for w in weeks if (season, w) in g.covered]
+        add = g.addable[season] if mask_pool else None
         # Only the arm under test gets a lower confidence bound. Consensus is a *ranking* with
         # no uncertainty attached to subtract, so there is nothing to hand it -- and this is
         # our arm being more careful with its own estimate, not the incumbent being handicapped.
-        lcb = (weekly[season] - z * se[season]) if (z and se is not None) else None
-        for k, roster in enumerate(rosters[season]):
+        lcb = (g.weekly[season] - z * g.se[season]) if z else None
+        for k, roster in enumerate(g.rosters[season]):
             # The pool is per draft: who is a free agent depends on what the other eleven
             # teams took in that room.
-            free = pool[season][k]
-            a = season_points(realised[season], pos[season], consensus[season], roster,
+            free = g.pool[season][k]
+            a = season_points(g.realised[season], g.pos[season], g.consensus[season], roster,
                               free, wks, churn=churn, addable=add)
-            b = season_points(realised[season], pos[season], weekly[season], roster,
+            b = season_points(g.realised[season], g.pos[season], g.weekly[season], roster,
                               free, wks, churn=churn, addable=add, add_score=lcb)
             for w in wks:
                 rows.append({"season": season, "roster": k, "week": w,
@@ -260,10 +279,7 @@ def verdict(summary: dict, seasons: pl.DataFrame,
                     "evidence of equivalence.")
 
 
-def coverage(rosters: dict[int, list[list[int]]],
-                      consensus: dict[int, np.ndarray], realised: dict[int, np.ndarray],
-                      covered: set[tuple[int, int]],
-                      weeks: Sequence[int] = GATE_WEEKS) -> dict[str, float]:
+def coverage(g: GateInputs, weeks: Sequence[int] = GATE_WEEKS) -> dict[str, float]:
     """How much of the incumbent's arm is missing, and how much of that is a defect.
 
     Two different things, and conflating them would either void every run or none:
@@ -275,13 +291,13 @@ def coverage(rosters: dict[int, list[list[int]]],
         what `VOID_FLOOR` is measured against.
     """
     cells = unranked = failed = 0
-    for season, made in rosters.items():
+    for season, made in g.rosters.items():
         for roster in made:
             for w in weeks:
-                if (season, w) not in covered:
+                if (season, w) not in g.covered:
                     continue
-                col = consensus[season][roster, w - 1]
-                pts = realised[season][roster, w - 1]
+                col = g.consensus[season][roster, w - 1]
+                pts = g.realised[season][roster, w - 1]
                 cells += col.size
                 un = col == UNRANKED
                 unranked += int(un.sum())
@@ -319,12 +335,10 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         return 0
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     from hub.season.weekly_gate_data import assemble_universe
-    ros, pos, realised, consensus, weekly, pool, addable, se, covered = assemble_universe(
-        seasons, drafts=a.drafts, seed=a.seed, shrink=a.shrink, expected=a.expected)
-    cover = coverage(ros, consensus, realised, covered)
-    paired = compare_universe(ros, pos, realised, consensus, weekly, pool, covered,
-                              None if a.open_pool else addable, churn=a.churn,
-                              z=a.lcb, se=se)
+    inputs = assemble_universe(seasons, drafts=a.drafts, seed=a.seed, shrink=a.shrink,
+                               expected=a.expected)
+    cover = coverage(inputs)
+    paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool)
     s = cluster_bootstrap(paired, seed=a.seed)
     seasons_tbl = per_season(paired)
     mode = ("one add/drop a week, pool both arms can score" if a.churn and not a.open_pool
@@ -337,7 +351,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     if a.lcb:
         mode += f", waiver LCB z={a.lcb}"
     print(f"\n  {int(s['n'])} roster-weeks over {int(s['clusters'])} rosters, "
-          f"on the {len(covered)} weeks consensus covers   [{mode}]")
+          f"on the {len(inputs.covered)} weeks consensus covers   [{mode}]")
     print(f"  unranked {cover['unranked']:.1%}, of which a join failure "
           f"{cover['join_failure']:.1%} (floor {VOID_FLOOR:.0%})")
     print(seasons_tbl)

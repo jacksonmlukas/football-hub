@@ -41,30 +41,55 @@ def test_the_lineup_is_chosen_again_every_week():
 
 # --- coverage, and the difference between an absence and a defect ----------
 
-def _cov_fixture():
+def _inputs(**over):
+    """A `GateInputs` with everything aligned, so a test names only what it cares about."""
+    import numpy as np
     pos = _pos()
     n = len(pos)
+    base = {
+        "rosters": {2024: [list(range(n))]}, "pos": {2024: pos},
+        "realised": {2024: np.zeros((n, 18))}, "consensus": {2024: np.zeros((n, 18))},
+        "weekly": {2024: np.zeros((n, 18))}, "pool": {2024: [[]]},
+        "addable": {2024: np.ones((n, 18), dtype=bool)}, "se": {2024: np.zeros((n, 18))},
+        "covered": {(2024, 5)}}
+    base.update(over)
+    return G.GateInputs(**base)
+
+
+def _cov_fixture():
+    """A join failure and a correct omission, in the same week."""
+    import numpy as np
+    n = len(_pos())
     cons = np.zeros((n, 18))
     realised = np.zeros((n, 18))
     cons[0, 4] = G.UNRANKED          # unranked and scored -> a join failure
     realised[0, 4] = 12.0
     cons[1, 4] = G.UNRANKED          # unranked and scored nothing -> correctly benched
-    return ({2024: [list(range(n))]}, {2024: cons}, {2024: realised})
+    return _inputs(consensus={2024: cons}, realised={2024: realised})
 
 
 def test_coverage_separates_a_correct_omission_from_a_join_failure():
     """A player who is out scores zero and being unranked is the incumbent's *answer*. A
     player who scored and was unranked is a name that did not match, and only that one biases
     the comparison."""
-    ros, cons, realised = _cov_fixture()
-    c = G.coverage(ros, cons, realised, {(2024, 5)}, weeks=[5])
+    c = G.coverage(_cov_fixture(), weeks=[5])
     assert c["unranked"] == pytest.approx(2 / 13)
     assert c["join_failure"] == pytest.approx(1 / 13)
 
 
 def test_coverage_ignores_weeks_the_incumbent_does_not_cover():
-    ros, cons, realised = _cov_fixture()
-    assert G.coverage(ros, cons, realised, set(), weeks=[5])["cells"] == 0
+    g = _cov_fixture()._replace(covered=set())
+    assert G.coverage(g, weeks=[5])["cells"] == 0
+
+
+def test_the_inputs_are_one_thing_rather_than_nine():
+    """They were a nine-value positional tuple threaded through twelve parameters, and the
+    ordering was knowledge duplicated across the return, the unpack and two call sites --
+    checked nowhere. Swapping `consensus` and `weekly` inverts the entire result."""
+    g = _inputs()
+    assert len(G.GateInputs._fields) == 9
+    assert G.GateInputs._fields[3:5] == ("consensus", "weekly")
+    assert g._replace(covered={(2024, 9)}).covered == {(2024, 9)}, "and it is replaceable"
 
 
 # --- the verdict, every branch ---------------------------------------------
@@ -151,15 +176,24 @@ def test_an_empty_frame_reports_rather_than_crashing():
 
 
 def test_compare_emits_one_row_per_roster_week_and_skips_uncovered_weeks():
-    pos = _pos()
-    n = len(pos)
-    rosters = {2024: [list(range(n))]}
-    arrays = {2024: np.ones((n, 18))}
+    import numpy as np
+    n = len(_pos())
     scores = {2024: np.tile(np.arange(n, dtype=float).reshape(-1, 1), (1, 18))}
-    out = G.compare_universe(rosters, {2024: pos}, arrays, scores, scores, {2024: [[]]},
-                             covered={(2024, 3), (2024, 4)}, weeks=[3, 4, 5])
+    g = _inputs(realised={2024: np.ones((n, 18))}, consensus=scores, weekly=scores,
+                covered={(2024, 3), (2024, 4)})
+    out = G.compare(g, weeks=[3, 4, 5])
     assert out.height == 2 and sorted(out["week"].to_list()) == [3, 4]
     assert (out["diff"] == 0.0).all(), "identical arms differ by nothing"
+
+
+def test_compare_takes_one_argument_and_three_options():
+    """It took twelve parameters to run thirty-six lines -- the interface was the larger half."""
+    import inspect
+    sig = inspect.signature(G.compare)
+    positional = [p for p in sig.parameters.values()
+                  if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD]
+    assert len(positional) == 1 and positional[0].name == "g"
+    assert set(sig.parameters) - {"g"} == {"weeks", "churn", "z", "mask_pool"}
 
 
 # --- the waiver rule, and the artifact it was written with ------------------
