@@ -25,12 +25,13 @@ from pathlib import Path
 
 import polars as pl
 
-from hub.draft.board import BOARD_PARQUET, board_age_hours
+from hub.draft.board import board_age_hours
 from hub.draft.optimize import the_pick
 from hub.draft.picks import MY_SLOT, TEAMS, my_picks
 from hub.draft.state import DraftState
 from hub.draft.state import load as load_state
 from hub.names import player_key
+from hub.paths import BOARD_PARQUET
 
 # docs/decisions.md, fixed 2026-08-27 before the draft rather than chosen in January.
 THRESHOLD = 12

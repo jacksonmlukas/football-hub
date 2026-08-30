@@ -35,7 +35,7 @@ from hub.config import (
     starters,
 )
 from hub.contracts import DRAFT_BOARD, ContractViolation
-from hub.draft import durability
+from hub.draft import adp_history, durability
 from hub.draft import regression as td_regression
 from hub.draft import report as report_mod
 from hub.draft import state as state_mod
@@ -44,11 +44,14 @@ from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.state import DraftState, remaining
 from hub.names import player_key
+from hub.paths import BOARD_PARQUET, ROOT
 
 if TYPE_CHECKING:                      # `optimize` imports from here, so runtime would cycle
     pass
 
-ROOT = Path(__file__).resolve().parents[3]
+# From the leaf, not declared here. `adp_history` and `adherence` used to import these
+# from this module -- a 780-line board builder -- purely to learn a Path.
+# improvements.md #17.
 OUT = ROOT / "site" / "data"
 
 # A `PPR` scoring table used to sit here, keyed `pass_yd`/`rec_td`, with nothing reading it.
@@ -338,7 +341,6 @@ def _impute_xfp(board: pl.DataFrame) -> pl.DataFrame:
     return board.with_columns(pl.Series("xfp_per_game", filled, dtype=pl.Float64))
 
 
-BOARD_PARQUET = ROOT / "data" / "processed" / "draft_board.parquet"
 
 
 def board_age_hours(path: Path, now: float) -> float:
@@ -802,12 +804,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Keep a dated copy of today's ADP before the next build overwrites it. ESPN does
         # not retain historical ADP, so this is the only chance to record it -- and its
         # absence is what blocks fit_espn_weight, the opponent model, and validating `edge`.
-        # Imported here rather than at module scope because it reads ROOT from this module.
         #
         # Never allowed to break the build: this is an archival side effect, not the
         # product, and a board that will not print because an archive write failed is
         # exactly the operator-dependence CLAUDE.md warns about.
-        from hub.draft import adp_history
         try:
             if adp_history.snapshot(board) is not None:
                 print(f"  adp archived: {len(adp_history.days())} days on file")

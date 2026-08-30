@@ -656,7 +656,7 @@ nobody.
 
 ---
 
-### 17. `ROOT` is declared eight times, and it does not matter much — PARTLY DONE 2026-08-29
+### 17. `ROOT` is declared eight times, and it does not matter much — DONE 2026-08-29
 
 **Investigated 2026-08-27; recorded rather than fixed.** The review flagged three
 declarations of the repo root; there are eight — `store`, `publish`, `board`, `tune`, `state`,
@@ -684,15 +684,19 @@ does not rediscover the eight declarations and overrate them.
 `pathlib`, with a test pinning that it stays a leaf. `hub.draft.adp_history` takes `ROOT` from
 it and **no longer imports a board builder at all**, so that cycle is gone.
 
-**The remaining three edits are deliberately not made**, and the reason is the date rather than
-the difficulty: `board.py` and `adherence.py` are draft-path code and the draft is
-2026-09-03. Neither change alters a number — `board` would swap two assignments for an import,
-`adherence` would take `BOARD_PARQUET` from the leaf and keep `board_age_hours` from the
-module — but "it cannot alter a number" is a claim about code I would be making four days out,
-and the value on the other side is tidiness.
+**And then the rest of it**, once the same session was already re-verifying the draft path for
+#18. `board.py` takes `ROOT` and `BOARD_PARQUET` from the leaf instead of declaring them;
+`adherence.py` takes the path from the leaf and keeps `board_age_hours` from the module, which
+is a function and belongs there.
 
-**After the draft:** those two, and then `board.main`'s function-local `adp_history` import
-becomes unnecessary, which is the thing this item was really about.
+**The point of the item, delivered:** `board.main`'s function-local `import adp_history` is
+gone, and with it the comment reading *"imported here rather than at module scope because it
+reads ROOT from this module"*. Eight function-local `hub` imports remain in `board.py` and all
+eight are deliberate — lazy loads of heavy or optional paths, not cycle workarounds.
+
+The five other `ROOT` declarations are untouched. They are one or two uses each in modules that
+import nothing from the leaf, and #17's own judgement stands: tidiness alone does not earn a
+change to five more files.
 
 ---
 
