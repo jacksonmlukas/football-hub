@@ -600,7 +600,7 @@ It is draft-path code and the freeze holds until 2026-08-31.
 
 ---
 
-### 15. `durability` and `regression` are one module written twice
+### 15. `durability` and `regression` are one module written twice — DONE 2026-08-29
 
 **Explored 2026-08-27.** Both files are the same four functions in the same order:
 `prior_season(season, cache)` → `<signal>(season)` → `attach(board, season)` →
@@ -623,6 +623,32 @@ took ownership of the column list; durability and regression remain distinct.
 
 **Do, post-draft:** one prior-season-correction shape parameterised by signal and coefficient.
 Low urgency — the duplication costs a reader's time and one extra download, not correctness.
+
+### Done 2026-08-29, and less of it than the item asked for
+
+`hub/draft/prior_signal.py` holds the two pieces that genuinely were one thing written twice:
+
+* **`join_by_player(board, signal, column)`** — the `_norm` join dance, twelve identical lines
+  in both files, including the rule that a player with no prior season keeps a **null and not a
+  zero**. Zero is "played every game" or "scored exactly as expected"; null is "we do not
+  know"; and filling one with the other calls every rookie durable and every rookie lucky.
+* **`priced(column, beta)`** — `beta[position] * column`, with an unlisted position at zero
+  rather than a pooled default, because a position absent from a `BETA` is one the fit found
+  nothing for.
+
+**What was deliberately not merged**, against the item's own suggestion: the two
+`correct_projection` bodies are *not* the same function. Durability prices a trait **and**
+today's designation, over two different position sets; touchdown luck prices one term. One
+shape with flags to cover both would cost more than the duplication does.
+
+Each module keeps its own `BETA` — which is also what keeps `config_digest` at `281b7b7a`,
+since the digest is over the constants those modules declare and both are in `FITTED_MODULES`.
+Verified: digest unchanged, and the rebuilt board has the same 449 rows, 241 non-null `missed`,
+320 non-null `td_luck` and a `proj_blend` mean of 7.1265.
+
+The extra `player_stats` download the item mentions is untouched — that is
+`nflverse._cache_path` keying on the column set, and merging the two column lists is a separate
+decision about what each module needs.
 
 ---
 

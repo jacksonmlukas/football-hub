@@ -1,28 +1,28 @@
 {
   "name": "live",
   "source": "espn_scoreboard",
-  "generated_at": "2026-08-29T18:47:34+00:00",
+  "generated_at": "2026-08-30T02:40:41+00:00",
   "n": 16,
   "rows": [
     {
       "id": "401873308",
-      "state": "in",
-      "detail": "13:40 - 3rd",
+      "state": "post",
+      "detail": "Final",
       "home": "IND",
-      "home_score": "13",
+      "home_score": "16",
       "away": "DET",
-      "away_score": "19",
-      "possession": "11",
-      "down_distance": "1st & 10 at DET 30"
+      "away_score": "25",
+      "possession": null,
+      "down_distance": null
     },
     {
       "id": "401874394",
-      "state": "pre",
-      "detail": "8/29 - 6:00 PM EDT",
+      "state": "post",
+      "detail": "Final",
       "home": "TEN",
-      "home_score": "0",
+      "home_score": "15",
       "away": "CHI",
-      "away_score": "0",
+      "away_score": "24",
       "possession": null,
       "down_distance": null
     },

@@ -27,8 +27,8 @@ from __future__ import annotations
 import polars as pl
 
 from hub.config import drafted_positions
+from hub.draft import prior_signal
 from hub.models.components import td_rate
-from hub.names import player_key
 
 # Fewer games than this and the number is noise wearing a number's clothes: a two-game
 # sample of touchdown luck is one red-zone target either way.
@@ -108,21 +108,10 @@ def td_luck(season: pl.DataFrame) -> pl.DataFrame:
 def attach(board: pl.DataFrame, season: pl.DataFrame) -> pl.DataFrame:
     """Add a `td_luck` column to a draft board.
 
-    Joined on a normalised name because nflverse and ESPN disagree about punctuation --
-    `A.J. Brown` against `AJ Brown` -- and an exact join drops him silently. Players with no
-    prior season keep a null rather than being dropped: rookies are half an early board.
+    The join itself is `prior_signal.join_by_player`, which `hub.draft.durability` also uses:
+    it was the same twelve lines in both files -- improvements.md #15.
     """
-    luck = td_luck(season)
-    if "td_luck" not in luck.columns or luck.is_empty():
-        return board.with_columns(pl.lit(None, dtype=pl.Float64).alias("td_luck"))
-
-    keyed = (luck.with_columns(
-                pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("_k"))
-             .select("_k", "td_luck").unique(subset=["_k"], keep="first"))
-    return (board.drop("td_luck", strict=False)
-                 .with_columns(
-                     pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("_k"))
-                 .join(keyed, on="_k", how="left").drop("_k"))
+    return prior_signal.join_by_player(board, td_luck(season), "td_luck")
 
 
 def correct_projection(board: pl.DataFrame, column: str = "proj_blend") -> pl.DataFrame:
@@ -134,7 +123,6 @@ def correct_projection(board: pl.DataFrame, column: str = "proj_blend") -> pl.Da
     """
     if column not in board.columns or "td_luck" not in board.columns:
         return board
-    adjustment = pl.col("pos").replace_strict(
-        TD_LUCK_BETA, default=0.0, return_dtype=pl.Float64) * pl.col("td_luck").fill_null(0.0)
+    adjustment = prior_signal.priced("td_luck", TD_LUCK_BETA)
     return board.with_columns(
         (pl.col(column) + adjustment).clip(0.0).alias(column))

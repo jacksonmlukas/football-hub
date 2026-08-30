@@ -142,3 +142,48 @@ def test_a_status_worth_flagging_is_recognised():
     assert D.is_flagworthy("QUESTIONABLE") and D.is_flagworthy("DOUBTFUL")
     assert not D.is_flagworthy("ACTIVE")
     assert not D.is_flagworthy(None)
+
+
+# --- the shape both prior-season signals share (improvements.md #15) --------
+
+def test_the_join_keeps_a_null_for_a_player_with_no_prior_season():
+    """Null and zero mean different things: zero is "played every game", null is "we do not
+    know", and filling one with the other calls every rookie durable. Rookies are half an
+    early board."""
+    import polars as pl
+
+    from hub.draft import prior_signal
+    board = pl.DataFrame({"player": ["A.J. Brown", "Rookie Guy"], "pos": ["WR", "WR"]})
+    signal = pl.DataFrame({"player": ["AJ Brown"], "missed": [3.0]})
+    got = prior_signal.join_by_player(board, signal, "missed")
+    assert got["missed"].to_list() == [3.0, None], "punctuation must not drop him"
+
+
+def test_an_empty_signal_yields_a_null_column_not_a_missing_one():
+    import polars as pl
+
+    from hub.draft import prior_signal
+    board = pl.DataFrame({"player": ["A"], "pos": ["WR"]})
+    got = prior_signal.join_by_player(board, pl.DataFrame(), "td_luck")
+    assert got["td_luck"].to_list() == [None]
+
+
+def test_an_unlisted_position_is_priced_at_zero_not_at_a_pooled_default():
+    """A position absent from a BETA is one the fit found nothing for, and inventing a
+    coefficient for it would ship an effect nobody measured."""
+    import polars as pl
+
+    from hub.draft import prior_signal
+    d = pl.DataFrame({"pos": ["QB", "TE"], "missed": [2.0, 2.0]})
+    got = d.select(prior_signal.priced("missed", {"QB": -0.5}).alias("adj"))
+    assert got["adj"].to_list() == [-1.0, 0.0]
+
+
+def test_both_modules_use_the_shared_shape():
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub" / "draft"
+    for rel in ("durability.py", "regression.py"):
+        names = {a.name for n in ast.walk(ast.parse((root / rel).read_text()))
+                 if isinstance(n, ast.ImportFrom) for a in n.names}
+        assert "prior_signal" in names, f"{rel} still carries its own copy of the join"

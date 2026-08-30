@@ -30,7 +30,7 @@ from __future__ import annotations
 import polars as pl
 
 from hub.config import drafted_positions
-from hub.names import player_key
+from hub.draft import prior_signal
 
 TEAM_GAMES = 17
 
@@ -103,17 +103,10 @@ def prior_season(season: int, cache=None) -> pl.DataFrame:
 def attach(board: pl.DataFrame, season: pl.DataFrame) -> pl.DataFrame:
     """Add a `missed` column. Players with no prior role keep a null rather than a zero.
 
-    Null and zero mean different things here: zero is "played every game", null is "we do
-    not know", and filling one with the other would quietly call every rookie durable.
+    The join itself is `prior_signal.join_by_player`, which `hub.draft.regression` also uses:
+    it was the same twelve lines in both files -- improvements.md #15.
     """
-    m = games_missed(season)
-    keyed = (m.with_columns(
-                pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("_k"))
-             .select("_k", "missed").unique(subset=["_k"], keep="first"))
-    return (board.drop("missed", strict=False)
-                 .with_columns(
-                     pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("_k"))
-                 .join(keyed, on="_k", how="left").drop("_k"))
+    return prior_signal.join_by_player(board, games_missed(season), "missed")
 
 
 def correct_projection(board: pl.DataFrame, column: str = "proj_blend") -> pl.DataFrame:
@@ -130,8 +123,7 @@ def correct_projection(board: pl.DataFrame, column: str = "proj_blend") -> pl.Da
         return board
     adjustment = pl.lit(0.0)
     if "missed" in board.columns:
-        adjustment = adjustment + pl.col("pos").replace_strict(
-            BETA, default=0.0, return_dtype=pl.Float64) * pl.col("missed").fill_null(0.0)
+        adjustment = adjustment + prior_signal.priced("missed", BETA)
     if "injury_status" in board.columns:
         # Applied at every position, unlike the durability trait: being ruled out is news,
         # not a trait the market has had years to discount.
