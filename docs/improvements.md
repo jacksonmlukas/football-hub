@@ -304,7 +304,13 @@ cold-start path for rookies. Then re-run `hub.season.lineup_gate`.
 
 ## Codebase
 
-### 7. `board.py` is still the hot spot — PARTLY ADDRESSED 2026-08-27
+**Status, 2026-08-29.** Every item below is resolved except two, and both are held open for a
+reason rather than by neglect: **#2** waits on Week 1 producing scored predictions to calibrate
+against, and **#7**'s remaining thread is the fetch/assemble seam that
+[ADR-0003](adr/0003-make-now-dagster-in-october.md) says the Dagster port wants anyway — doing
+it twice would be waste.
+
+### 7. `board.py` is still the hot spot — PARTLY ADDRESSED, remeasured 2026-08-29
 
 367 statements, **46% covered**, and `build()` still fetches, prints and degrades in one
 function — the one deviation from ADR-0003 that this session only partly addressed. Its
@@ -315,10 +321,22 @@ The honest split is between fetching and assembling, and
 seam anyway. Doing it twice would be waste; doing it as part of the port would not.
 
 **Two of the three jobs have since left, without touching that seam.** Rendering moved to
-`hub/draft/report.py`, and the degradation policy moved into `_stage`. `board.py` is 927 →
-~740 lines and 61% → 96% covered, and `build()` is 154 → 118 lines with zero `try/except`
-blocks in it. What remains for the port is exactly the fetch/assemble split ADR-0003 names,
-which is the right thing to have left.
+`hub/draft/report.py`, and the degradation policy moved into `_stage`. What remains for the
+port is exactly the fetch/assemble split ADR-0003 names, which is the right thing to have left.
+
+**Measured again 2026-08-29**, after a week in which `board.py` was still the most-touched file
+in the repo:
+
+| | when this was filed | now |
+|---|---|---|
+| statements | 367 | **305** |
+| coverage | 46% | **95%** |
+| `build()` lines | 154 | **83** |
+| `try/except` inside `build()` | several | **0** |
+
+The one open thread is the fetch/assemble seam, and it is open **on purpose**: ADR-0003 says
+the Dagster port wants that seam anyway, and doing it twice is waste. This item stays PARTLY
+ADDRESSED until the port, which is the honest status rather than a stale one.
 
 ### 8. The board bypasses `hub.store` — HALF DONE 2026-08-29, the half that loses data
 
