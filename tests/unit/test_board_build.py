@@ -364,3 +364,52 @@ def test_the_board_is_reproducible():
         "a tied ECR must order the same way whatever order the rows arrive in"
     assert runs[0]["player"].to_list() == ["Alpha", "Beta", "Zeta", "Mid"], \
         "and the tiebreaker never reorders across different ECRs"
+
+
+def test_every_build_is_archived_immutably(tmp_path):
+    """improvements.md #8. `build()` writes one flat `draft_board.parquet` and overwrites it,
+    so every `make draft` destroyed the previous day's board -- and with it that day's ADP,
+    which ESPN does not retain and which `fit_espn_weight`, the opponent model and validating
+    `edge` all need. The fetch layer had already solved this: `hub.store.write` is "immutable
+    dated partitions; corrections write a new file, nothing is overwritten".
+    """
+    import datetime as dt
+
+    import polars as pl
+
+    from hub import store
+    from hub.draft import board as B
+
+    frame = pl.DataFrame({"player": ["A"], "ecr": [1.0]})
+    first = B._archive(frame, now=dt.datetime(2026, 9, 1, 12, 0, tzinfo=dt.UTC), base=tmp_path)
+    second = B._archive(frame, now=dt.datetime(2026, 9, 2, 12, 0, tzinfo=dt.UTC), base=tmp_path)
+    assert first is not None and second is not None
+    assert first != second, "a second build must not overwrite the first"
+    assert first.exists() and second.exists()
+    assert store.tables(tmp_path) == {B.BOARD_TABLE}
+    assert store.sql(f"SELECT count(*) AS n FROM {B.BOARD_TABLE}", base=tmp_path)["n"][0] == 2
+
+
+def test_a_failed_archive_never_breaks_the_build(tmp_path, monkeypatch, capsys):
+    """An archival side effect, not the product. A board that will not print because an
+    archive write failed is exactly the operator-dependence CLAUDE.md warns about."""
+    import polars as pl
+
+    from hub import store
+    from hub.draft import board as B
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(store, "write", boom)
+    assert B._archive(pl.DataFrame({"player": ["A"]}), base=tmp_path) is None
+    assert "archive skipped" in capsys.readouterr().out
+
+
+def test_the_flat_board_is_still_where_everything_expects_it():
+    """Additive on purpose: `last_good` reads this path, `adherence` copies it, `hub.inspect`
+    special-cases it and `docs/draft-night.md` names it as the draft-night fallback."""
+    from hub.draft.board import BOARD_PARQUET
+    from hub.paths import BOARD_PARQUET as leaf
+    assert BOARD_PARQUET is leaf
+    assert BOARD_PARQUET.name == "draft_board.parquet"
+    assert BOARD_PARQUET.parent.name == "processed"

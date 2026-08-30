@@ -17,6 +17,7 @@ import itertools
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,7 +25,7 @@ import nflreadpy as nfl
 import numpy as np
 import polars as pl
 
-from hub import jsonio
+from hub import jsonio, store
 from hub.config import (
     DRAFTED_POSITIONS,
     SEASON_AHEAD,
@@ -695,6 +696,40 @@ def _emit(lines: list[str]) -> None:
         print(line)
 
 
+# The board's home in the store: a preseason artifact, so week 0.
+BOARD_TABLE = "boards"
+BOARD_WEEK = 0
+
+
+def _archive(board: pl.DataFrame, *, season: int = SEASON_AHEAD,
+             now: datetime | None = None, base: Path | None = None) -> Path | None:
+    """Keep every build, immutably, through `hub.store`.
+
+    improvements.md #8: `build()` writes one flat `draft_board.parquet` and overwrites it, so
+    **every `make draft` destroyed the previous day's board** -- and with it that day's ADP,
+    the one input `fit_espn_weight`, the opponent model and validating `edge` all need, and the
+    one thing ESPN does not retain. The fetch layer had already solved this: `hub.store.write`
+    is "immutable dated partitions; corrections write a new file, nothing is overwritten", and
+    the odds fetcher has kept every snapshot since day one.
+
+    Additive on purpose. `draft_board.parquet` stays exactly where it is, because `last_good`
+    reads it, `adherence` copies it, `hub.inspect` special-cases it and `docs/draft-night.md`
+    names it as the fallback -- and four days before a draft is not when the artifact everything
+    falls back to should move. Migrating the readers is what remains of this item.
+
+    Never allowed to break the build, for the same reason the ADP archive is not: this is an
+    archival side effect and a board that will not print because an archive write failed is
+    the operator-dependence CLAUDE.md warns about.
+    """
+    when = now or datetime.now(UTC)
+    try:
+        return store.write(board, BOARD_TABLE, "nfl", season, BOARD_WEEK,
+                           name=f"board-{when:%Y%m%dT%H%M%S}", base=base)
+    except Exception as e:                                  # pragma: no cover - disk
+        print(f"  board archive skipped ({type(e).__name__}); the board itself is written")
+        return None
+
+
 def _persist(board: pl.DataFrame, *, out: Path | None = None,
              path: Path | None = None) -> None:
     """Write the board and the site's copy of it, creating both parents first.
@@ -717,6 +752,7 @@ def _persist(board: pl.DataFrame, *, out: Path | None = None,
     path.parent.mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True, exist_ok=True)
     board.write_parquet(path)
+    _archive(board)
     # Through `hub.jsonio`, not `json`, because a bare `NaN` is not JSON and the page that
     # reads this file is the draft-night fallback -- see that module's docstring.
     out.joinpath("draft_board.json").write_text(

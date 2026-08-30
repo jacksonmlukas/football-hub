@@ -320,7 +320,7 @@ seam anyway. Doing it twice would be waste; doing it as part of the port would n
 blocks in it. What remains for the port is exactly the fetch/assemble split ADR-0003 names,
 which is the right thing to have left.
 
-### 8. The board bypasses `hub.store`
+### 8. The board bypasses `hub.store` — HALF DONE 2026-08-29, the half that loses data
 
 `build()` writes `data/processed/draft_board.parquet` directly. `hub.store` exists, has a Hive
 layout and a `write()`, and is used by the fetch layer. The board — the most-read artifact in
@@ -348,6 +348,28 @@ for doing this properly rather than against it.
 Two further consequences found the same day: `make draft` had never worked on a fresh clone,
 because `data/processed/` is created by `hub.store` and the board does not call it (fixed); and
 the board is the reason `hub.inspect` needs its bare-name special case at all.
+
+### Done 2026-08-29: every build is now kept
+
+`board._archive` writes each build through `hub.store.write` as
+`boards/league=nfl/season=2026/week=00/board-<timestamp>.parquet`. **Nothing is overwritten any
+more**, which is the half of this item that was losing data rather than offending tidiness. The
+catalog sees it: `store.tables()` now returns `boards` alongside `lines`, `preds`,
+`ff_opportunity`, `pbp` and `adp_history`.
+
+**Additive on purpose, and that is the whole design.** `draft_board.parquet` stays exactly
+where it is — `last_good` reads it, `adherence` copies it, `hub.inspect` special-cases it and
+[draft-night.md](draft-night.md) names it as the fallback for when the board will not build.
+Four days before a draft is not when the artifact everything falls back to should move.
+
+It also cannot break a build: the write is wrapped and prints `board archive skipped (...)`,
+for the same reason the ADP archive is — an archival side effect that stops the board printing
+is the operator-dependence `CLAUDE.md` warns about. Three tests, including that a second build
+does not overwrite the first and that a failing store still lets the board through.
+
+**What remains, after the draft:** migrate the readers to the store, retire the flat file, and
+then `hub.inspect`'s bare-name special case and `hub/draft/adp_history.py` — the second bespoke
+archive this item complains about — both become unnecessary.
 
 ### 9. One naive datetime in production — FIXED 2026-08-25
 
