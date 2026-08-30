@@ -625,7 +625,12 @@ def build(league_size: int = 12, season: int = SEASON_COMPLETED, *,
     # and this contract was declared in `hub.contracts` and applied to nothing at all. It
     # covers only what something downstream reads *unconditionally*; the optional columns
     # are deliberately absent so a degraded fetch still produces a usable board.
-    return DRAFT_BOARD.validate(board.sort("ecr")), report
+    # Sorted on `ecr` **and then `player`**. The tiebreaker cannot move a ranking -- it only
+    # orders players who share an ECR, which was arbitrary before -- and it is what makes the
+    # board reproducible: two identical `board_as_of` calls returned the same 1,103 players in
+    # a different row order, the draft indexes the board by row, and every measurement drafting
+    # from it wobbled by ~0.04 points a team-week. improvements.md #18, the other half.
+    return DRAFT_BOARD.validate(board.sort(["ecr", "player"])), report
 
 
 def board_as_of(season: int) -> tuple[pl.DataFrame, BuildReport]:

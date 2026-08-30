@@ -116,13 +116,10 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
 
     for yr in sorted(set(proj["season"].unique().to_list()) & set(seasons)):
         print(f"  building the {yr} board as of {yr}-09-01 ...", flush=True)
-        # Sorted, because `board_as_of` is not reproducible: two calls in one process return
-        # the same 1,103 players in a different ROW ORDER, and `wk15_17_sos` differs below
-        # 1e-6 -- an aggregation order effect. The draft indexes the board by row, so an
-        # unstable order moves picks and the gate wobbled by ~0.04 points a team-week between
-        # identical runs. Sorted here rather than in `board.build`, which is draft-path code
-        # six days from a live draft and whose tie-breaking must not move tonight.
-        board = board_as_of(yr)[0].sort("player")
+        # `board_as_of` is reproducible as of improvements.md #18 -- it sorts on
+        # (ecr, player) and its DvP aggregation no longer hands a hash-ordered
+        # frame to a mean -- so the workaround that used to sort here is gone.
+        board = board_as_of(yr)[0]
         names = board["player"].to_list()
         keys = [player_key(n) for n in names]
         pos[yr] = [str(p) if p else "NA" for p in board["pos"].to_list()]

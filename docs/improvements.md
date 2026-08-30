@@ -696,7 +696,7 @@ becomes unnecessary, which is the thing this item was really about.
 
 ---
 
-### 18. `board_as_of` is not reproducible — DIAGNOSED 2026-08-29, fix verified, not applied
+### 18. `board_as_of` is not reproducible — FIXED 2026-08-29
 
 **Found 2026-08-28 while building the waiver gate.** Two calls to `board_as_of(2024)` in one
 process return the same 1,103 players in a **different row order**, and `wk15_17_sos` differs
@@ -720,12 +720,20 @@ fixed frame is identical; the composition is not, four times out of four.
 `.sort([defence, position, week])` inserted, four consecutive runs are bit-identical; without
 it, they are not.
 
-**Not applied.** `playoff_sos` is on the draft path and the draft is 2026-09-03. The weekly
-gate works around it by sorting the board before drafting, which is local and touches nothing
-the draft reads.
+**Applied 2026-08-29**, on the reasoning that it makes the board *more* deterministic four
+days before the draft rather than less. The alternative was leaving row order to vary randomly
+on the night; this changes it once, now, under verification.
 
-**Do, after the draft:** insert the sort, and add a test that runs the pipeline twice and
-compares. Then drop the workaround in `weekly_gate_data`. The class of bug is worth a moment's
+**Two causes, not one.** The sort between the aggregations fixed every *value* — after it,
+two boards agree column for column — and the row order still varied, because `build` ended with
+`sort("ecr")` and ties ordered arbitrarily. It now sorts on **`["ecr", "player"]`**. The
+tiebreaker cannot move a ranking: it only orders players who share an ECR, which was arbitrary
+before.
+
+**Verified**: three consecutive `board_as_of(2024)` builds are now identical frames;
+`config_digest` is unchanged at `281b7b7a`, so no prediction moves; THE PICK at slot 3 is
+unchanged. The workaround in `weekly_gate_data` is removed. There is a test on the tiebreaker
+that needs no network. The class of bug is worth a moment's
 thought beyond this instance — **any `group_by` feeding a float aggregation to another
 `group_by` has it**.
 

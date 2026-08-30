@@ -41,17 +41,29 @@ def _dvp_from_stats(stats: pl.DataFrame) -> pl.DataFrame:
     those points whether they came from one back or three, and averaging player-level
     rows instead would reward defences that face deeper rotations.
     """
+    # Sorted before the second aggregation, and that is not tidiness. A `group_by` emits its
+    # rows in a hash-dependent order that varies between calls, the mean below sums them, and
+    # floating-point addition is not associative -- so without this the same input gives
+    # answers differing at 7.1e-15, the board sorted on that float lands in a different ROW
+    # ORDER, and the draft indexes the board by row. Two identical `board_as_of` calls
+    # returned different boards, and every measurement drafting from them wobbled by ~0.04
+    # points a team-week. improvements.md #18.
     per_week = (stats
                 .filter(pl.col("position").is_in(DRAFTED_POSITIONS))
                 .group_by(["opponent_team", "position", "week"])
-                .agg(pl.col("fantasy_points_ppr").sum().alias("allowed")))
+                .agg(pl.col("fantasy_points_ppr").sum().alias("allowed"))
+                .sort(["opponent_team", "position", "week"]))
     dvp = (per_week.group_by(["opponent_team", "position"])
                    .agg(pl.col("allowed").mean().alias("ppg_allowed"))
                    .rename({"opponent_team": "defense", "position": "pos"}))
-    return (dvp.with_columns(
-                (pl.col("ppg_allowed") / pl.col("ppg_allowed").mean().over("pos"))
-                .alias("dvp_ratio"))
-               .sort(["pos", "dvp_ratio"], descending=[False, True]))
+    # `.mean().over("pos")` is a third aggregation over the second's output, so it needs the
+    # same treatment; and the final sort carries `defense` as a tiebreaker, because two
+    # defences with an identical ratio would otherwise order arbitrarily.
+    return (dvp.sort(["defense", "pos"])
+               .with_columns(
+                   (pl.col("ppg_allowed") / pl.col("ppg_allowed").mean().over("pos"))
+                   .alias("dvp_ratio"))
+               .sort(["pos", "dvp_ratio", "defense"], descending=[False, True, False]))
 
 
 def _opponents_from_schedule(sched: pl.DataFrame,

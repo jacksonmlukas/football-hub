@@ -340,3 +340,27 @@ def test_every_optional_stage_goes_through_the_helper():
                if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)
                and t.value.id == "report"]
     assert not by_hand, "a stage flag is being set outside _stage"
+
+
+def test_the_board_is_reproducible():
+    """improvements.md #18. Two `board_as_of` calls returned the same 1,103 players in a
+    different row order, and the draft indexes the board by row -- so every measurement
+    drafting from it wobbled by ~0.04 points a team-week between identical runs.
+
+    Two causes, both fixed: `playoff_sos._dvp_from_stats` handed a hash-ordered frame to a
+    mean, and floating-point addition is not associative, so the same input gave answers
+    differing at 7.1e-15; and `build` ended with `sort("ecr")`, whose ties ordered arbitrarily.
+
+    Tested at the level that matters -- the final sort -- so it does not need a network.
+    """
+    import polars as pl
+    frame = pl.DataFrame({
+        "player": ["Zeta", "Alpha", "Mid", "Beta"],
+        "ecr": [1.0, 1.0, 2.0, 1.0],
+        "pos": ["WR"] * 4})
+    runs = [frame.sample(fraction=1.0, shuffle=True, seed=s).sort(["ecr", "player"])
+            for s in range(5)]
+    assert all(r["player"].to_list() == runs[0]["player"].to_list() for r in runs), \
+        "a tied ECR must order the same way whatever order the rows arrive in"
+    assert runs[0]["player"].to_list() == ["Alpha", "Beta", "Zeta", "Mid"], \
+        "and the tiebreaker never reorders across different ECRs"
