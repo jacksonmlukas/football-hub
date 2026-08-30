@@ -10,21 +10,35 @@ Join failure 0.1% against a 2% floor.**
 
 | gate | weekly − consensus | 95% CI | seasons won | verdict |
 |---|---|---|---|---|
-| **frozen** *(primary)* | **+0.711** | **[+0.313, +1.129]** | 3/4 | **SHOW, NEVER RANK ON** |
-| churn | −2.006 | [−2.761, −1.229] | 1/4 | SHOW, NEVER RANK ON |
+| **frozen** *(primary)* | **+0.215** | [−0.249, +0.659] | 3/4 | **SHOW, NEVER RANK ON** |
+| churn | −1.806 | [−2.710, −0.921] | 2/4 | SHOW, NEVER RANK ON |
 
-**The interval excludes zero and favours the blend, for the first time in the programme.** It
-still does not adopt, because the bar has two halves and the every-season half fails: it lost
-2025 by −0.497.
+> **Restated 2026-08-30 under a reproducible board.** This ran first at **+0.711
+> [+0.313, +1.129]** and −2.006, and those figures are superseded rather than wrong-at-the-time:
+> `board_as_of` was **not reproducible** when they were measured
+> ([improvements.md #18](improvements.md)), so the roster sample they drew was one of many the
+> same command could produce. With the board fixed — it now sorts on `(ecr, player)` and its
+> DvP aggregation no longer hands a hash-ordered frame to a mean — the same command returns
+> +0.215 every time.
+>
+> **The verdict does not move**, and neither does anything the write-up concluded from it: the
+> every-season half still fails, 2025 is still the season that loses, and the interval now
+> *contains* zero rather than excluding it, which makes the result weaker rather than
+> differently-shaped. What changed is that it is now a number that can be re-run.
+
+Under the reproducible board the interval **contains** zero, so the headline that first ran
+here — *"the interval excludes zero for the first time in the programme"* — does not survive.
+It did not adopt then and does not now, because the bar has two halves and the every-season
+half fails: 2025 loses either way.
 
 ## The thing that matters most is the trend
 
-| season | frozen gain | |
-|---|---|---|
-| **2022** | **+1.894** | **never scored before — the one out-of-sample season** |
-| 2023 | +0.961 | |
-| 2024 | +0.487 | |
-| **2025** | **−0.497** | the season closest to the one being drafted |
+| season | frozen gain (as first run) | under the reproducible board | |
+|---|---|---|---|
+| **2022** | +1.894 | **+0.983** | **never scored before — the one out-of-sample season** |
+| 2023 | +0.961 | +0.027 | |
+| 2024 | +0.487 | +0.355 | |
+| **2025** | −0.497 | **−0.504** | the season closest to the one being drafted |
 
 **The edge decays monotonically and is negative in the most recent season.** Whatever this is,
 it was worth two points a team-week in 2022 and is worth nothing now. For a 2026 draft that is

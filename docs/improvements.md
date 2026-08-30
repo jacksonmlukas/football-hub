@@ -803,7 +803,17 @@ before.
 **Verified**: three consecutive `board_as_of(2024)` builds are now identical frames;
 `config_digest` is unchanged at `281b7b7a`, so no prediction moves; THE PICK at slot 3 is
 unchanged. The workaround in `weekly_gate_data` is removed. There is a test on the tiebreaker
-that needs no network. The class of bug is worth a moment's
+that needs no network.
+
+**It moved a published number, which is the point of having fixed it.** The weekly gate drew
+its rosters from `board_as_of`, so a board that was not reproducible meant a roster sample that
+was not either: the frozen gate reported **+0.711 [+0.313, +1.129]** and now reports
+**+0.215 [−0.249, +0.659]**, every time. The verdict is unchanged (SHOW) and so is everything
+the write-up concluded, but the interval now contains zero where it excluded it — the earlier
+figure was one draw presented as a result. Restated in
+[weekly-blend-gate.md](weekly-blend-gate.md) and
+[ADR-0017](adr/0017-the-market-usage-blend-is-a-model-not-a-shrinkage.md) rather than quietly
+left. The class of bug is worth a moment's
 thought beyond this instance — **any `group_by` feeding a float aggregation to another
 `group_by` has it**.
 

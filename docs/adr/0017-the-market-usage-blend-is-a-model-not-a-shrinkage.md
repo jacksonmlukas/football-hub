@@ -100,15 +100,18 @@ Frozen: **positive but small, interval containing zero — SHOW.** Churn: **nega
 
 ## Resolved, 2026-08-29: SHOW
 
-    frozen  +0.711  CI [+0.313, +1.129]  3/4 seasons   <- primary
-    churn   -2.006  CI [-2.761, -1.229]  1/4 seasons
+    frozen  +0.215  CI [-0.249, +0.659]  3/4 seasons   <- primary
+    churn   -1.806  CI [-2.710, -0.921]  2/4 seasons
 
-2,000 roster-weeks over 160 rosters, four held-out seasons, join failure 0.1%. **The interval
-excludes zero and favours the blend, for the first time in the programme** — and the
-every-season half fails, losing 2025 by −0.497. No tripwire fired.
+    (Restated 2026-08-30. It first ran at +0.711 / -2.006 under a board that was not
+    reproducible -- improvements.md #18 -- so that roster sample was one of many the same
+    command could draw. The verdict is unchanged and the decay across seasons still holds.)
+
+2,000 roster-weeks over 160 rosters, four held-out seasons, join failure 0.1%. The every-season half fails, losing 2025 either way, and under the reproducible board the
+interval contains zero. No tripwire fired.
 
 **The decisive detail is not the pooled figure.** The frozen gain decays monotonically —
-**+1.894, +0.961, +0.487, −0.497** across 2022 to 2025 — and is negative in the season closest
+**+0.983, +0.027, +0.355, −0.504** across 2022 to 2025 — and is negative in the season closest
 to the one being drafted. Whatever this is, it was worth two points a team-week in 2022 and is
 worth nothing now. No mechanism is asserted for the decay.
 
