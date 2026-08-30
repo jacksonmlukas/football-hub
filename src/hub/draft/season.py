@@ -18,6 +18,8 @@ everyone's scores roughly equally, so it distorts P(win) far less than it distor
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 
 from hub.config import RosterConfig, flex_capacity, flex_positions, required_starters
@@ -32,6 +34,11 @@ FLEX_SLOTS = ROSTER.flex
 # The most flex-eligible players a team can start at once. Was a bare `7` in optimize.py.
 FLEX_CAPACITY = flex_capacity(ROSTER)
 REG_SEASON_WEEKS = 14
+# The weeks a fantasy regular season is played over, as a tuple, derived rather than restated.
+# It was written out twice as `GATE_WEEKS = tuple(range(1, 15))` -- in `weekly_screen` and in
+# `weekly_gate` -- which is a literal `15` in two files for a league length that already has an
+# owner one line up.
+FANTASY_WEEKS: tuple[int, ...] = tuple(range(1, REG_SEASON_WEEKS + 1))
 PLAYOFF_TEAMS = 6
 # Quarter-final, semi-final, final. The bracket needs its own weeks: scoring the playoffs on
 # draws that already decided seeding couples a team's title odds to its week 1 result.
@@ -62,6 +69,45 @@ from hub.models.predict import (  # noqa: F401,E402
 
 _skewed = skewed
 _correlated_normal = correlated_normal
+
+
+
+def starting_lineup(pos: Sequence[str], score: Sequence[float] | np.ndarray) -> list[int]:
+    """Indices of the lineup: each required **Slot** to the best available, then the flex.
+
+    One rule, in the module that owns the shape it reads. `STARTERS`, `FLEX_FROM` and
+    `FLEX_SLOTS` are declared three lines up, and five modules import them -- so the rule that
+    fills them belongs beside them rather than in whichever caller needed it first.
+
+    It was written twice, character for character, in `hub.season.lineup_gate` and
+    `hub.season.weekly_gate`, kept in agreement by a docstring reading *"the same rule as
+    lineup_gate.projection_lineup_points"*. This repo has now twice found something real
+    underneath an invariant asserted in prose -- `store.tables` claiming it and `connect` could
+    not disagree, and the `prior_signal` join -- so the second copy is gone rather than
+    annotated.
+
+    Greedy, and deliberately not the enumeration in `hub.season.lineup`. That one searches
+    every legal lineup to maximise a win probability; this is *start your highest*, the simple
+    rule both gates measure against. They are different questions and both are wanted.
+
+    `score` orders the choice and nothing else -- a projection, a negated consensus rank, a
+    lower confidence bound. What it means is the caller's business.
+    """
+    order = np.argsort(-np.asarray(score, dtype=float))
+    counts: dict[str, int] = {}
+    starters: list[int] = []
+    flex: list[int] = []
+    for j in order:
+        i = int(j)
+        p = pos[i]
+        if p in STARTERS and counts.get(p, 0) < STARTERS[p]:
+            counts[p] = counts.get(p, 0) + 1
+            starters.append(i)
+        elif p in FLEX_FROM:
+            flex.append(i)
+    # `order` is already descending, so the first FLEX_SLOTS leftovers are the best ones.
+    starters.extend(flex[:FLEX_SLOTS])
+    return starters
 
 
 def lineup_points(scores: np.ndarray, pos: np.ndarray) -> np.ndarray:

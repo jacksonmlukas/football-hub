@@ -37,7 +37,7 @@ import numpy as np
 import polars as pl
 
 from hub.draft.board import board_as_of
-from hub.draft.season import FLEX_FROM, FLEX_SLOTS, REG_SEASON_WEEKS, STARTERS
+from hub.draft.season import REG_SEASON_WEEKS, starting_lineup
 from hub.models.experiment import paired_report, summarise, walk_forward_inputs
 from hub.names import player_key
 
@@ -69,23 +69,11 @@ def projection_lineup_points(grid: np.ndarray, pos: Sequence[str],
     The lineup is chosen *once* from projections -- it does not change week to week, because
     a projection does not. That is the honest version of the simple rule: a manager following
     it sets the same lineup every week unless somebody is hurt.
+
+    The selection is `hub.draft.season.starting_lineup`, which `hub.season.weekly_gate` also
+    calls: it was the same eleven lines in both files, kept in agreement by a docstring.
     """
-    order = np.argsort(-np.asarray(proj, dtype=float))
-    counts: dict[str, int] = {}
-    starters: list[int] = []
-    flex: list[int] = []
-    for j in order:
-        i = int(j)
-        p = pos[i]
-        if p in STARTERS and counts.get(p, 0) < STARTERS[p]:
-            counts[p] = counts.get(p, 0) + 1
-            starters.append(i)
-        elif p in FLEX_FROM:
-            flex.append(i)
-    # `order` is already descending by projection, so the first FLEX_SLOTS leftovers are the
-    # best ones. This inlined ("RB", "WR", "TE") while importing STARTERS from the module
-    # where FLEX_FROM sits beside it.
-    starters.extend(flex[:FLEX_SLOTS])
+    starters = starting_lineup(pos, proj)
     if not starters:
         return 0.0
     return float(grid[starters, :].sum() / grid.shape[1])

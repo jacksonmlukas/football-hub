@@ -17,31 +17,6 @@ def _pos(n_qb=2, n_rb=4, n_wr=5, n_te=2):
 
 # --- the lineup rule --------------------------------------------------------
 
-def test_required_slots_fill_before_the_flex():
-    pos = _pos()
-    score = np.arange(len(pos), dtype=float)          # last players score highest
-    idx = G.starters_by_score(pos, score)
-    got = [pos[i] for i in idx]
-    from hub.draft.season import FLEX_SLOTS, STARTERS
-    for p, need in STARTERS.items():
-        assert got.count(p) >= need, f"{p} short of its required {need}"
-    assert len(idx) == sum(STARTERS.values()) + FLEX_SLOTS
-
-
-def test_the_flex_takes_the_best_leftover_not_the_first():
-    pos = ["QB", "RB", "RB", "RB", "WR", "WR", "WR", "WR", "TE"]
-    score = np.array([1, 9, 8, 7, 6, 5, 4, 3, 2], dtype=float)
-    idx = G.starters_by_score(pos, score)
-    assert 3 in idx, "the third RB at 7 is the best flex-eligible leftover"
-
-
-def test_a_quarterback_cannot_fill_the_flex():
-    pos = ["QB", "QB", "RB", "RB", "WR", "WR", "WR", "TE"]
-    score = np.array([9, 8, 1, 1, 1, 1, 1, 1], dtype=float)
-    idx = G.starters_by_score(pos, score)
-    assert [pos[i] for i in idx].count("QB") == 1, "the second QB scores highest and still sits"
-
-
 def test_the_lineup_is_chosen_again_every_week():
     """The entire subject. A static projection sets one lineup all season; a weekly one does
     not, and `lineup_gate` names that as the gap it could not measure."""

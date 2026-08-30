@@ -45,11 +45,11 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
-from hub.draft.season import FLEX_FROM, FLEX_SLOTS, STARTERS
+from hub.draft.season import FANTASY_WEEKS, STARTERS, starting_lineup
 from hub.models.experiment import BOOTSTRAP
 
 # The fantasy regular season. 15-17 is the playoffs, reported apart; 18 is meaningless.
-GATE_WEEKS: tuple[int, ...] = tuple(range(1, 15))
+GATE_WEEKS = FANTASY_WEEKS
 
 # A player the consensus page does not list is ranked behind every player it does.
 UNRANKED = -1e9
@@ -61,35 +61,13 @@ UNRANKED = -1e9
 VOID_FLOOR = 0.02
 
 
-def starters_by_score(pos: Sequence[str], score: np.ndarray) -> list[int]:
-    """Indices of the lineup: fill each required slot with the best available, then the flex.
-
-    The same rule as `lineup_gate.projection_lineup_points`, applied to **one week's** scores
-    rather than to a season-long projection. That difference is the entire subject here.
-    """
-    order = np.argsort(-np.asarray(score, dtype=float))
-    counts: dict[str, int] = {}
-    starters: list[int] = []
-    flex: list[int] = []
-    for j in order:
-        i = int(j)
-        p = pos[i]
-        if p in STARTERS and counts.get(p, 0) < STARTERS[p]:
-            counts[p] = counts.get(p, 0) + 1
-            starters.append(i)
-        elif p in FLEX_FROM:
-            flex.append(i)
-    starters.extend(flex[:FLEX_SLOTS])
-    return starters
-
-
 WAIVER_LOOK = 15
 
 
 def lineup_projection(roster: Sequence[int], pos: Sequence[str],
                       score: np.ndarray) -> float:
     """What this roster's best legal lineup *projects* to score, by this arm's own numbers."""
-    idx = starters_by_score([pos[i] for i in roster], score[list(roster)])
+    idx = starting_lineup([pos[i] for i in roster], score[list(roster)])
     return float(sum(score[roster[j]] for j in idx))
 
 
@@ -114,7 +92,6 @@ def waiver_swap(roster: list[int], pool: list[int], pos: Sequence[str],
 
     Both arms run this identically over an identical pool. Only `score` differs.
     """
-    from hub.draft.season import STARTERS
     if not pool or len(roster) <= starters:
         return None
     held: dict[str, int] = {}
@@ -158,7 +135,6 @@ def season_points(realised: np.ndarray, pos: Sequence[str], score: np.ndarray,
     hundred players the incumbent cannot score at all. Masking the roster instead would bench
     a rostered player for being unranked, which is a different rule and the wrong one.
     """
-    from hub.draft.season import STARTERS
     need = sum(STARTERS.values())
     cur, free = list(roster), list(pool)
     decide = score if add_score is None else add_score
@@ -173,7 +149,7 @@ def season_points(realised: np.ndarray, pos: Sequence[str], score: np.ndarray,
                 add, drop = swap
                 cur = [i for i in cur if i != drop] + [add]
                 free = [i for i in free if i != add] + [drop]
-        idx = starters_by_score([pos[i] for i in cur], col[cur])
+        idx = starting_lineup([pos[i] for i in cur], col[cur])
         chosen = [cur[j] for j in idx]
         out[w] = float(realised[chosen, w - 1].sum()) if chosen else 0.0
     return out

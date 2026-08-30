@@ -466,3 +466,69 @@ def test_leverage_and_season_share_one_bracket():
     src = inspect.getsource(leverage)
     assert "_champion" not in src, "leverage must not carry its own bracket"
     assert "seed_table" in src and "champion(" in src
+
+
+# --- the starting-lineup rule, in the module that owns the shape it reads ----
+#
+# It was written twice, character for character, in `hub.season.lineup_gate` and
+# `hub.season.weekly_gate`, kept in agreement by a docstring reading "the same rule as
+# lineup_gate.projection_lineup_points". These tests lived against one of the two copies.
+
+
+def _lineup_pos(n_qb=2, n_rb=4, n_wr=5, n_te=2):
+    return ["QB"] * n_qb + ["RB"] * n_rb + ["WR"] * n_wr + ["TE"] * n_te
+
+
+def test_required_slots_fill_before_the_flex():
+    import numpy as np
+
+    from hub.draft.season import FLEX_SLOTS, STARTERS, starting_lineup
+    pos = _lineup_pos()
+    got = [pos[i] for i in starting_lineup(pos, np.arange(len(pos), dtype=float))]
+    for p, need in STARTERS.items():
+        assert got.count(p) >= need, f"{p} short of its required {need}"
+    assert len(got) == sum(STARTERS.values()) + FLEX_SLOTS
+
+
+def test_the_flex_takes_the_best_leftover_not_the_first():
+    from hub.draft.season import starting_lineup
+    pos = ["QB", "RB", "RB", "RB", "WR", "WR", "WR", "WR", "TE"]
+    idx = starting_lineup(pos, [1, 9, 8, 7, 6, 5, 4, 3, 2])
+    assert 3 in idx, "the third RB at 7 is the best flex-eligible leftover"
+
+
+def test_a_quarterback_cannot_fill_the_flex():
+    from hub.draft.season import starting_lineup
+    pos = ["QB", "QB", "RB", "RB", "WR", "WR", "WR", "TE"]
+    idx = starting_lineup(pos, [9, 8, 1, 1, 1, 1, 1, 1])
+    assert [pos[i] for i in idx].count("QB") == 1, \
+        "the second QB scores highest and still sits"
+
+
+def test_the_rule_reads_the_shape_rather_than_restating_it():
+    """`STARTERS`, `FLEX_FROM` and `FLEX_SLOTS` are three lines above it, derived from
+    `RosterConfig`. A superflex league moves the config and the rule follows."""
+    from dataclasses import replace
+
+    from hub.config import RosterConfig, required_starters
+    from hub.draft.season import STARTERS
+    assert STARTERS == required_starters(RosterConfig())
+    assert required_starters(replace(RosterConfig(), qb=2))["QB"] == 2
+
+
+def test_the_fantasy_weeks_are_derived_from_the_season_length():
+    """It was `tuple(range(1, 15))` in two modules -- a literal 15 for a league length that
+    already had an owner."""
+    from hub.draft.season import FANTASY_WEEKS, REG_SEASON_WEEKS
+    assert FANTASY_WEEKS == tuple(range(1, REG_SEASON_WEEKS + 1))
+    assert len(FANTASY_WEEKS) == REG_SEASON_WEEKS
+
+
+def test_both_gates_use_the_one_rule():
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub" / "season"
+    for rel in ("lineup_gate.py", "weekly_gate.py"):
+        names = {a.name for n in ast.walk(ast.parse((root / rel).read_text()))
+                 if isinstance(n, ast.ImportFrom) for a in n.names}
+        assert "starting_lineup" in names, f"{rel} still carries its own copy"
