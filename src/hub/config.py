@@ -69,6 +69,16 @@ SEASON_AHEAD = 2026
 # ratios would silently come from a two-year-stale season. Six more sites said 2025 by hand.
 SEASON_COMPLETED = SEASON_AHEAD - 1
 
+# How long a fantasy regular season is, and the weeks it is played over as a tuple, derived
+# rather than restated. `tuple(range(1, 15))` was written out three times -- in `weekly_screen`,
+# in `weekly_gate` and here -- a literal 15 in three files for something with one owner. It sits
+# in `config` rather than in `draft.season` because `models/` may not reach into `draft/`
+# (`test_models_does_not_reach_into_draft`), and the screen and the Weekly projection both need
+# it. Weeks 15-17 are the playoffs, reported apart rather than pooled; week 18 is meaningless in
+# a league that ends at 17.
+REG_SEASON_WEEKS = 14
+FANTASY_WEEKS: tuple[int, ...] = tuple(range(1, REG_SEASON_WEEKS + 1))
+
 
 @dataclass
 class DraftConfig:

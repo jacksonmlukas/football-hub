@@ -13,6 +13,7 @@ import polars as pl
 
 from hub.draft.season import REG_SEASON_WEEKS
 from hub.models.experiment import realised_ppg
+from hub.models.panel import PanelSpec, build_panel, weekly_consensus
 from hub.names import player_key
 from hub.season.weekly_gate import UNRANKED, GateInputs
 
@@ -80,12 +81,11 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         project,
         standard_error,
     )
-    from hub.models.weekly_screen import build_panel, weekly_consensus
-
     cfg = RosterConfig()
-    want_ranks = shrink is not None and shrink is not None and "market" in shrink
-    panel = build_panel(seasons, consensus=False, expected=expected,
-                        ranks=preseason_ranks(seasons) if want_ranks else None)
+    want_ranks = shrink is not None and "market" in shrink
+    panel = build_panel(seasons, PanelSpec(
+        consensus=False, expected=expected,
+        ranks=preseason_ranks(seasons) if want_ranks else None))
     ecr = weekly_consensus(seasons)
 
     projected = []

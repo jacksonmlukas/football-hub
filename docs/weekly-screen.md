@@ -197,6 +197,12 @@ citation. The statistics, the cell structure, the pre-registered verdict — eve
 including the losing ones — and the joint screen are unit-tested offline; only the nflverse
 assembly needs the network.
 
+**Split 2026-08-30.** The screen is now the statistic and the verdict; the **Panel** it measures
+on — one row per player-week, every feature measured before its outcome — is
+`src/hub/models/panel.py`, because the Weekly projection and the weekly gate read the same frame
+and were reaching into the screen with function-local imports to get it. The CLI above is
+unchanged, and the numbers on this page re-run identically.
+
 Two defects the harness found that the scratchpad version had:
 
 * **The player control was career-to-date, not season-to-date.** Routing the expanding

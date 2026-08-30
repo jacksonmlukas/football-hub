@@ -7,9 +7,61 @@ import numpy as np
 import polars as pl
 import pytest
 
+from hub.models import panel as pnl
 from hub.models import weekly_screen as ws
 
-# --- the statistic ----------------------------------------------------------
+
+def _panel(seasons=(2023, 2024), weeks=(1, 2), players=60, seed=0):
+    rng = np.random.default_rng(seed)
+    rows = []
+    for s in seasons:
+        for w in weeks:
+            for i in range(players):
+                rows.append({"season": s, "week": w, "player_id": f"p{i}",
+                             "fantasy_points_ppr": float(rng.normal(12, 6)),
+                             "ppg_before": float(rng.normal(12, 4)),
+                             "ecr": float(i + 1), "feat": float(rng.normal())})
+    return pl.DataFrame(rows)
+
+
+def _summary(per, t):
+    return {"r": float(np.mean(list(per.values()))), "se": 1.0, "t": t,
+            "cells": len(per) * 5, "n": 1000, "per_season": per}
+
+
+def _collinear_panel(n=80, seed=3):
+    rng = np.random.default_rng(seed)
+    rows = []
+    for s in (2023, 2024):
+        for w in range(1, 11):
+            common = rng.normal(size=n)
+            for i in range(n):
+                # Two noisy readings of one underlying quantity, which is what drives the
+                # outcome. Symmetric on purpose: neither is the truth and the other a copy,
+                # so neither *residual* carries signal once the other is controlled for.
+                rows.append({"season": s, "week": w, "player_id": f"p{i}",
+                             "ppg_before": 12.0, "ecr": float(i + 1),
+                             "a": float(common[i] + 0.4 * rng.normal()),
+                             "b": float(common[i] + 0.4 * rng.normal()),
+                             "late": float(rng.normal()),
+                             "fantasy_points_ppr": float(10 + 4 * common[i]
+                                                         + rng.normal())})
+    return pl.DataFrame(rows)
+
+
+def _usage_panel(seasons=(2023, 2024), weeks=range(1, 13), players=60, seed=5):
+    rng = np.random.default_rng(seed)
+    rows = []
+    for s in seasons:
+        for w in weeks:
+            for i in range(players):
+                rows.append({"season": s, "week": w, "player_id": f"p{i}",
+                             "ecr": float(i + 1), "ppg_before": 12.0,
+                             "targets": float(rng.poisson(5)),
+                             "fantasy_points_ppr": float(rng.normal(12, 6)),
+                             "feat": float(rng.normal())})
+    return pl.DataFrame(rows)
+
 
 def test_residual_removes_the_control_entirely():
     rng = np.random.default_rng(0)
@@ -40,34 +92,11 @@ def test_a_constant_feature_has_no_partial_correlation():
     assert np.isnan(ws.partial_r(y, np.ones(4), np.zeros((4, 1))))
 
 
-# --- the cell structure, which is what stops repeated measures --------------
-
-def _panel(seasons=(2023, 2024), weeks=(1, 2), players=60, seed=0):
-    rng = np.random.default_rng(seed)
-    rows = []
-    for s in seasons:
-        for w in weeks:
-            for i in range(players):
-                rows.append({"season": s, "week": w, "player_id": f"p{i}",
-                             "fantasy_points_ppr": float(rng.normal(12, 6)),
-                             "ppg_before": float(rng.normal(12, 4)),
-                             "ecr": float(i + 1), "feat": float(rng.normal())})
-    return pl.DataFrame(rows)
-
-
 def test_one_correlation_per_season_week_cell():
     cells = ws.cell_correlations(_panel(), "feat")
     assert cells.height == 4
     assert set(zip(cells["season"], cells["week"], strict=True)) == {(2023, 1), (2023, 2),
                                                         (2024, 1), (2024, 2)}
-
-
-def test_no_player_appears_twice_inside_a_cell():
-    """The property the design rests on -- protocol item 3. Pooling player-weeks would
-    inflate every t here by roughly the square root of fourteen."""
-    p = _panel()
-    for (_s, _w), cell in p.group_by(["season", "week"]):
-        assert cell["player_id"].n_unique() == cell.height
 
 
 def test_a_thin_cell_is_dropped_not_correlated():
@@ -82,8 +111,6 @@ def test_a_feature_missing_before_its_week_is_excluded_not_zero_filled():
     cells = ws.cell_correlations(p, "feat", min_week=2)
     assert cells["week"].unique().to_list() == [2]
 
-
-# --- the standard error is of the cells, not of the player-weeks ------------
 
 def test_the_standard_error_is_across_cells():
     cells = pl.DataFrame({"season": [2023, 2023, 2024, 2024], "week": [1, 2, 1, 2],
@@ -106,13 +133,6 @@ def test_nothing_measured_is_reported_rather_than_crashing():
                                           "r": pl.Float64, "n": pl.Int64}))
     assert s["cells"] == 0
     assert ws.verdict(s, "+")[0] == ws.KILLED
-
-
-# --- the pre-registered rule, including every losing branch -----------------
-
-def _summary(per, t):
-    return {"r": float(np.mean(list(per.values()))), "se": 1.0, "t": t,
-            "cells": len(per) * 5, "n": 1000, "per_season": per}
 
 
 def test_a_feature_clears_only_with_both_halves():
@@ -165,28 +185,6 @@ def test_an_unsigned_feature_only_needs_consistency():
     assert ws.verdict(_summary(per, -4.0), "?")[0] == ws.CLEARS
 
 
-# --- the joint screen, and the bug it was written with ----------------------
-
-def _collinear_panel(n=80, seed=3):
-    rng = np.random.default_rng(seed)
-    rows = []
-    for s in (2023, 2024):
-        for w in range(1, 11):
-            common = rng.normal(size=n)
-            for i in range(n):
-                # Two noisy readings of one underlying quantity, which is what drives the
-                # outcome. Symmetric on purpose: neither is the truth and the other a copy,
-                # so neither *residual* carries signal once the other is controlled for.
-                rows.append({"season": s, "week": w, "player_id": f"p{i}",
-                             "ppg_before": 12.0, "ecr": float(i + 1),
-                             "a": float(common[i] + 0.4 * rng.normal()),
-                             "b": float(common[i] + 0.4 * rng.normal()),
-                             "late": float(rng.normal()),
-                             "fantasy_points_ppr": float(10 + 4 * common[i]
-                                                         + rng.normal())})
-    return pl.DataFrame(rows)
-
-
 def test_two_readings_of_one_quantity_both_clear_on_their_own():
     """Which is the reason the joint screen exists. `own_spread` and `implied_total` each
     cleared at 5/5 seasons, and one is a linear function of the other."""
@@ -221,47 +219,36 @@ def test_a_late_starting_feature_does_not_shrink_the_others_sample():
     assert late["controls"] == "a"
 
 
-# --- Usage, and the lagging-control problem ---------------------------------
-
-def _usage_panel(seasons=(2023, 2024), weeks=range(1, 13), players=60, seed=5):
-    rng = np.random.default_rng(seed)
-    rows = []
-    for s in seasons:
-        for w in weeks:
-            for i in range(players):
-                rows.append({"season": s, "week": w, "player_id": f"p{i}",
-                             "ecr": float(i + 1), "ppg_before": 12.0,
-                             "targets": float(rng.poisson(5)),
-                             "fantasy_points_ppr": float(rng.normal(12, 6)),
-                             "feat": float(rng.normal())})
-    return pl.DataFrame(rows)
+def test_route_trend_is_not_in_the_default_screen():
+    """A pin on a decision, not on a preference. `route_trend` clears alone (+0.034 at 2.5 se,
+    5/5 seasons) and correlates with `snap_trend` at **0.917** -- put in the same joint screen
+    the two annihilate each other and leave nothing, which is a fact about collinearity and not
+    about either signal. Snap share is the stronger, so it is the one that stays."""
+    assert ws.ROUTE_TREND.name == "route_trend"
+    assert ws.ROUTE_TREND not in ws.FEATURES
+    assert "snap_trend" in [f.name for f in ws.FEATURES]
 
 
-def test_recent_mean_is_strictly_prior():
-    """Week w's control may not contain week w. The whole screen rests on it."""
-    p = pl.DataFrame({"player_id": ["a"] * 5, "season": [2024] * 5,
-                      "week": [1, 2, 3, 4, 5],
-                      "targets": [10.0, 0.0, 0.0, 0.0, 99.0]})
-    out = ws.recent_mean(p, "targets").sort("week")
-    assert out["targets_recent"].to_list()[4] == pytest.approx(0.0), \
-        "weeks 2-4 are zeros; week 5's own 99 must not reach its own control"
-    assert out["targets_recent"].to_list()[0] is None, "week 1 has no history"
+def test_the_scheme_trends_are_not_in_the_default_screen():
+    assert all(f not in ws.FEATURES for f in ws.SCHEME_TRENDS)
+    assert {f.name for f in ws.SCHEME_TRENDS} == {
+        "pa_rate_trend", "motion_rate_trend", "nohuddle_rate_trend",
+        "screen_rate_trend", "pass_rate_trend"}
 
 
-def test_recent_mean_counts_calendar_weeks_not_appearances():
-    """A player who missed week 3 has a two-week window, not one padded from week 1."""
-    p = pl.DataFrame({"player_id": ["a"] * 3, "season": [2024] * 3,
-                      "week": [1, 2, 4], "targets": [10.0, 10.0, 4.0]})
-    out = ws.recent_mean(p, "targets").sort("week")
-    assert out["targets_recent"].to_list()[2] == pytest.approx(10.0), \
-        "week 4 averages weeks 1-3, of which only 1 and 2 exist"
+def test_no_player_appears_twice_inside_a_cell():
+    """The property the design rests on -- protocol item 3. Pooling player-weeks would
+    inflate every t here by roughly the square root of fourteen."""
+    p = _panel()
+    for (_s, _w), cell in p.group_by(["season", "week"]):
+        assert cell["player_id"].n_unique() == cell.height
 
 
 def test_the_usage_screen_controls_for_the_count_not_for_points():
     """Controlling this week's targets on season-to-date *points* would let a change in role
     show up as a target signal."""
     p = _usage_panel()
-    p = ws.recent_mean(ws.prior_means(p, ["player_id"], ["targets"], within_season=True)
+    p = pnl.recent_mean(pnl.prior_means(p, ["player_id"], ["targets"], within_season=True)
                        .join(p, on=["player_id", "season", "week"], how="right"), "targets")
     out = ws.screen_usage(p, [ws.Feature("feat", "+", 1)], components=("targets",))
     assert out.height == 1 and out["component"][0] == "targets"
@@ -281,9 +268,9 @@ def test_a_feature_that_is_recent_form_leaves_nothing():
              "targets": float(rng.poisson(4 + (i % 5)))}
             for w in range(1, 13) for i in range(80)]
     p = pl.DataFrame(rows)
-    p = p.join(ws.prior_means(p, ["player_id"], ["targets"], within_season=True),
+    p = p.join(pnl.prior_means(p, ["player_id"], ["targets"], within_season=True),
                on=["player_id", "season", "week"], how="left")
-    p = (ws.recent_mean(p, "targets")
+    p = (pnl.recent_mean(p, "targets")
            .drop_nulls(["targets_prior", "targets_recent"])
            .with_columns(pl.col("targets_recent").alias("form")))
     cells = ws.cell_correlations(p, "form", outcome="targets",
@@ -292,255 +279,3 @@ def test_a_feature_that_is_recent_form_leaves_nothing():
     alone = ws.cell_correlations(p, "form", outcome="targets",
                                  controls=("targets_prior", "ecr"))
     assert not alone.is_empty(), "and against the lagging control alone it is measurable"
-
-
-def test_the_panel_carries_the_designation_but_cannot_fit_retention_on_it():
-    """A pin on a structural fact, so nobody quietly fits the injury term on this panel.
-
-    `player_stats` has no row for a player who did not play, so of 5,473 "Out" designations
-    across 2021-25 exactly six reach the panel. `hub.models.injury` scores an injury row with
-    no stat row as zero -- the player who did not play is its whole subject -- so retention
-    fitted here would measure "what a Questionable player who played anyway retains" and
-    report it under the stronger result's name. The term belongs in Gate B, which builds a
-    complete grid where a missing row is a zero.
-    """
-    import inspect
-    src = inspect.getsource(ws.build_panel)
-    assert "CANNOT be fitted here" in src, "the constraint must stay stated where it is read"
-    assert "status" in src and "practice" in src, "and the columns are carried for Gate B"
-
-
-def test_the_designation_columns_survive_a_player_with_no_injury_row():
-    """A healthy player must come through as Healthy, not as a null that a group_by drops."""
-    inj = pl.DataFrame({"season": [2024], "week": [5], "key": ["hurt"],
-                        "inj_sev": [1.0], "status": ["Questionable"], "practice": ["Limited"]})
-    stats = pl.DataFrame({"season": [2024, 2024], "week": [5, 5],
-                          "key": ["hurt", "fine"], "x": [1.0, 2.0]})
-    out = (stats.join(inj, on=["season", "week", "key"], how="left")
-                .with_columns(pl.col("status").fill_null("Healthy"),
-                              pl.col("practice").fill_null("Healthy")))
-    assert out.filter(pl.col("key") == "fine")["status"][0] == "Healthy"
-    assert out.height == 2
-
-
-# --- the as-of week assignment, and the off-by-one that shifted everything ---
-
-def _windows():
-    """Two NFL weeks: Thursday to Monday, a week apart."""
-    import datetime as dt
-    return pl.DataFrame({
-        "season": [2024, 2024],
-        "week": [5, 6],
-        "first_kick": [dt.date(2024, 10, 3), dt.date(2024, 10, 10)],
-        "last_kick": [dt.date(2024, 10, 7), dt.date(2024, 10, 14)]})
-
-
-def _scrape(day):
-    import datetime as dt
-    return pl.DataFrame({"scrape_date": [dt.date(*day)], "key": ["x"], "ecr": [1.0]})
-
-
-def test_a_midweek_scrape_belongs_to_the_week_it_is_inside():
-    """The bug that shifted the whole control by a week. An NFL week runs Thursday to Monday
-    and FantasyPros scrapes land mid-week: 2024-10-04 is a Friday, *inside* week 5 (Oct 3-7),
-    and it ranks week 5's Sunday games. Joining on the next *first* kickoff sent it to week 6.
-
-    The tell was that Saquon Barkley, CeeDee Lamb and Patrick Mahomes were each missing from
-    exactly one week -- and it was the week after their team's bye, because a page that
-    correctly omits a bye-week player was being attached to the following week.
-    """
-    got = ws.assign_weeks(_scrape((2024, 10, 4)), _windows())
-    assert got["week"].to_list() == [5], "a Friday inside week 5 is week 5's ranking"
-
-
-def test_a_scrape_before_a_week_opens_still_belongs_to_it():
-    assert ws.assign_weeks(_scrape((2024, 10, 1)), _windows())["week"].to_list() == [5]
-
-
-def test_a_scrape_after_a_week_closes_belongs_to_the_next():
-    assert ws.assign_weeks(_scrape((2024, 10, 8)), _windows())["week"].to_list() == [6]
-
-
-def test_a_scrape_too_far_from_any_week_is_dropped():
-    """Pre-season and post-season scrapes rank no week that exists here."""
-    assert ws.assign_weeks(_scrape((2024, 9, 1)), _windows()).is_empty()
-
-
-def test_lead_days_is_measured_to_the_week_being_ranked():
-    got = ws.assign_weeks(_scrape((2024, 10, 4)), _windows())
-    assert got["lead_days"].to_list() == [3], "Friday to the following Monday"
-
-
-# --- pass-play participation, and the twin it turned out to be --------------
-
-def test_route_share_is_plays_on_over_team_pass_plays():
-    plays = pl.DataFrame({
-        "week": [1, 1, 1, 1],
-        "possession_team": ["PHI"] * 4,
-        "offense_players": ["a;b;c", "a;b", "a;c", "a"]})
-    got = ws.route_share_from_plays(plays, 2024).sort("player_id")
-    share = dict(zip(got["player_id"], got["route_pct"], strict=True))
-    assert share["a"] == pytest.approx(1.0), "on every pass play"
-    assert share["b"] == pytest.approx(0.5)
-    assert share["c"] == pytest.approx(0.5)
-
-
-def test_the_denominator_is_per_team_per_week():
-    """A player's share is of *his own* team's pass plays, not the league's."""
-    plays = pl.DataFrame({
-        "week": [1, 1, 1],
-        "possession_team": ["PHI", "DAL", "DAL"],
-        "offense_players": ["a", "b", "b"]})
-    got = ws.route_share_from_plays(plays, 2024)
-    assert set(got["route_pct"].to_list()) == {1.0}, "each is on all of his own team's plays"
-
-
-def test_an_empty_slate_yields_an_empty_frame_with_the_right_shape():
-    got = ws.route_share_from_plays(pl.DataFrame(), 2024)
-    assert got.is_empty()
-    assert set(got.columns) == {"season", "week", "player_id", "route_pct"}
-
-
-def test_blank_ids_in_the_player_list_are_dropped():
-    plays = pl.DataFrame({"week": [1], "possession_team": ["PHI"],
-                          "offense_players": ["a;;b;"]})
-    assert sorted(ws.route_share_from_plays(plays, 2024)["player_id"].to_list()) == ["a", "b"]
-
-
-def test_route_trend_is_not_in_the_default_screen():
-    """A pin on a decision, not on a preference. `route_trend` clears alone (+0.034 at 2.5 se,
-    5/5 seasons) and correlates with `snap_trend` at **0.917** -- put in the same joint screen
-    the two annihilate each other and leave nothing, which is a fact about collinearity and not
-    about either signal. Snap share is the stronger, so it is the one that stays."""
-    assert ws.ROUTE_TREND.name == "route_trend"
-    assert ws.ROUTE_TREND not in ws.FEATURES
-    assert "snap_trend" in [f.name for f in ws.FEATURES]
-
-
-# --- expected values replace efficiency, never opportunity ------------------
-
-def test_only_efficiency_quantities_get_an_expected_variant():
-    """A target is not an estimate -- he was thrown at or he was not. Everything below the
-    opportunity is an efficiency, and efficiency is what regresses."""
-    assert set(ws.EXPECTED) == {"receptions", "receiving_yards", "rushing_yards",
-                                "passing_yards"}
-    for opportunity in ("targets", "carries", "attempts"):
-        assert opportunity not in ws.EXPECTED
-
-
-def test_the_expected_columns_are_the_ff_opportunity_names():
-    assert ws.EXPECTED["receptions"] == "receptions_exp"
-    assert ws.EXPECTED["receiving_yards"] == "rec_yards_gained_exp"
-    assert ws.XFP_WEEK == "total_fantasy_points_exp"
-
-
-# --- team scheme, and the guard that came out of building it ----------------
-
-def test_scheme_rates_are_per_team_week():
-    charting = pl.DataFrame({
-        "nflverse_game_id": ["g1"] * 4,
-        "nflverse_play_id": [1, 2, 3, 4],
-        "is_play_action": [True, False, True, False],
-        "is_motion": [True, True, True, True],
-        "is_no_huddle": [False, False, False, False],
-        "is_screen_pass": [True, False, False, False]})
-    plays = pl.DataFrame({
-        "nflverse_game_id": ["g1"] * 4, "play_id": [1, 2, 3, 4],
-        "possession_team": ["PHI"] * 4, "is_pass": [True, True, False, False],
-        "week": [3] * 4, "season": [2024] * 4})
-    got = ws.scheme_rates_from_plays(charting, plays).to_dicts()[0]
-    assert got["posteam"] == "PHI" and got["week"] == 3
-    assert got["pa_rate"] == pytest.approx(0.5)
-    assert got["motion_rate"] == pytest.approx(1.0)
-    assert got["nohuddle_rate"] == pytest.approx(0.0)
-    assert got["pass_rate"] == pytest.approx(0.5)
-
-
-def test_a_play_charted_but_not_participated_is_dropped():
-    """An inner join, so a play FTN charted and participation did not is not a null team."""
-    charting = pl.DataFrame({"nflverse_game_id": ["g1", "g1"], "nflverse_play_id": [1, 99],
-                             "is_play_action": [True, True], "is_motion": [True, True],
-                             "is_no_huddle": [False, False], "is_screen_pass": [False, False]})
-    plays = pl.DataFrame({"nflverse_game_id": ["g1"], "play_id": [1],
-                          "possession_team": ["PHI"], "is_pass": [True],
-                          "week": [3], "season": [2024]})
-    assert ws.scheme_rates_from_plays(charting, plays).height == 1
-
-
-def test_the_play_id_dtypes_are_reconciled():
-    """FTN types it as an integer and nflverse as a float; unreconciled the join raises."""
-    charting = pl.DataFrame({"nflverse_game_id": ["g1"], "nflverse_play_id": [1],
-                             "is_play_action": [True], "is_motion": [True],
-                             "is_no_huddle": [False], "is_screen_pass": [False]})
-    plays = pl.DataFrame({"nflverse_game_id": ["g1"], "play_id": [1.0],
-                          "possession_team": ["PHI"], "is_pass": [True],
-                          "week": [3], "season": [2024]})
-    assert ws.scheme_rates_from_plays(charting, plays).height == 1
-
-
-def test_an_empty_side_yields_the_right_empty_shape():
-    got = ws.scheme_rates_from_plays(pl.DataFrame(), pl.DataFrame())
-    assert got.is_empty() and "pass_rate" in got.columns and "pa_rate" in got.columns
-
-
-def test_trend_refuses_a_key_that_is_not_unique_per_week():
-    """The guard that came out of the scheme build. `trend` fans out on a left join, so a team
-    key against a player-week panel multiplies by the roster size -- and five chained calls
-    took the process out on memory before this existed."""
-    dup = pl.DataFrame({"team": ["PHI", "PHI"], "season": [2024, 2024],
-                        "week": [3, 3], "pa_rate": [0.3, 0.4]})
-    with pytest.raises(ValueError, match="one row per"):
-        ws.trend(dup, "pa_rate", "team", "pa_rate_trend")
-
-
-def test_trend_accepts_the_unique_frame_it_asks_for():
-    ok = pl.DataFrame({"team": ["PHI"] * 3, "season": [2024] * 3,
-                       "week": [1, 2, 3], "pa_rate": [0.3, 0.4, 0.5]})
-    assert "pa_rate_trend" in ws.trend(ok, "pa_rate", "team", "pa_rate_trend").columns
-
-
-def test_the_scheme_trends_are_not_in_the_default_screen():
-    assert all(f not in ws.FEATURES for f in ws.SCHEME_TRENDS)
-    assert {f.name for f in ws.SCHEME_TRENDS} == {
-        "pa_rate_trend", "motion_rate_trend", "nohuddle_rate_trend",
-        "screen_rate_trend", "pass_rate_trend"}
-
-
-# --- determinism: sum-then-mean without a sort between them ----------------
-
-def test_prior_means_returns_a_deterministically_ordered_frame():
-    """A group_by emits rows in a hash-dependent order, and every caller of this means them
-    again. Floating-point addition is not associative, so an unsorted hand-off moves the answer
-    at ~1e-15 and every downstream sort can land differently -- improvements.md #18, which was
-    found in `playoff_sos` and then found here by auditing for the pattern.
-    """
-    df = pl.DataFrame({"player_id": ["b", "a", "b", "a", "c"],
-                       "season": [2024] * 5, "week": [1, 1, 2, 2, 1],
-                       "pts": [1.0, 2.0, 3.0, 4.0, 5.0]})
-    got = ws.prior_means(df, ["player_id"], ["pts"])
-    assert got.equals(got.sort(["player_id", "season", "week"])), \
-        "sorted on the way out, not left to the group_by"
-
-
-def test_a_two_stage_aggregation_is_stable_when_the_hand_off_is_sorted():
-    """The property itself, on a frame big enough for the group order to actually vary."""
-    rng = np.random.default_rng(0)
-    n = 4000
-    df = pl.DataFrame({
-        "team": [f"T{i % 32}" for i in range(n)],
-        "pos": [["QB", "RB", "WR", "TE"][i % 4] for i in range(n)],
-        "week": [(i % 14) + 1 for i in range(n)],
-        "pts": rng.normal(10, 6, n)})
-
-    def two_stage(sort_between):
-        a = df.group_by(["team", "pos", "week"]).agg(pl.col("pts").sum().alias("s"))
-        if sort_between:
-            a = a.sort(["team", "pos", "week"])
-        return (a.group_by(["team", "pos"]).agg(pl.col("s").mean().alias("m"))
-                 .sort(["team", "pos"])["m"])
-
-    unsorted = [two_stage(False) for _ in range(4)]
-    sorted_ = [two_stage(True) for _ in range(4)]
-    assert all(r.equals(sorted_[0]) for r in sorted_), "sorted: bit-identical every run"
-    # the unsorted version is *usually* unstable; assert only that sorting cannot hurt
-    assert sorted_[0].len() == unsorted[0].len()

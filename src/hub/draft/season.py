@@ -22,7 +22,13 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from hub.config import RosterConfig, flex_capacity, flex_positions, required_starters
+from hub.config import (
+    REG_SEASON_WEEKS,
+    RosterConfig,
+    flex_capacity,
+    flex_positions,
+    required_starters,
+)
 
 # QB1 / RB2 / WR3 / TE1 / FLEX1 -- confirmed against the live league, not the ESPN default.
 # Derived from `hub.config.RosterConfig` rather than restated: this module is "how a league
@@ -33,12 +39,6 @@ FLEX_FROM = flex_positions(ROSTER)
 FLEX_SLOTS = ROSTER.flex
 # The most flex-eligible players a team can start at once. Was a bare `7` in optimize.py.
 FLEX_CAPACITY = flex_capacity(ROSTER)
-REG_SEASON_WEEKS = 14
-# The weeks a fantasy regular season is played over, as a tuple, derived rather than restated.
-# It was written out twice as `GATE_WEEKS = tuple(range(1, 15))` -- in `weekly_screen` and in
-# `weekly_gate` -- which is a literal `15` in two files for a league length that already has an
-# owner one line up.
-FANTASY_WEEKS: tuple[int, ...] = tuple(range(1, REG_SEASON_WEEKS + 1))
 PLAYOFF_TEAMS = 6
 # Quarter-final, semi-final, final. The bracket needs its own weeks: scoring the playoffs on
 # draws that already decided seeding couples a team's title odds to its week 1 result.

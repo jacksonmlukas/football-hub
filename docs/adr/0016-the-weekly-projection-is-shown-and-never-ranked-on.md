@@ -138,10 +138,16 @@ blend is a model in its own right and should be gated as one, once, cleanly. See
 ## Closed, 2026-08-29
 
 That clean run happened, under [ADR-0017](0017-the-market-usage-blend-is-a-model-not-a-shrinkage.md):
-frozen **+0.711** CI [+0.313, +1.129] on four held-out seasons, churn **−2.006**. The interval
-excludes zero for the first time and the every-season half still fails — it lost 2025. And the
-frozen gain decays monotonically across the four seasons, **+1.894 → −0.497**, negative in the
-one closest to the season being drafted.
+frozen **+0.215** CI [−0.249, +0.659] on four held-out seasons, churn **−1.806**. The
+every-season half fails — it lost 2025 — and the frozen gain decays monotonically across the
+four seasons, **+0.983 → −0.504**, negative in the one closest to the season being drafted.
+
+(Restated 2026-08-30. It first ran at frozen **+0.711** [+0.313, +1.129] and churn **−2.006**,
+against a `board_as_of` that was not reproducible — improvements.md #18. Those figures are
+superseded rather than wrong-at-the-time; under the fixed board the same command returns +0.215
+every time. The interval now *contains* zero rather than excluding it, which makes the result
+weaker rather than differently-shaped, and the verdict does not move. Full restatement in
+[weekly-blend-gate.md](../weekly-blend-gate.md).)
 
 **Verdict SHOW on both gates. This decision stands and the weekly programme is closed.**
 

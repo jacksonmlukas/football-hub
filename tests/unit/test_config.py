@@ -327,3 +327,30 @@ def test_no_default_hardcodes_the_current_season():
     assert not offenders, (
         "a season default written by hand -- use SEASON_AHEAD or SEASON_COMPLETED so the "
         f"rollover is one edit: {offenders}")
+
+
+def test_the_fantasy_weeks_are_derived_from_the_season_length():
+    """It was `tuple(range(1, 15))` in three modules -- a literal 15 for a league length that
+    already had an owner. It lives in `config` and not in `draft.season` because `models/` may
+    not reach into `draft/`, and the screen and the Weekly projection both need it."""
+    from hub.config import FANTASY_WEEKS, REG_SEASON_WEEKS
+    assert FANTASY_WEEKS == tuple(range(1, REG_SEASON_WEEKS + 1))
+    assert len(FANTASY_WEEKS) == REG_SEASON_WEEKS
+
+
+def test_no_module_restates_the_season_length():
+    """The literal, not the name: a re-declared `range(1, 15)` would pass the test above."""
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
+    bad = []
+    for path in root.rglob("*.py"):
+        if path.name == "config.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == "range" and len(node.args) == 2
+                    and all(isinstance(a, ast.Constant) for a in node.args)
+                    and [a.value for a in node.args] == [1, 15]):
+                bad.append(f"{path.relative_to(root)}:{node.lineno}")
+    assert not bad, f"the league length is restated in: {bad}"

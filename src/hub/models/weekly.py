@@ -46,13 +46,16 @@ from typing import NamedTuple, cast
 import numpy as np
 import polars as pl
 
+from hub.config import FANTASY_WEEKS
 from hub.models.components import SCORING, td_rate
 from hub.models.experiment import expanding_seasons
-
-# The trend is dark before this: docs/snap-trend-signal.md finds anchors 4 and 6 null with the
-# sign flipping between seasons, so before week 8 the multiplier is 1 and the projection is
-# the flat one. That is not a fallback, it is the measurement.
-TREND_MIN_WEEK = 8
+from hub.models.panel import (
+    MIN_GAMES_BEFORE,
+    SEASONS,
+    TREND_MIN_WEEK,
+    PanelSpec,
+    build_panel,
+)
 
 # The multiplier is bounded. A snap share that doubled is real information; a multiplier of 4
 # on a player's target count is an extrapolation past anything in the fit, and the cost of
@@ -483,14 +486,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     if not a.fit:
         ap.print_help()
         return 0
-    from hub.models.weekly_screen import (
-        GATE_WEEKS,
-        MIN_GAMES_BEFORE,
-        SEASONS,
-        build_panel,
-    )
-    panel = build_panel(SEASONS, expected=a.expected).filter(
-        pl.col("week").is_in(list(GATE_WEEKS))
+    panel = build_panel(SEASONS, PanelSpec(expected=a.expected)).filter(
+        pl.col("week").is_in(list(FANTASY_WEEKS))
         & (pl.col("games_before") >= MIN_GAMES_BEFORE))
     print(f"  {panel.height} player-weeks over {panel['season'].n_unique()} seasons")
     errs = walk_forward(panel)

@@ -853,6 +853,47 @@ steering anything — and `backtest` and `lineup_gate` both draft from this func
 ±0.04 changes nothing, but "large enough not to matter" should be on the record rather than
 assumed.
 
+### 19. The screen owned the Panel, and two other modules reached in for it — DONE 2026-08-30
+
+`weekly_screen.py` was 867 lines doing two jobs. One was the screen proper: the partial
+correlation, the cell structure, the pre-registered verdict. The other was the **Panel** — one
+row per player-week, every feature measured before its outcome — assembled from eleven network
+sources. The second is 65% of the file and the screen is only its first caller.
+
+The tell was already written down as item 17, *what a caller does when an import feels wrong*.
+`models/weekly.py` and `season/weekly_gate_data.py` both needed a Panel, and both fetched one
+with a **function-local** `from hub.models.weekly_screen import build_panel` buried inside a
+function body. Neither of them screens anything. A module named for one question was the only
+way to ask a different one.
+
+**Done 2026-08-30.** `src/hub/models/panel.py` owns assembly; `weekly_screen.py` keeps the
+statistic and the verdict and is now 329 lines. Both function-local imports are ordinary
+module-level ones. `build_panel`'s five boolean flags became one `PanelSpec`, so a call site
+reads back as the shape it asked for instead of as a flag combination the reader has to decode.
+The screen's 49 tests split 26/23 by what they exercise, and `Panel` went into `CONTEXT.md` —
+it is a domain concept, not an implementation detail.
+
+Two more restatements of the same literal fell out and are collapsed rather than moved:
+
+* `TREND_MIN_WEEK = 8` was declared in `weekly.py` **and** in the screen. The Panel owns it now,
+  since the trend it gates is computed there, and the better half of each comment was merged.
+* `tuple(range(1, 15))` was written out in `weekly_screen`, `weekly_gate` **and**
+  `draft/season.py` — a bare `15` in three files for a league length with one owner. It moved to
+  `hub.config` rather than to `draft.season`, because `test_models_does_not_reach_into_draft`
+  forbids the direction the screen would have needed. A new test pins the *literal*, not the
+  name: re-declaring `range(1, 15)` anywhere under `src/hub/` now fails.
+
+That guard test earned its place immediately — it was the thing that caught the first attempt
+importing `FANTASY_WEEKS` from `draft/`.
+
+**Verified unchanged.** The frozen weekly gate re-runs at **+0.215** points per team-week,
+2,000 roster-weeks over 160 rosters, 16.0% unranked, 0.1% join failure, per-season
++0.983 / +0.027 / +0.355 / −0.504 — identical to the pre-split figures in
+[weekly-blend-gate.md](weekly-blend-gate.md), through the network path and not only under the
+unit tests. 1,361 tests pass; `config_digest` stays `281b7b7a` and `fitted_digest` `d5598b96`.
+
+---
+
 ---
 
 ## What is deliberately not on this list

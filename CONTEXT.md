@@ -146,11 +146,20 @@ does not (yards per carry r = 0.108, touchdowns per yard r ≈ 0).
 _Avoid_: opportunity (which is what **xFP** already prices), volume (which names only half of
 it — a carry and a target are not the same unit).
 
+**Panel**:
+The frame every week-level question is asked on: one row per (player, week), with every feature
+measured *strictly before* that week's kickoff. Pre-kickoff facts published *for* the week — the
+line, the injury report, the opponent — are week-*w* information; anything derived from play uses
+weeks before *w*. It is the unit of measurement, not a table: a screen correlates within its
+(season, week) cells, a projection is fitted on it, and a gate is assembled from it.
+_Avoid_: dataset, training data — both hide that the before-its-outcome rule is what makes it a
+Panel rather than a join.
+
 **Weekly projection**:
 A player's expected points for one *named* week, against a named opponent. Distinct from
 **xFP**, which is per-game and season-long. It is **shown and never ranked on**: measurably more
 accurate than the flat projection (+0.074 MAE at 5.9 se) and it still lost the lineup decision
-to consensus rank at −0.68 points a team-week, see
+to consensus rank at −0.304 points a team-week, see
 [ADR-0016](docs/adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md).
 _Avoid_: projection unqualified — say weekly projection or xFP, since the whole open question
 is whether the week adds anything.

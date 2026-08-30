@@ -516,14 +516,6 @@ def test_the_rule_reads_the_shape_rather_than_restating_it():
     assert required_starters(replace(RosterConfig(), qb=2))["QB"] == 2
 
 
-def test_the_fantasy_weeks_are_derived_from_the_season_length():
-    """It was `tuple(range(1, 15))` in two modules -- a literal 15 for a league length that
-    already had an owner."""
-    from hub.draft.season import FANTASY_WEEKS, REG_SEASON_WEEKS
-    assert FANTASY_WEEKS == tuple(range(1, REG_SEASON_WEEKS + 1))
-    assert len(FANTASY_WEEKS) == REG_SEASON_WEEKS
-
-
 def test_both_gates_use_the_one_rule():
     import ast
     import pathlib

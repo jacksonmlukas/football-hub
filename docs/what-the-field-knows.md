@@ -26,7 +26,7 @@ before proposing anything that improves accuracy.
 ## 1. There is a weekly expected-points table in the store and the model never opens it
 
 **Verified 2026-08-29:** the only mention of `ff_opportunity` in `hub/models/weekly.py` or
-`hub/models/weekly_screen.py` is a *comment*. The panel is built entirely from `player_stats` —
+`hub/models/weekly_screen.py` is a *comment*. The Panel is built entirely from `player_stats` —
 **realised** counts. Meanwhile the store holds weekly `receptions_exp`,
 `rec_yards_gained_exp`, `rush_yards_gained_exp`, `pass_yards_gained_exp`,
 `rec_touchdown_exp` and eleven more.
