@@ -60,16 +60,50 @@ def predictions(season: int, week: int, base: Path | None = None,
     # `"stale": true, "reason": "no predictions"`. It also returns one row per game rather
     # than one per fitted version: this page listed every week-1 game five times.
     df = store.predictions(season=season, week=week, base=base)
-    if df.is_empty():
+    rows = _keeping_published(df.to_dicts(), out / f"{name}.json")
+    if not rows:
         return None
 
-    payload = jsonio.artifact(name, "preds", df.to_dicts(), season=season, week=week,
-                              provenance=_obtainable(df))
+    payload = jsonio.artifact(name, "preds", rows, season=season, week=week,
+                              provenance=_obtainable(rows))
     _write(out, name, payload)
     return payload
 
 
-def _obtainable(df: pl.DataFrame) -> dict[str, dict[str, Any]]:
+def _keeping_published(fresh: list[dict[str, Any]], path: Path) -> list[dict[str, Any]]:
+    """This run's predictions, plus any already published for a game it no longer returns.
+
+    **The layer that matches what is committed.** `ratings._with_committed` carries a started
+    game forward by reading the partition the previous run wrote, which works on a machine
+    that keeps a store and not on an Actions runner: `data/processed/` is gitignored, so every
+    scheduled run starts empty, finds no partition, and publishes only the games it can still
+    predict. The artifact is what gets committed, so the game that had already kicked off was
+    deleted from the public record -- trimming exactly the predictions reality had tested.
+
+    A game the fresh query *does* return is replaced, not kept: it has not kicked off, so
+    re-pricing it is legitimate and its commit still predates it (`docs/track-record.md`
+    rule 1). Only games that have fallen out of the slate are carried.
+
+    An unreadable artifact is treated as no artifact. It is about to be overwritten either
+    way, and refusing to publish because the previous file is corrupt would turn one bad file
+    into a stalled record.
+    """
+    have = {r.get("game_id") for r in fresh}
+    if not path.exists():
+        return fresh
+    try:
+        prior = json.loads(path.read_text()).get("rows", [])
+    except (OSError, ValueError):
+        print(f"  {path.name} is unreadable; publishing this run's rows alone", flush=True)
+        return fresh
+    kept = [r for r in prior if r.get("game_id") not in have]
+    if kept:
+        print(f"  carried forward {len(kept)} published prediction(s) this run could not "
+              f"make: {', '.join(sorted(str(r.get('game_id')) for r in kept))}")
+    return sorted(fresh + kept, key=lambda r: str(r.get("game_id")))
+
+
+def _obtainable(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """For each price source in this week, whether a reader can obtain the input behind it.
 
     A record whose credibility rests on a reader checking it has to say what a reader can
@@ -84,9 +118,11 @@ def _obtainable(df: pl.DataFrame) -> dict[str, dict[str, Any]]:
     A week written before `price_source` existed classifies nothing rather than raising --
     the store spans schemas by design, and an old partition must not take the page down.
     """
-    if "price_source" not in df.columns:
-        return {}
-    used = sorted({s for s in df["price_source"].to_list() if s})
+    # Off the rows rather than a frame: a published week mixes this run's rows with rows
+    # carried forward from the committed artifact, whose timestamps are JSON strings rather
+    # than datetimes, and polars cannot infer one schema across the two.
+    used = sorted({r["price_source"] for r in rows
+                   if isinstance(r, dict) and r.get("price_source")})
     return {s: schedule.provenance(s)._asdict() for s in used}
 
 

@@ -596,3 +596,54 @@ def test_a_site_with_no_predictions_keeps_last_good(site, base, monkeypatch):
     monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
         {"game_id": ["g1"], "result": [7]}))
     assert publish.track_record(base=base, out=site) is None
+
+
+def test_a_later_runner_with_its_own_empty_store_does_not_drop_a_published_game(site, base):
+    """The failure a store-level guard cannot see, because CI has no store.
+
+    `ratings._with_committed` carries a started game forward by reading the partition the
+    previous run wrote. Every Actions runner starts with an empty `data/processed/` -- it is
+    gitignored -- so there is no partition to read, and the second run of a week publishes
+    only the games it can still predict. The artifact is what gets committed, so the game
+    that already kicked off is deleted from the public record: exactly the direction a
+    dishonest record trims in.
+
+    The store-level guard still earns its place on a machine that keeps a store. This is the
+    layer that matches what is actually committed.
+    """
+    store.write(_preds([("thu", 0.6, 3.0), ("sun", 0.4, -1.0)]), "preds", "nfl", 2026, 1,
+                base=base)
+    first = publish.predictions(2026, 1, base=base, out=site)
+    assert first is not None and first["n"] == 2
+
+    # A different runner, its own empty store, holding only the games still forecastable.
+    later = base / "another-runner"
+    store.write(_preds([("sun", 0.4, -1.0)]), "preds", "nfl", 2026, 1, base=later)
+    got = publish.predictions(2026, 1, base=later, out=site)
+    assert got is not None
+    assert {r["game_id"] for r in got["rows"]} == {"thu", "sun"}, (
+        "a published prediction must not vanish because a later runner could no longer make it")
+
+
+def test_the_carried_forward_row_keeps_the_prediction_it_was_published_with(site, base):
+    store.write(_preds([("thu", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    later = base / "another-runner"
+    store.write(_preds([("sun", 0.4, -1.0)]), "preds", "nfl", 2026, 1, base=later)
+    got = publish.predictions(2026, 1, base=later, out=site)
+    assert got is not None
+    thu = next(r for r in got["rows"] if r["game_id"] == "thu")
+    assert thu["home_win_prob"] == 0.6, "carried forward as published, not re-derived"
+
+
+def test_a_fresh_prediction_replaces_the_published_one_for_the_same_game(site, base):
+    """Carrying forward must not freeze a game that can still be re-priced before kickoff."""
+    store.write(_preds([("sun", 0.4, -1.0)]), "preds", "nfl", 2026, 1, base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    later = base / "another-runner"
+    fresher = _preds([("sun", 0.9, 9.0)]).with_columns(
+        pl.lit(dt.datetime(2026, 9, 12)).alias("predicted_at"))
+    store.write(fresher, "preds", "nfl", 2026, 1, base=later)
+    got = publish.predictions(2026, 1, base=later, out=site)
+    assert got is not None and got["n"] == 1
+    assert got["rows"][0]["home_win_prob"] == 0.9
