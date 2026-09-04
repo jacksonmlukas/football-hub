@@ -42,27 +42,44 @@ jobs:
           if [ "$AGE" -gt 600 ]; then echo "stale=true" >> "$GITHUB_OUTPUT";
           else echo "stale=false" >> "$GITHUB_OUTPUT"; fi
 
+      # `set +e` and the `||` fallbacks are the point of this step, not defensive noise.
+      # On 2026-09-04 the label did not exist in the repo, `gh issue create --label` failed,
+      # and the whole job exited 1 -- so the watchdog reported nothing at exactly the moment
+      # it had something to report. It had passed every earlier run only because the
+      # heartbeat was fresh and it never reached this branch: a monitor that works while
+      # nothing is wrong. Filing the incident is the job; the label is decoration, and
+      # decoration must never be able to silence the alarm.
       - name: File or update the incident issue
         if: steps.check.outputs.stale == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Deduped by label: one open incident at a time, never 200 issues.
+          set +e
+          # Deduped by label: one open incident at a time, never 200 issues. If the label is
+          # missing the dedupe degrades rather than the step dying -- worst case a second
+          # issue, which is noisy and visible, against a silent failure which is neither.
           EXISTING=$(gh issue list --repo "${{ github.repository }}" \
-            --label incident --state open --json number --jq '.[0].number')
+            --label incident --state open --json number --jq '.[0].number' 2>/dev/null)
           BODY="Heartbeat is ${{ steps.check.outputs.age }}s stale (threshold 600s).
 
-          Live poller appears down. On your Mac:
-          \`\`\`
-          make live
-          \`\`\`
-          The dashboard is serving last-good state, so nothing is wrong — it is just frozen.
+          The live scoreboard poller appears to be down. \`hub.fetch.espn.poll()\` is the
+          real entry point; \`make live\` was removed on 2026-08-24 because it invoked a CLI
+          that does not exist, and this message told you to run it anyway until 2026-09-04.
+          See docs/gaps.md.
+
+          The dashboard is serving last-good state, so nothing is broken — it is just frozen.
           This issue auto-closes on the next healthy check."
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "$BODY"
           else
             gh issue create --repo "${{ github.repository }}" \
-              --title "Live poller down" --label incident --body "$BODY"
+              --title "Live poller down" --label incident --body "$BODY" \
+              || gh issue create --repo "${{ github.repository }}" \
+                   --title "Live poller down" --body "$BODY"
+          fi
+          if [ $? -ne 0 ]; then
+            echo "::error::heartbeat is stale AND the incident could not be filed"
+            exit 1
           fi
 
       - name: Close the incident on recovery
