@@ -40,6 +40,22 @@ on:
     workflows: [slate]
     types: [completed]
 
+  # Every ten minutes through a game window, which is what makes the scores move. Sunday
+  # 16:00-04:00 UTC is noon to midnight Eastern; Saturday afternoon and evening is college;
+  # Thursday and Monday nights are the standalone games.
+  #
+  # **Only during windows.** A cron that ran all week would deploy a few thousand times a
+  # month to publish a scoreboard with nothing on it, and the watchdog's own threshold -- ten
+  # minutes of staleness *during a game window* -- is written against exactly these hours.
+  #
+  # Free of quota: ESPN's scoreboard needs no key, which is why this needed nothing from #16.
+  schedule:
+    - cron: "*/10 16-23 * * 0"
+    - cron: "*/10 0-4  * * 1"
+    - cron: "*/10 0-4  * * 2"
+    - cron: "*/10 16-23 * * 6"
+    - cron: "*/10 0-4  * * 5"
+
   workflow_dispatch:
 
 # Read the repo, mint the Pages OIDC token, write the deployment. Nothing else.
@@ -67,6 +83,27 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+
+      # The overlay is not in the checkout -- ADR-0018 keeps it out of the record -- so the
+      # previously published one is fetched back as last-good before it is refreshed. Without
+      # this a deploy triggered by anything other than a game-window tick would ship a site
+      # with no scores at all, and the panel would read "unavailable" every time the slate ran.
+      #
+      # `|| true`: no previous deploy, or a Pages 404, is a first run rather than a failure.
+      - name: Carry forward the last published scores
+        run: |
+          mkdir -p site/data
+          curl -sf --max-time 20 \
+            "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/live.json" \
+            -o site/data/live.json || echo "  no previously published overlay; this is a first run"
+
+      # A failed fetch leaves the carried-forward file exactly as it is and says so, which is
+      # the whole of last-good now that nothing is committed. `hub.publish.live` returns None
+      # and writes nothing on failure; `|| true` covers the process, not the artifact.
+      - name: Refresh the live scores
+        run: uv run python -m hub.publish --live || true
 
       # Fail loudly rather than deploying an empty site. `upload-pages-artifact` is happy to
       # tar a directory holding nothing, and the result is a live 404 that looks like a

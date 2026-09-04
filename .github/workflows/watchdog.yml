@@ -40,7 +40,15 @@ jobs:
         run: |
           set +e
           URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/live.json"
-          RESULT=$(.github/scripts/heartbeat.sh "$URL" 600)
+          # 1500s, not 600. The overlay is republished every ten minutes during a window,
+          # so a 600s threshold has *zero* margin against its own cadence -- and GitHub's
+          # scheduled runs drift by minutes under load, on both sides. A monitor that fires
+          # because two crons were both late is a monitor that gets ignored.
+          #
+          # The cost is that a genuinely dead publisher goes unreported for up to twenty-five
+          # minutes. The page serves last-good throughout, so that is a delay in learning
+          # rather than a delay in the page working.
+          RESULT=$(.github/scripts/heartbeat.sh "$URL" 1500)
           echo "age=$(echo "$RESULT" | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
           # Three different failures, reported apart, because they have three different
           # fixes: start the poller, republish the site, or reconcile writer and monitor.
@@ -74,7 +82,7 @@ jobs:
           # issue, which is noisy and visible, against a silent failure which is neither.
           EXISTING=$(gh issue list --repo "${{ github.repository }}" \
             --label incident --state open --json number --jq '.[0].number' 2>/dev/null)
-          BODY="Heartbeat age: ${{ steps.check.outputs.age }}s (threshold 600s).
+          BODY="Heartbeat age: ${{ steps.check.outputs.age }}s (threshold 1500s).
 
           Cause: ${{ steps.check.outputs.why }}.
 

@@ -47,6 +47,18 @@ committed. **The current design guarantees the staleness the watchdog is reporti
 heartbeat cannot be fresh between commits, however often the poller runs. Issue #4 is that
 guarantee, observed.
 
+## How last-good works without a commit
+
+Committing the overlay was also what carried it forward: a deploy shipped whatever was last
+committed. With it out of the record, each deploy fetches the previously *published* overlay
+back before refreshing it, so a failed ESPN call leaves the scores that were live exactly as
+they were. `hub.publish.live` already returns None and writes nothing on failure; what changed
+is that the file it declines to touch now arrives from the last deploy rather than from git.
+
+Every deploy does this, not only the game-window ones. Otherwise a deploy triggered by the
+weekly slate would ship a site with no overlay at all, and the panel would read "unavailable"
+every Wednesday morning.
+
 ## The cost, accepted
 
 A fresh clone has no `live.json`, so a local `make serve` renders "Live scores unavailable —

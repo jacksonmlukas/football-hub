@@ -16,6 +16,7 @@ with a warning.
 """
 import datetime as dt
 import json
+import pathlib
 
 import polars as pl
 import pytest
@@ -481,3 +482,56 @@ def test_the_panel_says_why_rather_than_going_blank(site, base, monkeypatch):
     man = publish.publish_all(2026, 1, base=base, out=site)
     art = next(a for a in man["artifacts"] if a["name"] == "track_record")
     assert art["stale"] is True and art["reason"]
+
+
+# --- the live overlay leaves the record -------------------------------------
+#
+# ADR-0018: a live score is someone else's fact, checkable against ESPN at the time, so
+# pinning it to a commit proves nothing and costs the record its readability -- seventy-two
+# commits a Sunday into a history that *is* the pre-registration. It is generated at deploy
+# time instead.
+#
+# The consequence that needs testing is what "last-good" means once the file is not committed.
+# A deploy carries the previously published overlay forward and refreshes it; a failed ESPN
+# fetch must leave that carried-forward file exactly as it was, because it is now the only
+# copy in the pipeline.
+
+def test_a_failed_fetch_leaves_the_carried_forward_scores_untouched(site, monkeypatch):
+    """The whole of last-good, once nothing is committed. If this wrote anything -- an empty
+    overlay, a partial one -- the deploy would publish it over the scores that were live."""
+    site.mkdir(parents=True, exist_ok=True)
+    carried = site / "live.json"
+    carried.write_text(json.dumps(
+        {"name": "live", "source": "espn_scoreboard", "generated_at": "2026-09-13T18:00:00+00:00",
+         "n": 1, "rows": [{"id": "1", "home": "PHI", "home_score": "21"}], "detail": {}}))
+    before = carried.read_text()
+
+    def _boom(league="nfl"):
+        raise RuntimeError("espn 503")
+    monkeypatch.setattr("hub.fetch.espn.live_state", _boom)
+
+    assert publish.live(out=site) is None
+    assert carried.read_text() == before, "a failed fetch must not touch the last published"
+
+
+def test_a_successful_fetch_replaces_the_carried_forward_scores(site, monkeypatch):
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "live.json").write_text(json.dumps({"name": "live", "n": 0, "rows": []}))
+    monkeypatch.setattr("hub.fetch.espn.live_state",
+                        lambda league="nfl": [{"id": "9", "home": "KC", "away": "LV"}])
+    got = publish.live(out=site)
+    assert got is not None and got["n"] == 1
+    assert json.loads((site / "live.json").read_text())["rows"][0]["id"] == "9"
+
+
+def test_the_live_overlay_is_not_in_the_committed_record():
+    """ADR-0018, asserted rather than remembered. It was committed until 2026-09-04, and the
+    deployed page therefore showed whatever was last committed -- which is why the heartbeat
+    could not be fresh between commits however often anything polled."""
+    import subprocess
+    tracked = subprocess.run(["git", "ls-files", "site/data"], capture_output=True, text=True,
+                             cwd=pathlib.Path(__file__).resolve().parents[2]).stdout.split()
+    assert "site/data/live.json" not in tracked, (
+        "the live overlay is committed again; ADR-0018 says it is generated at deploy time")
+    assert any(f.endswith("preds_wk01.json") for f in tracked), (
+        "no other artifact may leave the record with it -- a prediction is pinned by its commit")

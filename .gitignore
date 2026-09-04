@@ -12,6 +12,13 @@ notes/
 # `hub.fetch.nflverse --refresh`.
 data/processed/
 outputs/
+
+# The live overlay is generated at deploy time, not committed -- ADR-0018. A live score is
+# someone else's fact, checkable against ESPN at the time, so pinning it to a commit proves
+# nothing and costs the record its readability: seventy-two commits a Sunday into a history
+# that *is* the pre-registration. Committing it also guaranteed the staleness the watchdog
+# reports, because the deployed page could only ever show whatever was last committed.
+site/data/live.json
 .coverage
 htmlcov/
 
