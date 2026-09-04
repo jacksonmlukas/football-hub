@@ -1,0 +1,63 @@
+name: pages
+
+# Publishes `site/` as the Pages root, replacing the branch source.
+#
+# The branch source can only serve `/` or `/docs`. `site/` is neither, so serving from `main`
+# put the dashboard at `/football-hub/site/` and left the root empty -- patched on 2026-09-04
+# with a root `index.html` carrying a meta refresh. That works in a browser and nowhere else:
+# a meta refresh is not an HTTP 3xx, so `curl -L` and anything else that follows real
+# redirects stops at the landing page. An artifact upload has no such constraint: whatever
+# directory is uploaded *is* the root.
+#
+# **This deploys what is committed; it does not run `hub.publish`.** Generating the JSON in CI
+# would need the ESPN cookies and both API keys as repository secrets, and -- the deciding
+# reason -- it would break the record. `docs/track-record.md` rule 1 says a prediction counts
+# only if its commit predates kickoff, which is why `publish.predictions` writes one artifact
+# per week and its docstring says "the git history pins each week to a commit". Publishing
+# straight to Pages would leave nothing to pin. The commit is the timestamp.
+
+on:
+  push:
+    branches: [main]
+    # Only when something the site actually serves changes. A docs commit should not redeploy.
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+# Read the repo, mint the Pages OIDC token, write the deployment. Nothing else.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and never cancel one in flight: a half-applied deployment is worse
+# than a redundant one. A queued run supersedes an older queued run, not a running deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail loudly rather than deploying an empty site. `upload-pages-artifact` is happy to
+      # tar a directory holding nothing, and the result is a live 404 that looks like a
+      # broken build rather than a broken commit.
+      - name: Check the site has something to serve
+        run: |
+          test -f site/index.html || { echo "site/index.html is missing"; exit 1; }
+          test -d site/data || { echo "site/data is missing"; exit 1; }
+          echo "$(find site/data -name '*.json' | wc -l) artifacts to publish"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
