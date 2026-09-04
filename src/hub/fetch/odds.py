@@ -99,6 +99,32 @@ def _http_get(params: Mapping[str, Any], key: str) -> tuple[Any, Mapping[str, st
     return r.json(), r.headers
 
 
+def _game_date(commence_time: str) -> str:
+    """The date the game is *played on*, which is not the date its kickoff falls on in UTC.
+
+    The Odds API stamps `commence_time` in UTC; nflverse's `gameday` is the local date in
+    Eastern. Any kickoff at or after 20:00 ET is past midnight UTC, so slicing the raw string
+    put it on the following day and it matched nothing.
+
+    That is not a rounding error, it is the primetime slate. Measured against the 2026
+    schedule: **55 of 272 games kick off at or after 20:00 ET** -- 17 Sunday, 17 Monday, 17
+    Thursday -- and the 2026-09-04 snapshot lost 65 of 272 events, leaving the store with a
+    line for 207 games and none for every Sunday, Monday and Thursday night game of the season.
+
+    Converted rather than offset by a constant because the season crosses out of daylight
+    saving in November: -4 through week 9 and -5 after it, and a fixed offset would fix the
+    first half and break the second.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    raw = str(commence_time or "")
+    try:
+        utc = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw[:10]                # unparseable: fall back to the old behaviour, not a crash
+    return utc.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+
+
 def _team_abbrs() -> dict[str, str]:
     """Full name to abbreviation, from nflverse rather than a hardcoded table.
 
@@ -180,24 +206,30 @@ def snapshot(season: int = SEASON_AHEAD, *, markets: str = MARKET, regions: str 
         for r in sched.iter_rows(named=True)
     }
 
-    rows, unmatched = [], 0
+    rows, no_game, no_line = [], 0, 0
     for ev in payload or []:
         home = abbrs.get(ev.get("home_team", ""))
         away = abbrs.get(ev.get("away_team", ""))
-        day = str(ev.get("commence_time", ""))[:10]
-        hit = lookup.get((home, away, day))
+        hit = lookup.get((home, away, _game_date(ev.get("commence_time", ""))))
         spread = _median_home_spread(ev, ev.get("home_team", ""))
-        if not hit or spread is None:
-            unmatched += 1
+        if not hit:
+            no_game += 1
+            continue
+        if spread is None:
+            no_line += 1
             continue
         game_id, week = hit
         rows.append({"game_id": game_id, "close_spread": spread,
                      "captured_at": when, "week": int(week)})
 
-    if unmatched:
-        # Named rather than dropped: a mapping that quietly loses half the slate looks
-        # exactly like a quiet week.
-        print(f"  {unmatched} unmatched events (no nflverse game for the team/date pair)")
+    # Counted apart. These used to share one tally reported as "no nflverse game for the
+    # team/date pair", which asserted the first cause for both -- and the first cause was
+    # the one that was actually broken, so the message was right by accident and would have
+    # misdirected the next person the moment a bookmaker simply had not posted a line.
+    if no_game:
+        print(f"  {no_game} events with no nflverse game for the team/date pair")
+    if no_line:
+        print(f"  {no_line} events matched a game but had no posted spread")
 
     df = pl.DataFrame(rows, schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
                                     "captured_at": pl.Datetime, "week": pl.Int64})

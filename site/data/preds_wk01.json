@@ -1,7 +1,7 @@
 {
   "name": "preds_wk01",
   "source": "preds",
-  "generated_at": "2026-09-04T12:23:19+00:00",
+  "generated_at": "2026-09-04T15:17:34+00:00",
   "n": 64,
   "rows": [
     {
@@ -784,7 +784,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -800,7 +800,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -816,7 +816,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -832,7 +832,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -848,7 +848,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -864,7 +864,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -880,7 +880,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -896,7 +896,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -912,7 +912,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -928,7 +928,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -944,7 +944,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -960,7 +960,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -976,7 +976,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -992,7 +992,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -1008,7 +1008,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     },
@@ -1024,7 +1024,7 @@
       "model": "market_baseline",
       "version": "market-f64f1bad",
       "fit_through_week": 0,
-      "predicted_at": "2026-08-28 02:01:38",
+      "predicted_at": "2026-09-04 15:17:32",
       "cfg_digest": "281b7b7a",
       "fit_digest": "f64f1bad"
     }

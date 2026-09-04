@@ -170,7 +170,47 @@ def test_an_unmatched_event_is_reported_not_dropped_silently(transport, teams, s
                                                              paths, capsys):
     transport(events=[_event("Kansas City Chiefs", "Dallas Cowboys", "2199-01-01", -3.0)])
     odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
-    assert "unmatched" in capsys.readouterr().out.lower()
+    out = capsys.readouterr().out.lower()
+    assert "no nflverse game" in out, "a dropped event must say so"
+    assert "1 events" in out
+
+
+def test_a_matched_game_with_no_posted_line_is_counted_apart(transport, teams, schedule,
+                                                             paths, capsys):
+    """The two causes used to share one tally reported as a team/date mismatch, which
+    asserted the wrong one for half the cases it covered."""
+    ev = _event("Philadelphia Eagles", "Dallas Cowboys", "2025-09-04", -3.0)
+    ev["bookmakers"] = []                        # the game is real; nobody has priced it
+    transport(events=[ev])
+    odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
+    out = capsys.readouterr().out.lower()
+    assert "no posted spread" in out
+    assert "no nflverse game" not in out, "a priced-less game is not a mapping failure"
+
+
+# --- the kickoff date, which is not the UTC date ---
+
+def test_a_primetime_kickoff_keeps_the_date_the_game_is_played_on():
+    """A 20:20 ET Sunday kickoff is 00:20 UTC on Monday. Slicing the raw string put it on
+    Monday and it matched no nflverse game -- 55 of 272 games in 2026 kick off at or after
+    20:00 ET, which is every Sunday, Monday and Thursday night game of the season."""
+    assert odds._game_date("2026-09-14T00:20:00Z") == "2026-09-13"
+
+
+def test_an_afternoon_kickoff_is_unchanged():
+    assert odds._game_date("2026-09-13T17:00:00Z") == "2026-09-13"
+
+
+def test_the_conversion_follows_daylight_saving_rather_than_a_fixed_offset():
+    """The season crosses out of DST in November. A constant -4 would fix September and
+    break December; a constant -5 would do the reverse."""
+    assert odds._game_date("2026-09-14T00:20:00Z") == "2026-09-13"   # EDT, UTC-4
+    assert odds._game_date("2026-12-08T01:15:00Z") == "2026-12-07"   # EST, UTC-5
+
+
+def test_an_unparseable_timestamp_falls_back_rather_than_crashing():
+    assert odds._game_date("not-a-timestamp") == "not-a-time"
+    assert odds._game_date("") == ""
 
 
 def test_books_are_combined_by_median(transport, teams, schedule, paths):
