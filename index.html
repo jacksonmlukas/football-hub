@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>football hub</title>
+<!--
+  GitHub Pages serves a branch from either `/` or `/docs` -- `/site` is not an option -- and
+  the dashboard lives in `site/`. So the repo root redirects rather than the site moving:
+  `site/` is what `hub.publish` writes into and what `make serve` hosts locally, and pointing
+  three of those at a fourth directory to satisfy a Pages constraint would be the tail wagging
+  the dog.
+
+  Both the redirect and the link are here on purpose. The meta refresh covers a browser; the
+  link covers a reader with JavaScript or refresh disabled, and a crawler.
+-->
+<meta http-equiv="refresh" content="0; url=./site/">
+<link rel="canonical" href="./site/">
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+         margin: 4rem auto; max-width: 34rem; padding: 0 1.25rem; line-height: 1.6;
+         color: #12181d; background: #edf0f3; }
+  @media (prefers-color-scheme: dark) { body { color: #e7ecf0; background: #0e1317; } }
+  a { color: inherit; }
+</style>
+<p>Redirecting to the <a href="./site/">football hub dashboard</a>.</p>
