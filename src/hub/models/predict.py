@@ -178,6 +178,26 @@ def group_sd(mu_sd_pos_team) -> float:
     return float(max(var, 0.0) ** 0.5)
 
 
+def blend() -> pl.Expr:
+    """The forecast everything plays on: the market's forward projection and the xFP rate.
+
+    One expression rather than two copies. `hub.draft.board` builds it at draft time and
+    `hub.season.roster` rebuilds it in-season against a refreshed market half, and those two
+    must not be able to disagree about what `proj_blend` means -- `docs/next.md` names a
+    second implementation of one idea as how they drift.
+
+    The coalesce is the whole design: average the two when both exist, otherwise take
+    whichever does. A player with no prior season has no xFP of his own, so the board
+    interpolates one from consensus rank (`board._impute_xfp`); that value is a rank
+    transform rather than an observation, which matters when the market half is fresher than
+    the rank -- see `hub.season.roster.market`.
+    """
+    return pl.coalesce(
+        (pl.col("proj_ppg") + pl.col("xfp_per_game")) / 2.0,
+        pl.col("proj_ppg"), pl.col("xfp_per_game"),
+    ).alias("proj_blend")
+
+
 def moments(xp: pl.DataFrame, floor_sd: float = 0.0) -> pl.DataFrame:
     """Per-player weekly mean, spread and skew.
 

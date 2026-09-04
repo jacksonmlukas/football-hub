@@ -44,6 +44,7 @@ from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.state import DraftState, remaining
+from hub.models.predict import blend
 from hub.names import player_key
 from hub.paths import BOARD_PARQUET, ROOT
 
@@ -510,11 +511,7 @@ def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
     # the xFP regression signal. Keeping VOR on xFP alone would have the greedy rank
     # players on last season while the simulation scores them on this one -- the two
     # must share a basis or the "edge" is just the gap between the two signals.
-    board = board.with_columns(
-        pl.coalesce(
-            (pl.col("proj_ppg") + pl.col("xfp_per_game")) / 2.0,
-            pl.col("proj_ppg"), pl.col("xfp_per_game"),
-        ).alias("proj_blend"))
+    board = board.with_columns(blend())
     # Mark quarterbacks down for last season's touchdown luck. ESPN's projection carries
     # the same bias the draft room does, but only at QB (-0.540 points per point of
     # luck, 99.5%; see docs/td-luck.md). This has to happen here rather than in the

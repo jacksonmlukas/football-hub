@@ -33,6 +33,7 @@ from typing import Any, NamedTuple, cast
 
 import polars as pl
 
+from hub.models.predict import blend as predict_blend
 from hub.models.predict import moments
 from hub.names import player_key
 from hub.paths import ROSTER_PARQUET
@@ -127,6 +128,38 @@ def availability(espn: pl.DataFrame) -> pl.DataFrame:
     ).with_columns((pl.col("missing_games") < 1).alias("available"))
 
 
+def market(joined: pl.DataFrame) -> pl.DataFrame:
+    """Rebuild `proj_blend` against ESPN's *current* projection, not the board's copy of it.
+
+    The board is a draft-day artifact. `proj_ppg` in it is ESPN's season projection frozen at
+    build time, and in-season that number moves when something happens to a player.
+
+    Measured 2026-09-04, five days after the draft, across fourteen projected players: the
+    **median absolute drift was 0.04 points** and thirteen of fourteen were inside 0.6. The
+    exception was MarShawn Lloyd at **+2.91** -- ESPN had repriced him 5.10 -> 8.01 because
+    Josh Jacobs, the back ahead of him in Green Bay, had been suspended six games. So this is
+    not a stale-data sweep; it is inert everywhere except the one player whose situation
+    actually changed, which is exactly the property that makes it safe.
+
+    **It is a refresh, not a new signal.** The quantity is the one the board already uses,
+    read now instead of on Wednesday, so there is nothing here for a screen to ask "is this
+    real?" about. Note what it buys for free: this repo screened depth-chart movement as a
+    signal and rejected it (`docs/depth-chart-signal.md`), and it does not need one --
+    succession is already priced by the projection, and the only bug was discarding the price.
+
+    The board's own `proj_ppg` remains the fallback, so a player ESPN does not project keeps
+    the draft-day number rather than losing his projection entirely.
+    """
+    if "espn_avg" not in joined.columns or "proj_ppg" not in joined.columns:
+        return joined
+    # Only players the board already scoped. ESPN projects kickers and defences too, and
+    # taking its number for them would quietly overturn the decision that they carry none.
+    scoped = pl.col("projected") if "projected" in joined.columns else pl.lit(True)
+    live = pl.when(scoped & (pl.col("espn_avg") > 0)).then(pl.col("espn_avg")).otherwise(None)
+    return (joined.with_columns(pl.coalesce(live, pl.col("proj_ppg")).alias("proj_ppg"))
+                  .with_columns(predict_blend()))
+
+
 def build(espn: pl.DataFrame, board: pl.DataFrame) -> pl.DataFrame:
     """Attach the board's projection to each rostered player and take its moments.
 
@@ -144,8 +177,14 @@ def build(espn: pl.DataFrame, board: pl.DataFrame) -> pl.DataFrame:
 
     # `projected` before `moments`, because moments fills a missing projection with 0.0 and
     # that zero is indistinguishable from a real one once it has been written.
+    #
+    # It is also settled before `market`, and the order is load-bearing: `projected` means
+    # "the *board* carried a projection", which is the scope decision -- QB, RB, WR, TE. ESPN
+    # projects kickers and defences perfectly happily, so refreshing first and asking after
+    # let a D/ST in at 4.6 points and put it in the lineup.
     have = pl.any_horizontal(*[pl.col(c).is_not_null() for c in cols]) if cols else pl.lit(False)
-    out = moments(availability(joined).with_columns(have.alias("projected")))
+    scoped = availability(joined).with_columns(have.alias("projected"))
+    out = moments(market(scoped))
     return out.with_columns(
         pl.when(pl.col("projected")).then(pl.col("mu")).otherwise(None).alias("mu"),
         pl.when(pl.col("projected")).then(pl.col("sd")).otherwise(None).alias("sd"),

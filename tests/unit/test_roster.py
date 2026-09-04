@@ -256,3 +256,69 @@ def test_a_roster_where_nobody_plays_a_full_slate_is_not_a_roster_of_suspensions
     lk = R.lock(_squad(unavailable={n for n, _, _, _ in _SQUAD}))
     assert lk.withheld == []
     assert lk.gain is not None
+
+
+# --- the market half, refreshed against live ESPN ---
+
+def _with_board(players, board):
+    return R.build(R.from_team(_Team([], players)), board)
+
+
+def test_the_live_projection_replaces_the_boards_frozen_copy():
+    """The board is a draft-day artifact. ESPN repriced MarShawn Lloyd 5.10 -> 8.01 when the
+    back ahead of him was suspended, and the board could not know."""
+    got = _with_board(
+        [_p("MarShawn Lloyd", "RB", 8.01, 136.0, slot="RB")],
+        pl.DataFrame({"player": ["MarShawn Lloyd"], "pos": ["RB"],
+                      "proj_ppg": [5.10], "xfp_per_game": [6.08]}))
+    # blend of the *live* 8.01 with the board's xfp, not of the frozen 5.10
+    assert got.row(0, named=True)["mu"] == pytest.approx((8.01 + 6.08) / 2)
+
+
+def test_a_player_espn_no_longer_projects_keeps_the_draft_day_number():
+    """The refresh is a coalesce, not a replacement: losing a live projection must not cost a
+    player the one the board already had."""
+    got = _with_board(
+        [_p("Someone", "RB", 0.0, 0.0, slot="RB")],
+        pl.DataFrame({"player": ["Someone"], "pos": ["RB"],
+                      "proj_ppg": [9.0], "xfp_per_game": [7.0]}))
+    assert got.row(0, named=True)["mu"] == pytest.approx(8.0)
+
+
+def test_the_refresh_does_not_project_a_kicker_espn_happens_to_price():
+    """The regression this ordering exists for. ESPN projects kickers and defences perfectly
+    happily; refreshing before scoping let a D/ST into the lineup at 4.6 points."""
+    got = _with_board(
+        [_p("Eddy Pineiro", "K", 9.13, 155.2, slot="K"),
+         _p("Jaguars D/ST", "D/ST", 4.61, 78.4, slot="D/ST"),
+         _p("Real Back", "RB", 10.0, 170.0, slot="RB")],
+        pl.DataFrame({"player": ["Real Back"], "pos": ["RB"],
+                      "proj_ppg": [9.0], "xfp_per_game": [9.0]}))
+    by = {r["player"]: r for r in got.iter_rows(named=True)}
+    assert by["Eddy Pineiro"]["projected"] is False and by["Eddy Pineiro"]["mu"] is None
+    assert by["Jaguars D/ST"]["projected"] is False and by["Jaguars D/ST"]["mu"] is None
+    assert by["Real Back"]["mu"] == pytest.approx(9.5)
+
+
+def test_market_is_a_no_op_when_the_frame_carries_no_live_column():
+    """`build` is not the only caller shape -- a frame without `espn_avg` must pass through
+    rather than raise."""
+    df = pl.DataFrame({"proj_ppg": [9.0], "xfp_per_game": [7.0]})
+    assert R.market(df).equals(df)
+
+
+def test_the_board_and_the_roster_blend_the_same_way():
+    """One owner for `proj_blend`. The board builds it at draft time and the roster rebuilds
+    it in-season, and the two must not be able to disagree about what it means."""
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
+    bad = []
+    for path in (root / "draft" / "board.py", root / "season" / "roster.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            # the literal formula, written out anywhere other than predict.blend
+            if (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
+                    and isinstance(node.right, ast.Constant) and node.right.value == 2.0
+                    and isinstance(node.left, ast.BinOp) and isinstance(node.left.op, ast.Add)):
+                bad.append(f"{path.name}:{node.lineno}")
+    assert not bad, f"the blend formula is restated in: {bad}"
