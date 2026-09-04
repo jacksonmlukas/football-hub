@@ -14,3 +14,6 @@ data/processed/
 outputs/
 .coverage
 htmlcov/
+
+# Personal Claude Code overrides -- machine-local, never shared.
+.claude/settings.local.json
