@@ -1,0 +1,187 @@
+{
+  "name": "roster",
+  "source": "roster.parquet",
+  "generated_at": "2026-09-04T04:05:35+00:00",
+  "n": 16,
+  "rows": [
+    {
+      "player": "Ja'Marr Chase",
+      "pos": "WR",
+      "nfl_team": "CIN",
+      "mu": 19.61643763835294,
+      "sd": 9.433865375414442,
+      "projected": true,
+      "starting": true,
+      "best_start": true,
+      "injury_status": "QUESTIONABLE"
+    },
+    {
+      "player": "Josh Jacobs",
+      "pos": "RB",
+      "nfl_team": "GB",
+      "mu": 15.478436544705884,
+      "sd": 8.143927354195286,
+      "projected": true,
+      "starting": false,
+      "best_start": true,
+      "injury_status": "DAY_TO_DAY"
+    },
+    {
+      "player": "Rashee Rice",
+      "pos": "WR",
+      "nfl_team": "KC",
+      "mu": 14.939477243058823,
+      "sd": 8.232795048100831,
+      "projected": true,
+      "starting": true,
+      "best_start": true,
+      "injury_status": "ACTIVE"
+    },
+    {
+      "player": "Jordan Love",
+      "pos": "QB",
+      "nfl_team": "GB",
+      "mu": 14.914164866176472,
+      "sd": 7.260346018132615,
+      "projected": true,
+      "starting": true,
+      "best_start": true,
+      "injury_status": "ACTIVE"
+    },
+    {
+      "player": "Nico Collins",
+      "pos": "WR",
+      "nfl_team": "HOU",
+      "mu": 14.36032782185294,
+      "sd": 8.071639938387031,
+      "projected": true,
+      "starting": true,
+      "best_start": true,
+      "injury_status": "ACTIVE"
+    },
+    {
+      "player": "Terry McLaurin",
+      "pos": "WR",
+      "nfl_team": "WSH",
+      "mu": 10.60372327,
+      "sd": 6.935995393861143,
+      "projected": true,
+      "starting": true,
+      "best_start": true,
+      "injury_status": "ACTIVE"
+    },
+    {
+      "player": "Jonathon Brooks",
+      "pos": "RB",
+      "nfl_team": "CAR",
+      "mu": 10.054573344661065,
+      "sd": 6.563752076711779,
+      "projected": true,
+      "starting": false,
+      "best_start": true,
+      "injury_status": "QUESTIONABLE"
+    },
+    {
+      "player": "KC Concepcion",
+      "pos": "WR",
+      "nfl_team": "CLE",
+      "mu": 9.63270689037255,
+      "sd": 6.610796312921101,
+      "projected": true,
+      "starting": false,
+      "best_start": false,
+      "injury_status": "ACTIVE"
+    },
+    {
+      "player": "Mark Andrews",
+      "pos": "TE",
+      "nfl_team": "BAL",
+      "mu": 9.160598591147059,
+      "sd": 6.0230296762345,
+      "projected": true,
+      "starting": true,
+      "best_start": true,
+      "injury_status": "ACTIVE"
+    },
+    {
+      "player": "Bhayshul Tuten",
+      "pos": "RB",
+      "nfl_team": "JAX",
+      "mu": 8.75751857497059,
+      "sd": 6.125772713861613,
+      "projected": true,
+      "starting": true,
+      "best_start": false,
+      "injury_status": "QUESTIONABLE"
+    },
+    {
+      "player": "Denzel Boston",
+      "pos": "WR",
+      "nfl_team": "CLE",
+      "mu": 8.735857520360849,
+      "sd": 6.295531112156077,
+      "projected": true,
+      "starting": false,
+      "best_start": false,
+      "injury_status": "ACTIVE"
+    },
+    {
+      "player": "Matthew Golden",
+      "pos": "WR",
+      "nfl_team": "GB",
+      "mu": 8.703032177640058,
+      "sd": 6.283692122210889,
+      "projected": true,
+      "starting": false,
+      "best_start": false,
+      "injury_status": "ACTIVE"
+    },
+    {
+      "player": "Chris Rodriguez Jr.",
+      "pos": "RB",
+      "nfl_team": "JAX",
+      "mu": 5.994344898764707,
+      "sd": 5.06805371486105,
+      "projected": true,
+      "starting": false,
+      "best_start": false,
+      "injury_status": "ACTIVE"
+    },
+    {
+      "player": "MarShawn Lloyd",
+      "pos": "RB",
+      "nfl_team": "GB",
+      "mu": 5.591724980411765,
+      "sd": 4.894893499205716,
+      "projected": true,
+      "starting": true,
+      "best_start": false,
+      "injury_status": "ACTIVE"
+    },
+    {
+      "player": "Eddy Pineiro",
+      "pos": "K",
+      "nfl_team": "SF",
+      "mu": null,
+      "sd": null,
+      "projected": false,
+      "starting": true,
+      "best_start": false,
+      "injury_status": "ACTIVE"
+    },
+    {
+      "player": "Jaguars D/ST",
+      "pos": "D/ST",
+      "nfl_team": "JAX",
+      "mu": null,
+      "sd": null,
+      "projected": false,
+      "starting": true,
+      "best_start": false,
+      "injury_status": "NORMAL"
+    }
+  ],
+  "set_total": 97.94397298597057,
+  "optimal_total": 109.12773931995518,
+  "gain": 11.183766333984607
+}

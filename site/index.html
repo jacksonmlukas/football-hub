@@ -80,6 +80,7 @@
 
 <div class="grid">
   <section id="p-board"><h2>Draft board <span class="age"></span></h2><div class="body"></div></section>
+  <section id="p-roster"><h2>My roster <span class="age"></span></h2><div class="body"></div></section>
   <section id="p-slate"><h2>Weekly slate <span class="age"></span></h2><div class="body"></div></section>
   <section id="p-record"><h2>Track record <span class="age"></span></h2><div class="body"></div></section>
   <section id="p-survivor"><h2>Survivor <span class="age"></span></h2><div class="body"></div></section>
@@ -270,6 +271,44 @@ async function render() {
     });
   } else {
     panel("p-board", { age: "", warn: "No draft board. Run <code>make draft</code>." });
+  }
+
+  // --- my roster, and where the set lineup differs from the best one
+  const ros = await load("roster");
+  const rArt = findArt(man, "roster");
+  if (ros && Array.isArray(ros.rows) && ros.rows.length) {
+    // The gain is stated with its caveat attached rather than as a headline number. mu is
+    // the board's season-long projection, so it does not know who is hurt this week.
+    const gain = ros.gain;
+    const note = gain == null ? ""
+      : gain > 0.05
+        ? `<p class="warn">The set lineup projects ${fmt(ros.set_total, 1)}; the best one
+             projects ${fmt(ros.optimal_total, 1)}, a difference of <b>${fmt(gain, 1)}</b> a week.
+             These projections are season-long and do not know who is hurt this week, so treat
+             it as a question to settle at lock, not a free swap.</p>`
+        : `<p class="empty">The set lineup is already the best one on these projections.</p>`;
+    panel("p-roster", {
+      age: `${ros.n} rostered`,
+      warn: rArt?.stale ? `Stale: ${rArt.reason ?? "unknown"}` : null,
+      html: note + table([
+        { label: "", get: r => r.starting ? "S" : "", cls: r => r.starting ? "good" : "" },
+        { label: "pos", get: r => r.pos ?? "" },
+        { label: "player", get: r => r.player ?? "" },
+        { label: "proj", get: r => r.projected ? fmt(r.mu, 1) : "&mdash;" },
+        { label: "+/-", get: r => r.projected ? fmt(r.sd, 1) : "" },
+        { label: "best XI", get: r => r.best_start ? "\u2713" : "",
+          cls: r => r.best_start && !r.starting ? "good" : "" },
+        { label: "status", get: r =>
+            ["ACTIVE", "NORMAL", ""].includes(r.injury_status) ? "" : r.injury_status },
+      ], ros.rows),
+    });
+  } else {
+    panel("p-roster", {
+      age: "",
+      warn: "No roster yet. Run <code>python -m hub.season.roster --write</code>.",
+      html: `<p class="empty">Knowable only after the draft, which is why this panel was
+             empty all summer.</p>`,
+    });
   }
 
   // --- weekly slate, with the live overlay

@@ -169,6 +169,52 @@ def live(out: Path | None = None, league: str = "nfl") -> dict[str, Any] | None:
 
 # --- everything, plus a manifest -----------------------------------------
 
+# --- the roster, and the lineup it implies --------------------------------
+
+def roster(out: Path | None = None, path: Path | None = None) -> dict[str, Any] | None:
+    """Who is on the team, and where the set lineup differs from the best one.
+
+    Reads `data/processed/roster.parquet` rather than ESPN, so the panel is publishable
+    without a network round trip and shows last-good when a sync fails -- the same contract
+    every other artifact here keeps.
+
+    The comparison is the point. ESPN auto-sets a lineup at the end of the draft, and the
+    projections behind that lineup are not ours. Showing both, with the difference named, is
+    the `docs/draft-night.md` rule: two views, and the decision stays yours.
+    """
+    from hub.season.lineup import best_by_points
+    from hub.season.roster import ROSTER_PARQUET
+
+    src = path or ROSTER_PARQUET
+    if not src.exists():
+        return None
+    df = pl.read_parquet(src)
+    proj = df.filter(pl.col("projected"))
+
+    best_names: list[str] = []
+    set_total = optimal_total = None
+    if not proj.is_empty():
+        best = best_by_points(proj)["starters"]
+        best_names = best["player"].to_list()
+        optimal_total = float(best["mu"].sum())
+        set_total = float(proj.filter(pl.col("starting"))["mu"].sum())
+
+    rows = []
+    for r in df.iter_rows(named=True):
+        rows.append({
+            "player": r["player"], "pos": r["pos"], "nfl_team": r["nfl_team"],
+            "mu": r["mu"], "sd": r["sd"], "projected": r["projected"],
+            "starting": r["starting"], "best_start": r["player"] in best_names,
+            "injury_status": r["injury_status"],
+        })
+    payload = _artifact("roster", "roster.parquet", rows,
+                        set_total=set_total, optimal_total=optimal_total,
+                        gain=(None if set_total is None or optimal_total is None
+                              else optimal_total - set_total))
+    _write(out or SITE, "roster", payload)
+    return payload
+
+
 def publish_all(season: int, week: int, base: Path | None = None,
                 out: Path | None = None) -> dict[str, Any]:
     """Write every artifact and a manifest describing what the page can trust."""
@@ -190,6 +236,8 @@ def publish_all(season: int, week: int, base: Path | None = None,
            f"no predictions in the store for {season} week {week}")
     record("track_record", track_record(base=base, out=out), "no scored predictions")
     record("live", live(out=out), "ESPN scoreboard unavailable")
+    record("roster", roster(out=out),
+           "no roster yet -- run `python -m hub.season.roster --write`")
 
     board = (out / "draft_board.json")
     arts.append({"name": "draft_board", "present": board.exists(),

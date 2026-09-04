@@ -350,7 +350,7 @@ def test_no_module_restates_the_season_length():
         for node in ast.walk(ast.parse(path.read_text())):
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                     and node.func.id == "range" and len(node.args) == 2
-                    and all(isinstance(a, ast.Constant) for a in node.args)
-                    and [a.value for a in node.args] == [1, 15]):
+                    and [a.value if isinstance(a, ast.Constant) else None
+                         for a in node.args] == [1, 15]):
                 bad.append(f"{path.relative_to(root)}:{node.lineno}")
     assert not bad, f"the league length is restated in: {bad}"
