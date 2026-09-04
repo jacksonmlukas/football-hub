@@ -29,18 +29,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The check is a script rather than eight lines of inline shell because it could not
+      # pass and nothing could see that. It read `.ts`, which only `hub.fetch.espn.poll`
+      # writes -- `hub.publish.live` writes the file the page reads and has never carried
+      # that field -- and `jq -r '.ts // 0'` turned the absence into an age of `now - 0`.
+      # Every run reported 56.7 years of staleness and none could reach the healthy branch
+      # that closes an incident. `tests/contracts/test_watchdog_heartbeat.py` now pins it.
       - name: Check published heartbeat
         id: check
         run: |
           set +e
           URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/live.json"
-          TS=$(curl -sf --max-time 15 "$URL" | jq -r '.ts // 0')
-          NOW=$(date +%s)
-          AGE=$(( NOW - ${TS%.*} ))
-          echo "age=$AGE" >> "$GITHUB_OUTPUT"
-          # 600s of staleness during a game window means the poller is down.
-          if [ "$AGE" -gt 600 ]; then echo "stale=true" >> "$GITHUB_OUTPUT";
-          else echo "stale=false" >> "$GITHUB_OUTPUT"; fi
+          RESULT=$(.github/scripts/heartbeat.sh "$URL" 600)
+          echo "age=$(echo "$RESULT" | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+          # Three different failures, reported apart, because they have three different
+          # fixes: start the poller, republish the site, or reconcile writer and monitor.
+          case "$RESULT" in
+            ok*)          echo "stale=false" >> "$GITHUB_OUTPUT" ;;
+            stale*)       echo "stale=true"  >> "$GITHUB_OUTPUT"
+                          echo "why=the published live.json has not been refreshed" >> "$GITHUB_OUTPUT" ;;
+            unreachable*) echo "stale=true"  >> "$GITHUB_OUTPUT"
+                          echo "age=unknown" >> "$GITHUB_OUTPUT"
+                          echo "why=the published live.json could not be fetched" >> "$GITHUB_OUTPUT" ;;
+            *)            echo "stale=true"  >> "$GITHUB_OUTPUT"
+                          echo "age=unknown" >> "$GITHUB_OUTPUT"
+                          echo "why=live.json carries no readable generated_at, so its writer and this check disagree about the schema" >> "$GITHUB_OUTPUT" ;;
+          esac
 
       # `set +e` and the `||` fallbacks are the point of this step, not defensive noise.
       # On 2026-09-04 the label did not exist in the repo, `gh issue create --label` failed,
@@ -60,14 +74,15 @@ jobs:
           # issue, which is noisy and visible, against a silent failure which is neither.
           EXISTING=$(gh issue list --repo "${{ github.repository }}" \
             --label incident --state open --json number --jq '.[0].number' 2>/dev/null)
-          BODY="Heartbeat is ${{ steps.check.outputs.age }}s stale (threshold 600s).
+          BODY="Heartbeat age: ${{ steps.check.outputs.age }}s (threshold 600s).
 
-          The live scoreboard poller appears to be down. \`hub.fetch.espn.poll()\` is the
-          real entry point; \`make live\` was removed on 2026-08-24 because it invoked a CLI
-          that does not exist, and this message told you to run it anyway until 2026-09-04.
-          See docs/gaps.md.
+          Cause: ${{ steps.check.outputs.why }}.
 
-          The dashboard is serving last-good state, so nothing is broken — it is just frozen.
+          \`live.json\` is stamped by whatever last wrote it — \`hub.publish.live\` on a slate
+          refresh, or \`hub.fetch.espn.poll()\` while it runs. During a game window neither
+          having run for ten minutes means the page's scores are frozen.
+
+          The dashboard serves last-good state, so nothing is broken — it is just not moving.
           This issue auto-closes on the next healthy check."
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "$BODY"
