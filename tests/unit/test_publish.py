@@ -299,3 +299,53 @@ def test_the_week_partition_has_one_spelling():
     assert store.week_key(14) == "14"
     assert store.LAYOUT.format(table="preds", league="nfl", season=2026, week=1,
                                name="x").split("/")[3] == f"week={store.week_key(1)}"
+
+
+# --- the freshness contract, which every artifact keeps the same way ---
+
+def _names(season=2026, week=1, base=None, out=None):
+    return [a.name for a in publish.artifacts(season, week, base=base, out=out)]
+
+
+def test_every_panel_the_page_reads_is_declared_once():
+    """The manifest's order is the page's order, and adding a panel is one list entry."""
+    assert _names() == ["preds_wk01", "track_record", "live", "roster",
+                        "draft_board", "survivor"]
+
+
+@pytest.mark.parametrize("name", ["preds_wk01", "track_record", "live", "roster",
+                                  "draft_board", "survivor"])
+def test_a_producer_returning_none_is_stale_with_a_reason(name, tmp_path):
+    """`CLAUDE.md`'s degradation rule, asserted for all six rather than the four that used to
+    go through `record`. `draft_board` and `survivor` bypassed it entirely and so could not
+    be tested at all."""
+    art = next(a for a in publish.artifacts(2026, 1, out=tmp_path) if a.name == name)
+    got = publish.Artifact(art.name, lambda: None, art.reason).record(tmp_path)
+    assert got["stale"] is True
+    assert got["reason"], f"{name} went stale without saying why"
+    assert got["present"] is False and got["generated_at"] is None
+
+
+@pytest.mark.parametrize("name", ["preds_wk01", "roster", "draft_board", "survivor"])
+def test_last_goods_timestamp_survives_a_failed_producer(name, tmp_path):
+    """The panel shows yesterday's numbers *and* how old they are. `draft_board` and
+    `survivor` always reported null here, so the page could not age them."""
+    (tmp_path / f"{name}.json").write_text('{"generated_at": "2026-09-01T00:00:00+00:00"}')
+    got = publish.Artifact(name, lambda: None, "why").record(tmp_path)
+    assert got["present"] is True
+    assert got["generated_at"] == "2026-09-01T00:00:00+00:00"
+
+
+def test_a_list_shaped_artifact_does_not_crash_the_manifest(tmp_path):
+    """`draft_board.json` is a bare list of rows, so a `.get` on it raises. That branch was
+    unreachable while draft_board bypassed the contract; it is reachable now."""
+    (tmp_path / "draft_board.json").write_text('[{"player": "x"}]')
+    got = publish.Artifact("draft_board", lambda: None, "run `make draft`").record(tmp_path)
+    assert got["present"] is True and got["generated_at"] is None
+
+
+def test_a_present_board_is_not_stale_and_an_absent_one_is(tmp_path):
+    board = next(a for a in publish.artifacts(2026, 1, out=tmp_path) if a.name == "draft_board")
+    assert board.record(tmp_path)["stale"] is True
+    (tmp_path / "draft_board.json").write_text('[{"player": "x"}]')
+    assert board.record(tmp_path)["stale"] is False

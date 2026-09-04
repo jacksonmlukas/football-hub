@@ -894,6 +894,57 @@ unit tests. 1,361 tests pass; `config_digest` stays `281b7b7a` and `fitted_diges
 
 ---
 
+### 20. The Gate's statistic was written twice, and one copy was not reproducible — DONE 2026-09-04
+
+Three modules run a **Gate**: `draft.backtest`, `season.lineup_gate`, `season.weekly_gate`.
+All three build a paired frame with a `diff` column, bootstrap it, and read a verdict off the
+interval. The bootstrap existed twice. `experiment.summarise` resampled *rows*;
+`weekly_gate.cluster_bootstrap` resampled *rosters*. Same returned dict, one difference: what
+counts as an independent observation.
+
+Neither was wrong. `backtest` pairs one row per (season, draft) and `lineup_gate` one row per
+roster — independent draws, so rows are the right unit there. `weekly_gate` pairs one row per
+roster-*week*, fourteen readings sharing a roster's players, bye and draft. Each was right; the
+rule keeping them right lived in two places, and which one you got depended on which function
+you imported.
+
+**Done 2026-09-04.** One statistic: `summarise(paired, *, cluster=None)`, where `cluster` names
+the columns identifying one independent observation. `cluster_bootstrap` is deleted;
+`weekly_gate` passes `CLUSTER = ("season", "roster")` and its hand-rolled print block is now
+`paired_report`, which gained `places` and `show_n` so the weekly gate's tenth-the-size effect
+still reads as +0.215 rather than rounding to +0.22.
+
+**And the move found a live defect.** The clusters arrived in `.unique()` order, and since the
+bootstrap indexes into that order a permutation of the same cluster means moved the percentiles
+while leaving their average alone. That is why this repo's own docs recorded
+**+0.215 [−0.249, +0.659]** for a run that re-ran as **+0.215 [−0.251, +0.663]** — the mean was
+bit-stable and the interval never was. It is the same class of defect as #18, one layer down:
+a hash-ordered frame feeding a seeded computation. Clusters are sorted now, the interval is
+**[−0.242, +0.684]** every run, and a test asserts a shuffled input gives an identical summary.
+
+Nothing about the decision moves: same mean, same 3/4 seasons, same monotone decay, and an
+interval that contained zero still contains it.
+
+### 21. The Artifact was a concept with no module — DONE 2026-09-04
+
+`CLAUDE.md`'s degradation rule — *a panel whose data is missing says so and keeps rendering* —
+was written three ways inside one function. `publish_all` used a `record()` closure for four
+artifacts, a hand-rolled dict literal for `draft_board`, and `survivor` returned **its own
+manifest entry** rather than a payload, so it was appended raw and never recorded at all.
+
+The two that bypassed `record` were also the two that always reported `generated_at: null`, so
+the page could not age them. A stale board and a fresh one looked identical.
+
+**Done 2026-09-04.** `Artifact(name, produce, reason)` owns the contract and `publish_all` is a
+list comprehension over six declarations. `survivor` returns a payload or None like every other
+producer, printing its own failure the way `live` does. A parametrised test now asserts all six
+go stale with a reason and carry last-good's timestamp — for `draft_board` and `survivor` that
+test could not previously be written. `_generated_at` also guards the branch where a
+list-shaped artifact is read for a key it cannot have, which was unreachable before and is not
+now.
+
+---
+
 ---
 
 ## What is deliberately not on this list

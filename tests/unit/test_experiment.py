@@ -7,7 +7,9 @@ because both copies lived inside a `main()` that needs a network.
 
 All offline.
 """
+import numpy as np
 import polars as pl
+import pytest
 
 from hub.models import experiment
 
@@ -292,3 +294,53 @@ def test_the_bar_is_declared_once():
                 if isinstance(t, ast.Name) and t.id.endswith("MIN_SE"):
                     declared.append(f"{path.relative_to(src)}:{t.id}")
     assert not declared, f"a second significance bar: {declared}"
+
+
+# --- the resampling unit, which is the interface's whole job ---
+
+def _clustered(seed=0):
+    """Six rosters, ten weeks each, with a real per-roster effect."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for k in range(6):
+        offset = rng.normal(0, 3.0)
+        for w in range(1, 11):
+            rows.append({"season": 2024, "roster": k, "week": w,
+                         "diff": offset + rng.normal(0, 1.0)})
+    return pl.DataFrame(rows)
+
+
+def test_the_cluster_order_does_not_move_the_interval():
+    """Clusters are sorted before resampling. They used to arrive in `.unique()` order and the
+    bootstrap indexes into that order, so a permutation moved the interval while leaving the
+    mean alone -- which is why weekly-blend-gate.md records [-0.249, +0.659] for the same
+    +0.215 a re-run reports as [-0.251, +0.663]."""
+    df = _clustered()
+    shuffled = df.sample(fraction=1.0, shuffle=True, seed=7)
+    a = experiment.summarise(df, cluster=("season", "roster"), bootstrap=2000, seed=1)
+    b = experiment.summarise(shuffled, cluster=("season", "roster"), bootstrap=2000, seed=1)
+    assert a == b
+
+
+def test_clustering_widens_the_interval_when_the_cluster_effect_is_real():
+    df = _clustered()
+    wide = experiment.summarise(df, cluster=("season", "roster"), bootstrap=2000, seed=1)
+    narrow = experiment.summarise(df, bootstrap=2000, seed=1)
+    assert wide["hi"] - wide["lo"] > narrow["hi"] - narrow["lo"]
+
+
+def test_the_mean_is_the_same_either_way_for_balanced_clusters():
+    """Only the interval should move. A mean that shifted would mean clustering had changed
+    the estimate rather than its precision."""
+    df = _clustered()
+    wide = experiment.summarise(df, cluster=("season", "roster"), bootstrap=500, seed=1)
+    narrow = experiment.summarise(df, bootstrap=500, seed=1)
+    assert wide["mean"] == pytest.approx(narrow["mean"])
+    assert wide["n"] == narrow["n"] == 60
+    assert wide["clusters"] == 6
+
+
+def test_an_unclustered_summary_still_reports_its_unit_count():
+    """`clusters` is always present, so a reader never has to know which branch ran."""
+    s = experiment.summarise(_clustered(), bootstrap=200, seed=1)
+    assert s["clusters"] == s["n"] == 60

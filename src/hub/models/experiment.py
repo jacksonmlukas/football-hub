@@ -180,15 +180,21 @@ def _stats(season: int) -> pl.DataFrame:                        # pragma: no cov
 
 
 def paired_report(s: dict, *, arm_a: str, arm_b: str,
-                  unit: str = "points per team game") -> list[str]:
+                  unit: str = "points per team game", places: int = 2,
+                  show_n: bool = True) -> list[str]:
     """The n / interval / P(better) block, as lines rather than prints.
 
     Returned rather than printed for the reason `hub.draft.report` exists: a block that prints
     cannot be composed, capped, or asserted on.
+
+    `places` because the weekly gate's effect is a tenth the size of the draft gate's and
+    rounds to +0.22 at two -- while every doc and ADR quotes it as +0.215. `show_n` because
+    that gate prints its own roster-week count, with the cluster count beside it.
     """
+    head = f"n={int(s['n'])}  " if show_n else ""
     return [
-        f"\n  n={int(s['n'])}  {arm_a} - {arm_b} = {s['mean']:+.2f} {unit}",
-        f"  95% CI [{s['lo']:+.2f}, {s['hi']:+.2f}]   "
+        f"\n  {head}{arm_a} - {arm_b} = {s['mean']:+.{places}f} {unit}",
+        f"  95% CI [{s['lo']:+.{places}f}, {s['hi']:+.{places}f}]   "
         f"P({arm_a} better) {s['p_better'] * 100:.1f}%",
     ]
 
@@ -213,23 +219,47 @@ def realised_ppg(stats: pl.DataFrame) -> pl.DataFrame:
     return out.group_by(["player", "week"]).agg(pl.col("points").sum())
 
 
-def summarise(paired: pl.DataFrame, *, bootstrap: int = BOOTSTRAP,
-              seed: int = 0) -> dict[str, float]:
-    """Mean paired difference, a bootstrap interval, and P(optimizer better).
+def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
+              bootstrap: int = BOOTSTRAP, seed: int = 0) -> dict[str, float]:
+    """Mean paired difference, a bootstrap interval, and P(arm A better).
 
     Bootstrapped over *paired* observations rather than over each arm separately, matching
     `hub.models.eval.compare`: the arms share a room and a seed, so resampling them
     independently would throw away the pairing that the design exists to create.
+
+    **`cluster` names what one independent observation is**, and getting it wrong is the most
+    expensive mistake in this repo's record -- repeated measures once turned noise into an
+    apparent 4-sigma result (signal-screens.md protocol item 3). Pass the columns identifying
+    a cluster and each is averaged to a single reading before resampling; pass nothing and the
+    row is the unit. There is no safe default, so callers state it:
+
+      * `backtest.compare` -- one row per (season, draft), independent rooms: no cluster.
+      * `lineup_gate.compare` -- one row per roster: no cluster.
+      * `weekly_gate.compare` -- one row per roster-*week*, fourteen readings sharing a
+        roster's players, bye and draft: `cluster=("season", "roster")`. Resampling rows there
+        would report an interval about sqrt(14) too narrow.
+
+    The clusters are **sorted** before resampling. They used to arrive in `.unique()` order,
+    and since the bootstrap indexes into that order a permutation moved the interval while
+    leaving the mean alone -- which is why `docs/weekly-blend-gate.md` records a CI of
+    [-0.249, +0.659] against a re-run's [-0.251, +0.663] for an identical +0.215. Same defect
+    as improvements #18, one layer down.
     """
-    d = paired["diff"].to_numpy()
-    n = len(d)
-    if n == 0:
-        return {"n": 0, "mean": float("nan"), "lo": float("nan"), "hi": float("nan"),
-                "p_better": float("nan")}
+    if paired.is_empty():
+        return {"n": 0, "clusters": 0, "mean": float("nan"), "lo": float("nan"),
+                "hi": float("nan"), "p_better": float("nan")}
+    if cluster:
+        keys = list(cluster)
+        units = (paired.group_by(keys).agg(pl.col("diff").mean().alias("_unit"))
+                       .sort(keys)["_unit"].to_numpy().astype(float))
+    else:
+        units = paired["diff"].to_numpy().astype(float)
+
     rng = np.random.default_rng(seed)
-    idx = rng.integers(0, n, size=(bootstrap, n))
-    means = d[idx].mean(axis=1)
-    return {"n": float(n), "mean": float(d.mean()),
-            "lo": float(np.percentile(means, 2.5)),
-            "hi": float(np.percentile(means, 97.5)),
-            "p_better": float((means > 0).mean())}
+    idx = rng.integers(0, len(units), size=(bootstrap, len(units)))
+    draws = units[idx].mean(axis=1)
+    return {"n": float(paired.height), "clusters": float(len(units)),
+            "mean": float(units.mean()),
+            "lo": float(np.percentile(draws, 2.5)),
+            "hi": float(np.percentile(draws, 97.5)),
+            "p_better": float((draws > 0).mean())}

@@ -48,10 +48,17 @@ import polars as pl
 
 from hub.config import FANTASY_WEEKS
 from hub.draft.season import STARTERS, starting_lineup
-from hub.models.experiment import BOOTSTRAP
+from hub.models.experiment import paired_report, summarise
 
 # The fantasy regular season. 15-17 is the playoffs, reported apart; 18 is meaningless.
 GATE_WEEKS = FANTASY_WEEKS
+
+# What one independent observation is here. A roster's fourteen weeks share its players, its
+# bye and its draft, so they are one observation with fourteen readings -- resampling rows
+# would report an interval about sqrt(14) too narrow, which is signal-screens.md protocol
+# item 3 and the error that once produced an apparent 4-sigma result. `experiment.summarise`
+# takes this and does the clustering; it used to be a second bootstrap living here.
+CLUSTER: tuple[str, ...] = ("season", "roster")
 
 # A player the consensus page does not list is ranked behind every player it does.
 UNRANKED = -1e9
@@ -214,31 +221,6 @@ def compare(g: GateInputs, *, weeks: Sequence[int] = GATE_WEEKS, churn: bool = F
     return out.with_columns((pl.col("weekly") - pl.col("consensus")).alias("diff"))
 
 
-def cluster_bootstrap(paired: pl.DataFrame, *, bootstrap: int = BOOTSTRAP,
-                      seed: int = 0) -> dict[str, float]:
-    """Mean paired difference and an interval, resampling **rosters** rather than rows.
-
-    A roster's fourteen weeks share its players, its bye and its draft, so they are one
-    observation with fourteen readings. Resampling rows would treat them as fourteen and
-    report an interval about the square root of fourteen too narrow -- protocol item 3, which
-    turned noise into an apparent 4-sigma result once already.
-    """
-    if paired.is_empty():
-        return {"n": 0, "clusters": 0, "mean": float("nan"), "lo": float("nan"),
-                "hi": float("nan"), "p_better": float("nan")}
-    keys = paired.select("season", "roster").unique().rows()
-    by = {k: paired.filter((pl.col("season") == k[0]) & (pl.col("roster") == k[1]))["diff"]
-                   .to_numpy().astype(float) for k in keys}
-    means = np.array([v.mean() for v in by.values()])
-    rng = np.random.default_rng(seed)
-    idx = rng.integers(0, len(means), size=(bootstrap, len(means)))
-    draws = means[idx].mean(axis=1)
-    return {"n": float(paired.height), "clusters": float(len(means)),
-            "mean": float(means.mean()), "lo": float(np.percentile(draws, 2.5)),
-            "hi": float(np.percentile(draws, 97.5)),
-            "p_better": float((draws > 0).mean())}
-
-
 def per_season(paired: pl.DataFrame) -> pl.DataFrame:
     """Mean difference per held-out season -- the every-season half of the bar."""
     return (paired.group_by("season")
@@ -340,7 +322,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                                expected=a.expected)
     cover = coverage(inputs)
     paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool)
-    s = cluster_bootstrap(paired, seed=a.seed)
+    s = summarise(paired, cluster=CLUSTER, seed=a.seed)
     seasons_tbl = per_season(paired)
     mode = ("one add/drop a week, pool both arms can score" if a.churn and not a.open_pool
             else "one add/drop a week, OPEN POOL -- not the gate" if a.churn
@@ -356,9 +338,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     print(f"  unranked {cover['unranked']:.1%}, of which a join failure "
           f"{cover['join_failure']:.1%} (floor {VOID_FLOOR:.0%})")
     print(seasons_tbl)
-    print(f"\n  weekly - consensus = {s['mean']:+.3f} points per team-week")
-    print(f"  95% CI [{s['lo']:+.3f}, {s['hi']:+.3f}]   "
-          f"P(weekly better) {s['p_better'] * 100:.1f}%")
+    print("\n".join(paired_report(s, arm_a="weekly", arm_b="consensus",
+                                   unit="points per team-week", places=3, show_n=False)))
     print(f"\n  {verdict(s, seasons_tbl, cover)[1]}")
     return 0
 

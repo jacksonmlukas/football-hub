@@ -100,7 +100,7 @@ Frozen: **positive but small, interval containing zero — SHOW.** Churn: **nega
 
 ## Resolved, 2026-08-29: SHOW
 
-    frozen  +0.215  CI [-0.249, +0.659]  3/4 seasons   <- primary
+    frozen  +0.215  CI [-0.242, +0.684]  3/4 seasons   <- primary
     churn   -1.806  CI [-2.710, -0.921]  2/4 seasons
 
     (Restated 2026-08-30. It first ran at +0.711 / -2.006 under a board that was not

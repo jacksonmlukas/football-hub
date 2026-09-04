@@ -19,10 +19,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import polars as pl
 
@@ -212,44 +212,86 @@ def roster(out: Path | None = None, path: Path | None = None) -> dict[str, Any] 
 
 # --- everything, plus a manifest -----------------------------------------
 
+def _generated_at(path: Path) -> str | None:
+    """Last-good's timestamp, or None if the file has no dict to read it from.
+
+    `draft_board.json` is a list of rows, so a bare `.get` on it raises. That branch was
+    unreachable while draft_board bypassed the contract below; it is reachable now.
+    """
+    try:
+        got = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return got.get("generated_at") if isinstance(got, dict) else None
+
+
+class Artifact(NamedTuple):
+    """One published file, and the freshness contract every one of them keeps.
+
+    `CLAUDE.md`'s degradation rule -- *a panel whose data is missing says so and keeps
+    rendering* -- used to be written three ways inside `publish_all`: a `record` closure for
+    four artifacts, a hand-rolled dict for `draft_board`, and `survivor` returning its own
+    manifest entry. The two that bypassed `record` were also the two that always reported
+    `generated_at: null`, so the page could not age them.
+
+    A producer returns its payload, or **None** meaning "nothing new, keep last-good". It
+    never builds a manifest entry itself; that is this module's single job.
+    """
+    name: str
+    produce: Callable[[], dict[str, Any] | None]
+    reason: str
+
+    def record(self, out: Path) -> dict[str, Any]:
+        payload = self.produce()
+        path = out / f"{self.name}.json"
+        present = path.exists()
+        return {
+            "name": self.name, "present": present, "stale": payload is None,
+            "reason": None if payload else self.reason,
+            "generated_at": (payload.get("generated_at") if payload
+                             else (_generated_at(path) if present else None)),
+        }
+
+
+def _board(out: Path) -> dict[str, Any] | None:
+    """`draft_board.json` has no producer here -- `hub.draft.board` writes it.
+
+    So its "producer" only reports whether it is there. It carries no `generated_at` because
+    the file is a bare list of rows; the board's own age comes from the parquet's mtime, via
+    `board.board_age_hours`.
+    """
+    return {"generated_at": None} if (out / "draft_board.json").exists() else None
+
+
+def artifacts(season: int, week: int, base: Path | None = None,
+              out: Path | None = None) -> list[Artifact]:
+    """Everything the page reads, declared once. Adding a panel is one entry."""
+    out = out or SITE
+    return [
+        Artifact(f"preds_wk{store.week_key(week)}",
+                 lambda: predictions(season, week, base=base, out=out),
+                 f"no predictions in the store for {season} week {week}"),
+        Artifact("track_record", lambda: track_record(base=base, out=out),
+                 "no scored predictions"),
+        Artifact("live", lambda: live(out=out), "ESPN scoreboard unavailable"),
+        Artifact("roster", lambda: roster(out=out),
+                 "no roster yet -- run `python -m hub.season.roster --write`"),
+        Artifact("draft_board", lambda: _board(out), "run `make draft`"),
+        Artifact("survivor", lambda: survivor(season, out=out), "schedule unavailable"),
+    ]
+
 
 def publish_all(season: int, week: int, base: Path | None = None,
                 out: Path | None = None) -> dict[str, Any]:
     """Write every artifact and a manifest describing what the page can trust."""
     out = out or SITE
-    arts: list[dict[str, Any]] = []
-
-    def record(name: str, payload: dict[str, Any] | None, reason: str) -> None:
-        path = out / f"{name}.json"
-        present = path.exists()
-        arts.append({
-            "name": name, "present": present,
-            "stale": payload is None,
-            "reason": None if payload else reason,
-            "generated_at": payload["generated_at"] if payload else (
-                json.loads(path.read_text()).get("generated_at") if present else None),
-        })
-
-    record(f"preds_wk{store.week_key(week)}", predictions(season, week, base=base, out=out),
-           f"no predictions in the store for {season} week {week}")
-    record("track_record", track_record(base=base, out=out), "no scored predictions")
-    record("live", live(out=out), "ESPN scoreboard unavailable")
-    record("roster", roster(out=out),
-           "no roster yet -- run `python -m hub.season.roster --write`")
-
-    board = (out / "draft_board.json")
-    arts.append({"name": "draft_board", "present": board.exists(),
-                 "stale": not board.exists(),
-                 "reason": None if board.exists() else "run `make draft`",
-                 "generated_at": None})
-    arts.append(survivor(season, out=out))
-
+    arts = [a.record(out) for a in artifacts(season, week, base=base, out=out)]
     man = {"generated_at": _now(), "season": season, "week": week, "artifacts": arts}
     _write(out, "manifest", man)
     return man
 
 
-def survivor(season: int, out: Path | None = None) -> dict[str, Any]:
+def survivor(season: int, out: Path | None = None) -> dict[str, Any] | None:
     """The survivor plan, as its own artifact.
 
     Wrapped rather than inlined because it reaches the network for a schedule. A failing
@@ -266,14 +308,15 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any]:
         cov = sv.coverage(grid, list(range(1, NFL_WEEKS + 1)))
         plan = sv.solve(grid, weeks=cov["covered"])
     except Exception as e:
-        return {"name": "survivor", "present": False, "stale": True,
-                "reason": f"{type(e).__name__}: {e}"[:120], "generated_at": None}
-    rows = plan.to_dicts()
-    art = _artifact("survivor", "hub.season.survivor", rows, season=season,
+        # Reported the way `live` reports its own failure: printed for the operator, None for
+        # the caller. It used to hand back a manifest entry of its own -- the only producer
+        # that did -- which is why it could never be recorded like the rest.
+        print(f"  survivor: schedule unavailable ({type(e).__name__}: {e})"[:160])
+        return None
+    art = _artifact("survivor", "hub.season.survivor", plan.to_dicts(), season=season,
                     survival=sv.survival(plan), unpriced_weeks=cov["missing"])
     _write(out, "survivor", art)
-    return {"name": "survivor", "present": True, "stale": False,
-            "reason": None, "generated_at": art["generated_at"]}
+    return art
 
 
 def default_week(season: int, base: Path | None = None) -> int:

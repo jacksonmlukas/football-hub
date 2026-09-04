@@ -158,20 +158,22 @@ def test_the_bootstrap_resamples_rosters_not_rows():
     """A roster's weeks share its players, its bye and its draft. Resampling rows would treat
     ten readings as ten observations and report an interval far too narrow -- protocol item 3,
     which turned noise into an apparent 4-sigma result once already."""
+    from hub.models.experiment import summarise
     paired = _paired()
-    clustered = G.cluster_bootstrap(paired, bootstrap=2000, seed=1)
-    d = paired["diff"].to_numpy()
-    rng = np.random.default_rng(1)
-    naive = rng.integers(0, len(d), size=(2000, len(d)))
-    naive_width = float(np.percentile(d[naive].mean(axis=1), 97.5)
-                        - np.percentile(d[naive].mean(axis=1), 2.5))
+    clustered = summarise(paired, cluster=G.CLUSTER, bootstrap=2000, seed=1)
+    naive = summarise(paired, bootstrap=2000, seed=1)
+    naive_width = naive["hi"] - naive["lo"]
     assert clustered["hi"] - clustered["lo"] > 2 * naive_width, \
         "clustering must widen the interval when the roster effect is real"
     assert clustered["clusters"] == 6 and clustered["n"] == 60
+    # The unclustered arm is the same statistic with the unit left at the row -- which is the
+    # mistake, stated through the same interface rather than as a separate function.
+    assert naive["clusters"] == 60
 
 
 def test_an_empty_frame_reports_rather_than_crashing():
-    s = G.cluster_bootstrap(pl.DataFrame())
+    from hub.models.experiment import summarise
+    s = summarise(pl.DataFrame(), cluster=G.CLUSTER)
     assert s["clusters"] == 0 and np.isnan(s["mean"])
 
 

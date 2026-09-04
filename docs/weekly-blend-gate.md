@@ -10,8 +10,18 @@ Join failure 0.1% against a 2% floor.**
 
 | gate | weekly − consensus | 95% CI | seasons won | verdict |
 |---|---|---|---|---|
-| **frozen** *(primary)* | **+0.215** | [−0.249, +0.659] | 3/4 | **SHOW, NEVER RANK ON** |
+| **frozen** *(primary)* | **+0.215** | [−0.242, +0.684] | 3/4 | **SHOW, NEVER RANK ON** |
 | churn | −1.806 | [−2.710, −0.921] | 2/4 | SHOW, NEVER RANK ON |
+
+> **Interval restated 2026-09-04, and now reproducible.** The CI above was
+> [−0.249, +0.659] as first published and [−0.251, +0.663] on a re-run of the identical
+> command — the *mean* was bit-stable at +0.215 every time, but the interval drifted. The
+> cause: `cluster_bootstrap` took its clusters in `.unique()` order and the bootstrap indexes
+> into that order, so a permutation of the same cluster means moved the percentiles while
+> leaving their average alone. Same defect as [#18](improvements.md), one layer down. Clusters
+> are now sorted before resampling (`hub.models.experiment.summarise`), and the interval is
+> **[−0.242, +0.684]** every run. Nothing about the verdict, the seasons won, or the decay
+> moves — an interval that contained zero still contains it.
 
 > **Restated 2026-08-30 under a reproducible board.** This ran first at **+0.711
 > [+0.313, +1.129]** and −2.006, and those figures are superseded rather than wrong-at-the-time:

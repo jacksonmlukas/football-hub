@@ -138,7 +138,7 @@ blend is a model in its own right and should be gated as one, once, cleanly. See
 ## Closed, 2026-08-29
 
 That clean run happened, under [ADR-0017](0017-the-market-usage-blend-is-a-model-not-a-shrinkage.md):
-frozen **+0.215** CI [−0.249, +0.659] on four held-out seasons, churn **−1.806**. The
+frozen **+0.215** CI [−0.242, +0.684] on four held-out seasons, churn **−1.806**. The
 every-season half fails — it lost 2025 — and the frozen gain decays monotonically across the
 four seasons, **+0.983 → −0.504**, negative in the one closest to the season being drafted.
 
