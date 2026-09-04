@@ -67,11 +67,8 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
 
     import nflreadpy as nfl
 
-    from hub.config import RosterConfig
-    from hub.draft.backtest import market_strategy
     from hub.draft.board import board_as_of
-    from hub.draft.optimize import simulate_remaining_draft
-    from hub.draft.state import DraftState
+    from hub.draft.cohort import cohort
     from hub.models.experiment import PLAYER_STATS_COLS, expanding_seasons
     from hub.models.weekly import (
         VOLUME,
@@ -81,7 +78,6 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         project,
         standard_error,
     )
-    cfg = RosterConfig()
     want_ranks = shrink is not None and "market" in shrink
     panel = build_panel(seasons, PanelSpec(
         consensus=False, expected=expected,
@@ -122,8 +118,6 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         board = board_as_of(yr)[0]
         names = board["player"].to_list()
         keys = [player_key(n) for n in names]
-        pos[yr] = [str(p) if p else "NA" for p in board["pos"].to_list()]
-        n = len(keys)
 
         stats = nfl.load_player_stats(seasons=[yr]).select(list(PLAYER_STATS_COLS))
         pts_of = {(r["player"], int(r["week"])): float(r["points"])
@@ -147,15 +141,12 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         # confidence bound leaves the consensus fallback exactly where it was.
         se[yr] = np.nan_to_num(_matrix(keys, se_of, float("nan")), nan=0.0)
 
-        made, pools = [], []
-        for k in range(drafts):
-            room = simulate_remaining_draft(
-                board, DraftState(taken=[]), my_slot=cfg.slot, teams=cfg.teams, rounds=14,
-                rng=np.random.default_rng(seed + 1000 * yr + k), my_pick=market_strategy())
-            drafted = {int(i) for team in room for i in team}
-            made.append([int(i) for i in room[cfg.slot - 1]])
-            pools.append([i for i in range(n) if i not in drafted])
-        rosters[yr], pool[yr] = made, pools
+        # One recipe, one home. This was written out here and again inside
+        # `lineup_gate.main`, with the seed formula copied by hand into both.
+        made = cohort(board, yr, drafts=drafts, seed=seed)
+        # Positions come from the Cohort too, rather than being read off the board a second
+        # time -- two readings of one frame is how they come to disagree.
+        rosters[yr], pool[yr], pos[yr] = made.rosters, made.pool, made.pos
     return GateInputs(rosters, pos, realised, consensus, weekly, pool, addable, se,
                       covered_weeks(ecr))
 

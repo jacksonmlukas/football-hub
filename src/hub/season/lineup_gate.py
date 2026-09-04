@@ -174,10 +174,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                          "measured; see docs/parameter-uncertainty.md")
     a = ap.parse_args(argv)
 
-    from hub.config import RosterConfig
-    from hub.draft.backtest import market_strategy, play
+    from hub.draft.cohort import cohort
 
-    cfg = RosterConfig()
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     rosters: dict[int, list] = {}
 
@@ -207,12 +205,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         who = pred["player"].to_list()
         proj_of = dict(zip(who, pred["mu"].fill_null(0.0).to_list(), strict=True))
         sd_of = dict(zip(who, pred["sd"].fill_null(0.0).to_list(), strict=True))
-        made = []
-        for k in range(a.drafts):
-            names, pos = play(board, market_strategy(), my_slot=cfg.slot, teams=cfg.teams,
-                              rounds=14, rng=np.random.default_rng(a.seed + 1000 * yr + k))
-            made.append([(n, p, proj_of.get(n, 0.0), sd_of.get(n, 0.0))
-                         for n, p in zip(names, pos, strict=True)])
+        # The same Cohort the weekly gate scores, from the same seeded recipe. Both used to
+        # write it out, and a formula copied by hand into two places is one that eventually
+        # differs in one.
+        drafted = cohort(board, yr, drafts=a.drafts, seed=a.seed)
+        who_at = board["player"].to_list()
+        made = [[(who_at[i], drafted.pos[i], proj_of.get(who_at[i], 0.0),
+                  sd_of.get(who_at[i], 0.0)) for i in roster]
+                for roster in drafted.rosters]
         rosters[yr] = made
 
     paired = compare(rosters, realised)

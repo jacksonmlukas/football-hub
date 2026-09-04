@@ -121,6 +121,13 @@ The eleven opponents, as a model: each follows consensus with fitted pick noise 
 own starting slots before taking depth. Not the eleven actual people — a simulated room is
 what makes a draft replayable.
 
+**Cohort**:
+The simulated rosters a season-level **Gate** is scored on: many drafts from one **Slot**,
+across a season, from one seeded recipe. Not the **Room**, which is the eleven opponents
+inside a single draft — a Cohort is many drafts, one seat. Two gates built their own until
+2026-09-04, with the seed formula copied by hand into both.
+_Avoid_: sample, population — both hide that it is drafted rather than observed.
+
 **Slot**:
 A draft position, 1 to `teams`. Yours is 3. `roster_for(state, slot)` reconstructs any seat's
 roster from the snake order rather than tracking it.
