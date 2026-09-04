@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-04T23:12:03+00:00",
+  "generated_at": "2026-09-04T23:13:20+00:00",
   "season": 2026,
   "week": 1,
   "artifacts": [
@@ -8,27 +8,27 @@
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-09-04T23:12:02+00:00"
+      "generated_at": "2026-09-04T23:13:18+00:00"
     },
     {
       "name": "track_record",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-09-04T23:12:03+00:00"
+      "generated_at": "2026-09-04T23:13:19+00:00"
     },
     {
       "name": "live",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-09-04T23:12:03+00:00"
+      "generated_at": "2026-09-04T23:13:19+00:00"
     },
     {
       "name": "roster",
       "present": true,
-      "stale": false,
-      "reason": null,
+      "stale": true,
+      "reason": "no roster yet -- run `python -m hub.season.roster --write`",
       "generated_at": "2026-09-04T23:12:03+00:00"
     },
     {
@@ -43,7 +43,7 @@
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-09-04T23:12:03+00:00"
+      "generated_at": "2026-09-04T23:13:20+00:00"
     }
   ]
 }
