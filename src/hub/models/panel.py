@@ -25,6 +25,7 @@ from typing import NamedTuple
 import polars as pl
 
 from hub.config import DRAFTED_POSITIONS, SEASON_COMPLETED
+from hub.models import components
 from hub.models.experiment import expanding_weeks
 from hub.names import player_key, practice_key
 
@@ -131,12 +132,12 @@ def game_context(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - 
 # or he was not. Everything below the opportunity is an efficiency, and efficiency is what
 # regresses -- which this repo measured from the other side as `td_rate_prior` at -0.040 across
 # five of five seasons. See docs/what-the-field-knows.md.
-EXPECTED: dict[str, str] = {
-    "receptions": "receptions_exp",
-    "receiving_yards": "rec_yards_gained_exp",
-    "rushing_yards": "rush_yards_gained_exp",
-    "passing_yards": "pass_yards_gained_exp",
-}
+# The four the screen wants, named as a subset of `components.EXPECTED` rather than restated.
+# The vocabulary -- which upstream column means "expected receiving yards" -- is one thing and
+# lives beside the scoring weights; *which* of them a consumer uses is that consumer's business,
+# and this one deliberately leaves the touchdowns out for the reason above.
+EXPECTED: dict[str, str] = {k: components.EXPECTED[k][0] for k in
+                            ("receptions", "receiving_yards", "rushing_yards", "passing_yards")}
 
 
 # Required by the `ff_opportunity` contract, and carried rather than merely satisfied: it is

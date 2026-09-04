@@ -44,6 +44,42 @@ SCORING: dict[str, float] = {
     "fumbles_lost": -2.0, "two_point_conversions": 2.0,
 }
 
+# Where each scored stat's *expected* value comes from upstream, beside the weights that
+# price it. One owner: it was declared twice, in `hub.models.panel` for the weekly screen and
+# again in `hub.models.component_error`, and two modules holding the same vocabulary is how
+# they come to disagree about which upstream column means "expected receiving yards".
+#
+# A tuple because the mapping is not one-to-one. Two-point conversions are scored once and
+# arrive in three columns -- passing, receiving, rushing -- and folding them into a single
+# name would either drop two thirds of them or invent a column that does not exist. Including
+# them takes the rebuild's mean absolute error against the pre-summed total from 0.056 to
+# 0.017 points a player-week, so they are small and not nothing.
+#
+# **Consumers take subsets, and should.** The Panel deliberately uses four of these: counts
+# have no expected version and should not, and touchdown *rate* screened null as a feature
+# (`td_rate_prior`, -0.040 across five of five seasons). The Board needs the touchdowns
+# because six points is a heavy weight on a small error. Same vocabulary, different questions.
+EXPECTED: dict[str, tuple[str, ...]] = {
+    "receptions": ("receptions_exp",),
+    "receiving_yards": ("rec_yards_gained_exp",),
+    "receiving_tds": ("rec_touchdown_exp",),
+    "rushing_yards": ("rush_yards_gained_exp",),
+    "rushing_tds": ("rush_touchdown_exp",),
+    "passing_yards": ("pass_yards_gained_exp",),
+    "passing_tds": ("pass_touchdown_exp",),
+    "interceptions": ("pass_interception_exp",),
+    "two_point_conversions": ("pass_two_point_conv_exp", "rec_two_point_conv_exp",
+                              "rush_two_point_conv_exp"),
+}
+
+# Scored, but with no expected column upstream at all. Listed rather than omitted so that
+# "unmapped" and "forgotten" are different states: a scoring item missing from both this and
+# `EXPECTED` fails a test rather than silently contributing zero.
+#
+# `ff_opportunity` publishes realised fumbles (`rec_fumble_lost`, `rush_fumble_lost`) and no
+# expectation of them, which is defensible -- a fumble is an event, not a rate anyone models.
+NO_EXPECTED_SOURCE: frozenset[str] = frozenset({"fumbles_lost"})
+
 # Touchdowns per yard, 2022-25. Only phases where the position has real volume: a
 # quarterback's raw receiving rate is 0.125 per yard, twenty times any true rate, because
 # quarterbacks catch a pass a season and it is usually a trick play that scores. Applying
@@ -160,6 +196,48 @@ def points_expr(available: Iterable[str] | None = None) -> pl.Expr:
     """
     keys = SCORING if available is None else [k for k in SCORING if k in set(available)]
     return sum((pl.col(k).fill_null(0.0) * SCORING[k] for k in keys), start=pl.lit(0.0))
+
+
+def expected_columns() -> list[str]:
+    """Every upstream column `EXPECTED` names, flattened. What a fetch has to ask for."""
+    return [c for cols in EXPECTED.values() for c in cols]
+
+
+def from_opportunity(weekly: pl.DataFrame, *, by: str = "player_id") -> pl.DataFrame:
+    """Per-game expected components, and the points they add up to under this league's scoring.
+
+    The Board reads a pre-summed expected-points column and drops the twenty-one component
+    columns that sit beside it, so a disagreement with any other source is a scalar and cannot
+    be attributed to a stat. This turns the same frame into the components *and* the total, so
+    the total stays comparable while the parts become inspectable.
+
+    **Touchdowns are not regressed here and must not be.** The upstream touchdown columns are
+    already an expectation -- that is what `_exp` means -- and `td_luck` is defined elsewhere in
+    this repo as actual minus expected. `regress_touchdowns` replaces a player's *own realised*
+    rate with his position's and belongs on a frame of realised totals, which this is not.
+    Applying it here would regress an expectation that has already been regressed, and would
+    leave `td_luck` with nothing to explain.
+
+    Missing columns contribute zero and are named in the `missing` attribute of the result
+    rather than dropped, because a projection that quietly gets smaller as its inputs vanish
+    looks exactly like a projection of a worse player.
+    """
+    present = {k: [c for c in cols if c in weekly.columns] for k, cols in EXPECTED.items()}
+    missing = sorted(c for cols in EXPECTED.values() for c in cols if c not in weekly.columns)
+    usable = {k: cols for k, cols in present.items() if cols}
+    if not usable or weekly.is_empty():
+        out = weekly.head(0).select(by) if by in weekly.columns else pl.DataFrame({by: []})
+        return out.with_columns(pl.lit(0.0).alias("games"), pl.lit(0.0).alias("xfp_per_game"))
+
+    totals = weekly.group_by(by).agg(
+        [pl.sum_horizontal([pl.col(c).cast(pl.Float64).fill_null(0.0) for c in cols])
+           .sum().alias(k) for k, cols in usable.items()]
+        + [pl.len().alias("games")])
+    per_game = totals.with_columns(
+        [(pl.col(k) / pl.col("games")).alias(k) for k in usable])
+    return per_game.with_columns(
+        points_expr(usable.keys()).alias("xfp_per_game")).with_columns(
+        pl.lit(", ".join(missing) or None).alias("missing_components"))
 
 
 def regress_touchdowns(c: Mapping[str, float], position: str) -> dict[str, float]:

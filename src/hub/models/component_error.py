@@ -39,6 +39,7 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.models import components
 from hub.models.components import SCORING
 from hub.models.experiment import expanding_seasons
 
@@ -52,12 +53,7 @@ COMPONENTS: tuple[str, ...] = (
 
 # Upstream's expected-stat column for each. The Board keeps only the pre-summed total and drops
 # these; see issue #2, which gives the mapping one owner.
-EXPECTED: dict[str, str] = {
-    "receptions": "receptions_exp", "receiving_yards": "rec_yards_gained_exp",
-    "receiving_tds": "rec_touchdown_exp", "rushing_yards": "rush_yards_gained_exp",
-    "rushing_tds": "rush_touchdown_exp", "passing_yards": "pass_yards_gained_exp",
-    "passing_tds": "pass_touchdown_exp",
-}
+EXPECTED: dict[str, str] = {k: components.EXPECTED[k][0] for k in COMPONENTS}
 
 # Below this a per-game rate is a handful of snaps and the pairing is noise on both sides.
 MIN_GAMES = 6

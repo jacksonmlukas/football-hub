@@ -215,3 +215,93 @@ def test_a_scoring_item_we_do_not_model_is_reported_too():
     silently drops, which is the same failure pointed the other way."""
     got = C.scoring_mismatch(dict(C.SCORING, tackles=1.0))
     assert "tackles" in got
+
+
+# --- one owner for the expected-stat vocabulary ---
+
+def test_every_scored_item_has_a_source_or_is_recorded_as_having_none():
+    """A scoring item in neither `EXPECTED` nor `NO_EXPECTED_SOURCE` would contribute zero to
+    a rebuilt total and look like a player who simply does not do that thing."""
+    unaccounted = set(C.SCORING) - set(C.EXPECTED) - C.NO_EXPECTED_SOURCE
+    assert not unaccounted, f"scored but unmapped and unrecorded: {sorted(unaccounted)}"
+
+
+def test_the_two_lists_do_not_overlap():
+    """A stat cannot both have a source and be recorded as having none."""
+    assert not (set(C.EXPECTED) & C.NO_EXPECTED_SOURCE)
+
+
+def test_the_vocabulary_has_one_owner():
+    """`hub.models.panel` and `hub.models.component_error` both declared this map. They now
+    take it from here and name their own subsets, because which columns a consumer uses is its
+    business and what the columns *mean* is not."""
+    from hub.models import component_error, panel
+    for name, sub in (("panel", panel.EXPECTED), ("component_error", component_error.EXPECTED)):
+        for stat, col in sub.items():
+            assert stat in C.EXPECTED, f"{name} names {stat}, which the vocabulary does not"
+            assert col in C.EXPECTED[stat], f"{name} maps {stat} to {col}, the vocabulary does not"
+
+
+def test_expected_columns_flattens_every_source():
+    cols = C.expected_columns()
+    assert len(cols) == len(set(cols)), "no column should be requested twice"
+    assert "pass_two_point_conv_exp" in cols and "rec_two_point_conv_exp" in cols
+
+
+# --- the aggregation ---
+
+def _weekly(n_weeks=4, **over):
+    """A weekly frame in the shape `ff_opportunity` returns."""
+    d = {"player_id": ["p1"] * n_weeks}
+    for cols in C.EXPECTED.values():
+        for c in cols:
+            d[c] = [1.0] * n_weeks
+    d.update(over)
+    return pl.DataFrame(d)
+
+
+def test_components_come_back_per_game_not_as_season_totals():
+    got = C.from_opportunity(_weekly(n_weeks=4))
+    assert got["games"][0] == 4
+    assert got["receptions"][0] == pytest.approx(1.0), "4 weeks of 1.0 is 1.0 a game"
+
+
+def test_the_total_is_the_components_priced_by_this_league():
+    got = C.from_opportunity(_weekly(n_weeks=1))
+    # every mapped column is 1.0; two-point conversions arrive in three columns
+    expected = sum(C.SCORING[k] * len(cols) for k, cols in C.EXPECTED.items())
+    assert got["xfp_per_game"][0] == pytest.approx(expected)
+
+
+def test_an_expected_touchdown_column_is_not_regressed_on_the_way_through():
+    """`ff_opportunity`'s touchdown columns are already an expectation, and `td_luck` is defined
+    as actual minus expected. Regressing them here would regress a regression and leave
+    `td_luck` with nothing to explain."""
+    got = C.from_opportunity(_weekly(n_weeks=2, rec_touchdown_exp=[0.9, 0.1]))
+    assert got["receiving_tds"][0] == pytest.approx(0.5), "the mean, untouched"
+
+
+def test_a_missing_component_contributes_zero_and_is_named():
+    """A projection that quietly shrinks as its inputs vanish looks like a worse player, so the
+    shrinkage has to be visible in the result and not only in the total."""
+    full = C.from_opportunity(_weekly())
+    got = C.from_opportunity(_weekly().drop("rec_touchdown_exp"))
+    assert "rec_touchdown_exp" in got["missing_components"][0]
+    assert "receiving_tds" not in got.columns, "an absent component is absent, not zero-valued"
+    # and the total is lower by exactly what the league would have paid for it
+    assert got["xfp_per_game"][0] == pytest.approx(
+        full["xfp_per_game"][0] - C.SCORING["receiving_tds"])
+
+
+def test_nothing_usable_yields_an_empty_frame_rather_than_raising():
+    got = C.from_opportunity(pl.DataFrame({"player_id": ["p1"], "unrelated": [1.0]}))
+    assert got.height == 0
+    assert "xfp_per_game" in got.columns
+
+
+def test_several_players_are_aggregated_apart():
+    d = _weekly(n_weeks=4)
+    d = d.with_columns(pl.Series("player_id", ["p1", "p1", "p2", "p2"]))
+    got = C.from_opportunity(d).sort("player_id")
+    assert got["player_id"].to_list() == ["p1", "p2"]
+    assert got["games"].to_list() == [2, 2]
