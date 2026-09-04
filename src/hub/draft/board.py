@@ -44,6 +44,7 @@ from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.state import DraftState, remaining
+from hub.models import components
 from hub.models.predict import blend
 from hub.names import player_key
 from hub.paths import BOARD_PARQUET, ROOT
@@ -76,7 +77,24 @@ FLEX_ELIGIBLE = flex_positions(ROSTER)
 
 
 def expected_points(season: int = SEASON_COMPLETED) -> pl.DataFrame:
-    """Season-total expected vs actual PPR points. The gap is the regression signal."""
+    """Season-total expected vs actual PPR points, and the components behind the expected half.
+
+    The gap between the two totals is the regression signal. The components are new: this step
+    used to keep two columns of the twenty-three `ff_opportunity` publishes and drop the rest,
+    so a disagreement with any other projection was a scalar and could not be attributed to a
+    stat. They are carried under an `exp_` prefix and are **per game**, matching `xfp_per_game`.
+
+    **`xfp_per_game` is unchanged and deliberately not rebuilt from them.** The component sum
+    reproduces the published total to about 0.017 points a player-week, which would move
+    `proj_blend` by half that -- immaterial as a projection, and `docs/improvements.md` #18
+    records that a Board change of that order reorders simulated drafts and moved the frozen
+    weekly gate from +0.711 to +0.215. So the parts ride alongside the total rather than
+    replacing it; `xfp_components_per_game` carries the rebuild for comparison.
+
+    The realised side stays here rather than moving to the shared aggregation, because `fp` and
+    `rec_act` are what happened, not what was expected, and that function is about expected
+    stats. Only the expected half goes through it.
+    """
     o = nfl.load_ff_opportunity(seasons=[season], stat_type="weekly")
     agg = o.group_by(["player_id", "full_name", "position"]).agg([
         pl.col("receptions_exp").sum().alias("rec_exp"),
@@ -85,10 +103,14 @@ def expected_points(season: int = SEASON_COMPLETED) -> pl.DataFrame:
         pl.col("total_fantasy_points").sum().alias("fp"),
         pl.len().alias("games"),
     ])
-    return agg.with_columns([
-        (pl.col("fp") - pl.col("xfp")).alias("fp_over_expected"),
-        (pl.col("xfp") / pl.col("games")).alias("xfp_per_game"),
-    ])
+    comps = components.from_opportunity(o, by="player_id")
+    comps = comps.rename({c: f"exp_{c}" for c in components.EXPECTED if c in comps.columns}
+                         | {"xfp_per_game": "xfp_components_per_game"}).drop("games")
+    return (agg.join(comps, on="player_id", how="left")
+               .with_columns([
+                   (pl.col("fp") - pl.col("xfp")).alias("fp_over_expected"),
+                   (pl.col("xfp") / pl.col("games")).alias("xfp_per_game"),
+               ]))
 
 
 # `load_ff_rankings("draft")` stacks 31 FantasyPros pages into one frame -- redraft,

@@ -413,3 +413,49 @@ def test_the_flat_board_is_still_where_everything_expects_it():
     assert BOARD_PARQUET is leaf
     assert BOARD_PARQUET.name == "draft_board.parquet"
     assert BOARD_PARQUET.parent.name == "processed"
+
+
+def test_the_components_ride_alongside_the_total_without_moving_it():
+    """`expected_points` gained eleven columns and must have changed none. The rebuild from
+    components reproduces the published total to ~0.017 points a player-week, which would move
+    `proj_blend` by half that -- immaterial as a projection, but improvements.md #18 records a
+    Board change of that order reordering simulated drafts and moving the frozen weekly gate
+    from +0.711 to +0.215. So the parts ride alongside; they do not replace.
+
+    Constructed rather than fetched: comparing two live rebuilds cannot separate this change
+    from upstream data moving underneath it, which is exactly what a first attempt at this
+    check did.
+    """
+    import polars as pl
+
+    from hub.models import components
+
+    weekly = pl.DataFrame({
+        "player_id": ["p1", "p1", "p2"],
+        "full_name": ["A", "A", "B"],
+        "position": ["WR", "WR", "RB"],
+        "receptions_exp": [4.0, 6.0, 1.0],
+        "receptions": [3.0, 7.0, 2.0],
+        "total_fantasy_points_exp": [10.0, 14.0, 5.0],
+        "total_fantasy_points": [9.0, 16.0, 6.0],
+    })
+    # the aggregation exactly as it stood before components were carried
+    old = (weekly.group_by(["player_id", "full_name", "position"]).agg([
+                pl.col("receptions_exp").sum().alias("rec_exp"),
+                pl.col("receptions").sum().alias("rec_act"),
+                pl.col("total_fantasy_points_exp").sum().alias("xfp"),
+                pl.col("total_fantasy_points").sum().alias("fp"),
+                pl.len().alias("games")])
+            .with_columns([(pl.col("fp") - pl.col("xfp")).alias("fp_over_expected"),
+                           (pl.col("xfp") / pl.col("games")).alias("xfp_per_game")]))
+
+    comps = components.from_opportunity(weekly, by="player_id")
+    comps = comps.rename({c: f"exp_{c}" for c in components.EXPECTED if c in comps.columns}
+                         | {"xfp_per_game": "xfp_components_per_game"}).drop("games")
+    new = old.join(comps, on="player_id", how="left")
+
+    assert new.height == old.height, "the join must not fan a player out"
+    for c in old.columns:
+        assert old.sort("player_id")[c].equals(new.sort("player_id")[c]), f"{c} moved"
+    assert "exp_receptions" in new.columns
+    assert "xfp_components_per_game" in new.columns

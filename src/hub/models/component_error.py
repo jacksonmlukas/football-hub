@@ -145,6 +145,45 @@ def verdict(rounds: Sequence[dict[str, float]]) -> tuple[str, str]:
         f"over-dispersion is real and this correction for it does not pay for itself.")
 
 
+def attribution(paired: pl.DataFrame, by: str | None = None) -> pl.DataFrame:
+    """Split the points gap into the components that produce it, so that they sum to it.
+
+    "We are a point high on him" becomes "we have him at two more receptions and eight more
+    receiving yards". Each component contributes `(projected - realised) * what the league pays
+    for it`, and the contributions add up to the gap in the total exactly -- which is the
+    property that makes the split an explanation rather than a decoration, and which a test
+    pins.
+
+    **This is against what happened, not against another projection, and that is a limit rather
+    than a choice.** Decomposing a disagreement needs parts on both sides, and ESPN publishes a
+    total and no parts -- `proj_ppg` is one column. So the gap against ESPN can be decomposed on
+    our side only: it says what our number is made of, not which stat we disagree about. Against
+    the realised outcome both sides have components and the split is complete.
+
+    `by` groups the result -- position, a board tier, anything carried on the frame -- because
+    "where is the error" is usually a question about a kind of player rather than one player.
+    """
+    if by is not None and by not in paired.columns:
+        raise ValueError(
+            f"cannot group the decomposition by {by!r}: the paired frame carries "
+            f"{sorted(paired.columns)[:6]}... Add it to `pairs` if it should be there.")
+    have = [k for k in COMPONENTS
+            if f"p_{k}" in paired.columns and f"a_{k}" in paired.columns]
+    if not have or paired.is_empty():
+        return pl.DataFrame(schema={"component": pl.Utf8, "points": pl.Float64})
+
+    contrib = paired.with_columns(
+        [((pl.col(f"p_{k}") - pl.col(f"a_{k}")) * SCORING[k]).alias(f"d_{k}") for k in have])
+    keys = [by] if by else []
+    agg = (contrib.group_by(keys).agg(
+               [pl.col(f"d_{k}").mean().alias(k) for k in have] + [pl.len().alias("n")])
+           if keys else
+           contrib.select([pl.col(f"d_{k}").mean().alias(k) for k in have]
+                          + [pl.len().alias("n")]))
+    out = agg.unpivot(index=[*keys, "n"], variable_name="component", value_name="points")
+    return out.sort([*keys, "points"], descending=[*([False] * len(keys)), True])
+
+
 def pairs(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
     """Prior-season expected components against next-season realised ones, per game."""
     import nflreadpy as nfl
@@ -152,6 +191,8 @@ def pairs(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
     for prev, nxt in itertools.pairwise(seasons):
         o = nfl.load_ff_opportunity(seasons=[prev], stat_type="weekly")
         have = {k: v for k, v in EXPECTED.items() if v in o.columns}
+        pos = (o.select("player_id", "position").drop_nulls()
+                 .unique(subset="player_id", keep="first"))
         proj = (o.group_by("player_id")
                  .agg([pl.col(v).sum().alias(f"p_{k}") for k, v in have.items()]
                       + [pl.len().alias("pg")])
@@ -163,6 +204,7 @@ def pairs(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
                 .with_columns([(pl.col(f"a_{k}") / pl.col("ag")).alias(f"a_{k}") for k in have])
                 .filter(pl.col("ag") >= MIN_GAMES))
         out.append(proj.join(act, on="player_id", how="inner")
+                       .join(pos, on="player_id", how="left")
                        .with_columns(pl.lit(nxt).alias("season")))
     return pl.concat(out) if out else pl.DataFrame()
 
@@ -197,6 +239,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
         description="Where the component projection's error lives, priced in fantasy points.")
     ap.add_argument("--run", action="store_true", help="fetch and measure")
     ap.add_argument("--seasons", default="2021,2022,2023,2024,2025")
+    ap.add_argument("--by", default=None,
+                    help="decompose the gap by a grouping column, e.g. position")
     a = ap.parse_args(list(argv) if argv is not None else None)
     if not a.run:
         ap.print_help()
@@ -219,6 +263,19 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
     print("\n  prior-season expected components vs next-season realised, per game")
     print(f"  {d.height:,} player-seasons over {len(got)} pairs, >= {MIN_GAMES} games both sides")
     print("\n".join(report(card, rounds)))
+
+    # The gap, split into the components that produce it. Against what happened, not against
+    # another projection: decomposing a disagreement needs parts on both sides, and ESPN
+    # publishes a total and no parts.
+    att = attribution(d, by=a.by)
+    if att.height:
+        print(f"\n  the gap, decomposed -- projected minus realised, in points a game"
+              f"{f' by {a.by}' if a.by else ''}\n")
+        for r in att.iter_rows(named=True):
+            lead = f"{r[a.by]:<6} " if a.by else ""
+            print(f"  {lead}{r['component']:20} {r['points']:+8.3f}")
+        if not a.by:
+            print(f"  {'':20} {'':>8}\n  {'total':20} {att['points'].sum():+8.3f}")
     return 0
 
 

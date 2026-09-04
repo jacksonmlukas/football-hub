@@ -6,6 +6,7 @@ made for the same reason.
 """
 import numpy as np
 import polars as pl
+import pytest
 
 from hub.models import component_error as CE
 from hub.models.components import SCORING
@@ -137,3 +138,72 @@ def test_nothing_measured_is_reported_rather_than_crashing():
 def test_the_report_names_the_receiving_share_of_the_budget():
     lines = "\n".join(CE.report(CE.scorecard(_paired()), []))
     assert "error budget" in lines and "receiving game is" in lines
+
+
+# --- the decomposition, whose whole value is that it adds up ---
+
+def test_the_components_sum_to_the_gap_in_the_total():
+    """The property that makes this an explanation rather than a decoration. If the parts do
+    not add to the whole, "we have him at two more receptions" is a story, not an account."""
+    rng = np.random.default_rng(5)
+    n = 200
+    d: dict[str, object] = {"season": [2024] * n}
+    for k in CE.COMPONENTS:
+        d[f"p_{k}"] = rng.gamma(2.0, 3.0, n)
+        d[f"a_{k}"] = rng.gamma(2.0, 3.0, n)
+    f = pl.DataFrame(d)
+    got = CE.attribution(f)
+    parts = float(got["points"].sum())
+    # the gap in the total, computed independently
+    whole = sum(float((f[f"p_{k}"] - f[f"a_{k}"]).to_numpy().mean()) * SCORING[k]
+                for k in CE.COMPONENTS)
+    assert parts == pytest.approx(whole)
+
+
+def test_a_component_we_get_exactly_right_contributes_nothing():
+    n = 50
+    d: dict[str, object] = {"season": [2024] * n}
+    for k in CE.COMPONENTS:
+        v = np.linspace(1, 5, n)
+        d[f"p_{k}"], d[f"a_{k}"] = v, v
+    got = CE.attribution(pl.DataFrame(d))
+    assert got["points"].abs().max() == pytest.approx(0.0)
+
+
+def test_over_projecting_a_component_contributes_positively():
+    """Sign convention: projected minus realised, so over-projection is a positive contribution
+    and the reader can tell which way we are wrong without consulting a docstring."""
+    n = 40
+    d: dict[str, object] = {"season": [2024] * n}
+    for k in CE.COMPONENTS:
+        d[f"p_{k}"] = np.full(n, 2.0)
+        d[f"a_{k}"] = np.full(n, 1.0)
+    got = CE.attribution(pl.DataFrame(d))
+    by = dict(zip(got["component"].to_list(), got["points"].to_list(), strict=True))
+    assert by["receiving_tds"] == pytest.approx(SCORING["receiving_tds"])
+    assert all(v > 0 for v in by.values())
+
+
+def test_grouping_splits_the_account_without_breaking_it():
+    """Each group's parts must still sum to that group's gap -- otherwise grouping would be a
+    different statistic wearing the same name."""
+    rng = np.random.default_rng(6)
+    n = 120
+    d: dict[str, object] = {"pos": ["WR"] * 60 + ["RB"] * 60}
+    for k in CE.COMPONENTS:
+        d[f"p_{k}"] = rng.gamma(2.0, 3.0, n)
+        d[f"a_{k}"] = rng.gamma(2.0, 3.0, n)
+    f = pl.DataFrame(d)
+    got = CE.attribution(f, by="pos")
+    assert set(got["pos"].to_list()) == {"WR", "RB"}
+    for pos in ("WR", "RB"):
+        sub = f.filter(pl.col("pos") == pos)
+        parts = float(got.filter(pl.col("pos") == pos)["points"].sum())
+        whole = sum(float((sub[f"p_{k}"] - sub[f"a_{k}"]).to_numpy().mean()) * SCORING[k]
+                    for k in CE.COMPONENTS)
+        assert parts == pytest.approx(whole), pos
+
+
+def test_an_empty_frame_decomposes_into_nothing():
+    got = CE.attribution(pl.DataFrame({"season": []}))
+    assert got.height == 0
