@@ -26,6 +26,16 @@ Sportsbook prices — closing spreads and player props. Treated as already-effic
 backtests against it to audit itself, never to beat it.
 _Avoid_: the market, the book, Vegas.
 
+**Can start**:
+Whether the league will let a player occupy a **Slot** at all. Distinct from two neighbours
+it is easy to read as: *starting* is whether he is in one right now, and *available* is
+whether we expect him to play. A player on injured reserve cannot start however healthy his
+projection is; a suspended player can start and is not available. Only the second is a
+judgment, so only the second has an override.
+_Avoid_: **startable** — `hub.draft` already uses that word for a different idea, a player
+good enough to be worth starting, which is what replacement level counts. Also avoid active
+(collides with ESPN's `ACTIVE` designation) and eligible.
+
 **Snapshot**:
 One dated, immutable capture of the betting market's spread on a game, written by
 `hub.fetch.odds` and never rewritten. Many per game across a week; the as-of join picks the

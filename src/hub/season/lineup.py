@@ -212,6 +212,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if missing:
         print(f"hub.season.lineup: roster is missing {sorted(missing)}", file=sys.stderr)
         return 1
+    # Injured reserve is not a lineup decision. The league will not start the slot whatever
+    # ESPN still projects for him, so this is not behind `--include-unavailable`: that
+    # override exists to see a number you are declining, and there is no number to decline
+    # here. `hub.season.roster.lock` draws the same line for the same reason.
+    if "can_start" in players.columns:
+        out = players.filter(pl.col("can_start"))
+        if out.height < players.height:
+            gone = sorted(set(players["player"]) - set(out["player"]))
+            print(f"  withholding {', '.join(gone)} -- on injured reserve")
+        players = out
     # A player ESPN does not expect to play cannot be optimised into a lineup, whatever he
     # projects. Season-long projections are availability-blind, and this optimiser maximises
     # over the roster -- so an unavailable player with a high `mu` is exactly the row it

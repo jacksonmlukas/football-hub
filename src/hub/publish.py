@@ -201,6 +201,9 @@ def roster(out: Path | None = None, path: Path | None = None) -> dict[str, Any] 
             "starting": r["starting"], "best_start": r["player"] in start,
             "injury_status": r["injury_status"],
             "available": r.get("available", True),
+            # Two neighbouring facts, and the panel needs both: `available` is whether we
+            # expect him to play, `can_start` whether the league will let him.
+            "can_start": r.get("can_start", True),
             "missing_games": r.get("missing_games", 0),
         })
     payload = _artifact("roster", "roster.parquet", rows,

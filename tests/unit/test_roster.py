@@ -158,9 +158,15 @@ _SQUAD = [
 ]
 
 
-def _squad(unavailable=()):
-    """The nine, with named players optionally projected to miss six games."""
-    players = [_p(n, pos, 10.0, 110.0 if n in unavailable else 170.0, slot=slot)
+def _squad(unavailable=(), slots=None):
+    """The nine, with named players optionally projected to miss six games.
+
+    `slots` overrides where a player is set, which is how the tests below state the one
+    thing they are about: a suspended player set as a starter, or a player on IR.
+    """
+    slots = slots or {}
+    players = [_p(n, pos, 10.0, 110.0 if n in unavailable else 170.0,
+                  slot=slots.get(n, slot))
                for n, pos, _, slot in _SQUAD]
     board = _board(player=[n for n, _, _, _ in _SQUAD],
                    proj_blend=[mu for _, _, mu, _ in _SQUAD],
@@ -278,3 +284,107 @@ def test_the_board_and_the_roster_blend_the_same_way():
                     and isinstance(node.left, ast.BinOp) and isinstance(node.left.op, ast.Add)):
                 bad.append(f"{path.name}:{node.lineno}")
     assert not bad, f"the blend formula is restated in: {bad}"
+
+
+# --- what the set lineup is worth, which is not what it projects ---------------
+#
+# The set total used to sum every projected starter, while the best total was computed over
+# available players only. A suspended player set as a starter therefore carried his full
+# projection into one side of a comparison and none of the other, and the headline gain came
+# out negative -- printed directly above the SIT line telling you to drop him.
+
+# Jacobs started, and the rest of the lineup already optimal -- so the *only* thing wrong
+# with it is the player who cannot play. That matters: with any other starter also
+# improvable, the upgrade elsewhere covers his projection and the gain stays positive even
+# with the defect present. My first attempt at this fixture did exactly that and passed
+# against the bug it was written to catch.
+#
+# Set: Love, Jacobs, Tuten, the three receivers, Andrews, McLaurin at flex. Lloyd benched.
+_JACOBS_STARTS = {"Josh Jacobs": "RB", "MarShawn Lloyd": "BE",
+                  "Terry McLaurin": "RB/WR/TE"}
+
+# What that lineup is worth once he is priced at what he will score. Written out rather than
+# derived so a change to the arithmetic has to be stated here too.
+_SET_WITHOUT_JACOBS = 14.9 + 8.8 + 19.6 + 14.9 + 14.4 + 9.2 + 10.6
+
+
+def test_a_starter_who_cannot_play_contributes_nothing_to_the_set_total():
+    """He scores nothing, so the lineup as set is worth what the rest of it is worth."""
+    lk = R.lock(_squad(unavailable={"Josh Jacobs"}, slots=_JACOBS_STARTS))
+    assert lk.set_total == pytest.approx(_SET_WITHOUT_JACOBS)
+
+
+def test_the_gain_never_argues_against_the_swap_the_same_lock_recommends():
+    """The defect in one test. The lock said `set 118.8 -> best 106.8 (-12.0 a week)` and
+    then `SIT Josh Jacobs` underneath it, and a caveat below a number does not stop the
+    number being read."""
+    lk = R.lock(_squad(unavailable={"Josh Jacobs"}, slots=_JACOBS_STARTS))
+    assert "Josh Jacobs" in lk.bench
+    assert lk.gain is not None and lk.gain > 0
+
+
+@pytest.mark.parametrize("unavailable,slots", [
+    ((), None),
+    (("Josh Jacobs",), _JACOBS_STARTS),
+    (("Josh Jacobs", "MarShawn Lloyd"), _JACOBS_STARTS),
+    (("Josh Jacobs",), {"Josh Jacobs": "RB", "Terry McLaurin": "RB/WR/TE"}),
+    (("Ja'Marr Chase",), {"Ja'Marr Chase": "WR", "Terry McLaurin": "BE"}),
+    (("Mark Andrews",), None),
+])
+def test_a_recommended_change_is_never_priced_as_a_loss(unavailable, slots):
+    """The invariant behind the two tests above, over the configurations that produce it.
+    If the lock names a swap, the swap is worth something; if it is worth nothing the lock
+    has nothing to say. The two must not disagree."""
+    lk = R.lock(_squad(unavailable=set(unavailable), slots=slots))
+    if lk.gain is None:
+        return
+    assert lk.gain >= 0
+    if not (lk.start or lk.bench):
+        assert lk.gain == pytest.approx(0.0)
+
+
+# --- injured reserve, which is a slot you cannot start from -------------------
+
+def test_injured_reserve_is_not_a_starting_slot():
+    """ESPN has two non-starting slots and only the bench was named. Everything else was
+    read as started, so an IR-ed player counted toward the lineup as set."""
+    got = R.build(E.roster_rows(_Team([], [
+        _p("Josh Jacobs", "RB", 10.0, 170.0, slot="IR"),
+        _p("MarShawn Lloyd", "RB", 10.0, 170.0, slot="RB")])),
+        _board(player=["Josh Jacobs", "MarShawn Lloyd"], proj_blend=[15.5, 5.6],
+               pos=["RB", "RB"]))
+    starting = dict(zip(got["player"].to_list(), got["starting"].to_list(), strict=True))
+    assert starting == {"Josh Jacobs": False, "MarShawn Lloyd": True}
+
+
+def test_a_player_on_injured_reserve_does_not_inflate_the_set_total():
+    lk = R.lock(_squad(slots={"Josh Jacobs": "IR"}))
+    assert lk.set_total == pytest.approx(
+        14.9 + 8.8 + 5.6 + 19.6 + 14.9 + 14.4 + 9.2), "Jacobs' 15.5 must not be in here"
+
+
+def test_a_fully_projected_player_on_injured_reserve_is_not_recommended_to_start():
+    """The half availability does not cover. ESPN keeps projecting a player the manager has
+    IR-ed, so `available` stays true and he is the roster's second-best projection -- and
+    the lock recommended starting someone the league will not let you start."""
+    started = R.lock(_squad())
+    assert "Josh Jacobs" in started.start, "he is the swap when he is merely benched"
+    lk = R.lock(_squad(slots={"Josh Jacobs": "IR"}))
+    assert "Josh Jacobs" not in lk.start
+    assert lk.withheld == ["Josh Jacobs"]
+
+
+def test_injured_reserve_is_mechanical_and_the_override_does_not_reach_it():
+    """`--include-unavailable` overrides a judgment about who will play. A roster slot that
+    cannot start is not a judgment, so the override leaves it alone."""
+    lk = R.lock(_squad(slots={"Josh Jacobs": "IR"}), include_unavailable=True)
+    assert "Josh Jacobs" not in lk.start
+    assert lk.withheld == ["Josh Jacobs"]
+
+
+def test_a_roster_written_before_can_start_existed_still_locks():
+    """Graceful degradation over the store's own history: `roster.parquet` on disk predates
+    the column, and a lock that raised on it would take the Sunday panel down."""
+    df = _squad().drop("can_start")
+    lk = R.lock(df)
+    assert lk.gain is not None

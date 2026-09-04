@@ -41,8 +41,15 @@ from hub.paths import ROSTER_PARQUET
 # What `hub.season.lineup` requires, and therefore what this must always produce.
 REQUIRED: tuple[str, ...] = ("player", "pos", "mu", "sd")
 
-# ESPN's slot label for a benched player. Everything else is a starting slot of some kind.
+# ESPN's two slots a player cannot start from. Only the bench was named here, and
+# "everything else is a starting slot of some kind" was false: a player the manager has
+# placed on injured reserve read as started, so his projection counted toward the lineup as
+# set. The two are not the same kind of thing and the code below keeps them apart --
+# `available` is a judgment about who will play, read off ESPN's own projection; injured
+# reserve is mechanical, and the league will not let the slot start whatever anyone thinks.
 BENCH = "BE"
+INJURED_RESERVE = "IR"
+NOT_STARTING = frozenset({BENCH, INJURED_RESERVE})
 
 
 def availability(espn: pl.DataFrame) -> pl.DataFrame:
@@ -139,7 +146,11 @@ def build(espn: pl.DataFrame, board: pl.DataFrame) -> pl.DataFrame:
     return out.with_columns(
         pl.when(pl.col("projected")).then(pl.col("mu")).otherwise(None).alias("mu"),
         pl.when(pl.col("projected")).then(pl.col("sd")).otherwise(None).alias("sd"),
-        (pl.col("slot") != BENCH).alias("starting"),
+        (~pl.col("slot").is_in(NOT_STARTING)).alias("starting"),
+        # Whether he may occupy a Slot at all, which is not whether he is in one and not
+        # whether we expect him to play. Three neighbouring ideas with three names: see
+        # CONTEXT.md, which keeps them apart on purpose.
+        (pl.col("slot") != INJURED_RESERVE).alias("can_start"),
     ).sort(["projected", "mu"], descending=[True, True], nulls_last=True)
 
 
@@ -164,12 +175,25 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False) -> Lock:
     **Availability is applied before the comparison, not after.** The alternative -- rank on
     projection and caveat the result -- is what produced a recommendation to start a suspended
     player, and a caveat under a number does not stop the number being read.
+
+    **And it is applied to both sides of it.** The set total used to sum every projected
+    starter while the best total was computed over available players only, so a suspended
+    player set as a starter carried his full projection into one side and none of the other.
+    The lock printed `set 118.8 -> best 106.8 (-12.0 a week)` directly above `SIT Josh
+    Jacobs`: the headline argued for keeping him, which is the same defect this function
+    exists to prevent, wearing the number instead of the caveat. A player who cannot play
+    scores nothing, so the lineup as set is worth what the rest of it is worth.
     """
     from hub.season.lineup import NoLegalLineup, TooManyLineups, best_by_points
 
     proj = df.filter(pl.col("projected"))
-    pool = proj if include_unavailable or "available" not in proj.columns else proj.filter(
-        pl.col("available"))
+    # Injured reserve first, and `include_unavailable` does not reach it: the override exists
+    # to see a number you are declining, and there is no number to decline on a slot the
+    # league will not start. Guarded on presence because `roster.parquet` on disk predates
+    # the column and the Sunday panel reads it.
+    eligible = proj.filter(pl.col("can_start")) if "can_start" in proj.columns else proj
+    pool = eligible if include_unavailable or "available" not in eligible.columns \
+        else eligible.filter(pl.col("available"))
     withheld = ([] if pool.height == proj.height
                 else sorted(set(proj["player"]) - set(pool["player"])))
     if pool.is_empty():
@@ -182,7 +206,9 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False) -> Lock:
         # the whole slate down with it -- CLAUDE.md's degradation rule. Report the players
         # withheld, which is the actionable half, and no comparison.
         return Lock(None, None, None, [], [], withheld)
-    set_total = float(proj.filter(pl.col("starting"))["mu"].sum())
+    # Priced over `pool`, so both totals count the same players. A withheld starter drops out
+    # of the set lineup's value rather than out of one side of a subtraction.
+    set_total = float(pool.filter(pl.col("starting"))["mu"].sum())
     best_total = float(best["mu"].sum())
     start, was = set(best["player"]), set(proj.filter(pl.col("starting"))["player"])
     return Lock(set_total, best_total, best_total - set_total,
@@ -249,8 +275,17 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
         for p in lk.bench:
             print(f"    SIT    {p}")
     if lk.withheld:
-        print(f"  withheld as unavailable: {', '.join(lk.withheld)}")
-        print("  ESPN's injury field does not carry suspensions; its games projection does.")
+        # Per player, because the two reasons are different and the note below is only true
+        # of one of them. Printing it over an IR-ed player would explain the wrong thing.
+        why = {r["player"]: ("on injured reserve" if r["slot"] == INJURED_RESERVE
+                             else f"ESPN projects {r['missing_games']} missed games")
+               for r in df.iter_rows(named=True)}
+        print("\n  withheld -- cannot be started this week:")
+        for pl_name in lk.withheld:
+            print(f"    {pl_name}  ({why.get(pl_name, 'unavailable')})")
+        if any(why.get(n) != "on injured reserve" for n in lk.withheld):
+            print("  ESPN's injury field does not carry suspensions; its games projection "
+                  "does.")
 
     if a.write:
         print(f"  wrote {write(df, Path(a.out) if a.out else None)}")
