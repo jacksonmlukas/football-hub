@@ -47,7 +47,7 @@ import numpy as np
 import polars as pl
 
 from hub.config import FANTASY_WEEKS
-from hub.draft.season import STARTERS, starting_lineup
+from hub.league import STARTERS, starting_lineup
 from hub.models.experiment import paired_report, summarise
 
 # The fantasy regular season. 15-17 is the playoffs, reported apart; 18 is meaningless.

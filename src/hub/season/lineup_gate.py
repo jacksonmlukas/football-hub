@@ -37,7 +37,7 @@ import numpy as np
 import polars as pl
 
 from hub.draft.board import board_as_of
-from hub.draft.season import REG_SEASON_WEEKS, starting_lineup
+from hub.league import REG_SEASON_WEEKS, starting_lineup
 from hub.models.experiment import paired_report, summarise, walk_forward_inputs
 from hub.names import player_key
 

@@ -42,7 +42,7 @@ from collections.abc import Iterator, Mapping, Sequence
 
 import polars as pl
 
-from hub.draft.season import FLEX_FROM, FLEX_SLOTS, STARTERS
+from hub.league import FLEX_FROM, FLEX_SLOTS, STARTERS
 from hub.models.predict import group_sd
 from hub.paths import ROSTER_PARQUET
 

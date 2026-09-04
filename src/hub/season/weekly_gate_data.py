@@ -11,7 +11,7 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
-from hub.draft.season import REG_SEASON_WEEKS
+from hub.league import REG_SEASON_WEEKS
 from hub.models.experiment import realised_ppg
 from hub.models.panel import PanelSpec, build_panel, weekly_consensus
 from hub.names import player_key

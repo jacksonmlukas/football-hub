@@ -244,6 +244,81 @@ def league_settings(year: int = SEASON_AHEAD, league_id: int | None = None) -> L
     return LeagueView(lg, getattr(lg.settings, "roster_slots", {}) or {})
 
 
+# --- your team, as rows -----------------------------------------------------
+#
+# This module's job is knowing ESPN. It used to stop at handing back a raw `espn_api` League
+# and let `hub.season.roster` read the payload itself -- duck-typing seven player attributes,
+# matching the SWID, and deriving availability from two projections. The cost was that ESPN's
+# season projection had two readers: `_parse_projection` above, picking through raw stat
+# blocks for the Board, and `projected_avg_points` over in `season/`. Same number, two routes,
+# in packages that shared no code -- which is why the Board could hold 5.10 for a player ESPN
+# had already repriced to 8.01 and nothing was positioned to notice they were the same field.
+
+
+def my_team(league: Any, swid: str | None = None) -> Any:
+    """The team owned by the SWID already in the environment for the ESPN cookie.
+
+    Identity is inferred rather than configured, so there is no `ESPN_TEAM_ID` to keep in sync
+    with a league you might leave. Raises rather than guessing: a wrong team here would be
+    invisible downstream, because every number would compute cleanly against a roster that is
+    not yours.
+    """
+    me = (swid if swid is not None else os.environ.get("ESPN_SWID") or "").strip("{}").upper()
+    if not me:
+        raise LookupError("ESPN_SWID is not set, so no team can be identified as yours")
+    for team in league.teams:
+        owners = team.owners or []
+        ids = {str(o.get("id", o) if isinstance(o, dict) else o).strip("{}").upper()
+               for o in owners}
+        if me in ids:
+            return team
+    raise LookupError(
+        f"no team in this league is owned by the configured SWID "
+        f"(checked {len(league.teams)} teams)")
+
+
+# The seven attributes anything downstream depends on. Pinned here, in the module that owns
+# ESPN's vocabulary, so a rename in `espn_api` breaks one place with a test on it rather than
+# silently filling a column with empty strings somewhere else.
+ROSTER_SCHEMA: dict[str, Any] = {
+    "player": pl.Utf8, "key": pl.Utf8, "pos": pl.Utf8, "espn_id": pl.Int64,
+    "nfl_team": pl.Utf8, "slot": pl.Utf8, "injury_status": pl.Utf8,
+    "espn_avg": pl.Float64, "espn_total": pl.Float64,
+}
+
+
+def roster_rows(team: Any) -> pl.DataFrame:
+    """One row per rostered player, as data rather than as a vendor object.
+
+    `espn_avg` and `espn_total` are ESPN's own two projections. Their *ratio* is the only
+    season-level availability signal in the payload, and it is the one that matters: ESPN
+    reported Josh Jacobs `DAY_TO_DAY` through a six-game ban, and only
+    `projected_total_points / projected_avg_points` -- 11.0 where the rest of the roster was
+    17.0 -- gave it away. `hub.season.roster.availability` reads it off these two columns.
+    """
+    from hub.names import player_key
+    rows = []
+    for p in team.roster:
+        name = str(getattr(p, "name", "") or "")
+        rows.append({
+            "player": name,
+            "key": player_key(name),
+            "pos": str(getattr(p, "position", "") or ""),
+            "espn_id": int(getattr(p, "playerId", 0) or 0),
+            "nfl_team": str(getattr(p, "proTeam", "") or ""),
+            "slot": str(getattr(p, "lineupSlot", "") or ""),
+            "injury_status": str(getattr(p, "injuryStatus", "") or ""),
+            "espn_avg": float(getattr(p, "projected_avg_points", 0.0) or 0.0),
+            "espn_total": float(getattr(p, "projected_total_points", 0.0) or 0.0),
+        })
+    return pl.DataFrame(rows, schema=ROSTER_SCHEMA)
+
+
+def my_roster(year: int = SEASON_AHEAD) -> pl.DataFrame:  # pragma: no cover - network
+    """Your roster, from the league you are logged into."""
+    return roster_rows(my_team(league_settings(year).league))
+
+
 # --- league transaction history -------------------------------------------
 #
 # `docs/championship-leverage.md` gates its trade evaluator on measuring whether this

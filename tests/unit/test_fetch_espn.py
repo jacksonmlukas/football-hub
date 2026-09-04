@@ -1,4 +1,13 @@
+"""What `hub.fetch.espn` reads off ESPN, and the vocabulary it owns.
 
+The identity and roster-payload tests below moved here from `test_roster.py` on 2026-09-04,
+with the code. `hub.season.roster` used to duck-type the vendor object itself, which left
+ESPN's season projection with two readers -- `_parse_projection` here and
+`projected_avg_points` over in `season/` -- in packages that shared no code.
+"""
+import pytest
+
+from hub.fetch import espn as E
 
 # --- the year was hardcoded twice on one call path -------------------------
 
@@ -350,3 +359,72 @@ def test_the_player_filter_rides_only_on_the_player_view(monkeypatch):
     espn.league_history(2024, view="kona_player_info")
     assert seen["mTeam"] is None
     assert "x-fantasy-filter" in (seen["kona_player_info"] or {})
+
+
+class _Player:
+    def __init__(self, name, position, slot="BE", injury="ACTIVE", pid=1, pro="GB",
+                 avg=10.0, total=170.0):
+        self.name, self.position, self.lineupSlot = name, position, slot
+        self.injuryStatus, self.playerId, self.proTeam = injury, pid, pro
+        # ESPN's two projections; their ratio is the availability signal. The defaults are a
+        # full 17-game slate, so a test that says nothing about availability gets a fit player.
+        self.projected_avg_points, self.projected_total_points = avg, total
+
+
+class _Team:
+    def __init__(self, owners, players, team_id=1):
+        self.owners, self.roster, self.team_id = owners, players, team_id
+
+
+class _League:
+    def __init__(self, teams):
+        self.teams = teams
+
+
+# --- your team, and the seven fields anything downstream depends on ---
+#
+# Moved here from test_roster.py on 2026-09-04 with the code. The roster
+# module used to duck-type the vendor object itself, which left ESPN's season
+# projection with two readers in two packages that shared no code.
+
+def test_the_team_is_the_one_whose_owner_matches_the_swid():
+    a = _Team([{"id": "{AAA}"}], [], team_id=3)
+    b = _Team([{"id": "{BBB}"}], [], team_id=14)
+    assert E.my_team(_League([a, b]), swid="BBB").team_id == 14
+
+
+def test_swid_matching_ignores_braces_and_case():
+    t = _Team([{"id": "{abc-123}"}], [], team_id=7)
+    assert E.my_team(_League([t]), swid="ABC-123").team_id == 7
+
+
+def test_a_swid_owning_no_team_raises_rather_than_picking_one():
+    """A wrong team here computes cleanly against sixteen players who are not yours."""
+    with pytest.raises(LookupError, match="no team in this league"):
+        E.my_team(_League([_Team([{"id": "{AAA}"}], [])]), swid="ZZZ")
+
+
+def test_an_absent_swid_is_its_own_error():
+    with pytest.raises(LookupError, match="ESPN_SWID is not set"):
+        E.my_team(_League([]), swid="")
+
+
+def test_a_team_owned_by_several_people_still_matches():
+    t = _Team([{"id": "{AAA}"}, {"id": "{BBB}"}], [], team_id=9)
+    assert E.my_team(_League([t]), swid="BBB").team_id == 9
+
+
+# --- reading the roster off ESPN ---
+
+def test_every_attribute_the_producer_depends_on_is_read():
+    got = E.roster_rows(_Team([], [_Player("Ja'Marr Chase", "WR", "WR", "QUESTIONABLE", 42, "CIN")]))
+    r = got.row(0, named=True)
+    assert r["player"] == "Ja'Marr Chase"
+    assert (r["pos"], r["slot"], r["injury_status"]) == ("WR", "WR", "QUESTIONABLE")
+    assert (r["espn_id"], r["nfl_team"]) == (42, "CIN")
+
+
+def test_an_empty_roster_yields_the_right_empty_shape():
+    got = E.roster_rows(_Team([], []))
+    assert got.height == 0
+    assert list(got.columns) == list(E.ROSTER_SCHEMA)

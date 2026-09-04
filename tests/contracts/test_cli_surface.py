@@ -173,3 +173,43 @@ def test_models_does_not_reach_into_draft():
             if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("hub.draft"):
                 bad.append(f"{path.name} -> {node.module}")
     assert not bad, f"models/ reaches into draft/: {bad}"
+
+
+def test_the_league_module_is_a_leaf():
+    """`hub.league` may import `hub.config` and nothing else from this repo.
+
+    That is the whole point of it. `STARTERS` and `starting_lineup` used to live in
+    `hub.draft.season`, so anything wanting the roster shape imported a draft simulator --
+    which is why `models/` could not have them at all (the test above) and why four of the six
+    `hub.season` modules imported `draft/`. A leaf that grows a dependency stops being usable
+    from the places that needed it.
+    """
+    import ast
+    import pathlib
+    path = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub" / "league.py"
+    bad = [n.module for n in ast.walk(ast.parse(path.read_text()))
+           if isinstance(n, ast.ImportFrom) and n.module
+           and n.module.startswith("hub.") and n.module != "hub.config"]
+    assert not bad, f"hub.league must import only hub.config; it imports {bad}"
+
+
+def test_season_does_not_reach_into_draft_for_league_rules():
+    """`hub.season` sets lineups on real Sundays. It legitimately imports `draft/` to *simulate*
+    drafts -- the weekly gate builds the rosters it scores that way -- but it must not import
+    one to learn how many receivers it starts.
+
+    `season -> draft` was twelve imports across four modules, five of them for `STARTERS`,
+    `FLEX_*`, `starting_lineup` and `REG_SEASON_WEEKS`. Those are `hub.league` now. The seven
+    that remain are `board`, `backtest`, `optimize` and `state`, which are genuinely the draft.
+    """
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub" / "season"
+    bad = []
+    for path in root.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if (isinstance(node, ast.ImportFrom) and node.module == "hub.draft.season"):
+                bad.append(f"{path.name} -> {node.module}")
+    assert not bad, (
+        f"season/ imports the draft's season simulator for league rules: {bad}. "
+        f"The roster shape and `starting_lineup` are in `hub.league`.")

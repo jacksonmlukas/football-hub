@@ -25,7 +25,7 @@ import numpy as np
 import polars as pl
 
 from hub.draft.projection import adjusted
-from hub.draft.season import FLEX_FROM, FLEX_SLOTS, STARTERS
+from hub.league import FLEX_FROM, FLEX_SLOTS, STARTERS
 
 TEAMS = 12
 ROUNDS = 16

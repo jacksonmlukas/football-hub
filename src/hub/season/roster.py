@@ -11,10 +11,10 @@ which is the same currency `hub.draft.optimize` scored seasons against. Adding a
 project a rostered player would be a third implementation of one idea, which
 `docs/next.md` already names as how they drift.
 
-**Identity is inferred, not configured.** The team is the one whose owners include the SWID
-already in the environment for the ESPN cookie, so there is no `ESPN_TEAM_ID` to keep in sync
-with a league you might leave. If the SWID matches no team the error says so rather than
-silently picking team 1.
+**It does not read ESPN.** `hub.fetch.espn` owns that vocabulary and hands back rows --
+`my_team` for the identity, `roster_rows` for the seven fields. This module used to duck-type
+the vendor object itself, which meant ESPN's season projection had two readers in two packages
+that shared no code, and neither could see the other disagree.
 
 **Kickers and defences carry no projection and say so.** The board covers
 `config.DRAFTED_POSITIONS` -- QB, RB, WR, TE -- because that was the scope decision, so K and
@@ -25,14 +25,14 @@ that means "we expect nothing".
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, NamedTuple, cast
+from typing import NamedTuple, cast
 
 import polars as pl
 
+from hub.fetch.espn import my_team, roster_rows
 from hub.models.predict import blend as predict_blend
 from hub.models.predict import moments
 from hub.names import player_key
@@ -43,55 +43,6 @@ REQUIRED: tuple[str, ...] = ("player", "pos", "mu", "sd")
 
 # ESPN's slot label for a benched player. Everything else is a starting slot of some kind.
 BENCH = "BE"
-
-
-def _swid() -> str:
-    """The logged-in identity, normalised the way ESPN's team owners report it."""
-    return (os.environ.get("ESPN_SWID") or "").strip("{}").upper()
-
-
-def mine(league: Any, swid: str | None = None) -> Any:
-    """The team owned by the SWID already in the environment.
-
-    Raises rather than guessing. A wrong team here would be invisible downstream -- every
-    number would compute cleanly against sixteen players who are not yours.
-    """
-    me = swid if swid is not None else _swid()
-    if not me:
-        raise LookupError("ESPN_SWID is not set, so no team can be identified as yours")
-    for team in league.teams:
-        owners = team.owners or []
-        ids = {str(o.get("id", o) if isinstance(o, dict) else o).strip("{}").upper()
-               for o in owners}
-        if me in ids:
-            return team
-    raise LookupError(
-        f"no team in this league is owned by the configured SWID "
-        f"(checked {len(league.teams)} teams)")
-
-
-def from_team(team: Any) -> pl.DataFrame:
-    """One row per rostered player, straight off ESPN and not yet joined to anything."""
-    rows = []
-    for p in team.roster:
-        name = str(getattr(p, "name", "") or "")
-        rows.append({
-            "player": name,
-            "key": player_key(name),
-            "pos": str(getattr(p, "position", "") or ""),
-            "espn_id": int(getattr(p, "playerId", 0) or 0),
-            "nfl_team": str(getattr(p, "proTeam", "") or ""),
-            "slot": str(getattr(p, "lineupSlot", "") or ""),
-            "injury_status": str(getattr(p, "injuryStatus", "") or ""),
-            # ESPN's own two projections. Their *ratio* is the only season-level availability
-            # signal in the payload -- see `espn_games` below.
-            "espn_avg": float(getattr(p, "projected_avg_points", 0.0) or 0.0),
-            "espn_total": float(getattr(p, "projected_total_points", 0.0) or 0.0),
-        })
-    return pl.DataFrame(rows, schema={
-        "player": pl.Utf8, "key": pl.Utf8, "pos": pl.Utf8, "espn_id": pl.Int64,
-        "nfl_team": pl.Utf8, "slot": pl.Utf8, "injury_status": pl.Utf8,
-        "espn_avg": pl.Float64, "espn_total": pl.Float64})
 
 
 def availability(espn: pl.DataFrame) -> pl.DataFrame:
@@ -244,7 +195,7 @@ def fetch(board: pl.DataFrame | None = None) -> pl.DataFrame:  # pragma: no cove
     from hub.fetch.espn import league_settings
     if board is None:
         board, _age = last_good()
-    return build(from_team(mine(league_settings().league)), board)
+    return build(roster_rows(my_team(league_settings().league)), board)
 
 
 def write(df: pl.DataFrame, path: Path | None = None) -> Path:

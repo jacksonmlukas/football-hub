@@ -54,8 +54,9 @@ from hub.draft.optimize import (
     simulate_remaining_draft,
     win_probability,
 )
-from hub.draft.season import REG_SEASON_WEEKS, lineup_points
+from hub.draft.season import lineup_points
 from hub.draft.state import DraftState
+from hub.league import REG_SEASON_WEEKS
 from hub.models.experiment import (
     BOOTSTRAP,  # noqa: F401 -- re-exported: tests reach it as `bt.BOOTSTRAP`
     paired_report,

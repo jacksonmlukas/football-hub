@@ -77,6 +77,13 @@ projected points. Drawn once per simulated season, before any weekly scoring.
 
 ### Draft decisions
 
+**League**:
+How this one is shaped — the starting **Slots** (QB1/RB2/WR3/TE1/FLEX1), which positions may
+fill the flex, how many weeks the regular season runs — and the one rule for filling it:
+best available to each required Slot, then the flex. Read by both halves of the repo, the
+draft and the in-season path, which is why it is a leaf and not part of either.
+_Avoid_: roster (which is *your* players, not the league's shape), settings.
+
 **Scarcity** / **Value**:
 The two modes a pick can be in, set by the wait until your next turn. Scarcity means a long
 wait, so rank by who will not survive it; value means a short wait, so rank by VOR.

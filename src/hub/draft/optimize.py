@@ -53,8 +53,9 @@ from hub.config import DraftConfig
 from hub.draft import durability
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, blended_adp
 from hub.draft.picks import MY_SLOT, TEAMS, snake_picks
-from hub.draft.season import FLEX_CAPACITY, FLEX_FROM, STARTERS, champion_probability
+from hub.draft.season import champion_probability
 from hub.draft.state import DraftState, remaining, roster_for
+from hub.league import FLEX_CAPACITY, FLEX_FROM, STARTERS
 from hub.models.predict import WEEKLY_SKEW_POOLED, moments
 from hub.names import player_key
 

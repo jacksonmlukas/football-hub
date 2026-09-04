@@ -17,6 +17,7 @@ All offline.
 import numpy as np
 import polars as pl
 
+from hub import league
 from hub.draft import evaluate, season
 from hub.season import lineup, lineup_gate
 
@@ -46,13 +47,18 @@ def test_the_greedy_season_scorer_fields_the_configured_flex(monkeypatch):
 
 
 def test_the_projection_baseline_fields_the_configured_flex(monkeypatch):
-    """Patched on `season`, not on `lineup_gate`, because the flex count is read in exactly
-    one place now: `season.starting_lineup`, which both gates call. Before, each gate carried
-    its own copy of the selection loop and so its own read of the constant."""
+    """Patched on `league`, not on `lineup_gate`, because the flex count is read in exactly
+    one place: `league.starting_lineup`, which both gates call. Before, each gate carried its
+    own copy of the selection loop and so its own read of the constant.
+
+    Patched on `league` rather than `draft.season` since 2026-09-04: the rule moved to a leaf
+    so `hub.season` would stop importing a draft simulator to learn the roster shape. This
+    test caught the move -- patching the re-exported name no longer reached the function,
+    which is the correct failure and the reason the guard is worth having."""
     grid = np.array(PTS, dtype=float).reshape(len(PTS), 1)
-    monkeypatch.setattr(season, "FLEX_SLOTS", 1)
+    monkeypatch.setattr(league, "FLEX_SLOTS", 1)
     assert lineup_gate.projection_lineup_points(grid, POS, PTS) == BASE + BEST
-    monkeypatch.setattr(season, "FLEX_SLOTS", 2)
+    monkeypatch.setattr(league, "FLEX_SLOTS", 2)
     assert lineup_gate.projection_lineup_points(grid, POS, PTS) == BASE + BEST + SECOND
 
 
@@ -81,13 +87,13 @@ def test_the_greedy_rule_answers_to_the_configured_flex(monkeypatch):
 
     Asserted on **behaviour** rather than on whether a module mentions the constant. The
     source-text version of this guard failed the moment both gates stopped carrying their own
-    selection loop and started calling `season.starting_lineup` -- which is the fix, not a
+    selection loop and started calling `league.starting_lineup` -- which is the fix, not a
     regression. The enumerator has its own test above; this is the greedy rule.
     """
     for flex in (1, 2):
-        monkeypatch.setattr(season, "FLEX_SLOTS", flex)
-        got = season.starting_lineup(POS, PTS)
-        assert len(got) == sum(season.STARTERS.values()) + flex
+        monkeypatch.setattr(league, "FLEX_SLOTS", flex)
+        got = league.starting_lineup(POS, PTS)
+        assert len(got) == sum(league.STARTERS.values()) + flex
 
 
 def test_the_flex_count_is_read_where_a_rule_is_implemented():

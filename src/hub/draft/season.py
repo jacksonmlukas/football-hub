@@ -18,31 +18,26 @@ everyone's scores roughly equally, so it distorts P(win) far less than it distor
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 import numpy as np
 
-from hub.config import (
+# The league's shape and the one rule for filling it now live in `hub.league`, a leaf. They
+# were declared here, which put them inside the draft package and made four of the six
+# `hub.season` modules import a draft simulator to learn how many receivers they start.
+#
+# Re-exported rather than merely moved: `optimize`, `evaluate`, `leverage`, `backtest` and a
+# dozen tests import them from here, and a refactor that breaks its callers to be tidier is
+# not an improvement -- the same reason the `hub.models.predict` names below are re-exported.
+from hub.league import (  # noqa: F401
+    FLEX_CAPACITY,
+    FLEX_FROM,
+    FLEX_SLOTS,
+    PLAYOFF_ROUNDS,
+    PLAYOFF_TEAMS,
     REG_SEASON_WEEKS,
-    RosterConfig,
-    flex_capacity,
-    flex_positions,
-    required_starters,
+    ROSTER,
+    STARTERS,
+    starting_lineup,
 )
-
-# QB1 / RB2 / WR3 / TE1 / FLEX1 -- confirmed against the live league, not the ESPN default.
-# Derived from `hub.config.RosterConfig` rather than restated: this module is "how a league
-# works", so it is the right place to *read* the shape and the wrong place to declare it.
-ROSTER = RosterConfig()
-STARTERS = required_starters(ROSTER)
-FLEX_FROM = flex_positions(ROSTER)
-FLEX_SLOTS = ROSTER.flex
-# The most flex-eligible players a team can start at once. Was a bare `7` in optimize.py.
-FLEX_CAPACITY = flex_capacity(ROSTER)
-PLAYOFF_TEAMS = 6
-# Quarter-final, semi-final, final. The bracket needs its own weeks: scoring the playoffs on
-# draws that already decided seeding couples a team's title odds to its week 1 result.
-PLAYOFF_ROUNDS = 3
 
 # Player-level prediction lives in `hub.models.predict`: what a player does in a week, as
 # opposed to how a league works, which is this module. These constants are re-exported
@@ -53,7 +48,7 @@ PLAYOFF_ROUNDS = 3
 # and that alias outlived the function it named: `moments` returns three moments, so the
 # name promised a shape the object no longer had. Callers wanting a player-level
 # prediction import it from `hub.models.predict`, which is where it lives.
-from hub.models.predict import (  # noqa: F401,E402
+from hub.models.predict import (  # noqa: F401
     MIN_SKEW,
     TALENT_CV,
     TALENT_CV_BY_POS,
@@ -70,44 +65,6 @@ from hub.models.predict import (  # noqa: F401,E402
 _skewed = skewed
 _correlated_normal = correlated_normal
 
-
-
-def starting_lineup(pos: Sequence[str], score: Sequence[float] | np.ndarray) -> list[int]:
-    """Indices of the lineup: each required **Slot** to the best available, then the flex.
-
-    One rule, in the module that owns the shape it reads. `STARTERS`, `FLEX_FROM` and
-    `FLEX_SLOTS` are declared three lines up, and five modules import them -- so the rule that
-    fills them belongs beside them rather than in whichever caller needed it first.
-
-    It was written twice, character for character, in `hub.season.lineup_gate` and
-    `hub.season.weekly_gate`, kept in agreement by a docstring reading *"the same rule as
-    lineup_gate.projection_lineup_points"*. This repo has now twice found something real
-    underneath an invariant asserted in prose -- `store.tables` claiming it and `connect` could
-    not disagree, and the `prior_signal` join -- so the second copy is gone rather than
-    annotated.
-
-    Greedy, and deliberately not the enumeration in `hub.season.lineup`. That one searches
-    every legal lineup to maximise a win probability; this is *start your highest*, the simple
-    rule both gates measure against. They are different questions and both are wanted.
-
-    `score` orders the choice and nothing else -- a projection, a negated consensus rank, a
-    lower confidence bound. What it means is the caller's business.
-    """
-    order = np.argsort(-np.asarray(score, dtype=float))
-    counts: dict[str, int] = {}
-    starters: list[int] = []
-    flex: list[int] = []
-    for j in order:
-        i = int(j)
-        p = pos[i]
-        if p in STARTERS and counts.get(p, 0) < STARTERS[p]:
-            counts[p] = counts.get(p, 0) + 1
-            starters.append(i)
-        elif p in FLEX_FROM:
-            flex.append(i)
-    # `order` is already descending, so the first FLEX_SLOTS leftovers are the best ones.
-    starters.extend(flex[:FLEX_SLOTS])
-    return starters
 
 
 def lineup_points(scores: np.ndarray, pos: np.ndarray) -> np.ndarray:
