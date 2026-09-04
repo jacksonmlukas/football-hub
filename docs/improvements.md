@@ -945,6 +945,69 @@ now.
 
 ---
 
+### 22. Four defects from a full-repo review — FIXED 2026-09-04
+
+A read of all 13,665 lines of `src/hub`, not a diff. Four findings, each reproduced before
+being believed. Three are the same shape: a local accounting or ordering assumption that the
+code *next door* already knows to guard.
+
+**`fetch/cfbd.py` — a failed call spent quota nothing counted.** Both counters were
+incremented after `_http_get` returned, so every 429, 500 and timeout -- all of which
+`raise_for_status` turns into an exception -- spent a real call against the 1,000/month free
+tier that neither `quota_used()` nor `_CALLS_THIS_RUN` ever saw. Stubbing the call to raise:
+**20 real requests, 0 recorded, and the MAX_CALLS_PER_RUN=12 "this is a loop" ceiling never
+fired.** Counted in a `finally` now. A connection error that never reached CFBD over-counts by
+one, which is the safe direction. `fetch/odds.py` was immune only because it reads the balance
+from the server's own `x-requests-remaining` header instead of keeping a local counter.
+
+**`draft/tune.py` — the Spearman that fits `projection_lambda` mis-ranked ties.**
+`actual.argsort().argsort()` gives tied values distinct sequential ranks; Spearman requires the
+mean rank. `actual_points` is `fill_null(0.0)`, so every player with no production is an exact
+tie. On a 450-row board with 180 zeros: true rho **+0.650**, computed **+0.563**, and **+0.623**
+for the same data in a different row order -- so `score()` was not a function of its data.
+`sweep` re-sorts by `adj_ecr` per lambda, so each lambda carried its own arbitrary
+tie-breaking into a comparison against the others. Fixed with `average_ranks`, written in
+numpy rather than `scipy.stats.rankdata` because scipy is not a declared dependency and a
+fitted constant should not rest on a transitive one. **The sweep was re-run: `lam = 0.00`
+still wins on both metrics**, and lambda-sweep.md records why it was robust -- the tables
+report deltas between lambdas, and a shared bias cancels in the difference.
+
+**`store.write` — the docstring promised immutability and nothing enforced it.** The path is a
+pure function of its key and `write_parquet` truncates, so any caller reusing a name destroyed
+the previous partition. Three of four call sites dodged this with a timestamp or digest, each
+with a comment about the hazard; `fetch/nflverse` used the default `name="part"` and overwrote
+every week on every refresh, losing the record of any upstream stat correction. The promise is
+now enforced: `replace=False` refuses to overwrite differing data, identical bytes are a no-op
+so `make slate` stays idempotent, and the two callers that genuinely mean replacement say so.
+`ratings` needed it too -- `predicted_at` is `datetime.now()`, so an identical-config re-run
+lands on its own filename with different content, and the guard would have broken the weekly
+ritual. Caught by checking rather than by shipping.
+
+**`models/panel.py` — the reported scrape lead came from the wrong scrape.**
+`weekly_consensus` paired `ecr.min()` with `lead_days.first()` over an unsorted `group_by`.
+Measured on live rankings: **1,216 of 37,151 player-weeks carry two scrapes and 1,211 of those
+have two different leads**, so `LEAD_DAYS` -- what weekly-screen.md cites for the confound the
+whole screen is read against -- was partly computed from rows that did not supply the ECR.
+`injury_severity` sorts before its own `first()` for exactly this reason, forty lines above.
+The aggregation is now `best_per_week`, split out so it can be tested without the network.
+
+**Verified unchanged.** The frozen weekly gate re-runs at **+0.215, CI [-0.242, +0.684]**,
+3/4 seasons -- `lead_days` feeds no statistic, only the report. 1,423 tests pass (+12),
+`config_digest` 281b7b7a and `fitted_digest` d5598b96 unmoved.
+
+**Looked at and cleared**, so the sweep is legible as more than four hits: every `zip()` in
+the tree already passes `strict=`; there are no mutable default arguments; the other four
+`.first()` aggregations are each sorted first or take a value constant within the group;
+`_counts` guards all three dispersion regimes; `conformal.interval` cannot be reached with an
+empty window; `teammate_rho` handles both key orientations. Two near-misses are worth naming
+because the reasoning is the useful part: `correlate.pair_correlations` canonicalises its key
+without swapping the values, which is harmless **only** because `z` is standardised per
+player-season so both marginals are ~(0,1); and `survivor.solve` compares a solver float with
+`== 1`, which is genuinely fragile but CBC rounds cleanly and no failure could be produced, so
+it was left alone rather than padding the list.
+
+---
+
 ---
 
 ## What is deliberately not on this list

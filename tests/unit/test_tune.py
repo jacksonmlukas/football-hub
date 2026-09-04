@@ -167,3 +167,44 @@ def test_the_sweep_runs_offline(monkeypatch, capsys):
     assert tune.main(["--sweep"]) == 0
     out = capsys.readouterr().out
     assert "projection_lambda sweep" in out
+
+
+# --- Spearman with ties, which selects the fitted lambda ---
+
+def test_tied_values_share_a_rank():
+    """`argsort().argsort()` gave ties distinct sequential ranks. Spearman requires the mean."""
+    got = tune.average_ranks(np.array([7.0, 1.0, 7.0, 3.0]))
+    assert got.tolist() == [2.5, 0.0, 2.5, 1.0]
+
+
+def test_ranks_do_not_depend_on_the_order_the_rows_arrive_in():
+    """The worse half of the old bug. `sweep` re-sorts the board for every lambda, so each
+    lambda was scored with its own arbitrary tie-breaking and then compared to the others."""
+    rng = np.random.default_rng(0)
+    a = np.concatenate([rng.gamma(2, 40, 120), np.zeros(80)])
+    pred = np.arange(1, len(a) + 1, dtype=float)
+    perm = rng.permutation(len(a))
+    rho = float(np.corrcoef(pred, tune.average_ranks(a))[0, 1])
+    rho_perm = float(np.corrcoef(pred[perm], tune.average_ranks(a[perm]))[0, 1])
+    assert rho == pytest.approx(rho_perm)
+
+
+def test_a_block_of_zeros_does_not_drag_the_correlation_down():
+    """`actual_points` is `fill_null(0.0)`, so every player with no production is an exact
+    tie. Ranking those arbitrarily biased rho low -- +0.563 against a true +0.650."""
+    rng = np.random.default_rng(1)
+    a = np.concatenate([rng.gamma(2, 40, 270), np.zeros(180)])
+    pred = np.arange(1, len(a) + 1, dtype=float)
+    order = np.argsort(-a + rng.normal(0, 60, len(a)))
+    a = a[order]
+    naive = a.argsort().argsort().astype(float)
+    # `score` negates, because a good board pairs a LOW adj_ecr with HIGH points.
+    corrected = -float(np.corrcoef(pred, tune.average_ranks(a))[0, 1])
+    understated = -float(np.corrcoef(pred, naive)[0, 1])
+    assert corrected > understated
+    assert corrected == pytest.approx(0.6361, abs=1e-3)
+    assert understated == pytest.approx(0.6123, abs=1e-3)
+
+
+def test_average_ranks_handles_an_empty_board():
+    assert tune.average_ranks(np.array([])).tolist() == []

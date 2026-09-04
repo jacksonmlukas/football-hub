@@ -353,3 +353,45 @@ def test_the_catalog_spans_partitions_written_under_different_schemas(tmp_path):
     assert got.height == 2, "both partitions read, not one or an exception"
     assert got["cfg_digest"].to_list() == [None, "abc123"], \
         "the older partition fills null for a column it predates"
+
+
+# --- the immutability the docstring used to only promise ---
+
+def _part(v: float) -> pl.DataFrame:
+    return pl.DataFrame({"player": ["x"], "rec_yards": [v]})
+
+
+def test_an_unguarded_overwrite_of_differing_data_is_refused(tmp_path):
+    """`write_parquet` truncates and the path is a pure function of its key, so a caller
+    reusing a name silently destroyed the previous partition. `fetch.nflverse` did exactly
+    that on every weekly refresh, losing the record of any upstream stat correction."""
+    store.write(_part(50.0), "player_stats", "nfl", 2025, 3, base=tmp_path)
+    with pytest.raises(FileExistsError, match="already holds different data"):
+        store.write(_part(72.0), "player_stats", "nfl", 2025, 3, base=tmp_path)
+    assert pl.read_parquet(
+        store.write(_part(50.0), "player_stats", "nfl", 2025, 3,
+                    base=tmp_path))["rec_yards"].to_list() == [50.0]
+
+
+def test_rewriting_identical_data_is_a_no_op_not_an_error(tmp_path):
+    """`make slate` re-runs must stay idempotent, so identical bytes are not a collision."""
+    p1 = store.write(_part(50.0), "player_stats", "nfl", 2025, 3, base=tmp_path)
+    p2 = store.write(_part(50.0), "player_stats", "nfl", 2025, 3, base=tmp_path)
+    assert p1 == p2
+    assert len(list(p1.parent.iterdir())) == 1
+
+
+def test_replace_is_available_but_has_to_be_asked_for(tmp_path):
+    """The point is not that replacement is forbidden -- `fetch.nflverse` genuinely mirrors a
+    table that revises in place -- it is that it has to be visible in the call."""
+    store.write(_part(50.0), "player_stats", "nfl", 2025, 3, base=tmp_path)
+    p = store.write(_part(72.0), "player_stats", "nfl", 2025, 3, base=tmp_path, replace=True)
+    assert pl.read_parquet(p)["rec_yards"].to_list() == [72.0]
+
+
+def test_a_distinct_name_keeps_both_partitions(tmp_path):
+    """What board, ratings and odds do, and what the error message points a caller at."""
+    a = store.write(_part(50.0), "lines", "nfl", 2025, 3, base=tmp_path, name="snap-a")
+    b = store.write(_part(72.0), "lines", "nfl", 2025, 3, base=tmp_path, name="snap-b")
+    assert a != b
+    assert len(list(a.parent.iterdir())) == 2

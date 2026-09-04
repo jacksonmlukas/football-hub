@@ -32,9 +32,21 @@ LAYOUT = "{table}/league={league}/season={season}/week={week:02d}/{name}.parquet
 
 
 def write(df: pl.DataFrame, table: str, league: str, season: int, week: int,
-          name: str = "part", base: Path | None = None) -> Path:
-    """Immutable dated partitions. Corrections write a new file; nothing is overwritten,
-    so a backfill can always be reconstructed and audited.
+          name: str = "part", base: Path | None = None, *, replace: bool = False) -> Path:
+    """Dated partitions. A caller that would destroy an existing one has to say so.
+
+    This docstring used to promise that "nothing is overwritten, so a backfill can always be
+    reconstructed and audited". It was not true and nothing enforced it: the path is a pure
+    function of (table, league, season, week, name) and `write_parquet` truncates, so any
+    caller reusing a name silently destroyed the previous partition. Three of the four call
+    sites avoided that by passing a timestamp or a digest, each with a comment about the
+    hazard; `fetch.nflverse` used the default `name="part"` and overwrote every week on every
+    refresh, losing the record of any upstream stat correction.
+
+    So the promise is now enforced rather than stated. `replace=False` refuses to overwrite a
+    differing partition; a caller that genuinely means to replace passes `replace=True` and
+    is visible in review. Re-writing identical bytes is a no-op rather than an error, because
+    `make slate` re-runs must stay idempotent.
 
     `base` exists so tests -- and any caller wanting a scratch tree -- can redirect the
     root without reassigning a module global. Every Phase 1 fetch module writes through
@@ -43,6 +55,16 @@ def write(df: pl.DataFrame, table: str, league: str, season: int, week: int,
     root = base or DATA
     p = root / LAYOUT.format(table=table, league=league, season=season, week=week, name=name)
     p.parent.mkdir(parents=True, exist_ok=True)
+    if p.exists() and not replace:
+        try:
+            unchanged = pl.read_parquet(p).equals(df)
+        except Exception:                  # an unreadable partition is not a match
+            unchanged = False
+        if not unchanged:
+            raise FileExistsError(
+                f"{p} already holds different data. Pass a distinct `name=` to keep both "
+                f"(what board, ratings and odds do), or `replace=True` to mean it.")
+        return p
     df.write_parquet(p)
     return p
 

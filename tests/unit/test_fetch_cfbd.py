@@ -188,3 +188,49 @@ def test_week_prints_a_summary_not_rows(transport, paths, capsys):
     transport()
     cfbd.week(2026, 3, cache=paths["cache"], quota_path=paths["quota"])
     assert len(capsys.readouterr().out.splitlines()) <= 12
+
+
+def test_a_failed_call_still_spends_the_quota_it_spent(tmp_path, monkeypatch):
+    """The counters used to be incremented after `_http_get` returned, so a 429 or a 500 --
+    which `raise_for_status` turns into an exception -- spent a real call that neither the
+    monthly budget nor the run ceiling ever saw."""
+    import hub.fetch.cfbd as C
+
+    C.reset_run_budget()
+    q = tmp_path / "quota.json"
+
+    def boom(path, params, key):
+        raise RuntimeError("429 Too Many Requests")
+
+    monkeypatch.setattr(C, "_http_get", boom)
+    monkeypatch.setattr(C, "_api_key", lambda: "k")
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            C.bulk("lines", 2026, 1, cache=tmp_path / "cache", quota_path=q)
+
+    assert C.quota_used(q) == 3, "a spent call must be counted whether or not it answered"
+    assert C._CALLS_THIS_RUN == 3
+
+
+def test_the_run_ceiling_stops_a_loop_of_failing_calls(tmp_path, monkeypatch):
+    """The ceiling exists to catch a per-team loop. A loop that errors every time is still
+    a loop, and used to run forever because nothing counted it."""
+    import hub.fetch.cfbd as C
+
+    C.reset_run_budget()
+
+    def boom(path, params, key):
+        raise RuntimeError("500")
+
+    monkeypatch.setattr(C, "_http_get", boom)
+    monkeypatch.setattr(C, "_api_key", lambda: "k")
+    attempts = 0
+    for i in range(C.MAX_CALLS_PER_RUN + 5):
+        try:
+            C.bulk("lines", 2026, i + 1, cache=tmp_path / "cache",
+                   quota_path=tmp_path / "q.json")
+        except C.QuotaExceeded:
+            break
+        except RuntimeError:
+            attempts += 1
+    assert attempts == C.MAX_CALLS_PER_RUN, "the ceiling must fire on failing calls too"

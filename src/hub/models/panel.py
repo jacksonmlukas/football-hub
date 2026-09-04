@@ -503,8 +503,23 @@ def weekly_consensus(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cove
                   pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("key"),
                   pl.col("ecr").cast(pl.Float64))
           .drop_nulls(["scrape_date", "ecr"]))
-    joined = assign_weeks(w, week_windows(seasons))
-    return (joined.group_by(["season", "week", "key"])
+    return best_per_week(assign_weeks(w, week_windows(seasons)))
+
+
+def best_per_week(joined: pl.DataFrame) -> pl.DataFrame:
+    """One ECR per (season, week, key), with the lead of the scrape that supplied it.
+
+    Split out of `weekly_consensus` so it can be tested: everything around it is network.
+
+    Sorted so `first()` lands on the same scrape `min()` does. 3.3% of player-weeks carry two
+    scrapes (1,216 of 37,151 over 2021-25) and 1,211 of those have two different `lead_days`,
+    so without the sort the reported lead came from an arbitrary row and need not be the one
+    that supplied the ECR -- and `LEAD_DAYS` is what `docs/weekly-screen.md` cites for the
+    confound the whole screen is read against. `injury_severity` above sorts before its own
+    `first()` for exactly this reason; this one did not.
+    """
+    return (joined.sort("ecr")
+                  .group_by(["season", "week", "key"])
                   .agg(pl.col("ecr").min(), pl.col("lead_days").first())
                   .with_columns(pl.col("season").cast(pl.Int64),
                                 pl.col("week").cast(pl.Int64)))

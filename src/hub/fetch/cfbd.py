@@ -190,9 +190,20 @@ def bulk(endpoint: str, year: int, week: int | None = None, *,
     if not key:
         raise LoopRefused("no CFBD_API_KEY set; cannot fetch")
 
-    payload = _http_get(ENDPOINTS[endpoint], params, key)
-    _CALLS_THIS_RUN += 1
-    _record_call(quota_path)
+    # Counted in `finally`, because the quota is spent by the *request*, not by the reply.
+    # These two lines used to sit after the call, so anything `_http_get` raised -- a 429, a
+    # 500, a timeout, all of which `raise_for_status` turns into an exception -- spent a real
+    # call that neither counter ever saw. A rate-limited endpoint retried a few times could
+    # burn the monthly budget while `quota_used()` stayed flat and the run ceiling below
+    # never fired, which is precisely the failure this module exists to make impossible.
+    #
+    # A connection error that never reached CFBD is over-counted by one. That is the safe
+    # direction: erring high refuses a little early, erring low is how the budget disappears.
+    try:
+        payload = _http_get(ENDPOINTS[endpoint], params, key)
+    finally:
+        _CALLS_THIS_RUN += 1
+        _record_call(quota_path)
 
     df = pl.DataFrame(payload, infer_schema_length=None) if payload else pl.DataFrame()
     path.parent.mkdir(parents=True, exist_ok=True)

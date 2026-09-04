@@ -242,8 +242,14 @@ def _write_by_week(df: pl.DataFrame, table: str, season: int,
     """
     weeks = sorted(w for w in df["week"].unique().to_list() if w is not None)
     for wk in weeks:
+        # `replace=True` deliberately: these partitions mirror an nflverse table that revises
+        # in place, so the store mirrors it rather than accumulating a copy per refresh.
+        # `make slate` re-fetches every week weekly, and appending would grow the tree without
+        # bound and double-count anything that later queried it. The cost is real and worth
+        # naming -- a stat correction overwrites the number it corrects, and the record of the
+        # change lives with nflverse rather than here.
         store.write(df.filter(pl.col("week") == wk), table, "nfl", season, int(wk),
-                    base=base)
+                    base=base, replace=True)
     return len(weeks), df.height
 
 

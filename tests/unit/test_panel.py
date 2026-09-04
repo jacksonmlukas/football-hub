@@ -254,3 +254,25 @@ def test_a_two_stage_aggregation_is_stable_when_the_hand_off_is_sorted():
     assert all(r.equals(sorted_[0]) for r in sorted_), "sorted: bit-identical every run"
     # the unsorted version is *usually* unstable; assert only that sorting cannot hurt
     assert sorted_[0].len() == unsorted[0].len()
+
+
+def test_the_reported_lead_comes_from_the_scrape_whose_ecr_was_used():
+    """`ecr.min()` was paired with `lead_days.first()` over an unsorted group_by, so the two
+    could come from different scrapes. 3.3% of player-weeks carry two scrapes and 1,211 of
+    those 1,216 have two different leads, and LEAD_DAYS is what docs/weekly-screen.md cites
+    for the confound the whole screen is read against."""
+    joined = pl.DataFrame({
+        "season": [2024, 2024], "week": [5, 5], "key": ["chase", "chase"],
+        # the better rank is the *later* scrape, so an unsorted first() could take the other
+        "ecr": [12.0, 3.0], "lead_days": [7, 2],
+    })
+    r = pnl.best_per_week(joined).row(0, named=True)
+    assert (r["ecr"], r["lead_days"]) == (3.0, 2), "the lead must match the ECR that won"
+
+
+def test_one_scrape_a_week_is_unaffected():
+    joined = pl.DataFrame({"season": [2024, 2024], "week": [5, 6], "key": ["x", "x"],
+                           "ecr": [10.0, 11.0], "lead_days": [6, 5]})
+    got = pnl.best_per_week(joined).sort("week")
+    assert got["ecr"].to_list() == [10.0, 11.0]
+    assert got["lead_days"].to_list() == [6, 5]

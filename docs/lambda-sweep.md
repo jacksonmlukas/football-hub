@@ -6,6 +6,21 @@ because they are the point.
 
 **Result: `projection_lambda = 0.0`.**
 
+> **Metric corrected and the sweep re-run, 2026-09-04. The result did not move.** The Spearman
+> in `tune.score` was computed with `actual.argsort().argsort()`, which gives tied values
+> distinct sequential ranks instead of the mean rank Spearman requires. `actual_points` is
+> `fill_null(0.0)`, so every player with no recorded production is an exact tie -- on a
+> 450-row board with 180 zeros that understated a true rho of +0.650 as +0.563, and returned
+> +0.623 for the same data in a different row order. Since `sweep` re-sorts the board by
+> `adj_ecr` for each lambda, every lambda was scored with its own arbitrary tie-breaking and
+> then compared against the others.
+>
+> Re-run with average ranks (`tune.average_ranks`): **`lam = 0.00` is still selected**, on
+> both metrics. The conclusion below is unchanged, and the reason it was robust is visible in
+> the tables -- they report Spearman *deltas* between lambdas, and a bias shared by every
+> lambda largely cancels in the difference. The absolute rho was wrong; the ordering it was
+> read for was not.
+
 ## The question
 
 `hub.draft.projection` nudges the consensus board by last season's expected-vs-actual gap:

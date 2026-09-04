@@ -53,6 +53,36 @@ TOP_N = 50
 DRAFTABLE = 192
 
 
+def average_ranks(a: np.ndarray) -> np.ndarray:
+    """Ranks with ties sharing their mean rank, which is what Spearman requires.
+
+    This was `a.argsort().argsort()`, which hands tied values *distinct* sequential ranks in
+    whatever order the sort happened to emit. That is not a detail here: `actual_points` is
+    `fill_null(0.0)`, so every player with no recorded production is an exact tie, and on a
+    450-row board with 180 such zeros the naive form scored a true rho of +0.650 as +0.563 --
+    and returned +0.623 for the same data in a different row order.
+
+    Order-dependence is the worse half. `sweep` re-sorts the board by `adj_ecr` for every
+    lambda, so each lambda was scored with its own arbitrary tie-breaking, and
+    `best_lambda_spearman` then picked a winner by comparing those numbers to each other.
+
+    numpy rather than `scipy.stats.rankdata`: scipy is not a declared dependency, it is only
+    present transitively through scikit-learn, and a fitted constant should not rest on that.
+    """
+    n = len(a)
+    if n == 0:
+        return np.empty(0, dtype=float)
+    order = np.argsort(a, kind="stable")
+    s = a[order]
+    start = np.flatnonzero(np.r_[True, s[1:] != s[:-1]])
+    end = np.r_[start[1:], n]
+    # A tie group spanning positions [start, end) shares the mean of those positions.
+    mean_rank = (start + end - 1) / 2.0
+    out = np.empty(n, dtype=float)
+    out[order] = np.repeat(mean_rank, end - start)
+    return out
+
+
 def score(df: pl.DataFrame, lam: float, top_n: int = TOP_N) -> dict[str, float]:
     """How good a board this lambda produces, against what actually happened.
 
@@ -70,7 +100,7 @@ def score(df: pl.DataFrame, lam: float, top_n: int = TOP_N) -> dict[str, float]:
 
     # Spearman is Pearson on ranks. Negated because a better board means a LOW adj_ecr
     # pairs with HIGH points, and a positive number reading as "good" is worth the line.
-    actual_rank = actual.argsort().argsort().astype(float)
+    actual_rank = average_ranks(actual)
     if pred.std() == 0 or actual_rank.std() == 0:
         rho = float("nan")
     else:

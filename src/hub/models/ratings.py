@@ -102,9 +102,17 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
                                pl.lit(spec.digest).alias("fit_digest"))
     if preds.height:
         # The digest is in the filename as well as the rows: distinguishable rows are no use
-        # if the second run lands on the first one's file.
+        # if the second run lands on the first one's file. A *different* config therefore
+        # writes a different partition and both survive.
+        #
+        # `replace=True` covers the other case, on purpose: the same config re-run predicts
+        # the same games from the same lines, so only `predicted_at` differs and replacing is
+        # what is wanted -- appending would put two rows per game into `preds` and duplicate
+        # every game in the published artifact. The pre-registration that
+        # `docs/track-record.md` rule 1 counts is the *commit*, not this timestamp, so
+        # replacing it costs the record nothing.
         store.write(preds, "preds", "nfl", season, wk, base=base,
-                    name=f"{preds['version'][0]}-{digest}")
+                    name=f"{preds['version'][0]}-{digest}", replace=True)
 
     print(f"  ratings (passthrough): season {season} week {wk}")
     print(f"    {preds.height} games priced from the market, "
