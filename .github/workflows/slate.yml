@@ -88,8 +88,16 @@ jobs:
             exit 0
           fi
           WEEK=$(jq -r '.week' site/data/manifest.json)
-          git commit -m "slate: ${WEEK:-?} refresh
+          git commit -m "slate: week ${WEEK:-?} refresh
 
           Published by the scheduled slate. The commit is the timestamp -- see
           docs/track-record.md rule 1."
+          # Rebase before pushing. `main` can move between checkout and push -- a hand commit,
+          # or a second run -- and without this the job fails having produced the artifacts and
+          # published none of them. The page then simply does not update, which is quiet: only
+          # the watchdog would eventually notice, and only during a game window.
+          #
+          # A conflict here fails the job loudly, which is right. Two sources disagreeing about
+          # what was published is not something a scheduled job should resolve on its own.
+          git pull --rebase origin main
           git push
