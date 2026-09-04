@@ -1,7 +1,7 @@
 {
   "name": "track_record",
   "source": "preds+results",
-  "generated_at": "2026-09-04T04:05:35+00:00",
+  "generated_at": "2026-09-04T05:08:27+00:00",
   "n_scored": 16,
   "n_preregistered": 0,
   "is_backtest": true,

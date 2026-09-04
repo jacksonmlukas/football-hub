@@ -29,6 +29,8 @@ import polars as pl
 from hub import jsonio, store
 from hub.config import SEASON_AHEAD
 from hub.models.scoring_rules import brier, log_loss, reliability
+from hub.paths import ROSTER_PARQUET
+from hub.season.roster import lock
 
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "site" / "data"
@@ -167,52 +169,48 @@ def live(out: Path | None = None, league: str = "nfl") -> dict[str, Any] | None:
     return payload
 
 
-# --- everything, plus a manifest -----------------------------------------
-
 # --- the roster, and the lineup it implies --------------------------------
 
 def roster(out: Path | None = None, path: Path | None = None) -> dict[str, Any] | None:
-    """Who is on the team, and where the set lineup differs from the best one.
+    """Serialise the roster and the lock decision. Does not *make* the decision.
 
     Reads `data/processed/roster.parquet` rather than ESPN, so the panel is publishable
     without a network round trip and shows last-good when a sync fails -- the same contract
     every other artifact here keeps.
 
-    The comparison is the point. ESPN auto-sets a lineup at the end of the draft, and the
-    projections behind that lineup are not ours. Showing both, with the difference named, is
-    the `docs/draft-night.md` rule: two views, and the decision stays yours.
+    `season.roster.lock` computes set-versus-best, including which players are withheld as
+    unavailable. That arithmetic lived here for one evening, which meant the only way to ask
+    the Sunday question was to publish a website; it is a decision, not a rendering.
     """
-    from hub.season.lineup import best_by_points
-    from hub.season.roster import ROSTER_PARQUET
-
     src = path or ROSTER_PARQUET
     if not src.exists():
         return None
     df = pl.read_parquet(src)
-    proj = df.filter(pl.col("projected"))
-
-    best_names: list[str] = []
-    set_total = optimal_total = None
-    if not proj.is_empty():
-        best = best_by_points(proj)["starters"]
-        best_names = best["player"].to_list()
-        optimal_total = float(best["mu"].sum())
-        set_total = float(proj.filter(pl.col("starting"))["mu"].sum())
+    lk = lock(df)
+    # The best lineup, reconstructed from the moves: the set starters, less those to sit,
+    # plus those to start. Parenthesised because `-` binds tighter than `|` and the reader
+    # should not have to know that.
+    was = set(df.filter(pl.col("projected") & pl.col("starting"))["player"])
+    start = (was - set(lk.bench)) | set(lk.start)
 
     rows = []
     for r in df.iter_rows(named=True):
         rows.append({
             "player": r["player"], "pos": r["pos"], "nfl_team": r["nfl_team"],
             "mu": r["mu"], "sd": r["sd"], "projected": r["projected"],
-            "starting": r["starting"], "best_start": r["player"] in best_names,
+            "starting": r["starting"], "best_start": r["player"] in start,
             "injury_status": r["injury_status"],
+            "available": r.get("available", True),
+            "missing_games": r.get("missing_games", 0),
         })
     payload = _artifact("roster", "roster.parquet", rows,
-                        set_total=set_total, optimal_total=optimal_total,
-                        gain=(None if set_total is None or optimal_total is None
-                              else optimal_total - set_total))
+                        set_total=lk.set_total, optimal_total=lk.best_total, gain=lk.gain,
+                        withheld=lk.withheld, start=lk.start, sit=lk.bench)
     _write(out or SITE, "roster", payload)
     return payload
+
+
+# --- everything, plus a manifest -----------------------------------------
 
 
 def publish_all(season: int, week: int, base: Path | None = None,

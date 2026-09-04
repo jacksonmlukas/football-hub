@@ -23,3 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
 PROCESSED = DATA / "processed"
 BOARD_PARQUET = PROCESSED / "draft_board.parquet"
+# Beside the board for the same reason. `hub.season.roster` writes it and `hub.season.lineup`
+# reads it, and the reader had the path as a bare string literal in an argparse default -- so
+# moving the file would have left the reader looking at the old location in silence.
+ROSTER_PARQUET = PROCESSED / "roster.parquet"

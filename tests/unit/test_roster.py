@@ -11,9 +11,13 @@ from hub.season import roster as R
 
 
 class _Player:
-    def __init__(self, name, position, slot="BE", injury="ACTIVE", pid=1, pro="GB"):
+    def __init__(self, name, position, slot="BE", injury="ACTIVE", pid=1, pro="GB",
+                 avg=10.0, total=170.0):
         self.name, self.position, self.lineupSlot = name, position, slot
         self.injuryStatus, self.playerId, self.proTeam = injury, pid, pro
+        # ESPN's two projections; their ratio is the availability signal. The defaults are a
+        # full 17-game slate, so a test that says nothing about availability gets a fit player.
+        self.projected_avg_points, self.projected_total_points = avg, total
 
 
 class _Team:
@@ -142,3 +146,113 @@ def test_a_written_roster_round_trips_with_every_required_column(tmp_path):
     back = pl.read_parquet(p)
     assert not set(R.REQUIRED) - set(back.columns)
     assert back.height == 1
+
+
+# --- availability, which `injury_status` does not carry ---
+
+def _p(name, pos, avg, total, slot="BE", injury="ACTIVE"):
+    p = _Player(name, pos, slot=slot, injury=injury)
+    p.projected_avg_points, p.projected_total_points = avg, total
+    return p
+
+
+def test_a_suspended_player_is_found_by_his_games_not_his_designation():
+    """The defect this exists for: ESPN reported Jacobs ACTIVE/DAY_TO_DAY through a six-game
+    ban, and only his projected total gave it away."""
+    got = R.availability(R.from_team(_Team([], [
+        _p("Josh Jacobs", "RB", 15.15, 166.67, injury="DAY_TO_DAY"),
+        _p("Bhayshul Tuten", "RB", 12.29, 208.86),
+    ])))
+    by = dict(zip(got["player"].to_list(), got["missing_games"].to_list(), strict=True))
+    assert by == {"Josh Jacobs": 6, "Bhayshul Tuten": 0}
+    assert got.filter(pl.col("player") == "Josh Jacobs")["available"][0] is False
+
+
+def test_the_full_slate_is_the_rosters_own_maximum_not_a_hardcoded_17():
+    """Season length is ESPN's to change. A roster where nobody plays 17 must not read as a
+    roster where everybody is suspended."""
+    got = R.availability(R.from_team(_Team([], [
+        _p("A", "RB", 10.0, 140.0), _p("B", "WR", 10.0, 140.0)])))
+    assert got["missing_games"].to_list() == [0, 0]
+    assert got["available"].all()
+
+
+def test_a_player_with_no_projection_is_not_declared_unavailable():
+    """K and D/ST have no ESPN projection here; absence of evidence is not a suspension."""
+    got = R.availability(R.from_team(_Team([], [
+        _p("Kicker", "K", 0.0, 0.0), _p("Real", "WR", 10.0, 170.0)])))
+    assert got.filter(pl.col("player") == "Kicker")["available"][0] is True
+
+
+def test_an_empty_roster_yields_the_availability_columns_anyway():
+    got = R.availability(R.from_team(_Team([], [])))
+    assert {"espn_games", "missing_games", "available"} <= set(got.columns)
+
+
+# --- the lock decision ---
+
+# A roster that can actually fill QB/RB2/WR3/TE1/FLEX1, shaped like the real one. `swap`
+# overrides one player, which is how each test states the single thing it is about.
+_SQUAD = [
+    ("Jordan Love", "QB", 14.9, "QB"), ("Josh Jacobs", "RB", 15.5, "BE"),
+    ("Bhayshul Tuten", "RB", 8.8, "RB"), ("MarShawn Lloyd", "RB", 5.6, "RB"),
+    ("Ja'Marr Chase", "WR", 19.6, "WR"), ("Rashee Rice", "WR", 14.9, "WR"),
+    ("Nico Collins", "WR", 14.4, "WR"), ("Terry McLaurin", "WR", 10.6, "BE"),
+    ("Mark Andrews", "TE", 9.2, "TE"),
+]
+
+
+def _squad(unavailable=()):
+    """The nine, with named players optionally projected to miss six games."""
+    players = [_p(n, pos, 10.0, 110.0 if n in unavailable else 170.0, slot=slot)
+               for n, pos, _, slot in _SQUAD]
+    board = _board(player=[n for n, _, _, _ in _SQUAD],
+                   proj_blend=[mu for _, _, mu, _ in _SQUAD],
+                   pos=[p for _, p, _, _ in _SQUAD])
+    return R.build(R.from_team(_Team([], players)), board)
+
+
+def test_the_lock_withholds_an_unavailable_player_however_high_he_projects():
+    """The bug in one test: ranking on projection and caveating the result is what
+    recommended starting a suspended player. Jacobs is the roster's second-best projection
+    and must still not be started."""
+    lk = R.lock(_squad(unavailable={"Josh Jacobs"}))
+    assert lk.withheld == ["Josh Jacobs"]
+    assert "Josh Jacobs" not in lk.start
+
+
+def test_withholding_changes_the_recommendation_it_does_not_just_annotate_it():
+    """The available-only answer must differ from the availability-blind one, or the
+    filtering is decorative."""
+    df = _squad(unavailable={"Josh Jacobs"})
+    blind, aware = R.lock(df, include_unavailable=True), R.lock(df)
+    assert "Josh Jacobs" in blind.start
+    assert aware.gain is not None and blind.gain is not None
+    assert aware.gain < blind.gain
+
+
+def test_include_unavailable_puts_him_back():
+    """The override exists so the operator can see the number they are declining."""
+    assert R.lock(_squad(unavailable={"Josh Jacobs"}), include_unavailable=True).withheld == []
+
+
+def test_the_lock_names_both_sides_of_every_swap():
+    lk = R.lock(_squad())
+    assert "Josh Jacobs" in lk.start and "MarShawn Lloyd" in lk.bench
+    assert lk.gain is not None and lk.gain > 0
+
+
+def test_a_lineup_that_cannot_be_filled_reports_no_gain_rather_than_raising():
+    """Withholding can thin a roster past the slots -- here every receiver, leaving nobody for
+    the three WR slots. A lock that raised would take the whole slate down with it."""
+    lk = R.lock(_squad(unavailable={n for n, pos, _, _ in _SQUAD if pos == "WR"}))
+    assert lk.gain is None
+    assert len(lk.withheld) == 4
+
+
+def test_a_roster_where_nobody_plays_a_full_slate_is_not_a_roster_of_suspensions():
+    """`full` is the roster's own maximum, so a uniformly-short roster reads as available.
+    Marking everyone unavailable would be the same bug pointed the other way."""
+    lk = R.lock(_squad(unavailable={n for n, _, _, _ in _SQUAD}))
+    assert lk.withheld == []
+    assert lk.gain is not None

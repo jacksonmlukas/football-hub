@@ -44,6 +44,7 @@ import polars as pl
 
 from hub.draft.season import FLEX_FROM, FLEX_SLOTS, STARTERS
 from hub.models.predict import group_sd
+from hub.paths import ROSTER_PARQUET
 
 # Exhaustive enumeration is exact and, for a real 14-to-16 man roster, takes milliseconds
 # -- a few thousand legal lineups. The cap exists so that if a caller ever hands over
@@ -185,11 +186,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.season.lineup",
         description="Pick the lineup with the best chance of winning this week's matchup.")
-    ap.add_argument("--roster", default="data/processed/roster.parquet",
+    ap.add_argument("--roster", default=str(ROSTER_PARQUET),
                     help="player, pos, mu, sd")
     ap.add_argument("--opp-mu", type=float, required=True,
                     help="opponent's projected total")
     ap.add_argument("--opp-sd", type=float, default=25.0)
+    ap.add_argument("--include-unavailable", action="store_true",
+                    help="optimise over players ESPN projects to miss games")
     a = ap.parse_args(argv)
 
     # Nothing in this repo writes a roster yet, so the default path is absent until after
@@ -209,6 +212,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if missing:
         print(f"hub.season.lineup: roster is missing {sorted(missing)}", file=sys.stderr)
         return 1
+    # A player ESPN does not expect to play cannot be optimised into a lineup, whatever he
+    # projects. Season-long projections are availability-blind, and this optimiser maximises
+    # over the roster -- so an unavailable player with a high `mu` is exactly the row it
+    # reaches for. See `hub.season.roster.availability`.
+    if "available" in players.columns and not a.include_unavailable:
+        out = players.filter(pl.col("available"))
+        if out.height < players.height:
+            gone = sorted(set(players["player"]) - set(out["player"]))
+            print(f"  withholding {', '.join(gone)} -- ESPN projects them to miss games "
+                  f"(--include-unavailable to override)")
+        players = out
     try:
         got = optimize(players, opp_mu=a.opp_mu, opp_sd=a.opp_sd)
     except (NoLegalLineup, TooManyLineups) as e:

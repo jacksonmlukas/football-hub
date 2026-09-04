@@ -29,15 +29,13 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple, cast
 
 import polars as pl
 
 from hub.models.predict import moments
 from hub.names import player_key
-from hub.paths import PROCESSED
-
-ROSTER_PARQUET = PROCESSED / "roster.parquet"
+from hub.paths import ROSTER_PARQUET
 
 # What `hub.season.lineup` requires, and therefore what this must always produce.
 REQUIRED: tuple[str, ...] = ("player", "pos", "mu", "sd")
@@ -84,10 +82,49 @@ def from_team(team: Any) -> pl.DataFrame:
             "nfl_team": str(getattr(p, "proTeam", "") or ""),
             "slot": str(getattr(p, "lineupSlot", "") or ""),
             "injury_status": str(getattr(p, "injuryStatus", "") or ""),
+            # ESPN's own two projections. Their *ratio* is the only season-level availability
+            # signal in the payload -- see `espn_games` below.
+            "espn_avg": float(getattr(p, "projected_avg_points", 0.0) or 0.0),
+            "espn_total": float(getattr(p, "projected_total_points", 0.0) or 0.0),
         })
     return pl.DataFrame(rows, schema={
         "player": pl.Utf8, "key": pl.Utf8, "pos": pl.Utf8, "espn_id": pl.Int64,
-        "nfl_team": pl.Utf8, "slot": pl.Utf8, "injury_status": pl.Utf8})
+        "nfl_team": pl.Utf8, "slot": pl.Utf8, "injury_status": pl.Utf8,
+        "espn_avg": pl.Float64, "espn_total": pl.Float64})
+
+
+def availability(espn: pl.DataFrame) -> pl.DataFrame:
+    """How many games ESPN expects each player to play, and whether that is all of them.
+
+    **`injury_status` does not carry suspensions.** Josh Jacobs was served a six-game ban and
+    ESPN still reported him `DAY_TO_DAY`, so a roster trusting that field recommended starting
+    him in week 1. The ban *is* in the payload, just not in the field with the obvious name:
+    his `projected_total_points` divided by his `projected_avg_points` is 11.0 where every
+    other player on the roster is 17.0.
+
+    So availability is read off the ratio rather than the designation. `full` is the largest
+    implied count on the roster rather than a hard-coded 17, because the number of games in a
+    season is ESPN's to change and not ours to restate.
+
+    This is a **season-level** signal and says nothing about *which* games are missed. It is
+    therefore only safe in one direction: a player short of a full slate is not
+    presumed available, and no claim is made about when a full-slate player plays.
+    """
+    if espn.is_empty():
+        return espn.with_columns(pl.lit(None, dtype=pl.Float64).alias("espn_games"),
+                                 pl.lit(0, dtype=pl.Int64).alias("missing_games"),
+                                 pl.lit(True).alias("available"))
+    games = pl.when(pl.col("espn_avg") > 0).then(
+        pl.col("espn_total") / pl.col("espn_avg")).otherwise(None)
+    out = espn.with_columns(games.alias("espn_games"))
+    full = out["espn_games"].max()
+    if full is None:                      # ESPN published no projections at all
+        return out.with_columns(pl.lit(0, dtype=pl.Int64).alias("missing_games"),
+                                pl.lit(True).alias("available"))
+    missing = (pl.lit(float(cast(float, full))) - pl.col("espn_games")).round(0)
+    return out.with_columns(
+        missing.fill_null(0.0).cast(pl.Int64).alias("missing_games")
+    ).with_columns((pl.col("missing_games") < 1).alias("available"))
 
 
 def build(espn: pl.DataFrame, board: pl.DataFrame) -> pl.DataFrame:
@@ -108,12 +145,58 @@ def build(espn: pl.DataFrame, board: pl.DataFrame) -> pl.DataFrame:
     # `projected` before `moments`, because moments fills a missing projection with 0.0 and
     # that zero is indistinguishable from a real one once it has been written.
     have = pl.any_horizontal(*[pl.col(c).is_not_null() for c in cols]) if cols else pl.lit(False)
-    out = moments(joined.with_columns(have.alias("projected")))
+    out = moments(availability(joined).with_columns(have.alias("projected")))
     return out.with_columns(
         pl.when(pl.col("projected")).then(pl.col("mu")).otherwise(None).alias("mu"),
         pl.when(pl.col("projected")).then(pl.col("sd")).otherwise(None).alias("sd"),
         (pl.col("slot") != BENCH).alias("starting"),
     ).sort(["projected", "mu"], descending=[True, True], nulls_last=True)
+
+
+class Lock(NamedTuple):
+    """The Sunday question: what is set, what should start, and what the difference is worth.
+
+    Here rather than in `hub.publish` because it is a *decision*, not a rendering. It lived in
+    the site writer for one evening, which meant the only way to ask it was to publish a
+    website, and it could not be tested without a parquet on disk.
+    """
+    set_total: float | None
+    best_total: float | None
+    gain: float | None
+    start: list[str]                 # who should start, availability respected
+    bench: list[str]                 # set starters who should not
+    withheld: list[str]              # excluded as unavailable, whatever they project
+
+
+def lock(df: pl.DataFrame, *, include_unavailable: bool = False) -> Lock:
+    """Compare the lineup as set against the best one that could be set.
+
+    **Availability is applied before the comparison, not after.** The alternative -- rank on
+    projection and caveat the result -- is what produced a recommendation to start a suspended
+    player, and a caveat under a number does not stop the number being read.
+    """
+    from hub.season.lineup import NoLegalLineup, TooManyLineups, best_by_points
+
+    proj = df.filter(pl.col("projected"))
+    pool = proj if include_unavailable or "available" not in proj.columns else proj.filter(
+        pl.col("available"))
+    withheld = ([] if pool.height == proj.height
+                else sorted(set(proj["player"]) - set(pool["player"])))
+    if pool.is_empty():
+        return Lock(None, None, None, [], [], withheld)
+
+    try:
+        best = best_by_points(pool)["starters"]
+    except (NoLegalLineup, TooManyLineups):
+        # Withholding can make a thin roster unfillable, and a lock that raises would take
+        # the whole slate down with it -- CLAUDE.md's degradation rule. Report the players
+        # withheld, which is the actionable half, and no comparison.
+        return Lock(None, None, None, [], [], withheld)
+    set_total = float(proj.filter(pl.col("starting"))["mu"].sum())
+    best_total = float(best["mu"].sum())
+    start, was = set(best["player"]), set(proj.filter(pl.col("starting"))["player"])
+    return Lock(set_total, best_total, best_total - set_total,
+                sorted(start - was), sorted(was - start), withheld)
 
 
 def fetch(board: pl.DataFrame | None = None) -> pl.DataFrame:  # pragma: no cover - network
@@ -163,7 +246,21 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
         shown = f"{mu:>5.1f} +/- {sd:4.1f}" if mu is not None else "    not projected"
         flag = "S" if r["starting"] else " "
         inj = "" if r["injury_status"] in ("ACTIVE", "NORMAL", "") else f"  {r['injury_status']}"
-        print(f"  {flag} {r['pos']:<4} {r['player']:<24} {shown}{inj}")
+        miss = ("" if r.get("available", True)
+                else f"  MISSING {r['missing_games']} GAMES")
+        print(f"  {flag} {r['pos']:<4} {r['player']:<24} {shown}{inj}{miss}")
+
+    lk = lock(df)
+    if lk.gain is not None:
+        print(f"\n  set {lk.set_total:.1f}  ->  best {lk.best_total:.1f}  "
+              f"({lk.gain:+.1f} a week)")
+        for p in lk.start:
+            print(f"    START  {p}")
+        for p in lk.bench:
+            print(f"    SIT    {p}")
+    if lk.withheld:
+        print(f"  withheld as unavailable: {', '.join(lk.withheld)}")
+        print("  ESPN's injury field does not carry suspensions; its games projection does.")
 
     if a.write:
         print(f"  wrote {write(df, Path(a.out) if a.out else None)}")

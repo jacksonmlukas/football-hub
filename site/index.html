@@ -280,17 +280,27 @@ async function render() {
     // The gain is stated with its caveat attached rather than as a headline number. mu is
     // the board's season-long projection, so it does not know who is hurt this week.
     const gain = ros.gain;
-    const note = gain == null ? ""
+    const held = (ros.withheld ?? []);
+    // Withheld players are named first: the recommendation is only trustworthy if the reader
+    // can see who was taken out of it and why.
+    const heldNote = held.length
+      ? `<p class="warn">Withheld as unavailable: <b>${held.join(", ")}</b>. ESPN's injury
+           field does not carry suspensions; its games projection does, and these are short of
+           a full slate. They are excluded from the lineup below.</p>`
+      : "";
+    const note = gain == null
+      ? `<p class="empty">No lineup could be filled from the available players.</p>`
       : gain > 0.05
-        ? `<p class="warn">The set lineup projects ${fmt(ros.set_total, 1)}; the best one
-             projects ${fmt(ros.optimal_total, 1)}, a difference of <b>${fmt(gain, 1)}</b> a week.
-             These projections are season-long and do not know who is hurt this week, so treat
-             it as a question to settle at lock, not a free swap.</p>`
-        : `<p class="empty">The set lineup is already the best one on these projections.</p>`;
+        ? `<p class="warn">The set lineup projects ${fmt(ros.set_total, 1)}; the best available
+             one projects ${fmt(ros.optimal_total, 1)}, a difference of <b>${fmt(gain, 1)}</b>
+             a week &mdash; start ${(ros.start ?? []).join(", ")} over
+             ${(ros.sit ?? []).join(", ")}. These projections are season-long and do not know
+             who is hurt this week, so settle it at lock.</p>`
+        : `<p class="empty">The set lineup is already the best available one.</p>`;
     panel("p-roster", {
       age: `${ros.n} rostered`,
       warn: rArt?.stale ? `Stale: ${rArt.reason ?? "unknown"}` : null,
-      html: note + table([
+      html: heldNote + note + table([
         { label: "", get: r => r.starting ? "S" : "", cls: r => r.starting ? "good" : "" },
         { label: "pos", get: r => r.pos ?? "" },
         { label: "player", get: r => r.player ?? "" },
@@ -299,7 +309,9 @@ async function render() {
         { label: "best XI", get: r => r.best_start ? "\u2713" : "",
           cls: r => r.best_start && !r.starting ? "good" : "" },
         { label: "status", get: r =>
-            ["ACTIVE", "NORMAL", ""].includes(r.injury_status) ? "" : r.injury_status },
+            r.available === false ? `out ${r.missing_games} gm`
+              : ["ACTIVE", "NORMAL", ""].includes(r.injury_status) ? "" : r.injury_status,
+          cls: r => r.available === false ? "bad" : "" },
       ], ros.rows),
     });
   } else {
