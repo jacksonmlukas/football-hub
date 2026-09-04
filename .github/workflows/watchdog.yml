@@ -13,10 +13,10 @@ on:
   # allowance, to watch nothing.
   #
   # Every 10 min during NFL windows (Sun 12:00-24:00 ET = 16:00-04:00 UTC) and Sat CFB.
-  # schedule:
-  #   - cron: "*/10 16-23 * * 0"
-  #   - cron: "*/10 0-4 * * 1"
-  #   - cron: "*/10 16-23 * * 6"
+  schedule:
+    - cron: "*/10 16-23 * * 0"
+    - cron: "*/10 0-4 * * 1"
+    - cron: "*/10 16-23 * * 6"
   workflow_dispatch:
 
 permissions:

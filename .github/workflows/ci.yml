@@ -8,8 +8,8 @@ on:
   # Until 2026-08-24 this trigger was absent entirely while the `golden` job below gated on
   # `github.event_name == 'schedule'` -- so the job could never fire, had never once run, and
   # its own comment described it as nightly. README claimed the same. Uncomment at the flip.
-  # schedule:
-  #   - cron: "0 9 * * *"
+  schedule:
+    - cron: "0 9 * * *"
 
   # So the golden job can be exercised on demand while the schedule is off. Without this it
   # is unreachable until the flip, which is how it went from being written to being fixed
