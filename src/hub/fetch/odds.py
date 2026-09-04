@@ -125,15 +125,36 @@ def _game_date(commence_time: str) -> str:
     return utc.astimezone(ZoneInfo("America/New_York")).date().isoformat()
 
 
-def _team_abbrs() -> dict[str, str]:
+def _team_abbrs(valid: set[str]) -> dict[str, str]:
     """Full name to abbreviation, from nflverse rather than a hardcoded table.
 
     The Odds API says "Philadelphia Eagles"; nflverse says "PHI". A literal map would be
     32 lines that go stale the next time a team relocates.
+
+    **`valid` is not optional in practice, and the reason is a silent collapse.**
+    `nfl.load_teams()` lists "Los Angeles Rams" twice, once as `LA` and once as `LAR`, so
+    building the map with a plain `dict(zip(...))` keeps whichever came last and throws the
+    other away. It kept `LAR`. The 2026 schedule uses `LA`. Every Rams game therefore matched
+    nothing -- 17 of them, which was the whole of the residual after the timezone fix, and it
+    looked like a rounding error rather than one team's entire season.
+
+    The `strict=True` on that zip gave false comfort: it checks that the two columns are the
+    same length, which they were, and says nothing about duplicate keys.
+
+    `valid` is required rather than defaulted for that reason: there is no principled way to
+    pick between two abbreviations for one name without knowing which the season uses, and a
+    default would just be choosing a different arbitrary winner. The caller has the schedule
+    in hand, so it can say. A name whose abbreviations are all outside `valid` -- the historical
+    entries, Oakland and San Diego and the rest -- keeps the first, and never appears in a
+    payload for a season it did not play in.
     """
     import nflreadpy as nfl
     t = nfl.load_teams()
-    return dict(zip(t["team_name"].to_list(), t["team_abbr"].to_list(), strict=True))
+    out: dict[str, str] = {}
+    for name, abbr in zip(t["team_name"].to_list(), t["team_abbr"].to_list(), strict=True):
+        if name not in out or (abbr in valid and out[name] not in valid):
+            out[name] = abbr
+    return out
 
 
 def _schedule(season: int) -> pl.DataFrame:
@@ -199,8 +220,10 @@ def snapshot(season: int = SEASON_AHEAD, *, markets: str = MARKET, regions: str 
     if remaining is not None and remaining < floor:
         print(f"  WARNING: below the floor of {floor}; the next pull will refuse")
 
-    abbrs = _team_abbrs()
     sched = _schedule(season)
+    # The season's own abbreviations resolve a team that nflverse lists under two of them.
+    in_play = set(sched["home_team"].to_list()) | set(sched["away_team"].to_list())
+    abbrs = _team_abbrs(in_play)
     lookup = {
         (r["home_team"], r["away_team"], str(r["gameday"])): (r["game_id"], r["week"])
         for r in sched.iter_rows(named=True)

@@ -29,7 +29,7 @@ def paths(tmp_path):
 
 @pytest.fixture
 def teams(monkeypatch):
-    monkeypatch.setattr(odds, "_team_abbrs", lambda: {
+    monkeypatch.setattr(odds, "_team_abbrs", lambda valid=None: {
         "Philadelphia Eagles": "PHI", "Dallas Cowboys": "DAL",
         "Kansas City Chiefs": "KC", "Los Angeles Chargers": "LAC",
     })
@@ -279,3 +279,45 @@ def test_credits_command_works_without_a_key(paths, monkeypatch, capsys):
     paths["state"].write_text(json.dumps({"remaining": 372}))
     assert odds.main(["--credits", "--state-path", str(paths["state"])]) == 0
     assert "372" in capsys.readouterr().out
+
+
+# --- one team, two abbreviations, and a dict that quietly kept the wrong one ---
+
+def test_a_team_listed_under_two_abbreviations_resolves_to_the_one_in_play(monkeypatch):
+    """`load_teams` lists "Los Angeles Rams" twice, as LA and as LAR. `dict(zip(...))` keeps
+    the last, which is LAR; the 2026 schedule uses LA. Every Rams game therefore matched
+    nothing -- 17 of them, the whole residual after the timezone fix, looking like a rounding
+    error rather than one team's entire season."""
+    import polars as pl
+
+    monkeypatch.setattr(odds, "_schedule", lambda season: pl.DataFrame({}))
+    fake = pl.DataFrame({"team_name": ["Los Angeles Rams", "Los Angeles Chargers",
+                                       "Los Angeles Rams"],
+                         "team_abbr": ["LA", "LAC", "LAR"]})
+
+    class _Nfl:
+        @staticmethod
+        def load_teams():
+            return fake
+
+    monkeypatch.setitem(__import__("sys").modules, "nflreadpy", _Nfl)
+    assert odds._team_abbrs({"LA", "LAC"})["Los Angeles Rams"] == "LA"
+    assert odds._team_abbrs({"LAR", "LAC"})["Los Angeles Rams"] == "LAR"
+    assert odds._team_abbrs({"LAC"})["Los Angeles Rams"] == "LA", "no signal: keep the first"
+
+
+def test_the_strict_zip_never_protected_against_this(monkeypatch):
+    """`strict=True` checks that the two columns are the same length -- they were -- and says
+    nothing about duplicate keys. It is why the collapse looked safe."""
+    import polars as pl
+
+    fake = pl.DataFrame({"team_name": ["A", "A"], "team_abbr": ["X", "Y"]})
+
+    class _Nfl:
+        @staticmethod
+        def load_teams():
+            return fake
+
+    monkeypatch.setitem(__import__("sys").modules, "nflreadpy", _Nfl)
+    assert odds._team_abbrs({"Y"})["A"] == "Y"
+    assert len(odds._team_abbrs({"Y"})) == 1, "two rows, one name, one entry"
