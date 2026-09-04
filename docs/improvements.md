@@ -1008,6 +1008,42 @@ it was left alone rather than padding the list.
 
 ---
 
+### 23. A prediction was priced from a field that moves — DONE 2026-09-04
+
+`ratings.games_for` priced every prediction from nflverse's `spread_line`. That field is not
+wrong, but it is not a *record*: it moves as the week runs, and upstream leaves it empty for
+weeks that are far away — 0 of 16 for week 18 as of this morning. A prediction sourced from it
+cannot be shown afterwards, only asserted, which is the whole value of pre-registering one.
+
+The dated snapshots existed and no model read them. `store.AS_OF_LINES` prices a prediction
+that already exists, which is the audit direction; a fit needs the same question asked
+forwards, before it has written anything.
+
+**Not gated, deliberately.** Both inputs quote the same quantity, so an accuracy gate would
+compare two nearly identical series, return "no detectable difference" by construction, and
+spend a pre-registration and four seasons of harness saying so — the vacuous-gate trap already
+diagnosed on issue #1. The evidence that replaces it is agreement where both exist:
+**0.159 points a game over 112 games, worst 3.0, and zero games with the favourite on opposite
+sides** once near-pick-em games are excluded. `2026_06_HOU_JAX` is the one sign flip, stable at
+−1.5 across all seven snapshots against nflverse's +1.5, which is two sources calling a pick-em
+differently rather than a mapping bug.
+
+**Done 2026-09-04.** `store.lines_as_of` asks the as-of question forwards; `games_for`
+coalesces snapshot over moving field and records `price_source` and `priced_at`; the version
+string carries the source, so a prediction priced from a snapshot is a different artifact from
+one priced from a moving field even when the numbers agree, and each source writes its own
+partition. Coverage prints every fit — the share that falls back is what a dead poller looks
+like from inside the model rather than only in the watchdog.
+
+**One assumption in the ticket turned out to be false, in the useful direction.** It expected
+far weeks to have no snapshot at fit time. The Odds API is already posting week 18: all 272
+games price from a snapshot and **no real game currently takes the fallback**. So the fallback
+is pinned deterministically in the unit tests, and the golden test asserts the standing reason
+it exists — the moving field alone still leaves the late season unpriced — rather than
+asserting a path no game takes.
+
+---
+
 ---
 
 ## What is deliberately not on this list

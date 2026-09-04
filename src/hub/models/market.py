@@ -87,6 +87,24 @@ class MarketBaseline:
         probs = [normal_cdf(float(s) / self.margin_sd) for s in spread]
         half = Z_80 * self.margin_sd
 
+        # Where the number came from is part of what was produced. A spread read off a dated
+        # snapshot and one read off a field that has since moved are not the same artifact
+        # even when they are the same number, because only the first can be shown afterwards
+        # -- so the source lands in the version string rather than only in a column beside it.
+        # Optional: a caller with one source and nothing to distinguish keeps the plain
+        # version, which is what `store.verify` and every existing test do.
+        if "price_source" in priced.columns:
+            # One expression, used twice. Filling only the version would let a row say
+            # "unknown" in the string and null in the column beside it, which is two answers
+            # to the same question.
+            source = pl.col("price_source").fill_null("unknown")
+            version = pl.format("{}-{}", pl.lit(self.version), source)
+            provenance = [source.alias("price_source")]
+            if "priced_at" in priced.columns:
+                provenance.append(pl.col("priced_at").cast(pl.Datetime))
+        else:
+            version, provenance = pl.lit(self.version), []
+
         return priced.select(
             pl.col("game_id"),
             pl.col("league"),
@@ -97,7 +115,8 @@ class MarketBaseline:
             (pl.col("close_spread") - half).cast(pl.Float64).alias("margin_lo"),
             (pl.col("close_spread") + half).cast(pl.Float64).alias("margin_hi"),
             pl.lit(self.name).alias("model"),
-            pl.lit(self.version).alias("version"),
+            version.alias("version"),
+            *provenance,
             pl.lit(self._spec.through_week).cast(pl.Int32).alias("fit_through_week"),
             # UTC, not local. `predicted_at` is the provenance stamp on every prediction
             # row and the whole claim is that December can audit August -- a naive local

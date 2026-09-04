@@ -15,6 +15,7 @@ Why not Postgres: single user, no concurrent writers, no network. Nothing to buy
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 import duckdb
@@ -158,6 +159,51 @@ ASOF LEFT JOIN lines l
   ON p.game_id = l.game_id AND p.predicted_at >= l.captured_at
 WHERE p.league = ?
 """
+
+
+# The same as-of question asked forwards. `AS_OF_LINES` prices a prediction that already
+# exists, which is the audit direction; a fit has to ask it *before* it has written anything,
+# so the left side is the games themselves and the moment is supplied rather than read off a
+# row. Same join, same lookahead guarantee, different direction -- and writing it as an ASOF
+# JOIN rather than a window function keeps it the one idiom this module vouches for.
+LINE_AS_OF = """
+WITH asked AS (
+    SELECT DISTINCT game_id, CAST(? AS TIMESTAMP) AS at
+    FROM lines WHERE league = ? AND season = ?
+)
+SELECT a.game_id, l.close_spread, l.captured_at
+FROM asked a
+ASOF LEFT JOIN (SELECT game_id, close_spread, captured_at FROM lines
+                WHERE league = ? AND season = ?) l
+  ON a.game_id = l.game_id AND a.at >= l.captured_at
+"""
+
+LINE_SCHEMA = {"game_id": pl.Utf8, "close_spread": pl.Float64, "captured_at": pl.Datetime}
+
+
+def lines_as_of(at: datetime, season: int, league: str = "nfl",
+                base: Path | None = None) -> pl.DataFrame:
+    """One line per game: the latest snapshot captured at or before `at`.
+
+    A game whose only snapshots come *after* the moment is absent rather than null. It was
+    not priced then, and returning its later line is the lookahead the as-of join exists to
+    prevent -- a caller coalescing onto a fallback would take a number from the future and
+    never see it happen.
+
+    `season` has no default on purpose. Every other season-scoped helper here takes
+    `SEASON_COMPLETED`, which is the right default for a backtest and the wrong one for a
+    fit: a caller who forgets it would get last season's lines, find nothing matching this
+    season's game ids, and silently fall back to the moving field for every game.
+
+    An empty frame is returned when the store holds no lines at all, which is the state of a
+    fresh clone: `connect` builds a view per directory that exists, so `lines` is not an
+    empty table there but no table, and querying it raises `CatalogException`. Callers price
+    from their fallback instead of dying, which is what the repo means by degrading.
+    """
+    if "lines" not in tables(base):
+        return pl.DataFrame(schema=LINE_SCHEMA)
+    got = sql(LINE_AS_OF, params=[at, league, season, league, season], base=base)
+    return got.drop_nulls("close_spread")
 
 
 def verify(season: int = SEASON_COMPLETED, base: Path | None = None) -> int:

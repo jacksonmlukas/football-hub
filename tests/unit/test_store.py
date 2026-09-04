@@ -395,3 +395,49 @@ def test_a_distinct_name_keeps_both_partitions(tmp_path):
     b = store.write(_part(72.0), "lines", "nfl", 2025, 3, base=tmp_path, name="snap-b")
     assert a != b
     assert len(list(a.parent.iterdir())) == 2
+
+
+# --- the line that was live at a moment ------------------------------------
+
+def test_lines_as_of_returns_the_snapshot_that_was_live(base):
+    """The as-of question asked forwards. `AS_OF_LINES` prices a prediction that already
+    exists; a fit has to ask the same question before it has written anything."""
+    store.write(_lines([("g1", -3.0, dt.datetime(2025, 9, 1, 9)),
+                        ("g1", -6.5, dt.datetime(2025, 9, 1, 15))]),
+                "lines", "nfl", 2025, 1, base=base)
+    got = store.lines_as_of(dt.datetime(2025, 9, 1, 12), season=2025, base=base)
+    assert got["close_spread"].to_list() == [-3.0]
+    assert got["captured_at"].to_list() == [dt.datetime(2025, 9, 1, 9)]
+
+
+def test_lines_as_of_takes_the_latest_snapshot_not_the_first(base):
+    store.write(_lines([("g1", -3.0, dt.datetime(2025, 9, 1, 9)),
+                        ("g1", -6.5, dt.datetime(2025, 9, 1, 15))]),
+                "lines", "nfl", 2025, 1, base=base)
+    got = store.lines_as_of(dt.datetime(2025, 9, 2), season=2025, base=base)
+    assert got["close_spread"].to_list() == [-6.5]
+
+
+def test_a_snapshot_captured_after_the_moment_prices_nothing(base):
+    """A line that did not exist yet cannot have priced anything, and returning it would be
+    the same lookahead `AS_OF_LINES` exists to prevent."""
+    store.write(_lines([("g1", -3.0, dt.datetime(2025, 9, 10))]),
+                "lines", "nfl", 2025, 1, base=base)
+    assert store.lines_as_of(dt.datetime(2025, 9, 1), season=2025, base=base).height == 0
+
+
+def test_lines_as_of_on_a_store_with_no_lines_is_empty_rather_than_an_error(base):
+    """A fresh clone has no `lines` view at all, and querying one raises rather than
+    returning nothing -- the failure mode `tables()` was written for."""
+    got = store.lines_as_of(dt.datetime(2025, 9, 1), season=2025, base=base)
+    assert got.height == 0
+    assert set(got.columns) == {"game_id", "close_spread", "captured_at"}
+
+
+def test_lines_as_of_is_scoped_to_the_season_asked_for(base):
+    store.write(_lines([("g1", -3.0, dt.datetime(2024, 9, 1))]), "lines", "nfl", 2024, 1,
+                base=base)
+    store.write(_lines([("g2", -7.0, dt.datetime(2025, 9, 1))]), "lines", "nfl", 2025, 1,
+                base=base)
+    got = store.lines_as_of(dt.datetime(2025, 12, 1), season=2025, base=base)
+    assert got["game_id"].to_list() == ["g2"]

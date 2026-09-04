@@ -50,8 +50,9 @@ def test_fit_stamps_provenance_onto_every_row(monkeypatch, tmp_path):
     games = pl.DataFrame({
         "game_id": ["g1"], "league": ["nfl"], "season": pl.Series([2026], dtype=pl.Int32),
         "week": pl.Series([1], dtype=pl.Int32), "home_team": ["KC"], "away_team": ["LV"],
-        "close_spread": [3.0], "result": [None]})
-    monkeypatch.setattr(ratings, "games_for", lambda season, cache=None: games)
+        "close_spread": [3.0], "price_source": ["schedule"], "priced_at": pl.Series([None], dtype=pl.Datetime),
+        "result": [None]})
+    monkeypatch.setattr(ratings, "games_for", lambda season, cache=None, at=None, base=None: games)
     got = ratings.fit(2026, 1, base=tmp_path)
     assert got.height == 1
     for col in ratings.PROVENANCE_COLUMNS:
@@ -63,8 +64,9 @@ def test_two_runs_under_different_config_do_not_overwrite_each_other(monkeypatch
     games = pl.DataFrame({
         "game_id": ["g1"], "league": ["nfl"], "season": pl.Series([2026], dtype=pl.Int32),
         "week": pl.Series([1], dtype=pl.Int32), "home_team": ["KC"], "away_team": ["LV"],
-        "close_spread": [3.0], "result": [None]})
-    monkeypatch.setattr(ratings, "games_for", lambda season, cache=None: games)
+        "close_spread": [3.0], "price_source": ["schedule"], "priced_at": pl.Series([None], dtype=pl.Datetime),
+        "result": [None]})
+    monkeypatch.setattr(ratings, "games_for", lambda season, cache=None, at=None, base=None: games)
 
     monkeypatch.setattr(ratings, "live_config", lambda: HubConfig())
     ratings.fit(2026, 1, base=tmp_path)

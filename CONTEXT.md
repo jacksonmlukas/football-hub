@@ -26,6 +26,20 @@ Sportsbook prices — closing spreads and player props. Treated as already-effic
 backtests against it to audit itself, never to beat it.
 _Avoid_: the market, the book, Vegas.
 
+**Snapshot**:
+One dated, immutable capture of the betting market's spread on a game, written by
+`hub.fetch.odds` and never rewritten. Many per game across a week; the as-of join picks the
+one that was live at a given moment. Contrast the schedule's own `spread_line`, which is a
+single field that *moves* — the same quantity, but not a record of it.
+_Avoid_: the line, the closing line (a snapshot is rarely the close).
+
+**Price source**:
+Which input priced a prediction — a dated snapshot, or the moving field it falls back to.
+Carried on the row and in the version string, because a prediction priced from a snapshot
+can be shown afterwards and one priced from a moving field can only be asserted. Two
+predictions that agree on the number and differ here are different artifacts.
+_Avoid_: line source, provenance alone.
+
 **Edge**:
 Consensus rank minus draft-market pick, on a common scale. Positive means your leaguemates,
 drafting off ESPN's board, will let this player fall past his consensus value. Displayed and
