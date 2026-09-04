@@ -37,6 +37,13 @@ with a posted line is a money-backed test of it. Run once against the Week 1 ope
 | mean bias | **+3.5 yds, +16%** |
 | MAE | 8.8 yds |
 
+**Corroborated 2026-09-04 from a different direction.**
+`component-projection.md` measures prior-season expected components against next-season realised
+ones over 1,187 player-seasons and finds yardage over-projected in every phase in every season —
+receiving by ~2.0 yards a game, rushing 1.0, passing 0.9, negative in 12 of 12 season-phases.
+Twelve stat-lines in one week and four seasons of player-games are not the same evidence, and
+they agree.
+
 We over-project by about 16% against the market, and not uniformly — Darnold's passing line
 is 30 yards *above* our number while most receivers are below theirs. That is a calibration
 gap in us, and validating against history alone could never have shown it. It also does not

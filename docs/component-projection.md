@@ -175,6 +175,75 @@ decomposition rather than a replacement projection.
 **So `project()` keeps carrying volume forward and regressing touchdowns**, which the screen
 says is the best of the options tried.
 
+## Where the remaining error is, priced in points
+
+**Measured 2026-09-04**, `hub.models.component_error`. The sections above establish the shape
+of the model. This one asks which component the error that is left actually sits in — the
+question anyone proposing to improve the projection has to answer first.
+
+The unit is the whole point. A yard of receiving error and a touchdown of receiving error are
+not comparable until each is multiplied by what the league pays for it. Prior-season **expected**
+components against next-season **realised** ones, per game, 1,187 player-seasons over four pairs,
+six games minimum on both sides:
+
+| component | corr | slope | bias | MAE | **pts/gm at stake** |
+|---|---|---|---|---|---|
+| receiving_yards | 0.849 | 0.916 | −1.94 | 8.72 | **0.872** |
+| receptions | 0.830 | 0.872 | −0.19 | 0.76 | **0.757** |
+| receiving_tds | **0.650** | **0.730** | −0.02 | 0.10 | **0.584** |
+| rushing_yards | 0.887 | 0.904 | −0.94 | 4.73 | 0.473 |
+| rushing_tds | 0.746 | 0.792 | −0.01 | 0.06 | 0.380 |
+| passing_tds | 0.929 | 0.861 | −0.01 | 0.05 | 0.197 |
+| passing_yards | **0.965** | 0.930 | −0.90 | 4.40 | 0.176 |
+
+**The receiving game is 64% of a 3.44-point budget.** Passing volume is very nearly solved at
+r = 0.965 and contributes least of all seven. Ranked on raw error the order is almost reversed,
+which is why the weighting is not decoration.
+
+Touchdowns being the least predictable is not a new finding here — the persistence table above
+already has receiving touchdown *rate* at −0.004, which is the sharper version of it, since a
+touchdown *count* inherits the persistence of the yardage underneath it. What is new is that
+touchdowns are nonetheless the third-largest line in the budget, because six points is a heavy
+weight on a small error.
+
+### Two effects that hold in every season
+
+**Every component is over-dispersed.** The slope of realised on projected is below one for all
+seven components in all four pairs — **28 of 28**. A player projected a standard deviation above
+the mean lands, on average, less than a standard deviation above it.
+
+**Yardage is over-projected, every phase, every season** — receiving by about 2.0 yards a game,
+rushing by 1.0, passing by 0.9, negative in **12 of 12** season-phases. This independently
+reproduces the props audit in [next.md](next.md), which found us 16% high against posted lines
+on twelve stat-lines in one week, from an entirely different direction and at four seasons of n.
+
+### Correcting the over-dispersion is a null
+
+The obvious response is to shrink each component by its own measured slope. Fitted on earlier
+pairs only and applied forward, that is:
+
+| held out | raw MAE | calibrated | raw RMSE | calibrated |
+|---|---|---|---|---|
+| 2023 | 3.589 | **3.508** | 6.603 | **6.259** |
+| 2024 | 3.520 | 3.554 | 6.604 | **6.528** |
+| 2025 | 3.178 | 3.226 | 5.660 | **5.507** |
+
+**RMSE improves in three of three; MAE is a wash — better in one of three, mean −0.000.** That
+split is the expected shape rather than a surprise: least squares minimises squared error by
+construction, and shrinkage buys the tails at the middle's expense. Fantasy points are linear,
+so MAE is the loss that decides, and the bar is every held-out season.
+
+**Not taken.** The over-dispersion is real, consistently signed, and this correction for it does
+not pay for itself. Recorded so it is not rediscovered — and so that a future proposal to shrink
+components has to beat a measured null rather than an intuition.
+
+### What this does and does not license
+
+It does **not** license another run at a volume model. That was screened above and came back
+null at −0.2%, and [volume-model.md](volume-model.md) re-screened it against a pick-implied
+prior. "The receiving game is most of the error" is a statement about where error *is*, not
+evidence that it is *reducible* — those are different claims and only the first is measured here.
+
 ## What is still missing
 
 **Correlation between players.** Every draw here is independent. A quarterback and his WR1
@@ -195,4 +264,11 @@ for — and the thing it has to earn is the *week*, not the decomposition, which
 
 ```bash
 uv run python -m hub.fetch.nflverse --refresh --season 2025
+```
+
+The error budget, the over-dispersion and the calibration null re-run from the committed
+harness — ADR-0007's trigger is citation, and these numbers are cited as a reason:
+
+```bash
+uv run python -m hub.models.component_error --run
 ```
