@@ -217,10 +217,11 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False) -> Lock:
 
 def fetch(board: pl.DataFrame | None = None) -> pl.DataFrame:  # pragma: no cover - network
     """The current roster, projected. Reads ESPN and the board; neither is cached here."""
-    from hub.draft.board import last_good
+    from hub.draft.board import readable
     from hub.fetch.espn import league_settings
     if board is None:
-        board, _age = last_good()
+        board, source = readable()
+        print(f"  board: {source}")
     return build(roster_rows(my_team(league_settings().league)), board)
 
 

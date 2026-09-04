@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import json
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -47,7 +48,7 @@ from hub.draft.state import DraftState, remaining
 from hub.models import components
 from hub.models.predict import blend
 from hub.names import player_key
-from hub.paths import BOARD_PARQUET, ROOT
+from hub.paths import BOARD_JSON, BOARD_PARQUET, ROOT
 
 if TYPE_CHECKING:                      # `optimize` imports from here, so runtime would cycle
     pass
@@ -387,6 +388,52 @@ def last_good(path: Path | None = None,
             f"it does not build one.")
     return pl.read_parquet(path), board_age_hours(
         path, time.time() if now is None else now)
+
+
+def published(site: Path | None = None) -> pl.DataFrame:
+    """The Board as last published to the site: the top 300 by consensus, as committed JSON.
+
+    Narrower than the parquet and deliberately so -- it is the draft-night fallback
+    `docs/draft-night.md` names, sized to cover all 192 picks. For an in-season roster that is
+    ample; a player outside consensus 300 comes through unprojected, which `build` already
+    renders as "carries no projection" rather than as a zero.
+    """
+    path = (site / "draft_board.json") if site else BOARD_JSON
+    if not path.exists():
+        raise FileNotFoundError(f"no published board at {path}")
+    return pl.DataFrame(json.loads(path.read_text()))
+
+
+def readable(path: Path | None = None,
+             site: Path | None = None) -> tuple[pl.DataFrame, str]:
+    """The best Board available here, and which one it was.
+
+    The parquet where it exists, because it is wider. The published artifact otherwise --
+    which is what a scheduled run has, since `data/processed/` is gitignored as redistributed
+    third-party data and a runner therefore never holds a parquet. Both scheduled runs on
+    2026-09-04 reported the roster panel stale for exactly that reason.
+
+    Nothing new is published to make this work: the board artifact has been committed and
+    public since the repo flipped. What changes is that a reader can reach it.
+
+    The source is returned rather than logged, so a caller can say which board its numbers
+    came from instead of leaving a reader to assume the richer one.
+    """
+    try:
+        board, _age = last_good(path)
+        return board, "local parquet"
+    except FileNotFoundError:
+        pass
+    try:
+        return published(site), "published artifact (top 300 by consensus)"
+    except FileNotFoundError:
+        # Both places, and the action -- a message naming only the artifact would point a
+        # reader at the site when what they need is to build a board.
+        raise FileNotFoundError(
+            f"no board here. Looked for a built one at {path or BOARD_PARQUET} and a "
+            f"published one at {(site / 'draft_board.json') if site else BOARD_JSON}. "
+            f"Run `make draft` to build one, or check out a commit that has the artifact."
+        ) from None
 
 
 def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,

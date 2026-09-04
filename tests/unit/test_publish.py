@@ -100,10 +100,15 @@ def test_a_stale_artifact_that_never_existed_is_reported_as_absent(site, base):
 
 # --- the track record -----------------------------------------------------
 
-def _scored_one(base, monkeypatch):
-    """One prediction with a result, so the record has something to be a record of."""
+def _scored_one(base, monkeypatch, site):
+    """One *published* prediction with a result, so the record has something to record.
+
+    Through `publish.predictions` rather than straight into the store, because the record is
+    scored from what was published -- a test seeding only the store would be asserting
+    against a source nothing reads."""
     import nflreadpy as nfl
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    publish.predictions(2026, 1, base=base, out=site)
     monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
         {"game_id": ["g1"], "result": [7]}))
 
@@ -121,7 +126,7 @@ def test_with_no_scored_predictions_the_record_says_so(site, base):
 def test_a_backtest_is_never_labelled_a_track_record(site, base, monkeypatch):
     """docs/track-record.md rule 1: the value is entirely in the timestamp. A record that
     cannot distinguish a pre-registered prediction from a backfilled one proves nothing."""
-    _scored_one(base, monkeypatch)
+    _scored_one(base, monkeypatch, site)
     got = publish.track_record(base=base, out=site)
     assert got is not None
     assert "preregistered" in json.dumps(got).lower()
@@ -391,6 +396,10 @@ def test_the_track_record_scores_each_game_once(site, base, monkeypatch):
     later = _preds([("g1", 0.6, 3.0)]).with_columns(
         pl.lit("v2").alias("version"), pl.lit(dt.datetime(2026, 9, 3)).alias("predicted_at"))
     store.write(later, "preds", "nfl", 2026, 1, base=base, name="v2")
+    # Through the published artifact, which is what the record scores. `publish.predictions`
+    # is where the one-row-per-game rule is applied, so this now asserts that rule end to end
+    # rather than only where it is implemented.
+    publish.predictions(2026, 1, base=base, out=site)
     monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
         {"game_id": ["g1"], "result": [7]}))
     got = publish.track_record(base=base, out=site)
@@ -465,10 +474,7 @@ def test_a_run_with_nothing_to_score_keeps_the_last_good_record(site, base, monk
 
 
 def test_a_run_that_can_score_something_still_publishes(site, base, monkeypatch):
-    import nflreadpy as nfl
-    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
-    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
-        {"game_id": ["g1"], "result": [7]}))
+    _scored_one(base, monkeypatch, site)
     got = publish.track_record(base=base, out=site)
     assert got is not None and got["n_scored"] == 1
 
@@ -535,3 +541,58 @@ def test_the_live_overlay_is_not_in_the_committed_record():
         "the live overlay is committed again; ADR-0018 says it is generated at deploy time")
     assert any(f.endswith("preds_wk01.json") for f in tracked), (
         "no other artifact may leave the record with it -- a prediction is pinned by its commit")
+
+
+# --- the record is scored from what was published --------------------------
+#
+# `data/processed/` is gitignored as redistributed third-party data, so a scheduled run has no
+# store and could never advance the track record. But the stored predictions are not
+# third-party data -- they are this repo's own claims, and they are already published, one
+# artifact per week, in the site.
+#
+# Scoring those rather than the store is not a workaround. `docs/track-record.md` rule 1 says
+# the git history *is* the pre-registration, so the thing scored should be the thing
+# pre-registered. Reading the store left them free to differ: a prediction in the store and
+# never published would have been scored, and one published from a store since rebuilt would
+# not have been.
+
+def test_the_record_is_scored_without_any_store(site, base, monkeypatch):
+    """The regression this fixes. A runner has no store and must still advance the record."""
+    import nflreadpy as nfl
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
+        {"game_id": ["g1"], "result": [7]}))
+
+    empty = base / "nothing-here"
+    got = publish.track_record(base=empty, out=site)
+    assert got is not None and got["n_scored"] == 1
+
+
+def test_every_published_week_is_scored_not_only_the_latest(site, base, monkeypatch):
+    import nflreadpy as nfl
+    for wk, gid in ((1, "g1"), (2, "g2")):
+        store.write(_preds([(gid, 0.6, 3.0)], week=wk), "preds", "nfl", 2026, wk, base=base)
+        publish.predictions(2026, wk, base=base, out=site)
+    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
+        {"game_id": ["g1", "g2"], "result": [7, -3]}))
+    got = publish.track_record(base=base, out=site)
+    assert got is not None and got["n_scored"] == 2
+
+
+def test_a_prediction_in_the_store_and_never_published_is_not_scored(site, base, monkeypatch):
+    """The property that makes this the right source rather than a convenient one. Rule 1
+    counts a prediction because its commit predates kickoff; one that was never published has
+    no commit to check, so it is not part of the record."""
+    import nflreadpy as nfl
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
+        {"game_id": ["g1"], "result": [7]}))
+    assert publish.track_record(base=base, out=site) is None
+
+
+def test_a_site_with_no_predictions_keeps_last_good(site, base, monkeypatch):
+    import nflreadpy as nfl
+    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
+        {"game_id": ["g1"], "result": [7]}))
+    assert publish.track_record(base=base, out=site) is None

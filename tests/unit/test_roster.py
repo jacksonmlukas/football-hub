@@ -388,3 +388,62 @@ def test_a_roster_written_before_can_start_existed_still_locks():
     df = _squad().drop("can_start")
     lk = R.lock(df)
     assert lk.gain is not None
+
+
+# --- the Board a scheduled run can actually reach ---------------------------
+#
+# The roster refresh reads the Board from `data/processed/`, which is gitignored as
+# redistributed third-party data -- so both scheduled runs reported `roster: STALE` and the
+# panel could only ever be refreshed from the machine holding the parquet.
+#
+# The published board artifact is already committed and already public: it carries the top 300
+# by consensus, with `proj_blend`, `ecr`, `adp` and `vor`. Reading it changes what a runner can
+# reach without moving any data that was not already published.
+
+def _published_board(path, rows):
+    import json
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rows))
+    return path
+
+
+def test_the_local_board_is_preferred_when_it_is_there():
+    """It is wider than the published 300 and is what a local run should keep using."""
+    import inspect
+
+    from hub.draft import board as B
+    assert "readable" in dir(B), "no reader that can fall back"
+    assert "site" in inspect.signature(B.readable).parameters
+
+
+def test_the_published_board_is_read_when_there_is_no_parquet(tmp_path):
+    from hub.draft import board as B
+    site = tmp_path / "site"
+    _published_board(site / "draft_board.json",
+                     [{"player": "Ja'Marr Chase", "pos": "WR", "proj_blend": 19.6}])
+    got, source = B.readable(path=tmp_path / "absent.parquet", site=site)
+    assert got.height == 1 and got["player"][0] == "Ja'Marr Chase"
+    assert "published" in source, "the caller has to be able to say which board it used"
+
+
+def test_a_roster_built_from_the_published_board_still_projects(tmp_path):
+    """End to end: the panel a runner produces has to carry the same projections."""
+    from hub.draft import board as B
+    site = tmp_path / "site"
+    _published_board(site / "draft_board.json",
+                     [{"player": n, "pos": p, "proj_blend": mu}
+                      for n, p, mu, _ in _SQUAD])
+    board, _ = B.readable(path=tmp_path / "absent.parquet", site=site)
+    players = [_p(n, pos, 10.0, 170.0, slot=slot) for n, pos, _, slot in _SQUAD]
+    got = R.build(E.roster_rows(_Team([], players)), board)
+    assert int(got["projected"].sum()) == len(_SQUAD)
+    assert R.lock(got).gain is not None
+
+
+def test_neither_board_is_a_sentence_rather_than_a_traceback(tmp_path):
+    from hub.draft import board as B
+    with pytest.raises(FileNotFoundError, match="make draft") as e:
+        B.readable(path=tmp_path / "absent.parquet", site=tmp_path / "empty")
+    # Both places named, not just the one that happened to be checked last: a message about
+    # the site artifact would send a reader to the wrong fix.
+    assert "absent.parquet" in str(e.value) and "draft_board.json" in str(e.value)

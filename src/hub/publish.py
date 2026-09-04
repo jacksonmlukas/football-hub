@@ -95,13 +95,35 @@ def _obtainable(df: pl.DataFrame) -> dict[str, dict[str, Any]]:
 # The scoring rules moved to `hub.models.scoring_rules`; `hub.models.eval` was importing
 # them from here, which meant model evaluation could not be read without the site writer.
 # Re-exported because `publish` still uses all three and the site's own tests name them here.
-def _scored(base: Path | None) -> pl.DataFrame:
-    """Predictions joined to results. Empty frame when either side is missing."""
+def _published(out: Path) -> pl.DataFrame:
+    """Every prediction this repo has published, read back from the artifacts it published.
+
+    Not from the store, and the difference is the point. `docs/track-record.md` rule 1 counts
+    a prediction because its *commit* predates kickoff, so the thing scored should be the
+    thing pre-registered. Reading the store left the two free to differ: a prediction written
+    to the store and never published would have been scored anyway, and one published from a
+    store since rebuilt would have vanished from the record.
+
+    It also makes the record reproducible by anyone. `data/processed/` is gitignored as
+    redistributed third-party data, so a store-scored record could only ever be built on one
+    machine -- which is why a scheduled run published an empty one over sixteen scored
+    predictions before this. These artifacts are committed, so a reader can rebuild the same
+    numbers from the same files.
+    """
+    rows: list[dict[str, Any]] = []
+    for path in sorted(out.glob("preds_wk*.json")):
+        try:
+            rows += json.loads(path.read_text()).get("rows", [])
+        except (OSError, ValueError):
+            print(f"  track_record: {path.name} is unreadable and was skipped", flush=True)
+    return pl.DataFrame(rows) if rows else pl.DataFrame()
+
+
+def _scored(out: Path) -> pl.DataFrame:
+    """Published predictions joined to results. Empty frame when either side is missing."""
     empty = pl.DataFrame(schema={"game_id": pl.Utf8, "home_win_prob": pl.Float64,
                                  "home_won": pl.Int64, "predicted_at": pl.Utf8})
-    # One row per game. Pooling five versions of the same sixteen games into one reliability
-    # curve counts every prediction five times and reports the inflated n as the sample.
-    preds = store.predictions(base=base)
+    preds = _published(out)
     if preds.is_empty():
         return empty
 
@@ -141,7 +163,7 @@ def track_record(base: Path | None = None, out: Path | None = None,
     it, so an artifact that can be produced emptier than its predecessor has to say None.
     """
     out = out or SITE
-    df = _scored(base)
+    df = _scored(out)
     if df.is_empty():
         return None
 

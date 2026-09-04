@@ -27,3 +27,9 @@ BOARD_PARQUET = PROCESSED / "draft_board.parquet"
 # reads it, and the reader had the path as a bare string literal in an argparse default -- so
 # moving the file would have left the reader looking at the old location in silence.
 ROSTER_PARQUET = PROCESSED / "roster.parquet"
+
+# Where published artifacts live. Here rather than in `hub.publish` because a second module
+# now reads them: `hub.draft.board` falls back to the published board where the parquet is
+# gitignored, and neither should import the other to learn a directory name.
+SITE = ROOT / "site" / "data"
+BOARD_JSON = SITE / "draft_board.json"
