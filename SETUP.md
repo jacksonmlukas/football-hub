@@ -118,6 +118,57 @@ Prints 200 or more. A small number means you copied the wrong cookie. Go back to
 
 `.env` is gitignored. Never paste these into a chat, an issue, or a commit.
 
+## 4b. The two API keys
+
+Neither can be recovered from the repo, and both are free. This section exists because the
+cookie walkthrough above is detailed and these were not written down at all — which is obvious
+once and annoying every time after.
+
+**The Odds API** — [the-odds-api.com](https://the-odds-api.com), sign up for the free tier and
+the key is on your dashboard. 500 requests a month, and a request costs *markets × regions*, so
+`hub.fetch.odds` refuses more than one of each before forming a request. It also refuses a pull
+below a floor of 50 remaining, so an over-eager schedule cannot silently drain the month.
+
+    ODDS_API_KEY=...
+
+**CollegeFootballData** — [collegefootballdata.com/key](https://collegefootballdata.com/key),
+fill in the form and the key arrives by email. 1,000 calls a month on the free tier, which is
+ample as long as nothing loops over teams; [cfbd-quota.md](docs/cfbd-quota.md) has the budget
+and the one rule. That doc also notes a raised academic limit for a verified `.edu` address, and
+that **redistributing CFBD payloads is prohibited** — which is why `data/raw/` is gitignored.
+
+    CFBD_API_KEY=...
+
+Only the odds key is on the fantasy path. Without the CFBD key the college panel serves last-good
+and marks itself stale, and nothing else changes.
+
+**Check:**
+
+```bash
+uv run python -m hub.fetch.odds --credits
+```
+
+Prints a remaining balance. `no ODDS_API_KEY set` means the key did not reach the process — check
+that `.env` is in the repo root and the line has no quotes around the value.
+
+## 4c. The same values, as repository secrets
+
+Needed only once a scheduled run has to fetch without you present. Five, and the league id is
+easy to forget because it is not a credential:
+
+```bash
+gh secret set ODDS_API_KEY      # prompts, hidden input, nothing in shell history
+gh secret set ESPN_S2
+gh secret set ESPN_SWID
+gh secret set ESPN_LEAGUE_ID
+gh secret set CFBD_API_KEY
+```
+
+`gh secret list` shows the names back. GitHub never shows a value again, which is expected.
+
+Secrets are **not** exposed to workflows triggered by pull requests from forks, so a public repo
+is safe for this. A scheduled run on `main` gets them; a stranger's PR does not.
+
 ---
 
 ## 5. Build the board
