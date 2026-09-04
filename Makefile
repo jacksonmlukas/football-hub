@@ -19,6 +19,11 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 	-uv run python -m hub.fetch.cfbd $(if $(strip $(WEEK)),--week $(WEEK))
 	-uv run python -m hub.fetch.odds --snapshot
 	uv run python -m hub.models.ratings --fit
+# The roster changes every week the waiver wire does, so it is refreshed here rather than
+# written once after the draft. Optional like the other ESPN-cookie sources: if the league is
+# unreachable the CLI serves last-good and the panel says so, and the rest of the slate is not
+# about your team.
+	-uv run python -m hub.season.roster --write
 	uv run python -m hub.publish --all $(if $(strip $(WEEK)),--week $(WEEK))
 
 check:          ## Quota + cache health, prints a summary only

@@ -19,15 +19,20 @@ make slate WEEK=<n>
    `x-requests-remaining` in the response header.
 4. `hub.models.ratings --fit` refits state-space ratings on data through week N-1.
 5. `hub.models.conformal --recalibrate` updates the rolling calibration window.
-6. `hub.publish` writes `site/data/*.json`, commits, and Pages redeploys.
+6. `hub.season.roster --write` re-reads your ESPN team. Waivers and trades move it every week,
+   so this is a refresh, not a one-off after the draft. Optional: unreachable serves last-good.
+7. `hub.publish` writes `site/data/*.json`, commits, and Pages redeploys.
 
 ## Cadence
 
 | Day | Action |
 |---|---|
 | Tue | Full refit. Research and refactors belong here, not later in the week. |
-| Wed | Waivers, using `xfp` trend rather than last week's points. |
-| Sun AM | Odds snapshot, lineup lock, survivor and pickem submit. Nothing else. |
+| Wed | Waivers, using `xfp` trend rather than last week's points. Re-run the slate after a
+        claim lands, or the roster panel shows a player you no longer have. |
+| Sun AM | Odds snapshot, lineup lock, survivor and pickem submit. Nothing else. The
+          roster panel names where the set lineup differs from the best one; that
+          difference is the lock decision. |
 | Sun PM | Watch only. (`make live` was removed 2026-08-24: it invoked a CLI that does not exist. `hub.fetch.espn.poll()` is real; its entry point is roadmap -- see docs/gaps.md.) |
 
 **Reserve Sunday's token budget.** The weekly cap bites before the 5-hour window does. If the
