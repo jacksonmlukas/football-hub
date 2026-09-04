@@ -99,16 +99,30 @@ def test_a_stale_artifact_that_never_existed_is_reported_as_absent(site, base):
 
 # --- the track record -----------------------------------------------------
 
+def _scored_one(base, monkeypatch):
+    """One prediction with a result, so the record has something to be a record of."""
+    import nflreadpy as nfl
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
+        {"game_id": ["g1"], "result": [7]}))
+
+
 def test_with_no_scored_predictions_the_record_says_so(site, base):
-    got = publish.track_record(base=base, out=site)
-    assert got["n_scored"] == 0
-    assert got["n_preregistered"] == 0
+    """It says so by being *stale with a reason*, not by publishing a record of nothing.
+    Those look different to a reader, and only one of them survives a machine that simply
+    has no history -- see the regression tests at the end of this file."""
+    assert publish.track_record(base=base, out=site) is None
+    man = publish.publish_all(2026, 1, base=base, out=site)
+    art = next(a for a in man["artifacts"] if a["name"] == "track_record")
+    assert art["stale"] and "scored" in art["reason"]
 
 
-def test_a_backtest_is_never_labelled_a_track_record(site, base):
+def test_a_backtest_is_never_labelled_a_track_record(site, base, monkeypatch):
     """docs/track-record.md rule 1: the value is entirely in the timestamp. A record that
     cannot distinguish a pre-registered prediction from a backfilled one proves nothing."""
+    _scored_one(base, monkeypatch)
     got = publish.track_record(base=base, out=site)
+    assert got is not None
     assert "preregistered" in json.dumps(got).lower()
     assert got.get("is_backtest") is not None
 
@@ -378,7 +392,8 @@ def test_the_track_record_scores_each_game_once(site, base, monkeypatch):
     store.write(later, "preds", "nfl", 2026, 1, base=base, name="v2")
     monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
         {"game_id": ["g1"], "result": [7]}))
-    assert publish.track_record(base=base, out=site)["n_scored"] == 1
+    got = publish.track_record(base=base, out=site)
+    assert got is not None and got["n_scored"] == 1
 
 
 # --- what a reader of the published record can check ------------------------
@@ -427,3 +442,42 @@ def test_an_artifact_from_before_price_source_existed_still_publishes(site, base
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     got = publish.predictions(2026, 1, base=base, out=site)
     assert got is not None and got["provenance"] == {}
+
+
+# --- an empty artifact must not replace a fuller one ------------------------
+#
+# The first scheduled run published a track record of nothing over one holding sixteen scored
+# predictions: log-loss 0.556 became null and ten calibration bins became zero. The runner had
+# no history to score, because `data/processed/` is gitignored, and `track_record` returned a
+# valid payload describing nothing -- which `Artifact.record` reads as success.
+#
+# `CLAUDE.md`'s degradation rule is implemented as "a producer returning None means keep
+# last-good". An empty-but-valid payload walks straight past it.
+
+def test_a_run_with_nothing_to_score_keeps_the_last_good_record(site, base, monkeypatch):
+    """The regression, in one test. A scheduled run on a machine with no history must not
+    blank the public record -- and it has, once."""
+    import nflreadpy as nfl
+    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
+        {"game_id": ["g1"], "result": [7]}))
+    assert publish.track_record(base=base, out=site) is None
+
+
+def test_a_run_that_can_score_something_still_publishes(site, base, monkeypatch):
+    import nflreadpy as nfl
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
+        {"game_id": ["g1"], "result": [7]}))
+    got = publish.track_record(base=base, out=site)
+    assert got is not None and got["n_scored"] == 1
+
+
+def test_the_panel_says_why_rather_than_going_blank(site, base, monkeypatch):
+    """Stale with a reason, which is what the page renders. A blank record and a stale one
+    look different to a reader and only one of them is honest."""
+    import nflreadpy as nfl
+    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
+        {"game_id": ["g1"], "result": [7]}))
+    man = publish.publish_all(2026, 1, base=base, out=site)
+    art = next(a for a in man["artifacts"] if a["name"] == "track_record")
+    assert art["stale"] is True and art["reason"]

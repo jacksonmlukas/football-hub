@@ -121,16 +121,29 @@ def _scored(base: Path | None) -> pl.DataFrame:
 
 
 def track_record(base: Path | None = None, out: Path | None = None,
-                 n_bins: int = 10) -> dict[str, Any]:
+                 n_bins: int = 10) -> dict[str, Any] | None:
     """Calibration, and an honest count of what was actually pre-registered.
 
     `n_preregistered` is deliberately separate from `n_scored`. Scoring a prediction after
     the game is a backtest; the record only means something for predictions whose commit
     predates kickoff. Until the season starts both are zero, and the page says so rather
     than filling the space with a backfill dressed up as history.
+
+    **Nothing to score returns None, which means keep last-good.** It used to return a valid
+    payload describing nothing, and `Artifact.record` reads a payload as success -- so the
+    first scheduled run published an empty record over one holding sixteen scored
+    predictions, turning a log-loss of 0.556 into null and ten calibration bins into zero.
+    The runner had no history to score because `data/processed/` is gitignored, and it had no
+    way to know that "nothing" was a fact about the machine rather than about the season.
+
+    `CLAUDE.md`'s degradation rule is written as *serve last-good rather than erroring*, and
+    it is implemented as *None means keep last-good*. An empty-but-valid payload walks past
+    it, so an artifact that can be produced emptier than its predecessor has to say None.
     """
     out = out or SITE
     df = _scored(base)
+    if df.is_empty():
+        return None
 
     payload: dict[str, Any] = {
         "name": "track_record", "source": "preds+results", "generated_at": jsonio.stamp(),
@@ -374,8 +387,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if a.track_record:
         got = track_record()
-        print(f"  track_record: {got['n_scored']} scored, "
-              f"{got['n_preregistered']} pre-registered")
+        print("  track_record: " + (
+            f"{got['n_scored']} scored, {got['n_preregistered']} pre-registered" if got
+            else "nothing to score; last-good kept"))
         return 0
     if not a.all:
         ap.print_help()
