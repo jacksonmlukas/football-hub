@@ -23,6 +23,23 @@ on:
     paths:
       - "site/**"
       - ".github/workflows/pages.yml"
+
+  # The scheduled slate commits `site/data` and that push deploys nothing, because GitHub
+  # does not let a push made with `GITHUB_TOKEN` trigger another workflow -- a deliberate
+  # guard against a job that commits and re-triggers itself forever.
+  #
+  # So the slate published to git and never to the site. Every artifact was correct, committed
+  # and invisible, and the only symptom was a page that quietly stopped changing. Found by
+  # dispatching the slate and noticing no deploy followed it; reading either file alone shows
+  # nothing wrong.
+  #
+  # `workflow_run` is the documented way across that guard. It fires on the *completion* of
+  # the slate, which is why the job below checks the conclusion: a slate that failed has
+  # nothing worth deploying.
+  workflow_run:
+    workflows: [slate]
+    types: [completed]
+
   workflow_dispatch:
 
 # Read the repo, mint the Pages OIDC token, write the deployment. Nothing else.
@@ -39,6 +56,11 @@ concurrency:
 
 jobs:
   deploy:
+    # A slate that failed has nothing worth deploying. Every other trigger runs unconditionally,
+    # which is why this reads as a condition on the event rather than on the workflow.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
