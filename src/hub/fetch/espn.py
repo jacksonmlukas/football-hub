@@ -69,13 +69,42 @@ def summary(event_id: str, league: str = "nfl") -> dict:
     return _get(f"{LEAGUE_PATHS[league]}/summary", {"event": event_id}, f"sum_{event_id}")
 
 
+def _sides(competitors: list[dict]) -> tuple[dict, dict] | None:
+    """The home and away competitors, by the field that names them.
+
+    ESPN puts `homeAway` on every competitor and documents nothing about the order of the
+    array. Reading position instead -- which this did -- swaps both teams and both scores the
+    first time a payload arrives away-first. That is the same class of error as an inverted
+    spread sign in `store.verify`: the result stays plausible, and the overlay is the one
+    artifact that moves during a Sunday, so there is nothing beside it on the page to
+    contradict a scoreline that is exactly backwards.
+
+    None when the payload does not name exactly one of each, which the caller reports rather
+    than resolving. Picking the first of each side would invent an opponent.
+    """
+    by: dict[str, dict] = {}
+    for c in competitors:
+        side = str(c.get("homeAway", "")).lower()
+        if side in ("home", "away"):
+            by.setdefault(side, c)
+    return (by["home"], by["away"]) if len(by) == 2 else None
+
+
 def live_state(league: str = "nfl") -> list[dict]:
     """Flattened in-progress game state for the dashboard overlay."""
-    out = []
+    out: list[dict] = []
+    unnamed: list[str] = []
     for ev in scoreboard(league).get("events", []):
         c = ev["competitions"][0]
         st = c["status"]["type"]
-        home, away = c["competitors"][0], c["competitors"][1]
+        sides = _sides(c.get("competitors", []))
+        if sides is None:
+            # Left out rather than guessed at, and named so the omission is visible. A
+            # missing game is a gap the page can show; a game with the wrong team winning
+            # is not, because nothing on the page disagrees with it.
+            unnamed.append(str(ev.get("id", "?")))
+            continue
+        home, away = sides
         out.append({
             "id": ev["id"],
             "state": st["state"],           # pre | in | post
@@ -85,6 +114,9 @@ def live_state(league: str = "nfl") -> list[dict]:
             "possession": c.get("situation", {}).get("possession"),
             "down_distance": c.get("situation", {}).get("downDistanceText"),
         })
+    if unnamed:
+        print(f"  live: {len(unnamed)} event(s) did not name home and away and are absent "
+              f"from the overlay: {', '.join(unnamed)}")
     return out
 
 

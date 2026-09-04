@@ -160,17 +160,70 @@ def test_summary_is_keyed_by_event_so_two_games_do_not_share_a_cache_entry(monke
     assert {p.name for p in tmp_path.glob("*.json")} == {"sum_401671.json", "sum_401672.json"}
 
 
+def _event(competitors, event_id="1"):
+    """One scoreboard event. `competitors` is handed in whatever order the test is about."""
+    return {"id": event_id, "competitions": [{
+        "status": {"type": {"state": "in", "shortDetail": "Q3 4:12"}},
+        "competitors": competitors,
+        "situation": {"possession": "1", "downDistanceText": "2nd & 7"}}]}
+
+
+# PHI at home, DAL away, said explicitly -- which is how ESPN says it.
+_PHI = {"homeAway": "home", "team": {"abbreviation": "PHI"}, "score": "21"}
+_DAL = {"homeAway": "away", "team": {"abbreviation": "DAL"}, "score": "17"}
+
+
 def test_live_state_flattens_what_the_overlay_needs(monkeypatch, tmp_path):
     espn = _cache_at(monkeypatch, tmp_path)
-    ev = {"id": "1", "competitions": [{
-        "status": {"type": {"state": "in", "shortDetail": "Q3 4:12"}},
-        "competitors": [{"team": {"abbreviation": "PHI"}, "score": "21"},
-                        {"team": {"abbreviation": "DAL"}, "score": "17"}],
-        "situation": {"possession": "1", "downDistanceText": "2nd & 7"}}]}
-    monkeypatch.setattr(espn, "scoreboard", lambda league="nfl": {"events": [ev]})
+    monkeypatch.setattr(espn, "scoreboard",
+                        lambda league="nfl": {"events": [_event([_PHI, _DAL])]})
     got = espn.live_state()[0]
     assert got["home"] == "PHI" and got["away"] == "DAL"
+    assert got["home_score"] == "21" and got["away_score"] == "17"
     assert got["state"] == "in" and got["down_distance"] == "2nd & 7"
+
+
+def test_the_side_comes_from_the_field_that_names_it_not_from_the_order(monkeypatch,
+                                                                        tmp_path):
+    """The array order is undocumented and not guaranteed. Reading position instead of the
+    field swaps both teams and both scores, and the overlay is the one artifact that moves
+    during a Sunday -- there is nothing on the page to compare it against, so it renders as
+    a plausible scoreline that is exactly backwards."""
+    espn = _cache_at(monkeypatch, tmp_path)
+
+    def state(order):
+        monkeypatch.setattr(espn, "scoreboard",
+                            lambda league="nfl": {"events": [_event(order)]})
+        return espn.live_state()[0]
+
+    assert state([_PHI, _DAL]) == state([_DAL, _PHI])
+    assert state([_DAL, _PHI])["home"] == "PHI"
+    assert state([_DAL, _PHI])["home_score"] == "21"
+
+
+def test_an_event_that_does_not_name_its_sides_is_left_out_and_said_so(monkeypatch,
+                                                                       tmp_path, capsys):
+    """Degrade by saying so, not by guessing. Emitting the game with a side picked off the
+    array would put a possibly-inverted scoreline on the page, which is worse than a game
+    the panel does not show."""
+    espn = _cache_at(monkeypatch, tmp_path)
+    bare = [{"team": {"abbreviation": "KC"}, "score": "3"},
+            {"team": {"abbreviation": "LV"}, "score": "0"}]
+    monkeypatch.setattr(espn, "scoreboard", lambda league="nfl": {
+        "events": [_event([_PHI, _DAL]), _event(bare, event_id="2")]})
+    got = espn.live_state()
+    assert [g["id"] for g in got] == ["1"], "the good game still renders"
+    assert "2" in capsys.readouterr().out
+
+
+def test_two_competitors_on_the_same_side_is_not_a_game_either(monkeypatch, tmp_path):
+    """A payload naming two home teams names no away team. Taking the first of each would
+    invent an opponent."""
+    espn = _cache_at(monkeypatch, tmp_path)
+    both = [_PHI, {**_DAL, "homeAway": "home"}]
+    monkeypatch.setattr(espn, "scoreboard",
+                        lambda league="nfl": {"events": [_event(both)]})
+    assert espn.live_state() == []
 
 
 # --- the tiered poller ------------------------------------------------------
