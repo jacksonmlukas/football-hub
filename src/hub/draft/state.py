@@ -174,7 +174,7 @@ def _league(year: int, league_id: int | None = None):
     from dotenv import load_dotenv
     from espn_api.football import League
     load_dotenv()
-    return League(league_id=int(league_id if league_id is not None
-                                else os.environ["ESPN_LEAGUE_ID"]), year=year,
+    from hub.fetch.espn import resolve_league_id
+    return League(league_id=resolve_league_id(league_id), year=year,
                   espn_s2=os.environ.get("ESPN_S2") or None,
                   swid=os.environ.get("ESPN_SWID") or None)

@@ -855,13 +855,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     a = ap.parse_args(argv)
 
     if a.fit_noise:
-        import os
 
         from dotenv import load_dotenv
 
         from hub.draft.availability import fit_pick_noise
         load_dotenv()
-        fit_pick_noise(int(os.environ["ESPN_LEAGUE_ID"]), [a.season - 2, a.season - 1])
+        from hub.fetch.espn import resolve_league_id
+        fit_pick_noise(resolve_league_id(), [a.season - 2, a.season - 1])
         return 0
 
     st = state_mod.load()

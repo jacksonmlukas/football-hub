@@ -483,3 +483,42 @@ def test_an_empty_roster_yields_the_right_empty_shape():
     got = E.roster_rows(_Team([], []))
     assert got.height == 0
     assert list(got.columns) == list(E.ROSTER_SCHEMA)
+
+
+# --- a secret that is not what it should be says which one ------------------
+
+def test_a_bad_league_id_names_the_variable_and_the_value_shape(monkeypatch):
+    """A scheduled run failed with `invalid literal for int() with base 10: "***"`. The
+    `***` is GitHub redacting the secret in its own logs, so the operator was told neither
+    which variable was wrong nor what was wrong with it -- and the likeliest cause, pasting
+    `ESPN_LEAGUE_ID=123456` into the secret rather than `123456`, is invisible from that."""
+    from hub.fetch import espn
+    monkeypatch.setenv("ESPN_LEAGUE_ID", "ESPN_LEAGUE_ID=123456")
+    with pytest.raises(ValueError) as e:
+        espn.resolve_league_id()
+    said = str(e.value)
+    assert "ESPN_LEAGUE_ID" in said
+    assert "digits" in said or "number" in said
+    assert "123456" not in said, "must not echo the value; it is a secret in CI logs"
+
+
+def test_a_missing_league_id_is_a_sentence_not_a_key_error(monkeypatch):
+    from hub.fetch import espn
+    # `.env` on this machine has one, and `load_dotenv` would put it back -- so the absence
+    # has to be simulated at the loader, not at the environment.
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: None)
+    monkeypatch.delenv("ESPN_LEAGUE_ID", raising=False)
+    with pytest.raises(ValueError, match="ESPN_LEAGUE_ID"):
+        espn.resolve_league_id()
+
+
+def test_an_explicit_league_id_overrides_the_environment(monkeypatch):
+    from hub.fetch import espn
+    monkeypatch.setenv("ESPN_LEAGUE_ID", "999")
+    assert espn.resolve_league_id(12345) == 12345
+
+
+def test_a_well_formed_league_id_parses(monkeypatch):
+    from hub.fetch import espn
+    monkeypatch.setenv("ESPN_LEAGUE_ID", " 123456 ")
+    assert espn.resolve_league_id() == 123456

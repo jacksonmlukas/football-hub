@@ -295,6 +295,36 @@ class LeagueView:
     roster_slots: dict[str, int]
 
 
+def resolve_league_id(override: int | None = None) -> int:
+    """The league to read, from `ESPN_LEAGUE_ID` unless a caller names one.
+
+    Its own function because the failure it produces is otherwise unreadable. A scheduled run
+    died with `invalid literal for int() with base 10: "***"` -- the `***` is GitHub redacting
+    the secret in its own logs, so the operator learned neither which variable was wrong nor
+    what was wrong with it. The likeliest cause, pasting `ESPN_LEAGUE_ID=123456` into the
+    secret instead of `123456`, is invisible from that message and obvious from this one.
+
+    **The value is never echoed.** It is a secret in CI, and a message that printed it would
+    put it in a log that the redaction exists to keep it out of.
+    """
+    if override is not None:
+        return int(override)
+    from dotenv import load_dotenv
+    load_dotenv()
+    raw = os.environ.get("ESPN_LEAGUE_ID")
+    if not raw:
+        raise ValueError(
+            "ESPN_LEAGUE_ID is not set. It is in the league URL as `leagueId=XXXXXXX`; see "
+            "SETUP.md. In a scheduled run it is a repository secret.")
+    try:
+        return int(str(raw).strip())
+    except ValueError:
+        raise ValueError(
+            "ESPN_LEAGUE_ID is not a number. It must be the digits alone -- pasting the "
+            "whole `.env` line, or wrapping it in quotes, produces exactly this. The value "
+            "is not shown here because it is a secret in CI logs.") from None
+
+
 def league_settings(year: int = SEASON_AHEAD, league_id: int | None = None) -> LeagueView:
     """Read roster slots straight from your league instead of hardcoding them.
 
@@ -308,7 +338,7 @@ def league_settings(year: int = SEASON_AHEAD, league_id: int | None = None) -> L
     from espn_api.football import League
     load_dotenv()
     lg = League(
-        league_id=int(league_id if league_id is not None else os.environ["ESPN_LEAGUE_ID"]),
+        league_id=resolve_league_id(league_id),
         year=year,
         espn_s2=os.environ.get("ESPN_S2") or None,
         swid=os.environ.get("ESPN_SWID") or None,
@@ -421,7 +451,7 @@ def league_history(season: int, view: str = "mTeam") -> dict:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).resolve().parents[3] / ".env")
     r = requests.get(
-        f"{LM_API}/leagueHistory/{os.environ['ESPN_LEAGUE_ID']}",
+        f"{LM_API}/leagueHistory/{resolve_league_id()}",
         params={"view": view, "seasonId": season},
         headers=({"x-fantasy-filter": json.dumps(PLAYER_FILTER)}
                  if view == "kona_player_info" else None),
