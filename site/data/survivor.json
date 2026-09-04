@@ -1,18 +1,18 @@
 {
   "name": "survivor",
   "source": "hub.season.survivor",
-  "generated_at": "2026-09-04T19:19:46+00:00",
+  "generated_at": "2026-09-04T22:26:32+00:00",
   "n": 18,
   "rows": [
     {
       "week": 1,
       "team": "JAX",
-      "win_prob": 0.7349633745617887
+      "win_prob": 0.7349633745617888
     },
     {
       "week": 2,
       "team": "LAC",
-      "win_prob": 0.7476578734980867
+      "win_prob": 0.7476578734980865
     },
     {
       "week": 3,
@@ -27,7 +27,7 @@
     {
       "week": 5,
       "team": "DET",
-      "win_prob": 0.7476578734980867
+      "win_prob": 0.7476578734980865
     },
     {
       "week": 6,
@@ -67,7 +67,7 @@
     {
       "week": 13,
       "team": "PHI",
-      "win_prob": 0.7476578734980867
+      "win_prob": 0.7476578734980865
     },
     {
       "week": 14,
@@ -82,7 +82,7 @@
     {
       "week": 16,
       "team": "BAL",
-      "win_prob": 0.7779374803179051
+      "win_prob": 0.777937480317905
     },
     {
       "week": 17,
@@ -96,7 +96,7 @@
     }
   ],
   "season": 2026,
-  "survival": 0.007104094022958949,
+  "survival": 0.007104094022958947,
   "unpriced_weeks": [],
   "snapshot_only_weeks": [
     8,
