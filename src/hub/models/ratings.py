@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -31,16 +31,37 @@ from hub.models.base import FitSpec, validate_predictions
 from hub.models.market import MarketBaseline
 
 
-def target_week(games: pl.DataFrame) -> int:
-    """The first week not yet played, or the last week if the season is over.
+def forecastable(games: pl.DataFrame, at: datetime | None = None) -> pl.DataFrame:
+    """The games it is still honest to predict: kickoff ahead of us, no result yet.
 
-    Predicting a week that already has results is not forecasting, and the leakage check
-    in `validate_predictions` would reject it anyway -- better to pick the right week than
-    to make the caller discover the tripwire.
+    `docs/track-record.md` rule 1 -- a prediction counts only if it was committed before
+    kickoff -- was satisfied by habit, because a person runs the fit before the week starts.
+    A schedule has no habits. A Sunday-morning run would publish a prediction for Thursday
+    night's finished game, and one post-hoc row in a public record devalues every honest row
+    beside it, because a reader cannot tell them apart.
+
+    Both tests, because neither covers the other. A finished game has a result; a game *in
+    progress* does not, and it is no more forecastable. A game whose kickoff is unknown is
+    kept rather than dropped -- an invented time would silently decide this, and the result
+    check still catches it once the game is over.
     """
-    unplayed = games.filter(pl.col("result").is_null() & pl.col("close_spread").is_not_null())
-    if unplayed.height:
-        return int(cast(int, unplayed["week"].min() or 1))
+    moment = at or datetime.now(UTC).replace(tzinfo=None)
+    started = (pl.col("kickoff").is_not_null() & (pl.col("kickoff") <= moment)
+               if "kickoff" in games.columns else pl.lit(False))
+    done = pl.col("result").is_not_null() if "result" in games.columns else pl.lit(False)
+    return games.filter(~(started | done))
+
+
+def target_week(games: pl.DataFrame, at: datetime | None = None) -> int:
+    """The first week still forecastable, or the last week if none is.
+
+    Not "the first week unfinished": a run that fires late finds a week in progress, and
+    predicting the rest of a slate whose first game is already over is the same backdating,
+    one game at a time.
+    """
+    ahead = forecastable(games, at).filter(pl.col("close_spread").is_not_null())
+    if ahead.height:
+        return int(cast(int, ahead["week"].min() or 1))
     return int(cast(int, games["week"].max() or 1))
 
 
@@ -60,11 +81,35 @@ def live_config():
     return HubConfig()
 
 
+def _with_committed(part: pl.DataFrame, season: int, week: int, name: str,
+                    base: Path | None) -> pl.DataFrame:
+    """This run's predictions, plus any already committed for a game it can no longer make.
+
+    A second run in a week re-fits the games that have not started and rewrites the same
+    partition. Without this the games that *have* started vanish from it -- so the record
+    would quietly lose exactly the predictions reality has already tested, which is the
+    direction a dishonest record trims in. `docs/track-record.md` rule 1 says the commit is
+    the timestamp; a later commit must not un-say an earlier one.
+
+    Only games absent from this slate are carried over. One still ahead of its kickoff is
+    re-priced on purpose -- the commit still predates it, which is the whole test.
+    """
+    path = store.partition("preds", "nfl", season, week, name, base)
+    if not path.exists():
+        return part
+    try:
+        prior = pl.read_parquet(path)
+    except Exception:                       # an unreadable partition is not a record to keep
+        return part
+    keep = prior.filter(~pl.col("game_id").is_in(part["game_id"].to_list()))
+    return pl.concat([part, keep], how="diagonal_relaxed") if keep.height else part
+
+
 def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | None = None,
         base: Path | None = None, at: datetime | None = None) -> pl.DataFrame:
     """Fit through week-1, predict `week`, validate, write versioned predictions."""
     games = schedule.priced_games(season, at=at, cache=cache, base=base)
-    wk = week if week is not None else target_week(games)
+    wk = week if week is not None else target_week(games, at)
 
     # Fit through the week before the one being predicted. The gap is the leakage
     # tripwire in validate_predictions, and it is load-bearing: leakage looks like
@@ -75,7 +120,10 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
     cfg = live_config()
     digest = config_digest(cfg)
     spec = FitSpec("nfl", season, wk - 1, cfg_digest=digest)
-    slate = games.filter(pl.col("week") == wk).drop("result")
+    # Rule 1, made structural rather than scheduled around.
+    whole = games.filter(pl.col("week") == wk)
+    slate = forecastable(whole, at).drop("result")
+    under_way = whole.height - slate.height
 
     model = MarketBaseline().fit(spec)
     preds = model.predict(slate)
@@ -99,10 +147,16 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
     # it costs the record nothing.
     for src in sorted(set(preds["price_source"].to_list())):
         part = preds.filter(pl.col("price_source") == src)
-        store.write(part, "preds", "nfl", season, wk, base=base,
-                    name=f"{part['version'][0]}-{digest}", replace=True)
+        name = f"{part['version'][0]}-{digest}"
+        store.write(_with_committed(part, season, wk, name, base), "preds", "nfl", season, wk,
+                    base=base, name=name, replace=True)
 
     print(f"  ratings (passthrough): season {season} week {wk}")
+    if under_way:
+        # Said out loud: a reader seeing thirteen of sixteen games should learn that the fit
+        # ran late, not conclude the week was light.
+        print(f"    {under_way} already under way and not predicted -- a prediction counts "
+              f"only if it was committed before kickoff")
     cov = schedule.by_source(slate)
     print(f"    {slate.height - cov['unpriced']} of {slate.height} games priced: "
           f"{cov['snapshot']} from a dated snapshot, {cov['schedule']} from the moving "

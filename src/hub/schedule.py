@@ -40,11 +40,36 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import NamedTuple
+from zoneinfo import ZoneInfo
 
 import polars as pl
 
 from hub import store
 from hub.fetch import nflverse
+
+ET = ZoneInfo("America/New_York")
+
+
+def _kickoff() -> pl.Expr:
+    """Kickoff as a naive UTC moment, from nflverse's Eastern date and time.
+
+    Every other moment in this repo -- `captured_at`, `predicted_at`, the as-of `at` -- is
+    naive UTC, and `gameday`/`gametime` are Eastern. Comparing the two directly is a four-hour
+    error that looks like nothing, which this repo has already shipped once today: the first
+    coverage measurement against the as-of join asked its question in local time and silently
+    hid a morning's snapshots.
+
+    Converted rather than offset by a constant, for the reason `hub.fetch.odds._game_date`
+    records: the season crosses out of daylight saving in November, so a fixed -4 would be
+    right through week 9 and wrong after it.
+    """
+    stamp = (pl.col("gameday").cast(pl.Utf8) + " " + pl.col("gametime").cast(pl.Utf8))
+    return (stamp.str.to_datetime("%Y-%m-%d %H:%M", strict=False)
+                 .dt.replace_time_zone("America/New_York", non_existent="null",
+                                       ambiguous="earliest")
+                 .dt.convert_time_zone("UTC")
+                 .dt.replace_time_zone(None)
+                 .alias("kickoff"))
 
 
 def priced_games(season: int, *, at: datetime | None = None, cache: Path | None = None,
@@ -71,6 +96,11 @@ def priced_games(season: int, *, at: datetime | None = None, cache: Path | None 
         pl.col("away_team"),
         pl.col("spread_line").cast(pl.Float64).alias("schedule_spread"),
         pl.col("result"),
+        # When it starts, which is when it stops being forecastable. A schedule without times
+        # carries a null rather than a guess -- an invented kickoff would silently decide
+        # whether a game may still be predicted.
+        (_kickoff() if {"gameday", "gametime"} <= set(sched.columns)
+         else pl.lit(None, dtype=pl.Datetime).alias("kickoff")),
     )
     moment = at or datetime.now(UTC).replace(tzinfo=None)
     snaps = store.lines_as_of(moment, season, league, base=base).rename(

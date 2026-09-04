@@ -32,6 +32,19 @@ CATALOG = DATA / "hub.duckdb"
 LAYOUT = "{table}/league={league}/season={season}/week={week:02d}/{name}.parquet"
 
 
+def partition(table: str, league: str, season: int, week: int, name: str = "part",
+              base: Path | None = None) -> Path:
+    """Where one partition lives. `write` computes this and now so does one caller.
+
+    Extracted rather than restated: the path is a pure function of the five keys and
+    `LAYOUT`, and a second copy of that formatting is a second thing to keep in step with
+    the zero-padding `week_key` exists for.
+    """
+    root = base or DATA
+    return root / LAYOUT.format(table=table, league=league, season=season, week=week,
+                                name=name)
+
+
 def write(df: pl.DataFrame, table: str, league: str, season: int, week: int,
           name: str = "part", base: Path | None = None, *, replace: bool = False) -> Path:
     """Dated partitions. A caller that would destroy an existing one has to say so.
@@ -53,8 +66,7 @@ def write(df: pl.DataFrame, table: str, league: str, season: int, week: int,
     root without reassigning a module global. Every Phase 1 fetch module writes through
     here, so it needed an injection point that is not monkeypatching.
     """
-    root = base or DATA
-    p = root / LAYOUT.format(table=table, league=league, season=season, week=week, name=name)
+    p = partition(table, league, season, week, name, base)
     p.parent.mkdir(parents=True, exist_ok=True)
     if p.exists() and not replace:
         try:

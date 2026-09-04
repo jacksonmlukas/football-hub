@@ -1,0 +1,95 @@
+name: slate
+
+# The weekly pre-lock refresh, run where nobody has to be present.
+#
+# **Weekly, not continuous, and the distinction is the point.** Predictions are frozen at lock:
+# `hub.publish.live`'s docstring is explicit that a win probability drifting while games are in
+# progress is indistinguishable from one that was always going to look right, which destroys the
+# pre-registration the record depends on. So this refreshes the model's numbers *before* a week
+# starts and never during it. The thing that moves on a Sunday is the live overlay, which needs
+# no key and is its own workflow.
+#
+# **It commits what it published.** Generating the JSON straight into Pages would break
+# `docs/track-record.md` rule 1 -- the commit is the timestamp, and a deploy that produced the
+# artifact would leave nothing to pin. `pages.yml` says the same and this composes with it: the
+# push to `site/**` trips that deploy on the way past.
+on:
+  # Wednesday 11:00 UTC (07:00 ET), before the week's first kickoff; and Saturday 14:00 UTC,
+  # for the roster, because waivers clear midweek and the Wednesday roster is stale by the
+  # weekend.
+  #
+  # **The Saturday run is safe by construction rather than by timing.** It fires after Thursday
+  # night, so it cannot predict those games -- `ratings.forecastable` withholds them -- and it
+  # does not delete the predictions the Wednesday run committed for them either. Correctness
+  # lives in the code; the cron only chooses when to be useful. A cron that has to be right for
+  # the record to hold is one bad retry away from a wrong record.
+  #
+  # Two runs a week is two odds credits, about 9 a month against 500. `hub.fetch.odds` refuses
+  # below a floor of 50 before spending one, so an over-eager cadence cannot drain the month.
+  schedule:
+    - cron: "0 11 * * 3"
+    - cron: "0 14 * * 6"
+  workflow_dispatch:
+
+# Contents write, because the whole design is that this commits. Nothing else.
+permissions:
+  contents: write
+
+# Never two at once: both would regenerate the same artifacts and race to commit them.
+concurrency:
+  group: slate
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+
+      # `make slate` and not a hand-copied list of commands: the Makefile is what a human runs
+      # and what SETUP.md documents, so CI exercising anything else would be a second recipe
+      # that drifts. Its optional sources are already marked with a leading `-` there.
+      #
+      # A runner starts with an empty store, which is fine and was measured: `--snapshot` takes
+      # one fresh pull and the as-of join wants the latest capture at or before now, so a
+      # snapshot thirty seconds old prices the whole season. The historical store is not needed
+      # and is never published -- `.gitignore` excludes it as redistributed third-party data.
+      - name: Refresh the slate
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+          ESPN_S2: ${{ secrets.ESPN_S2 }}
+          ESPN_SWID: ${{ secrets.ESPN_SWID }}
+          ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
+        run: make slate
+
+      # Read back rather than trusted. A run whose sources all failed still writes a manifest,
+      # and a manifest of six stale panels is a successful-looking job that published nothing --
+      # which is the shape of failure this repo keeps finding.
+      - name: Report what the page can trust
+        run: |
+          jq -r '.artifacts[] | "  \(.name): \(if .stale then "STALE -- " + (.reason // "no reason given") else "ok" end)"' \
+            site/data/manifest.json
+          test "$(jq '[.artifacts[] | select(.stale | not)] | length' site/data/manifest.json)" -gt 0 \
+            || { echo "::error::every artifact is stale; nothing was refreshed"; exit 1; }
+
+      # Only when something moved. `generated_at` changes on every run by construction, so a
+      # naive `git commit -am` would produce a commit a week that says nothing -- and the git
+      # history is the pre-registration, so filling it with noise is not free.
+      - name: Commit what was published
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/data
+          if git diff --cached --quiet; then
+            echo "nothing changed; no commit"
+            exit 0
+          fi
+          WEEK=$(jq -r '.week' site/data/manifest.json)
+          git commit -m "slate: ${WEEK:-?} refresh
+
+          Published by the scheduled slate. The commit is the timestamp -- see
+          docs/track-record.md rule 1."
+          git push

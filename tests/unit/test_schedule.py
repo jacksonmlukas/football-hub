@@ -26,6 +26,9 @@ def _sched(rows):
          "week": pl.Series([r[1] for r in rows], dtype=pl.Int32),
          "home_team": [r[4] if len(r) > 4 else "KC" for r in rows],
          "away_team": [r[5] if len(r) > 5 else "LV" for r in rows],
+         # Eastern date and time, the way nflverse gives them.
+         "gameday": [r[6] if len(r) > 6 else "2026-09-10" for r in rows],
+         "gametime": [r[7] if len(r) > 7 else "20:15" for r in rows],
          "spread_line": [r[2] for r in rows],
          "result": [r[3] for r in rows]})
 
@@ -182,3 +185,32 @@ def test_the_reason_cites_the_constraint_rather_than_restating_it():
 def test_the_classification_is_data_a_caller_can_serialise():
     got = schedule.provenance("snapshot")
     assert isinstance(got.reader_can_obtain, bool) and isinstance(got.why, str)
+
+
+# --- when a game starts, which is when it stops being forecastable ------------
+
+def test_kickoff_is_carried_in_utc_not_in_the_schedules_own_zone(sched, tmp_path):
+    """nflverse gives an Eastern date and an Eastern time; every other moment in this repo is
+    naive UTC. Comparing the two directly is a four-hour error that looks like nothing, and
+    this repo has already shipped one of those today."""
+    sched([("a", 1, 3.0, None)])
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 6), base=tmp_path)
+    # the fixture kicks off 2026-09-10 20:15 ET, which is 00:15 UTC on the 11th
+    assert got["kickoff"].to_list() == [dt.datetime(2026, 9, 11, 0, 15)]
+
+
+def test_kickoff_converts_rather_than_offsetting_so_november_still_works(sched, tmp_path):
+    """The season crosses out of daylight saving in November. A fixed -4 would be right
+    through week 9 and wrong after it -- the caveat `hub.fetch.odds` already records."""
+    sched([("sep", 1, 3.0, None, "KC", "LV", "2026-09-13", "13:00"),
+           ("dec", 14, 3.0, None, "KC", "LV", "2026-12-13", "13:00")])
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 6), base=tmp_path)
+    by = dict(zip(got["game_id"].to_list(), got["kickoff"].to_list(), strict=True))
+    assert by["sep"] == dt.datetime(2026, 9, 13, 17, 0), "EDT, UTC-4"
+    assert by["dec"] == dt.datetime(2026, 12, 13, 18, 0), "EST, UTC-5"
+
+
+def test_a_schedule_without_times_carries_a_null_kickoff_rather_than_guessing(sched, tmp_path):
+    sched([("a", 1, 3.0, None, "KC", "LV", None, None)])
+    assert schedule.priced_games(2026, at=dt.datetime(2026, 9, 6),
+                                 base=tmp_path)["kickoff"].to_list() == [None]
