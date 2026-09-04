@@ -24,6 +24,7 @@ import argparse
 import math
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 import polars as pl
@@ -133,6 +134,19 @@ def coverage(grid: pl.DataFrame, weeks: Sequence[int]) -> dict:
     }
 
 
+def snapshot_only_weeks(grid: pl.DataFrame, weeks: Sequence[int]) -> list[int]:
+    """Weeks no game reaches through the schedule's own moving field.
+
+    Reported rather than assumed, because it is the quantity that decides whether reading
+    the store was worth anything -- and because it moves: upstream fills `spread_line` in as
+    the season approaches, so a week in this list today is not in it in December.
+    """
+    if "moving_field" not in grid.columns:
+        return []
+    have = set(grid.filter(pl.col("moving_field"))["week"].to_list())
+    return [int(w) for w in weeks if int(w) not in have]
+
+
 def survival(plan: pl.DataFrame) -> float:
     """Probability of surviving every week in the plan."""
     out = 1.0
@@ -141,24 +155,49 @@ def survival(plan: pl.DataFrame) -> float:
     return out
 
 
-def grid_from_schedule(season: int, cache: Path | None = None) -> pl.DataFrame:
+def grid_from_schedule(season: int, cache: Path | None = None, *,
+                       at: datetime | None = None,
+                       base: Path | None = None) -> pl.DataFrame:
     """Win probability for every team in every week it plays.
 
-    Uses the same spread-to-probability conversion as `MarketBaseline`, so a survivor pick
-    and a weekly prediction cannot disagree about the same game.
+    Two things are shared rather than restated, and both were claims this function used to
+    make in prose while nothing enforced them.
+
+    The spread-to-probability conversion is `MarketBaseline`'s, so a survivor pick and a
+    weekly prediction cannot disagree about a game they both price. And the *spread* is
+    `hub.schedule`'s, so they cannot disagree about which number that is either -- which
+    they did, for a day: the weekly prediction moved onto the dated snapshots and this was
+    left reading nflverse's own field, which upstream leaves empty for the late season. That
+    planned twelve of eighteen weeks and reported the rest unpriced while the store held
+    every game of the season, week 18 included.
+
+    Spending a team early costs you that team later, so a plan over twelve weeks followed by
+    a plan over the remaining six, with the best teams already gone, is strictly worse than
+    one plan over eighteen. Which weeks are reachable is therefore not a display detail.
+
+    A game neither source prices is dropped rather than filled at a coin flip, and
+    `coverage` still names the week so an entrant knows it is theirs to fill.
     """
-    from hub.fetch import nflverse
+    from hub import schedule
     from hub.models.market import MARGIN_SD, normal_cdf
 
-    sched = nflverse.load("schedules", seasons=[season], cache=cache)
+    games = schedule.priced_games(season, at=at, cache=cache, base=base)
     rows = []
-    for r in sched.filter(pl.col("spread_line").is_not_null()).iter_rows(named=True):
-        # spread_line is positive when the home team is favoured.
-        home_p = normal_cdf(float(r["spread_line"]) / MARGIN_SD)
-        rows.append((int(r["week"]), r["home_team"], home_p))
-        rows.append((int(r["week"]), r["away_team"], 1.0 - home_p))
+    for r in games.filter(pl.col("close_spread").is_not_null()).iter_rows(named=True):
+        # close_spread is positive when the home team is favoured, both sources alike.
+        home_p = normal_cdf(float(r["close_spread"]) / MARGIN_SD)
+        # Whether the schedule's own field *could* have priced this game, which is not the
+        # same as which source won. With the store covering every game, `price_source` reads
+        # "snapshot" everywhere and says nothing about what the fallback would have reached
+        # -- I reported all eighteen weeks as snapshot-only before the real data caught it.
+        moving = r["schedule_spread"] is not None
+        rows.append((int(r["week"]), r["home_team"], home_p, moving))
+        rows.append((int(r["week"]), r["away_team"], 1.0 - home_p, moving))
     return pl.DataFrame({"week": [r[0] for r in rows], "team": [r[1] for r in rows],
-                         "win_prob": [r[2] for r in rows]})
+                         "win_prob": [r[2] for r in rows],
+                         "moving_field": [r[3] for r in rows]},
+                        schema={"week": pl.Int64, "team": pl.Utf8, "win_prob": pl.Float64,
+                                "moving_field": pl.Boolean})
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -189,6 +228,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"    wk {r['week']:>2}  {r['team']:<4} {r['win_prob']:.3f}{thin}")
     s = survival(plan)
     print(f"  survives the {plan.height} planned weeks: {s:.1%}")
+    # What the snapshot store actually buys, said out loud. These are the weeks nflverse's
+    # lookahead field does not price, and the difference between a season plan and most of
+    # one -- a team spent in week 3 is unavailable in week 17 whether or not the plan could
+    # see week 17 when it chose.
+    if snap_only := snapshot_only_weeks(grid, weeks):
+        print(f"  {len(snap_only)} of these weeks are priced only by the dated snapshots: "
+              + ", ".join(f"wk {w}" for w in snap_only))
     if cov["missing"]:
         # Not a failure: weeks with no spread are weeks the market has not posted, and a
         # plan over what exists beats no plan. But an entrant still has to pick in them.

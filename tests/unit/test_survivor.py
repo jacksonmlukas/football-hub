@@ -176,30 +176,148 @@ def test_the_cli_says_so_when_the_season_is_not_fully_priced(capsys, monkeypatch
 
 # --- the schedule -> probability boundary ---------------------------------
 
-def test_the_home_favourite_is_the_one_with_the_higher_win_probability():
+def test_the_home_favourite_is_the_one_with_the_higher_win_probability(tmp_path):
     """The sign convention, which this repo has already got wrong once at a different
     boundary (`docs/decisions.md`: The Odds API reports a handicap, nflverse a margin).
     nflverse `spread_line` is positive when the *home* team is favoured. Getting this
     backwards would produce a survivor plan that picks underdogs all season and still
     looks entirely plausible on the page."""
     import hub.fetch.nflverse as nflverse
-    sched = pl.DataFrame({"week": [1], "home_team": ["KC"], "away_team": ["LV"],
-                          "spread_line": [9.5]})
+    sched = pl.DataFrame({"game_id": ["2026_01_LV_KC"], "season": [2026], "week": [1],
+                          "home_team": ["KC"], "away_team": ["LV"],
+                          "spread_line": [9.5], "result": [None]})
     with pytest.MonkeyPatch.context() as m:
         m.setattr(nflverse, "load", lambda *a, **k: sched)
-        grid = survivor.grid_from_schedule(2026)
+        grid = survivor.grid_from_schedule(2026, base=tmp_path)
     p = dict(zip(grid["team"].to_list(), grid["win_prob"].to_list(), strict=True))
     assert p["KC"] > 0.5 < 1.0 and p["LV"] < 0.5
     assert p["KC"] + p["LV"] == pytest.approx(1.0)
 
 
-def test_games_without_a_posted_line_are_dropped_not_treated_as_coin_flips():
+def test_games_without_a_posted_line_are_dropped_not_treated_as_coin_flips(tmp_path):
     """A null spread means the market has not priced it. Filling it in at 0.5 would put an
     unpriced game into the plan at a probability nobody quoted."""
     import hub.fetch.nflverse as nflverse
-    sched = pl.DataFrame({"week": [1, 2], "home_team": ["KC", "SF"],
-                          "away_team": ["LV", "SEA"], "spread_line": [9.5, None]})
+    sched = pl.DataFrame({"game_id": ["2026_01_LV_KC", "2026_02_SEA_SF"],
+                          "season": [2026, 2026], "week": [1, 2],
+                          "home_team": ["KC", "SF"], "away_team": ["LV", "SEA"],
+                          "spread_line": [9.5, None], "result": [None, None]})
     with pytest.MonkeyPatch.context() as m:
         m.setattr(nflverse, "load", lambda *a, **k: sched)
-        grid = survivor.grid_from_schedule(2026)
+        grid = survivor.grid_from_schedule(2026, base=tmp_path)
     assert grid["week"].to_list() == [1, 1]
+
+
+# --- the weeks the snapshots reach and the moving field does not ---------------
+#
+# The ticket in one sentence: `spread_line` is a lookahead number upstream leaves empty for
+# the late season, so survivor planned 12 of 18 weeks and called the other six "not priced
+# yet" -- while the store held every game of the season, week 18 included. Solving twelve
+# weeks now and the rest later, with the best teams already spent, is exactly the mistake
+# this module exists to avoid.
+
+import datetime as dt  # noqa: E402
+
+from hub import store  # noqa: E402
+
+
+def _late_season(tmp_path, snapshot_weeks=(), at=dt.datetime(2026, 9, 4)):
+    """A schedule the moving field prices only in week 1, plus snapshots for named weeks."""
+    rows = [("2026_01_LV_KC", 1, "KC", "LV", 9.5),
+            ("2026_02_SEA_SF", 2, "SF", "SEA", None),
+            ("2026_18_NYJ_BUF", 18, "BUF", "NYJ", None)]
+    sched = pl.DataFrame({
+        "game_id": [r[0] for r in rows], "season": [2026] * len(rows),
+        "week": [r[1] for r in rows], "home_team": [r[2] for r in rows],
+        "away_team": [r[3] for r in rows], "spread_line": [r[4] for r in rows],
+        "result": [None] * len(rows)})
+    for gid, wk, _, _, _ in rows:
+        if wk in snapshot_weeks:
+            store.write(
+                pl.DataFrame({"game_id": [gid], "close_spread": [7.0],
+                              "captured_at": [at]},
+                             schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                                     "captured_at": pl.Datetime}),
+                "lines", "nfl", 2026, wk, base=tmp_path, name="snap-x")
+    return sched
+
+
+def test_a_week_only_the_snapshot_prices_still_enters_the_plan(tmp_path, monkeypatch):
+    """Week 18 carries no `spread_line` and never will at the moment the plan is first
+    wanted. The snapshot is what puts it in the season."""
+    import hub.fetch.nflverse as nflverse
+    sched = _late_season(tmp_path, snapshot_weeks=(18,))
+    monkeypatch.setattr(nflverse, "load", lambda *a, **k: sched)
+    grid = survivor.grid_from_schedule(2026, at=dt.datetime(2026, 9, 5), base=tmp_path)
+    cov = survivor.coverage(grid, [1, 2, 18])
+    assert 18 in cov["covered"]
+    assert 2 in cov["missing"], "week 2 has neither source and must still ask for a pick"
+    assert 18 in survivor.solve(grid, weeks=cov["covered"])["week"].to_list()
+
+
+def test_a_week_neither_source_prices_is_still_reported_as_needing_a_pick(tmp_path,
+                                                                          monkeypatch):
+    """The coverage report is what tells an entrant a week is theirs to fill. Reading the
+    store must not turn a genuinely unpriced week into a silent absence."""
+    import hub.fetch.nflverse as nflverse
+    monkeypatch.setattr(nflverse, "load",
+                        lambda *a, **k: _late_season(tmp_path, snapshot_weeks=(18,)))
+    grid = survivor.grid_from_schedule(2026, at=dt.datetime(2026, 9, 5), base=tmp_path)
+    assert survivor.coverage(grid, [1, 2, 18])["missing"] == [2]
+
+
+def test_the_snapshot_does_not_change_a_week_the_moving_field_already_priced(tmp_path,
+                                                                             monkeypatch):
+    """Coverage, not repricing. Where both exist the two agree, and the plan for those weeks
+    is the one it always was."""
+    import hub.fetch.nflverse as nflverse
+    monkeypatch.setattr(nflverse, "load", lambda *a, **k: _late_season(tmp_path))
+    before = survivor.grid_from_schedule(2026, at=dt.datetime(2026, 9, 5), base=tmp_path)
+    monkeypatch.setattr(nflverse, "load",
+                        lambda *a, **k: _late_season(tmp_path, snapshot_weeks=(18,)))
+    after = survivor.grid_from_schedule(2026, at=dt.datetime(2026, 9, 5), base=tmp_path)
+    wk1 = lambda g: g.filter(pl.col("week") == 1).sort("team")["win_prob"].to_list()  # noqa: E731
+    assert wk1(before) == wk1(after)
+    assert 18 not in before["week"].to_list() and 18 in after["week"].to_list()
+
+
+def test_survivor_and_the_weekly_prediction_price_a_game_the_same_way(tmp_path, monkeypatch):
+    """The claim `grid_from_schedule` makes in its own docstring, asserted rather than
+    stated. It held until the weekly prediction moved onto the snapshots and this did not."""
+    import hub.fetch.nflverse as nflverse
+    from hub import schedule as sch
+    from hub.models.market import MARGIN_SD, normal_cdf
+    monkeypatch.setattr(nflverse, "load",
+                        lambda *a, **k: _late_season(tmp_path, snapshot_weeks=(18,)))
+    at = dt.datetime(2026, 9, 5)
+    priced = sch.priced_games(2026, at=at, base=tmp_path)
+    spread = priced.filter(pl.col("week") == 18)["close_spread"][0]
+    grid = survivor.grid_from_schedule(2026, at=at, base=tmp_path)
+    buf = grid.filter((pl.col("week") == 18) & (pl.col("team") == "BUF"))["win_prob"][0]
+    assert buf == pytest.approx(normal_cdf(float(spread) / MARGIN_SD))
+
+
+def test_a_week_both_sources_price_is_not_reported_as_snapshot_only(tmp_path, monkeypatch):
+    """The measurement I got wrong first. Reading it off the *winning* source says
+    "snapshot" for every game once the store covers the season, so every week looks like one
+    the fallback could not reach -- which reported all eighteen and was caught only by the
+    real data disagreeing. What decides it is whether the moving field carries the game at
+    all, not which of the two was used."""
+    import hub.fetch.nflverse as nflverse
+    monkeypatch.setattr(nflverse, "load",
+                        lambda *a, **k: _late_season(tmp_path, snapshot_weeks=(1, 18)))
+    grid = survivor.grid_from_schedule(2026, at=dt.datetime(2026, 9, 5), base=tmp_path)
+    # week 1 carries both and is priced from the snapshot; week 18 carries only the snapshot
+    assert grid.filter(pl.col("week") == 1)["moving_field"].all()
+    assert survivor.snapshot_only_weeks(grid, [1, 18]) == [18]
+
+
+def test_snapshot_only_weeks_is_empty_when_the_moving_field_reaches_everything(tmp_path,
+                                                                               monkeypatch):
+    import hub.fetch.nflverse as nflverse
+    sched = pl.DataFrame({"game_id": ["2026_01_LV_KC"], "season": [2026], "week": [1],
+                          "home_team": ["KC"], "away_team": ["LV"],
+                          "spread_line": [9.5], "result": [None]})
+    monkeypatch.setattr(nflverse, "load", lambda *a, **k: sched)
+    grid = survivor.grid_from_schedule(2026, base=tmp_path)
+    assert survivor.snapshot_only_weeks(grid, [1]) == []

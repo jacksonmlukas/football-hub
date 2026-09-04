@@ -317,7 +317,10 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | None:
         print(f"  survivor: schedule unavailable ({type(e).__name__}: {e})"[:160])
         return None
     art = _artifact("survivor", "hub.season.survivor", plan.to_dicts(), season=season,
-                    survival=sv.survival(plan), unpriced_weeks=cov["missing"])
+                    survival=sv.survival(plan), unpriced_weeks=cov["missing"],
+                    # Which weeks exist in this plan only because the store was read. They
+                    # are the ones a reader should not expect to find on nflverse.
+                    snapshot_only_weeks=sv.snapshot_only_weeks(grid, cov["covered"]))
     _write(out, "survivor", art)
     return art
 

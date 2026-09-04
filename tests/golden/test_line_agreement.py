@@ -30,9 +30,8 @@ import numpy as np
 import polars as pl
 import pytest
 
-from hub import store
+from hub import schedule, store
 from hub.config import SEASON_AHEAD
-from hub.models import ratings
 
 # Both sources quote the market's spread on the home team, so they are comparable point for
 # point. They are not the *same* quote: nflverse publishes one lookahead number per game and
@@ -57,7 +56,7 @@ def priced():
     # local `datetime.now()` silently asks an as-of question four hours in the past and hides
     # the morning's snapshots -- which it did, until the coverage it reported disagreed with
     # the store.
-    games = ratings.games_for(SEASON_AHEAD)
+    games = schedule.priced_games(SEASON_AHEAD)
     both = games.filter(pl.col("snapshot_spread").is_not_null()
                         & pl.col("schedule_spread").is_not_null())
     if both.height < 10:
@@ -111,7 +110,7 @@ def test_the_coverage_report_accounts_for_every_game(priced):
     """The number reported each fit is the one a dead poller shows up in, so it has to be
     exhaustive rather than indicative."""
     games, _ = priced
-    cov = ratings.coverage(games)
+    cov = schedule.by_source(games)
     assert sum(cov.values()) == games.height
     assert cov["snapshot"], "no game priced from a snapshot; the store or the as-of moment"
 

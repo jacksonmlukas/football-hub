@@ -1029,7 +1029,8 @@ sides** once near-pick-em games are excluded. `2026_06_HOU_JAX` is the one sign 
 differently rather than a mapping bug.
 
 **Done 2026-09-04.** `store.lines_as_of` asks the as-of question forwards; `games_for`
-coalesces snapshot over moving field and records `price_source` and `priced_at`; the version
+coalesces snapshot over moving field and records `price_source` and `priced_at`
+(that function is `hub.schedule.priced_games` from #24 on, which gave it its second reader); the version
 string carries the source, so a prediction priced from a snapshot is a different artifact from
 one priced from a moving field even when the numbers agree, and each source writes its own
 partition. Coverage prints every fit — the share that falls back is what a dead poller looks
@@ -1041,6 +1042,39 @@ games price from a snapshot and **no real game currently takes the fallback**. S
 is pinned deterministically in the unit tests, and the golden test asserts the standing reason
 it exists — the moving field alone still leaves the late season unpriced — rather than
 asserting a path no game takes.
+
+---
+
+### 24. Survivor planned twelve of eighteen weeks against a fully priced season — DONE 2026-09-04
+
+`grid_from_schedule` priced every game from nflverse's `spread_line`. Upstream leaves that
+field empty for the late season — **weeks 8, 13, 14, 15, 17 and 18 carry not one game between
+them** — so survivor planned twelve weeks and reported the other six as "not priced yet",
+while the store held all 272 games of the season from a snapshot taken that morning.
+
+That is the mistake the module exists to avoid, arriving through the data rather than the
+solver. Survivor is a single assignment problem *because* spending a team in week 1 costs you
+that team in week 12; a plan over twelve weeks followed by a plan over the remaining six,
+with the best teams already gone, is strictly worse than one plan over eighteen.
+
+It also falsified the function's own docstring — *"a survivor pick and a weekly prediction
+cannot disagree about the same game"* — which held until the weekly prediction moved onto the
+snapshots (#23) and this did not. One day old.
+
+**Not gated**, for the reason #23 was not: both inputs quote the same quantity, so an accuracy
+gate would return "no detectable difference" by construction. What changed is coverage, and
+the evidence is the week count.
+
+**Done 2026-09-04.** The snapshot-over-moving-field rule is `hub.schedule`, read by both the
+weekly prediction and survivor, so the two cannot disagree about a game again. Survivor now
+plans **18 of 18 weeks** and names the six the fallback alone could not reach.
+
+**A measurement I got wrong, and what caught it.** The first version of that six-week
+diagnostic read the *winning* source off the grid. With the store covering every game that is
+"snapshot" everywhere, so it reported all eighteen weeks as reachable only by snapshot — a
+number that is literally true and answers a different question. What decides it is whether the
+moving field carries the game at all. The real data disagreeing is what surfaced it; there is
+now a test that would.
 
 ---
 
