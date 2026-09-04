@@ -285,7 +285,7 @@ optimizer, which is a fifth limitation below.
 ### The fix, and the before/after that gated it
 
 `--diagnose` was committed *before* the fix so it could be run against both, at
-`75f800f` (pre-fix) and the commit that follows it. The draft is advanced by the market in
+`250e0da` (pre-fix) and the commit that follows it. The draft is advanced by the market in
 both runs, so the path is identical and the only thing that can differ is what equity says.
 
 | pick | held | leader BEFORE | leader AFTER |
@@ -381,21 +381,21 @@ records a pre-registered check being talked past.
 
 **What this does not settle.** Three things changed between P0 and P0b -- the shortlist, the
 seasons and n, and the roster-seeding fix -- so none of the -19.66 can be attributed to any
-one of them. Isolating the fix means re-running arm B at `75f800f`. Cheap at reduced n: with
+one of them. Isolating the fix means re-running arm B at `250e0da`. Cheap at reduced n: with
 sd 16.2, twenty drafts separate -19.66 from +0.04 at better than five standard errors.
 
 **P1 does not fire.** It was gated on equity beating the market. It loses.
 
 ### Did the roster-seeding fix cause this? No -- it helped slightly
 
-Run at `75f800f` (pre-fix) plus the one fetch fix it needed, same seasons, same seeds, n=20.
+Run at `250e0da` (pre-fix) plus the one fetch fix it needed, same seasons, same seeds, n=20.
 Arm A comes out **byte-identical** across the two runs, which confirms the comparison isolates
 arm B: seeding is a no-op at an empty draft state and only bites inside `win_probability`'s
 nested rollouts.
 
 | | arm B | market |
 |---|---|---|
-| pre-fix (`75f800f`) | 102.11 | 127.73 |
+| pre-fix (`250e0da`) | 102.11 | 127.73 |
 | post-fix | 105.19 | 127.73 |
 
 Paired, arm B post-fix minus pre-fix: **+3.08 points per team game** (sd 10.14, n=20, so the

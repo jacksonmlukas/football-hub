@@ -12,7 +12,7 @@ P0 asked whether championship equity beats the draft market, got +0.04 points pe
 with a 95% CI of [−3.64, +3.58] at n=36, and on that basis demoted championship equity from
 the headline to a tiebreaker. That is the most consequential measurement in the repo.
 
-Both P0 commits — `cf02d0f` (design) and `063194c` (result) — touch `docs/next.md` and nothing
+Both P0 commits — `18a8133` (design) and `f9828ec` (result) — touch `docs/next.md` and nothing
 else. There is no harness in `src/`, none in `scripts/`, and no artifact in `data/processed`.
 The number cannot be reproduced, and two departures from its own pre-registered design went
 unrecorded because nothing existed to record them:
