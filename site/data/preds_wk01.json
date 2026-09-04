@@ -1,7 +1,7 @@
 {
   "name": "preds_wk01",
   "source": "preds",
-  "generated_at": "2026-09-04T22:30:25+00:00",
+  "generated_at": "2026-09-04T22:32:23+00:00",
   "n": 16,
   "rows": [
     {
@@ -15,48 +15,48 @@
       "margin_hi": 26.3288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_ATL_PIT",
       "league": "nfl",
       "season": 2026,
       "week": "01",
-      "home_win_prob": 0.5930742653255309,
+      "home_win_prob": 0.593074265325531,
       "margin_mean": 3.0,
       "margin_lo": -13.3288656,
       "margin_hi": 19.3288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_BAL_IND",
       "league": "nfl",
       "season": 2026,
       "week": "01",
-      "home_win_prob": 0.39177193937674853,
+      "home_win_prob": 0.3917719393767485,
       "margin_mean": -3.5,
       "margin_lo": -19.8288656,
       "margin_hi": 12.8288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_BUF_HOU",
@@ -69,12 +69,12 @@
       "margin_hi": 16.3288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_CHI_CAR",
@@ -87,30 +87,30 @@
       "margin_hi": 13.8288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_CLE_JAX",
       "league": "nfl",
       "season": 2026,
       "week": "01",
-      "home_win_prob": 0.7349633745617887,
+      "home_win_prob": 0.7349633745617888,
       "margin_mean": 8.0,
       "margin_lo": -8.3288656,
       "margin_hi": 24.3288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_DAL_NYG",
@@ -123,12 +123,12 @@
       "margin_hi": 13.3288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_DEN_KC",
@@ -141,12 +141,12 @@
       "margin_hi": 18.8288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_GB_MIN",
@@ -159,12 +159,12 @@
       "margin_hi": 17.8288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_MIA_LV",
@@ -177,12 +177,12 @@
       "margin_hi": 19.8288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_NE_SEA",
@@ -195,12 +195,12 @@
       "margin_hi": 19.8288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_NO_DET",
@@ -213,12 +213,12 @@
       "margin_hi": 23.3288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_NYJ_TEN",
@@ -231,12 +231,12 @@
       "margin_hi": 17.8288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_SF_LA",
@@ -249,12 +249,12 @@
       "margin_hi": 20.3288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_TB_CIN",
@@ -267,12 +267,12 @@
       "margin_hi": 20.3288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     },
     {
       "game_id": "2026_01_WAS_PHI",
@@ -285,12 +285,12 @@
       "margin_hi": 21.3288656,
       "model": "market_baseline",
       "version": "market-f64f1bad-snapshot",
-      "fit_through_week": 0,
-      "predicted_at": "2026-09-04 22:16:53",
-      "cfg_digest": "281b7b7a",
-      "fit_digest": "f64f1bad",
       "price_source": "snapshot",
-      "priced_at": "2026-09-04 15:51:36.595520"
+      "priced_at": "2026-09-04 22:32:18.082645",
+      "fit_through_week": 0,
+      "predicted_at": "2026-09-04 22:32:22",
+      "cfg_digest": "281b7b7a",
+      "fit_digest": "f64f1bad"
     }
   ],
   "season": 2026,
