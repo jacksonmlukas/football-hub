@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from typing import Any
 import polars as pl
 import requests
 
+from hub import jsonio
 from hub.config import SEASON_AHEAD
 
 CACHE = Path(__file__).resolve().parents[3] / "data" / "raw" / "espn"
@@ -120,6 +122,35 @@ def live_state(league: str = "nfl") -> list[dict]:
     return out
 
 
+LIVE_JSON = Path(__file__).resolve().parents[3] / "site" / "data" / "live.json"
+
+
+def poll_once(out: Path, league: str = "nfl", watch: Sequence[str] = ()) -> dict:
+    """One tick: the scoreboard, optionally some win probabilities, written as an artifact.
+
+    Separated from the loop so it can be tested -- and because the loop is the part with
+    nothing to test. It writes the same document `hub.publish.live` writes, through the same
+    envelope in `hub.jsonio`, which is the whole point: this used to emit `{ts, games, detail}`
+    while the page read `rows` and `generated_at`, so a running poller would have blanked every
+    score column. The dashboard worked because nothing was polling.
+
+    `watch` empty is the ordinary tick. The tier-2 fan-out costs one request per game and the
+    caller decides how often to spend that, which is ADR-0005.
+    """
+    state = live_state(league)                          # tier 1: one request
+    detail: dict[str, dict] = {}
+    for gid in watch:                                   # tier 2: bounded fan-out
+        try:
+            wp = (summary(gid, league).get("winprobability") or [{}])[-1]
+            detail[gid] = {"home_win_prob": wp.get("homeWinPercentage")}
+        except Exception:
+            continue
+    payload = jsonio.artifact("live", "espn_scoreboard", state, league=league, detail=detail)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(jsonio.dumps(payload))
+    return payload
+
+
 def poll(interval: int = 45, league: str = "nfl", out: Path | None = None,
          games_of_interest: list[str] | None = None, summary_every: int = 4):
     """Tiered poller. Run locally, not in Actions -- cron fires late under load.
@@ -139,25 +170,17 @@ def poll(interval: int = 45, league: str = "nfl", out: Path | None = None,
     ThreadPoolExecutor(max_workers=8) -- but do not, because these endpoints are
     undocumented and ESPN asks that request volume stay low.
     """
-    out = out or Path(__file__).resolve().parents[3] / "site" / "data" / "live.json"
+    out = out or LIVE_JSON
     out.parent.mkdir(parents=True, exist_ok=True)
     watch = list(games_of_interest or [])[:12]
     tick = 0
     while True:
         try:
-            state = live_state(league)                      # tier 1: one request
-            detail = {}
-            if watch and tick % summary_every == 0:         # tier 2: bounded fan-out
-                for gid in watch:
-                    try:
-                        s = summary(gid, league)
-                        wp = (s.get("winprobability") or [{}])[-1]
-                        detail[gid] = {"home_win_prob": wp.get("homeWinPercentage")}
-                    except Exception:
-                        continue
-            out.write_text(json.dumps({"ts": time.time(), "games": state, "detail": detail}))
-            live = sum(g["state"] == "in" for g in state)
-            print(f"[{time.strftime('%H:%M:%S')}] {len(state)} games, {live} live"
+            got = poll_once(out=out, league=league,
+                            watch=watch if tick % summary_every == 0 else [])
+            live = sum(g["state"] == "in" for g in got["rows"])
+            detail = got["detail"]
+            print(f"[{time.strftime('%H:%M:%S')}] {got['n']} games, {live} live"
                   f"{f', {len(detail)} detailed' if detail else ''}", flush=True)
         except Exception as e:
             print(f"poll error (serving stale): {e!r}", flush=True)

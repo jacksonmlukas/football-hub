@@ -20,7 +20,6 @@ import argparse
 import json
 import sys
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -37,21 +36,11 @@ SITE = ROOT / "site" / "data"
 NFL_WEEKS = 18
 
 
-def _now() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat()
-
-
 def _write(out: Path, name: str, payload: dict[str, Any]) -> Path:
     out.mkdir(parents=True, exist_ok=True)
     p = out / f"{name}.json"
     p.write_text(jsonio.dumps(payload, indent=2))
     return p
-
-
-def _artifact(name: str, source: str, rows: list[dict[str, Any]],
-              **extra: Any) -> dict[str, Any]:
-    return {"name": name, "source": source, "generated_at": _now(),
-            "n": len(rows), "rows": rows, **extra}
 
 
 # --- weekly predictions ---------------------------------------------------
@@ -74,7 +63,7 @@ def predictions(season: int, week: int, base: Path | None = None,
     if df.is_empty():
         return None
 
-    payload = _artifact(name, "preds", df.to_dicts(), season=season, week=week)
+    payload = jsonio.artifact(name, "preds", df.to_dicts(), season=season, week=week)
     _write(out, name, payload)
     return payload
 
@@ -122,7 +111,7 @@ def track_record(base: Path | None = None, out: Path | None = None,
     df = _scored(base)
 
     payload: dict[str, Any] = {
-        "name": "track_record", "source": "preds+results", "generated_at": _now(),
+        "name": "track_record", "source": "preds+results", "generated_at": jsonio.stamp(),
         "n_scored": df.height,
         # Nothing is pre-registered until a prediction is committed before kickoff, which
         # the Sunday Actions job does. Counting it here would be marking my own homework.
@@ -162,7 +151,10 @@ def live(out: Path | None = None, league: str = "nfl") -> dict[str, Any] | None:
     except Exception as e:
         print(f"  live: ESPN unavailable ({type(e).__name__}); leaving last-good in place")
         return None
-    payload = _artifact("live", "espn_scoreboard", rows, league=league)
+    # `detail` empty rather than absent: the poller fills it with per-game win probability
+    # and this writer has none, and a reader written against one document must be written
+    # against the other. Same keys, not merely compatible ones.
+    payload = jsonio.artifact("live", "espn_scoreboard", rows, league=league, detail={})
     _write(out, "live", payload)
     return payload
 
@@ -204,7 +196,7 @@ def roster(out: Path | None = None, path: Path | None = None) -> dict[str, Any] 
             "can_start": r.get("can_start", True),
             "missing_games": r.get("missing_games", 0),
         })
-    payload = _artifact("roster", "roster.parquet", rows,
+    payload = jsonio.artifact("roster", "roster.parquet", rows,
                         set_total=lk.set_total, optimal_total=lk.best_total, gain=lk.gain,
                         withheld=lk.withheld, start=lk.start, sit=lk.bench)
     _write(out or SITE, "roster", payload)
@@ -287,7 +279,7 @@ def publish_all(season: int, week: int, base: Path | None = None,
     """Write every artifact and a manifest describing what the page can trust."""
     out = out or SITE
     arts = [a.record(out) for a in artifacts(season, week, base=base, out=out)]
-    man = {"generated_at": _now(), "season": season, "week": week, "artifacts": arts}
+    man = {"generated_at": jsonio.stamp(), "season": season, "week": week, "artifacts": arts}
     _write(out, "manifest", man)
     return man
 
@@ -314,7 +306,7 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | None:
         # that did -- which is why it could never be recorded like the rest.
         print(f"  survivor: schedule unavailable ({type(e).__name__}: {e})"[:160])
         return None
-    art = _artifact("survivor", "hub.season.survivor", plan.to_dicts(), season=season,
+    art = jsonio.artifact("survivor", "hub.season.survivor", plan.to_dicts(), season=season,
                     survival=sv.survival(plan), unpriced_weeks=cov["missing"],
                     # Which weeks exist in this plan only because the store was read. They
                     # are the ones a reader should not expect to find on nflverse.

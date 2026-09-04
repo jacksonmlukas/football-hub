@@ -253,7 +253,9 @@ def test_the_poller_writes_one_file_per_tick(monkeypatch, tmp_path):
     out = tmp_path / "live.json"
     _run_poll(monkeypatch, espn, 2, out=out)
     import json
-    assert json.loads(out.read_text())["games"] == [{"state": "in"}]
+    # `rows`, not `games`: the poller writes the same envelope the site writer does, so the
+    # page can read whichever ran last. See tests/contracts/test_live_artifact_shape.py.
+    assert json.loads(out.read_text())["rows"] == [{"state": "in"}]
 
 
 def test_the_summary_fanout_is_capped_at_twelve(monkeypatch, tmp_path):

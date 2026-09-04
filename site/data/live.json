@@ -1,7 +1,7 @@
 {
   "name": "live",
   "source": "espn_scoreboard",
-  "generated_at": "2026-09-04T19:19:46+00:00",
+  "generated_at": "2026-09-04T20:01:48+00:00",
   "n": 16,
   "rows": [
     {
@@ -181,5 +181,6 @@
       "down_distance": null
     }
   ],
-  "league": "nfl"
+  "league": "nfl",
+  "detail": {}
 }

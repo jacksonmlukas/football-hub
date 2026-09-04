@@ -52,11 +52,11 @@ def test_an_old_artifact_is_stale(tmp_path):
 
 
 def test_the_field_it_reads_is_the_one_publish_actually_writes(tmp_path):
-    """The regression. An artifact carrying `ts` and no `generated_at` is what the poller
-    writes; one carrying `generated_at` and no `ts` is what the site writer writes, and the
-    check used to be able to read only the first."""
-    from hub import publish
-    shape = publish._artifact("live", "espn_scoreboard", [], league="nfl")
+    """The regression. An artifact carrying `ts` and no `generated_at` was what the poller
+    wrote, while `generated_at` was what the site writer wrote, and the check could read only
+    the first. Both go through one envelope now, and this asserts the check reads that."""
+    from hub import jsonio
+    shape = jsonio.artifact("live", "espn_scoreboard", [], league="nfl")
     assert "generated_at" in shape and "ts" not in shape
     assert _run(_artifact(tmp_path, **{"generated_at": shape["generated_at"]})
                 ).startswith("ok ")
