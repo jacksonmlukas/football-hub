@@ -202,8 +202,15 @@ def test_a_block_of_zeros_does_not_drag_the_correlation_down():
     corrected = -float(np.corrcoef(pred, tune.average_ranks(a))[0, 1])
     understated = -float(np.corrcoef(pred, naive)[0, 1])
     assert corrected > understated
+
+    # Only the corrected side is pinned. `average_ranks` sorts stably and averages tie groups,
+    # so it is the same number on any machine. The naive side is deliberately *not* pinned:
+    # `argsort`'s default is quicksort, which is unstable, so it orders a block of tied zeros
+    # differently on different builds. This assertion originally pinned it at 0.6123 -- the
+    # value on macOS arm64 -- and CI on linux x86-64 returned 0.5654 and went red three times.
+    # That is the bug this test is about, demonstrated harder than intended: the naive ranking
+    # is not merely order-dependent within a dataset, it is platform-dependent across machines.
     assert corrected == pytest.approx(0.6361, abs=1e-3)
-    assert understated == pytest.approx(0.6123, abs=1e-3)
 
 
 def test_average_ranks_handles_an_empty_board():
