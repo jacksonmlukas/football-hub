@@ -1078,6 +1078,51 @@ now a test that would.
 
 ---
 
+### 25. Nothing reading the prediction store picked one version per game — DONE 2026-09-04
+
+`store.write` files predictions under a name carrying the fit digest and the config digest,
+so two configurations both survive. That is the design and `docs/foundation-plan.md` 3.5 is
+why. **Nothing that read it knew.** On the live store 2026 week 1 held **five fitted versions
+of the same sixteen games**, and all three consumers treated them as eighty independent rows:
+
+* the published week-1 page listed every game five times;
+* `eval._paired` joins on (game_id, season, week), so two versions a side is a fourfold cross
+  product and the model comparison becomes mostly a model against itself;
+* `conformal` counted each residual five times — and because the calibration quantile is a
+  *rank* over the window, that does not merely inflate `n`, it reweights the quantile toward
+  whichever games happened to be re-fitted most often.
+
+Found reviewing #6, which added the fifth version and made an existing defect one row worse.
+Filed rather than folded in, because choosing a winner changes what the site shows and what
+the track record scores.
+
+**The rule: the latest `predicted_at`, ties broken by version descending.** A later write for
+a game is a correction — refreshed odds, a different price source — so the most recent is what
+the model now says. The tie-break is not a preference between versions, it is determinism:
+`ratings.fit` writes a partition per price source inside one run, so two rows can share a
+timestamp, and a reader returning whichever DuckDB scanned first would publish a different
+page on every refresh.
+
+It answers *"what does the model say"*, which is what all three callers ask. It is **not** the
+answer to *"what was pre-registered"* — that is decided by which commit predates kickoff
+(`docs/track-record.md` rule 1), lives in git rather than in the store, and is why
+`track_record` still reports `n_preregistered: 0` rather than counting rows.
+
+**No opt-out flag.** A raw `SELECT ... FROM preds` looks exactly like correct code, so the
+rule is enforced by a contract test rather than offered as a parameter nobody would pass.
+Anything genuinely wanting every version writes the SQL and is visible in review doing it.
+
+**Done 2026-09-04.** `store.predictions` is the one read; `publish`, `eval` and `conformal`
+go through it. The week-1 artifact carries **16 rows, not 80**. `default_week` moved to
+`store.latest_week` for the same reason — `max(week)` is a string comparison over a `week=01`
+key and is right only because `week_key` pads, which is the store's business and not a
+caller's. The read is ordered, because the artifact is committed to git and an unordered scan
+makes every republish a whole-file diff with the real change invisible inside it.
+
+Nothing already written was deleted. This changed reading.
+
+---
+
 ---
 
 ## What is deliberately not on this list

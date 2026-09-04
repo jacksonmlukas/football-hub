@@ -206,6 +206,97 @@ def lines_as_of(at: datetime, season: int, league: str = "nfl",
     return got.drop_nulls("close_spread")
 
 
+# One prediction per game, and the rule for choosing it.
+#
+# The store keeps every version on purpose -- two configurations both survive, which is
+# `docs/foundation-plan.md` 3.5 -- and nothing that read it knew that. On the live store 2026
+# week 1 held five fitted versions of the same sixteen games, and `publish`, `eval` and
+# `conformal` each treated them as eighty independent rows: the site listed every game five
+# times, `_paired` built a 25-fold cross product, and the calibration window counted each
+# residual five times while reporting the inflated n as its own size.
+#
+# **The rule is the latest `predicted_at`, ties broken by version descending.** A later write
+# for a game is a correction -- refreshed odds, a different price source -- so the most recent
+# is what the model now says. The tie-break is not a preference between two versions, it is
+# determinism: `ratings.fit` writes a partition per price source inside one run, so two rows
+# for a game can share a timestamp, and a reader returning whichever DuckDB scanned first
+# would publish a different page on every refresh.
+#
+# It answers "what does the model say", which is what all three callers ask. It is NOT the
+# answer to "what was pre-registered": that is decided by which commit predates kickoff
+# (`docs/track-record.md` rule 1), lives in git rather than here, and is why `track_record`
+# still reports `n_preregistered: 0` rather than counting rows.
+LATEST_PREDICTIONS = """
+SELECT * EXCLUDE (rn) FROM (
+    SELECT *, row_number() OVER (
+        PARTITION BY game_id, season, week
+        ORDER BY predicted_at DESC, version DESC) AS rn
+    FROM preds{where}
+) WHERE rn = 1
+ORDER BY season, week, game_id
+"""
+
+
+def predictions(league: str | None = None, season: int | None = None,
+                week: int | None = None, model: str | None = None,
+                base: Path | None = None) -> pl.DataFrame:
+    """Predictions from the store, one row per game, week and season.
+
+    Every filter is optional and `None` means "do not narrow on this" -- a league default of
+    "nfl" would silently drop college predictions the day the first one is written.
+
+    `week` takes an int. The zero-padding `week_key` exists for is the store's business, and
+    a caller passing 1 against a `week=01` partition matches nothing and reports it as an
+    empty week -- which is the footgun `week_key`'s own docstring describes and which this
+    keeps inside the module.
+
+    An empty frame when the store holds no predictions at all: a fresh clone has no `preds`
+    view, and querying one raises `CatalogException` rather than returning nothing.
+
+    Ordered, because the weekly artifact this feeds is committed to git and its value is
+    entirely in the commit history: an unordered scan makes every republish a diff of the
+    whole file, and a real change is then invisible inside the churn.
+
+    To read *every* version -- comparing two configurations, auditing what a run wrote --
+    query `preds` through `sql()` directly and say so. `tests/contracts` enforces that no
+    module does it by accident.
+    """
+    if "preds" not in tables(base):
+        return pl.DataFrame()
+    clauses: list[str] = []
+    params: list[object] = []
+    for col, val in (("league", league), ("season", season), ("model", model)):
+        if val is not None:
+            clauses.append(f"{col} = ?")
+            params.append(val)
+    if week is not None:
+        clauses.append("week = ?")
+        params.append(week_key(week))
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    return sql(LATEST_PREDICTIONS.format(where=where), params, base=base)
+
+
+def latest_week(season: int, league: str | None = None,
+                base: Path | None = None) -> int | None:
+    """The highest week already predicted for a season, or None if none is.
+
+    Here rather than in `hub.publish` because `preds` is this module's table and the padding
+    is its convention: `max(week)` is a string comparison over a `week=01` partition key, and
+    it gives the right answer only because `week_key` pads. A caller writing that query
+    elsewhere has to know that, and a caller who writes weeks unpadded breaks it silently.
+    """
+    if "preds" not in tables(base):
+        return None
+    clauses: list[str] = ["season = ?"]
+    params: list[object] = [season]
+    if league is not None:
+        clauses.append("league = ?")
+        params.append(league)
+    got = sql(f"SELECT max(week) AS w FROM preds WHERE {' AND '.join(clauses)}",
+              params, base=base)
+    return int(got["w"][0]) if got.height and got["w"][0] is not None else None
+
+
 def verify(season: int = SEASON_COMPLETED, base: Path | None = None) -> int:
     """Exercise the whole path against real games and real closing lines.
 

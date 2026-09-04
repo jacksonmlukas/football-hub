@@ -213,3 +213,27 @@ def test_season_does_not_reach_into_draft_for_league_rules():
     assert not bad, (
         f"season/ imports the draft's season simulator for league rules: {bad}. "
         f"The roster shape and `starting_lineup` are in `hub.league`.")
+
+
+def test_nothing_reads_the_preds_view_around_the_one_reader():
+    """`preds` holds several fitted versions of the same game on purpose, and every consumer
+    that read it directly treated them as separate games.
+
+    A raw `SELECT ... FROM preds` looks exactly like the correct code, which is why the rule
+    is enforced here rather than offered as a flag on `store.predictions`. `hub.store` owns
+    the query; anything genuinely wanting every version writes the SQL and is visible in
+    review doing it.
+    """
+    import pathlib
+    import re
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
+    bad = []
+    for path in root.rglob("*.py"):
+        if path.name == "store.py":
+            continue
+        for i, line in enumerate(path.read_text().splitlines(), 1):
+            if re.search(r"\bFROM\s+preds\b", line, re.IGNORECASE):
+                bad.append(f"{path.relative_to(root)}:{i}")
+    assert not bad, (
+        f"these query `preds` directly instead of `store.predictions()`: {bad}. "
+        f"That returns one row per fitted version, not one per game.")

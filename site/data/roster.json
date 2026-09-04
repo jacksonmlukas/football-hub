@@ -1,7 +1,7 @@
 {
   "name": "roster",
   "source": "roster.parquet",
-  "generated_at": "2026-09-04T15:17:35+00:00",
+  "generated_at": "2026-09-04T19:19:46+00:00",
   "n": 16,
   "rows": [
     {
@@ -15,6 +15,7 @@
       "best_start": true,
       "injury_status": "QUESTIONABLE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -28,6 +29,7 @@
       "best_start": true,
       "injury_status": "ACTIVE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -41,6 +43,7 @@
       "best_start": true,
       "injury_status": "ACTIVE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -54,6 +57,7 @@
       "best_start": false,
       "injury_status": "DAY_TO_DAY",
       "available": false,
+      "can_start": true,
       "missing_games": 6
     },
     {
@@ -67,6 +71,7 @@
       "best_start": true,
       "injury_status": "ACTIVE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -80,6 +85,7 @@
       "best_start": true,
       "injury_status": "ACTIVE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -93,6 +99,7 @@
       "best_start": true,
       "injury_status": "QUESTIONABLE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -106,6 +113,7 @@
       "best_start": false,
       "injury_status": "ACTIVE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -119,6 +127,7 @@
       "best_start": true,
       "injury_status": "ACTIVE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -132,6 +141,7 @@
       "best_start": true,
       "injury_status": "QUESTIONABLE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -145,6 +155,7 @@
       "best_start": false,
       "injury_status": "ACTIVE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -158,6 +169,7 @@
       "best_start": false,
       "injury_status": "ACTIVE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -171,6 +183,7 @@
       "best_start": false,
       "injury_status": "ACTIVE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -184,6 +197,7 @@
       "best_start": false,
       "injury_status": "ACTIVE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -197,6 +211,7 @@
       "best_start": false,
       "injury_status": "ACTIVE",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     },
     {
@@ -210,6 +225,7 @@
       "best_start": false,
       "injury_status": "NORMAL",
       "available": true,
+      "can_start": true,
       "missing_games": 0
     }
   ],

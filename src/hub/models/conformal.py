@@ -110,15 +110,15 @@ def load_scored(model: str, base: Path | None = None,
     an unplayed game simply does not survive it.
     """
     from hub import store
-    if "preds" not in store.tables(base):
-        return pl.DataFrame(schema={"week": pl.Int64, "margin_mean": pl.Float64,
-                                    "margin_actual": pl.Float64})
-    preds = store.sql(
-        "SELECT game_id, week, margin_mean FROM preds WHERE model = ?",
-        params=[model], base=base)
-    empty = preds.head(0).with_columns(pl.lit(None, pl.Float64).alias("margin_actual"))
-    if preds.is_empty():
-        return empty.select("week", "margin_mean", "margin_actual")
+    empty_shape = pl.DataFrame(schema={"week": pl.Int64, "margin_mean": pl.Float64,
+                                       "margin_actual": pl.Float64})
+    # One row per game. The calibration quantile is a rank over the window, so counting each
+    # residual once per fitted version does not merely inflate `n` -- it reweights the
+    # quantile toward whichever games happen to have been re-fitted most often.
+    got = store.predictions(model=model, base=base)
+    if got.is_empty():
+        return empty_shape
+    preds = got.select("game_id", "week", "margin_mean")
     if schedules is None:                                       # pragma: no cover
         import nflreadpy as nfl
         schedules = nfl.load_schedules()

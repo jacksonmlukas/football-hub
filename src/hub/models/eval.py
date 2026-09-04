@@ -38,14 +38,14 @@ class NoOverlap(Exception):
 def load_predictions(model: str, base: Path | None = None) -> pl.DataFrame:
     """Scored predictions for one model, from the prediction store."""
     from hub import store
-    if "preds" not in store.tables(base):
-        # A fresh clone has no store at all, so `preds` is not merely empty -- the view does
-        # not exist and DuckDB raises CatalogException. Returning the shape `_paired` needs
-        # lets that flow through to the NoOverlap message, which is the true answer.
+    # One row per game. `_paired` joins on (game_id, season, week), so two versions on each
+    # side is a fourfold cross product -- and the comparison silently becomes mostly a model
+    # against itself. A fresh clone has no `preds` view at all, and the empty frame flows
+    # through to the NoOverlap message, which is the true answer.
+    df = store.predictions(model=model, base=base)
+    if df.is_empty():
         return pl.DataFrame(schema={"game_id": pl.Utf8, "season": pl.Int64, "week": pl.Int64,
                                     "home_win_prob": pl.Float64, "home_won": pl.Int64})
-    df = store.sql(
-        "SELECT * FROM preds WHERE model = ?", params=[model], base=base)
     if "home_won" not in df.columns:
         raise NoOverlap(f"{model} has no scored outcomes yet")
     return df

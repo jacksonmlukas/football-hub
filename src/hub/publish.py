@@ -65,14 +65,12 @@ def predictions(season: int, week: int, base: Path | None = None,
     """
     out = out or SITE
     name = f"preds_wk{store.week_key(week)}"
-    # Asked, not caught. `store.tables` exists precisely so a caller can tell "this clone has
-    # no predictions yet" from "the query is broken", and a bare `except Exception` here made
-    # a schema break, a DuckDB lock and a typo in the SQL all arrive as
-    # `"stale": true, "reason": "no predictions"`.
-    if "preds" not in store.tables(base):
-        return None
-    df = store.sql("SELECT * FROM preds WHERE season = ? AND week = ?",
-                   params=[season, store.week_key(week)], base=base)
+    # Asked, not caught. `store.predictions` distinguishes "this clone has no predictions
+    # yet" from "the query is broken" -- a bare `except Exception` here once made a schema
+    # break, a DuckDB lock and a typo in the SQL all arrive as
+    # `"stale": true, "reason": "no predictions"`. It also returns one row per game rather
+    # than one per fitted version: this page listed every week-1 game five times.
+    df = store.predictions(season=season, week=week, base=base)
     if df.is_empty():
         return None
 
@@ -90,9 +88,9 @@ def _scored(base: Path | None) -> pl.DataFrame:
     """Predictions joined to results. Empty frame when either side is missing."""
     empty = pl.DataFrame(schema={"game_id": pl.Utf8, "home_win_prob": pl.Float64,
                                  "home_won": pl.Int64, "predicted_at": pl.Utf8})
-    if "preds" not in store.tables(base):
-        return empty
-    preds = store.sql("SELECT * FROM preds", base=base)
+    # One row per game. Pooling five versions of the same sixteen games into one reliability
+    # curve counts every prediction five times and reports the inflated n as the sample.
+    preds = store.predictions(base=base)
     if preds.is_empty():
         return empty
 
@@ -333,13 +331,8 @@ def default_week(season: int, base: Path | None = None) -> int:
     a weekly refresh that needs a live API to decide what week it is has one more way to
     fail on a Sunday.
     """
-    if "preds" not in store.tables(base):
-        return 1
-    got = store.sql("SELECT max(week) AS w FROM preds WHERE season = ?",
-                    params=[season], base=base)
-    if got.height and got["w"][0] is not None:
-        return int(got["w"][0])
-    return 1
+    week = store.latest_week(season, base=base)
+    return week if week is not None else 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:

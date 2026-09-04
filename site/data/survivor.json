@@ -1,32 +1,32 @@
 {
   "name": "survivor",
   "source": "hub.season.survivor",
-  "generated_at": "2026-09-04T15:17:35+00:00",
-  "n": 12,
+  "generated_at": "2026-09-04T19:19:46+00:00",
+  "n": 18,
   "rows": [
     {
       "week": 1,
-      "team": "LAC",
-      "win_prob": 0.7950617937505842
+      "team": "JAX",
+      "win_prob": 0.7349633745617887
     },
     {
       "week": 2,
-      "team": "SEA",
-      "win_prob": 0.7837344437707137
-    },
-    {
-      "week": 3,
-      "team": "KC",
-      "win_prob": 0.7219522298168483
-    },
-    {
-      "week": 4,
-      "team": "CHI",
+      "team": "LAC",
       "win_prob": 0.7476578734980867
     },
     {
+      "week": 3,
+      "team": "SF",
+      "win_prob": 0.8166303325052899
+    },
+    {
+      "week": 4,
+      "team": "MIN",
+      "win_prob": 0.7219522298168483
+    },
+    {
       "week": 5,
-      "team": "NE",
+      "team": "DET",
       "win_prob": 0.7476578734980867
     },
     {
@@ -36,38 +36,69 @@
     },
     {
       "week": 7,
-      "team": "BAL",
-      "win_prob": 0.6082280606232515
+      "team": "DEN",
+      "win_prob": 0.7219522298168483
+    },
+    {
+      "week": 8,
+      "team": "DAL",
+      "win_prob": 0.7950617937505842
     },
     {
       "week": 9,
-      "team": "CIN",
-      "win_prob": 0.6380271805560663
+      "team": "SEA",
+      "win_prob": 0.8553301988618258
     },
     {
       "week": 10,
-      "team": "DET",
-      "win_prob": 0.5468592666108859
+      "team": "IND",
+      "win_prob": 0.6950317276536153
     },
     {
       "week": 11,
-      "team": "SF",
-      "win_prob": 0.6380271805560663
+      "team": "KC",
+      "win_prob": 0.8166303325052899
     },
     {
       "week": 12,
-      "team": "BUF",
-      "win_prob": 0.5777798142127708
+      "team": "CIN",
+      "win_prob": 0.6950317276536153
+    },
+    {
+      "week": 13,
+      "team": "PHI",
+      "win_prob": 0.7476578734980867
+    },
+    {
+      "week": 14,
+      "team": "CHI",
+      "win_prob": 0.6670120023224967
+    },
+    {
+      "week": 15,
+      "team": "GB",
+      "win_prob": 0.7950617937505842
     },
     {
       "week": 16,
-      "team": "PHI",
-      "win_prob": 0.5777798142127708
+      "team": "BAL",
+      "win_prob": 0.7779374803179051
+    },
+    {
+      "week": 17,
+      "team": "BUF",
+      "win_prob": 0.7219522298168483
+    },
+    {
+      "week": 18,
+      "team": "NE",
+      "win_prob": 0.7950617937505842
     }
   ],
   "season": 2026,
-  "survival": 0.009722165885646802,
-  "unpriced_weeks": [
+  "survival": 0.007104094022958949,
+  "unpriced_weeks": [],
+  "snapshot_only_weeks": [
     8,
     13,
     14,

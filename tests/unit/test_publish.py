@@ -349,3 +349,33 @@ def test_a_present_board_is_not_stale_and_an_absent_one_is(tmp_path):
     assert board.record(tmp_path)["stale"] is True
     (tmp_path / "draft_board.json").write_text('[{"player": "x"}]')
     assert board.record(tmp_path)["stale"] is False
+
+
+# --- one prediction per game, not one per fitted version --------------------
+
+def test_a_week_with_several_fitted_versions_publishes_each_game_once(site, base):
+    """On the live store 2026 week 1 held five versions of the same sixteen games, and this
+    page listed every one of them five times -- a reader counting games on it would have
+    found eighty."""
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base, name="v1")
+    later = _preds([("g1", 0.9, 9.0)]).with_columns(
+        pl.lit("v2").alias("version"), pl.lit(dt.datetime(2026, 9, 3)).alias("predicted_at"))
+    store.write(later, "preds", "nfl", 2026, 1, base=base, name="v2")
+
+    got = publish.predictions(2026, 1, base=base, out=site)
+    assert got is not None
+    assert got["n"] == 1
+    assert got["rows"][0]["version"] == "v2", "the page shows what the model now says"
+
+
+def test_the_track_record_scores_each_game_once(site, base, monkeypatch):
+    """Pooling versions counts every prediction as many times as it was re-fitted, and the
+    reliability curve reports the inflated count as its sample size."""
+    import nflreadpy as nfl
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base, name="v1")
+    later = _preds([("g1", 0.6, 3.0)]).with_columns(
+        pl.lit("v2").alias("version"), pl.lit(dt.datetime(2026, 9, 3)).alias("predicted_at"))
+    store.write(later, "preds", "nfl", 2026, 1, base=base, name="v2")
+    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
+        {"game_id": ["g1"], "result": [7]}))
+    assert publish.track_record(base=base, out=site)["n_scored"] == 1

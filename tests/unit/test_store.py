@@ -441,3 +441,114 @@ def test_lines_as_of_is_scoped_to_the_season_asked_for(base):
                 base=base)
     got = store.lines_as_of(dt.datetime(2025, 12, 1), season=2025, base=base)
     assert got["game_id"].to_list() == ["g2"]
+
+
+# --- one prediction per game ------------------------------------------------
+#
+# The store keeps every version on purpose: two configurations both survive, which is what
+# `docs/foundation-plan.md` 3.5 asks for. Nothing that *read* it knew that. On the live store
+# 2026 week 1 held five fitted versions of the same sixteen games, and every consumer treated
+# them as eighty independent rows -- the site listed each game five times, `eval._paired`
+# built a 25-fold cross product, and `conformal` counted each residual five times while
+# reporting the inflated n as its calibration window.
+
+def _versioned(game, version, at, prob=0.6, model="market_baseline"):
+    return pl.DataFrame(
+        {"game_id": [game], "model": [model], "version": [version],
+         "home_win_prob": [prob], "predicted_at": [at]},
+        schema={"game_id": pl.Utf8, "model": pl.Utf8, "version": pl.Utf8,
+                "home_win_prob": pl.Float64, "predicted_at": pl.Datetime})
+
+
+def test_predictions_returns_one_row_per_game_not_one_per_version(base):
+    store.write(_versioned("g1", "v1", dt.datetime(2026, 9, 1)), "preds", "nfl", 2026, 1,
+                base=base, name="v1")
+    store.write(_versioned("g1", "v2", dt.datetime(2026, 9, 2)), "preds", "nfl", 2026, 1,
+                base=base, name="v2")
+    assert store.sql("SELECT * FROM preds", base=base).height == 2, "both are kept"
+    got = store.predictions(base=base)
+    assert got.height == 1
+
+
+def test_the_latest_prediction_is_the_one_that_wins(base):
+    """The rule, stated: a later write under the same game is a correction -- refreshed odds,
+    a new price source -- and the most recent is what the model now says."""
+    store.write(_versioned("g1", "old", dt.datetime(2026, 9, 1), prob=0.10), "preds", "nfl",
+                2026, 1, base=base, name="a")
+    store.write(_versioned("g1", "new", dt.datetime(2026, 9, 3), prob=0.90), "preds", "nfl",
+                2026, 1, base=base, name="b")
+    got = store.predictions(base=base)
+    assert got["version"].to_list() == ["new"]
+    assert got["home_win_prob"].to_list() == [0.90]
+
+
+def test_versions_written_in_the_same_run_resolve_to_one_deterministically(base):
+    """Determinism matters more than which one wins. `ratings.fit` writes a partition per
+    price source in a single run, so the same game genuinely can carry two rows stamped the
+    same second -- and a reader returning whichever DuckDB happened to scan first would give
+    a different page on every refresh."""
+    at = dt.datetime(2026, 9, 1)
+    store.write(_versioned("g1", "market-x-schedule", at), "preds", "nfl", 2026, 1,
+                base=base, name="a")
+    store.write(_versioned("g1", "market-x-snapshot", at), "preds", "nfl", 2026, 1,
+                base=base, name="b")
+    first = store.predictions(base=base)["version"].to_list()
+    assert len(first) == 1
+    assert first == store.predictions(base=base)["version"].to_list()
+
+
+def test_two_different_games_both_survive(base):
+    store.write(_versioned("g1", "v1", dt.datetime(2026, 9, 1)), "preds", "nfl", 2026, 1,
+                base=base, name="a")
+    store.write(_versioned("g2", "v1", dt.datetime(2026, 9, 1)), "preds", "nfl", 2026, 1,
+                base=base, name="b")
+    assert sorted(store.predictions(base=base)["game_id"].to_list()) == ["g1", "g2"]
+
+
+def test_the_same_game_in_two_weeks_is_two_predictions(base):
+    """Partitioned by game *and* week: a game re-predicted in a later week is a different
+    forecast, not a correction of the first."""
+    store.write(_versioned("g1", "v1", dt.datetime(2026, 9, 1)), "preds", "nfl", 2026, 1,
+                base=base, name="a")
+    store.write(_versioned("g1", "v1", dt.datetime(2026, 9, 8)), "preds", "nfl", 2026, 2,
+                base=base, name="a")
+    assert store.predictions(base=base).height == 2
+
+
+def test_predictions_can_be_narrowed_to_a_week_a_season_and_a_model(base):
+    store.write(_versioned("g1", "v1", dt.datetime(2026, 9, 1)), "preds", "nfl", 2026, 1,
+                base=base, name="a")
+    store.write(_versioned("g2", "v1", dt.datetime(2026, 9, 8)), "preds", "nfl", 2026, 2,
+                base=base, name="a")
+    assert store.predictions(week=1, base=base)["game_id"].to_list() == ["g1"]
+    assert store.predictions(season=2026, base=base).height == 2
+    assert store.predictions(model="nobody", base=base).is_empty()
+
+
+def test_the_week_filter_takes_an_int_not_a_padded_key(base):
+    """`week_key` padding is the store's business. A caller passing 1 and silently matching
+    nothing is the footgun this removes."""
+    store.write(_versioned("g1", "v1", dt.datetime(2026, 9, 1)), "preds", "nfl", 2026, 1,
+                base=base, name="a")
+    assert store.predictions(week=1, base=base).height == 1
+
+
+def test_predictions_on_a_store_with_none_is_empty_rather_than_an_error(base):
+    got = store.predictions(base=base)
+    assert got.is_empty()
+
+
+def test_latest_week_reads_the_padded_partition_key_correctly(base):
+    """`max(week)` is a string comparison over `week=01`, and gives the right answer only
+    because `week_key` pads. Week 9 sorting above week 10 is what an unpadded key would do."""
+    for wk in (1, 9, 10):
+        store.write(_versioned(f"g{wk}", "v1", dt.datetime(2026, 9, wk)), "preds", "nfl",
+                    2026, wk, base=base, name="a")
+    assert store.latest_week(2026, base=base) == 10
+
+
+def test_latest_week_is_none_when_the_season_has_no_predictions(base):
+    assert store.latest_week(2026, base=base) is None
+    store.write(_versioned("g1", "v1", dt.datetime(2025, 9, 1)), "preds", "nfl", 2025, 1,
+                base=base, name="a")
+    assert store.latest_week(2026, base=base) is None
