@@ -25,7 +25,7 @@ from typing import Any, NamedTuple
 
 import polars as pl
 
-from hub import jsonio, store
+from hub import jsonio, schedule, store
 from hub.config import SEASON_AHEAD
 from hub.models.scoring_rules import brier, log_loss, reliability
 from hub.paths import ROSTER_PARQUET
@@ -63,9 +63,31 @@ def predictions(season: int, week: int, base: Path | None = None,
     if df.is_empty():
         return None
 
-    payload = jsonio.artifact(name, "preds", df.to_dicts(), season=season, week=week)
+    payload = jsonio.artifact(name, "preds", df.to_dicts(), season=season, week=week,
+                              provenance=_obtainable(df))
     _write(out, name, payload)
     return payload
+
+
+def _obtainable(df: pl.DataFrame) -> dict[str, dict[str, Any]]:
+    """For each price source in this week, whether a reader can obtain the input behind it.
+
+    A record whose credibility rests on a reader checking it has to say what a reader can
+    check. `priced_at` names a dated snapshot and that citation is complete on the machine
+    holding the store; the store is unpublished, so following it is something only one person
+    can do. Saying so costs nothing and is the difference between a track record and an
+    assertion.
+
+    Once per source rather than once per row: it is a property of where the number came from,
+    and sixteen copies of one sentence is noise in an artifact a person reads.
+
+    A week written before `price_source` existed classifies nothing rather than raising --
+    the store spans schemas by design, and an old partition must not take the page down.
+    """
+    if "price_source" not in df.columns:
+        return {}
+    used = sorted({s for s in df["price_source"].to_list() if s})
+    return {s: schedule.provenance(s)._asdict() for s in used}
 
 
 # --- calibration ----------------------------------------------------------

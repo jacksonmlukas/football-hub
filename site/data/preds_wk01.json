@@ -1,7 +1,7 @@
 {
   "name": "preds_wk01",
   "source": "preds",
-  "generated_at": "2026-09-04T19:20:27+00:00",
+  "generated_at": "2026-09-04T20:48:46+00:00",
   "n": 16,
   "rows": [
     {
@@ -294,5 +294,11 @@
     }
   ],
   "season": 2026,
-  "week": 1
+  "week": 1,
+  "provenance": {
+    "snapshot": {
+      "reader_can_obtain": false,
+      "why": "the capture is dated and immutable, and it is not published: `.gitignore` excludes the processed store as redistributed third-party data the repo cannot publish. The number used is in the artifact; the source it came from is not something a reader can open."
+    }
+  }
 }

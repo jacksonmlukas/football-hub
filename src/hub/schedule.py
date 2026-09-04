@@ -8,6 +8,14 @@ planned twelve of eighteen weeks and called the rest unpriced while the store he
 game of the season. `docs/next.md` names a second implementation of one idea as how they
 drift; this is the first one.
 
+**What a reader can follow is a separate question, and the answer today is neither source.**
+A snapshot is dated and immutable and is *not published* -- `.gitignore` excludes the processed
+store as redistributed third-party data. The moving field is published and has *moved*, so the
+lookahead value a prediction was priced from cannot be fetched back. So `price_source` and
+`priced_at` are a complete citation on the machine holding the store and an unfollowable one
+anywhere else, which is what `PROVENANCE` below says out loud and what the weekly artifact
+carries. The number used is published either way; what is missing is corroboration.
+
 **Both columns quote the same quantity** -- the betting market's spread on the home team,
 positive when the home team is favoured -- so choosing between them is provenance rather
 than accuracy, and `tests/golden/test_line_agreement.py` carries the evidence that they
@@ -31,6 +39,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 import polars as pl
 
@@ -90,3 +99,53 @@ def by_source(games: pl.DataFrame) -> dict[str, int]:
     return {"snapshot": int((src == "snapshot").sum()),
             "schedule": int((src == "schedule").sum()),
             "unpriced": int(src.null_count())}
+
+
+# --- what a reader can obtain -------------------------------------------------
+
+class Provenance(NamedTuple):
+    """Whether a third party can fetch the input a prediction was priced from, and why not.
+
+    Not whether *we* can. `priced_at` names the snapshot on this machine and that citation is
+    complete here; the question a public record has to answer is whether anyone else can
+    follow it.
+    """
+    reader_can_obtain: bool
+    why: str
+
+
+# Neither source is obtainable by a reader today, and the reasons are opposites -- which is
+# the useful part, because they have different futures. A snapshot is immutable and could be
+# published in some derived form; the moving field is published and its value at our capture
+# moment is simply gone.
+#
+# Stated here rather than in the site writer because this module owns `price_source`, and a
+# classification that lives away from the thing it classifies is one that stops matching it.
+PROVENANCE: dict[str, Provenance] = {
+    "snapshot": Provenance(
+        reader_can_obtain=False,
+        why=("the capture is dated and immutable, and it is not published: `.gitignore` "
+             "excludes the processed store as redistributed third-party data the repo "
+             "cannot publish. The number used is in the artifact; the source it came from "
+             "is not something a reader can open.")),
+    "schedule": Provenance(
+        reader_can_obtain=False,
+        why=("the source is public, but the value has moved. nflverse keeps one current "
+             "`spread_line` per game and no history, so the lookahead number this was "
+             "priced from cannot be fetched back -- which is why #6 stopped pricing from "
+             "it where a snapshot exists.")),
+}
+
+
+def provenance(source: str) -> Provenance:
+    """How obtainable the input behind a price source is. Unknown sources raise.
+
+    Loudly, and on purpose. A default would let a fourth source ship carrying whichever
+    answer was convenient, and the artifact would go back to claiming a verifiability it does
+    not have -- which is the defect this exists to close.
+    """
+    if source not in PROVENANCE:
+        raise KeyError(
+            f"{source!r} can price a prediction and is not classified. Say whether a reader "
+            f"can obtain it, in `schedule.PROVENANCE`.")
+    return PROVENANCE[source]

@@ -19,6 +19,25 @@ Nothing else you can do for free carries that much credibility.
 The Sunday Actions job must run and commit before the earliest kickoff, not on a "sometime
 Sunday" cron. Set it early and accept the slack.
 
+### What this does and does not prove
+
+The commit proves *when*. It does not prove *from what*, and the two are worth keeping apart.
+
+Every prediction carries the market number it was priced from, which source that was, and --
+for a dated snapshot -- when that snapshot was captured. A reader can see all of it. What a
+reader cannot currently do is fetch the input back and check it independently, and the reason
+differs by source:
+
+* a **snapshot** is immutable, and unpublished. `.gitignore` excludes the processed store as
+  redistributed third-party data the repo cannot publish.
+* the **moving field** is published, and has moved. nflverse keeps one current `spread_line`
+  per game and no history, so the lookahead value is gone.
+
+So the record is checkable on its timestamp and corroborable on neither of its inputs. That is
+stated in every weekly artifact, under `provenance`, rather than left for a reader to discover.
+Publishing a derived per-game summary of the snapshots would change the first of those; nothing
+changes the second.
+
 ## 2. The page is generated, never edited
 
 `hub.publish --track-record` reads `data/processed/preds/**/*.parquet` and regenerates the whole

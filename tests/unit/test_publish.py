@@ -379,3 +379,51 @@ def test_the_track_record_scores_each_game_once(site, base, monkeypatch):
     monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
         {"game_id": ["g1"], "result": [7]}))
     assert publish.track_record(base=base, out=site)["n_scored"] == 1
+
+
+# --- what a reader of the published record can check ------------------------
+
+def _priced(rows, source="snapshot", week=1):
+    return _preds(rows, week=week).with_columns(pl.lit(source).alias("price_source"))
+
+
+def test_the_weekly_artifact_says_what_a_reader_can_obtain(site, base):
+    """`priced_at` names a snapshot on one machine. A public record has to say that."""
+    store.write(_priced([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    got = publish.predictions(2026, 1, base=base, out=site)
+    assert got is not None
+    prov = got["provenance"]
+    assert set(prov) == {"snapshot"}
+    assert prov["snapshot"]["reader_can_obtain"] is False
+    assert ".gitignore" in prov["snapshot"]["why"]
+
+
+def test_a_mixed_slate_classifies_every_source_it_used(site, base):
+    """Near weeks price from a snapshot and far ones can fall back, so one artifact carries
+    both -- and a reader needs the reason for each, not for whichever came first."""
+    store.write(_priced([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base, name="a")
+    store.write(_priced([("g2", 0.4, -1.0)], source="schedule"), "preds", "nfl", 2026, 1,
+                base=base, name="b")
+    got = publish.predictions(2026, 1, base=base, out=site)
+    assert got is not None
+    assert set(got["provenance"]) == {"snapshot", "schedule"}
+
+
+def test_nothing_a_prediction_already_carried_is_removed(site, base):
+    """This adds a qualification. A record that dropped provenance to look tidier would be
+    the opposite of the point."""
+    store.write(_priced([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    got = publish.predictions(2026, 1, base=base, out=site)
+    assert got is not None
+    row = got["rows"][0]
+    for field in ("game_id", "home_win_prob", "margin_mean", "model", "version",
+                  "predicted_at", "price_source"):
+        assert field in row
+
+
+def test_an_artifact_from_before_price_source_existed_still_publishes(site, base):
+    """The store spans schemas by design. A week written before #6 has no source to classify
+    and must not take the page down."""
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    got = publish.predictions(2026, 1, base=base, out=site)
+    assert got is not None and got["provenance"] == {}

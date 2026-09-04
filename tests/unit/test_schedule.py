@@ -112,3 +112,73 @@ def test_a_snapshot_does_not_fan_a_game_out_into_two_rows(sched, tmp_path):
     got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 7), base=tmp_path)
     assert got.height == 1
     assert got["priced_at"].to_list() == [dt.datetime(2026, 9, 6)]
+
+
+# --- what a reader can obtain, and what only this machine can ------------------
+#
+# #6 gave every prediction a `price_source` and a `priced_at` under a stated purpose: a
+# prediction that can be re-derived later from the data that produced it. Against the store on
+# this machine that citation is complete. Against the public repository it is not, and nothing
+# said so -- `data/processed/` is gitignored as redistributed third-party data the repo cannot
+# publish, so the timestamp names a file no reader can open.
+
+def test_every_source_the_rule_can_emit_is_classified():
+    """The assertion that catches the next source added.
+
+    Read off the pricing rule itself rather than off a fixture: a behavioural test only sees
+    the sources its own frame happens to exercise, so a fourth branch would ship unclassified
+    and the artifact would over-claim again.
+
+    Targeted at the branch chain -- the literals handed to `.then(pl.lit(...))` -- rather than
+    at every string in the function. My first version was a denylist of column names, which
+    would have failed the day someone added a column and taught the next reader to edit the
+    exclusion list instead of the classification.
+    """
+    import ast
+    import inspect
+
+    emitted = set()
+    for node in ast.walk(ast.parse(inspect.getsource(schedule.priced_games))):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "then" and node.args):
+            continue
+        arg = node.args[0]
+        if (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
+                and arg.func.attr == "lit" and arg.args
+                and isinstance(arg.args[0], ast.Constant)
+                and isinstance(arg.args[0].value, str)):
+            emitted.add(arg.args[0].value)
+
+    assert emitted == {"snapshot", "schedule"}, (
+        f"the branch chain now emits {sorted(emitted)}; this test reads the rule and the "
+        f"rule has changed shape")
+    unclassified = emitted - set(schedule.PROVENANCE)
+    assert not unclassified, (
+        f"{sorted(unclassified)} can price a prediction and nothing says whether a reader "
+        f"can obtain it. Classify it in `schedule.PROVENANCE`.")
+
+
+def test_an_unclassified_source_is_a_loud_failure_not_a_default():
+    """A convenient default is how the artifact comes to over-claim quietly."""
+    with pytest.raises(KeyError, match="consensus"):
+        schedule.provenance("consensus")
+
+
+def test_neither_source_is_obtainable_by_a_reader_today_and_for_different_reasons():
+    """The finding worth publishing, and it is not the one the ticket assumed. A snapshot is
+    immutable and unpublished; the moving field is published and has since moved. Both fail
+    re-derivation, and the *reason* is what tells a reader which could change."""
+    snap, sched = schedule.provenance("snapshot"), schedule.provenance("schedule")
+    assert not snap.reader_can_obtain and not sched.reader_can_obtain
+    assert snap.why != sched.why
+    assert "publish" in snap.why and "moved" in sched.why
+
+
+def test_the_reason_cites_the_constraint_rather_than_restating_it():
+    """A future reader has to be able to tell a licence constraint from an oversight."""
+    assert ".gitignore" in schedule.provenance("snapshot").why
+
+
+def test_the_classification_is_data_a_caller_can_serialise():
+    got = schedule.provenance("snapshot")
+    assert isinstance(got.reader_can_obtain, bool) and isinstance(got.why, str)
