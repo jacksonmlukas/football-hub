@@ -1,7 +1,7 @@
 {
   "name": "roster",
   "source": "roster.parquet",
-  "generated_at": "2026-09-04T23:12:03+00:00",
+  "generated_at": "2026-09-04T23:31:13+00:00",
   "n": 16,
   "rows": [
     {
@@ -131,6 +131,20 @@
       "missing_games": 0
     },
     {
+      "player": "MarShawn Lloyd",
+      "pos": "RB",
+      "nfl_team": "GB",
+      "mu": 8.981190476190477,
+      "sd": 6.203507320172079,
+      "projected": true,
+      "starting": true,
+      "best_start": true,
+      "injury_status": "ACTIVE",
+      "available": true,
+      "can_start": true,
+      "missing_games": 0
+    },
+    {
       "player": "Bhayshul Tuten",
       "pos": "RB",
       "nfl_team": "JAX",
@@ -138,7 +152,7 @@
       "sd": 6.134067013409618,
       "projected": true,
       "starting": true,
-      "best_start": true,
+      "best_start": false,
       "injury_status": "QUESTIONABLE",
       "available": true,
       "can_start": true,
@@ -148,8 +162,8 @@
       "player": "Denzel Boston",
       "pos": "WR",
       "nfl_team": "CLE",
-      "mu": 8.735232776654966,
-      "sd": 6.295305996089937,
+      "mu": 8.589073468391506,
+      "sd": 6.24241679309748,
       "projected": true,
       "starting": false,
       "best_start": false,
@@ -166,20 +180,6 @@
       "sd": 6.213737305358185,
       "projected": true,
       "starting": false,
-      "best_start": false,
-      "injury_status": "ACTIVE",
-      "available": true,
-      "can_start": true,
-      "missing_games": 0
-    },
-    {
-      "player": "MarShawn Lloyd",
-      "pos": "RB",
-      "nfl_team": "GB",
-      "mu": 7.0458823529411765,
-      "sd": 5.494624763722964,
-      "projected": true,
-      "starting": true,
       "best_start": false,
       "injury_status": "ACTIVE",
       "available": true,
@@ -229,9 +229,9 @@
       "missing_games": 0
     }
   ],
-  "set_total": 103.49517647058825,
-  "optimal_total": 106.77548459383753,
-  "gain": 3.2803081232492843,
+  "set_total": 105.43048459383755,
+  "optimal_total": 106.97542507002801,
+  "gain": 1.5449404761904617,
   "withheld": [
     "Josh Jacobs"
   ],
@@ -239,6 +239,6 @@
     "Jonathon Brooks"
   ],
   "sit": [
-    "MarShawn Lloyd"
+    "Bhayshul Tuten"
   ]
 }
