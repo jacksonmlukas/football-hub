@@ -59,7 +59,10 @@ from hub.draft.state import DraftState
 from hub.league import REG_SEASON_WEEKS
 from hub.models.experiment import (
     BOOTSTRAP,  # noqa: F401 -- re-exported: tests reach it as `bt.BOOTSTRAP`
+    Actions,
+    gate,
     paired_report,
+    per_season,
     realised_ppg,  # noqa: F401 -- same
     summarise,
     walk_forward_inputs,
@@ -376,16 +379,26 @@ def correction_tripwire(board: pl.DataFrame, clamp_frac: float | None = None) ->
     return bad
 
 
-def verdict(summary: dict[str, float]) -> str:
-    """The pre-registered action, read off the interval. Fixed before the numbers."""
-    if summary["lo"] > 0:
-        return ("PROMOTE: championship equity returns to the headline, and P1 (break the "
-                "circularity) fires.")
-    if summary["hi"] < 0:
-        return ("REMOVE: championship equity leaves the draft-night output. A tiebreaker "
-                "measurably worse than the market steers close calls the wrong way.")
-    return ("NO CHANGE: the market leads and equity stays a tiebreaker. Absence of "
-            "evidence, not evidence of equivalence.")
+# The pre-registered actions, fixed before the numbers. The rule that chooses between them
+# is `experiment.gate` -- one implementation, ADR-0019 -- and these are the three sentences
+# only this gate can write.
+ACTIONS = Actions(
+    adopt="PROMOTE: championship equity returns to the headline, and P1 (break the "
+          "circularity) fires.",
+    remove="REMOVE: championship equity leaves the draft-night output. A tiebreaker "
+           "measurably worse than the market steers close calls the wrong way.",
+    show="NO CHANGE: the market leads and equity stays a tiebreaker.")
+
+
+def verdict(summary: dict[str, float], seasons: pl.DataFrame) -> tuple[str, str]:
+    """The pre-registered action, read off the interval *and* the seasons.
+
+    The every-season half is new here and was not a choice this gate made -- it adopted on
+    the pooled interval alone because the rule lived in three places and only one of them had
+    been corrected. See ADR-0019. It does not move what ADR-0009 recorded: equity lost in all
+    four seasons with an interval well below zero, which is REMOVE under either form.
+    """
+    return gate(summary, seasons, ACTIONS)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -498,7 +511,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     for line in paired_report(s, arm_a="optimizer", arm_b="market"):
         print(line)
-    print(f"\n  {verdict(s)}")
+    print(f"\n  {verdict(s, per_season(paired))[1]}")
     print("\n  Limitations, fixed before the run:")
     for line in LIMITATIONS:
         print(f"    - {line}")

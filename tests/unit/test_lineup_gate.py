@@ -22,24 +22,44 @@ def _realised(rows):
                         schema={"player": pl.Utf8, "week": pl.Int64, "points": pl.Float64})
 
 
-# --- the pre-registered rule, as executable code --------------------------
+# --- the pre-registered actions, and that they are wired to the shared rule ------
+#
+# The three branches themselves -- including the boundary where an interval endpoint is
+# exactly zero -- are tested once in `test_experiment.py`, because there is one rule now
+# (ADR-0019). What is this gate's own is which sentence each branch produces.
 
-def test_an_interval_above_zero_trusts_the_optimiser():
-    assert lg.verdict({"lo": 0.5, "hi": 3.0}).startswith("TRUST")
+def _yrs(gains):
+    return pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
+                         "gain": [float(g) for g in gains], "n": [10] * len(gains)})
+
+
+def _sum(lo, hi):
+    return {"n": 80.0, "clusters": 80.0, "mean": (lo + hi) / 2, "lo": lo, "hi": hi,
+            "p_better": 0.5}
+
+
+def test_an_interval_above_zero_in_every_season_trusts_the_optimiser():
+    status, said = lg.verdict(_sum(0.5, 3.0), _yrs([0.4, 0.6, 0.9]))
+    assert status == "ADOPT" and said.startswith("TRUST")
 
 
 def test_an_interval_containing_zero_says_start_your_projections():
     """The likely branch, and it has an action rather than being a disappointment."""
-    assert lg.verdict({"lo": -1.0, "hi": 2.0}).startswith("START YOUR PROJECTIONS")
+    status, said = lg.verdict(_sum(-1.0, 2.0), _yrs([0.4, -0.6, 0.9]))
+    assert status == "SHOW" and said.startswith("START YOUR PROJECTIONS")
 
 
-def test_an_interval_below_zero_removes_it():
+def test_an_interval_below_zero_in_every_season_removes_it():
     """Evidence demotes as well as promotes -- the asymmetry P0's rule originally lacked."""
-    assert lg.verdict({"lo": -3.0, "hi": -0.5}).startswith("REMOVE")
+    status, said = lg.verdict(_sum(-3.0, -0.5), _yrs([-0.4, -0.6, -0.9]))
+    assert status == "REMOVE" and said.startswith("REMOVE")
 
 
-def test_touching_zero_has_not_excluded_it():
-    assert lg.verdict({"lo": 0.0, "hi": 3.0}).startswith("START YOUR PROJECTIONS")
+def test_adr_0012s_own_numbers_still_read_as_start_your_projections():
+    """Regression on the recorded result: +0.00, CI [-0.00, +0.00] over four seasons.
+    Unifying the rule tightened this gate, and it must not have moved what it published."""
+    status, said = lg.verdict(_sum(-0.00, 0.00), _yrs([0.0, 0.0, 0.0, 0.0]))
+    assert status == "SHOW" and said.startswith("START YOUR PROJECTIONS")
 
 
 # --- the two arms ---------------------------------------------------------

@@ -38,7 +38,14 @@ import polars as pl
 
 from hub.draft.board import board_as_of
 from hub.league import REG_SEASON_WEEKS, starting_lineup
-from hub.models.experiment import paired_report, summarise, walk_forward_inputs
+from hub.models.experiment import (
+    Actions,
+    gate,
+    paired_report,
+    per_season,
+    summarise,
+    walk_forward_inputs,
+)
 from hub.names import player_key
 
 # What the optimiser is assumed to be playing against each week. The league's own weekly team
@@ -134,16 +141,23 @@ def compare(rosters: dict[int, list[Roster]], realised: dict[int, pl.DataFrame],
     return out.with_columns((pl.col("optimiser") - pl.col("projection")).alias("diff"))
 
 
-def verdict(summary: dict[str, float]) -> str:
-    """The pre-registered action, read off the interval. Fixed before the numbers."""
-    if summary["lo"] > 0:
-        return ("TRUST: accounting for variance beats sorting on projection alone. The "
-                "optimiser sets the lineup.")
-    if summary["hi"] < 0:
-        return ("REMOVE: the optimiser is worse than sorting on projection. Enumerating "
-                "every legal lineup to maximise a win probability actively costs points.")
-    return ("START YOUR PROJECTIONS: variance-awareness buys nothing detectable. Absence "
-            "of evidence, not evidence of equivalence.")
+# The pre-registered actions, fixed before the numbers and quoted in this module's own
+# docstring above. The rule choosing between them is `experiment.gate` -- ADR-0019.
+ACTIONS = Actions(
+    adopt="TRUST: accounting for variance beats sorting on projection alone. The optimiser "
+          "sets the lineup.",
+    remove="REMOVE: the optimiser is worse than sorting on projection. Enumerating every "
+           "legal lineup to maximise a win probability actively costs points.",
+    show="START YOUR PROJECTIONS: variance-awareness buys nothing detectable.")
+
+
+def verdict(summary: dict[str, float], seasons: pl.DataFrame) -> tuple[str, str]:
+    """The pre-registered action, read off the interval *and* the seasons.
+
+    The every-season half is new and does not move what ADR-0012 recorded: that interval is
+    [-0.00, +0.00], which contains zero and is the middle branch under either form.
+    """
+    return gate(summary, seasons, ACTIONS)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -206,7 +220,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     for line in paired_report(s, arm_a="optimiser", arm_b="projections",
                               unit="points per game"):
         print(line)
-    print(f"\n  {verdict(s)}")
+    print(f"\n  {verdict(s, per_season(paired))[1]}")
     print("\n  Both arms see only projections. The optimiser's sole advantage is that it")
     print("  reads `sd` as well as `mu`, so it can start upside when the matchup wants it.")
     print("  Limitation: projections are static across the season, because weekly historical")

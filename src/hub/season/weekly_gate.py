@@ -48,7 +48,7 @@ import polars as pl
 
 from hub.config import FANTASY_WEEKS
 from hub.league import STARTERS, starting_lineup
-from hub.models.experiment import paired_report, summarise
+from hub.models.experiment import Actions, gate, paired_report, per_season, summarise
 
 # The fantasy regular season. 15-17 is the playoffs, reported apart; 18 is meaningless.
 GATE_WEEKS = FANTASY_WEEKS
@@ -221,45 +221,38 @@ def compare(g: GateInputs, *, weeks: Sequence[int] = GATE_WEEKS, churn: bool = F
     return out.with_columns((pl.col("weekly") - pl.col("consensus")).alias("diff"))
 
 
-def per_season(paired: pl.DataFrame) -> pl.DataFrame:
-    """Mean difference per held-out season -- the every-season half of the bar."""
-    return (paired.group_by("season")
-                  .agg(pl.col("diff").mean().alias("gain"), pl.len().alias("n"))
-                  .sort("season"))
+# The pre-registered actions, fixed in `docs/weekly-projection-plan.md` before this ran.
+# Asymmetric on purpose: the Weekly projection is the complicated thing and the burden sits
+# on it. The middle branch is the expected one and it carries an *action* rather than being a
+# disappointment to explain away -- the same disposition the snap trend got in ADR-0013, and
+# it was written down early precisely because "show it beside consensus" is a satisfying thing
+# to decide after seeing a near-miss.
+ACTIONS = Actions(
+    adopt="ADOPT: the Weekly projection sets lineups.",
+    remove="REMOVE: worse than a free ranking. Delete the module rather than shipping it as "
+           "an option.",
+    show="SHOW, NEVER RANK ON: printed beside consensus, never sorted on.")
 
 
 def verdict(summary: dict, seasons: pl.DataFrame,
             cover: dict[str, float] | None = None) -> tuple[str, str]:
-    """The three branches, fixed in `docs/weekly-projection-plan.md` before this ran.
+    """The three branches, plus the one precondition only this gate has.
 
-    Asymmetric on purpose: the Weekly projection is the complicated thing and the burden sits
-    on it. The middle branch is the expected one and it carries an *action* rather than being
-    a disappointment to explain away -- the same disposition the snap trend got in ADR-0013,
-    and it was written down early precisely because "show it beside consensus" is a satisfying
-    thing to decide after seeing a near-miss.
+    The branches are `experiment.gate` -- one rule for every gate in the repo, ADR-0019. This
+    gate additionally *voids*: an unmatched player is ranked last, so a join failure does not
+    add noise, it benches the incumbent's arm and biases the result toward us. That is not a
+    verdict about the arm, it is a statement that there is no verdict to read, and the floor
+    it trips at is pre-registered in `docs/weekly-projection-plan.md`.
     """
+    void = None
     if cover is not None and cover["cells"] and cover["join_failure"] > VOID_FLOOR:
-        return "VOID", (
+        void = (
             f"VOID: {cover['join_failure']:.1%} of roster-weeks are a join failure -- the "
             f"player was not on that week's consensus page and scored anyway -- against a "
             f"pre-registered floor of {VOID_FLOOR:.0%}.\n  An unmatched player is ranked "
             f"last, so this benches the incumbent's arm and biases the result toward us. "
             f"Fix the join before reading any number below.")
-    if summary["clusters"] == 0:
-        return "SHOW", "nothing measured -- no roster-week scored"
-    won = int((seasons["gain"] > 0).sum())
-    total = seasons.height
-    if summary["lo"] > 0 and won == total:
-        return "ADOPT", ("ADOPT: the Weekly projection sets lineups. It beat consensus rank in "
-                         f"every held-out season ({won}/{total}) and the interval excludes zero.")
-    if summary["hi"] < 0 and won == 0:
-        return "REMOVE", ("REMOVE: worse than a free ranking in every season. Delete the "
-                          "module rather than shipping it as an option.")
-    zero = "the interval contains zero" if summary["lo"] <= 0 <= summary["hi"] else (
-        "the interval excludes zero but the sign is not consistent across seasons")
-    return "SHOW", ("SHOW, NEVER RANK ON: printed beside consensus, never sorted on. "
-                    f"Won {won}/{total} seasons and {zero} -- absence of evidence, not "
-                    "evidence of equivalence.")
+    return gate(summary, seasons, ACTIONS, void=void)
 
 
 def coverage(g: GateInputs, weeks: Sequence[int] = GATE_WEEKS) -> dict[str, float]:

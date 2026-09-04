@@ -344,3 +344,108 @@ def test_an_unclustered_summary_still_reports_its_unit_count():
     """`clusters` is always present, so a reader never has to know which branch ran."""
     s = experiment.summarise(_clustered(), bootstrap=200, seed=1)
     assert s["clusters"] == s["n"] == 60
+
+
+# --- the Gate, which was a rule three modules each remembered --------------------
+#
+# `CONTEXT.md` defines a Gate exactly -- does this beat the simplest thing that already
+# works? -- and three modules answered it with the same three branches on a confidence
+# interval. They had already diverged: the weekly gate required the sign to hold in every
+# held-out season before adopting, the lineup gate and the draft backtest adopted on the
+# pooled interval alone. Nobody decided that.
+#
+# The drift had already cost something. `hub.models.spread`'s verdict records in its own
+# docstring that an earlier version checked the seasons alone and "would have adopted a model
+# on a gain too small to distinguish from noise". That copy was found weak and strengthened;
+# the others were never revisited, because nothing connected them.
+
+_ACTIONS = experiment.Actions(
+    adopt="ADOPT: the arm ships.",
+    remove="REMOVE: delete it.",
+    show="SHOW, NEVER RANK ON: printed beside the incumbent.")
+
+
+def _gate_seasons(gains):
+    return pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
+                         "gain": [float(g) for g in gains],
+                         "n": [10] * len(gains)})
+
+
+def _gate_summary(lo, hi, clusters=80):
+    return {"n": 800.0, "clusters": float(clusters), "mean": (lo + hi) / 2,
+            "lo": lo, "hi": hi, "p_better": 0.5}
+
+
+def test_an_interval_above_zero_in_every_season_adopts():
+    status, said = experiment.gate(_gate_summary(0.4, 1.2), _gate_seasons([0.3, 0.5, 0.9]), _ACTIONS)
+    assert status == "ADOPT"
+    assert said.startswith("ADOPT: the arm ships.")
+    assert "3/3" in said
+
+
+def test_an_interval_above_zero_that_loses_a_season_does_not_adopt():
+    """The half two of the three gates did not have, and the reason this is now one rule.
+    A pooled interval that excludes zero while one season disagrees is the shape
+    `hub.models.spread` was corrected for."""
+    status, said = experiment.gate(_gate_summary(0.1, 1.2), _gate_seasons([0.3, -0.2, 0.9]), _ACTIONS)
+    assert status == "SHOW"
+    assert "2/3" in said
+
+
+def test_an_interval_below_zero_in_every_season_removes():
+    status, said = experiment.gate(_gate_summary(-1.2, -0.4), _gate_seasons([-0.3, -0.5, -0.9]),
+                                   _ACTIONS)
+    assert status == "REMOVE"
+    assert said.startswith("REMOVE: delete it.")
+
+
+def test_an_interval_below_zero_that_wins_a_season_does_not_remove():
+    status, _ = experiment.gate(_gate_summary(-1.2, -0.1), _gate_seasons([-0.3, 0.2, -0.9]), _ACTIONS)
+    assert status == "SHOW"
+
+
+def test_an_interval_containing_zero_shows():
+    status, said = experiment.gate(_gate_summary(-0.4, 0.9), _gate_seasons([0.3, -0.2, 0.9]), _ACTIONS)
+    assert status == "SHOW"
+    assert "absence of evidence" in said
+
+
+def test_an_endpoint_of_exactly_zero_is_not_an_exclusion():
+    """The boundary. A bootstrap that lands on zero has not excluded it, and
+    ADR-0012's published interval is [-0.00, +0.00]."""
+    assert experiment.gate(_gate_summary(0.0, 1.2), _gate_seasons([0.3, 0.5]), _ACTIONS)[0] == "SHOW"
+    assert experiment.gate(_gate_summary(-1.2, 0.0), _gate_seasons([-0.3, -0.5]), _ACTIONS)[0] == "SHOW"
+
+
+def test_nothing_measured_shows_rather_than_adopting_on_an_empty_interval():
+    status, said = experiment.gate(_gate_summary(float("nan"), float("nan"), clusters=0),
+                                   _gate_seasons([]), _ACTIONS)
+    assert status == "SHOW"
+    assert "Nothing measured" in said
+
+
+def test_a_void_condition_preempts_every_branch():
+    """A gate whose inputs are broken has no verdict to read. The condition itself is the
+    caller's -- the weekly gate voids on a join-failure rate -- and the gate honours it
+    rather than deciding what counts as broken."""
+    status, said = experiment.gate(_gate_summary(0.4, 1.2), _gate_seasons([0.3, 0.5]), _ACTIONS,
+                                   void="VOID: 4.0% of roster-weeks are a join failure.")
+    assert status == "VOID"
+    assert said.startswith("VOID:")
+
+
+# --- the published verdicts must still fall out of the unified rule ------------
+
+@pytest.mark.parametrize("what,lo,hi,gains,expected", [
+    # ADR-0009: equity vs the market, n=80, losing in all four seasons.
+    ("ADR-0009 championship equity", -23.16, -16.20, [-19.0, -21.0, -18.0, -20.0], "REMOVE"),
+    # ADR-0012: the lineup optimiser, an interval that is zero to two places both ways.
+    ("ADR-0012 lineup optimiser", -0.00, 0.00, [0.0, 0.0, 0.0, 0.0], "SHOW"),
+    # The frozen weekly gate: +0.215, CI [-0.242, +0.684], three seasons of four.
+    ("weekly gate", -0.242, 0.684, [0.4, 0.3, -0.2, 0.5], "SHOW"),
+])
+def test_the_recorded_verdicts_reproduce(what, lo, hi, gains, expected):
+    """Unifying the rule tightened two of the three gates. If that had flipped a published
+    decision it would be a different change entirely, so it is checked rather than hoped."""
+    got = experiment.gate(_gate_summary(lo, hi), _gate_seasons(gains), _ACTIONS)[0]
+    assert got == expected, f"{what} moved to {got}"

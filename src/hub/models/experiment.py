@@ -263,3 +263,66 @@ def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
             "lo": float(np.percentile(draws, 2.5)),
             "hi": float(np.percentile(draws, 97.5)),
             "p_better": float((draws > 0).mean())}
+
+
+# --- the Gate ---------------------------------------------------------------
+
+class Actions(NamedTuple):
+    """What a gate does with each verdict, in that gate's own words.
+
+    The rule below is shared; these are not. "The optimiser sets your Week 1 lineup" and
+    "championship equity returns to the headline" are different actions and have to read that
+    way, so each gate supplies its three sentences and the rule supplies the evidence.
+    """
+    adopt: str
+    remove: str
+    show: str
+
+
+def per_season(paired: pl.DataFrame) -> pl.DataFrame:
+    """Mean paired difference per held-out season -- the every-season half of the bar."""
+    return (paired.group_by("season")
+                  .agg(pl.col("diff").mean().alias("gain"), pl.len().alias("n"))
+                  .sort("season"))
+
+
+def gate(summary: dict, seasons: pl.DataFrame, actions: Actions,
+         *, void: str | None = None) -> tuple[str, str]:
+    """Did this beat the simplest thing that already works? The rule, in one place.
+
+    `CONTEXT.md` defines a **Gate** as exactly that question, and three modules answered it
+    with three copies of these branches. They had diverged: the weekly gate required the sign
+    to hold in every held-out season, the lineup gate and the draft backtest adopted on the
+    pooled interval alone. Nobody chose that.
+
+    **Both halves are required, and that is ADR-0019.**
+    An interval excluding zero says the pooled effect is unlikely to be noise; it says nothing
+    about whether one lucky season carried it. `hub.models.spread` had already been bitten:
+    its verdict's own docstring records that an earlier version checked the seasons alone and
+    "would have adopted a model on a gain too small to distinguish from noise". That copy was
+    strengthened and the others were not, because nothing connected them.
+
+    The asymmetry is deliberate and pre-registered in every plan that uses this: the arm under
+    test is the complicated thing and the burden sits on it. The middle branch therefore
+    carries an *action* rather than being a disappointment to explain away.
+
+    `void` is the caller's own precondition, already phrased -- the weekly gate voids above a
+    join-failure rate. A gate whose inputs are broken has no verdict to read, and what counts
+    as broken is specific to the gate, so this honours the condition rather than defining it.
+    """
+    if void:
+        return "VOID", void
+    if not summary.get("clusters"):
+        return "SHOW", f"{actions.show} Nothing measured -- no paired observation."
+    won = int((seasons["gain"] > 0).sum())
+    total = seasons.height
+    if summary["lo"] > 0 and won == total:
+        return "ADOPT", (f"{actions.adopt} It won in every held-out season ({won}/{total}) "
+                         f"and the interval excludes zero.")
+    if summary["hi"] < 0 and won == 0:
+        return "REMOVE", (f"{actions.remove} Worse in every held-out season ({total}/{total}) "
+                          f"and the interval excludes zero.")
+    why = ("the interval contains zero" if summary["lo"] <= 0 <= summary["hi"]
+           else "the interval excludes zero but the sign is not consistent across seasons")
+    return "SHOW", (f"{actions.show} Won {won}/{total} seasons and {why} -- absence of "
+                    f"evidence, not evidence of equivalence.")

@@ -19,31 +19,50 @@ from hub.names import player_key
 # The most valuable assertions in this file. The rule was fixed before the numbers; these
 # make it impossible to quietly reinterpret afterwards.
 
-def test_an_interval_above_zero_promotes_equity():
-    assert bt.verdict({"lo": 0.4, "hi": 3.0}).startswith("PROMOTE")
+# The three branches, and the boundary where an interval endpoint is exactly zero, are
+# tested once in `test_experiment.py` -- there is one rule now (ADR-0019). What is this
+# gate's own is which sentence each branch produces, and that its record still reads the same.
+
+def _yrs(gains):
+    return pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
+                         "gain": [float(g) for g in gains], "n": [10] * len(gains)})
 
 
-def test_an_interval_below_zero_removes_equity():
+def _sum(lo, hi):
+    return {"n": 80.0, "clusters": 80.0, "mean": (lo + hi) / 2, "lo": lo, "hi": hi,
+            "p_better": 0.5}
+
+
+def test_an_interval_above_zero_in_every_season_promotes_equity():
+    status, said = bt.verdict(_sum(0.4, 3.0), _yrs([0.5, 1.2, 0.9]))
+    assert status == "ADOPT" and said.startswith("PROMOTE")
+
+
+def test_an_interval_below_zero_in_every_season_removes_equity():
     """Evidence demotes as well as promotes. A rule that only ever promotes is
     'heads I win, tails nothing changes'."""
-    assert bt.verdict({"lo": -3.0, "hi": -0.4}).startswith("REMOVE")
+    status, said = bt.verdict(_sum(-3.0, -0.4), _yrs([-0.5, -1.2, -0.9]))
+    assert status == "REMOVE" and said.startswith("REMOVE")
 
 
 def test_an_interval_containing_zero_changes_nothing():
     """The branch P0 landed on, and the one worth pre-registering: a null has an action
     rather than being a disappointment to explain away."""
-    assert bt.verdict({"lo": -3.64, "hi": 3.58}).startswith("NO CHANGE")
-
-
-def test_touching_zero_is_not_excluding_zero():
-    """An interval whose bound sits exactly on zero has not excluded it."""
-    assert bt.verdict({"lo": 0.0, "hi": 3.0}).startswith("NO CHANGE")
-    assert bt.verdict({"lo": -3.0, "hi": 0.0}).startswith("NO CHANGE")
+    status, said = bt.verdict(_sum(-3.64, 3.58), _yrs([0.5, -1.2, 0.9]))
+    assert status == "SHOW" and said.startswith("NO CHANGE")
 
 
 def test_p0s_own_numbers_still_read_as_no_change():
     """Regression on the historical result: +0.04, [-3.64, +3.58], n=36."""
-    assert bt.verdict({"lo": -3.64, "hi": 3.58, "mean": 0.04}).startswith("NO CHANGE")
+    status, said = bt.verdict(_sum(-3.64, 3.58), _yrs([0.4, -0.3, 0.1]))
+    assert status == "SHOW" and said.startswith("NO CHANGE")
+
+
+def test_adr_0009s_own_numbers_still_remove_equity():
+    """The published decision: -19.66, CI [-23.16, -16.20], losing in all four seasons.
+    Unifying the rule tightened this gate, and it must not have moved what it published."""
+    status, said = bt.verdict(_sum(-23.16, -16.20), _yrs([-19.0, -21.0, -18.0, -20.0]))
+    assert status == "REMOVE" and said.startswith("REMOVE")
 
 
 # --- the paired bootstrap --------------------------------------------------
