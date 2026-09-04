@@ -21,6 +21,7 @@ import requests
 
 from hub import jsonio
 from hub.config import SEASON_AHEAD
+from hub.contracts import ESPN_SCOREBOARD
 
 CACHE = Path(__file__).resolve().parents[3] / "data" / "raw" / "espn"
 CACHE.mkdir(parents=True, exist_ok=True)
@@ -71,6 +72,14 @@ def summary(event_id: str, league: str = "nfl") -> dict:
     return _get(f"{LEAGUE_PATHS[league]}/summary", {"event": event_id}, f"sum_{event_id}")
 
 
+# The three columns the contract types. Given explicitly because a scoreboard with no games
+# in progress carries all-null `possession` and `down_distance`, and polars infers those as
+# `Null` -- which is its own dtype family and matches nothing, exactly the case `_family` was
+# written for.
+SCOREBOARD_TYPES: dict[str, Any] = {"id": pl.Utf8, "state": pl.Utf8, "home": pl.Utf8,
+                                    "away": pl.Utf8}
+
+
 def _sides(competitors: list[dict]) -> tuple[dict, dict] | None:
     """The home and away competitors, by the field that names them.
 
@@ -119,6 +128,14 @@ def live_state(league: str = "nfl") -> list[dict]:
     if unnamed:
         print(f"  live: {len(unnamed)} event(s) did not name home and away and are absent "
               f"from the overlay: {', '.join(unnamed)}")
+    # Asserted at the boundary. This endpoint is undocumented and is now read unattended every
+    # ten minutes through a game window, so drift -- a renamed field, a null where there was
+    # never one, duplicated ids -- has to fail here rather than reach the page. Both callers
+    # already degrade on an exception: `publish.live` keeps last-good, `poll` serves stale.
+    # Typed even when empty: `pl.DataFrame([])` has no columns at all, and a contract cannot
+    # tell "no games today" from "every field is gone" without them.
+    ESPN_SCOREBOARD.validate(pl.DataFrame(out, schema_overrides=SCOREBOARD_TYPES) if out
+                             else pl.DataFrame(schema=SCOREBOARD_TYPES))
     return out
 
 

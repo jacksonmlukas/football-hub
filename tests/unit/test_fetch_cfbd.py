@@ -37,6 +37,14 @@ def paths(tmp_path):
     return {"cache": tmp_path / "cache", "quota": tmp_path / "quota.json"}
 
 
+# The shape `contracts.CFBD_GAMES` and `CFBD_LINES` declare. Note what this fixture is and
+# is not: both contracts were written from documentation and have never met a live response,
+# so a fixture matching them confirms the *plumbing*, not the declaration. The first real
+# response is what decides whether the guess was right, which is why both carry
+# `verified_against_live=False` and say so when they fail.
+_GAME = {"id": 1, "season": 2026, "week": 1, "homeTeam": "Cal", "awayTeam": "Stanford"}
+
+
 @pytest.fixture
 def transport(monkeypatch):
     """Records every call the module would have made."""
@@ -45,7 +53,7 @@ def transport(monkeypatch):
     def _install(payload=None):
         def _fake(path, params, key):
             calls.append((path, dict(params)))
-            return payload if payload is not None else [{"id": 1, "week": 1}]
+            return payload if payload is not None else [_GAME]
         monkeypatch.setattr(cfbd, "_http_get", _fake)
         monkeypatch.setattr(cfbd, "_api_key", lambda: "test-key")
         return calls

@@ -36,6 +36,7 @@ from typing import Any
 import polars as pl
 
 from hub.config import SEASON_AHEAD
+from hub.contracts import CFBD_GAMES, CFBD_LINES, Contract
 
 ROOT = Path(__file__).resolve().parents[3]
 CACHE = ROOT / "data" / "raw" / "cfbd"
@@ -211,6 +212,12 @@ def bulk(endpoint: str, year: int, week: int | None = None, *,
     return df
 
 
+# Endpoint to contract. Neither of these has ever met a live response -- there was no CFBD
+# key on the machine they were written on -- so both carry `verified_against_live=False` and
+# a first failure should be read as "the declaration was a guess" before "the source broke".
+CONTRACTS: dict[str, Contract] = {"games": CFBD_GAMES, "lines": CFBD_LINES}
+
+
 def week(year: int, week_no: int, *, cache: Path | None = None,
          quota_path: Path | None = None) -> dict[str, pl.DataFrame]:
     """The documented weekly slate: games, lines, box scores. Three calls, not 408."""
@@ -218,6 +225,10 @@ def week(year: int, week_no: int, *, cache: Path | None = None,
     print(f"  CFBD week {week_no}, {year}")
     for endpoint in WEEKLY:
         df = bulk(endpoint, year, week_no, cache=cache, quota_path=quota_path)
+        # A registry rather than a branch, and the same shape `hub.fetch.nflverse` uses:
+        # `box` has no declared contract and is not being given a weak one to fill the row.
+        if (contract := CONTRACTS.get(endpoint)) is not None:
+            contract.validate(df)
         out[endpoint] = df
         print(f"    {endpoint:<14} {df.height:>6,} rows | {len(df.columns):>3} cols")
     print(f"  quota: {quota_used(quota_path):,} of {FREE_TIER_MONTHLY:,} this month")

@@ -37,6 +37,7 @@ import polars as pl
 
 from hub import store
 from hub.config import SEASON_AHEAD
+from hub.contracts import ODDS_SNAPSHOT
 
 ROOT = Path(__file__).resolve().parents[3]
 STATE = ROOT / "data" / "raw" / "odds" / "state.json"
@@ -258,6 +259,10 @@ def snapshot(season: int = SEASON_AHEAD, *, markets: str = MARKET, regions: str 
                                     "captured_at": pl.Datetime, "week": pl.Int64})
     for wk in sorted(set(df["week"].to_list())):
         part = df.filter(pl.col("week") == wk).drop("week")
+        # Asserted on what is stored, which is where the boundary is. Validating the whole
+        # pull instead would fail `min_rows` on a pull that matched nothing -- and a pull
+        # matching nothing writes nothing, so there is no partition to be wrong about.
+        ODDS_SNAPSHOT.validate(part)
         # Snapshots append. A fixed name would overwrite the morning's line with the
         # afternoon's and leave the as-of join nothing to resolve.
         store.write(part, "lines", "nfl", season, wk, base=base,

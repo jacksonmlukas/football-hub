@@ -50,6 +50,11 @@ class Contract:
     unique: tuple[str, ...] = ()
     ranges: dict[str, tuple[float, float]] = field(default_factory=dict)
     min_rows: int = 1
+    # Whether this declaration has ever been checked against a real response. Two were
+    # written from documentation and never run, so their first failure is as likely to mean
+    # "the guess was wrong" as "the source broke" -- and a red build should say which is the
+    # likelier suspect rather than leaving the reader to work it out.
+    verified_against_live: bool = True
 
     def validate(self, df: pl.DataFrame) -> pl.DataFrame:
         problems = []
@@ -80,7 +85,10 @@ class Contract:
                 if mn is not None and (cast(float, mn) < lo or cast(float, mx) > hi):
                     problems.append(f"{c} range [{mn}, {mx}] outside [{lo}, {hi}]")
         if problems:
-            raise ContractViolation(f"{self.name}: " + "; ".join(problems))
+            note = "" if self.verified_against_live else (
+                ". NOTE: this contract was written from documentation and has never been "
+                "checked against a live response -- suspect the declaration before the source")
+            raise ContractViolation(f"{self.name}: " + "; ".join(problems) + note)
         return df
 
 
@@ -189,6 +197,9 @@ CFBD_GAMES = Contract(
     # CFB runs longer than the NFL: 15 regular-season weeks plus postseason.
     ranges={"week": (1, 20), "homePoints": (0, 120), "awayPoints": (0, 120)},
     min_rows=1,
+    # No CFBD key on the machine this was written on, so the shape below is read off
+    # the documentation rather than off a response. See `verified_against_live`.
+    verified_against_live=False,
 )
 
 CFBD_LINES = Contract(
@@ -200,6 +211,9 @@ CFBD_LINES = Contract(
     # College spreads reach much further than NFL ones -- 50+ happens in September.
     ranges={"week": (1, 20)},
     min_rows=1,
+    # No CFBD key on the machine this was written on, so the shape below is read off
+    # the documentation rather than off a response. See `verified_against_live`.
+    verified_against_live=False,
 )
 
 ODDS_SNAPSHOT = Contract(
@@ -218,5 +232,8 @@ ESPN_SCOREBOARD = Contract(
     required={"id": pl.Utf8, "state": pl.Utf8, "home": pl.Utf8, "away": pl.Utf8},
     non_null=("id", "state", "home", "away"),
     unique=("id",),
-    min_rows=1,
+    # Zero games is a fact about the day, not a broken scoreboard -- there is no NFL slate in
+    # February and the deploy runs all year. `min_rows=1` here asserted that a game is always
+    # on, which is the declaration being wrong rather than the source; found by applying it.
+    min_rows=0,
 )
