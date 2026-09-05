@@ -13,15 +13,25 @@ never revisited.
 
 So the enforcing piece is not the four call sites -- it is this, which makes a fifth inert
 contract impossible to add without someone deciding not to.
+
+The second half of the file asks the other question a declaration makes: not "is this applied
+anywhere" but "has it ever met the thing it describes". `verified_against_live` records that,
+and the only assertion on it was that the attribute is a `bool` -- on a field declared
+`bool = True`. Flipping both CFBD contracts to `True`, which erases the entire distinction the
+field exists to record, left all twenty tests here green. Measured on 2026-09-05.
 """
 import ast
+import functools
 import pathlib
 
+import polars as pl
 import pytest
 
 from hub import contracts
 
 SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
+TESTS = pathlib.Path(__file__).resolve().parents[1]
+FIXTURES = TESTS / "golden" / "fixtures"
 
 
 def _declared() -> set[str]:
@@ -237,5 +247,266 @@ def test_an_unresolvable_receiver_counts_for_nothing_rather_than_everything():
 def test_each_contract_names_whether_it_has_met_real_data(name):
     """Two of these were written from documentation and have never seen a live response, so
     a first failure is as likely to mean "the guess was wrong" as "the source broke". The
-    reader of a red build should not have to work out which."""
+    reader of a red build should not have to work out which.
+
+    That the attribute is a `bool` is all this ever asserted, on a field declared
+    `bool = True`. What the flag *says* is checked below."""
     assert isinstance(getattr(contracts, name).verified_against_live, bool)
+
+
+# --- has the declaration ever met the thing it describes? ---------------------
+#
+# The flag is not asked to be true; it is asked to agree with evidence the repo already keeps.
+# Every source is frozen under `tests/golden/fixtures/`, and that directory's README calls the
+# `.synthetic` marker in a filename "not decoration": it marks a payload hand-built from docs
+# because no key for that source exists on this machine. So the question "has this contract
+# met a real response" has an answer in the tree -- which frozen payload is the contract
+# actually validated against, and was that payload captured or guessed.
+#
+# The escape hatch is the honest one and the README already prescribes it: the day a key is
+# added, the fixture is replaced with a real capture under a name without `.synthetic`, and
+# the flag follows. Renaming the file is the edit; there is no list here to keep in step.
+
+
+@functools.cache
+def _fixtures() -> dict[str, bool]:
+    """Every frozen payload, and whether it is a capture of a real response."""
+    return {p.name: ".synthetic." not in p.name for p in FIXTURES.glob("*.json")}
+
+
+def _payload_names(node: ast.AST, fixtures: dict[str, bool]) -> set[str]:
+    """The frozen payloads an expression names outright.
+
+    Matched against the files that exist rather than against a `.json` suffix, so a fixture
+    renamed out from under this reads as no evidence rather than as a capture.
+    """
+    return {n.value for n in ast.walk(node)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in fixtures}
+
+
+def _payload_bindings(scope: ast.AST, fixtures: dict[str, bool]) -> dict[str, set[str]]:
+    """Local names, and the frozen payload each one can be holding."""
+    out: dict[str, set[str]] = {}
+    for node in ast.walk(scope):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            target, value = node.targets[0].id, node.value
+        elif (isinstance(node, ast.AnnAssign) and node.value is not None
+                and isinstance(node.target, ast.Name)):
+            target, value = node.target.id, node.value
+        elif isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
+            target, value = node.target.id, node.value
+        else:
+            continue
+        if got := _payload_names(value, fixtures):
+            out.setdefault(target, set()).update(got)
+    return out
+
+
+def _receiver_contracts(recv: ast.AST, declared: set[str]) -> set[str]:
+    """Which declared contract a `.validate` receiver is, for the fixture-test forms."""
+    if isinstance(recv, ast.Name):
+        return {recv.id} & declared
+    if isinstance(recv, ast.Call):
+        # `shape_only(PBP).validate(df)`. Two of the fixture tests drop the volume floor
+        # before validating, because a fixture is a handful of rows on purpose -- so a
+        # resolver reading only a bare name finds no evidence for `PBP` or `FF_OPPORTUNITY`.
+        return {a.id for a in recv.args if isinstance(a, ast.Name)} & declared
+    return set()
+
+
+def _exercised_in(scope: ast.AST, declared: set[str],
+                  fixtures: dict[str, bool]) -> dict[str, set[str]]:
+    """Which frozen payloads each contract is validated against, within one function.
+
+    One hop from the validated expression to a local binding, and deliberately not two.
+    `test_odds_fixture_parses_to_the_lines_table_shape` is two hops -- the payload, then rows
+    built from it by hand, then a frame built from those -- and it should not count:
+    `ODDS_SNAPSHOT` describes a table this repo writes under column names it chose, so the
+    frame it validates is the parser's output rather than the shape a third party returned.
+    A hop-limit is a blunt way to draw that line, and it draws it where the evidence is.
+    """
+    bindings = _payload_bindings(scope, fixtures)
+    out: dict[str, set[str]] = {}
+    for node in ast.walk(scope):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "validate" and node.args):
+            continue
+        names = _receiver_contracts(node.func.value, declared)
+        if not names:
+            continue
+        got = _payload_names(node.args[0], fixtures)
+        if not got:                          # `df = frame("x.json"); CONTRACT.validate(df)`
+            for n in ast.walk(node.args[0]):
+                if isinstance(n, ast.Name):
+                    got |= bindings.get(n.id, set())
+        if not got:
+            continue                         # no payload behind it, so nothing to say
+        for name in names:
+            out.setdefault(name, set()).update(got)
+    return out
+
+
+@functools.cache
+def _exercised() -> dict[str, frozenset[str]]:
+    """Every contract the suite validates against a frozen payload, and which payloads.
+
+    Scoped one function at a time, which is not a detail. `df` is bound in eight functions of
+    `test_source_contracts.py` and names four different payloads across them; resolved over
+    the module as a whole, every one of those reaches every call in the file, and `CFBD_GAMES`
+    -- whose only fixture is hand-built -- comes back holding `nflverse_pbp.json` and reads as
+    verified against a real capture. Measured on the version of this that did that.
+    """
+    declared, fixtures = _declared(), _fixtures()
+    out: dict[str, set[str]] = {}
+    for path in sorted(TESTS.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for name, got in _exercised_in(node, declared, fixtures).items():
+                out.setdefault(name, set()).update(got)
+    return {name: frozenset(got) for name, got in out.items()}
+
+
+def test_the_payload_scan_finds_both_kinds_of_evidence():
+    """This half's premise. Both ends can quietly match nothing -- a moved fixture directory,
+    a renamed helper, a `.validate` reached some new way -- and a scan that resolves no
+    contract makes the two assertions below vacuously true, which is the exact defect the
+    section was added for."""
+    fixtures = _fixtures()
+    captured = sorted(n for n, real in fixtures.items() if real)
+    hand_built = sorted(n for n, real in fixtures.items() if not real)
+    assert len(captured) >= 3, f"no captured payloads under {FIXTURES}: {sorted(fixtures)}"
+    assert len(hand_built) >= 2, f"no hand-built payloads under {FIXTURES}: {sorted(fixtures)}"
+
+    seen = _exercised()
+    assert {"CFBD_GAMES", "CFBD_LINES", "PBP", "SCHEDULES"} <= set(seen), (
+        f"the scan resolved {sorted(seen)}; it has stopped seeing contracts that are "
+        f"demonstrably validated against a frozen payload in tests/contracts/")
+    assert seen["CFBD_GAMES"] == frozenset({"cfbd_games.synthetic.json"}), (
+        f"CFBD_GAMES resolved to {sorted(seen['CFBD_GAMES'])}; it should hold its own "
+        f"payload, not every payload named in the file that validates it")
+
+
+def test_a_contract_only_ever_checked_against_a_hand_built_shape_says_it_is_unverified():
+    """The flip this exists to catch. Both CFBD contracts are validated only against payloads
+    written by hand from CFBD's documentation, so `verified_against_live=True` on either is a
+    claim the tree contradicts -- and it used to be a claim nothing read."""
+    fixtures, wrong = _fixtures(), []
+    for name, seen in sorted(_exercised().items()):
+        if not any(fixtures[p] for p in seen) and getattr(contracts, name).verified_against_live:
+            wrong.append(f"{name} (checked only against {', '.join(sorted(seen))})")
+    assert not wrong, (
+        f"claims verified_against_live, but every frozen payload it is checked against was "
+        f"hand-built from documentation: {wrong}. That flag is what tells the reader of a red "
+        f"build whether to suspect the declaration or the source, so a contract that has only "
+        f"ever met a shape we guessed must say so. If a real capture now exists, replace the "
+        f"`.synthetic` fixture with it -- see tests/golden/fixtures/README.md.")
+
+
+def test_a_contract_checked_against_a_real_capture_does_not_call_itself_a_guess():
+    """The other direction, which goes stale the quieter way: a fixture gets replaced with a
+    real capture and the flag it was written to explain is left behind."""
+    fixtures, wrong = _fixtures(), []
+    for name, seen in sorted(_exercised().items()):
+        real = sorted(p for p in seen if fixtures[p])
+        if real and not getattr(contracts, name).verified_against_live:
+            wrong.append(f"{name} (checked against {', '.join(real)})")
+    assert not wrong, (
+        f"declares verified_against_live=False while a captured payload proves otherwise: "
+        f"{wrong}. Every violation from these carries a note telling the reader to suspect "
+        f"the declaration first, which sends them to the wrong suspect.")
+
+
+def test_a_violation_from_an_unverified_contract_names_the_likelier_suspect():
+    """The behaviour the flag buys, which nothing asserted. An empty frame is enough to fail
+    any of them -- what is being read is the sentence, not the failure."""
+    unverified = [n for n in sorted(_declared())
+                  if not getattr(contracts, n).verified_against_live]
+    assert unverified, ("no contract declares itself unverified, so this asserts nothing; "
+                        "both CFBD endpoints were written from documentation")
+    for name in unverified:
+        with pytest.raises(contracts.ContractViolation) as raised:
+            getattr(contracts, name).validate(pl.DataFrame())
+        assert "suspect the declaration before the source" in str(raised.value), (
+            f"{name} has never met a live response and its violation does not say so")
+
+
+def _evidence(source: str) -> dict[str, set[str]]:
+    """Run the payload resolver over a planted module. The resolver itself, not a restatement."""
+    import textwrap
+    out: dict[str, set[str]] = {}
+    for node in ast.walk(ast.parse(textwrap.dedent(source))):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            for name, got in _exercised_in(node, _declared(), _fixtures()).items():
+                out.setdefault(name, set()).update(got)
+    return out
+
+
+def test_a_hand_built_payload_is_evidence_only_of_the_documented_shape():
+    assert _evidence("""
+        from hub.contracts import CFBD_GAMES
+        def test_documented_shape():
+            CFBD_GAMES.validate(frame("cfbd_games.synthetic.json"))
+    """) == {"CFBD_GAMES": {"cfbd_games.synthetic.json"}}
+
+
+def test_a_payload_reached_through_a_local_and_a_dropped_volume_floor_still_counts():
+    """The local binding every captured source reaches its payload through, and the dropped
+    volume floor two of them add. A resolver that missed either would report those sources as
+    having no evidence at all, which constrains nothing."""
+    assert _evidence("""
+        from hub.contracts import PBP
+        def test_real_slice():
+            df = frame("nflverse_pbp.json").with_columns(pl.col("week").cast(pl.Int32))
+            shape_only(PBP).validate(df)
+    """) == {"PBP": {"nflverse_pbp.json"}}
+
+
+def test_a_payload_does_not_leak_across_the_functions_that_rebind_it():
+    """**The hole a module-wide scan opens.** `df` names four different payloads across eight
+    functions of `test_source_contracts.py`; resolved module-wide, `CFBD_GAMES` came back
+    holding the real play-by-play capture and read as verified -- the guard agreeing with the
+    flip it exists to catch."""
+    assert _evidence("""
+        from hub.contracts import CFBD_GAMES, PBP
+        def test_documented_shape():
+            df = frame("cfbd_games.synthetic.json")
+            CFBD_GAMES.validate(df)
+        def test_real_slice():
+            df = frame("nflverse_pbp.json")
+            PBP.validate(df)
+    """) == {"CFBD_GAMES": {"cfbd_games.synthetic.json"}, "PBP": {"nflverse_pbp.json"}}
+
+
+def test_a_frame_assembled_by_hand_is_not_the_payload_it_was_read_from():
+    """`ODDS_SNAPSHOT`'s columns are ones this repo chose, and the frame it validates is what
+    the parser produced from the payload rather than the payload's own shape. Counting that
+    as the contract meeting a response would be the tautology again, one indirection out."""
+    assert _evidence("""
+        from hub.contracts import ODDS_SNAPSHOT
+        def test_parses_to_the_lines_table_shape():
+            events = load("odds_spreads.synthetic.json")
+            rows = [{"game_id": "g", "close_spread": median_home_spread(e)} for e in events]
+            ODDS_SNAPSHOT.validate(pl.DataFrame(rows))
+    """) == {}
+
+
+def test_a_string_that_names_no_frozen_payload_is_not_evidence():
+    """Dropping `.synthetic` from the string is not how a contract becomes verified; the
+    fixture has to exist under that name, which means someone replaced it with a capture."""
+    assert _evidence("""
+        from hub.contracts import CFBD_GAMES
+        def test_documented_shape():
+            CFBD_GAMES.validate(frame("cfbd_games.json"))
+    """) == {}
+
+
+def test_an_unresolvable_frame_counts_for_nothing_rather_than_everything():
+    """Same rule as the half above: an indirection this cannot follow reads as no evidence,
+    which constrains nothing, rather than as evidence of whatever was nearby."""
+    assert _evidence("""
+        from hub.contracts import PBP
+        def test_real_slice(load_frame):
+            PBP.validate(load_frame("nflverse_pbp.json").pipe(reshape))
+    """) == {"PBP": {"nflverse_pbp.json"}}

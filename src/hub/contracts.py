@@ -42,6 +42,17 @@ def _family(dt: Any) -> str:
     return str(dt)
 
 
+# The sentence a violation carries when the declaration it broke has never met a response.
+# Both CFBD contracts were read off the documentation on a machine with no key, so their
+# first red build has two suspects -- the guess and the source -- and the reader should be
+# told which to open first.
+# GUARD unverified-note [contracts/test_every_contract_is_applied.py]: a guessed contract says so
+_UNVERIFIED_NOTE = (
+    ". NOTE: this contract was written from documentation and has never been "
+    "checked against a live response -- suspect the declaration before the source")
+# /GUARD
+
+
 @dataclass(frozen=True)
 class Contract:
     name: str
@@ -54,6 +65,12 @@ class Contract:
     # written from documentation and never run, so their first failure is as likely to mean
     # "the guess was wrong" as "the source broke" -- and a red build should say which is the
     # likelier suspect rather than leaving the reader to work it out.
+    #
+    # Not a free-text claim. `tests/contracts/test_every_contract_is_applied.py` resolves
+    # which frozen payload each contract is validated against and requires this flag to agree
+    # with that payload's provenance, which `tests/golden/fixtures/README.md` records in the
+    # filename. Flipping either CFBD contract to `True` fails there, by name -- until this
+    # was written, flipping both left all twenty tests in that file green.
     verified_against_live: bool = True
 
     def validate(self, df: pl.DataFrame) -> pl.DataFrame:
@@ -87,9 +104,7 @@ class Contract:
                 if mn is not None and (cast(float, mn) < lo or cast(float, mx) > hi):
                     problems.append(f"{c} range [{mn}, {mx}] outside [{lo}, {hi}]")
         if problems:
-            note = "" if self.verified_against_live else (
-                ". NOTE: this contract was written from documentation and has never been "
-                "checked against a live response -- suspect the declaration before the source")
+            note = "" if self.verified_against_live else _UNVERIFIED_NOTE
             raise ContractViolation(f"{self.name}: " + "; ".join(problems) + note)
         return df
 
