@@ -8,8 +8,10 @@ actually catch a rename.
 
 What each fixture can and cannot prove is not uniform, and it matters:
 
-  * nflverse and ESPN fixtures are **real captures**, so a passing test here means our
-    parser handles what those APIs actually returned on 2026-08-23.
+  * nflverse and ESPN fixtures are **real captures**, so a passing test here means the
+    contract holds against what those APIs actually returned on 2026-08-23. The ESPN one is
+    a *trimmed* capture -- see `_scoreboard_frame` below, which is where that costs
+    something.
   * CFBD and Odds fixtures are **hand-built**, because neither key exists on this machine.
     They prove the parser handles the shape we *believe* is returned. A synthetic fixture
     cannot catch a rename, which is the whole reason contracts exist -- so those two
@@ -28,6 +30,7 @@ import pytest
 from hub.contracts import (
     CFBD_GAMES,
     CFBD_LINES,
+    ESPN_SCOREBOARD,
     FF_OPPORTUNITY,
     ODDS_SNAPSHOT,
     PBP,
@@ -77,14 +80,81 @@ def test_schedules_contract_holds_on_the_real_slice():
     assert SCHEDULES.validate(df).height == df.height
 
 
-def test_espn_scoreboard_fixture_has_the_fields_the_poller_reads():
-    payload = json.loads((FIXTURES / "espn_scoreboard.json").read_text())
-    events = payload["events"]
-    assert events, "a scoreboard with no events cannot exercise anything"
-    for e in events:
-        assert e["id"] and e["status"]["type"]["state"]
-        sides = e["competitions"][0]["competitors"]
-        assert {c["homeAway"] for c in sides} == {"home", "away"}
+def _scoreboard_frame(payload: dict) -> pl.DataFrame:
+    """The four columns `ESPN_SCOREBOARD` types, lifted out of a raw scoreboard response.
+
+    **Not `espn.live_state`, which would be the better route**, since that is the function the
+    contract is actually applied in. Feeding it this capture raises `KeyError: 'status'`: it
+    reads the state from `competitions[0]["status"]["type"]` and the capture carries `status`
+    on the event with nothing at all on the competition. Measured 2026-09-05 by trying it.
+
+    Recorded as its own test below rather than resolved here. The capture is trimmed to the
+    fields the test that froze it asserted, so its silence about a competition-level `status`
+    is not evidence that ESPN omits one -- telling those two apart needs a re-capture or a
+    change to `hub.fetch.espn`, and neither is a contracts test's call to make.
+
+    `_sides` is imported rather than reimplemented. Reading the side off the array's order
+    instead of off the `homeAway` field swaps both teams and both scores, which is the one
+    part of this flattening with an incident behind it, and a second copy here would be a
+    second place to get it wrong. Events it cannot name are dropped exactly as production
+    drops them, so a payload that stops naming its sides reaches the contract as a short
+    frame rather than as a wrong one.
+    """
+    from hub.fetch.espn import SCOREBOARD_TYPES, _sides
+
+    rows: list[dict] = []
+    for ev in payload.get("events", []):
+        sides = _sides(ev["competitions"][0].get("competitors", []))
+        if sides is None:
+            continue
+        home, away = sides
+        rows.append({"id": ev["id"], "state": ev["status"]["type"]["state"],
+                     "home": home["team"]["abbreviation"],
+                     "away": away["team"]["abbreviation"]})
+    return (pl.DataFrame(rows, schema_overrides=SCOREBOARD_TYPES) if rows
+            else pl.DataFrame(schema=SCOREBOARD_TYPES))
+
+
+def test_espn_scoreboard_contract_holds_on_the_real_capture():
+    """The capture, through the contract instead of through a list of hand-written asserts.
+
+    This test used to read the same file and check four fields by hand, and that is why
+    `ESPN_SCOREBOARD` declared its provenance unmeasured while a real capture of the endpoint
+    sat two directories away: nothing routed the payload through a validation, so the resolver
+    in `test_every_contract_is_applied.py` had no evidence to see.
+
+    Four shape changes were tried against this on 2026-09-05 and all four are caught: a
+    renamed `team.abbreviation` (the lift raises), a renamed `homeAway` (every event drops out
+    and the frame arrives empty), two events sharing an id, and a state arriving null. The
+    height is asserted at 2 rather than at `df.height` because of the second: `min_rows=0` is
+    right for this contract -- February has no slate -- so an empty frame is a shape the
+    contract accepts and only the count can tell it from a Sunday that vanished.
+
+    One change is *not* caught, measured the same way: an `id` arriving as a number. Both this
+    and `live_state` build the frame with `SCOREBOARD_TYPES` as `schema_overrides`, which
+    coerces it back to `Utf8` before the contract sees it, so the dtype check cannot fire on
+    these four columns from this direction. That is production's behaviour too, not something
+    the test introduces, and it is written down here rather than left as a surprise.
+    """
+    df = _scoreboard_frame(json.loads((FIXTURES / "espn_scoreboard.json").read_text()))
+    assert ESPN_SCOREBOARD.validate(df).height == 2
+
+
+def test_the_espn_capture_does_not_carry_what_the_poller_reads_its_state_from():
+    """The finding from wiring that capture into a real validation, kept where it was made.
+
+    An assertion about the frozen file and not about ESPN: the capture is trimmed, so it
+    cannot say whether the endpoint sends a competition-level `status`, and this does not
+    claim it does not. What it pins is why `_scoreboard_frame` exists at all. The day someone
+    re-captures with that field present this goes red, and the fix is to delete both this and
+    the flattening and validate through `espn.live_state`.
+    """
+    event = json.loads((FIXTURES / "espn_scoreboard.json").read_text())["events"][0]
+    assert event["status"]["type"]["state"], "the path this capture carries the state on"
+    assert "status" not in event["competitions"][0], (
+        "the capture now carries the field `hub.fetch.espn.live_state` reads the state from, "
+        "so the flattening in `_scoreboard_frame` has stopped earning its place -- validate "
+        "through `live_state` and delete both")
 
 
 # --- synthetic fixtures: these prove we parse the documented shape --------

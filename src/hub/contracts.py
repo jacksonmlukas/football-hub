@@ -49,7 +49,7 @@ def _family(dt: Any) -> str:
 #
 # Two sentences, because there are two ways not to have met a response and they send the
 # reader to different places. "Written from documentation" is a claim about how a contract
-# was authored, true of the CFBD pair and not known of anything else: six of the eleven are
+# was authored, true of the CFBD pair and not known of anything else: five of the eleven are
 # validated against no frozen payload at all, so nobody has measured whether they have met
 # live data. Saying nothing about those was the defect in #66 -- the flag defaulted to
 # verified, so their violations read as "the source broke" on no evidence either way.
@@ -78,11 +78,13 @@ class Contract:
     # likelier suspect rather than leaving the reader to work it out.
     #
     # Three states, and `None` -- unmeasured -- is the default. It used to default to `True`,
-    # which made silence a claim: six of the eleven contracts are validated against no frozen
+    # which made silence a claim: six of the eleven contracts were validated against no frozen
     # payload at all, and every one of them said it had met live data on no evidence either
     # way. A contract added from documentation, exactly like the CFBD pair below, inherited
-    # that claim and nothing went red (#66). Nobody has measured those six, so `None` says
-    # that and no more; guessing an answer for them would be worse than saying nothing.
+    # that claim and nothing went red (#66). Five are still in that position and nobody has
+    # measured them, so `None` says that and no more; guessing an answer for them would be
+    # worse than saying nothing. The sixth was `ESPN_SCOREBOARD`, and what moved it was
+    # routing its capture through a validation -- not anyone deciding it had met live data.
     #
     # Not a free-text claim. `tests/contracts/test_every_contract_is_applied.py` resolves
     # which frozen payload each contract is validated against and requires this flag to agree
@@ -285,4 +287,13 @@ ESPN_SCOREBOARD = Contract(
     # February and the deploy runs all year. `min_rows=1` here asserted that a game is always
     # on, which is the declaration being wrong rather than the source; found by applying it.
     min_rows=0,
+    # Checked against `espn_scoreboard.json`, a real 2026-08-23 capture of the public
+    # scoreboard. Stated because the default is now `None` -- see `verified_against_live`.
+    #
+    # It said `None` until 2026-09-05 while that capture sat in the tree, because the only
+    # test reading the file asserted four fields by hand rather than putting a frame through
+    # this contract, and the resolver has nothing to see in a hand-written assert. The flag
+    # moved when the validation was wired; declaring it would have been the invented answer
+    # the resolver exists to refuse.
+    verified_against_live=True,
 )

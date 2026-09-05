@@ -276,14 +276,21 @@ def test_each_contract_names_whether_it_has_met_real_data(name):
 #
 # **What the evidence can say, and what it cannot.** It resolved five of eleven contracts on
 # 2026-09-05 -- PBP, FF_OPPORTUNITY, SCHEDULES, CFBD_GAMES, CFBD_LINES -- because those are
-# the ones a test validates against a frozen payload. The other six resolve to nothing, and
+# the ones a test validates against a frozen payload. The other six resolved to nothing, and
 # for a flag that defaulted to `True` that meant six contracts claiming they had met live
 # data on no evidence at all: a contract written from documentation, exactly like the two
 # this section exists for, could be added and nothing would go red.
 #
-# Nobody has measured whether those six have ever met a live response, and inventing an
-# answer would be worse than saying nothing, so the fix is not to guess -- it is to stop
-# silence reading as a claim. `None` is the default and means unmeasured, which is a
+# Six is now five, and how it moved is the point. ESPN_SCOREBOARD was in that group while a
+# real capture of the endpoint sat under tests/golden/fixtures/ -- the test reading that file
+# asserted its fields by hand, and a hand-written assert is not something this scan can see,
+# so the contract said "unmeasured" beside its own evidence. The fix was to route the capture
+# through `ESPN_SCOREBOARD.validate`, which is the escape hatch below rather than an exception
+# to it: the flag followed the resolver, and the resolver followed the payload.
+#
+# Nobody has measured whether the five still unresolved have ever met a live response, and
+# inventing an answer would be worse than saying nothing, so the fix is not to guess -- it is
+# to stop silence reading as a claim. `None` is the default and means unmeasured, which is a
 # different sentence in a violation from "written from documentation", and the three tests
 # below together make the flag a function of the evidence rather than a claim beside it:
 # a capture requires `True`, hand-built-only requires `False`, no evidence requires `None`.
