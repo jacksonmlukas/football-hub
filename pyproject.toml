@@ -55,6 +55,9 @@ select = ["E", "F", "I", "UP", "B", "C4", "RUF", "DTZ"]
 
 [tool.pyrefly]
 project-includes = ["src", "tests"]
+# Mirrors `pythonpath` under `[tool.pytest.ini_options]`: `tests/` is an import root so the
+# three excision harnesses can share `guardlib`.
+search-path = ["src", "tests"]
 # CRITICAL: an unconfigured project defaults to the `basic` preset, which silences most
 # type errors. A fast checker that finds nothing is worse than a slow one that finds bugs.
 preset = "default"
@@ -62,7 +65,11 @@ preset = "default"
 ignore-missing-imports = ["nflreadpy.*", "espn_api.*", "duckdb.*", "hydra.*", "omegaconf.*"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# `tests` is on the path so the three excision harnesses can share one `guardlib`
+# (tests/guardlib.py) instead of keeping three copies of the same marker grammar. The repo
+# root deliberately is not on the path: that would expose `site/`, `data/`, `scripts/` and
+# `conf/` as importable top-level names, and `site` is a stdlib module.
+pythonpath = ["src", "tests"]
 testpaths = ["tests"]
 # Golden tests hit live third-party APIs. Deselected by default so an upstream outage
 # cannot block a docs commit; run them deliberately with `uv run pytest -m golden`.

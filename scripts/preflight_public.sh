@@ -73,7 +73,7 @@ canary_sample() {
 # cookie and, on failure, printed "the patterns match nothing, so the scan below cannot
 # fail" -- a claim about all five alternations from evidence about one. The other four were
 # exactly as unproven here as they had been while every pattern was inert BRE.
-# GUARD pattern-canary [test_the_scan_proves_it_can_match_before_reporting_clean or test_a_dead_pattern_is_named_and_blocks_the_flip or test_a_pattern_with_no_synthetic_sample_is_a_failure]: refuses to report a clean history through a scanner that has gone even partly blind.
+# GUARD pattern-canary [unit/test_preflight.py::test_the_scan_proves_it_can_match_before_reporting_clean unit/test_preflight.py::test_a_dead_pattern_is_named_and_blocks_the_flip unit/test_preflight.py::test_a_pattern_with_no_synthetic_sample_is_a_failure]: refuses to report a clean history through a scanner that has gone even partly blind.
 echo "==> Verifying every credential pattern can still match"
 canary_fail=0
 COVERED=0
@@ -126,7 +126,7 @@ else
 fi
 # /GUARD
 
-# GUARD credential-history-scan [test_a_planted_credential_blocks_the_flip or test_a_credential_committed_and_then_removed_still_blocks or test_the_brace_less_swid_is_caught_too]: greps every commit for the five credential shapes; a hit is already-disclosed, not preventable.
+# GUARD credential-history-scan [unit/test_preflight.py::test_a_planted_credential_blocks_the_flip unit/test_preflight.py::test_a_credential_committed_and_then_removed_still_blocks unit/test_preflight.py::test_the_brace_less_swid_is_caught_too]: greps every commit for the five credential shapes; a hit is already-disclosed, not preventable.
 echo "==> Scanning full history for ESPN cookies and API keys"
 if git rev-list --all >/dev/null 2>&1; then
   # `grep -v PATTERNS=` so this script's own declaration is not a hit. Narrower than
@@ -145,7 +145,7 @@ if git rev-list --all >/dev/null 2>&1; then
 fi
 # /GUARD
 
-# GUARD env-file-in-history [test_a_committed_env_file_blocks_the_flip]: refuses a history containing .env at all, whatever is in it -- that is where every credential in this project lives.
+# GUARD env-file-in-history [unit/test_preflight.py::test_a_committed_env_file_blocks_the_flip]: refuses a history containing .env at all, whatever is in it -- that is where every credential in this project lives.
 echo "==> Checking .env was never committed"
 if git log --all --name-only --pretty=format: 2>/dev/null | sort -u | grep -qx '.env'; then
   echo "  FAIL: .env appears in history" >&2; fail=1
@@ -154,7 +154,7 @@ else
 fi
 # /GUARD
 
-# GUARD tracked-raw-data [test_a_staged_but_uncommitted_data_file_blocks_the_flip]: the index half -- CFBD and nflverse both prohibit redistribution, and this sees a file staged before it is ever committed.
+# GUARD tracked-raw-data [unit/test_preflight.py::test_a_staged_but_uncommitted_data_file_blocks_the_flip]: the index half -- CFBD and nflverse both prohibit redistribution, and this sees a file staged before it is ever committed.
 echo "==> Checking no raw third-party payloads are tracked"
 # CFBD and nflverse both prohibit redistribution. These are gitignored, but verify
 # nothing slipped in. processed/ is included: it was NOT checked here until 2026-08-23,
@@ -168,7 +168,7 @@ else
 fi
 # /GUARD
 
-# GUARD data-in-history [test_a_parquet_committed_then_untracked_still_fails]: the history half -- the 2026-08-23 miss was 45 parquet files untracked one commit later and still reachable by SHA.
+# GUARD data-in-history [unit/test_preflight.py::test_a_parquet_committed_then_untracked_still_fails]: the history half -- the 2026-08-23 miss was 45 parquet files untracked one commit later and still reachable by SHA.
 echo "==> Checking no data file survives anywhere in history"
 # The index check above only sees the current tree. Flipping public exposes every commit,
 # and a file removed in commit N is still sitting in commit N-1 -- which is exactly what
@@ -229,7 +229,7 @@ esac
 # Comments are stripped first, and only where a `#` starts a line or follows whitespace, so a
 # `#` inside a quoted scalar survives. Stripping can only ever hide a real cron and produce a
 # spurious WARNING; it cannot invent a trigger, so it fails in the safe direction.
-# GUARD schedule-liveness [test_a_commented_out_schedule_is_reported or test_a_cron_outside_the_schedule_block_is_not_a_live_schedule]: reads the on:/schedule:/- cron: nesting rather than grepping for the two independently, which passed a workflow whose only real schedule block was commented out. A WARNING, not a fail=1: a cron that is off may be off on purpose.
+# GUARD schedule-liveness [unit/test_preflight.py::test_a_commented_out_schedule_is_reported unit/test_preflight.py::test_a_cron_outside_the_schedule_block_is_not_a_live_schedule]: reads the on:/schedule:/- cron: nesting rather than grepping for the two independently, which passed a workflow whose only real schedule block was commented out. A WARNING, not a fail=1: a cron that is off may be off on purpose.
 has_live_schedule() {
   sed -e 's/^[[:space:]]*#.*//' -e 's/[[:space:]]#.*//' "$1" | awk '
     function ind(s) { match(s, /^ */); return RLENGTH }
@@ -261,21 +261,21 @@ for WF in watchdog ci pages slate; do
 done
 # /GUARD
 
-# The seventh refusal, and the only one nothing here proves. Six of the seven carry a
+# The seventh guard, and the only one nothing here proves. Six of the seven carry a
 # `# GUARD` above and are proved by excision -- delete the block, and the planted input stops
 # being caught. This one cannot be. `command -v gitleaks` finds nothing on the machine this
 # was written on (checked 2026-09-05), and no workflow under .github/ installs it or runs
 # this script, so the `skipped` branch is the only one anyone here has taken: deleting the
 # call changes nothing observable, and an excision run would be green because the tool is
-# absent rather than because the refusal fires. That is the same shape as the BRE patterns
+# absent rather than because the guard fires. That is the same shape as the BRE patterns
 # that matched nothing while the gate printed "ok", so it is declared rather than faked.
 #
 # It is declared by name and not as an allowance. Until 2026-09-05 the marking test asked
 # only that at most *one* `fail=1` sit outside a guard, and this call was the one -- so the
-# next unmarked refusal would have spent the same budget in silence, and this repo has been
+# next unmarked guard would have spent the same budget in silence, and this repo has been
 # bitten three times by a count drifting from what it counted, one of them a comment that
 # said "six steps" over five.
-# UNPROVED third-party-secret-scanner [gitleaks on PATH]: excising this changes nothing while the tool is absent, so a green excision run would prove the tool is missing, not that the refusal fires.
+# UNPROVED third-party-secret-scanner [unit/test_preflight.py::test_the_exception_expires_when_the_scanner_is_installed]: excising this changes nothing while gitleaks is absent from PATH, so a green excision run would prove the tool is missing rather than that the guard fires; the test in the bracket is the one that fails the day it is installed.
 echo "==> Checking gitleaks if available"
 if command -v gitleaks >/dev/null 2>&1; then
   gitleaks detect --no-banner --redact || fail=1
@@ -284,7 +284,7 @@ else
 fi
 # /UNPROVED
 #
-# What changes if it is installed: the premise above is gone, the refusal becomes provable,
+# What changes if it is installed: the premise above is gone, the guard becomes provable,
 # and `test_the_exception_expires_when_the_scanner_is_installed` stops skipping and fails --
 # asking for a planted input only gitleaks catches, a `# GUARD` naming that test in place of
 # this block, and the name struck from UNPROVED_HERE. The exemption expires with its reason
