@@ -38,9 +38,15 @@ import polars as pl
 from hub import store
 from hub.config import SEASON_AHEAD
 from hub.contracts import ODDS_SNAPSHOT
+from hub.paths import STATE_DIR
 
 ROOT = Path(__file__).resolve().parents[3]
-STATE = ROOT / "data" / "raw" / "odds" / "state.json"
+# Under `state/`, not `data/raw/`. The balance is what the floor below refuses on, and
+# `.gitignore` excludes the whole of `data/` as redistributed third-party payloads -- so on
+# an Actions runner `credits_remaining` always answered None, the floor never refused, and
+# the header read back from each response was written to a file the next run could not see.
+# A guard that cannot fire reads as a guard.
+STATE = STATE_DIR / "odds.json"
 
 BASE = "https://api.the-odds-api.com/v4"
 SPORT = "americanfootball_nfl"

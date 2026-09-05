@@ -37,10 +37,15 @@ import polars as pl
 
 from hub.config import SEASON_AHEAD
 from hub.contracts import CFBD_GAMES, CFBD_LINES, Contract
+from hub.paths import STATE_DIR
 
 ROOT = Path(__file__).resolve().parents[3]
 CACHE = ROOT / "data" / "raw" / "cfbd"
-QUOTA = CACHE / "quota.json"
+# Beside the odds balance and away from the cache, for the same reason. The responses under
+# `CACHE` are third-party payloads this repo cannot publish and `.gitignore` is right to
+# exclude them; the count of calls spent against a 1,000-a-month free tier is ours, and
+# keeping it in the excluded tree meant every scheduled run started the month over.
+QUOTA = STATE_DIR / "cfbd-quota.json"
 
 BASE = "https://api.collegefootballdata.com"
 FREE_TIER_MONTHLY = 1_000
@@ -247,8 +252,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     reset_run_budget()
     qpath = Path(a.quota_path) if a.quota_path else None
 
-    if a.week is None or a.quota:
+    if a.quota:
         return quota_report(qpath)
+    if a.week is None:
+        # Not success. `make slate` runs this with no `--week` unless `WEEK` is set and the
+        # scheduled run sets none, so this branch printed a healthy-looking quota report and
+        # exited 0 -- every scheduled run reporting success for a fetch that did not happen.
+        # The Makefile marks this source optional with a leading `-`, so a non-zero exit
+        # still lets the slate continue; what changes is that it stops lying about it.
+        quota_report(qpath)
+        print("hub.fetch.cfbd: no --week given, so nothing was fetched. That was a quota "
+              "report. Pass --week N, or `make slate WEEK=N`.", file=sys.stderr)
+        return 1
 
     if not _api_key():
         print("hub.fetch.cfbd: no CFBD_API_KEY set; add one to .env to fetch. "

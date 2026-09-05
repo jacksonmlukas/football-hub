@@ -82,7 +82,12 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add site/data
+          # `state/` as well as `site/data`. It holds the odds balance and the CFBD call
+          # count, and a run that spends a credit and does not commit the new number leaves
+          # the next run refusing -- or not refusing -- on a stale one. Both counters lived
+          # under `data/raw/` until now, which is gitignored, so no scheduled run had ever
+          # seen what any other had spent.
+          git add site/data state
           if git diff --cached --quiet; then
             echo "nothing changed; no commit"
             exit 0

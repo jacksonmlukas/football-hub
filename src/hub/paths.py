@@ -33,3 +33,13 @@ ROSTER_PARQUET = PROCESSED / "roster.parquet"
 # gitignored, and neither should import the other to learn a directory name.
 SITE = ROOT / "site" / "data"
 BOARD_JSON = SITE / "draft_board.json"
+
+# Our own bookkeeping about our own accounts: how many odds credits are left, how many CFBD
+# calls this month has spent. Deliberately NOT under `data/`, whose whole tree is gitignored
+# as redistributed third-party data -- which is correct for a cached payload and fatal for a
+# counter. Both guards persisted here read as guards and could never fire on a runner,
+# because every scheduled run started with no record of what had been spent.
+#
+# Committed, not cached. An Actions cache can be evicted, and a cache miss resets a counter
+# silently -- which is the failure being fixed, arriving by a different route.
+STATE_DIR = ROOT / "state"
