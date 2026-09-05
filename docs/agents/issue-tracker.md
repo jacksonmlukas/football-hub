@@ -9,7 +9,13 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 - **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
-- **Close**: `gh issue close <number> --comment "..."`
+- **Close**: `gh issue close <number> --reason completed --comment "..."`, or
+  `--reason "not planned"` when the work did not land. **Never close without a reason** — a bare
+  close silently records `completed`, which is how "finished", "abandoned" and `wontfix` ended up
+  indistinguishable. The reason *is* this tracker's done-state; see `triage-labels.md`.
+- **Read the outcome of a closed issue**: `gh issue view <number> --json state,stateReason`, or in
+  bulk `gh issue list --state closed --json number,title,stateReason`. `stateReason` is upper snake
+  case (`COMPLETED` / `NOT_PLANNED`); the `reason:` search qualifier and `--reason` are not.
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
@@ -42,4 +48,4 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 - **Blocking**: GitHub's **native issue dependencies**, the canonical, UI-visible representation. Add an edge with `gh api --method POST repos/<owner>/<repo>/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`, where `<blocker-db-id>` is the blocker's numeric **database id** (`gh api repos/<owner>/<repo>/issues/<n> --jq .id`, _not_ the `#number` or `node_id`). GitHub reports `issue_dependencies_summary.blocked_by` (open blockers only, the live gate). Where dependencies aren't available, fall back to a `Blocked by: #<n>, #<n>` line at the top of the child body. A ticket is unblocked when every blocker is closed.
 - **Frontier query**: list the map's open children (`gh issue list --state open`, scoped to the map's sub-issues / task list), drop any with an open blocker (`issue_dependencies_summary.blocked_by > 0`, or an open issue in the `Blocked by` line) or an assignee; first in map order wins.
 - **Claim**: `gh issue edit <n> --add-assignee @me`, the session's first write.
-- **Resolve**: `gh issue comment <n> --body "<answer>"`, then `gh issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
+- **Resolve**: `gh issue comment <n> --body "<answer>"`, then `gh issue close <n> --reason completed` (a research ticket that reached an answer *has* landed, even when the answer is "no" and no production code changed — close it `not planned` only if it was dropped unanswered), then append a context pointer (gist + link) to the map's Decisions-so-far.
