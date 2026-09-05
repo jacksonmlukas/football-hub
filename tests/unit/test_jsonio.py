@@ -10,6 +10,8 @@ That file is what `docs/draft-night.md` names as the last-resort fallback for dr
 import json
 import math
 
+import pytest
+
 from hub import jsonio
 
 
@@ -73,3 +75,39 @@ def test_both_writers_use_it():
                  for a in n.names}
         assert "jsonio" in names, f"{rel} writes JSON without the NaN-safe dumper"
     assert math.isnan(float("nan")), "sanity"
+
+
+# --- the envelope cannot be redefined by a caller ---------------------------
+
+# `name`, `source` and `rows` are positional parameters, so Python refuses them before the
+# check ever runs -- a different exception for the same reason. Only these two can reach it.
+@pytest.mark.parametrize("field", ["generated_at", "n"])
+def test_extra_cannot_displace_an_envelope_key(field):
+    """`artifact`'s whole reason for existing is that two writers of one file cannot
+    disagree about its shape -- `site/data/live.json` had a site writer producing the
+    envelope every panel reads and a poller producing `{ts, games, detail}`, and the page
+    could only read the first.
+
+    A caller passing one of these in `extra` would be redefining that shape from the
+    outside, which is the disagreement rather than the fix. Found untested by the excision
+    harness: deleting the check left this whole module green.
+    """
+    with pytest.raises(ValueError, match=field):
+        jsonio.artifact("x", "src", [], **{field: "hijacked"})
+
+
+@pytest.mark.parametrize("field", ["name", "source", "rows"])
+def test_an_envelope_key_that_is_a_parameter_is_refused_by_python(field):
+    """Same refusal, enforced one layer down. Worth pinning so a future signature change
+    that turned one of these into a keyword would surface here rather than silently widen
+    what a caller can redefine."""
+    with pytest.raises(TypeError):
+        jsonio.artifact("x", "src", [], **{field: "hijacked"})
+
+
+def test_an_extra_field_the_envelope_does_not_own_is_fine():
+    """The refusal is scoped. `extra` is for what one artifact has and another does not --
+    the league a scoreboard is for, the season a slate belongs to."""
+    got = jsonio.artifact("survivor", "hub.season.survivor", [], season=2026, survival=0.007)
+    assert got["season"] == 2026 and got["survival"] == 0.007
+    assert got["n"] == 0 and got["name"] == "survivor"

@@ -198,8 +198,10 @@ def provenance(source: str) -> Provenance:
     answer was convenient, and the artifact would go back to claiming a verifiability it does
     not have -- which is the defect this exists to close.
     """
+    # GUARD unclassified-source-raises [unit/test_provenance.py]: a fourth source is refused
     if source not in PROVENANCE:
         raise KeyError(
             f"{source!r} can price a prediction and is not classified. Say whether a reader "
             f"can obtain it, in `schedule.PROVENANCE`.")
+    # /GUARD
     return PROVENANCE[source]

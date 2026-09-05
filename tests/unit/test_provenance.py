@@ -14,6 +14,7 @@ writing indistinguishable rows into a public track record that claims a specific
 a specific prediction.
 """
 import polars as pl
+import pytest
 
 from hub.config import HubConfig, ModelConfig, config_digest
 from hub.models import ratings
@@ -82,3 +83,29 @@ def test_two_runs_under_different_config_do_not_overwrite_each_other(monkeypatch
     for f in written:
         digests |= set(pl.read_parquet(f)["cfg_digest"].to_list())
     assert len(digests) == 2
+
+
+# --- a fourth price source cannot ship unclassified -------------------------
+
+def test_an_unclassified_price_source_raises_rather_than_defaulting():
+    """`schedule.provenance` refuses to guess. A default would let a fourth source ship
+    carrying whichever answer was convenient, and the weekly artifact would go back to
+    claiming a verifiability it does not have -- which is the defect the classification
+    exists to close.
+
+    Found untested by the excision harness: deleting the raise left `test_schedule.py`
+    green, and nothing anywhere asserted the refusal.
+    """
+    from hub import schedule
+    with pytest.raises(KeyError, match="not classified"):
+        schedule.provenance("a_fourth_source")
+
+
+def test_every_source_the_schedule_can_choose_is_classified():
+    """The premise. A test that only checks an unknown name raises would pass against a
+    `PROVENANCE` table that had gone empty."""
+    from hub import schedule
+    assert {"snapshot", "schedule"} <= set(schedule.PROVENANCE)
+    for source in ("snapshot", "schedule"):
+        got = schedule.provenance(source)
+        assert isinstance(got.reader_can_obtain, bool) and got.why

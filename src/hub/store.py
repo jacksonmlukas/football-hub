@@ -73,10 +73,12 @@ def write(df: pl.DataFrame, table: str, league: str, season: int, week: int,
             unchanged = pl.read_parquet(p).equals(df)
         except Exception:                  # an unreadable partition is not a match
             unchanged = False
+        # GUARD partition-not-silently-overwritten: a differing partition is never destroyed unasked
         if not unchanged:
             raise FileExistsError(
                 f"{p} already holds different data. Pass a distinct `name=` to keep both "
                 f"(what board, ratings and odds do), or `replace=True` to mean it.")
+        # /GUARD
         return p
     df.write_parquet(p)
     return p

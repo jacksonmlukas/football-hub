@@ -202,12 +202,14 @@ def load(source: str, seasons: Sequence[int], cols: Sequence[str] | None = None,
         raise WideFrameRefused(
             f"unknown source {source!r}. Known: {', '.join(sorted(SOURCES))}")
 
+    # GUARD wide-frame-refused [unit/test_fetch_nflverse.py]: a wide source is never whole
     if source in WIDE and not cols:
         standard = {"pbp": "PBP_COLS", "player_stats": "PLAYER_STATS_COLS"}.get(source)
         raise WideFrameRefused(
             f"{source} is {WIDE[source]} columns wide; name the ones you need via cols=."
             + (f" For the standard slice use hub.fetch.nflverse.{standard}."
                if standard else ""))
+    # /GUARD
 
     path = _cache_path(source, seasons, cols, cache)
     if path.exists() and not refresh:

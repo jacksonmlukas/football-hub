@@ -98,8 +98,10 @@ def validate_predictions(df: pl.DataFrame, spec: FitSpec) -> pl.DataFrame:
     if p.min() is not None and (cast(float, p.min()) < 0 or cast(float, p.max()) > 1):
         raise ValueError(f"home_win_prob outside [0,1]: [{p.min()}, {p.max()}]")
 
+    # GUARD leakage-tripwire [unit/test_models_base.py]: fit through N never predicts <= N
     leaked = df.filter(pl.col("week") <= pl.col("fit_through_week"))
     if leaked.height:
+    # /GUARD
         raise ValueError(
             f"LEAKAGE: {leaked.height} predictions for weeks at or before "
             f"fit_through_week={spec.through_week}"

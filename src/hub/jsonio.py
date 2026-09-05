@@ -69,8 +69,10 @@ def artifact(name: str, source: str, rows: list[Any], **extra: Any) -> dict[str,
     for, the season a slate belongs to. It cannot displace the envelope: a caller passing
     `rows` or `generated_at` here would be redefining the thing this exists to fix.
     """
+    # GUARD envelope-cannot-be-overridden: extra never displaces the shape every reader depends on
     clash = {"name", "source", "generated_at", "n", "rows"} & set(extra)
     if clash:
         raise ValueError(f"{sorted(clash)} belong to the envelope and cannot be overridden")
+    # /GUARD
     return {"name": name, "source": source, "generated_at": stamp(),
             "n": len(rows), "rows": rows, **extra}

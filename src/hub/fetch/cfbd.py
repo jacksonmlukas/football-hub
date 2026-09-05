@@ -174,19 +174,23 @@ def bulk(endpoint: str, year: int, week: int | None = None, *,
         params["week"] = week
     if extra:
         narrowing = sorted(set(extra) & FORBIDDEN_PARAMS)
+        # GUARD team-keys-refused [unit/test_fetch_cfbd.py]: narrowing below a week is refused
         if narrowing:
             raise LoopRefused(
                 f"{narrowing} would narrow this below a week, which is how the 1,000/month "
                 f"quota dies. Pull the bulk payload and filter it in polars instead.")
+        # /GUARD
         params.update(extra)
 
     path = _cache_path(endpoint, year, week, cache)
     if path.exists():
         return pl.read_parquet(path)
 
+    # GUARD run-ceiling-stops-a-loop [unit/test_fetch_cfbd.py]: a loop stops at call 13
     if _CALLS_THIS_RUN >= MAX_CALLS_PER_RUN:
         raise QuotaExceeded(
             f"{MAX_CALLS_PER_RUN} calls in one run; a week costs 5-8. This is a loop.")
+    # /GUARD
     if quota_used(quota_path) >= FREE_TIER_MONTHLY:
         raise QuotaExceeded(
             f"monthly budget of {FREE_TIER_MONTHLY:,} is spent. Waiting beats a second key: "
