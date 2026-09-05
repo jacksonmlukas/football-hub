@@ -40,7 +40,7 @@ from typing import NamedTuple, cast
 import numpy as np
 import polars as pl
 
-from hub.config import FANTASY_WEEKS
+from hub.config import FANTASY_WEEKS, HubConfig, provenance
 from hub.models.experiment import MIN_SE
 from hub.models.panel import (
     MIN_GAMES_BEFORE,
@@ -51,6 +51,7 @@ from hub.models.panel import (
     USAGE,
     PanelSpec,
     build_panel,
+    consensus_pin,
 )
 
 # A cell smaller than this is a correlation on noise. 40 is roughly a tenth of a normal week.
@@ -291,12 +292,24 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     ap.add_argument("--usage", action="store_true",
                     help="screen the survivors against Usage counts, not points")
     ap.add_argument("--seasons", default=",".join(str(s) for s in SEASONS))
+    ap.add_argument("--as-of", dest="as_of", default=None, metavar="YYYY-MM-DD",
+                    help="bound the consensus archive at this date, inclusive of the day "
+                         "itself; two runs at one as-of read the same rankings")
     a = ap.parse_args(list(argv) if argv is not None else None)
     if not a.run:
         ap.print_help()
         return 0
     seasons = [int(x) for x in a.seasons.split(",") if x]
-    panel = build_panel(seasons, PanelSpec(routes=a.routes, scheme=a.scheme))
+    panel = build_panel(seasons, PanelSpec(routes=a.routes, scheme=a.scheme), as_of=a.as_of)
+    # What the run read, printed where the run is read. Until the archive was routed through
+    # the fetch layer there was nothing to print: two screens a week apart disagreed and
+    # nothing said whether the code or the rankings had moved -- which is the correction
+    # `docs/weekly-screen.md` already records having to make once.
+    pins = [p for p in (consensus_pin(a.as_of),) if p is not None]
+    d = provenance(HubConfig(), pins)
+    print(f"  cfg {d['cfg']} | fitted {d['fitted']} | data {d['data']}"
+          + ("" if a.as_of else "   (no --as-of: the digest names the bytes this run "
+                                "happened to read, not a date it can be re-read at)"))
     sample = panel.filter(pl.col("week").is_in(list(FANTASY_WEEKS))
                           & (pl.col("games_before") >= MIN_GAMES_BEFORE))
     sample = sample.drop_nulls([OUTCOME, *CONTROLS])

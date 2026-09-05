@@ -276,3 +276,103 @@ def test_one_scrape_a_week_is_unaffected():
     got = pnl.best_per_week(joined).sort("week")
     assert got["ecr"].to_list() == [10.0, 11.0]
     assert got["lead_days"].to_list() == [6, 5]
+
+
+# --- the consensus archive, read through the fetch layer -------------------
+#
+# The screen's largest input and the only append-only one, so it is the only one an as-of can
+# *filter* rather than label. Routed through `hub.fetch.nflverse.load_rankings` for that: the
+# rows are validated against `FF_RANKINGS`, cached under a key carrying the as-of, and pinned,
+# so two screens at one as-of read the same rankings however much FantasyPros published in
+# between. `docs/weekly-screen.md` records what the alternative costs -- a screen whose numbers
+# moved with the archive under it.
+
+def _rankings(*specs, page: str = "weekly-op"):
+    """(player, ecr, scrape_date) rows on a ranking page, in the archive's own shape."""
+    return pl.DataFrame(
+        [{"page_type": page, "player": p, "pos": "WR", "team": "CIN", "ecr": e,
+          "sd": 1.0, "best": 1.0, "worst": 9.0, "scrape_date": d} for p, e, d in specs])
+
+
+def _routed(monkeypatch, tmp_path, frame):
+    """The archive faked at the fetch boundary, with the loader's cache in a tmp tree.
+
+    RAW is redirected because `load_rankings` writes a dated parquet and a pin beside it: left
+    alone, a unit test writes into the developer's own `data/raw` and the next test naming the
+    same as-of is served this frame instead of its own.
+    """
+    import hub.fetch.nflverse as nv
+    monkeypatch.setattr(nv, "RAW", tmp_path / "raw")
+    monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: frame)
+    monkeypatch.setattr(pnl, "week_windows", lambda seasons: _windows())
+
+
+def test_the_weekly_consensus_comes_through_the_loader_not_from_nflreadpy(monkeypatch,
+                                                                         tmp_path):
+    """The routing itself. A page type reaches the loader; nothing here reaches the network."""
+    import hub.fetch.nflverse as nv
+    pages = []
+    _routed(monkeypatch, tmp_path, _rankings(("Ja'Marr Chase", 3.0, "2024-10-04")))
+    monkeypatch.setattr(nv, "_raw_ff_rankings",
+                        lambda p: pages.append(p) or _rankings(("Ja'Marr Chase", 3.0,
+                                                               "2024-10-04")))
+    got = pnl.weekly_consensus([2024])
+    assert pages == [["all"]], "the archive is keyed by page type, not by a season list"
+    assert got["ecr"].to_list() == [3.0]
+
+
+def test_the_panels_as_of_is_inclusive_of_the_day_itself(monkeypatch, tmp_path):
+    """One convention with `hub.draft.board.consensus` and with the loader that bounds both.
+
+    A scrape *on* the as-of counts. If this goes red while the board's own boundary test stays
+    green, the two have drifted a day apart again -- which moves every number the screen prints
+    without any line of code having changed.
+    """
+    _routed(monkeypatch, tmp_path, _rankings(("Ja'Marr Chase", 3.0, "2024-10-04"),
+                                             ("Ja'Marr Chase", 1.0, "2024-10-11")))
+    on_the_day = pnl.weekly_consensus([2024], as_of="2024-10-04")
+    assert on_the_day["ecr"].to_list() == [3.0], "the boundary day is inside the as-of"
+    assert on_the_day["week"].to_list() == [5], "and it still belongs to the week it ranks"
+
+
+def test_a_scrape_after_the_as_of_does_not_reach_the_panel(monkeypatch, tmp_path):
+    """The other half: an as-of that bounds nothing would pin nothing."""
+    _routed(monkeypatch, tmp_path, _rankings(("Ja'Marr Chase", 3.0, "2024-10-04"),
+                                             ("Ja'Marr Chase", 1.0, "2024-10-11")))
+    got = pnl.weekly_consensus([2024], as_of="2024-10-10")
+    assert got["week"].to_list() == [5], "week 6's scrape was published after the as-of"
+
+
+def test_two_as_ofs_are_two_pins_and_one_as_of_reproduces(monkeypatch, tmp_path):
+    """What the screen prints as its data digest, at the seam that produces it.
+
+    `consensus_pin` names the same cache entry `weekly_consensus` read -- source, page,
+    columns and as-of -- so a run's provenance describes the load it claims to describe.
+    """
+    _routed(monkeypatch, tmp_path, _rankings(("Ja'Marr Chase", 3.0, "2024-10-04"),
+                                             ("Ja'Marr Chase", 1.0, "2024-10-11")))
+    for as_of in ("2024-10-04", "2024-10-11"):
+        pnl.weekly_consensus([2024], as_of=as_of)
+    early, late = (pnl.consensus_pin(d) for d in ("2024-10-04", "2024-10-11"))
+    assert early is not None and late is not None, "a pinned load leaves a pin behind"
+    assert early.digest != late.digest, "two as-ofs over one archive are two claims"
+    assert early.pinned_at is None, \
+        "an append-only source filtered at its as-of reproduces from the as-of alone"
+    pnl.weekly_consensus([2024], as_of="2024-10-04")
+    assert pnl.consensus_pin("2024-10-04") == early, "the same as-of reads back the same pin"
+
+
+def test_an_unpinned_panel_is_still_the_common_case(monkeypatch, tmp_path):
+    """No as-of, no filter: the whole archive, and a pin that names bytes but not a date.
+
+    Worth separating, because the digest still moves when the archive does. What an unbounded
+    run cannot say is *which* archive it read -- the pin carries `as_of: null`, so it records
+    what was fetched and not a date anyone can fetch it at again. That is why the screen labels
+    the line rather than leaving a reader to assume the run reproduces.
+    """
+    _routed(monkeypatch, tmp_path, _rankings(("Ja'Marr Chase", 3.0, "2024-10-04"),
+                                             ("Ja'Marr Chase", 1.0, "2024-10-11")))
+    assert pnl.weekly_consensus([2024]).height == 2, "both weeks, unbounded"
+    from hub.config import UNPINNED, data_digest
+    assert data_digest([p for p in (pnl.consensus_pin(None),) if p is not None]) != UNPINNED, \
+        "an unbounded load still writes an undated pin; it is the as-of that is absent"

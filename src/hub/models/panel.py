@@ -25,6 +25,8 @@ from typing import NamedTuple
 import polars as pl
 
 from hub.config import DRAFTED_POSITIONS, SEASON_COMPLETED
+from hub.contracts import FF_RANKINGS
+from hub.fetch.nflverse import Pin, data_pin, load_rankings
 from hub.models import components
 from hub.models.experiment import expanding_weeks
 from hub.names import player_key, practice_key
@@ -494,12 +496,45 @@ def assign_weeks(scrapes: pl.DataFrame, windows: pl.DataFrame,
     ).filter(pl.col("lead_days") <= max_lead)
 
 
-def weekly_consensus(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
-    """That week's cross-position consensus ECR, joined as-of to (season, week)."""
-    import nflreadpy as nfl
-    a = nfl.load_ff_rankings("all")
-    page = "page_type" if "page_type" in a.columns else "page"
-    w = (a.filter(pl.col(page) == CONSENSUS_PAGE)
+# The columns `load_rankings` is asked for: the contract's own required set, which is also
+# every column either routed reader takes. Derived from the contract rather than retyped, so
+# this and `hub.draft.board.consensus` name the same cache entry -- the archive is 1.8M rows
+# and two nearly-identical copies of it is the cost of two hand-written tuples drifting.
+RANKINGS_COLS: tuple[str, ...] = tuple(FF_RANKINGS.required)
+
+
+def consensus_pin(as_of: str | None = None) -> Pin | None:
+    """The pin beside the rankings entry `weekly_consensus` reads, or None if it is cold.
+
+    The screen prints a data digest and has to name the same cache entry the panel read; the
+    key is `(source, page, columns, as-of)` and stating it twice is how the printed provenance
+    stops describing the load it claims to describe. So it is stated once, here.
+    """
+    return data_pin("ff_rankings", ["all"], cols=RANKINGS_COLS, as_of=as_of)
+
+
+def weekly_consensus(seasons: Sequence[int],
+                     as_of: str | None = None) -> pl.DataFrame:  # pragma: no cover - network
+    """That week's cross-position consensus ECR, joined as-of to (season, week).
+
+    Routed through `hub.fetch.nflverse.load_rankings` rather than reaching nflreadpy here: this
+    is the screen's largest input and the only one whose archive is append-only, so it is the
+    one that can be *pinned* -- validated against `FF_RANKINGS`, cached under a key that
+    carries the as-of, and recorded in a `Pin` a run can print. Two screens at one as-of read
+    the same rows however much FantasyPros has published in between, which is what the repo
+    means by a re-run reproducing.
+
+    `as_of` is an ISO date and it is **inclusive** -- a scrape *on* that day counts. One
+    convention, and it is the loader's: `hub.draft.board.consensus` gave up its own strictly-
+    before comparison to say so, and `hub.store.lines_as_of` already meant "at or before".
+    Passing None loads the whole archive, unfiltered and unpinned, which is what every caller
+    that has not asked to be reproducible gets.
+
+    Note what this bound is *not*: a lower one. Every scrape the archive holds is still
+    considered, and `assign_weeks` is what decides which week a scrape belongs to.
+    """
+    a = load_rankings("all", as_of=as_of, cols=RANKINGS_COLS)
+    w = (a.filter(pl.col("page_type") == CONSENSUS_PAGE)
           .select(pl.col("scrape_date").str.to_date(),
                   pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("key"),
                   pl.col("ecr").cast(pl.Float64))
@@ -527,8 +562,24 @@ def best_per_week(joined: pl.DataFrame) -> pl.DataFrame:
 
 
 def build_panel(seasons: Sequence[int] = SEASONS,
-                spec: PanelSpec = SCREEN_SPEC) -> pl.DataFrame:  # pragma: no cover - network
+                spec: PanelSpec = SCREEN_SPEC,
+                as_of: str | None = None) -> pl.DataFrame:  # pragma: no cover - network
     """One row per (player, season, week), with every feature measured before its outcome.
+
+    `as_of` is an ISO date, inclusive of the day itself, and today it bounds **one** of the
+    eleven sources: the FantasyPros archive behind `weekly_consensus`. That is the one this
+    panel's reproducibility turned on -- it is the largest, it grows under the harness between
+    two runs of the same screen, and it is the only one of the eleven declared append-only, so
+    it is the only one an as-of can *filter* rather than merely label. The other ten still
+    reach nflverse live and revise in place; U2 of
+    `docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md` routes them. A panel
+    built at an as-of is therefore pinned in its consensus control and not yet in its outcome,
+    which is worth knowing before quoting a digest as if it named the whole panel.
+
+    A parameter rather than a `PanelSpec` field on purpose: the spec says *which sources* a
+    caller wants on its panel, and the as-of says *when* -- one is the shape and the other is
+    the moment, and folding the second into the first would make every existing spec a claim
+    about a date it never made.
 
     **This panel contains only weeks a player took a snap**, because `player_stats` has no row
     for a player who did not. That is the pre-registered Gate A treatment -- inactive weeks are
@@ -623,4 +674,5 @@ def build_panel(seasons: Sequence[int] = SEASONS,
         # does not list -- being unranked is the incumbent's *answer*, not a reason to have no
         # projection. Only the screen, which measures beyond consensus, requires it to exist.
         return p
-    return p.join(weekly_consensus(seasons), on=["season", "week", "key"], how="inner")
+    return p.join(weekly_consensus(seasons, as_of=as_of),
+                  on=["season", "week", "key"], how="inner")

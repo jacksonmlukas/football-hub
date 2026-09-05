@@ -36,7 +36,7 @@ from hub.config import (
     flex_share,
     starters,
 )
-from hub.contracts import DRAFT_BOARD, ContractViolation
+from hub.contracts import DRAFT_BOARD, FF_RANKINGS, ContractViolation
 from hub.draft import adp_history, durability
 from hub.draft import regression as td_regression
 from hub.draft import report as report_mod
@@ -45,6 +45,7 @@ from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.state import DraftState, remaining
+from hub.fetch.nflverse import load_rankings
 from hub.models import components
 from hub.models.predict import blend
 from hub.names import player_key
@@ -160,30 +161,47 @@ def _select_consensus(r: pl.DataFrame) -> pl.DataFrame:
 def consensus(as_of: str | None = None) -> pl.DataFrame:
     """FantasyPros ECR. `ecr_sd` is a crude prior on uncertainty until conformal lands.
 
-    `as_of` is an ISO date. Given one, this returns the board as it stood *before* that date
-    -- the latest scrape per player -- rather than today's. That is what makes a historical
-    replay honest: the room in 2022 could only see what had been published by then, and
-    scoring a 2022 draft against 2026 rankings would be hindsight wearing a backtest's
-    clothes.
+    `as_of` is an ISO date and it is **INCLUSIVE**: this returns the board as it stood at the
+    *end* of that day -- the latest scrape per player, counting the day itself. That is what
+    makes a historical replay honest: the room in 2022 could only see what had been published
+    by then, and scoring a 2022 draft against 2026 rankings would be hindsight wearing a
+    backtest's clothes.
 
-    The current path is untouched and still reads the small `draft` table. `all` is 1.8M rows
+    **The boundary belongs to one place, and this is not it.** This function used to keep its
+    own `scrape_date < as_of` -- *strictly* before -- while `hub.fetch.nflverse` filtered the
+    same archive at `<= as_of` and documented itself as inclusive. Two conventions one day
+    apart, agreeing on nothing but the fact that neither call site had moved yet. Routing this
+    read through `load_rankings` deletes the second convention rather than restating it: there
+    is now no date comparison here to drift from the loader's. Inclusive is the one that
+    survived because it is what the rest of the repo already means by "as of" --
+    `hub.store.lines_as_of` returns the latest snapshot captured *at or before* the moment --
+    and because the loader documents it, pins on it, and keys its cache on it.
+
+    What that costs, measured on the 2026-09-05 archive rather than assumed: exactly one
+    replay season has any `redraft-overall` scrape on its own September 1, and it is 2023 (540
+    rows). Read inclusively at `2023-09-01` the board would gain 11 players (964 -> 975) and
+    move 463 ECRs, reordering its top 25. So `board_as_of` asks for August 31 instead, which
+    names the same instant the old strict comparison did -- see there.
+
+    The live path is untouched and still reads the small `draft` table directly: `load` serves
+    a cache entry when one exists, and a board that silently reuses yesterday's ECR is a
+    draft-night failure. Routing it belongs with a refresh policy, not here. `all` is 1.8M rows
     across 2020-10-16 onward, which is fine once per backtest and wrong on draft night.
     """
     if as_of is None:
         return _select_consensus(nfl.load_ff_rankings("draft"))
-    allr = nfl.load_ff_rankings("all")
+    # The contract's own required set, so this and `hub.models.panel.weekly_consensus` -- the
+    # two routed readers of this archive -- key the same cache entry and cannot drift apart
+    # into two half-filled copies of a 1.8M-row table.
+    allr = load_rankings("all", as_of=as_of, cols=tuple(FF_RANKINGS.required))
     snap = (allr.filter((pl.col("page_type") == CONSENSUS_PAGE)
-                        # scrape_date is an ISO string, which sorts correctly as text;
-                        # casting it just to compare would be waste. Same technique as
-                        # `hub.draft.availability.historical_picks`.
-                        & (pl.col("scrape_date") < as_of)
                         & (pl.col("ecr").is_not_null()))
                 .sort("scrape_date", descending=True)
                 .unique(subset=["player"], keep="first"))
     if snap.is_empty():
         raise ContractViolation(
-            f"ff_rankings: no `{CONSENSUS_PAGE}` rows scraped before {as_of}; the archive "
-            f"starts 2020-10-16, so a season before 2021 cannot be replayed")
+            f"ff_rankings: no `{CONSENSUS_PAGE}` rows scraped on or before {as_of}; the "
+            f"archive starts 2020-10-16, so a season before 2021 cannot be replayed")
     return _select_consensus(snap)
 
 
@@ -714,8 +732,24 @@ def board_as_of(season: int) -> tuple[pl.DataFrame, BuildReport]:
     The temporal rule itself is `build`'s, documented on `build`, and now stated next to it: a
     strategy scored against rankings published after the season is hindsight wearing a
     backtest's clothes.
+
+    **August 31, not September 1, and the two name the same instant.** `consensus` is inclusive
+    of its as-of day -- one convention, the loader's, since it stopped keeping its own -- so the
+    cutoff this function asks for has to move back a day to select the rows the old strict
+    `scrape_date < {season}-09-01` selected. Verified on the whole archive rather than reasoned
+    about: for every season 2021-26, `< {yr}-09-01` and `<= {yr}-08-31` return the same row
+    count, and no `scrape_date` in 1.83M rows fails to parse as a plain date.
+
+    Holding the row set is deliberate and it is the reason the date moved. Only 2023 has any
+    `redraft-overall` scrape *on* September 1 (540 rows), and reading that day in would hand
+    the 2023 board 11 extra players (964 -> 975), move 463 ECRs and reorder its top 25 -- which
+    re-prices `hub.draft.backtest`, `hub.season.lineup_gate` and every published number
+    downstream of them, as a side effect of a plumbing change nobody would connect to the
+    cause. `docs/track-record.md` rule 1 makes those numbers commit-dated. Widening the window
+    by a day may well be right; it is a measurement with its own before-and-after, not a
+    migration detail.
     """
-    return build(season=season - 1, season_ahead=season, as_of=f"{season}-09-01")
+    return build(season=season - 1, season_ahead=season, as_of=f"{season}-08-31")
 
 
 def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
