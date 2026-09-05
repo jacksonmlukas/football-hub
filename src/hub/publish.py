@@ -100,7 +100,13 @@ def _keeping(out: Path, name: str, why: str, key: str = "n") -> Kept | None:
     if not (out / f"{name}.json").exists():
         return None
     had = _last_good_n(out, name, key)
-    print(f"  {name}: 0 rows against {had} already published; keeping last-good", flush=True)
+    # The printed line branches with the returned one. It used to say "0 rows against 0
+    # already published; keeping last-good" whenever the published artifact was itself
+    # empty -- an operator reading the slate's log was told last-good was being kept and
+    # that there was nothing to keep, in one sentence.
+    print(f"  {name}: read and empty; keeping the {had} row(s) last published" if had
+          else f"  {name}: read and empty, and so is the artifact already published",
+          flush=True)
     return Kept(f"{why}; keeping the {had} row(s) last published" if had
                 else f"{why}, and so is the artifact already published")
 
