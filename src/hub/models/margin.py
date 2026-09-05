@@ -68,7 +68,7 @@ TRAILING = 10
 DROP_TIES = True
 
 
-def home_won(games: pl.DataFrame, *, result: str = "result") -> pl.DataFrame:
+def home_won(games: pl.DataFrame) -> pl.DataFrame:
     """`games` with unscorable rows dropped and the realised outcome added as `home_won`.
 
     The one place a realised margin becomes the binary outcome a proper scoring rule reads,
@@ -86,10 +86,10 @@ def home_won(games: pl.DataFrame, *, result: str = "result") -> pl.DataFrame:
     would put a confident wrong outcome into a calibration bin instead, and calibration is
     the page's whole claim (`docs/track-record.md` rule 3).
     """
-    out = games.drop_nulls(result)
+    out = games.drop_nulls("result")
     if DROP_TIES:
-        out = out.filter(pl.col(result) != 0)
-    return out.with_columns((pl.col(result) > 0).cast(pl.Int64).alias("home_won"))
+        out = out.filter(pl.col("result") != 0)
+    return out.with_columns((pl.col("result") > 0).cast(pl.Int64).alias("home_won"))
 
 
 def residuals(schedules: pl.DataFrame) -> pl.DataFrame:

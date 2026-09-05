@@ -54,8 +54,9 @@ def test_the_envelope_names_the_file_it_is_in(path):
     assert got.get("name") == path.stem, (
         f"{path.name} describes itself as {got.get('name')!r}. The envelope is what stops two "
         f"writers of one file disagreeing about its shape; one that names a different file is "
-        f"disagreeing with itself. A `git mv` of a published artifact has to rewrite the name "
-        f"inside it, or the writer has to republish it.")
+        f"disagreeing with itself. Republish it through the writer; correcting the name by "
+        f"hand is the fallback for an archived week the writer no longer emits, and it "
+        f"has to leave the rows and the stamp untouched.")
 
 
 @pytest.mark.parametrize("path", _published(), ids=lambda p: p.stem)

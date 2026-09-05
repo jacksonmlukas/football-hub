@@ -58,7 +58,8 @@ def main(argv: list[str]) -> int:
         shredded = False
 
     print(f"  wrote {VAR} to .env ({len(key)} chars)")
-    print(f"  scratch file {'shredded and removed' if shredded else 'COULD NOT be removed -- delete it yourself'}: {src}")
+    fate = "shredded and removed" if shredded else "COULD NOT be removed -- delete it yourself"
+    print(f"  scratch file {fate}: {src}")
     print("  .env permissions set to 0600, and it is gitignored")
     return 0
 
