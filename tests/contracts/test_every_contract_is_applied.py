@@ -250,8 +250,15 @@ def test_each_contract_names_whether_it_has_met_real_data(name):
     reader of a red build should not have to work out which.
 
     That the attribute is a `bool` is all this ever asserted, on a field declared
-    `bool = True`. What the flag *says* is checked below."""
-    assert isinstance(getattr(contracts, name).verified_against_live, bool)
+    `bool = True`. What the flag *says* is checked below.
+
+    Three states now, not two: `None` is "nobody has measured", and it is the default, so a
+    newly declared contract starts by saying nothing rather than by claiming it has met a
+    live response. `isinstance(..., bool)` would have read `None` as a broken declaration."""
+    value = getattr(contracts, name).verified_against_live
+    assert value is True or value is False or value is None, (
+        f"{name}.verified_against_live is {value!r}; the three states are True (a captured "
+        f"payload proves it), False (only ever a hand-built shape), and None (unmeasured)")
 
 
 # --- has the declaration ever met the thing it describes? ---------------------
@@ -266,6 +273,22 @@ def test_each_contract_names_whether_it_has_met_real_data(name):
 # The escape hatch is the honest one and the README already prescribes it: the day a key is
 # added, the fixture is replaced with a real capture under a name without `.synthetic`, and
 # the flag follows. Renaming the file is the edit; there is no list here to keep in step.
+#
+# **What the evidence can say, and what it cannot.** It resolved five of eleven contracts on
+# 2026-09-05 -- PBP, FF_OPPORTUNITY, SCHEDULES, CFBD_GAMES, CFBD_LINES -- because those are
+# the ones a test validates against a frozen payload. The other six resolve to nothing, and
+# for a flag that defaulted to `True` that meant six contracts claiming they had met live
+# data on no evidence at all: a contract written from documentation, exactly like the two
+# this section exists for, could be added and nothing would go red.
+#
+# Nobody has measured whether those six have ever met a live response, and inventing an
+# answer would be worse than saying nothing, so the fix is not to guess -- it is to stop
+# silence reading as a claim. `None` is the default and means unmeasured, which is a
+# different sentence in a violation from "written from documentation", and the three tests
+# below together make the flag a function of the evidence rather than a claim beside it:
+# a capture requires `True`, hand-built-only requires `False`, no evidence requires `None`.
+# The way to move a contract off `None` is to validate it against a frozen payload, not to
+# edit a list.
 
 
 @functools.cache
@@ -383,6 +406,15 @@ def test_the_payload_scan_finds_both_kinds_of_evidence():
     assert {"CFBD_GAMES", "CFBD_LINES", "PBP", "SCHEDULES"} <= set(seen), (
         f"the scan resolved {sorted(seen)}; it has stopped seeing contracts that are "
         f"demonstrably validated against a frozen payload in tests/contracts/")
+    # Naming four was not enough. Five contracts resolved on 2026-09-05 and FF_OPPORTUNITY
+    # was the fifth, so a resolver that stopped following one form could drop it and still
+    # satisfy the line above -- and a contract whose evidence disappears is exactly a
+    # contract whose flag has nothing left to disagree with. A floor, because the resolved
+    # set can only be grown by wiring more evidence, never shrunk by accident.
+    assert len(seen) >= 5, (
+        f"the scan resolved {len(seen)} contracts ({sorted(seen)}), down from the five "
+        f"measured on 2026-09-05; evidence has gone missing rather than been added, so "
+        f"some contract's declaration is no longer being checked against anything")
     assert seen["CFBD_GAMES"] == frozenset({"cfbd_games.synthetic.json"}), (
         f"CFBD_GAMES resolved to {sorted(seen['CFBD_GAMES'])}; it should hold its own "
         f"payload, not every payload named in the file that validates it")
@@ -391,38 +423,76 @@ def test_the_payload_scan_finds_both_kinds_of_evidence():
 def test_a_contract_only_ever_checked_against_a_hand_built_shape_says_it_is_unverified():
     """The flip this exists to catch. Both CFBD contracts are validated only against payloads
     written by hand from CFBD's documentation, so `verified_against_live=True` on either is a
-    claim the tree contradicts -- and it used to be a claim nothing read."""
+    claim the tree contradicts -- and it used to be a claim nothing read.
+
+    `False` exactly, not merely "not True". The tree answers this question here, so a
+    declaration that says `None` -- unmeasured -- while a hand-built payload sits behind it
+    is throwing away the more useful of the two sentences a violation can carry."""
     fixtures, wrong = _fixtures(), []
     for name, seen in sorted(_exercised().items()):
-        if not any(fixtures[p] for p in seen) and getattr(contracts, name).verified_against_live:
-            wrong.append(f"{name} (checked only against {', '.join(sorted(seen))})")
+        flag = getattr(contracts, name).verified_against_live
+        if not any(fixtures[p] for p in seen) and flag is not False:
+            wrong.append(f"{name} (verified_against_live={flag!r}, "
+                         f"checked only against {', '.join(sorted(seen))})")
     assert not wrong, (
-        f"claims verified_against_live, but every frozen payload it is checked against was "
-        f"hand-built from documentation: {wrong}. That flag is what tells the reader of a red "
-        f"build whether to suspect the declaration or the source, so a contract that has only "
-        f"ever met a shape we guessed must say so. If a real capture now exists, replace the "
-        f"`.synthetic` fixture with it -- see tests/golden/fixtures/README.md.")
+        f"every frozen payload these are checked against was hand-built from documentation, "
+        f"so each must declare `verified_against_live=False`: {wrong}. That flag is what "
+        f"tells the reader of a red build whether to suspect the declaration or the source, "
+        f"so a contract that has only ever met a shape we guessed must say so. If a real "
+        f"capture now exists, replace the `.synthetic` fixture with it -- see "
+        f"tests/golden/fixtures/README.md.")
 
 
 def test_a_contract_checked_against_a_real_capture_does_not_call_itself_a_guess():
     """The other direction, which goes stale the quieter way: a fixture gets replaced with a
-    real capture and the flag it was written to explain is left behind."""
+    real capture and the flag it was written to explain is left behind. `None` fails here for
+    the same reason `False` does -- a capture is an answer, and the declaration should carry
+    it rather than say nobody looked."""
     fixtures, wrong = _fixtures(), []
     for name, seen in sorted(_exercised().items()):
         real = sorted(p for p in seen if fixtures[p])
-        if real and not getattr(contracts, name).verified_against_live:
-            wrong.append(f"{name} (checked against {', '.join(real)})")
+        flag = getattr(contracts, name).verified_against_live
+        if real and flag is not True:
+            wrong.append(f"{name} (verified_against_live={flag!r}, "
+                         f"checked against {', '.join(real)})")
     assert not wrong, (
-        f"declares verified_against_live=False while a captured payload proves otherwise: "
-        f"{wrong}. Every violation from these carries a note telling the reader to suspect "
-        f"the declaration first, which sends them to the wrong suspect.")
+        f"a captured payload proves these have met a real response, so each must declare "
+        f"`verified_against_live=True`: {wrong}. Every violation from a contract that does "
+        f"not carries a note about the declaration being the likelier suspect, which sends "
+        f"the reader of a red build to the wrong one.")
+
+
+def test_a_contract_with_no_evidence_at_all_cannot_claim_it_has_met_live_data():
+    """**The gap #66 was opened for.** The two tests above only constrain contracts the
+    evidence resolves, which was five of eleven on 2026-09-05. The other six resolved to no
+    frozen payload at all and the flag still defaulted to *verified*, so a contract written
+    from documentation -- exactly like the two CFBD ones this whole section exists for --
+    could be declared and nothing would go red.
+
+    The fix is not to guess at those six. Nobody has measured whether the unexercised
+    nflverse contracts have ever met a live response, and `None` says exactly that: it is
+    the default, so silence now reads as silence rather than as a claim. Moving a contract
+    off `None` means validating it against a frozen payload, not editing a list here."""
+    seen = _exercised()
+    wrong = []
+    for name in sorted(_declared()):
+        flag = getattr(contracts, name).verified_against_live
+        if name not in seen and flag is not None:
+            wrong.append(f"{name} (verified_against_live={flag!r})")
+    assert not wrong, (
+        f"claims to know whether it has met live data, and no frozen payload in the tree "
+        f"says either way: {wrong}. Nothing in tests/ validates these contracts against a "
+        f"fixture, so the answer is unmeasured and the declaration must say so with `None` "
+        f"-- the state that exists precisely so an unmeasured contract is not collapsed "
+        f"into one known to be hand-built. To claim otherwise, validate it against a frozen "
+        f"payload under tests/golden/fixtures/ and let this scan see it.")
 
 
 def test_a_violation_from_an_unverified_contract_names_the_likelier_suspect():
     """The behaviour the flag buys, which nothing asserted. An empty frame is enough to fail
     any of them -- what is being read is the sentence, not the failure."""
     unverified = [n for n in sorted(_declared())
-                  if not getattr(contracts, n).verified_against_live]
+                  if getattr(contracts, n).verified_against_live is False]
     assert unverified, ("no contract declares itself unverified, so this asserts nothing; "
                         "both CFBD endpoints were written from documentation")
     for name in unverified:
@@ -430,6 +500,31 @@ def test_a_violation_from_an_unverified_contract_names_the_likelier_suspect():
             getattr(contracts, name).validate(pl.DataFrame())
         assert "suspect the declaration before the source" in str(raised.value), (
             f"{name} has never met a live response and its violation does not say so")
+
+
+def test_a_violation_from_an_unmeasured_contract_does_not_borrow_the_guess_sentence():
+    """The distinction the third state exists for, read where a person actually meets it.
+
+    "Written from documentation" is a claim about how a contract was authored, and it is true
+    of the two CFBD ones. It is not known to be true of the six nothing validates against a
+    payload -- nobody has measured those -- so a violation from one must not say it. Nor may
+    it say nothing, which is what a flag defaulting to *verified* did: a reader of that red
+    build was told the source is the only suspect."""
+    unmeasured = [n for n in sorted(_declared())
+                  if getattr(contracts, n).verified_against_live is None]
+    assert unmeasured, ("no contract declares its provenance unmeasured, so this asserts "
+                        "nothing; six resolved to no frozen payload on 2026-09-05")
+    for name in unmeasured:
+        with pytest.raises(contracts.ContractViolation) as raised:
+            getattr(contracts, name).validate(pl.DataFrame())
+        message = str(raised.value)
+        assert "written from documentation" not in message, (
+            f"{name}'s provenance is unmeasured, and its violation asserts it was written "
+            f"from documentation -- which is the CFBD contracts' story, not a measurement "
+            f"anyone made about this one")
+        assert "nothing in this repo records" in message, (
+            f"{name} has no frozen payload behind it and its violation does not say so, so "
+            f"the reader of a red build is left to suspect the source alone")
 
 
 def _evidence(source: str) -> dict[str, set[str]]:

@@ -46,10 +46,21 @@ def _family(dt: Any) -> str:
 # Both CFBD contracts were read off the documentation on a machine with no key, so their
 # first red build has two suspects -- the guess and the source -- and the reader should be
 # told which to open first.
-# GUARD unverified-note [contracts/test_every_contract_is_applied.py]: a guessed contract says so
+#
+# Two sentences, because there are two ways not to have met a response and they send the
+# reader to different places. "Written from documentation" is a claim about how a contract
+# was authored, true of the CFBD pair and not known of anything else: six of the eleven are
+# validated against no frozen payload at all, so nobody has measured whether they have met
+# live data. Saying nothing about those was the defect in #66 -- the flag defaulted to
+# verified, so their violations read as "the source broke" on no evidence either way.
+# GUARD unverified-note [contracts/test_every_contract_is_applied.py]: names the suspect
 _UNVERIFIED_NOTE = (
     ". NOTE: this contract was written from documentation and has never been "
     "checked against a live response -- suspect the declaration before the source")
+_UNMEASURED_NOTE = (
+    ". NOTE: nothing in this repo records whether this contract has ever been checked "
+    "against a real response -- the declaration is as much a suspect as the source")
+_PROVENANCE_NOTES: dict[bool | None, str] = {False: _UNVERIFIED_NOTE, None: _UNMEASURED_NOTE}
 # /GUARD
 
 
@@ -66,12 +77,22 @@ class Contract:
     # "the guess was wrong" as "the source broke" -- and a red build should say which is the
     # likelier suspect rather than leaving the reader to work it out.
     #
+    # Three states, and `None` -- unmeasured -- is the default. It used to default to `True`,
+    # which made silence a claim: six of the eleven contracts are validated against no frozen
+    # payload at all, and every one of them said it had met live data on no evidence either
+    # way. A contract added from documentation, exactly like the CFBD pair below, inherited
+    # that claim and nothing went red (#66). Nobody has measured those six, so `None` says
+    # that and no more; guessing an answer for them would be worse than saying nothing.
+    #
     # Not a free-text claim. `tests/contracts/test_every_contract_is_applied.py` resolves
     # which frozen payload each contract is validated against and requires this flag to agree
     # with that payload's provenance, which `tests/golden/fixtures/README.md` records in the
-    # filename. Flipping either CFBD contract to `True` fails there, by name -- until this
-    # was written, flipping both left all twenty tests in that file green.
-    verified_against_live: bool = True
+    # filename: a capture requires `True`, a hand-built shape requires `False`, and no
+    # payload at all requires `None`. Flipping either CFBD contract to `True` fails there, by
+    # name -- until this was written, flipping both left all twenty tests in that file green.
+    # The way off `None` is to validate the contract against a frozen payload, not to edit a
+    # list somewhere.
+    verified_against_live: bool | None = None
 
     def validate(self, df: pl.DataFrame) -> pl.DataFrame:
         problems = []
@@ -104,7 +125,9 @@ class Contract:
                 if mn is not None and (cast(float, mn) < lo or cast(float, mx) > hi):
                     problems.append(f"{c} range [{mn}, {mx}] outside [{lo}, {hi}]")
         if problems:
-            note = "" if self.verified_against_live else _UNVERIFIED_NOTE
+            # `.get`, so only the two states that have something to say add a sentence --
+            # `True` is the contract that has met a real response and needs no caveat.
+            note = _PROVENANCE_NOTES.get(self.verified_against_live, "")
             raise ContractViolation(f"{self.name}: " + "; ".join(problems) + note)
         return df
 
@@ -135,6 +158,9 @@ FF_OPPORTUNITY = Contract(
     non_null=("player_id",),
     ranges={"total_fantasy_points_exp": (-10, 80)},
     min_rows=1000,
+    # Checked against `nflverse_ff_opportunity.json`, a real 2025 capture. Stated because
+    # the default is now `None` -- see `verified_against_live`.
+    verified_against_live=True,
 )
 
 PBP = Contract(
@@ -149,6 +175,9 @@ PBP = Contract(
     # timeouts, end-of-quarter rows -- so requiring it would fail every honest refresh.
     ranges={"week": (1, 22), "epa": (-16, 12), "wp": (0, 1), "yards_gained": (-45, 120)},
     min_rows=1000,
+    # Checked against `nflverse_pbp.json`, a real 2025 capture. Stated because the default
+    # is now `None` -- see `verified_against_live`.
+    verified_against_live=True,
 )
 
 # Play-level personnel and alignment. The scheme layer's foundation: who was on the field,
@@ -203,6 +232,9 @@ SCHEDULES = Contract(
     # sign flip, which would show as a plausible number on the wrong team.
     ranges={"week": (1, 22), "spread_line": (-40, 40), "total_line": (20, 80)},
     min_rows=1,
+    # Checked against `nflverse_schedules.json`, a real 2025 capture. Stated because the
+    # default is now `None` -- see `verified_against_live`.
+    verified_against_live=True,
 )
 
 CFBD_GAMES = Contract(

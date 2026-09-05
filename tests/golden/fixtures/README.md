@@ -6,7 +6,13 @@ nightly job in `tests/golden/` is what actually catches an upstream rename.
 
 ## Provenance
 
-Two kinds, and the filename says which.
+Two kinds of fixture, and the filename says which. There is a third answer to the provenance
+question and it has no file here: a contract that no test validates against any frozen
+payload. Six of the eleven in `hub.contracts` are in that position, so what this directory
+records about them is nothing, and `verified_against_live=None` is how they say so — the
+absence of a row below is not evidence of a capture. See
+`tests/contracts/test_every_contract_is_applied.py`, which resolves which payload each
+contract is actually checked against and requires the flag to match.
 
 | Fixture | Source |
 |---|---|
