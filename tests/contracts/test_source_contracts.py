@@ -10,11 +10,14 @@ What each fixture can and cannot prove is not uniform, and it matters:
 
   * nflverse and ESPN fixtures are **real captures**, so a passing test here means the
     contract holds against what those APIs actually returned -- three of the nflverse six on
-    2026-08-23, the three #33 added on 2026-09-05, the ESPN scoreboard the same day. The ESPN one is trimmed, and the rule
-    the re-capture in #73 established is that a trim may remove anything except a path the
-    production reader takes: the capture before it had been cut past the competition-level
-    status `live_state` reads a game's state from, so the fixture could not fail on the one
-    path the code actually walks.
+    2026-08-23, the three #33 added on 2026-09-05, and both ESPN scoreboards the same day.
+    The two ESPN ones are trimmed, and the rule the re-capture in #73 established is that a
+    trim may remove anything except a path the production reader takes: the capture before it
+    had been cut past the competition-level status `live_state` reads a game's state from, so
+    the fixture could not fail on the one path the code actually walks. #75 added the
+    NFL board beside the college one and the sentence the college trim had left
+    unevidenced -- see `tests/golden/fixtures/README.md`, which records what each trim keeps
+    and, for the NFL board, what a capture taken before kickoff cannot show.
   * CFBD and Odds fixtures are **hand-built**, because neither key exists on this machine.
     They prove the parser handles the shape we *believe* is returned. A synthetic fixture
     cannot catch a rename, which is the whole reason contracts exist -- so those two
@@ -139,7 +142,7 @@ def test_snap_percentages_arriving_as_whole_percents_are_caught():
         shape_only(SNAP_COUNTS).validate(df)
 
 
-def _live_frame(monkeypatch, fixture: str) -> pl.DataFrame:
+def _live_frame(monkeypatch, fixture: str, league: str = "cfb") -> pl.DataFrame:
     """The frozen capture put through `espn.live_state`, as the frame the contract sees.
 
     **Through the production reader**, which is the point. This file used to lift the four
@@ -157,8 +160,24 @@ def _live_frame(monkeypatch, fixture: str) -> pl.DataFrame:
     from hub.fetch import espn
 
     payload = json.loads((FIXTURES / fixture).read_text())
-    monkeypatch.setattr(espn, "scoreboard", lambda league="nfl": payload)
-    return espn.scoreboard_frame(espn.live_state())
+    # Tie the capture to the league it was taken from, by name. The first version of this
+    # asserted the requested league against the league this function was *given*, which is
+    # the same value twice -- a guard that compares an argument to itself and can never fire.
+    # What actually needs checking is the pair: `espn_scoreboard_nfl.json` served as "cfb"
+    # would otherwise validate happily and evidence nothing about either board.
+    captured = fixture.removesuffix(".json").rsplit("_", 1)[-1]
+    assert captured == league, (
+        f"{fixture} is a capture of the {captured} board and this call declares it {league}. "
+        f"The frame would validate either way, which is why the pair is checked here rather "
+        f"than left to match by convention.")
+
+    def _scoreboard(league: str = "nfl", date: str | None = None) -> dict:
+        assert league == captured, (
+            f"the reader asked for the {league} board while holding the {captured} capture")
+        return payload
+
+    monkeypatch.setattr(espn, "scoreboard", _scoreboard)
+    return espn.scoreboard_frame(espn.live_state(league))
 
 
 def test_espn_scoreboard_contract_holds_on_the_real_capture(monkeypatch):
@@ -180,7 +199,56 @@ def test_espn_scoreboard_contract_holds_on_the_real_capture(monkeypatch):
     the test introduces, and it is written down here rather than left as a surprise.
     """
     assert ESPN_SCOREBOARD.validate(
-        _live_frame(monkeypatch, "espn_scoreboard.json")).height == 4
+        _live_frame(monkeypatch, "espn_scoreboard_cfb.json", "cfb")).height == 4
+
+
+def test_the_nfl_board_has_a_frozen_shape_too(monkeypatch):
+    """The other league the poller serves, which had no frozen shape at all until now.
+
+    `espn_scoreboard_cfb.json` is the college board, frozen because it is the one that had
+    games in every state on the afternoon it was taken -- and the poller *defaults* to
+    `nfl`. So the endpoint the overlay reads most had nothing offline to compare against, and
+    a rename would have waited for the nightly canary. This is the same endpoint under
+    `LEAGUE_PATHS["nfl"]`, captured the same day, through the same reader.
+
+    **What it evidences and what it cannot.** The 2026 NFL season had not kicked off on
+    2026-09-05, so all sixteen Week 1 events on that board were `pre` and an in-progress
+    NFL game did not exist to capture. Every path this file's counterpart exercises
+    for a live game -- `situation.possession`, `downDistanceText` -- is therefore absent here,
+    and no fixture in this repo asserts a shape of the NFL board that anybody
+    observed in progress. Freezing one would have meant editing a `pre` event into an `in`
+    one, which is a fixture asserting a shape nobody saw: worse than the gap. The gap is
+    covered live instead, by `tests/golden/test_golden.py`, which runs both leagues through
+    `live_state` nightly.
+
+    What is left is not nothing, and one part of it is covered nowhere else. Sixteen of
+    sixteen events resolve, so the field names the reader walks are evidenced on the
+    NFL board rather than assumed from the college one. That is the whole of what it earns.
+
+    It is *not* here for `possession` and `down_distance` arriving all-null on a quiet board.
+    That was the original justification and it is false: neither column is in
+    `SCOREBOARD_TYPES` or the contract's `required`, so nothing validates their dtype and
+    dropping both outright still passes. Asserting `pl.Null` here would have tested polars'
+    inference and called it contract coverage -- a check that cannot fail, which is the
+    defect this repo keeps paying for. It is written down rather than quietly deleted
+    because the same sentence sat in `espn.py` for months.
+    """
+    df = ESPN_SCOREBOARD.validate(
+        _live_frame(monkeypatch, "espn_scoreboard_nfl.json", "nfl"))
+    assert df.height == 16, (
+        f"the NFL capture resolved {df.height} of its events; every one of them "
+        f"resolved when it was frozen, so a drop is the reader refusing a shape")
+    assert set(df["state"]) == {"pre"}, (
+        "the NFL capture is documented as pre-only -- it was taken before the "
+        "season kicked off -- and this test's claim about what it cannot evidence depends "
+        "on that staying true")
+    from hub.fetch.espn import SCOREBOARD_TYPES
+
+    assert set(SCOREBOARD_TYPES) == set(ESPN_SCOREBOARD.required), (
+        f"the frame builder types {sorted(SCOREBOARD_TYPES)} and the contract requires "
+        f"{sorted(ESPN_SCOREBOARD.required)}. They are declared apart and have to agree: a "
+        f"column typed but not required is unvalidated, and one required but not typed "
+        f"vanishes from an empty board, which is what the explicit typing is for.")
 
 
 # --- synthetic fixtures: these prove we parse the documented shape --------

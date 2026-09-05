@@ -1,34 +1,106 @@
 {
   "events": [
     {
-      "id": "401858425",
-      "date": "2026-09-05T16:00Z",
-      "name": "North Texas Mean Green at Indiana Hoosiers",
+      "id": "401858434",
+      "date": "2026-09-05T19:30Z",
+      "name": "Marshall Thundering Herd at Penn State Nittany Lions",
+      "status": {
+        "type": {
+          "state": "in",
+          "shortDetail": "7:16 - 1st"
+        }
+      },
       "competitions": [
         {
           "status": {
             "type": {
               "state": "in",
-              "shortDetail": "12:51 - 4th"
+              "shortDetail": "7:16 - 1st"
             }
           },
           "competitors": [
             {
               "homeAway": "home",
-              "score": "38",
+              "score": "10",
               "team": {
-                "abbreviation": "IU"
+                "abbreviation": "PSU"
               }
             },
             {
               "homeAway": "away",
-              "score": "16",
+              "score": "0",
               "team": {
-                "abbreviation": "UNT"
+                "abbreviation": "MRSH"
+              }
+            }
+          ],
+          "situation": {
+            "possession": "213",
+            "downDistanceText": "1st & 10 at PSU 34"
+          }
+        }
+      ]
+    },
+    {
+      "id": "401856667",
+      "date": "2026-09-05T19:30Z",
+      "name": "Texas State Bobcats at Texas Longhorns",
+      "competitions": [
+        {
+          "status": {
+            "type": {
+              "state": "in",
+              "shortDetail": "4:14 - 1st"
+            }
+          },
+          "competitors": [
+            {
+              "homeAway": "home",
+              "score": "14",
+              "team": {
+                "abbreviation": "TEX"
+              }
+            },
+            {
+              "homeAway": "away",
+              "score": "0",
+              "team": {
+                "abbreviation": "TXST"
               }
             }
           ],
           "situation": {}
+        }
+      ]
+    },
+    {
+      "id": "401856668",
+      "date": "2026-09-05T23:00Z",
+      "name": "Missouri State Bears at Texas A&M Aggies",
+      "competitions": [
+        {
+          "status": {
+            "type": {
+              "state": "pre",
+              "shortDetail": "9/5 - 7:00 PM EDT"
+            }
+          },
+          "competitors": [
+            {
+              "homeAway": "home",
+              "score": "0",
+              "team": {
+                "abbreviation": "TA&M"
+              }
+            },
+            {
+              "homeAway": "away",
+              "score": "0",
+              "team": {
+                "abbreviation": "MOST"
+              }
+            }
+          ]
         }
       ]
     },
@@ -40,14 +112,14 @@
         {
           "status": {
             "type": {
-              "state": "in",
-              "shortDetail": "13:36 - 4th"
+              "state": "post",
+              "shortDetail": "Final"
             }
           },
           "competitors": [
             {
               "homeAway": "home",
-              "score": "45",
+              "score": "48",
               "team": {
                 "abbreviation": "ALA"
               }
@@ -57,72 +129,6 @@
               "score": "10",
               "team": {
                 "abbreviation": "ECU"
-              }
-            }
-          ],
-          "situation": {
-            "possession": "151",
-            "downDistanceText": "4th & 8 at ECU 27"
-          }
-        }
-      ]
-    },
-    {
-      "id": "401856658",
-      "date": "2026-09-05T19:00Z",
-      "name": "Tennessee State Tigers at Georgia Bulldogs",
-      "competitions": [
-        {
-          "status": {
-            "type": {
-              "state": "pre",
-              "shortDetail": "9/5 - 3:00 PM EDT"
-            }
-          },
-          "competitors": [
-            {
-              "homeAway": "home",
-              "score": "0",
-              "team": {
-                "abbreviation": "UGA"
-              }
-            },
-            {
-              "homeAway": "away",
-              "score": "0",
-              "team": {
-                "abbreviation": "TNST"
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "401864494",
-      "date": "2026-08-29T19:00Z",
-      "name": "San Jos\u00e9 State Spartans at USC Trojans",
-      "competitions": [
-        {
-          "status": {
-            "type": {
-              "state": "post",
-              "shortDetail": "Final"
-            }
-          },
-          "competitors": [
-            {
-              "homeAway": "home",
-              "score": "42",
-              "team": {
-                "abbreviation": "USC"
-              }
-            },
-            {
-              "homeAway": "away",
-              "score": "26",
-              "team": {
-                "abbreviation": "SJSU"
               }
             }
           ]

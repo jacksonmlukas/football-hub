@@ -72,10 +72,16 @@ def summary(event_id: str, league: str = "nfl") -> dict:
     return _get(f"{LEAGUE_PATHS[league]}/summary", {"event": event_id}, f"sum_{event_id}")
 
 
-# The three columns the contract types. Given explicitly because a scoreboard with no games
-# in progress carries all-null `possession` and `down_distance`, and polars infers those as
-# `Null` -- which is its own dtype family and matches nothing, exactly the case `_family` was
-# written for.
+# The four columns the contract types, given explicitly because an *empty* board would
+# otherwise have no columns at all: `pl.DataFrame([])` carries none, and a contract cannot
+# tell "no games today" from "every field is gone" without them. `scoreboard_frame` says the
+# same where it uses this.
+#
+# This comment used to say three columns, and justify itself by `possession` and
+# `down_distance` arriving all-null on a quiet board. Neither is in this dict, so the
+# contract never sees their dtype and `_family` never compares it -- dropping both columns
+# outright still validates. It read plausibly for months because no fixture had a board with
+# nothing in progress; #75 froze one, which made the claim checkable and false.
 SCOREBOARD_TYPES: dict[str, Any] = {"id": pl.Utf8, "state": pl.Utf8, "home": pl.Utf8,
                                     "away": pl.Utf8}
 
@@ -120,9 +126,16 @@ def _overlay_row(ev: dict) -> tuple[dict | None, str]:
         return None, "no competition"
     c = comps[0]
     # The **competition's** status, which is where a game's state lives. An event-level
-    # `status` also exists in the response and is deliberately not read here; the frozen
-    # capture carried only that one until 2026-09-05, which is how a golden fixture came to
-    # be unable to exercise the path production takes (#73).
+    # `status` carrying the same state also exists in the response and is deliberately not
+    # read here. That sentence is checkable rather than asserted: `espn_scoreboard_cfb.json`
+    # keeps both copies on its first event -- the one thing in that file trimmed past the
+    # paths a reader takes, kept precisely so the choice can be seen -- and
+    # `test_the_event_level_status_is_in_the_capture_and_still_unread` fails if the capture
+    # stops carrying it, if this comment stops claiming it, or if the state a row reports
+    # starts coming off the event. The frozen capture carried *only* the event-level copy
+    # until 2026-09-05, which is how a golden fixture came to be unable to exercise the path
+    # production takes (#73); a capture carrying neither is that defect mirrored, and is what
+    # the test above refuses.
     st = (c.get("status") or {}).get("type") or {}
     if not st.get("state"):
         return None, "no competition-level status.type.state"

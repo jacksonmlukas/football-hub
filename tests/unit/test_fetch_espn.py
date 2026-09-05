@@ -295,34 +295,108 @@ def test_a_board_with_no_games_on_it_is_not_a_failure(monkeypatch, tmp_path):
     assert espn.live_state() == []
 
 
+def _capture(name: str) -> dict:
+    """One frozen scoreboard capture, freshly loaded so a test may mutate it."""
+    import json
+    from pathlib import Path as _Path
+
+    return json.loads((_Path(__file__).resolve().parents[1] / "golden" / "fixtures"
+                       / name).read_text())
+
+
 def test_the_frozen_capture_reaches_the_overlay_with_its_live_fields(monkeypatch, tmp_path):
     """The reader against the real response, not against a payload written for it.
 
-    `tests/golden/fixtures/espn_scoreboard.json` is the capture; the contract test puts it
-    through the contract, and this puts it through the columns the contract does not cover.
-    The two live games in it are the reason the trim kept both: ESPN sent one with
+    `tests/golden/fixtures/espn_scoreboard_cfb.json` is the capture; the contract test puts
+    it through the contract, and this puts it through the columns the contract does not
+    cover. The two live games in it are the reason the trim kept both: ESPN sent one with
     `situation.possession` and `downDistanceText` set, and one -- between plays, after an
     extra point -- whose `situation` carried neither. That is observed, not supposed, and it
     is why those two are read with `.get` rather than subscripted.
     """
-    import json
-    from pathlib import Path as _Path
-
     espn = _cache_at(monkeypatch, tmp_path)
-    payload = json.loads((_Path(__file__).resolve().parents[1] / "golden" / "fixtures"
-                          / "espn_scoreboard.json").read_text())
+    payload = _capture("espn_scoreboard_cfb.json")
     monkeypatch.setattr(espn, "scoreboard", lambda league="nfl": payload)
     rows = {g["id"]: g for g in espn.live_state()}
 
     assert sorted(g["state"] for g in rows.values()) == ["in", "in", "post", "pre"]
-    with_ball = rows["401856634"]
-    assert with_ball["home"] == "ALA" and with_ball["home_score"] == "45"
-    assert with_ball["detail"] == "13:36 - 4th"
-    assert with_ball["possession"] == "151"
-    assert with_ball["down_distance"] == "4th & 8 at ECU 27"
-    between_plays = rows["401858425"]
+    with_ball = rows["401858434"]
+    assert with_ball["home"] == "PSU" and with_ball["home_score"] == "10"
+    assert with_ball["detail"] == "7:16 - 1st"
+    assert with_ball["possession"] == "213"
+    assert with_ball["down_distance"] == "1st & 10 at PSU 34"
+    between_plays = rows["401856667"]
     assert between_plays["state"] == "in"
     assert between_plays["possession"] is None and between_plays["down_distance"] is None
+
+
+def test_the_event_level_status_is_in_the_capture_and_still_unread(monkeypatch, tmp_path):
+    """`_overlay_row` says an event-level `status` exists and is deliberately not read.
+
+    Until this, that sentence was the one claim about the capture the capture contradicted:
+    the trim had removed the event-level copy from all four events, so a reader checking the
+    comment against the fixture found nothing there -- the mirror of #73, which was the trim
+    keeping *only* the event-level copy and cutting the competition-level path the reader
+    walks. One event now carries both, which is the only way "deliberately not read" is a
+    choice somebody can watch being made rather than a sentence to take on trust.
+
+    Three things have to stay in step, and each is asserted here so that breaking any of them
+    is loud: the comment claims it, the capture carries it, and the reader ignores it. The
+    last is the one worth a mutation -- a row whose event-level state says `post` while its
+    competition says `in` still reports `in`, and an event that loses only its
+    competition-level status is dropped with the event-level copy sitting right there
+    unread. If the sentence is ever deleted from `_overlay_row`, delete the event-level
+    `status` from the capture and this test with it; a fixture carrying a field for a reason
+    nothing states any more is the same rot pointing the other way.
+    """
+    import inspect as _inspect
+    import re as _re
+    from pathlib import Path as _Path
+
+    espn = _cache_at(monkeypatch, tmp_path)
+    # Scoped to `_overlay_row` and matched as one sentence. Two substrings anywhere in the
+    # module is the weaker test that was here first: a rewording which deletes the claim but
+    # leaves both phrases elsewhere in the file passes it, so it would go on guarding a
+    # sentence that no longer exists.
+    claim = _re.search(r"event-level[^.]{0,200}deliberately not"
+                       r"|deliberately not[^.]{0,200}event-level",
+                       _inspect.getsource(espn._overlay_row), _re.S)
+    assert claim, (
+        "`_overlay_row` no longer claims, in one sentence, that an event-level `status` "
+        "exists and is deliberately not read. If that claim is gone, drop the event-level "
+        "`status` the capture keeps solely to evidence it.")
+
+    # The README states the rule that a field kept past the reader's paths must say in that
+    # file why. Nothing read the README, so deleting its section left the rule's own second
+    # half green -- an unevidenced clause inside the rule about evidence.
+    readme = (_Path(__file__).resolve().parents[1] / "golden" / "fixtures" / "README.md"
+              ).read_text()
+    assert "event-level" in readme and "deliberately not" in readme, (
+        "the fixtures README no longer explains the event-level `status` the college capture "
+        "keeps past every path the reader walks. That field is in the file only because the "
+        "README justifies it; unjustified, it is an untrimmed field, not evidence.")
+
+    payload = _capture("espn_scoreboard_cfb.json")
+    both = [ev for ev in payload["events"] if "status" in ev]
+    assert len(both) == 1, (
+        f"{len(both)} of {len(payload['events'])} captured events carry an event-level "
+        f"`status`; the trim is documented as keeping exactly one, and a capture carrying "
+        f"none cannot evidence the comment in `_overlay_row` that says it exists")
+    ev = both[0]
+    assert ev["status"]["type"]["state"] == ev["competitions"][0]["status"]["type"]["state"]
+
+    monkeypatch.setattr(espn, "scoreboard", lambda league="nfl": payload)
+    ev["status"]["type"]["state"] = "post"          # disagreeing with the competition's `in`
+    assert {g["id"]: g["state"] for g in espn.live_state()}[ev["id"]] == "in", (
+        "the overlay took a game's state off the event; `_overlay_row` reads it off the "
+        "competition, and the two agree in every real response, so nothing else would say")
+
+    del ev["competitions"][0]["status"]
+    resolved = {g["id"] for g in espn.live_state()}
+    assert ev["id"] not in resolved and len(resolved) == 3, (
+        "an event whose competition carries no status was resolved anyway -- the event-level "
+        "copy is standing in for the path the poller reads, which is exactly what #73 "
+        "removed from the fixture side")
 
 
 # --- the tiered poller ------------------------------------------------------

@@ -100,9 +100,16 @@ def test_the_live_board_still_resolves_through_the_reader(league, monkeypatch):
     Fetched once and replayed, because `live_state` fetches for itself and one nightly GET
     per league is the budget.
 
-    Both leagues, deliberately: the poller defaults to `nfl` and the frozen capture is the
-    college board, and the endpoint is shared, so a rename shows up in whichever board has
-    games that night.
+    Both leagues, deliberately: the endpoint is shared, so a rename shows up in whichever
+    board has games that night. Both are now frozen too -- #75 added `espn_scoreboard_nfl`
+    beside the college capture -- but the two frozen shapes are not equivalent and this is
+    where the difference is paid for. The professional capture was taken before the 2026
+    season kicked off, so every event in it is `pre`: it evidences the field names on that
+    board and the all-null `possession`/`down_distance` case, and nothing about a
+    professional game in progress. An in-progress professional game did not exist to capture
+    on 2026-09-05 and inventing one would have been a fixture asserting a shape nobody
+    observed, so that path is watched here rather than frozen -- which is why this test runs
+    nightly against both leagues instead of only against the one whose live path is frozen.
 
     Every event has to resolve, not merely one. A dropped event is `_overlay_row` refusing a
     shape, which is exactly what this is here to notice -- the alternative tolerates a
