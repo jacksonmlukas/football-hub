@@ -24,9 +24,14 @@ fail=0
 #
 # The value charsets are named rather than left as `.`, which is not tightening for its own
 # sake: `ODDS_API_KEY=.{20,}` matches the sentence "ODDS_API_KEY= in SETUP.md for where to
-# get one", and a gate that fires on the documentation telling you to set a key is a gate you
+# get one", and a scan that fires on the documentation telling you to set a key is a scan you
 # learn to ignore -- which is how the 2026-08-23 miss became possible. A real cookie or key
 # carries no spaces and no prose punctuation.
+#
+# "Scan", not "gate", throughout. `CONTEXT.md` reserves **Gate** for the measurement decision
+# -- does a model beat the thing it replaces -- and this checks a history for credentials,
+# which is a different kind of claim entirely. The test module still says gate in its own
+# names; that is issue #53's second pass.
 #
 # One named variable per credential shape rather than a single blob. The self-check below
 # reports the name, so a pattern that goes dead is identified instead of being folded into
@@ -47,7 +52,7 @@ CANARY_CASES='espn-cookie:P_ESPN_S2 espn-cookie-quoted:P_ESPN_S2_QUOTED braced-s
 
 # Every sample is synthetic and assembled at runtime from parts. Not style: the scan below
 # reads every commit, this script is in every commit, so a credential-shaped literal here
-# would make the gate fail on itself permanently. Held by
+# would make this scan fail on itself permanently. Held by
 # tests/unit/test_preflight.py::test_the_gate_and_its_own_tests_are_not_credential_hits,
 # which commits this file into a throwaway repo and runs the real scan over it.
 canary_sample() {
@@ -121,7 +126,7 @@ if [ "$canary_fail" -eq 0 ]; then
   echo "  ok: self-check planted a synthetic sample for each of the $ALTS patterns and every"
   echo "    one of them matched"
 else
-  echo "  This is not a clean repo; it is a broken gate. Fix the pattern named above." >&2
+  echo "  This is not a clean repo; it is a broken scan. Fix the pattern named above." >&2
   fail=1
 fi
 # /GUARD
@@ -159,7 +164,7 @@ echo "==> Checking no raw third-party payloads are tracked"
 # CFBD and nflverse both prohibit redistribution. These are gitignored, but verify
 # nothing slipped in. processed/ is included: it was NOT checked here until 2026-08-23,
 # and by then 45 parquet files (3.5MB of nflverse play-by-play) were tracked while this
-# gate reported PASS. Derived data is still redistributed data.
+# check reported PASS. Derived data is still redistributed data.
 TRACKED=$(git ls-files 'data/raw/*' 'data/interim/*' 'data/processed/*' 2>/dev/null)
 if [ -n "$TRACKED" ]; then
   echo "  FAIL: raw data tracked in git:" >&2; echo "$TRACKED" | head >&2; fail=1
@@ -268,7 +273,7 @@ done
 # this script, so the `skipped` branch is the only one anyone here has taken: deleting the
 # call changes nothing observable, and an excision run would be green because the tool is
 # absent rather than because the guard fires. That is the same shape as the BRE patterns
-# that matched nothing while the gate printed "ok", so it is declared rather than faked.
+# that matched nothing while this scan printed "ok", so it is declared rather than faked.
 #
 # It is declared by name and not as an allowance. Until 2026-09-05 the marking test asked
 # only that at most *one* `fail=1` sit outside a guard, and this call was the one -- so the

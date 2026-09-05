@@ -660,22 +660,23 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | Kept | No
     from hub.season import survivor as sv
     out = out or SITE
     try:
-        # The plan *and its scope*, from `hub.season.survivor` rather than assembled here.
-        # This function used to make nine `sv.*` calls orchestrating survivor's own data,
-        # and the six of them that matter -- what is ahead, which weeks are behind, what
-        # those weeks spent, which weeks left are priced, solve against the rest -- were
-        # written out again in `survivor.main`. That sequence is the whole of issue #24's
-        # rule, so two copies is one plan silently wrong.
+        # The remaining plan *and its scope*, from `hub.season.survivor` rather than
+        # assembled here. This function used to make nine `sv.*` calls orchestrating
+        # survivor's own data, and the ones that matter were written out again in
+        # `survivor.main`. `plan_remaining`'s own docstring enumerates that sequence and is
+        # the one place it is written; restating it here is what put "six steps" over five
+        # items into two modules at once (issue #53). That sequence is the whole of issue
+        # #24's rule, so two copies is one plan silently wrong.
         got = sv.plan_remaining(sv.grid_from_schedule(season), season,
-                                # What this entry has already used, read back from the plan
-                                # it published. The only record there is.
+                                # What this entry has already used, read back from the
+                                # remaining plan it published. The only record there is.
                                 prior=sv.published_plan(out / "survivor.json"))
     except sv.Infeasible as e:
         # Caught apart from the failure below, because it is not one. The schedule answered;
         # what is missing is a *posted spread* for the weeks that remain, or a pool of teams
         # that cannot cover them. Under one `except Exception` the panel read "schedule
-        # unavailable" in August, when nothing was unavailable and the market simply had not
-        # posted -- the reader sent to fix a problem they do not have (issue #27).
+        # unavailable" in August, when nothing was unavailable and the betting market simply
+        # had not posted -- the reader sent to fix a problem they do not have (issue #27).
         print(f"  survivor: no plan ({e})"[:160])
         return Kept(f"no plan for the weeks that remain: {e}")
     except Exception as e:
@@ -687,7 +688,7 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | Kept | No
     art = jsonio.artifact("survivor", "hub.season.survivor", got.picks.to_dicts(),
                     season=season,
                     survival=got.survival, unpriced_weeks=got.coverage.missing,
-                    # The plan's own scope, said out loud. A survival probability means
+                    # The remaining plan's own scope, said out loud. A survival probability means
                     # nothing without the weeks it is over, and a reader looking at a plan
                     # that starts in week 9 should not have to infer why.
                     #

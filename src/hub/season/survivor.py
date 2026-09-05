@@ -39,9 +39,12 @@ from hub.paths import SITE
 # 1% is never the answer, and log(0) is negative infinity.
 MIN_PROB = 1e-4
 
-# Fewer than three priced games in a week. The "choice" is then which side of one or two
-# games to take, which is worth saying out loud before anyone treats it as a plan.
-THIN_WEEK = 6
+# The row count below which a week is thin. Rows, not games and not weeks: the grid carries
+# one row per team per game, so 6 is three games. It was `THIN_WEEK`, which named neither the
+# quantity nor its unit -- a reader checking "is 6 three games or six?" had only the comment.
+# Fewer than three priced games and the "choice" is which side of one or two games to take,
+# which is worth saying out loud before anyone treats it as a plan for the weeks ahead.
+THIN_ROWS = 6
 
 # How long the season a plan covers is. Here rather than in `hub.publish`, which had its own
 # `NFL_WEEKS = 18` beside this module's `--weeks` default of 18: one number, spelled twice,
@@ -111,7 +114,7 @@ def solve(grid: pl.DataFrame, weeks: Sequence[int] | None = None,
     below only binds *within* one plan, so a mid-season solve would otherwise hand back a
     team spent in September and the entry would be infeasible the moment it was entered.
     Passed in rather than inferred: this module is given a grid, not a history, and guessing
-    which of the plan's own earlier picks were actually entered would be a different claim.
+    which of its own earlier picks were actually entered would be a different claim.
     """
     import pulp
 
@@ -181,14 +184,14 @@ def spent_teams(prior: Sequence[Mapping[str, Any]], weeks: Sequence[int],
     The best available answer to "what has this entry already used", and stated as what it
     is: a reading of the last plan published, not a record of what was entered. An entrant
     who deviated has deviated from this too. It is still strictly better than assuming
-    nothing was spent, which is what the plan did -- and which made every mid-season plan
+    nothing was spent, which is what `plan_remaining` did -- and which made every mid-season
     infeasible against the real remaining pool while looking exactly like a plan.
 
     **Scoped to one season**, for the reason `hub.publish._keeping_published` is: a week
     number does not identify a slate. A `survivor.json` left from last season would
     otherwise contribute its weeks-1..N picks here, and the committed artifact outlives the
     gitignored store, so a run that starts a season mid-way is exactly when it happens.
-    A row carrying no season is read as this one's -- artifacts written before the plan
+    A row carrying no season is read as this one's -- artifacts written before a remaining plan
     recorded it, and forgetting what a running entry spent is the worse of the two errors.
 
     A row with no usable week is skipped rather than raising. `int(None)` took the whole
@@ -208,11 +211,11 @@ def spent_teams(prior: Sequence[Mapping[str, Any]], weeks: Sequence[int],
 
 
 class Coverage(NamedTuple):
-    """The requested weeks, sorted into what the market has done about them.
+    """The requested weeks, sorted into what the betting market has done about them.
 
     Typed rather than a dict, because `RemainingPlan` used to copy `covered`, `missing` and
     `thin` out of it one key at a time -- three fields restating one answer, and a reader of
-    the plan could not tell they came from a single question.
+    a reader of the remaining plan could not tell they came from a single question.
 
     The per-week game counts that decide these three are not carried. They were, and nothing
     read them: `thin` is the question anyone actually asks of a count, and a field no caller
@@ -224,11 +227,11 @@ class Coverage(NamedTuple):
 
 
 def coverage(grid: pl.DataFrame, weeks: Sequence[int]) -> Coverage:
-    """Which requested weeks the market has actually priced.
+    """Which requested weeks the betting market has actually priced.
 
     In August the board runs a handful of weeks deep, so a solve over "the season" quietly
-    becomes a solve over whatever is posted. The plan is still the best available answer
-    for the weeks it covers -- it just is not a season, and must not print like one.
+    becomes a solve over whatever is posted. A remaining plan is still the best available
+    answer for the weeks it covers -- it just is not a season, and must not print like one.
     """
     usable = grid.filter(pl.col("win_prob") > MIN_PROB)
     counts = {int(r["week"]): int(r["len"])
@@ -237,7 +240,7 @@ def coverage(grid: pl.DataFrame, weeks: Sequence[int]) -> Coverage:
     return Coverage(
         covered=[w for w in weeks if counts.get(w, 0) > 0],
         missing=[w for w in weeks if counts.get(w, 0) == 0],
-        thin=[w for w in weeks if 0 < counts.get(w, 0) < THIN_WEEK],
+        thin=[w for w in weeks if 0 < counts.get(w, 0) < THIN_ROWS],
     )
 
 
@@ -257,15 +260,15 @@ def snapshot_only_weeks(grid: pl.DataFrame, weeks: Sequence[int]) -> list[int]:
 class RemainingPlan(NamedTuple):
     """A plan, and the scope it is a plan over.
 
-    Returned together because the plan alone is unreadable: a survival probability means
+    Returned together because the picks alone are unreadable: a survival probability means
     nothing without the weeks it is over, a reader looking at a plan that starts in week 9
-    should not have to infer why, and a week the market has not priced still needs a pick
+    should not have to infer why, and a week the betting market has not priced still needs a
     from the entrant. The site panel and the CLI both print all of it.
 
     `coverage` rides along whole rather than unpacked into three lists here, and `survival`
     is a property rather than a call every caller makes on the way out -- both callers did
-    `survival(got.picks)` on the next line, which is a behaviour of the plan and not of the
-    caller.
+    `survival(got.picks)` on the next line, which is a behaviour of the remaining plan and not
+    of the caller.
     """
     picks: pl.DataFrame
     coverage: Coverage
@@ -285,21 +288,23 @@ def plan_remaining(grid: pl.DataFrame, season: int, *,
                    prior: Sequence[Mapping[str, Any]] = (),
                    season_weeks: int = NFL_WEEKS,
                    at: datetime | None = None) -> RemainingPlan:
-    """The plan for the weeks still ahead, against the teams still unspent.
+    """The remaining plan: the weeks still ahead, against the teams still unspent.
 
     **From here, not from week 1.** Survivor is one assignment problem *because* spending a
     team early costs you that team later -- so a grid that still prices played weeks hands
     the solver its strongest teams for games that are over, and every remaining pick comes
     from a pool degraded by picks that were never available. The reported survival
     probability is then the product over games already won or lost. Both are wrong
-    in-season and neither shows in the output: the plan looks like a plan.
+    in-season and neither shows in the output: a whole-season solve prints exactly like a
+    plan from here.
 
-    **Written once, because it was written twice.** These six steps -- what is ahead, which
+    **Written once, because it was written twice.** These five steps -- what is ahead, which
     weeks are behind, what those weeks spent, which of the weeks left are priced, solve
     against the rest -- were verbatim in `hub.publish.survivor` and in this module's `main`.
-    That sequence *is* the rule issue #24 was about, so a drift between the copies would
-    have the panel and the CLI planning different seasons with nothing in either output
-    saying so.
+    (It read "six steps" over five items, in both copies, until issue #53: a hand-kept count
+    of a list printed beside it.) That sequence *is* the rule issue #24 was about, so a drift
+    between the copies would have the panel and the CLI planning different seasons with
+    nothing in either output saying so.
 
     `at` and `season_weeks` are arguments rather than reads of the clock and of a constant,
     so a test can put the season anywhere in itself; `prior` is the last published plan's
@@ -328,7 +333,7 @@ def plan_remaining(grid: pl.DataFrame, season: int, *,
 
 
 def survival(plan: pl.DataFrame) -> float:
-    """Probability of surviving every week in the plan."""
+    """Probability of surviving every week in the frame given."""
     out = 1.0
     for p in plan["win_prob"].to_list():
         out *= float(p)
@@ -410,7 +415,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  survivor plan, {a.season}, {len(cov.covered)} of "
           f"{len(cov.covered) + len(cov.missing)} remaining weeks priced")
     if got.played:
-        print(f"  {len(got.played)} week(s) already played and absent from the plan: "
+        print(f"  {len(got.played)} week(s) already played and absent from this plan: "
               + ", ".join(f"wk {w}" for w in got.played))
     if got.spent:
         print(f"  unavailable, already spent: {', '.join(got.spent)}")
@@ -420,15 +425,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  survives the {got.picks.height} planned weeks: {got.survival:.1%}")
     # What the snapshot store actually buys, said out loud. These are the weeks nflverse's
     # lookahead field does not price, and the difference between a season plan and most of
-    # one -- a team spent in week 3 is unavailable in week 17 whether or not the plan could
+    # one -- a team spent in week 3 is unavailable in week 17 whether or not this plan could
     # see week 17 when it chose.
     if got.snapshot_only:
         print(f"  {len(got.snapshot_only)} of these weeks are priced only by the dated "
               "snapshots: " + ", ".join(f"wk {w}" for w in got.snapshot_only))
     if cov.missing:
-        # Not a failure: weeks with no spread are weeks the market has not posted, and a
+        # Not a failure: weeks with no spread are weeks the betting market has not posted,
         # plan over what exists beats no plan. But an entrant still has to pick in them.
-        print("  not priced yet, so absent from the plan and still needing a pick: "
+        print("  not priced yet, so absent from this plan and still needing a pick: "
               + ", ".join(f"wk {w}" for w in cov.missing))
         print("  re-run once those weeks are on the board -- the teams spent early are "
               "not available to cover them.")

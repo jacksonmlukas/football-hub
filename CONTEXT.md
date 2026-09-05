@@ -43,6 +43,20 @@ one that was live at a given moment. Contrast the schedule's own `spread_line`, 
 single field that *moves* — the same quantity, but not a record of it.
 _Avoid_: the line, the closing line (a snapshot is rarely the close).
 
+**As of**:
+A date that bounds what a run was allowed to see, and it is **inclusive of the day itself** —
+"as of 2023-08-31" means every row published up to and including that day, and none published
+after. One convention, everywhere, and it is not a style preference: two of them a day apart
+is a silent re-pricing. `hub.draft.board.consensus` kept a *strictly before* comparison of its
+own while `hub.fetch.nflverse` filtered the same archive inclusively, and the day the call
+site moved onto the shared loader, a board built "as of" a date would have gained the rows
+scraped that day and moved every number downstream with no code change to blame. So the
+boundary now lives in exactly one place — the loader that filters, caches and pins on it —
+and a caller that wants the day before asks for the day before (`board_as_of` does).
+`hub.store.lines_as_of` has always meant this: the latest snapshot captured *at or before*.
+_Avoid_: cutoff, up to (both read as exclusive to half the people who see them), and stating
+an as-of anywhere but at the fetch boundary.
+
 **Price source**:
 Which input priced a prediction — a dated snapshot, or the moving field it falls back to.
 Carried on the row and in the version string, because a prediction priced from a snapshot
@@ -57,8 +71,8 @@ never sorted on — it needs historical ADP to validate and none exists
 ([ADR-0010](docs/adr/0010-edge-is-displayed-but-never-ranked-on.md)).
 
 **Corrected ADP**:
-The draft market's ordering, moved by the corrections this repo has measured and the market
-has not priced, bounded at 20% of a player's own ADP. What THE PICK ranks on.
+The draft market's ordering, moved by the corrections this repo has measured and the draft
+market has not priced, bounded at 20% of a player's own ADP. What THE PICK ranks on.
 _Avoid_: adjusted ADP, our ADP.
 
 **Correction**:
@@ -96,8 +110,8 @@ Value over replacement — a player's points per game minus his position's repla
 The shortlist quantity, not the recommendation.
 
 **Talent**:
-How wrong a preseason projection turns out to be about a player's season, as a fraction of his
-projected points. Drawn once per simulated season, before any weekly scoring.
+How wrong a preseason projection turns out to be about a player's season, as a fraction of
+that projection. Drawn once per simulated season, before any weekly scoring.
 
 ### Draft decisions
 
@@ -152,8 +166,8 @@ something published on a Monday.
 
 **Model**:
 A component that produces a projection or a decision. Tested by a **gate**: does it beat the
-simplest thing that already works? Championship equity was gated against following the market
-and lost by 19.66 points a team-game.
+simplest thing that already works? Championship equity was gated against following the draft
+market and lost by 19.66 points a team-game.
 
 **Provisional rule**:
 A decision rule adopted *without* a gate, because no gate can run at available n — never
@@ -194,8 +208,8 @@ _Avoid_: dataset, training data — both hide that the before-its-outcome rule i
 Panel rather than a join.
 
 **Weekly projection**:
-A player's expected points for one *named* week, against a named opponent. Distinct from
-**xFP**, which is per-game and season-long. It is **shown and never ranked on**: measurably more
+A player's expected fantasy points for one *named* week, against a named opponent.
+Distinct from **xFP**, which is per-game and season-long. It is **shown and never ranked on**: measurably more
 accurate than the flat projection (+0.074 MAE at 5.9 se) and it still lost the lineup decision
 to consensus rank at −0.304 points a team-week, see
 [ADR-0016](docs/adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md).
@@ -227,19 +241,25 @@ the difference. A tie is reported as a tie rather than broken by noise.
 The answer a producer gives when it ran and had nothing to say, so what is already published
 stands. Distinct from the two it sits between: a payload is this run's answer, and `None`
 means there is nothing fresh *and* nothing kept, so the panel's standing reason is the best
-sentence available. A first run with nothing published still writes its empty artifact — the
-page needs a file it can read — and still answers Kept, because "here is an artifact of
-nothing" and "this is current" are different claims. The distinction is the manifest's
-`reason`, which is all a reader gets: "no roster yet — run `… --write`" is the wrong
-instruction for a sync that ran and found an empty league.
+sentence available. Where `hub.publish._publish` does the writing, a first run with nothing
+published still writes its empty artifact — the page needs a file it can read — and still
+answers Kept, because "here is an artifact of nothing" and "this is current" are different
+claims. **The weekly-prediction producer is the exception, and is right to be**: it has to
+answer emptiness *before* its carry-forward merge, so it asks `_keeping` directly rather than
+handing a payload over, and `_keeping` on a page with nothing published returns `None` — no
+artifact is written and the panel carries the producer's standing reason. The distinction is
+the manifest's `reason`, which is all a reader gets: "no roster yet — run `… --write`" is the
+wrong instruction for a sync that ran and found an empty league.
 _Avoid_: stale (which is what the manifest says about *all three* of those, and so cannot
 name this one), skipped, failed — a Kept producer did run.
 
 **Remaining plan**:
 A survivor plan over the weeks still ahead, against the teams not already spent, together
-with the scope that makes it readable: which weeks are behind it, which of the weeks left
-the market has not priced, and which are priced thinly. `hub.season.survivor.plan_remaining`,
+with the scope that makes it readable: which weeks are behind it, which of the weeks left the
+betting market has not priced, and which are priced thinly. `hub.season.survivor.plan_remaining`,
 read by both the site panel and the CLI, because two copies of the sequence is one plan
-silently wrong.
+silently wrong. **The thin list is the CLI's alone.** `hub.publish.survivor` publishes the
+weeks behind, the weeks remaining, the unpriced ones and the snapshot-only ones, and not the
+thin ones — so the panel cannot show a thin week however readable the scope is here.
 _Avoid_: the plan unqualified — a plan for the whole season and a plan from here are
 different objects, and the difference is what issue #24 was.

@@ -50,12 +50,18 @@ def test_the_board_is_built_as_of_that_season_s_opening():
     """A strategy scored against rankings published after the season is hindsight wearing a
     backtest's clothes. The rule lives in `hub.draft.board`, beside the `build` that enforces
     it -- it started here, which put draft-domain knowledge under `models/` and inverted the
-    tree's one consistent direction."""
+    tree's one consistent direction.
+
+    The cutoff reads August 31 and used to read September 1. It selects the same rows either
+    way: `board.consensus` is now inclusive of its as-of day, one convention with the loader
+    that bounds the archive, so the date it asks for moved back by the day that change would
+    otherwise have added. `tests/unit/test_consensus_page.py` holds the boundary itself.
+    """
     import inspect
 
     from hub.draft import board
     src = inspect.getsource(board.board_as_of)
-    assert 'as_of=f"{season}-09-01"' in src
+    assert 'as_of=f"{season}-08-31"' in src
     assert "season=season - 1" in src
 
 
