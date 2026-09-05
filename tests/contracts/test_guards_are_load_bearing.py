@@ -277,7 +277,7 @@ PY_UNPROVED = marker("UNPROVED", "#")
 
 # No Python refusal is exempt today. Named as an empty set rather than left out so that the
 # first one has somewhere to go that is not "delete the scan": the mechanism exists, it is
-# the shell gate's, and the test below fails if a block appears that this set does not know.
+# the shell scan's, and the test below fails if a block appears that this set does not know.
 UNPROVED_HERE: frozenset[str] = frozenset()
 
 
@@ -437,7 +437,7 @@ def test_prose_naming_a_refusal_is_not_read_as_one():
 def test_an_unproved_block_declares_a_refusal_the_same_way_a_guard_does():
     """The explained half of "marked or explained", proved rather than asserted.
 
-    A refusal that cannot be proved by excision -- the shell gate's optional gitleaks call is
+    A refusal that cannot be proved by excision -- the shell scan's optional gitleaks call is
     the one live example -- has to have somewhere to go, or the person who meets one deletes
     the gate instead. Both verbs come from `guardlib.marker`, so this checks the second one is
     actually wired here rather than only in `test_preflight.py`."""

@@ -740,21 +740,12 @@ def _docs_commit_refs(cwd) -> list[str]:
     return got.stdout.split()
 
 
-@pytest.mark.skipif(MUTANT_RUN, reason="the mutant copy is exercised by the harness")
-def test_the_rewrite_cost_counts_commits_and_not_hex_that_looks_like_one():
-    """The figure is offered as what a history rewrite would break, so it has to be commits.
-
-    Counting every backticked seven-character hex string would let a digest prefix, a colour
-    or an id inflate a number a reader is asked to weigh a decision against. `deadbee` is
-    valid hex and is not a commit here; before this it was counted.
-    """
-    real = _docs_commit_refs(ROOT)
-    assert real, "no short SHAs found in docs/, so this proves nothing about the filter"
-    for sha in real:
-        assert subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"],
-                              capture_output=True, cwd=ROOT).returncode == 0, \
-            f"{sha} is counted as a commit reference and does not resolve to a commit"
-
+# The live variant of this was removed rather than kept beside the hermetic one below. It ran
+# the filter over the real `docs/` tree and asserted every token it counted resolved to a
+# commit -- which is a property of the repo's prose, not of the filter, and `docs/` includes
+# untracked files, so a plausible seven-character hex string written in a scratch note would
+# have reddened the build. A test that fails on something the change under test does not own
+# is a false alarm generator, and the scratch-repo case below already proves the filter.
 
 @pytest.mark.skipif(MUTANT_RUN, reason="the mutant copy is exercised by the harness")
 def test_a_hex_token_that_is_not_a_commit_is_not_counted(tmp_path):

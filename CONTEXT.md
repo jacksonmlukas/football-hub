@@ -45,7 +45,7 @@ _Avoid_: the line, the closing line (a snapshot is rarely the close).
 
 **As of**:
 A date that bounds what a run was allowed to see, and it is **inclusive of the day itself** —
-"as of 2023-08-31" means every row published up to and including that day, and none published
+"as of 2023-08-31" means every row published on or before that day, and none published
 after. One convention, everywhere, and it is not a style preference: two of them a day apart
 is a silent re-pricing. `hub.draft.board.consensus` kept a *strictly before* comparison of its
 own while `hub.fetch.nflverse` filtered the same archive inclusively, and the day the call

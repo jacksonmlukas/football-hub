@@ -137,12 +137,15 @@ class Rule:
     why: str
     owners: tuple[str, ...] = ()
     pattern: str = ""                               # overrides the term, for a phrase
-    deny_next: str = ""                             # extra chars that end a *non*-match
+    deny_trailing: str = ""                         # characters that also end a non-match
 
     def regex(self, term: str) -> re.Pattern[str]:
-        """The term as a whole word, minus any trailing character `deny_next` rules out.
+        """The term as a whole word, minus any trailing character `deny_trailing` rules out.
 
-        `deny_next` exists so a term can be checked where one syntactic form of it is
+        Each character in `deny_trailing` is added to the word-boundary class, so it is a
+        *set of characters* and never a sequence -- two characters deny two forms, not
+        one two-character form. It exists so a term can be checked where one syntactic
+        form of it is
         decidably a different thing -- `cutoff=` is a keyword argument and never an as-of
         date. Without it such a term goes to UNCHECKED whole, which is worse: UNCHECKED has
         no ratchet, so its known violations are not counted and a new one lands unseen. That
@@ -150,7 +153,7 @@ class Rule:
         that added the entry forbidding it.
         """
         return re.compile(r"(?<![A-Za-z0-9_])" + re.escape(self.pattern or term)
-                          + r"(?![A-Za-z0-9_" + re.escape(self.deny_next) + r"])", re.I)
+                          + r"(?![A-Za-z0-9_" + re.escape(self.deny_trailing) + r"])", re.I)
 
 
 CHECKED: dict[str, Rule] = {
@@ -171,7 +174,14 @@ CHECKED: dict[str, Rule] = {
     # else the word can be here is the date sense the **As of** entry forbids.
     "cutoff": Rule("phrase", "the As of entry forbids it for a date; `cutoff=` is a keyword "
                              "argument and never a date, and a leading underscore makes it "
-                             "part of another name", deny_next="="),
+                             "part of another name", deny_trailing="="),
+    # Checkable at zero. The helper it named is gone, so the whole-word form occurs nowhere
+    # in the scanned roots and needs no inventory entry -- which is precisely what makes it
+    # CHECKED rather than UNCHECKED. Its sibling on the same `_Avoid_` line is already
+    # checked; parking this one said "no regex can decide it" about a term with no
+    # occurrences, which is the shape this file caught for `cutoff` one commit ago.
+    "_norm": Rule("phrase", "the helper it spelled is gone; the whole-word form occurs "
+                            "nowhere, so any reappearance is the historical spelling"),
     "the closing line": Rule("phrase", "names the close, which a snapshot rarely is; the "
                                        "phrase has no other referent here"),
     "line source": Rule("phrase", "the superseded spelling of Price source, and nothing "
@@ -219,8 +229,10 @@ UNCHECKED: dict[str, str] = {
               "everywhere it says roster. Only the League-shape sense is forbidden",
     "settings": "same entry, same problem -- Hydra settings are settings",
     "sample": "forbidden for a Cohort; a games sample and a synthetic sample are neither",
-    "population": "forbidden for a Cohort; the word is used nowhere else, but deciding "
-                  "which sense a use is in needs the sentence",
+    "population": "forbidden for a Cohort. Three uses in the draft modules are the "
+                  "statistical sense -- a population average, one population against "
+                  "another, pick numbers over one population -- and which sense a use "
+                  "is in needs the sentence, which no regex reads",
     "seat": "forbidden for a Slot, and `cohort` legitimately says seat for the human idea",
     "heuristic": "forbidden for a Provisional rule; a solver heuristic is not one",
     "validate": "forbidden for a screen or a gate; `validate_predictions` and every "
@@ -239,7 +251,6 @@ UNCHECKED: dict[str, str] = {
              "in the module the entry is about",
     "skipped": "a skipped test, a skipped workflow and a skipped file are all this word",
     "failed": "a failed fetch and a failed gate are both correct uses",
-    "_norm": "a private helper that no longer exists; the term is a historical spelling",
     # The **As of** entry arrived from another change while issue #53 was in flight, which is
     # this file's premise check doing its job: three terms turned up and had to be decided.
     "up to": "ordinary English, several times a page ('up to five rows'); the entry forbids "

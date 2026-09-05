@@ -382,6 +382,10 @@ def test_the_event_level_status_is_in_the_capture_and_still_unread(monkeypatch, 
         f"{len(both)} of {len(payload['events'])} captured events carry an event-level "
         f"`status`; the trim is documented as keeping exactly one, and a capture carrying "
         f"none cannot evidence the comment in `_overlay_row` that says it exists")
+    assert payload["events"][0] is both[0], (
+        "`_overlay_row` says the capture keeps both copies on its *first* event, and it is "
+        "on another one. A re-trim that moves it leaves that sentence wrong with nothing "
+        "red, which is the shape this whole test exists to close.")
     ev = both[0]
     assert ev["status"]["type"]["state"] == ev["competitions"][0]["status"]["type"]["state"]
 
@@ -695,3 +699,23 @@ def test_a_well_formed_league_id_parses(monkeypatch):
     from hub.fetch import espn
     monkeypatch.setenv("ESPN_LEAGUE_ID", " 123456 ")
     assert espn.resolve_league_id() == 123456
+
+
+def test_an_empty_board_still_carries_the_columns_the_contract_reads(monkeypatch, tmp_path):
+    """Why `SCOREBOARD_TYPES` is written out rather than inferred, held by a test.
+
+    The comment on it says an empty board would otherwise have no columns at all --
+    `pl.DataFrame([])` carries none -- and that a contract cannot tell "no games today" from
+    "every field is gone" without them. February is the ordinary case for this, not an edge
+    one, and until now the justification was prose with nothing exercising it.
+    """
+    from hub.contracts import ESPN_SCOREBOARD
+
+    espn = _cache_at(monkeypatch, tmp_path)
+    empty = espn.scoreboard_frame([])
+    assert empty.height == 0
+    assert set(empty.columns) == set(espn.SCOREBOARD_TYPES), (
+        f"an empty board came back with {sorted(empty.columns)}; a frame with no columns "
+        f"reads to the contract as every field having vanished")
+    assert ESPN_SCOREBOARD.validate(empty).height == 0, (
+        "the contract refuses an empty board, so a quiet day would read as an outage")

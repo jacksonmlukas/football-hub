@@ -53,7 +53,7 @@ CANARY_CASES='espn-cookie:P_ESPN_S2 espn-cookie-quoted:P_ESPN_S2_QUOTED braced-s
 # Every sample is synthetic and assembled at runtime from parts. Not style: the scan below
 # reads every commit, this script is in every commit, so a credential-shaped literal here
 # would make this scan fail on itself permanently. Held by
-# tests/unit/test_preflight.py::test_the_gate_and_its_own_tests_are_not_credential_hits,
+# tests/unit/test_preflight.py::test_the_scan_and_its_own_tests_are_not_credential_hits,
 # which commits this file into a throwaway repo and runs the real scan over it.
 canary_sample() {
   B64=$(printf 'a%.0s' $(seq 1 70))           # 70 > the 60 the quoted branch demands
