@@ -647,3 +647,36 @@ def test_a_fresh_prediction_replaces_the_published_one_for_the_same_game(site, b
     got = publish.predictions(2026, 1, base=later, out=site)
     assert got is not None and got["n"] == 1
     assert got["rows"][0]["home_win_prob"] == 0.9
+
+
+def test_an_empty_store_keeps_last_good_rather_than_restamping_it(site, base):
+    """The regression the carry-forward introduced, and the same class as the track record
+    one: an artifact re-stamped fresh when this run produced nothing.
+
+    Carrying forward is for a *partial* run -- a slate that could still price some games.
+    A run that priced none has nothing to say, and `None` is how this repo says that."""
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    before = json.loads((site / "preds_wk01.json").read_text())["generated_at"]
+
+    assert publish.predictions(2026, 1, base=base / "empty", out=site) is None
+    after = json.loads((site / "preds_wk01.json").read_text())["generated_at"]
+    assert after == before, "an empty run must not advance the timestamp of last-good"
+
+
+def test_a_prediction_from_another_season_is_never_carried_forward(site, base):
+    """`site/data/preds_wk18.json` holds 2025 week 18 today. Without a season check,
+    publishing 2026 week 18 into the same filename inherits all sixteen 2025 games and
+    publishes two seasons as one slate -- reproduced at 17 rows across two seasons."""
+    old = _preds([("2025_18_KC_LV", 0.6, 3.0)], week=18).with_columns(
+        pl.lit(2025, dtype=pl.Int32).alias("season"))
+    store.write(old, "preds", "nfl", 2025, 18, base=base)
+    publish.predictions(2025, 18, base=base, out=site)
+
+    new = base / "next-season"
+    store.write(_preds([("2026_18_SF_SEA", 0.4, -1.0)], week=18), "preds", "nfl", 2026, 18,
+                base=new)
+    got = publish.predictions(2026, 18, base=new, out=site)
+    assert got is not None
+    assert {r["game_id"] for r in got["rows"]} == {"2026_18_SF_SEA"}
+    assert {r["season"] for r in got["rows"]} == {2026}
