@@ -141,9 +141,18 @@ def cell_correlations(panel: pl.DataFrame, feature: str, *, min_week: int = 1,
     whatever it does to the total.
     """
     need = [outcome, feature, *controls]
-    d = panel.filter(pl.col("week") >= min_week).drop_nulls(need)
+    # Sorted before grouping, and grouped in order. `group_by` promises neither the order of
+    # the groups nor the order of rows within one, and both reach floating-point sums here:
+    # the rows become numpy arrays a correlation is taken over, and the correlations become a
+    # pooled mean. Two runs over one panel returned 0.029259338518170086 and then
+    # 0.02925933851817009 -- float addition is not associative, so a reordering shows up in
+    # the last bit. That is immaterial to any verdict and fatal to a reproducibility claim:
+    # `docs/track-record.md` rests on a published run being re-derivable, and "re-derivable to
+    # within a rounding error" is a weaker promise than the one this repo makes.
+    d = (panel.filter(pl.col("week") >= min_week).drop_nulls(need)
+              .sort(["season", "week", "player_id"]))
     rows = []
-    for (season, week), cell in d.group_by(["season", "week"]):
+    for (season, week), cell in d.group_by(["season", "week"], maintain_order=True):
         if cell.height < min_cell:
             continue
         r = partial_r(cell[outcome].to_numpy().astype(float),
@@ -152,7 +161,8 @@ def cell_correlations(panel: pl.DataFrame, feature: str, *, min_week: int = 1,
         if not np.isnan(r):
             rows.append({"season": int(season), "week": int(week), "r": r, "n": cell.height})
     return pl.DataFrame(rows, schema={"season": pl.Int64, "week": pl.Int64,
-                                      "r": pl.Float64, "n": pl.Int64})
+                                      "r": pl.Float64, "n": pl.Int64}
+                        ).sort(["season", "week"])
 
 
 def summarise(cells: pl.DataFrame) -> dict:

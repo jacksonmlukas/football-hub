@@ -279,3 +279,60 @@ def test_a_feature_that_is_recent_form_leaves_nothing():
     alone = ws.cell_correlations(p, "form", outcome="targets",
                                  controls=("targets_prior", "ecr"))
     assert not alone.is_empty(), "and against the lagging control alone it is measurable"
+
+
+def _panel_with_every_feature(seasons=(2023, 2024), weeks=tuple(range(1, 15)),
+                              players=80, seed=11):
+    """A panel carrying every column `FEATURES` screens, so a re-run covers all of them.
+
+    Weeks run past `TREND_MIN_WEEK` deliberately. At four weeks the two trend features
+    have no cell that qualifies, `summarise` returns NaN for each, and NaN compares
+    unequal to itself -- so the comparison below would have reported a difference for
+    exactly the two features it had failed to screen. Deep enough that all nine produce
+    a number, and the equality means what it says."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for s in seasons:
+        for w in weeks:
+            for i in range(players):
+                row = {"season": s, "week": w, "player_id": f"p{i}",
+                       "fantasy_points_ppr": float(rng.normal(12, 6)),
+                       "ppg_before": float(rng.normal(12, 4)),
+                       "ecr": float(i + 1)}
+                for f in ws.FEATURES:
+                    row[f.name] = float(rng.normal())
+                rows.append(row)
+    return pl.DataFrame(rows)
+
+
+def test_the_screen_returns_the_same_correlation_for_every_feature_when_rerun():
+    """Issue #34: "the screen re-run at one as-of returns the same correlation for every
+    feature twice".
+
+    That criterion is two claims joined, and they are tested in the two places they live.
+    `test_panel.py::test_two_as_ofs_are_two_pins_and_one_as_of_reproduces` holds the input
+    half -- one as-of reads back one pin over the same rows, however much FantasyPros has
+    published since. This holds the other half: given that input, the screen is a function of
+    it and nothing else.
+
+    Worth asserting rather than assuming. `cell_correlations` groups by cell and
+    `summarise` pools across them, and a pooled float that depended on group order would
+    reproduce under a fixed as-of only by luck -- which is the shape of reproducibility claim
+    this repo has already had to withdraw once. Equality is exact, not approximate: two runs
+    of the same arithmetic on the same rows have no licence to differ in the last bit.
+    """
+    panel = _panel_with_every_feature()
+    runs = []
+    for _ in range(2):
+        runs.append({f.name: ws.summarise(
+            ws.cell_correlations(panel, f.name, min_week=f.min_week)) for f in ws.FEATURES})
+
+    assert set(runs[0]) == {f.name for f in ws.FEATURES}, "a feature went unscreened"
+    empty = [n for n, v in runs[0].items() if v["cells"] == 0]
+    assert not empty, (
+        f"{empty} produced no cell, so this compares NaN with NaN and proves nothing. "
+        f"The panel has to run past `TREND_MIN_WEEK` for the trend features to screen.")
+    for name in runs[0]:
+        assert runs[0][name] == runs[1][name], (
+            f"{name} moved between two runs over one panel: {runs[0][name]} then "
+            f"{runs[1][name]}. The screen has an input the as-of does not pin.")
