@@ -135,12 +135,47 @@ class PollConfig:
 
 
 @dataclass
+class PoolConfig:
+    """The survivor pool's rules, as the commissioner states them.
+
+    Settings, not measurements: a rule is what someone decided, so a correction is a re-run
+    rather than an edit. That is the whole reason these are here and not constants in
+    `hub.season.survivor` -- three of them are still provisional, and a provisional number
+    baked into a module is one nobody re-reads.
+
+    **Confirmed** for 2026: winner-take-all at $20, buybacks at $20 running *through* week 6,
+    and a buyback that restores the entry's used-team ledger rather than clearing it -- so
+    re-entering late is worth less than re-entering early, because the teams are already
+    spent. **Provisional**: the cap of four, and whether it counts per entry or per person.
+    **Unconfirmed**: what happens when more than one entry survives, and whether the pool
+    plays on past week 18. Both of those move every dollar figure, because every dollar
+    figure divides a pot among survivors.
+
+    `double_pick_weeks` is a tuple and not a set. `config_digest` builds a structured config
+    and OmegaConf rejects a `set` annotation outright -- which is a startup error, not a
+    survivor-path error, so the wrong type here would take down the board.
+    """
+    entry_fee: float = 20.0
+    buyback_fee: float = 20.0
+    buyback_cap: int = 4                     # provisional; 0 means no buybacks, not unlimited
+    buyback_cutoff_week: int = 6             # inclusive -- buybacks run *through* this week
+    buyback_restores_ledger: bool = True     # confirmed: used teams survive a re-entry
+    double_pick_weeks: tuple[int, ...] = (13, 14, 15, 16, 17, 18)
+    tie_eliminates: bool = True
+    field_size: int = 21
+    max_entries_per_person: int = 5
+    co_survivor_rule: str = "split"          # unconfirmed: split | rollover | tiebreak
+    playoff_continuation: bool = False       # unconfirmed for this pool
+
+
+@dataclass
 class HubConfig:
     roster: RosterConfig = field(default_factory=RosterConfig)
     draft: DraftConfig = field(default_factory=DraftConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     quota: QuotaConfig = field(default_factory=QuotaConfig)
     poll: PollConfig = field(default_factory=PollConfig)
+    pool: PoolConfig = field(default_factory=PoolConfig)
 
 
 cs = ConfigStore.instance()
@@ -373,7 +408,8 @@ def fitted_digest() -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:8]
 
 
-def config_digest(cfg: HubConfig | object, *, exclude: tuple[str, ...] = ("poll", "quota")) -> str:
+def config_digest(cfg: HubConfig | object, *,
+                  exclude: tuple[str, ...] = ("poll", "quota", "pool")) -> str:
     """Stable 8-char hash of everything that can change a prediction.
 
     Both halves of that: the settings in `cfg`, and the fitted constants in
@@ -382,6 +418,13 @@ def config_digest(cfg: HubConfig | object, *, exclude: tuple[str, ...] = ("poll"
 
     Operational settings are excluded on purpose: changing the poll interval must not
     invalidate a model version, or every version bump becomes meaningless noise.
+
+    `pool` is excluded for a sharper version of the same reason. This digest is stamped on
+    every prediction row and folded into `FitSpec`, so covering the survivor pool's rules
+    would mean confirming the buyback cap invalidates every cached NFL fit and issues a new
+    model version for the weekly prediction and the draft board -- neither of which can read
+    a pool rule. `pool_digest` distinguishes two survivor runs instead, where the distinction
+    belongs.
     """
     d = cast(dict[str, Any], OmegaConf.to_container(OmegaConf.structured(cfg), resolve=True))
     for k in exclude:
@@ -498,6 +541,23 @@ def digests(cfg: HubConfig | object, pins: Iterable[DataPin]) -> dict[str, str]:
     output. `cfg` and `fitted` describe the code; `data` describes what the code read.
     """
     return {"cfg": config_digest(cfg), "fitted": fitted_digest(), "data": data_digest(pins)}
+
+
+def pool_digest(cfg: PoolConfig) -> str:
+    """Stable 8-char hash of the survivor pool's rules.
+
+    Beside `config_digest`, never inside it. Two survivor runs under different pool rules are
+    different runs and their outputs must say so; two *model* runs under different pool rules
+    are the same model, and saying otherwise would move a version for a number the model
+    cannot read.
+
+    Not folded into `digests()` either, for the same reason stated from the other side: that
+    helper answers "which run produced this row" for every gate in the repo, and a draft
+    board has no pool. The survivor artifact and the decision ledger call this one directly.
+    """
+    d = OmegaConf.to_container(OmegaConf.structured(cfg), resolve=True)
+    canonical = OmegaConf.to_yaml(OmegaConf.create(d), sort_keys=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()[:8]
 
 
 def starters(cfg: RosterConfig) -> dict[str, int]:
