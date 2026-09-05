@@ -1,7 +1,8 @@
 """The config exists to make model versions honest. These tests pin that."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pytest
+from omegaconf.errors import ValidationError
 
 from hub import config
 from hub.config import (
@@ -13,6 +14,7 @@ from hub.config import (
     DraftConfig,
     HubConfig,
     PollConfig,
+    PoolConfig,
     RosterConfig,
     config_digest,
     data_digest,
@@ -22,6 +24,7 @@ from hub.config import (
     flex_capacity,
     flex_positions,
     flex_share,
+    pool_digest,
     required_starters,
     roster_mismatch,
     starters,
@@ -44,6 +47,84 @@ def test_operational_settings_do_not_change_the_digest():
     a = HubConfig()
     b = HubConfig(poll=PollConfig(scoreboard_interval=90))
     assert config_digest(a) == config_digest(b)
+
+
+# --- the pool's rules are settings, and stay out of the model's digest -----
+#
+# The rules of a survivor pool are decisions someone made, not measurements, so they belong
+# here where a correction is a re-run. But `config_digest` is stamped on every prediction row
+# and folded into `FitSpec`, so covering them would mean the commissioner confirming a buyback
+# cap invalidates every cached NFL fit -- a new model version for a number no model reads.
+
+
+def test_the_pool_config_is_reachable_and_carries_every_rule():
+    """What the solver and the money layer read. A rule that is not here is a rule somebody
+    hardcoded, which is the thing this dataclass exists to prevent."""
+    pool = HubConfig().pool
+    for rule in ("entry_fee", "buyback_fee", "buyback_cap", "buyback_cutoff_week",
+                 "buyback_restores_ledger", "double_pick_weeks", "tie_eliminates",
+                 "field_size", "max_entries_per_person", "co_survivor_rule",
+                 "playoff_continuation"):
+        assert hasattr(pool, rule), rule
+
+
+def test_a_pool_rule_does_not_move_the_model_digest():
+    """The reason `pool` is excluded. Confirming the buyback cap must not invalidate a cached
+    fit or issue a new model version for the weekly projection, which cannot read a pool rule."""
+    a = HubConfig()
+    b = HubConfig(pool=PoolConfig(buyback_cap=0))
+    assert config_digest(a) == config_digest(b)
+
+
+def test_the_pool_digest_moves_when_a_pool_rule_moves():
+    """And the other half: two survivor runs under different rules are different runs, and
+    their outputs have to say so."""
+    base = PoolConfig()
+    assert pool_digest(base) != pool_digest(PoolConfig(buyback_cutoff_week=5))
+    assert pool_digest(base) != pool_digest(PoolConfig(double_pick_weeks=(13, 14)))
+
+
+def test_the_pool_digest_is_stable_across_identical_rules():
+    assert pool_digest(PoolConfig()) == pool_digest(PoolConfig())
+
+
+def test_double_pick_weeks_default_to_thirteen_through_eighteen():
+    assert HubConfig().pool.double_pick_weeks == (13, 14, 15, 16, 17, 18)
+
+
+def test_double_pick_weeks_are_overridable_to_empty():
+    """An empty tuple reduces the solver to one pick a week, which is today's behaviour and
+    the fallback if the rule is ever misread."""
+    assert HubConfig(pool=PoolConfig(double_pick_weeks=())).pool.double_pick_weeks == ()
+
+
+def test_double_pick_weeks_is_a_tuple_not_a_set():
+    """`config_digest` builds a structured config and OmegaConf rejects a `set` annotation
+    outright -- so the wrong type here is a startup error for the whole repo, not a survivor
+    one. Pinned because a set is the obvious thing to reach for."""
+    assert isinstance(HubConfig().pool.double_pick_weeks, tuple)
+
+    @dataclass
+    class Bad:
+        weeks: set = field(default_factory=set)
+
+    with pytest.raises(ValidationError, match="Unexpected type annotation"):
+        config_digest(Bad())
+
+
+def test_a_buyback_cap_of_zero_means_no_buybacks():
+    """Zero is representable and distinct from absent. A cap that read as unlimited when set
+    to zero would simulate a field that refills for free."""
+    assert HubConfig(pool=PoolConfig(buyback_cap=0)).pool.buyback_cap == 0
+
+
+def test_the_confirmed_rules_carry_the_commissioner_s_answers():
+    """Buybacks run *through* week 6 and a re-entry keeps its used teams. Both were confirmed
+    rather than assumed, and both change what a buyback is worth -- re-entering in week 6 with
+    six teams spent is a weaker entry than the same $20 in week 2."""
+    pool = HubConfig().pool
+    assert pool.buyback_cutoff_week == 6
+    assert pool.buyback_restores_ledger is True
 
 
 # --- the digest covers the fitted constants, not just the settings ---------
