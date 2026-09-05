@@ -1,7 +1,7 @@
 {
   "name": "survivor",
   "source": "hub.season.survivor",
-  "generated_at": "2026-09-04T23:31:13+00:00",
+  "generated_at": "2026-09-05T16:43:28+00:00",
   "n": 18,
   "rows": [
     {
@@ -98,6 +98,28 @@
   "season": 2026,
   "survival": 0.007104094022958947,
   "unpriced_weeks": [],
+  "weeks_remaining": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18
+  ],
+  "weeks_played": [],
+  "spent": [],
   "snapshot_only_weeks": [
     8,
     13,
