@@ -112,17 +112,28 @@ function ago(iso) {
   return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
 }
 
+// Everything that reaches innerHTML from a feed goes through this first. Player names,
+// team names and status text come from ESPN and nflverse; an apostrophe or an ampersand in
+// a name is enough to produce malformed markup, and anything angle-bracketed is injected
+// into the page. This site is public, unattended, and refreshed twice a week by a workflow
+// with a push token -- nobody is watching it render.
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
 function panel(id, { age, warn, html }) {
   const el = document.getElementById(id);
   el.querySelector(".age").textContent = age ?? "";
   el.querySelector(".body").innerHTML =
-    (warn ? `<p class="warn">${warn}</p>` : "") + (html ?? "");
+    (warn ? `<p class="warn">${esc(warn)}</p>` : "") + (html ?? "");
 }
 
+// Escapes by default, so a column cannot forget. Getters return *text*, never markup --
+// which is why the em dash below is the character rather than `&mdash;`. Relying on each
+// call site to remember is how one of a dozen columns ends up unescaped.
 function table(cols, rows) {
-  const head = cols.map(c => `<th>${c.label}</th>`).join("");
+  const head = cols.map(c => `<th>${esc(c.label)}</th>`).join("");
   const body = rows.map(r =>
-    `<tr>${cols.map(c => `<td class="num ${c.cls ? c.cls(r) : ""}">${c.get(r)}</td>`).join("")}</tr>`
+    `<tr>${cols.map(c => `<td class="num ${c.cls ? c.cls(r) : ""}">${esc(c.get(r))}</td>`).join("")}</tr>`
   ).join("");
   return `<div class="scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
@@ -138,7 +149,7 @@ function reliabilitySVG(bins) {
   const dots = filled.map(b => {
     const r = 3 + 5 * Math.sqrt(b.n / maxN);
     return `<circle cx="${x(b.predicted).toFixed(1)}" cy="${y(b.actual).toFixed(1)}" r="${r.toFixed(1)}"
-             fill="var(--accent)" fill-opacity="0.65"><title>${b.bin}: n=${b.n}, predicted ${pct(b.predicted)}, actual ${pct(b.actual)}</title></circle>`;
+             fill="var(--accent)" fill-opacity="0.65"><title>${esc(b.bin)}: n=${b.n}, predicted ${pct(b.predicted)}, actual ${pct(b.actual)}</title></circle>`;
   }).join("");
   return `<svg viewBox="0 0 ${S} ${S}" width="100%" style="max-width:230px;margin-top:0.6rem">
     <line x1="${pad}" y1="${S - pad}" x2="${S - pad}" y2="${pad}"
@@ -229,12 +240,12 @@ async function renderSlate(man, wk) {
     </thead>
     <tbody>${rows.map(r => `
       <tr>
-        <td>${r.teams}</td>
+        <td>${esc(r.teams)}</td>
         <td class="num grp-frozen">${pct(r.home_win_prob)}</td>
         <td class="num grp-frozen">${fmt(r.margin_mean, 1)}</td>
         <td class="num grp-frozen">${fmt(r.margin_lo, 0)} … ${fmt(r.margin_hi, 0)}</td>
-        <td class="num grp-live">${r.live ? `${r.live.away_score}–${r.live.home_score}` : "—"}</td>
-        <td class="num grp-live">${r.live ? (r.live.detail ?? r.live.state) : "not on the board"}</td>
+        <td class="num grp-live">${r.live ? `${esc(r.live.away_score)}–${esc(r.live.home_score)}` : "—"}</td>
+        <td class="num grp-live">${r.live ? esc(r.live.detail ?? r.live.state) : "not on the board"}</td>
       </tr>`).join("")}
     </tbody></table></div>`;
 
@@ -286,7 +297,7 @@ async function render() {
     // Withheld players are named first: the recommendation is only trustworthy if the reader
     // can see who was taken out of it and why.
     const heldNote = held.length
-      ? `<p class="warn">Withheld as unavailable: <b>${held.join(", ")}</b>. ESPN's injury
+      ? `<p class="warn">Withheld as unavailable: <b>${esc(held.join(", "))}</b>. ESPN's injury
            field does not carry suspensions; its games projection does, and these are short of
            a full slate. They are excluded from the lineup below.</p>`
       : "";
@@ -295,8 +306,8 @@ async function render() {
       : gain > 0.05
         ? `<p class="warn">The set lineup projects ${fmt(ros.set_total, 1)}; the best available
              one projects ${fmt(ros.optimal_total, 1)}, a difference of <b>${fmt(gain, 1)}</b>
-             a week &mdash; start ${(ros.start ?? []).join(", ")} over
-             ${(ros.sit ?? []).join(", ")}. These projections are season-long and do not know
+             a week &mdash; start ${esc((ros.start ?? []).join(", "))} over
+             ${esc((ros.sit ?? []).join(", "))}. These projections are season-long and do not know
              who is hurt this week, so settle it at lock.</p>`
         : `<p class="empty">The set lineup is already the best available one.</p>`;
     panel("p-roster", {
@@ -306,7 +317,7 @@ async function render() {
         { label: "", get: r => r.starting ? "S" : "", cls: r => r.starting ? "good" : "" },
         { label: "pos", get: r => r.pos ?? "" },
         { label: "player", get: r => r.player ?? "" },
-        { label: "proj", get: r => r.projected ? fmt(r.mu, 1) : "&mdash;" },
+        { label: "proj", get: r => r.projected ? fmt(r.mu, 1) : "\u2014" },
         { label: "+/-", get: r => r.projected ? fmt(r.sd, 1) : "" },
         { label: "best XI", get: r => r.best_start ? "\u2713" : "",
           cls: r => r.best_start && !r.starting ? "good" : "" },
@@ -333,7 +344,7 @@ async function render() {
   if (tr) {
     const pre = tr.n_preregistered ?? 0;
     const body = pre === 0
-      ? `<p class="empty">${tr.note ?? ""}</p>` +
+      ? `<p class="empty">${esc(tr.note ?? "")}</p>` +
         (tr.n_scored ? `<p class="empty">${tr.n_scored} predictions scored retrospectively.
            That is a backtest, not a record, and it is not shown as one.</p>` : "")
       : table([
@@ -370,7 +381,7 @@ async function render() {
              ? `Weeks ${missing.join(", ")} have no posted spread yet and still need a pick.`
              : null),
       html: (gone.length
-              ? `<p class="empty">Already spent and unavailable: ${gone.join(", ")}.
+              ? `<p class="empty">Already spent and unavailable: ${esc(gone.join(", "))}.
                    Read from the last published plan, so it is what was planned rather than
                    what was entered.</p>`
               : "") + table([
@@ -389,7 +400,7 @@ async function render() {
 
   const stale = (man?.artifacts ?? []).filter(a => a.stale);
   document.getElementById("footer").innerHTML = stale.length
-    ? `${stale.length} of ${man.artifacts.length} panels stale: ${stale.map(a => a.name).join(", ")}.
+    ? `${stale.length} of ${man.artifacts.length} panels stale: ${esc(stale.map(a => a.name).join(", "))}.
        Panels show last-good data rather than going blank.`
     : `All panels current. Regenerate with <code>make slate</code>.`;
 }
