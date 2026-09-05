@@ -56,10 +56,17 @@ jobs:
       # one fresh pull and the as-of join wants the latest capture at or before now, so a
       # snapshot thirty seconds old prices the whole season. The historical store is not needed
       # and is never published -- `.gitignore` excludes it as redistributed third-party data.
+      # `CFB_WEEK_ONE` is a repository *variable* and not a secret: it is the date of the
+      # college season's first game, which is public and is the whole of what this job needs
+      # in order to know which college week to fetch. Set once in August; `hub.fetch.cfbd`
+      # counts the week from it, so nothing here has to be bumped weekly. Unset, the fetcher
+      # records that it fetched nothing and the slate carries on -- which is the behaviour
+      # the step below reads back.
       - name: Refresh the slate
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+          CFB_WEEK_ONE: ${{ vars.CFB_WEEK_ONE }}
           ESPN_S2: ${{ secrets.ESPN_S2 }}
           ESPN_SWID: ${{ secrets.ESPN_SWID }}
           ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
@@ -72,6 +79,28 @@ jobs:
         run: |
           jq -r '.artifacts[] | "  \(.name): \(if .stale then "STALE -- " + (.reason // "no reason given") else "ok" end)"' \
             site/data/manifest.json
+
+          # CFBD is read separately because it is not in that manifest: `hub.publish` writes
+          # the manifest for the panels the page renders, and college football feeds none of
+          # them yet. `hub.fetch.cfbd` writes its own record in the same three states, and
+          # `fetched` is the field that tells "no week was configured" apart from "the week
+          # held nothing" -- the distinction issue #27 asked for and #56 found missing.
+          #
+          # Annotations, never `exit 1`. An optional source that is unconfigured must not
+          # fail a Sunday; that is what the leading `-` in `make slate` is for, and failing
+          # here would undo it one step later. A ::warning:: shows on the run summary without
+          # scrolling a log, which is the part that was missing when this was a stderr line.
+          CFBD=site/data/cfbd.json
+          if [ ! -f "$CFBD" ]; then
+            echo "::warning::hub.fetch.cfbd left no run record at all -- it did not run"
+          elif [ "$(jq -r '.fetched' "$CFBD")" != "true" ]; then
+            echo "::warning::no college week was fetched. $(jq -r '.reason' "$CFBD")"
+          elif [ "$(jq -r '.stale' "$CFBD")" = "true" ]; then
+            echo "::notice::college week fetched, and empty. $(jq -r '.reason' "$CFBD")"
+          else
+            echo "::notice::college week $(jq -r '.week' "$CFBD") fetched: $(jq -r '.rows_by_endpoint | to_entries | map("\(.key)=\(.value)") | join(" ")' "$CFBD")"
+          fi
+
           test "$(jq '[.artifacts[] | select(.stale | not)] | length' site/data/manifest.json)" -gt 0 \
             || { echo "::error::every artifact is stale; nothing was refreshed"; exit 1; }
 

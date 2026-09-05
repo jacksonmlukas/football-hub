@@ -19,6 +19,14 @@ So this module does not ask callers to remember the rule. Three independent guar
 Every response is cached under `data/raw/cfbd/`. Caching here is a quota mechanism, not a
 speed one: a completed season is never re-fetched.
 
+**Which week, and what a run that fetched none says.** `configured_week` owns the first
+question and its docstring owns the argument. The second is `record_run`: every invocation
+of this CLI leaves a record in `site/data/cfbd.json` saying whether it fetched, and a run
+that fetched nothing is distinguishable there from one that fetched and found nothing. That
+file rather than an exit code because `make slate` marks this source optional with a leading
+`-` -- which is correct, an unconfigured extra must not take a Sunday down, and which means
+the exit code reaches nobody.
+
     uv run python -m hub.fetch.cfbd --quota
     uv run python -m hub.fetch.cfbd --week 3
 """
@@ -29,15 +37,16 @@ import json
 import os
 import sys
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import polars as pl
 
+from hub import jsonio
 from hub.config import SEASON_AHEAD
 from hub.contracts import CFBD_GAMES, CFBD_LINES, Contract
-from hub.paths import STATE_DIR
+from hub.paths import SITE, STATE_DIR
 
 ROOT = Path(__file__).resolve().parents[3]
 CACHE = ROOT / "data" / "raw" / "cfbd"
@@ -46,6 +55,26 @@ CACHE = ROOT / "data" / "raw" / "cfbd"
 # exclude them; the count of calls spent against a 1,000-a-month free tier is ours, and
 # keeping it in the excluded tree meant every scheduled run started the month over.
 QUOTA = STATE_DIR / "cfbd-quota.json"
+
+# Where a run says what it did, beside the artifacts the page reads. Not a log line: the
+# slate marks this source optional with a leading `-`, so neither the exit code nor stderr
+# reaches anything downstream, and the workflow commits `site/data` -- which makes this a
+# committed statement rather than a scroll-back.
+#
+# **Counts, never rows.** `docs/cfbd-quota.md`: redistributing CFBD payloads is a terms
+# violation that gets access revoked, `data/raw/` is gitignored for exactly that reason, and
+# everything under `site/data` is committed to a repo intended to go public.
+STATUS = SITE / "cfbd.json"
+
+# The season's first game, as a date. The whole of this module's configuration; the argument
+# for it being a date rather than a week number is in `configured_week`.
+CFB_WEEK_ONE_ENV = "CFB_WEEK_ONE"
+
+# The last college week that is a *week*. Weeks 1-15 are the regular season through the
+# conference championships; past that is the postseason, which CFBD asks for as a
+# `seasonType` and not as a week number. A run counting past this records that there is no
+# week rather than fetching one that does not exist.
+REGULAR_SEASON_WEEKS = 15
 
 BASE = "https://api.collegefootballdata.com"
 FREE_TIER_MONTHLY = 1_000
@@ -96,10 +125,20 @@ class QuotaExceeded(Exception):
     """Refused rather than spend a call: either the run ceiling or the monthly budget."""
 
 
-def _api_key() -> str | None:
+def _env() -> Mapping[str, str]:
+    """The process environment with `.env` folded into it.
+
+    One reader rather than two, because this module now takes two things from it -- the key
+    and the season's start date -- and a test that has to defeat `load_dotenv` twice to say
+    what the environment is will eventually only defeat it once.
+    """
     from dotenv import load_dotenv
     load_dotenv()
-    return os.environ.get("CFBD_API_KEY") or None
+    return os.environ
+
+
+def _api_key() -> str | None:
+    return _env().get("CFBD_API_KEY") or None
 
 
 def _month_key(now: datetime | None = None) -> str:
@@ -236,7 +275,14 @@ def week(year: int, week_no: int, *, cache: Path | None = None,
         df = bulk(endpoint, year, week_no, cache=cache, quota_path=quota_path)
         # A registry rather than a branch, and the same shape `hub.fetch.nflverse` uses:
         # `box` has no declared contract and is not being given a weak one to fill the row.
-        if (contract := CONTRACTS.get(endpoint)) is not None:
+        #
+        # `df.height and` because both CFBD contracts declare `min_rows=1`, so validating a
+        # frame of no rows reports "0 rows < min 1; missing columns [...]" -- which reads as
+        # the source having changed shape when it has simply said "nothing here", and which
+        # a week nobody has played yet answers with. Emptiness is a state the caller reports
+        # (`record_run`, below); it is not a contract failure, and the contract still sees
+        # every response that has rows, which is every response a renamed field could hide in.
+        if df.height and (contract := CONTRACTS.get(endpoint)) is not None:
             contract.validate(df)
         out[endpoint] = df
         print(f"    {endpoint:<14} {df.height:>6,} rows | {len(df.columns):>3} cols")
@@ -244,36 +290,203 @@ def week(year: int, week_no: int, *, cache: Path | None = None,
     return out
 
 
+class WeekChoice(NamedTuple):
+    """The college week to fetch, or None and the sentence saying why there is none.
+
+    The reason travels with the decision, for the reason `publish.Kept` does: it belongs to
+    the run that declined. A standing sentence kept somewhere else is one that eventually
+    describes a different run than the one the reader is looking at.
+    """
+    week: int | None
+    why: str
+
+
+def configured_week(now: datetime | None = None) -> WeekChoice:
+    """Which college week a scheduled run fetches, counted from the season's start date.
+
+    **Issue #56 asks where the week comes from. Three other answers were available and each
+    is worse.**
+
+    *From the store*, the way `hub.publish.default_week` takes the latest week already
+    predicted. That works for the NFL because the store is full of NFL weeks. The college
+    calendar is a different one -- its own week-1 date, a Week 0 the NFL has no equivalent
+    of, fifteen regular-season weeks against eighteen -- so the store's number would be
+    confidently wrong here, and it cannot answer at all before anything has been written.
+
+    *From the calendar alone.* College week 1 is not on a fixed date; it moves with Labor
+    Day and with whether a season opens a week early. Code that works it out is guessing,
+    and a wrong guess does not fail loudly -- it fetches the wrong week, caches it, and
+    reports a successful refresh.
+
+    *From CFBD's own `/calendar`.* Authoritative, and it puts a network call on the question
+    of what week it is. `publish.default_week` already rejected that reasoning for the NFL
+    side and the sentence holds here: a weekly refresh that needs a live API to decide what
+    week it is has one more way to fail on a Sunday.
+
+    So configuration -- and specifically **the date of the season's first game rather than a
+    week number**. A pinned number (`CFB_WEEK=3`) is right for seven days and silently wrong
+    for the rest of the season: in November it would still fetch week 3, cache it, and
+    record a successful refresh. A start date stated once in August stays true through
+    January, which is the difference between a system that needs somebody every Wednesday
+    and one that does not -- and CLAUDE.md is blunt that the first kind dies in October.
+
+    It lives in the environment beside `CFBD_API_KEY`: `.env` locally, a repository variable
+    in Actions. A source that already needs configuring before it can fetch at all is the
+    right place to put the one more line, rather than inventing a config surface for it.
+
+    **The date is week 1's first game; the week boundary is the Tuesday before it.** Those
+    are two different things and both are needed. The date is the fact a human states and it
+    is naturally the opening Thursday or Saturday; a college week is the Tuesday-to-Monday
+    block that game falls in, which is where CFBD's own week numbers change over. Counting
+    plain seven-day blocks from an opening Thursday puts the Wednesday 11:00 UTC refresh a
+    week behind from week 2 on -- fetching the week that just finished rather than the one
+    it is refreshing for. So the stated date is snapped back to its Tuesday and the count
+    runs from there.
+
+    Unset, unparseable, before the first game, or past the regular season, this returns no
+    week and the sentence for it. Nothing here ever invents one -- `--week N` is how a human
+    asks for a specific week, including a backfill.
+    """
+    raw = (_env().get(CFB_WEEK_ONE_ENV) or "").strip()
+    if not raw:
+        return WeekChoice(None, (
+            f"nothing was fetched: {CFB_WEEK_ONE_ENV} is not set, so nothing here knows "
+            f"which college week it is. Set it to the date of the season's first game "
+            f"(YYYY-MM-DD), or pass --week N"))
+    try:
+        first = date.fromisoformat(raw)
+    except ValueError:
+        return WeekChoice(None, (
+            f"nothing was fetched: {CFB_WEEK_ONE_ENV}={raw!r} is not a YYYY-MM-DD date, "
+            f"and a week is not being guessed from it"))
+    # Back to the Tuesday that opens the stated date's week. `weekday()` is Monday 0, so
+    # Tuesday is 1 and `(w - 1) % 7` is how many days back that Tuesday is -- zero when the
+    # date given is already one.
+    opens = first - timedelta(days=(first.weekday() - 1) % 7)
+    today = (now or datetime.now(UTC)).date()
+    if today < opens:
+        return WeekChoice(None, (
+            f"nothing was fetched: the season has not started -- its first game is "
+            f"{first.isoformat()}, whose week opens {opens.isoformat()}"))
+    # Whole weeks since week 1 opened, one-based. Counted in UTC while the games are played
+    # in North America, which moves the Monday-to-Tuesday boundary by a few hours; the
+    # scheduled runs are Wednesday 11:00 and Saturday 14:00 UTC, both far from it.
+    n = (today - opens).days // 7 + 1
+    if n > REGULAR_SEASON_WEEKS:
+        return WeekChoice(None, (
+            f"nothing was fetched: week {n} counted from {opens.isoformat()} is past the "
+            f"{REGULAR_SEASON_WEEKS}-week regular season, and the postseason is a "
+            f"seasonType rather than a week number"))
+    return WeekChoice(n, "")
+
+
+def record_run(season: int, week_no: int | None, *,
+               rows: Mapping[str, int] | None = None, why: str | None = None,
+               path: Path | None = None, quota_path: Path | None = None) -> dict[str, Any]:
+    """Write what this run did, in the three states `publish.Artifact.record` writes.
+
+    That mapping, because a reader who has learned to read the manifest should not have to
+    learn a second vocabulary for this file:
+
+    * **fetched, with rows** -- `stale: false`, `reason: null`. `Artifact.record`'s fresh
+      payload.
+    * **fetched, and nothing there** -- `stale: true` with a reason in the run's own words.
+      `publish.Kept`: the source answered, and an empty answer is never reported fresh.
+    * **not fetched at all** -- `stale: true`, `fetched: false`, and the sentence from
+      whatever declined. The state issue #27 asked for and #56 found missing: without it
+      "no week was configured" and "the week held no games" are the same silence.
+
+    `fetched` as a field of its own rather than leaving the distinction to prose, because
+    the slate workflow reads this with `jq` and a workflow cannot read a sentence.
+
+    **Counts, never rows.** See `STATUS`: a CFBD payload committed under `site/data` would
+    be redistribution, which is the terms violation `docs/cfbd-quota.md` warns costs access.
+    """
+    fetched = rows is not None
+    counts = dict(rows or {})
+    summary = ", ".join(f"{k} {v:,} rows" for k, v in counts.items())
+    if not fetched:
+        stale, reason = True, (why or "nothing was fetched")
+    elif not sum(counts.values()):
+        stale, reason = True, (f"week {week_no} of {season} was read and came back empty")
+    else:
+        stale, reason = False, None
+    got: dict[str, Any] = {
+        "name": "cfbd", "source": "hub.fetch.cfbd", "generated_at": jsonio.stamp(),
+        "season": season, "week": week_no, "fetched": fetched,
+        "stale": stale, "reason": reason,
+        "rows_by_endpoint": counts,
+        "quota": {"month": _month_key(), "used": quota_used(quota_path),
+                  "limit": FREE_TIER_MONTHLY},
+    }
+    p = Path(path or STATUS)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(jsonio.dumps(got, indent=2))
+    # The reason already opens with what happened -- "nothing was fetched: ...", "week 2 of
+    # 2026 was read and came back empty" -- so prefixing it with a verdict only stutters.
+    print(f"  cfbd: {reason or f'week {week_no} fetched, ' + summary}; recorded in {p}")
+    return got
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.fetch.cfbd",
         description="CFBD bulk fetch. Week-level endpoints only, by construction.")
     ap.add_argument("--quota", action="store_true", help="report calls used this month")
-    ap.add_argument("--week", type=int, default=None, help="pull one week's bulk slate")
+    ap.add_argument("--week", type=int, default=None,
+                    help=f"pull one week's bulk slate; defaults to the week counted from "
+                         f"${CFB_WEEK_ONE_ENV}")
     ap.add_argument("--year", type=int, default=SEASON_AHEAD)
+    ap.add_argument("--status-path", default=None,
+                    help="where to record what this run did (default site/data/cfbd.json)")
     ap.add_argument("--quota-path", default=None, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     reset_run_budget()
     qpath = Path(a.quota_path) if a.quota_path else None
+    spath = Path(a.status_path) if a.status_path else None
 
     if a.quota:
+        # An accounting question, not a refresh, so it leaves no run record: `make check`
+        # asking how much of the month is left must not overwrite what the last slate said
+        # it did. This branch is also what the old no-week path fell into, which is how a
+        # fetch that never happened came to print a healthy-looking report and exit 0.
         return quota_report(qpath)
-    if a.week is None:
-        # Not success. `make slate` runs this with no `--week` unless `WEEK` is set and the
-        # scheduled run sets none, so this branch printed a healthy-looking quota report and
-        # exited 0 -- every scheduled run reporting success for a fetch that did not happen.
-        # The Makefile marks this source optional with a leading `-`, so a non-zero exit
-        # still lets the slate continue; what changes is that it stops lying about it.
-        quota_report(qpath)
-        print("hub.fetch.cfbd: no --week given, so nothing was fetched. That was a quota "
-              "report. Pass --week N, or `make slate WEEK=N`.", file=sys.stderr)
+
+    # `--week` is a human asking for a specific week -- a backfill, or a rerun. Everything
+    # else is a scheduled run, which has to work out the week for itself or say that it
+    # could not; `configured_week` holds the argument for how.
+    week_no, why_not = (WeekChoice(a.week, "") if a.week is not None else configured_week())
+
+    # GUARD no-week-is-recorded [unit/test_fetch_cfbd.py]: no week means a record, not silence
+    if week_no is None:
+        record_run(a.year, None, why=why_not, path=spath, quota_path=qpath)
+        print(f"hub.fetch.cfbd: {why_not}", file=sys.stderr)
         return 1
+    # /GUARD
 
     if not _api_key():
-        print("hub.fetch.cfbd: no CFBD_API_KEY set; add one to .env to fetch. "
-              "Quota accounting still works via --quota.", file=sys.stderr)
+        why = ("nothing was fetched: no CFBD_API_KEY set; add one to .env. Quota "
+               "accounting still works via --quota")
+        record_run(a.year, week_no, why=why, path=spath, quota_path=qpath)
+        print(f"hub.fetch.cfbd: {why}", file=sys.stderr)
         return 1
-    week(a.year, a.week, quota_path=qpath)
+
+    try:
+        got = week(a.year, week_no, quota_path=qpath)
+    except Exception as e:
+        # Caught rather than raised, because the traceback goes to the same place the exit
+        # code does -- nowhere. An optional source that is down must not halt the slate
+        # (CLAUDE.md's degradation rule, and the leading `-` in the Makefile), and it must
+        # not be indistinguishable from one that succeeded either.
+        why = f"nothing was fetched: {type(e).__name__}: {e}"[:400]
+        record_run(a.year, week_no, why=why, path=spath, quota_path=qpath)
+        print(f"hub.fetch.cfbd: {why}", file=sys.stderr)
+        return 1
+
+    # A week that answered, whether or not it held anything. `record_run` tells those two
+    # apart; the exit code does not try to, because the fetch happened either way.
+    record_run(a.year, week_no, rows={k: v.height for k, v in got.items()},
+               path=spath, quota_path=qpath)
     return 0
 
 

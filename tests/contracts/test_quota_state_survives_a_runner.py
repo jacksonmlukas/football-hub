@@ -99,11 +99,16 @@ def test_the_cfbd_counter_carries_across_runs(tmp_path):
 
 # --- a quota report is not a fetch -------------------------------------------
 
-def test_asking_cfbd_for_no_week_does_not_report_success(capsys):
+def test_asking_cfbd_for_no_week_does_not_report_success(capsys, tmp_path):
     """`make slate` runs `hub.fetch.cfbd` with no `--week` unless `WEEK` is set, and the
     scheduled run sets none. Exiting 0 after printing a quota report is how every run has
     reported success for a fetch that did not happen."""
-    code = cfbd.main(["--quota-path", "/dev/null"])
+    # `--status-path` as well as `--quota-path`: without it the CLI records its run into
+    # the real `site/data/`, so running the suite left an untracked artifact in the working
+    # tree. A test that writes into the repo it is testing is one that eventually gets
+    # committed by accident.
+    code = cfbd.main(["--quota-path", "/dev/null",
+                      "--status-path", str(tmp_path / "cfbd.json")])
     assert code != 0, "no week means nothing was fetched, and the exit code has to say so"
     assert "nothing was fetched" in capsys.readouterr().err.lower()
 

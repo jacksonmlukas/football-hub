@@ -12,11 +12,23 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 # and neither feeds the fantasy path. They report their own status and the slate continues,
 # because a weekly refresh that halts on an unconfigured extra is a system that needs an
 # operator, and those die in October.
-# WEEK is optional. Unset, it expands to nothing and the CLIs pick their own default --
-# `--week $(WEEK)` with WEEK unset passes a bare `--week` and argparse exits 2, which is how
-# `make slate` came to fail on a clean checkout.
+# WEEK is the NFL week and is optional. Unset, it expands to nothing and `hub.publish` picks
+# its own default -- `--week $(WEEK)` with WEEK unset would pass a bare `--week` and argparse
+# would exit 2, which is how `make slate` came to fail on a clean checkout. The same `$(if
+# $(strip ...))` guard is why CFB_WEEK below is written the way it is.
 	uv run python -m hub.fetch.nflverse --refresh
-	-uv run python -m hub.fetch.cfbd $(if $(strip $(WEEK)),--week $(WEEK))
+# CFB_WEEK, not WEEK, and it is normally unset. WEEK is the *NFL* week -- a different
+# calendar with a different week-1 date and three more weeks in it -- so passing it here
+# would have fetched a confidently wrong college week. Left unset, `hub.fetch.cfbd` counts
+# the week from $CFB_WEEK_ONE, the date of the college season's first game, which is a fact
+# stated once in `.env` (or as an Actions variable) rather than a number somebody has to
+# bump every Wednesday. `make slate CFB_WEEK=3` is the one-off override, for a backfill.
+#
+# The leading `-` stays, and so does the reason for it: an optional source that is
+# unconfigured must not take a Sunday down. What changed with issue #56 is that the run now
+# leaves a record in `site/data/cfbd.json` saying whether it fetched, so a swallowed exit
+# code is no longer the only thing that knew.
+	-uv run python -m hub.fetch.cfbd $(if $(strip $(CFB_WEEK)),--week $(CFB_WEEK))
 	-uv run python -m hub.fetch.odds --snapshot
 	uv run python -m hub.models.ratings --fit
 # The roster changes every week the waiver wire does, so it is refreshed here rather than
