@@ -362,6 +362,10 @@ def grid_from_schedule(season: int, cache: Path | None = None, *,
 
     A game neither source prices is dropped rather than filled at a coin flip, and
     `coverage` still names the week so an entrant knows it is theirs to fill.
+
+    Each row also carries the `game_id` it came from. Nothing reads it yet: it is here so
+    that a week taking two picks can be stopped from taking both sides of one fixture, which
+    is unreachable while a week takes one pick and guaranteed fatal once it takes two.
     """
     from hub.models.market import MARGIN_SD, normal_cdf
 
@@ -380,16 +384,24 @@ def grid_from_schedule(season: int, cache: Path | None = None, *,
         # again here from a week number would be the second implementation of one idea that
         # this module's own docstring warns about.
         kick, res = r.get("kickoff"), r.get("result")
-        rows.append((int(r["week"]), r["home_team"], home_p, moving, kick, res))
-        rows.append((int(r["week"]), r["away_team"], 1.0 - home_p, moving, kick, res))
+        # The fixture both rows came from. A week that takes *two* picks must not take both
+        # sides of one game, and nothing else on the row can say which rows those are:
+        # `kickoff` groups a dozen unrelated Sunday-afternoon games into one slot, and
+        # `result` is null for every week still being planned. nflverse's own `game_id`
+        # rather than a key assembled here, because `hub.schedule` already carries it and a
+        # second spelling of one identifier is the drift this module keeps being bitten by.
+        gid = r["game_id"]
+        rows.append((int(r["week"]), r["home_team"], home_p, moving, kick, res, gid))
+        rows.append((int(r["week"]), r["away_team"], 1.0 - home_p, moving, kick, res, gid))
     return pl.DataFrame({"week": [r[0] for r in rows], "team": [r[1] for r in rows],
                          "win_prob": [r[2] for r in rows],
                          "moving_field": [r[3] for r in rows],
                          "kickoff": [r[4] for r in rows],
-                         "result": [r[5] for r in rows]},
+                         "result": [r[5] for r in rows],
+                         "game_id": [r[6] for r in rows]},
                         schema={"week": pl.Int64, "team": pl.Utf8, "win_prob": pl.Float64,
                                 "moving_field": pl.Boolean, "kickoff": pl.Datetime,
-                                "result": pl.Float64})
+                                "result": pl.Float64, "game_id": pl.Utf8})
 
 
 def main(argv: Sequence[str] | None = None) -> int:

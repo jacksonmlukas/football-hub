@@ -208,6 +208,57 @@ def test_games_without_a_posted_line_are_dropped_not_treated_as_coin_flips(tmp_p
     assert grid["week"].to_list() == [1, 1]
 
 
+def test_both_sides_of_a_fixture_carry_the_same_game_id(tmp_path):
+    """Two rows, one game. A week that takes two picks must be able to tell that these two
+    teams are the same fixture, because taking both guarantees one of them loses. Under one
+    pick a week the pairing was unreachable, so nothing on the row ever needed to say it."""
+    import hub.fetch.nflverse as nflverse
+    sched = pl.DataFrame({"game_id": ["2026_01_LV_KC", "2026_01_SEA_SF"],
+                          "season": [2026, 2026], "week": [1, 1],
+                          "home_team": ["KC", "SF"], "away_team": ["LV", "SEA"],
+                          "spread_line": [9.5, 3.0], "result": [None, None]})
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(nflverse, "load", lambda *a, **k: sched)
+        grid = survivor.grid_from_schedule(2026, base=tmp_path)
+    by_team = dict(zip(grid["team"].to_list(), grid["game_id"].to_list(), strict=True))
+    assert by_team["KC"] == by_team["LV"]
+    assert by_team["SF"] == by_team["SEA"]
+    assert by_team["KC"] != by_team["SF"]
+
+
+def test_a_shared_kickoff_is_not_a_shared_game(tmp_path):
+    """The reason the identifier has to ride along rather than being derived. A dozen games
+    share a Sunday afternoon slot, so grouping on `kickoff` would forbid taking two teams
+    from two entirely different fixtures -- a silently wrong plan of exactly the kind the
+    same-game rule exists to prevent."""
+    import hub.fetch.nflverse as nflverse
+    sched = pl.DataFrame({"game_id": ["2026_01_LV_KC", "2026_01_SEA_SF"],
+                          "season": [2026, 2026], "week": [1, 1],
+                          "home_team": ["KC", "SF"], "away_team": ["LV", "SEA"],
+                          "spread_line": [9.5, 3.0], "result": [None, None],
+                          "gameday": ["2026-09-13", "2026-09-13"],
+                          "gametime": ["13:00", "13:00"]})
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(nflverse, "load", lambda *a, **k: sched)
+        grid = survivor.grid_from_schedule(2026, base=tmp_path)
+    assert grid["kickoff"].n_unique() == 1, "the fixture is that they share a slot"
+    by_team = dict(zip(grid["team"].to_list(), grid["game_id"].to_list(), strict=True))
+    assert by_team["KC"] != by_team["SF"]
+
+
+def test_the_game_id_does_not_change_any_plan():
+    """It rides along and nothing reads it. The next change makes a week take two picks and
+    uses it; until then a grid carrying the column must plan exactly as one without it, or
+    this commit is not the no-op it claims to be."""
+    rows = [(1, "KC", 0.9), (1, "SF", 0.8), (2, "KC", 0.7), (2, "SF", 0.6)]
+    plain = _grid(rows)
+    keyed = plain.with_columns(
+        pl.Series("game_id", ["2026_01_LV_KC", "2026_01_SEA_ARI",
+                              "2026_02_KC_DEN", "2026_02_SF_LAR"]))
+    assert (survivor.solve(plain).drop("win_prob").to_dicts()
+            == survivor.solve(keyed).drop("win_prob").to_dicts())
+
+
 # --- the weeks the snapshots reach and the moving field does not ---------------
 #
 # The ticket in one sentence: `spread_line` is a lookahead number upstream leaves empty for
