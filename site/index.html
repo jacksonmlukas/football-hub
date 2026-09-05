@@ -283,7 +283,9 @@ async function render() {
       ], rows),
     });
   } else {
-    panel("p-board", { age: "", warn: "No draft board. Run <code>make draft</code>." });
+    // Backticks, not `<code>`: `warn` is escaped, and the manifest's own reason strings
+    // ("run `python -m hub.season.roster --write`") already read this way.
+    panel("p-board", { age: "", warn: "No draft board. Run `make draft`." });
   }
 
   // --- my roster, and where the set lineup differs from the best one
@@ -330,7 +332,7 @@ async function render() {
   } else {
     panel("p-roster", {
       age: "",
-      warn: "No roster yet. Run <code>python -m hub.season.roster --write</code>.",
+      warn: "No roster yet. Run `python -m hub.season.roster --write`.",
       html: `<p class="empty">Knowable only after the draft, which is why this panel was
              empty all summer.</p>`,
     });

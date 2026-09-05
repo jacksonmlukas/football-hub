@@ -95,15 +95,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          # Deduped by label: one open incident at a time, never 200 issues. If the label is
-          # missing the dedupe degrades rather than the step dying -- worst case a second
-          # issue, which is noisy and visible, against a silent failure which is neither.
-          EXISTING=$(gh issue list --repo "${{ github.repository }}" \
-            --label incident --state open --json number --jq '.[0].number' 2>/dev/null)
-          # The marker, not the label. `incident` says what an issue is *about*, and the
-          # recovery branch below used it to decide what to close -- so an incident a human
-          # filed was closed with a comment about the heartbeat. This says who filed it.
+          # The marker, not the label. `incident` says what an issue is *about*; this says
+          # who filed it. Both branches need it and for the same reason -- the close branch
+          # was shutting a human's issue with a comment about the heartbeat, and a dedupe on
+          # the label alone would latch onto that same issue and comment on it forever
+          # instead of ever filing one of its own, leaving nothing marked for recovery to
+          # close. Fixing one half and not the other just moves the failure.
           MARKER="<!-- watchdog-heartbeat -->"
+          # Deduped to one open incident at a time, never 200 issues. If the lookup fails the
+          # dedupe degrades rather than the step dying -- worst case a second issue, which is
+          # noisy and visible, against a silent failure which is neither.
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" \
+            --label incident --state open --json number,body \
+            --jq "([.[] | select(.body | contains(\"$MARKER\"))][0].number) // empty" 2>/dev/null)
           BODY="$MARKER
           Heartbeat age: ${{ steps.check.outputs.age }}s (threshold 1500s).
 

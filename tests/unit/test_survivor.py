@@ -406,3 +406,48 @@ def test_a_grid_with_no_kickoffs_is_entirely_still_to_come():
     times carries a null kickoff, and an invented one would silently decide this."""
     grid = _grid([(1, "A", 0.9), (2, "B", 0.8)])
     assert survivor.forthcoming(grid).height == 2
+
+
+# --- a plan belongs to one season, like a published week does ----------------
+#
+# Found reviewing the change above. `spent_teams` matched on week alone, so a `survivor.json`
+# left from a previous season contributes its weeks-1..N picks as "spent" in the new one.
+# `site/data/survivor.json` is committed and `data/processed/` is not, so the case is a
+# scheduled run that starts a season mid-way -- a dormant repo, or a fresh clone. Exactly
+# the collision issue #23 fixed for the weekly artifact, one file over.
+
+def test_a_plan_from_another_season_spends_nothing():
+    prior = [{"season": 2025, "week": 1, "team": "KC"},
+             {"season": 2025, "week": 2, "team": "SF"}]
+    assert survivor.spent_teams(prior, [1, 2], season=2026) == []
+    assert survivor.spent_teams(prior, [1, 2], season=2025) == ["KC", "SF"]
+
+
+def test_a_plan_with_no_season_is_read_as_this_one():
+    """Artifacts written before the plan carried a season. Refusing them would silently
+    forget what a running entry had spent, which is the worse of the two errors."""
+    prior = [{"week": 1, "team": "KC"}]
+    assert survivor.spent_teams(prior, [1], season=2026) == ["KC"]
+
+
+def test_a_row_with_no_week_is_skipped_rather_than_raising():
+    """A partially written or hand-edited artifact. `int(None)` raised, and `publish`
+    caught it in its broad except -- so the panel went stale citing an unavailable
+    schedule, which is the wrong cause reported for the wrong reason."""
+    prior = [{"week": None, "team": "KC"}, {"week": 1, "team": "SF"}]
+    assert survivor.spent_teams(prior, [1], season=2026) == ["SF"]
+
+
+def test_the_published_plan_stamps_each_row_with_the_seasons_it_came_from(tmp_path):
+    """The season is on the envelope, not the rows, so it is carried down here -- otherwise
+    `spent_teams` would need the artifact's shape as well as its rows."""
+    import json
+    art = tmp_path / "survivor.json"
+    art.write_text(json.dumps({"name": "survivor", "season": 2025, "n": 1,
+                               "rows": [{"week": 1, "team": "KC", "win_prob": 0.9}]}))
+    assert survivor.published_plan(art) == [
+        {"week": 1, "team": "KC", "win_prob": 0.9, "season": 2025}]
+
+
+def test_an_absent_plan_is_no_history_rather_than_an_error(tmp_path):
+    assert survivor.published_plan(tmp_path / "nothing.json") == []

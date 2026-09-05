@@ -56,8 +56,16 @@ def published_plan(path: Path | None = None) -> list[dict]:
         got = json.loads(Path(path or (SITE / "survivor.json")).read_text())
     except (OSError, ValueError):
         return []
-    rows = got.get("rows") if isinstance(got, dict) else None
-    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    if not isinstance(got, dict) or not isinstance(rows := got.get("rows"), list):
+        return []
+    # The season rides on the envelope, not on the rows. Carried down so `spent_teams` can
+    # stay a function of rows -- and so it can tell a plan from this season apart from one
+    # left over from the last, which is the collision issue #23 fixed for the weekly
+    # artifact. `site/data/survivor.json` is committed and `data/processed/` is not, so a
+    # scheduled run that starts a season mid-way reads last season's plan as this one's.
+    season = got.get("season")
+    return [{**r, **({"season": season} if season is not None else {})}
+            for r in rows if isinstance(r, dict)]
 
 
 def _solver():
@@ -174,18 +182,37 @@ def played(grid: pl.DataFrame, at: datetime | None = None) -> list[int]:
     return sorted({int(w) for w in grid["week"].to_list()} - {int(w) for w in ahead})
 
 
-def spent_teams(prior: Sequence[Mapping[str, Any]], weeks: Sequence[int]) -> list[str]:
-    """Teams a previous plan assigned to weeks that are now behind us.
+def spent_teams(prior: Sequence[Mapping[str, Any]], weeks: Sequence[int],
+                season: int | None = None) -> list[str]:
+    """Teams a previous plan assigned to weeks that are now behind us, in this season.
 
     The best available answer to "what has this entry already used", and stated as what it
     is: a reading of the last plan published, not a record of what was entered. An entrant
     who deviated has deviated from this too. It is still strictly better than assuming
     nothing was spent, which is what the plan did -- and which made every mid-season plan
     infeasible against the real remaining pool while looking exactly like a plan.
+
+    **Scoped to one season**, for the reason `hub.publish._keeping_published` is: a week
+    number does not identify a slate. A `survivor.json` left from last season would
+    otherwise contribute its weeks-1..N picks here, and the committed artifact outlives the
+    gitignored store, so a run that starts a season mid-way is exactly when it happens.
+    A row carrying no season is read as this one's -- artifacts written before the plan
+    recorded it, and forgetting what a running entry spent is the worse of the two errors.
+
+    A row with no usable week is skipped rather than raising. `int(None)` took the whole
+    panel down through `publish`'s broad except, which then reported an unavailable
+    schedule: the wrong cause, for the wrong reason.
     """
     gone = {int(w) for w in weeks}
-    return sorted({str(r["team"]) for r in prior
-                   if r.get("team") and int(r.get("week", -1)) in gone})
+    out = set()
+    for r in prior:
+        if not r.get("team") or r.get("week") is None:
+            continue
+        if season is not None and r.get("season") not in (None, season):
+            continue
+        if int(r["week"]) in gone:
+            out.add(str(r["team"]))
+    return sorted(out)
 
 
 def coverage(grid: pl.DataFrame, weeks: Sequence[int]) -> dict:
@@ -292,7 +319,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     grid = grid_from_schedule(a.season)
     ahead = forthcoming(grid)
     gone = played(grid)
-    spent = spent_teams(published_plan(), gone)
+    spent = spent_teams(published_plan(), gone, season=a.season)
     # Against the weeks still to come. A week already run is not one the plan can cover and
     # not one that "still needs a pick" either, so it belongs in neither list.
     requested = [w for w in range(1, a.weeks + 1) if w not in gone]

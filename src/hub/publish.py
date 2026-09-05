@@ -462,7 +462,7 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | None:
         gone = sv.played(grid)
         # What this entry has already used, read back from the plan it published. The only
         # record there is, and named as what it is in `spent_teams`.
-        spent = sv.spent_teams(sv.published_plan(out / "survivor.json"), gone)
+        spent = sv.spent_teams(sv.published_plan(out / "survivor.json"), gone, season=season)
         # Against every week still to come, not against the weeks the grid happens to have --
         # asking coverage about its own weeks makes `missing` empty by construction and the
         # panel would never say a week needs a pick. A week already played is in neither list.
