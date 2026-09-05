@@ -130,3 +130,64 @@ def test_a_grid_without_a_game_key_is_refused():
     g = _grid([(1, "KC", "LV", 0.8)]).drop("game_id")
     with pytest.raises(ValueError, match="game_id"):
         pool.weeks_from_grid(g, [1])
+
+
+# --- our own entry, carrying what it has already spent ------------------------
+#
+# The quantity a buyback is priced against. The failure to avoid is one-over-the-field, which
+# is blind to the ledger: identical in week 2 and week 6, so a buyback figure built on it never
+# moves with the teams already gone.
+
+
+def test_a_fuller_ledger_is_worth_less():
+    """The whole point of taking a ledger at all. Same field, same weeks, same fixtures -- the
+    only difference is that this entry has already spent the teams worth having."""
+    g = _grid([(w, a, b, p) for w in (1, 2, 3)
+               for a, b, p in (("KC", "LV", 0.85), ("SF", "SEA", 0.8), ("BUF", "NYJ", 0.75))])
+    kw = {"entries": 6, "trials": 600}
+    fresh = pool.entry_outcome(g, [1, 2, 3], rng=np.random.default_rng(4), **kw)
+    spent = pool.entry_outcome(g, [1, 2, 3], ledger=("KC", "SF", "BUF"),
+                               rng=np.random.default_rng(4), **kw)
+    assert spent.survives < fresh.survives
+    assert spent.sole < fresh.sole
+
+
+def test_the_entry_shares_outcomes_with_rivals_on_its_team():
+    """Pinned to a closed form, because the alternative is arithmetically distinguishable.
+
+    One fixture, KC at 0.9. Our ledger holds KC so we must take LV; the rival samples by win
+    probability and takes KC nine times in ten. Exactly one side wins, so we survive when LV
+    wins (0.1) and are alone when the rival was on KC (0.9): 0.09. Drawn per entry instead,
+    the rival could lose while on the winning side and sole would be nearer 0.018."""
+    g = _grid([(1, "KC", "LV", 0.9)])
+    out = pool.entry_outcome(g, [1], entries=2, ledger=("KC",), trials=4000,
+                             rng=np.random.default_rng(5))
+    assert out.survives == pytest.approx(0.10, abs=0.02)
+    assert out.sole == pytest.approx(0.09, abs=0.02)
+    # And the pot splits when the rival came along: 0.1 * (0.9 * 1 + 0.1 * 1/2).
+    assert out.share == pytest.approx(0.095, abs=0.02)
+
+
+def test_share_sits_between_sole_and_survival():
+    """Finishing level with two others is worth a third, not nothing and not everything."""
+    g = _grid([(w, a, b, p) for w in (1, 2)
+               for a, b, p in (("KC", "LV", 0.9), ("SF", "SEA", 0.85), ("BUF", "NYJ", 0.8))])
+    out = pool.entry_outcome(g, [1, 2], entries=9, trials=600, rng=np.random.default_rng(6))
+    assert 0 < out.sole <= out.share <= out.survives <= 1
+
+
+def test_an_entry_that_cannot_cover_the_week_is_worth_nothing():
+    """Elimination by the no-repeat ledger rather than by losing -- the 24-team constraint."""
+    g = _grid([(1, "KC", "LV", 0.9)])
+    out = pool.entry_outcome(g, [1], entries=3, ledger=("KC", "LV"), trials=100,
+                             rng=np.random.default_rng(0))
+    assert out.survives == 0.0 and out.sole == 0.0 and out.share == 0.0
+
+
+def test_the_same_seed_and_ledger_reproduce_the_same_figure():
+    g = _grid([(w, a, b, p) for w in (1, 2)
+               for a, b, p in (("KC", "LV", 0.8), ("SF", "SEA", 0.7))])
+    kw = {"entries": 5, "ledger": ("KC",), "trials": 300}
+    a = pool.entry_outcome(g, [1, 2], rng=np.random.default_rng(11), **kw)
+    b = pool.entry_outcome(g, [1, 2], rng=np.random.default_rng(11), **kw)
+    assert a == b

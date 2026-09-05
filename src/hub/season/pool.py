@@ -57,6 +57,20 @@ class PoolOutcome(NamedTuple):
     alive_by_week: dict[int, float]    # week -> mean entries still live after it
 
 
+class EntryOutcome(NamedTuple):
+    """What one entry's own position is worth, from here.
+
+    `sole` is the ticket's question and `share` is the one a dollar figure asks: with a pot
+    split among co-survivors, finishing level with two others is worth a third, not nothing.
+    Both come off the same trials because a second pass over this simulator is not cheap, and
+    computing them apart would let them disagree about the same run.
+    """
+    trials: int
+    survives: float     # P(this entry outlasts the final week at all)
+    sole: float         # P(it is the only one that does)
+    share: float        # expected fraction of the pot under an even split
+
+
 class _Week(NamedTuple):
     """One week's games and prices, in a shape the trial loop can use without re-querying."""
     games: tuple[tuple[str, str, float], ...]   # (team_a, team_b, P(team_a wins))
@@ -111,6 +125,68 @@ def _pick(rng: np.random.Generator, week: _Week, ledger: set[str], k: int) -> li
     return [str(t) for t in rng.choice(avail, size=k, replace=False, p=w / total)]
 
 
+def _play(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int],
+          led: list[set[str]], alive: list[bool]) -> tuple[int | None, list[int]]:
+    """Play one trial out. Returns the week everyone died -- None if somebody lasted -- and
+    the live count after each week.
+
+    Every game is drawn once here and the result shared by each entry holding either side.
+    Extracted rather than written twice: `simulate` and `entry_outcome` ask different
+    questions of the same trial, and a second copy of this loop is a second answer about it.
+    """
+    counts = []
+    for wk, w in zip(wks, weeks, strict=True):
+        won: set[str] = set()
+        for a, b, p_a in wk.games:
+            won.add(a if rng.random() < p_a else b)
+        for i in range(len(alive)):
+            if not alive[i]:
+                continue
+            picks = _pick(rng, wk, led[i], wk.picks)
+            if picks is None or not all(t in won for t in picks):
+                alive[i] = False
+                continue
+            led[i].update(picks)
+        counts.append(sum(alive))
+        if counts[-1] == 0:
+            return w, counts
+    return None, counts
+
+
+def entry_outcome(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
+                  ledger: Sequence[str] = (), pool: PoolConfig | None = None,
+                  trials: int = DEFAULT_TRIALS,
+                  rng: np.random.Generator | None = None) -> EntryOutcome:
+    """What our own entry is worth from here, carrying the teams it has already spent.
+
+    The quantity a buyback is priced against, and the reason it cannot be one-over-the-field:
+    that number is blind to the ledger, so it is the same in week 2 and week 6 and a buyback
+    figure built on it never moves with the teams already gone. Here a fuller ledger means
+    fewer legal picks, which means more weeks the entry cannot cover.
+
+    Our entry runs in the same trials as the field, so it shares game outcomes with every
+    rival holding the same team -- which is why it cannot be computed on its own and then
+    combined with a field number afterwards.
+    """
+    rng = rng or np.random.default_rng(0)
+    wks = weeks_from_grid(grid, weeks, pool)
+    ours = set(ledger)
+    survived = sole = 0
+    share = 0.0
+    for _ in range(trials):
+        led = [set(ours)] + [set() for _ in range(entries - 1)]
+        alive = [True] * entries
+        _play(rng, wks, weeks, led, alive)
+        if not alive[0]:
+            continue
+        n = sum(alive)
+        survived += 1
+        sole += int(n == 1)
+        share += 1.0 / n
+    return EntryOutcome(trials=trials, survives=survived / trials,
+                        sole=sole / trials, share=share / trials)
+
+
 def simulate(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
              pool: PoolConfig | None = None, ledgers: Sequence[set[str]] | None = None,
              trials: int = DEFAULT_TRIALS,
@@ -130,24 +206,11 @@ def simulate(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
     for _ in range(trials):
         led = [set(ledgers[i]) if ledgers is not None else set() for i in range(entries)]
         alive = [True] * entries
-        for wk, w in zip(wks, weeks, strict=True):
-            # One draw per game, shared by every entry holding either side.
-            won: set[str] = set()
-            for a, b, p_a in wk.games:
-                won.add(a if rng.random() < p_a else b)
-            for i in range(entries):
-                if not alive[i]:
-                    continue
-                picks = _pick(rng, wk, led[i], wk.picks)
-                if picks is None or not all(t in won for t in picks):
-                    alive[i] = False
-                    continue
-                led[i].update(picks)
-            n = sum(alive)
+        died, counts = _play(rng, wks, weeks, led, alive)
+        for w, n in zip(weeks, counts, strict=False):
             alive_tot[w] += n
-            if n == 0:
-                ended[w] += 1
-                break
+        if died is not None:
+            ended[died] += 1
         else:
             co[sum(alive)] += 1
 
