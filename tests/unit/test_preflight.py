@@ -1,4 +1,4 @@
-"""The pre-public gate.
+"""The pre-publication scan.
 
 On 2026-08-23 this script reported PASS while 45 parquet files -- 3.5MB of nflverse
 play-by-play -- sat in history one commit back. The index check saw a clean tree and the
@@ -7,7 +7,7 @@ commit, not the tip, and a file removed in commit N is still reachable in commit
 
 The case that matters is therefore the one that slipped: committed, then untracked, and
 the working tree clean. Each test builds a throwaway repo rather than asserting against
-this one, so a green run here means the gate works rather than that today happens to be
+this one, so a green run here means the scan works rather than that today happens to be
 fine.
 """
 import os
@@ -32,7 +32,7 @@ from guardlib import (
 ROOT = Path(__file__).resolve().parents[2]
 
 # The excision harness at the bottom of this file re-runs this module against a *mutated copy*
-# of the gate, so the script under test has to be an input rather than a constant. Reading it
+# of the scan, so the script under test has to be an input rather than a constant. Reading it
 # from the environment is the whole reason the mutant runs are trustworthy: the Python harness
 # in tests/contracts/test_guards_are_load_bearing.py first passed its mutant tree through
 # PYTHONPATH, which pyproject's own `pythonpath` silently shadowed, so every mutant ran
@@ -111,7 +111,7 @@ def test_the_failure_says_untracking_is_not_enough(repo):
 
 def test_a_json_under_site_data_is_not_flagged(repo):
     """site/data/*.json is the published artifact. Flagging it would train you to ignore
-    this gate, which is how the 2026-08-23 miss became possible."""
+    this scan, which is how the 2026-08-23 miss became possible."""
     d = repo / "site" / "data"
     d.mkdir(parents=True)
     (d / "draft_board.json").write_text("[]")
@@ -121,7 +121,7 @@ def test_a_json_under_site_data_is_not_flagged(repo):
 
 
 def test_history_rewritten_clean_passes_again(repo):
-    """After a genuine rewrite the gate must go green, or it is not actionable."""
+    """After a genuine rewrite the scan must go green, or it is not actionable."""
     d = repo / "data" / "processed"
     d.mkdir(parents=True)
     (d / "board.parquet").write_bytes(b"PAR1")
@@ -143,12 +143,12 @@ def test_history_rewritten_clean_passes_again(repo):
 # matching nothing at all would also satisfy. It was matching nothing at all.
 #
 # `PATTERNS` is written with BRE interval syntax (`.\{40,\}`) and passed to `grep -E`, where
-# `\{` is a literal brace. So every pattern in the gate was inert: measured 2026-09-04 by
+# `\{` is a literal brace. So every pattern in the scan was inert: measured 2026-09-04 by
 # planting three synthetic credentials in a throwaway repo, against which the script printed
 # "ok: no credential patterns in any commit" and exited PASS.
 #
 # Each value below is assembled from parts rather than written out, so this file does not
-# itself become a hit when the gate scans this repo's history. None is a real credential.
+# itself become a hit when the scan scans this repo's history. None is a real credential.
 
 SWID_BODY = "1A2B3C4D-5E6F-7081-9203-A4B5C6D7E8F9"
 S2_BODY = "AEB" + "a1B2c3D4e5" * 6
@@ -170,10 +170,10 @@ def _plant(repo: Path, name: str, body: str) -> None:
     pytest.param("odds key", "ODDS_API_KEY=" + KEY_BODY, id="odds-key"),
 ])
 def test_a_planted_credential_blocks_the_flip(repo, shape, line):
-    """The assertion that was missing. Exit non-zero, or the gate is decoration."""
+    """The assertion that was missing. Exit non-zero, or the scan is decoration."""
     _plant(repo, line, shape)
     got = preflight(repo)
-    assert got.returncode == 1, f"{shape} passed the gate: {got.stdout}"
+    assert got.returncode == 1, f"{shape} passed the scan: {got.stdout}"
     assert "credential" in (got.stdout + got.stderr).lower()
 
 
@@ -196,7 +196,7 @@ def test_a_credential_committed_and_then_removed_still_blocks(repo):
 
 
 def test_the_scan_proves_it_can_match_before_reporting_clean(repo):
-    """The gate's own premise, checked by the gate rather than only here. A scan that
+    """The scan's own premise, checked by the scan rather than only here. A scan that
     reports 'no credential patterns in any commit' is making two claims -- that it looked,
     and that it found nothing -- and until now only the second was ever true."""
     got = preflight(repo)
@@ -207,7 +207,7 @@ def test_the_scan_proves_it_can_match_before_reporting_clean(repo):
 
 
 def test_ordinary_prose_is_not_flagged(repo):
-    """A gate that fires on the word ESPN in a docstring is a gate you learn to ignore --
+    """A scan that fires on the word ESPN in a docstring is a scan you learn to ignore --
     which is how the 2026-08-23 miss became possible."""
     (repo / "docs.md").write_text(
         "Set ESPN_S2 and SWID in .env. The CFBD_API_KEY is optional.\n"
@@ -291,7 +291,7 @@ def test_a_cron_outside_the_schedule_block_is_not_a_live_schedule(repo):
         + got.stdout)
 
 
-def test_a_dormant_cron_does_not_block_the_gate(repo):
+def test_a_dormant_cron_does_not_block_the_scan(repo):
     """A warning, for the same reason the author-address check is one: a cron that is off is
     something to know, not a credential in the history. Grading it FAIL would put a workflow
     someone switched off on purpose behind the same red line as a leaked cookie."""
@@ -309,7 +309,7 @@ def test_a_repo_with_no_workflows_is_not_a_finding(repo):
     assert not [ln for ln in _schedule_lines(got.stdout) if "WARNING" in ln], got.stdout
 
 
-def test_the_gate_does_not_ask_for_work_that_is_already_done(repo):
+def test_the_scan_does_not_ask_for_work_that_is_already_done(repo):
     """The defect this check was added to remove, which the checklist then reproduced twice
     over. `Uncomment the schedule: block in ci.yml` outlived the commit that uncommented it;
     `Flip the repo public` and `Enable Pages` outlived the flip and the Pages build."""
@@ -343,14 +343,14 @@ def test_the_script_declares_the_patterns_this_file_expects():
     """The premise. If the declarations stop being discoverable the parametrize below
     silently becomes empty, and an empty parametrize is a green suite proving nothing."""
     found = _pattern_vars()
-    assert len(found) >= 5, f"only found {found}; the gate declares five credential shapes"
+    assert len(found) >= 5, f"only found {found}; the scan declares five credential shapes"
 
 
 @pytest.mark.parametrize("var", _pattern_vars(), ids=lambda v: v.lower())
 def test_a_dead_pattern_is_named_and_blocks_the_flip(repo, var, tmp_path):
     """Kill one pattern; the self-check must fail the run and say which one.
 
-    Nothing is planted in the repo -- a clean history. The point is that the gate refuses to
+    Nothing is planted in the repo -- a clean history. The point is that the scan refuses to
     report a clean history through a scanner that has gone partly blind."""
     dead = PATTERN_DECL.sub(
         lambda m: f"{m['var']}={m['q']}zzz-this-matches-nothing-zzz{m['q']}"
@@ -360,7 +360,7 @@ def test_a_dead_pattern_is_named_and_blocks_the_flip(repo, var, tmp_path):
     broken.write_text(dead)
     got = subprocess.run(["bash", str(broken)], cwd=repo, capture_output=True, text=True)
     assert got.returncode == 1, (
-        f"{var} matches nothing and the gate still reported a clean history:\n{got.stdout}")
+        f"{var} matches nothing and the scan still reported a clean history:\n{got.stdout}")
     both = got.stdout + got.stderr
     assert var in both, (
         f"the failure does not say which pattern went dead:\n{both}")
@@ -373,7 +373,7 @@ def test_a_dead_pattern_is_named_and_blocks_the_flip(repo, var, tmp_path):
 
 def test_a_pattern_with_no_synthetic_sample_is_a_failure(repo, tmp_path):
     """An alternation added to PATTERNS without a sample is an unproven alternation, which
-    is the whole defect. The gate counts what it joined against what it exercised."""
+    is the whole defect. The scan counts what it joined against what it exercised."""
     text = SCRIPT.read_text()
     widened = text.replace(
         'PATTERNS="$P_ESPN_S2|', 'PATTERNS="NEVER_MATCHES_ANYTHING_AT_ALL_XYZ=[0-9]{9,}|$P_ESPN_S2|')
@@ -383,13 +383,13 @@ def test_a_pattern_with_no_synthetic_sample_is_a_failure(repo, tmp_path):
     got = subprocess.run(["bash", str(wide)], cwd=repo, capture_output=True, text=True)
     assert got.returncode == 1, (
         "a sixth alternation went into PATTERNS with nothing proving it can match, and the "
-        f"gate still called the history clean:\n{got.stdout}")
+        f"scan still called the history clean:\n{got.stdout}")
 
 
-def test_the_gate_and_its_own_tests_are_not_credential_hits(repo):
+def test_the_scan_and_its_own_tests_are_not_credential_hits(repo):
     """Every synthetic value in the script and in this file is assembled from parts so that
     neither is a hit when the scan reads its own history. That property is easy to break by
-    writing one plausible-looking literal, and breaking it makes the gate fail forever on
+    writing one plausible-looking literal, and breaking it makes the scan fail forever on
     itself -- so it is checked by committing both files and running the real scan over them
     rather than by remembering."""
     for src, rel in ((SCRIPT, "scripts/preflight_public.sh"),
@@ -398,10 +398,10 @@ def test_the_gate_and_its_own_tests_are_not_credential_hits(repo):
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(src.read_text())
     git(repo, "add", "-A")
-    git(repo, "commit", "-m", "vendor the gate and its tests")
+    git(repo, "commit", "-m", "vendor the scan and its tests")
     got = preflight(repo)
     assert got.returncode == 0, (
-        "the gate or its tests contain a credential-shaped literal:\n" + got.stdout + got.stderr)
+        "the scan or its tests contain a credential-shaped literal:\n" + got.stdout + got.stderr)
 
 
 # --- the other guards, given planted inputs of their own ---------------------
@@ -420,7 +420,7 @@ def test_a_committed_env_file_blocks_the_flip(repo):
     git(repo, "add", "-f", ".env")
     git(repo, "commit", "-m", "oops")
     got = preflight(repo)
-    assert got.returncode == 1, f".env passed the gate:\n{got.stdout}"
+    assert got.returncode == 1, f".env passed the scan:\n{got.stdout}"
     assert ".env" in got.stderr
 
 
@@ -432,7 +432,7 @@ def test_a_staged_but_uncommitted_data_file_blocks_the_flip(repo):
     (d / "board.parquet").write_bytes(b"PAR1")
     git(repo, "add", "-f", "data/processed/board.parquet")
     got = preflight(repo)
-    assert got.returncode == 1, f"a staged parquet passed the gate:\n{got.stdout}"
+    assert got.returncode == 1, f"a staged parquet passed the scan:\n{got.stdout}"
     assert "tracked" in got.stderr.lower()
 
 
@@ -479,7 +479,7 @@ TESTS = ROOT / "tests"
 
 SHELL_GUARD = marker("GUARD", "#")
 
-# Six of the gate's seven guards carry a `# GUARD` and are proved by excision below. The
+# Six of the scan's seven guards carry a `# GUARD` and are proved by excision below. The
 # seventh -- the optional third-party scanner -- cannot be: `command -v gitleaks` finds
 # nothing here and no workflow installs it, so that call has only ever taken its `skipped`
 # branch, deleting it changes nothing anyone can observe, and an excision test for it would be
@@ -498,7 +498,7 @@ SHELL_GUARD = marker("GUARD", "#")
 SHELL_UNPROVED = marker("UNPROVED", "#")
 
 # The exception, by name. Until 2026-09-05 this was the number 1 -- `outside <= 1` in
-# `test_the_gate_declares_the_guards_it_makes` -- which says "one guard may be unmarked" and
+# `test_the_scan_declares_the_guards_it_makes` -- which says "one guard may be unmarked" and
 # not "*this* guard is unmarked, for this reason". The two come apart the moment the
 # allowance changes hands: mark the gitleaks call, or delete it, and the budget frees up for
 # the next unmarked guard to spend in silence. A count is also the shape this repo has been
@@ -511,7 +511,7 @@ def _declared_guards() -> list[Guard]:
 
 
 def _without(guard: Guard) -> str:
-    """The gate with that guard's block removed, markers and all."""
+    """The scan with that guard's block removed, markers and all."""
     return excise(SCRIPT.read_text(), guard)
 
 
@@ -554,7 +554,7 @@ def _child(script: Path, selectors: tuple[str, ...]) -> subprocess.CompletedProc
 
 
 @pytest.mark.skipif(MUTANT_RUN, reason="a child run of the excision harness")
-def test_the_gate_declares_the_guards_it_makes():
+def test_the_scan_declares_the_guards_it_makes():
     """The premise, and the reason a new guard cannot land unproven: every `fail=1` in the
     script must sit inside a declared guard or a declared exception.
 
@@ -592,7 +592,7 @@ def test_every_declared_block_names_tests_that_exist():
 def test_a_second_unmarked_refusing_line_is_named_immediately():
     """The positive control, and the thing the old count could not do.
 
-    Splice one more unmarked `fail=1` into the gate and the report must name it -- not say
+    Splice one more unmarked `fail=1` into the scan and the report must name it -- not say
     "2 refusing lines sit outside any # GUARD block", which is the count restated one larger.
     Without this the check only ever ran against a script that satisfies it, which is the
     same vacuum as a canary that proves one pattern of five."""
@@ -621,7 +621,7 @@ def test_the_unproved_guard_is_named_rather_than_counted():
     number that happened to be large enough."""
     declared_names = set(_unproved(SCRIPT.read_text()))
     assert declared_names == UNPROVED_HERE, (
-        f"the gate declares {sorted(declared_names)} as unprovable by excision; this file "
+        f"the scan declares {sorted(declared_names)} as unprovable by excision; this file "
         f"expects {sorted(UNPROVED_HERE)}. A guard that cannot be proved is not a spare slot: "
         f"say which guard it is and why, in both places.")
 
@@ -664,7 +664,7 @@ def test_the_child_run_uses_the_script_it_is_handed(tmp_path):
 
     If PREFLIGHT_SCRIPT were ignored -- the shape of failure that made the first Python
     harness report four green mutants against untouched source -- the child would run the
-    real gate, catch the planted credential, and come back green."""
+    real scan, catch the planted credential, and come back green."""
     stub = tmp_path / "preflight_public.sh"
     stub.write_text("#!/usr/bin/env bash\necho PASS\nexit 0\n")
     got = outcome(_child(stub, ("unit/test_preflight.py::test_a_planted_credential_blocks_"

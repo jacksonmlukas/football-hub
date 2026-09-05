@@ -195,6 +195,18 @@ fi
 # in a commit object cannot be edited without rewriting every SHA after it. This is a warning
 # rather than a failure: publishing under a real address is a choice many people make on
 # purpose, and it is only a problem if it is a surprise.
+# Short SHAs in `docs/` that are really commits in this history. The count printed below is
+# offered as what a `filter-repo` would break, so it has to be that and not "backticked things
+# that look hexadecimal": a digest prefix, a colour or an id would otherwise inflate a figure
+# a reader is asked to weigh a decision against. Each candidate is resolved against the object
+# database, so this is a number the script can defend rather than one it asserts.
+docs_commit_refs() {
+  grep -rho '`[0-9a-f]\{7\}`' docs/ 2>/dev/null | tr -d '`' | sort -u \
+    | while read -r sha; do
+        git cat-file -e "${sha}^{commit}" 2>/dev/null && echo "$sha"
+      done
+}
+
 echo "==> Checking commit author addresses"
 NOREPLY=$(git config user.email 2>/dev/null | grep -c 'users\.noreply\.github\.com' || true)
 OTHER=$(git log --all --format='%ae%n%ce' 2>/dev/null | sort -u \
@@ -205,7 +217,7 @@ if [ -n "$OTHER" ]; then
   git log --all --format='%ae' 2>/dev/null | sort | uniq -c | sort -rn | sed 's/^/    /'
   echo "    Flipping public publishes these. To change them you must rewrite history"
   echo "    (git filter-repo --mailmap), which changes every SHA -- and docs/ references"
-  echo "    $(grep -rho '\`[0-9a-f]\{7\}\`' docs/ 2>/dev/null | sort -u | wc -l | tr -d ' ') of them."
+  echo "    $(docs_commit_refs | wc -l | tr -d ' ') of them."
   echo "    Not a failure. A decision, and one that is far cheaper before the flip."
 else
   echo "  ok: every commit is authored from a noreply address"
