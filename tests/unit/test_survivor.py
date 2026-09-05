@@ -142,8 +142,8 @@ def test_uncovered_weeks_are_named_not_quietly_skipped():
     is fine; not saying so is how you show up on a Sunday with nothing."""
     grid = _grid([(1, "A", 0.7), (1, "B", 0.6), (3, "C", 0.8)])
     cov = survivor.coverage(grid, weeks=[1, 2, 3])
-    assert cov["missing"] == [2]
-    assert cov["covered"] == [1, 3]
+    assert cov.missing == [2]
+    assert cov.covered == [1, 3]
 
 
 def test_a_week_priced_by_a_single_game_is_flagged_as_thin():
@@ -152,13 +152,13 @@ def test_a_week_priced_by_a_single_game_is_flagged_as_thin():
     grid = _grid([(1, "A", 0.7), (1, "B", 0.3)]
                  + [(2, f"T{i}", 0.5) for i in range(20)])
     cov = survivor.coverage(grid, weeks=[1, 2])
-    assert cov["thin"] == [1]
+    assert cov.thin == [1]
 
 
 def test_full_coverage_reports_nothing_to_warn_about():
     grid = _grid([(w, f"T{i}", 0.5) for w in (1, 2) for i in range(20)])
     cov = survivor.coverage(grid, weeks=[1, 2])
-    assert cov["missing"] == [] and cov["thin"] == []
+    assert cov.missing == [] and cov.thin == []
 
 
 def test_the_cli_says_so_when_the_season_is_not_fully_priced(capsys, monkeypatch):
@@ -250,9 +250,9 @@ def test_a_week_only_the_snapshot_prices_still_enters_the_plan(tmp_path, monkeyp
     monkeypatch.setattr(nflverse, "load", lambda *a, **k: sched)
     grid = survivor.grid_from_schedule(2026, at=dt.datetime(2026, 9, 5), base=tmp_path)
     cov = survivor.coverage(grid, [1, 2, 18])
-    assert 18 in cov["covered"]
-    assert 2 in cov["missing"], "week 2 has neither source and must still ask for a pick"
-    assert 18 in survivor.solve(grid, weeks=cov["covered"])["week"].to_list()
+    assert 18 in cov.covered
+    assert 2 in cov.missing, "week 2 has neither source and must still ask for a pick"
+    assert 18 in survivor.solve(grid, weeks=cov.covered)["week"].to_list()
 
 
 def test_a_week_neither_source_prices_is_still_reported_as_needing_a_pick(tmp_path,
@@ -263,7 +263,7 @@ def test_a_week_neither_source_prices_is_still_reported_as_needing_a_pick(tmp_pa
     monkeypatch.setattr(nflverse, "load",
                         lambda *a, **k: _late_season(tmp_path, snapshot_weeks=(18,)))
     grid = survivor.grid_from_schedule(2026, at=dt.datetime(2026, 9, 5), base=tmp_path)
-    assert survivor.coverage(grid, [1, 2, 18])["missing"] == [2]
+    assert survivor.coverage(grid, [1, 2, 18]).missing == [2]
 
 
 def test_the_snapshot_does_not_change_a_week_the_moving_field_already_priced(tmp_path,
@@ -371,21 +371,23 @@ def test_a_week_already_played_is_not_in_the_grid_the_plan_solves():
         (2, "A", 0.8, dt.datetime(2026, 9, 17, 20, 15), None),
         (2, "B", 0.2, dt.datetime(2026, 9, 17, 20, 15), None),
     ])
-    ahead = survivor.forthcoming(grid, at=dt.datetime(2026, 9, 15))
-    assert ahead["week"].to_list() == [2, 2]
-    assert survivor.solve(ahead)["week"].to_list() == [2]
+    got = survivor.plan_remaining(grid, 2026, season_weeks=2,
+                                  at=dt.datetime(2026, 9, 15))
+    assert got.played == [1]
+    assert got.coverage.covered == [2]
+    assert got.picks["week"].to_list() == [2]
 
 
 def test_a_week_in_progress_is_no_more_pickable_than_a_finished_one():
-    """Both tests, because neither covers the other -- the same pair `forecastable` makes
-    for a prediction. A game under way has no result and is not a choice either."""
+    """Both tests, because neither covers the other -- the same pair
+    `schedule.forecastable` makes for a weekly prediction. A game under way has no result
+    and is not a choice either."""
     import datetime as dt
     grid = _dated_grid([
         (1, "A", 0.9, dt.datetime(2026, 9, 10, 20, 15), None),
         (2, "B", 0.8, dt.datetime(2026, 9, 17, 20, 15), None),
     ])
-    ahead = survivor.forthcoming(grid, at=dt.datetime(2026, 9, 10, 21, 0))
-    assert ahead["week"].to_list() == [2]
+    assert survivor.played(grid, at=dt.datetime(2026, 9, 10, 21, 0)) == [1]
 
 
 def test_survival_is_the_product_over_the_weeks_still_to_come():
@@ -397,15 +399,82 @@ def test_survival_is_the_product_over_the_weeks_still_to_come():
         (2, "B", 0.80, dt.datetime(2026, 9, 17, 20, 15), None),
         (3, "C", 0.90, dt.datetime(2026, 9, 24, 20, 15), None),
     ])
-    plan = survivor.solve(survivor.forthcoming(grid, at=dt.datetime(2026, 9, 15)))
-    assert survivor.survival(plan) == pytest.approx(0.8 * 0.9)
+    got = survivor.plan_remaining(grid, 2026, season_weeks=3,
+                                  at=dt.datetime(2026, 9, 15))
+    assert survivor.survival(got.picks) == pytest.approx(0.8 * 0.9)
 
 
 def test_a_grid_with_no_kickoffs_is_entirely_still_to_come():
     """Preseason, and the fixture shape every other test here uses. A schedule without
     times carries a null kickoff, and an invented one would silently decide this."""
     grid = _grid([(1, "A", 0.9), (2, "B", 0.8)])
-    assert survivor.forthcoming(grid).height == 2
+    assert survivor.played(grid) == []
+    assert survivor.plan_remaining(grid, 2026, season_weeks=2).coverage.covered == [1, 2]
+
+
+# --- the remaining plan is one function, and the rule has one name -----------
+#
+# The six steps -- what is still ahead, which weeks are behind, what those weeks spent,
+# which of the weeks left are priced, solve against the rest -- were written out twice,
+# verbatim, in `hub.publish.survivor` and in this module's CLI. That sequence *is* the rule
+# issue #24 was about, so two copies is one plan silently wrong with nothing in either
+# output to say which. And `forthcoming` was a second name for `schedule.forecastable`
+# under ten lines of docstring saying the rule was "unchanged and unrestated".
+
+def test_the_remaining_plan_carries_the_scope_it_is_a_plan_over():
+    """A plan is not readable without its scope: which weeks are behind it, which of the
+    weeks left the market has not priced, and which teams it was not allowed to use."""
+    import datetime as dt
+    kicks = [dt.datetime(2026, 9, 3 + 7 * w, 20, 15) for w in range(4)]
+    grid = _dated_grid([
+        (1, "KC", 0.90, kicks[0], 7.0), (1, "LV", 0.10, kicks[0], 7.0),
+        (2, "KC", 0.85, kicks[1], None), (2, "SF", 0.70, kicks[1], None),
+        (3, "KC", 0.80, kicks[2], None), (3, "SEA", 0.60, kicks[2], None),
+    ])
+    got = survivor.plan_remaining(grid, 2026, prior=[{"week": 1, "team": "KC"}],
+                                  season_weeks=4, at=dt.datetime(2026, 9, 5))
+    assert got.played == [1], "week 1 is behind us and is neither planned nor unpriced"
+    assert got.spent == ["KC"], "the published plan is the only record of what was used"
+    assert "KC" not in got.picks["team"].to_list()
+    assert got.coverage.covered == [2, 3] and got.coverage.missing == [4]
+    assert got.coverage.thin == [2, 3], "two teams in a week is one game, not a choice"
+    assert got.snapshot_only == []
+
+
+def test_a_remaining_plan_with_nothing_priced_says_which_weeks_it_wanted():
+    """The CLI's own message, raised rather than printed, so both callers get it. Solving
+    zero weeks would otherwise arrive as "no pickable team in any week", which is true of
+    the grid and not the answer to what was asked."""
+    grid = _grid([(9, "A", 0.7)])
+    with pytest.raises(survivor.Infeasible, match="1-4"):
+        survivor.plan_remaining(grid, 2026, season_weeks=4)
+
+
+def test_the_cli_asks_for_a_plan_rather_than_assembling_one(monkeypatch):
+    """Half the drift guard, and it says which half: this asserts only that the CLI reaches
+    the plan through `plan_remaining`, not that the two agree. That the panel and the CLI
+    *print the same plan* is asserted in `tests/unit/test_publish.py`, by running both."""
+    seen = []
+    real = survivor.plan_remaining
+    monkeypatch.setattr(survivor, "plan_remaining",
+                        lambda *a, **k: (seen.append((a, k)), real(*a, **k))[1])
+    monkeypatch.setattr(survivor, "grid_from_schedule",
+                        lambda season, cache=None: _grid([(1, "A", 0.7), (1, "B", 0.6),
+                                                          (2, "C", 0.8), (2, "D", 0.5)]))
+    assert survivor.main(["--season", "2026", "--weeks", "2"]) == 0
+    assert seen, "the CLI builds its own plan instead of asking for one"
+
+
+def test_the_season_length_is_spelled_once():
+    """`hub.publish` carried its own `NFL_WEEKS = 18` beside this CLI's `--weeks` default of
+    18. One number, two spellings, in the two places that plan the same season."""
+    import inspect
+
+    from hub import publish
+    assert survivor.NFL_WEEKS == 18
+    assert (inspect.signature(survivor.plan_remaining).parameters["season_weeks"].default
+            == survivor.NFL_WEEKS)
+    assert not hasattr(publish, "NFL_WEEKS"), "the panel spells the season length again"
 
 
 # --- a plan belongs to one season, like a published week does ----------------

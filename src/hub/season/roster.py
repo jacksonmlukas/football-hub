@@ -226,10 +226,22 @@ def fetch(board: pl.DataFrame | None = None) -> pl.DataFrame:  # pragma: no cove
 
 
 def write(df: pl.DataFrame, path: Path | None = None) -> Path:
-    """Persist, refusing to write a frame `hub.season.lineup` could not read."""
+    """Persist, refusing to write a frame `hub.season.lineup` could not read.
+
+    A frame with the right columns and no rows is refused for the same reason a frame with
+    the wrong columns is: nothing downstream can use it. `lock` cannot price an empty pool,
+    the CLI has no lineup to print, and `hub.publish.roster` publishes an artifact of nobody
+    -- and every one of those reads as "you have no roster" when what happened is that one
+    ESPN sync came back empty. The last roster on disk is the better answer, and refusing
+    here is what leaves it there.
+    """
     missing = [c for c in REQUIRED if c not in df.columns]
     if missing:
         raise ValueError(f"roster is missing {missing}; lineup.py requires {list(REQUIRED)}")
+    if df.is_empty():
+        raise ValueError("roster has no players; refusing to overwrite the last good one "
+                         "with an empty league -- an ESPN sync returning nothing is a "
+                         "failed sync, not an empty team")
     p = path or ROSTER_PARQUET
     p.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(p)
@@ -289,7 +301,14 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
                   "does.")
 
     if a.write:
-        print(f"  wrote {write(df, Path(a.out) if a.out else None)}")
+        try:
+            print(f"  wrote {write(df, Path(a.out) if a.out else None)}")
+        except ValueError as e:
+            # The refusal above, reported rather than raised. An empty sync has to leave the
+            # last-good parquet where it is, and a traceback on a Sunday is the
+            # operator-dependence CLAUDE.md warns about -- the same reason `fetch` degrades.
+            print(f"hub.season.roster: {e}", file=sys.stderr)
+            return 1
     return 0
 
 

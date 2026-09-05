@@ -114,13 +114,20 @@ def _scored_one(base, monkeypatch, site):
 
 
 def test_with_no_scored_predictions_the_record_says_so(site, base):
-    """It says so by being *stale with a reason*, not by publishing a record of nothing.
-    Those look different to a reader, and only one of them survives a machine that simply
-    has no history -- see the regression tests at the end of this file."""
-    assert publish.track_record(base=base, out=site) is None
-    man = publish.publish_all(2026, 1, base=base, out=site)
-    art = next(a for a in man["artifacts"] if a["name"] == "track_record")
-    assert art["stale"] and "scored" in art["reason"]
+    """Two ways of saying so, and which one is honest depends on what is already published.
+
+    With a record already on the page, an empty run keeps it and the manifest says the
+    source was read and had nothing -- the regression at the end of this file. With nothing
+    published at all there is nothing to protect, so the empty record is written: `n_scored`
+    zero and the note that no prediction is pre-registered yet, which is what the page
+    renders. It is still reported `Kept`, because a record of nothing is not a current
+    record -- and what must never happen is the first of those blanking the second."""
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, publish.Kept) and got.why
+    published = json.loads((site / "track_record.json").read_text())
+    assert published["n_scored"] == 0
+    assert published["seasons"] == [] and published["log_loss"] is None
+    assert "pre-registered" in published["note"]
 
 
 def test_a_backtest_is_never_labelled_a_track_record(site, base, monkeypatch):
@@ -128,7 +135,7 @@ def test_a_backtest_is_never_labelled_a_track_record(site, base, monkeypatch):
     cannot distinguish a pre-registered prediction from a backfilled one proves nothing."""
     _scored_one(base, monkeypatch, site)
     got = publish.track_record(base=base, out=site)
-    assert got is not None
+    assert isinstance(got, dict)
     assert "preregistered" in json.dumps(got).lower()
     assert got.get("is_backtest") is not None
 
@@ -173,7 +180,7 @@ def test_live_is_its_own_artifact(site, monkeypatch):
                         lambda league="nfl": [{"id": "1", "home": "SEA", "away": "NE",
                                                "state": "in", "home_score": "10"}])
     got = publish.live(out=site)
-    assert got is not None and got["source"] == "espn_scoreboard"
+    assert isinstance(got, dict) and got["source"] == "espn_scoreboard"
     assert json.loads((site / "live.json").read_text())["rows"][0]["home"] == "SEA"
 
 
@@ -333,12 +340,12 @@ def test_every_panel_the_page_reads_is_declared_once():
                         "draft_board", "survivor"]
 
 
-@pytest.mark.parametrize("name", ["preds_2026_wk01", "track_record", "live", "roster",
-                                  "draft_board", "survivor"])
+@pytest.mark.parametrize("name", _names())
 def test_a_producer_returning_none_is_stale_with_a_reason(name, tmp_path):
-    """`CLAUDE.md`'s degradation rule, asserted for all six rather than the four that used to
-    go through `record`. `draft_board` and `survivor` bypassed it entirely and so could not
-    be tested at all."""
+    """`CLAUDE.md`'s degradation rule, asserted for every declared panel rather than the four
+    that used to go through `record`. `draft_board` and `survivor` bypassed it entirely and
+    so could not be tested at all. Parametrised off `artifacts()` for the reason issue #22
+    gives: a seventh panel is covered by construction."""
     art = next(a for a in publish.artifacts(2026, 1, out=tmp_path) if a.name == name)
     got = publish.Artifact(art.name, lambda: None, art.reason).record(tmp_path)
     assert got["stale"] is True
@@ -346,8 +353,7 @@ def test_a_producer_returning_none_is_stale_with_a_reason(name, tmp_path):
     assert got["present"] is False and got["generated_at"] is None
 
 
-@pytest.mark.parametrize("name", ["preds_2026_wk01", "roster", "draft_board",
-                                  "survivor"])
+@pytest.mark.parametrize("name", _names())
 def test_last_goods_timestamp_survives_a_failed_producer(name, tmp_path):
     """The panel shows yesterday's numbers *and* how old they are. `draft_board` and
     `survivor` always reported null here, so the page could not age them."""
@@ -384,7 +390,7 @@ def test_a_week_with_several_fitted_versions_publishes_each_game_once(site, base
     store.write(later, "preds", "nfl", 2026, 1, base=base, name="v2")
 
     got = publish.predictions(2026, 1, base=base, out=site)
-    assert got is not None
+    assert isinstance(got, dict)
     assert got["n"] == 1
     assert got["rows"][0]["version"] == "v2", "the page shows what the model now says"
 
@@ -404,7 +410,7 @@ def test_the_track_record_scores_each_game_once(site, base, monkeypatch):
     monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
         {"game_id": ["g1"], "result": [7]}))
     got = publish.track_record(base=base, out=site)
-    assert got is not None and got["n_scored"] == 1
+    assert isinstance(got, dict) and got["n_scored"] == 1
 
 
 # --- what a reader of the published record can check ------------------------
@@ -417,7 +423,7 @@ def test_the_weekly_artifact_says_what_a_reader_can_obtain(site, base):
     """`priced_at` names a snapshot on one machine. A public record has to say that."""
     store.write(_priced([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     got = publish.predictions(2026, 1, base=base, out=site)
-    assert got is not None
+    assert isinstance(got, dict)
     prov = got["provenance"]
     assert set(prov) == {"snapshot"}
     assert prov["snapshot"]["reader_can_obtain"] is False
@@ -431,7 +437,7 @@ def test_a_mixed_slate_classifies_every_source_it_used(site, base):
     store.write(_priced([("g2", 0.4, -1.0)], source="schedule"), "preds", "nfl", 2026, 1,
                 base=base, name="b")
     got = publish.predictions(2026, 1, base=base, out=site)
-    assert got is not None
+    assert isinstance(got, dict)
     assert set(got["provenance"]) == {"snapshot", "schedule"}
 
 
@@ -440,7 +446,7 @@ def test_nothing_a_prediction_already_carried_is_removed(site, base):
     the opposite of the point."""
     store.write(_priced([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     got = publish.predictions(2026, 1, base=base, out=site)
-    assert got is not None
+    assert isinstance(got, dict)
     row = got["rows"][0]
     for field in ("game_id", "home_win_prob", "margin_mean", "model", "version",
                   "predicted_at", "price_source"):
@@ -452,7 +458,7 @@ def test_an_artifact_from_before_price_source_existed_still_publishes(site, base
     and must not take the page down."""
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     got = publish.predictions(2026, 1, base=base, out=site)
-    assert got is not None and got["provenance"] == {}
+    assert isinstance(got, dict) and got["provenance"] == {}
 
 
 # --- an empty artifact must not replace a fuller one ------------------------
@@ -467,28 +473,43 @@ def test_an_artifact_from_before_price_source_existed_still_publishes(site, base
 
 def test_a_run_with_nothing_to_score_keeps_the_last_good_record(site, base, monkeypatch):
     """The regression, in one test. A scheduled run on a machine with no history must not
-    blank the public record -- and it has, once."""
+    blank the public record -- and it has, once. The published record is seeded because that
+    is the case: `site/data/track_record.json` is committed and the store that produced it
+    is not, so the runner sees sixteen scored predictions on the page and none on disk."""
     import nflreadpy as nfl
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "track_record.json").write_text(json.dumps(
+        {"name": "track_record", "n_scored": 16, "log_loss": 0.556,
+         "generated_at": "2026-01-06T00:00:00+00:00"}))
+    before = (site / "track_record.json").read_text()
     monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
         {"game_id": ["g1"], "result": [7]}))
-    assert publish.track_record(base=base, out=site) is None
+
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, publish.Kept), "an empty record was published as fresh"
+    assert (site / "track_record.json").read_text() == before
 
 
 def test_a_run_that_can_score_something_still_publishes(site, base, monkeypatch):
     _scored_one(base, monkeypatch, site)
     got = publish.track_record(base=base, out=site)
-    assert got is not None and got["n_scored"] == 1
+    assert isinstance(got, dict) and got["n_scored"] == 1
 
 
 def test_the_panel_says_why_rather_than_going_blank(site, base, monkeypatch):
     """Stale with a reason, which is what the page renders. A blank record and a stale one
-    look different to a reader and only one of them is honest."""
+    look different to a reader and only one of them is honest -- and the reason says the
+    source was read, rather than sending the reader after a record that is already there."""
     import nflreadpy as nfl
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "track_record.json").write_text(json.dumps(
+        {"name": "track_record", "n_scored": 16, "generated_at": "2026-01-06T00:00:00+00:00"}))
     monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
         {"game_id": ["g1"], "result": [7]}))
     man = publish.publish_all(2026, 1, base=base, out=site)
     art = next(a for a in man["artifacts"] if a["name"] == "track_record")
-    assert art["stale"] is True and art["reason"]
+    assert art["stale"] is True
+    assert "empty" in art["reason"] and art["generated_at"] == "2026-01-06T00:00:00+00:00"
 
 
 # --- the live overlay leaves the record -------------------------------------
@@ -521,13 +542,36 @@ def test_a_failed_fetch_leaves_the_carried_forward_scores_untouched(site, monkey
     assert carried.read_text() == before, "a failed fetch must not touch the last published"
 
 
+def test_an_empty_scoreboard_is_relayed_not_frozen(site, monkeypatch):
+    """The other half of ADR-0018, and the reason `live` is outside the last-good guard the
+    other producers share.
+
+    ESPN answering with no games is ESPN's answer -- a Tuesday, or a slate that has
+    finished -- and relaying it is the panel working. This repo asserts nothing by relaying
+    it, so there is no claim to protect by keeping Sunday's scores on the page instead:
+    "scores move, model numbers do not". The guard's own escape hatch cannot help here
+    either, because every deploy fetches the previously published overlay back before
+    refreshing it, so `live.json` is always already there and a first run with nothing
+    published never happens for this one artifact.
+
+    A *failed* fetch is the case ADR-0018 does protect, and it is the test above."""
+    _live_rows(monkeypatch, [{"id": "1", "home": "KC", "away": "LV", "state": "in"}])
+    publish.live(out=site)
+
+    _live_rows(monkeypatch, [])
+    got = publish.live(out=site)
+    assert isinstance(got, dict) and got["n"] == 0
+    assert json.loads((site / "live.json").read_text())["rows"] == [], (
+        "the overlay froze on a finished slate; ADR-0018 says the scoreboard is a relay")
+
+
 def test_a_successful_fetch_replaces_the_carried_forward_scores(site, monkeypatch):
     site.mkdir(parents=True, exist_ok=True)
     (site / "live.json").write_text(json.dumps({"name": "live", "n": 0, "rows": []}))
     monkeypatch.setattr("hub.fetch.espn.live_state",
                         lambda league="nfl": [{"id": "9", "home": "KC", "away": "LV"}])
     got = publish.live(out=site)
-    assert got is not None and got["n"] == 1
+    assert isinstance(got, dict) and got["n"] == 1
     assert json.loads((site / "live.json").read_text())["rows"][0]["id"] == "9"
 
 
@@ -567,7 +611,7 @@ def test_the_record_is_scored_without_any_store(site, base, monkeypatch):
 
     empty = base / "nothing-here"
     got = publish.track_record(base=empty, out=site)
-    assert got is not None and got["n_scored"] == 1
+    assert isinstance(got, dict) and got["n_scored"] == 1
 
 
 def test_every_published_week_is_scored_not_only_the_latest(site, base, monkeypatch):
@@ -578,7 +622,7 @@ def test_every_published_week_is_scored_not_only_the_latest(site, base, monkeypa
     monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
         {"game_id": ["g1", "g2"], "result": [7, -3]}))
     got = publish.track_record(base=base, out=site)
-    assert got is not None and got["n_scored"] == 2
+    assert isinstance(got, dict) and got["n_scored"] == 2
 
 
 def test_a_prediction_in_the_store_and_never_published_is_not_scored(site, base, monkeypatch):
@@ -589,14 +633,24 @@ def test_a_prediction_in_the_store_and_never_published_is_not_scored(site, base,
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
         {"game_id": ["g1"], "result": [7]}))
-    assert publish.track_record(base=base, out=site) is None
+    publish.track_record(base=base, out=site)
+    assert json.loads((site / "track_record.json").read_text())["n_scored"] == 0, (
+        "a prediction that was never published was scored from the store")
 
 
 def test_a_site_with_no_predictions_keeps_last_good(site, base, monkeypatch):
+    """The record on the page outlives the store that made it -- `site/data/` is committed
+    and `data/processed/` is not -- so "this site publishes no predictions" is a fact about
+    this checkout and must not reach the page as a calibration of nothing."""
     import nflreadpy as nfl
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "track_record.json").write_text(json.dumps(
+        {"name": "track_record", "n_scored": 16, "log_loss": 0.556}))
+    before = (site / "track_record.json").read_text()
     monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
         {"game_id": ["g1"], "result": [7]}))
-    assert publish.track_record(base=base, out=site) is None
+    assert isinstance(publish.track_record(base=base, out=site), publish.Kept)
+    assert (site / "track_record.json").read_text() == before
 
 
 def test_a_later_runner_with_its_own_empty_store_does_not_drop_a_published_game(site, base):
@@ -615,13 +669,13 @@ def test_a_later_runner_with_its_own_empty_store_does_not_drop_a_published_game(
     store.write(_preds([("thu", 0.6, 3.0), ("sun", 0.4, -1.0)]), "preds", "nfl", 2026, 1,
                 base=base)
     first = publish.predictions(2026, 1, base=base, out=site)
-    assert first is not None and first["n"] == 2
+    assert isinstance(first, dict) and first["n"] == 2
 
     # A different runner, its own empty store, holding only the games still forecastable.
     later = base / "another-runner"
     store.write(_preds([("sun", 0.4, -1.0)]), "preds", "nfl", 2026, 1, base=later)
     got = publish.predictions(2026, 1, base=later, out=site)
-    assert got is not None
+    assert isinstance(got, dict)
     assert {r["game_id"] for r in got["rows"]} == {"thu", "sun"}, (
         "a published prediction must not vanish because a later runner could no longer make it")
 
@@ -632,7 +686,7 @@ def test_the_carried_forward_row_keeps_the_prediction_it_was_published_with(site
     later = base / "another-runner"
     store.write(_preds([("sun", 0.4, -1.0)]), "preds", "nfl", 2026, 1, base=later)
     got = publish.predictions(2026, 1, base=later, out=site)
-    assert got is not None
+    assert isinstance(got, dict)
     thu = next(r for r in got["rows"] if r["game_id"] == "thu")
     assert thu["home_win_prob"] == 0.6, "carried forward as published, not re-derived"
 
@@ -646,7 +700,7 @@ def test_a_fresh_prediction_replaces_the_published_one_for_the_same_game(site, b
         pl.lit(dt.datetime(2026, 9, 12)).alias("predicted_at"))
     store.write(fresher, "preds", "nfl", 2026, 1, base=later)
     got = publish.predictions(2026, 1, base=later, out=site)
-    assert got is not None and got["n"] == 1
+    assert isinstance(got, dict) and got["n"] == 1
     assert got["rows"][0]["home_win_prob"] == 0.9
 
 
@@ -655,12 +709,15 @@ def test_an_empty_store_keeps_last_good_rather_than_restamping_it(site, base):
     one: an artifact re-stamped fresh when this run produced nothing.
 
     Carrying forward is for a *partial* run -- a slate that could still price some games.
-    A run that priced none has nothing to say, and `None` is how this repo says that."""
+    A run that priced none has nothing to say, and a `Kept` is how this repo says that --
+    with the sentence the manifest shows, rather than the standing one about an empty
+    store, which is not what happened here."""
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     publish.predictions(2026, 1, base=base, out=site)
     before = json.loads((site / "preds_2026_wk01.json").read_text())["generated_at"]
 
-    assert publish.predictions(2026, 1, base=base / "empty", out=site) is None
+    assert isinstance(publish.predictions(2026, 1, base=base / "empty", out=site),
+                      publish.Kept)
     after = json.loads((site / "preds_2026_wk01.json").read_text())["generated_at"]
     assert after == before, "an empty run must not advance the timestamp of last-good"
 
@@ -678,55 +735,126 @@ def test_a_prediction_from_another_season_is_never_carried_forward(site, base):
     store.write(_preds([("2026_18_SF_SEA", 0.4, -1.0)], week=18), "preds", "nfl", 2026, 18,
                 base=new)
     got = publish.predictions(2026, 18, base=new, out=site)
-    assert got is not None
+    assert isinstance(got, dict)
     assert {r["game_id"] for r in got["rows"]} == {"2026_18_SF_SEA"}
     assert {r["season"] for r in got["rows"]} == {2026}
 
 
-# --- emptiness is not freshness (issue #22) --------------------------------
+# --- emptiness is not freshness (issues #22 and #27) ------------------------
 #
 # The class that bit three times in one day: a producer that can return a valid payload
 # describing nothing, and `Artifact.record` reading any payload as success. `track_record`
 # published an empty record over sixteen scored predictions; the carry-forward re-stamped
 # last-good as fresh; `roster` had no empty check at all. Fixed once per producer is how it
-# came back twice, so the rule now lives in one place and every producer goes through it.
+# came back twice, so the rule now lives in `_publish` and every producer goes through it.
+#
+# One test over `publish.artifacts(...)` rather than one per producer, so the seventh panel
+# is covered the day it is declared rather than the day someone remembers to copy a test.
 
 def _live_rows(monkeypatch, rows):
     monkeypatch.setattr("hub.fetch.espn.live_state", lambda league="nfl": rows)
 
 
-def test_an_empty_scoreboard_does_not_blank_the_published_one(site, monkeypatch):
-    """ESPN answering with zero games is not the same as ESPN saying the scores are gone.
-    The contract allows an empty scoreboard -- February has no slate -- but publishing it
-    over a Sunday's scores is the blanking this rule exists to stop."""
-    _live_rows(monkeypatch, [{"id": "1", "home": "KC", "away": "LV", "state": "in"}])
-    publish.live(out=site)
-    before = (site / "live.json").read_text()
+def _empty_grid():
+    return pl.DataFrame(schema={"week": pl.Int64, "team": pl.Utf8, "win_prob": pl.Float64,
+                                "kickoff": pl.Datetime, "result": pl.Float64})
 
+
+def _last_good(out, name):
+    """A fuller artifact already published, counted in both keys a producer counts rows in
+    (`n` for the row-shaped panels, `n_scored` for the record)."""
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{name}.json").write_text(json.dumps(
+        {"name": name, "source": "x", "generated_at": "2026-09-01T00:00:00+00:00",
+         "n": 3, "n_scored": 3,
+         "rows": [{"game_id": "g1", "season": 2026, "home_win_prob": 0.6}]}))
+
+
+@pytest.fixture
+def barren(site, tmp_path, monkeypatch):
+    """Every source a producer reads, present and answering with nothing.
+
+    One environment rather than one per producer: an empty store, an empty roster parquet,
+    an empty scoreboard, an empty survivor grid and a schedule with no results. What each
+    producer does with that is the thing under test.
+    """
+    import nflreadpy as nfl
+
+    import hub.season.survivor as sv
+    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
+        {"game_id": [], "result": []}, schema={"game_id": pl.Utf8, "result": pl.Int64}))
+    empty_roster = tmp_path / "empty-roster.parquet"
+    _roster_frame([]).write_parquet(empty_roster)
+    monkeypatch.setattr(publish, "ROSTER_PARQUET", empty_roster)
+    monkeypatch.setattr(sv, "grid_from_schedule", lambda season, cache=None: _empty_grid())
     _live_rows(monkeypatch, [])
-    assert publish.live(out=site) is None
-    assert (site / "live.json").read_text() == before
+    return site
 
 
-def test_an_empty_scoreboard_still_publishes_when_nothing_is_published_yet(site, monkeypatch):
-    """The guard is "never replace something with nothing", not "never write nothing".
-    A first run on a day with no games has an honest empty answer and should say it."""
-    _live_rows(monkeypatch, [])
-    got = publish.live(out=site)
-    assert got is not None and got["n"] == 0
+def _producers_that_build_a_payload():
+    """Every panel the page declares that builds an artifact here, so a seventh is covered
+    the day it is declared. Two are left out and each says why -- an unexplained gap is how
+    this rule came to have four implementations and no test that could see it.
+
+    `live` is excluded by ADR-0018: a live score is someone else's fact relayed, scores move
+    where model numbers do not, and every deploy fetches the previously published overlay
+    back before refreshing it -- so keeping last-good would freeze the one artifact whose job
+    is to move. See `test_an_empty_scoreboard_is_relayed_not_frozen`.
+
+    `draft_board` is excluded because it has no producer in this module: `hub.draft.board`
+    writes that file and `_board` only reports whether it is there, so "the artifact is
+    unchanged" is true of it however this rule behaves. Asserting it here would read as
+    coverage the guard never gets, which is exactly what this test exists to stop.
+    `test_a_present_board_is_not_stale_and_an_absent_one_is` is its coverage.
+    """
+    skip = {"live", "draft_board"}
+    return [a.name for a in publish.artifacts(2026, 1) if a.name not in skip]
 
 
-def test_an_empty_roster_parquet_does_not_blank_the_published_roster(site, base, tmp_path):
-    """`roster` guarded only `not src.exists()`. A parquet that exists and holds no rows --
-    an ESPN sync that returned an empty league -- published a roster of nobody."""
+@pytest.mark.parametrize("name", _producers_that_build_a_payload())
+def test_no_producer_replaces_a_published_artifact_with_an_empty_one(name, barren, base):
+    """Issue #22's criterion: one test over every producer, so a seventh is covered by
+    construction. Each of these was fixed on its own and the class came back twice."""
+    _last_good(barren, name)
+    before = (barren / f"{name}.json").read_text()
+    art = next(a for a in publish.artifacts(2026, 1, base=base, out=barren)
+               if a.name == name)
+    art.record(barren)
+    assert (barren / f"{name}.json").read_text() == before, (
+        f"{name} published a payload describing nothing over one describing something")
+
+
+def test_the_manifest_says_a_source_ran_and_was_empty_rather_than_repeating_the_default(
+        site, tmp_path):
+    """Issue #27. Both cases keep last-good and both are stale, so the reason is the whole
+    of what the reader gets -- and stamping the producer's standing reason on a source that
+    *was* read sends them to fix something that already works. "no roster yet -- run
+    `python -m hub.season.roster --write`" for a sync that ran and found an empty league."""
     src = tmp_path / "roster.parquet"
     _roster_frame([("Chase", "WR", 19.7)]).write_parquet(src)
     publish.roster(out=site, path=src)
-    before = (site / "roster.json").read_text()
-
     _roster_frame([]).write_parquet(src)
-    assert publish.roster(out=site, path=src) is None
-    assert (site / "roster.json").read_text() == before
+
+    kept = publish.roster(out=site, path=src)
+    assert isinstance(kept, publish.Kept), "an empty read is not the same as no read"
+    reason = next(a for a in publish.artifacts(2026, 1, out=site)
+                  if a.name == "roster").reason
+    ran = publish.Artifact("roster", lambda: kept, reason).record(site)
+    skipped = publish.Artifact("roster", lambda: None, reason).record(site)
+    assert ran["stale"] is True and skipped["stale"] is True
+    assert ran["reason"] == kept.why != skipped["reason"]
+    assert skipped["reason"] == reason
+
+
+def test_a_kept_artifact_is_still_aged_by_what_was_kept(site):
+    """The manifest is what the page ages a panel by. A kept last-good reads as stale *and*
+    carries the timestamp of the file that is being served, not of this run."""
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "roster.json").write_text('{"generated_at": "2026-09-01T00:00:00+00:00"}')
+    got = publish.Artifact("roster", lambda: publish.Kept("empty league"),
+                           "no roster yet").record(site)
+    assert got["present"] is True
+    assert got["generated_at"] == "2026-09-01T00:00:00+00:00"
 
 
 def _roster_frame(rows):
@@ -741,16 +869,6 @@ def _roster_frame(rows):
                 "sd": pl.Float64, "projected": pl.Boolean, "starting": pl.Boolean,
                 "injury_status": pl.Utf8, "available": pl.Boolean, "can_start": pl.Boolean,
                 "missing_games": pl.Int64})
-
-
-def test_an_emptied_producer_is_reported_stale_rather_than_published(site, monkeypatch):
-    """The manifest is what the page ages a panel by, so a kept last-good has to read as
-    stale -- otherwise the reader is told yesterday's scores are current."""
-    _live_rows(monkeypatch, [{"id": "1", "home": "KC", "away": "LV", "state": "in"}])
-    publish.live(out=site)
-    _live_rows(monkeypatch, [])
-    art = next(a for a in publish.artifacts(2026, 1, out=site) if a.name == "live")
-    assert art.record(site)["stale"] is True
 
 
 # --- a published week belongs to one season (issue #23) --------------------
@@ -790,6 +908,77 @@ def test_both_seasons_of_a_week_are_scored(site, base, monkeypatch):
     publish.predictions(2026, 18, base=new, out=site)
 
     assert set(publish._published(site)["game_id"]) == {"2025_18_KC_LV", "2026_18_SF_SEA"}
+
+
+# --- one calibration curve per season (issue #23) --------------------------
+#
+# Both seasons being scored is the fix above; scoring them as *one* set is the half that was
+# left. `site/data/` holds `preds_2025_wk18.json` beside `preds_2026_wk01.json` and the
+# record read every row into a single log loss, Brier and set of reliability bins. A pooled
+# curve describes neither season -- the two were priced by different fits against different
+# markets -- and a calibration failure in one is diluted by the other rather than shown.
+
+def _two_seasons(site, base, monkeypatch):
+    """One published prediction per season, both with a result. 2025's is right (0.6 on a
+    home win), 2026's is wrong (0.4 on one), so a pooled loss differs from either."""
+    import nflreadpy as nfl
+    old = _preds([("2025_18_KC_LV", 0.6, 3.0)], week=18).with_columns(
+        pl.lit(2025, dtype=pl.Int32).alias("season"))
+    store.write(old, "preds", "nfl", 2025, 18, base=base)
+    publish.predictions(2025, 18, base=base, out=site)
+    new = base / "next-season"
+    store.write(_preds([("2026_01_SF_SEA", 0.4, -1.0)]), "preds", "nfl", 2026, 1, base=new)
+    publish.predictions(2026, 1, base=new, out=site)
+    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
+        {"game_id": ["2025_18_KC_LV", "2026_01_SF_SEA"], "result": [7, 3]}))
+
+
+def test_each_season_is_scored_on_its_own_curve(site, base, monkeypatch):
+    _two_seasons(site, base, monkeypatch)
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    assert [s["season"] for s in got["seasons"]] == [2026, 2025], "newest season first"
+    assert [s["n_scored"] for s in got["seasons"]] == [1, 1]
+    assert got["n_scored"] == 2, "the total is still every scored prediction"
+    assert all(s["bins"] for s in got["seasons"]), "a season without its own bins is pooled"
+    assert got["seasons"][0]["log_loss"] == pytest.approx(publish.log_loss([0.4], [1]))
+    assert got["seasons"][1]["log_loss"] == pytest.approx(publish.log_loss([0.6], [1]))
+
+
+def test_the_top_level_numbers_are_the_newest_seasons_not_the_pool(site, base, monkeypatch):
+    """`site/index.html` reads `log_loss`, `brier` and `bins` off the top level, so they stay
+    -- as one season's numbers rather than two seasons averaged into a number that is nobody's
+    calibration."""
+    _two_seasons(site, base, monkeypatch)
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    newest = got["seasons"][0]
+    assert got["log_loss"] == newest["log_loss"] and got["brier"] == newest["brier"]
+    assert got["bins"] == newest["bins"]
+    assert got["log_loss"] != pytest.approx(publish.log_loss([0.6, 0.4], [1, 1]))
+
+
+def test_a_prediction_from_before_the_row_carried_a_season_is_still_scored(site, base,
+                                                                          monkeypatch):
+    """`preds_wk18.json` was written before the season joined the row, and those sixteen
+    games are the whole of the site's committed calibration. Dropping them would lose the
+    record this change exists to protect; folding them into the newest season would put rows
+    from a season nothing can name inside that season's curve. So they get a group of their
+    own, ordered last, and the page can say what it is."""
+    import nflreadpy as nfl
+    _two_seasons(site, base, monkeypatch)
+    (site / "preds_wk18.json").write_text(json.dumps(
+        {"name": "preds_wk18", "source": "preds", "n": 1,
+         "rows": [{"game_id": "legacy1", "home_win_prob": 0.7,
+                   "predicted_at": "2025-01-05T00:00:00+00:00"}]}))
+    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
+        {"game_id": ["2025_18_KC_LV", "2026_01_SF_SEA", "legacy1"], "result": [7, 3, 7]}))
+
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    assert [s["season"] for s in got["seasons"]] == [2026, 2025, None]
+    assert got["n_scored"] == 3
+    assert got["seasons"][-1]["n_scored"] == 1
 
 
 # --- the survivor panel plans from now (issue #24) -------------------------
@@ -844,7 +1033,7 @@ def test_a_team_spent_in_a_played_week_is_gone_from_the_next_plan(site, base, mo
     monkeypatch.setattr(sv, "grid_from_schedule",
                         lambda season, cache=None: _mid_season_grid())
     got = publish.survivor(2026, out=site)
-    assert got is not None
+    assert isinstance(got, dict)
     assert got["spent"] == ["KC"]
     assert "KC" not in [r["team"] for r in got["rows"]]
     assert [r["team"] for r in got["rows"]] == ["SF", "SEA"]
@@ -857,10 +1046,33 @@ def test_the_published_survival_covers_the_remaining_weeks_only(site, base, monk
     monkeypatch.setattr(sv, "grid_from_schedule",
                         lambda season, cache=None: _mid_season_grid())
     got = publish.survivor(2026, out=site)
-    assert got is not None
+    assert isinstance(got, dict)
     assert got["survival"] == pytest.approx(0.70 * 0.80), (
         "SF in week 2 to keep KC for week 3 -- and week 1's 0.90 is not part of "
         "surviving from here")
+
+
+def test_the_panel_and_the_cli_plan_the_same_weeks_and_teams(site, capsys, monkeypatch):
+    """Not "both call one function" -- both *print the same plan*, which is the property a
+    reader would notice breaking. The six-step sequence -- ahead, played, spent, remaining,
+    coverage, solve -- was written out here and again in `survivor.main`. It *is* issue
+    #24's rule, so a drift between the copies is one plan silently wrong.
+
+    `sv.SITE` is pointed at the same directory both read, because the CLI answers "what has
+    this entry spent" from the published plan and the panel would otherwise be compared
+    against a run that had read a different file."""
+    import hub.season.survivor as sv
+    monkeypatch.setattr(sv, "SITE", site)
+    monkeypatch.setattr(sv, "grid_from_schedule",
+                        lambda season, cache=None: _mid_season_grid())
+    panel = publish.survivor(2026, out=site)
+    assert isinstance(panel, dict) and panel["rows"]
+
+    assert sv.main(["--season", "2026"]) == 0
+    printed = capsys.readouterr().out
+    for row in panel["rows"]:
+        assert f"wk {row['week']:>2}  {row['team']}" in printed, (
+            f"the CLI does not plan week {row['week']} the way the panel does:\n{printed}")
 
 
 def test_a_survivor_plan_from_another_season_spends_nothing(site, base, monkeypatch):
@@ -875,6 +1087,92 @@ def test_a_survivor_plan_from_another_season_spends_nothing(site, base, monkeypa
     monkeypatch.setattr(sv, "grid_from_schedule",
                         lambda season, cache=None: _mid_season_grid())
     got = publish.survivor(2026, out=site)
-    assert got is not None
+    assert isinstance(got, dict)
     assert got["spent"] == [], "2025's week 1 pick is not 2026's"
     assert "KC" in [r["team"] for r in got["rows"]]
+
+
+# --- the guard has to be reachable (issue #22, again) -----------------------
+#
+# The rule was moved into `_publish` and then every producer learned to answer emptiness
+# before calling it: `predictions` and `track_record` returned None first, `roster` built its
+# own `Kept`, and `survivor` could not produce zero picks at all. Deleting the guard's whole
+# body left 118 tests passing. A rule nothing can arrive at is not a rule, and this is the
+# recurrence of the defect issue #22 was filed about -- fixed once per producer, which is how
+# it came back.
+
+def test_the_producers_reach_the_last_good_rule_rather_than_pre_empting_it(barren):
+    """Both halves matter: a `Kept` comes back, and it comes back *from `_publish`*.
+
+    Deleting the guard makes this fail with a published payload of nothing, which is what
+    the parametrised test above then reports as a blanked artifact."""
+    _last_good(barren, "roster")
+    _last_good(barren, "track_record")
+    assert isinstance(publish.roster(out=barren), publish.Kept), (
+        "an empty roster parquet decided its own answer instead of asking `_publish`")
+    assert isinstance(publish.track_record(out=barren), publish.Kept), (
+        "an empty record decided its own answer instead of asking `_publish`")
+
+
+def test_a_market_that_has_not_posted_is_not_a_schedule_that_failed(site, monkeypatch):
+    """Issue #27's criterion, for the panel that still failed it. `plan_remaining` raises
+    `Infeasible` when no remaining week has a posted spread; `except Exception` caught that
+    and told the reader the schedule was unavailable, when the schedule answered fine and it
+    is the *market* that has not posted. The wrong fix for a problem they do not have."""
+    import hub.season.survivor as sv
+    monkeypatch.setattr(sv, "grid_from_schedule", lambda season, cache=None: _empty_grid())
+    got = publish.survivor(2026, out=site)
+    assert isinstance(got, publish.Kept)
+    assert "spread" in got.why, f"reported as {got.why!r}"
+
+    art = next(a for a in publish.artifacts(2026, 1, out=site) if a.name == "survivor")
+    entry = art.record(site)
+    assert entry["stale"] is True
+    assert entry["reason"] == got.why != art.reason
+
+
+def test_a_hundred_rows_without_a_season_do_not_hide_the_one_with_it(site):
+    """Pins the `Measured:` claim in `_published`, which is the only thing keeping the
+    per-season split honest: polars infers a frame's schema from the first hundred dicts, so
+    a long enough run of rows written before `season` existed drops the column outright --
+    and `_by_season` then reads every season as undated, which is issue #23's pooling
+    arriving by the back door."""
+    site.mkdir(parents=True, exist_ok=True)
+    rows = ([{"game_id": f"old{i}", "home_win_prob": 0.5} for i in range(101)]
+            + [{"game_id": "new", "home_win_prob": 0.4, "season": 2026}])
+    (site / "preds_2026_wk01.json").write_text(json.dumps({"name": "x", "rows": rows}))
+    assert "season" in publish._published(site).columns
+
+
+# --- an empty answer is never a current one (issue #22's own criterion) ------
+#
+# "A run that produces nothing leaves the previous artifact's timestamp untouched -- the
+# panel goes stale with a reason rather than looking current." The guard protected rows and
+# not freshness: with nothing published yet it fell straight through, wrote the empty
+# artifact and reported it fresh with no reason, so a source that ran and came back empty was
+# indistinguishable from one that succeeded. And because `_last_good_n` then reads that file
+# back as zero rows, every later run fell through again and rewrote it.
+
+def test_an_empty_first_run_publishes_a_file_and_still_says_it_is_not_current(barren):
+    """The file has to exist -- a page with no `roster.json` cannot render the panel at all
+    -- but "here is an artifact of nothing" and "this is current" are different claims and
+    only the first is true."""
+    art = next(a for a in publish.artifacts(2026, 1, out=barren) if a.name == "roster")
+    entry = art.record(barren)
+    assert entry["present"] is True
+    assert json.loads((barren / "roster.json").read_text())["n"] == 0
+    assert entry["stale"] is True, "a source that ran and came back empty reported as fresh"
+    assert entry["reason"], "and reported it without saying why"
+
+
+def test_a_second_empty_run_does_not_rewrite_the_empty_artifact(barren):
+    """The re-stamp, which `jsonio.stamp()` hides by truncating to the second -- so this
+    watches the file rather than the timestamp printed inside it."""
+    assert isinstance(publish.roster(out=barren), publish.Kept)
+    stamp = json.loads((barren / "roster.json").read_text())["generated_at"]
+    written = (barren / "roster.json").stat().st_mtime_ns
+
+    assert isinstance(publish.roster(out=barren), publish.Kept)
+    assert (barren / "roster.json").stat().st_mtime_ns == written, (
+        "the empty artifact was rewritten, which advances its age every run")
+    assert json.loads((barren / "roster.json").read_text())["generated_at"] == stamp

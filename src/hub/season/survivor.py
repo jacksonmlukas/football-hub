@@ -21,16 +21,19 @@ maximising survival, which is right for the small case and defensible for the la
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import polars as pl
 
+from hub import schedule
 from hub.config import SEASON_AHEAD
+from hub.paths import SITE
 
 # Below this a team is treated as unpickable rather than fed to log(). A survivor pick at
 # 1% is never the answer, and log(0) is negative infinity.
@@ -39,6 +42,11 @@ MIN_PROB = 1e-4
 # Fewer than three priced games in a week. The "choice" is then which side of one or two
 # games to take, which is worth saying out loud before anyone treats it as a plan.
 THIN_WEEK = 6
+
+# How long the season a plan covers is. Here rather than in `hub.publish`, which had its own
+# `NFL_WEEKS = 18` beside this module's `--weeks` default of 18: one number, spelled twice,
+# in the two places that plan the same season.
+NFL_WEEKS = 18
 
 
 def published_plan(path: Path | None = None) -> list[dict]:
@@ -49,9 +57,6 @@ def published_plan(path: Path | None = None) -> list[dict]:
     fresh clone has none, and refusing to plan because of that would be the
     operator-dependence `CLAUDE.md` warns about.
     """
-    import json
-
-    from hub.paths import SITE
     try:
         got = json.loads(Path(path or (SITE / "survivor.json")).read_text())
     except (OSError, ValueError):
@@ -111,12 +116,14 @@ def solve(grid: pl.DataFrame, weeks: Sequence[int] | None = None,
     import pulp
 
     weeks = list(weeks) if weeks is not None else sorted(set(grid["week"].to_list()))
-    gone = {str(t) for t in spent}
+    # Teams, where `hub.publish.survivor` had a `gone` holding weeks a few lines from its
+    # own `spent`. One word for two kinds of thing, in one neighbourhood.
+    unavailable = {str(t) for t in spent}
     usable = grid.filter(pl.col("win_prob") > MIN_PROB)
 
     options = [(int(r["week"]), str(r["team"]), float(r["win_prob"]))
                for r in usable.iter_rows(named=True)
-               if int(r["week"]) in weeks and str(r["team"]) not in gone]
+               if int(r["week"]) in weeks and str(r["team"]) not in unavailable]
     if not options:
         raise Infeasible("no pickable team in any week")
 
@@ -152,33 +159,18 @@ def solve(grid: pl.DataFrame, weeks: Sequence[int] | None = None,
          "win_prob": [p for _, _, p in picked]}).sort("week")
 
 
-def forthcoming(grid: pl.DataFrame, at: datetime | None = None) -> pl.DataFrame:
-    """The grid rows whose game is still ahead of us. Everything else is not a choice.
-
-    The whole reason survivor is one assignment problem rather than eighteen is that
-    spending a team early costs you that team later -- so a grid that still prices weeks
-    already played hands the solver its strongest teams for games that are over, and every
-    remaining pick comes from a pool degraded by picks that were never available. The
-    reported survival probability is then the product over games already won or lost. Both
-    are wrong in-season and neither is visible from the output: the plan looks like a plan.
-
-    The rule is `hub.schedule.forecastable`, unchanged and unrestated. A weekly prediction
-    and a survivor pick must not be able to disagree about which games are still ahead, and
-    a grid with no kickoff column -- the preseason case, and a schedule with no times -- is
-    entirely still to come.
-    """
-    from hub import schedule
-    return schedule.forecastable(grid, at)
-
-
 def played(grid: pl.DataFrame, at: datetime | None = None) -> list[int]:
     """Weeks the season has already run: in the grid, and absent from what is ahead.
 
     Derived by difference rather than by comparing a week number to a date, because the two
-    would disagree the first time a week straddled a boundary -- and because `forthcoming`
-    is then the only place the rule is written.
+    would disagree the first time a week straddled a boundary -- and because
+    `schedule.forecastable` is then the only place the rule is written. This module wrapped
+    that call as `forthcoming` for a while, under a docstring saying the rule was
+    "unchanged and unrestated" while the name restated it; `docs/agents/domain.md` is
+    specific about not drifting to a synonym, so the wrapper is gone and its callers ask
+    `hub.schedule` directly.
     """
-    ahead = set(forthcoming(grid, at)["week"].to_list())
+    ahead = set(schedule.forecastable(grid, at)["week"].to_list())
     return sorted({int(w) for w in grid["week"].to_list()} - {int(w) for w in ahead})
 
 
@@ -215,7 +207,23 @@ def spent_teams(prior: Sequence[Mapping[str, Any]], weeks: Sequence[int],
     return sorted(out)
 
 
-def coverage(grid: pl.DataFrame, weeks: Sequence[int]) -> dict:
+class Coverage(NamedTuple):
+    """The requested weeks, sorted into what the market has done about them.
+
+    Typed rather than a dict, because `RemainingPlan` used to copy `covered`, `missing` and
+    `thin` out of it one key at a time -- three fields restating one answer, and a reader of
+    the plan could not tell they came from a single question.
+
+    The per-week game counts that decide these three are not carried. They were, and nothing
+    read them: `thin` is the question anyone actually asks of a count, and a field no caller
+    needs is a promise this has to keep.
+    """
+    covered: list[int]
+    missing: list[int]
+    thin: list[int]
+
+
+def coverage(grid: pl.DataFrame, weeks: Sequence[int]) -> Coverage:
     """Which requested weeks the market has actually priced.
 
     In August the board runs a handful of weeks deep, so a solve over "the season" quietly
@@ -226,12 +234,11 @@ def coverage(grid: pl.DataFrame, weeks: Sequence[int]) -> dict:
     counts = {int(r["week"]): int(r["len"])
               for r in usable.group_by("week").len().iter_rows(named=True)}
     weeks = list(weeks)
-    return {
-        "covered": [w for w in weeks if counts.get(w, 0) > 0],
-        "missing": [w for w in weeks if counts.get(w, 0) == 0],
-        "thin": [w for w in weeks if 0 < counts.get(w, 0) < THIN_WEEK],
-        "counts": counts,
-    }
+    return Coverage(
+        covered=[w for w in weeks if counts.get(w, 0) > 0],
+        missing=[w for w in weeks if counts.get(w, 0) == 0],
+        thin=[w for w in weeks if 0 < counts.get(w, 0) < THIN_WEEK],
+    )
 
 
 def snapshot_only_weeks(grid: pl.DataFrame, weeks: Sequence[int]) -> list[int]:
@@ -245,6 +252,79 @@ def snapshot_only_weeks(grid: pl.DataFrame, weeks: Sequence[int]) -> list[int]:
         return []
     have = set(grid.filter(pl.col("moving_field"))["week"].to_list())
     return [int(w) for w in weeks if int(w) not in have]
+
+
+class RemainingPlan(NamedTuple):
+    """A plan, and the scope it is a plan over.
+
+    Returned together because the plan alone is unreadable: a survival probability means
+    nothing without the weeks it is over, a reader looking at a plan that starts in week 9
+    should not have to infer why, and a week the market has not priced still needs a pick
+    from the entrant. The site panel and the CLI both print all of it.
+
+    `coverage` rides along whole rather than unpacked into three lists here, and `survival`
+    is a property rather than a call every caller makes on the way out -- both callers did
+    `survival(got.picks)` on the next line, which is a behaviour of the plan and not of the
+    caller.
+    """
+    picks: pl.DataFrame
+    coverage: Coverage
+    played: list[int]
+    spent: list[str]
+    snapshot_only: list[int]
+
+    @property
+    def survival(self) -> float:
+        """Probability of surviving every week this plan covers."""
+        # The module-level function, not this property: a method body's names resolve
+        # through the module, never through the class it is written in.
+        return survival(self.picks)
+
+
+def plan_remaining(grid: pl.DataFrame, season: int, *,
+                   prior: Sequence[Mapping[str, Any]] = (),
+                   season_weeks: int = NFL_WEEKS,
+                   at: datetime | None = None) -> RemainingPlan:
+    """The plan for the weeks still ahead, against the teams still unspent.
+
+    **From here, not from week 1.** Survivor is one assignment problem *because* spending a
+    team early costs you that team later -- so a grid that still prices played weeks hands
+    the solver its strongest teams for games that are over, and every remaining pick comes
+    from a pool degraded by picks that were never available. The reported survival
+    probability is then the product over games already won or lost. Both are wrong
+    in-season and neither shows in the output: the plan looks like a plan.
+
+    **Written once, because it was written twice.** These six steps -- what is ahead, which
+    weeks are behind, what those weeks spent, which of the weeks left are priced, solve
+    against the rest -- were verbatim in `hub.publish.survivor` and in this module's `main`.
+    That sequence *is* the rule issue #24 was about, so a drift between the copies would
+    have the panel and the CLI planning different seasons with nothing in either output
+    saying so.
+
+    `at` and `season_weeks` are arguments rather than reads of the clock and of a constant,
+    so a test can put the season anywhere in itself; `prior` is the last published plan's
+    rows, passed in for the reason `solve` takes `spent` rather than inferring it -- this
+    module is given data, not a history. `season_weeks` is a count where every other `weeks`
+    in this module is a list of week numbers, and it is spelled apart for the reason `spent`
+    and the solver's teams are.
+
+    Raising when no week is covered, rather than handing `solve` an empty week list: "no
+    pickable team in any week" is true of the grid and is not the answer to what was asked,
+    which was weeks 1 to `season_weeks`.
+    """
+    ahead = schedule.forecastable(grid, at)
+    behind = played(grid, at)
+    spent = spent_teams(prior, behind, season=season)
+    # Against every week still to come, not against the weeks the grid happens to have --
+    # asking coverage about its own weeks makes `missing` empty by construction and the
+    # panel would never say a week needs a pick. A week already played is in neither list.
+    cov = coverage(ahead, [w for w in range(1, season_weeks + 1) if w not in behind])
+    if not cov.covered:
+        raise Infeasible(f"no week in 1-{season_weeks} has a posted spread yet")
+    return RemainingPlan(
+        picks=solve(ahead, weeks=cov.covered, spent=spent),
+        coverage=cov, played=behind, spent=spent,
+        snapshot_only=snapshot_only_weeks(ahead, cov.covered))
 
 
 def survival(plan: pl.DataFrame) -> float:
@@ -278,7 +358,6 @@ def grid_from_schedule(season: int, cache: Path | None = None, *,
     A game neither source prices is dropped rather than filled at a coin flip, and
     `coverage` still names the week so an entrant knows it is theirs to fill.
     """
-    from hub import schedule
     from hub.models.market import MARGIN_SD, normal_cdf
 
     games = schedule.priced_games(season, at=at, cache=cache, base=base)
@@ -291,8 +370,8 @@ def grid_from_schedule(season: int, cache: Path | None = None, *,
         # "snapshot" everywhere and says nothing about what the fallback would have reached
         # -- I reported all eighteen weeks as snapshot-only before the real data caught it.
         moving = r["schedule_spread"] is not None
-        # Kickoff and result ride along per row, so `forthcoming` can ask the same question
-        # of this grid that `ratings` asks of the games it was built from. Deriving them
+        # Kickoff and result ride along per row, so `schedule.forecastable` can ask the same
+        # question of this grid that `ratings` asks of the games it was built from. Deriving them
         # again here from a week number would be the second implementation of one idea that
         # this module's own docstring warns about.
         kick, res = r.get("kickoff"), r.get("result")
@@ -313,52 +392,44 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog="hub.season.survivor",
         description="Plan a full survivor season as one assignment problem.")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD)
-    ap.add_argument("--weeks", type=int, default=18)
+    ap.add_argument("--weeks", type=int, default=NFL_WEEKS)
     a = ap.parse_args(argv)
 
     grid = grid_from_schedule(a.season)
-    ahead = forthcoming(grid)
-    gone = played(grid)
-    spent = spent_teams(published_plan(), gone, season=a.season)
-    # Against the weeks still to come. A week already run is not one the plan can cover and
-    # not one that "still needs a pick" either, so it belongs in neither list.
-    requested = [w for w in range(1, a.weeks + 1) if w not in gone]
-    cov = coverage(ahead, requested)
-    weeks = cov["covered"]
-    if not weeks:
-        print(f"hub.season.survivor: no week in 1-{a.weeks} has a posted spread yet",
-              file=sys.stderr)
-        return 1
     try:
-        plan = solve(ahead, weeks=weeks, spent=spent)
+        # The same call `hub.publish.survivor` makes, which is the point of it existing.
+        got = plan_remaining(grid, a.season, prior=published_plan(),
+                             season_weeks=a.weeks)
     except Infeasible as e:
         print(f"hub.season.survivor: {e}", file=sys.stderr)
         return 1
-
-    print(f"  survivor plan, {a.season}, {len(weeks)} of {len(requested)} remaining weeks "
-          f"priced")
-    if gone:
-        print(f"  {len(gone)} week(s) already played and absent from the plan: "
-              + ", ".join(f"wk {w}" for w in gone))
-    if spent:
-        print(f"  unavailable, already spent: {', '.join(spent)}")
-    for r in plan.iter_rows(named=True):
-        thin = "  (thin: one or two games priced)" if r["week"] in cov["thin"] else ""
+    # `got.picks` and `got.coverage` rather than locals called `plan` and `cov`: CONTEXT.md
+    # avoids "the plan" unqualified, because a plan for the season and a plan from here are
+    # different objects and this CLI prints the second one.
+    cov = got.coverage
+    print(f"  survivor plan, {a.season}, {len(cov.covered)} of "
+          f"{len(cov.covered) + len(cov.missing)} remaining weeks priced")
+    if got.played:
+        print(f"  {len(got.played)} week(s) already played and absent from the plan: "
+              + ", ".join(f"wk {w}" for w in got.played))
+    if got.spent:
+        print(f"  unavailable, already spent: {', '.join(got.spent)}")
+    for r in got.picks.iter_rows(named=True):
+        thin = "  (thin: one or two games priced)" if r["week"] in cov.thin else ""
         print(f"    wk {r['week']:>2}  {r['team']:<4} {r['win_prob']:.3f}{thin}")
-    s = survival(plan)
-    print(f"  survives the {plan.height} planned weeks: {s:.1%}")
+    print(f"  survives the {got.picks.height} planned weeks: {got.survival:.1%}")
     # What the snapshot store actually buys, said out loud. These are the weeks nflverse's
     # lookahead field does not price, and the difference between a season plan and most of
     # one -- a team spent in week 3 is unavailable in week 17 whether or not the plan could
     # see week 17 when it chose.
-    if snap_only := snapshot_only_weeks(ahead, weeks):
-        print(f"  {len(snap_only)} of these weeks are priced only by the dated snapshots: "
-              + ", ".join(f"wk {w}" for w in snap_only))
-    if cov["missing"]:
+    if got.snapshot_only:
+        print(f"  {len(got.snapshot_only)} of these weeks are priced only by the dated "
+              "snapshots: " + ", ".join(f"wk {w}" for w in got.snapshot_only))
+    if cov.missing:
         # Not a failure: weeks with no spread are weeks the market has not posted, and a
         # plan over what exists beats no plan. But an entrant still has to pick in them.
         print("  not priced yet, so absent from the plan and still needing a pick: "
-              + ", ".join(f"wk {w}" for w in cov["missing"]))
+              + ", ".join(f"wk {w}" for w in cov.missing))
         print("  re-run once those weeks are on the board -- the teams spent early are "
               "not available to cover them.")
     print("  objective is survival only -- pool-aware play needs the pool config that "

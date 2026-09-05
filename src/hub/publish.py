@@ -33,7 +33,6 @@ from hub.season.roster import lock
 
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "site" / "data"
-NFL_WEEKS = 18
 
 
 def _write(out: Path, name: str, payload: dict[str, Any]) -> Path:
@@ -43,19 +42,75 @@ def _write(out: Path, name: str, payload: dict[str, Any]) -> Path:
     return p
 
 
-def _published_n(out: Path, name: str) -> int:
-    """How many rows the artifact already on disk carries. Unreadable or absent counts 0."""
+class Kept(NamedTuple):
+    """Last-good kept, and why. A producer that ran and had nothing to say.
+
+    Whatever is published stands, which on a page with nothing published yet is nothing --
+    the panel is stale either way, and what this carries is the sentence the reader gets.
+
+    Three states rather than two. `Artifact.record` read a payload as fresh and `None` as
+    stale, so `None` had to carry both "the source was never read" and "the source was read
+    and came back empty" -- and the manifest stamped the producer's standing reason on a
+    panel whose source had just answered. A reader was told "no roster yet -- run
+    `python -m hub.season.roster --write`" about a sync that had run and found an empty
+    league: the wrong fix, for a problem they do not have (issue #27).
+
+    A returned sentinel rather than a flag set somewhere on the way past, because the reason
+    belongs to the run that declined. Six producers sharing one module-level slot is the
+    same defect one layer down.
+    """
+    why: str
+
+
+def _last_good_n(out: Path, name: str, key: str = "n") -> int:
+    """How many rows the artifact already on disk carries. Unreadable or absent counts 0.
+
+    **`key` because the track record counts in `n_scored` where the row-shaped panels count
+    in `n`.** Asking the wrong key reads every published record as empty, which lets an empty
+    one replace it -- the exact regression `_keeping` below exists to prevent. This is the
+    one statement of that; `_publish`'s `count_key` is this argument arriving from a caller.
+
+    Named apart from `_published`, which returns every prediction *row* the site has ever
+    published. These were `_published_n` and `_published`: near-homographs, in one module,
+    answering unrelated questions.
+    """
     try:
         got = json.loads((out / f"{name}.json").read_text())
     except (OSError, ValueError):
         return 0
-    return int(got.get("n", 0)) if isinstance(got, dict) else 0
+    return int(got.get(key, 0) or 0) if isinstance(got, dict) else 0
 
 
-def _publish(out: Path, name: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+def _keeping(out: Path, name: str, why: str, key: str = "n") -> Kept | None:
+    """Whether there is already an artifact to keep, and the sentence for it.
+
+    **On the file existing, not on it having rows.** Asking "are there rows worth
+    protecting" fell through for an artifact already published empty, and the caller then
+    rewrote it -- advancing its `generated_at` on every run, which is the re-stamp the
+    carry-forward did once already. An empty artifact is still a published artifact and is
+    still what the page is reading.
+
+    None when there is no file at all: nothing to keep, so the caller decides whether to
+    write one.
+
+    Split out of `_publish` for `predictions`, which has to answer emptiness *before* the
+    carry-forward merge and so cannot hand its payload over -- one implementation of the
+    question, two places that ask it, rather than the four that grew here once already.
+    """
+    if not (out / f"{name}.json").exists():
+        return None
+    had = _last_good_n(out, name, key)
+    print(f"  {name}: 0 rows against {had} already published; keeping last-good", flush=True)
+    return Kept(f"{why}; keeping the {had} row(s) last published" if had
+                else f"{why}, and so is the artifact already published")
+
+
+def _publish(out: Path, name: str, payload: dict[str, Any],
+             count_key: str = "n") -> dict[str, Any] | Kept:
     """Write the artifact, unless doing so would replace something with nothing.
 
-    **The one place this rule lives.** `CLAUDE.md`'s degradation rule is implemented as
+    **The one place this rule lives**, over the one question `_keeping` above answers.
+    `CLAUDE.md`'s degradation rule is implemented as
     *a producer returning None means keep last-good*, and an empty-but-valid payload walks
     straight past it: `Artifact.record` reads any payload as success. That has bitten three
     times -- `track_record` published an empty record over sixteen scored predictions and
@@ -64,15 +119,55 @@ def _publish(out: Path, name: str, payload: dict[str, Any]) -> dict[str, Any] | 
     league would have published a roster of nobody. Each was fixed where it was found, which
     is why the next one was a surprise.
 
-    Not "never write an empty artifact". A first run on a day with no games has an honest
-    empty answer and should say it; what must not happen is that answer *replacing* a
-    fuller one. So the comparison is against what is already published, and a producer that
-    goes quiet keeps last-good and is marked stale.
+    Not "never write an empty artifact", and not "an empty answer is a fresh one" either.
+    Both were tried. A first run on a day with no games has to leave the page a file it can
+    read, so the artifact is written -- but issue #22's criterion is about *freshness*, not
+    about rows: "a run that produces nothing leaves the previous artifact's timestamp
+    untouched -- the panel goes stale with a reason rather than looking current". So an
+    empty payload is never reported fresh, and it never rewrites a file that already exists:
+
+    * empty, something already published -- keep it, write nothing, say why.
+    * empty, nothing published at all -- write it once so the page has a valid file, and
+      still report `Kept`, because "here is an artifact of nothing" and "this is current"
+      are different claims and only the first one is true.
+
+    Reporting that first run fresh made a source that ran and came back empty
+    indistinguishable from one that succeeded -- verbatim the shape #22 was filed against --
+    and, because `_last_good_n` reads the file back as zero rows, every later run fell
+    through the guard and rewrote it.
+
+    **Every panel this module writes goes through here, `live` excepted** -- including the
+    empty ones: `roster` builds an artifact of no players rather than deciding for itself,
+    and `track_record` an artifact of nothing scored. Written as a rule about *writes*
+    rather than as a count of producers, because that count has now been recorded wrong
+    twice: it said one bypass when there were three, then two when there were three.
+
+    `live` is the exception, and ADR-0018 is why: every deploy fetches the previously
+    published overlay back before refreshing it, so something is always published and the
+    first-run case above can never arise for it -- keeping last-good would only ever freeze
+    the one artifact whose job is to move, and a live score is someone else's fact relayed
+    rather than a claim this repo makes.
+
+    Two more things in this module are not covered by that sentence and neither is a bypass.
+    `predictions` writes through here when it has rows and asks `_keeping` -- the same
+    question, one implementation -- when it has none, because it must answer before the
+    carry-forward merge rather than after building a payload. `draft_board` writes nothing
+    here at all: `hub.draft.board` writes that file and `_board` only reports whether it is
+    there. (`survivor` does hand its payload over; its own `Kept` comes from `Infeasible`,
+    which is a failure to produce and a different question from this one.)
+
+    That this rule is *reachable* is the point of writing it once: it was unreachable for a
+    day, because each producer had learned to answer emptiness before calling, and deleting
+    the lines below left every test passing.
+
+    `count_key` is `_last_good_n`'s `key`, and is documented there.
     """
-    if not payload.get("n") and (had := _published_n(out, name)):
-        print(f"  {name}: 0 rows against {had} already published; keeping last-good",
-              flush=True)
-        return None
+    why = "the source was read and came back empty"
+    if not payload.get(count_key):
+        if kept := _keeping(out, name, why, count_key):
+            return kept
+        _write(out, name, payload)
+        return Kept(f"{why}; published as an empty artifact so the page has one to read")
     _write(out, name, payload)
     return payload
 
@@ -95,7 +190,7 @@ def preds_name(season: int, week: int) -> str:
 # --- weekly predictions ---------------------------------------------------
 
 def predictions(season: int, week: int, base: Path | None = None,
-                out: Path | None = None) -> dict[str, Any] | None:
+                out: Path | None = None) -> dict[str, Any] | Kept | None:
     """One artifact per week, so the git history pins each week to a commit.
 
     Returns None and touches nothing when the store has no predictions for that week --
@@ -114,7 +209,7 @@ def predictions(season: int, week: int, base: Path | None = None,
     # re-stamping last-good as fresh is the defect this repo already fixed once, for the
     # track record; the merge reintroduced it here until this guard came back.
     if df.is_empty():
-        return None
+        return _keeping(out, name, "the store held no prediction for this week")
     rows = _keeping_published(df.to_dicts(), out / f"{name}.json", season)
 
     payload = jsonio.artifact(name, "preds", rows, season=season, week=week,
@@ -215,11 +310,23 @@ def _published(out: Path) -> pl.DataFrame:
             rows += json.loads(path.read_text()).get("rows", [])
         except (OSError, ValueError):
             print(f"  track_record: {path.name} is unreadable and was skipped", flush=True)
-    return pl.DataFrame(rows) if rows else pl.DataFrame()
+    # Every row scanned for the schema, not polars' default first hundred. `season` is on
+    # some artifacts and not others -- `preds_wk18.json` predates the field -- and a column
+    # polars does not see is a season `_by_season` cannot tell apart, which is the pooling
+    # it exists to stop arriving by the back door. Measured: 101 rows without the key ahead
+    # of one with it drops the column entirely.
+    return pl.DataFrame(rows, infer_schema_length=None) if rows else pl.DataFrame()
 
 
-def _scored(out: Path) -> pl.DataFrame:
-    """Published predictions joined to results. Empty frame when either side is missing."""
+def _scored(out: Path) -> pl.DataFrame | None:
+    """Published predictions joined to results.
+
+    An empty frame means the sources answered and nothing is scorable yet -- no predictions
+    published, or none of them finished. **None means the results could not be fetched at
+    all**, which is not the same fact and must not reach the page as a record of nothing:
+    the caller keeps last-good instead of publishing zero scored predictions because
+    nflverse was down for ninety seconds.
+    """
     empty = pl.DataFrame(schema={"game_id": pl.Utf8, "home_win_prob": pl.Float64,
                                  "home_won": pl.Int64, "predicted_at": pl.Utf8})
     preds = _published(out)
@@ -235,14 +342,14 @@ def _scored(out: Path) -> pl.DataFrame:
     except Exception as e:
         # This one stays broad -- it is a network call on a schedule that runs unattended --
         # but it says which failure it was rather than presenting every cause as "no results".
-        print(f"  schedules unavailable ({type(e).__name__}); track record served without "
-              f"results", flush=True)
-        return empty
+        print(f"  schedules unavailable ({type(e).__name__}); track record left as "
+              f"published", flush=True)
+        return None
     return preds.join(sched, on="game_id", how="inner")
 
 
 def track_record(base: Path | None = None, out: Path | None = None,
-                 n_bins: int = 10) -> dict[str, Any] | None:
+                 n_bins: int = 10) -> dict[str, Any] | Kept | None:
     """Calibration, and an honest count of what was actually pre-registered.
 
     `n_preregistered` is deliberately separate from `n_scored`. Scoring a prediction after
@@ -250,22 +357,40 @@ def track_record(base: Path | None = None, out: Path | None = None,
     predates kickoff. Until the season starts both are zero, and the page says so rather
     than filling the space with a backfill dressed up as history.
 
-    **Nothing to score returns None, which means keep last-good.** It used to return a valid
-    payload describing nothing, and `Artifact.record` reads a payload as success -- so the
-    first scheduled run published an empty record over one holding sixteen scored
-    predictions, turning a log-loss of 0.556 into null and ten calibration bins into zero.
-    The runner had no history to score because `data/processed/` is gitignored, and it had no
-    way to know that "nothing" was a fact about the machine rather than about the season.
+    **Nothing to score does not blank the record, and `_publish` is what enforces that.**
+    This used to return a valid payload describing nothing, and `Artifact.record` reads a
+    payload as success -- so the first scheduled run published an empty record over one
+    holding sixteen scored predictions, turning a log-loss of 0.556 into null and ten
+    calibration bins into zero. The runner had no history to score because
+    `data/processed/` is gitignored, and it had no way to know that "nothing" was a fact
+    about the machine rather than about the season.
 
-    `CLAUDE.md`'s degradation rule is written as *serve last-good rather than erroring*, and
-    it is implemented as *None means keep last-good*. An empty-but-valid payload walks past
-    it, so an artifact that can be produced emptier than its predecessor has to say None.
+    It was then fixed *here*, with an early return, which is how the shared guard came to be
+    unreachable. The empty payload is built and handed over like any other: with a record
+    already published `_publish` keeps it and says the source was read; with nothing
+    published it writes the empty record once, so the page has a file with its note in it,
+    and still reports it as not current.
+
+    A *failed* results fetch is the different fact `_scored` reports as None, and that one
+    does return None: an empty record on a machine whose network is down is a claim about
+    the season made from a fact about the machine.
+
+    **One curve per season, never one across two.** `_published` returns every artifact the
+    site holds, and it holds `preds_2025_wk18.json` beside `preds_2026_wk01.json`. Pooled,
+    the two are scored as though one model had made them: a calibration failure in either is
+    diluted by the other, and the log loss that comes out describes no season anybody ran
+    (issue #23). The top-level `log_loss`/`brier`/`bins` stay, as the *newest* season's, so
+    a reader written against them keeps working and reads one season instead of a blend.
     """
     out = out or SITE
     df = _scored(out)
-    if df.is_empty():
+    if df is None:
         return None
 
+    seasons = [_curve(season, rows, n_bins) for season, rows in _by_season(df)]
+    # An empty record still carries the trio, as nulls: `site/index.html` reads them off the
+    # top level unconditionally, and a missing key and a null one render differently.
+    newest = seasons[0] if seasons else {"bins": [], "log_loss": None, "brier": None}
     payload: dict[str, Any] = {
         "name": "track_record", "source": "preds+results", "generated_at": jsonio.stamp(),
         "n_scored": df.height,
@@ -275,16 +400,48 @@ def track_record(base: Path | None = None, out: Path | None = None,
         "is_backtest": df.height > 0,
         "note": ("No pre-registered predictions yet. A prediction counts only once its "
                  "commit predates kickoff -- see docs/track-record.md."),
-        "bins": [], "log_loss": None, "brier": None,
+        "seasons": seasons,
+        "bins": newest["bins"], "log_loss": newest["log_loss"], "brier": newest["brier"],
     }
-    if df.height:
-        probs = df["home_win_prob"].to_list()
-        won = df["home_won"].to_list()
-        payload["bins"] = reliability(df, n_bins)
-        payload["log_loss"] = log_loss(probs, won)
-        payload["brier"] = brier(probs, won)
-    _write(out, "track_record", payload)
-    return payload
+    return _publish(out, "track_record", payload, count_key="n_scored")
+
+
+def _by_season(df: pl.DataFrame) -> list[tuple[int | None, pl.DataFrame]]:
+    """The scored rows split by the season they belong to, newest first.
+
+    A row carrying no season goes in a group of its own, ordered last, and keeps its
+    `season: null` in the artifact. `preds_wk18.json` was written before the field existed
+    and its sixteen games are the whole of the site's committed 2025 calibration, so
+    dropping them would lose the record this scoring exists to keep; folding them into the
+    newest season would put rows nothing can date inside a curve that names one. Neither is
+    a thing to do silently, so the page is told which they are.
+    """
+    if not df.height:
+        return []
+    if "season" not in df.columns:
+        return [(None, df)]
+    # Cast rather than compared as it arrives. Both committed artifacts carry integers, so a
+    # `season` of `"2026"` is unreachable today -- but it comes off JSON that a hand edit or
+    # an older writer could have typed, and `pl.col("season") == 2026` against a Utf8 column
+    # raises `ComputeError` and takes the whole record down. Unparseable lands in the
+    # undated group, which is the group that exists for rows nothing can date.
+    df = df.with_columns(pl.col("season").cast(pl.Int64, strict=False))
+    known = sorted({int(s) for s in df["season"].drop_nulls().to_list()}, reverse=True)
+    groups: list[tuple[int | None, pl.DataFrame]] = [
+        (s, df.filter(pl.col("season") == s)) for s in known]
+    undated = df.filter(pl.col("season").is_null())
+    if undated.height:
+        groups.append((None, undated))
+    return groups
+
+
+def _curve(season: int | None, df: pl.DataFrame, n_bins: int) -> dict[str, Any]:
+    """One season's calibration: what it scored, and how well."""
+    probs = df["home_win_prob"].to_list()
+    won = df["home_won"].to_list()
+    return {"season": season, "n_scored": df.height,
+            "log_loss": log_loss(probs, won), "brier": brier(probs, won),
+            "bins": reliability(df, n_bins)}
 
 
 # --- the live overlay -----------------------------------------------------
@@ -299,6 +456,28 @@ def live(out: Path | None = None, league: str = "nfl") -> dict[str, Any] | None:
     pre-registration the whole record depends on.
 
     So: scores move, model numbers do not, and the page says which is which.
+
+    **The one producer that does not go through `_publish`, and ADR-0018 is why.** The ADR
+    quotes the paragraph above and draws the line it rests on: a live score is *someone
+    else's fact*, ESPN's, checkable against ESPN at the time, and this repo asserts nothing
+    by relaying it. So a scoreboard with no games is ESPN saying there are no games -- a
+    Tuesday, or a slate that has finished -- and writing that is the relay working, not an
+    empty answer replacing a full one. `_publish`'s own exception for an honest first empty
+    answer cannot rescue it either: the ADR has every deploy fetch the previously published
+    overlay back before refreshing it, so something is always already published and the
+    guard would freeze the one artifact whose whole job is to move.
+
+    A *failed* fetch is the case the ADR does protect, and it is the `return None` below:
+    nothing is written, the carried-forward file stays exactly as it was, and the manifest
+    marks the panel stale.
+
+    **The cost, accepted.** A 200 from ESPN carrying no events mid-slate now blanks the
+    overlay, where a last-good guard would have held Sunday's scores on the page until the
+    next poll. That is the right trade for a relay and not an oversight: the same response
+    is how a finished slate and a Tuesday look, this repo cannot tell those apart from the
+    outside, and holding scores that ESPN is no longer reporting would be asserting
+    something ESPN is not. The page ages the panel from `generated_at`, so a stale-looking
+    empty overlay is visible as one. Do not put the guard back without reopening ADR-0018.
     """
     out = out or SITE
     try:
@@ -311,12 +490,14 @@ def live(out: Path | None = None, league: str = "nfl") -> dict[str, Any] | None:
     # and this writer has none, and a reader written against one document must be written
     # against the other. Same keys, not merely compatible ones.
     payload = jsonio.artifact("live", "espn_scoreboard", rows, league=league, detail={})
-    return _publish(out, "live", payload)
+    _write(out, "live", payload)
+    return payload
 
 
 # --- the roster, and the lineup it implies --------------------------------
 
-def roster(out: Path | None = None, path: Path | None = None) -> dict[str, Any] | None:
+def roster(out: Path | None = None,
+           path: Path | None = None) -> dict[str, Any] | Kept | None:
     """Serialise the roster and the lock decision. Does not *make* the decision.
 
     Reads `data/processed/roster.parquet` rather than ESPN, so the panel is publishable
@@ -331,10 +512,14 @@ def roster(out: Path | None = None, path: Path | None = None) -> dict[str, Any] 
     if not src.exists():
         return None
     df = pl.read_parquet(src)
-    # Before `lock`, which cannot price an empty pool and would raise rather than say
-    # nothing. A parquet that exists and holds no rows is a sync that came back empty.
+    # The second line of defence, and only that: `hub.season.roster.write` now refuses a
+    # zero-row frame, so an empty parquet is one written before that check or by hand. It is
+    # handed to `_publish` as the empty artifact it is -- built without `lock`, which cannot
+    # price an empty pool and would raise rather than say nothing. Deciding the answer here
+    # instead is what left the shared guard with no producer able to reach it.
     if df.is_empty():
-        return None
+        return _publish(out or SITE, "roster",
+                        jsonio.artifact("roster", "roster.parquet", []))
     lk = lock(df)
     # The best lineup, reconstructed from the moves: the set starters, less those to sit,
     # plus those to start. Parenthesised because `-` binds tighter than `|` and the reader
@@ -385,21 +570,29 @@ class Artifact(NamedTuple):
     manifest entry. The two that bypassed `record` were also the two that always reported
     `generated_at: null`, so the page could not age them.
 
-    A producer returns its payload, or **None** meaning "nothing new, keep last-good". It
-    never builds a manifest entry itself; that is this module's single job.
+    A producer returns its payload; a **`Kept`** meaning "I ran, and whatever is published
+    stands -- here is why"; or **None**, meaning there is nothing fresh *and* nothing kept,
+    so the panel's standing reason is the best sentence available. It never builds a manifest
+    entry itself; that is this module's single job.
     """
     name: str
-    produce: Callable[[], dict[str, Any] | None]
+    produce: Callable[[], dict[str, Any] | Kept | None]
     reason: str
 
     def record(self, out: Path) -> dict[str, Any]:
         payload = self.produce()
         path = out / f"{self.name}.json"
         present = path.exists()
+        fresh = payload if isinstance(payload, dict) else None
         return {
-            "name": self.name, "present": present, "stale": payload is None,
-            "reason": None if payload else self.reason,
-            "generated_at": (payload.get("generated_at") if payload
+            "name": self.name, "present": present, "stale": fresh is None,
+            # Three states, because a reader acts on the reason. A `Kept` was produced by a
+            # source that answered, so it says so in its own words; `self.reason` is the
+            # standing sentence for a source that did not run, and stamping that on a panel
+            # whose source *did* run sent the reader to fix what already worked (issue #27).
+            "reason": None if fresh else (payload.why if isinstance(payload, Kept)
+                                          else self.reason),
+            "generated_at": (fresh.get("generated_at") if fresh
                              else (_generated_at(path) if present else None)),
         }
 
@@ -442,7 +635,7 @@ def publish_all(season: int, week: int, base: Path | None = None,
     return man
 
 
-def survivor(season: int, out: Path | None = None) -> dict[str, Any] | None:
+def survivor(season: int, out: Path | None = None) -> dict[str, Any] | Kept | None:
     """The survivor plan, as its own artifact.
 
     Wrapped rather than inlined because it reaches the network for a schedule. A failing
@@ -452,38 +645,41 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | None:
     from hub.season import survivor as sv
     out = out or SITE
     try:
-        grid = sv.grid_from_schedule(season)
-        # **From here, not from week 1.** Survivor is one assignment problem because spending
-        # a team early costs you that team later -- so a grid that still prices played weeks
-        # hands the solver its best teams for games that are over, and every remaining pick
-        # comes from a pool degraded by picks that were never available. Both halves are wrong
-        # in-season and neither shows in the output: the plan looks like a plan.
-        ahead = sv.forthcoming(grid)
-        gone = sv.played(grid)
-        # What this entry has already used, read back from the plan it published. The only
-        # record there is, and named as what it is in `spent_teams`.
-        spent = sv.spent_teams(sv.published_plan(out / "survivor.json"), gone, season=season)
-        # Against every week still to come, not against the weeks the grid happens to have --
-        # asking coverage about its own weeks makes `missing` empty by construction and the
-        # panel would never say a week needs a pick. A week already played is in neither list.
-        remaining = [w for w in range(1, NFL_WEEKS + 1) if w not in gone]
-        cov = sv.coverage(ahead, remaining)
-        plan = sv.solve(ahead, weeks=cov["covered"], spent=spent)
+        # The plan *and its scope*, from `hub.season.survivor` rather than assembled here.
+        # This function used to make nine `sv.*` calls orchestrating survivor's own data,
+        # and the six of them that matter -- what is ahead, which weeks are behind, what
+        # those weeks spent, which weeks left are priced, solve against the rest -- were
+        # written out again in `survivor.main`. That sequence is the whole of issue #24's
+        # rule, so two copies is one plan silently wrong.
+        got = sv.plan_remaining(sv.grid_from_schedule(season), season,
+                                # What this entry has already used, read back from the plan
+                                # it published. The only record there is.
+                                prior=sv.published_plan(out / "survivor.json"))
+    except sv.Infeasible as e:
+        # Caught apart from the failure below, because it is not one. The schedule answered;
+        # what is missing is a *posted spread* for the weeks that remain, or a pool of teams
+        # that cannot cover them. Under one `except Exception` the panel read "schedule
+        # unavailable" in August, when nothing was unavailable and the market simply had not
+        # posted -- the reader sent to fix a problem they do not have (issue #27).
+        print(f"  survivor: no plan ({e})"[:160])
+        return Kept(f"no plan for the weeks that remain: {e}")
     except Exception as e:
         # Reported the way `live` reports its own failure: printed for the operator, None for
         # the caller. It used to hand back a manifest entry of its own -- the only producer
         # that did -- which is why it could never be recorded like the rest.
         print(f"  survivor: schedule unavailable ({type(e).__name__}: {e})"[:160])
         return None
-    art = jsonio.artifact("survivor", "hub.season.survivor", plan.to_dicts(), season=season,
-                    survival=sv.survival(plan), unpriced_weeks=cov["missing"],
+    art = jsonio.artifact("survivor", "hub.season.survivor", got.picks.to_dicts(),
+                    season=season,
+                    survival=got.survival, unpriced_weeks=got.coverage.missing,
                     # The plan's own scope, said out loud. A survival probability means
                     # nothing without the weeks it is over, and a reader looking at a plan
                     # that starts in week 9 should not have to infer why.
-                    weeks_remaining=cov["covered"], weeks_played=gone, spent=spent,
+                    weeks_remaining=got.coverage.covered, weeks_played=got.played,
+                    spent=got.spent,
                     # Which weeks exist in this plan only because the store was read. They
                     # are the ones a reader should not expect to find on nflverse.
-                    snapshot_only_weeks=sv.snapshot_only_weeks(ahead, cov["covered"]))
+                    snapshot_only_weeks=got.snapshot_only)
     return _publish(out, "survivor", art)
 
 
@@ -513,10 +709,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.week is None:
         a.week = default_week(a.season)
 
+    # `isinstance(..., dict)` rather than a truth test on every one of these: a `Kept` is a
+    # non-empty tuple and so is truthy, and indexing it for a row count raises.
     if a.predictions:
         got = predictions(a.season, a.week)
         print(f"  {preds_name(a.season, a.week)}: "
-              + (f"{got['n']} games" if got else "nothing in the store; left as-is"))
+              + (f"{got['n']} games" if isinstance(got, dict)
+                 else got.why if isinstance(got, Kept)
+                 else "nothing in the store; left as-is"))
         return 0
     if a.live:
         got = live()
@@ -525,7 +725,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.track_record:
         got = track_record()
         print("  track_record: " + (
-            f"{got['n_scored']} scored, {got['n_preregistered']} pre-registered" if got
+            f"{got['n_scored']} scored, {got['n_preregistered']} pre-registered"
+            if isinstance(got, dict)
+            else got.why if isinstance(got, Kept)
             else "nothing to score; last-good kept"))
         return 0
     if not a.all:

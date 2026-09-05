@@ -220,3 +220,26 @@ _Avoid_: edge (which means something else entirely here).
 **Co-leader**:
 A candidate the simulation cannot separate from the best one — within two standard errors of
 the difference. A tie is reported as a tie rather than broken by noise.
+
+### What the page publishes
+
+**Kept**:
+The answer a producer gives when it ran and had nothing to say, so what is already published
+stands. Distinct from the two it sits between: a payload is this run's answer, and `None`
+means there is nothing fresh *and* nothing kept, so the panel's standing reason is the best
+sentence available. A first run with nothing published still writes its empty artifact — the
+page needs a file it can read — and still answers Kept, because "here is an artifact of
+nothing" and "this is current" are different claims. The distinction is the manifest's
+`reason`, which is all a reader gets: "no roster yet — run `… --write`" is the wrong
+instruction for a sync that ran and found an empty league.
+_Avoid_: stale (which is what the manifest says about *all three* of those, and so cannot
+name this one), skipped, failed — a Kept producer did run.
+
+**Remaining plan**:
+A survivor plan over the weeks still ahead, against the teams not already spent, together
+with the scope that makes it readable: which weeks are behind it, which of the weeks left
+the market has not priced, and which are priced thinly. `hub.season.survivor.plan_remaining`,
+read by both the site panel and the CLI, because two copies of the sequence is one plan
+silently wrong.
+_Avoid_: the plan unqualified — a plan for the whole season and a plan from here are
+different objects, and the difference is what issue #24 was.

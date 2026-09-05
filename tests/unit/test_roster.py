@@ -447,3 +447,26 @@ def test_neither_board_is_a_sentence_rather_than_a_traceback(tmp_path):
     # Both places named, not just the one that happened to be checked last: a message about
     # the site artifact would send a reader to the wrong fix.
     assert "absent.parquet" in str(e.value) and "draft_board.json" in str(e.value)
+
+
+# --- the writer refuses an empty league (issue #22) --------------------------
+
+def test_the_writer_refuses_a_frame_with_no_players(tmp_path):
+    """Issue #22: "The roster's own writer refuses a zero-row frame, so the empty artifact
+    is never created in the first place."
+
+    `publish.roster` guards the artifact and that is the second line of defence, not a
+    substitute: it can only decline to publish what this function has already put on disk,
+    and everything else reading `roster.parquet` -- `hub.season.lineup`, the CLI -- gets the
+    empty frame regardless. An ESPN sync returning nothing is a failed sync, not an empty
+    team.
+    """
+    cols = {"player": pl.Utf8, "pos": pl.Utf8, "nfl_team": pl.Utf8, "mu": pl.Float64,
+            "sd": pl.Float64, "projected": pl.Boolean, "starting": pl.Boolean,
+            "injury_status": pl.Utf8, "available": pl.Boolean, "can_start": pl.Boolean,
+            "missing_games": pl.Int64}
+    p = tmp_path / "roster.parquet"
+    with pytest.raises(ValueError, match="no players"):
+        R.write(pl.DataFrame(schema=cols), p)
+    assert not p.exists(), "a refused write must not leave a file behind"
+
