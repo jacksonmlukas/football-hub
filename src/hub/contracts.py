@@ -97,12 +97,31 @@ class Contract:
     verified_against_live: bool | None = None
 
     def validate(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Every check here is a refusal, and every one of them is declared.
+
+        Six checks append to one list and one `raise` turns the list into a
+        `ContractViolation`. Only the dtype check carried a `# GUARD` until #62, so five
+        refusals applied to fourteen contracts at every fetch boundary in the repo were
+        proved by nothing -- and the unmarked five sat either side of the marked one, in the
+        same function, appending to the same list. That is the decay this marker habit exists
+        to stop, caught in the one place it is easiest to see.
+
+        `tests/contracts/test_guards_are_load_bearing.py` reads this function rather than
+        trusting the sweep: every `problems.append(` and every `raise ContractViolation(` in
+        this module must sit inside a `# GUARD` or a `# UNPROVED` block, so a seventh check
+        cannot land unmarked. The `# GUARD` blocks are then proved the usual way -- deleted
+        one at a time, with `tests/contracts/test_contracts.py` required to go red.
+        """
         problems = []
+        # GUARD too-few-rows-refused: a truncated response is refused rather than served
         if df.height < self.min_rows:
             problems.append(f"{df.height} rows < min {self.min_rows}")
+        # /GUARD
+        # GUARD missing-column-refused: a renamed or dropped column is caught
         missing = set(self.required) - set(df.columns)
         if missing:
             problems.append(f"missing columns: {sorted(missing)}")
+        # /GUARD
         # The dtypes in `required` were declared from the start and read by nothing -- the
         # mapping was used as `set(self.required)` and never for its values, so a retyped or
         # all-null column passed every contract in the repo. The module docstring names
@@ -115,22 +134,34 @@ class Contract:
             if got != want:
                 problems.append(f"{col} is {df.schema[col]} ({got}), declared {want}")
         # /GUARD
+        # GUARD nulls-in-a-required-column-refused: an all-null or partly-null key is caught
         for c in self.non_null:
             if c in df.columns and df[c].null_count():
                 problems.append(f"{c} has {df[c].null_count()} nulls")
+        # /GUARD
+        # GUARD duplicate-keys-refused: a doubled row is caught before it doubles a join
         for c in self.unique:
             if c in df.columns and df[c].n_unique() != df.height:
                 problems.append(f"{c} not unique ({df[c].n_unique()}/{df.height})")
+        # /GUARD
+        # GUARD out-of-range-refused: a units change inside a plausible column is caught
         for c, (lo, hi) in self.ranges.items():
             if c in df.columns:
                 mn, mx = df[c].min(), df[c].max()
                 if mn is not None and (cast(float, mn) < lo or cast(float, mx) > hi):
                     problems.append(f"{c} range [{mn}, {mx}] outside [{lo}, {hi}]")
+        # /GUARD
+        # The one exit, marked for the same reason as the six checks above it: a seventh
+        # check that raised here directly rather than appending would be a refusal the
+        # `problems.append(` scan cannot see, so the scan reads this shape too and this block
+        # is what covers it. Excising it makes `validate` return every frame it is given.
+        # GUARD problems-are-raised-not-returned: an accumulated problem is refused, not returned
         if problems:
             # `.get`, so only the two states that have something to say add a sentence --
             # `True` is the contract that has met a real response and needs no caveat.
             note = _PROVENANCE_NOTES.get(self.verified_against_live, "")
             raise ContractViolation(f"{self.name}: " + "; ".join(problems) + note)
+        # /GUARD
         return df
 
 

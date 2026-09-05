@@ -45,6 +45,25 @@ def test_optional_columns_are_not_contracted():
         assert optional not in DRAFT_BOARD.required
 
 
+def test_contract_catches_a_truncated_response():
+    """The check that had nothing watching it. `min_rows` is 300 on the board and 1,000 on
+    four nflverse frames, so it is the line between a real refresh and a source that answered
+    with a header and three rows -- the quiet half of the Week 7 failure mode, where nothing
+    crashes and the projections are built off almost nothing."""
+    df = pl.DataFrame({"player": ["A"]})
+    with pytest.raises(ContractViolation, match="rows < min"):
+        Contract("t", required={"player": pl.Utf8}, min_rows=5).validate(df)
+
+
+def test_contract_catches_nulls_in_a_column_declared_non_null():
+    """The other unwatched one. A key column arriving all-null passes every presence check
+    and then silently drops every row it is joined on -- `_family` says the same thing about
+    the `Null` dtype, and this is the row-level half of it."""
+    df = pl.DataFrame({"player": ["A", None]})
+    with pytest.raises(ContractViolation, match="nulls"):
+        Contract("t", required={"player": pl.Utf8}, non_null=("player",)).validate(df)
+
+
 def test_contract_catches_missing_column():
     df = pl.DataFrame({"player": ["A"], "ecr": [1.0]})
     with pytest.raises(ContractViolation, match="missing columns"):

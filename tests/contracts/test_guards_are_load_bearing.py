@@ -44,6 +44,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -214,6 +215,270 @@ def test_a_child_that_errored_is_told_apart_from_one_that_failed(tmp_path):
     assert "error" in erroring.stdout.lower(), (
         "the substring check this replaced would have been satisfied by this run, which is "
         "the point: red and full of the word 'error' is not a failing test")
+
+
+# --- the next refusal ---------------------------------------------------------
+#
+# Everything above proves the guards that *are* declared. Nothing above makes the next one
+# get declared, and twenty-five are twenty-five because someone swept for them by hand on
+# 2026-09-04. A registry that only a sweep can grow starts decaying the day the sweep ends,
+# which is the shape of all eight dead guards that week: something that reads as protection
+# while nothing keeps it true (#62).
+#
+# **Why this is not a scan for `raise`.** There are 84 `raise` statements under `src/hub` and
+# 10 of them sit inside a declared guard. The other 74 are argument validation, domain
+# signalling a caller catches (`NoLegalLineup`, `Infeasible`, `NoOverlap`) and `SystemExit`
+# from a `main`. Asking for a marker or a written exemption on all 74 is a gate nobody
+# finishes and everybody turns off, and this repo has the incident: `preflight_public.sh`
+# carried a `# noqa`-shaped exemption budget until it was replaced by named exceptions. A
+# noisy gate is worse than none, because it is switched off *and* it was the last thing
+# looking.
+#
+# `raise` is also the wrong unit for the case that prompted the ticket. The contract
+# validator's five unmarked refusals do not raise -- they append to a list that one later
+# `raise` turns into a `ContractViolation`. A scan for `raise` would have found none of them.
+#
+# **Why this is not a count.** A baseline of "25 declared guards, update deliberately" says
+# a number is allowed to change, not which refusal is unmarked and why. `test_preflight.py`
+# ran exactly that shape -- `outside <= 1` -- until 2026-09-05, and it read as "one unmarked
+# guard is fine": the allowance was already spent on the gitleaks call, and marking or
+# deleting that call would have freed the budget for the next unmarked guard to spend in
+# silence. The same shape has bitten this repo three times, most recently a canary comment
+# claiming six steps over five.
+#
+# **What this is instead: a refusal vocabulary, per module.** The shell gate has one exact
+# way to refuse -- `fail=1` -- so its scan is a substring and has no judgement in it at all.
+# Python has no repo-wide equivalent, but a *module* can have one, and where it does the
+# judgement is made once, in writing, rather than per `raise` by whoever is reading.
+# `WATCHED` below records the modules where that is true, the shapes that make a statement a
+# refusal there, and why. Inside a watched module every one must sit in a `# GUARD` (proved
+# by excision above) or a `# UNPROVED` (explained, with the test that expires the exemption)
+# -- the two verbs already shared with the shell gate through `guardlib.marker`, not a third
+# dialect.
+#
+# **Read off the AST, not off the text.** The shell scan greps, because `bash` leaves nothing
+# better to read; here the first cut grepped too and went red on this module's own
+# docstring, which names both refusal shapes in a sentence explaining that they are watched.
+# That is the fires-on-its-own-explanation failure, reached in one edit, and patching it with
+# a comment-line exclusion would only have moved it into the next docstring or error string.
+# `ast` knows a call from a sentence about one, so a refusal is located by shape and prose is
+# free to describe it. The exclusion the shell scan needs does not exist here.
+#
+# **What it costs, stated rather than discovered.** The gate sees only what `WATCHED` lists.
+# A new refusal in an unwatched module is as silent today as every refusal was yesterday, so
+# this narrows the hole rather than closing it. That is deliberate and it is the honest
+# trade: a scope can only under-cover, and adding to it strengthens the gate, whereas a
+# budget can be spent. `contracts.py` is the entry it starts with because it is the highest-
+# leverage refusal code in the repo -- fourteen contracts, every fetch boundary, one function
+# -- and because it is the module whose declared dtypes were "read by nothing" for months by
+# its own docstring's account. Widening it is one line per module and one honest sentence.
+
+PY_UNPROVED = marker("UNPROVED", "#")
+
+# No Python refusal is exempt today. Named as an empty set rather than left out so that the
+# first one has somewhere to go that is not "delete the scan": the mechanism exists, it is
+# the shell gate's, and the test below fails if a block appears that this set does not know.
+UNPROVED_HERE: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class Watched:
+    """A module whose refusals are guards by default, and the shapes that identify one.
+
+    `collects` names the local lists whose entries become a refusal -- appending to one is
+    the contract validator's way of saying no. `raises` names the exception types raised to
+    refuse. Both, because a check that raised directly rather than appending would otherwise
+    be a refusal neither shape sees.
+    """
+
+    path: Path
+    collects: tuple[str, ...]
+    raises: tuple[str, ...]
+    why: str
+
+
+WATCHED = (
+    Watched(
+        path=SRC / "contracts.py",
+        collects=("problems",),
+        raises=("ContractViolation",),
+        why=("`Contract.validate` is a refusal and nothing else: every entry appended to "
+             "`problems` becomes a `ContractViolation` at the foot of the same function, so "
+             "there is no ordinary control flow here for a scan to mistake for a guard. That "
+             "is what makes the judgement safe to make once, in this entry, rather than per "
+             "statement by whoever is reading."),
+    ),
+)
+
+
+def _refusals(text: str, watched: Watched) -> list[tuple[int, int, str]]:
+    """Every refusal in `text`, as (character offset, line number, source line).
+
+    Located by shape rather than by substring. A grep for `problems.append(` also matches the
+    docstring that explains it is watched, which is how the first version of this went red on
+    its own explanation; `ast` tells a call from a sentence about one, so the module is free
+    to describe what it refuses.
+    """
+    starts, offset = [], 0
+    for line in text.splitlines(keepends=True):
+        starts.append(offset)
+        offset += len(line)
+    lines = text.splitlines()
+
+    found = []
+    for node in ast.walk(ast.parse(text)):
+        lineno = None
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if (isinstance(fn, ast.Attribute) and fn.attr == "append"
+                    and isinstance(fn.value, ast.Name) and fn.value.id in watched.collects):
+                lineno = node.lineno
+        elif isinstance(node, ast.Raise) and node.exc is not None:
+            exc = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+            if isinstance(exc, ast.Name) and exc.id in watched.raises:
+                lineno = node.lineno
+        if lineno is not None:
+            found.append((starts[lineno - 1], lineno, lines[lineno - 1].strip()))
+    return sorted(found)
+
+
+def _undeclared(text: str, watched: Watched) -> list[str]:
+    """The refusals in `text` inside neither a `# GUARD` nor an `# UNPROVED` block.
+
+    Takes the text rather than a path so the controls below can splice a refusal in and watch
+    this name it. Reported by line and by source, never as a count: the report has to say
+    *which* refusal is undeclared, or it is the budget this replaces wearing a longer message.
+    """
+    covered: set[int] = set()
+    for pattern in (GUARD, PY_UNPROVED):
+        for m in pattern.finditer(text):
+            covered.update(range(*m.span()))
+    return [f"line {lineno}: {src}"
+            for offset, lineno, src in _refusals(text, watched) if offset not in covered]
+
+
+def test_every_refusal_in_a_watched_module_is_declared():
+    """The gate. A seventh contract check cannot land the way the first six did."""
+    for watched in WATCHED:
+        undeclared = _undeclared(watched.path.read_text(), watched)
+        assert undeclared == [], (
+            f"these refusals in {watched.path.name} sit inside no # GUARD and no # UNPROVED "
+            f"block, so nothing proves they fire:\n  " + "\n  ".join(undeclared) + "\n"
+            f"That module is watched because: {watched.why}\n"
+            f"Wrap each in `# GUARD name: why` and let the excision harness above prove it, "
+            f"or -- only if it genuinely cannot be proved -- declare it as an `# UNPROVED` "
+            f"block naming the test that expires the exemption, and add its name to "
+            f"UNPROVED_HERE.")
+
+
+def test_the_watched_shapes_still_find_the_module_they_watch():
+    """The premise, and the failure this whole file exists to catch.
+
+    Rename `problems` to `issues` and the gate above finds nothing, reports no undeclared
+    refusals, and stays green forever over a module it has stopped reading. A scan that has
+    gone blind is indistinguishable from a module with nothing to find, which is the
+    "passing tests, dead guard" shape from the week of 2026-09-04 -- so the denominator is
+    asserted rather than assumed, and each declared shape has to account for itself."""
+    for watched in WATCHED:
+        text = watched.path.read_text()
+        alone = (
+            (f"collects={watched.collects!r}",
+             Watched(watched.path, watched.collects, (), watched.why)),
+            (f"raises={watched.raises!r}",
+             Watched(watched.path, (), watched.raises, watched.why)),
+        )
+        for shape, probe in alone:
+            assert _refusals(text, probe), (
+                f"nothing in {watched.path.name} matches its declared {shape} any more, so "
+                f"the gate is reading less than it claims and would stay green over any "
+                f"number of undeclared refusals. Re-point WATCHED at whatever that module "
+                f"refuses with now.")
+
+
+def test_a_new_undeclared_refusal_is_named_immediately():
+    """The positive control. Splice a refusal onto the watched module and require the report
+    to say what it is and where -- not "1 refusal is undeclared", which is the count restated.
+
+    Without this the gate only ever runs against a module that already satisfies it, which is
+    the same vacuum as a canary proving one pattern of five."""
+    watched = WATCHED[0]
+    spliced = watched.path.read_text() + '\ndef _later(problems):\n    problems.append("x")\n'
+    got = _undeclared(spliced, watched)
+    assert len(got) == 1, f"the splice was not the only undeclared refusal: {got}"
+    assert 'problems.append("x")' in got[0], f"the report does not say what it is: {got[0]}"
+    assert got[0].startswith("line "), f"nor where it is: {got[0]}"
+
+
+def test_a_check_that_raises_instead_of_appending_is_caught_too():
+    """The hole the second shape closes. A seventh check could refuse directly rather than
+    adding to `problems`, and a gate that only knew the list would not see it."""
+    watched = WATCHED[0]
+    spliced = (watched.path.read_text()
+               + '\ndef _later(df):\n    raise ContractViolation("straight to the exit")\n')
+    got = _undeclared(spliced, watched)
+    assert len(got) == 1 and "ContractViolation" in got[0], got
+
+
+def test_prose_naming_a_refusal_is_not_read_as_one():
+    """Why this reads the AST. `Contract.validate`'s own docstring names both watched shapes
+    in the sentence explaining that they are watched, and the first version of this gate went
+    red on it -- a gate firing on its own explanation, which is the shape that gets a gate
+    deleted rather than satisfied. Kept as a test because the cheap fix (skip comment lines,
+    as the shell scan must) passes today and breaks on the next docstring or error string."""
+    watched = WATCHED[0]
+    spliced = (watched.path.read_text()
+               + '\ndef _later():\n    """Mentions problems.append( and ContractViolation."""\n'
+                 '    return "raise ContractViolation( in a string, too"\n')
+    assert _undeclared(spliced, watched) == [], (
+        "a sentence about a refusal was read as a refusal, so the gate now fires on any "
+        "attempt to document it")
+
+
+def test_an_unproved_block_declares_a_refusal_the_same_way_a_guard_does():
+    """The explained half of "marked or explained", proved rather than asserted.
+
+    A refusal that cannot be proved by excision -- the shell gate's optional gitleaks call is
+    the one live example -- has to have somewhere to go, or the person who meets one deletes
+    the gate instead. Both verbs come from `guardlib.marker`, so this checks the second one is
+    actually wired here rather than only in `test_preflight.py`."""
+    watched = WATCHED[0]
+    text = watched.path.read_text()
+    naked = text + '\ndef _later(problems):\n    problems.append("x")\n'
+    covered = (text + '\ndef _later(problems):\n'
+                      '    # UNPROVED later-check [contracts/test_contracts.py]: why not.\n'
+                      '    problems.append("x")\n'
+                      '    # /UNPROVED\n')
+    assert len(_undeclared(naked, watched)) == 1
+    assert _undeclared(covered, watched) == [], (
+        "an # UNPROVED block does not cover the refusal it wraps, so the only way past this "
+        "gate is a # GUARD -- and a refusal that cannot be proved has nowhere to go.")
+
+
+def test_no_python_refusal_claims_an_exemption_it_has_not_argued_for():
+    """The exemptions are named, not counted -- the distinction `test_preflight.py` drew when
+    it replaced `outside <= 1` with `UNPROVED_HERE`. An `# UNPROVED` block appearing in a
+    watched module without being added here is a new unproved refusal that nobody argued
+    for, which is the budget shape by another route."""
+    for watched in WATCHED:
+        found = {g.name for g in declared(watched.path.read_text(), PY_UNPROVED)}
+        assert found <= UNPROVED_HERE, (
+            f"{watched.path.name} declares {sorted(found - UNPROVED_HERE)} as unprovable by "
+            f"excision, which this file does not know about. A refusal that cannot be proved "
+            f"is not a spare slot: say which one it is and why, in both places.")
+
+
+def test_every_unproved_block_names_a_test_that_expires_it():
+    """An exemption with no expiry is a permanent one. For an `# UNPROVED` the bracket names
+    the test that fails the day the exemption stops holding -- the same one meaning the
+    bracket has had since #65 -- so a stale one is reported here rather than never."""
+    stale = [(g.name, s)
+             for w in WATCHED for g in declared(w.path.read_text(), PY_UNPROVED, w.path)
+             for s in (g.selectors or ("",))
+             if not s or not selector_file(s, TESTS).exists()]
+    assert not stale, (
+        f"these # UNPROVED brackets do not resolve to a file under tests/: {stale}. The "
+        f"bracket is one or more pytest selectors relative to `tests/` -- see "
+        f"tests/guardlib.py.")
 
 
 # --- the habit ----------------------------------------------------------------
