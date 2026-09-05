@@ -245,7 +245,7 @@ def test_the_board_keeps_no_date_comparison_of_its_own(monkeypatch):
          "convention is exactly what this migration removed.")
 
 
-def test_board_as_of_asks_for_the_cutoff_that_holds_the_replay_still():
+def test_board_as_of_asks_for_the_day_that_holds_the_replay_still():
     """August 31 inclusive is the September 1 exclusive the strict comparison meant.
 
     Measured on the live archive before the switch: `< {yr}-09-01` and `<= {yr}-08-31` return
@@ -257,4 +257,4 @@ def test_board_as_of_asks_for_the_cutoff_that_holds_the_replay_still():
     from hub.draft import board as board_mod
     src = inspect.getsource(board_mod.board_as_of)
     assert "-08-31" in src and "-09-01" not in src.split('"""')[2], \
-        "the replay cutoff moved back to the day the strict comparison actually selected"
+        "the replay as-of moved back to the day the strict comparison actually selected"

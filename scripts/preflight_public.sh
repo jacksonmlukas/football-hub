@@ -30,7 +30,7 @@ fail=0
 #
 # "Scan", not "gate", throughout. `CONTEXT.md` reserves **Gate** for the measurement decision
 # -- does a model beat the thing it replaces -- and this checks a history for credentials,
-# which is a different kind of claim entirely. The test module still says gate in its own
+# which is a different kind of claim entirely. Its test module was renamed to match in the
 # names; that is issue #53's second pass.
 #
 # One named variable per credential shape rather than a single blob. The self-check below

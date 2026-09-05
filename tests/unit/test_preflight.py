@@ -720,3 +720,57 @@ def test_removing_the_guard_stops_the_planted_input_being_caught(guard, tmp_path
         f"It guards: {guard.why}\n"
         f"Either something else catches the same planted input, or the guard is dead. "
         f"({got.why_not_evidence()})")
+
+
+# --- the rewrite-cost figure ---------------------------------------------------
+#
+# `docs_commit_refs` is only *called* inside the branch that fires when history carries a
+# non-noreply author address. Every commit in this repo is authored from a noreply address,
+# so that branch does not run here and the figure it prints has no coverage from any
+# end-to-end invocation -- which is how a hand-run proof came to stand in for a test in the
+# commit closing the ticket about hand-kept counts. So the function is exercised directly.
+
+def _docs_commit_refs(cwd) -> list[str]:
+    """Run just that function out of the scan, in `cwd`."""
+    src = SCRIPT.read_text()
+    start = src.index("docs_commit_refs() {")
+    end = src.index("}", src.index("done", start)) + 1
+    body = src[start:end] + "\ndocs_commit_refs\n"
+    got = subprocess.run(["bash", "-c", body], capture_output=True, text=True, cwd=cwd)
+    return got.stdout.split()
+
+
+@pytest.mark.skipif(MUTANT_RUN, reason="the mutant copy is exercised by the harness")
+def test_the_rewrite_cost_counts_commits_and_not_hex_that_looks_like_one():
+    """The figure is offered as what a history rewrite would break, so it has to be commits.
+
+    Counting every backticked seven-character hex string would let a digest prefix, a colour
+    or an id inflate a number a reader is asked to weigh a decision against. `deadbee` is
+    valid hex and is not a commit here; before this it was counted.
+    """
+    real = _docs_commit_refs(ROOT)
+    assert real, "no short SHAs found in docs/, so this proves nothing about the filter"
+    for sha in real:
+        assert subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"],
+                              capture_output=True, cwd=ROOT).returncode == 0, \
+            f"{sha} is counted as a commit reference and does not resolve to a commit"
+
+
+@pytest.mark.skipif(MUTANT_RUN, reason="the mutant copy is exercised by the harness")
+def test_a_hex_token_that_is_not_a_commit_is_not_counted(tmp_path):
+    """Planted in a scratch repo, so the assertion is about the filter and not about docs/."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "seed.txt").write_text("seed\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "-c", "user.email=a@b.c", "-c", "user.name=t",
+                    "commit", "-qm", "seed"], cwd=tmp_path, check=True)
+    real = subprocess.run(["git", "rev-parse", "--short=7", "HEAD"], cwd=tmp_path,
+                          capture_output=True, text=True).stdout.strip()
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "notes.md").write_text(f"See `{real}` and also `deadbee` and `abcdef1`.\n")
+
+    got = _docs_commit_refs(tmp_path)
+    assert got == [real], (
+        f"counted {got}; only `{real}` is a commit in that repo, and a rewrite would break "
+        f"that reference and not the two hex strings that merely look like one")

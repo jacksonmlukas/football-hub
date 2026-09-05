@@ -52,7 +52,7 @@ def test_the_board_is_built_as_of_that_season_s_opening():
     it -- it started here, which put draft-domain knowledge under `models/` and inverted the
     tree's one consistent direction.
 
-    The cutoff reads August 31 and used to read September 1. It selects the same rows either
+    The as-of reads August 31 and used to read September 1. It selects the same rows either
     way: `board.consensus` is now inclusive of its as-of day, one convention with the loader
     that bounds the archive, so the date it asks for moved back by the day that change would
     otherwise have added. `tests/unit/test_consensus_page.py` holds the boundary itself.

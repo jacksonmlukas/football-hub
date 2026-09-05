@@ -137,10 +137,20 @@ class Rule:
     why: str
     owners: tuple[str, ...] = ()
     pattern: str = ""                               # overrides the term, for a phrase
+    deny_next: str = ""                             # extra chars that end a *non*-match
 
     def regex(self, term: str) -> re.Pattern[str]:
+        """The term as a whole word, minus any trailing character `deny_next` rules out.
+
+        `deny_next` exists so a term can be checked where one syntactic form of it is
+        decidably a different thing -- `cutoff=` is a keyword argument and never an as-of
+        date. Without it such a term goes to UNCHECKED whole, which is worse: UNCHECKED has
+        no ratchet, so its known violations are not counted and a new one lands unseen. That
+        is not hypothetical -- it is how `cutoff` gained a fresh violation in the same change
+        that added the entry forbidding it.
+        """
         return re.compile(r"(?<![A-Za-z0-9_])" + re.escape(self.pattern or term)
-                          + r"(?![A-Za-z0-9_])", re.I)
+                          + r"(?![A-Za-z0-9_" + re.escape(self.deny_next) + r"])", re.I)
 
 
 CHECKED: dict[str, Rule] = {
@@ -155,6 +165,13 @@ CHECKED: dict[str, Rule] = {
     "the plan unqualified": Rule("phrase", "the entry forbids the bare phrase and names the "
                                            "qualified forms that are fine",
                                  pattern="the plan"),
+    # Checked rather than parked. The one form that is decidably not an as-of date is the
+    # keyword argument -- `difflib.get_close_matches(cutoff=0.85)` is a similarity threshold
+    # -- and `_adp_saturation_cutoff` is already excluded by the word boundary. Everything
+    # else the word can be here is the date sense the **As of** entry forbids.
+    "cutoff": Rule("phrase", "the As of entry forbids it for a date; `cutoff=` is a keyword "
+                             "argument and never a date, and a leading underscore makes it "
+                             "part of another name", deny_next="="),
     "the closing line": Rule("phrase", "names the close, which a snapshot rarely is; the "
                                        "phrase has no other referent here"),
     "line source": Rule("phrase", "the superseded spelling of Price source, and nothing "
@@ -225,10 +242,6 @@ UNCHECKED: dict[str, str] = {
     "_norm": "a private helper that no longer exists; the term is a historical spelling",
     # The **As of** entry arrived from another change while issue #53 was in flight, which is
     # this file's premise check doing its job: three terms turned up and had to be decided.
-    "cutoff": "forbidden for an As of date; `difflib.get_close_matches(cutoff=0.85)` in "
-              "`hub.draft.state` is a similarity threshold, so an occurrence is not "
-              "decidably the date sense. Worth checking once the two in `hub.draft.board` "
-              "are settled -- they are the forbidden sense and they are the only two",
     "up to": "ordinary English, several times a page ('up to five rows'); the entry forbids "
              "it only where it bounds an as-of",
     "stating an as-of anywhere but at the fetch boundary": (
@@ -430,10 +443,9 @@ OUTSTANDING: dict[tuple[str, str], tuple[int, str]] = {
     ("scripts/bootstrap_project.sh", "the closing line"): (1, "the same"),
 }
 
-# `tests/unit/test_preflight.py` names the secret scan a "gate" thirty times, including in
-# test names. It is outside SCAN_ROOTS (tests are not the source tree) and outside issue
-# #53's scope, and the script it tests no longer calls itself one. Recorded here in prose so
-# the second pass has it written down rather than rediscovered.
+# `tests/unit/test_preflight.py` named the secret scan a "gate" throughout, including in
+# its test names. Renamed in the second pass; the count is zero now, and this note is kept
+# only because a sentence describing a violation outlived the violation once already here.
 
 
 def _outstanding_counts(hits: list[Hit]) -> dict[tuple[str, str], int]:

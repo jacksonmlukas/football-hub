@@ -36,7 +36,7 @@ from hub.config import (
     flex_share,
     starters,
 )
-from hub.contracts import DRAFT_BOARD, FF_RANKINGS, ContractViolation
+from hub.contracts import DRAFT_BOARD, ContractViolation
 from hub.draft import adp_history, durability
 from hub.draft import regression as td_regression
 from hub.draft import report as report_mod
@@ -45,7 +45,7 @@ from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.state import DraftState, remaining
-from hub.fetch.nflverse import load_rankings
+from hub.fetch.nflverse import RANKINGS_COLS, load_rankings
 from hub.models import components
 from hub.models.predict import blend
 from hub.names import player_key
@@ -193,7 +193,7 @@ def consensus(as_of: str | None = None) -> pl.DataFrame:
     # The contract's own required set, so this and `hub.models.panel.weekly_consensus` -- the
     # two routed readers of this archive -- key the same cache entry and cannot drift apart
     # into two half-filled copies of a 1.8M-row table.
-    allr = load_rankings("all", as_of=as_of, cols=tuple(FF_RANKINGS.required))
+    allr = load_rankings("all", as_of=as_of, cols=RANKINGS_COLS)
     snap = (allr.filter((pl.col("page_type") == CONSENSUS_PAGE)
                         & (pl.col("ecr").is_not_null()))
                 .sort("scrape_date", descending=True)
@@ -724,7 +724,7 @@ def board_as_of(season: int) -> tuple[pl.DataFrame, BuildReport]:
     """The board for `season`, built from the last consensus scrape before it opened.
 
     Lives here rather than in `hub.models.experiment`, which is where it started. Every line
-    of it is draft-domain knowledge -- `season - 1`, `season_ahead`, the September cutoff --
+    of it is draft-domain knowledge -- `season - 1`, `season_ahead`, the September as-of --
     and putting it under `models/` inverted the tree's one consistent direction (six `draft/`
     modules import `models/`; nothing went the other way) to save two callers a lambda each.
     It also needed a function-local import to dodge the cycle that inversion created.
@@ -735,7 +735,7 @@ def board_as_of(season: int) -> tuple[pl.DataFrame, BuildReport]:
 
     **August 31, not September 1, and the two name the same instant.** `consensus` is inclusive
     of its as-of day -- one convention, the loader's, since it stopped keeping its own -- so the
-    cutoff this function asks for has to move back a day to select the rows the old strict
+    as-of this function asks for has to move back a day to select the rows the old strict
     `scrape_date < {season}-09-01` selected. Verified on the whole archive rather than reasoned
     about: for every season 2021-26, `< {yr}-09-01` and `<= {yr}-08-31` return the same row
     count, and no `scrape_date` in 1.83M rows fails to parse as a plain date.

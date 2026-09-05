@@ -104,6 +104,15 @@ APPEND_ONLY: dict[str, str] = {"ff_rankings": "scrape_date"}
 # It gets its own source and contract on the day something needs it.
 RANKINGS_PAGES: tuple[str, ...] = ("draft", "all")
 
+# The columns `load_rankings` is asked for: the contract's own required set, which is also
+# every column either routed reader takes. It lives here, beside the loader, because it is
+# half of that loader's cache key -- `(source, page, columns, as-of)` -- and the two readers
+# that name the key are in different packages. Stated in one of them, the other has to either
+# import across a package boundary or retype it; retyping it is what `hub.draft.board` did,
+# under a comment in `hub.models.panel` claiming it was stated once. The archive is 1.8M rows
+# and two hand-written tuples drifting is two nearly-identical copies of it.
+RANKINGS_COLS: tuple[str, ...] = tuple(FF_RANKINGS.required)
+
 
 class WideFrameRefused(Exception):
     """Asked for a frame this module will not return in the shape requested."""

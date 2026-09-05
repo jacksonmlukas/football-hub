@@ -25,8 +25,7 @@ from typing import NamedTuple
 import polars as pl
 
 from hub.config import DRAFTED_POSITIONS, SEASON_COMPLETED
-from hub.contracts import FF_RANKINGS
-from hub.fetch.nflverse import Pin, data_pin, load_rankings
+from hub.fetch.nflverse import RANKINGS_COLS, Pin, data_pin, load_rankings
 from hub.models import components
 from hub.models.experiment import expanding_weeks
 from hub.names import player_key, practice_key
@@ -494,13 +493,6 @@ def assign_weeks(scrapes: pl.DataFrame, windows: pl.DataFrame,
     return out.with_columns(
         (pl.col("last_kick") - pl.col("scrape_date")).dt.total_days().alias("lead_days")
     ).filter(pl.col("lead_days") <= max_lead)
-
-
-# The columns `load_rankings` is asked for: the contract's own required set, which is also
-# every column either routed reader takes. Derived from the contract rather than retyped, so
-# this and `hub.draft.board.consensus` name the same cache entry -- the archive is 1.8M rows
-# and two nearly-identical copies of it is the cost of two hand-written tuples drifting.
-RANKINGS_COLS: tuple[str, ...] = tuple(FF_RANKINGS.required)
 
 
 def consensus_pin(as_of: str | None = None) -> Pin | None:

@@ -215,7 +215,7 @@ class Coverage(NamedTuple):
 
     Typed rather than a dict, because `RemainingPlan` used to copy `covered`, `missing` and
     `thin` out of it one key at a time -- three fields restating one answer, and a reader of
-    a reader of the remaining plan could not tell they came from a single question.
+    the remaining plan could not tell they came from a single question.
 
     The per-week game counts that decide these three are not carried. They were, and nothing
     read them: `thin` is the question anyone actually asks of a count, and a field no caller
@@ -263,7 +263,7 @@ class RemainingPlan(NamedTuple):
     Returned together because the picks alone are unreadable: a survival probability means
     nothing without the weeks it is over, a reader looking at a plan that starts in week 9
     should not have to infer why, and a week the betting market has not priced still needs a
-    from the entrant. The site panel and the CLI both print all of it.
+    pick from the entrant. The site panel and the CLI both print all of it.
 
     `coverage` rides along whole rather than unpacked into three lists here, and `survival`
     is a property rather than a call every caller makes on the way out -- both callers did

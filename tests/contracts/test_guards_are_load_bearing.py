@@ -23,7 +23,7 @@ habit, it is a run of luck, and it is what this file replaces.
     # /GUARD
 
 The grammar, the record type, the excision and the way a child run is read are all
-`tests/guardlib.py`, shared with the shell gate's harness in `tests/unit/test_preflight.py`
+`tests/guardlib.py`, shared with the shell scan's harness in `tests/unit/test_preflight.py`
 and the page's in `tests/contracts/test_dashboard_escapes.py` -- three copies of one
 convention until issue #65. Read that module for the bracket's one resolution rule; the only
 thing this file adds to it is the derivation below, which is why the bracket is usually
@@ -246,14 +246,14 @@ def test_a_child_that_errored_is_told_apart_from_one_that_failed(tmp_path):
 # silence. The same shape has bitten this repo three times, most recently a canary comment
 # claiming six steps over five.
 #
-# **What this is instead: a refusal vocabulary, per module.** The shell gate has one exact
+# **What this is instead: a refusal vocabulary, per module.** The shell scan has one exact
 # way to refuse -- `fail=1` -- so its scan is a substring and has no judgement in it at all.
 # Python has no repo-wide equivalent, but a *module* can have one, and where it does the
 # judgement is made once, in writing, rather than per `raise` by whoever is reading.
 # `WATCHED` below records the modules where that is true, the shapes that make a statement a
 # refusal there, and why. Inside a watched module every one must sit in a `# GUARD` (proved
 # by excision above) or a `# UNPROVED` (explained, with the test that expires the exemption)
-# -- the two verbs already shared with the shell gate through `guardlib.marker`, not a third
+# -- the two verbs already shared with the shell scan through `guardlib.marker`, not a third
 # dialect.
 #
 # **Read off the AST, not off the text.** The shell scan greps, because `bash` leaves nothing
