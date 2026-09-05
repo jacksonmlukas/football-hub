@@ -238,10 +238,12 @@ def write(df: pl.DataFrame, path: Path | None = None) -> Path:
     missing = [c for c in REQUIRED if c not in df.columns]
     if missing:
         raise ValueError(f"roster is missing {missing}; lineup.py requires {list(REQUIRED)}")
+    # GUARD empty-league-refused-at-the-writer: an empty roster parquet is never written
     if df.is_empty():
         raise ValueError("roster has no players; refusing to overwrite the last good one "
                          "with an empty league -- an ESPN sync returning nothing is a "
                          "failed sync, not an empty team")
+    # /GUARD
     p = path or ROSTER_PARQUET
     p.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(p)

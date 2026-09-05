@@ -169,11 +169,13 @@ def _publish(out: Path, name: str, payload: dict[str, Any],
     `count_key` is `_last_good_n`'s `key`, and is documented there.
     """
     why = "the source was read and came back empty"
+    # GUARD last-good-not-blanked: an empty payload never replaces a published one
     if not payload.get(count_key):
         if kept := _keeping(out, name, why, count_key):
             return kept
         _write(out, name, payload)
         return Kept(f"{why}; published as an empty artifact so the page has one to read")
+    # /GUARD
     _write(out, name, payload)
     return payload
 
@@ -518,14 +520,12 @@ def roster(out: Path | None = None,
     if not src.exists():
         return None
     df = pl.read_parquet(src)
-    # The second line of defence, and only that: `hub.season.roster.write` now refuses a
-    # zero-row frame, so an empty parquet is one written before that check or by hand. It is
-    # handed to `_publish` as the empty artifact it is -- built without `lock`, which cannot
-    # price an empty pool and would raise rather than say nothing. Deciding the answer here
-    # instead is what left the shared guard with no producer able to reach it.
-    if df.is_empty():
-        return _publish(out or SITE, "roster",
-                        jsonio.artifact("roster", "roster.parquet", []))
+    # No empty check here. There was one, justified by `lock` being unable to price an empty
+    # pool -- and `lock` does no such thing: on a zero-row frame it returns a `Lock` of Nones
+    # and empty lists. The excision harness found it, by deleting the branch and watching
+    # `test_publish.py` stay green. An empty frame falls through to `_publish`, which is the
+    # one place this rule is meant to live; `hub.season.roster.write` refuses to create the
+    # empty parquet in the first place.
     lk = lock(df)
     # The best lineup, reconstructed from the moves: the set starters, less those to sit,
     # plus those to start. Parenthesised because `-` binds tighter than `|` and the reader

@@ -208,9 +208,11 @@ def snapshot(season: int = SEASON_AHEAD, *, markets: str = MARKET, regions: str 
 
     when = now or datetime.now(UTC).replace(tzinfo=None)
     have = credits_remaining(state_path)
+    # GUARD credit-floor-refuses [unit/test_fetch_odds.py]: a low balance spends nothing
     if have is not None and have < floor:
         raise QuotaFloor(
             f"{have} credits left, floor is {floor}. Refusing before spending one.")
+    # /GUARD
 
     key = _api_key()
     if not key:

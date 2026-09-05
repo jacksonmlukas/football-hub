@@ -67,12 +67,14 @@ class Contract:
         # mapping was used as `set(self.required)` and never for its values, so a retyped or
         # all-null column passed every contract in the repo. The module docstring names
         # renaming as the failure mode; retyping is the same failure with a quieter symptom.
+        # GUARD dtypes-are-checked [unit/test_fetch_nflverse.py]: a retype is caught
         for col, declared in self.required.items():
             if col not in df.columns:
                 continue                        # already reported as missing
             got, want = _family(df.schema[col]), _family(declared)
             if got != want:
                 problems.append(f"{col} is {df.schema[col]} ({got}), declared {want}")
+        # /GUARD
         for c in self.non_null:
             if c in df.columns and df[c].null_count():
                 problems.append(f"{c} has {df[c].null_count()} nulls")
