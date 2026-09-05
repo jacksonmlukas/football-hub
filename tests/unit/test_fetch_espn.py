@@ -218,12 +218,111 @@ def test_an_event_that_does_not_name_its_sides_is_left_out_and_said_so(monkeypat
 
 def test_two_competitors_on_the_same_side_is_not_a_game_either(monkeypatch, tmp_path):
     """A payload naming two home teams names no away team. Taking the first of each would
-    invent an opponent."""
+    invent an opponent.
+
+    A good game rides along because a board on which *nothing* resolves is a different
+    finding and raises -- see the guard test at the end of this section. This test is about
+    the one event, so it needs a board that is otherwise fine.
+    """
     espn = _cache_at(monkeypatch, tmp_path)
     both = [_PHI, {**_DAL, "homeAway": "home"}]
+    monkeypatch.setattr(espn, "scoreboard", lambda league="nfl": {
+        "events": [_event([_PHI, _DAL]), _event(both, event_id="2")]})
+    assert [g["id"] for g in espn.live_state()] == ["1"]
+
+
+# --- one malformed event must not end the poll -----------------------------
+#
+# `live_state` subscripted `ev["competitions"][0]`, `c["status"]["type"]` and `ev["id"]`
+# while using `.get` for everything around them, so a single event missing one of those
+# three raised out of the whole poll -- twelve good games lost to one bad one, in the module
+# whose own rule (CLAUDE.md, "graceful degradation") is to serve an answer with no operator.
+# The policy for an event that does not name its sides was already the right one; these are
+# the rest of the path brought onto it.
+
+
+@pytest.mark.parametrize("broken, why", [
+    ({"id": "2"}, "no competition"),
+    ({"id": "2", "competitions": [{"competitors": [_PHI, _DAL]}]},
+     "no competition-level status.type.state"),
+    ({"id": "2", "competitions": [{"status": {"type": {"state": None}},
+                                   "competitors": [_PHI, _DAL]}]},
+     "no competition-level status.type.state"),
+    ({"id": "2", "competitions": [{"status": {"type": {"state": "in"}}, "competitors": [
+        {"homeAway": "home", "team": {}, "score": "3"},
+        {"homeAway": "away", "team": {"abbreviation": "LV"}, "score": "0"}]}]},
+     "a side carried no team abbreviation"),
+    ({"competitions": [{"status": {"type": {"state": "in"}},
+                        "competitors": [_PHI, _DAL]}]}, "no id"),
+])
+def test_an_event_the_reader_cannot_resolve_is_dropped_and_named(monkeypatch, tmp_path,
+                                                                 capsys, broken, why):
+    """Each of these used to raise `KeyError` or `IndexError` out of `live_state`."""
+    espn = _cache_at(monkeypatch, tmp_path)
     monkeypatch.setattr(espn, "scoreboard",
-                        lambda league="nfl": {"events": [_event(both)]})
+                        lambda league="nfl": {"events": [_event([_PHI, _DAL]), broken]})
+    assert [g["id"] for g in espn.live_state()] == ["1"], "the good game still renders"
+    said = capsys.readouterr().out
+    assert why in said, said
+
+
+def test_a_board_that_resolves_none_of_its_games_raises_rather_than_going_quiet(monkeypatch,
+                                                                                tmp_path):
+    """The cost of the tolerance above, paid back.
+
+    Dropping a malformed event is what keeps the rest of the slate on the page; a field
+    renamed for *every* event drops every row, and `ESPN_SCOREBOARD` declares `min_rows=0`
+    -- correctly, February has no slate -- so the contract cannot tell that from a day with
+    no games. Only `live_state` knows how many events arrived, so it is the thing that can.
+    Both callers already degrade on an exception: `publish.live` keeps last-good, `poll`
+    serves stale, and either beats publishing 'no games today' during a Sunday.
+    """
+    espn = _cache_at(monkeypatch, tmp_path)
+    renamed = [{**_PHI, "side": "home"}, {**_DAL, "side": "away"}]
+    for c in renamed:
+        del c["homeAway"]
+    monkeypatch.setattr(espn, "scoreboard", lambda league="nfl": {
+        "events": [_event(renamed), _event(renamed, event_id="2")]})
+    with pytest.raises(RuntimeError, match="resolved none of them"):
+        espn.live_state()
+
+
+def test_a_board_with_no_games_on_it_is_not_a_failure(monkeypatch, tmp_path):
+    """The other side of that guard, and the reason it counts events rather than rows.
+    There is no NFL slate in February and the deploy runs all year."""
+    espn = _cache_at(monkeypatch, tmp_path)
+    monkeypatch.setattr(espn, "scoreboard", lambda league="nfl": {"events": []})
     assert espn.live_state() == []
+
+
+def test_the_frozen_capture_reaches_the_overlay_with_its_live_fields(monkeypatch, tmp_path):
+    """The reader against the real response, not against a payload written for it.
+
+    `tests/golden/fixtures/espn_scoreboard.json` is the capture; the contract test puts it
+    through the contract, and this puts it through the columns the contract does not cover.
+    The two live games in it are the reason the trim kept both: ESPN sent one with
+    `situation.possession` and `downDistanceText` set, and one -- between plays, after an
+    extra point -- whose `situation` carried neither. That is observed, not supposed, and it
+    is why those two are read with `.get` rather than subscripted.
+    """
+    import json
+    from pathlib import Path as _Path
+
+    espn = _cache_at(monkeypatch, tmp_path)
+    payload = json.loads((_Path(__file__).resolve().parents[1] / "golden" / "fixtures"
+                          / "espn_scoreboard.json").read_text())
+    monkeypatch.setattr(espn, "scoreboard", lambda league="nfl": payload)
+    rows = {g["id"]: g for g in espn.live_state()}
+
+    assert sorted(g["state"] for g in rows.values()) == ["in", "in", "post", "pre"]
+    with_ball = rows["401856634"]
+    assert with_ball["home"] == "ALA" and with_ball["home_score"] == "45"
+    assert with_ball["detail"] == "13:36 - 4th"
+    assert with_ball["possession"] == "151"
+    assert with_ball["down_distance"] == "4th & 8 at ECU 27"
+    between_plays = rows["401858425"]
+    assert between_plays["state"] == "in"
+    assert between_plays["possession"] is None and between_plays["down_distance"] is None
 
 
 # --- the tiered poller ------------------------------------------------------

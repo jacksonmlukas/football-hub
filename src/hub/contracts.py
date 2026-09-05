@@ -287,8 +287,10 @@ ESPN_SCOREBOARD = Contract(
     # February and the deploy runs all year. `min_rows=1` here asserted that a game is always
     # on, which is the declaration being wrong rather than the source; found by applying it.
     min_rows=0,
-    # Checked against `espn_scoreboard.json`, a real 2026-08-23 capture of the public
-    # scoreboard. Stated because the default is now `None` -- see `verified_against_live`.
+    # Checked against `espn_scoreboard.json`, a real 2026-09-05 capture of the public
+    # college scoreboard (`groups=80`) -- the NFL board carried no in-progress game that day,
+    # and the live path is the one worth freezing. Stated because the default is now `None`
+    # -- see `verified_against_live`.
     #
     # It said `None` until 2026-09-05 while that capture sat in the tree, because the only
     # test reading the file asserted four fields by hand rather than putting a frame through

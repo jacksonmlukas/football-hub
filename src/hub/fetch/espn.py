@@ -101,41 +101,102 @@ def _sides(competitors: list[dict]) -> tuple[dict, dict] | None:
     return (by["home"], by["away"]) if len(by) == 2 else None
 
 
+def _overlay_row(ev: dict) -> tuple[dict | None, str]:
+    """One overlay row for one scoreboard event, or `(None, reason)` saying what it lacked.
+
+    Every lookup on the way in is tolerant, and it was not: this path subscripted
+    `ev["competitions"][0]`, `c["status"]["type"]` and `ev["id"]` while reaching for
+    everything around them with `.get`, so one malformed event raised out of the whole poll
+    and took the rest of the slate with it. The opposite policy was already here, for an
+    event that does not name its sides -- drop it and say which -- and running two policies
+    over the same kind of gap is what this collapses.
+
+    The team abbreviation is on the same footing. Reading it tolerantly and letting the null
+    reach the contract would still end the poll, only later and under a message about a
+    frame rather than about an event.
+    """
+    comps = ev.get("competitions") or []
+    if not comps:
+        return None, "no competition"
+    c = comps[0]
+    # The **competition's** status, which is where a game's state lives. An event-level
+    # `status` also exists in the response and is deliberately not read here; the frozen
+    # capture carried only that one until 2026-09-05, which is how a golden fixture came to
+    # be unable to exercise the path production takes (#73).
+    st = (c.get("status") or {}).get("type") or {}
+    if not st.get("state"):
+        return None, "no competition-level status.type.state"
+    sides = _sides(c.get("competitors") or [])
+    if sides is None:
+        # Left out rather than guessed at, and named so the omission is visible. A missing
+        # game is a gap the page can show; a game with the wrong team winning is not,
+        # because nothing on the page disagrees with it.
+        return None, "did not name home and away"
+    home, away = sides
+    named = [(side.get("team") or {}).get("abbreviation") for side in (home, away)]
+    if not all(named):
+        return None, "a side carried no team abbreviation"
+    if not ev.get("id"):
+        return None, "no id"
+    sit = c.get("situation") or {}
+    return {
+        "id": ev["id"],
+        "state": st["state"],               # pre | in | post
+        "detail": st.get("shortDetail"),
+        "home": named[0], "home_score": home.get("score"),
+        "away": named[1], "away_score": away.get("score"),
+        "possession": sit.get("possession"),
+        "down_distance": sit.get("downDistanceText"),
+    }, ""
+
+
+def scoreboard_frame(rows: list[dict]) -> pl.DataFrame:
+    """The typed frame `ESPN_SCOREBOARD` is asserted on, from `live_state` rows.
+
+    Its own function so the contract test can put the frozen capture through this exact
+    construction rather than building a second frame beside it -- a fixture validated
+    through a shape the production reader does not build is the defect #73 removed.
+
+    Typed even when empty: `pl.DataFrame([])` has no columns at all, and a contract cannot
+    tell "no games today" from "every field is gone" without them.
+    """
+    return (pl.DataFrame(rows, schema_overrides=SCOREBOARD_TYPES) if rows
+            else pl.DataFrame(schema=SCOREBOARD_TYPES))
+
+
 def live_state(league: str = "nfl") -> list[dict]:
     """Flattened in-progress game state for the dashboard overlay."""
     out: list[dict] = []
-    unnamed: list[str] = []
-    for ev in scoreboard(league).get("events", []):
-        c = ev["competitions"][0]
-        st = c["status"]["type"]
-        sides = _sides(c.get("competitors", []))
-        if sides is None:
-            # Left out rather than guessed at, and named so the omission is visible. A
-            # missing game is a gap the page can show; a game with the wrong team winning
-            # is not, because nothing on the page disagrees with it.
-            unnamed.append(str(ev.get("id", "?")))
+    dropped: list[str] = []
+    events = scoreboard(league).get("events") or []
+    for ev in events:
+        row, why = _overlay_row(ev)
+        if row is None:
+            dropped.append(f"{ev.get('id', '?')} ({why})")
             continue
-        home, away = sides
-        out.append({
-            "id": ev["id"],
-            "state": st["state"],           # pre | in | post
-            "detail": st.get("shortDetail"),
-            "home": home["team"]["abbreviation"], "home_score": home.get("score"),
-            "away": away["team"]["abbreviation"], "away_score": away.get("score"),
-            "possession": c.get("situation", {}).get("possession"),
-            "down_distance": c.get("situation", {}).get("downDistanceText"),
-        })
-    if unnamed:
-        print(f"  live: {len(unnamed)} event(s) did not name home and away and are absent "
-              f"from the overlay: {', '.join(unnamed)}")
+        out.append(row)
+    if dropped:
+        print(f"  live: {len(dropped)} event(s) absent from the overlay: "
+              f"{', '.join(dropped)}")
+    # GUARD board-resolved-nothing: a board that resolves none of its games is a shape change
+    #
+    # Dropping a malformed event is what keeps the rest of the slate on the page, and it is
+    # the whole point of the tolerant lookups above -- but it also means a field renamed for
+    # *every* event drops every row, and `min_rows=0` (right, because February has no slate)
+    # then reads that as a quiet day. So the two are told apart here rather than by the
+    # contract, which cannot see how many events arrived.
+    if events and not out:
+        raise RuntimeError(
+            f"the {league} scoreboard returned {len(events)} event(s) and resolved none of "
+            f"them to a row: {', '.join(dropped)}. One event failing this way is dropped and "
+            f"named; all of them failing is a renamed field, and an empty overlay would "
+            f"publish it as 'no games today'.")
+    # /GUARD
     # Asserted at the boundary. This endpoint is undocumented and is now read unattended every
     # ten minutes through a game window, so drift -- a renamed field, a null where there was
     # never one, duplicated ids -- has to fail here rather than reach the page. Both callers
     # already degrade on an exception: `publish.live` keeps last-good, `poll` serves stale.
-    # Typed even when empty: `pl.DataFrame([])` has no columns at all, and a contract cannot
-    # tell "no games today" from "every field is gone" without them.
-    ESPN_SCOREBOARD.validate(pl.DataFrame(out, schema_overrides=SCOREBOARD_TYPES) if out
-                             else pl.DataFrame(schema=SCOREBOARD_TYPES))
+    ESPN_SCOREBOARD.validate(scoreboard_frame(out))
     return out
 
 

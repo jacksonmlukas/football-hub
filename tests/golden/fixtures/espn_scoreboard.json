@@ -1,29 +1,97 @@
 {
   "events": [
     {
-      "id": "401873297",
-      "date": "2026-08-24T00:00Z",
-      "name": "Seattle Seahawks at Tennessee Titans",
-      "status": {
-        "type": {
-          "state": "in"
-        }
-      },
+      "id": "401858425",
+      "date": "2026-09-05T16:00Z",
+      "name": "North Texas Mean Green at Indiana Hoosiers",
       "competitions": [
         {
+          "status": {
+            "type": {
+              "state": "in",
+              "shortDetail": "12:51 - 4th"
+            }
+          },
           "competitors": [
             {
               "homeAway": "home",
-              "score": "3",
+              "score": "38",
               "team": {
-                "abbreviation": "TEN"
+                "abbreviation": "IU"
               }
             },
             {
               "homeAway": "away",
               "score": "16",
               "team": {
-                "abbreviation": "SEA"
+                "abbreviation": "UNT"
+              }
+            }
+          ],
+          "situation": {}
+        }
+      ]
+    },
+    {
+      "id": "401856634",
+      "date": "2026-09-05T16:00Z",
+      "name": "East Carolina Pirates at Alabama Crimson Tide",
+      "competitions": [
+        {
+          "status": {
+            "type": {
+              "state": "in",
+              "shortDetail": "13:36 - 4th"
+            }
+          },
+          "competitors": [
+            {
+              "homeAway": "home",
+              "score": "45",
+              "team": {
+                "abbreviation": "ALA"
+              }
+            },
+            {
+              "homeAway": "away",
+              "score": "10",
+              "team": {
+                "abbreviation": "ECU"
+              }
+            }
+          ],
+          "situation": {
+            "possession": "151",
+            "downDistanceText": "4th & 8 at ECU 27"
+          }
+        }
+      ]
+    },
+    {
+      "id": "401856658",
+      "date": "2026-09-05T19:00Z",
+      "name": "Tennessee State Tigers at Georgia Bulldogs",
+      "competitions": [
+        {
+          "status": {
+            "type": {
+              "state": "pre",
+              "shortDetail": "9/5 - 3:00 PM EDT"
+            }
+          },
+          "competitors": [
+            {
+              "homeAway": "home",
+              "score": "0",
+              "team": {
+                "abbreviation": "UGA"
+              }
+            },
+            {
+              "homeAway": "away",
+              "score": "0",
+              "team": {
+                "abbreviation": "TNST"
               }
             }
           ]
@@ -31,29 +99,30 @@
       ]
     },
     {
-      "id": "401873286",
-      "date": "2026-08-21T00:00Z",
-      "name": "Las Vegas Raiders at Houston Texans",
-      "status": {
-        "type": {
-          "state": "post"
-        }
-      },
+      "id": "401864494",
+      "date": "2026-08-29T19:00Z",
+      "name": "San Jos\u00e9 State Spartans at USC Trojans",
       "competitions": [
         {
+          "status": {
+            "type": {
+              "state": "post",
+              "shortDetail": "Final"
+            }
+          },
           "competitors": [
             {
               "homeAway": "home",
-              "score": "20",
+              "score": "42",
               "team": {
-                "abbreviation": "HOU"
+                "abbreviation": "USC"
               }
             },
             {
               "homeAway": "away",
-              "score": "22",
+              "score": "26",
               "team": {
-                "abbreviation": "LV"
+                "abbreviation": "SJSU"
               }
             }
           ]
