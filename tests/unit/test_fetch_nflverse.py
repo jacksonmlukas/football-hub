@@ -730,7 +730,23 @@ def test_a_pin_missing_what_identifies_it_reads_as_none(tmp_path):
 
 def test_refresh_names_the_data_it_pulled(fake_pbp, fake_ffo, tmp_path, capsys):
     """The digest of the two frames just written, printed beside the digests of the code
-    that will read them."""
+    that will read them.
+
+    The `cfg` assertion is deliberately *not* the expression `refresh` evaluates. It used to
+    be: the line was built from `config_digest(HubConfig())` and checked against
+    `config_digest(HubConfig())`, so the two moved together by construction and no
+    configuration on earth could have made it fail. `refresh` now resolves `conf/` the way a
+    run does, and this asserts the dataclass defaults, so the assertion has an independent
+    answer to be wrong about.
+
+    What it is worth on the day it fails: the two agree only while nothing in `conf/`
+    diverges from a default (both `281b7b7a`, measured 2026-09-05), and the first override
+    that does is exactly when the two remaining bare-`HubConfig()` provenance stamps -- and
+    any reader who assumed the printed `cfg` was the shipped defaults -- become wrong. Red
+    here means "`conf/` now says something; go and see who is still not listening", not
+    "`refresh` is broken". `test_refresh_names_the_config_the_run_resolved` is the other
+    half, and holds `refresh` to the resolved config from the other side.
+    """
     from hub.config import HubConfig, config_digest, data_digest, fitted_digest
     fake_pbp()
     fake_ffo()
@@ -742,8 +758,35 @@ def test_refresh_names_the_data_it_pulled(fake_pbp, fake_ffo, tmp_path, capsys):
     expected = data_digest([p for p in pins if p is not None])
     assert expected != "unpinned"
     assert f"data {expected}" in out
-    assert f"cfg {config_digest(HubConfig())}" in out
+    assert f"cfg {config_digest(HubConfig())}" in out, (
+        "the printed cfg digest is not the digest of the dataclass defaults. Either `conf/` "
+        "has gained an override that diverges from one -- in which case this line is right "
+        "and `draft/backtest.py`, `models/ratings.py` and this assertion are the things to "
+        "revisit -- or `refresh` has stopped resolving the config a run resolves.")
     assert f"fitted {fitted_digest()}" in out
+
+
+def test_refresh_names_the_config_the_run_resolved(fake_pbp, fake_ffo, tmp_path, capsys,
+                                                   monkeypatch):
+    """A configuration the run actually had reaches the line, rather than the defaults.
+
+    The other half of the assertion above, and the one that fails if `refresh` goes back to
+    building its own `HubConfig()`. Since `conf/` currently overrides nothing that moves a
+    digest, a divergence has to be introduced to see the difference at all -- so it is
+    introduced at the seam a run resolves through, and the line has to follow it.
+    """
+    from hub.config import HubConfig, ModelConfig, config_digest
+    divergent = HubConfig(model=ModelConfig(conformal_alpha=0.05))
+    assert config_digest(divergent) != config_digest(HubConfig()), (
+        "the fixture no longer diverges, so this proves nothing")
+    monkeypatch.setattr(nv, "resolved_config", lambda: divergent)
+    fake_pbp()
+    fake_ffo()
+    nv.refresh(season=2025, cache=tmp_path, base=tmp_path / "store")
+    out = capsys.readouterr().out
+    assert f"cfg {config_digest(divergent)}" in out, (
+        "the provenance line named a configuration this run did not have")
+    assert f"cfg {config_digest(HubConfig())}" not in out
 
 
 def test_a_moved_archive_shows_up_in_what_refresh_prints(fake_pbp, fake_ffo, tmp_path,

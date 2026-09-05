@@ -29,8 +29,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
+from hydra import compose, initialize_config_dir
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
+
+from hub import paths
 
 
 @dataclass
@@ -143,6 +146,43 @@ class HubConfig:
 cs = ConfigStore.instance()
 cs.store(name="hub_config", node=HubConfig)
 
+# Where the overrides live. `hub.paths` is the one declaration of `ROOT` and imports nothing
+# but `pathlib`, so taking the directory from it costs nothing and keeps the eighth copy of
+# `parents[2]` from being written here.
+CONF_DIR = paths.ROOT / "conf"
+
+
+def resolved_config() -> HubConfig:
+    """The configuration a run operates under: the dataclasses with `conf/` applied.
+
+    The one thing `HubConfig()` is not. ADR-0004 says the digest folded into every model
+    version is over the *resolved* config, and a bare `HubConfig()` is the resolved config
+    only for as long as `conf/config.yaml` overrides nothing that diverges from a default --
+    which is true today (both digests are `281b7b7a`, measured 2026-09-05) and is a
+    coincidence rather than a property. The first divergent override would have a gate print
+    a model version for a model nobody ran: provenance present in the schema and absent in
+    the data, which is the defect `models/ratings.py` records from when `cfg_digest`
+    defaulted to `"default"`.
+
+    Composed through Hydra rather than by merging the YAML by hand, because "the way a run
+    resolves one" is the claim being made, and a second resolution path would be a second
+    answer to defend. `defaults` and the `hydra` block are consumed by the composer, so what
+    comes back is the structured schema and nothing else; `to_object` makes it a real
+    `HubConfig`, so a caller gets the same type either way and a type checker still sees the
+    fields rather than the `Any` a bare `DictConfig` would hand it.
+
+    Degrades to the defaults when `conf/` is absent -- an installed wheel, a partial
+    checkout -- because a missing override file means "nothing to override" and a fetch
+    that cannot print provenance is worse than one that prints the defaults it ran under.
+    A `conf/` that exists and does not compose is *not* degraded past: that is the typo
+    ADR-0004 chose structured configs to turn into a startup error, and swallowing it would
+    stamp rows with a digest for a configuration the run never had.
+    """
+    if not CONF_DIR.is_dir():
+        return HubConfig()
+    with initialize_config_dir(config_dir=str(CONF_DIR), version_base=None):
+        return cast(HubConfig, OmegaConf.to_object(compose(config_name="config")))
+
 
 # Modules whose module-level constants were *measured* rather than chosen. They are not in
 # `HubConfig` on purpose, and this is the one place that distinction is written down:
@@ -249,8 +289,8 @@ NOT_FITTED: dict[str, str] = {
                               "OPP_SD describe the *opponent* a simulated week is played "
                               "against -- a fixture for scoring two arms against each other, "
                               "not an input any published prediction can reach.",
-    "hub.season.survivor": "MIN_PROB is a floor that keeps a zero out of a log, and THIN_WEEK "
-                           "a count of games. Both are settings; the win probabilities "
+    "hub.season.survivor": "MIN_PROB is a floor that keeps a zero out of a log, and THIN_ROWS "
+                           "a count of grid rows. Both are settings; the win probabilities "
                            "themselves come from hub.models.market at run time.",
     "hub.models.weekly": "the Weekly projection. MULTIPLIER_LO/HI bound a fitted "
                          "multiplier, MIN_UNITS is a volume floor below which a per-unit "
@@ -354,10 +394,14 @@ class DataPin(Protocol):
     """What identifies one loaded source, structurally.
 
     Read-only on purpose, so `hub.fetch.nflverse.Pin` -- a frozen dataclass -- satisfies it,
-    and stated here rather than imported so this module keeps knowing nothing about the
-    filesystem. `config_digest` can be computed from an empty checkout; making it import a
-    fetch layer to do so would be the wrong shape and a circular import besides, since
-    `hub.fetch.nflverse` reads `SEASON_COMPLETED` from here.
+    and stated here rather than imported so no digest in this module has to reach a data
+    layer to be computed. Every digest here answers from its arguments alone and can be
+    computed from an empty checkout; making one import a fetch layer would be the wrong
+    shape and a circular import besides, since `hub.fetch.nflverse` reads `SEASON_COMPLETED`
+    from here. (`resolved_config` does read one file -- `conf/config.yaml`, and degrades to
+    the defaults without it -- because resolving a config is the one job here that is about
+    what is on disk. It is not on any digest's path: `config_digest` hashes the config it is
+    handed.)
     """
 
     @property
@@ -370,6 +414,25 @@ class DataPin(Protocol):
     def digest(self) -> str: ...
 
 
+def pin_fold(source: str, as_of: str | None, digest: str) -> str:
+    """What one pin hashes as: content, folded with the source name and the as-of.
+
+    The one statement of it. `nflverse.pin_digest` builds a pin's own digest from a frame,
+    and `data_digest` below folds a set of pins into a run's; both hash this exact form, and
+    until now each wrote it out with a comment saying the other matched. A comment is not a
+    mechanism -- the two would have gone on agreeing right up until one of them was edited,
+    and the failure would be a digest that no longer named the thing it was compared against.
+
+    All three parts, and only these three. Hashing the labels alone would be invariant to
+    exactly the drift the pins exist to catch -- two runs at one as-of that fetched different
+    bytes would agree. Hashing content alone would make an archive that has not moved between
+    two pins indistinguishable, and a pin is a claim about a date and a source as well as
+    about rows. `pinned_at` is deliberately absent: it is a wall-clock stamp that moves on
+    every refetch, so folding it in would report drift on rows that had not changed.
+    """
+    return f"{source}\n{as_of or ''}\n{digest}"
+
+
 # What `data_digest` answers for a run that pinned nothing. Not a hash: sixteen modules
 # besides `hub.fetch.nflverse` itself still `import nflreadpy` and reach the archive directly
 # (counted 2026-09-05) -- `models/panel.py` at eight call sites on its own -- so the
@@ -377,8 +440,18 @@ class DataPin(Protocol):
 # docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md routes them. A
 # plausible-looking eight hex characters for that case would be provenance present in the
 # schema and absent in the data, which is the defect `models/ratings.py` records when
-# `cfg_digest` defaulted to "default" for every run under every configuration. Eight
-# characters, so it lines up where the three are printed together.
+# `cfg_digest` defaulted to "default" for every run under every configuration.
+#
+# So it shares a *width* with a digest and nothing else, and that is the whole of the answer
+# to "should the sentinel and an eight-character digest share a shape". Eight characters so
+# the three line up where they are printed together; not eight *hex* characters, so a reader
+# who did not write this can tell which is which without being told -- `unpinned` is not a
+# hexadecimal number, and `test_config.py` holds that line rather than trusting the word to
+# stay unhexish through a rename. The shared return type is the same trade: a caller printing
+# provenance gets one column of strings and never has to branch, and the only thing that
+# would make a `None` better here is a caller that wants to *ask*, which none does -- the
+# three digests are printed and compared, and a comparison against this sentinel means
+# "these runs pinned nothing", which is true and is what it says.
 UNPINNED = "unpinned"
 
 
@@ -406,14 +479,12 @@ def data_digest(pins: Iterable[DataPin]) -> str:
     So a gate prints both, and a moved archive shows up as a changed *data* digest beside an
     unchanged model version -- which is the distinction a reader needs to make.
 
-    Content, source and as-of are folded, matching `nflverse.pin_digest`: a pin is a claim
-    about a date and a source as well as about rows. `pinned_at` is not, because it is a
-    wall-clock stamp that moves on every refetch -- folding it in would report drift on rows
-    that had not changed. Sorted and de-duplicated, so the answer does not depend on which
-    source a gate happened to load first, or on one archive being reached through two call
-    sites.
+    Each pin folds through `pin_fold`, which is the same call `nflverse.pin_digest` makes and
+    argues there for what goes in and what stays out. Sorted and de-duplicated, so the answer
+    does not depend on which source a gate happened to load first, or on one archive being
+    reached through two call sites.
     """
-    rows = sorted({f"{p.source}\n{p.as_of or ''}\n{p.digest}" for p in pins})
+    rows = sorted({pin_fold(p.source, p.as_of, p.digest) for p in pins})
     if not rows:
         return UNPINNED
     return hashlib.sha256("\n".join(rows).encode()).hexdigest()[:8]

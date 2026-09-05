@@ -1,11 +1,15 @@
 """The config exists to make model versions honest. These tests pin that."""
 from dataclasses import dataclass
 
+import pytest
+
+from hub import config
 from hub.config import (
     FITTED_EXTRA,
     FITTED_MODULES,
     NOT_FITTED,
     NOT_IN_DIGEST,
+    UNPINNED,
     DraftConfig,
     HubConfig,
     PollConfig,
@@ -438,6 +442,110 @@ def test_a_run_that_pinned_nothing_says_so_rather_than_hashing_air():
 def test_the_data_digest_is_the_length_the_others_are():
     """A gate prints the three side by side."""
     assert len(data_digest([_StubPin("ff_opportunity", None, "aaaaaaaa")])) == 8
+
+
+def test_the_sentinel_shares_a_width_with_a_digest_and_nothing_else():
+    """The sentinel and an eight-character digest occupy one column and one return type, so
+    the only thing standing between them is that one of them is not a number.
+
+    Width is on purpose -- three digests line up where they are printed. Hex would not be:
+    an unpinned run would be reporting provenance it does not have, which is the
+    `cfg_digest = "default"` defect one module over. That leaves the difference resting on a
+    word, and a word survives a rename only if something is checking, so this checks. A
+    sentinel that came back `deadbeef` would pass every other test in this file.
+    """
+    assert len(UNPINNED) == len(data_digest([_StubPin("ff_opportunity", None, "aaaaaaaa")]))
+    with pytest.raises(ValueError):
+        int(UNPINNED, 16)
+
+
+# --- one statement of the pin fold -------------------------------------------
+
+def test_one_pin_folds_the_way_a_set_of_them_does():
+    """`pin_fold` is the whole of the form, and both levels reach it.
+
+    `nflverse.pin_digest` hashes one pin's content with its labels; `data_digest` hashes a
+    set of already-digested pins with theirs. They were two spellings of one form with a
+    comment on each saying the other matched -- which is a claim, not a mechanism. Hashing
+    the fold by hand here would put a third spelling in the tree, so what is asserted is what
+    the fold has to *do*: all three parts load-bearing, and a null as-of not silently equal
+    to some other as-of.
+    """
+    from hub.config import pin_fold
+    base = pin_fold("ff_opportunity", "2026-09-04", "aaaaaaaa")
+    assert base != pin_fold("player_stats", "2026-09-04", "aaaaaaaa"), "source is not folded"
+    assert base != pin_fold("ff_opportunity", "2026-08-01", "aaaaaaaa"), "as-of is not folded"
+    assert base != pin_fold("ff_opportunity", "2026-09-04", "bbbbbbbb"), "content is not folded"
+    assert base != pin_fold("ff_opportunity", None, "aaaaaaaa")
+
+
+def test_the_fetch_layer_folds_a_pin_through_the_same_call():
+    """The reason the fold moved into this module: `hub.config` may not import a fetch layer,
+    so the shared form has to live at the bottom and be reached upward."""
+    import inspect
+
+    from hub.fetch import nflverse
+    assert "pin_fold(" in inspect.getsource(nflverse.pin_digest), (
+        "nflverse.pin_digest has gone back to spelling the fold out for itself")
+
+
+# --- the config a run resolves, as against the one the dataclasses default to -
+
+
+def test_the_resolved_config_reads_the_override_tree(tmp_path, monkeypatch):
+    """`resolved_config` composes `conf/`, so an override there reaches the digest.
+
+    The claim that makes it worth having: a run's provenance names the configuration the run
+    had. Asserted against a tree written here rather than against the repo's own `conf/`,
+    which overrides nothing that diverges from a default -- so pointing at the real one would
+    be a test that passes equally well against `return HubConfig()`.
+    """
+    (tmp_path / "config.yaml").write_text(
+        "defaults:\n  - hub_config\n  - _self_\n\nroster:\n  wr: 4\n")
+    monkeypatch.setattr(config, "CONF_DIR", tmp_path)
+    got = config.resolved_config()
+    assert isinstance(got, HubConfig), "a caller gets the same type either way"
+    assert got.roster.wr == 4
+    assert config_digest(got) != config_digest(HubConfig()), (
+        "an override that changes the roster shape did not move the model version")
+
+
+def test_an_absent_conf_tree_degrades_to_the_defaults(tmp_path, monkeypatch):
+    """Graceful degradation: an installed wheel has no `conf/`, and a fetch that cannot
+    print provenance is worse than one that prints the defaults it ran under."""
+    monkeypatch.setattr(config, "CONF_DIR", tmp_path / "absent")
+    assert config.resolved_config() == HubConfig()
+
+
+def test_a_conf_tree_that_does_not_compose_is_not_degraded_past(tmp_path, monkeypatch):
+    """The other half, and the one worth being deliberate about. ADR-0004 chose structured
+    configs so a typo in `conf/` is a startup error; swallowing one here would put it back to
+    surfacing mid-Sunday, and would stamp rows with a digest for a configuration no run had.
+    """
+    from hydra.errors import ConfigCompositionException
+    (tmp_path / "config.yaml").write_text(
+        "defaults:\n  - hub_config\n  - _self_\n\nroster:\n  wrr: 4\n")
+    monkeypatch.setattr(config, "CONF_DIR", tmp_path)
+    # The type and the message, not a bare `Exception`: "something went wrong" is satisfied
+    # by a broken import or a stale global, and would still pass against a function that had
+    # stopped composing anything at all.
+    with pytest.raises(ConfigCompositionException, match="wrr"):
+        config.resolved_config()
+
+
+def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
+    """Not a property -- a measurement, and the one several other checks lean on.
+
+    `draft/backtest.py` and `models/ratings.py` stamp rows through `resolved_config`, and
+    `test_fetch_nflverse.py` checks the provenance line against `config_digest(HubConfig())`
+    on the strength of these two agreeing. They agree because `conf/config.yaml` sets
+    `teams`, `slot` and `wr` to the values the dataclasses already default to. The day an
+    override diverges, this is the test that says which of the two moved and that the answer
+    is `conf/` rather than a bug -- and `281b7b7a` is what the docs and every committed
+    artifact record for the defaults.
+    """
+    assert config_digest(HubConfig()) == "281b7b7a"
+    assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 
 def test_a_real_pin_is_accepted():

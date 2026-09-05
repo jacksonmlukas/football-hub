@@ -37,7 +37,7 @@ from typing import Any
 import polars as pl
 
 from hub import store
-from hub.config import SEASON_COMPLETED, HubConfig, provenance
+from hub.config import SEASON_COMPLETED, pin_fold, provenance, resolved_config
 from hub.contracts import (
     FF_OPPORTUNITY,
     FF_RANKINGS,
@@ -320,16 +320,16 @@ def content_digest(df: pl.DataFrame) -> str:
 def pin_digest(source: str, as_of: str | None, df: pl.DataFrame) -> str:
     """The published digest: content, folded with the source name and the as-of.
 
-    Both halves. Hashing the labels alone would be invariant to exactly the drift this
-    exists to catch -- two runs at one as-of that fetched different bytes would agree.
-    Hashing content alone would make one archive that has not moved between two pins
-    indistinguishable, and a pin is a claim about a date as well as about rows.
+    The fold itself is `hub.config.pin_fold`, which argues there for what goes into it and
+    what stays out. It lives there rather than here because `data_digest` folds a *set* of
+    these the same way and `hub.config` may not import a fetch layer; two statements of one
+    form, with a comment on each saying the other matched, is what this call replaced.
 
     Eight hex characters, the length `config_digest` and `fitted_digest` already use, since
     a gate output prints the two side by side.
     """
     return hashlib.sha256(
-        f"{source}\n{as_of or ''}\n{content_digest(df)}".encode()).hexdigest()[:8]
+        pin_fold(source, as_of, content_digest(df)).encode()).hexdigest()[:8]
 
 
 def _as_of_date(as_of: str | date | None) -> date | None:
@@ -579,6 +579,13 @@ def refresh(season: int = SEASON_COMPLETED, cache: Path | None = None,
     Three digests, not one, and `hub.config.data_digest` argues at length why the data digest
     sits beside the model version rather than inside it: this line moves on a Tuesday refetch,
     and `cfg` must not.
+
+    The `cfg` half comes from `resolved_config()` and not from a `HubConfig()` built here. A
+    line that names a configuration has to name the one the run had; constructing the
+    defaults instead is right only while `conf/` overrides nothing that diverges from one,
+    and that is a coincidence this line would print straight past. The two agree today, so
+    the difference is latent -- which is why the test on this line checks it against the
+    defaults rather than against this call, and goes red the day they part.
     """
     print(f"  nflverse refresh: season {season}")
     total_rows = 0
@@ -595,7 +602,7 @@ def refresh(season: int = SEASON_COMPLETED, cache: Path | None = None,
         print(f"    {label:<16} {rows:>7,} rows | {len(df.columns):>3} cols | "
               f"{n_weeks} week partitions")
     print(f"  wrote {total_rows:,} rows through hub.store")
-    p = provenance(HubConfig(), pins)
+    p = provenance(resolved_config(), pins)
     print(f"  cfg {p['cfg']} | fitted {p['fitted']} | data {p['data']}")
     return 0
 

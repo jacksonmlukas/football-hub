@@ -45,7 +45,13 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from hub.config import DraftConfig, HubConfig, RosterConfig, config_digest, drafted_positions
+from hub.config import (
+    DraftConfig,
+    RosterConfig,
+    config_digest,
+    drafted_positions,
+    resolved_config,
+)
 from hub.draft.board import board_as_of
 from hub.draft.optimize import (
     DEFAULT_ROUNDS,
@@ -517,8 +523,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"    - {line}")
 
     if a.out:
+        # `resolved_config()`, not `HubConfig()`: ADR-0007 keeps this file so a later reader
+        # can tell which configuration produced these rows, and the defaults are that only
+        # while `conf/` overrides nothing that diverges from one. Same call as the fetch
+        # layer's provenance line and `ratings.live_config`, so a run's three stamps cannot
+        # disagree about what a run was.
         stamped = paired.with_columns(
-            pl.lit(config_digest(HubConfig())).alias("cfg_digest"))
+            pl.lit(config_digest(resolved_config())).alias("cfg_digest"))
         stamped.write_parquet(a.out)
         print(f"\n  wrote {paired.height} paired rows to {a.out}")
     return 0

@@ -30,11 +30,6 @@ from hub.config import SEASON_AHEAD, config_digest
 from hub.models.base import FitSpec, validate_predictions
 from hub.models.market import MarketBaseline
 
-# `forecastable` lives in `hub.schedule` now, which owns `kickoff` and `result` -- and which
-# `hub.season.survivor` reads the same rule from. A survivor plan that spends teams on weeks
-# already over has the same defect this rule fixes here, and the two must not be able to
-# disagree about which games are still ahead.
-
 
 def target_week(games: pl.DataFrame, at: datetime | None = None) -> int:
     """The first week still forecastable, or the last week if none is.
@@ -60,9 +55,17 @@ def live_config():
     """The configuration this run is operating under.
 
     Its own function so a test can substitute one, and so the digest has a single source.
+
+    It used to answer with a bare `HubConfig()`, which is the dataclass defaults and not what
+    a run operates under -- the name said "live" and the body said "as shipped". They agree
+    today only because nothing in `conf/` diverges from a default; the first one that did
+    would have stamped every prediction row with a digest for a configuration nobody ran,
+    which is the same shape as the `cfg_digest = "default"` defect this module's `fit`
+    records two screens down. `hub.config.resolved_config` is now the one answer, here and
+    in the fetch layer's provenance line.
     """
-    from hub.config import HubConfig
-    return HubConfig()
+    from hub.config import resolved_config
+    return resolved_config()
 
 
 def _with_committed(part: pl.DataFrame, season: int, week: int, name: str,
