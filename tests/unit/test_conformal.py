@@ -212,3 +212,51 @@ def test_a_store_with_no_preds_at_all_is_empty_not_a_catalog_error(monkeypatch):
     monkeypatch.setattr(store, "tables", lambda *a, **k: set())
     got = conformal.load_scored("m", schedules=_sched([("g1", 7.0)]))
     assert got.is_empty() and got.columns == ["week", "margin_mean", "margin_actual"]
+
+
+# --- against the store's own output, not a hand-built frame (issue #25) ------
+#
+# Every test above hands `rolling_coverage` a frame carrying a numeric `week`, which is what
+# `PREDICTION_SCHEMA` declares. The store returned the Hive partition key instead -- the
+# zero-padded string `"01"` -- so `pl.col("week").is_in([1, 2])` compared a string column
+# against integers and this path had never once been run on real data. It exits early today
+# for want of calibration points, which is why the divergence was latent rather than loud.
+
+def _store_with_predictions(base, n_weeks=12, per_week=16, seed=0):
+    """A real store, written the way `ratings.fit` writes one: one partition per week."""
+    import datetime as dt
+
+    from hub import store
+    rng = np.random.default_rng(seed)
+    for w in range(1, n_weeks + 1):
+        mean = rng.normal(0.0, 6.0, per_week)
+        store.write(
+            pl.DataFrame({
+                "game_id": [f"2026_{w:02d}_g{i}" for i in range(per_week)],
+                "league": ["nfl"] * per_week,
+                "season": pl.Series([2026] * per_week, dtype=pl.Int32),
+                "week": pl.Series([w] * per_week, dtype=pl.Int32),
+                "home_win_prob": [0.5] * per_week, "margin_mean": mean,
+                "margin_lo": mean - 17.0, "margin_hi": mean + 17.0,
+                "model": ["market_baseline"] * per_week, "version": ["v1"] * per_week,
+                "fit_through_week": pl.Series([w - 1] * per_week, dtype=pl.Int32),
+                "predicted_at": [dt.datetime(2026, 9, 1)] * per_week}),
+            "preds", "nfl", 2026, w, base=base)
+    return base
+
+
+def test_the_rolling_window_runs_on_what_the_store_actually_returns(tmp_path):
+    """The end-to-end shape: store -> load_scored -> rolling_coverage. Nothing hand-built,
+    so a week that arrives as a padded string fails here rather than in October."""
+    base = _store_with_predictions(tmp_path / "processed")
+    rng = np.random.default_rng(1)
+    sched = pl.DataFrame(
+        {"game_id": [f"2026_{w:02d}_g{i}" for w in range(1, 13) for i in range(16)],
+         "result": rng.normal(0.0, 13.0, 12 * 16)},
+        schema={"game_id": pl.Utf8, "result": pl.Float64})
+    scored = conformal.load_scored("market_baseline", base=base, schedules=sched)
+    assert scored.schema["week"].is_numeric(), "the store must hand back a numeric week"
+
+    got = conformal.rolling_coverage(scored, alpha=0.2, min_calibration=32)
+    assert got["n_weeks_scored"] > 0
+    assert got["first_scored_week"] > 1, "the first week has no earlier week to calibrate on"

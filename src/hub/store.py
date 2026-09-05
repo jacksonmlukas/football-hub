@@ -136,6 +136,36 @@ def tables(base: Path | None = None) -> set[str]:
     return {d.name for d in root.iterdir() if is_table(d)}
 
 
+# The dtypes the partition keys are written with, so a read hands them back that way.
+#
+# Hive partitioning infers league/season/week from the *path*, and those inferred columns
+# shadow the ones actually written: `week`, declared `Int32` in `PREDICTION_SCHEMA` and
+# validated against it on the way in, came back as the zero-padded string `"01"`, and
+# `season` as `Int64`. A schema that promises a type and a reader that believes it is the
+# whole reason the schema is there -- `conformal.rolling_coverage` and `eval.compare` both
+# treat week numerically and would have raised on real store output, latent only because
+# each exits early for an unrelated reason today.
+#
+# Declared here rather than imported from `hub.models.base`: `LAYOUT` writes these keys and
+# `week_key` pads them, so the round trip is this module's, and storage should not depend on
+# the model layer to describe its own paths. `tests/unit/test_store.py` holds the two
+# declarations against each other, which is where they are allowed to meet.
+PARTITION_TYPES: dict[str, pl.DataType] = {
+    "league": pl.Utf8(), "season": pl.Int32(), "week": pl.Int32(),
+}
+
+
+def _as_written(df: pl.DataFrame) -> pl.DataFrame:
+    """Restore the partition keys to the dtypes they were written with.
+
+    Only the keys, and only the ones present: every other column comes off the parquet with
+    its own dtype intact, and casting more would be this module inventing a schema for data
+    it does not declare.
+    """
+    return df.with_columns(pl.col(c).cast(t) for c, t in PARTITION_TYPES.items()
+                           if c in df.columns)
+
+
 def week_key(week: int) -> str:
     """The partition value for a week, zero-padded, as `LAYOUT` writes it.
 
@@ -262,6 +292,11 @@ def predictions(league: str | None = None, season: int | None = None,
     empty week -- which is the footgun `week_key`'s own docstring describes and which this
     keeps inside the module.
 
+    **Typed as `PREDICTION_SCHEMA` declares**, not as Hive infers. The partition keys are read
+    off the path, so `week` came back as the padded string `"01"` and `season` as `Int64` --
+    and the two consumers that treat week numerically would have raised the first week either
+    had enough data to do its job. `_as_written` puts them back.
+
     An empty frame when the store holds no predictions at all: a fresh clone has no `preds`
     view, and querying one raises `CatalogException` rather than returning nothing.
 
@@ -285,7 +320,7 @@ def predictions(league: str | None = None, season: int | None = None,
         clauses.append("week = ?")
         params.append(week_key(week))
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    return sql(LATEST_PREDICTIONS.format(where=where), params, base=base)
+    return _as_written(sql(LATEST_PREDICTIONS.format(where=where), params, base=base))
 
 
 def latest_week(season: int, league: str | None = None,

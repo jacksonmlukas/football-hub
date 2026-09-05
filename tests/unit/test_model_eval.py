@@ -149,3 +149,55 @@ def test_an_empty_holdout_window_is_an_error():
     b = _preds([0.6] * 5, [1] * 5, week=1, model="b")
     got = me.compare(a, b, split="temporal", holdout=0.5)
     assert got["n_scored"] == 5, "a single week cannot be split; score it rather than fail"
+
+
+# --- against the store's own output, not a hand-built frame (issue #25) ------
+#
+# `_preds` above builds `week` as the `Int32` that `PREDICTION_SCHEMA` declares, so every
+# temporal-split test ran on a frame the store never produces. The Hive partition key
+# shadowed the written column and `week` arrived as `"01"`, which `_holdout_weeks` turns
+# into integers and `pl.col("week").is_in(...)` then compares against a string column. It
+# exits early today on no scored outcomes, which is why the divergence stayed latent.
+
+def _write_predictions(base, model, probs, week, season=2026):
+    import datetime as dt
+
+    from hub import store
+    n = len(probs)
+    store.write(
+        pl.DataFrame({
+            "game_id": [f"{season}_{week:02d}_g{i}" for i in range(n)],
+            "league": ["nfl"] * n,
+            "season": pl.Series([season] * n, dtype=pl.Int32),
+            "week": pl.Series([week] * n, dtype=pl.Int32),
+            "home_win_prob": list(probs), "margin_mean": [0.0] * n,
+            "margin_lo": [-17.0] * n, "margin_hi": [17.0] * n,
+            "model": [model] * n, "version": ["v1"] * n,
+            "fit_through_week": pl.Series([week - 1] * n, dtype=pl.Int32),
+            "predicted_at": [dt.datetime(2026, 9, 1)] * n}),
+        "preds", "nfl", season, week, base=base, name=model)
+
+
+def test_a_temporal_split_works_on_predictions_read_from_the_store(tmp_path):
+    """The path a real `--compare` takes: store -> load_predictions -> compare. A padded
+    string week makes the holdout filter compare a string column against integers."""
+    base = tmp_path / "processed"
+    for w in range(1, 11):
+        _write_predictions(base, "a", [0.6] * 8, w)
+        _write_predictions(base, "b", [0.55] * 8, w)
+
+    from hub import store
+    # Read through `store.predictions`, not `me.load_predictions`. The store records what was
+    # predicted and never what happened -- `conformal.load_scored` says so and joins the
+    # result on -- so `load_predictions` raises `NoOverlap` on every real store it is given
+    # and cannot reach `compare` at all. That is its own defect; what this test needs is the
+    # frame the store hands back, which is the same frame either way.
+    a = store.predictions(model="a", base=base)
+    assert a.schema["week"].is_numeric(), "the store must hand back a numeric week"
+
+    b = store.predictions(model="b", base=base)
+    won = pl.DataFrame({"game_id": a["game_id"].to_list(), "home_won": [1] * a.height})
+    got = me.compare(a.join(won, on="game_id"), b.join(won, on="game_id"),
+                     split="temporal", holdout=0.3)
+    assert got["holdout_weeks"] == [8, 9, 10]
+    assert got["n_scored"] == 24, "the last 3 of 10 weeks, 8 games each"

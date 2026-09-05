@@ -552,3 +552,50 @@ def test_latest_week_is_none_when_the_season_has_no_predictions(base):
     store.write(_versioned("g1", "v1", dt.datetime(2025, 9, 1)), "preds", "nfl", 2025, 1,
                 base=base, name="a")
     assert store.latest_week(2026, base=base) is None
+
+
+# --- what a reader gets back is what the schema declared (issue #25) ---------
+#
+# Hive partitioning infers league/season/week from the *path*, and those inferred columns
+# shadow the written ones -- so `week`, declared `Int32` and validated on the way in, came
+# back as the zero-padded string `"01"` and `season` as `Int64`. Both consumers that treat
+# week numerically (`conformal.rolling_coverage`, `eval.compare`) were tested only against
+# hand-built frames carrying the declared types, so neither had ever met the store's own
+# output. A schema that promises a type and a reader that believes it is the whole point.
+
+def _one_prediction(week=1, season=2026):
+    import datetime as dt
+    return pl.DataFrame(
+        {"game_id": [f"{season}_{week:02d}_LV_KC"], "league": ["nfl"],
+         "season": pl.Series([season], dtype=pl.Int32),
+         "week": pl.Series([week], dtype=pl.Int32),
+         "home_win_prob": [0.6], "margin_mean": [3.0], "margin_lo": [-14.0],
+         "margin_hi": [20.0], "model": ["market_baseline"], "version": ["v1"],
+         "fit_through_week": pl.Series([week - 1], dtype=pl.Int32),
+         "predicted_at": [dt.datetime(2026, 9, 1)]})
+
+
+def test_a_prediction_reads_back_with_the_dtypes_it_was_written_with(tmp_path):
+    """Against `PREDICTION_SCHEMA` itself rather than a repeated literal, so the assertion
+    cannot drift away from the declaration it exists to check."""
+    from hub.models.base import PREDICTION_SCHEMA
+    store.write(_one_prediction(), "preds", "nfl", 2026, 1, base=tmp_path)
+    got = store.predictions(season=2026, base=tmp_path)
+    diverged = {c: (PREDICTION_SCHEMA[c], got.schema[c]) for c in got.columns
+                if c in PREDICTION_SCHEMA and got.schema[c] != PREDICTION_SCHEMA[c]}
+    assert not diverged, f"declared vs returned: {diverged}"
+
+
+def test_the_week_read_back_is_the_number_not_the_padded_key(tmp_path):
+    """`week_key` pads for the path. A caller filtering `week > 4` on `"01"` is doing string
+    comparison, and a caller passing the int to `is_in` raises."""
+    store.write(_one_prediction(week=9), "preds", "nfl", 2026, 9, base=tmp_path)
+    got = store.predictions(season=2026, base=tmp_path)
+    assert got["week"].to_list() == [9]
+    assert got.filter(pl.col("week").is_in([9])).height == 1
+
+
+def test_reading_a_narrowed_week_still_returns_every_declared_column(tmp_path):
+    store.write(_one_prediction(week=2), "preds", "nfl", 2026, 2, base=tmp_path)
+    got = store.predictions(season=2026, week=2, base=tmp_path)
+    assert got.height == 1 and got["season"].to_list() == [2026]
