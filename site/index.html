@@ -162,8 +162,118 @@ function reliabilitySVG(bins) {
   </svg>`;
 }
 
+// The track record panel's body.
+//
+// Split out of `render` because it has two payload shapes to serve and neither can be
+// exercised in a browser without publishing an artifact first: `publish.track_record`
+// scores each season on its own curve, and the committed `track_record.json` will not carry
+// a `seasons` key until the next slate runs. A panel that needed the new key to render
+// would go blank on the deploy that shipped it.
+function trackRecordBody(tr) {
+  const pre = tr.n_preregistered ?? 0;
+  // Newest season first, by contract with the writer: `tr.log_loss`, `tr.brier` and
+  // `tr.bins` are that season's numbers rather than a pool. Pooling 2025's sixteen scored
+  // games with 2026's reports a curve neither season was measured at -- the 2025 model, its
+  // fitted parameters and the betting market it was priced against are not the 2026 ones,
+  // and a bin holding nine games from each hides that it is holding two answers.
+  const seasons = Array.isArray(tr.seasons) ? tr.seasons : [];
+  const newest = seasons[0] ?? null;
+  const chart = reliabilitySVG(tr.bins ?? []);
+
+  // The framing, which decides how everything under it is read and is the whole of what
+  // this panel withholds. `n_preregistered` stays 0 until a prediction's commit predates
+  // kickoff, so it is the branch every artifact committed so far lands in; withholding the
+  // numbers here as well -- as this did for one revision -- meant showing nobody a
+  // calibration at all, while the branch that had them was code no artifact could reach.
+  // Refusing to present a backtest *as a record* is the honest claim and this sentence is
+  // it: the numbers below are labelled by it rather than hidden behind it.
+  //
+  // Both branches share this line, and that is a deliberate change to the branch nobody
+  // asked about: the pre-registered count used to be a `{ k, v }` row inside the metrics
+  // table, and lifting it out is what lets one table serve both framings instead of two
+  // tables differing by a row. Recorded here so the next reader does not read it as drift.
+  const lede = pre === 0
+    ? `<p class="empty">${esc(tr.note ?? "")}</p>` +
+      (tr.n_scored ? `<p class="empty">${esc(tr.n_scored)} predictions scored
+         retrospectively. That is a backtest, not a record, and it is not shown as one.</p>`
+                   : "")
+    : `<p class="legend">${esc(pre)} pre-registered, ${esc(tr.n_scored ?? 0)} scored.</p>`;
+
+  if (!newest) {
+    // An artifact from before the split. Its numbers are pooled and nothing here can unpool
+    // them, so they are shown as they are rather than relabelled with a season they were
+    // never scored by.
+    return lede + table([
+      { label: "metric", get: r => r.k },
+      { label: "value", get: r => r.v },
+    ], [
+      { k: "log loss", v: fmt(tr.log_loss, 4) },
+      { k: "Brier", v: fmt(tr.brier, 4) },
+    ]) + chart;
+  }
+  // Whose curve the diagram is. `publish.track_record` groups rows carrying no season under
+  // `season: null` and orders that group last, so it is the *newest* group only when every
+  // scored row is undated -- the shape `preds_wk18.json` had before the season joined the
+  // filename. "Calibration for ." is not a sentence, and a caption with a hole in it is how
+  // a reader learns to distrust the numbers beside it.
+  const whose = newest.season == null ? "the predictions with an unrecorded season"
+                                      : String(newest.season);
+  return lede + table([
+    { label: "season", get: r => r.season ?? "unrecorded" },
+    { label: "scored", get: r => r.n_scored },
+    { label: "log loss", get: r => fmt(r.log_loss, 4) },
+    { label: "Brier", get: r => fmt(r.brier, 4) },
+  ], seasons) + chart +
+    // The diagram draws one group's bins. Unlabelled, under a table of several seasons, it
+    // reads as the pool -- which is the reading the split exists to prevent.
+    (chart ? `<p class="legend">Calibration for ${esc(whose)}. Each season is
+       scored on its own curve.</p>` : "");
+}
+
 function findArt(man, name) {
   return (man?.artifacts ?? []).find(a => a.name === name) ?? null;
+}
+
+// The manifest's entry for this week's predictions -- name, stale flag and reason in one
+// lookup, because they are one fact.
+//
+// Read, never rebuilt. `publish.preds_name` owns the spelling and `store.week_key` owns the
+// zero-pad inside it; this page can import neither, so building the name here kept a second
+// copy of both rules in a language that cannot be held in step with the first. It had
+// already drifted: `manifest.json` listed `preds_wk01` beside a committed
+// `preds_2026_wk01.json`, so `findArt` matched nothing and the slate lost its stale and
+// reason reporting with no error anywhere -- the file still loaded, because the *other*
+// copy of the rule happened to be the right one. There is no fallback that spells a name
+// this page could not read: a guessed name fetches nothing and reports the 404 as a week
+// that was never published, which is a lie about the record.
+//
+// No week argument, deliberately. `publish.artifacts` emits exactly one `preds_`-prefixed
+// entry per manifest, so there is nothing here to disambiguate; if it ever emitted several,
+// the rule for choosing between them would be the writer's to state, and a page picking one
+// on its own would be guessing again.
+function predsArt(man) {
+  return (man?.artifacts ?? []).find(a => String(a?.name ?? "").startsWith("preds_")) ?? null;
+}
+
+// The published weeks a reader can reach other than the one on screen.
+//
+// The manifest describes the week it was written for and nothing else, so an older artifact
+// is not discoverable from this page at all: `preds_2025_wk18.json` is committed, is the
+// sixteen games the track record is scored from, and until now no reader could open it --
+// issue #23 asks that the site render both. These are names the writer wrote, copied once;
+// copying `preds_name`'s *output* is not the same as keeping a second copy of `preds_name`,
+// and a name that stops resolving is a broken link rather than a silently wrong fetch.
+// `tests/contracts/test_dashboard_escapes.py` pins each one to a file that is committed.
+// When `publish` starts listing what it has published, this list goes.
+const ARCHIVE = [{ name: "preds_2025_wk18", label: "2025 week 18" }];
+
+function otherWeeks(man, shown) {
+  // The current week's label is the manifest's claim about it, which is all there is before
+  // its artifact has been fetched. The legend corrects it from the artifact on arrival.
+  const art = predsArt(man);
+  const current = art
+    ? [{ name: art.name, label: `${man?.season ?? "?"} week ${man?.week ?? "?"}` }] : [];
+  return [...current, ...ARCHIVE].filter(w => w.name !== shown);
 }
 
 // ESPN to nflverse, and the direction matters. Compared against a live scoreboard and a
@@ -182,29 +292,65 @@ const teamKey = t => TEAM_ALIAS[t] ?? t;
 // captioned with when they were locked, the live columns are shaded and captioned with
 // how old the scores are, and a game with no live match says so rather than showing a
 // blank that could be read as 0-0.
-// Predictions are fetched exactly once per page load and cached here. The poll below must
-// not be able to replace them even by accident: making the freeze structural rather than a
-// convention is the point of 4.3, and a re-fetch on a timer is precisely how a "frozen"
-// number quietly starts moving.
-let frozenPreds = null;
+// Predictions are fetched at most once per artifact per page load and kept here. The poll
+// below must not be able to replace them even by accident: making the freeze structural
+// rather than a convention is the point of 4.3, and a re-fetch on a timer is precisely how
+// a "frozen" number quietly starts moving. Keyed by the artifact's own name, so that
+// reading an archived week cannot disturb the current one and the key always names the
+// artifact that was actually served.
+const frozenPreds = new Map();
 
-async function renderSlate(man, wk) {
-  // Season and week. The artifact was named by week alone, so 2026 week 18 would have
-  // overwritten the 2025 week 18 file the track record is scored from.
-  const key = `preds_${man?.season ?? ""}_wk${String(wk).padStart(2, "0")}`;
-  if (!frozenPreds) frozenPreds = { key, data: await load(key) };
-  const preds = frozenPreds.key === key ? frozenPreds.data : await load(key);
-  const pArt = findArt(man, key);
+async function frozen(key) {
+  // The promise rather than its result: filling the map only after the await leaves a
+  // window in which a second caller fetches the same artifact again, and "fetched once" is
+  // the property this is for.
+  if (!frozenPreds.has(key)) frozenPreds.set(key, load(key));
+  return frozenPreds.get(key);
+}
+
+// The archived week a reader asked for, and the manifest the slate last rendered against.
+// Both live out here because the link that switches weeks is handled by delegation below:
+// every panel is rebuilt through innerHTML, so a listener bound to the link itself would
+// not survive the next render.
+let viewing = null;
+let slateMan = null;
+
+async function renderSlate(man) {
+  slateMan = man;
+  // The artifact this week was published as, named by whoever wrote it. See `predsArt`.
+  const pArt = predsArt(man);
+  const key = viewing ?? pArt?.name ?? null;
+  const preds = key ? await frozen(key) : null;
+  // The manifest describes the week it published and not an archived one, so its staleness
+  // and its reason belong to the panel only while that is what the panel is showing.
+  const art = viewing ? null : pArt;
+
+  // The other published weeks, as links: issue #23 asks the site to render both, and the
+  // only week reachable until now was whichever one the manifest happened to name.
+  const links = otherWeeks(man, key)
+    .map(w => `<a href="#" data-preds="${esc(w.name)}">${esc(w.label)}</a>`).join(", ");
+  const also = links ? `<p class="legend">Also published: ${links}</p>` : "";
 
   if (!preds?.rows?.length) {
     panel("p-slate", {
       age: "",
-      warn: pArt?.reason ? `No slate: ${pArt.reason}` : "No predictions published yet.",
+      warn: art?.reason ? `No slate: ${art.reason}`
+          : viewing ? "That published week could not be loaded."
+          : key ? "No predictions published yet."
+                : "No slate: the manifest names no published week.",
+      // The links survive the empty case on purpose: a week that could not be published is
+      // exactly when a reader wants the one that was.
+      html: also,
     });
     return;
   }
 
-  const live = await load("live");
+  // Scores are joined only for the week the manifest names. The live map is keyed by the
+  // matchup alone, and three of 2026 week 1's fixtures repeat 2025 week 18's -- so reaching
+  // the older week put tonight's score beside a prediction made for a different season's
+  // game, under a column captioned "live". An archived week gets no overlay at all rather
+  // than a plausible wrong one.
+  const live = viewing ? null : await load("live");
   const byGame = new Map();
   for (const g of live?.rows ?? []) {
     byGame.set(`${teamKey(g.away)}_${teamKey(g.home)}`, g);
@@ -217,11 +363,28 @@ async function renderSlate(man, wk) {
   const matched = rows.filter(r => r.live).length;
 
   const lockedAt = preds.rows[0]?.predicted_at ?? preds.generated_at;
+  const liveAge = viewing ? "not shown for a week that is over"
+                : live ? ago(live.generated_at) : "unavailable";
+  // Which week this slate is, stated in the panel rather than only in the page subtitle.
+  // `site/data/` holds two published weeks -- 2025 week 18 and 2026 week 01 -- and a panel
+  // headed "Weekly slate" showing "week 18" does not say which of them is on screen; the
+  // subtitle is a page-level fact a reader scanning one panel need never have seen.
+  //
+  // Off the artifact and nothing else. The manifest names the week it was *written* for,
+  // which is precisely the one week that can disagree with the rows on screen -- reading it
+  // as a fallback would reintroduce the skew this panel exists to make visible, and an
+  // archived week is not the manifest's week at all. An artifact that does not say which
+  // week it is says so rather than borrowing an answer.
+  const shownSeason = preds.season ?? preds.rows[0]?.season;
+  const shownWeek = preds.week ?? preds.rows[0]?.week;
+  const stamp = (shownSeason != null && shownWeek != null)
+    ? `${shownSeason} week ${shownWeek}` : "an unrecorded season and week";
   const head = `
     <p class="legend">
+      <b>${esc(stamp)}</b>.
       <span class="tag frozen">frozen</span> model numbers, locked ${ago(lockedAt)} — these
       do not move once games start.
-      <span class="tag live">live</span> scores, ${live ? ago(live.generated_at) : "unavailable"}.
+      <span class="tag live">live</span> scores, ${liveAge}.
     </p>`;
 
   const body = `<div class="scroll"><table>
@@ -251,11 +414,12 @@ async function renderSlate(man, wk) {
 
   panel("p-slate", {
     age: `${preds.n} games · ${matched} live`,
-    warn: pArt?.stale ? `Stale: ${pArt.reason ?? "unknown"}`
+    warn: art?.stale ? `Stale: ${art.reason ?? "unknown"}`
+        : viewing ? "An earlier published week, kept exactly as it was committed."
         : (!live ? "Live scores unavailable — model numbers below are still correct."
                  : (matched === 0 ? "No live game matches this slate; scores column is idle."
                                   : null)),
-    html: head + body,
+    html: head + body + also,
   });
 }
 
@@ -339,25 +503,12 @@ async function render() {
   }
 
   // --- weekly slate, with the live overlay
-  await renderSlate(man, wk);
+  await renderSlate(man);
 
   // --- track record
   const tr = await load("track_record");
   if (tr) {
-    const pre = tr.n_preregistered ?? 0;
-    const body = pre === 0
-      ? `<p class="empty">${esc(tr.note ?? "")}</p>` +
-        (tr.n_scored ? `<p class="empty">${tr.n_scored} predictions scored retrospectively.
-           That is a backtest, not a record, and it is not shown as one.</p>` : "")
-      : table([
-          { label: "metric", get: r => r.k },
-          { label: "value", get: r => r.v },
-        ], [
-          { k: "pre-registered", v: pre },
-          { k: "log loss", v: fmt(tr.log_loss, 4) },
-          { k: "Brier", v: fmt(tr.brier, 4) },
-        ]) + reliabilitySVG(tr.bins ?? []);
-    panel("p-record", { age: ago(tr.generated_at), html: body });
+    panel("p-record", { age: ago(tr.generated_at), html: trackRecordBody(tr) });
   } else {
     panel("p-record", { age: "", warn: "No track record published yet." });
   }
@@ -415,9 +566,25 @@ const LIVE_POLL_MS = 45000;
 let manifestCache = null;
 
 async function tick() {
-  if (!manifestCache) return;
-  await renderSlate(manifestCache, manifestCache.week ?? "?");
+  // Not while a reader is looking at an archived week. That week's games are over, so the
+  // timer has nothing to add, and redrawing the panel under them would take their choice
+  // away -- which is how a page teaches a reader not to click anything.
+  if (!manifestCache || viewing) return;
+  await renderSlate(manifestCache);
 }
+
+// Switching weeks. Delegated from the document because the panel is rebuilt through
+// innerHTML on every render, so a listener bound to the link would not survive one.
+document.addEventListener("click", (e) => {
+  const link = e.target.closest?.("[data-preds]");
+  if (!link) return;
+  e.preventDefault();
+  const pick = link.getAttribute("data-preds");
+  // Choosing the manifest's own week is "back to now", which puts the live poll back in
+  // charge; choosing any other stops it, per `tick`.
+  viewing = pick === predsArt(slateMan)?.name ? null : pick;
+  renderSlate(slateMan);
+});
 
 render().then(async () => { manifestCache = await load("manifest"); });
 setInterval(tick, LIVE_POLL_MS);
