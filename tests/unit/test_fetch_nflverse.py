@@ -624,37 +624,60 @@ def test_a_pin_that_was_never_written_reads_as_none(tmp_path):
     assert nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04") is None
 
 
-# --- what is reachable, and what is only declared ----------------------------
+# --- what is reachable, and what the docstrings say is -----------------------
 #
 # `APPEND_ONLY` declares a property of a *source*, which is the right thing to declare early
-# and the reason `hub.draft.tune.holdout` already bounds `scrape_date` by hand. But the one
-# source declared there has no loader, so `load` refuses it at the `SOURCES` check before the
-# as-of filter is ever consulted: every pin a real caller can write today carries a
-# `pinned_at`. The fixture above reaches the filter by substituting the registry, which tests
-# the filter honestly and proves nothing about reachability -- so reachability gets its own
-# test, and the docstrings say what is true now rather than what will be.
+# and the reason `hub.draft.tune.holdout` already bounds `scrape_date` by hand. Until #33 the
+# one source declared there had no loader, so `load` refused it at the `SOURCES` check before
+# the as-of filter was ever consulted, and every pin a real caller could write carried a
+# `pinned_at`. Two tests stood here saying so, and the second asserted that three docstrings
+# still admitted it -- a canary, written to go red the day a loader landed.
+#
+# It went red on #33, which is the canary working. Both are rewritten rather than deleted,
+# because the property each was protecting outlived the state it described: that the
+# reproducible half of the pin is reached by a *real load* and not only by a fixture that
+# substitutes the registry, and that the module's prose still matches what a caller can do.
+# The second is now an equivalence rather than a one-way check, so it fails in both
+# directions -- if the loader is ever pulled back out of `SOURCES`, the wording has to come
+# back with it.
 
-def test_no_declared_append_only_source_can_be_loaded_yet():
-    """The reproducible half of the pin -- `pinned_at is None` -- is unreachable from `load`.
+def test_the_append_only_path_is_reachable_through_load(fake_rankings, tmp_path):
+    """The half of `Pin` no caller could reach before #33, reached the way a caller would.
 
-    Not a defect to fix here: the loader is issue #33 (U2 of the plan), and it needs a
-    contract in `hub.contracts` before `SOURCES` can name the source at all. This test is the
-    canary. When #33 lands it goes red, and what it is asking for is that `Pin.pinned_at`,
-    `APPEND_ONLY` and `load` stop saying "declared but not yet reachable".
+    This is what `test_no_declared_append_only_source_can_be_loaded_yet` was asking for when
+    it went red. `fake_archive` above proves the *filter* works by monkeypatching
+    `APPEND_ONLY` onto a source that has a loader; that is honest about the filter and says
+    nothing about whether anything reaches it. Here the registry is the real one, the source
+    is the one declared in it, and only the network is faked.
     """
-    reachable = sorted(set(nv.APPEND_ONLY) & set(nv.SOURCES))
-    assert not reachable, (
-        f"{reachable} now has a loader, so the append-only path is reachable. Drop the "
-        f"'not yet reachable' wording from Pin.pinned_at, APPEND_ONLY and load(), and "
-        f"replace this test with one that pins a real ff_rankings load.")
+    assert sorted(set(nv.APPEND_ONLY) & set(nv.SOURCES)) == ["ff_rankings"]
+    fake_rankings(["2026-08-01", "2026-09-10"])
+    got = nv.load_rankings("all", as_of="2026-09-04", cache=tmp_path)
+    assert got["scrape_date"].unique().to_list() == ["2026-08-01"], (
+        "a scrape from after the as-of survived a pinned load")
+    pin = nv.data_pin("ff_rankings", ["all"], cache=tmp_path, as_of="2026-09-04")
+    assert pin is not None and pin.pinned_at is None, (
+        "these rows reproduce from the as-of alone, so a stamp would claim less than is true")
 
 
-def test_the_docstrings_do_not_promise_a_state_no_caller_can_reach():
-    """The wording is the deliverable, so it is asserted rather than trusted. A field whose
-    docstring describes a state its own callers cannot produce is how a reader comes to
-    believe the archive is pinned reproducibly when every pin says otherwise."""
-    for text in (nv.Pin.__doc__, nv.load.__doc__):
-        assert text is not None and "not yet reachable" in text
+def test_the_docstrings_match_what_a_caller_can_reach():
+    """The wording is the deliverable, so it is asserted rather than trusted -- in both
+    directions now. A field whose docstring describes a state its callers cannot produce is
+    how a reader comes to believe the archive is pinned reproducibly when every pin says
+    otherwise; a module that has quietly lost its only append-only loader while still
+    promising the path is the same defect with the sign flipped.
+
+    The whole module text, not `Pin.__doc__` and `load.__doc__` alone: the third statement of
+    this lived in the comment above `APPEND_ONLY`, where no attribute lookup reaches it, and
+    the canary's own instructions named all three.
+    """
+    reachable = bool(set(nv.APPEND_ONLY) & set(nv.SOURCES))
+    from pathlib import Path
+    promised_unreachable = "not yet reachable" in Path(nv.__file__).read_text()
+    assert reachable is not promised_unreachable, (
+        f"append-only sources reachable through load: {reachable}; module still says "
+        f"'not yet reachable': {promised_unreachable}. Those have to disagree -- the wording "
+        f"exists to tell a reader which half of `Pin` a caller can actually produce.")
 
 
 # --- a sidecar is read back leniently ----------------------------------------
@@ -743,3 +766,251 @@ def test_a_moved_archive_shows_up_in_what_refresh_prints(fake_pbp, fake_ffo, tmp
     assert set(a) == {"cfg", "fitted", "data"}, a
     assert a["data"] != b["data"], "the archive moved and the printed digest did not"
     assert (a["cfg"], a["fitted"]) == (b["cfg"], b["fitted"])
+
+
+# --- the three sources #33 added ---------------------------------------------
+#
+# U2 of `docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md`. The fetch layer
+# could not serve the rankings archive, the injury report or snap counts, so the eight call
+# sites that read them imported `nflreadpy` directly and nothing validated, cached or pinned
+# what came back. This unit is the loaders and the contracts; the call sites move in #34-36.
+#
+# Two of the three are ordinary season-partitioned sources. `ff_rankings` is not: it is one
+# table of every scrape of 47 ranking pages, so its loader takes a page type and an as-of,
+# and it is the source `APPEND_ONLY` was declared for.
+
+def _rankings_frame(dates=("2026-08-28",), per_date: int = 4, **over) -> pl.DataFrame:
+    """A well-formed slice of the archive: the nine columns `FF_RANKINGS` declares.
+
+    `scrape_date` is a string here because it is a string upstream -- `_as_of_filter` parses
+    it, `hub.draft.board.consensus` compares it as text, and a fake that handed back a real
+    date would test neither.
+    """
+    n = len(dates) * per_date
+    return pl.DataFrame({
+        "page_type": ["redraft-overall"] * n,
+        "player": [f"Player {i}" for i in range(n)],
+        "pos": ["WR"] * n,
+        "team": ["PHI"] * n,
+        "ecr": [float(i + 1) for i in range(n)],
+        "sd": [1.5] * n,
+        "best": [1.0] * n,
+        "worst": [20.0] * n,
+        "scrape_date": [d for d in dates for _ in range(per_date)],
+    } | dict(over))
+
+
+def _injuries_frame(rows: int = 4, **over) -> pl.DataFrame:
+    """`report_status` is null on one row on purpose: it is null on 21,490 of 40,204 rows
+    over 2019-25, so a fake without one would be testing a shape nflverse does not send."""
+    return pl.DataFrame({
+        "season": pl.Series([2024] * rows, dtype=pl.Int32),
+        "week": pl.Series([1] * rows, dtype=pl.Int32),
+        "team": ["PHI"] * rows,
+        "game_type": ["REG"] * rows,
+        "gsis_id": [f"00-00{i:05d}" for i in range(rows)],
+        "position": ["WR"] * rows,
+        "full_name": [f"Player {i}" for i in range(rows)],
+        "report_status": ["Questionable"] * (rows - 1) + [None],
+        "practice_status": ["Limited Participation in Practice"] * rows,
+    } | dict(over))
+
+
+def _snaps_frame(rows: int = 4, **over) -> pl.DataFrame:
+    return pl.DataFrame({
+        "game_id": [f"2024_01_PHI_DAL_{i}" for i in range(rows)],
+        "season": pl.Series([2024] * rows, dtype=pl.Int32),
+        "week": pl.Series([1] * rows, dtype=pl.Int32),
+        "game_type": ["REG"] * rows,
+        "player": [f"Player {i}" for i in range(rows)],
+        "pfr_player_id": [f"Play00{i:02d}" for i in range(rows)],
+        "position": ["WR"] * rows,
+        "team": ["PHI"] * rows,
+        "opponent": ["DAL"] * rows,
+        "offense_snaps": [55.0] * rows,
+        "offense_pct": [0.82] * rows,
+        "defense_pct": [0.0] * rows,
+        "st_pct": [0.14] * rows,
+    } | dict(over))
+
+
+@pytest.fixture
+def fake_rankings(monkeypatch):
+    """The archive, faked onto the real `ff_rankings` source.
+
+    Unlike `fake_archive` above, `APPEND_ONLY` is left alone: this is the source declared in
+    it, so the as-of filter runs because the registry says so rather than because a test said
+    so. Only the network is replaced.
+    """
+    def _install(dates=("2026-08-28",), per_date: int = 4, **over):
+        frame = _rankings_frame(dates, per_date, **over)
+        monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: frame)
+        return frame
+    return _install
+
+
+# The three, and how to break each one. Every entry names a column whose disappearance, whose
+# nullity or whose scale change is a failure somebody downstream would otherwise absorb:
+# `ecr` is the board's rank, `report_status` is the designation `hub.models.injury` fits on,
+# `offense_pct` is the snap share `hub.models.panel` reads, and the `85.0` in that row is the
+# unit change -- PFR publishing whole percents -- rather than an impossible number.
+BREAKAGES = {
+    "ff_rankings": (_rankings_frame, "ecr", "scrape_date", "ecr", 5000.0),
+    "injuries": (_injuries_frame, "report_status", "gsis_id", "week", 99),
+    "snap_counts": (_snaps_frame, "offense_pct", "game_id", "offense_pct", 85.0),
+}
+
+RAW_FETCHER = {"ff_rankings": "_raw_ff_rankings", "injuries": "_raw_injuries",
+               "snap_counts": "_raw_snap_counts"}
+
+
+def _load(source: str, frame: pl.DataFrame, monkeypatch, tmp_path) -> pl.DataFrame:
+    """Put one frame through the real loader for its source.
+
+    Through `load`, not through `CONTRACT.validate` -- a contract that holds and is applied
+    nowhere is the thing `tests/contracts/test_every_contract_is_applied.py` exists for, and
+    a refusal proved against the contract object alone would prove exactly that much.
+
+    No as-of, deliberately. `_as_of_filter` drops rows whose scrape date is null before the
+    contract ever sees them, which is right -- a row that cannot be placed in time must not
+    survive a pinned load -- but it would also hide the null-column refusal below on the one
+    source where the null column *is* the scrape date. Unpinned, the contract is what catches
+    it, which is the path every non-pinned caller takes.
+    """
+    monkeypatch.setattr(nv, RAW_FETCHER[source], lambda keys: frame)
+    keys = ["all"] if source == "ff_rankings" else [2024]
+    return nv.load(source, seasons=keys, cache=tmp_path)
+
+
+@pytest.mark.parametrize("source", sorted(BREAKAGES))
+def test_each_new_source_loads_and_validates(source, monkeypatch, tmp_path):
+    build = BREAKAGES[source][0]
+    assert _load(source, build(), monkeypatch, tmp_path).height == 4
+
+
+@pytest.mark.parametrize("source", sorted(BREAKAGES))
+def test_a_missing_column_is_refused(source, monkeypatch, tmp_path):
+    """The Week 7 failure this repo names: a column quietly renamed upstream."""
+    build, drop, _, _, _ = BREAKAGES[source]
+    with pytest.raises(ContractViolation, match="missing columns"):
+        _load(source, build().drop(drop), monkeypatch, tmp_path)
+
+
+@pytest.mark.parametrize("source", sorted(BREAKAGES))
+def test_a_null_in_a_non_nullable_column_is_refused(source, monkeypatch, tmp_path):
+    """Nullity, not absence. A column that is present and empty passes every name check and
+    then produces nulls wherever it is read -- which for `scrape_date` means a row that
+    cannot be placed in time and for `gsis_id` means a row that joins to nobody."""
+    build, _, col, _, _ = BREAKAGES[source]
+    df = build()
+    holed = df.with_columns(
+        pl.when(pl.int_range(pl.len()) == 0)
+          .then(pl.lit(None, dtype=df.schema[col]))
+          .otherwise(pl.col(col)).alias(col))
+    assert holed[col].null_count() == 1, "the fake did not actually punch a hole"
+    with pytest.raises(ContractViolation, match=f"{col} has 1 nulls"):
+        _load(source, holed, monkeypatch, tmp_path)
+
+
+@pytest.mark.parametrize("source", sorted(BREAKAGES))
+def test_a_value_outside_its_plausible_range_is_refused(source, monkeypatch, tmp_path):
+    """The dangerous case: structural breakage announces itself, a plausible-looking number
+    does not. `offense_pct` at 85.0 is PFR switching from fractions to whole percents, which
+    would multiply every snap share by a hundred in a column nothing prints."""
+    build, _, _, col, bad = BREAKAGES[source]
+    df = build()
+    with pytest.raises(ContractViolation, match="range"):
+        _load(source, df.with_columns(pl.lit(bad).cast(df.schema[col]).alias(col)),
+              monkeypatch, tmp_path)
+
+
+def test_the_new_sources_are_not_wide():
+    """25, 17 and 16 columns. `WIDE` is for the two that cost a session to hand back whole,
+    and listing a 16-column source there would make the refusal a formality nobody reads."""
+    assert not set(BREAKAGES) & set(nv.WIDE)
+
+
+# --- the rankings loader: a page type and an as-of ---------------------------
+
+def test_the_rankings_loader_refuses_a_season_list():
+    """The source is one table of every scrape, so a season list identifies nothing. It is
+    refused rather than ignored: a caller who believes they have bounded a load to 2024 and
+    has not is exactly the reader who would then publish a number from the whole archive."""
+    with pytest.raises(nv.WideFrameRefused, match="not season-partitioned"):
+        nv.load_rankings("all", seasons=[2024])
+
+
+def test_a_season_list_is_refused_at_the_other_door_too(tmp_path):
+    """`load_rankings` is a front door, not a fence. Reaching `load` directly with a year
+    where the page belongs has to fail there as well, and before any network call."""
+    with pytest.raises(nv.WideFrameRefused, match="one page type"):
+        nv.load("ff_rankings", seasons=[2024], cache=tmp_path)
+
+
+def test_an_unknown_rankings_page_is_refused_and_names_the_known_ones():
+    """`week` is a real nflreadpy page and deliberately not served: its columns are a
+    different table (`page_pos`, `player_name`, `rank`), so `FF_RANKINGS` would either have
+    to be loosened to cover both or fail on every weekly load."""
+    with pytest.raises(nv.WideFrameRefused) as e:
+        nv.load_rankings("week")
+    assert "draft" in str(e.value) and "all" in str(e.value)
+
+
+def test_the_page_is_part_of_the_cache_key(fake_rankings, tmp_path, monkeypatch):
+    """Two pages are two entries. Without that a caller asking for the archive would be
+    served the last caller's draft page -- 5,850 rows of one scrape, on the same columns."""
+    fake_rankings(per_date=4)
+    assert nv.load_rankings("all", cache=tmp_path).height == 4
+    monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: _rankings_frame(per_date=2))
+    assert nv.load_rankings("draft", cache=tmp_path).height == 2
+    assert nv.load_rankings("all", cache=tmp_path).height == 4, "the draft page overwrote it"
+
+
+def test_a_rankings_load_at_an_as_of_is_filtered_not_merely_labelled(fake_rankings, tmp_path):
+    """The distinction the whole pin rests on, on the source it was declared for."""
+    fake_rankings(["2026-08-01", "2026-08-28", "2026-09-10"], per_date=2)
+    got = nv.load_rankings("all", as_of="2026-08-28", cache=tmp_path)
+    assert got.height == 4
+    assert got["scrape_date"].max() == "2026-08-28", "the as-of is inclusive of its own day"
+
+
+def test_a_grown_rankings_archive_still_yields_the_same_rows_at_one_as_of(
+        fake_rankings, tmp_path, monkeypatch):
+    """R2, end to end through the real source rather than through a substituted registry.
+
+    The archive gains a week -- FantasyPros scrapes weekly -- and a gate re-run at the same
+    as-of has to answer with the same rows and the same digest, or the number it published
+    cannot be reproduced.
+    """
+    original = fake_rankings(["2026-08-01"], per_date=3)
+    first = nv.load_rankings("all", as_of="2026-09-04", cache=tmp_path)
+    grown = pl.concat([original, original.with_columns(
+        pl.lit("2026-09-20").alias("scrape_date"))])
+    monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: grown)
+    second = nv.load_rankings("all", as_of="2026-09-04", cache=tmp_path, refresh=True)
+    assert second.equals(first)
+    pin = nv.data_pin("ff_rankings", ["all"], cache=tmp_path, as_of="2026-09-04")
+    assert pin is not None
+    assert pin.digest == nv.pin_digest("ff_rankings", "2026-09-04", first), (
+        "the archive grew and the digest of the pinned frame moved with it")
+
+
+def test_two_rankings_as_ofs_are_two_pins_and_two_digests(fake_rankings, tmp_path):
+    """A pin is a claim about a date as well as about rows, so two as-ofs over one archive
+    must not collide -- the filtered content differs and the digest has to say so."""
+    fake_rankings(["2026-08-01", "2026-09-10"], per_date=2)
+    early = nv.load_rankings("all", as_of="2026-08-15", cache=tmp_path)
+    late = nv.load_rankings("all", as_of="2026-09-20", cache=tmp_path)
+    assert (early.height, late.height) == (2, 4)
+    pins = [nv.data_pin("ff_rankings", ["all"], cache=tmp_path, as_of=d)
+            for d in ("2026-08-15", "2026-09-20")]
+    assert all(p is not None for p in pins)
+    assert pins[0].digest != pins[1].digest  # type: ignore[union-attr]
+
+
+def test_a_rankings_load_with_no_as_of_still_returns_the_whole_archive(fake_rankings,
+                                                                      tmp_path):
+    """The unpinned path is unchanged: no as-of, no filter, everything the source sent.
+    `hub.draft.board.consensus(None)` reads the small `draft` page this way."""
+    fake_rankings(["2026-08-01", "2026-09-10"], per_date=2)
+    assert nv.load_rankings("draft", cache=tmp_path).height == 4

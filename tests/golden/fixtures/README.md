@@ -8,7 +8,7 @@ nightly job in `tests/golden/` is what actually catches an upstream rename.
 
 Two kinds of fixture, and the filename says which. There is a third answer to the provenance
 question and it has no file here: a contract that no test validates against any frozen
-payload. Five of the eleven in `hub.contracts` are in that position, so what this directory
+payload. Five of the fourteen in `hub.contracts` are in that position, so what this directory
 records about them is nothing, and `verified_against_live=None` is how they say so — the
 absence of a row below is not evidence of a capture. It was six until 2026-09-05: a row here
 is only evidence a validation can reach, and `espn_scoreboard.json` was recorded below as a
@@ -28,6 +28,9 @@ you like except a path a reader takes.
 | `nflverse_pbp.json` | **Captured** 2026-08-23, real 2025 play-by-play, first 8 rows of `PBP_COLS` |
 | `nflverse_ff_opportunity.json` | **Captured** 2026-08-23, real 2025 weekly ff_opportunity |
 | `nflverse_schedules.json` | **Captured** 2026-08-23, real 2025 games with a published spread |
+| `nflverse_ff_rankings.json` | **Captured** 2026-09-05 from the `all` archive, 8 rows scraped 2025-08-29 — see below |
+| `nflverse_injuries.json` | **Captured** 2026-09-05, real 2024 injury report, 8 rows — see below |
+| `nflverse_snap_counts.json` | **Captured** 2026-09-05, real 2024 snap counts, 8 rows — see below |
 | `espn_scoreboard.json` | **Captured** 2026-09-05 from the public scoreboard endpoint, trimmed — see below |
 | `cfbd_games.synthetic.json` | **Hand-built** from CFBD's documented response shape |
 | `cfbd_lines.synthetic.json` | **Hand-built** from CFBD's documented response shape |
@@ -87,6 +90,29 @@ through `espn.live_state`, and three shape changes tried against it on 2026-09-0
 every event resolving and raise; two events sharing an id fails the contract. An `id` arriving
 as a number is *not* caught, because `SCOREBOARD_TYPES` coerces it back to `Utf8` first, in
 production as well as here.
+
+## The three #33 added
+
+Captured on 2026-09-05 by one `nflreadpy` call each — `load_ff_rankings("all")`,
+`load_injuries([2024])`, `load_snap_counts([2024])` — with no key, since these are public
+nflverse releases. No loop over teams or games; one bulk pull per source.
+
+**What was trimmed, and why the trim keeps every reader's path.** Each file keeps exactly the
+columns its contract declares and drops the rest. That is the whole of what a reader takes:
+`FF_RANKINGS` covers the nine columns `hub.draft.board._select_consensus` selects plus the
+`scrape_date` the as-of filter bounds on; `INJURIES` covers the identity columns plus the
+`report_status`/`practice_status` pair `hub.models.injury` fits its retention table on;
+`SNAP_COUNTS` covers the identity columns plus `offense_pct`, which is the one number
+`hub.models.panel.snap_share` reads. The rule from the ESPN re-capture holds — remove
+anything except a path a reader takes — and here the contract *is* that list.
+
+**Which rows, and why those.** Not the first eight of each. The rankings file carries two
+`page_type` values because 47 ranking pages are stacked in the real frame on their own ECR
+scales and telling them apart is that column's job. The injuries file carries five rows with
+a game designation and three without, because `report_status` is null on 21,490 of 40,204
+rows over 2019-25 and an all-null column would arrive typed `Null` and fail the contract for
+the wrong reason. The snap-counts file carries six starters and two players who took no
+offensive snap, so the bottom of the `offense_pct` range is exercised as well as the top.
 
 CFBD prohibits redistributing its data. A hand-built two-row shape sample is not a dataset,
 but a real capture would be -- if you replace these, keep them minimal.

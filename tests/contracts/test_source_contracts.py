@@ -9,8 +9,8 @@ actually catch a rename.
 What each fixture can and cannot prove is not uniform, and it matters:
 
   * nflverse and ESPN fixtures are **real captures**, so a passing test here means the
-    contract holds against what those APIs actually returned -- the nflverse three on
-    2026-08-23, the ESPN scoreboard on 2026-09-05. The ESPN one is trimmed, and the rule
+    contract holds against what those APIs actually returned -- three of the nflverse six on
+    2026-08-23, the three #33 added on 2026-09-05, the ESPN scoreboard the same day. The ESPN one is trimmed, and the rule
     the re-capture in #73 established is that a trim may remove anything except a path the
     production reader takes: the capture before it had been cut past the competition-level
     status `live_state` reads a game's state from, so the fixture could not fail on the one
@@ -35,9 +35,12 @@ from hub.contracts import (
     CFBD_LINES,
     ESPN_SCOREBOARD,
     FF_OPPORTUNITY,
+    FF_RANKINGS,
+    INJURIES,
     ODDS_SNAPSHOT,
     PBP,
     SCHEDULES,
+    SNAP_COUNTS,
     ContractViolation,
 )
 
@@ -81,6 +84,59 @@ def test_schedules_contract_holds_on_the_real_slice():
     df = frame("nflverse_schedules.json").with_columns(
         pl.col("season").cast(pl.Int32), pl.col("week").cast(pl.Int32))
     assert SCHEDULES.validate(df).height == df.height
+
+
+def test_ff_rankings_contract_holds_on_the_real_slice():
+    """Eight rows of the archive as it stood on 2025-08-29, six from the page this league
+    drafts on and two from another -- `page_type` varies in the fixture because 47 pages are
+    stacked in the real frame and telling them apart is the column's whole job.
+
+    `best` and `worst` come back `Float64` from the archive and `Int64` from the `draft`
+    page. Both are the numeric family, which is the level `_family` compares at, so one
+    declaration covers the two pages `load_rankings` serves.
+    """
+    df = frame("nflverse_ff_rankings.json")
+    assert shape_only(FF_RANKINGS).validate(df).height == 8
+    assert df["page_type"].n_unique() > 1, "the capture no longer proves pages are told apart"
+
+
+def test_injuries_contract_holds_on_the_real_slice():
+    """Five rows carrying a game designation and three carrying none.
+
+    The three are the reason `report_status` is required and not `non_null`: a player on the
+    injury report with no designation is the ordinary case (21,490 of 40,204 rows over
+    2019-25), and a contract that refused them would fail every honest refresh. The five are
+    the reason the column is not all-null in the fixture -- an all-null column arrives typed
+    `Null`, which is its own family and would fail this rather than prove anything.
+    """
+    df = frame("nflverse_injuries.json").with_columns(
+        pl.col("season").cast(pl.Int32), pl.col("week").cast(pl.Int32))
+    assert shape_only(INJURIES).validate(df).height == 8
+    assert df["report_status"].null_count() == 3
+
+
+def test_snap_counts_contract_holds_on_the_real_slice():
+    """Six starters and two players who took no offensive snap.
+
+    The zeroes are deliberate: `offense_pct` is a fraction, the range is what would catch
+    PFR switching to whole percents, and a fixture of starters alone would never exercise the
+    bottom of it.
+    """
+    df = frame("nflverse_snap_counts.json").with_columns(
+        pl.col("season").cast(pl.Int32), pl.col("week").cast(pl.Int32))
+    assert shape_only(SNAP_COUNTS).validate(df).height == 8
+    assert df["offense_pct"].min() == 0.0
+
+
+def test_snap_percentages_arriving_as_whole_percents_are_caught():
+    """The units change the range exists for, on the real capture rather than a made-up
+    frame: every snap share multiplied by a hundred is a plausible number in a column
+    `hub.models.panel.snap_share` reads and nothing prints."""
+    df = frame("nflverse_snap_counts.json").with_columns(
+        pl.col("season").cast(pl.Int32), pl.col("week").cast(pl.Int32),
+        (pl.col("offense_pct") * 100).alias("offense_pct"))
+    with pytest.raises(ContractViolation, match="offense_pct range"):
+        shape_only(SNAP_COUNTS).validate(df)
 
 
 def _live_frame(monkeypatch, fixture: str) -> pl.DataFrame:

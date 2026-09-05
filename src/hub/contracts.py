@@ -49,9 +49,9 @@ def _family(dt: Any) -> str:
 #
 # Two sentences, because there are two ways not to have met a response and they send the
 # reader to different places. "Written from documentation" is a claim about how a contract
-# was authored, true of the CFBD pair and not known of anything else: five of the eleven are
-# validated against no frozen payload at all, so nobody has measured whether they have met
-# live data. Saying nothing about those was the defect in #66 -- the flag defaulted to
+# was authored, true of the CFBD pair and not known of anything else: five of the fourteen
+# are validated against no frozen payload at all, so nobody has measured whether they have
+# met live data. Saying nothing about those was the defect in #66 -- the flag defaulted to
 # verified, so their violations read as "the source broke" on no evidence either way.
 # GUARD unverified-note [contracts/test_every_contract_is_applied.py]: names the suspect
 _UNVERIFIED_NOTE = (
@@ -297,5 +297,93 @@ ESPN_SCOREBOARD = Contract(
     # this contract, and the resolver has nothing to see in a hand-written assert. The flag
     # moved when the validation was wired; declaring it would have been the invented answer
     # the resolver exists to refuse.
+    verified_against_live=True,
+)
+
+
+# FantasyPros' consensus archive, as DynastyProcess republishes it. Not season-partitioned:
+# one row per (scrape, ranking page, player), 1.83M rows from 2019-12-27 to 2026-09-04
+# measured on 2026-09-05, which is why `hub.fetch.nflverse` reaches it by page type and
+# as-of rather than by a season list.
+#
+# The columns are the ones a reader takes. `page_type` because 47 ranking pages are stacked
+# in this one frame on their own ECR scales and `hub.draft.board._select_consensus` refuses
+# without it; `sd`, `best` and `worst` because the same function selects them; `scrape_date`
+# because `APPEND_ONLY` bounds the archive on it, and a row that cannot be placed in time
+# cannot be pinned.
+#
+# Two columns are deliberately NOT non_null, both measured over the whole archive on
+# 2026-09-05: `player` is null on 34 rows and `ecr` on 104. Declaring either would fail
+# every honest refresh, and `_select_consensus` already drops null-ECR rows itself.
+#
+# `id` is left out entirely rather than declared: the `draft` page types it `Int64` and the
+# `all` archive types it `Utf8`, so one declaration would be wrong for one of the two pages
+# this contract covers. Nothing in the repo reads it.
+#
+# Ranges from the whole archive (ecr 1.0-999.5, sd 0-449, best 0-1000, worst 1-1000),
+# widened past the observed edge in the direction a FantasyPros page could plausibly grow.
+FF_RANKINGS = Contract(
+    name="nflverse_ff_rankings",
+    required={"page_type": pl.Utf8, "player": pl.Utf8, "pos": pl.Utf8, "team": pl.Utf8,
+              "ecr": pl.Float64, "sd": pl.Float64, "best": pl.Float64,
+              "worst": pl.Float64, "scrape_date": pl.Utf8},
+    non_null=("page_type", "scrape_date"),
+    ranges={"ecr": (0, 1200), "sd": (0, 600), "best": (0, 1200), "worst": (0, 1200)},
+    min_rows=1,
+    # Checked against `nflverse_ff_rankings.json`, a real capture of the `all` archive.
+    verified_against_live=True,
+)
+
+# The weekly injury report. `report_status` is the designation `hub.models.injury` fits its
+# retention table on and `hub.models.panel.injury_severity` reads for the screen's ordinal.
+#
+# It is required and explicitly NOT non_null: it is null on 21,490 of 40,204 rows over
+# 2019-25, because a player on the report with no game designation is the ordinary case, not
+# a break. `practice_status` is null on 45 of those and is out of `non_null` for the same
+# reason. What must be there is the row's identity -- who, which week, which team.
+#
+# `season` and `week` are declared `Int32`, which is what a single-season load returns; a
+# multi-season load comes back `Float64` because nflreadpy concatenates seasons with
+# `diagonal_relaxed`. Both are the numeric family, which is the level `_family` compares at
+# and the reason it compares there.
+INJURIES = Contract(
+    name="nflverse_injuries",
+    required={"season": pl.Int32, "week": pl.Int32, "team": pl.Utf8,
+              "game_type": pl.Utf8, "gsis_id": pl.Utf8, "position": pl.Utf8,
+              "full_name": pl.Utf8, "report_status": pl.Utf8,
+              "practice_status": pl.Utf8},
+    non_null=("season", "week", "team", "game_type", "gsis_id", "full_name"),
+    # Deliberately NOT unique on gsis_id: a player appears once per week, and two rows for
+    # one player-week exist in the archive besides (2 of 11,814 over 2023-24).
+    ranges={"week": (1, 22)},
+    min_rows=1,
+    # Checked against `nflverse_injuries.json`, a real 2024 capture.
+    verified_against_live=True,
+)
+
+# Pro Football Reference's snap counts. `offense_pct` is the one column the repo reads --
+# `hub.models.panel.snap_share` and `hub.models.spread` both take it -- and it is the reason
+# the percentage ranges are here: PFR publishes these as fractions, and the failure worth
+# catching is the day they arrive as whole percents, which would multiply every snap share
+# by a hundred and read as a plausible number in a column nobody prints.
+#
+# `1.05`, not `1.0`. Measured over 2019-25, `st_pct` reaches 1.01 -- PFR's rounding, not a
+# units change -- so a ceiling at 1 would fail an honest refresh. `defense_pct` and `st_pct`
+# ride along unread because a units change would hit all three at once and they cost nothing.
+#
+# Not unique on anything a single column can express: the key is (game_id, pfr_player_id),
+# which the 181,477 rows over 2019-25 do respect and this contract cannot say.
+SNAP_COUNTS = Contract(
+    name="nflverse_snap_counts",
+    required={"game_id": pl.Utf8, "season": pl.Int32, "week": pl.Int32,
+              "game_type": pl.Utf8, "player": pl.Utf8, "pfr_player_id": pl.Utf8,
+              "position": pl.Utf8, "team": pl.Utf8, "opponent": pl.Utf8,
+              "offense_snaps": pl.Float64, "offense_pct": pl.Float64,
+              "defense_pct": pl.Float64, "st_pct": pl.Float64},
+    non_null=("game_id", "season", "week", "game_type", "player", "pfr_player_id", "team"),
+    ranges={"week": (1, 22), "offense_snaps": (0, 130), "offense_pct": (0, 1.05),
+            "defense_pct": (0, 1.05), "st_pct": (0, 1.05)},
+    min_rows=1,
+    # Checked against `nflverse_snap_counts.json`, a real 2024 capture.
     verified_against_live=True,
 )

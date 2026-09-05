@@ -1,7 +1,7 @@
 """A contract that is declared and never applied reads as coverage.
 
-`hub.contracts` describes eleven third-party sources, and its whole value is failing when one
-of them changes shape. Four were applied to nothing: both CFBD endpoints, the odds snapshots
+`hub.contracts` describes fourteen third-party sources, and its whole value is failing when
+one of them changes shape. Four were applied to nothing: both CFBD endpoints, the odds snapshots
 every prediction is priced from, and an undocumented ESPN endpoint that a scheduled job now
 hits every ten minutes on a Sunday.
 
@@ -276,7 +276,9 @@ def test_each_contract_names_whether_it_has_met_real_data(name):
 #
 # **What the evidence can say, and what it cannot.** It resolved five of eleven contracts on
 # 2026-09-05 -- PBP, FF_OPPORTUNITY, SCHEDULES, CFBD_GAMES, CFBD_LINES -- because those are
-# the ones a test validates against a frozen payload. The other six resolved to nothing, and
+# the ones a test validates against a frozen payload. (#33 took it to eight of fourteen by
+# freezing a capture of each source it added; the five below that resolve to nothing are the
+# same five.) The other six resolved to nothing, and
 # for a flag that defaulted to `True` that meant six contracts claiming they had met live
 # data on no evidence at all: a contract written from documentation, exactly like the two
 # this section exists for, could be added and nothing would go red.
@@ -417,9 +419,11 @@ def test_the_payload_scan_finds_both_kinds_of_evidence():
     # was the fifth, so a resolver that stopped following one form could drop it and still
     # satisfy the line above -- and a contract whose evidence disappears is exactly a
     # contract whose flag has nothing left to disagree with. A floor, because the resolved
-    # set can only be grown by wiring more evidence, never shrunk by accident.
-    assert len(seen) >= 5, (
-        f"the scan resolved {len(seen)} contracts ({sorted(seen)}), down from the five "
+    # set can only be grown by wiring more evidence, never shrunk by accident -- so it moves
+    # up when evidence is added, and #33 moved it from five to eight by freezing a capture of
+    # the rankings archive, the injury report and snap counts.
+    assert len(seen) >= 8, (
+        f"the scan resolved {len(seen)} contracts ({sorted(seen)}), down from the eight "
         f"measured on 2026-09-05; evidence has gone missing rather than been added, so "
         f"some contract's declaration is no longer being checked against anything")
     assert seen["CFBD_GAMES"] == frozenset({"cfbd_games.synthetic.json"}), (

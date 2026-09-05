@@ -16,7 +16,15 @@ from pathlib import Path
 
 import pytest
 
-from hub.contracts import ESPN_SCOREBOARD, FF_OPPORTUNITY, PBP, SCHEDULES
+from hub.contracts import (
+    ESPN_SCOREBOARD,
+    FF_OPPORTUNITY,
+    FF_RANKINGS,
+    INJURIES,
+    PBP,
+    SCHEDULES,
+    SNAP_COUNTS,
+)
 from hub.fetch import espn, nflverse
 from hub.fetch.nflverse import PBP_COLS
 
@@ -49,6 +57,32 @@ def test_live_ff_opportunity_still_satisfies_its_contract(tmp_path):
 def test_live_schedules_still_satisfies_its_contract(tmp_path):
     live = nflverse.load("schedules", seasons=[2025], cache=tmp_path)
     assert SCHEDULES.validate(live).height == live.height
+
+
+def test_live_ff_rankings_still_satisfies_its_contract(tmp_path):
+    """The archive, through the loader #33 gave it. One page, not three: `all` is the one a
+    pinned load reads and the one the frozen capture came from."""
+    live = nflverse.load_rankings("all", cache=tmp_path)
+    assert FF_RANKINGS.validate(live).height == live.height
+
+
+def test_live_ff_rankings_still_has_every_column_we_freeze(tmp_path):
+    missing = fixture_columns("nflverse_ff_rankings.json") - set(
+        nflverse.load_rankings("all", cache=tmp_path).columns)
+    assert not missing, f"DynastyProcess dropped or renamed: {sorted(missing)}"
+
+
+def test_live_injuries_still_satisfies_its_contract(tmp_path):
+    live = nflverse.load("injuries", seasons=[2024], cache=tmp_path)
+    assert INJURIES.validate(live).height == live.height
+
+
+def test_live_snap_counts_still_satisfies_its_contract(tmp_path):
+    """The one that would catch PFR switching `offense_pct` to whole percents, which the
+    frozen fixture cannot: a units change is a change in the *values*, and only the live
+    pull sees new ones."""
+    live = nflverse.load("snap_counts", seasons=[2024], cache=tmp_path)
+    assert SNAP_COUNTS.validate(live).height == live.height
 
 
 @pytest.mark.parametrize("league", ["nfl", "cfb"])

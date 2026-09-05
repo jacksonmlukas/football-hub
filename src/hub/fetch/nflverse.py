@@ -32,6 +32,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, fields
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
@@ -39,11 +40,14 @@ from hub import store
 from hub.config import SEASON_COMPLETED, HubConfig, provenance
 from hub.contracts import (
     FF_OPPORTUNITY,
+    FF_RANKINGS,
     FTN_CHARTING,
+    INJURIES,
     PARTICIPATION,
     PBP,
     PLAYER_STATS,
     SCHEDULES,
+    SNAP_COUNTS,
     Contract,
     ContractViolation,
 )
@@ -77,19 +81,28 @@ PLAYER_STATS_COLS: tuple[str, ...] = (
 # so a later fetch of an archive that has grown still yields the same rows; for everything
 # else an as-of can only label a snapshot, and the pin says so.
 #
-# `ff_rankings` is the archive this exists for and has no loader yet -- it is page-typed
-# rather than season-parameterised and needs a contract first (issue #33, U2 of
-# docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md). The property belongs to
-# the source rather than to its loader, and `hub.draft.tune.holdout` already bounds
-# `scrape_date` on it by hand for the same reason this filter exists, so it is declared here
-# and the loader reads the declaration when it lands.
+# `ff_rankings` is the archive this exists for, and since #33 it has a loader: `load_rankings`
+# below, which reaches `load` with the page type where a season-partitioned source passes a
+# season list. So the filter below and the `pinned_at is None` half of `Pin` are reachable
+# through `load` -- a pinned rankings load reproduces from its as-of alone, and its pin says
+# so by carrying no stamp. `test_the_append_only_path_is_reachable_through_load` asserts that
+# end to end, and `test_the_docstrings_match_what_a_caller_can_reach` ties this paragraph to
+# it in both directions.
 #
-# The consequence, stated rather than left for a reader to discover: nothing in this dict is
-# in `SOURCES`, so the filter below and the `pinned_at is None` half of `Pin` are **not yet
-# reachable through `load`**. `test_no_declared_append_only_source_can_be_loaded_yet` fails
-# the day that stops being true, which is the day this paragraph and `Pin.pinned_at` need
-# rewriting.
+# The property belongs to the source rather than to its loader, which is why it was declared
+# here before there was one, and why `hub.draft.tune.holdout` bounds `scrape_date` by hand
+# for the same reason this filter exists.
 APPEND_ONLY: dict[str, str] = {"ff_rankings": "scrape_date"}
+
+# The FantasyPros ranking pages `load_rankings` will serve, and the reason the third is not
+# among them. nflreadpy offers "draft" (the latest scrape, ~5,850 rows), "all" (the archive,
+# 1.83M rows from 2019-12-27) and "week" -- and the first two are one table under two names
+# while "week" is a different one: `page_pos` rather than `page_type`, `player_name` rather
+# than `player`, and a `rank` column the other two do not carry. `FF_RANKINGS` describes the
+# archive's shape, nothing in this repo reads the weekly page, and admitting it here would
+# mean either a contract loose enough to cover both or one that fails on every weekly load.
+# It gets its own source and contract on the day something needs it.
+RANKINGS_PAGES: tuple[str, ...] = ("draft", "all")
 
 
 class WideFrameRefused(Exception):
@@ -179,6 +192,34 @@ def _raw_ftn_charting(seasons: Sequence[int]) -> pl.DataFrame:
     return nfl.load_ftn_charting(seasons=list(seasons))
 
 
+def _raw_injuries(seasons: Sequence[int]) -> pl.DataFrame:
+    import nflreadpy as nfl
+    return nfl.load_injuries(seasons=list(seasons))
+
+
+def _raw_snap_counts(seasons: Sequence[int]) -> pl.DataFrame:
+    import nflreadpy as nfl
+    return nfl.load_snap_counts(seasons=list(seasons))
+
+
+def _raw_ff_rankings(pages: Sequence[str]) -> pl.DataFrame:
+    """The one source keyed by a page type instead of a season.
+
+    `pages` is the partition key `load` was handed, which for this source is a single
+    FantasyPros page. Refused rather than silently served if it is anything else: a caller
+    who passed two pages would get one of them, and a board built from the wrong scale is
+    the failure `hub.draft.board._select_consensus` already exists to prevent.
+    """
+    if len(pages) != 1 or pages[0] not in RANKINGS_PAGES:
+        raise WideFrameRefused(
+            f"ff_rankings is keyed by one page type, not by {list(pages)!r}. "
+            f"Known: {', '.join(RANKINGS_PAGES)}; use load_rankings(page, as_of=...).")
+    import nflreadpy as nfl
+    # nflreadpy types the argument as a `Literal`, and the check above is what narrows it --
+    # a membership test in a module-level tuple, which no type checker follows.
+    return nfl.load_ff_rankings(pages[0])  # type: ignore[bad-argument-type]
+
+
 SOURCES: dict[str, Contract | None] = {
     "pbp": PBP,
     "ff_opportunity": FF_OPPORTUNITY,
@@ -187,25 +228,40 @@ SOURCES: dict[str, Contract | None] = {
     # The scheme layer. Neither is WIDE -- 26 and 29 columns -- so both come back whole.
     "participation": PARTICIPATION,
     "ftn_charting": FTN_CHARTING,
+    # The three #33 added. None is WIDE -- 25, 17 and 16 columns -- so none needs `cols`,
+    # though passing one still narrows. `ff_rankings` is keyed by page type rather than by
+    # season and is reached through `load_rankings`.
+    "ff_rankings": FF_RANKINGS,
+    "injuries": INJURIES,
+    "snap_counts": SNAP_COUNTS,
 }
 
 
-def _fetch(source: str, seasons: Sequence[int]) -> pl.DataFrame:
+def _fetch(source: str, keys: Sequence[int | str]) -> pl.DataFrame:
     """Dispatch by name at call time, not by binding function objects at import.
 
     A dict of function objects built at module scope captures whatever was defined then,
     so a test that replaces `_raw_ff_opportunity` is ignored and the call goes to the
     network instead. That is not only a testing problem: it makes the indirection a lie.
+
+    `keys` is the partition key set. For every source but one that is a list of seasons;
+    `ff_rankings` is not season-partitioned and its key is the FantasyPros page type, which
+    is why the annotation admits a string. The value type stays `Any`: a fetcher declared
+    over `Sequence[int]` is not assignable to one declared over the wider type, and widening
+    all six to say otherwise would be six lies told to make one true.
     """
-    fetchers: dict[str, Callable[[Sequence[int]], pl.DataFrame]] = {
+    fetchers: dict[str, Callable[[Any], pl.DataFrame]] = {
         "pbp": _raw_pbp,
         "ff_opportunity": _raw_ff_opportunity,
         "player_stats": _raw_player_stats,
         "schedules": _raw_schedules,
         "participation": _raw_participation,
         "ftn_charting": _raw_ftn_charting,
+        "injuries": _raw_injuries,
+        "snap_counts": _raw_snap_counts,
+        "ff_rankings": _raw_ff_rankings,
     }
-    return fetchers[source](seasons)
+    return fetchers[source](keys)
 
 
 @dataclass(frozen=True)
@@ -218,14 +274,19 @@ class Pin:
     *detectable* rather than silently assumed reproducible.
 
     It is None where they can -- an append-only archive filtered at its as-of reproduces from
-    the as-of alone -- and **that state is not yet reachable through `load`**. `APPEND_ONLY`
-    names `ff_rankings` and `SOURCES` does not, so a load of it is refused at the unknown-source
-    check before the as-of filter is ever consulted, and every pin a caller writes today
-    therefore carries a stamp. The loader that closes the gap is issue #33 (U2 of
-    docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md); it needs a contract
-    first, which is why it is not done here. Until it lands, a None here comes only from a
-    test that substituted the registry, and
-    `test_no_declared_append_only_source_can_be_loaded_yet` is the canary that will say so.
+    the as-of alone. `ff_rankings` is that archive and #33 gave it a loader, so a caller
+    writing `load_rankings("all", as_of=...)` gets a pin with no stamp on it, and the claim
+    that pin makes is the strong one: these rows can be fetched again.
+
+    Both states are reachable and both are asserted. The labelled half is taken through
+    `player_stats` by the test that a source revising in place carries a stamp; this half is
+    taken through a real `load_rankings` by
+    `test_the_append_only_path_is_reachable_through_load`, rather than through a substituted
+    registry -- which is what the canary it replaced was asking for.
+
+    Before #33 the two were not symmetric: `APPEND_ONLY` named `ff_rankings`, `SOURCES` did
+    not, and a load of it was refused at the unknown-source check before the as-of filter was
+    ever consulted, so every pin a real caller could write carried a stamp.
     """
 
     source: str
@@ -300,7 +361,7 @@ def _as_of_filter(source: str, df: pl.DataFrame, as_of: date) -> pl.DataFrame:
     return df.filter(scraped <= pl.lit(as_of))
 
 
-def _cache_path(source: str, seasons: Sequence[int], cols: Sequence[str] | None,
+def _cache_path(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None,
                 cache: Path | None, as_of: date | None = None) -> Path:
     """One entry per (source, seasons, columns, as-of).
 
@@ -331,7 +392,7 @@ def _pin_path(path: Path) -> Path:
     return path.with_suffix(".pin.json")
 
 
-def data_pin(source: str, seasons: Sequence[int], cols: Sequence[str] | None = None,
+def data_pin(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None = None,
              cache: Path | None = None, as_of: str | date | None = None) -> Pin | None:
     """The pin beside one cache entry, or None when nothing readable has been written there.
 
@@ -343,8 +404,8 @@ def data_pin(source: str, seasons: Sequence[int], cols: Sequence[str] | None = N
 
     Fields this version does not know are dropped rather than raising. The pin tree outlives
     any one version of this module -- the sidecar sits beside a parquet file that survives a
-    checkout, and U2 will add sources with more to record -- so a pin written by a later
-    version has to degrade to the fields understood here. A record missing what *identifies*
+    checkout, and a later unit may add sources with more to record -- so a pin written by a
+    later version has to degrade to the fields understood here. A record missing what *identifies*
     it is a different case and reads as nothing: a Pin with no digest names no data.
     """
     path = _pin_path(_cache_path(source, seasons, cols, cache, _as_of_date(as_of)))
@@ -361,7 +422,7 @@ def data_pin(source: str, seasons: Sequence[int], cols: Sequence[str] | None = N
         return None
 
 
-def load(source: str, seasons: Sequence[int], cols: Sequence[str] | None = None,
+def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None = None,
          refresh: bool = False, cache: Path | None = None,
          as_of: str | date | None = None) -> pl.DataFrame:
     """Fetch one nflverse source, narrowed and validated.
@@ -369,15 +430,20 @@ def load(source: str, seasons: Sequence[int], cols: Sequence[str] | None = None,
     Raises rather than returning a wide frame, because the caller who forgets to narrow
     is the caller this module exists for.
 
+    `seasons` is the partition key. It is a season list for every source but `ff_rankings`,
+    which is not season-partitioned and is keyed by FantasyPros page type instead -- reach
+    that one through `load_rankings`, which takes the page and refuses a season list rather
+    than quietly keying a cache entry on a year the source knows nothing about.
+
     `as_of` pins the load: its own cache entry, filtered where the source is append-only and
     labelled where it revises in place, with a `Pin` written beside the entry either way.
     Omitted, nothing about the call changes -- the same undated entry is read and written as
     before, `refresh=True` rewrites that undated entry, and the weekly slate path is
     untouched.
 
-    Of the two, only labelling is reachable today: no source in `APPEND_ONLY` is in `SOURCES`,
-    so the filtering branch is **not yet reachable** from here and every pin this writes
-    carries a `pinned_at`. See `APPEND_ONLY` and `Pin.pinned_at` for what would change that.
+    Both halves are reachable. A pinned `ff_rankings` load is filtered at its as-of and its
+    pin carries no `pinned_at`, because those rows reproduce from the as-of alone; every
+    other source is labelled and stamped. See `APPEND_ONLY` and `Pin.pinned_at`.
     """
     if source not in SOURCES:
         raise WideFrameRefused(
@@ -430,6 +496,47 @@ def load(source: str, seasons: Sequence[int], cols: Sequence[str] | None = None,
         pinned_at=None if reproducible else datetime.now(UTC).isoformat(timespec="seconds"),
     )), indent=2, sort_keys=True) + "\n")
     return df
+
+
+def load_rankings(page: str = "draft", as_of: str | date | None = None,
+                  cols: Sequence[str] | None = None, refresh: bool = False,
+                  cache: Path | None = None, *,
+                  seasons: object = None) -> pl.DataFrame:
+    """The FantasyPros consensus archive, by page type and as-of.
+
+    The one source here that is not season-partitioned. DynastyProcess republishes every
+    scrape of every ranking page as one table -- 1.83M rows over 2019-12-27 to 2026-09-04,
+    measured 2026-09-05 -- so what identifies a load is *which page* and *as of when*, and a
+    season list identifies nothing. `seasons` exists only to say so: passing one raises
+    rather than being silently ignored, because a caller who thinks they have bounded a load
+    to 2024 and has not is the reader this refusal is for.
+
+    Everything else is `load`: the same dated cache entry, the same `FF_RANKINGS` validation
+    on the way out, the same `Pin` beside the entry -- and because `ff_rankings` is declared
+    in `APPEND_ONLY`, an as-of here *filters* the archive rather than labelling it. Two loads
+    at one as-of return the same rows however much the archive has grown between them, and
+    the pin says so by carrying no `pinned_at`.
+
+    The pin for a load from here reads back as `data_pin("ff_rankings", [page], ...)`: the
+    page is the partition key, so it is the key the sidecar is filed under.
+
+    47 ranking pages are stacked in the frame this returns, each on its own ECR scale --
+    `hub.draft.board.CONSENSUS_PAGE` names the one this league drafts on, and blending them
+    is the mistake `_select_consensus` refuses. This loader validates and caches; it does not
+    choose a page for you.
+    """
+    if seasons is not None:
+        raise WideFrameRefused(
+            f"ff_rankings is not season-partitioned, so seasons={seasons!r} cannot key a "
+            f"load of it: the archive is one table of every scrape of every page. Bound it "
+            f"with as_of=, and filter `scrape_date` downstream for a lower bound.")
+    if page not in RANKINGS_PAGES:
+        raise WideFrameRefused(
+            f"unknown rankings page {page!r}. Known: {', '.join(RANKINGS_PAGES)}. "
+            f"nflreadpy also offers 'week', whose columns are a different table -- see "
+            f"RANKINGS_PAGES.")
+    return load("ff_rankings", seasons=[page], cols=cols, refresh=refresh, cache=cache,
+                as_of=as_of)
 
 
 def _write_by_week(df: pl.DataFrame, table: str, season: int,

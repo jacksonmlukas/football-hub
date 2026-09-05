@@ -1,0 +1,90 @@
+[
+  {
+    "full_name": "Xavier Weaver",
+    "game_type": "REG",
+    "gsis_id": "00-0039521",
+    "position": "WR",
+    "practice_status": "Did Not Participate In Practice",
+    "report_status": "Out",
+    "season": 2024,
+    "team": "ARI",
+    "week": 1
+  },
+  {
+    "full_name": "Joey Blount",
+    "game_type": "REG",
+    "gsis_id": "00-0037141",
+    "position": "S",
+    "practice_status": "Limited Participation in Practice",
+    "report_status": "Questionable",
+    "season": 2024,
+    "team": "ARI",
+    "week": 1
+  },
+  {
+    "full_name": "Tip Reiman",
+    "game_type": "REG",
+    "gsis_id": "00-0039737",
+    "position": "TE",
+    "practice_status": "Limited Participation in Practice",
+    "report_status": "Questionable",
+    "season": 2024,
+    "team": "ARI",
+    "week": 1
+  },
+  {
+    "full_name": "Antonio Hamilton",
+    "game_type": "REG",
+    "gsis_id": "00-0032933",
+    "position": "CB",
+    "practice_status": "Did Not Participate In Practice",
+    "report_status": "Out",
+    "season": 2024,
+    "team": "ATL",
+    "week": 1
+  },
+  {
+    "full_name": "Kyle Van Noy",
+    "game_type": "REG",
+    "gsis_id": "00-0031360",
+    "position": "LB",
+    "practice_status": "\n    ",
+    "report_status": "Out",
+    "season": 2024,
+    "team": "BAL",
+    "week": 1
+  },
+  {
+    "full_name": "Grady Jarrett",
+    "game_type": "REG",
+    "gsis_id": "00-0031583",
+    "position": "DT",
+    "practice_status": "Did Not Participate In Practice",
+    "report_status": null,
+    "season": 2024,
+    "team": "ATL",
+    "week": 1
+  },
+  {
+    "full_name": "David Onyemata",
+    "game_type": "REG",
+    "gsis_id": "00-0033051",
+    "position": "DT",
+    "practice_status": "Did Not Participate In Practice",
+    "report_status": null,
+    "season": 2024,
+    "team": "ATL",
+    "week": 1
+  },
+  {
+    "full_name": "Nate Landman",
+    "game_type": "REG",
+    "gsis_id": "00-0037587",
+    "position": "LB",
+    "practice_status": "Full Participation in Practice",
+    "report_status": null,
+    "season": 2024,
+    "team": "ATL",
+    "week": 1
+  }
+]

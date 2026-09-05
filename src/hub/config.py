@@ -271,6 +271,15 @@ NOT_FITTED: dict[str, str] = {
     "hub.models.margin": "the recorded output of the MARGIN_SD fit, used by a test to guard "
                          "the live constant -- an assertion about a prediction, not an input. "
                          "The live number lives in hub.models.market, which IS registered.",
+    "hub.contracts": "declared plausibility bounds, not fitted inputs. A range here says what "
+                     "a source may plausibly return -- SNAP_COUNTS bounds offense_pct at "
+                     "[0, 1.05], measured over 2019-25 where PFR's own rounding reaches 1.01 "
+                     "-- so moving one changes what the fetch layer refuses and never what a "
+                     "prediction computes. Stated as a module rather than constant by "
+                     "constant because every float in this file is that kind of number by "
+                     "construction, and because #71 established that adding a data source "
+                     "must not move a model version: the eleven contracts before #33 held "
+                     "only integer bounds and this scan had never met one of these.",
 }
 
 

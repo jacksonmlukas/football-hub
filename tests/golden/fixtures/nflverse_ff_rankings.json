@@ -1,0 +1,90 @@
+[
+  {
+    "best": 1.0,
+    "ecr": 1.1,
+    "page_type": "redraft-overall",
+    "player": "Ja'Marr Chase",
+    "pos": "WR",
+    "scrape_date": "2025-08-29",
+    "sd": 0.47,
+    "team": "CIN",
+    "worst": 4.0
+  },
+  {
+    "best": 2.0,
+    "ecr": 2.72,
+    "page_type": "redraft-overall",
+    "player": "Bijan Robinson",
+    "pos": "RB",
+    "scrape_date": "2025-08-29",
+    "sd": 1.55,
+    "team": "ATL",
+    "worst": 10.0
+  },
+  {
+    "best": 1.0,
+    "ecr": 3.58,
+    "page_type": "redraft-overall",
+    "player": "CeeDee Lamb",
+    "pos": "WR",
+    "scrape_date": "2025-08-29",
+    "sd": 0.99,
+    "team": "DAL",
+    "worst": 8.0
+  },
+  {
+    "best": 2.0,
+    "ecr": 4.04,
+    "page_type": "redraft-overall",
+    "player": "Justin Jefferson",
+    "pos": "WR",
+    "scrape_date": "2025-08-29",
+    "sd": 1.42,
+    "team": "MIN",
+    "worst": 9.0
+  },
+  {
+    "best": 2.0,
+    "ecr": 5.64,
+    "page_type": "redraft-overall",
+    "player": "Jahmyr Gibbs",
+    "pos": "RB",
+    "scrape_date": "2025-08-29",
+    "sd": 2.95,
+    "team": "DET",
+    "worst": 24.0
+  },
+  {
+    "best": 3.0,
+    "ecr": 7.61,
+    "page_type": "redraft-overall",
+    "player": "Malik Nabers",
+    "pos": "WR",
+    "scrape_date": "2025-08-29",
+    "sd": 2.23,
+    "team": "NYG",
+    "worst": 15.0
+  },
+  {
+    "best": 1.0,
+    "ecr": 1.0,
+    "page_type": "best-overall",
+    "player": "Player Name",
+    "pos": "WR",
+    "scrape_date": "2025-08-29",
+    "sd": 0.0,
+    "team": "FA",
+    "worst": 1.0
+  },
+  {
+    "best": 1.0,
+    "ecr": 1.0,
+    "page_type": "best-dst",
+    "player": "Denver Broncos",
+    "pos": "DST",
+    "scrape_date": "2025-08-29",
+    "sd": 0.0,
+    "team": "DEN",
+    "worst": 1.0
+  }
+]
