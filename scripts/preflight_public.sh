@@ -261,12 +261,34 @@ for WF in watchdog ci pages slate; do
 done
 # /GUARD
 
+# The seventh refusal, and the only one nothing here proves. Six of the seven carry a
+# `# GUARD` above and are proved by excision -- delete the block, and the planted input stops
+# being caught. This one cannot be. `command -v gitleaks` finds nothing on the machine this
+# was written on (checked 2026-09-05), and no workflow under .github/ installs it or runs
+# this script, so the `skipped` branch is the only one anyone here has taken: deleting the
+# call changes nothing observable, and an excision run would be green because the tool is
+# absent rather than because the refusal fires. That is the same shape as the BRE patterns
+# that matched nothing while the gate printed "ok", so it is declared rather than faked.
+#
+# It is declared by name and not as an allowance. Until 2026-09-05 the marking test asked
+# only that at most *one* `fail=1` sit outside a guard, and this call was the one -- so the
+# next unmarked refusal would have spent the same budget in silence, and this repo has been
+# bitten three times by a count drifting from what it counted, one of them a comment that
+# said "six steps" over five.
+# UNPROVED third-party-secret-scanner [gitleaks on PATH]: excising this changes nothing while the tool is absent, so a green excision run would prove the tool is missing, not that the refusal fires.
 echo "==> Checking gitleaks if available"
 if command -v gitleaks >/dev/null 2>&1; then
   gitleaks detect --no-banner --redact || fail=1
 else
   echo "  skipped (brew install gitleaks for a real scan)"
 fi
+# /UNPROVED
+#
+# What changes if it is installed: the premise above is gone, the refusal becomes provable,
+# and `test_the_exception_expires_when_the_scanner_is_installed` stops skipping and fails --
+# asking for a planted input only gitleaks catches, a `# GUARD` naming that test in place of
+# this block, and the name struck from UNPROVED_HERE. The exemption expires with its reason
+# rather than outliving it.
 
 echo
 if [ $fail -eq 0 ]; then

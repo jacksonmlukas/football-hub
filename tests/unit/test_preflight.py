@@ -12,6 +12,7 @@ fine.
 """
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -465,6 +466,39 @@ SHELL_GUARD = re.compile(
     re.S | re.M,
 )
 
+# Six of the gate's seven refusals carry a `# GUARD` and are proved by excision above. The
+# seventh -- the optional third-party scanner -- cannot be: `command -v gitleaks` finds
+# nothing here and no workflow installs it, so that call has only ever taken its `skipped`
+# branch, deleting it changes nothing anyone can observe, and an excision test for it would be
+# green for the wrong reason. Faking that proof is worse than not having it, so it is
+# declared instead:
+#
+#     # UNPROVED name [what would make it provable]: why it cannot be proved here.
+#     ...
+#     # /UNPROVED
+#
+# Deliberately the `# GUARD` block shape with a different verb, rather than a fourth marker
+# grammar -- issue #65 has to reconcile the three that already exist (this file, the Python
+# harness in tests/contracts/test_guards_are_load_bearing.py, and the page harness in
+# tests/contracts/test_dashboard_escapes.py), and this should not add a fourth thing for it
+# to reconcile. The bracket slot holds the condition that retires the exception, where a
+# `# GUARD` holds the `-k` expression that proves it; both answer "what settles this".
+SHELL_UNPROVED = re.compile(
+    r"^[ \t]*# UNPROVED (?P<name>[a-z0-9][a-z0-9-]*)"
+    r" \[(?P<retires>[^\]]+)\]: (?P<why>[^\n]+)\n"
+    r"(?P<body>.*?)"
+    r"^[ \t]*# /UNPROVED[^\n]*\n",
+    re.S | re.M,
+)
+
+# The exception, by name. Until 2026-09-05 this was the number 1 -- `outside <= 1` in
+# `test_the_gate_declares_the_refusals_it_makes` -- which says "one refusal may be unmarked"
+# and not "*this* refusal is unmarked, for this reason". The two come apart the moment the
+# allowance changes hands: mark the gitleaks call, or delete it, and the budget frees up for
+# the next unmarked refusal to spend in silence. A count is also the shape this repo has been
+# bitten by three times, most recently a canary comment that said "six steps" over five.
+UNPROVED_HERE = {"third-party-secret-scanner"}
+
 
 @dataclass(frozen=True)
 class Refusal:
@@ -491,6 +525,35 @@ def _without(refusal: Refusal) -> str:
     return text[:lo] + text[hi:]
 
 
+def _unproved(text: str) -> dict[str, str]:
+    """The declared exceptions in `text`, name -> the whole block including its markers."""
+    return {m.group("name"): m.group(0) for m in SHELL_UNPROVED.finditer(text)}
+
+
+def _unmarked_refusals(text: str) -> list[str]:
+    """Every `fail=1` in `text` inside neither a `# GUARD` nor an `# UNPROVED` block.
+
+    Takes the text rather than reading SCRIPT so the positive control below can splice a
+    refusal in and watch this name it. Plain substring, not `\\bfail=1\\b`: `canary_fail=1`
+    and any other suffixed flag counts too, because over-reporting here costs a comment and
+    under-reporting is the whole defect.
+
+    Whole-comment lines are the one exclusion, and they are excluded because a refusal
+    cannot live in one: the prose explaining this convention says `fail=1` several times
+    in both files, and reading those as unmarked refusals is the fires-on-its-own-
+    documentation shape the pattern charsets above were tightened to avoid. A real
+    refusal carrying a trailing comment is untouched -- only a `#` before any other
+    content on the line makes it a comment here.
+    """
+    covered: set[int] = set()
+    for marker in (SHELL_GUARD, SHELL_UNPROVED):
+        for m in marker.finditer(text):
+            covered.update(range(*m.span()))
+    return [f"line {text[:m.start()].count(chr(10)) + 1}: {m.group(0).strip()}"
+            for m in re.finditer(r"^(?![ \t]*#).*fail=1.*$", text, re.M)
+            if m.start() not in covered]
+
+
 def _child(script: Path, k: str) -> subprocess.CompletedProcess:
     """Run this module's own tests against the script at `script`."""
     env = os.environ.copy()
@@ -504,17 +567,91 @@ def _child(script: Path, k: str) -> subprocess.CompletedProcess:
 @pytest.mark.skipif(MUTANT_RUN, reason="a child run of the excision harness")
 def test_the_gate_declares_the_refusals_it_makes():
     """The premise, and the reason a new refusal cannot land unproven: every `fail=1` in the
-    script must sit inside a declared guard, or this harness quietly covers five of six."""
-    text = SCRIPT.read_text()
+    script must sit inside a declared guard or a declared exception.
+
+    This asked `outside <= 1` until 2026-09-05. That is a budget, and the budget was already
+    spent on the gitleaks call -- so it read as "one unmarked refusal is fine" and could not
+    tell which one, nor notice the spender changing. Every unmarked refusal is reported here
+    by line and by source text instead."""
     found = _refusals()
     assert len(found) >= 5, f"only found {[r.name for r in found]}"
-    covered = "".join(text[lo:hi] for lo, hi in (r.span for r in found))
-    outside = text.count("fail=1") - covered.count("fail=1")
-    # `fail=0` initialises and the gitleaks line is `|| fail=1` on a tool that is skipped
-    # when absent, so it is not excised here; count it and no more.
-    assert outside <= 1, (
-        f"{outside} `fail=1` refusals sit outside any # GUARD block. An unmarked refusal is "
-        f"an unproven one -- that is what this file is for.")
+    unmarked = _unmarked_refusals(SCRIPT.read_text())
+    assert unmarked == [], (
+        "these refusals sit inside no # GUARD and no # UNPROVED block, so nothing proves "
+        "they fire:\n  " + "\n  ".join(unmarked) + "\n"
+        "Wrap each in `# GUARD name [-k expression]: why` and let the excision harness below "
+        "prove it, or -- only if it genuinely cannot be proved here -- declare it as an "
+        "`# UNPROVED` exception and add its name to UNPROVED_HERE.")
+
+
+@pytest.mark.skipif(MUTANT_RUN, reason="a child run of the excision harness")
+def test_a_second_unmarked_refusal_is_named_immediately():
+    """The positive control, and the thing the old count could not do.
+
+    Splice one more unmarked `fail=1` into the gate and the report must name it -- not say
+    "2 refusals sit outside any # GUARD block", which is the count restated one larger.
+    Without this the check only ever ran against a script that satisfies it, which is the
+    same vacuum as a canary that proves one pattern of five."""
+    spliced = SCRIPT.read_text() + "\ngrep -q something_new . || fail=1\n"
+    got = _unmarked_refusals(spliced)
+    assert len(got) == 1, f"the splice was not the only unmarked refusal: {got}"
+    assert "grep -q something_new" in got[0], (
+        f"the report does not say what the unmarked refusal is: {got[0]}")
+    assert got[0].startswith("line "), f"nor where it is: {got[0]}"
+
+
+@pytest.mark.skipif(MUTANT_RUN, reason="a child run of the excision harness")
+def test_a_refusal_carrying_a_trailing_comment_is_still_unmarked():
+    """The other side of that exclusion. Whole-comment lines are skipped so the prose about
+    this convention is not read as a refusal; a real refusal that happens to end in a comment
+    must not leave through the same door."""
+    spliced = SCRIPT.read_text() + "\ngrep -q something_new . || fail=1  # still a refusal\n"
+    got = _unmarked_refusals(spliced)
+    assert len(got) == 1 and "grep -q something_new" in got[0], got
+
+
+@pytest.mark.skipif(MUTANT_RUN, reason="a child run of the excision harness")
+def test_the_unproved_refusal_is_named_rather_than_counted():
+    """The exception is one specific refusal, identified by what it is. A second one is a new
+    unproved refusal and has to be argued for here, in this set, rather than inherited from a
+    number that happened to be large enough."""
+    declared = set(_unproved(SCRIPT.read_text()))
+    assert declared == UNPROVED_HERE, (
+        f"the gate declares {sorted(declared)} as unprovable by excision; this file expects "
+        f"{sorted(UNPROVED_HERE)}. A refusal that cannot be proved is not a spare slot: say "
+        f"which refusal it is and why, in both places.")
+
+
+@pytest.mark.skipif(MUTANT_RUN, reason="a child run of the excision harness")
+def test_the_exception_is_recorded_where_someone_meets_it():
+    """The reason has to sit on the refusal, not only in this file: the person who adds the
+    eighth refusal is reading the script, and `# UNPROVED` two lines above the call is what
+    tells them the exemption is one named case rather than a spare slot they may take."""
+    block = _unproved(SCRIPT.read_text())["third-party-secret-scanner"]
+    assert "fail=1" in block, "the exception does not wrap the refusal it exempts"
+    assert "gitleaks" in block, "the exception does not name the tool it is about"
+    assert "install" in block.lower(), (
+        "the exception does not record what would change if the tool were installed, which "
+        "is the difference between a reason and an excuse:\n" + block)
+
+
+@pytest.mark.skipif(MUTANT_RUN, reason="a child run of the excision harness")
+def test_the_exception_expires_when_the_scanner_is_installed():
+    """What would change if gitleaks were installed: this stops skipping and starts failing.
+
+    The exemption's whole premise is that `command -v gitleaks` takes the `skipped` branch
+    here, so excising the call changes nothing observable and a green excision run would
+    prove nothing. Install the tool and that premise is gone -- the refusal becomes provable,
+    and something has to say so rather than leaving a permanent exemption behind. Skipped
+    rather than asserted-around, so this run's silence is not mistaken for a measurement:
+    gitleaks was absent when this was written and is absent whenever this skips."""
+    if shutil.which("gitleaks") is None:
+        pytest.skip("gitleaks is not installed here, which is the exception's own premise")
+    assert "third-party-secret-scanner" not in _unproved(SCRIPT.read_text()), (
+        "gitleaks is on PATH, so the reason this refusal is exempt from the excision harness "
+        "no longer holds. Plant an input only gitleaks catches, wrap the call in a "
+        "`# GUARD third-party-secret-scanner [-k that test]`, and drop the `# UNPROVED` "
+        "block and its name from UNPROVED_HERE.")
 
 
 @pytest.mark.skipif(MUTANT_RUN, reason="a child run of the excision harness")
