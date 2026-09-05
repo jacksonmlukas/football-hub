@@ -38,7 +38,8 @@ its own incumbent and its own sentences.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from enum import Enum
 from typing import NamedTuple
 
 import numpy as np
@@ -180,35 +181,60 @@ def _stats(season: int) -> pl.DataFrame:                        # pragma: no cov
     return nflverse.load("player_stats", [season], cols=list(PLAYER_STATS_COLS))
 
 
-# What a summary field says when it has no value on it.
+# What a summary says about a field it has nothing to put in -- and why that is a *shape*
+# rather than a value.
 #
-# `float("nan")` rather than `None` because `summarise` is declared `dict[str, float]` and
-# `backtest.verdict` and `lineup_gate.verdict` both declare that same type on the way in.
-# Widening it would push a signature change through three harnesses that these two fields are
-# specifically meant not to touch.
+# The first version of this was `ABSENT = float("nan")` with a `present()` predicate, and its
+# comment cited `.github/scripts/heartbeat.sh` as the reason: `jq -r '.ts // 0'` made a missing
+# timestamp an age of `now - 0`, so the watchdog reported 56.7 years of staleness on every run
+# and could never reach the branch that closes an incident -- "one sentinel standing for
+# unreachable, unreadable and stale", three failures whose fix was three separate words.
 #
-# The one thing ABSENT must never be confusable with is a *computed* value, and a computed
-# zero above all. The repo has paid for that twice. ESPN's historical ADP returns 169 for
-# "undrafted" -- 78%/73%/69% of players in 2022-24 and 100% in 2025 -- and `docs/decisions.md`
-# records that it makes the series unusable, because nothing downstream can tell a 169th pick
-# from no pick. And `.github/scripts/heartbeat.sh` carries the closer one: `jq -r '.ts // 0'`
-# made a missing timestamp an age of `now - 0`, so the watchdog reported 56.7 years of
-# staleness on every run and could never reach the branch that closes an incident -- "one
-# sentinel standing for unreachable, unreadable and stale", three failures with three
-# different fixes. NaN is outside the range of both fields by construction and cannot be
-# arithmetic'd into a reading.
+# It then reproduced exactly that defect. `summarise` already returns NaN for its mean, its
+# bounds and its probability on an empty frame, meaning *the experiment had no rows*; `ABSENT`
+# was the same NaN in the same dictionary meaning *this summary predates the field*. Measured
+# 2026-09-05 on `summarise(pl.DataFrame())`: `present(s["mean"])` and `present(s["ceiling"])`
+# both answered `False`, and the two values were both `float("nan")`. Those are different facts
+# with different responses -- a gate over an empty frame has nothing to say, a gate over a full
+# frame whose ceiling was never computed has plenty to say and one missing line -- and nothing
+# a reader was given could separate them.
 #
-# A ceiling of zero -- a perfect-foresight arm gaining nothing at all over the incumbent -- is
-# the strongest finding a ceiling can carry, and it has to reach the reader as one. So
-# `present` is the only way to ask, rather than a truthiness check each reader writes for
-# itself and one of them writes as `if s["ceiling"]:`.
-ABSENT = float("nan")
+# So the states are carried apart the way `heartbeat.sh` carries its three: a field with no
+# value at all is *not in the summary*, which leaves NaN meaning exactly one thing, no data.
+# The mapping stays `dict[str, float]`, which is what makes this cheap -- widening the values
+# to admit `None` was re-measured on 2026-09-05 at 30 pyrefly errors across six files, four of
+# them inside the three harnesses this prefactor exists in order not to touch.
+#
+# The other half of the first version was right and is kept: a ceiling of zero -- a
+# perfect-foresight arm gaining nothing at all over the incumbent -- is the strongest finding a
+# ceiling can carry, and it has to reach the reader as one. `reading` is the only way to ask,
+# rather than a truthiness check each reader writes for itself and one of them writes as
+# `if s["ceiling"]:`.
 
 
-def present(value: float) -> bool:
-    """Whether a summary field carries a value at all. `present(0.0)` is True; that is why
-    this exists rather than a `!= 0` or a truthiness test at each reader."""
-    return not math.isnan(value)
+class Field(Enum):
+    """What a summary has to say about one of its fields. Three states, three answers.
+
+    `NO_SLOT` names a dictionary key that is not there. That is this summary's own slot and
+    not `CONTEXT.md`'s draft **Slot**, which is a pick position.
+    """
+
+    VALUE = "value"        # a number, a measured zero included
+    NO_DATA = "no data"    # the field is there and the experiment scored nothing into it
+    NO_SLOT = "no slot"    # this summary's producer does not compute the field at all
+
+
+def reading(summary: Mapping[str, float], field: str) -> Field:
+    """Which of the three a summary gives for `field`.
+
+    `reading(s, "mean")` on an empty frame is `NO_DATA`; `reading(s, "ceiling")` on a summary
+    written before anything measured one is `NO_SLOT`. That the same question works on every
+    field is the point -- the two fields waiting on their producers are not a special case with
+    a private predicate, they are ordinary fields whose producer has not landed yet.
+    """
+    if field not in summary:
+        return Field.NO_SLOT
+    return Field.NO_DATA if math.isnan(summary[field]) else Field.VALUE
 
 
 def paired_report(s: dict, *, arm_a: str, arm_b: str,
@@ -223,11 +249,13 @@ def paired_report(s: dict, *, arm_a: str, arm_b: str,
     rounds to +0.22 at two -- while every doc and ADR quotes it as +0.215. `show_n` because
     that gate prints its own roster-week count, with the cluster count beside it.
 
-    `mde` and `ceiling` render only when present. Nothing computes either yet, so every caller
-    today gets exactly the two lines it got before -- not a placeholder, not a blank, not a
-    line reading `nan`. Order is deliberate: the effect, the interval around it, the smallest
-    effect the run could have resolved, and then how much there was to resolve. Each line is
-    read against the one above it.
+    `mde` and `ceiling` render only when they carry a value. Nothing computes either yet, so
+    every caller today gets exactly the two lines it got before -- not a placeholder, not a
+    blank, not a line reading `nan`. A field with a slot and no data prints nothing either:
+    `nan` set against a unit is the watchdog's 56.7 years, and silence is the honest render of
+    a number that was not computed. Order is deliberate: the effect, the interval around it,
+    the smallest effect the run could have resolved, and then how much there was to resolve.
+    Each line is read against the one above it.
     """
     head = f"n={int(s['n'])}  " if show_n else ""
     lines = [
@@ -235,14 +263,15 @@ def paired_report(s: dict, *, arm_a: str, arm_b: str,
         f"  95% CI [{s['lo']:+.{places}f}, {s['hi']:+.{places}f}]   "
         f"P({arm_a} better) {s['p_better'] * 100:.1f}%",
     ]
-    # `.get` rather than `s["mde"]`: hand-built summaries reach this block too, and a dict
-    # without the slot has exactly as much to say about its MDE as one carrying ABSENT.
-    mde = s.get("mde", ABSENT)
-    if present(mde):
-        lines.append(f"  MDE at 80% power {mde:+.{places}f} {unit}")
-    ceiling = s.get("ceiling", ABSENT)
-    if present(ceiling):
-        lines.append(f"  ceiling (perfect foresight) {ceiling:+.{places}f} {unit}")
+    # `reading` rather than `s["mde"]`: hand-built summaries reach this block too, and one
+    # with no such key has nothing to say about its MDE. This block renders neither that nor a
+    # slot holding no data, but they are different nothings, and `gate` is where the
+    # difference will be acted on -- which is why the block asks a three-answer question
+    # rather than a predicate that folds them together.
+    if reading(s, "mde") is Field.VALUE:
+        lines.append(f"  MDE at 80% power {s['mde']:+.{places}f} {unit}")
+    if reading(s, "ceiling") is Field.VALUE:
+        lines.append(f"  ceiling (perfect foresight) {s['ceiling']:+.{places}f} {unit}")
     return lines
 
 
@@ -268,7 +297,7 @@ def realised_ppg(stats: pl.DataFrame) -> pl.DataFrame:
 
 def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
               bootstrap: int = BOOTSTRAP, seed: int = 0,
-              ceiling: float = ABSENT) -> dict[str, float]:
+              ceiling: float | None = None) -> dict[str, float]:
     """Mean paired difference, a bootstrap interval, and P(arm A better).
 
     Bootstrapped over *paired* observations rather than over each arm separately, matching
@@ -293,22 +322,31 @@ def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
     [-0.249, +0.659] against a re-run's [-0.251, +0.663] for an identical +0.215. Same defect
     as improvements #18, one layer down.
 
-    **`mde` and `ceiling` are slots, and today both are `ABSENT`.** They are the two numbers
-    a gate needs before a null it reports means anything: the smallest effect this run could
-    have resolved at 80% power, and the largest one there was to find -- what a
-    perfect-foresight arm gains over this gate's own incumbent, on this gate's own harness, in
-    this gate's own units. `mde` will be computed here, from the same cluster-mean vector the
-    interval comes from. `ceiling` arrives from the caller instead, because measuring it means
-    playing an extra arm and only the harness knows what its arms are.
+    **`mde` and `ceiling` are the two fields whose producers have not landed, so a summary
+    carries each only when something filled it -- and today nothing computes an `mde` and no
+    caller hands in a `ceiling`.** They are the two numbers a gate needs before a null it
+    reports means anything: the smallest effect this run could have resolved at 80% power,
+    and the largest one there was to find -- what a perfect-foresight arm gains over this
+    gate's own incumbent, on this gate's own harness, in this gate's own units. `mde` will be
+    computed here, from the same cluster-mean vector the interval comes from, and the key
+    appears when it does. `ceiling` arrives from the caller instead, because measuring it
+    means playing an extra arm and only the harness knows what its arms are -- so it appears
+    exactly when a caller hands one in.
 
-    Neither is read by anything yet, and that is deliberate: they exist now so the units that
-    compute them change no call site's signature. Until then a block that has neither prints
-    neither, and `gate` decides on the same two halves ADR-0019 fixed.
+    A key's *presence* is this producer's claim to compute the field; a NaN inside one is its
+    claim to have computed nothing this time. Neither field is read by anything yet, and that
+    is deliberate: they exist now so the units that compute them change no call site's
+    signature. Until then a block that has neither prints neither, and `gate` decides on the
+    same two halves ADR-0019 fixed.
     """
+    # A ceiling the caller measured is a fact about its harness rather than about these
+    # rows, so it is carried onto the empty summary too -- that pairing, a real ceiling beside
+    # a mean of no data, is the one the old sentinel could not express. No ceiling means no
+    # key: a NaN here would be indistinguishable from the mean directly above it.
+    carried = {} if ceiling is None else {"ceiling": ceiling}
     if paired.is_empty():
         return {"n": 0, "clusters": 0, "mean": float("nan"), "lo": float("nan"),
-                "hi": float("nan"), "p_better": float("nan"),
-                "mde": ABSENT, "ceiling": ceiling}
+                "hi": float("nan"), "p_better": float("nan")} | carried
     if cluster:
         keys = list(cluster)
         units = (paired.group_by(keys).agg(pl.col("diff").mean().alias("_unit"))
@@ -323,8 +361,7 @@ def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
             "mean": float(units.mean()),
             "lo": float(np.percentile(draws, 2.5)),
             "hi": float(np.percentile(draws, 97.5)),
-            "p_better": float((draws > 0).mean()),
-            "mde": ABSENT, "ceiling": ceiling}
+            "p_better": float((draws > 0).mean())} | carried
 
 
 # --- the Gate ---------------------------------------------------------------

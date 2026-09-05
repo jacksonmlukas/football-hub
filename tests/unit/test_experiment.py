@@ -7,6 +7,8 @@ because both copies lived inside a `main()` that needs a network.
 
 All offline.
 """
+import hashlib
+import math
 from typing import Any
 
 import numpy as np
@@ -452,20 +454,33 @@ def test_the_recorded_verdicts_reproduce(what, lo, hi, gains, expected):
     got = experiment.gate(_gate_summary(lo, hi), _gate_seasons(gains), _ACTIONS)[0]
     assert got == expected, f"{what} moved to {got}"
 
-
-# --- the MDE and the ceiling, carried before anything computes them ---------
+# --- the MDE and the ceiling, and the difference between no data and no slot ---------
 #
 # U4 of `docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md` computes a minimum
 # detectable effect inside `summarise`; U13 measures a ceiling on each gate's own harness and
-# hands it in. Neither exists yet. The slots exist now so that when those units land, no call
+# hands it in. Neither exists yet. The fields exist now so that when those units land, no call
 # site changes -- which makes "this changed nothing" the whole property under test here.
 #
-# The sentinel is `experiment.ABSENT` and `experiment.present` is the one way to ask. This
-# repo has a recorded case of one sentinel standing for several distinct causes and hiding all
-# of them: the watchdog's `// 0` reported unreachable, unreadable and stale as one number. So
-# the line these tests hold is that a *computed* zero is present. A gate measured to have no
-# headroom and a gate with no ceiling measured are different readings, and a reader who cannot
-# tell them apart has the watchdog's number back.
+# The first attempt gave both fields a NaN sentinel named `ABSENT` and a `present()` predicate,
+# and justified it by citing `.github/scripts/heartbeat.sh`: `jq -r '.ts // 0'` made a missing
+# timestamp an age of `now - 0`, the watchdog reported 56.7 years of staleness on every run and
+# could never reach the branch that closes an incident -- "one sentinel standing for
+# unreachable, unreadable and stale". The fix there was three words for three causes.
+#
+# It then did the thing the comment forbade. `summarise` already returns NaN for its mean,
+# bounds and probability on an empty frame, meaning *the experiment had no rows*; `ABSENT` was
+# the same NaN in the same dictionary meaning *this summary predates the field*, and `present`
+# answered False to both. Measured 2026-09-05 on `summarise(pl.DataFrame())`:
+# `present(s["mean"])` and `present(s["ceiling"])` were both `False` and the two values were
+# both `float("nan")` -- nothing a reader was given could separate them.
+#
+# What replaced it carries the state in the mapping's *shape* rather than in a value: a field
+# with nothing to say is not in the summary at all. Three states, three answers, from
+# `experiment.reading` -- a value, no data, no slot. These tests hold that line, and the line
+# that a *computed* zero is a value: a gate measured to have no headroom and a gate with no
+# ceiling measured are different readings, and a reader who cannot tell them apart has the
+# watchdog's number back.
+
 
 def _paired_frame():
     return pl.DataFrame({"season": [2022, 2023, 2024, 2025],
@@ -506,7 +521,7 @@ def test_an_existing_caller_s_block_is_byte_identical(site):
 @pytest.mark.parametrize("site", sorted(BLOCKS_BEFORE))
 def test_a_summary_straight_out_of_summarise_renders_the_same_two_lines(site):
     """The goldens above are hand-built dicts, which cannot show whether the real product of
-    `summarise` -- which now carries both slots -- has grown a line. This does."""
+    `summarise` has grown a line. This does."""
     kwargs, _ = BLOCKS_BEFORE[site]
     lines = experiment.paired_report(experiment.summarise(_paired_frame(), bootstrap=200,
                                                           seed=1), **kwargs)
@@ -514,20 +529,180 @@ def test_a_summary_straight_out_of_summarise_renders_the_same_two_lines(site):
     assert "MDE" not in "\n".join(lines) and "ceiling" not in "\n".join(lines)
 
 
-def test_the_summary_carries_both_slots_absent():
-    s = experiment.summarise(_paired_frame(), bootstrap=200, seed=1)
-    assert not experiment.present(s["mde"])
-    assert not experiment.present(s["ceiling"])
+# --- the breadth proof ------------------------------------------------------
+#
+# Three hand-written goldens localise a failure; they cannot show the blocks are unchanged
+# across the shapes a real run takes. The sweep below renders all three call sites over 41
+# frames x 3 cluster settings x 2 seeds -- 738 blocks -- and hashes them, together with 80
+# gate verdicts. Both digests were recorded from this module *as it stood before the sentinel
+# changed* (working tree at 293ae3c, 2026-09-05), which is what makes them a proof of "current
+# callers see the same bytes" rather than a restatement of whatever the code now does.
+
+_SWEEP_CLUSTERS: tuple[tuple[str, ...] | None, ...] = (None, ("season",),
+                                                       ("season", "roster"))
+_SWEEP_SEEDS = (1, 7)
 
 
-def test_an_empty_summary_carries_them_too():
-    """A reader never has to know which branch ran -- the same reason `clusters` is always
-    present."""
+def _sweep_frames() -> list[pl.DataFrame]:
+    """The empty frame, then forty shaped frames.
+
+    Built from arithmetic rather than an RNG so the digests below cannot move under a numpy
+    upgrade -- the bootstrap inside `summarise` is stream-dependent enough on its own.
+    """
+    schema = {"season": pl.Int64, "roster": pl.Int64, "week": pl.Int64, "diff": pl.Float64}
+    frames = [pl.DataFrame(schema=schema)]
+    for i in range(40):
+        rows, k = [], 0
+        for season in range(2022, 2023 + i % 4):
+            for roster in range(1 + i % 3):
+                for week in range(1, 2 + i % 5):
+                    k += 1
+                    rows.append({
+                        "season": season, "roster": roster, "week": week,
+                        "diff": round(math.sin(i * 1.7 + k * 0.31) * (1 + i % 3)
+                                      + (i - 20) / 8, 6)})
+        frames.append(pl.DataFrame(rows, schema=schema))
+    return frames
+
+
+def _sweep_blocks() -> list[tuple[str, list[str]]]:
+    """Every call site's rendered block, over every frame, cluster setting and seed."""
+    out = []
+    for f_i, frame in enumerate(_sweep_frames()):
+        for cluster in _SWEEP_CLUSTERS:
+            for seed in _SWEEP_SEEDS:
+                s = experiment.summarise(frame, cluster=cluster, bootstrap=200, seed=seed)
+                for site in sorted(BLOCKS_BEFORE):
+                    kwargs, _ = BLOCKS_BEFORE[site]
+                    out.append((f"{f_i}|{cluster}|{seed}|{site}",
+                                experiment.paired_report(s, **kwargs)))
+    return out
+
+
+def _digest(parts: list[str]) -> str:
+    return hashlib.sha256("\n--\n".join(parts).encode()).hexdigest()[:16]
+
+
+BLOCK_SWEEP_DIGEST = "bf5b1af281ea0f0c"
+GATE_SWEEP_DIGEST = "7c0084a7ec69757d"
+
+
+def test_the_whole_rendered_sweep_is_byte_identical():
+    """738 blocks, one hash. If a field grew a line, changed a number or reordered, this moves
+    and the readable assertions below say which of those it was."""
+    blocks = _sweep_blocks()
+    assert len(blocks) == 738
+    assert _digest([f"{label}\n" + "\n".join(lines) for label, lines in blocks]) \
+        == BLOCK_SWEEP_DIGEST
+
+
+def test_no_block_in_the_sweep_grew_a_line():
+    """The readable half of the digest above: today nothing computes an MDE and no caller
+    hands in a ceiling, so every one of the 738 blocks is exactly the two lines it was."""
+    for label, lines in _sweep_blocks():
+        assert len(lines) == 2, label
+        assert "MDE" not in "\n".join(lines) and "ceiling" not in "\n".join(lines)
+
+
+def test_only_the_empty_frame_renders_a_nan_across_the_sweep():
+    """Where NaN reaches a reader it is because the experiment scored nothing -- 18 blocks,
+    the empty frame at each of 3 cluster settings x 2 seeds x 3 call sites. That is also
+    exactly what those callers printed before, so it stays."""
+    nan_blocks = [label for label, lines in _sweep_blocks() if "nan" in "\n".join(lines)]
+    assert len(nan_blocks) == 18
+    assert {label.split("|")[0] for label in nan_blocks} == {"0"}
+
+
+_GATE_INTERVALS = ((-1.2, -0.4), (-1.2, -0.1), (-0.4, 0.9), (0.0, 1.2), (-1.2, 0.0),
+                   (0.1, 1.2), (0.4, 1.2), (-23.16, -16.20), (-0.242, 0.684), (-0.0, 0.0))
+_GATE_GAINS = ((0.3, 0.5, 0.9), (0.3, -0.2, 0.9), (-0.3, -0.5, -0.9), (-0.3, 0.2, -0.9),
+               (0.0, 0.0, 0.0), (1.0,), (-1.0,), (0.4, 0.3, -0.2, 0.5))
+
+
+def _gate_sweep(extra: dict[str, float]) -> list[str]:
+    """Every verdict on the interval x seasons grid, with `extra` merged into each summary."""
+    out = []
+    for lo, hi in _GATE_INTERVALS:
+        for gains in _GATE_GAINS:
+            status, said = experiment.gate(_gate_summary(lo, hi) | extra,
+                                           _gate_seasons(gains), _ACTIONS)
+            out.append(f"{lo}|{hi}|{gains}|{status}|{said}")
+    return out
+
+
+def test_the_eighty_gate_verdicts_are_unmoved():
+    verdicts = _gate_sweep({})
+    assert len(verdicts) == 80
+    assert _digest(verdicts) == GATE_SWEEP_DIGEST
+
+
+@pytest.mark.parametrize("extra", [
+    {},
+    {"ceiling": 1.2},
+    {"ceiling": 0.0},
+    {"mde": 0.44, "ceiling": 1.2},
+    {"mde": float("nan"), "ceiling": float("nan")},
+])
+def test_no_state_of_either_field_moves_a_gate_verdict(extra):
+    """`gate` is ADR-0019's two halves and nothing else today. U4 adds a not-runnable branch
+    ahead of every branch but VOID; until it does, a summary carrying these fields in any
+    state must reach exactly the verdict a summary without them reaches."""
+    assert _gate_sweep(extra) == _gate_sweep({})
+
+
+# --- no data is not no slot -------------------------------------------------
+
+
+def test_no_data_and_no_slot_are_different_answers():
+    """The defect, in one assertion. On an empty frame the mean says *no rows were scored* and
+    the ceiling says *nobody measured one*; those are different facts with different responses
+    and the reader is now given words that separate them."""
+    empty = experiment.summarise(pl.DataFrame())
+    assert experiment.reading(empty, "mean") is experiment.Field.NO_DATA
+    assert experiment.reading(empty, "ceiling") is experiment.Field.NO_SLOT
+    assert experiment.reading(empty, "mde") is experiment.Field.NO_SLOT
+
+
+def test_a_ceiling_measured_on_a_harness_survives_an_empty_frame():
+    """The case that has to read correctly and could not before: the harness played its
+    perfect-foresight arm and got a number, and this particular frame scored nothing. Two
+    facts, both reportable, previously one NaN."""
+    s = experiment.summarise(pl.DataFrame(), ceiling=0.0)
+    assert experiment.reading(s, "ceiling") is experiment.Field.VALUE
+    assert s["ceiling"] == 0.0
+    assert experiment.reading(s, "mean") is experiment.Field.NO_DATA
+
+
+def test_nan_means_no_data_and_nothing_else():
+    """The invariant that keeps the two apart, stated both ways. A summary over rows carries
+    no NaN anywhere; the empty summary carries NaN for exactly the four computed fields."""
+    full = experiment.summarise(_paired_frame(), bootstrap=200, seed=1, ceiling=1.2)
+    assert [k for k, v in full.items() if math.isnan(v)] == []
+    empty = experiment.summarise(pl.DataFrame())
+    assert sorted(k for k, v in empty.items() if math.isnan(v)) == [
+        "hi", "lo", "mean", "p_better"]
+
+
+def test_the_empty_frame_still_reports_what_it_reported_before():
+    """An experiment with no rows is not silently promoted to a missing field: its four
+    computed numbers are still NaN and its two counts are still zero."""
     s = experiment.summarise(pl.DataFrame())
-    assert not experiment.present(s["mde"]) and not experiment.present(s["ceiling"])
+    assert (s["n"], s["clusters"]) == (0, 0)
+    for field in ("mean", "lo", "hi", "p_better"):
+        assert math.isnan(s[field]), field
+        assert experiment.reading(s, field) is experiment.Field.NO_DATA
 
 
-def test_the_slots_do_not_move_the_numbers_that_were_already_there():
+def test_a_summary_today_has_no_slot_for_either_field():
+    """Nothing computes an MDE and no caller hands in a ceiling, so `summarise` claims
+    neither. The key's presence is the claim that this producer computes the field."""
+    s = experiment.summarise(_paired_frame(), bootstrap=200, seed=1)
+    assert "mde" not in s and "ceiling" not in s
+    assert experiment.reading(s, "mde") is experiment.Field.NO_SLOT
+    assert experiment.reading(s, "ceiling") is experiment.Field.NO_SLOT
+
+
+def test_the_optional_fields_do_not_move_the_numbers_that_were_already_there():
     """Adding a field must not perturb the bootstrap. Same seed, and these six are the values
     recorded from the run before the change."""
     s = experiment.summarise(_paired_frame(), bootstrap=500, seed=3)
@@ -540,25 +715,44 @@ def test_a_ceiling_is_carried_from_the_caller():
     arrives from outside rather than being computed here."""
     s = experiment.summarise(_paired_frame(), bootstrap=200, seed=1, ceiling=1.20)
     assert s["ceiling"] == 1.20
+    assert experiment.reading(s, "ceiling") is experiment.Field.VALUE
 
 
-def test_absent_is_not_a_computed_zero():
-    """The watchdog's `// 0` again. A ceiling of zero says a perfect-foresight arm gains
-    nothing over the incumbent, which is a finding; an absent ceiling says nobody looked."""
-    assert experiment.present(0.0)
-    assert experiment.present(-0.0)
-    assert not experiment.present(experiment.ABSENT)
+def test_the_declared_mapping_type_is_not_widened():
+    """The constraint that shaped this and still binds: `summarise` is declared
+    `dict[str, float]` and `backtest.verdict` and `lineup_gate.verdict` declare it on the way
+    in. Widening the values to admit `None` was re-measured on 2026-09-05 at 30 pyrefly errors
+    across six files, four of them in the three harnesses a prefactor must not touch. Absence
+    is carried by the mapping's shape instead, which costs those callers nothing."""
+    import inspect
+    sig = inspect.signature(experiment.summarise)
+    assert sig.return_annotation == "dict[str, float]"
+    got = experiment.summarise(_paired_frame(), bootstrap=200, seed=1, ceiling=0.5)
+    assert [k for k, v in got.items() if not isinstance(v, float | int)] == []
 
 
-def test_the_ceiling_line_renders_when_present():
+def test_a_measured_zero_is_a_value_not_an_absence():
+    """The watchdog's `// 0` again, and the line the first attempt got right. A ceiling of zero
+    says a perfect-foresight arm gains nothing over the incumbent, which is the strongest
+    finding a ceiling can carry."""
+    assert experiment.reading({"ceiling": 0.0}, "ceiling") is experiment.Field.VALUE
+    assert experiment.reading({"ceiling": -0.0}, "ceiling") is experiment.Field.VALUE
+    assert experiment.reading({}, "ceiling") is experiment.Field.NO_SLOT
+    assert experiment.reading({"ceiling": float("nan")}, "ceiling") is experiment.Field.NO_DATA
+
+
+# --- what the block renders -------------------------------------------------
+
+
+def test_the_ceiling_line_renders_when_it_has_a_value():
     lines = experiment.paired_report(_summary() | {"ceiling": 1.2},
                                      arm_a="optimizer", arm_b="market")
     joined = "\n".join(lines)
     assert "ceiling (perfect foresight) +1.20 points per team game" in joined
-    assert "MDE" not in joined, "the absent one must not appear at all"
+    assert "MDE" not in joined, "the one with no slot must not appear at all"
 
 
-def test_the_mde_line_renders_when_present():
+def test_the_mde_line_renders_when_it_has_a_value():
     lines = experiment.paired_report(_summary() | {"mde": 0.44},
                                      arm_a="weekly", arm_b="consensus",
                                      unit="points per team-week", places=3, show_n=False)
@@ -568,12 +762,23 @@ def test_the_mde_line_renders_when_present():
 
 
 def test_a_measured_zero_still_renders():
-    """The distinction the sentinel exists to keep. A gate whose ceiling is zero has no
-    headroom to report and has to say so; omitting the line would read as never measured."""
+    """The distinction the shape exists to keep. A gate whose ceiling is zero has no headroom
+    to report and has to say so; omitting the line would read as never measured."""
     joined = "\n".join(experiment.paired_report(_summary() | {"ceiling": 0.0, "mde": 0.0},
                                                 arm_a="a", arm_b="b"))
     assert "ceiling (perfect foresight) +0.00" in joined
     assert "MDE at 80% power +0.00" in joined
+
+
+def test_a_field_with_no_data_renders_no_line_rather_than_a_line_reading_nan():
+    """A slot that exists and has nothing in it yet -- U4's MDE over an empty frame -- is a
+    third state, and the block's answer to it is silence. `nan` printed against a unit is the
+    watchdog's 56.7 years."""
+    lines = experiment.paired_report(_summary() | {"mde": float("nan"),
+                                                   "ceiling": float("nan")},
+                                     arm_a="a", arm_b="b")
+    assert lines == experiment.paired_report(_summary(), arm_a="a", arm_b="b")
+    assert "nan" not in "\n".join(lines)
 
 
 def test_both_render_below_the_interval_in_a_stated_order():
@@ -583,14 +788,3 @@ def test_both_render_below_the_interval_in_a_stated_order():
                                      arm_a="a", arm_b="b")
     assert len(lines) == 4
     assert "95% CI" in lines[1] and "MDE" in lines[2] and "ceiling" in lines[3]
-
-
-def test_the_gate_reads_neither_field_while_it_is_absent():
-    """`gate` is ADR-0019's two halves and nothing else today. U4 adds the not-runnable branch
-    ahead of every branch but VOID; until it does, a summary carrying the absent sentinel must
-    reach exactly the verdict a summary without the keys reaches."""
-    seasons = pl.DataFrame({"season": [2022, 2023], "gain": [0.4, 0.6], "n": [10, 10]})
-    acts = experiment.Actions(adopt="A.", remove="R.", show="S.")
-    old = {"clusters": 2.0, "lo": 0.1, "hi": 0.9}
-    carried = old | {"mde": experiment.ABSENT, "ceiling": experiment.ABSENT}
-    assert experiment.gate(carried, seasons, acts) == experiment.gate(old, seasons, acts)
