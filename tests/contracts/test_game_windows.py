@@ -56,10 +56,13 @@ GAME_HOURS: set[tuple[int, int]] = (
 )
 
 
+def _crons_in(text: str) -> list[str]:
+    return re.findall(r'^\s*-\s*cron:\s*"([^"]+)"', text, flags=re.MULTILINE)
+
+
 def _crons(name: str) -> list[str]:
     """The cron expressions in one workflow, ignoring commented-out ones."""
-    text = (WORKFLOWS / name).read_text()
-    return re.findall(r'^\s*-\s*cron:\s*"([^"]+)"', text, flags=re.MULTILINE)
+    return _crons_in((WORKFLOWS / name).read_text())
 
 
 def _hours(field: str) -> set[int]:
@@ -111,6 +114,18 @@ def test_the_scan_finds_the_crons_that_exist():
     assert len(_crons("pages.yml")) >= 5
     assert len(_crons("watchdog.yml")) >= 3
     assert _slots(_crons("pages.yml")), "no hours parsed out of the deploy crons"
+
+
+def test_a_commented_out_cron_is_not_counted_as_one():
+    """The premise above only holds if the regex can tell a live block from a dormant one,
+    and that is not hypothetical here: until 2026-09-04 both `watchdog.yml` and `ci.yml`
+    carried a `SCHEDULE DISABLED` comment above a `schedule:` block that was in fact live.
+    Had the block matched the comment, `_crons` would have returned nothing and every
+    property in this file would have passed by having nothing to check."""
+    live = '  schedule:\n    - cron: "*/10 17-23 * * 0"\n'
+    dead = '  # schedule:\n  #   - cron: "*/10 17-23 * * 0"\n'
+    assert _crons_in(live) == ["*/10 17-23 * * 0"]
+    assert _crons_in(dead) == [], "a commented-out cron would be counted as coverage"
 
 
 # --- 1. the window follows Eastern, in both states ---------------------------

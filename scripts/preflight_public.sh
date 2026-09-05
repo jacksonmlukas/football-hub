@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# Run before flipping the repo public. Flipping exposes the ENTIRE history, not just HEAD --
-# a secret committed and later removed is still sitting in an old commit, permanently.
+# The repo is public. Every commit in it is readable by anyone, and that is already true of
+# everything below -- so a hit here is not "do not flip", it is "this is disclosed, rotate it
+# now". The scan covers the ENTIRE history rather than HEAD because a secret committed and
+# later removed is still sitting in an old commit, permanently, and being reachable by SHA is
+# indistinguishable from being published.
+#
+# It still runs before a push, which is the only moment any of it is preventable.
 set -uo pipefail
 fail=0
 
@@ -117,6 +122,51 @@ case "$NAME" in
     echo "  WARNING: git config user.name is '$NAME' -- a placeholder, on a public repo" ;;
 esac
 
+# `schedule:` blocks go stale silently: a commented-out trigger is a workflow that simply
+# never runs, with no failure anywhere to notice. watchdog.yml and ci.yml spent the private
+# period with theirs off to stay inside the 2,000 free Actions minutes private repos are
+# metered at (watchdog.yml records what that cost when it was left on by mistake); c984746
+# turned both back on and left every comment and checklist step still saying they were off.
+# Reading the file is the only version of that claim that cannot drift.
+#
+# Structural, not two greps. `schedule:` also matches a `with:` input and `- cron:` also
+# matches a line inside a heredoc, so testing for the two independently passes a file whose
+# only real schedule block is commented out -- the same shape as the BRE patterns above that
+# matched nothing, in the check added to stop a claim going stale.
+#
+# Comments are stripped first, and only where a `#` starts a line or follows whitespace, so a
+# `#` inside a quoted scalar survives. Stripping can only ever hide a real cron and produce a
+# spurious WARNING; it cannot invent a trigger, so it fails in the safe direction.
+has_live_schedule() {
+  sed -e 's/^[[:space:]]*#.*//' -e 's/[[:space:]]#.*//' "$1" | awk '
+    function ind(s) { match(s, /^ */); return RLENGTH }
+    { if ($0 ~ /^[[:space:]]*$/) next
+      i = ind($0)
+      if (insched && i <= sind) insched = 0
+      if (i == 0) { inon = ($0 ~ /^on:[[:space:]]*$/); insched = 0 }
+      else if (inon && !insched && $0 ~ /^ +schedule:[[:space:]]*$/) { insched = 1; sind = i }
+      else if (insched && $0 ~ /^ *- *cron:/) found = 1 }
+    END { exit found ? 0 : 1 }'
+}
+
+# All four workflows that are meant to run unattended. watchdog.yml and ci.yml are the two
+# that were deliberately switched off; pages.yml and slate.yml never were, and are here
+# because a schedule silently commented out is exactly as invisible in them.
+echo "==> Checking the unattended workflows still run on a schedule"
+for WF in watchdog ci pages slate; do
+  F=".github/workflows/$WF.yml"
+  if [ ! -f "$F" ]; then
+    echo "  skipped: no $F here"
+  elif has_live_schedule "$F"; then
+    echo "  ok: $F has a live schedule: block"
+  else
+    # A warning, not a failure: a cron that is off is a thing to know, not a credential in
+    # the history, and it may well be off on purpose.
+    echo "  WARNING: $F has no live 'schedule:' trigger, so it runs only when something"
+    echo "    else triggers it. Nothing will fail to tell you that."
+  fi
+done
+
 echo "==> Checking gitleaks if available"
 if command -v gitleaks >/dev/null 2>&1; then
   gitleaks detect --no-banner --redact || fail=1
@@ -126,16 +176,12 @@ fi
 
 echo
 if [ $fail -eq 0 ]; then
-  echo "PASS. Safe to flip public."
-  echo
-  echo "Then, in this order -- none of these happen on their own:"
-  echo "  1. Flip the repo public."
-  echo "  2. Check the 'schedule:' block in .github/workflows/watchdog.yml is live."
-  echo "     It is, as of 2026-09-04 -- the comment above it saying otherwise is stale."
-  echo "  3. Uncomment the 'schedule:' block in .github/workflows/ci.yml, which is what"
-  echo "     runs the golden tests against the live APIs."
-  echo "  4. Enable Pages (Settings > Pages > main branch)."
+  # "PASS" is asserted by tests/unit/test_preflight.py::test_a_clean_repo_passes.
+  echo "PASS. Nothing in this history is exposed that should not be."
 else
-  echo "BLOCKED. Fix the above before making this repo public." >&2
+  # Not "do not flip" any more. The history is already published, so everything above is
+  # already disclosed; removing it from the repo is the second step, after rotating it.
+  echo "BLOCKED. Treat everything above as already disclosed: rotate the credential first," >&2
+  echo "then rewrite the history with git-filter-repo. Removing it is not un-publishing it." >&2
 fi
 exit $fail
