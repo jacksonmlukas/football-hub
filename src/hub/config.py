@@ -16,12 +16,18 @@ Covered is not the same as living here, and the difference is deliberate:
 
 So: if you find yourself typing a float into a module, ask which kind it is. A choice belongs
 in this file. A measurement belongs beside the evidence for it, in a module this file hashes.
+
+There is a third kind, and it is deliberately *not* covered. The bytes a run was scored
+against are not part of the model that scored them, and they move on their own -- so
+`data_digest()` sits beside `config_digest()` and never inside it. `data_digest` argues why
+at the point of the decision.
 """
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
@@ -333,6 +339,85 @@ def config_digest(cfg: HubConfig | object, *, exclude: tuple[str, ...] = ("poll"
         d.pop(k, None)
     canonical = OmegaConf.to_yaml(OmegaConf.create(d), sort_keys=True)
     return hashlib.sha256((canonical + fitted_digest()).encode()).hexdigest()[:8]
+
+
+class DataPin(Protocol):
+    """What identifies one loaded source, structurally.
+
+    Read-only on purpose, so `hub.fetch.nflverse.Pin` -- a frozen dataclass -- satisfies it,
+    and stated here rather than imported so this module keeps knowing nothing about the
+    filesystem. `config_digest` can be computed from an empty checkout; making it import a
+    fetch layer to do so would be the wrong shape and a circular import besides, since
+    `hub.fetch.nflverse` reads `SEASON_COMPLETED` from here.
+    """
+
+    @property
+    def source(self) -> str: ...
+
+    @property
+    def as_of(self) -> str | None: ...
+
+    @property
+    def digest(self) -> str: ...
+
+
+# What `data_digest` answers for a run that pinned nothing. Not a hash: sixteen modules
+# besides `hub.fetch.nflverse` itself still `import nflreadpy` and reach the archive directly
+# (counted 2026-09-05) -- `models/panel.py` at eight call sites on its own -- so the
+# unpinned run is the common case until U2 of
+# docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md routes them. A
+# plausible-looking eight hex characters for that case would be provenance present in the
+# schema and absent in the data, which is the defect `models/ratings.py` records when
+# `cfg_digest` defaulted to "default" for every run under every configuration. Eight
+# characters, so it lines up where the three are printed together.
+UNPINNED = "unpinned"
+
+
+def data_digest(pins: Iterable[DataPin]) -> str:
+    """Stable 8-char hash of the data a run actually loaded, or `UNPINNED` for none.
+
+    Deliberately a *sibling* of `config_digest` and not an ingredient of it. The two answer
+    different questions and only one of them belongs in a model version:
+
+      * `config_digest` answers "which model made this row". ADR-0006 requires that it move
+        when, and only when, a setting or a fitted constant moves.
+      * this answers "which bytes was it scored against". nflverse revises `player_stats` and
+        `pbp` in place -- `nflverse._write_by_week` says so where it passes `replace=True` --
+        so this moves on a Tuesday refetch with no line of code and no fitted constant having
+        changed.
+
+    Folding the second into the first would issue a new model version every time the archive
+    was refetched. That is the mirror image of the failure ADR-0006 was written for: there,
+    refitting TALENT_CV left the version byte-identical, so the record claimed one model had
+    made both sets of rows; here the version would move while the model stood still, and it
+    would stop discriminating hyperparameters, which is the one job ADR-0004 gave it. It would
+    also make the version depend on the state of a cache directory, so a fresh clone would
+    report a different model for identical code.
+
+    So a gate prints both, and a moved archive shows up as a changed *data* digest beside an
+    unchanged model version -- which is the distinction a reader needs to make.
+
+    Content, source and as-of are folded, matching `nflverse.pin_digest`: a pin is a claim
+    about a date and a source as well as about rows. `pinned_at` is not, because it is a
+    wall-clock stamp that moves on every refetch -- folding it in would report drift on rows
+    that had not changed. Sorted and de-duplicated, so the answer does not depend on which
+    source a gate happened to load first, or on one archive being reached through two call
+    sites.
+    """
+    rows = sorted({f"{p.source}\n{p.as_of or ''}\n{p.digest}" for p in pins})
+    if not rows:
+        return UNPINNED
+    return hashlib.sha256("\n".join(rows).encode()).hexdigest()[:8]
+
+
+def provenance(cfg: HubConfig | object, pins: Iterable[DataPin]) -> dict[str, str]:
+    """The three digests that identify a run, as {"cfg", "fitted", "data"}.
+
+    One call, so that no gate decides for itself which of the three name it -- and so the
+    "beside, not inside" choice above is made in one place rather than re-argued at each
+    output. `cfg` and `fitted` describe the code; `data` describes what the code read.
+    """
+    return {"cfg": config_digest(cfg), "fitted": fitted_digest(), "data": data_digest(pins)}
 
 
 def starters(cfg: RosterConfig) -> dict[str, int]:

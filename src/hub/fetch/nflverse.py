@@ -29,14 +29,14 @@ import io
 import json
 import sys
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 import polars as pl
 
 from hub import store
-from hub.config import SEASON_COMPLETED
+from hub.config import SEASON_COMPLETED, HubConfig, provenance
 from hub.contracts import (
     FF_OPPORTUNITY,
     FTN_CHARTING,
@@ -78,11 +78,17 @@ PLAYER_STATS_COLS: tuple[str, ...] = (
 # else an as-of can only label a snapshot, and the pin says so.
 #
 # `ff_rankings` is the archive this exists for and has no loader yet -- it is page-typed
-# rather than season-parameterised and needs a contract first (U2 of
+# rather than season-parameterised and needs a contract first (issue #33, U2 of
 # docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md). The property belongs to
 # the source rather than to its loader, and `hub.draft.tune.holdout` already bounds
 # `scrape_date` on it by hand for the same reason this filter exists, so it is declared here
 # and the loader reads the declaration when it lands.
+#
+# The consequence, stated rather than left for a reader to discover: nothing in this dict is
+# in `SOURCES`, so the filter below and the `pinned_at is None` half of `Pin` are **not yet
+# reachable through `load`**. `test_no_declared_append_only_source_can_be_loaded_yet` fails
+# the day that stops being true, which is the day this paragraph and `Pin.pinned_at` need
+# rewriting.
 APPEND_ONLY: dict[str, str] = {"ff_rankings": "scrape_date"}
 
 
@@ -206,11 +212,20 @@ def _fetch(source: str, seasons: Sequence[int]) -> pl.DataFrame:
 class Pin:
     """What one load recorded about the data behind it, so a gate can name it.
 
-    `pinned_at` carries the honest half. It is None where the rows can be fetched again --
-    an append-only archive filtered at its as-of reproduces from the as-of alone -- and set
-    where they cannot: `player_stats` and `pbp` mirror an upstream that revises in place,
-    which `_write_by_week` says where it passes `replace=True`. A stamp there makes an
-    unreproducible re-run *detectable* rather than silently assumed reproducible.
+    `pinned_at` carries the honest half. It is set where the rows cannot be fetched again:
+    `player_stats` and `pbp` mirror an upstream that revises in place, which `_write_by_week`
+    says where it passes `replace=True`. A stamp there makes an unreproducible re-run
+    *detectable* rather than silently assumed reproducible.
+
+    It is None where they can -- an append-only archive filtered at its as-of reproduces from
+    the as-of alone -- and **that state is not yet reachable through `load`**. `APPEND_ONLY`
+    names `ff_rankings` and `SOURCES` does not, so a load of it is refused at the unknown-source
+    check before the as-of filter is ever consulted, and every pin a caller writes today
+    therefore carries a stamp. The loader that closes the gap is issue #33 (U2 of
+    docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md); it needs a contract
+    first, which is why it is not done here. Until it lands, a None here comes only from a
+    test that substituted the registry, and
+    `test_no_declared_append_only_source_can_be_loaded_yet` is the canary that will say so.
     """
 
     source: str
@@ -318,15 +333,32 @@ def _pin_path(path: Path) -> Path:
 
 def data_pin(source: str, seasons: Sequence[int], cols: Sequence[str] | None = None,
              cache: Path | None = None, as_of: str | date | None = None) -> Pin | None:
-    """The pin beside one cache entry, or None when nothing has been loaded into it.
+    """The pin beside one cache entry, or None when nothing readable has been written there.
 
-    None rather than a raise: entries written before this existed have no pin beside them,
-    and a caller asking about a cold tree should get an answer it can degrade on.
+    None rather than a raise, three ways, all the same call: entries written before this
+    existed have no pin beside them, an interrupted write leaves a file that is not JSON, and
+    a caller asking about a cold tree should get an answer it can degrade on rather than an
+    exception. CLAUDE.md's rule is that a module produces a usable answer with zero attention;
+    a provenance lookup that takes down the gate asking it is the opposite of that.
+
+    Fields this version does not know are dropped rather than raising. The pin tree outlives
+    any one version of this module -- the sidecar sits beside a parquet file that survives a
+    checkout, and U2 will add sources with more to record -- so a pin written by a later
+    version has to degrade to the fields understood here. A record missing what *identifies*
+    it is a different case and reads as nothing: a Pin with no digest names no data.
     """
     path = _pin_path(_cache_path(source, seasons, cols, cache, _as_of_date(as_of)))
-    if not path.exists():
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError):
         return None
-    return Pin(**json.loads(path.read_text()))
+    if not isinstance(raw, dict):
+        return None
+    known = {f.name for f in fields(Pin)}
+    try:
+        return Pin(**{k: v for k, v in raw.items() if k in known})
+    except TypeError:
+        return None
 
 
 def load(source: str, seasons: Sequence[int], cols: Sequence[str] | None = None,
@@ -342,6 +374,10 @@ def load(source: str, seasons: Sequence[int], cols: Sequence[str] | None = None,
     Omitted, nothing about the call changes -- the same undated entry is read and written as
     before, `refresh=True` rewrites that undated entry, and the weekly slate path is
     untouched.
+
+    Of the two, only labelling is reachable today: no source in `APPEND_ONLY` is in `SOURCES`,
+    so the filtering branch is **not yet reachable** from here and every pin this writes
+    carries a `pinned_at`. See `APPEND_ONLY` and `Pin.pinned_at` for what would change that.
     """
     if source not in SOURCES:
         raise WideFrameRefused(
@@ -419,21 +455,41 @@ def _write_by_week(df: pl.DataFrame, table: str, season: int,
 
 def refresh(season: int = SEASON_COMPLETED, cache: Path | None = None,
             base: Path | None = None) -> int:
-    """Pull play-by-play and ff_opportunity, write both through the store.
+    """Pull play-by-play and ff_opportunity, write both through the store, and say which bytes.
 
-    Prints counts only. A fetch path that prints rows is the failure it is meant to
-    prevent, so the summary never names a column or a value.
+    Prints counts and digests only. A fetch path that prints rows is the failure it is meant
+    to prevent, so the summary never names a column or a value.
+
+    The last line is what made the pins worth writing. Until it, this module wrote a `Pin`
+    beside every cache entry and nothing in `src/` ever read one back, so an archive that
+    moved under the harness surfaced only as a different number downstream, with nothing to
+    say the input had moved rather than the code. `docs/next.md` records that happening: two
+    `--diagnose` runs at the same seed disagreed on pick 3 because `build()` refetched live
+    ESPN ADP each time, and it took a flipped leader between two post-fix runs to notice.
+    This is the path that actually fetches, so this is the path that has to name what it
+    fetched.
+
+    Three digests, not one, and `hub.config.data_digest` argues at length why the data digest
+    sits beside the model version rather than inside it: this line moves on a Tuesday refetch,
+    and `cfg` must not.
     """
     print(f"  nflverse refresh: season {season}")
     total_rows = 0
+    pins: list[Pin] = []
     for table, cols, label in (("pbp", list(PBP_COLS), "play-by-play"),
                                ("ff_opportunity", None, "ff_opportunity")):
         df = load(table, seasons=[season], cols=cols, refresh=True, cache=cache)
+        # Read back from the sidecar rather than re-digesting `df` here, so what is printed is
+        # what a later reader of this cache entry will compute -- one path to the number.
+        if (pin := data_pin(table, [season], cols=cols, cache=cache)) is not None:
+            pins.append(pin)
         n_weeks, rows = _write_by_week(df, table, season, base)
         total_rows += rows
         print(f"    {label:<16} {rows:>7,} rows | {len(df.columns):>3} cols | "
               f"{n_weeks} week partitions")
     print(f"  wrote {total_rows:,} rows through hub.store")
+    p = provenance(HubConfig(), pins)
+    print(f"  cfg {p['cfg']} | fitted {p['fitted']} | data {p['data']}")
     return 0
 
 

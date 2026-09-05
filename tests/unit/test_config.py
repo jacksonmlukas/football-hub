@@ -1,4 +1,6 @@
 """The config exists to make model versions honest. These tests pin that."""
+from dataclasses import dataclass
+
 from hub.config import (
     FITTED_EXTRA,
     FITTED_MODULES,
@@ -9,11 +11,13 @@ from hub.config import (
     PollConfig,
     RosterConfig,
     config_digest,
+    data_digest,
     fitted_constants,
     fitted_digest,
     flex_capacity,
     flex_positions,
     flex_share,
+    provenance,
     required_starters,
     roster_mismatch,
     starters,
@@ -354,3 +358,112 @@ def test_no_module_restates_the_season_length():
                          for a in node.args] == [1, 15]):
                 bad.append(f"{path.relative_to(root)}:{node.lineno}")
     assert not bad, f"the league length is restated in: {bad}"
+
+
+# --- the data digest sits beside the config digest, never inside it --------
+#
+# R1: every gate output carries a content-derived data digest alongside its existing config
+# digest, so a moved archive shows up as a changed digest rather than a silently different
+# number. `docs/next.md` records the input moving under a harness and nothing saying so: two
+# `--diagnose` runs at one seed disagreed on pick 3 because `build()` refetched live ESPN ADP
+# each time.
+#
+# Beside and not inside is the load-bearing half, and it is an ADR-0006 question. The config
+# digest folds into the model version to answer "which model made this row"; nflverse revises
+# `player_stats` and `pbp` in place, so a data digest folded in would issue a new model version
+# every time the archive was refetched, with no line of code and no fitted constant having
+# moved. That is the mirror of the TALENT_CV failure ADR-0006 was written for -- there the
+# version stood still while the model changed, here it would move while the model stood still --
+# and either way the version stops identifying a model.
+
+
+@dataclass(frozen=True)
+class _StubPin:
+    """The three fields `data_digest` reads. A stub rather than `hub.fetch.nflverse.Pin`, so
+    these tests describe the contract and not one caller's dataclass; the real `Pin` is fed
+    through the same function below."""
+
+    source: str
+    as_of: str | None
+    digest: str
+    pinned_at: str | None = None
+
+
+def test_a_moved_archive_moves_the_data_digest():
+    """The defect in one line: same source, same as-of, different bytes."""
+    before = data_digest([_StubPin("ff_opportunity", "2026-09-04", "aaaaaaaa")])
+    after = data_digest([_StubPin("ff_opportunity", "2026-09-04", "bbbbbbbb")])
+    assert before != after
+
+
+def test_the_data_digest_names_the_source_and_the_as_of_too():
+    """A pin is a claim about a date and a source as well as about rows, the same reasoning
+    `pin_digest` folds all three."""
+    rows = "aaaaaaaa"
+    base = data_digest([_StubPin("ff_opportunity", "2026-09-04", rows)])
+    assert data_digest([_StubPin("ff_opportunity", "2026-08-01", rows)]) != base
+    assert data_digest([_StubPin("player_stats", "2026-09-04", rows)]) != base
+
+
+def test_the_data_digest_does_not_depend_on_the_order_pins_are_listed_in():
+    """Two gates reading the same two sources must agree, whichever they loaded first."""
+    a = _StubPin("ff_opportunity", "2026-09-04", "aaaaaaaa")
+    b = _StubPin("player_stats", None, "bbbbbbbb")
+    assert data_digest([a, b]) == data_digest([b, a])
+
+
+def test_listing_one_pin_twice_is_the_same_run():
+    """A gate that loads one source through two call sites pinned one archive, not two."""
+    a = _StubPin("ff_opportunity", "2026-09-04", "aaaaaaaa")
+    assert data_digest([a, a]) == data_digest([a])
+
+
+def test_when_the_rows_were_taken_does_not_move_the_digest():
+    """`pinned_at` is a wall-clock stamp on a source that revises in place. Folding it in
+    would move the digest on a refetch that returned byte-identical rows -- the digest would
+    then report drift that had not happened, which is as useless as missing drift that had."""
+    rows = "aaaaaaaa"
+    early = _StubPin("player_stats", "2026-09-04", rows, pinned_at="2026-09-04T01:00:00+00:00")
+    late = _StubPin("player_stats", "2026-09-04", rows, pinned_at="2026-09-05T09:00:00+00:00")
+    assert data_digest([early]) == data_digest([late])
+
+
+def test_a_run_that_pinned_nothing_says_so_rather_than_hashing_air():
+    """An unpinned run must not publish a plausible-looking hash. Most of the tree still
+    reaches nflverse directly rather than through the fetch layer until U2, so this is the
+    common case today and it has to read as what it is."""
+    assert data_digest([]) == "unpinned"
+
+
+def test_the_data_digest_is_the_length_the_others_are():
+    """A gate prints the three side by side."""
+    assert len(data_digest([_StubPin("ff_opportunity", None, "aaaaaaaa")])) == 8
+
+
+def test_a_real_pin_is_accepted():
+    """The stub above describes the contract; this is the record the fetch layer writes."""
+    from hub.fetch.nflverse import Pin
+    pin = Pin(source="ff_opportunity", as_of="2026-09-04", digest="aaaaaaaa", rows=1200)
+    assert data_digest([pin]) == data_digest(
+        [_StubPin("ff_opportunity", "2026-09-04", "aaaaaaaa")])
+
+
+def test_the_data_digest_leaves_the_model_version_alone():
+    """ADR-0006, stated as the test that would have caught the wrong choice. The archive
+    moves weekly; the model version must move when and only when the code or a fitted
+    constant does."""
+    cfg = HubConfig()
+    before = (config_digest(cfg), fitted_digest())
+    moved = provenance(cfg, [_StubPin("player_stats", "2026-09-04", "bbbbbbbb")])
+    still = provenance(cfg, [_StubPin("player_stats", "2026-09-04", "aaaaaaaa")])
+    assert moved["data"] != still["data"], "the data digest did not notice the archive moving"
+    assert moved["cfg"] == still["cfg"] == before[0]
+    assert moved["fitted"] == still["fitted"] == before[1]
+
+
+def test_provenance_reports_all_three_and_names_them():
+    """One call, so no gate has to decide for itself which digests identify a run."""
+    got = provenance(HubConfig(), [_StubPin("ff_opportunity", None, "aaaaaaaa")])
+    assert set(got) == {"cfg", "fitted", "data"}
+    assert got["cfg"] == config_digest(HubConfig())
+    assert got["fitted"] == fitted_digest()
