@@ -13,14 +13,24 @@ Everything returned passes a `Contract` first. The failure this guards is not a 
 it is nflverse renaming a column between releases and downstream numbers going quietly
 wrong for weeks.
 
+A load may also be *pinned*: given an as-of, it becomes its own cache entry and records a
+digest over the bytes it actually loaded. The failure that buys is the one
+`docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md` opens on -- no gate in the
+tree re-runs to its own number while the archive it scored against is refetched live every
+time. A pinned load answers with the same rows, or with a digest that says it could not.
+
     uv run python -m hub.fetch.nflverse --refresh --season 2025
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
+import io
+import json
 import sys
 from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import polars as pl
@@ -35,6 +45,7 @@ from hub.contracts import (
     PLAYER_STATS,
     SCHEDULES,
     Contract,
+    ContractViolation,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -59,6 +70,20 @@ PLAYER_STATS_COLS: tuple[str, ...] = (
     "player_id", "player_display_name", "position", "season", "week", "season_type",
     "fantasy_points_ppr",
 )
+
+
+# Sources whose archive is append-only and carries the date each row was scraped, as
+# {source: scrape-date column}. For these an as-of is a *filter* applied inside the loader,
+# so a later fetch of an archive that has grown still yields the same rows; for everything
+# else an as-of can only label a snapshot, and the pin says so.
+#
+# `ff_rankings` is the archive this exists for and has no loader yet -- it is page-typed
+# rather than season-parameterised and needs a contract first (U2 of
+# docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md). The property belongs to
+# the source rather than to its loader, and `hub.draft.tune.holdout` already bounds
+# `scrape_date` on it by hand for the same reason this filter exists, so it is declared here
+# and the loader reads the declaration when it lands.
+APPEND_ONLY: dict[str, str] = {"ff_rankings": "scrape_date"}
 
 
 class WideFrameRefused(Exception):
@@ -177,26 +202,146 @@ def _fetch(source: str, seasons: Sequence[int]) -> pl.DataFrame:
     return fetchers[source](seasons)
 
 
+@dataclass(frozen=True)
+class Pin:
+    """What one load recorded about the data behind it, so a gate can name it.
+
+    `pinned_at` carries the honest half. It is None where the rows can be fetched again --
+    an append-only archive filtered at its as-of reproduces from the as-of alone -- and set
+    where they cannot: `player_stats` and `pbp` mirror an upstream that revises in place,
+    which `_write_by_week` says where it passes `replace=True`. A stamp there makes an
+    unreproducible re-run *detectable* rather than silently assumed reproducible.
+    """
+
+    source: str
+    as_of: str | None
+    digest: str
+    rows: int
+    pinned_at: str | None = None
+
+
+def content_digest(df: pl.DataFrame) -> str:
+    """A hash of what the frame holds, reproducible in a fresh interpreter.
+
+    Not `hash()`: it is salted per process, so a digest resting on it would change on every
+    run and could name nothing.
+
+    Not the Arrow IPC bytes either, which was the first attempt here. A frame and that same
+    frame read back from the parquet this module writes serialise to *different* IPC bytes
+    on polars 1.43 -- measured 2026-09-05, with identical schemas either side -- so the
+    digest would have moved on a cache hit alone. The canonical form is instead the column
+    names and dtypes followed by the frame's CSV bytes: text, exact for floats
+    (`0.1 + 0.2` writes as `0.30000000000000004`), and distinguishing a null from an empty
+    string. It is order-sensitive, which is right -- a reordered frame is not the frame a
+    published number was computed on.
+    """
+    head = ";".join(f"{c}:{df.schema[c]}" for c in df.columns).encode()
+    buf = io.BytesIO()
+    df.write_csv(buf)
+    return hashlib.sha256(head + b"\n" + buf.getvalue()).hexdigest()[:8]
+
+
+def pin_digest(source: str, as_of: str | None, df: pl.DataFrame) -> str:
+    """The published digest: content, folded with the source name and the as-of.
+
+    Both halves. Hashing the labels alone would be invariant to exactly the drift this
+    exists to catch -- two runs at one as-of that fetched different bytes would agree.
+    Hashing content alone would make one archive that has not moved between two pins
+    indistinguishable, and a pin is a claim about a date as well as about rows.
+
+    Eight hex characters, the length `config_digest` and `fitted_digest` already use, since
+    a gate output prints the two side by side.
+    """
+    return hashlib.sha256(
+        f"{source}\n{as_of or ''}\n{content_digest(df)}".encode()).hexdigest()[:8]
+
+
+def _as_of_date(as_of: str | date | None) -> date | None:
+    """Normalise an as-of to a plain date, raising on anything that is not one."""
+    if as_of is None:
+        return None
+    if isinstance(as_of, datetime):
+        return as_of.date()
+    if isinstance(as_of, date):
+        return as_of
+    return date.fromisoformat(as_of)
+
+
+def _as_of_filter(source: str, df: pl.DataFrame, as_of: date) -> pl.DataFrame:
+    """Bound an append-only archive at the as-of, inside the loader.
+
+    The reproducing half of the pin: the archive grows, and a load at the same as-of still
+    yields the rows it yielded before. Inclusive of the day itself. A row whose scrape date
+    is null cannot be placed in time, so it does not survive a pinned load.
+    """
+    col = APPEND_ONLY[source]
+    if col not in df.columns:
+        raise ContractViolation(
+            f"{source} is declared append-only on {col!r} and that column is not there; "
+            f"got {len(df.columns)} columns from upstream. The as-of cannot be applied, and "
+            "returning the unfiltered archive would be the drift the pin exists to catch.")
+    scraped = (pl.col(col).str.to_date(strict=False) if df.schema[col] == pl.Utf8
+               else pl.col(col).cast(pl.Date))
+    return df.filter(scraped <= pl.lit(as_of))
+
+
 def _cache_path(source: str, seasons: Sequence[int], cols: Sequence[str] | None,
-                cache: Path | None) -> Path:
-    """One entry per (source, seasons, columns).
+                cache: Path | None, as_of: date | None = None) -> Path:
+    """One entry per (source, seasons, columns, as-of).
 
     The column set is part of the key. Without that, a caller asking for four columns
-    would be served an earlier caller's three and never notice.
+    would be served an earlier caller's three and never notice. The as-of is part of it for
+    the same reason: two pins are two entries, and a gate re-run at one as-of must never be
+    handed another's rows.
+
+    With no as-of this is the undated path the module has always written, for read and for
+    write both -- which is what leaves `make slate`, which drives `refresh=True` and passes
+    no as-of, on exactly the file it used yesterday.
     """
     root = cache or RAW
     key = ",".join(sorted(cols)) if cols else "all"
     digest = hashlib.sha256(key.encode()).hexdigest()[:8]
     stamp = "-".join(str(s) for s in sorted(seasons))
-    return root / source / f"{stamp}-{digest}.parquet"
+    dated = f"-asof-{as_of.isoformat()}" if as_of is not None else ""
+    return root / source / f"{stamp}-{digest}{dated}.parquet"
+
+
+def _pin_path(path: Path) -> Path:
+    """The pin sits beside its cache entry, not in a registry of its own.
+
+    Same call ADR-0006 makes for fitted constants and their provenance: a record kept away
+    from the thing it describes is one that stops matching it. It also survives the process,
+    so a load served from cache can still say what it is serving.
+    """
+    return path.with_suffix(".pin.json")
+
+
+def data_pin(source: str, seasons: Sequence[int], cols: Sequence[str] | None = None,
+             cache: Path | None = None, as_of: str | date | None = None) -> Pin | None:
+    """The pin beside one cache entry, or None when nothing has been loaded into it.
+
+    None rather than a raise: entries written before this existed have no pin beside them,
+    and a caller asking about a cold tree should get an answer it can degrade on.
+    """
+    path = _pin_path(_cache_path(source, seasons, cols, cache, _as_of_date(as_of)))
+    if not path.exists():
+        return None
+    return Pin(**json.loads(path.read_text()))
 
 
 def load(source: str, seasons: Sequence[int], cols: Sequence[str] | None = None,
-         refresh: bool = False, cache: Path | None = None) -> pl.DataFrame:
+         refresh: bool = False, cache: Path | None = None,
+         as_of: str | date | None = None) -> pl.DataFrame:
     """Fetch one nflverse source, narrowed and validated.
 
     Raises rather than returning a wide frame, because the caller who forgets to narrow
     is the caller this module exists for.
+
+    `as_of` pins the load: its own cache entry, filtered where the source is append-only and
+    labelled where it revises in place, with a `Pin` written beside the entry either way.
+    Omitted, nothing about the call changes -- the same undated entry is read and written as
+    before, `refresh=True` rewrites that undated entry, and the weekly slate path is
+    untouched.
     """
     if source not in SOURCES:
         raise WideFrameRefused(
@@ -211,12 +356,21 @@ def load(source: str, seasons: Sequence[int], cols: Sequence[str] | None = None,
                if standard else ""))
     # /GUARD
 
-    path = _cache_path(source, seasons, cols, cache)
+    stamp = _as_of_date(as_of)
+    path = _cache_path(source, seasons, cols, cache, stamp)
     if path.exists() and not refresh:
         return pl.read_parquet(path)
 
     contract = SOURCES[source]
     df = _fetch(source, seasons)
+
+    # The as-of filters content where the source allows it and only labels a snapshot where
+    # it does not. `pinned_at` on the pin below is what says which of the two happened, so
+    # a re-run that cannot reproduce is detectable rather than assumed reproducible.
+    reproducible = False
+    if stamp is not None and source in APPEND_ONLY:
+        df = _as_of_filter(source, df, stamp)
+        reproducible = True
 
     if cols:
         missing = [c for c in cols if c not in df.columns]
@@ -231,6 +385,14 @@ def load(source: str, seasons: Sequence[int], cols: Sequence[str] | None = None,
 
     path.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(path)
+    iso = stamp.isoformat() if stamp is not None else None
+    _pin_path(path).write_text(json.dumps(asdict(Pin(
+        source=source,
+        as_of=iso,
+        digest=pin_digest(source, iso, df),
+        rows=df.height,
+        pinned_at=None if reproducible else datetime.now(UTC).isoformat(timespec="seconds"),
+    )), indent=2, sort_keys=True) + "\n")
     return df
 
 

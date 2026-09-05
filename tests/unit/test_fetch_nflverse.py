@@ -11,6 +11,8 @@ asking for pbp without naming columns must raise rather than quietly hand back 3
 Everything here runs against an injected fake nflreadpy. Tests that download three seasons
 of play-by-play are tests nobody runs.
 """
+from datetime import date
+
 import polars as pl
 import pytest
 
@@ -398,3 +400,224 @@ def test_the_scheme_sources_are_not_wide():
     these need not be, so a caller is not forced to guess a column list."""
     from hub.fetch.nflverse import WIDE
     assert "participation" not in WIDE and "ftn_charting" not in WIDE
+
+
+# --- the as-of pin and the data digest ------------------------------------
+#
+# U1 of `docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md`. Two mechanisms,
+# because the sources differ: an append-only archive carrying a scrape date is *filtered* at
+# the as-of, so a later fetch of a grown archive yields the same rows; a source that revises
+# in place can only be *labelled*, so its pin carries the moment it was taken.
+#
+# The failure being closed is the one the plan opens on: no gate in the tree re-runs to its
+# own number while the FantasyPros archive it scores against is refetched live every time.
+
+@pytest.fixture
+def fake_archive(monkeypatch):
+    """An append-only source, faked onto `ff_opportunity`.
+
+    `ff_rankings` is the archive the filter exists for and it has no loader until U2 of the
+    same plan -- it is page-typed rather than season-parameterised and needs a contract
+    first. So the registry is monkeypatched onto a source that *is* wired up: what is under
+    test here is the filter, not a loader that does not exist yet.
+    """
+    def _install(dates, per_date: int = 1200):
+        n = len(dates) * per_date
+        frame = pl.DataFrame({
+            "player_id": [f"p{i}" for i in range(n)],
+            "position": ["WR"] * n,
+            "total_fantasy_points_exp": [10.0] * n,
+            "season": pl.Series([2025] * n, dtype=pl.Int32),
+            "week": pl.Series([1] * n, dtype=pl.Int32),
+            "scrape_date": pl.Series(
+                [d for d in dates for _ in range(per_date)]).str.to_date(),
+        })
+        monkeypatch.setattr(nv, "APPEND_ONLY", {"ff_opportunity": "scrape_date"})
+        monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: frame)
+        return frame
+    return _install
+
+
+def test_an_as_of_writes_a_dated_cache_path(fake_ffo, tmp_path):
+    fake_ffo()
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+    written = [p.name for p in (tmp_path / "ff_opportunity").glob("*.parquet")]
+    assert written and all("2026-09-04" in name for name in written), written
+
+
+def test_two_as_ofs_are_two_entries_and_neither_is_served_the_others_rows(
+        fake_ffo, tmp_path, monkeypatch):
+    """The reason the column set is already part of the key, applied to the date."""
+    frame = fake_ffo()
+    early = nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-08-01")
+    monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: frame.head(1100))
+    late = nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+    assert (early.height, late.height) == (1200, 1100)
+    again = nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-08-01")
+    assert again.height == 1200, "the earlier pin was overwritten by the later one"
+
+
+def test_a_second_load_at_one_as_of_hits_the_network_once(fake_ffo, tmp_path, monkeypatch):
+    fake_ffo()
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+
+    def _boom(seasons):
+        raise AssertionError("a pinned load must be served from its dated entry")
+    monkeypatch.setattr(nv, "_raw_ff_opportunity", _boom)
+    assert nv.load("ff_opportunity", seasons=[2025], cache=tmp_path,
+                   as_of="2026-09-04").height == 1200
+
+
+def test_a_load_with_no_as_of_uses_the_undated_path_for_read_and_write(
+        fake_ffo, tmp_path, monkeypatch):
+    """What keeps this a prefactor: `make slate` passes no as-of and must not move."""
+    fake_ffo()
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path)
+    names = [p.name for p in (tmp_path / "ff_opportunity").glob("*.parquet")]
+    assert names == [nv._cache_path("ff_opportunity", [2025], None, tmp_path).name]
+
+    def _boom(seasons):
+        raise AssertionError("the undated entry must still be read back")
+    monkeypatch.setattr(nv, "_raw_ff_opportunity", _boom)
+    assert nv.load("ff_opportunity", seasons=[2025], cache=tmp_path).height == 1200
+
+
+def test_refresh_rewrites_the_entry_matching_the_as_of_it_was_given(
+        fake_ffo, tmp_path, monkeypatch):
+    frame = fake_ffo()
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path)
+    monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: frame.head(1100))
+    pinned = nv.load("ff_opportunity", seasons=[2025], cache=tmp_path,
+                     as_of="2026-09-04", refresh=True)
+    assert pinned.height == 1100
+    assert nv.load("ff_opportunity", seasons=[2025], cache=tmp_path).height == 1200, (
+        "a refresh at an as-of must not rewrite the undated entry")
+
+
+def test_an_append_only_archive_is_filtered_at_the_as_of(fake_archive, tmp_path):
+    fake_archive(["2026-08-01", "2026-09-10"])
+    got = nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+    assert got.height == 1200
+    assert got["scrape_date"].max() == date(2026, 8, 1), "a later scrape survived the as-of"
+
+
+def test_a_grown_archive_still_yields_the_same_rows_at_one_as_of(
+        fake_archive, tmp_path, monkeypatch):
+    """The whole point of R2: the archive grows and the pinned frame does not move."""
+    original = fake_archive(["2026-08-01"])
+    first = nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+    grown = pl.concat([original, original.with_columns(
+        pl.lit("2026-09-20").str.to_date().alias("scrape_date"))])
+    monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: grown)
+    second = nv.load("ff_opportunity", seasons=[2025], cache=tmp_path,
+                     as_of="2026-09-04", refresh=True)
+    assert second.equals(first)
+    pin = nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04")
+    assert pin is not None
+    assert pin.digest == nv.pin_digest("ff_opportunity", "2026-09-04", first), (
+        "the archive grew and the digest of the pinned frame moved with it")
+
+
+def test_ff_rankings_is_declared_append_only():
+    """The archive the filter exists for. `hub.draft.tune.holdout` already bounds
+    `scrape_date` on this source by hand; U2 gives it a loader that reads this registry."""
+    assert nv.APPEND_ONLY["ff_rankings"] == "scrape_date"
+
+
+def test_a_vanished_scrape_date_column_is_a_contract_violation(
+        fake_ffo, tmp_path, monkeypatch):
+    """A source declared append-only whose date column is gone cannot be pinned, and
+    silently returning the unfiltered archive would be the drift this unit exists to catch."""
+    fake_ffo()
+    monkeypatch.setattr(nv, "APPEND_ONLY", {"ff_opportunity": "scrape_date"})
+    with pytest.raises(ContractViolation, match="scrape_date"):
+        nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+
+
+def test_two_runs_at_one_as_of_that_fetched_different_bytes_disagree(
+        fake_ffo, tmp_path, monkeypatch):
+    """The digest hashes content, not labels. Hashing the source name and the as-of alone
+    would be invariant to exactly the drift it exists to catch."""
+    frame = fake_ffo()
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+    before = nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04")
+    monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: frame.with_columns(
+        pl.lit(11.0).alias("total_fantasy_points_exp")))
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04",
+            refresh=True)
+    after = nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04")
+    assert before is not None and after is not None
+    assert before.digest != after.digest, "same as-of, different bytes, same digest"
+
+
+def test_the_digest_moves_with_the_as_of_on_identical_content(fake_ffo, tmp_path):
+    """Folded with the source and the as-of, so two pins of the same rows are still two
+    pins -- `hub.fetch.odds` names a snapshot by when it was taken for the same reason."""
+    fake_ffo()
+    for stamp in ("2026-08-01", "2026-09-04"):
+        nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of=stamp)
+    a = nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-08-01")
+    b = nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04")
+    assert a is not None and b is not None and a.digest != b.digest
+
+
+def test_the_digest_is_reproducible_in_a_fresh_process(fake_ffo, tmp_path):
+    """Python's `hash()` is salted per process, so a digest resting on it would change on
+    every run and could not name the data a published gate scored against.
+
+    Proved rather than asserted: the digest is recomputed in a subprocess, from the cache
+    file this process wrote, under two `PYTHONHASHSEED` values that differ from each other.
+    A literal in this file would prove nothing -- it would pin whatever this process
+    happened to produce.
+    """
+    import os
+    import subprocess
+    import sys
+
+    fake_ffo()
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+    pin = nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04")
+    assert pin is not None
+    path = nv._cache_path("ff_opportunity", [2025], None, tmp_path,
+                          date(2026, 9, 4))
+    script = ("import sys, polars as pl\n"
+              "from hub.fetch.nflverse import pin_digest\n"
+              "print(pin_digest('ff_opportunity', '2026-09-04', pl.read_parquet(sys.argv[1])))")
+    seen = set()
+    for seed in ("0", "524287"):
+        env = {**os.environ, "PYTHONHASHSEED": seed,
+               "PYTHONPATH": str(nv.ROOT / "src")}
+        out = subprocess.run([sys.executable, "-c", script, str(path)],
+                             capture_output=True, text=True, env=env, timeout=120)
+        assert out.returncode == 0, out.stderr
+        seen.add(out.stdout.strip())
+    assert seen == {pin.digest}, seen
+
+
+def test_a_source_that_revises_in_place_carries_a_pinned_at(monkeypatch, tmp_path):
+    """`player_stats` mirrors an upstream that rewrites -- `_write_by_week` says so where it
+    passes `replace=True`. An as-of cannot reproduce those rows, so the pin records when they
+    were taken instead of claiming they can be fetched again."""
+    monkeypatch.setattr(nv, "_raw_player_stats", lambda seasons: _weekly())
+    nv.load("player_stats", seasons=[2024], cols=nv.PLAYER_STATS_COLS, cache=tmp_path,
+            as_of="2026-09-04")
+    pin = nv.data_pin("player_stats", [2024], cols=nv.PLAYER_STATS_COLS, cache=tmp_path,
+                      as_of="2026-09-04")
+    assert pin is not None and pin.pinned_at is not None
+    assert pin.as_of == "2026-09-04" and pin.rows == 2
+
+
+def test_an_archive_filtered_at_its_as_of_needs_no_pinned_at(fake_archive, tmp_path):
+    """The other half of the same distinction: these rows *are* reproducible from the
+    as-of, so a stamp saying when they were taken would claim less than is true."""
+    fake_archive(["2026-08-01"])
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+    pin = nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04")
+    assert pin is not None and pin.pinned_at is None
+
+
+def test_a_pin_that_was_never_written_reads_as_none(tmp_path):
+    """Graceful degradation: caches written before this unit have no pin beside them, and
+    asking for one must answer "nothing recorded" rather than raise on a cold tree."""
+    assert nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04") is None
