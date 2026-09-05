@@ -40,21 +40,35 @@ on:
     workflows: [slate]
     types: [completed]
 
-  # Every ten minutes through a game window, which is what makes the scores move. Sunday
-  # 16:00-04:00 UTC is noon to midnight Eastern; Saturday afternoon and evening is college;
-  # Thursday and Monday nights are the standalone games.
+  # Every ten minutes through a game window, which is what makes the scores move.
+  #
+  # **The hours are a union over both daylight-saving states, not a fixed offset.** A cron
+  # fires in UTC; games are played on Eastern, which is UTC-4 until early November and UTC-5
+  # after it. These windows were written as fixed UTC hours annotated as Eastern, so the whole
+  # window slid an hour earlier at the boundary -- gaining dead time before the first kickoff
+  # and losing the hour a Sunday night game runs past midnight in. This repo has paid for the
+  # fixed-offset assumption before: see `hub.fetch.odds._game_date` and `hub.schedule._kickoff`,
+  # which both convert rather than offset. `tests/contracts/test_game_windows.py` holds these
+  # crons against the Eastern clock in both states, so the third statement of the rule is the
+  # first one that can fail.
+  #
+  # In Eastern, the windows are: Sunday noon to Monday 00:59; Saturday noon to Sunday 00:59
+  # for college, whose marquee kickoffs are 19:30 and 20:00; Thursday and Monday 20:00 to
+  # 00:59 for the standalone night games. Each block is one hour wider in UTC than either
+  # offset needs, which is what covering both costs.
   #
   # **Only during windows.** A cron that ran all week would deploy a few thousand times a
-  # month to publish a scoreboard with nothing on it, and the watchdog's own threshold -- ten
-  # minutes of staleness *during a game window* -- is written against exactly these hours.
+  # month to publish a scoreboard with nothing on it, and the watchdog's threshold -- staleness
+  # *during a game window* -- is written against exactly these hours.
   #
   # Free of quota: ESPN's scoreboard needs no key, which is why this needed nothing from #16.
   schedule:
-    - cron: "*/10 16-23 * * 0"
-    - cron: "*/10 0-4  * * 1"
-    - cron: "*/10 0-4  * * 2"
-    - cron: "*/10 16-23 * * 6"
-    - cron: "*/10 0-4  * * 5"
+    - cron: "*/10 16-23 * * 0"   # Sunday daytime ET
+    - cron: "*/10 0-5  * * 1"    # Sunday night ET, into Monday morning
+    - cron: "*/10 0-5  * * 2"    # Monday night ET
+    - cron: "*/10 16-23 * * 6"   # Saturday daytime ET
+    - cron: "*/10 0-5  * * 0"    # Saturday night ET -- college primetime, uncovered until now
+    - cron: "*/10 0-5  * * 5"    # Thursday night ET
 
   workflow_dispatch:
 

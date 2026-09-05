@@ -12,11 +12,29 @@ on:
   # full minute each: roughly 126 runs and 126 minutes a week, about 27% of the free
   # allowance, to watch nothing.
   #
-  # Every 10 min during NFL windows (Sun 12:00-24:00 ET = 16:00-04:00 UTC) and Sat CFB.
+  # Each of `pages.yml`'s game windows, **less its first hour**, and nothing else.
+  #
+  # Two rules, both learned from this file reporting the wrong thing.
+  #
+  # *Never wider than what it watches.* The watchdog checks the overlay `pages.yml` deploys,
+  # so an hour it watches and nothing refreshes is a gap between two schedules being reported
+  # as an outage. It used to skip the Thursday and Monday night windows entirely, which was
+  # the other direction of the same mismatch: a monitor that is not watching.
+  #
+  # *Never the opening hour.* Staleness is measured against the last refresh and the refresh
+  # runs on the same cadence, so the first tick of a window looks at an artifact last written
+  # before the window opened -- an incident by construction, twice a week for eighteen weeks.
+  # Starting an hour in means the deploy has already run six times by the first check.
+  #
+  # The hours follow Eastern in both daylight-saving states, for the reason `pages.yml`
+  # spells out. `tests/contracts/test_game_windows.py` asserts both rules against both files.
   schedule:
-    - cron: "*/10 16-23 * * 0"
-    - cron: "*/10 0-4 * * 1"
-    - cron: "*/10 16-23 * * 6"
+    - cron: "*/10 17-23 * * 0"   # Sunday daytime, from an hour into the window
+    - cron: "*/10 0-5  * * 1"    # Sunday night -- the window has been open since 16:00 UTC
+    - cron: "*/10 1-5  * * 2"    # Monday night
+    - cron: "*/10 17-23 * * 6"   # Saturday daytime
+    - cron: "*/10 0-5  * * 0"    # Saturday night
+    - cron: "*/10 1-5  * * 5"    # Thursday night
   workflow_dispatch:
 
 permissions:
@@ -82,7 +100,12 @@ jobs:
           # issue, which is noisy and visible, against a silent failure which is neither.
           EXISTING=$(gh issue list --repo "${{ github.repository }}" \
             --label incident --state open --json number --jq '.[0].number' 2>/dev/null)
-          BODY="Heartbeat age: ${{ steps.check.outputs.age }}s (threshold 1500s).
+          # The marker, not the label. `incident` says what an issue is *about*, and the
+          # recovery branch below used it to decide what to close -- so an incident a human
+          # filed was closed with a comment about the heartbeat. This says who filed it.
+          MARKER="<!-- watchdog-heartbeat -->"
+          BODY="$MARKER
+          Heartbeat age: ${{ steps.check.outputs.age }}s (threshold 1500s).
 
           Cause: ${{ steps.check.outputs.why }}.
 
@@ -105,12 +128,19 @@ jobs:
             exit 1
           fi
 
+      # Only the incidents this workflow filed. It used to close every open issue carrying
+      # the `incident` label, a human's included, with a comment about the heartbeat -- the
+      # label describes the subject, not the author. `<!-- watchdog-heartbeat -->` is written
+      # into the body above and matched here, so an issue a person opened about a genuine
+      # outage survives the next healthy check.
       - name: Close the incident on recovery
         if: steps.check.outputs.stale == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          MARKER="<!-- watchdog-heartbeat -->"
           for n in $(gh issue list --repo "${{ github.repository }}" \
-                      --label incident --state open --json number --jq '.[].number'); do
+                      --label incident --state open --json number,body \
+                      --jq ".[] | select(.body | contains(\"$MARKER\")) | .number"); do
             gh issue close "$n" --repo "${{ github.repository }}" --comment "Heartbeat healthy again."
           done
