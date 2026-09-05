@@ -117,8 +117,10 @@ function ago(iso) {
 // a name is enough to produce malformed markup, and anything angle-bracketed is injected
 // into the page. This site is public, unattended, and refreshed twice a week by a workflow
 // with a push token -- nobody is watching it render.
+// GUARD esc-escapes-what-reaches-the-page: nothing off a feed reaches innerHTML as markup.
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// /GUARD
 
 function panel(id, { age, warn, html }) {
   const el = document.getElementById(id);
@@ -131,10 +133,12 @@ function panel(id, { age, warn, html }) {
 // which is why the em dash below is the character rather than `&mdash;`. Relying on each
 // call site to remember is how one of a dozen columns ends up unescaped.
 function table(cols, rows) {
+  // GUARD table-escapes-every-cell: every cell and header is escaped here, not at the call site.
   const head = cols.map(c => `<th>${esc(c.label)}</th>`).join("");
   const body = rows.map(r =>
     `<tr>${cols.map(c => `<td class="num ${c.cls ? c.cls(r) : ""}">${esc(c.get(r))}</td>`).join("")}</tr>`
   ).join("");
+  // /GUARD
   return `<div class="scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 

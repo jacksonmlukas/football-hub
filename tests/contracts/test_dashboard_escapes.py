@@ -18,16 +18,32 @@ function out of the page, run it in node, and assert on what it produces. They c
 two things the page can only get wrong silently -- which artifact it asks for (a name it
 rebuilt rather than read, disagreeing with the manifest and reporting nothing) and which
 season a published week and a calibration curve belong to.
+
+The last section turns the same excision habit `tests/contracts/test_guards_are_load_bearing.py`
+applies to `src/` on the page itself: each protection is declared where it lives, deleted, and
+required to turn these tests red (#61).
 """
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-PAGE = Path(__file__).resolve().parents[2] / "site" / "index.html"
+ROOT = Path(__file__).resolve().parents[2]
+
+# Every test below reads the page through this one name, so the excision harness at the foot
+# of the file can hand a child run a mutated copy and have all of them apply to it. An
+# environment variable is the thing that went wrong in the Python harness -- pytest's own
+# `pythonpath` setting shadowed it and every mutant silently ran against the real source --
+# so nothing here assumes the override took: the pair of tests under "the harness is
+# looking at the mutant" prove it on every run.
+PAGE = Path(os.environ.get("HUB_DASHBOARD_PAGE") or ROOT / "site" / "index.html")
 
 # Names carrying every character that matters, in the shapes a feed actually produces.
 HOSTILE = "<script>alert(1)</script>"
@@ -384,3 +400,262 @@ def test_a_group_that_records_no_season_is_captioned_truthfully(node):
     assert "unrecorded" in out, "neither the caption nor the row says the season is missing"
     # And the group still appears in the table rather than as an empty cell.
     assert "<td class=\"num \"></td>" not in out
+
+
+# --- the page's own guards, proved by deleting them (#61) --------------------
+#
+# `tests/contracts/test_guards_are_load_bearing.py` does this for the guards in
+# `src/`: declare a guard where it lives, delete the block, run the target tests against the
+# mutant, require red. It reads Python, so the page -- the public, unattended surface that
+# renders third-party feed values -- sat outside it. Three protections live here and none had
+# the property: `esc`, `table` escaping every cell and header without being asked, and the
+# static interpolation scan above, which is the thing that would catch a new unescaped
+# `${...}` and whose own removal was caught by nothing.
+#
+# The two traps carried over from the Python harness rather than rediscovered:
+#
+#   * A mutant that no longer parses is a *harness* error, never a pass. Excising a block can
+#     leave source that will not run, everything then fails, and that looks exactly like a
+#     load-bearing guard. `node --check` is the JavaScript analogue of `ast.parse`.
+#   * The harness must be running against the mutant. The first Python version passed the
+#     mutated tree through an environment variable that pytest's own `pythonpath` shadowed,
+#     so every mutant ran against the real source and all four guards reported green. Here
+#     the override is proved on every run rather than assumed -- see the pair of tests under
+#     "the harness is looking at the mutant".
+
+# `// GUARD <name>: <why>` ... `// /GUARD`, inside the page's script.
+PAGE_GUARD = re.compile(
+    r"^[ \t]*// GUARD (?P<name>[a-z0-9][a-z0-9-]*): (?P<why>[^\n]+)\n"
+    r"(?P<body>.*?)"
+    r"^[ \t]*// /GUARD[^\n]*\n",
+    re.S | re.M,
+)
+
+# Set on the child run, which exists to exercise the page's tests against a mutated copy.
+# Without it the child would re-enter this section and mutate the mutant, forever.
+IN_CHILD = "HUB_DASHBOARD_MUTANT" in os.environ
+parent_only = pytest.mark.skipif(
+    IN_CHILD, reason="the child run exercises the page's tests, not the harness's")
+
+
+@dataclass(frozen=True)
+class PageGuard:
+    """One guard declared in the page: what it protects, and where its markers sit."""
+
+    name: str
+    why: str
+    span: tuple[int, int]
+
+    def __repr__(self) -> str:                          # the parametrize id
+        return self.name
+
+
+def _declared(text: str) -> list[PageGuard]:
+    return [PageGuard(m.group("name"), m.group("why"), m.span())
+            for m in PAGE_GUARD.finditer(text)]
+
+
+def _without(text: str, guard: PageGuard) -> str:
+    """The page with that guard's block removed, markers and all."""
+    lo, hi = guard.span
+    return text[:lo] + text[hi:]
+
+
+def _script(text: str) -> str:
+    """The page's script, for `node --check`.
+
+    One block today. If a second ever appears this stops rather than checking the first and
+    calling the rest parsed -- a syntax check that silently covers half the page is the same
+    kind of quietly-dead guard this file is about.
+    """
+    blocks = re.findall(r"<script>([\s\S]*?)</script>", text)
+    assert len(blocks) == 1, (
+        f"expected one <script> block, found {len(blocks)}; check each of them rather than "
+        f"only the first")
+    return blocks[0]
+
+
+def _parses(node: str, js: str) -> subprocess.CompletedProcess:
+    """`node --check` on the page's script -- the analogue of `ast.parse` on a Python mutant.
+
+    A file rather than stdin because `--check` takes a path, and `.js` rather than `.mjs`
+    because the page's script is a classic script and nothing in it is a module."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "mutant.js"
+        path.write_text(js)
+        return subprocess.run([node, "--check", str(path)],
+                              capture_output=True, text=True, timeout=30)
+
+
+def _mutant_site(tmp_path: Path, text: str) -> Path:
+    """A whole copy of `site/`, with the mutated page in it.
+
+    The directory and not the file alone: `DATA` above is `PAGE.parent / "data"`, so a page
+    written somewhere without its artifacts beside it would fail the archive tests for a
+    reason that has nothing to do with the guard -- every mutant red, every guard reported
+    load-bearing, which is the trap this file is built around.
+    """
+    site = tmp_path / "site"
+    if not site.exists():
+        shutil.copytree(ROOT / "site", site)
+    (site / "index.html").write_text(text)
+    return site / "index.html"
+
+
+def _run_module_against(page: Path) -> subprocess.CompletedProcess:
+    """Run this module's page tests against the page at `page`."""
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", str(Path(__file__).resolve()),
+         "-q", "--tb=no", "-rf", "-p", "no:cacheprovider"],
+        cwd=ROOT, capture_output=True, text=True, timeout=600,
+        env={**os.environ, "HUB_DASHBOARD_PAGE": str(page), "HUB_DASHBOARD_MUTANT": "1"},
+    )
+
+
+def _failed(got: subprocess.CompletedProcess) -> set[str]:
+    """The test names the child reported as failures -- not errors, which prove nothing."""
+    return set(re.findall(r"^FAILED [^:\n]+::(\w+)", got.stdout, re.M))
+
+
+# --- the harness's own premise -----------------------------------------------
+#
+# `parent_only` throughout: these read the markers, and an excision has just deleted a pair
+# of them. Left running in the child they would fail on every mutant, and every guard would
+# be reported load-bearing on the strength of the harness failing to find itself.
+
+@parent_only
+def test_the_scan_finds_the_guards_the_page_declares():
+    """A marker syntax that matched nothing would make every excision below vacuously
+    absent, and this section would report a clean sweep of zero guards."""
+    found = {g.name for g in _declared(PAGE.read_text())}
+    assert "esc-escapes-what-reaches-the-page" in found, (
+        f"the escaper is unmarked; found {sorted(found)}")
+    assert "table-escapes-every-cell" in found, (
+        f"the table helper's escaping is unmarked; found {sorted(found)}")
+
+
+@parent_only
+def test_a_guard_that_cannot_be_removed_cleanly_is_a_harness_error(node, tmp_path):
+    """The trap. Excising a block can leave script that will not parse, every lifted
+    function then fails, and that is indistinguishable from a load-bearing guard until
+    something checks. `node --check` is what checks."""
+    page = tmp_path / "brittle.html"
+    page.write_text("<script>\nfunction f(xs) {\n  return xs.map(x =>\n"
+                    "    // GUARD only-expression: removing this leaves an arrow with no body.\n"
+                    "    x + 1\n"
+                    "    // /GUARD\n  );\n}\n</script>\n")
+    guard = _declared(page.read_text())[0]
+    assert guard.name == "only-expression"
+    broken = _parses(node, _script(_without(page.read_text(), guard)))
+    assert broken.returncode != 0, "node accepted an arrow function with no body"
+
+
+@parent_only
+def test_the_pages_own_guards_survive_their_excision_syntactically(node):
+    """Same check against the real markers: if one of them straddles a brace, the red run
+    below would be a parse failure wearing a guard's name."""
+    text = PAGE.read_text()
+    for guard in _declared(text):
+        got = _parses(node, _script(_without(text, guard)))
+        assert got.returncode == 0, (
+            f"removing guard {guard.name!r} leaves script that will not parse "
+            f"({got.stderr.strip().splitlines()[-1] if got.stderr else '?'}). Widen the "
+            f"markers so the block stands alone -- as written, a red run proves nothing.")
+
+
+# --- the harness is looking at the mutant ------------------------------------
+
+@parent_only
+def test_the_child_run_passes_on_the_real_page(node):
+    """The green half of the pair. A child that failed whatever it was handed would report
+    every guard load-bearing, so the harness has to be able to come back green at all."""
+    got = _run_module_against(PAGE)
+    assert got.returncode == 0, f"the module does not pass on its own page:\n{got.stdout}"
+
+
+@parent_only
+def test_a_page_that_forgets_to_escape_is_caught_only_by_the_scan(node, tmp_path):
+    """The red half, and it does two jobs.
+
+    It proves the child is reading the mutant: the page handed over differs from the real one
+    by a single unescaped `${r.player}`, and the run must go red where the run above went
+    green. If the environment override were shadowed -- the exact way the Python harness
+    fooled itself for a day -- the child would read the real page and this would pass green,
+    which is why the assertion is written this way round.
+
+    And it proves the static scan is load-bearing: nothing else in this module notices that
+    interpolation, so deleting `test_every_feed_value_in_the_markup_goes_through_esc` turns
+    this red. It is the sharpest of the three (#61): the thing that would catch a new
+    unescaped interpolation, whose own removal was caught by nothing.
+    """
+    forgetful = PAGE.read_text().replace(
+        "</script>", "const forgotten = `<td>${r.player}</td>`;\n</script>")
+    assert forgetful != PAGE.read_text(), "the injection did not land"
+    assert _parses(node, _script(forgetful)).returncode == 0, "the injected page must parse"
+
+    got = _run_module_against(_mutant_site(tmp_path, forgetful))
+    assert got.returncode != 0, (
+        "a page with an unescaped feed value passed. Either the child is reading the real "
+        f"page rather than the mutant, or the static scan is gone.\n{got.stdout}")
+    assert _failed(got) == {"test_every_feed_value_in_the_markup_goes_through_esc"}, (
+        f"expected the scan alone to notice, got {sorted(_failed(got))}. If it is empty the "
+        f"child errored rather than failed, and this proves nothing.")
+
+
+@parent_only
+def test_a_table_that_stops_escaping_its_cells_is_caught(node, tmp_path):
+    """The narrower claim, because the marked block is wider than it.
+
+    `table-escapes-every-cell` wraps the two statements that build the header and the cells,
+    which is the smallest span that contains the escaping and still leaves script `node
+    --check` accepts. Deleting it therefore removes the escaping *and* the markup around it,
+    so a red run proves less than the marker's sentence says. This mutates only the two
+    `esc(...)` wrappers and leaves the table otherwise intact -- the change a new column
+    would make by forgetting -- and requires the same red.
+
+    Written against the page's exact expressions, which can drift; if they do, the
+    replacement is a no-op and the assertion below says so rather than passing quietly.
+    """
+    text = PAGE.read_text()
+    unwrapped = text.replace("${esc(c.label)}", "${c.label}").replace(
+        "${esc(c.get(r))}", "${c.get(r)}")
+    assert unwrapped != text, (
+        "neither `esc(c.label)` nor `esc(c.get(r))` is in the page any more; this test is "
+        "mutating nothing. Re-point it at whatever `table` escapes with now.")
+    assert _parses(node, _script(unwrapped)).returncode == 0
+
+    got = _run_module_against(_mutant_site(tmp_path, unwrapped))
+    assert got.returncode != 0, (
+        f"`table` stopped escaping its cells and every test still passed.\n{got.stdout}")
+    assert "test_the_table_escapes_every_cell_without_being_asked" in _failed(got), (
+        f"something noticed, but not the test whose job this is: {sorted(_failed(got))}")
+
+
+# --- the habit ---------------------------------------------------------------
+
+@parent_only
+@pytest.mark.parametrize("guard", _declared(PAGE.read_text()) or [None], ids=repr)
+def test_removing_a_guard_turns_the_pages_tests_red(guard, node, tmp_path):
+    """Delete the guard, run this module's page tests against the mutant, require failure.
+
+    A new guard marked on the page is covered here without a test of its own, which is the
+    point: the mechanism is the habit, not a list.
+    """
+    assert guard is not None, "no guards declared on the page"
+    text = PAGE.read_text()
+    mutant = _without(text, guard)
+    parsed = _parses(node, _script(mutant))
+    if parsed.returncode != 0:                          # pragma: no cover - marker error
+        pytest.fail(f"removing guard {guard.name!r} leaves script that will not parse "
+                    f"({parsed.stderr.strip()}). Widen the markers so the block stands "
+                    f"alone -- as written, a red run would prove nothing.")
+
+    got = _run_module_against(_mutant_site(tmp_path, mutant))
+    assert _failed(got), (
+        f"removing guard {guard.name!r} made the child error rather than fail, which proves "
+        f"nothing about the guard.\n{got.stdout}")
+    assert got.returncode != 0, (
+        f"the page's tests still pass with guard {guard.name!r} removed, so nothing proves "
+        f"it fires. It guards: {guard.why}\n"
+        f"Either the tests assert the outcome rather than that the guard produced it, or the "
+        f"guard is dead.")
