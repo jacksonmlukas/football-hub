@@ -35,6 +35,19 @@ class NoOverlap(Exception):
     """The two models never predicted the same game."""
 
 
+class OutcomesUnavailable(Exception):
+    """The realised outcomes could not be read, so there is nothing to score against.
+
+    Distinct from `NoOverlap`, which is about the predictions: two models sharing no games
+    is a comparison that *cannot* be made, and an absent outcome source is one that could
+    not be *attempted*. Different fixes, so a different exception -- and the two causes
+    inside this one (schedules unreachable, schedules answering without `result`) carry
+    different messages for the same reason. Two messages rather than two more types
+    because the CLI's job with either is to print it; what a reader needs is which of the
+    two happened, and that is a sentence. Issue #63.
+    """
+
+
 def _schedules() -> pl.DataFrame:                                    # pragma: no cover
     """nflverse's schedules, fetched only when the caller did not supply them.
 
@@ -44,6 +57,22 @@ def _schedules() -> pl.DataFrame:                                    # pragma: n
     """
     import nflreadpy as nfl
     return nfl.load_schedules()
+
+
+def _nothing_predicted() -> pl.DataFrame:
+    """The frame for a model the store holds no predictions for.
+
+    Named for what returning it asserts rather than for what it is made of -- it was
+    `empty_shape`, which described the columns and not the fact. The fact is the useful
+    part: this model has predicted nothing, so the frame flows through to `_paired`, whose
+    NoOverlap message is the true answer for it.
+
+    A function rather than a local built at the top of `load_predictions`, which paid to
+    construct it on every call including the ones that go on to fetch and join.
+    """
+    return pl.DataFrame(schema={"game_id": pl.Utf8, "season": pl.Int32,
+                                "week": pl.Int32, "model": pl.Utf8,
+                                "home_win_prob": pl.Float64, "home_won": pl.Int64})
 
 
 def load_predictions(model: str, base: Path | None = None,
@@ -64,26 +93,42 @@ def load_predictions(model: str, base: Path | None = None,
     prediction for an unplayed game defaulting to a home loss is scored by log loss exactly
     as confidently as a real one, and nothing downstream can tell the two apart.
 
+    A join means a fetch, and a fetch can fail: `OutcomesUnavailable` rather than whatever
+    `nflreadpy` raised, so the CLI can degrade on it without also swallowing every unrelated
+    error underneath. A model the store holds nothing for returns before the fetch happens.
+
     Ties are dropped, on `hub.models.margin.DROP_TIES`'s reasoning -- a tie is neither a home
     win nor an away win, and there is no probability to score it against. `hub.publish._scored`
     takes the other convention, `result > 0`, so the two disagree on tied games and only those.
     """
     from hub import store
-    empty_shape = pl.DataFrame(schema={"game_id": pl.Utf8, "season": pl.Int32,
-                                       "week": pl.Int32, "model": pl.Utf8,
-                                       "home_win_prob": pl.Float64, "home_won": pl.Int64})
     # One row per game. `_paired` joins on (game_id, season, week), so two versions on each
     # side is a fourfold cross product -- and the comparison silently becomes mostly a model
-    # against itself. A fresh clone has no `preds` view at all, and the empty frame flows
-    # through to the NoOverlap message, which is the true answer.
+    # against itself. A fresh clone has no `preds` view at all; `_nothing_predicted` says
+    # what returning nothing means. Returning it before the fetch is deliberate: a model
+    # with nothing stored must not cost a network call to say so, and a fresh clone has to
+    # reach the NoOverlap message even with nflverse down.
     got = store.predictions(model=model, base=base)
     if got.is_empty():
-        return empty_shape
+        return _nothing_predicted()
     preds = got.select("game_id", "season", "week", "model", "home_win_prob")
     if schedules is None:
-        schedules = _schedules()
+        try:
+            schedules = _schedules()
+        except Exception as e:
+            # Broad, and deliberately so, on `hub.publish._scored`'s reasoning: this is a
+            # network call inside a command that runs unattended, and the module rule is
+            # that it produces a usable answer with no operator. Like `_scored` it names
+            # the failure *type* rather than presenting every cause as one, and it chains
+            # the original so the traceback is still there for whoever goes looking.
+            # Issue #63: closing #59 added this call and `main` was not widened, so an
+            # unreachable nflverse reached the operator as a traceback from a command that
+            # previously could not fail that way.
+            raise OutcomesUnavailable(
+                f"could not fetch schedules ({type(e).__name__}); {model} has no "
+                f"outcomes to score against") from e
     if "result" not in schedules.columns:
-        raise ValueError("schedules is missing `result`, the realised margin")
+        raise OutcomesUnavailable("schedules is missing `result`, the realised margin")
     won = (schedules.select("game_id", pl.col("result").cast(pl.Float64))
                     .drop_nulls("result")
                     .filter(pl.col("result") != 0.0)
@@ -192,7 +237,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         # that is the frame whose error message a first run is most likely to see.
         got = compare(load_predictions(names[0], base), load_predictions(names[1], base),
                       split=args.split, holdout=args.holdout, names=(names[0], names[1]))
-    except NoOverlap as e:
+    except (NoOverlap, OutcomesUnavailable) as e:
+        # Both exit the same way; the sentence is what differs, and `_paired`, the fetch and
+        # the missing column each write their own. This wrapped `NoOverlap` alone until #63,
+        # which is why the network call #59 introduced tracebacked -- an unreachable source,
+        # schedules without a realised margin, and two models sharing no games are three
+        # different fixes and the reader gets only this line to tell them apart.
         print(f"hub.models.eval: {e}", file=sys.stderr)
         return 1
 

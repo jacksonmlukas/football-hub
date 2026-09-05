@@ -244,10 +244,12 @@ def test_a_store_with_no_preds_at_all_is_empty_not_a_catalog_error(monkeypatch):
 
 
 def test_schedules_without_a_result_column_says_so(monkeypatch):
+    """`OutcomesUnavailable` rather than a bare `ValueError`, so the CLI can catch it
+    without also catching every unrelated value error raised beneath it (issue #63)."""
     import hub.store as store
     monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
     monkeypatch.setattr(store, "sql", lambda *a, **k: _stored([("g1", 1, 0.6)]))
-    with pytest.raises(ValueError, match="result"):
+    with pytest.raises(me.OutcomesUnavailable, match="result"):
         me.load_predictions("m", schedules=pl.DataFrame({"game_id": ["g1"]}))
 
 
@@ -314,3 +316,102 @@ def test_the_store_path_reaches_the_cli(capsys, tmp_path, monkeypatch):
     assert me.main(["--compare", "a,b", "--store", str(base)]) == 0
     out = capsys.readouterr().out
     assert "on 24 games" in out and "weeks 8-10 held out" in out
+
+
+# --- the outcome source can be down (issue #63) ------------------------------
+#
+# Closing #59 gave `load_predictions` a network call it never had -- the outcome is joined
+# from nflverse's schedules. `main` was not widened to match: it wrapped only `NoOverlap`, so
+# an unreachable nflverse left a traceback on a command that previously could not fail that
+# way. `hub.publish._scored` had already settled the shape one file over -- catch broadly
+# around the fetch, name the failure type rather than presenting every cause as one, and
+# degrade. These drive the unreachable case by monkeypatching `_schedules`, so no test here
+# touches the network.
+
+def _two_model_store(tmp_path):
+    """A store `--compare a,b` can actually read, so the CLI reaches the fetch."""
+    base = tmp_path / "processed"
+    for w in (1, 2):
+        _write_predictions(base, "a", [0.6] * 4, w)
+        _write_predictions(base, "b", [0.5] * 4, w)
+    return base
+
+
+def test_an_unreachable_schedules_source_is_reported_not_raised(capsys, tmp_path,
+                                                                monkeypatch):
+    def _down():
+        raise ConnectionError("nflverse unreachable")
+
+    monkeypatch.setattr(me, "_schedules", _down)
+    assert me.main(["--compare", "a,b", "--store", str(_two_model_store(tmp_path))]) == 1
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "ConnectionError" in err, "the failure type, as `hub.publish._scored` prints it"
+    assert "schedules" in err
+
+
+def test_schedules_missing_the_realised_margin_is_reported_not_raised(capsys, tmp_path,
+                                                                      monkeypatch):
+    """A frame that arrived but has no `result` is a different fix from a frame that never
+    arrived, and it used to leave a `ValueError` traceback in exactly the same place."""
+    monkeypatch.setattr(me, "_schedules", lambda: pl.DataFrame({"game_id": ["g1"]}))
+    assert me.main(["--compare", "a,b", "--store", str(_two_model_store(tmp_path))]) == 1
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "result" in err
+
+
+def test_the_three_failure_causes_do_not_share_one_message(capsys, tmp_path, monkeypatch):
+    """An unreachable source, a frame with no realised margin, and two models sharing no
+    games are three different fixes. Collapsing them into one sentence is what sends the
+    reader to check the wrong thing first."""
+    base = _two_model_store(tmp_path)
+
+    def _down():
+        raise TimeoutError("nflverse timed out")
+
+    said = []
+    for schedules in (_down,
+                      lambda: pl.DataFrame({"game_id": ["g1"]}),
+                      lambda: _sched([("no_such_game", 7.0)])):
+        monkeypatch.setattr(me, "_schedules", schedules)
+        assert me.main(["--compare", "a,b", "--store", str(base)]) == 1
+        said.append(capsys.readouterr().err.strip())
+
+    assert len(set(said)) == 3, f"three causes, {len(set(said))} distinct messages: {said}"
+    assert "TimeoutError" in said[0]
+    assert "result" in said[1]
+    assert "share no games" in said[2]
+
+
+def test_the_underlying_fetch_failure_is_kept_as_the_cause(monkeypatch):
+    """Broad like `_scored`'s, but not swallowing: the original is chained, so a stack trace
+    is still there for whoever goes looking."""
+    import hub.store as store
+    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
+    monkeypatch.setattr(store, "sql", lambda *a, **k: _stored([("g1", 1, 0.6)]))
+
+    boom = ConnectionError("nflverse unreachable")
+
+    def _down():
+        raise boom
+
+    monkeypatch.setattr(me, "_schedules", _down)
+    with pytest.raises(me.OutcomesUnavailable) as e:
+        me.load_predictions("m")
+    assert e.value.__cause__ is boom
+
+
+def test_a_model_with_nothing_stored_never_reaches_the_fetch(monkeypatch):
+    """The normal state before the first prediction is written, and the frame it returns is
+    named for meaning that: nothing predicted. It must not cost a fetch to say so -- and a
+    fresh clone with nflverse down still has to reach the no-overlap message."""
+    import hub.store as store
+    monkeypatch.setattr(store, "tables", lambda *a, **k: set())
+
+    def _down():
+        raise ConnectionError("nflverse unreachable")
+
+    monkeypatch.setattr(me, "_schedules", _down)
+    got = me.load_predictions("m")
+    assert got.is_empty() and "home_won" in got.columns
