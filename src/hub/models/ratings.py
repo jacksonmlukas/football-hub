@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import cast
 
@@ -30,26 +30,10 @@ from hub.config import SEASON_AHEAD, config_digest
 from hub.models.base import FitSpec, validate_predictions
 from hub.models.market import MarketBaseline
 
-
-def forecastable(games: pl.DataFrame, at: datetime | None = None) -> pl.DataFrame:
-    """The games it is still honest to predict: kickoff ahead of us, no result yet.
-
-    `docs/track-record.md` rule 1 -- a prediction counts only if it was committed before
-    kickoff -- was satisfied by habit, because a person runs the fit before the week starts.
-    A schedule has no habits. A Sunday-morning run would publish a prediction for Thursday
-    night's finished game, and one post-hoc row in a public record devalues every honest row
-    beside it, because a reader cannot tell them apart.
-
-    Both tests, because neither covers the other. A finished game has a result; a game *in
-    progress* does not, and it is no more forecastable. A game whose kickoff is unknown is
-    kept rather than dropped -- an invented time would silently decide this, and the result
-    check still catches it once the game is over.
-    """
-    moment = at or datetime.now(UTC).replace(tzinfo=None)
-    started = (pl.col("kickoff").is_not_null() & (pl.col("kickoff") <= moment)
-               if "kickoff" in games.columns else pl.lit(False))
-    done = pl.col("result").is_not_null() if "result" in games.columns else pl.lit(False)
-    return games.filter(~(started | done))
+# `forecastable` lives in `hub.schedule` now, which owns `kickoff` and `result` -- and which
+# `hub.season.survivor` reads the same rule from. A survivor plan that spends teams on weeks
+# already over has the same defect this rule fixes here, and the two must not be able to
+# disagree about which games are still ahead.
 
 
 def target_week(games: pl.DataFrame, at: datetime | None = None) -> int:
@@ -59,7 +43,7 @@ def target_week(games: pl.DataFrame, at: datetime | None = None) -> int:
     predicting the rest of a slate whose first game is already over is the same backdating,
     one game at a time.
     """
-    ahead = forecastable(games, at).filter(pl.col("close_spread").is_not_null())
+    ahead = schedule.forecastable(games, at).filter(pl.col("close_spread").is_not_null())
     if ahead.height:
         return int(cast(int, ahead["week"].min() or 1))
     return int(cast(int, games["week"].max() or 1))
@@ -122,7 +106,7 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
     spec = FitSpec("nfl", season, wk - 1, cfg_digest=digest)
     # Rule 1, made structural rather than scheduled around.
     whole = games.filter(pl.col("week") == wk)
-    slate = forecastable(whole, at).drop("result")
+    slate = schedule.forecastable(whole, at).drop("result")
     under_way = whole.height - slate.height
 
     model = MarketBaseline().fit(spec)

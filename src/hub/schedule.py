@@ -113,6 +113,30 @@ def priced_games(season: int, *, at: datetime | None = None, cache: Path | None 
                        .otherwise(None).alias("price_source")))
 
 
+def forecastable(games: pl.DataFrame, at: datetime | None = None) -> pl.DataFrame:
+    """The games still ahead of us: kickoff not yet passed, no result yet.
+
+    Here rather than in one of its readers, because `kickoff` and `result` are this module's
+    columns and the rule is the same rule for both of them. `hub.models.ratings` needs it for
+    `docs/track-record.md` rule 1 -- a prediction counts only if it was committed before
+    kickoff, and a Sunday-morning run would otherwise publish a prediction for Thursday
+    night's finished game. `hub.season.survivor` needs it because a plan that spends teams on
+    weeks already over is drawing every remaining pick from a pool degraded by picks that were
+    never available. Two readers of one rule is what this module exists for, and the last time
+    they each had their own copy they disagreed for a day.
+
+    Both tests, because neither covers the other. A finished game has a result; a game *in
+    progress* does not, and it is no more forecastable. A game whose kickoff is unknown is
+    kept rather than dropped -- an invented time would silently decide this, and the result
+    check still catches it once the game is over.
+    """
+    moment = at or datetime.now(UTC).replace(tzinfo=None)
+    started = (pl.col("kickoff").is_not_null() & (pl.col("kickoff") <= moment)
+               if "kickoff" in games.columns else pl.lit(False))
+    done = pl.col("result").is_not_null() if "result" in games.columns else pl.lit(False)
+    return games.filter(~(started | done))
+
+
 def by_source(games: pl.DataFrame) -> dict[str, int]:
     """How many games each source priced.
 

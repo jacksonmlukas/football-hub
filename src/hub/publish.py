@@ -453,11 +453,22 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | None:
     out = out or SITE
     try:
         grid = sv.grid_from_schedule(season)
-        # Against the full season, not against the weeks the grid happens to have -- asking
-        # coverage about its own weeks makes `missing` empty by construction, and the panel
-        # would never say a week still needs a pick.
-        cov = sv.coverage(grid, list(range(1, NFL_WEEKS + 1)))
-        plan = sv.solve(grid, weeks=cov["covered"])
+        # **From here, not from week 1.** Survivor is one assignment problem because spending
+        # a team early costs you that team later -- so a grid that still prices played weeks
+        # hands the solver its best teams for games that are over, and every remaining pick
+        # comes from a pool degraded by picks that were never available. Both halves are wrong
+        # in-season and neither shows in the output: the plan looks like a plan.
+        ahead = sv.forthcoming(grid)
+        gone = sv.played(grid)
+        # What this entry has already used, read back from the plan it published. The only
+        # record there is, and named as what it is in `spent_teams`.
+        spent = sv.spent_teams(sv.published_plan(out / "survivor.json"), gone)
+        # Against every week still to come, not against the weeks the grid happens to have --
+        # asking coverage about its own weeks makes `missing` empty by construction and the
+        # panel would never say a week needs a pick. A week already played is in neither list.
+        remaining = [w for w in range(1, NFL_WEEKS + 1) if w not in gone]
+        cov = sv.coverage(ahead, remaining)
+        plan = sv.solve(ahead, weeks=cov["covered"], spent=spent)
     except Exception as e:
         # Reported the way `live` reports its own failure: printed for the operator, None for
         # the caller. It used to hand back a manifest entry of its own -- the only producer
@@ -466,9 +477,13 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | None:
         return None
     art = jsonio.artifact("survivor", "hub.season.survivor", plan.to_dicts(), season=season,
                     survival=sv.survival(plan), unpriced_weeks=cov["missing"],
+                    # The plan's own scope, said out loud. A survival probability means
+                    # nothing without the weeks it is over, and a reader looking at a plan
+                    # that starts in week 9 should not have to infer why.
+                    weeks_remaining=cov["covered"], weeks_played=gone, spent=spent,
                     # Which weeks exist in this plan only because the store was read. They
                     # are the ones a reader should not expect to find on nflverse.
-                    snapshot_only_weeks=sv.snapshot_only_weeks(grid, cov["covered"]))
+                    snapshot_only_weeks=sv.snapshot_only_weeks(ahead, cov["covered"]))
     return _publish(out, "survivor", art)
 
 

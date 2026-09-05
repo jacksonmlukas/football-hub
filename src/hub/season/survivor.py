@@ -23,9 +23,10 @@ from __future__ import annotations
 import argparse
 import math
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
@@ -38,6 +39,25 @@ MIN_PROB = 1e-4
 # Fewer than three priced games in a week. The "choice" is then which side of one or two
 # games to take, which is worth saying out loud before anyone treats it as a plan.
 THIN_WEEK = 6
+
+
+def published_plan(path: Path | None = None) -> list[dict]:
+    """The rows of the last published survivor artifact, or nothing.
+
+    Read here so the CLI and `hub.publish.survivor` answer "what has been spent" from the
+    same file. An unreadable or absent artifact is no history rather than an error -- a
+    fresh clone has none, and refusing to plan because of that would be the
+    operator-dependence `CLAUDE.md` warns about.
+    """
+    import json
+
+    from hub.paths import SITE
+    try:
+        got = json.loads(Path(path or (SITE / "survivor.json")).read_text())
+    except (OSError, ValueError):
+        return []
+    rows = got.get("rows") if isinstance(got, dict) else None
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
 
 
 def _solver():
@@ -68,18 +88,27 @@ class Infeasible(Exception):
     """No assignment covers every week without reusing a team."""
 
 
-def solve(grid: pl.DataFrame, weeks: Sequence[int] | None = None) -> pl.DataFrame:
+def solve(grid: pl.DataFrame, weeks: Sequence[int] | None = None,
+          spent: Sequence[str] = ()) -> pl.DataFrame:
     """One team per week, no repeats, maximising the probability of surviving them all.
 
     `grid` is (week, team, win_prob) for every team playing in every week.
+
+    `spent` is the teams already used in weeks that are behind us. The no-repeat constraint
+    below only binds *within* one plan, so a mid-season solve would otherwise hand back a
+    team spent in September and the entry would be infeasible the moment it was entered.
+    Passed in rather than inferred: this module is given a grid, not a history, and guessing
+    which of the plan's own earlier picks were actually entered would be a different claim.
     """
     import pulp
 
     weeks = list(weeks) if weeks is not None else sorted(set(grid["week"].to_list()))
+    gone = {str(t) for t in spent}
     usable = grid.filter(pl.col("win_prob") > MIN_PROB)
 
     options = [(int(r["week"]), str(r["team"]), float(r["win_prob"]))
-               for r in usable.iter_rows(named=True) if int(r["week"]) in weeks]
+               for r in usable.iter_rows(named=True)
+               if int(r["week"]) in weeks and str(r["team"]) not in gone]
     if not options:
         raise Infeasible("no pickable team in any week")
 
@@ -113,6 +142,50 @@ def solve(grid: pl.DataFrame, weeks: Sequence[int] | None = None) -> pl.DataFram
     return pl.DataFrame(
         {"week": [w for w, _, _ in picked], "team": [t for _, t, _ in picked],
          "win_prob": [p for _, _, p in picked]}).sort("week")
+
+
+def forthcoming(grid: pl.DataFrame, at: datetime | None = None) -> pl.DataFrame:
+    """The grid rows whose game is still ahead of us. Everything else is not a choice.
+
+    The whole reason survivor is one assignment problem rather than eighteen is that
+    spending a team early costs you that team later -- so a grid that still prices weeks
+    already played hands the solver its strongest teams for games that are over, and every
+    remaining pick comes from a pool degraded by picks that were never available. The
+    reported survival probability is then the product over games already won or lost. Both
+    are wrong in-season and neither is visible from the output: the plan looks like a plan.
+
+    The rule is `hub.schedule.forecastable`, unchanged and unrestated. A weekly prediction
+    and a survivor pick must not be able to disagree about which games are still ahead, and
+    a grid with no kickoff column -- the preseason case, and a schedule with no times -- is
+    entirely still to come.
+    """
+    from hub import schedule
+    return schedule.forecastable(grid, at)
+
+
+def played(grid: pl.DataFrame, at: datetime | None = None) -> list[int]:
+    """Weeks the season has already run: in the grid, and absent from what is ahead.
+
+    Derived by difference rather than by comparing a week number to a date, because the two
+    would disagree the first time a week straddled a boundary -- and because `forthcoming`
+    is then the only place the rule is written.
+    """
+    ahead = set(forthcoming(grid, at)["week"].to_list())
+    return sorted({int(w) for w in grid["week"].to_list()} - {int(w) for w in ahead})
+
+
+def spent_teams(prior: Sequence[Mapping[str, Any]], weeks: Sequence[int]) -> list[str]:
+    """Teams a previous plan assigned to weeks that are now behind us.
+
+    The best available answer to "what has this entry already used", and stated as what it
+    is: a reading of the last plan published, not a record of what was entered. An entrant
+    who deviated has deviated from this too. It is still strictly better than assuming
+    nothing was spent, which is what the plan did -- and which made every mid-season plan
+    infeasible against the real remaining pool while looking exactly like a plan.
+    """
+    gone = {int(w) for w in weeks}
+    return sorted({str(r["team"]) for r in prior
+                   if r.get("team") and int(r.get("week", -1)) in gone})
 
 
 def coverage(grid: pl.DataFrame, weeks: Sequence[int]) -> dict:
@@ -191,13 +264,21 @@ def grid_from_schedule(season: int, cache: Path | None = None, *,
         # "snapshot" everywhere and says nothing about what the fallback would have reached
         # -- I reported all eighteen weeks as snapshot-only before the real data caught it.
         moving = r["schedule_spread"] is not None
-        rows.append((int(r["week"]), r["home_team"], home_p, moving))
-        rows.append((int(r["week"]), r["away_team"], 1.0 - home_p, moving))
+        # Kickoff and result ride along per row, so `forthcoming` can ask the same question
+        # of this grid that `ratings` asks of the games it was built from. Deriving them
+        # again here from a week number would be the second implementation of one idea that
+        # this module's own docstring warns about.
+        kick, res = r.get("kickoff"), r.get("result")
+        rows.append((int(r["week"]), r["home_team"], home_p, moving, kick, res))
+        rows.append((int(r["week"]), r["away_team"], 1.0 - home_p, moving, kick, res))
     return pl.DataFrame({"week": [r[0] for r in rows], "team": [r[1] for r in rows],
                          "win_prob": [r[2] for r in rows],
-                         "moving_field": [r[3] for r in rows]},
+                         "moving_field": [r[3] for r in rows],
+                         "kickoff": [r[4] for r in rows],
+                         "result": [r[5] for r in rows]},
                         schema={"week": pl.Int64, "team": pl.Utf8, "win_prob": pl.Float64,
-                                "moving_field": pl.Boolean})
+                                "moving_field": pl.Boolean, "kickoff": pl.Datetime,
+                                "result": pl.Float64})
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -209,20 +290,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     a = ap.parse_args(argv)
 
     grid = grid_from_schedule(a.season)
-    requested = list(range(1, a.weeks + 1))
-    cov = coverage(grid, requested)
+    ahead = forthcoming(grid)
+    gone = played(grid)
+    spent = spent_teams(published_plan(), gone)
+    # Against the weeks still to come. A week already run is not one the plan can cover and
+    # not one that "still needs a pick" either, so it belongs in neither list.
+    requested = [w for w in range(1, a.weeks + 1) if w not in gone]
+    cov = coverage(ahead, requested)
     weeks = cov["covered"]
     if not weeks:
         print(f"hub.season.survivor: no week in 1-{a.weeks} has a posted spread yet",
               file=sys.stderr)
         return 1
     try:
-        plan = solve(grid, weeks=weeks)
+        plan = solve(ahead, weeks=weeks, spent=spent)
     except Infeasible as e:
         print(f"hub.season.survivor: {e}", file=sys.stderr)
         return 1
 
-    print(f"  survivor plan, {a.season}, {len(weeks)} of {len(requested)} weeks priced")
+    print(f"  survivor plan, {a.season}, {len(weeks)} of {len(requested)} remaining weeks "
+          f"priced")
+    if gone:
+        print(f"  {len(gone)} week(s) already played and absent from the plan: "
+              + ", ".join(f"wk {w}" for w in gone))
+    if spent:
+        print(f"  unavailable, already spent: {', '.join(spent)}")
     for r in plan.iter_rows(named=True):
         thin = "  (thin: one or two games priced)" if r["week"] in cov["thin"] else ""
         print(f"    wk {r['week']:>2}  {r['team']:<4} {r['win_prob']:.3f}{thin}")
@@ -232,7 +324,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # lookahead field does not price, and the difference between a season plan and most of
     # one -- a team spent in week 3 is unavailable in week 17 whether or not the plan could
     # see week 17 when it chose.
-    if snap_only := snapshot_only_weeks(grid, weeks):
+    if snap_only := snapshot_only_weeks(ahead, weeks):
         print(f"  {len(snap_only)} of these weeks are priced only by the dated snapshots: "
               + ", ".join(f"wk {w}" for w in snap_only))
     if cov["missing"]:

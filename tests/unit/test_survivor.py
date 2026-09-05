@@ -321,3 +321,88 @@ def test_snapshot_only_weeks_is_empty_when_the_moving_field_reaches_everything(t
     monkeypatch.setattr(nflverse, "load", lambda *a, **k: sched)
     grid = survivor.grid_from_schedule(2026, base=tmp_path)
     assert survivor.snapshot_only_weeks(grid, [1]) == []
+
+
+# --- a plan is for the weeks that are left (issue #24) -----------------------
+#
+# Survivor is one assignment problem *because* spending a team in week 1 costs you that team
+# in week 12. The grid priced every week of the season with no cutoff, so from week 2 onward
+# the plan spent its strongest teams on weeks already over: every remaining pick was drawn
+# from a pool degraded by picks that were never available, and the reported survival
+# probability was the product over games already won or lost. Neither is visible from the
+# output -- the plan looks like a plan.
+
+def _dated_grid(rows):
+    """rows: (week, team, win_prob, kickoff, result)"""
+    return pl.DataFrame(
+        {"week": [r[0] for r in rows], "team": [r[1] for r in rows],
+         "win_prob": [float(r[2]) for r in rows], "kickoff": [r[3] for r in rows],
+         "result": [r[4] for r in rows]},
+        schema={"week": pl.Int64, "team": pl.Utf8, "win_prob": pl.Float64,
+                "kickoff": pl.Datetime, "result": pl.Float64})
+
+
+def test_a_team_already_spent_cannot_be_planned_again():
+    """The constraint the solver already enforces within one plan, extended across the
+    plans that came before it. Without it a September pick is silently available again in
+    October and the plan is infeasible the moment it is entered."""
+    grid = _grid([(2, "A", 0.90), (2, "B", 0.60), (2, "C", 0.55),
+                  (3, "A", 0.95), (3, "B", 0.50), (3, "C", 0.45)])
+    assert "A" in survivor.solve(grid)["team"].to_list(), (
+        "the premise: A is worth picking, so leaving it out has to be `spent` doing it")
+    plan = survivor.solve(grid, spent=["A"])
+    assert "A" not in plan["team"].to_list()
+    assert plan.height == 2
+
+
+def test_spending_the_only_option_in_a_week_is_reported_not_silently_dropped():
+    grid = _grid([(2, "A", 0.9), (3, "A", 0.9), (3, "B", 0.8)])
+    with pytest.raises(survivor.Infeasible):
+        survivor.solve(grid, weeks=[2, 3], spent=["A"])
+
+
+def test_a_week_already_played_is_not_in_the_grid_the_plan_solves():
+    """Week 1 has kicked off and has a result. It is not a choice any more, and the honest
+    plan is over what is left."""
+    import datetime as dt
+    grid = _dated_grid([
+        (1, "A", 0.9, dt.datetime(2026, 9, 10, 20, 15), 7.0),
+        (1, "B", 0.1, dt.datetime(2026, 9, 10, 20, 15), 7.0),
+        (2, "A", 0.8, dt.datetime(2026, 9, 17, 20, 15), None),
+        (2, "B", 0.2, dt.datetime(2026, 9, 17, 20, 15), None),
+    ])
+    ahead = survivor.forthcoming(grid, at=dt.datetime(2026, 9, 15))
+    assert ahead["week"].to_list() == [2, 2]
+    assert survivor.solve(ahead)["week"].to_list() == [2]
+
+
+def test_a_week_in_progress_is_no_more_pickable_than_a_finished_one():
+    """Both tests, because neither covers the other -- the same pair `forecastable` makes
+    for a prediction. A game under way has no result and is not a choice either."""
+    import datetime as dt
+    grid = _dated_grid([
+        (1, "A", 0.9, dt.datetime(2026, 9, 10, 20, 15), None),
+        (2, "B", 0.8, dt.datetime(2026, 9, 17, 20, 15), None),
+    ])
+    ahead = survivor.forthcoming(grid, at=dt.datetime(2026, 9, 10, 21, 0))
+    assert ahead["week"].to_list() == [2]
+
+
+def test_survival_is_the_product_over_the_weeks_still_to_come():
+    """The reported number was the product over games already won or lost, which says
+    nothing about whether the entry survives from here."""
+    import datetime as dt
+    grid = _dated_grid([
+        (1, "A", 0.50, dt.datetime(2026, 9, 10, 20, 15), 7.0),
+        (2, "B", 0.80, dt.datetime(2026, 9, 17, 20, 15), None),
+        (3, "C", 0.90, dt.datetime(2026, 9, 24, 20, 15), None),
+    ])
+    plan = survivor.solve(survivor.forthcoming(grid, at=dt.datetime(2026, 9, 15)))
+    assert survivor.survival(plan) == pytest.approx(0.8 * 0.9)
+
+
+def test_a_grid_with_no_kickoffs_is_entirely_still_to_come():
+    """Preseason, and the fixture shape every other test here uses. A schedule without
+    times carries a null kickoff, and an invented one would silently decide this."""
+    grid = _grid([(1, "A", 0.9), (2, "B", 0.8)])
+    assert survivor.forthcoming(grid).height == 2

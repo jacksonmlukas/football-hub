@@ -790,3 +790,74 @@ def test_both_seasons_of_a_week_are_scored(site, base, monkeypatch):
     publish.predictions(2026, 18, base=new, out=site)
 
     assert set(publish._published(site)["game_id"]) == {"2025_18_KC_LV", "2026_18_SF_SEA"}
+
+
+# --- the survivor panel plans from now (issue #24) -------------------------
+
+def _dated_survivor_grid(rows):
+    """rows: (week, team, win_prob, kickoff, result)"""
+    return pl.DataFrame(
+        {"week": [r[0] for r in rows], "team": [r[1] for r in rows],
+         "win_prob": [float(r[2]) for r in rows], "kickoff": [r[3] for r in rows],
+         "result": [r[4] for r in rows]},
+        schema={"week": pl.Int64, "team": pl.Utf8, "win_prob": pl.Float64,
+                "kickoff": pl.Datetime, "result": pl.Float64})
+
+
+MID_SEASON = pl.DataFrame  # placeholder so the fixture below reads as data, not machinery
+
+
+def _mid_season_grid():
+    kick1, kick2, kick3 = (dt.datetime(2026, 9, 10, 20, 15),
+                           dt.datetime(2026, 9, 17, 20, 15),
+                           dt.datetime(2026, 9, 24, 20, 15))
+    return _dated_survivor_grid([
+        (1, "KC", 0.90, kick1, 7.0), (1, "LV", 0.10, kick1, 7.0),
+        (2, "KC", 0.85, kick2, None), (2, "SF", 0.70, kick2, None),
+        (3, "KC", 0.80, kick3, None), (3, "SEA", 0.60, kick3, None),
+    ])
+
+
+def test_the_published_plan_covers_only_the_weeks_that_remain(site, base, monkeypatch):
+    """Week 1 has been played. A plan that still prices it spends its strongest team on a
+    game that is over, and every remaining pick comes from a pool degraded by picks that
+    were never available."""
+    import hub.season.survivor as sv
+    monkeypatch.setattr(sv, "grid_from_schedule",
+                        lambda season, cache=None: _mid_season_grid())
+    publish.survivor(2026, out=site)
+    got = json.loads((site / "survivor.json").read_text())
+    assert [r["week"] for r in got["rows"]] == [2, 3]
+    assert got["weeks_remaining"] == [2, 3]
+    assert 1 not in got["unpriced_weeks"], "a week already played does not need a pick"
+
+
+def test_a_team_spent_in_a_played_week_is_gone_from_the_next_plan(site, base, monkeypatch):
+    """The published plan is the only record of what this entry has used. KC was the week 1
+    pick; it is the best team in every remaining week, and it must not be offered again."""
+    import hub.season.survivor as sv
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "survivor.json").write_text(json.dumps(
+        {"name": "survivor", "n": 3, "rows": [{"week": 1, "team": "KC", "win_prob": 0.9},
+                                              {"week": 2, "team": "SF", "win_prob": 0.7},
+                                              {"week": 3, "team": "SEA", "win_prob": 0.6}]}))
+    monkeypatch.setattr(sv, "grid_from_schedule",
+                        lambda season, cache=None: _mid_season_grid())
+    got = publish.survivor(2026, out=site)
+    assert got is not None
+    assert got["spent"] == ["KC"]
+    assert "KC" not in [r["team"] for r in got["rows"]]
+    assert [r["team"] for r in got["rows"]] == ["SF", "SEA"]
+
+
+def test_the_published_survival_covers_the_remaining_weeks_only(site, base, monkeypatch):
+    """It was the product over games already won or lost, which says nothing about whether
+    the entry survives from here."""
+    import hub.season.survivor as sv
+    monkeypatch.setattr(sv, "grid_from_schedule",
+                        lambda season, cache=None: _mid_season_grid())
+    got = publish.survivor(2026, out=site)
+    assert got is not None
+    assert got["survival"] == pytest.approx(0.70 * 0.80), (
+        "SF in week 2 to keep KC for week 3 -- and week 1's 0.90 is not part of "
+        "surviving from here")

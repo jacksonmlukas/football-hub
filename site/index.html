@@ -358,13 +358,22 @@ async function render() {
     // weeks deep, so a plan covering 12 of 18 is the honest answer and a plan that did not
     // say so would read as a season.
     const missing = surv.unpriced_weeks ?? [];
+    // The plan's scope, not the season's. Spending a team early costs you that team later,
+    // so a mid-season plan is over the weeks that remain and against the teams that are
+    // left -- and a survival probability means nothing without the weeks it is over.
+    const gone = surv.spent ?? [];
+    const from = sRows[0]?.week;
     panel("p-survivor", {
-      age: `${sRows.length} weeks planned · survives ${pct(surv.survival ?? 0)}`,
+      age: `${sRows.length} weeks from wk ${from} · survives ${pct(surv.survival ?? 0)}`,
       warn: sArt?.stale ? `Stale: ${sArt.reason ?? "unknown"}`
           : (missing.length
              ? `Weeks ${missing.join(", ")} have no posted spread yet and still need a pick.`
              : null),
-      html: table([
+      html: (gone.length
+              ? `<p class="empty">Already spent and unavailable: ${gone.join(", ")}.
+                   Read from the last published plan, so it is what was planned rather than
+                   what was entered.</p>`
+              : "") + table([
         { label: "week", get: r => r.week },
         { label: "team", get: r => r.team ?? "" },
         { label: "win", get: r => pct(r.win_prob) },
