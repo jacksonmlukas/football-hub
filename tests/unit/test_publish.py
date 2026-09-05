@@ -52,7 +52,7 @@ def _preds(rows, week=1):
 def test_predictions_become_a_weekly_artifact(site, base):
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     publish.predictions(2026, 1, base=base, out=site)
-    got = json.loads((site / "preds_wk01.json").read_text())
+    got = json.loads((site / "preds_2026_wk01.json").read_text())
     assert got["rows"][0]["game_id"] == "g1"
     assert got["week"] == 1
 
@@ -60,7 +60,7 @@ def test_predictions_become_a_weekly_artifact(site, base):
 def test_every_artifact_carries_its_own_freshness(site, base):
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     publish.predictions(2026, 1, base=base, out=site)
-    got = json.loads((site / "preds_wk01.json").read_text())
+    got = json.loads((site / "preds_2026_wk01.json").read_text())
     assert got["generated_at"] and got["source"] == "preds"
 
 
@@ -68,7 +68,7 @@ def test_a_manifest_lists_what_the_page_can_render(site, base):
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     publish.publish_all(2026, 1, base=base, out=site)
     man = json.loads((site / "manifest.json").read_text())
-    assert {a["name"] for a in man["artifacts"]} >= {"preds_wk01", "track_record"}
+    assert {a["name"] for a in man["artifacts"]} >= {"preds_2026_wk01", "track_record"}
 
 
 # --- last-good, not blank -------------------------------------------------
@@ -76,17 +76,17 @@ def test_a_manifest_lists_what_the_page_can_render(site, base):
 def test_a_missing_source_leaves_the_previous_artifact_alone(site, base):
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     publish.predictions(2026, 1, base=base, out=site)
-    before = (site / "preds_wk01.json").read_text()
+    before = (site / "preds_2026_wk01.json").read_text()
 
     # week 2 has nothing in the store at all
     publish.predictions(2026, 2, base=base, out=site)
-    assert (site / "preds_wk01.json").read_text() == before, "week 1 must survive"
+    assert (site / "preds_2026_wk01.json").read_text() == before, "week 1 must survive"
 
 
 def test_a_missing_source_marks_stale_rather_than_writing_an_empty_file(site, base):
     publish.publish_all(2026, 9, base=base, out=site)
     man = json.loads((site / "manifest.json").read_text())
-    preds = next(a for a in man["artifacts"] if a["name"] == "preds_wk09")
+    preds = next(a for a in man["artifacts"] if a["name"] == "preds_2026_wk09")
     assert preds["stale"] is True
     assert preds["reason"]
 
@@ -94,7 +94,7 @@ def test_a_missing_source_marks_stale_rather_than_writing_an_empty_file(site, ba
 def test_a_stale_artifact_that_never_existed_is_reported_as_absent(site, base):
     publish.publish_all(2026, 9, base=base, out=site)
     man = json.loads((site / "manifest.json").read_text())
-    preds = next(a for a in man["artifacts"] if a["name"] == "preds_wk09")
+    preds = next(a for a in man["artifacts"] if a["name"] == "preds_2026_wk09")
     assert preds["present"] is False
 
 
@@ -195,13 +195,13 @@ def test_publishing_live_never_touches_the_predictions(site, base, monkeypatch):
     worthless as a pre-registered claim, however good it looks afterwards."""
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     publish.predictions(2026, 1, base=base, out=site)
-    frozen = (site / "preds_wk01.json").read_text()
+    frozen = (site / "preds_2026_wk01.json").read_text()
 
     import hub.fetch.espn as espn
     monkeypatch.setattr(espn, "live_state", lambda league="nfl": [{"id": "1", "home": "SEA"}])
     for _ in range(3):
         publish.live(out=site)
-    assert (site / "preds_wk01.json").read_text() == frozen
+    assert (site / "preds_2026_wk01.json").read_text() == frozen
 
 
 def test_scoring_against_itself_reports_no_edge():
@@ -329,11 +329,11 @@ def _names(season=2026, week=1, base=None, out=None):
 
 def test_every_panel_the_page_reads_is_declared_once():
     """The manifest's order is the page's order, and adding a panel is one list entry."""
-    assert _names() == ["preds_wk01", "track_record", "live", "roster",
+    assert _names() == ["preds_2026_wk01", "track_record", "live", "roster",
                         "draft_board", "survivor"]
 
 
-@pytest.mark.parametrize("name", ["preds_wk01", "track_record", "live", "roster",
+@pytest.mark.parametrize("name", ["preds_2026_wk01", "track_record", "live", "roster",
                                   "draft_board", "survivor"])
 def test_a_producer_returning_none_is_stale_with_a_reason(name, tmp_path):
     """`CLAUDE.md`'s degradation rule, asserted for all six rather than the four that used to
@@ -346,7 +346,8 @@ def test_a_producer_returning_none_is_stale_with_a_reason(name, tmp_path):
     assert got["present"] is False and got["generated_at"] is None
 
 
-@pytest.mark.parametrize("name", ["preds_wk01", "roster", "draft_board", "survivor"])
+@pytest.mark.parametrize("name", ["preds_2026_wk01", "roster", "draft_board",
+                                  "survivor"])
 def test_last_goods_timestamp_survives_a_failed_producer(name, tmp_path):
     """The panel shows yesterday's numbers *and* how old they are. `draft_board` and
     `survivor` always reported null here, so the page could not age them."""
@@ -539,7 +540,7 @@ def test_the_live_overlay_is_not_in_the_committed_record():
                              cwd=pathlib.Path(__file__).resolve().parents[2]).stdout.split()
     assert "site/data/live.json" not in tracked, (
         "the live overlay is committed again; ADR-0018 says it is generated at deploy time")
-    assert any(f.endswith("preds_wk01.json") for f in tracked), (
+    assert any("/preds_" in f and f.endswith(".json") for f in tracked), (
         "no other artifact may leave the record with it -- a prediction is pinned by its commit")
 
 
@@ -657,15 +658,15 @@ def test_an_empty_store_keeps_last_good_rather_than_restamping_it(site, base):
     A run that priced none has nothing to say, and `None` is how this repo says that."""
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     publish.predictions(2026, 1, base=base, out=site)
-    before = json.loads((site / "preds_wk01.json").read_text())["generated_at"]
+    before = json.loads((site / "preds_2026_wk01.json").read_text())["generated_at"]
 
     assert publish.predictions(2026, 1, base=base / "empty", out=site) is None
-    after = json.loads((site / "preds_wk01.json").read_text())["generated_at"]
+    after = json.loads((site / "preds_2026_wk01.json").read_text())["generated_at"]
     assert after == before, "an empty run must not advance the timestamp of last-good"
 
 
 def test_a_prediction_from_another_season_is_never_carried_forward(site, base):
-    """`site/data/preds_wk18.json` holds 2025 week 18 today. Without a season check,
+    """`site/data/preds_2025_wk18.json` holds 2025 week 18. Without a season check,
     publishing 2026 week 18 into the same filename inherits all sixteen 2025 games and
     publishes two seasons as one slate -- reproduced at 17 rows across two seasons."""
     old = _preds([("2025_18_KC_LV", 0.6, 3.0)], week=18).with_columns(
@@ -680,3 +681,112 @@ def test_a_prediction_from_another_season_is_never_carried_forward(site, base):
     assert got is not None
     assert {r["game_id"] for r in got["rows"]} == {"2026_18_SF_SEA"}
     assert {r["season"] for r in got["rows"]} == {2026}
+
+
+# --- emptiness is not freshness (issue #22) --------------------------------
+#
+# The class that bit three times in one day: a producer that can return a valid payload
+# describing nothing, and `Artifact.record` reading any payload as success. `track_record`
+# published an empty record over sixteen scored predictions; the carry-forward re-stamped
+# last-good as fresh; `roster` had no empty check at all. Fixed once per producer is how it
+# came back twice, so the rule now lives in one place and every producer goes through it.
+
+def _live_rows(monkeypatch, rows):
+    monkeypatch.setattr("hub.fetch.espn.live_state", lambda league="nfl": rows)
+
+
+def test_an_empty_scoreboard_does_not_blank_the_published_one(site, monkeypatch):
+    """ESPN answering with zero games is not the same as ESPN saying the scores are gone.
+    The contract allows an empty scoreboard -- February has no slate -- but publishing it
+    over a Sunday's scores is the blanking this rule exists to stop."""
+    _live_rows(monkeypatch, [{"id": "1", "home": "KC", "away": "LV", "state": "in"}])
+    publish.live(out=site)
+    before = (site / "live.json").read_text()
+
+    _live_rows(monkeypatch, [])
+    assert publish.live(out=site) is None
+    assert (site / "live.json").read_text() == before
+
+
+def test_an_empty_scoreboard_still_publishes_when_nothing_is_published_yet(site, monkeypatch):
+    """The guard is "never replace something with nothing", not "never write nothing".
+    A first run on a day with no games has an honest empty answer and should say it."""
+    _live_rows(monkeypatch, [])
+    got = publish.live(out=site)
+    assert got is not None and got["n"] == 0
+
+
+def test_an_empty_roster_parquet_does_not_blank_the_published_roster(site, base, tmp_path):
+    """`roster` guarded only `not src.exists()`. A parquet that exists and holds no rows --
+    an ESPN sync that returned an empty league -- published a roster of nobody."""
+    src = tmp_path / "roster.parquet"
+    _roster_frame([("Chase", "WR", 19.7)]).write_parquet(src)
+    publish.roster(out=site, path=src)
+    before = (site / "roster.json").read_text()
+
+    _roster_frame([]).write_parquet(src)
+    assert publish.roster(out=site, path=src) is None
+    assert (site / "roster.json").read_text() == before
+
+
+def _roster_frame(rows):
+    return pl.DataFrame(
+        {"player": [r[0] for r in rows], "pos": [r[1] for r in rows],
+         "nfl_team": ["CIN"] * len(rows), "mu": [r[2] for r in rows],
+         "sd": [6.0] * len(rows), "projected": [True] * len(rows),
+         "starting": [True] * len(rows), "injury_status": ["ACTIVE"] * len(rows),
+         "available": [True] * len(rows), "can_start": [True] * len(rows),
+         "missing_games": [0] * len(rows)},
+        schema={"player": pl.Utf8, "pos": pl.Utf8, "nfl_team": pl.Utf8, "mu": pl.Float64,
+                "sd": pl.Float64, "projected": pl.Boolean, "starting": pl.Boolean,
+                "injury_status": pl.Utf8, "available": pl.Boolean, "can_start": pl.Boolean,
+                "missing_games": pl.Int64})
+
+
+def test_an_emptied_producer_is_reported_stale_rather_than_published(site, monkeypatch):
+    """The manifest is what the page ages a panel by, so a kept last-good has to read as
+    stale -- otherwise the reader is told yesterday's scores are current."""
+    _live_rows(monkeypatch, [{"id": "1", "home": "KC", "away": "LV", "state": "in"}])
+    publish.live(out=site)
+    _live_rows(monkeypatch, [])
+    art = next(a for a in publish.artifacts(2026, 1, out=site) if a.name == "live")
+    assert art.record(site)["stale"] is True
+
+
+# --- a published week belongs to one season (issue #23) --------------------
+
+def test_publishing_a_week_never_overwrites_another_seasons_week(site, base):
+    """`preds_wk18.json` held 2025 and was the only source of the site's calibration
+    numbers. The week alone does not identify a slate, so the artifact is named by season
+    and week -- publishing 2026 week 18 leaves the 2025 file where it is."""
+    old = _preds([("2025_18_KC_LV", 0.6, 3.0)], week=18).with_columns(
+        pl.lit(2025, dtype=pl.Int32).alias("season"))
+    store.write(old, "preds", "nfl", 2025, 18, base=base)
+    assert publish.predictions(2025, 18, base=base, out=site) is not None
+    kept = sorted(p.name for p in site.glob("preds_*.json"))
+
+    new = base / "next-season"
+    store.write(_preds([("2026_18_SF_SEA", 0.4, -1.0)], week=18), "preds", "nfl", 2026, 18,
+                base=new)
+    assert publish.predictions(2026, 18, base=new, out=site) is not None
+
+    after = sorted(p.name for p in site.glob("preds_*.json"))
+    assert set(kept) < set(after), f"the 2025 artifact was replaced: {kept} -> {after}"
+    still = json.loads((site / kept[0]).read_text())
+    assert {r["season"] for r in still["rows"]} == {2025}
+
+
+def test_both_seasons_of_a_week_are_scored(site, base, monkeypatch):
+    """The consequence of the collision, and the reason it mattered: the track record is
+    read back from the published artifacts, so a week that overwrote another season's
+    dropped those sixteen games out of the public calibration entirely."""
+    old = _preds([("2025_18_KC_LV", 0.6, 3.0)], week=18).with_columns(
+        pl.lit(2025, dtype=pl.Int32).alias("season"))
+    store.write(old, "preds", "nfl", 2025, 18, base=base)
+    publish.predictions(2025, 18, base=base, out=site)
+    new = base / "next-season"
+    store.write(_preds([("2026_18_SF_SEA", 0.4, -1.0)], week=18), "preds", "nfl", 2026, 18,
+                base=new)
+    publish.predictions(2026, 18, base=new, out=site)
+
+    assert set(publish._published(site)["game_id"]) == {"2025_18_KC_LV", "2026_18_SF_SEA"}

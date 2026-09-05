@@ -43,6 +43,55 @@ def _write(out: Path, name: str, payload: dict[str, Any]) -> Path:
     return p
 
 
+def _published_n(out: Path, name: str) -> int:
+    """How many rows the artifact already on disk carries. Unreadable or absent counts 0."""
+    try:
+        got = json.loads((out / f"{name}.json").read_text())
+    except (OSError, ValueError):
+        return 0
+    return int(got.get("n", 0)) if isinstance(got, dict) else 0
+
+
+def _publish(out: Path, name: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Write the artifact, unless doing so would replace something with nothing.
+
+    **The one place this rule lives.** `CLAUDE.md`'s degradation rule is implemented as
+    *a producer returning None means keep last-good*, and an empty-but-valid payload walks
+    straight past it: `Artifact.record` reads any payload as success. That has bitten three
+    times -- `track_record` published an empty record over sixteen scored predictions and
+    turned a log-loss of 0.556 into null; the carry-forward re-stamped last-good as fresh;
+    `roster` guarded `not src.exists()` and nothing else, so an ESPN sync returning an empty
+    league would have published a roster of nobody. Each was fixed where it was found, which
+    is why the next one was a surprise.
+
+    Not "never write an empty artifact". A first run on a day with no games has an honest
+    empty answer and should say it; what must not happen is that answer *replacing* a
+    fuller one. So the comparison is against what is already published, and a producer that
+    goes quiet keeps last-good and is marked stale.
+    """
+    if not payload.get("n") and (had := _published_n(out, name)):
+        print(f"  {name}: 0 rows against {had} already published; keeping last-good",
+              flush=True)
+        return None
+    _write(out, name, payload)
+    return payload
+
+
+def preds_name(season: int, week: int) -> str:
+    """The weekly artifact's filename stem. Season *and* week, because a week is not a slate.
+
+    It was `preds_wk{week}` alone, and `site/data/preds_wk18.json` holds 2025 -- so
+    publishing 2026 week 18 would overwrite it. That file is not merely a page: the track
+    record is scored by reading every published artifact back (`_published`), so the sixteen
+    2025 games it holds are the whole of the site's calibration numbers, and they would have
+    gone without anything reporting a loss.
+
+    `store.week_key` still owns the padding, so the store and the site agree on how a week
+    is spelled.
+    """
+    return f"preds_{season}_wk{store.week_key(week)}"
+
+
 # --- weekly predictions ---------------------------------------------------
 
 def predictions(season: int, week: int, base: Path | None = None,
@@ -53,7 +102,7 @@ def predictions(season: int, week: int, base: Path | None = None,
     the caller records it as stale rather than publishing an empty page.
     """
     out = out or SITE
-    name = f"preds_wk{store.week_key(week)}"
+    name = preds_name(season, week)
     # Asked, not caught. `store.predictions` distinguishes "this clone has no predictions
     # yet" from "the query is broken" -- a bare `except Exception` here once made a schema
     # break, a DuckDB lock and a typo in the SQL all arrive as
@@ -70,8 +119,7 @@ def predictions(season: int, week: int, base: Path | None = None,
 
     payload = jsonio.artifact(name, "preds", rows, season=season, week=week,
                               provenance=_obtainable(rows))
-    _write(out, name, payload)
-    return payload
+    return _publish(out, name, payload)
 
 
 def _keeping_published(fresh: list[dict[str, Any]], path: Path,
@@ -89,11 +137,11 @@ def _keeping_published(fresh: list[dict[str, Any]], path: Path,
     re-pricing it is legitimate and its commit still predates it (`docs/track-record.md`
     rule 1). Only games that have fallen out of the slate are carried.
 
-    **Scoped to one season.** The artifact is named by week alone, and `preds_wk18.json`
-    currently holds 2025 -- so an unscoped merge would hand 2026 week 18 all sixteen of the
-    previous season's games and publish two seasons as one slate. Reproduced at 17 rows.
-    (The filename collision itself is a separate problem: publishing 2026 week 18 still
-    overwrites the 2025 artifact. Tracked apart from this guard.)
+    **Scoped to one season, and still scoped after the filenames were.** `preds_wk18.json`
+    held 2025, so an unscoped merge handed 2026 week 18 all sixteen of the previous season's
+    games and published two seasons as one slate -- reproduced at 17 rows. The artifact is
+    named by season and week now (`preds_name`), which stops the collision at the file; this
+    stays because a merge that reads a file must not depend on the filename being right.
 
     An unreadable artifact is treated as no artifact. It is about to be overwritten either
     way, and refusing to publish because the previous file is corrupt would turn one bad file
@@ -159,7 +207,10 @@ def _published(out: Path) -> pl.DataFrame:
     numbers from the same files.
     """
     rows: list[dict[str, Any]] = []
-    for path in sorted(out.glob("preds_wk*.json")):
+    # Both namings. `preds_wk18.json` was written before the season joined the filename and
+    # is still the pre-registered record of those sixteen games; a glob that stopped seeing
+    # it would drop them from the calibration -- the same loss this rename exists to prevent.
+    for path in sorted(set(out.glob("preds_wk*.json")) | set(out.glob("preds_[0-9]*.json"))):
         try:
             rows += json.loads(path.read_text()).get("rows", [])
         except (OSError, ValueError):
@@ -260,8 +311,7 @@ def live(out: Path | None = None, league: str = "nfl") -> dict[str, Any] | None:
     # and this writer has none, and a reader written against one document must be written
     # against the other. Same keys, not merely compatible ones.
     payload = jsonio.artifact("live", "espn_scoreboard", rows, league=league, detail={})
-    _write(out, "live", payload)
-    return payload
+    return _publish(out, "live", payload)
 
 
 # --- the roster, and the lineup it implies --------------------------------
@@ -281,6 +331,10 @@ def roster(out: Path | None = None, path: Path | None = None) -> dict[str, Any] 
     if not src.exists():
         return None
     df = pl.read_parquet(src)
+    # Before `lock`, which cannot price an empty pool and would raise rather than say
+    # nothing. A parquet that exists and holds no rows is a sync that came back empty.
+    if df.is_empty():
+        return None
     lk = lock(df)
     # The best lineup, reconstructed from the moves: the set starters, less those to sit,
     # plus those to start. Parenthesised because `-` binds tighter than `|` and the reader
@@ -304,8 +358,7 @@ def roster(out: Path | None = None, path: Path | None = None) -> dict[str, Any] 
     payload = jsonio.artifact("roster", "roster.parquet", rows,
                         set_total=lk.set_total, optimal_total=lk.best_total, gain=lk.gain,
                         withheld=lk.withheld, start=lk.start, sit=lk.bench)
-    _write(out or SITE, "roster", payload)
-    return payload
+    return _publish(out or SITE, "roster", payload)
 
 
 # --- everything, plus a manifest -----------------------------------------
@@ -366,7 +419,7 @@ def artifacts(season: int, week: int, base: Path | None = None,
     """Everything the page reads, declared once. Adding a panel is one entry."""
     out = out or SITE
     return [
-        Artifact(f"preds_wk{store.week_key(week)}",
+        Artifact(preds_name(season, week),
                  lambda: predictions(season, week, base=base, out=out),
                  f"no predictions in the store for {season} week {week}"),
         Artifact("track_record", lambda: track_record(base=base, out=out),
@@ -416,8 +469,7 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | None:
                     # Which weeks exist in this plan only because the store was read. They
                     # are the ones a reader should not expect to find on nflverse.
                     snapshot_only_weeks=sv.snapshot_only_weeks(grid, cov["covered"]))
-    _write(out, "survivor", art)
-    return art
+    return _publish(out, "survivor", art)
 
 
 def default_week(season: int, base: Path | None = None) -> int:
@@ -448,7 +500,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if a.predictions:
         got = predictions(a.season, a.week)
-        print(f"  preds_wk{a.week:02d}: "
+        print(f"  {preds_name(a.season, a.week)}: "
               + (f"{got['n']} games" if got else "nothing in the store; left as-is"))
         return 0
     if a.live:

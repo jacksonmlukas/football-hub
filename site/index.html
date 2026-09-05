@@ -178,7 +178,9 @@ const teamKey = t => TEAM_ALIAS[t] ?? t;
 let frozenPreds = null;
 
 async function renderSlate(man, wk) {
-  const key = `preds_wk${String(wk).padStart(2, "0")}`;
+  // Season and week. The artifact was named by week alone, so 2026 week 18 would have
+  // overwritten the 2025 week 18 file the track record is scored from.
+  const key = `preds_${man?.season ?? ""}_wk${String(wk).padStart(2, "0")}`;
   if (!frozenPreds) frozenPreds = { key, data: await load(key) };
   const preds = frozenPreds.key === key ? frozenPreds.data : await load(key);
   const pArt = findArt(man, key);

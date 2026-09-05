@@ -9,7 +9,7 @@ The value of a public record is entirely in the timestamp. A results page assemb
 fact proves nothing, and any reader who matters knows that.
 
 ```
-hub.publish --predictions --week N   # writes site/data/preds_wk{N}.json
+hub.publish --predictions --week N   # writes site/data/preds_{season}_wk{N}.json
 git commit -m "wk{N} predictions"    # BEFORE first kickoff
 ```
 
