@@ -681,6 +681,12 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | Kept | No
                     # The plan's own scope, said out loud. A survival probability means
                     # nothing without the weeks it is over, and a reader looking at a plan
                     # that starts in week 9 should not have to infer why.
+                    #
+                    # Every one of these is rendered by the survivor panel, and
+                    # `test_every_field_the_survivor_artifact_publishes_is_read_by_the_page`
+                    # is what keeps that true. `weeks_played` was published here and read by
+                    # nothing at all for a while -- no page code, no test, no CLI -- which is
+                    # a claim in a public artifact that no reader could ever check (#57).
                     weeks_remaining=got.coverage.covered, weeks_played=got.played,
                     spent=got.spent,
                     # Which weeks exist in this plan only because the store was read. They

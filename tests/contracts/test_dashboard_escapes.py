@@ -116,7 +116,7 @@ def test_a_missing_value_renders_as_nothing_not_as_undefined(node):
 # scoreboard; the rest are names off nflverse and the ESPN league.
 FROM_A_FEED = ("player", "pos", "team", "teams", "injury_status", "nfl_team",
                "detail", "state", "away_score", "home_score", "withheld",
-               "held", "gone", "start", "sit")
+               "held", "spent", "start", "sit")
 
 
 def test_every_feed_value_in_the_markup_goes_through_esc():
@@ -379,13 +379,54 @@ def test_an_archived_week_is_not_joined_to_todays_scoreboard():
     week therefore put tonight's score beside a prediction made for a different season's
     game, under a column captioned "live", which is precisely the confusion the frozen/live
     split exists to prevent. An archived week gets no overlay rather than a plausible wrong
-    one, and the panel says why."""
+    one, and the panel says why.
+
+    The join is guarded on `archived` rather than on `viewing` directly since #57: the two
+    say the same thing, and the test below is why there is only one of them."""
     text = PAGE.read_text()
     joined = re.search(r"const live = [^\n]*", text)
     assert joined, "the slate no longer loads the live overlay where the test expects"
-    assert "viewing" in joined.group(0), (
+    assert "archived" in joined.group(0), (
         f"{joined.group(0)!r} joins scores to whatever week is on screen; guard it on the "
         f"week the manifest names.")
+
+
+# --- the slate asks what it is showing once (#57) ----------------------------
+
+def _slate_render() -> str:
+    """The slate render, both halves, in the order the panel runs them."""
+    return "\n".join([_lift(r"async function renderSlate\(man\) \{[\s\S]*?\n\}"),
+                      _lift(r"async function slateBody\([^)]*\) \{[\s\S]*?\n\}")])
+
+
+def test_the_slate_answers_the_archived_week_question_in_one_place():
+    """"Is this an archived week" was re-branched on `viewing` four times inside one render
+    -- the manifest entry it reports staleness from, the live join, the age of the scores,
+    and the warning. Four readings of one question is three chances for one of them to be
+    the odd one out, and the one that mattered was the live join: an archived week joined to
+    tonight's scoreboard shows a real score beside a prediction for a different season's
+    game. Answered once now, and everything downstream reads the answer."""
+    src = _slate_render()
+    answered = re.search(r"const archived = ([^\n]*)", src)
+    assert answered, "the slate no longer names what it is showing; #57 collapsed it to one"
+    assert "viewing" in answered.group(1), (
+        f"`archived` is not derived from the week a reader clicked: {answered.group(1)!r}")
+    after = src[answered.end():]
+    assert "viewing" not in after, (
+        f"the slate re-asks which week is on screen after answering it: "
+        f"{[ln.strip() for ln in after.splitlines() if 'viewing' in ln]}")
+
+
+def test_the_other_published_weeks_are_offered_at_the_slates_one_exit():
+    """The links were concatenated onto the html at each of the two exits of the render.
+    Two exits is two chances to forget, and the one that would be forgotten is the empty
+    case -- a week that could not be published is exactly when a reader wants the week that
+    was. One exit, so the links cannot be missing from one of them."""
+    text = PAGE.read_text()
+    exits = text.count('panel("p-slate"')
+    assert exits == 1, (
+        f"the slate renders through {exits} exits; the published-week links have to be "
+        f"appended at each of them, and one of them will be the one that forgets.")
 
 
 def test_a_group_that_records_no_season_is_captioned_truthfully(node):
@@ -400,6 +441,95 @@ def test_a_group_that_records_no_season_is_captioned_truthfully(node):
     assert "unrecorded" in out, "neither the caption nor the row says the season is missing"
     # And the group still appears in the table rather than as an empty cell.
     assert "<td class=\"num \"></td>" not in out
+
+
+# --- the remaining plan says what it is scoped to (#57) ----------------------
+
+# The survivor artifact as `publish.survivor` writes it, mid-season: week 1 is behind the
+# plan, KC was spent in it, and week 3 reached the grid only because the store was read.
+SURVIVOR = {"name": "survivor", "source": "hub.season.survivor", "season": 2026, "n": 2,
+            "rows": [{"week": 2, "team": "SF", "win_prob": 0.70},
+                     {"week": 3, "team": "SEA", "win_prob": 0.60}],
+            "survival": 0.42, "unpriced_weeks": [], "weeks_remaining": [2, 3],
+            "weeks_played": [1], "spent": ["KC"], "snapshot_only_weeks": [3]}
+
+
+def _survivor_body(node: str, surv: dict) -> str:
+    lifted = "\n".join([
+        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
+        _lift(r"const pct = v =>[^\n]*"),
+        _lift(r"const weekList = ws =>[^\n]*"),
+        _lift(r"function table\(cols, rows\) \{[\s\S]*?\n\}"),
+        _lift(r"function survivorBody\(surv\) \{[\s\S]*?\n\}"),
+    ])
+    return _run(node, f"{lifted}\nconsole.log(survivorBody({json.dumps(surv)}));")
+
+
+def test_the_plan_says_which_weeks_it_is_over_and_which_are_behind_it(node):
+    """`weeks_played` was published and read by nothing at all -- no page code, no test, no
+    CLI -- and `weeks_remaining` by one test that rendered nothing (#57). A field nobody
+    reads is what this repo deletes on sight, and the alternative it chose here is that the
+    panel shows it: a plan whose first row is week 9 has to say why, and a reader should not
+    have to open the JSON to find the eight weeks that are behind it."""
+    out = _survivor_body(node, SURVIVOR)
+    assert "wk 2" in out and "wk 3" in out, "the panel does not say which weeks it covers"
+    assert "wk 1" in out and "played" in out, (
+        f"nothing says week 1 is behind this plan, so its first row is unexplained: {out}")
+
+
+def test_a_plan_with_nothing_behind_it_says_so_rather_than_leaving_a_hole(node):
+    """Preseason is the state the panel spent all summer in. "0 week(s) already played" and
+    a dangling colon are how a reader learns the scope line is boilerplate."""
+    out = _survivor_body(node, dict(SURVIVOR, weeks_played=[], spent=[]))
+    assert ": ." not in out and "wk ." not in out
+    assert "played" in out or "behind" in out, f"the scope line says nothing at all: {out}"
+
+
+def test_an_artifact_written_before_the_scope_existed_still_renders(node):
+    """`site/data/survivor.json` as committed carries `season`, `survival`,
+    `unpriced_weeks` and `snapshot_only_weeks` and none of the rest, and it will not carry
+    them until the next slate runs -- so it is exactly what the deploy that ships this
+    renders. Absent and empty are different claims: `[]` says no week has been played,
+    missing says the artifact never said. Reading both as zero would caption a plan of
+    eighteen weeks "0 week(s) covered", which is the caption with a hole in it the record
+    panel already learned not to leave."""
+    legacy = {k: v for k, v in SURVIVOR.items()
+              if k not in ("weeks_remaining", "weeks_played", "spent")}
+    out = _survivor_body(node, legacy)
+    assert "0 week(s)" not in out, f"an absent scope read as a scope of nothing: {out}"
+    assert "&mdash; ." not in out and ": .</p>" not in out, f"a hole in the caption: {out}"
+    assert "already played" not in out, "claimed a scope the artifact does not record"
+    assert "SF" in out and "SEA" in out, "the plan itself stopped rendering"
+
+
+def test_the_weeks_that_are_in_the_plan_only_because_the_store_was_read_are_named(node):
+    """`snapshot_only_weeks` is the third scope field and had no reader either. It is the
+    one that decides whether reading the store bought anything, and it moves -- a week in
+    the list today is not in it in December -- so it is reported rather than assumed."""
+    out = _survivor_body(node, SURVIVOR)
+    assert "wk 3" in out and "snapshot" in out.lower(), (
+        f"the panel does not say which weeks nflverse's own field cannot price: {out}")
+    quiet = _survivor_body(node, dict(SURVIVOR, snapshot_only_weeks=[]))
+    assert "snapshot" not in quiet.lower(), "a caveat about no weeks at all"
+
+
+def test_a_hostile_team_name_cannot_reach_the_survivor_markup(node):
+    """The spent teams and the picked ones are nflverse's, and the scope prose around them
+    is hand-built rather than built by `table`."""
+    out = _survivor_body(node, dict(SURVIVOR, spent=[HOSTILE],
+                                    rows=[{"week": 2, "team": HOSTILE, "win_prob": 0.7}]))
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
+
+
+def test_the_survivor_panel_escapes_its_own_numbers_too():
+    """The same rule the record panel is held to, for the same reason: `FROM_A_FEED` is
+    silent on week numbers because they are ours, and that is exactly how the rule erodes.
+    Every hand-built interpolation in this panel goes through `esc`, no exemptions."""
+    body = _lift(r"function survivorBody\(surv\) \{[\s\S]*?\n\}")
+    raw = [e for e in re.findall(r"\$\{([^{}]*)\}", body)
+           if "esc(" not in e and "pct(" not in e]
+    assert not raw, f"unescaped interpolations in the survivor panel: {raw}"
 
 
 # --- the page's own guards, proved by deleting them (#61) --------------------

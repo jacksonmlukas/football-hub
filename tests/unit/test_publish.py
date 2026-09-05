@@ -21,7 +21,7 @@ import pathlib
 import polars as pl
 import pytest
 
-from hub import publish, store
+from hub import jsonio, publish, store
 
 
 @pytest.fixture
@@ -1019,6 +1019,32 @@ def test_the_published_plan_covers_only_the_weeks_that_remain(site, base, monkey
     assert [r["week"] for r in got["rows"]] == [2, 3]
     assert got["weeks_remaining"] == [2, 3]
     assert 1 not in got["unpriced_weeks"], "a week already played does not need a pick"
+
+
+def test_every_field_the_survivor_artifact_publishes_is_read_by_the_page(site, monkeypatch):
+    """A published field nobody reads is a claim with no reader, and this repo removes those
+    on sight -- `SCHEDULE_COLUMNS` and a one-caller `summary()` both went that way.
+    `weeks_played` was written here and read by no page code, no test and no CLI, and
+    `weeks_remaining` by one test that rendered nothing (#57). The alternative chosen was to
+    render them, so this is the test that makes "published" and "read" one thing.
+
+    The envelope's own keys come from `jsonio.artifact` rather than from a list here: a key
+    the shape adds for every artifact is not this producer's claim, and asking the writer
+    keeps this test from going stale the day the envelope grows.
+    """
+    import hub.season.survivor as sv
+    monkeypatch.setattr(sv, "grid_from_schedule",
+                        lambda season, cache=None: _mid_season_grid())
+    got = publish.survivor(2026, out=site)
+    assert isinstance(got, dict)
+    envelope = set(jsonio.artifact("survivor", "hub.season.survivor", []))
+    page = (pathlib.Path(__file__).resolve().parents[2] / "site" / "index.html").read_text()
+    # The panel reads its artifact as `surv`, so `surv.<key>` is the page asking for it by
+    # name. A bare substring would count the word "season" in an unrelated panel as a reader.
+    unread = [k for k in got if k not in envelope and f"surv.{k}" not in page]
+    assert not unread, (
+        f"{unread} are published and nothing reads them. Render them in the survivor panel "
+        f"or stop writing them -- a field with no reader is a claim nobody can check.")
 
 
 def test_a_team_spent_in_a_played_week_is_gone_from_the_next_plan(site, base, monkeypatch):

@@ -101,6 +101,10 @@ async function load(name) {
 const cap = s => s ? s[0].toUpperCase() + s.slice(1) + (/[.!?]$/.test(s) ? "" : ".") : s;
 const fmt = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? "—" : (+v).toFixed(d);
 const pct = v => (v === null || v === undefined) ? "—" : (100 * v).toFixed(1) + "%";
+// A list of week numbers as prose. Text, escaped where it lands, exactly like a `table`
+// getter -- and worded the way `hub.season.survivor`'s CLI words it, so the two readers of
+// one plan read alike.
+const weekList = ws => ws.map(w => `wk ${w}`).join(", ");
 
 function ago(iso) {
   if (!iso) return "never";
@@ -234,6 +238,66 @@ function trackRecordBody(tr) {
        scored on its own curve.</p>` : "");
 }
 
+// The survivor panel's body: the remaining plan, and the scope that makes it readable.
+//
+// Split out of `render` for the reason `trackRecordBody` was -- it builds prose from four
+// scope fields and none of it can be exercised in a browser without publishing an artifact
+// first.
+//
+// The scope is *rendered* here, not merely published. `publish.survivor` wrote
+// `weeks_played` and nothing read it -- no page code, no test, no CLI -- and
+// `weeks_remaining` was read by one test that rendered nothing (issue #57). CONTEXT.md's
+// "Remaining plan" is the plan *together with* the scope that makes it readable, so showing
+// it is what makes the writer's claim true: a plan whose first row is week 9 has to say what
+// became of weeks 1 to 8, and a reader should not have to open the JSON to find out.
+function survivorBody(surv) {
+  const rows = Array.isArray(surv?.rows) ? surv.rows : [];
+  // Absent and empty are different claims, and both arrive here. `[]` says no week has been
+  // played; missing says the artifact never said -- `site/data/survivor.json` as committed
+  // carries neither of these keys and will not until the next slate runs, so it is what the
+  // deploy shipping this renders. Read as zero, a plan of eighteen weeks would be captioned
+  // "0 week(s) covered", which is the caption with a hole in it that the record panel above
+  // already learned not to leave.
+  const left = surv.weeks_remaining ?? null;
+  const played = surv.weeks_played ?? null;
+  const spent = surv.spent ?? [];
+  // Weeks that are in this plan only because the store was read: the schedule's own moving
+  // field carries no spread for them. Reported rather than assumed because it moves --
+  // upstream fills that field in as the season approaches, so a week listed here today is
+  // not listed here in December.
+  const storeOnly = surv.snapshot_only_weeks ?? [];
+
+  const scope = `<p class="legend"><b>Remaining plan, `
+    + `${esc(surv.season ?? "an unrecorded season")}</b>: `
+    + (left
+       ? `${esc(left.length)} week(s) covered &mdash; ${esc(weekList(left))}. `
+       : `the rows below are every week it covers, which is all this artifact records. `)
+    + (played === null ? ""
+       : played.length
+         ? `${esc(played.length)} week(s) already played and absent from it: `
+           + `${esc(weekList(played))}. `
+         : `No week has been played yet. `)
+    + (storeOnly.length
+       ? `Priced from a dated snapshot only, and so not on nflverse's own field: `
+         + `${esc(weekList(storeOnly))}.`
+       : "")
+    + `</p>`;
+
+  // Spending a team early costs you that team later, so a mid-season plan is against the
+  // teams that are left rather than the whole league.
+  const spentNote = spent.length
+    ? `<p class="empty">Already spent and unavailable: ${esc(spent.join(", "))}.
+         Read from the last published plan, so it is what was planned rather than
+         what was entered.</p>`
+    : "";
+
+  return scope + spentNote + table([
+    { label: "week", get: r => r.week },
+    { label: "team", get: r => r.team ?? "" },
+    { label: "win", get: r => pct(r.win_prob) },
+  ], rows);
+}
+
 function findArt(man, name) {
   return (man?.artifacts ?? []).find(a => a.name === name) ?? null;
 }
@@ -319,42 +383,17 @@ async function frozen(key) {
 let viewing = null;
 let slateMan = null;
 
-async function renderSlate(man) {
-  slateMan = man;
-  // The artifact this week was published as, named by whoever wrote it. See `predsArt`.
-  const pArt = predsArt(man);
-  const key = viewing ?? pArt?.name ?? null;
-  const preds = key ? await frozen(key) : null;
-  // The manifest describes the week it published and not an archived one, so its staleness
-  // and its reason belong to the panel only while that is what the panel is showing.
-  const art = viewing ? null : pArt;
-
-  // The other published weeks, as links: issue #23 asks the site to render both, and the
-  // only week reachable until now was whichever one the manifest happened to name.
-  const links = otherWeeks(man, key)
-    .map(w => `<a href="#" data-preds="${esc(w.name)}">${esc(w.label)}</a>`).join(", ");
-  const also = links ? `<p class="legend">Also published: ${links}</p>` : "";
-
-  if (!preds?.rows?.length) {
-    panel("p-slate", {
-      age: "",
-      warn: art?.reason ? `No slate: ${art.reason}`
-          : viewing ? "That published week could not be loaded."
-          : key ? "No predictions published yet."
-                : "No slate: the manifest names no published week.",
-      // The links survive the empty case on purpose: a week that could not be published is
-      // exactly when a reader wants the one that was.
-      html: also,
-    });
-    return;
-  }
-
+// The slate for a week that has rows, and the two facts about the live join that belong in
+// the panel's frame beside it: how many games matched, and how old the scores are. Hence
+// the `{age, warn, html}` where `trackRecordBody` returns markup alone -- the join happens
+// here, so what it found is known here and nowhere else.
+async function slateBody(preds, art, archived) {
   // Scores are joined only for the week the manifest names. The live map is keyed by the
   // matchup alone, and three of 2026 week 1's fixtures repeat 2025 week 18's -- so reaching
   // the older week put tonight's score beside a prediction made for a different season's
   // game, under a column captioned "live". An archived week gets no overlay at all rather
   // than a plausible wrong one.
-  const live = viewing ? null : await load("live");
+  const live = archived ? null : await load("live");
   const byGame = new Map();
   for (const g of live?.rows ?? []) {
     byGame.set(`${teamKey(g.away)}_${teamKey(g.home)}`, g);
@@ -367,7 +406,7 @@ async function renderSlate(man) {
   const matched = rows.filter(r => r.live).length;
 
   const lockedAt = preds.rows[0]?.predicted_at ?? preds.generated_at;
-  const liveAge = viewing ? "not shown for a week that is over"
+  const liveAge = archived ? "not shown for a week that is over"
                 : live ? ago(live.generated_at) : "unavailable";
   // Which week this slate is, stated in the panel rather than only in the page subtitle.
   // `site/data/` holds two published weeks -- 2025 week 18 and 2026 week 01 -- and a panel
@@ -416,15 +455,51 @@ async function renderSlate(man) {
       </tr>`).join("")}
     </tbody></table></div>`;
 
-  panel("p-slate", {
+  return {
     age: `${preds.n} games · ${matched} live`,
     warn: art?.stale ? `Stale: ${art.reason ?? "unknown"}`
-        : viewing ? "An earlier published week, kept exactly as it was committed."
+        : archived ? "An earlier published week, kept exactly as it was committed."
         : (!live ? "Live scores unavailable — model numbers below are still correct."
                  : (matched === 0 ? "No live game matches this slate; scores column is idle."
                                   : null)),
-    html: head + body + also,
-  });
+    html: head + body,
+  };
+}
+
+async function renderSlate(man) {
+  slateMan = man;
+  // The artifact this week was published as, named by whoever wrote it. See `predsArt`.
+  const pArt = predsArt(man);
+  const key = viewing ?? pArt?.name ?? null;
+  // What the panel is showing, answered once. "Is this an archived week" decided the
+  // manifest entry, the live join, the age of the scores and the warning, and each of the
+  // four asked `viewing` again -- four readings of one question, and the live join is the
+  // one that must never come out wrong: an archived week joined to tonight's scoreboard
+  // puts a real score beside a prediction for a different season's game (issue #57).
+  const archived = viewing != null;
+  const preds = key ? await frozen(key) : null;
+  // The manifest describes the week it published and not an archived one, so its staleness
+  // and its reason belong to the panel only while that is what the panel is showing.
+  const art = archived ? null : pArt;
+
+  // The other published weeks, as links: issue #23 asks the site to render both, and the
+  // only week reachable until now was whichever one the manifest happened to name.
+  const links = otherWeeks(man, key)
+    .map(w => `<a href="#" data-preds="${esc(w.name)}">${esc(w.label)}</a>`).join(", ");
+  const also = links ? `<p class="legend">Also published: ${links}</p>` : "";
+
+  // One exit, so the links are appended once. They were concatenated at each of the two
+  // this render used to have, and the one that would eventually lose them is the empty
+  // case -- which is exactly when a reader wants the week that did publish.
+  const shown = preds?.rows?.length ? await slateBody(preds, art, archived) : {
+    age: "",
+    warn: art?.reason ? `No slate: ${art.reason}`
+        : archived ? "That published week could not be loaded."
+        : key ? "No predictions published yet."
+              : "No slate: the manifest names no published week.",
+    html: "",
+  };
+  panel("p-slate", { age: shown.age, warn: shown.warn, html: shown.html + also });
 }
 
 async function render() {
@@ -524,12 +599,9 @@ async function render() {
   if (sRows.length) {
     // The unpriced weeks matter more than the plan does. In August the board runs a few
     // weeks deep, so a plan covering 12 of 18 is the honest answer and a plan that did not
-    // say so would read as a season.
+    // say so would read as a season. A week here is the entrant's to fill, which is why it
+    // is the panel's warning and not part of the scope sentence below it.
     const missing = surv.unpriced_weeks ?? [];
-    // The plan's scope, not the season's. Spending a team early costs you that team later,
-    // so a mid-season plan is over the weeks that remain and against the teams that are
-    // left -- and a survival probability means nothing without the weeks it is over.
-    const gone = surv.spent ?? [];
     const from = sRows[0]?.week;
     panel("p-survivor", {
       age: `${sRows.length} weeks from wk ${from} · survives ${pct(surv.survival ?? 0)}`,
@@ -537,15 +609,7 @@ async function render() {
           : (missing.length
              ? `Weeks ${missing.join(", ")} have no posted spread yet and still need a pick.`
              : null),
-      html: (gone.length
-              ? `<p class="empty">Already spent and unavailable: ${esc(gone.join(", "))}.
-                   Read from the last published plan, so it is what was planned rather than
-                   what was entered.</p>`
-              : "") + table([
-        { label: "week", get: r => r.week },
-        { label: "team", get: r => r.team ?? "" },
-        { label: "win", get: r => pct(r.win_prob) },
-      ], sRows),
+      html: survivorBody(surv),
     });
   } else {
     panel("p-survivor", {
