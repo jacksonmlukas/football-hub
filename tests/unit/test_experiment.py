@@ -7,6 +7,8 @@ because both copies lived inside a `main()` that needs a network.
 
 All offline.
 """
+from typing import Any
+
 import numpy as np
 import polars as pl
 import pytest
@@ -449,3 +451,146 @@ def test_the_recorded_verdicts_reproduce(what, lo, hi, gains, expected):
     decision it would be a different change entirely, so it is checked rather than hoped."""
     got = experiment.gate(_gate_summary(lo, hi), _gate_seasons(gains), _ACTIONS)[0]
     assert got == expected, f"{what} moved to {got}"
+
+
+# --- the MDE and the ceiling, carried before anything computes them ---------
+#
+# U4 of `docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md` computes a minimum
+# detectable effect inside `summarise`; U13 measures a ceiling on each gate's own harness and
+# hands it in. Neither exists yet. The slots exist now so that when those units land, no call
+# site changes -- which makes "this changed nothing" the whole property under test here.
+#
+# The sentinel is `experiment.ABSENT` and `experiment.present` is the one way to ask. This
+# repo has a recorded case of one sentinel standing for several distinct causes and hiding all
+# of them: the watchdog's `// 0` reported unreachable, unreadable and stale as one number. So
+# the line these tests hold is that a *computed* zero is present. A gate measured to have no
+# headroom and a gate with no ceiling measured are different readings, and a reader who cannot
+# tell them apart has the watchdog's number back.
+
+def _paired_frame():
+    return pl.DataFrame({"season": [2022, 2023, 2024, 2025],
+                         "diff": [1.5, -0.5, 2.0, 0.25]})
+
+
+# The three call sites, spelled as `backtest.main`, `lineup_gate.main` and `weekly_gate.main`
+# spell them, with the block each rendered before the two fields existed. Byte-for-byte,
+# because the acceptance criterion is byte-identical output for every existing caller and a
+# `==` on the whole block is the only way to hold that rather than assert it.
+BLOCKS_BEFORE: dict[str, tuple[dict[str, Any], list[str]]] = {
+    "backtest": (
+        {"arm_a": "optimizer", "arm_b": "market"},
+        ["\n  n=80  optimizer - market = -19.13 points per team game",
+         "  95% CI [-22.31, -15.75]   P(optimizer better) 0.0%"],
+    ),
+    "lineup_gate": (
+        {"arm_a": "optimiser", "arm_b": "projections", "unit": "points per game"},
+        ["\n  n=80  optimiser - projections = -19.13 points per game",
+         "  95% CI [-22.31, -15.75]   P(optimiser better) 0.0%"],
+    ),
+    "weekly_gate": (
+        {"arm_a": "weekly", "arm_b": "consensus", "unit": "points per team-week",
+         "places": 3, "show_n": False},
+        ["\n  weekly - consensus = -19.130 points per team-week",
+         "  95% CI [-22.310, -15.750]   P(weekly better) 0.0%"],
+    ),
+}
+
+
+@pytest.mark.parametrize("site", sorted(BLOCKS_BEFORE))
+def test_an_existing_caller_s_block_is_byte_identical(site):
+    """The load-bearing criterion. Not a line, not a blank, not a placeholder."""
+    kwargs, before = BLOCKS_BEFORE[site]
+    assert experiment.paired_report(_summary(), **kwargs) == before
+
+
+@pytest.mark.parametrize("site", sorted(BLOCKS_BEFORE))
+def test_a_summary_straight_out_of_summarise_renders_the_same_two_lines(site):
+    """The goldens above are hand-built dicts, which cannot show whether the real product of
+    `summarise` -- which now carries both slots -- has grown a line. This does."""
+    kwargs, _ = BLOCKS_BEFORE[site]
+    lines = experiment.paired_report(experiment.summarise(_paired_frame(), bootstrap=200,
+                                                          seed=1), **kwargs)
+    assert len(lines) == 2
+    assert "MDE" not in "\n".join(lines) and "ceiling" not in "\n".join(lines)
+
+
+def test_the_summary_carries_both_slots_absent():
+    s = experiment.summarise(_paired_frame(), bootstrap=200, seed=1)
+    assert not experiment.present(s["mde"])
+    assert not experiment.present(s["ceiling"])
+
+
+def test_an_empty_summary_carries_them_too():
+    """A reader never has to know which branch ran -- the same reason `clusters` is always
+    present."""
+    s = experiment.summarise(pl.DataFrame())
+    assert not experiment.present(s["mde"]) and not experiment.present(s["ceiling"])
+
+
+def test_the_slots_do_not_move_the_numbers_that_were_already_there():
+    """Adding a field must not perturb the bootstrap. Same seed, and these six are the values
+    recorded from the run before the change."""
+    s = experiment.summarise(_paired_frame(), bootstrap=500, seed=3)
+    assert (s["n"], s["clusters"]) == (4.0, 4.0)
+    assert (s["mean"], s["lo"], s["hi"], s["p_better"]) == (0.8125, -0.3125, 1.875, 0.944)
+
+
+def test_a_ceiling_is_carried_from_the_caller():
+    """U13 measures it on each gate's own harness against that gate's own incumbent, so it
+    arrives from outside rather than being computed here."""
+    s = experiment.summarise(_paired_frame(), bootstrap=200, seed=1, ceiling=1.20)
+    assert s["ceiling"] == 1.20
+
+
+def test_absent_is_not_a_computed_zero():
+    """The watchdog's `// 0` again. A ceiling of zero says a perfect-foresight arm gains
+    nothing over the incumbent, which is a finding; an absent ceiling says nobody looked."""
+    assert experiment.present(0.0)
+    assert experiment.present(-0.0)
+    assert not experiment.present(experiment.ABSENT)
+
+
+def test_the_ceiling_line_renders_when_present():
+    lines = experiment.paired_report(_summary() | {"ceiling": 1.2},
+                                     arm_a="optimizer", arm_b="market")
+    joined = "\n".join(lines)
+    assert "ceiling (perfect foresight) +1.20 points per team game" in joined
+    assert "MDE" not in joined, "the absent one must not appear at all"
+
+
+def test_the_mde_line_renders_when_present():
+    lines = experiment.paired_report(_summary() | {"mde": 0.44},
+                                     arm_a="weekly", arm_b="consensus",
+                                     unit="points per team-week", places=3, show_n=False)
+    joined = "\n".join(lines)
+    assert "MDE at 80% power +0.440 points per team-week" in joined
+    assert "ceiling" not in joined
+
+
+def test_a_measured_zero_still_renders():
+    """The distinction the sentinel exists to keep. A gate whose ceiling is zero has no
+    headroom to report and has to say so; omitting the line would read as never measured."""
+    joined = "\n".join(experiment.paired_report(_summary() | {"ceiling": 0.0, "mde": 0.0},
+                                                arm_a="a", arm_b="b"))
+    assert "ceiling (perfect foresight) +0.00" in joined
+    assert "MDE at 80% power +0.00" in joined
+
+
+def test_both_render_below_the_interval_in_a_stated_order():
+    """Effect, then interval, then what the run could have resolved, then what there was to
+    resolve. Each reads against the line above it."""
+    lines = experiment.paired_report(_summary() | {"mde": 0.44, "ceiling": 1.2},
+                                     arm_a="a", arm_b="b")
+    assert len(lines) == 4
+    assert "95% CI" in lines[1] and "MDE" in lines[2] and "ceiling" in lines[3]
+
+
+def test_the_gate_reads_neither_field_while_it_is_absent():
+    """`gate` is ADR-0019's two halves and nothing else today. U4 adds the not-runnable branch
+    ahead of every branch but VOID; until it does, a summary carrying the absent sentinel must
+    reach exactly the verdict a summary without the keys reaches."""
+    seasons = pl.DataFrame({"season": [2022, 2023], "gain": [0.4, 0.6], "n": [10, 10]})
+    acts = experiment.Actions(adopt="A.", remove="R.", show="S.")
+    old = {"clusters": 2.0, "lo": 0.1, "hi": 0.9}
+    carried = old | {"mde": experiment.ABSENT, "ceiling": experiment.ABSENT}
+    assert experiment.gate(carried, seasons, acts) == experiment.gate(old, seasons, acts)

@@ -37,6 +37,7 @@ its own incumbent and its own sentences.
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterator, Sequence
 from typing import NamedTuple
 
@@ -179,6 +180,37 @@ def _stats(season: int) -> pl.DataFrame:                        # pragma: no cov
     return nflverse.load("player_stats", [season], cols=list(PLAYER_STATS_COLS))
 
 
+# What a summary field says when it has no value on it.
+#
+# `float("nan")` rather than `None` because `summarise` is declared `dict[str, float]` and
+# `backtest.verdict` and `lineup_gate.verdict` both declare that same type on the way in.
+# Widening it would push a signature change through three harnesses that these two fields are
+# specifically meant not to touch.
+#
+# The one thing ABSENT must never be confusable with is a *computed* value, and a computed
+# zero above all. The repo has paid for that twice. ESPN's historical ADP returns 169 for
+# "undrafted" -- 78%/73%/69% of players in 2022-24 and 100% in 2025 -- and `docs/decisions.md`
+# records that it makes the series unusable, because nothing downstream can tell a 169th pick
+# from no pick. And `.github/scripts/heartbeat.sh` carries the closer one: `jq -r '.ts // 0'`
+# made a missing timestamp an age of `now - 0`, so the watchdog reported 56.7 years of
+# staleness on every run and could never reach the branch that closes an incident -- "one
+# sentinel standing for unreachable, unreadable and stale", three failures with three
+# different fixes. NaN is outside the range of both fields by construction and cannot be
+# arithmetic'd into a reading.
+#
+# A ceiling of zero -- a perfect-foresight arm gaining nothing at all over the incumbent -- is
+# the strongest finding a ceiling can carry, and it has to reach the reader as one. So
+# `present` is the only way to ask, rather than a truthiness check each reader writes for
+# itself and one of them writes as `if s["ceiling"]:`.
+ABSENT = float("nan")
+
+
+def present(value: float) -> bool:
+    """Whether a summary field carries a value at all. `present(0.0)` is True; that is why
+    this exists rather than a `!= 0` or a truthiness test at each reader."""
+    return not math.isnan(value)
+
+
 def paired_report(s: dict, *, arm_a: str, arm_b: str,
                   unit: str = "points per team game", places: int = 2,
                   show_n: bool = True) -> list[str]:
@@ -190,13 +222,28 @@ def paired_report(s: dict, *, arm_a: str, arm_b: str,
     `places` because the weekly gate's effect is a tenth the size of the draft gate's and
     rounds to +0.22 at two -- while every doc and ADR quotes it as +0.215. `show_n` because
     that gate prints its own roster-week count, with the cluster count beside it.
+
+    `mde` and `ceiling` render only when present. Nothing computes either yet, so every caller
+    today gets exactly the two lines it got before -- not a placeholder, not a blank, not a
+    line reading `nan`. Order is deliberate: the effect, the interval around it, the smallest
+    effect the run could have resolved, and then how much there was to resolve. Each line is
+    read against the one above it.
     """
     head = f"n={int(s['n'])}  " if show_n else ""
-    return [
+    lines = [
         f"\n  {head}{arm_a} - {arm_b} = {s['mean']:+.{places}f} {unit}",
         f"  95% CI [{s['lo']:+.{places}f}, {s['hi']:+.{places}f}]   "
         f"P({arm_a} better) {s['p_better'] * 100:.1f}%",
     ]
+    # `.get` rather than `s["mde"]`: hand-built summaries reach this block too, and a dict
+    # without the slot has exactly as much to say about its MDE as one carrying ABSENT.
+    mde = s.get("mde", ABSENT)
+    if present(mde):
+        lines.append(f"  MDE at 80% power {mde:+.{places}f} {unit}")
+    ceiling = s.get("ceiling", ABSENT)
+    if present(ceiling):
+        lines.append(f"  ceiling (perfect foresight) {ceiling:+.{places}f} {unit}")
+    return lines
 
 
 # The paired bootstrap, matching `hub.models.eval.compare`.
@@ -220,7 +267,8 @@ def realised_ppg(stats: pl.DataFrame) -> pl.DataFrame:
 
 
 def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
-              bootstrap: int = BOOTSTRAP, seed: int = 0) -> dict[str, float]:
+              bootstrap: int = BOOTSTRAP, seed: int = 0,
+              ceiling: float = ABSENT) -> dict[str, float]:
     """Mean paired difference, a bootstrap interval, and P(arm A better).
 
     Bootstrapped over *paired* observations rather than over each arm separately, matching
@@ -244,10 +292,23 @@ def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
     leaving the mean alone -- which is why `docs/weekly-blend-gate.md` records a CI of
     [-0.249, +0.659] against a re-run's [-0.251, +0.663] for an identical +0.215. Same defect
     as improvements #18, one layer down.
+
+    **`mde` and `ceiling` are slots, and today both are `ABSENT`.** They are the two numbers
+    a gate needs before a null it reports means anything: the smallest effect this run could
+    have resolved at 80% power, and the largest one there was to find -- what a
+    perfect-foresight arm gains over this gate's own incumbent, on this gate's own harness, in
+    this gate's own units. `mde` will be computed here, from the same cluster-mean vector the
+    interval comes from. `ceiling` arrives from the caller instead, because measuring it means
+    playing an extra arm and only the harness knows what its arms are.
+
+    Neither is read by anything yet, and that is deliberate: they exist now so the units that
+    compute them change no call site's signature. Until then a block that has neither prints
+    neither, and `gate` decides on the same two halves ADR-0019 fixed.
     """
     if paired.is_empty():
         return {"n": 0, "clusters": 0, "mean": float("nan"), "lo": float("nan"),
-                "hi": float("nan"), "p_better": float("nan")}
+                "hi": float("nan"), "p_better": float("nan"),
+                "mde": ABSENT, "ceiling": ceiling}
     if cluster:
         keys = list(cluster)
         units = (paired.group_by(keys).agg(pl.col("diff").mean().alias("_unit"))
@@ -262,7 +323,8 @@ def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
             "mean": float(units.mean()),
             "lo": float(np.percentile(draws, 2.5)),
             "hi": float(np.percentile(draws, 97.5)),
-            "p_better": float((draws > 0).mean())}
+            "p_better": float((draws > 0).mean()),
+            "mde": ABSENT, "ceiling": ceiling}
 
 
 # --- the Gate ---------------------------------------------------------------
