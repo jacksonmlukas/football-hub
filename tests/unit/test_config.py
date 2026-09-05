@@ -16,12 +16,12 @@ from hub.config import (
     RosterConfig,
     config_digest,
     data_digest,
+    digests,
     fitted_constants,
     fitted_digest,
     flex_capacity,
     flex_positions,
     flex_share,
-    provenance,
     required_starters,
     roster_mismatch,
     starters,
@@ -562,16 +562,16 @@ def test_the_data_digest_leaves_the_model_version_alone():
     constant does."""
     cfg = HubConfig()
     before = (config_digest(cfg), fitted_digest())
-    moved = provenance(cfg, [_StubPin("player_stats", "2026-09-04", "bbbbbbbb")])
-    still = provenance(cfg, [_StubPin("player_stats", "2026-09-04", "aaaaaaaa")])
+    moved = digests(cfg, [_StubPin("player_stats", "2026-09-04", "bbbbbbbb")])
+    still = digests(cfg, [_StubPin("player_stats", "2026-09-04", "aaaaaaaa")])
     assert moved["data"] != still["data"], "the data digest did not notice the archive moving"
     assert moved["cfg"] == still["cfg"] == before[0]
     assert moved["fitted"] == still["fitted"] == before[1]
 
 
-def test_provenance_reports_all_three_and_names_them():
+def test_digests_reports_all_three_and_names_them():
     """One call, so no gate has to decide for itself which digests identify a run."""
-    got = provenance(HubConfig(), [_StubPin("ff_opportunity", None, "aaaaaaaa")])
+    got = digests(HubConfig(), [_StubPin("ff_opportunity", None, "aaaaaaaa")])
     assert set(got) == {"cfg", "fitted", "data"}
     assert got["cfg"] == config_digest(HubConfig())
     assert got["fitted"] == fitted_digest()

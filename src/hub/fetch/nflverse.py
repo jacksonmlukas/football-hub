@@ -37,7 +37,7 @@ from typing import Any
 import polars as pl
 
 from hub import store
-from hub.config import SEASON_COMPLETED, pin_fold, provenance, resolved_config
+from hub.config import SEASON_COMPLETED, digests, pin_fold, resolved_config
 from hub.contracts import (
     FF_OPPORTUNITY,
     FF_RANKINGS,
@@ -602,7 +602,7 @@ def refresh(season: int = SEASON_COMPLETED, cache: Path | None = None,
         print(f"    {label:<16} {rows:>7,} rows | {len(df.columns):>3} cols | "
               f"{n_weeks} week partitions")
     print(f"  wrote {total_rows:,} rows through hub.store")
-    p = provenance(resolved_config(), pins)
+    p = digests(resolved_config(), pins)
     print(f"  cfg {p['cfg']} | fitted {p['fitted']} | data {p['data']}")
     return 0
 

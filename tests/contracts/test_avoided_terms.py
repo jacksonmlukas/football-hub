@@ -353,15 +353,10 @@ _BETTING = "pre-existing prose; the word means the betting market here"
 _XFP = "pre-existing prose for xFP, which is expected fantasy points per game"
 
 OUTSTANDING: dict[tuple[str, str], tuple[int, str]] = {
-    # --- deferred to issue #53's second pass, because another change owns the file today --
-    ("src/hub/config.py", "provenance alone"): (
-        1, "DEFERRED: `config.provenance` returns a set of digests, which is not price "
-           "source. `hub.schedule.provenance` already owns the word and the publisher "
-           "imports it. The digest set should be named for what it is"),
-    ("src/hub/fetch/espn.py", "board"): (
-        1, "DEFERRED: the `board-resolved-nothing` guard names the ESPN scoreboard `board`, "
-           "which is the reserved Board. `scoreboard` and `overlay` are both already used "
-           "in this module; its tests carry three more of these"),
+    # The two sites this file was written to hold are fixed: `config.provenance` is
+    # `config.digests`, and the ESPN reader's guard is `scoreboard-resolved-nothing`. They
+    # are out of the inventory rather than retained with a note, because an entry that
+    # outlives its violation is the decay this whole file is about.
     # --- correct uses of a reserved word, in a module outside the owning package -----------
     ("src/hub/paths.py", "board"): (2, "the real draft board's paths, named outside "
                                        "`hub.draft` because paths are a leaf module"),
@@ -522,16 +517,25 @@ def test_the_scan_finds_the_terms_it_is_supposed_to():
     ("src/hub/config.py", "provenance alone"),
     ("src/hub/fetch/espn.py", "board"),
 ])
-def test_the_scan_reports_the_sites_held_back_for_the_second_pass(path, term):
-    """Pointed at the two files issue #53 deferred, this must report them.
+def test_the_sites_held_back_for_the_second_pass_are_fixed_and_stay_fixed(path, term):
+    """The two files #53 deferred, now clean, and required to stay clean.
 
-    They are in OUTSTANDING and so do not fail the habit below -- but a scan that could not
-    see them would be useless to the change that finally fixes them, which is the whole
-    point of building the guard in the same ticket.
+    This test was the inverse until the second pass landed: it pointed the scan at these two
+    and demanded it *report* them, so the change that finally fixed them could not be made
+    with a guard too narrow to see them. Both are fixed -- `config.provenance` is
+    `config.digests`, and the ESPN reader's guard is `scoreboard-resolved-nothing` -- so it
+    now asserts the other direction. Kept rather than deleted because these are the two sites
+    the codebase has already drifted on once, and a term reintroduced here is the likeliest
+    regression in the file.
+
+    Note `src/hub/fetch/espn.py` still uses `board` correctly, for the draft Board it feeds
+    with ADP and projections. Those are not violations and the scan does not count them;
+    what was wrong was naming the ESPN scoreboard with the reserved word.
     """
     got = scan((ROOT / path,))
-    assert any(h.term == term for h in got), (
-        f"{path} violates `{term}` and the scan does not see it: {got}")
+    assert not any(h.term == term for h in got), (
+        f"{path} has regained a `{term}` violation: "
+        f"{[(h.term, h.line) for h in got if h.term == term]}")
 
 
 def test_a_fresh_violation_is_caught(tmp_path):

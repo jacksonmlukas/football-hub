@@ -72,15 +72,15 @@ def summary(event_id: str, league: str = "nfl") -> dict:
     return _get(f"{LEAGUE_PATHS[league]}/summary", {"event": event_id}, f"sum_{event_id}")
 
 
-# The four columns the contract types, given explicitly because an *empty* board would
+# The four columns the contract types, given explicitly because an *empty* scoreboard would
 # otherwise have no columns at all: `pl.DataFrame([])` carries none, and a contract cannot
 # tell "no games today" from "every field is gone" without them. `scoreboard_frame` says the
 # same where it uses this.
 #
 # This comment used to say three columns, and justify itself by `possession` and
-# `down_distance` arriving all-null on a quiet board. Neither is in this dict, so the
+# `down_distance` arriving all-null on a quiet scoreboard. Neither is in this dict, so the
 # contract never sees their dtype and `_family` never compares it -- dropping both columns
-# outright still validates. It read plausibly for months because no fixture had a board with
+# outright still validates. It read plausibly for months because no fixture had a scoreboard with
 # nothing in progress; #75 froze one, which made the claim checkable and false.
 SCOREBOARD_TYPES: dict[str, Any] = {"id": pl.Utf8, "state": pl.Utf8, "home": pl.Utf8,
                                     "away": pl.Utf8}
@@ -191,7 +191,7 @@ def live_state(league: str = "nfl") -> list[dict]:
     if dropped:
         print(f"  live: {len(dropped)} event(s) absent from the overlay: "
               f"{', '.join(dropped)}")
-    # GUARD board-resolved-nothing: a board that resolves none of its games is a shape change
+    # GUARD scoreboard-resolved-nothing: a scoreboard resolving none of its games has changed shape
     #
     # Dropping a malformed event is what keeps the rest of the slate on the page, and it is
     # the whole point of the tolerant lookups above -- but it also means a field renamed for

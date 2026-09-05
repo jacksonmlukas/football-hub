@@ -490,7 +490,7 @@ def data_digest(pins: Iterable[DataPin]) -> str:
     return hashlib.sha256("\n".join(rows).encode()).hexdigest()[:8]
 
 
-def provenance(cfg: HubConfig | object, pins: Iterable[DataPin]) -> dict[str, str]:
+def digests(cfg: HubConfig | object, pins: Iterable[DataPin]) -> dict[str, str]:
     """The three digests that identify a run, as {"cfg", "fitted", "data"}.
 
     One call, so that no gate decides for itself which of the three name it -- and so the

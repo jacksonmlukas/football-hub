@@ -40,7 +40,7 @@ from typing import NamedTuple, cast
 import numpy as np
 import polars as pl
 
-from hub.config import FANTASY_WEEKS, HubConfig, provenance
+from hub.config import FANTASY_WEEKS, digests, resolved_config
 from hub.models.experiment import MIN_SE
 from hub.models.panel import (
     MIN_GAMES_BEFORE,
@@ -306,7 +306,10 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     # nothing said whether the code or the rankings had moved -- which is the correction
     # `docs/weekly-screen.md` already records having to make once.
     pins = [p for p in (consensus_pin(a.as_of),) if p is not None]
-    d = provenance(HubConfig(), pins)
+    # `resolved_config()`, not `HubConfig()`: this line exists to say what the run read,
+    # and a bare dataclass prints the defaults whatever `conf/` says -- a model version
+    # for a model nobody ran, which is what #74 removed from the other three stamps.
+    d = digests(resolved_config(), pins)
     print(f"  cfg {d['cfg']} | fitted {d['fitted']} | data {d['data']}"
           + ("" if a.as_of else "   (no --as-of: the digest names the bytes this run "
                                 "happened to read, not a date it can be re-read at)"))
