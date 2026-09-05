@@ -107,3 +107,84 @@ def test_history_rewritten_clean_passes_again(repo):
     git(repo, "add", "-A")
     git(repo, "commit", "--amend", "-m", "init")
     assert preflight(repo).returncode == 0
+
+
+# --- the credential scan, proven to fail (issue #28) ------------------------
+#
+# Every test above plants a *data file*. Nothing planted a credential, so the only thing
+# asserted about the credential scan was that it exits 0 on a clean tree -- which a scan
+# matching nothing at all would also satisfy. It was matching nothing at all.
+#
+# `PATTERNS` is written with BRE interval syntax (`.\{40,\}`) and passed to `grep -E`, where
+# `\{` is a literal brace. So every pattern in the gate was inert: measured 2026-09-04 by
+# planting three synthetic credentials in a throwaway repo, against which the script printed
+# "ok: no credential patterns in any commit" and exited PASS.
+#
+# Each value below is assembled from parts rather than written out, so this file does not
+# itself become a hit when the gate scans this repo's history. None is a real credential.
+
+SWID_BODY = "1A2B3C4D-5E6F-7081-9203-A4B5C6D7E8F9"
+S2_BODY = "AEB" + "a1B2c3D4e5" * 6
+KEY_BODY = "0f1e2d3c4b5a" * 3
+
+
+def _plant(repo: Path, name: str, body: str) -> None:
+    (repo / "leak.txt").write_text(f"{name}\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-m", f"planted {body}")
+
+
+@pytest.mark.parametrize("shape,line", [
+    pytest.param("espn cookie", "ESPN_S2=" + S2_BODY, id="espn-cookie"),
+    pytest.param("espn cookie, quoted", 'espn_s2: "' + S2_BODY + '"', id="espn-quoted"),
+    pytest.param("braced swid", "SWID={" + SWID_BODY + "}", id="swid-braced"),
+    pytest.param("brace-less swid", "SWID=" + SWID_BODY, id="swid-bare"),
+    pytest.param("cfbd key", "CFBD_API_KEY=" + KEY_BODY, id="cfbd-key"),
+    pytest.param("odds key", "ODDS_API_KEY=" + KEY_BODY, id="odds-key"),
+])
+def test_a_planted_credential_blocks_the_flip(repo, shape, line):
+    """The assertion that was missing. Exit non-zero, or the gate is decoration."""
+    _plant(repo, line, shape)
+    got = preflight(repo)
+    assert got.returncode == 1, f"{shape} passed the gate: {got.stdout}"
+    assert "credential" in (got.stdout + got.stderr).lower()
+
+
+def test_the_brace_less_swid_is_caught_too(repo):
+    """ESPN's cookie carries braces and the pattern required them, so the form actually
+    pasted into a secret -- which is how it was got wrong on 2026-09-04 -- was invisible."""
+    _plant(repo, "ESPN_SWID=" + SWID_BODY, "brace-less swid")
+    assert preflight(repo).returncode == 1
+
+
+def test_a_credential_committed_and_then_removed_still_blocks(repo):
+    """Flipping public exposes every commit. The same lesson the parquet tests carry, for
+    the thing the scan is actually named after."""
+    _plant(repo, "ESPN_S2=" + S2_BODY, "espn cookie")
+    (repo / "leak.txt").unlink()
+    git(repo, "add", "-A")
+    git(repo, "commit", "-m", "remove it")
+    got = preflight(repo)
+    assert got.returncode == 1, "a clean tree is not a clean history"
+
+
+def test_the_scan_proves_it_can_match_before_reporting_clean(repo):
+    """The gate's own premise, checked by the gate rather than only here. A scan that
+    reports 'no credential patterns in any commit' is making two claims -- that it looked,
+    and that it found nothing -- and until now only the second was ever true."""
+    got = preflight(repo)
+    assert got.returncode == 0
+    out = got.stdout.lower()
+    assert "patterns match" in out or "self-check" in out, (
+        f"the scan does not demonstrate that it can match anything:\n{got.stdout}")
+
+
+def test_ordinary_prose_is_not_flagged(repo):
+    """A gate that fires on the word ESPN in a docstring is a gate you learn to ignore --
+    which is how the 2026-08-23 miss became possible."""
+    (repo / "docs.md").write_text(
+        "Set ESPN_S2 and SWID in .env. The CFBD_API_KEY is optional.\n"
+        "See ODDS_API_KEY= in SETUP.md for where to get one.\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-m", "docs")
+    assert preflight(repo).returncode == 0

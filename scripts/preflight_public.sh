@@ -4,12 +4,45 @@
 set -uo pipefail
 fail=0
 
+# espn_s2 is 250+ chars of base64-ish; swid is a UUID, braced in the cookie and routinely
+# pasted without the braces -- which is how it was set in a repository secret on 2026-09-04,
+# and the form the old pattern could not see.
+#
+# **ERE, not BRE.** These are passed to `grep -E`, where `\{40,\}` is a literal brace, a 4, a
+# 0, a comma and a brace -- not an interval. Every pattern here was written in BRE and was
+# therefore inert: measured 2026-09-04 by planting three synthetic credentials in a throwaway
+# repo, against which this script printed "ok: no credential patterns in any commit" and
+# exited PASS. The self-check below exists so that can never again be silent.
+#
+# `[[:space:]]` rather than `\s`: this runs on BSD grep locally and GNU grep in CI, and only
+# one of them knows `\s`.
+#
+# The value charsets are named rather than left as `.`, which is not tightening for its own
+# sake: `ODDS_API_KEY=.{20,}` matches the sentence "ODDS_API_KEY= in SETUP.md for where to
+# get one", and a gate that fires on the documentation telling you to set a key is a gate you
+# learn to ignore -- which is how the 2026-08-23 miss became possible. A real cookie or key
+# carries no spaces and no prose punctuation.
+PATTERNS='ESPN_S2=[A-Za-z0-9%+/=_-]{40,}|espn_s2["'"'"']*[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9%+/=]{60,}|SWID=[{]?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-|CFBD_API_KEY=[A-Za-z0-9+/=_-]{20,}|ODDS_API_KEY=[A-Za-z0-9+/=_-]{20,}'
+
+# A scan reporting "no credential patterns in any commit" makes two claims: that it looked,
+# and that it found nothing. Only the second was ever true. This proves the first on every
+# run, against a synthetic value that is not a credential and never was.
+echo "==> Verifying the patterns match anything at all"
+CANARY="ESPN_S2=$(printf 'a%.0s' $(seq 1 50))"
+if printf '%s\n' "$CANARY" | grep -qE "$PATTERNS"; then
+  echo "  ok: self-check planted a synthetic cookie and the patterns matched it"
+else
+  echo "  FAIL: the patterns match nothing, so the scan below cannot fail" >&2
+  echo "  This is not a clean repo; it is a broken gate. Fix PATTERNS." >&2
+  fail=1
+fi
+
 echo "==> Scanning full history for ESPN cookies and API keys"
-# espn_s2 is 250+ chars of base64-ish; swid is a braced UUID.
-PATTERNS='ESPN_S2=.\{40,\}|espn_s2["'"'"']*\s*[:=]\s*["'"'"'][A-Za-z0-9%+/=]\{60,\}|SWID=\{\?[0-9A-F]\{8\}-|CFBD_API_KEY=.\{20,\}|ODDS_API_KEY=.\{20,\}'
 if git rev-list --all >/dev/null 2>&1; then
+  # `grep -v PATTERNS=` so this script's own declaration is not a hit. Narrower than
+  # excluding the file, which would hide a credential that landed inside it.
   HITS=$(git rev-list --all | while read -r c; do
-    git grep -I -n -E "$PATTERNS" "$c" 2>/dev/null | head -5
+    git grep -I -n -E "$PATTERNS" "$c" 2>/dev/null | grep -v 'PATTERNS=' | head -5
   done | sort -u)
   if [ -n "$HITS" ]; then
     echo "  FAIL: credential-shaped strings found in history:" >&2
@@ -97,8 +130,8 @@ if [ $fail -eq 0 ]; then
   echo
   echo "Then, in this order -- none of these happen on their own:"
   echo "  1. Flip the repo public."
-  echo "  2. Uncomment the 'schedule:' block in .github/workflows/watchdog.yml."
-  echo "     The cron is commented out, so the watchdog does NOT start on its own."
+  echo "  2. Check the 'schedule:' block in .github/workflows/watchdog.yml is live."
+  echo "     It is, as of 2026-09-04 -- the comment above it saying otherwise is stale."
   echo "  3. Uncomment the 'schedule:' block in .github/workflows/ci.yml, which is what"
   echo "     runs the golden tests against the live APIs."
   echo "  4. Enable Pages (Settings > Pages > main branch)."
