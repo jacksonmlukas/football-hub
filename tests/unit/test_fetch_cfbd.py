@@ -16,8 +16,14 @@ Three independent guards, because a comment is not a control:
 
 Multiple keys and rate-limit circumvention are explicit terms violations that get access
 revoked, so the monthly budget is a hard stop rather than a warning.
+
+A fourth guard was added for #68 and is about this file's own kind: `_http_get` refuses to run
+under pytest at all, outside `tests/golden/`. Every test here patches the transport, which is
+the habit and not the guarantee -- the guarantee has to hold for the test nobody remembered to
+patch, and one in `tests/contracts/` was exactly that.
 """
 import json
+import os
 from datetime import UTC, datetime, timedelta
 
 import polars as pl
@@ -395,15 +401,21 @@ def test_a_missing_key_records_not_fetched_rather_than_crashing(env, paths, monk
 def test_a_failed_fetch_records_the_failure_instead_of_taking_the_slate_down(
         env, paths, monkeypatch):
     """CLAUDE.md's degradation rule. An unreachable optional source must not halt a Sunday,
-    and must not report success either."""
+    and must not report success either.
+
+    What the record says about the failure is a separate question, and it is asserted by
+    `test_a_failed_fetch_records_the_kind_of_failure_and_not_its_words` below: this one used
+    to require `"503" in reason`, which is the exception's own words and is the channel #70
+    closed.
+    """
     def boom(path, params, key):
         raise RuntimeError("503 Service Unavailable")
     monkeypatch.setattr(cfbd, "_http_get", boom)
     monkeypatch.setattr(cfbd, "_api_key", lambda: "k")
     assert cfbd.main(["--week", "3", "--quota-path", str(paths["quota"])]) == 1
     got = _record(cfbd.STATUS)
-    assert got["fetched"] is False
-    assert "503" in got["reason"] and "RuntimeError" in got["reason"]
+    assert got["fetched"] is False and got["stale"] is True
+    assert "RuntimeError" in got["reason"]
 
 
 def test_the_record_carries_counts_and_never_a_cfbd_payload(env, transport, paths):
@@ -434,3 +446,192 @@ def test_an_empty_week_is_an_answer_rather_than_a_broken_contract(transport, pat
     transport(payload=[])
     got = cfbd.week(2026, 3, cache=paths["cache"], quota_path=paths["quota"])
     assert all(df.height == 0 for df in got.values())
+
+
+# --- a test cannot spend a live call --------------------------------------
+#
+# Issue #68. Every test above patches `_http_get`, which is the right habit and is not a
+# guarantee: the guarantee has to hold for the test nobody remembered to patch. One in
+# `tests/contracts/` was exactly that -- it drove this CLI with neither the environment
+# reader nor the cache patched, which was harmless while the CLI had no week to resolve and
+# became three live calls a suite run once it counted one from `CFB_WEEK_ONE`. Measured
+# 2026-09-05: this machine's `.env` carries neither the anchor nor a key, so nothing was
+# spent -- but `.env.example` instructs a developer to set the anchor and the key is already
+# a repository secret, so the thing standing between the suite and the account was which
+# machine it ran on.
+#
+# So the refusal lives at the transport, where it holds whatever the environment contains.
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    """`requests.get` replaced by something that fails the test rather than dialling out.
+
+    Present so that these tests still prove something when the guard they are about is
+    deleted: without it, the excision harness in `tests/contracts/test_guards_are_load_
+    bearing.py` would prove the guard fires by making a real request to CFBD.
+    """
+    import requests
+
+    def _never(*a, **k):                                     # pragma: no cover - must not run
+        raise AssertionError("a test reached the network")
+
+    monkeypatch.setattr(requests, "get", _never)
+
+
+def test_the_transport_refuses_a_live_call_from_the_default_suite(no_network):
+    """The whole of #68, at the one function in this module that touches the network."""
+    with pytest.raises(cfbd.LiveCallRefused):
+        cfbd._http_get("/games", {"year": 2026, "week": 1}, "a-key")
+
+
+def test_the_refusal_names_the_test_and_the_rule_it_protects(no_network):
+    with pytest.raises(cfbd.LiveCallRefused) as e:
+        cfbd._http_get("/games", {"year": 2026}, "a-key")
+    said = str(e.value)
+    assert "quota" in said.lower(), "a refusal that does not say why teaches nothing"
+    assert "test_the_refusal_names_the_test" in said, (
+        "the refusal has to name the test that tripped it, or finding it means bisecting")
+
+
+def test_the_golden_suite_is_the_one_place_a_live_call_is_still_allowed(monkeypatch):
+    """`tests/golden/` exists to diff a live response against the frozen fixture, is marked
+    `golden`, and is deselected by default (`addopts = "-m 'not golden'"`). Refusing there
+    too would turn the only check that meets reality into one that cannot run."""
+    sent = []
+
+    class _Response:
+        def raise_for_status(self): return None
+        def json(self): return [_GAME]
+
+    def _capture(url, **kw):
+        sent.append(url)
+        return _Response()
+
+    import requests
+    monkeypatch.setattr(requests, "get", _capture)
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/golden/test_golden.py::t (call)")
+    assert cfbd._http_get("/games", {"year": 2025, "week": 1}, "k") == [_GAME]
+    assert sent == [f"{cfbd.BASE}/games"]
+
+
+def test_a_pytest_node_id_is_the_path_the_exemption_matches_on():
+    """The premise under `LIVE_TEST_SUITE`. `PYTEST_CURRENT_TEST` is a rootdir-relative node
+    id, which is what makes `tests/golden/` a prefix of every node in that suite and of
+    nothing else. If a runner ever changes what rootdir is, this says so here -- rather than
+    by silently refusing the one suite that is supposed to reach CFBD."""
+    assert os.environ[cfbd.PYTEST_NODE_ENV].startswith(
+        "tests/unit/test_fetch_cfbd.py::test_a_pytest_node_id_is")
+
+
+def test_the_network_has_exactly_one_door_in_this_module():
+    """What makes the refusal above structural rather than one more patched seam: there is
+    one function that can reach CFBD, so guarding it guards everything."""
+    import inspect
+    src = inspect.getsource(cfbd)
+    users = [ln.strip() for ln in src.splitlines()
+             if "requests" in ln and not ln.strip().startswith("#")]
+    assert users == ["import requests",
+                     "r = requests.get(f\"{BASE}{path}\", params=dict(params), timeout=30,"], (
+        f"something other than `_http_get` reaches the network now: {users}. The refusal in "
+        f"`_http_get` only covers this module while that stays the only door.")
+
+
+# --- the record carries counts, and the contract still fires on an empty week ---
+#
+# Issue #70, two defects at the same boundary: what a third party said, and what this repo
+# commits about it.
+
+
+def test_the_status_file_never_quotes_the_values_that_broke_a_contract(env, transport, paths,
+                                                                      capsys):
+    """`record_run` writes into `site/data/cfbd.json`, which the slate commits to a repo
+    intended to go public, and the failure path used to write `str(e)` into it. A contract
+    violation quotes the values that broke it. Measured 2026-09-05, the planted frame below
+    produces exactly
+
+        cfbd_games: week range [99, 99] outside [1, 20]; homePoints range [131, 131]
+        outside [0, 120]
+
+    which is four payload values and a column name. Truncating at 400 characters bounds how
+    much of a response escapes; it does not turn rows into counts, and the comment above
+    `STATUS` claims counts twice.
+    """
+    env[cfbd.CFB_WEEK_ONE_ENV] = "2026-09-01"
+    transport(payload=[{**_GAME, "week": 99, "homePoints": 131, "awayPoints": 0}])
+    assert cfbd.main(["--week", "3", "--quota-path", str(paths["quota"])]) == 1
+
+    text = cfbd.STATUS.read_text()
+    for leaked in ("homePoints", "outside", "Stanford", "cfbd_games", "range"):
+        assert leaked not in text, f"{leaked!r} came out of the payload and is now committed"
+    reason = _record(cfbd.STATUS)["reason"]
+    assert "99" not in reason and "131" not in reason, f"payload values in {reason!r}"
+    assert "ContractViolation" in reason, (
+        "a reader of the status file still has to be able to tell why the fetch failed")
+    # Not lost, only not committed: stderr is where the operator reads it.
+    assert "week range [99, 99]" in capsys.readouterr().err
+
+
+def test_a_failed_fetch_records_the_kind_of_failure_and_not_its_words(env, paths, monkeypatch,
+                                                                      capsys):
+    """The rule the status file can actually keep: the exception's type, never its message.
+
+    A type name is ours -- it comes out of this repo's code or its dependencies' -- while a
+    message is an open channel with nothing bounding what a third party can put through it.
+    """
+    def boom(path, params, key):
+        raise RuntimeError("503 Service Unavailable for https://api.collegefootballdata.com")
+    monkeypatch.setattr(cfbd, "_http_get", boom)
+    monkeypatch.setattr(cfbd, "_api_key", lambda: "k")
+    assert cfbd.main(["--week", "3", "--quota-path", str(paths["quota"])]) == 1
+    got = _record(cfbd.STATUS)
+    assert got["fetched"] is False
+    assert "RuntimeError" in got["reason"]
+    assert "Service Unavailable" not in got["reason"] and "api.college" not in got["reason"]
+    assert "Service Unavailable" in capsys.readouterr().err
+
+
+def test_an_http_status_is_a_number_so_it_survives_the_redaction(env, paths, monkeypatch):
+    """The diagnostic worth keeping. A status code is a count-shaped fact about the exchange
+    -- three digits from the protocol, not a field of anybody's payload -- and it is the
+    difference between "the source is down" and "the key is wrong" without opening a log."""
+    class _Response:
+        status_code = 503
+
+    class _HTTPError(RuntimeError):
+        response = _Response()
+
+    def boom(path, params, key):
+        raise _HTTPError("503 Server Error: Service Unavailable for url: ...")
+    monkeypatch.setattr(cfbd, "_http_get", boom)
+    monkeypatch.setattr(cfbd, "_api_key", lambda: "k")
+    assert cfbd.main(["--week", "3", "--quota-path", str(paths["quota"])]) == 1
+    assert "HTTP 503" in _record(cfbd.STATUS)["reason"]
+
+
+def test_an_empty_response_carrying_a_shape_is_a_shape_change_not_an_empty_week(transport,
+                                                                               paths):
+    """The half of #70 that had gone quiet. Validation became conditional on the frame having
+    rows, so a response of no rows was not checked at all -- and both CFBD contracts declare
+    `min_rows=1`, which made that skip a hole in exactly the pair the provenance work
+    constrains.
+
+    An empty week and an empty *shape* are not the same thing. `[]` is the source saying
+    "nothing here" and carries no columns to check. A reshaped endpoint answering
+    `{"data": []}` is also zero rows -- and is a rename wearing an empty week's clothes.
+    """
+    from hub.contracts import ContractViolation
+
+    transport(payload={"data": []})
+    with pytest.raises(ContractViolation):
+        cfbd.week(2026, 3, cache=paths["cache"], quota_path=paths["quota"])
+
+
+def test_a_week_with_rows_outside_the_declared_range_is_still_a_violation(transport, paths):
+    """The ordinary case, asserted because nothing else here did: the check that fires on a
+    populated week has to keep firing while the empty one is being taught to."""
+    from hub.contracts import ContractViolation
+
+    transport(payload=[{**_GAME, "week": 99}])
+    with pytest.raises(ContractViolation):
+        cfbd.week(2026, 3, cache=paths["cache"], quota_path=paths["quota"])

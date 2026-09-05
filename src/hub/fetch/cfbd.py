@@ -19,6 +19,11 @@ So this module does not ask callers to remember the rule. Three independent guar
 Every response is cached under `data/raw/cfbd/`. Caching here is a quota mechanism, not a
 speed one: a completed season is never re-fetched.
 
+Those three are about a loop. A fourth is about the suite: `_http_get` refuses to run under
+pytest at all, outside the one directory that exists to hit live APIs. Tests patch the
+transport and should, but a test suite that only fails to spend quota because nobody has set
+`CFB_WEEK_ONE` on this laptop is not a guard, it is a coincidence (#68).
+
 **Which week, and what a run that fetched none says.** `configured_week` owns the first
 question and its docstring owns the argument. The second is `record_run`: every invocation
 of this CLI leaves a record in `site/data/cfbd.json` saying whether it fetched, and a run
@@ -37,6 +42,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -78,6 +84,18 @@ REGULAR_SEASON_WEEKS = 15
 
 BASE = "https://api.collegefootballdata.com"
 FREE_TIER_MONTHLY = 1_000
+
+# The pytest node running right now, or nothing outside a test. pytest sets this for the
+# duration of each test's setup, call and teardown, and nothing else in this repo writes it.
+PYTEST_NODE_ENV = "PYTEST_CURRENT_TEST"
+
+# The one suite allowed to reach CFBD. `tests/golden/` exists to diff a live response against
+# the frozen fixture -- it is the only thing in the repo that knows whether the two CFBD
+# contracts, both written from documentation, resemble reality -- and it is marked `golden`
+# and deselected by default (`addopts = "-m 'not golden'"`, pyproject.toml). Node ids are
+# relative to pytest's rootdir, so a run started from inside `tests/` does not match and is
+# refused: erring toward refusal is the direction this module errs in everywhere.
+LIVE_TEST_SUITE = "tests/golden/"
 
 # Twelve covers the documented 5-8 call week with headroom, and stops a loop over 136 FBS
 # teams at call thirteen. Deliberately per-run rather than per-month: the monthly budget
@@ -123,6 +141,10 @@ class LoopRefused(Exception):
 
 class QuotaExceeded(Exception):
     """Refused rather than spend a call: either the run ceiling or the monthly budget."""
+
+
+class LiveCallRefused(Exception):
+    """A test reached the live transport. Refused before anything left the process."""
 
 
 def _env() -> Mapping[str, str]:
@@ -181,6 +203,30 @@ def quota_report(path: Path | None = None) -> int:
 
 
 def _http_get(path: str, params: Mapping[str, Any], key: str) -> Any:
+    # GUARD no-live-call-from-the-suite [unit/test_fetch_cfbd.py]: a test cannot spend quota
+    #
+    # #68, and the only place in this module where the answer does not depend on the machine
+    # it runs on. `tests/contracts/test_quota_state_survives_a_runner.py` drove this CLI with
+    # neither the environment reader nor the cache patched. That was harmless while the CLI
+    # had no week to resolve and took its no-week branch; once it began counting one from
+    # `CFB_WEEK_ONE` it became three live calls on every run of the suite for anyone holding
+    # a key. Measured 2026-09-05: the `.env` on the machine this was written on carries
+    # neither the anchor nor a key, so nothing was spent that day -- but `.env.example` now
+    # instructs a developer to set the anchor, and the key is already a repository secret, so
+    # the only thing between the suite and the account was which machine ran it.
+    #
+    # Patching the transport per test is the right habit and every test in the sibling module
+    # does it. It is not a guarantee, because the guarantee has to hold for the test nobody
+    # remembered to patch. This does, and it costs one environment read per request.
+    node = os.environ.get(PYTEST_NODE_ENV, "")
+    if node and not node.startswith(LIVE_TEST_SUITE):
+        raise LiveCallRefused(
+            f"{node.split(' ')[0]} would spend a live CFBD call. The free tier is "
+            f"{FREE_TIER_MONTHLY:,} a month and docs/cfbd-quota.md records that "
+            f"rate-limit circumvention gets access revoked rather than throttled, so no "
+            f"test fetches: patch `_http_get`, the way tests/unit/test_fetch_cfbd.py does. "
+            f"Only {LIVE_TEST_SUITE} may reach CFBD, and it is deselected by default.")
+    # /GUARD
     import requests
     r = requests.get(f"{BASE}{path}", params=dict(params), timeout=30,
                      headers={"Authorization": f"Bearer {key}"})
@@ -276,14 +322,34 @@ def week(year: int, week_no: int, *, cache: Path | None = None,
         # A registry rather than a branch, and the same shape `hub.fetch.nflverse` uses:
         # `box` has no declared contract and is not being given a weak one to fill the row.
         #
-        # `df.height and` because both CFBD contracts declare `min_rows=1`, so validating a
-        # frame of no rows reports "0 rows < min 1; missing columns [...]" -- which reads as
-        # the source having changed shape when it has simply said "nothing here", and which
-        # a week nobody has played yet answers with. Emptiness is a state the caller reports
-        # (`record_run`, below); it is not a contract failure, and the contract still sees
-        # every response that has rows, which is every response a renamed field could hide in.
-        if df.height and (contract := CONTRACTS.get(endpoint)) is not None:
-            contract.validate(df)
+        # GUARD empty-week-is-still-checked [unit/test_fetch_cfbd.py]: an empty response is
+        # validated with its row minimum relaxed, never skipped
+        #
+        # This read `if df.height and (contract := ...)` (#70). Both CFBD contracts declare
+        # `min_rows=1`, so that made an empty college week not checked at all -- and those two
+        # are the only contracts the provenance work constrains, so the skip took the check
+        # off exactly the pair that motivated it.
+        #
+        # The reason for it was right. A week nobody has played yet answers `[]`, and
+        # reporting that as "0 rows < min 1; missing columns [...]" reads as the source having
+        # changed shape when it has said "nothing here" -- which is the fetched-and-empty
+        # state `record_run` exists to distinguish, and it could not exist while emptiness
+        # raised. What was wrong is where the fix went: skipping the contract also stops it
+        # answering the question it is for.
+        #
+        # So "empty" is narrowed instead. A response with no rows *and no columns* is the
+        # source saying nothing, and there is no shape in it to check -- `[]` parses to a
+        # (0, 0) frame. A response with no rows and columns of its own is a different animal:
+        # `{"data": []}` from a reshaped endpoint is also zero rows, and is a rename wearing
+        # an empty week's clothes. That one is checked against everything the contract
+        # declares except the row count, which is the only clause emptiness is allowed to
+        # relax.
+        if (contract := CONTRACTS.get(endpoint)) is not None:
+            if not df.height:
+                contract = replace(contract, min_rows=0)
+            if df.width:
+                contract.validate(df)
+        # /GUARD
         out[endpoint] = df
         print(f"    {endpoint:<14} {df.height:>6,} rows | {len(df.columns):>3} cols")
     print(f"  quota: {quota_used(quota_path):,} of {FREE_TIER_MONTHLY:,} this month")
@@ -382,6 +448,7 @@ def configured_week(now: datetime | None = None) -> WeekChoice:
 
 def record_run(season: int, week_no: int | None, *,
                rows: Mapping[str, int] | None = None, why: str | None = None,
+               error: BaseException | None = None,
                path: Path | None = None, quota_path: Path | None = None) -> dict[str, Any]:
     """Write what this run did, in the three states `publish.Artifact.record` writes.
 
@@ -401,7 +468,36 @@ def record_run(season: int, week_no: int | None, *,
 
     **Counts, never rows.** See `STATUS`: a CFBD payload committed under `site/data` would
     be redistribution, which is the terms violation `docs/cfbd-quota.md` warns costs access.
+    That is why a failure arrives here as `error` -- the exception itself -- rather than as a
+    sentence somebody wrote from it. See the guard below.
     """
+    # GUARD status-carries-no-payload-text [unit/test_fetch_cfbd.py]: the type, never the
+    # message
+    #
+    # #70: this used to be `why = f"...{type(e).__name__}: {e}"[:400]` at the call site,
+    # and an exception's message is an open channel with nothing bounding what a third
+    # party can put through it. A `ContractViolation` quotes the values that broke the
+    # contract: measured 2026-09-05, a planted bad frame produced `week range [99, 99]
+    # outside [1, 20]; homePoints range [131, 131] outside [0, 120]` -- four payload
+    # values and a column name, into a file the slate commits to a repo intended to go
+    # public. Truncating bounded how much escaped and left it rows all the same.
+    #
+    # So the exception arrives here whole and only its *type* is recorded. A type name
+    # comes out of this repo or its dependencies; it can say `ContractViolation` rather
+    # than `ConnectionError` without saying anything a source sent us. The message is not
+    # lost -- `main` prints it to stderr, which is a log and not a commit.
+    #
+    # An HTTP status is the one exception to "type only", and it is one because it is a
+    # count: three digits from the protocol, not a field of anybody's payload. It is also the
+    # difference between "the source is down" and "the key is wrong" without opening a log,
+    # which is most of what this file gets read for.
+    if error is not None:
+        status = getattr(getattr(error, "response", None), "status_code", None)
+        code = f" (HTTP {status})" if isinstance(status, int) else ""
+        why = (f"nothing was fetched: {type(error).__name__}{code}. Its message is on stderr "
+               f"and deliberately not here: a contract violation quotes the payload values "
+               f"that broke it, and this file is committed")
+    # /GUARD
     fetched = rows is not None
     counts = dict(rows or {})
     summary = ", ".join(f"{k} {v:,} rows" for k, v in counts.items())
@@ -478,9 +574,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         # code does -- nowhere. An optional source that is down must not halt the slate
         # (CLAUDE.md's degradation rule, and the leading `-` in the Makefile), and it must
         # not be indistinguishable from one that succeeded either.
-        why = f"nothing was fetched: {type(e).__name__}: {e}"[:400]
-        record_run(a.year, week_no, why=why, path=spath, quota_path=qpath)
-        print(f"hub.fetch.cfbd: {why}", file=sys.stderr)
+        #
+        # The exception goes to `record_run` whole and is redacted there, rather than being
+        # rendered into a sentence here: the file it lands in is committed, and `{e}` was how
+        # a contract violation's quoted payload values got into it (#70). Stderr gets the
+        # message in full, because a log is not a commit and the operator has to be able to
+        # read what actually broke.
+        record_run(a.year, week_no, error=e, path=spath, quota_path=qpath)
+        print(f"hub.fetch.cfbd: nothing was fetched: {type(e).__name__}: {e}",
+              file=sys.stderr)
         return 1
 
     # A week that answered, whether or not it held anything. `record_run` tells those two

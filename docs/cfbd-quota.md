@@ -59,10 +59,51 @@ terms violation (see below). The slate workflow reads the record back and raises
 annotation when nothing was fetched — visible without scrolling a log, and never fatal, because an
 unconfigured optional source must not fail a Sunday.
 
+**A failed run says what kind of failure, not what the failure said.** The claim above has to
+survive the failure path, and at first it did not: that path wrote the exception's text, and a
+contract violation quotes the values that broke it. Measured 2026-09-05, a planted bad frame put
+`week range [99, 99] outside [1, 20]; homePoints range [131, 131] outside [0, 120]` into the
+record — four payload values and a column name, committed. Truncating at 400 characters bounded
+how much escaped and left it rows all the same. What is recorded now is the exception's *type*,
+plus the HTTP status where there is one, because a status code is three digits from the protocol
+rather than a field of anybody's payload. The message goes to stderr, which is a log and not a
+commit.
+
+**What "empty" means to the contract.** A week that answers `[]` is the source saying "nothing
+here", not a shape change, so the row minimum both CFBD contracts declare is relaxed for it — but
+the contract still runs. `[]` parses to a frame with no rows *and no columns*, and there is no
+shape in it to check. A response with no rows and columns of its own — `{"data": []}` from a
+reshaped endpoint — is a rename wearing an empty week's clothes, and everything the contract
+declares except the row count still applies to it. Skipping validation whenever a frame had no
+rows, which is what this did for a while, took the check off the only two contracts the
+provenance work constrains.
+
 **What this costs.** `WEEKLY` is three endpoints — games, lines, box scores — so a fetched week is
 three calls. The two scheduled runs can land in different college weeks, so the worst case is two
 weeks a week: **6 calls, ~26 a month**, comfortably inside the 5–8/week the table above budgets.
 Two runs inside one college week cost three, because the second reads the cache.
+
+## No test spends a call
+
+`hub.fetch.cfbd._http_get` is the only function in the module that reaches the network, and it
+refuses outright when `PYTEST_CURRENT_TEST` is set, unless the node running is under
+`tests/golden/`.
+
+It sits there rather than in a fixture because of what happened without it. A contract test drove
+the CLI while patching neither the environment reader nor the response cache, which was harmless
+for exactly as long as the CLI had no week to resolve — and became three live calls on every run
+of the suite once it began counting one from `CFB_WEEK_ONE`. Nothing was actually spent: measured
+2026-09-05, the `.env` on that machine carried neither the anchor nor a key. But `.env.example`
+now instructs a developer to set the anchor, and the key is already a repository secret, so what
+stood between the suite and the account was which machine happened to run it. Patching the
+transport per test is the right habit and every unit test here does it; it is not a guarantee,
+because the guarantee has to hold for the test nobody remembered to patch.
+
+`tests/golden/` is the exception, because it exists to diff a live response against the frozen
+fixture — it is the only thing in the repo that can say whether the two CFBD contracts, both
+written from documentation, resemble reality. It is marked `golden` and deselected by default, so
+running it is a deliberate act: `uv run pytest -m golden` with a key on the machine spends one
+call for the week it checks, and none once that response is cached.
 
 ## Historical backfill — do this in the first week of a billing month
 
