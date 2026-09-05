@@ -140,6 +140,68 @@ def test_a_backtest_is_never_labelled_a_track_record(site, base, monkeypatch):
     assert got.get("is_backtest") is not None
 
 
+# --- a tied game is scored one way (issue #64) ----------------------------
+#
+# The record derived the outcome as `result > 0`, so a tie arrived as a home loss and was
+# scored by log loss exactly as confidently as a real one -- credit for a game nobody won,
+# against whichever model gave the home side the lower probability. `hub.models.eval` and
+# `hub.models.margin` already dropped ties, and the two conventions could not both be right
+# in one repo. Latent when this was written: measured 2026-09-05, none of the 32 published
+# predictions is a tie (16 scored, 16 not yet played), so no published number moves.
+
+
+def _tied_and_won(base, monkeypatch, site):
+    """Two published predictions: `g1` ends level, `g2` is a home win."""
+    import nflreadpy as nfl
+    store.write(_preds([("g1", 0.2, -3.0), ("g2", 0.6, 3.0)]), "preds", "nfl", 2026, 1,
+                base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
+        {"game_id": ["g1", "g2"], "result": [0, 7]}))
+
+
+def test_a_tie_is_not_scored_as_a_home_loss_in_the_record(site, base, monkeypatch):
+    """0.2 on the home side would look like a confident correct call on a game nobody won,
+    and the reliability bin it lands in is what the page claims to be measuring."""
+    _tied_and_won(base, monkeypatch, site)
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    assert got["n_scored"] == 1, "the tie is not a scorable outcome"
+    assert got["log_loss"] == pytest.approx(publish.log_loss([0.6], [1]))
+
+
+def test_the_record_reads_the_tie_constant_rather_than_hardcoding_it(site, base, monkeypatch):
+    """The convention lives in `hub.models.margin.DROP_TIES` and is read from there, so a
+    future decision to score ties differently moves both paths or neither."""
+    from hub.models import margin
+    monkeypatch.setattr(margin, "DROP_TIES", False)
+    _tied_and_won(base, monkeypatch, site)
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    assert got["n_scored"] == 2, "the constant is not being read"
+
+
+def test_both_paths_score_the_same_tied_game_the_same_way(site, base, monkeypatch):
+    """The whole of issue #64 end to end. No published prediction is a tied game yet, so
+    nothing but a test can show the two paths agreeing -- which is why this exists."""
+    import hub.store as hub_store
+    from hub.models import eval as me
+    _tied_and_won(base, monkeypatch, site)
+
+    record = publish._scored(site)
+    assert record is not None
+    monkeypatch.setattr(hub_store, "tables", lambda *a, **k: {"preds"})
+    monkeypatch.setattr(hub_store, "sql", lambda *a, **k: pl.DataFrame(
+        {"game_id": ["g1", "g2"],
+         "season": pl.Series([2026, 2026], dtype=pl.Int32),
+         "week": pl.Series([1, 1], dtype=pl.Int32),
+         "model": ["market_baseline"] * 2, "home_win_prob": [0.2, 0.6]}))
+    comparison = me.load_predictions("market_baseline", base=base)
+
+    assert record["game_id"].to_list() == comparison["game_id"].to_list() == ["g2"]
+    assert record["home_won"].to_list() == comparison["home_won"].to_list() == [1]
+
+
 def test_calibration_bins_are_reported_with_counts(site, base):
     scored = pl.DataFrame({
         "home_win_prob": [0.1, 0.15, 0.85, 0.9, 0.55, 0.45],

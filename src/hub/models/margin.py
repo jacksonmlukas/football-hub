@@ -56,21 +56,52 @@ TRAILING = 10
 
 # A tie is neither a home win nor an away win, and there is no sensible probability to score it
 # against. 1999-2025 has a handful; dropping them is cleaner than inventing a convention.
+#
+# **The repo's one answer, and `home_won` below is where it is read.** Until issue #64 this
+# constant was quoted in `hub.models.eval`'s docstring and read by nothing outside this
+# module: the comparison hardcoded the same test, and `hub.publish._scored` -- the path that
+# feeds the public record -- took the other convention, deriving the outcome as `result > 0`
+# and so scoring a tie as a home loss. That is log-loss credit for a game nobody won, handed
+# to whichever model gave the home side the lower probability. Flipping this to False changed
+# no behaviour and broke no test, which is the same defect the excision work exists to
+# eliminate. Everything that scores an outcome now goes through `home_won`.
 DROP_TIES = True
 
 
+def home_won(games: pl.DataFrame, *, result: str = "result") -> pl.DataFrame:
+    """`games` with unscorable rows dropped and the realised outcome added as `home_won`.
+
+    The one place a realised margin becomes the binary outcome a proper scoring rule reads,
+    so that `DROP_TIES` is read rather than restated. `result` is home score minus away, so
+    the outcome is its sign and needs no team columns.
+
+    Two kinds of row cannot be scored and both go, for the same reason: log loss cannot tell
+    an invented outcome from an observed one. An **unplayed** game has no result at all, and
+    a **tie** has one that answers a question nobody asked -- the prediction was P(home win),
+    and a game nobody won is not a home loss.
+
+    Dropping is a real cost and is worth naming: a tied game the model priced is a game the
+    record does not count. It is the smaller cost, and cheap -- issue #64 puts NFL ties at
+    about one every season or two, against a ~285-game season. Scoring one as a home loss
+    would put a confident wrong outcome into a calibration bin instead, and calibration is
+    the page's whole claim (`docs/track-record.md` rule 3).
+    """
+    out = games.drop_nulls(result)
+    if DROP_TIES:
+        out = out.filter(pl.col(result) != 0)
+    return out.with_columns((pl.col(result) > 0).cast(pl.Int64).alias("home_won"))
+
+
 def residuals(schedules: pl.DataFrame) -> pl.DataFrame:
-    """(season, spread_line, result, resid) for every completed game with a closing spread."""
+    """(season, spread_line, result, resid, home_won) per completed game with a spread."""
     keep = ("season", "spread_line", "result")
     if not set(keep) <= set(schedules.columns):
         missing = sorted(set(keep) - set(schedules.columns))
         raise ValueError(f"schedules is missing {missing}")
     out = (schedules.select(keep)
-                    .drop_nulls(["spread_line", "result"])
+                    .drop_nulls("spread_line")
                     .with_columns((pl.col("result") - pl.col("spread_line")).alias("resid")))
-    if DROP_TIES:
-        out = out.filter(pl.col("result") != 0)
-    return out
+    return home_won(out)
 
 
 def fit(resid: pl.DataFrame) -> dict[str, float]:
@@ -112,7 +143,9 @@ def walk_forward(resid: pl.DataFrame, *, trailing: int = TRAILING) -> pl.DataFra
             "trailing10": fit(past.filter(pl.col("season") >= yr - trailing))["sd"],
         }
         spread = now["spread_line"].to_numpy().astype(float)
-        won = (now["result"].to_numpy().astype(float) > 0).astype(float)
+        # Off the column `residuals` built, not re-derived here. This read `result > 0`, a
+        # fourth restatement of the outcome convention in a module that declares it.
+        won = now["home_won"].to_numpy().astype(float)
         row: dict[str, float] = {"season": yr, "n": now.height}
         for name, sd in sds.items():
             row[f"sd_{name}"] = sd

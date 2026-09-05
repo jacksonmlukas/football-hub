@@ -27,6 +27,7 @@ import polars as pl
 
 from hub import jsonio, schedule, store
 from hub.config import SEASON_AHEAD
+from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
 from hub.paths import ROSTER_PARQUET
 from hub.season.roster import lock
@@ -334,6 +335,16 @@ def _scored(out: Path) -> pl.DataFrame | None:
     all**, which is not the same fact and must not reach the page as a record of nothing:
     the caller keeps last-good instead of publishing zero scored predictions because
     nflverse was down for ninety seconds.
+
+    **What a tied game means, and this side used to say nothing about it.** The outcome
+    comes from `hub.models.margin.home_won`, which drops a tie rather than scoring it. This
+    derived it inline as `result > 0`, so a tie arrived as a home loss and log loss took
+    full credit for it -- a confident correct call on a game nobody won, awarded to whichever
+    model gave the home side the lower probability, on the one path that feeds the public
+    record. `hub.models.eval` had always dropped ties, so the repo answered the question two
+    ways and only the wrong answer was published (issue #64). Latent when it was fixed: of
+    the 32 published predictions on 2026-09-05, sixteen were scored and none was a tie, so
+    no published number moved -- verified against nflverse rather than assumed.
     """
     empty = pl.DataFrame(schema={"game_id": pl.Utf8, "home_win_prob": pl.Float64,
                                  "home_won": pl.Int64, "predicted_at": pl.Utf8})
@@ -343,10 +354,8 @@ def _scored(out: Path) -> pl.DataFrame | None:
 
     try:
         import nflreadpy as nfl
-        sched = (nfl.load_schedules()
-                 .filter(pl.col("result").is_not_null())
-                 .select(pl.col("game_id"),
-                         (pl.col("result") > 0).cast(pl.Int64).alias("home_won")))
+        sched = (home_won(nfl.load_schedules().select("game_id", "result"))
+                 .select("game_id", "home_won"))
     except Exception as e:
         # This one stays broad -- it is a network call on a schedule that runs unattended --
         # but it says which failure it was rather than presenting every cause as "no results".

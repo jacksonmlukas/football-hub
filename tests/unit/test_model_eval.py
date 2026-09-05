@@ -217,6 +217,19 @@ def test_a_tie_is_dropped_rather_than_scored_as_a_home_loss(monkeypatch):
     assert got["game_id"].to_list() == ["g2"]
 
 
+def test_the_comparison_reads_the_tie_constant_rather_than_hardcoding_it(monkeypatch):
+    """Issue #64's citation half. The docstring above quoted `margin.DROP_TIES` while the
+    filter here restated the test, so flipping the constant to False changed no behaviour
+    and broke no test -- a named constant referenced in prose and read by nothing."""
+    import hub.store as store
+    from hub.models import margin
+    monkeypatch.setattr(margin, "DROP_TIES", False)
+    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
+    monkeypatch.setattr(store, "sql", lambda *a, **k: _stored([("g1", 1, 0.6)]))
+    got = me.load_predictions("m", schedules=_sched([("g1", 0.0)]))
+    assert got["home_won"].to_list() == [0], "the constant is not being read"
+
+
 def test_a_prediction_with_no_matching_game_is_dropped(monkeypatch):
     import hub.store as store
     monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})

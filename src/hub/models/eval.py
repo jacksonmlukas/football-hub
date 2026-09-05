@@ -26,6 +26,7 @@ import numpy as np
 import polars as pl
 
 from hub.models.experiment import BOOTSTRAP
+from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
 
 DEFAULT_HOLDOUT = 0.3
@@ -97,9 +98,11 @@ def load_predictions(model: str, base: Path | None = None,
     `nflreadpy` raised, so the CLI can degrade on it without also swallowing every unrelated
     error underneath. A model the store holds nothing for returns before the fetch happens.
 
-    Ties are dropped, on `hub.models.margin.DROP_TIES`'s reasoning -- a tie is neither a home
-    win nor an away win, and there is no probability to score it against. `hub.publish._scored`
-    takes the other convention, `result > 0`, so the two disagree on tied games and only those.
+    The outcome comes from `hub.models.margin.home_won`, which is the repo's one answer to
+    what a tied game means: a tie is neither a home win nor an away win, so it is not scored.
+    This used to restate that test inline while *citing* `margin.DROP_TIES` in this
+    paragraph, and `hub.publish._scored` took the other convention -- so the two disagreed on
+    tied games and only those, with the disagreeing one feeding the public record. Issue #64.
     """
     from hub import store
     # One row per game. `_paired` joins on (game_id, season, week), so two versions on each
@@ -129,12 +132,8 @@ def load_predictions(model: str, base: Path | None = None,
                 f"outcomes to score against") from e
     if "result" not in schedules.columns:
         raise OutcomesUnavailable("schedules is missing `result`, the realised margin")
-    won = (schedules.select("game_id", pl.col("result").cast(pl.Float64))
-                    .drop_nulls("result")
-                    .filter(pl.col("result") != 0.0)
-                    .select("game_id",
-                            (pl.col("result") > 0.0).cast(pl.Int64).alias("home_won")))
-    return preds.join(won, on="game_id", how="inner")
+    won = home_won(schedules.select("game_id", pl.col("result").cast(pl.Float64)))
+    return preds.join(won.select("game_id", "home_won"), on="game_id", how="inner")
 
 
 def _labels(a: pl.DataFrame, b: pl.DataFrame,

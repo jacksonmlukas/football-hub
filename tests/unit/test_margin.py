@@ -59,6 +59,51 @@ def test_missing_columns_raise_rather_than_return_empty():
         margin.residuals(pl.DataFrame({"season": [2023], "result": [7]}))
 
 
+# --- the outcome convention, read from one place (issue #64) ---------------
+#
+# The repo scored a tied game two ways: this module and `hub.models.eval` dropped it, and
+# `hub.publish._scored` -- the one that feeds the public record -- derived the outcome as
+# `result > 0` and took log-loss credit for a game nobody won. `home_won` is now the single
+# place that turns a realised margin into the binary outcome a proper scoring rule reads,
+# so the three cannot disagree again.
+
+
+def _games(rows):
+    """(game_id, result) -- nflverse's realised margin, home minus away."""
+    return pl.DataFrame({"game_id": [r[0] for r in rows], "result": [r[1] for r in rows]},
+                        schema={"game_id": pl.Utf8, "result": pl.Float64})
+
+
+def test_home_won_is_home_relative():
+    got = margin.home_won(_games([("g1", 7.0), ("g2", -3.0)]))
+    assert got["home_won"].to_list() == [1, 0]
+
+
+def test_home_won_drops_an_unplayed_game():
+    """An unplayed game arriving as a home loss is scored by log loss exactly as
+    confidently as a real one, and nothing downstream can tell the two apart."""
+    assert margin.home_won(_games([("g1", 7.0), ("g2", None)]))["game_id"].to_list() == ["g1"]
+
+
+def test_home_won_drops_a_tie():
+    got = margin.home_won(_games([("g1", 0.0), ("g2", 7.0)]))
+    assert got["game_id"].to_list() == ["g2"]
+
+
+def test_flipping_drop_ties_moves_home_won(monkeypatch):
+    """The citation defect this replaced: `DROP_TIES` was quoted in `hub.models.eval`'s
+    docstring and read by nothing outside `residuals`, so flipping it to False changed no
+    behaviour and broke no test. Every caller now goes through here, so it does both."""
+    monkeypatch.setattr(margin, "DROP_TIES", False)
+    got = margin.home_won(_games([("g1", 0.0)]))
+    assert got["home_won"].to_list() == [0]
+
+
+def test_residuals_reads_the_constant_rather_than_restating_it(monkeypatch):
+    monkeypatch.setattr(margin, "DROP_TIES", False)
+    assert margin.residuals(_sched([(2023, 3.0, 0), (2023, 3.0, 7)])).height == 2
+
+
 # --- the fit --------------------------------------------------------------
 
 def test_the_fit_recovers_a_known_dispersion():
