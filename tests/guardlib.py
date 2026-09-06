@@ -1,7 +1,7 @@
 """One way to declare a guard, in every language this repo ships.
 
 Three harnesses prove guards by deleting them -- `tests/contracts/test_guards_are_load_bearing.py`
-for the Python source, `tests/unit/test_preflight.py` for the shell gate, and
+for the Python source, `tests/unit/test_preflight.py` for the shell scan, and
 `tests/contracts/test_dashboard_escapes.py` for the page's script. They were written in
 parallel from the same brief and converged on the thing that matters (a mutant that no longer
 parses is a harness error, never a pass) while diverging on the grammar, the record type, the

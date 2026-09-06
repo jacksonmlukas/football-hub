@@ -552,7 +552,7 @@ def test_the_survivor_panel_escapes_its_own_numbers_too():
 # `${...}` and whose own removal was caught by nothing.
 #
 # The grammar, the record type, the excision and the reading of a child run are all
-# `tests/guardlib.py` since issue #65, shared with the Python harness and the shell gate's.
+# `tests/guardlib.py` since issue #65, shared with the Python harness and the shell scan's.
 # The bracket after a guard's name resolves by that module's one rule -- pytest selectors
 # relative to `tests/` -- which is why the page's markers name this module rather than
 # carrying nothing and leaving the harness to assume it.
