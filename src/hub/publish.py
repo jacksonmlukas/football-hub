@@ -26,7 +26,7 @@ from typing import Any, NamedTuple
 import polars as pl
 
 from hub import jsonio, schedule, store
-from hub.config import SEASON_AHEAD
+from hub.config import SEASON_AHEAD, PoolConfig
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
 from hub.paths import ROSTER_PARQUET
@@ -668,6 +668,9 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | Kept | No
         # items into two modules at once (issue #53). That sequence is the whole of issue
         # #24's rule, so two copies is one plan silently wrong.
         got = sv.plan_remaining(sv.grid_from_schedule(season), season,
+                                # The pool's own rules, so weeks 13-18 take two teams here
+                                # even though a bare `solve` still takes one.
+                                pool=PoolConfig(),
                                 # What this entry has already used, read back from the
                                 # remaining plan it published. The only record there is.
                                 prior=sv.published_plan(out / "survivor.json"))

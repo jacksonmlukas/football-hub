@@ -32,7 +32,7 @@ from typing import Any, NamedTuple
 import polars as pl
 
 from hub import schedule
-from hub.config import SEASON_AHEAD
+from hub.config import SEASON_AHEAD, PoolConfig
 from hub.paths import SITE
 
 # Below this a team is treated as unpickable rather than fed to log(). A survivor pick at
@@ -105,8 +105,24 @@ class Infeasible(Exception):
 
 
 def solve(grid: pl.DataFrame, weeks: Sequence[int] | None = None,
-          spent: Sequence[str] = ()) -> pl.DataFrame:
-    """One team per week, no repeats, maximising the probability of surviving them all.
+          spent: Sequence[str] = (), pool: PoolConfig | None = None) -> pl.DataFrame:
+    """The weeks a pool asks for, no repeats, maximising the probability of surviving them all.
+
+    One team a week, except where the pool says two. Weeks 13-18 of this pool take a pair and
+    both have to win, which the objective already expresses: surviving both is the product of
+    surviving each, so the sum of logs it maximises is the joint probability without a change.
+    The no-repeat constraint needed no change either -- it already spans the season, and a
+    24-pick path is what it was always counting.
+
+    What is new is that two picks in one week must not be the two sides of one fixture. Under
+    one pick that was unreachable; under two it is reachable, guaranteed fatal, and *attractive*
+    -- not for the week, where two opposite sides multiply to at most a quarter and any two
+    independent favourites match that, but across the season, where spending two coin flips at
+    once conserves two favourites for later. The optimiser will take that trade unless it is
+    forbidden.
+
+    A caller that passes no `pool` gets one pick a week: these are the pool's rules, not the
+    game's, and a solver handed no rules should not invent them.
 
     `grid` is (week, team, win_prob) for every team playing in every week.
 
@@ -118,13 +134,21 @@ def solve(grid: pl.DataFrame, weeks: Sequence[int] | None = None,
     """
     import pulp
 
+    doubles = tuple(pool.double_pick_weeks) if pool is not None else ()
     weeks = list(weeks) if weeks is not None else sorted(set(grid["week"].to_list()))
+    if doubles and "game_id" not in grid.columns and any(w in doubles for w in weeks):
+        raise ValueError(
+            "a double-pick week needs `game_id` on the grid: without it the two picks cannot "
+            "be stopped from being the two sides of one fixture, which loses by construction")
+    picks_in = {w: (2 if w in doubles else 1) for w in weeks}
     # Teams, where `hub.publish.survivor` had a `gone` holding weeks a few lines from its
     # own `spent`. One word for two kinds of thing, in one neighbourhood.
     unavailable = {str(t) for t in spent}
     usable = grid.filter(pl.col("win_prob") > MIN_PROB)
 
-    options = [(int(r["week"]), str(r["team"]), float(r["win_prob"]))
+    has_gid = "game_id" in usable.columns
+    options = [(int(r["week"]), str(r["team"]), float(r["win_prob"]),
+                str(r["game_id"]) if has_gid else "")
                for r in usable.iter_rows(named=True)
                if int(r["week"]) in weeks and str(r["team"]) not in unavailable]
     if not options:
@@ -133,30 +157,42 @@ def solve(grid: pl.DataFrame, weeks: Sequence[int] | None = None,
     prob = pulp.LpProblem("survivor", pulp.LpMaximize)
     # add_variable rather than LpVariable(...): the direct constructor is deprecated and
     # goes away in PuLP 4.0, and a 18x32 grid emits a warning per variable.
-    x = {(w, t): prob.add_variable(f"x_{w}_{t}", cat="Binary") for w, t, _ in options}
+    x = {(w, t): prob.add_variable(f"x_{w}_{t}", cat="Binary") for w, t, _, _ in options}
 
-    # log, because surviving every week is the product of surviving each one.
-    prob += pulp.lpSum(math.log(p) * x[(w, t)] for w, t, p in options)
+    # log, because surviving every week is the product of surviving each one -- and, in a
+    # double-pick week, of surviving both of that week's games.
+    prob += pulp.lpSum(math.log(p) * x[(w, t)] for w, t, p, _ in options)
 
     for w in weeks:
-        wk = [x[(w, t)] for ww, t, _ in options if ww == w]
-        if not wk:
-            raise Infeasible(f"no pickable team in week {w}")
-        prob += pulp.lpSum(wk) == 1, f"one_pick_wk{w}"
+        wk = [x[(w, t)] for ww, t, _, _ in options if ww == w]
+        need = picks_in[w]
+        if len(wk) < need:
+            raise Infeasible(
+                f"week {w} needs {need} pick(s) and has {len(wk)} pickable team(s)")
+        prob += pulp.lpSum(wk) == need, f"picks_wk{w}"
+        # Never both sides of one fixture: one of them loses, so the week is lost.
+        by_game: dict[str, list] = {}
+        for ww, tt, _, gid in options:
+            if ww == w and gid:
+                by_game.setdefault(gid, []).append(x[(w, tt)])
+        for gid, sides in by_game.items():
+            if len(sides) > 1:
+                prob += pulp.lpSum(sides) <= 1, f"one_side_wk{w}_{gid}"
 
-    for team in {t for _, t, _ in options}:
-        appearances = [x[(w, t)] for w, t, _ in options if t == team]
+    for team in {t for _, t, _, _ in options}:
+        appearances = [x[(w, t)] for w, t, _, _ in options if t == team]
         if len(appearances) > 1:
             prob += pulp.lpSum(appearances) <= 1, f"once_{team}"
 
     status = prob.solve(_solver())
     if pulp.LpStatus[status] != "Optimal":
         raise Infeasible(
-            f"no full-season plan: {pulp.LpStatus[status]}. With {len(weeks)} weeks and "
-            f"{len({t for _, t, _ in options})} distinct teams, one team per week cannot "
-            f"be covered without a repeat.")
+            f"no full-season plan: {pulp.LpStatus[status]}. {len(weeks)} weeks asking for "
+            f"{sum(picks_in.values())} picks against "
+            f"{len({t for _, t, _, _ in options})} distinct teams cannot be covered "
+            f"without a repeat.")
 
-    picked = [(w, t, p) for w, t, p in options if x[(w, t)].value() == 1]
+    picked = [(w, t, p) for w, t, p, _ in options if x[(w, t)].value() == 1]
     return pl.DataFrame(
         {"week": [w for w, _, _ in picked], "team": [t for _, t, _ in picked],
          "win_prob": [p for _, _, p in picked]}).sort("week")
@@ -226,20 +262,35 @@ class Coverage(NamedTuple):
     thin: list[int]
 
 
-def coverage(grid: pl.DataFrame, weeks: Sequence[int]) -> Coverage:
+def coverage(grid: pl.DataFrame, weeks: Sequence[int],
+             pool: PoolConfig | None = None) -> Coverage:
     """Which requested weeks the betting market has actually priced.
 
     In August the board runs a handful of weeks deep, so a solve over "the season" quietly
     becomes a solve over whatever is posted. A remaining plan is still the best available
     answer for the weeks it covers -- it just is not a season, and must not print like one.
     """
+    doubles = tuple(pool.double_pick_weeks) if pool is not None else ()
     usable = grid.filter(pl.col("win_prob") > MIN_PROB)
     counts = {int(r["week"]): int(r["len"])
               for r in usable.group_by("week").len().iter_rows(named=True)}
+    # Fixtures, not rows. A week taking two picks needs two *games* to take them from; priced
+    # by one, it would be called covered, hand the solver an unsatisfiable equality, and raise
+    # for the whole season -- which `publish.survivor` turns into a kept stale plan for the
+    # seventeen weeks that were fine.
+    if "game_id" in usable.columns:
+        have = {int(r["week"]): int(r["game_id"])
+                for r in usable.group_by("week").agg(
+                    pl.col("game_id").n_unique()).iter_rows(named=True)}
+    else:
+        # No fixture key, so fixtures cannot be counted -- and `solve` refuses a double-pick
+        # week without one, so the only question left is the old one: is anything priced.
+        have = counts
+    need = {w: (2 if w in doubles else 1) for w in weeks}
     weeks = list(weeks)
     return Coverage(
-        covered=[w for w in weeks if counts.get(w, 0) > 0],
-        missing=[w for w in weeks if counts.get(w, 0) == 0],
+        covered=[w for w in weeks if have.get(w, 0) >= need[w]],
+        missing=[w for w in weeks if have.get(w, 0) < need[w]],
         thin=[w for w in weeks if 0 < counts.get(w, 0) < THIN_ROWS],
     )
 
@@ -287,7 +338,8 @@ class RemainingPlan(NamedTuple):
 def plan_remaining(grid: pl.DataFrame, season: int, *,
                    prior: Sequence[Mapping[str, Any]] = (),
                    season_weeks: int = NFL_WEEKS,
-                   at: datetime | None = None) -> RemainingPlan:
+                   at: datetime | None = None,
+                   pool: PoolConfig | None = None) -> RemainingPlan:
     """The remaining plan: the weeks still ahead, against the teams still unspent.
 
     **From here, not from week 1.** Survivor is one assignment problem *because* spending a
@@ -323,11 +375,11 @@ def plan_remaining(grid: pl.DataFrame, season: int, *,
     # Against every week still to come, not against the weeks the grid happens to have --
     # asking coverage about its own weeks makes `missing` empty by construction and the
     # panel would never say a week needs a pick. A week already played is in neither list.
-    cov = coverage(ahead, [w for w in range(1, season_weeks + 1) if w not in behind])
+    cov = coverage(ahead, [w for w in range(1, season_weeks + 1) if w not in behind], pool)
     if not cov.covered:
         raise Infeasible(f"no week in 1-{season_weeks} has a posted spread yet")
     return RemainingPlan(
-        picks=solve(ahead, weeks=cov.covered, spent=spent),
+        picks=solve(ahead, weeks=cov.covered, spent=spent, pool=pool),
         coverage=cov, played=behind, spent=spent,
         snapshot_only=snapshot_only_weeks(ahead, cov.covered))
 
@@ -434,7 +486,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     for r in got.picks.iter_rows(named=True):
         thin = "  (thin: one or two games priced)" if r["week"] in cov.thin else ""
         print(f"    wk {r['week']:>2}  {r['team']:<4} {r['win_prob']:.3f}{thin}")
-    print(f"  survives the {got.picks.height} planned weeks: {got.survival:.1%}")
+    wk_n = got.picks["week"].n_unique()
+    print(f"  survives the {wk_n} planned weeks "
+          f"({got.picks.height} picks): {got.survival:.1%}")
     # What the snapshot store actually buys, said out loud. These are the weeks nflverse's
     # lookahead field does not price, and the difference between a season plan and most of
     # one -- a team spent in week 3 is unavailable in week 17 whether or not this plan could
