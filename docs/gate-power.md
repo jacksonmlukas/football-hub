@@ -90,3 +90,59 @@ the null is the finding.
 
 If they are not underpowered, the chain runs as planned and this document is the reason each
 verdict may be believed.
+
+---
+
+# The measurement, 2026-09-06
+
+Run against the rule above, which was committed first in `a41301b`.
+
+## Draft backtest
+
+The only gate with a persisted paired frame: `data/processed/p0b_paired.parquet`, 80 rows,
+one per (season, draft), seasons 2022-2025. The other two gates assemble their pairs from the
+network and have nothing on disk, so they are **not measured here** -- see below.
+
+| clustered on | clusters | effect | 95% CI | bootstrap SE | MDE (80%) |
+|---|---|---|---|---|---|
+| row (current) | 80 | -19.66 | [-23.16, -16.20] | 1.79 | **5.03** |
+| season | 4 | -19.66 | [-26.68, -11.45] | 3.67 | **10.29** |
+
+The season-clustered interval was checked against `experiment.summarise(cluster=("season",))`
+and reproduces it exactly, so the standard error above comes from the same bootstrap that
+produces the published interval rather than from a second one that happens to agree.
+
+**Stage 1: this gate passes.** Clustering on the season roughly doubles the standard error and
+widens the interval by about 60% -- the effect #45 predicts -- but the reported effect is
+nearly twice the season-clustered MDE, and the interval still excludes zero.
+
+Two things this does not say. The effect is **negative**: the arm under test is behind its
+incumbent by about twenty points on this frame, so what the widening changes is the confidence
+in a loss. And stage 1 is a weak bar by construction, as the rule says -- passing it means the
+MDE sits below the point estimate the noise itself produced. The real bar is stage 2 against
+the foresight ceiling, and #42 has not been built.
+
+## Why the other two gates are unmeasured
+
+`weekly_gate.compare` and `lineup_gate.compare` build their paired frames from the network at
+run time and persist nothing, and `data/processed/` is not publishable, so neither gate can be
+measured offline or re-measured in CI. Measuring them needs either a run with credentials or
+a frozen paired frame of their own -- the second is the better answer and is the same shape as
+the panel archive #108 froze.
+
+Their clusters also differ from the backtest's: `weekly_gate` already clusters on
+`("season", "roster")`, so its current interval is not the row-level one this table compares
+against. **This result does not transfer to them.**
+
+## A finding for #45, from trying it
+
+Adding the MDE to `summarise`'s return is not additive. `paired_report` already prints an
+`MDE at 80% power` line whenever the key is present -- the reporting plumbing was written
+ahead of the producer, as `summarise`'s own docstring says it was -- so supplying the key
+changes every gate's printed output, and moves the sweep digest that
+`tests/unit/test_experiment.py` pins.
+
+That is the digest doing its job. It also means this is a change to published gate output
+rather than a measurement, so it belongs to #45 with its blockers done and a before/after on
+the affected verdicts, not to a probe. It was tried, reverted, and is recorded here so #45
+starts knowing the plumbing exists and the digest will move.
