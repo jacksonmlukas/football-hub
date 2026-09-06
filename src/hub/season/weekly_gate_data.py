@@ -11,6 +11,7 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.fetch import nflverse
 from hub.league import REG_SEASON_WEEKS
 from hub.models.experiment import realised_ppg
 from hub.models.panel import PanelSpec, build_panel, weekly_consensus
@@ -70,8 +71,6 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     """
     from collections.abc import Sequence as _Seq
 
-    import nflreadpy as nfl
-
     from hub.draft.board import board_as_of
     from hub.draft.cohort import cohort
     from hub.models.experiment import PLAYER_STATS_COLS, expanding_seasons
@@ -124,7 +123,11 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         names = board["player"].to_list()
         keys = [player_key(n) for n in names]
 
-        stats = nfl.load_player_stats(seasons=[yr]).select(list(PLAYER_STATS_COLS))
+        # Routed (#36), the same call `models.experiment` already makes for this source. The
+        # loader drops the ~22 rows a season that belong to no player and refuses if any of
+        # them scored -- so what was a silent inclusion of unattributable rows in a points
+        # aggregation is now either absent or an upstream break that says so.
+        stats = nflverse.load("player_stats", [yr], cols=list(PLAYER_STATS_COLS))
         pts_of = {(r["player"], int(r["week"])): float(r["points"])
                   for r in realised_ppg(stats).iter_rows(named=True)}
         ecr_of = {(r["key"], int(r["week"])): -float(r["ecr"])

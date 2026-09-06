@@ -127,12 +127,15 @@ def historical_picks(league_id: int, years: list[int]) -> pl.DataFrame:
     """
     import os
 
-    import nflreadpy as nfl
     from dotenv import load_dotenv
     from espn_api.football import League
 
+    from hub.fetch.nflverse import RANKINGS_COLS, load_rankings
+
     load_dotenv()
-    allr = nfl.load_ff_rankings("all")
+    # Routed (#36), and keyed on the contract's own column set so this and the board's dated
+    # read share one cache entry rather than two half-filled copies of a 1.8M-row table.
+    allr = load_rankings("all", cols=RANKINGS_COLS)
     rows = []
     for yr in years:
         try:

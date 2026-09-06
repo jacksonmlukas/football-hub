@@ -117,11 +117,13 @@ def _patch(monkeypatch, tmp_path, frame):
     naming the same as-of is served the previous test's frame from cache instead of its own.
     That is not a hypothetical -- it is what the first run of this file did.
     """
-    import hub.draft.board as board_mod
     import hub.fetch.nflverse as nv
     monkeypatch.setattr(nv, "RAW", tmp_path / "raw")
+    # One stub, not two. The live path used to read `nflreadpy` directly and needed its own
+    # double; since #36 both paths reach the archive through `load_rankings`, so stubbing the
+    # fetch layer's one entry point covers them -- and a test that has to double two seams to
+    # cover one source is a test asserting that the two agree, which nothing guaranteed.
     monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: frame)
-    monkeypatch.setattr(board_mod.nfl, "load_ff_rankings", lambda which: frame)
 
 
 def test_as_of_takes_the_latest_scrape_before_the_date(monkeypatch, tmp_path):
@@ -142,25 +144,36 @@ def test_as_of_excludes_anything_scraped_after(monkeypatch, tmp_path):
     assert consensus(as_of="2022-09-01")["player"].to_list() == ["Old"]
 
 
-def test_the_live_path_is_untouched(monkeypatch, tmp_path):
-    """No `as_of` must still read the small `draft` table, not the 1.8M-row archive.
+def test_the_live_path_reads_the_small_table_and_never_a_cached_one(monkeypatch, tmp_path):
+    """No `as_of` must still read the small `draft` table, not the 1.8M-row archive -- and it
+    must reach the wire every time.
 
-    And it must read it *directly*: `load` serves whatever is already in the cache, so a live
-    board routed through it would print yesterday's ECR on draft night without saying so.
+    This used to assert the opposite of the first half: that the live path did *not* go
+    through the loader. The reason given was right and is why the change had to keep it --
+    `load` serves whatever is already in the cache, and a live board printing yesterday's ECR
+    on draft night without saying so is the failure that matters. Going direct bought that at
+    the price of the pin, so the live board could not say what it had read.
+
+    `refresh=True` buys both: the loader fetches every time and still writes the pin. So the
+    property asserted here is now the one that was actually wanted -- never cached -- rather
+    than the mechanism that happened to deliver it (#36).
     """
-    import hub.draft.board as board_mod
     import hub.fetch.nflverse as nv
     from hub.draft.board import consensus
     frame = _dated(("Guy", 3.0, "2022-08-20"))
-    seen, routed = [], []
+    routed = []
     monkeypatch.setattr(nv, "RAW", tmp_path / "raw")
     monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: routed.append(pages) or frame)
-    monkeypatch.setattr(board_mod.nfl, "load_ff_rankings",
-                        lambda which: seen.append(which) or frame)
+
     consensus()
-    assert (seen, routed) == (["draft"], []), "the live path does not go through the loader"
+    assert routed == [["draft"]], "the live path reads the small table through the loader"
+    consensus()
+    assert routed == [["draft"], ["draft"]], (
+        "the second live board was served from cache, so draft night can print yesterday's "
+        "ECR without saying so")
+
     consensus(as_of="2022-09-01")
-    assert routed == [["all"]], "the dated path is the loader's, keyed by page type"
+    assert routed[-1] == ["all"], "the dated path is the loader's, keyed by page type"
 
 
 def test_a_date_before_the_archive_starts_is_a_contract_violation(monkeypatch, tmp_path):

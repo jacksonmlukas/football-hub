@@ -22,7 +22,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import nflreadpy as nfl
 import numpy as np
 import polars as pl
 
@@ -45,6 +44,7 @@ from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.state import DraftState, remaining
+from hub.fetch import nflverse
 from hub.fetch.nflverse import RANKINGS_COLS, load_rankings
 from hub.models import components
 from hub.models.predict import blend
@@ -97,7 +97,12 @@ def expected_points(season: int = SEASON_COMPLETED) -> pl.DataFrame:
     `rec_act` are what happened, not what was expected, and that function is about expected
     stats. Only the expected half goes through it.
     """
-    o = nfl.load_ff_opportunity(seasons=[season], stat_type="weekly")
+    # Routed, so the number a gate publishes can name the archive it came from (#36). The
+    # loader drops rows whose `player_id` is null -- unattributed team-level residue -- and
+    # that is invisible here by construction: the aggregation below groups by `player_id`, so
+    # those rows were already collapsing into a null bucket that joined to nothing. See
+    # `_clean_ff_opportunity`, whose docstring names this function as the reason.
+    o = nflverse.load("ff_opportunity", [season])
     agg = o.group_by(["player_id", "full_name", "position"]).agg([
         pl.col("receptions_exp").sum().alias("rec_exp"),
         pl.col("receptions").sum().alias("rec_act"),
@@ -189,7 +194,12 @@ def consensus(as_of: str | None = None) -> pl.DataFrame:
     across 2020-10-16 onward, which is fine once per backtest and wrong on draft night.
     """
     if as_of is None:
-        return _select_consensus(nfl.load_ff_rankings("draft"))
+        # Routed with `refresh=True`, which is the whole of the reservation this used to
+        # carry. A board that silently reuses yesterday's ECR is a draft-night failure, so
+        # this path must not be served from cache -- but going direct to skip the cache also
+        # skipped the pin, which is what left the live board unable to say what it read.
+        # `refresh=True` fetches every time *and* writes the pin, so both hold at once (#36).
+        return _select_consensus(load_rankings("draft", refresh=True, cols=RANKINGS_COLS))
     # The contract's own required set, so this and `hub.models.panel.weekly_consensus` -- the
     # two routed readers of this archive -- key the same cache entry and cannot drift apart
     # into two half-filled copies of a 1.8M-row table.

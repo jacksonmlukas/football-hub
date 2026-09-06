@@ -245,10 +245,13 @@ def holdout(signal_season: int = SEASON_COMPLETED - 1, board_season: int = SEASO
     The board is the LAST preseason ECR snapshot before the season opened, because that is
     what a drafter would actually have had in hand.
     """
-    import nflreadpy as nfl
-
     from hub.draft.projection import weighted_signal
-    weekly = (nfl.load_ff_opportunity(seasons=[signal_season], stat_type="weekly")
+    from hub.fetch import nflverse
+    from hub.fetch.nflverse import RANKINGS_COLS, load_rankings
+    # Routed (#36). The filter below is kept rather than dropped as redundant: the loader
+    # drops the same rows, so this is now a statement about what this function needs rather
+    # than a step it performs, and it is what makes the two provably equivalent.
+    weekly = (nflverse.load("ff_opportunity", [signal_season])
               .filter(pl.col("player_id").is_not_null())
               .select(pl.col("full_name"), pl.col("position"), pl.col("week"),
                       pl.col("total_fantasy_points_exp").alias("xfp"),
@@ -261,7 +264,7 @@ def holdout(signal_season: int = SEASON_COMPLETED - 1, board_season: int = SEASO
     # preseason but not this one carries his stale rank forward and is scored as though
     # the market still rated him. Harmless-looking, and it would quietly differ between
     # season pairs -- which is exactly what a multi-season comparison must not do.
-    board = (nfl.load_ff_rankings("all")
+    board = (load_rankings("all", cols=RANKINGS_COLS)
              .filter((pl.col("page_type") == (page or board_page(board_season)))
                      & (pl.col("scrape_date") < f"{board_season}-09-01")
                      & (pl.col("scrape_date") >= f"{board_season}-07-01")
@@ -270,7 +273,7 @@ def holdout(signal_season: int = SEASON_COMPLETED - 1, board_season: int = SEASO
              .unique(subset=["player"], keep="first")
              .select(pl.col("player"), pl.col("ecr"), pl.col("pos")))
 
-    truth = (nfl.load_ff_opportunity(seasons=[board_season], stat_type="weekly")
+    truth = (nflverse.load("ff_opportunity", [board_season])
              .filter(pl.col("player_id").is_not_null())
              .group_by("full_name")
              .agg(pl.col("total_fantasy_points").sum().alias("actual_points")))

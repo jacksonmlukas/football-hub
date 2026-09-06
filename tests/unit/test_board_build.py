@@ -710,3 +710,36 @@ def test_a_missing_correction_actually_moves_the_corrected_ranking():
         "absorbing the touchdown-luck stage left the corrected ranking identical, which "
         "would make it advisory after all -- and would make the printed note wrong")
     assert rank(b.drop("missed")) != with_both, "same for durability"
+
+
+def test_a_routed_board_reads_one_archive_entry_twice_and_gets_the_same_frame(
+        tmp_path, monkeypatch):
+    """#36's third criterion. The board's two archive reads go through the fetch layer now,
+    so a build at a fixed as-of has to answer from the pinned entry rather than from whatever
+    the wire says this minute -- twice, identically.
+
+    Asserted at the loader rather than through a whole board build, because a build needs
+    ESPN and a scoring check besides, and a test that can only run with a network is a test
+    nobody re-runs. What routing changed is which path the archive reads take; that is what
+    is checked.
+    """
+    from hub.fetch import nflverse as nv
+
+    # The nine columns `FF_RANKINGS` declares. Building a narrower frame here would be
+    # testing the contract's refusal rather than the routing, and it did on the first run.
+    frame = pl.DataFrame({
+        "page_type": ["redraft-overall"] * 2,
+        "player": ["A", "B"], "pos": ["WR", "RB"], "team": ["PHI", "DAL"],
+        "ecr": [1.0, 2.0], "best": [1.0, 1.0], "worst": [3.0, 4.0], "sd": [0.5, 0.6],
+        "scrape_date": ["2026-08-20", "2026-08-20"],
+    })
+    calls = []
+    monkeypatch.setattr(nv, "RAW", tmp_path / "raw")
+    monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: calls.append(pages) or frame)
+
+    first = nv.load_rankings("all", as_of="2026-09-01")
+    second = nv.load_rankings("all", as_of="2026-09-01")
+    assert first.equals(second), "a pinned as-of did not reproduce"
+    assert len(calls) == 1, "the second read went to the wire, so the as-of is not pinned"
+    # And the run can say what it read, which is the point of routing it at all.
+    assert any(p.source == "ff_rankings" for p in nv.pins_this_run())
