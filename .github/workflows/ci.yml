@@ -33,7 +33,13 @@ jobs:
       # (espn.poll, league_settings, availability.historical_picks) or expensive harness
       # CLIs. Covering those means stubbing six things to assert an exit code, which is the
       # shape of test this repo has a documented incident about.
-      - run: uv run pytest tests/unit tests/contracts -q --cov=hub --cov-fail-under=88
+      - run: >
+          uv run pytest tests/unit tests/contracts -q --cov=hub --cov-fail-under=88
+          --cov-report=json:coverage.json
+      # The total floor above cannot see one module losing its tests: #104 took
+      # `models/weekly.py` from 98% to 22% and the total only fell to 89.62%, which cleared
+      # 88 and passed. This is per-module and it is a ratchet -- see tests/coveragefloor.py.
+      - run: uv run python scripts/coverage_ratchet.py coverage.json
 
   golden:
     # Hits the real APIs and diffs against frozen fixtures. Scheduled, not on PRs, because a

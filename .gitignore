@@ -20,6 +20,7 @@ outputs/
 # reports, because the deployed page could only ever show whatever was last committed.
 site/data/live.json
 .coverage
+coverage.json
 htmlcov/
 
 # Personal Claude Code overrides -- machine-local, never shared.
