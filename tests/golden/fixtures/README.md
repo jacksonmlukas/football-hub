@@ -169,3 +169,86 @@ offensive snap, so the bottom of the `offense_pct` range is exercised as well as
 
 CFBD prohibits redistributing its data. A hand-built two-row shape sample is not a dataset,
 but a real capture would be -- if you replace these, keep them minimal.
+
+## `panel_archive/` — the seven #108 added
+
+Everything above this line is one payload per source, a handful of rows, read by a contract
+test. This directory is different in kind: it is an **archive** rather than a payload, and it
+exists to be *run through*, not parsed. `hub.models.panel.build_panel` reads eleven sources and
+every one is marked `pragma: no cover - network`, so the entire assembly — eleven joins, five
+per-source narrowings, the expanding aggregates that are the one statement of the
+before-its-outcome rule — was covered by a single `inspect.getsource` call that grepped the
+function's own text. `tests/panelarchive.py` serves these files to the assembly at the last
+call before the wire, so that everything above that line is the production path.
+
+Captured on **2026-09-05** by one bulk `nflreadpy` call per source, plus one run of
+`hub.draft.board.board_as_of(2024)`. No key, no loop over teams or games.
+
+| Fixture | Source |
+|---|---|
+| `panel_archive/player_stats.json` | **Captured**, `load_player_stats([2023, 2024], summary_level="week")`, 410 rows |
+| `panel_archive/schedules.json` | **Captured**, `load_schedules()`, all 416 REG games of weeks 1-14 |
+| `panel_archive/snap_counts.json` | **Captured**, `load_snap_counts([2023, 2024])`, 410 rows |
+| `panel_archive/injuries.json` | **Captured**, `load_injuries([2023, 2024])`, 101 rows |
+| `panel_archive/ff_rankings.json` | **Captured**, `load_ff_rankings("all")`, the `weekly-op` page, 456 rows |
+| `panel_archive/ff_opportunity.json` | **Captured**, `load_ff_opportunity(stat_type="weekly")`, 1,000 rows — see below |
+| `panel_archive/draft_board.json` | **Captured** output of `board_as_of(2024)`, its top 200 rows |
+
+**Each file carries its own dtypes.** These are `{"dtypes": {...}, "rows": [...]}` rather than
+a bare list, and that is not a second dialect for its own sake. JSON has three scalar types and
+nflverse has a dozen: inferred, a float column whose captured values are all whole numbers
+comes back `Int64`, and a column null on every captured row comes back `Null`. Both change what
+the assembly does with it, so the dtype map is part of the capture — it records the frame
+nflverse returned rather than what JSON could carry.
+
+**What was trimmed, and why the trim keeps every path the assembly takes.** Sixteen players,
+four at each position, over weeks 1-14 of 2023 and 2024. Sixteen because the trend features
+reach back six calendar weeks and the priors expand over every earlier week, so the binding
+constraint is *consecutive weeks*, not players: a capture of four hundred players over three
+weeks would leave every trend null and every leakage assertion true over nothing.
+`test_the_trend_features_have_something_to_compute_on` is the floor that says so, in numbers.
+Columns are cut to what the reader takes — the twenty-three `weekly_stats` names, the eleven
+`game_context` and `week_windows` read off a schedule, `offense_pct` and the REG marker for
+snaps, the status/practice pair plus identity for injuries, and `FF_RANKINGS.required` exactly,
+since that is the column list `load_rankings` asks the loader for.
+
+**Which sixteen, and why those.** Six change team between the two seasons or miss weeks, so the
+calendar-grid reindexing in `trend` and `recent_mean` is exercised on real gaps rather than on
+a frame that never has one. All sixteen are on the frozen board, so the gate-side assembly
+joins rather than resolving to nothing. And two — **Michael Pittman in 2024 week 6 and Gus
+Edwards in 2024 week 10** — were really absent from that week's cross-position consensus page
+and really scored (12.5 and 5.5). Those two cells are the only reason
+`hub.season.weekly_gate.VOID_FLOOR` guards something a test can reach: three roster-weeks of
+3,080 over the twenty-draft **Cohort**, 0.097% against a pre-registered floor of 2%.
+
+**The board is a capture of an output, not of inputs.** `board_as_of(2024)` returned 1,103
+players and the file keeps its top 200 in the board's own `(ecr, player)` order, every column.
+Rows only, because the draft simulation reads columns this file has no business guessing at,
+and 200 because twelve teams over fourteen rounds take 168 of them. Freezing the board's
+*inputs* instead would mean a whole season of `ff_opportunity` and the redraft archive, to
+exercise a seam that belongs to `hub.draft.board` and has six test files of its own. What
+`assemble_universe` owns is everything from the board onward, and that runs here for real.
+
+**The 650 rows of `ff_opportunity` that join to nothing.** `FF_OPPORTUNITY` declares
+`min_rows=1000` and the production loader validates before the panel sees the frame, so a file
+holding only the sixteen players' 350 rows would fail the contract rather than the test. The
+remainder is every other row in the same (season, week) cells, in `(season, week, player_id)`
+order, taken until the file reaches exactly 1,000. They join to no Panel row and are there for
+the floor and nothing else.
+
+**What this archive cannot drive, and why no file here does.** `PanelSpec(routes=...)` and
+`PanelSpec(scheme=...)` read `load_participation` and `load_ftn_charting`, which are
+play-level. A capture deep enough to make a six-week team trend real is thousands of rows of
+`offense_players` strings — larger than everything else here together — to exercise two opt-in
+features the repo has already measured as null, whose arithmetic is covered by
+`route_share_from_plays` and `scheme_rates_from_plays` on their own. So the gap is left open
+and named, the way the NFL in-progress board above is: `tests/panelarchive.py` installs both as
+refusals that raise, so the day someone turns a flag on they get that sentence instead of a
+silent live fetch. What is *not* covered by this archive is the call: whether the scheme trend
+is taken on the team-week frame and joined once, which is the hazard `trend`'s own guard names.
+
+**One number here is an artefact of the trim and must not be read as production.** The board
+carries 200 players and the frozen consensus page carries 16 of them, so 88% of roster-week
+cells come back unranked against roughly 64% in a real run. `coverage` reports `unranked` and
+`join_failure` as two numbers for exactly this reason — only the second is what `VOID_FLOOR`
+reads, and only the second is asserted.

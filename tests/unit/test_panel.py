@@ -3,14 +3,22 @@
 Split out of `test_weekly_screen.py` alongside the module itself. These tests are about
 *assembly* -- what a source contributes, what survives a join, what a window belongs to. The
 statistic that gets measured on the result is tested next door.
+
+Two halves, and the second exists because the first is not enough. Above the divider each leaf
+is exercised on a hand-built frame: a window, a share, a two-scrape tie-break. Below it,
+`build_panel` itself runs end to end against a frozen capture, because the rule that makes a
+Panel a Panel is not in any leaf -- it is in how they are called. That half used to be a single
+`inspect.getsource` assertion that read the function's own text back.
 """
 import datetime as dt
 
 import numpy as np
+import panelarchive as arc
 import polars as pl
 import pytest
 
 from hub.models import panel as pnl
+from hub.names import player_key
 
 
 def _windows():
@@ -44,22 +52,6 @@ def test_recent_mean_counts_calendar_weeks_not_appearances():
     out = pnl.recent_mean(p, "targets").sort("week")
     assert out["targets_recent"].to_list()[2] == pytest.approx(10.0), \
         "week 4 averages weeks 1-3, of which only 1 and 2 exist"
-
-
-def test_the_panel_carries_the_designation_but_cannot_fit_retention_on_it():
-    """A pin on a structural fact, so nobody quietly fits the injury term on this panel.
-
-    `player_stats` has no row for a player who did not play, so of 5,473 "Out" designations
-    across 2021-25 exactly six reach the panel. `hub.models.injury` scores an injury row with
-    no stat row as zero -- the player who did not play is its whole subject -- so retention
-    fitted here would measure "what a Questionable player who played anyway retains" and
-    report it under the stronger result's name. The term belongs in Gate B, which builds a
-    complete grid where a missing row is a zero.
-    """
-    import inspect
-    src = inspect.getsource(pnl.build_panel)
-    assert "CANNOT be fitted here" in src, "the constraint must stay stated where it is read"
-    assert "status" in src and "practice" in src, "and the columns are carried for Gate B"
 
 
 def test_a_midweek_scrape_belongs_to_the_week_it_is_inside():
@@ -376,3 +368,247 @@ def test_an_unpinned_panel_is_still_the_common_case(monkeypatch, tmp_path):
     from hub.config import UNPINNED, data_digest
     assert data_digest([p for p in (pnl.consensus_pin(None),) if p is not None]) != UNPINNED, \
         "an unbounded load still writes an undated pin; it is the as-of that is absent"
+
+
+# --- the assembly itself, run end to end against a frozen archive ------------
+#
+# Everything above this line tests a leaf: a window, a share, a two-scrape tie-break. The
+# rule that makes a **Panel** a Panel is not in any leaf -- it is in how `build_panel` calls
+# them, on which key, over which grid, joined back to which rows. That was covered by one
+# `inspect.getsource` assertion that grepped the function's own text, which passes for a
+# function rewritten to do something else so long as the string it looks for survives.
+#
+# So the assembly runs. `tests/panelarchive.py` serves it a frozen capture of all six sources
+# it reads at the last call before the wire, so every narrowing in between -- the REG filter,
+# the position filter, the name key, the as-of window, eleven joins -- is the production path.
+#
+# **Why this rule and not another.** Leakage is the one defect this repo cannot detect after
+# the fact. A feature accidentally measured after its outcome makes a screen look *better*,
+# clears its gate and publishes cleanly, and stays indistinguishable from a finding until a
+# season contradicts it. Every other guard here protects something a reader could eventually
+# notice was wrong.
+
+# The play-derived facts a perturbation moves. Not the injury report, the line or the
+# consensus page: those are published *before* kickoff and are week-w information by the rule
+# itself, so moving them would be testing the opposite claim.
+_PLAY = ("fantasy_points_ppr", "target_share", "receiving_yards", "rushing_yards",
+         "passing_yards", "receiving_tds", "rushing_tds", "passing_tds", "targets",
+         "receptions", "carries", "attempts", "completions", "passing_interceptions",
+         "fumbles_lost_total")
+
+
+def _rewrite_play(season, week, name):
+    """One player-week's realised play, made unmistakably different."""
+    def edit(df):
+        hit = ((pl.col("season") == season) & (pl.col("week") == week)
+               & (pl.col("player_display_name") == name))
+        return df.with_columns(
+            [pl.when(hit).then(pl.col(c).cast(pl.Float64) + 37.0)
+               .otherwise(pl.col(c).cast(pl.Float64)).alias(c) for c in _PLAY])
+    return edit
+
+
+def _rewrite_snaps(season, week, name):
+    def edit(df):
+        hit = ((pl.col("season") == season) & (pl.col("week") == week)
+               & (pl.col("player") == name))
+        return df.with_columns(pl.when(hit).then(pl.lit(0.03))
+                                 .otherwise(pl.col("offense_pct")).alias("offense_pct"))
+    return edit
+
+
+def _both_panels(monkeypatch, tmp_path, season, week, name):
+    """The Panel from the archive, and the Panel from the archive with one week rewritten."""
+    arc.install(monkeypatch, tmp_path / "as-captured")
+    base = pnl.build_panel(arc.SEASONS)
+    monkeypatch.undo()
+    arc.install(monkeypatch, tmp_path / "rewritten", edits={
+        "player_stats": _rewrite_play(season, week, name),
+        "snap_counts": _rewrite_snaps(season, week, name)})
+    return base, pnl.build_panel(arc.SEASONS)
+
+
+# Two, at different positions and in different seasons, so a green result is not a property
+# of one lucky row. Both sit far enough into their season for every window to be full.
+_REWRITTEN = [("CeeDee Lamb", 2024, 8), ("Bijan Robinson", 2023, 9)]
+
+
+@pytest.mark.parametrize(("name", "season", "week"), _REWRITTEN)
+def test_no_feature_moves_when_its_own_weeks_play_is_rewritten(monkeypatch, tmp_path,
+                                                               name, season, week):
+    """**The rule, asserted by running the assembly.** A feature measured after its outcome
+    would move when that outcome moves; every feature here is measured before it, so none may.
+
+    One player-week's realised play is rewritten in the frozen archive -- points, counts,
+    yardage, turnovers, target share, snap share, all of it -- and the Panel is rebuilt. Every
+    feature on every row at or before that (season, week) must be bit-identical. Not only that
+    player's row: a defence-vs-position term reads the whole league's week, and a leak there
+    would arrive on somebody else's row.
+
+    What may move on the rewritten row is what the archive itself supplies -- the realised
+    columns and the two totals built from them -- and `panelarchive.play_derived_columns`
+    derives that exempt set from the captures rather than listing it, so a feature added to
+    the Panel is tested rather than quietly exempted.
+    """
+    base, after = _both_panels(monkeypatch, tmp_path, season, week, name)
+    feats = arc.features(base)
+    before = arc.rows_up_to(base, season, week).select(feats)
+    got = arc.rows_up_to(after, season, week).select(feats)
+    assert before.height == got.height, (
+        f"the rewrite changed which rows exist at or before {season} week {week} "
+        f"({before.height} -> {got.height}); it is meant to change values, not membership")
+    moved = [c for c in feats if not before[c].equals(got[c])]
+    assert not moved, (
+        f"{moved} moved on rows at or before {season} week {week} when only that week's own "
+        f"play was rewritten. A feature that can see its own outcome week is the one defect "
+        f"this repo cannot detect after the fact: it makes a screen look better, clears its "
+        f"gate and publishes, and reads as a finding until a season contradicts it.")
+
+
+@pytest.mark.parametrize(("name", "season", "week"), _REWRITTEN)
+def test_the_rewritten_week_does_reach_the_features_that_are_allowed_to_see_it(
+        monkeypatch, tmp_path, name, season, week):
+    """The premise of the test above, which is otherwise satisfiable by changing nothing.
+
+    An edit the assembly never reads makes "no feature moved" vacuously true -- the shape
+    every guard in `tests/contracts/test_guards_are_load_bearing.py` was written after. Later
+    weeks are exactly where that week's play is *supposed* to arrive: it is their past.
+    """
+    base, after = _both_panels(monkeypatch, tmp_path, season, week, name)
+    feats = arc.features(base)
+    later = ((pl.col("season") > season)
+             | ((pl.col("season") == season) & (pl.col("week") > week)))
+    a = base.filter(later).sort(["player_id", "season", "week"]).select(feats)
+    b = after.filter(later).sort(["player_id", "season", "week"]).select(feats)
+    moved = [c for c in feats if not a[c].equals(b[c])]
+    assert len(moved) >= 10, (
+        f"only {moved} moved after {season} week {week}; the rewrite is not reaching the "
+        f"assembly, so the leakage test beside this one is asserting nothing")
+    assert {"ppg_before", "dvp", "snap_trend", "tgt_trend", "targets_recent"} <= set(moved), (
+        f"the season-to-date control, the opponent term, both trends and the recent mean all "
+        f"read earlier weeks, so all five must move; {sorted(moved)} did")
+
+
+def test_the_panel_is_one_row_per_player_season_week(monkeypatch, tmp_path):
+    """The other half of the definition. A fanned-out join is how a Panel stops being one.
+
+    `trend` raises on a duplicated key for this reason and is tested on a hand-built frame
+    above; this asserts the assembly does not hand it one in the first place.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS)
+    assert p.height > 0, "an empty Panel would satisfy every assertion in this section"
+    assert not p.select("player_id", "season", "week").is_duplicated().any()
+
+
+def test_the_trend_features_have_something_to_compute_on(monkeypatch, tmp_path):
+    """The archive's own premise. `trend` reaches back six calendar weeks, so a capture of
+    three weeks would return an all-null column and every leakage assertion above would hold
+    over nothing. Recorded as a number rather than left to whoever next trims the fixture."""
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS)
+    for col in ("snap_trend", "tgt_trend", "dvp", "targets_recent", "ppg_before"):
+        assert p[col].drop_nulls().len() >= 200, (
+            f"{col} is null on all but {p[col].drop_nulls().len()} of {p.height} rows")
+
+
+def test_the_panel_carries_the_designation_and_the_out_weeks_do_not_reach_it(monkeypatch,
+                                                                            tmp_path):
+    """The structural fact that stops anyone fitting the injury term on this Panel, measured.
+
+    `player_stats` has no row for a player who did not play, so an "Out" designation and a
+    Panel row are nearly disjoint by construction -- 6 of 5,473 across 2021-25 in production,
+    and 0 of 3 in this capture. `hub.models.injury` prices an injury row with no stat row as
+    *zero*, and the player who did not play is its whole subject; retention fitted here would
+    measure "what a Questionable player who played anyway retains" and report it under the
+    stronger result's name.
+
+    This replaces an `inspect.getsource` assertion that grepped `build_panel` for the sentence
+    "CANNOT be fitted here". That passed for any function still carrying the string and failed
+    for a correct one that worded it differently, which is the wrong way round. The sentence
+    stays in the docstring, where a reader meets it; what holds it true is here.
+
+    `status` and `practice` are carried regardless, because Gate B builds a complete grid
+    where a missing row is a zero, and that is where the term belongs.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS)
+    inj = arc.frame("injuries")
+    assert {"status", "practice"} <= set(p.columns), "carried for Gate B"
+    assert inj.filter(pl.col("report_status") == "Out").height == 3, \
+        "the capture holds three Out designations; without one there is nothing to be absent"
+    assert p.filter(pl.col("status") == "Out").height == 0, \
+        "none of them reaches a Panel row, because he did not play"
+    assert p.filter(pl.col("status") == "Questionable").height == 9, \
+        "Questionable does reach it -- 9 of the capture's 14 -- which is the weaker term"
+    assert p.filter(pl.col("status") == "Healthy").height > 0, \
+        "and a player with no injury row comes through as Healthy, not as a dropped null"
+
+
+def test_the_gate_spec_keeps_the_players_the_consensus_page_leaves_out(monkeypatch, tmp_path):
+    """`consensus=False` is not a smaller Panel, it is a wider one, and only running says so.
+
+    The gate needs a projection for every rostered player. Being unranked is the incumbent's
+    *answer*, not a reason to have no projection -- only the screen, which measures beyond
+    consensus, requires it to exist. The inner join at the end of `build_panel` is where that
+    happens, and 66 player-weeks of this capture fall through it.
+    """
+    arc.install(monkeypatch, tmp_path)
+    screen = pnl.build_panel(arc.SEASONS)
+    everyone = pnl.build_panel(arc.SEASONS, pnl.PanelSpec(consensus=False))
+    assert everyone.height == 410 and screen.height == 344
+    assert "ecr" in screen.columns and "ecr" not in everyone.columns
+    kept = set(zip(screen["season"].to_list(), screen["week"].to_list(), strict=True))
+    all_weeks = set(zip(everyone["season"].to_list(), everyone["week"].to_list(), strict=True))
+    assert (2024, 1) in all_weeks and (2024, 1) not in kept, \
+        "the archive's consensus page starts at 2024 week 4; weeks 1-3 exist only unranked"
+
+
+def test_the_expected_spec_moves_the_priors_and_not_the_realised_columns(monkeypatch,
+                                                                        tmp_path):
+    """What `PanelSpec(expected=True)` actually changes, run rather than read.
+
+    `ff_opportunity` prices each opportunity by its situation, so a six-target week three
+    yards downfield stops being the same number as one at fifteen. It is coalesced into the
+    frame the priors are taken over -- so `receiving_yards_prior` moves -- while the Panel's
+    own realised `receiving_yards` for the week is untouched.
+    """
+    arc.install(monkeypatch, tmp_path)
+    plain = pnl.build_panel(arc.SEASONS)
+    xp = pnl.build_panel(arc.SEASONS, pnl.PanelSpec(expected=True))
+    assert plain.height == xp.height
+    on = ["player_id", "season", "week"]
+    j = plain.sort(on).join(xp.sort(on).select(*on, pl.col("receiving_yards").alias("x_real"),
+                                               pl.col("receiving_yards_prior").alias("x_prior")),
+                            on=on)
+    assert j.filter(pl.col("receiving_yards") != pl.col("x_real")).height == 0, \
+        "the realised column is what happened and the spec does not rewrite it"
+    moved = j.filter((pl.col("receiving_yards_prior") - pl.col("x_prior")).abs() > 1e-9)
+    assert moved.height >= 100, \
+        f"only {moved.height} priors moved; the expected frame is not reaching them"
+
+
+def test_an_injected_board_lands_on_the_season_it_was_built_for(monkeypatch, tmp_path):
+    """`spec.ranks` is injected rather than fetched, and this is what the injection has to do.
+
+    A board lives under `draft/` and six `draft/` modules import `models/` while nothing goes
+    the other way, so `build_panel` takes the frame instead of building one --
+    `weekly_gate_data.preseason_ranks` is the caller that does. The join is on (key, season),
+    so a board built for one season must reach that season's rows and no others: an August
+    opinion about 2024 is not an August opinion about 2023, and a join that lost the season
+    would make it one.
+    """
+    arc.install(monkeypatch, tmp_path)
+    board = arc.frame("draft_board")
+    ranks = board.select(
+        pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("key"),
+        pl.lit(2024).cast(pl.Int64).alias("season"),
+        pl.col("ecr").alias("preseason_ecr")).drop_nulls("preseason_ecr")
+    p = pnl.build_panel(arc.SEASONS, pnl.PanelSpec(consensus=False, ranks=ranks))
+    assert "preseason_ecr" in p.columns
+    got = p.filter(pl.col("preseason_ecr").is_not_null())
+    assert got.height > 0 and set(got["season"].to_list()) == {2024}, \
+        "a board built for 2024 must not price 2023's weeks"
+    assert p.filter((pl.col("season") == 2024)
+                    & pl.col("preseason_ecr").is_null()).height == 0, \
+        "and every 2024 player here is on that board, so none should come back unpriced"
