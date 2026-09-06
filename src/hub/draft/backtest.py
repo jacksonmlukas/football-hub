@@ -50,6 +50,7 @@ from hub.config import (
     DraftConfig,
     RosterConfig,
     config_digest,
+    data_digest,
     drafted_positions,
     resolved_config,
 )
@@ -63,6 +64,7 @@ from hub.draft.optimize import (
 )
 from hub.draft.season import lineup_points
 from hub.draft.state import DraftState
+from hub.fetch.nflverse import pins_this_run
 from hub.league import REG_SEASON_WEEKS
 from hub.models.experiment import (
     BOOTSTRAP,  # noqa: F401 -- re-exported: tests reach it as `bt.BOOTSTRAP`
@@ -538,10 +540,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         # while `conf/` overrides nothing that diverges from one. Same call as the fetch
         # layer's provenance line and `ratings.live_config`, so a run's three stamps cannot
         # disagree about what a run was.
+        #
+        # `data_digest` beside it, and that is the pinning layer's whole premise arriving:
+        # every gate output should name the data it scored against, so an archive that moved
+        # shows up as a changed digest rather than as a silently different number. The digest
+        # existed and nothing computed one, so until now a moved archive was exactly the
+        # silent case (issue #71).
+        pins = pins_this_run()
+        data = data_digest(pins)
         stamped = paired.with_columns(
-            pl.lit(config_digest(resolved_config())).alias("cfg_digest"))
+            pl.lit(config_digest(resolved_config())).alias("cfg_digest"),
+            pl.lit(data).alias("data_digest"))
         stamped.write_parquet(a.out)
         print(f"\n  wrote {paired.height} paired rows to {a.out}")
+        # Printed as well as stored, because the reader deciding whether two runs are
+        # comparable is usually reading the terminal, not the parquet.
+        print(f"  data: {data} over {len(pins)} pinned source(s)"
+              + ("" if pins else " -- nothing was loaded through the pinning layer"))
     return 0
 
 

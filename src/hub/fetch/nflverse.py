@@ -406,6 +406,54 @@ def _pin_path(path: Path) -> Path:
     return path.with_suffix(".pin.json")
 
 
+# What this process has actually read, keyed by the entry it came from. A gate folds these
+# into the `data` digest it publishes, so an archive that moved shows up as a changed digest
+# rather than as a silently different number -- which is the whole premise of the pinning
+# layer and the one part of it nothing computed (issue #71).
+#
+# Recorded here rather than assembled by the gate, because this is the only place that knows
+# what a run read. A gate naming its own sources would be a second list, free to drift from
+# the loads that actually happened, and drift is the failure this digest exists to catch.
+#
+# Both paths record: a cache hit reads the sidecar beside the entry it served. A run that
+# answered entirely from cache has read data and has to be able to say which.
+_READ_THIS_RUN: dict[str, Pin] = {}
+
+
+def pins_this_run() -> tuple[Pin, ...]:
+    """Every nflverse entry this process has loaded, in the order first read.
+
+    Empty is a truthful answer and `config.NO_DATA` is what a digest over it says: a run that
+    loaded nothing pinned nothing. Callers fold this through `config.data_digest`.
+    """
+    return tuple(_READ_THIS_RUN.values())
+
+
+def _remember(path: Path, pin: Pin | None) -> None:
+    """Record what an entry held, once per entry. First read wins.
+
+    A second load of the same entry in one process returns the same bytes -- the cache path is
+    a function of the key -- so re-recording would only reorder the digest's inputs.
+    """
+    if pin is not None:
+        _READ_THIS_RUN.setdefault(str(path), pin)
+
+
+def _pin_beside(path: Path) -> Pin | None:
+    """The pin written next to one cache entry, or None if there is nothing readable there."""
+    try:
+        raw = json.loads(_pin_path(path).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    known = {f.name for f in fields(Pin)}
+    try:
+        return Pin(**{k: v for k, v in raw.items() if k in known})
+    except TypeError:
+        return None
+
+
 def data_pin(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None = None,
              cache: Path | None = None, as_of: str | date | None = None) -> Pin | None:
     """The pin beside one cache entry, or None when nothing readable has been written there.
@@ -422,18 +470,7 @@ def data_pin(source: str, seasons: Sequence[int | str], cols: Sequence[str] | No
     later version has to degrade to the fields understood here. A record missing what *identifies*
     it is a different case and reads as nothing: a Pin with no digest names no data.
     """
-    path = _pin_path(_cache_path(source, seasons, cols, cache, _as_of_date(as_of)))
-    try:
-        raw = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return None
-    if not isinstance(raw, dict):
-        return None
-    known = {f.name for f in fields(Pin)}
-    try:
-        return Pin(**{k: v for k, v in raw.items() if k in known})
-    except TypeError:
-        return None
+    return _pin_beside(_cache_path(source, seasons, cols, cache, _as_of_date(as_of)))
 
 
 def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None = None,
@@ -477,6 +514,8 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
     stamp = _as_of_date(as_of)
     path = _cache_path(source, seasons, cols, cache, stamp)
     if path.exists() and not refresh:
+        # A cache hit is still a read, and the run has to be able to say what it read.
+        _remember(path, _pin_beside(path))
         return pl.read_parquet(path)
 
     contract = SOURCES[source]
@@ -506,13 +545,15 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
     path.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(path)
     iso = stamp.isoformat() if stamp is not None else None
-    _pin_path(path).write_text(json.dumps(asdict(Pin(
+    pin = Pin(
         source=source,
         as_of=iso,
         digest=pin_digest(source, iso, df),
         rows=df.height,
         pinned_at=None if reproducible else datetime.now(UTC).isoformat(timespec="seconds"),
-    )), indent=2, sort_keys=True) + "\n")
+    )
+    _pin_path(path).write_text(json.dumps(asdict(pin), indent=2, sort_keys=True) + "\n")
+    _remember(path, pin)
     return df
 
 

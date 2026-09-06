@@ -1127,3 +1127,61 @@ def test_a_rankings_load_with_no_as_of_still_returns_the_whole_archive(fake_rank
     `hub.draft.board.consensus(None)` reads the small `draft` page this way."""
     fake_rankings(["2026-08-01", "2026-09-10"], per_date=2)
     assert nv.load_rankings("draft", cache=tmp_path).height == 4
+
+
+# --- what a run read, so a gate can name it (issue #71) --------------------
+
+def test_a_run_records_what_it_loaded_so_a_gate_can_name_it(fake_rankings, tmp_path,
+                                                            monkeypatch):
+    """The pinning layer's premise: every gate output names the data it scored against, so a
+    moved archive shows up as a changed digest rather than as a silently different number.
+
+    The digest existed and nothing in the source tree computed one, which left a moved archive
+    as exactly the silent case the layer was built to remove.
+    """
+    from hub.config import UNPINNED, data_digest
+
+    fake_rankings()
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    assert nv.pins_this_run() == ()
+    assert data_digest(nv.pins_this_run()) == UNPINNED, (
+        "a run that loaded nothing must say so rather than hashing an empty set into "
+        "something that looks like data")
+
+    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    pins = nv.pins_this_run()
+    assert len(pins) == 1 and pins[0].source == "ff_rankings"
+    assert data_digest(pins) != UNPINNED
+
+
+def test_a_cache_hit_is_still_a_read(fake_rankings, tmp_path, monkeypatch):
+    """The path that returned before recording anything.
+
+    A run answered entirely from cache has read data and has to be able to say which -- and
+    that is the *common* case for a gate re-run, which is when someone is most likely to be
+    asking whether two numbers are comparable. Nothing else here exercises the early return.
+    """
+    fake_rankings()
+    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)   # populates the entry
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+
+    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)   # served from cache
+    pins = nv.pins_this_run()
+    assert len(pins) == 1, "a cache hit recorded nothing, so a re-run names no data"
+    assert pins[0].digest, "the pin beside the served entry was not read"
+
+
+def test_reading_the_same_entry_twice_does_not_double_the_digest(fake_rankings, tmp_path,
+                                                                 monkeypatch):
+    """The cache path is a function of the key, so a second load returns the same bytes.
+    Recording it again would only reorder the digest's inputs, which would make a digest
+    depend on how many times a run happened to ask."""
+    from hub.config import data_digest
+
+    fake_rankings()
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    once = data_digest(nv.pins_this_run())
+    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    assert data_digest(nv.pins_this_run()) == once
+    assert len(nv.pins_this_run()) == 1
