@@ -191,3 +191,104 @@ def test_the_same_seed_and_ledger_reproduce_the_same_figure():
     a = pool.entry_outcome(g, [1, 2], rng=np.random.default_rng(11), **kw)
     b = pool.entry_outcome(g, [1, 2], rng=np.random.default_rng(11), **kw)
     assert a == b
+
+
+# --- the buyback, which is an investment decision and not a survival one ------
+
+
+def _season(weeks=(1, 2, 3)):
+    return _grid([(w, a, b, p) for w in weeks
+                  for a, b, p in (("KC", "LV", 0.85), ("SF", "SEA", 0.8),
+                                  ("BUF", "NYJ", 0.75), ("DAL", "NYG", 0.7))])
+
+
+def test_a_buyback_inherits_the_ledger_rather_than_starting_fresh():
+    """Written before the arithmetic, because this is the part that gets implemented as a
+    fresh entry by accident. The commissioner confirmed a re-entry keeps its used teams, so
+    buying back in week 6 with six teams spent is a weaker entry than the same $20 in week 2 --
+    and a figure that does not move with the ledger is the tell that it was priced as fresh."""
+    g = _season()
+    kw = {"live_entries": 8, "pot": 420.0, "trials": 400}
+    early = pool.buyback(g, [1, 2, 3], week=1, ledger=(), rng=np.random.default_rng(3), **kw)
+    late = pool.buyback(g, [1, 2, 3], week=1, ledger=("KC", "SF", "BUF"),
+                        rng=np.random.default_rng(3), **kw)
+    assert late.spent == 3 and early.spent == 0
+    assert late.equity < early.equity
+
+
+def test_equity_above_the_fee_recommends_buying_back():
+    """A big pot and a thin field: the share is worth more than the $20 it costs."""
+    b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=(), live_entries=2, pot=420.0,
+                     trials=400, rng=np.random.default_rng(8))
+    assert b.available and b.recommend
+    assert b.net > 0 and b.equity > b.fee
+    assert b.breakeven == pytest.approx(b.equity)
+
+
+def test_equity_below_the_fee_recommends_against():
+    """A small pot and a crowded field. The breakeven is still reported, because a decision
+    without its margin is not a decision -- a net of -$0.40 and -$40 read the same otherwise."""
+    b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=("KC", "SF"), live_entries=60,
+                     pot=40.0, trials=400, rng=np.random.default_rng(8))
+    assert b.available and not b.recommend
+    assert b.net < 0 and b.breakeven == pytest.approx(b.equity)
+
+
+def test_the_sign_of_net_is_the_recommendation():
+    """Pinned so a negative figure can never be read as a positive one."""
+    for pot, live in ((420.0, 2), (40.0, 60)):
+        b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=(), live_entries=live, pot=pot,
+                         trials=300, rng=np.random.default_rng(9))
+        assert b.recommend == (b.net > 0)
+        assert b.net == pytest.approx(b.equity - b.fee)
+
+
+def test_a_buyback_past_the_cutoff_is_unavailable_not_priced():
+    """Reported rather than returned as a zero, which would read as a live decision that came
+    out badly instead of an option that does not exist."""
+    b = pool.buyback(_season(), [1, 2, 3], week=7, ledger=(), live_entries=8, pot=420.0,
+                     trials=50, rng=np.random.default_rng(0))
+    assert not b.available and not b.recommend
+    assert "the last one that allows it" in b.reason
+
+
+def test_rival_buybacks_move_the_pot_and_the_field_together():
+    """Both sides, which is the point. Modelling only the fees would make every buyback look
+    better than it is: the money they add comes with the people who added it."""
+    kw = {"ledger": (), "live_entries": 8, "pot": 420.0, "trials": 300}
+    alone = pool.buyback(_season(), [1, 2, 3], week=1, rival_buybacks=0,
+                         rng=np.random.default_rng(10), **kw)
+    crowd = pool.buyback(_season(), [1, 2, 3], week=1, rival_buybacks=3,
+                         rng=np.random.default_rng(10), **kw)
+    assert crowd.pot > alone.pot
+    assert crowd.field > alone.field
+    assert crowd.pot - alone.pot == pytest.approx(3 * alone.fee)
+    assert crowd.field - alone.field == 3
+
+
+def test_a_cap_of_zero_means_no_buyback_and_no_growth():
+    """Zero is a rule, not an absence. Nobody re-enters, so the pot is the pot."""
+    b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=(), live_entries=8, pot=420.0,
+                     rival_buybacks=5, pool=PoolConfig(buyback_cap=0), trials=50,
+                     rng=np.random.default_rng(0))
+    assert not b.available
+    assert b.pot == 420.0
+    assert "cap is zero" in b.reason
+
+
+def test_rival_buybacks_cannot_exceed_the_cap():
+    b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=(), live_entries=8, pot=420.0,
+                     rival_buybacks=99, pool=PoolConfig(buyback_cap=2), trials=50,
+                     rng=np.random.default_rng(0))
+    assert b.field == 8 + 1 + 2
+
+
+def test_the_decision_reports_as_lines_with_the_breakeven_on_the_page():
+    """Lines rather than prints, the reason `paired_report` is shaped that way: a block that
+    prints cannot be composed, capped, or asserted on."""
+    b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=("KC",), live_entries=8, pot=420.0,
+                     trials=200, rng=np.random.default_rng(2))
+    lines = pool.report(b)
+    assert any("breakeven" in ln for ln in lines)
+    assert any("$" in ln for ln in lines)
+    assert any("already spent" in ln for ln in lines)
