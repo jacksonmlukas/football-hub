@@ -239,8 +239,8 @@ def test_live_is_its_own_artifact(site, monkeypatch):
     keeping it apart is what lets the page hold frozen and live numbers apart."""
     import hub.fetch.espn as espn
     monkeypatch.setattr(espn, "live_state",
-                        lambda league="nfl": [{"id": "1", "home": "SEA", "away": "NE",
-                                               "state": "in", "home_score": "10"}])
+                        lambda league="nfl", **_: [{"id": "1", "home": "SEA", "away": "NE",
+                                                    "state": "in", "home_score": "10"}])
     got = publish.live(out=site)
     assert isinstance(got, dict) and got["source"] == "espn_scoreboard"
     assert json.loads((site / "live.json").read_text())["rows"][0]["home"] == "SEA"
@@ -248,15 +248,111 @@ def test_live_is_its_own_artifact(site, monkeypatch):
 
 def test_espn_being_down_leaves_the_last_scores_in_place(site, monkeypatch):
     import hub.fetch.espn as espn
-    monkeypatch.setattr(espn, "live_state", lambda league="nfl": [{"id": "1", "home": "SEA"}])
+    monkeypatch.setattr(espn, "live_state", lambda league="nfl", **_: [{"id": "1", "home": "SEA"}])
     publish.live(out=site)
     before = (site / "live.json").read_text()
 
-    def _boom(league="nfl"):
+    def _boom(league="nfl", **_):
         raise RuntimeError("403")
     monkeypatch.setattr(espn, "live_state", _boom)
     assert publish.live(out=site) is None
     assert (site / "live.json").read_text() == before, "last-good scores must survive"
+
+
+def _espn_answering(monkeypatch, tmp_path, payload=None):
+    """The whole fetch layer against a real cache directory and a controllable network.
+
+    Stubbing `live_state` -- which every other test here does -- cannot see this class of
+    bug at all: the cache lives *below* that seam, and the payload it serves is shaped
+    exactly like a live one. So the double goes at the network boundary instead.
+    """
+    from hub.fetch import espn
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(espn, "CACHE", tmp_path)
+
+    class _Resp:
+        def raise_for_status(self):
+            if payload is None:
+                raise OSError("espn 503")
+
+        def json(self):
+            return payload
+    monkeypatch.setattr(espn.requests, "get", lambda *a, **k: _Resp())
+    return espn
+
+
+_ONE_GAME = {"events": [{"id": "1", "competitions": [{
+    "status": {"type": {"state": "in", "shortDetail": "Q3 4:12"}},
+    "competitors": [{"homeAway": "home", "team": {"abbreviation": "PHI"}, "score": "21"},
+                    {"homeAway": "away", "team": {"abbreviation": "DAL"}, "score": "17"}]}]}]}
+
+
+def test_a_cache_served_scoreboard_does_not_advance_the_stamp(site, tmp_path, monkeypatch):
+    """Issue #91's heart, and the failure the return value hides.
+
+    `_get` falls back to its last-good cache when ESPN cannot be reached, which is the
+    dashboard's degradation and is right. But `live` stamps what it is handed with the
+    current time, and the watchdog reads *that stamp* to decide whether the page is moving.
+    A cached payload published under a fresh `generated_at` is therefore a frozen page
+    reporting itself healthy -- and, worse, one no monitor can ever notice, because the only
+    evidence of the freeze is the field being overwritten.
+
+    So the cache being warm must change nothing: no write, no new stamp, the previously
+    published overlay left exactly as it was.
+    """
+    espn = _espn_answering(monkeypatch, tmp_path, _ONE_GAME)
+    site.mkdir(parents=True, exist_ok=True)
+    assert publish.live(out=site) is not None, "a reachable ESPN publishes"
+    published = (site / "live.json").read_text()
+    assert (tmp_path / "sb_nfl_now.json").exists(), "and leaves the cache warm"
+
+    _espn_answering(monkeypatch, tmp_path, None)          # ESPN now unreachable
+    assert espn.scoreboard("nfl")["events"], "the cache would answer a degrading caller"
+
+    assert publish.live(out=site) is None, "but a refresh is not a degrading caller"
+    assert (site / "live.json").read_text() == published, (
+        "the stamp advanced over cached scores: the page freezes and the heartbeat says it "
+        "did not")
+
+
+def test_an_empty_board_from_a_reachable_espn_is_published(site, tmp_path, monkeypatch):
+    """The other side of the same decision, and why refusing the cache is not a last-good
+    guard in disguise. ADR-0018: an empty scoreboard is ESPN saying there are no games, and
+    relaying it is the relay working. Only an unreachable ESPN holds the stamp."""
+    _espn_answering(monkeypatch, tmp_path, {"events": []})
+    got = publish.live(out=site)
+    assert isinstance(got, dict) and got["n"] == 0
+    assert json.loads((site / "live.json").read_text())["rows"] == []
+
+
+def test_the_cli_says_which_of_the_three_outcomes_happened(tmp_path, monkeypatch, capsys):
+    """What the unattended refresher branches on, and the reason it is an exit code.
+
+    Reading "unavailable" off stdout would work until the sentence is reworded. The three
+    outcomes are two codes because two of them mean the same thing to the caller: a board
+    with games and a board with none are both ESPN answering, and both are published.
+    """
+    monkeypatch.setattr(publish, "SITE", tmp_path)
+    _espn_answering(monkeypatch, tmp_path / "cache", _ONE_GAME)
+    assert publish.main(["--live"]) == 0
+    _espn_answering(monkeypatch, tmp_path / "cache", {"events": []})
+    assert publish.main(["--live"]) == 0, "an empty board is an answer, and is published"
+    _espn_answering(monkeypatch, tmp_path / "cache", None)
+    assert publish.main(["--live"]) == publish.NOTHING_FRESH
+    assert publish.NOTHING_FRESH not in (0, 1), "0 is published and 1 is a broken program"
+    assert "unavailable; last-good kept" in capsys.readouterr().out
+
+
+def test_the_overlays_league_is_the_one_asked_for(tmp_path, monkeypatch):
+    """The window says which board is playing -- college on Saturday, professional on
+    Sunday -- and the artifact is single-league, so the CLI has to be able to say."""
+    monkeypatch.setattr(publish, "SITE", tmp_path)
+    asked = []
+    monkeypatch.setattr("hub.fetch.espn.live_state",
+                        lambda league="nfl", **_: asked.append(league) or [])
+    assert publish.main(["--live", "--league", "cfb"]) == 0
+    assert asked == ["cfb"]
+    assert json.loads((tmp_path / "live.json").read_text())["league"] == "cfb"
 
 
 def test_publishing_live_never_touches_the_predictions(site, base, monkeypatch):
@@ -267,7 +363,7 @@ def test_publishing_live_never_touches_the_predictions(site, base, monkeypatch):
     frozen = (site / "preds_2026_wk01.json").read_text()
 
     import hub.fetch.espn as espn
-    monkeypatch.setattr(espn, "live_state", lambda league="nfl": [{"id": "1", "home": "SEA"}])
+    monkeypatch.setattr(espn, "live_state", lambda league="nfl", **_: [{"id": "1", "home": "SEA"}])
     for _ in range(3):
         publish.live(out=site)
     assert (site / "preds_2026_wk01.json").read_text() == frozen
@@ -596,7 +692,7 @@ def test_a_failed_fetch_leaves_the_carried_forward_scores_untouched(site, monkey
          "n": 1, "rows": [{"id": "1", "home": "PHI", "home_score": "21"}], "detail": {}}))
     before = carried.read_text()
 
-    def _boom(league="nfl"):
+    def _boom(league="nfl", **_):
         raise RuntimeError("espn 503")
     monkeypatch.setattr("hub.fetch.espn.live_state", _boom)
 
@@ -631,7 +727,7 @@ def test_a_successful_fetch_replaces_the_carried_forward_scores(site, monkeypatc
     site.mkdir(parents=True, exist_ok=True)
     (site / "live.json").write_text(json.dumps({"name": "live", "n": 0, "rows": []}))
     monkeypatch.setattr("hub.fetch.espn.live_state",
-                        lambda league="nfl": [{"id": "9", "home": "KC", "away": "LV"}])
+                        lambda league="nfl", **_: [{"id": "9", "home": "KC", "away": "LV"}])
     got = publish.live(out=site)
     assert isinstance(got, dict) and got["n"] == 1
     assert json.loads((site / "live.json").read_text())["rows"][0]["id"] == "9"
@@ -814,7 +910,7 @@ def test_a_prediction_from_another_season_is_never_carried_forward(site, base):
 # is covered the day it is declared rather than the day someone remembers to copy a test.
 
 def _live_rows(monkeypatch, rows):
-    monkeypatch.setattr("hub.fetch.espn.live_state", lambda league="nfl": rows)
+    monkeypatch.setattr("hub.fetch.espn.live_state", lambda league="nfl", **_: rows)
 
 
 def _empty_grid():

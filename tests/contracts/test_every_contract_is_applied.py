@@ -3,7 +3,7 @@
 `hub.contracts` describes fourteen third-party sources, and its whole value is failing when
 one of them changes shape. Four were applied to nothing: both CFBD endpoints, the odds snapshots
 every prediction is priced from, and an undocumented ESPN endpoint that a scheduled job now
-hits every ten minutes on a Sunday.
+hits every five minutes on a Sunday.
 
 **The repo had already been bitten by this and fixed exactly one instance.** `hub.draft.board`
 still carries the sentence: *"this contract was declared in `hub.contracts` and applied to

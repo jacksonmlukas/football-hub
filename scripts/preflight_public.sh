@@ -260,10 +260,15 @@ has_live_schedule() {
 }
 
 # All four workflows that are meant to run unattended. watchdog.yml and ci.yml are the two
-# that were deliberately switched off; pages.yml and slate.yml never were, and are here
+# that were deliberately switched off; live.yml and slate.yml never were, and are here
 # because a schedule silently commented out is exactly as invisible in them.
+#
+# `pages.yml` was on this list until issue #91 and is deliberately off it: the game-window
+# schedule moved to `live.yml`, so the deploy now runs only when something asks it to, and
+# listing it here would print a WARNING every run for a workflow that is working as designed.
+# `tests/contracts/test_game_windows.py` is what holds the window to one workflow.
 echo "==> Checking the unattended workflows still run on a schedule"
-for WF in watchdog ci pages slate; do
+for WF in watchdog ci live slate; do
   F=".github/workflows/$WF.yml"
   if [ ! -f "$F" ]; then
     echo "  skipped: no $F here"

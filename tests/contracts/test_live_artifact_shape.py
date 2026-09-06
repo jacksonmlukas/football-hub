@@ -33,7 +33,7 @@ _ROW = {"id": "1", "state": "in", "detail": "Q3 4:12",
 
 
 def _from_the_site_writer(tmp_path, monkeypatch):
-    monkeypatch.setattr("hub.fetch.espn.live_state", lambda league="nfl": [_ROW])
+    monkeypatch.setattr("hub.fetch.espn.live_state", lambda league="nfl", **_: [_ROW])
     got = publish.live(out=tmp_path)
     assert got is not None
     return json.loads((tmp_path / "live.json").read_text())

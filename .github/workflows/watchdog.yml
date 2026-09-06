@@ -13,11 +13,11 @@ on:
   # rather than stated here: the comment that used to state it went on saying SCHEDULE
   # DISABLED after c984746 turned the block on.
   #
-  # Each of `pages.yml`'s game windows, **less its first hour**, and nothing else.
+  # Each of `live.yml`'s game windows, **less its first hour**, and nothing else.
   #
   # Two rules, both learned from this file reporting the wrong thing.
   #
-  # *Never wider than what it watches.* The watchdog checks the overlay `pages.yml` deploys,
+  # *Never wider than what it watches.* The watchdog checks the overlay `live.yml` refreshes,
   # so an hour it watches and nothing refreshes is a gap between two schedules being reported
   # as an outage. It used to skip the Thursday and Monday night windows entirely, which was
   # the other direction of the same mismatch: a monitor that is not watching.
@@ -27,7 +27,7 @@ on:
   # before the window opened -- an incident by construction, twice a week for eighteen weeks.
   # Starting an hour in means the deploy has already run six times by the first check.
   #
-  # The hours follow Eastern in both daylight-saving states, for the reason `pages.yml`
+  # The hours follow Eastern in both daylight-saving states, for the reason `live.yml`
   # spells out. `tests/contracts/test_game_windows.py` asserts both rules against both files.
   schedule:
     - cron: "*/10 17-23 * * 0"   # Sunday daytime, from an hour into the window
@@ -59,10 +59,11 @@ jobs:
         run: |
           set +e
           URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/live.json"
-          # 1500s, not 600. The overlay is republished every ten minutes during a window,
-          # so a 600s threshold has *zero* margin against its own cadence -- and GitHub's
-          # scheduled runs drift by minutes under load, on both sides. A monitor that fires
-          # because two crons were both late is a monitor that gets ignored.
+          # 1500s, not 600, and unchanged by issue #91. The overlay is republished every
+          # five minutes during a window, so this is now a 5x margin rather than the 2.5x it
+          # was against the old ten-minute cron -- it alarms on a genuine failure rather than
+          # on jitter. It was never the threshold that was wrong: the refresh the threshold
+          # was written against was being delivered every ~106 minutes.
           #
           # The cost is that a genuinely dead publisher goes unreported for up to twenty-five
           # minutes. The page serves last-good throughout, so that is a delay in learning
@@ -114,9 +115,11 @@ jobs:
 
           Cause: ${{ steps.check.outputs.why }}.
 
-          \`live.json\` is stamped by whatever last wrote it — \`hub.publish.live\` on a slate
-          refresh, or \`hub.fetch.espn.poll()\` while it runs. During a game window neither
-          having run for ten minutes means the page's scores are frozen.
+          \`live.json\` is stamped by whatever last wrote it — the \`live\` workflow's loop
+          every five minutes through a window, or \`hub.publish.live\` on a slate refresh.
+          Nothing having run for twenty-five minutes means the page's scores are frozen, or
+          that ESPN has been unreachable for that long: the loop holds the stamp rather than
+          republishing a cached board, so a flat heartbeat is the honest report of both.
 
           The dashboard serves last-good state, so nothing is broken — it is just not moving.
           This issue auto-closes on the next healthy check."

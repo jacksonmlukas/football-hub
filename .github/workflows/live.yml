@@ -1,0 +1,164 @@
+name: live
+
+# The live overlay's refresher: one long-lived job per window that asks ESPN every five
+# minutes and publishes what it gets.
+#
+# **Why this is a loop and not a cron.** It used to be a cron -- `*/10` through each window,
+# in `pages.yml` -- and on 2026-09-05 those runs were measured landing **97-126 minutes
+# apart, median 106**, each finishing in under a minute. That is delivery, not execution:
+# GitHub queues scheduled workflows and drops them under load. So the overlay was stale by
+# the watchdog's own 1500s definition for most of every game window, an incident was filed,
+# the next deploy closed it, and the whole cycle read as routine noise. Issue #91.
+#
+# A job that loops moves the problem to where it can be absorbed: a *start* being ninety
+# minutes late costs coverage once, and the cap below is long enough that the next start
+# arrives before this one ends.
+#
+# **What it does not know.** Nothing about the window's shape. The crons below are the window
+# definition and the only one; a second copy in code is the drift this repo keeps paying for
+# (`hub.fetch.odds._game_date`, `hub.schedule._kickoff`, and the fixed-offset windows this
+# very file inherited). The loop runs for a fixed two hours and stops, wherever in a window
+# it happened to start.
+on:
+  # Every Eastern hour a game can be in progress, in **both** daylight-saving states -- these
+  # moved here from `pages.yml` unchanged, and `tests/contracts/test_game_windows.py` holds
+  # them against the Eastern clock in both states, holds the watchdog inside them, and now
+  # also holds `pages.yml` to having no window cron of its own. Two deploy sources for one
+  # window would double the deploy rate.
+  #
+  # A cron fires in UTC; games are played on Eastern, which is UTC-4 until early November and
+  # UTC-5 after it. Each block is one hour wider in UTC than either offset needs, which is
+  # what covering both costs.
+  #
+  # In Eastern the windows are: Sunday noon to Monday 00:59; Saturday noon to Sunday 00:59
+  # for college, whose marquee kickoffs are 19:30 and 20:00; Thursday and Monday 20:00 to
+  # 00:59 for the standalone night games.
+  #
+  # Still `*/10` even though a run lasts two hours, and deliberately: this is a *request* for
+  # a start, the measured delivery of that request is one start per ~106 minutes, and the
+  # concurrency group below makes a redundant start harmless -- it replaces the running loop
+  # rather than joining it. Asking less often would ask for gaps.
+  #
+  # Free of quota: ESPN's scoreboard needs no key.
+  schedule:
+    - cron: "*/10 16-23 * * 0"   # Sunday daytime ET      -- professional
+    - cron: "*/10 0-5  * * 1"    # Sunday night ET, into Monday morning
+    - cron: "*/10 0-5  * * 2"    # Monday night ET
+    - cron: "*/10 16-23 * * 6"   # Saturday daytime ET    -- college
+    - cron: "*/10 0-5  * * 0"    # Saturday night ET      -- college primetime
+    - cron: "*/10 0-5  * * 5"    # Thursday night ET
+
+  # The opening of a window is exactly where a late cron hurts most, and a workflow-completion
+  # event is delivered promptly where a schedule is not. The Saturday slate finishes around
+  # 14:00 UTC, two hours before the college window opens, so this start covers the opening
+  # the cron may reach late.
+  #
+  # Not filtered on the slate's conclusion, unlike `pages.yml`'s deploy: that job publishes
+  # what the slate produced and a failed slate has nothing worth publishing, while this one
+  # reads ESPN and cares only that a window is near. The cost is that the Wednesday slate
+  # also starts a loop -- two hours of publishing an empty midweek board, roughly 24 deploys.
+  # Accepted rather than fixed by a condition, because any condition precise enough to
+  # exclude it would be a second copy of the window.
+  workflow_run:
+    workflows: [slate]
+    types: [completed]
+
+  workflow_dispatch:
+    inputs:
+      league:
+        description: "Which board (a dispatch outside a window has no cron to ask)"
+        type: choice
+        options: ["auto", "nfl", "cfb"]
+        default: "auto"
+      minutes:
+        description: "How long to loop for"
+        default: "115"
+      interval:
+        description: "Seconds between cycles"
+        default: "300"
+
+# Read the repo, and dispatch `pages.yml`. Nothing else -- in particular not `pages: write`,
+# because this workflow does not deploy: it asks the one workflow that does.
+permissions:
+  contents: read
+  actions: write
+
+# Exactly one loop at a time, and a newer start **replaces** an older one. Two loops would
+# double the deploy rate and interleave two answers to the same question.
+#
+# This is the opposite setting from the deploy's own group, and both are right: cancelling a
+# loop mid-sleep loses nothing (the next cycle re-asks ESPN), while cancelling a deploy
+# mid-apply leaves a half-applied site. The deploys this triggers are runs of `pages.yml` and
+# so join `pages.yml`'s group, whose `cancel-in-progress: false` must stay.
+concurrency:
+  group: live-loop
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # The cap belongs to the loop, which stops on its own; this is the backstop for a cycle
+    # wedged on a socket, and is deliberately a little wider than the loop's own two hours.
+    timeout-minutes: 130
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+
+      # **The league follows the window**: college on Saturday, professional on Sunday. The
+      # artifact is single-league, and on 2026-09-05 the overlay held professional pre-season
+      # games while the college board was the one with games in progress.
+      #
+      # Read off the cron that started this run, so the window definition above stays the only
+      # one. `tests/contracts/test_game_windows.py` fails if a cron is added, edited or removed
+      # without appearing here -- otherwise an edited cron would silently fall through to the
+      # default and publish the wrong board for a whole Saturday.
+      #
+      # A start with no cron behind it -- a dispatch, or the slate finishing -- has only the
+      # day to go on, and Saturday is college. That is a fact about the calendar rather than a
+      # copy of the window's hours, which is why it is allowed to live here.
+      - name: Which board this window is for
+        id: board
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+          ASKED: ${{ inputs.league }}
+        run: |
+          case "$SCHEDULE" in
+            "*/10 16-23 * * 6") LEAGUE=cfb ;;   # Saturday daytime ET
+            "*/10 0-5  * * 0")  LEAGUE=cfb ;;   # Saturday night ET
+            "*/10 16-23 * * 0") LEAGUE=nfl ;;   # Sunday daytime ET
+            "*/10 0-5  * * 1")  LEAGUE=nfl ;;   # Sunday night ET
+            "*/10 0-5  * * 2")  LEAGUE=nfl ;;   # Monday night ET
+            "*/10 0-5  * * 5")  LEAGUE=nfl ;;   # Thursday night ET
+            "")
+              if [ -n "$ASKED" ] && [ "$ASKED" != "auto" ]; then LEAGUE="$ASKED"
+              elif [ "$(TZ=America/New_York date +%u)" = "6" ]; then LEAGUE=cfb
+              else LEAGUE=nfl
+              fi ;;
+            *)
+              echo "::error::cron '$SCHEDULE' has no league; the mapping and the schedule have drifted"
+              exit 1 ;;
+          esac
+          echo "league=$LEAGUE" >> "$GITHUB_OUTPUT"
+          echo "refreshing the $LEAGUE board"
+
+      # One scoreboard request per cycle -- the thin path, not the tiered poller, whose
+      # per-game fan-out (ADR-0005) has no place in an unattended loop.
+      #
+      # The deploy is `pages.yml` dispatched, not steps repeated here: a job can run
+      # `deploy-pages` once, and the run has to be a run of the deploy workflow anyway so that
+      # it joins that workflow's concurrency group. `workflow_dispatch` is one of the two
+      # events GITHUB_TOKEN is documented to be able to trigger -- the recursion guard that
+      # blocks token-made *pushes* from starting a workflow, and that `pages.yml` already
+      # works around with `workflow_run`, does not apply to it.
+      - name: Refresh the overlay through the window
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          .github/scripts/live-loop.sh \
+            "$(( ${{ inputs.minutes || 115 }} * 60 ))" \
+            "${{ inputs.interval || 300 }}" \
+            "${{ steps.board.outputs.league }}" \
+            site/data \
+            gh workflow run pages.yml --repo "${{ github.repository }}" \
+              -f league="${{ steps.board.outputs.league }}"

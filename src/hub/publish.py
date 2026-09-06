@@ -463,6 +463,12 @@ def _curve(season: int | None, df: pl.DataFrame, n_bins: int) -> dict[str, Any]:
 
 # --- the live overlay -----------------------------------------------------
 
+# What `--live` exits with when ESPN could not be reached. Distinct from 0 (published) and
+# from 1 (this program is broken), because the unattended refresher has to tell "nothing to
+# publish" from "publish and deploy" without reading prose off stdout.
+NOTHING_FRESH = 3
+
+
 def live(out: Path | None = None, league: str = "nfl") -> dict[str, Any] | None:
     """Current scores, written separately from the model's numbers on purpose.
 
@@ -488,6 +494,14 @@ def live(out: Path | None = None, league: str = "nfl") -> dict[str, Any] | None:
     nothing is written, the carried-forward file stays exactly as it was, and the manifest
     marks the panel stale.
 
+    **A cache-served fetch is a failed fetch**, and issue #91 is what happens when it is not
+    treated as one. The fetch layer degrades to last-good, so a scoreboard can arrive here
+    that ESPN was never asked for -- and this function stamps what it is handed. The overlay
+    would then carry a fresh `generated_at` over frozen scores, the heartbeat the watchdog
+    reads would say the page is current, and the freeze would erase its own evidence. So the
+    read below refuses the cache, and every unreachable-ESPN outcome comes out of the same
+    `return None`.
+
     **The cost, accepted.** A 200 from ESPN carrying no events mid-slate now blanks the
     overlay, where a last-good guard would have held Sunday's scores on the page until the
     next poll. That is the right trade for a relay and not an oversight: the same response
@@ -499,7 +513,14 @@ def live(out: Path | None = None, league: str = "nfl") -> dict[str, Any] | None:
     out = out or SITE
     try:
         from hub.fetch.espn import live_state
-        rows = live_state(league)
+        # `allow_cache=False`, because the artifact this writes is a *timestamp* as much as a
+        # scoreboard. `hub.fetch.espn._get` degrades to its last-good cache on failure, which
+        # is right for the dashboard and wrong here: the cached payload would arrive
+        # indistinguishable from a live one, be stamped with this moment, and publish a
+        # heartbeat saying the page is fresh while it shows scores nobody has refreshed. The
+        # watchdog reads exactly that stamp, so it could never fire again -- issue #91.
+        # Refusing the cache turns that into the failed fetch it actually is.
+        rows = live_state(league, allow_cache=False)
     except Exception as e:
         print(f"  live: ESPN unavailable ({type(e).__name__}); leaving last-good in place")
         return None
@@ -721,12 +742,26 @@ def default_week(season: int, base: Path | None = None) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # Imported here rather than at module scope for the reason `live` imports `live_state`
+    # inside the function: `hub.fetch.espn` opens its cache directory on import, and
+    # `--help` must reach nothing. The names of the two boards have one owner, so `--league`
+    # takes its choices from there rather than restating them.
+    from hub.fetch.espn import LEAGUE_PATHS
+
     ap = argparse.ArgumentParser(
         prog="hub.publish", description="Write site/data/*.json from the processed store.")
     ap.add_argument("--all", action="store_true", help="every artifact plus the manifest")
     ap.add_argument("--predictions", action="store_true", help="one week's predictions")
     ap.add_argument("--track-record", action="store_true", help="calibration page data")
     ap.add_argument("--live", action="store_true", help="live scores overlay only")
+    ap.add_argument("--league", default="nfl", choices=sorted(LEAGUE_PATHS),
+                    help="which board the overlay is for; the window decides (--live only)")
+    # The destination is a parameter of every producer in this module and was the one thing
+    # only the CLI could not say, which is the seam `test_cli_surface` threaded `--store`
+    # through the store-backed commands for: a command that can only write the real file can
+    # only be tested by something that is not the command.
+    ap.add_argument("--out", type=Path, default=None,
+                    help="where the overlay is written; defaults to site/data (--live only)")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD)
     ap.add_argument("--week", type=int, default=None,
                     help="defaults to the latest week already predicted")
@@ -744,9 +779,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                  else "nothing in the store; left as-is"))
         return 0
     if a.live:
-        got = live()
+        got = live(out=a.out, league=a.league)
         print("  live: " + (f"{got['n']} games" if got else "unavailable; last-good kept"))
-        return 0
+        # Three outcomes, two exit codes, and the split is the one the refresher acts on:
+        # games and no games are both ESPN answering, and both are worth publishing
+        # (ADR-0018). Not reaching ESPN at all is the third, and nothing about it should
+        # reach the page -- no deploy, and no new `generated_at` over scores nobody
+        # refreshed. `NOTHING_FRESH` rather than 1 because this is not a failure: the
+        # overlay is intact, last-good stands, and the caller is being told which of the
+        # three happened. `.github/scripts/live-loop.sh` is the caller that branches on it.
+        return 0 if got else NOTHING_FRESH
     if a.track_record:
         got = track_record()
         print("  track_record: " + (

@@ -62,7 +62,7 @@ Both captured on 2026-09-05, one unauthenticated GET each:
 
 — the URLs `hub.fetch.espn.scoreboard("cfb")` and `scoreboard("nfl")` build, with the
 User-Agent `_get` sends first. The scoreboard endpoint needs no key, which is why the live
-overlay may refresh every ten minutes with no secret and why this is the one source here that
+overlay may refresh every five minutes with no secret and why this is the one source here that
 can be re-captured on demand. Two requests, not a loop.
 
 **Why there are two, and why they are not equivalent.** `live_state` reads both leagues
