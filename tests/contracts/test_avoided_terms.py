@@ -29,6 +29,15 @@ that violates a checked rule today, with the reason it is still there. It is a r
 unlisted pair fails, a listed pair that grows fails, and a listed pair that has gone to zero
 fails as stale. Narrowing the scan until it sees nothing would have been the easier way to
 get a green build and is the exact defect issue #53 was filed about.
+
+**The half a ratchet cannot reach is the prose around it.** Entries are policed; the sentences
+introducing them are not, and they have now outlived their subject twice. `c8530e5` fixed two
+that described violations already gone, and recorded the reason it had to be done by hand:
+"prose is the half its own inventory test cannot check". The second was the inventory's own
+preamble, which said "sixty comments" and "three of them are the second pass's" until
+2026-09-06 -- by then the dict held 104 sites and not one deferred entry. Both figures were
+true when written and neither was ever re-derived. So the preamble carries no number now, and
+a test holds it to that: the only honest count is the one the dict computes.
 """
 from __future__ import annotations
 
@@ -376,10 +385,14 @@ def scan(paths: tuple[Path, ...] = SCAN_ROOTS,
 
 # --- what is outstanding, and why ---------------------------------------------
 #
-# Issue #53 fixed the sites it named and left the rest standing rather than rewriting sixty
-# comments in one change. Every one of them is here, with the reason, and the ratchet below
-# means the count can fall and never rise. Three of them are the second pass's, held back
-# because three other changes were rewriting those files at the same time.
+# Issue #53 fixed the sites it named and left the rest standing rather than rewriting them
+# all in a single change. All of them are here, each with its own reason, and the ratchet
+# below means the count can fall and never rise.
+#
+# This paragraph deliberately states no count, and
+# `test_the_inventorys_preamble_states_no_count_of_its_own` keeps it that way. The dict below
+# is the count; a number restated up here is a second copy that nothing re-derives, and the
+# module docstring records what that cost twice.
 
 _BULK = "pre-existing prose, outside issue #53's scope; the word means the draft market here"
 _BETTING = "pre-existing prose; the word means the betting market here"
@@ -460,6 +473,58 @@ OUTSTANDING: dict[tuple[str, str], tuple[int, str]] = {
 # `tests/unit/test_preflight.py` named the secret scan a "gate" throughout, including in
 # its test names. Renamed in the second pass; the count is zero now, and this note is kept
 # only because a sentence describing a violation outlived the violation once already here.
+
+
+# The inventory's own preamble: the comment block between the section rule and the first
+# constant under it. Delimited rather than searched for by wording, so rephrasing the
+# paragraph cannot slide it out of the test's view.
+_PREAMBLE = re.compile(r"^# --- what is outstanding.*?$(.*?)^\s*$", re.M | re.S)
+
+# Digits, and the number words a comment actually reaches for. `#53` is an identifier and is
+# stripped before this runs -- an issue number names a ticket, it does not count anything.
+_ISSUE_REF = re.compile(r"#\d+")
+_A_COUNT = re.compile(
+    r"\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
+    r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|"
+    r"seventy|eighty|ninety|hundred|dozen)\b", re.I)
+
+
+def test_the_harness_can_find_the_preamble_it_guards():
+    """A renamed section rule would make the assertion below vacuously green."""
+    assert _PREAMBLE.search(Path(__file__).read_text()), (
+        "the OUTSTANDING preamble could not be located, so the next test guards nothing")
+
+
+def test_the_inventorys_preamble_states_no_count_of_its_own():
+    """The half a ratchet cannot reach, held by the one rule that is mechanical.
+
+    `OUTSTANDING` is policed entry by entry. The paragraph introducing it is not, and it has
+    outlived its subject twice -- most recently claiming "sixty comments" and "three of them
+    are the second pass's" against a dict holding 104 sites and no deferred entry at all.
+    Both were true when written. Neither was re-derived, because prose has nowhere to
+    re-derive from.
+
+    A count *here* is a second copy of something the dict below already holds, so the rule is
+    that there is no count here at all. That is checkable where "keep it accurate" is not.
+    The figures themselves are not lost: they sit in the module docstring, tied to the dates
+    they were true on, which is what makes them history rather than a claim.
+
+    **The rule is stricter than the defect, on purpose.** It has no way to tell a count from
+    an idiom, and it caught "every *one* of them" in the very paragraph written to satisfy
+    it. Loosening it to allow the idiomatic senses would put it back in the class this file's
+    own docstring calls undecidable, where a regex cannot tell a use from the use it is
+    contrasted with. Costing the preamble a few turns of phrase buys a rule that cannot be
+    argued with, and the preamble is four sentences long.
+    """
+    body = _PREAMBLE.search(Path(__file__).read_text())
+    assert body is not None
+    prose = _ISSUE_REF.sub("", body.group(1))
+    found = _A_COUNT.findall(prose)
+    assert not found, (
+        f"the OUTSTANDING preamble states {found!r}. The dict below is the count -- a number "
+        "restated up here is a second copy that nothing re-derives, which is how this "
+        "paragraph went stale twice. Put the figure in the module docstring against the date "
+        "it was true, or leave it to the inventory.")
 
 
 def _outstanding_counts(hits: list[Hit]) -> dict[tuple[str, str], int]:
