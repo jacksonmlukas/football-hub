@@ -21,6 +21,12 @@ import polars as pl
 
 from hub.draft import durability
 
+NOT_FITTED_BECAUSE = (
+    "renders the draft-night output as lines; SOS_GAP and SOS_ADP_WINDOW are display "
+    "thresholds for the same-tier swap list, not fitted quantities -- nothing downstream "
+    "reads them "
+)
+
 if TYPE_CHECKING:                      # both import from `board`, so runtime would cycle
     from hub.draft.board import BuildReport
     from hub.draft.optimize import ThePick
@@ -56,7 +62,8 @@ def built_or_served(report: BuildReport, age_h: float | None) -> list[str]:
             "  every section below is that board's, not tonight's.",
             f"  it carries, read off the board itself: {carried}",
             f"  not on it, or not recorded on it: {', '.join(missing)}" if missing
-            else "  it carries every optional signal."] + _corrections_note(report)
+            else "  it carries every optional signal.",
+            *_corrections_note(report)]
 
 
 def _corrections_note(report: BuildReport) -> list[str]:
