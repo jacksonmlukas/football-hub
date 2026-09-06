@@ -243,7 +243,7 @@ def test_the_sign_of_net_is_the_recommendation():
         assert b.net == pytest.approx(b.equity - b.fee)
 
 
-def test_a_buyback_past_the_cutoff_is_unavailable_not_priced():
+def test_a_buyback_past_the_deadline_is_unavailable_not_priced():
     """Reported rather than returned as a zero, which would read as a live decision that came
     out badly instead of an option that does not exist."""
     b = pool.buyback(_season(), [1, 2, 3], week=7, ledger=(), live_entries=8, pot=420.0,

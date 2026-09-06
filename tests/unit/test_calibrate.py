@@ -101,7 +101,7 @@ def test_dropping_the_worst_outcomes_biases_the_answer_down():
             < calibrate.fit_talent_cv(df)["talent_cv"] - 0.05)
 
 
-def test_the_market_is_calibrated_to_be_unbiased_before_dispersion_is_measured():
+def test_the_draft_market_is_calibrated_to_be_unbiased_before_dispersion_is_measured():
     """If the fitted curve sat above or below the outcomes on average, that level error
     would be counted as spread."""
     got = calibrate.fit_talent_cv(_synthetic(0.35))

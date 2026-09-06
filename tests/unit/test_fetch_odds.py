@@ -325,7 +325,7 @@ def test_the_strict_zip_never_protected_against_this(monkeypatch):
 
 # --- whose failure was it (issue #119) ------------------------------------
 
-def test_the_market_not_answering_is_reported_as_the_markets(monkeypatch, paths, capsys):
+def test_the_betting_market_not_answering_is_reported_as_the_markets(monkeypatch, paths, capsys):
     """The half that was always right, kept as the control. Without it the test below passes
     on a CLI that calls everything a repo-side defect, which is the same error inverted."""
     def _down(params, key):

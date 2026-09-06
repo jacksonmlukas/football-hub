@@ -102,7 +102,7 @@ def _favourite_roster():
     return [*BASE[:-1], ("steady", "RB", 10.0, 1.0), ("risky", "RB", 13.0, 16.0)]
 
 
-def test_a_heavy_favourite_declines_projected_points_for_a_floor():
+def test_a_heavy_favourite_declines_weekly_projection_for_a_floor():
     """Up 35, the mean is already past the line and every extra point of spread is a
     chance to give the week away -- so three projected points are worth giving up. This is
     the case the blanket ceiling rule gets wrong, and note it cannot be passed by accident

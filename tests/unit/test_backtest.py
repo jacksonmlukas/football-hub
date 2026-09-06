@@ -444,7 +444,7 @@ def test_the_diagnose_picks_are_your_first_six_turns():
     assert list(bt.DIAGNOSE_PICKS) == snake_picks(cfg.slot, cfg.teams, 16)[:6]
 
 
-def test_diagnose_advances_the_draft_by_the_market_not_by_equity():
+def test_diagnose_advances_by_the_draft_market_not_by_equity():
     """So the path through the draft is identical before and after the change, and the only
     thing that can differ is what equity says about the same situation."""
     import inspect
@@ -551,7 +551,7 @@ def test_play_returns_my_roster_and_positions():
     assert set(names) <= set(board["player"].to_list())
 
 
-def test_the_market_arm_fills_its_starting_slots_before_taking_depth():
+def test_the_draft_market_arm_fills_its_starting_slots_before_taking_depth():
     board = _full_board()
     _, pos = bt.play(board, bt.market_strategy(), my_slot=3, teams=12, rounds=8,
                      rng=np.random.default_rng(0))
@@ -597,7 +597,7 @@ def test_diagnose_reports_one_row_per_requested_pick():
     assert {"leader", "lift", "co_leaders", "need_co_led"} <= set(got.columns)
 
 
-def test_diagnose_advances_by_the_market_so_both_runs_share_a_path():
+def test_diagnose_advances_by_the_draft_market_so_both_runs_share_a_path():
     """Two runs at two commits must walk the same draft, or the comparison is not one."""
     board = _full_board(n=140)
     kw = {"picks": (3, 22), "my_slot": 3, "teams": 12, "rounds": 3,
@@ -689,7 +689,7 @@ def test_a_player_with_no_realised_row_ranks_last_not_null():
     assert worst == "P3"
 
 
-def test_the_ceiling_arm_never_loses_to_the_market_in_any_season():
+def test_the_ceiling_arm_never_loses_to_the_draft_market_in_any_season():
     """Criterion one, and it is what makes the number a ceiling rather than a third arm.
 
     An arm that knows the season and still loses is not bounding anything, and would make

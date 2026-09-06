@@ -312,7 +312,7 @@ def _ranked(n=400, seed=13):
     return pl.concat(frames)
 
 
-def test_the_market_prior_falls_with_rank():
+def test_the_consensus_prior_falls_with_rank():
     """Log-log in the pick, the shape volume-model.md fitted: volume is roughly a power law
     in the market's opinion and strictly non-negative."""
     t = _ranked()
@@ -339,7 +339,7 @@ def test_a_player_with_no_rank_falls_back_to_his_position():
     assert got[0] == pytest.approx(3.0), "no rank, so the positional mean is the target"
 
 
-def test_the_market_target_reads_the_preseason_rank_and_ignores_a_weekly_one():
+def test_the_consensus_target_reads_the_preseason_rank_and_ignores_a_weekly_one():
     """The distinction the whole variant rests on. Shrinking toward the *weekly* ranking would
     make the arm partly be the incumbent Gate B measures it against; the preseason rank is a
     different quantity, published four months earlier. Tested by handing it both and checking
