@@ -24,6 +24,47 @@ import pytest
 from hub import jsonio, publish, store
 
 
+@pytest.fixture(autouse=True)
+def offline(monkeypatch):
+    """Every source this module's producers reach, stubbed to answer nothing.
+
+    Seven tests here fetched nflverse for real. They passed, and they passed *through the
+    degradation path*: `publish_all` publishes the track record and the survivor plan, both
+    of which reach the wire, and both handlers meet a failure with a printed sentence and a
+    stale panel. So a test asserting "the panel says why rather than going blank" was
+    asserting it about a live download that failed, not about its own fixture -- and on a
+    machine with the network up it asserted it about something else again (issue #117).
+
+    Answering with nothing rather than raising, because empty is the state these producers
+    are about. A test that wants games overrides the seam it cares about; `monkeypatch` in a
+    test runs after this, so it wins.
+
+    ESPN is stubbed at the same seam `_espn_answering` uses -- `espn.requests.get` -- and
+    that choice is load-bearing twice over. `live_state` is too high: the guard recorded the
+    reach coming from `espn._get`, below it, which is where a test that neither stubs nor
+    wants ESPN falls through. And `_get` is too low in the other direction: three tests here
+    double the network boundary on purpose, because the cache lives below `live_state` and
+    stubbing above it cannot see that class of bug at all. Patching what they patch means a
+    test's own double runs after this one and wins.
+
+    The same shape as `offline` in `test_board_build.py`, which this module wanted and did
+    not have.
+    """
+    import nflreadpy as nfl
+
+    import hub.season.survivor as sv
+    monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: pl.DataFrame(
+        schema={"game_id": pl.Utf8, "result": pl.Float64}))
+    monkeypatch.setattr(sv, "grid_from_schedule", lambda season, cache=None: pl.DataFrame(
+        schema={"week": pl.Int64, "team": pl.Utf8, "win_prob": pl.Float64,
+                "kickoff": pl.Datetime, "result": pl.Float64}))
+    from hub.fetch import espn as espn_fetch
+
+    def _no_wire(*a, **k):
+        raise RuntimeError("ESPN is not reached from tests/unit; stub the seam you need")
+    monkeypatch.setattr(espn_fetch.requests, "get", _no_wire)
+
+
 @pytest.fixture
 def site(tmp_path):
     return tmp_path / "site" / "data"
