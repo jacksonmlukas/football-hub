@@ -29,7 +29,15 @@ from typing import Any
 import polars as pl
 
 from hub.cli import unavailable
-from hub.draft.board import DRAFTED_POSITIONS, MIN_GAMES, SLOTS, last_good, replacement_levels
+from hub.draft import report as report_mod
+from hub.draft.board import (
+    DRAFTED_POSITIONS,
+    MIN_GAMES,
+    SLOTS,
+    BuildReport,
+    last_good,
+    replacement_levels,
+)
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.state import DraftState, remaining, take
 
@@ -256,15 +264,26 @@ def next_action(n_taken: int, last: int, since_beat: float,
 
 
 def _load_board(now: float | None = None) -> pl.DataFrame:
-    # Print the age, always, with no threshold.
-    #
-    # `exists()` was the only check, so a board built on Tuesday and a build that failed on
-    # Thursday were indistinguishable -- you would poll all night against Tuesday's ADP with
-    # nothing on screen to say so. A threshold would be a magic number wrong in one direction
-    # or the other; the age is one line, has no failure mode, and at 9pm "when did I last
-    # build this" is exactly what you will not remember.
+    """The board this screen polls against, and what it is.
+
+    The age is printed always, with no threshold. `exists()` was the only check, so a board
+    built on Tuesday and a build that failed on Thursday were indistinguishable -- you would
+    poll all night against Tuesday's ADP with nothing on screen to say so. A threshold would
+    be a magic number wrong in one direction or the other; the age has no failure mode, and
+    at 9pm "when did I last build this" is exactly what you will not remember.
+
+    Age alone is the weakest form of that information, though. "Built 3.5h ago" is true of a
+    board built successfully at 4pm and of one whose rebuild failed at 7:30, and those are
+    different situations for someone about to draft. This poller never builds, so every board
+    it shows is served -- and #105 already wrote the derivation that says what a served board
+    carries, and the renderer that prints it. Read here rather than reimplemented, which also
+    means this screen picks up the Corrected ADP note #121 added without knowing about it
+    (issue #116).
+    """
     board, age = last_good(now=now)
     print(f"  board built {age:.1f}h ago (draft_board.parquet)", flush=True)
+    for line in report_mod.built_or_served(BuildReport.of_served(board), age):
+        print(line, flush=True)
     return board
 
 

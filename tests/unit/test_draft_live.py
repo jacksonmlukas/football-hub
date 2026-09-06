@@ -12,6 +12,7 @@ The other thing worth pinning is that replacement level *moves during a draft*. 
 computed against a preseason baseline quietly overvalues a position after a run on it, and
 a run is precisely when the number is being consulted.
 """
+import os
 import time
 from typing import ClassVar
 
@@ -594,3 +595,34 @@ def test_ctrl_c_inside_the_loop_body_still_stops_it(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "stopped" in out and "poll error" not in out, \
         "Ctrl-C is not a poll failure"
+
+
+def test_the_poller_says_what_the_board_it_polls_against_carries(tmp_path, monkeypatch, capsys):
+    """Issue #116. The screen printed an age and nothing else.
+
+    "Built 3.5h ago" is true of a board built successfully at 4pm and of one whose rebuild
+    failed at 7:30, and those are different situations for someone about to draft. #105 wrote
+    the derivation that says what a served board carries; this screen did not read it.
+
+    Driven through the real `_load_board` against a real parquet, not through a stub handing
+    back a frame. Every other test in this file replaces `_load_board` outright, so the served
+    path had no coverage at all -- and a stub that pairs a board with a report it could not
+    have produced is the fixture shape that hid the #105 defect in the first place.
+    """
+    from hub.draft import board as board_mod
+
+    p = tmp_path / "draft_board.parquet"
+    # No `td_luck` column: this board was built while that stage was absorbed.
+    pl.DataFrame({"player": ["A"], "pos": ["QB"], "ecr": [1.0], "adp": [2.0],
+                  "missed": [0.0], "wk15_17_sos": [0.1]}).write_parquet(p)
+    monkeypatch.setattr(board_mod, "BOARD_PARQUET", p)
+
+    got = live._load_board(now=os.path.getmtime(p) + 3600 * 3.5)
+    out = capsys.readouterr().out
+
+    assert got.height == 1
+    assert "board built 3.5h ago" in out, "the age is still shown, not replaced"
+    assert "SERVED BOARD" in out, "nothing said this board was not built just now"
+    assert "sos" in out and "durability" in out, "it does not say what the board carries"
+    # And because the renderer is shared, the poller inherits the correction note for free.
+    assert "CORRECTED ADP is missing touchdown luck" in out
