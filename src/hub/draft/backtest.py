@@ -410,6 +410,37 @@ def verdict(summary: dict[str, float], seasons: pl.DataFrame) -> tuple[str, str]
     return gate(summary, seasons, ACTIONS)
 
 
+def stamped_for_publication(paired: pl.DataFrame) -> tuple[pl.DataFrame, str]:
+    """The paired frame carrying what produced it, and the line a reader gets.
+
+    `resolved_config()`, not `HubConfig()`: ADR-0007 keeps this file so a later reader can tell
+    which configuration produced these rows, and the defaults are that only while `conf/`
+    overrides nothing that diverges from one. Same call as the fetch layer's provenance line
+    and `ratings.live_config`, so a run's three stamps cannot disagree about what a run was.
+
+    `data_digest` beside it is the pinning layer's premise arriving: every gate output should
+    name the data it scored against, so an archive that moved shows up as a changed digest
+    rather than as a silently different number. The digest existed and nothing computed one,
+    so until now a moved archive was exactly the silent case (issue #71).
+
+    The line is returned rather than printed, and the frame rather than written, because
+    `main` needs a network to reach this and a stamping rule that can only be exercised
+    through a network is a stamping rule with no test. That is not hypothetical: the first
+    version of this lived inline and the coverage ratchet caught it as three untested
+    statements the commit after the ratchet landed.
+    """
+    pins = pins_this_run()
+    data = data_digest(pins)
+    stamped = paired.with_columns(
+        pl.lit(config_digest(resolved_config())).alias("cfg_digest"),
+        pl.lit(data).alias("data_digest"))
+    # Said as well as stored, because the reader deciding whether two runs are comparable is
+    # usually reading the terminal, not the parquet.
+    said = (f"  data: {data} over {len(pins)} pinned source(s)"
+            + ("" if pins else " -- nothing was loaded through the pinning layer"))
+    return stamped, said
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.draft.backtest",
@@ -535,28 +566,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"    - {line}")
 
     if a.out:
-        # `resolved_config()`, not `HubConfig()`: ADR-0007 keeps this file so a later reader
-        # can tell which configuration produced these rows, and the defaults are that only
-        # while `conf/` overrides nothing that diverges from one. Same call as the fetch
-        # layer's provenance line and `ratings.live_config`, so a run's three stamps cannot
-        # disagree about what a run was.
-        #
-        # `data_digest` beside it, and that is the pinning layer's whole premise arriving:
-        # every gate output should name the data it scored against, so an archive that moved
-        # shows up as a changed digest rather than as a silently different number. The digest
-        # existed and nothing computed one, so until now a moved archive was exactly the
-        # silent case (issue #71).
-        pins = pins_this_run()
-        data = data_digest(pins)
-        stamped = paired.with_columns(
-            pl.lit(config_digest(resolved_config())).alias("cfg_digest"),
-            pl.lit(data).alias("data_digest"))
+        stamped, said = stamped_for_publication(paired)
         stamped.write_parquet(a.out)
-        print(f"\n  wrote {paired.height} paired rows to {a.out}")
-        # Printed as well as stored, because the reader deciding whether two runs are
-        # comparable is usually reading the terminal, not the parquet.
-        print(f"  data: {data} over {len(pins)} pinned source(s)"
-              + ("" if pins else " -- nothing was loaded through the pinning layer"))
+        print(f"\n  wrote {paired.height} paired rows to {a.out}\n{said}")
     return 0
 
 

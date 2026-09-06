@@ -603,3 +603,47 @@ def test_diagnose_advances_by_the_market_so_both_runs_share_a_path():
     kw = {"picks": (3, 22), "my_slot": 3, "teams": 12, "rounds": 3,
               "n_draft_sims": 2, "n_season_sims": 10, "seed": 0}
     assert bt.diagnose(board, **kw)["held"].to_list() == bt.diagnose(board, **kw)["held"].to_list()
+
+
+# --- what produced these rows (issue #71) ---------------------------------
+
+def test_the_paired_frame_names_the_config_and_the_data_that_made_it(monkeypatch):
+    """A gate output that cannot name its data leaves a moved archive as a silently different
+    number, which is the defect the whole pinning layer exists to remove."""
+    from hub.config import UNPINNED
+    from hub.draft import backtest as bt
+    from hub.fetch import nflverse as nv
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    paired = pl.DataFrame({"season": [2024, 2025], "effect": [1.0, -2.0]})
+
+    stamped, said = bt.stamped_for_publication(paired)
+    assert stamped.height == paired.height
+    assert set(stamped.columns) >= {"cfg_digest", "data_digest"}
+    assert stamped["data_digest"].unique().to_list() == [UNPINNED], (
+        "a run that pinned nothing must say so rather than publishing a digest that looks "
+        "like data")
+    assert "nothing was loaded through the pinning layer" in said
+
+
+def test_a_pinned_load_changes_the_published_data_digest(monkeypatch):
+    """The property a reader acts on: two runs over different data do not carry the same
+    stamp. Without this the digest is decoration."""
+    from hub.config import UNPINNED
+    from hub.draft import backtest as bt
+    from hub.fetch import nflverse as nv
+
+    paired = pl.DataFrame({"season": [2024], "effect": [1.0]})
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    unpinned, _ = bt.stamped_for_publication(paired)
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {
+        "entry": nv.Pin(source="ff_opportunity", as_of="2026-09-04", digest="abcd1234",
+                        rows=10, pinned_at=None)})
+    pinned, said = bt.stamped_for_publication(paired)
+
+    assert unpinned["data_digest"][0] == UNPINNED
+    assert pinned["data_digest"][0] != UNPINNED
+    assert "over 1 pinned source(s)" in said
+    # And the config stamp is unmoved by the data changing -- they answer different questions.
+    assert pinned["cfg_digest"][0] == unpinned["cfg_digest"][0]
