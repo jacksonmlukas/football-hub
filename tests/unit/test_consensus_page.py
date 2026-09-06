@@ -245,16 +245,64 @@ def test_the_board_keeps_no_date_comparison_of_its_own(monkeypatch):
          "convention is exactly what this migration removed.")
 
 
-def test_board_as_of_asks_for_the_day_that_holds_the_replay_still():
-    """August 31 inclusive is the September 1 exclusive the strict comparison meant.
+def test_the_replay_as_of_selects_what_the_strict_comparison_selected(monkeypatch, tmp_path):
+    """The replay date held by the rows it selects, not by the string in the source.
 
-    Measured on the live archive before the switch: `< {yr}-09-01` and `<= {yr}-08-31` return
-    the same rows for every season 2021-26, and only 2023 has any `redraft-overall` scrape on
-    September 1 at all -- reading that day in would have moved 463 ECRs on the 2023 board.
+    `board_as_of` asks for August 31 because the as-of filter is inclusive, and inclusive of
+    August 31 is what *strictly before* September 1 used to mean. That equivalence is why no
+    published number moved when the convention changed, so it is the thing worth asserting --
+    and the previous version of this test asserted it by reading the function's own source for
+    the literal `-08-31`. That passes for a function rewritten to do something else entirely
+    so long as the string survives, and fails for a correct function that spells the date
+    differently.
+
+    Here the archive carries a scrape on the boundary day and another the day after, with
+    different values, so the two rules are distinguishable: asking for the wrong day picks up
+    the September scrape and this fails.
+
+    **The equivalence is a property of plain-date scrape dates.** Inclusive-of-August-31 and
+    strictly-before-September-1 coincide only because no scrape carries a time. A move to
+    timestamps has to revisit the convention itself, not merely this test.
     """
-    import inspect
+    import hub.draft.board as board_mod
+    from hub.draft.board import consensus
 
-    from hub.draft import board as board_mod
-    src = inspect.getsource(board_mod.board_as_of)
-    assert "-08-31" in src and "-09-01" not in src.split('"""')[2], \
-        "the replay as-of moved back to the day the strict comparison actually selected"
+    yr = 2023
+    frame = _dated(("Guy", 50.0, f"{yr}-08-30"),
+                   ("Guy", 12.0, f"{yr}-08-31"),      # the boundary day itself
+                   ("Guy", 99.0, f"{yr}-09-01"))      # the day the strict rule excluded
+    _patch(monkeypatch, tmp_path, frame)
+
+    asked: dict[str, object] = {}
+    monkeypatch.setattr(board_mod, "build",
+                        lambda **kw: asked.update(kw) or (pl.DataFrame(), None))
+    board_mod.board_as_of(yr)
+
+    got = consensus(as_of=str(asked["as_of"]))
+    assert got["ecr"][0] == 12.0, (
+        f"the replay asked for {asked['as_of']} and selected ecr {got['ecr'][0]}. The strict "
+        f"comparison it replaced took the last scrape *before* {yr}-09-01, which is the "
+        f"{yr}-08-31 one at 12.0; reading 99.0 means the day moved forward and the replay now "
+        f"sees a scrape the original never did.")
+
+    strict = frame.filter(pl.col("scrape_date") < f"{yr}-09-01").sort("scrape_date")
+    assert got["ecr"][0] == strict["ecr"][-1], (
+        "the inclusive as-of and the strict comparison no longer select the same scrape")
+
+
+def test_the_boundary_day_is_inside_the_replay_as_of(monkeypatch, tmp_path):
+    """The case that makes the equivalence fragile, pinned on its own.
+
+    Were the boundary day excluded rather than included, the two rules would still agree on
+    any archive with no scrape on August 31 -- which is most of them. Only 2023 has one in the
+    real archive, which is why this needs a fixture rather than whichever season the suite
+    happens to exercise.
+    """
+    from hub.draft.board import consensus
+
+    yr = 2023
+    _patch(monkeypatch, tmp_path, _dated(("Guy", 50.0, f"{yr}-08-29"),
+                                         ("Guy", 12.0, f"{yr}-08-31")))
+    assert consensus(as_of=f"{yr}-08-31")["ecr"][0] == 12.0, (
+        "a scrape landing exactly on the as-of was dropped; the filter is documented as "
+        "inclusive and the replay date depends on it being so")
