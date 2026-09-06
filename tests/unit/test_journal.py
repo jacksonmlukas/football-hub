@@ -4,6 +4,8 @@ The property under test throughout is that a decision is a claim made when nobod
 answer, and a record that can be revised once the answer arrives is not a record of a decision.
 """
 import datetime as dt
+from pathlib import Path
+from typing import TypedDict, Unpack
 
 import polars as pl
 import pytest
@@ -13,10 +15,36 @@ from hub.season import journal
 AT = dt.datetime(2026, 9, 7, 12, 0)
 
 
-def _decide(tmp_path, **kw):
-    base = {"season": 2026, "week": 1, "kind": "pick", "chose": "LAC", "at": AT,
-            "base": tmp_path}
-    return journal.record(**{**base, **kw})
+class _Decision(TypedDict, total=False):
+    """`journal.record`'s keyword surface, so the helper below can be typed.
+
+    Merging two plain dicts and splatting the result widens every value to a union of
+    everything either dict can hold, and the checker then reports one error per parameter --
+    thirteen of them, for calls that are correct. Declaring the shape keeps the helper's
+    ergonomics (twenty-one call sites pass only what they vary) while letting the checker see
+    what is actually being passed.
+    """
+
+    season: int
+    week: int
+    kind: str
+    chose: str
+    fallback: str | None
+    market_price: float | None
+    price_note: str | None
+    expected_dollars: float | None
+    survival_given_up: float | None
+    credits_before: float | None
+    credits_after: float | None
+    at: dt.datetime | None
+    base: Path
+
+
+def _decide(tmp_path: Path, **kw: Unpack[_Decision]) -> str:
+    call: _Decision = {"season": 2026, "week": 1, "kind": "pick", "chose": "LAC", "at": AT,
+                       "base": tmp_path}
+    call.update(kw)
+    return journal.record(**call)
 
 
 def test_a_decision_and_its_outcome_are_two_rows_joined_on_a_key(tmp_path):
