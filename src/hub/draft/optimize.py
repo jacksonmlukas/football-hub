@@ -339,10 +339,23 @@ def corrected_adp(board: pl.DataFrame, clamp_frac: float | None = None) -> pl.Se
     proj = board["proj_blend"].to_numpy().astype(float)
     corr = board["proj_correction"].fill_null(0.0).to_numpy().astype(float)
 
-    xs, ys = market_curve(adp, proj)
+    # `proj_blend` arrives already corrected -- `_attach_market` applies both corrections to
+    # it in place and derives `proj_correction` as the delta -- so the uncorrected projection
+    # is the difference, and it is where the curve has to be read (#39).
+    #
+    # Reading at `proj` and `proj + corr` measured each shift from the corrected point to a
+    # *twice*-corrected one: one full correction too far along a curve that is steeply
+    # non-linear by construction, so the error was largest exactly where the curve is
+    # steepest and corrections are most trusted.
+    raw = proj - corr
+    # And the curve is built on the uncorrected projection. Built on the corrected one it
+    # moved under every player whenever any correction changed -- so absorbing a single
+    # advisory stage re-priced the whole board rather than the players that stage touched,
+    # which is what #121 measured at 346 of 457 players.
+    xs, ys = market_curve(adp, raw)
     # Both sides read off the curve, so a player whose own ADP already differs from it keeps
     # that difference -- the shift is the correction's effect, not a re-pricing of the player.
-    shift = np.interp(proj + corr, xs, ys) - np.interp(proj, xs, ys)
+    shift = np.interp(raw + corr, xs, ys) - np.interp(raw, xs, ys)
     shift = np.where(np.isfinite(shift), shift, 0.0)
     bound = clamp_frac * np.abs(np.nan_to_num(adp, nan=0.0))
     shift = np.clip(shift, -bound, bound)

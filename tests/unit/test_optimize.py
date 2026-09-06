@@ -509,3 +509,109 @@ def test_the_consensus_fallback_reports_ecr_and_says_so():
     assert tp is not None
     assert tp.rank_label == "ECR"
     assert "consensus" in tp.via
+
+
+# --- a correction moves a player once, not twice (issue #39) ---------------
+
+def _priced(n=60):
+    """A board whose ADP-to-projection relationship is steeply non-linear, like the real one.
+
+    Flat would hide this defect entirely: reading the curve one correction too far only
+    matters where the curve's slope changes, which is the whole reason it is interpolated
+    rather than fitted.
+    """
+    proj = np.linspace(300.0, 40.0, n)
+    adp = np.round(np.exp(np.linspace(0.0, 5.2, n)))      # 1 .. ~180, steepening
+    return proj, adp
+
+
+def _closed_form(adp, raw, corr):
+    """The identity, recomputed from the board's own columns and nothing else.
+
+    Deliberately not a call into `corrected_adp`: an oracle that reuses the code under test
+    agrees with it by construction, including when both are wrong.
+    """
+    from hub.draft.optimize import market_curve
+    xs, ys = market_curve(adp, raw)
+    shift = np.interp(raw + corr, xs, ys) - np.interp(raw, xs, ys)
+    return np.where(np.isfinite(shift), shift, 0.0)
+
+
+def _frame(proj_corrected, adp, corr):
+    return pl.DataFrame({"adp": adp, "proj_blend": proj_corrected, "proj_correction": corr})
+
+
+def test_the_pre_clamp_shift_matches_the_closed_form_identity():
+    """Criterion one, and the one that decides the ticket."""
+    from hub.draft.optimize import corrected_adp
+    raw, adp = _priced()
+    corr = np.linspace(-8.0, 8.0, raw.size)
+    got = corrected_adp(_frame(raw + corr, adp, corr), clamp_frac=1e9).to_numpy()
+    want = adp + _closed_form(adp, raw, corr)
+    assert np.allclose(got, want, atol=1e-9), (
+        f"largest disagreement {np.abs(got - want).max():.3f} picks")
+
+
+def test_the_identity_holds_for_a_clamped_player():
+    """Criterion three. The check runs pre-clamp, so a clamped player must still agree once
+    the same clamp is applied to the identity -- otherwise the clamp could be hiding the very
+    error this is about."""
+    from hub.draft.optimize import corrected_adp
+    raw, adp = _priced()
+    corr = np.full(raw.size, 25.0)                 # large enough to clamp widely
+    frac = 0.05
+    got = corrected_adp(_frame(raw + corr, adp, corr), clamp_frac=frac).to_numpy()
+    shift = _closed_form(adp, raw, corr)
+    bound = frac * np.abs(adp)
+    want = adp + np.clip(shift, -bound, bound)
+    assert (np.abs(got - adp) <= bound + 1e-9).all(), "the clamp was not applied"
+    assert np.allclose(got, want, atol=1e-9)
+
+
+def test_only_the_corrected_player_moves_on_a_steep_curve():
+    """Criterion four. `test_a_player_with_no_correction_does_not_move` above already asserts
+    the all-zero case; what this adds is that one player's correction does not drag the rest,
+    which is possible only because the curve is now built on the uncorrected projection."""
+    from hub.draft.optimize import corrected_adp
+    raw, adp = _priced()
+    corr = np.zeros(raw.size)
+    corr[10] = -6.0
+    got = corrected_adp(_frame(raw + corr, adp, corr)).to_numpy()
+    unmoved = np.ones(raw.size, dtype=bool)
+    unmoved[10] = False
+    assert np.allclose(got[unmoved], adp[unmoved]), (
+        "one player's correction moved the others, so the curve is still being re-fitted "
+        "under everyone")
+    assert got[10] != adp[10]
+
+
+def test_the_curve_is_unchanged_when_every_correction_is_zero():
+    """Criterion five. Built on the corrected projection the curve moved under everyone
+    whenever any correction changed -- which is what #121 measured at 346 of 457 players."""
+    from hub.draft.optimize import corrected_adp, market_curve
+    raw, adp = _priced()
+    zero = np.zeros(raw.size)
+    assert np.allclose(corrected_adp(_frame(raw, adp, zero)).to_numpy(), adp)
+    # And the curve the shift is read from is the uncorrected one, whatever the corrections.
+    corr = np.linspace(-8.0, 8.0, raw.size)
+    a1, b1 = market_curve(adp, raw)
+    a2, b2 = market_curve(adp, raw)          # same inputs, same curve
+    assert np.array_equal(a1, a2) and np.array_equal(b1, b2)
+    moved = corrected_adp(_frame(raw + corr, adp, corr), clamp_frac=1e9).to_numpy()
+    want = adp + _closed_form(adp, raw, corr)
+    assert np.allclose(moved, want)
+
+
+def test_a_player_near_the_smoothing_window_boundary_is_covered():
+    """Criterion six. `market_curve` smooths with a rolling median over a 15-wide window, so
+    a correction large enough to re-sort a player changes which window he lands in. Reading
+    the curve at the corrected projection made that re-sorting part of the measurement."""
+    from hub.draft.optimize import corrected_adp
+    raw, adp = _priced()
+    corr = np.zeros(raw.size)
+    # Big enough to jump this player across several neighbours, and so across the window.
+    corr[30] = -(raw[30] - raw[38])
+    got = corrected_adp(_frame(raw + corr, adp, corr), clamp_frac=1e9).to_numpy()
+    want = adp + _closed_form(adp, raw, corr)
+    assert np.allclose(got, want, atol=1e-9)
+    assert got[30] > adp[30], "a downgraded player should be taken later, not earlier"
