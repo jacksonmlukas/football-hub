@@ -44,7 +44,7 @@ def test_the_same_config_is_stable_across_runs():
 
 def test_predictions_carry_the_config_digest_as_a_column():
     """Readable without decoding a hash. A provenance field nobody can query is decoration."""
-    assert "cfg_digest" in ratings.PROVENANCE_COLUMNS
+    assert "cfg_digest" in ratings.STAMP_COLUMNS
 
 
 def test_fit_stamps_provenance_onto_every_row(monkeypatch, tmp_path):
@@ -57,7 +57,7 @@ def test_fit_stamps_provenance_onto_every_row(monkeypatch, tmp_path):
                         lambda season, at=None, cache=None, base=None: games)
     got = ratings.fit(2026, 1, base=tmp_path)
     assert got.height == 1
-    for col in ratings.PROVENANCE_COLUMNS:
+    for col in ratings.STAMP_COLUMNS:
         assert col in got.columns and got[col][0] is not None
 
 

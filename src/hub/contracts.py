@@ -60,7 +60,7 @@ _UNVERIFIED_NOTE = (
 _UNMEASURED_NOTE = (
     ". NOTE: nothing in this repo records whether this contract has ever been checked "
     "against a real response -- the declaration is as much a suspect as the source")
-_PROVENANCE_NOTES: dict[bool | None, str] = {False: _UNVERIFIED_NOTE, None: _UNMEASURED_NOTE}
+_VERIFICATION_NOTES: dict[bool | None, str] = {False: _UNVERIFIED_NOTE, None: _UNMEASURED_NOTE}
 # /GUARD
 
 
@@ -159,7 +159,7 @@ class Contract:
         if problems:
             # `.get`, so only the two states that have something to say add a sentence --
             # `True` is the contract that has met a real response and needs no caveat.
-            note = _PROVENANCE_NOTES.get(self.verified_against_live, "")
+            note = _VERIFICATION_NOTES.get(self.verified_against_live, "")
             raise ContractViolation(f"{self.name}: " + "; ".join(problems) + note)
         # /GUARD
         return df

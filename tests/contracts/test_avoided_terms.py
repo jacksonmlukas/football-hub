@@ -397,12 +397,6 @@ OUTSTANDING: dict[tuple[str, str], tuple[int, str]] = {
                                          "file is there; the Board is what it means"),
     ("src/hub/contracts.py", "board"): (1, "the draft board's contract, named where every "
                                            "other contract is"),
-    ("src/hub/contracts.py", "provenance alone"): (
-        1, "`_PROVENANCE_NOTES` is the fetch layer's source provenance, which is a third "
-           "thing again. Second pass, with the config module"),
-    ("src/hub/models/ratings.py", "provenance alone"): (
-        1, "`PROVENANCE_COLUMNS` is the same defect as the config one and predates it: it "
-           "is a digest set, not a price source. Second pass, with the config module"),
     # --- "the market", the term three entries forbid --------------------------------------
     ("src/hub/draft/backtest.py", "the market"): (8, _BULK),
     ("src/hub/draft/board.py", "the market"): (7, _BULK),
@@ -541,8 +535,27 @@ def test_the_scan_finds_the_terms_it_is_supposed_to():
     assert "the market" in found, (
         "the term three glossary entries forbid matched nowhere, so the phrase scan is dead")
     assert "board" in found, "the reserved-headword scan matched nothing"
-    assert "provenance alone" in found, "the name scan matched nothing"
     assert len(hits) >= 50, f"only {len(hits)} hits; the scan has narrowed"
+
+
+def test_the_name_scan_can_match_at_all(tmp_path):
+    """The name-kind half of the anti-vacuity check, proved without a live violation.
+
+    This used to assert that `provenance alone` was among the repo's hits, using a real
+    violation as evidence that the name-kind scan was alive. That worked until the violations
+    were fixed -- which was the goal -- and then the premise check failed for the one reason
+    it should never fail: the repo got cleaner. A check that needs the codebase to stay dirty
+    to prove itself is a check that argues against its own ticket.
+
+    So the machinery is proved against a planted case instead, the way a fresh phrase
+    violation already is. The repo-wide assertions above keep covering the kinds that still
+    have real hits.
+    """
+    mod = tmp_path / "named.py"
+    mod.write_text("PROVENANCE_COLUMNS = ('model', 'version')\n")
+    got = scan((mod,))
+    assert [(h.term, h.line) for h in got] == [("provenance alone", 1)], (
+        f"the name-kind scan did not match a planted violation: {got}")
 
 
 @pytest.mark.parametrize("path,term", [

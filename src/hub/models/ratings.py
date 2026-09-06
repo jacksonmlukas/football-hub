@@ -48,7 +48,7 @@ def target_week(games: pl.DataFrame, at: datetime | None = None) -> int:
 # that produced it. `docs/foundation-plan.md` 3.5: two runs differing only in a
 # hyperparameter must produce distinguishable rows, and the public claim is that a specific
 # model made a specific prediction -- not "the Bayesian model" as a category.
-PROVENANCE_COLUMNS = ("model", "version", "cfg_digest", "fit_digest")
+STAMP_COLUMNS = ("model", "version", "cfg_digest", "fit_digest")
 
 
 def live_config():
