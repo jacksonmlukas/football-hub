@@ -1,4 +1,5 @@
-"""`CONTEXT.md`'s `_Avoid_` lists, enforced against the source tree and against `CONTEXT.md`.
+"""`CONTEXT.md`'s `_Avoid_` lists, enforced against the source tree, against `CONTEXT.md`, and
+against the names `tests/` declares.
 
 Prose has failed to hold this rule five times. A frame was named `eligible` two lines after
 the comment citing the entry whose `_Avoid_` names "eligible"; a docstring said "the sample"
@@ -41,6 +42,7 @@ a test holds it to that: the only honest count is the one the dict computes.
 """
 from __future__ import annotations
 
+import inspect
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,17 +52,36 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 CONTEXT = ROOT / "CONTEXT.md"
 
-# The source tree and the glossary, which is what the acceptance criterion names. Tests are
-# deliberately outside it: `tests/` restates the vocabulary constantly when describing what
-# it is testing, and folding it in would bury the source's own violations under hundreds of
-# test-name hits. `tests/unit/test_preflight.py` is the site that costs us for that -- see
-# OUTSTANDING's note on it.
+# The source tree and the glossary, read line by line.
 SCAN_ROOTS: tuple[Path, ...] = (
     *sorted((ROOT / "src" / "hub").rglob("*.py")),
     *sorted((ROOT / "scripts").glob("*.sh")),
     ROOT / "site" / "index.html",
     CONTEXT,
 )
+
+# And `tests/`, read for the names it *declares* -- each file's own name, and every `def` and
+# `class` in it -- and for nothing else. `docs/agents/domain.md` puts a test name in scope by
+# name, and a test name is where someone learning what a thing is called meets the word first.
+#
+# Names and not prose, and that split is the decision rather than an implementation detail.
+# This root used to be excluded outright, reasoning that `tests/` restates the vocabulary
+# constantly while describing what it is testing, so folding it in would bury the source's own
+# violations. That was argued and never measured, so both spans were measured on 2026-09-06,
+# against the tree this change started from: all of `tests/`, prose included, was 297 hits --
+# the burial the exclusion described, and still the right call. The declared names alone were
+# 20, every one of them a real violation of an entry, and all 20 are renamed here. So the
+# exclusion was right about prose and wrong about names, which is the half it never priced.
+#
+# Both figures are history, dated and left that way. The prose span already reads 306, because
+# the paragraph you are reading restates the vocabulary exactly the way `tests/` always does --
+# the exclusion's own argument, arriving on schedule.
+#
+# The evidence for widening was always about names, too. `cutoff` arrived in a *test name* in
+# the same change that added the **As of** entry forbidding it, and the scan of the day could
+# not see it; `test_the_name_that_prompted_this_widening_would_now_be_caught` holds that case
+# by writing it out, since the name itself is gone.
+NAME_ROOTS: tuple[Path, ...] = tuple(sorted((ROOT / "tests").rglob("*.py")))
 
 
 # --- reading the glossary -----------------------------------------------------
@@ -383,6 +404,72 @@ def scan(paths: tuple[Path, ...] = SCAN_ROOTS,
     return out
 
 
+# Only `def` and `class`. The module-level assignments and guard markers `_PY_NAME` also
+# collects are read by the name-kind rules above, which do not run over `tests/`.
+#
+# The indent is `[ \t]*` and not `\s*`, which is the difference between naming the line and
+# naming a blank one: `\s` matches a newline, so `^\s*def` anchored at the blank line above a
+# top-level `def` matches from *there*, and the hit is reported two lines early. A message
+# that sends a reader to a blank line is how a scan gets ignored.
+_DECLARED = re.compile(r"^[ \t]*(?:def|class)\s+(?P<n>[A-Za-z_][A-Za-z0-9_]*)", re.M)
+
+
+def declared_names(path: Path) -> list[tuple[int, str]]:
+    """The file's own name, then every `def`/`class` in it, with the underscores taken out.
+
+    Reading them back as prose is not a convenience, it is the whole mechanism. `cutoff` in
+    `test_empty_series_has_no_cutoff` sits behind an underscore, and the word boundary that
+    deliberately spares `_adp_saturation_cutoff` over in `src/` would spare this too -- so a
+    scan widened to `tests/` but still reading identifiers as identifiers would have gone on
+    missing the exact name that prompted widening it. Split on the underscores and the same
+    string says "has no cutoff", which is a claim about a date and decidable as one.
+
+    The file's own name is reported against line 1, because a reader told about a file name
+    is being sent to the file rather than to a line in it.
+    """
+    text = path.read_text()
+    out = [(1, path.stem.replace("_", " "))]
+    out += [(text.count("\n", 0, m.start()) + 1, m.group("n").replace("_", " "))
+            for m in _DECLARED.finditer(text)]
+    return out
+
+
+def scan_names(paths: tuple[Path, ...] = NAME_ROOTS,
+               rules: dict[str, Rule] | None = None) -> list[Hit]:
+    """Every declared name in `paths` that a checked *phrase* rule forbids.
+
+    Phrase rules only, and that is a limit on what the widening claims rather than a shortcut.
+    A name read as prose is prose, so the phrase rules are exactly the ones that can decide
+    it. The `kind="name"` rules cannot come along: they say who owns a reserved word as a
+    `src/` path prefix, and no file under `tests/` can match one, so `board` and `gate` would
+    fire on all 138 declarations that exist to test the Board and the Gate (measured
+    2026-09-06) -- correct uses every one, with no way for the rule to say so. Ownership is
+    expressed in source paths, so reserved words stay policed where their owners live.
+
+    There is no `_is_mention` escape either. A name cannot quote a term or sit on a line that
+    cites the rule, so a test that genuinely needs to name a forbidden word says so in its
+    docstring, which this half does not read.
+    """
+    rules = {**CHECKED, **RESERVED} if rules is None else rules
+    phrases = {t: r for t, r in rules.items() if r.kind == "phrase"}
+    out: list[Hit] = []
+    for path in paths:
+        if not path.exists():
+            continue
+        rel = (path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT)
+               else path.as_posix())
+        for line, name in declared_names(path):
+            for term, rule in phrases.items():
+                for _ in rule.regex(term).finditer(name):
+                    out.append(Hit(rel, line, term, rule, name))
+    return out
+
+
+def _all_hits() -> list[Hit]:
+    """Both halves: the scanned files read whole, and `tests/` read for its names."""
+    return scan() + scan_names()
+
+
 # --- what is outstanding, and why ---------------------------------------------
 #
 # Issue #53 fixed the sites it named and left the rest standing rather than rewriting them
@@ -471,6 +558,9 @@ OUTSTANDING: dict[tuple[str, str], tuple[int, str]] = {
 # `tests/unit/test_preflight.py` named the secret scan a "gate" throughout, including in
 # its test names. Renamed in the second pass; the count is zero now, and this note is kept
 # only because a sentence describing a violation outlived the violation once already here.
+# Widening the scan into `tests/` does not pick that case up and never could: `gate` is a
+# reserved *headword*, decided by ownership against `src/` prefixes, and `scan_names` says
+# why ownership cannot be expressed for a test file. A reviewer caught it, as with `cutoff`.
 
 
 # The inventory's own preamble: the comment block between the section rule and the first
@@ -621,6 +711,86 @@ def test_the_name_scan_can_match_at_all(tmp_path):
         f"the name-kind scan did not match a planted violation: {got}")
 
 
+def test_the_name_scan_reads_the_test_roots_it_claims_to():
+    """The widened half's anti-vacuity check, and it has to be written round the back.
+
+    Every other root proves itself by what it finds. This one cannot: the change that widened
+    the scan into `tests/` also renamed all 20 names it found, so there is nothing left for it
+    to point at -- and `test_the_name_scan_can_match_at_all` already learned what happens to a
+    premise check that needs the repo to stay dirty. So this asserts the machinery instead:
+    the roots are populated, and a name comes back out of them as the prose the rules read.
+    A glob that stops matching, or an extractor that stops splitting, fails here.
+    """
+    assert len(NAME_ROOTS) >= 30, (
+        f"only {len(NAME_ROOTS)} files under `tests/`; the glob has drifted and the widened "
+        f"half is scanning almost nothing")
+    got = declared_names(Path(__file__))
+    assert (1, "test avoided terms") in got, (
+        f"this file's own name did not come back out of the extractor: {got[:3]}")
+    assert any(n == "test the name scan reads the test roots it claims to" for _, n in got), (
+        "this test's own name did not come back out of the extractor, so the `def` scan is "
+        "dead and every name-kind assertion below it is vacuous")
+
+
+def test_the_habit_test_reads_both_halves():
+    """The one narrowing the checks above cannot see, closed by reading the call instead.
+
+    Every name the widened half found is renamed, so `scan()` and `_all_hits()` return the
+    same list today -- which means a change putting the habit test back on `scan()` alone is
+    green, silently, until the next forbidden test name lands unreported. That is the
+    narrowing this module's docstring calls the exact defect issue #53 was filed about, and no
+    assertion about *results* can catch it while the results agree. So this one is about the
+    call, in the same spirit as `test_the_harness_can_find_the_preamble_it_guards`.
+    """
+    src = inspect.getsource(test_nothing_scanned_uses_a_term_its_glossary_forbids)
+    assert "_all_hits()" in src, (
+        "the habit test no longer reads the names in `tests/`. Putting it back on one half of "
+        "the scan is green today only because every name the other half found is already "
+        "renamed, and stays green over the next one that is not.")
+
+
+def test_a_forbidden_term_in_a_test_name_is_caught(tmp_path):
+    """Plant one and require the scan to name the term and the line -- and only the name.
+
+    The second line is the same violation in prose, and it is *supposed* to go unreported:
+    test prose is the span this widening deliberately left out, priced at NAME_ROOTS, and a
+    scan that quietly read it anyway would be a different decision than the one written there.
+    """
+    mod = tmp_path / "test_planted.py"
+    mod.write_text("def test_a_pick_that_beats_the_market():\n"
+                   "    # whichever way the market moves, this line is prose and unread\n"
+                   "    assert True\n")
+    got = scan_names((mod,))
+    assert [(h.term, h.line, h.text) for h in got] == [
+        ("the market", 1, "test a pick that beats the market")], got
+
+
+def test_the_name_that_prompted_this_widening_would_now_be_caught(tmp_path):
+    """The case this ticket was filed over, written out rather than described.
+
+    `test_empty_series_has_no_cutoff` landed in `tests/unit/test_board_edge.py` in the same
+    change that added the **As of** entry whose `_Avoid_` forbids the word, and the scan of
+    the day could not see it twice over: `tests/` was outside the roots at all, and the
+    underscore in front of the word would have spared it even inside them. A reviewer reading
+    the diff caught it, which is the run of luck this file exists to replace.
+
+    It is spelled out here because the name itself is gone -- it is
+    `test_empty_series_has_no_saturation_point` now, which is what the helper it calls has
+    always been about -- so this line is the only thing still holding the historical form.
+    """
+    mod = tmp_path / "test_board_edge.py"
+    mod.write_text("def test_empty_series_has_no_cutoff():\n"
+                   "    assert _adp_saturation_cutoff(EMPTY, teams=12) is None\n")
+    got = scan_names((mod,))
+    assert [(h.term, h.line) for h in got] == [("cutoff", 1)], (
+        f"the name that prompted this widening is not caught: {got}")
+    # And the file half still spares both, which is the complement that makes the two
+    # necessary: `_adp_saturation_cutoff` is a threshold and not a date, and the identifier
+    # in the `def` line is unreadable as prose until the underscores come out.
+    assert not [h for h in scan((mod,)) if h.term == "cutoff"], (
+        "the file half now flags the helper it was written to spare")
+
+
 @pytest.mark.parametrize("path,term", [
     ("src/hub/config.py", "provenance alone"),
     ("src/hub/fetch/espn.py", "board"),
@@ -670,7 +840,7 @@ def test_a_citation_of_the_rule_is_not_a_violation(tmp_path):
 def test_the_outstanding_inventory_is_current():
     """A listed site that has gone to zero is a stale entry, and stale entries are how an
     inventory stops describing the repo."""
-    counts = _outstanding_counts(scan())
+    counts = _outstanding_counts(_all_hits())
     gone = [site for site in OUTSTANDING if site not in counts]
     assert not gone, (
         f"OUTSTANDING lists sites that no longer violate anything: {gone}. Delete them -- "
@@ -679,12 +849,18 @@ def test_the_outstanding_inventory_is_current():
 
 # --- the habit ----------------------------------------------------------------
 
-def test_no_source_file_or_glossary_entry_uses_a_term_its_glossary_forbids():
-    """The whole point. Anything not in OUTSTANDING, or more of it than there was, is red."""
-    counts = _outstanding_counts(scan())
+def test_nothing_scanned_uses_a_term_its_glossary_forbids():
+    """The whole point. Anything not in OUTSTANDING, or more of it than there was, is red.
+
+    Both halves land in the same list, which is what makes the widening worth anything: a
+    forbidden word in a test name is reported beside one in a module, in the same message,
+    against the same inventory.
+    """
+    hits = _all_hits()
+    counts = _outstanding_counts(hits)
     by_term = {t: e for e in glossary() for t in e.avoided}
     bad = []
-    for hit in scan():
+    for hit in hits:
         allowed, _ = OUTSTANDING.get(hit.site, (0, ""))
         if counts[hit.site] > allowed:
             entry = by_term.get(hit.term)
@@ -695,4 +871,6 @@ def test_no_source_file_or_glossary_entry_uses_a_term_its_glossary_forbids():
         "these use a term CONTEXT.md forbids:\n" + "\n".join(sorted(set(bad))) + "\n\n"
         "Say which market, which plan, which board. If the use is genuinely the entry's own "
         "sense, add it to OUTSTANDING with the reason -- and if the term is not decidable by "
-        "a regex at all, move it to UNCHECKED and say why.")
+        "a regex at all, move it to UNCHECKED and say why. A name under `tests/` is a name "
+        "you own outright, so rename it: an exemption there is a test that teaches the wrong "
+        "word to the next reader, which is the whole reason names are scanned.")

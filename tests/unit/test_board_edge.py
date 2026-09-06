@@ -60,7 +60,7 @@ def test_lowest_qualifying_cluster_wins():
     assert _adp_saturation_cutoff(s, teams=12) == 150.0
 
 
-def test_empty_series_has_no_cutoff():
+def test_empty_series_has_no_saturation_point():
     assert _adp_saturation_cutoff(pl.Series("adp", [], dtype=pl.Float64), teams=12) is None
 
 

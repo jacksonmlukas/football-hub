@@ -241,7 +241,7 @@ def test_a_candidate_indistinguishable_from_the_field_is_left_unmarked():
 
 # --- the market's pick, which is what the board now leads with -------------
 
-def test_the_market_pick_fills_an_unfilled_starting_slot_first():
+def test_the_draft_market_pick_fills_an_unfilled_starting_slot_first():
     """P0 measured this arm at +3.11 against the room, and championship equity at +3.15 --
     no detectable difference, n=36, CI [-3.64, +3.58]. The simpler one leads because the
     burden is on the complicated thing, not because the optimizer is bad."""

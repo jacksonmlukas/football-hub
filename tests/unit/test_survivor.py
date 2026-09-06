@@ -88,7 +88,7 @@ def test_survival_is_multiplicative_not_additive():
     assert survivor.survival(plan) == pytest.approx(0.525)
 
 
-def test_the_plan_reports_its_survival_probability():
+def test_the_survivor_plan_reports_its_survival_probability():
     grid = _grid([(1, "A", 0.9), (2, "B", 0.8)])
     plan = survivor.solve(grid, weeks=[1, 2])
     assert survivor.survival(plan) == pytest.approx(0.72)
@@ -116,7 +116,7 @@ def test_a_full_season_is_assignable():
     assert len(set(plan["team"].to_list())) == 18
 
 
-def test_the_plan_is_ordered_by_week():
+def test_the_survivor_plan_is_ordered_by_week():
     rng = np.random.default_rng(1)
     rows = [(w, f"T{i}", float(rng.uniform(0.3, 0.8)))
             for w in range(1, 8) for i in range(10)]
@@ -293,7 +293,7 @@ def _late_season(tmp_path, snapshot_weeks=(), at=dt.datetime(2026, 9, 4)):
     return sched
 
 
-def test_a_week_only_the_snapshot_prices_still_enters_the_plan(tmp_path, monkeypatch):
+def test_a_week_only_the_snapshot_prices_still_enters_the_survivor_plan(tmp_path, monkeypatch):
     """Week 18 carries no `spread_line` and never will at the moment the plan is first
     wanted. The snapshot is what puts it in the season."""
     import hub.fetch.nflverse as nflverse
@@ -412,7 +412,7 @@ def test_spending_the_only_option_in_a_week_is_reported_not_silently_dropped():
         survivor.solve(grid, weeks=[2, 3], spent=["A"])
 
 
-def test_a_week_already_played_is_not_in_the_grid_the_plan_solves():
+def test_a_week_already_played_is_not_in_the_grid_the_remaining_plan_solves():
     """Week 1 has kicked off and has a result. It is not a choice any more, and the honest
     plan is over what is left."""
     import datetime as dt
@@ -649,7 +649,7 @@ def test_a_double_week_priced_by_one_fixture_needs_a_pick_rather_than_raising():
     survivor.solve(g, cov.covered, pool=_DOUBLE)      # the weeks that were fine still plan
 
 
-def test_with_no_double_weeks_configured_the_plan_is_todays():
+def test_with_no_double_weeks_configured_the_survivor_plan_is_todays():
     g = _fx([(1, "KC", "LV", 0.9), (1, "SF", "SEA", 0.8),
              (2, "BUF", "NYJ", 0.85), (2, "DAL", "NYG", 0.75)])
     plain = survivor.solve(g, [1, 2])

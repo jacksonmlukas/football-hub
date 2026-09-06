@@ -55,7 +55,7 @@ def test_an_unknown_position_falls_back_rather_than_raising():
 
 # --- blending his own season with the market's opinion --------------------
 
-def test_projection_sits_between_his_own_volume_and_the_market_prior():
+def test_projection_sits_between_his_own_volume_and_the_draft_market_prior():
     own = {"targets": 9.0, "receptions": 6.0, "receiving_yards": 110.0,
            "carries": 0.0, "attempts": 0.0}
     got = V.project(own, pick=90, position="WR")

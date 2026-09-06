@@ -474,7 +474,7 @@ def _survivor_body(node: str, surv: dict) -> str:
     return _run(node, f"{lifted}\nconsole.log(survivorBody({json.dumps(surv)}));")
 
 
-def test_the_plan_says_which_weeks_it_is_over_and_which_are_behind_it(node):
+def test_the_remaining_plan_says_which_weeks_it_is_over_and_which_are_behind_it(node):
     """`weeks_played` was published and read by nothing at all -- no page code, no test, no
     CLI -- and `weeks_remaining` by one test that rendered nothing (#57). A field nobody
     reads is what this repo deletes on sight, and the alternative it chose here is that the
@@ -511,7 +511,7 @@ def test_an_artifact_written_before_the_scope_existed_still_renders(node):
     assert "SF" in out and "SEA" in out, "the plan itself stopped rendering"
 
 
-def test_the_weeks_that_are_in_the_plan_only_because_the_store_was_read_are_named(node):
+def test_the_weeks_that_are_in_the_remaining_plan_only_because_the_store_was_read_are_named(node):
     """`snapshot_only_weeks` is the third scope field and had no reader either. It is the
     one that decides whether reading the store bought anything, and it moves -- a week in
     the list today is not in it in December -- so it is reported rather than assumed."""
