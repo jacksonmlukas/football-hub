@@ -42,13 +42,34 @@ P_ESPN_S2_QUOTED='espn_s2["'"'"']*[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9
 P_SWID='SWID=[{]?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-'
 P_CFBD='CFBD_API_KEY=[A-Za-z0-9+/=_-]{20,}'
 P_ODDS='ODDS_API_KEY=[A-Za-z0-9+/=_-]{20,}'
-PATTERNS="$P_ESPN_S2|$P_ESPN_S2_QUOTED|$P_SWID|$P_CFBD|$P_ODDS"
+# The survivor pool host's session cookie, and the first pattern here to arrive *before* the
+# credential it covers. `src/hub/fetch/pool.py` does not exist yet -- it waits on the fetch
+# routing in issues #34 through #36 -- and `POOL_SESSION` is the environment name it will
+# read, beside `ESPN_S2` and `ESPN_SWID`. Landing the pattern first is the whole point of
+# doing it now: an unrecognised shape is invisible to this scan by design, so a scan taught
+# the shape afterwards is blind for exactly the interval when the credential is new and
+# being pasted between machines. Every miss recorded in this file was found the other way
+# round.
+#
+# What it sees is the environment assignment: `.env`, a repository secret pasted into a
+# workflow, a value copied into a note or a docstring. What it does not see is the host's own
+# cookie name in a raw `Cookie:` header, and that limit is written down rather than left to be
+# discovered -- `P_ESPN_S2_QUOTED` can cover the ESPN equivalent only because `espn_s2` is the
+# name the cookie itself carries, and the pool host's is not known here. When #34-#36 land and
+# `hub.fetch.pool` names it, that is one more pattern and a canary case beside it.
+#
+# `%` and `.` join the value charset for this one, which the key patterns do not need: session
+# cookies are routinely url-encoded and signature-separated (`s%3A<id>.<signature>`). Without
+# them the pattern would still fire, on a prefix; with them it spans the token, and the
+# synthetic sample below carries both so the charset is exercised rather than asserted.
+P_POOL_SESSION='POOL_SESSION=[A-Za-z0-9%+/=_.-]{20,}'
+PATTERNS="$P_ESPN_S2|$P_ESPN_S2_QUOTED|$P_SWID|$P_CFBD|$P_ODDS|$P_POOL_SESSION"
 
 # label:pattern-variable, one per synthetic sample the self-check plants. Two labels share
 # P_SWID: the braces are optional in that pattern, and the brace-less form is the one that
 # was actually pasted into a repository secret on 2026-09-04. The coverage check compares
 # distinct *variables* against the alternations in PATTERNS, not labels.
-CANARY_CASES='espn-cookie:P_ESPN_S2 espn-cookie-quoted:P_ESPN_S2_QUOTED braced-swid:P_SWID brace-less-swid:P_SWID cfbd-key:P_CFBD odds-key:P_ODDS'
+CANARY_CASES='espn-cookie:P_ESPN_S2 espn-cookie-quoted:P_ESPN_S2_QUOTED braced-swid:P_SWID brace-less-swid:P_SWID cfbd-key:P_CFBD odds-key:P_ODDS pool-cookie:P_POOL_SESSION'
 
 # Every sample is synthetic and assembled at runtime from parts. Not style: the scan below
 # reads every commit, this script is in every commit, so a credential-shaped literal here
@@ -59,6 +80,7 @@ canary_sample() {
   B64=$(printf 'a%.0s' $(seq 1 70))           # 70 > the 60 the quoted branch demands
   UUID='1A2B3C4D-5E6F-7081-9203-A4B5C6D7E8F9' # a bare UUID; no SWID= in front of it here
   KEY=$(printf '0f1e2d3c%.0s' $(seq 1 4))     # 32 > the 20 both key branches demand
+  SESSION="s%3A$KEY.$KEY"                     # the url-encoding and the dot, both in its charset
   case "$1" in
     espn-cookie)        printf 'ESPN_S2=%s\n' "$B64" ;;
     espn-cookie-quoted) printf 'espn_s2: "%s"\n' "$B64" ;;
@@ -66,6 +88,7 @@ canary_sample() {
     brace-less-swid)    printf 'SWID=%s\n' "$UUID" ;;
     cfbd-key)           printf 'CFBD_API_KEY=%s\n' "$KEY" ;;
     odds-key)           printf 'ODDS_API_KEY=%s\n' "$KEY" ;;
+    pool-cookie)        printf 'POOL_SESSION=%s\n' "$SESSION" ;;
     *)                  return 1 ;;
   esac
 }
@@ -110,9 +133,9 @@ for CASE in $CANARY_CASES; do
   esac
 done
 
-# The other half of "every alternation": a sixth pattern joined into PATTERNS with no sample
-# beside it is a sixth unproven pattern, and the loop above cannot see what it was never
-# given. Counting `|` is exact only while no pattern carries one inside a bracket expression;
+# The other half of "every alternation": a pattern joined into PATTERNS with no sample beside
+# it is an unproven pattern, and the loop above cannot see what it was never given. Counting
+# `|` is exact only while no pattern carries one inside a bracket expression;
 # if that ever changes this over-counts and fails loudly, which is the safe direction.
 ALTS=$(( $(printf '%s' "$PATTERNS" | tr -cd '|' | wc -c) + 1 ))
 if [ "$ALTS" -ne "$COVERED" ]; then
@@ -131,7 +154,7 @@ else
 fi
 # /GUARD
 
-# GUARD credential-history-scan [unit/test_preflight.py::test_a_planted_credential_blocks_the_flip unit/test_preflight.py::test_a_credential_committed_and_then_removed_still_blocks unit/test_preflight.py::test_the_brace_less_swid_is_caught_too]: greps every commit for the five credential shapes; a hit is already-disclosed, not preventable.
+# GUARD credential-history-scan [unit/test_preflight.py::test_a_planted_credential_blocks_the_flip unit/test_preflight.py::test_a_credential_committed_and_then_removed_still_blocks unit/test_preflight.py::test_the_brace_less_swid_is_caught_too]: greps every commit for every credential shape declared above; a hit is already-disclosed, not preventable.
 echo "==> Scanning full history for ESPN cookies and API keys"
 if git rev-list --all >/dev/null 2>&1; then
   # `grep -v PATTERNS=` so this script's own declaration is not a hit. Narrower than

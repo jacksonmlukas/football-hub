@@ -153,6 +153,10 @@ def test_history_rewritten_clean_passes_again(repo):
 SWID_BODY = "1A2B3C4D-5E6F-7081-9203-A4B5C6D7E8F9"
 S2_BODY = "AEB" + "a1B2c3D4e5" * 6
 KEY_BODY = "0f1e2d3c4b5a" * 3
+# The pool host's session cookie, in the url-encoded, signature-separated form those cookies
+# take. The `%` and the `.` are the parts of the shape the key patterns above have no charset
+# for, so planting a body without them would leave the widened charset untested.
+POOL_BODY = "s%3A" + KEY_BODY + "." + KEY_BODY
 
 
 def _plant(repo: Path, name: str, body: str) -> None:
@@ -168,6 +172,7 @@ def _plant(repo: Path, name: str, body: str) -> None:
     pytest.param("brace-less swid", "SWID=" + SWID_BODY, id="swid-bare"),
     pytest.param("cfbd key", "CFBD_API_KEY=" + KEY_BODY, id="cfbd-key"),
     pytest.param("odds key", "ODDS_API_KEY=" + KEY_BODY, id="odds-key"),
+    pytest.param("pool session cookie", "POOL_SESSION=" + POOL_BODY, id="pool-cookie"),
 ])
 def test_a_planted_credential_blocks_the_flip(repo, shape, line):
     """The assertion that was missing. Exit non-zero, or the scan is decoration."""
@@ -211,7 +216,8 @@ def test_ordinary_prose_is_not_flagged(repo):
     which is how the 2026-08-23 miss became possible."""
     (repo / "docs.md").write_text(
         "Set ESPN_S2 and SWID in .env. The CFBD_API_KEY is optional.\n"
-        "See ODDS_API_KEY= in SETUP.md for where to get one.\n")
+        "See ODDS_API_KEY= in SETUP.md for where to get one.\n"
+        "POOL_SESSION= is the pool host's session cookie, read from the environment.\n")
     git(repo, "add", "-A")
     git(repo, "commit", "-m", "docs")
     assert preflight(repo).returncode == 0
@@ -327,10 +333,11 @@ def test_the_scan_does_not_ask_for_work_that_is_already_done(repo):
 # pattern was inert BRE. These tests kill each pattern in turn and require the run to block
 # and to name the one that died.
 #
-# The pattern declarations are discovered rather than listed, so a sixth shape added to the
-# script is exercised here without anyone remembering to add it. `test_the_script_declares
-# _the_patterns_this_file_expects` is the premise: an empty discovery would parametrize this
-# to nothing and pass, which is the exact vacuum this whole issue is about.
+# The pattern declarations are discovered rather than listed, so a further shape added to the
+# script is exercised here without anyone remembering to add it -- which is what happened when
+# the pool host's session cookie landed. `test_the_script_declares_the_patterns_this_file
+# _expects` is the premise: an empty discovery would parametrize this to nothing and pass,
+# which is the exact vacuum this whole issue is about.
 
 PATTERN_DECL = re.compile(r"^(?P<var>P_[A-Z0-9_]+)=(?P<q>['\"])(?P<body>.*)(?P=q)$", re.M)
 
@@ -343,7 +350,10 @@ def test_the_script_declares_the_patterns_this_file_expects():
     """The premise. If the declarations stop being discoverable the parametrize below
     silently becomes empty, and an empty parametrize is a green suite proving nothing."""
     found = _pattern_vars()
-    assert len(found) >= 5, f"only found {found}; the scan declares five credential shapes"
+    assert len(found) >= 6, (
+        f"only found {found}; the scan declares one pattern per credential shape it covers, "
+        f"and this floor rises with them -- it is what stops the parametrize below thinning "
+        f"back to nothing")
 
 
 @pytest.mark.parametrize("var", _pattern_vars(), ids=lambda v: v.lower())
@@ -382,7 +392,7 @@ def test_a_pattern_with_no_synthetic_sample_is_a_failure(repo, tmp_path):
     wide.write_text(widened)
     got = subprocess.run(["bash", str(wide)], cwd=repo, capture_output=True, text=True)
     assert got.returncode == 1, (
-        "a sixth alternation went into PATTERNS with nothing proving it can match, and the "
+        "another alternation went into PATTERNS with nothing proving it can match, and the "
         f"scan still called the history clean:\n{got.stdout}")
 
 
