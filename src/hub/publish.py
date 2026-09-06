@@ -26,7 +26,7 @@ from typing import Any, NamedTuple
 import polars as pl
 
 from hub import jsonio, schedule, store
-from hub.config import SEASON_AHEAD, PoolConfig
+from hub.config import SEASON_AHEAD, UNCONFIRMED_POOL_RULES, PoolConfig
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
 from hub.paths import ROSTER_PARQUET
@@ -729,7 +729,13 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | Kept | No
         # that did -- which is why it could never be recorded like the rest.
         print(f"  survivor: schedule unavailable ({type(e).__name__}: {e})"[:160])
         return None
+    # The rules this plan rests on that nobody has confirmed, carried beside the numbers
+    # rather than left for a reader to know. `co_survivor_rule` decides how a shared pot
+    # splits, so every dollar figure here is conditional on it -- publishing them without
+    # saying so is the unlabelled claim `docs/method.md` exists to stop. Read from
+    # `hub.config` so this cannot disagree with the settings it describes.
     art = jsonio.artifact("survivor", "hub.season.survivor", got.picks.to_dicts(),
+                          unconfirmed=list(UNCONFIRMED_POOL_RULES),
                     season=season,
                     survival=got.survival, unpriced_weeks=got.coverage.missing,
                     # The remaining plan's own scope, said out loud. A survival probability means

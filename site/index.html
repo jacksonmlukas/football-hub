@@ -257,6 +257,20 @@ function trackRecordBody(tr) {
 // "Remaining plan" is the plan *together with* the scope that makes it readable, so showing
 // it is what makes the writer's claim true: a plan whose first row is week 9 has to say what
 // became of weeks 1 to 8, and a reader should not have to open the JSON to find out.
+// The pool rules nobody has confirmed, said beside the numbers that depend on them. The
+// dollar figures are conditional on `co_survivor_rule` in particular -- it decides how a
+// shared pot splits -- and publishing them without saying so is the unlabelled claim
+// `docs/method.md` exists to stop. The list comes from `hub.config`, so it cannot disagree
+// with the settings it describes and it empties itself when a rule is confirmed.
+function unconfirmedNote(surv) {
+  const un = Array.isArray(surv?.unconfirmed) ? surv.unconfirmed : [];
+  if (!un.length) return "";
+  return `<p class="warn">These figures assume pool rules nobody has confirmed:
+          <b>${esc(un.join(", "))}</b>. The dollar amounts move if any of them is settled
+          differently.</p>`;
+}
+
+
 function survivorBody(surv) {
   const rows = Array.isArray(surv?.rows) ? surv.rows : [];
   // Absent and empty are different claims, and both arrive here. `[]` says no week has been
@@ -633,7 +647,7 @@ async function render() {
           : (missing.length
              ? `Weeks ${missing.join(", ")} have no posted spread yet and still need a pick.`
              : null),
-      html: survivorBody(surv),
+      html: survivorBody(surv) + unconfirmedNote(surv),
     });
   } else {
     panel("p-survivor", {

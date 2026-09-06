@@ -44,7 +44,8 @@ READS: dict[str, tuple[str, tuple[str, ...]]] = {
     "track_record": ("tr", ("generated_at", "n_scored", "n_preregistered", "brier",
                             "log_loss", "bins", "seasons", "note")),
     "survivor": ("surv", ("rows", "season", "spent", "survival", "weeks_played",
-                          "weeks_remaining", "unpriced_weeks", "snapshot_only_weeks")),
+                          "weeks_remaining", "unpriced_weeks", "snapshot_only_weeks",
+                          "unconfirmed")),
     "manifest": ("man", ("artifacts", "generated_at", "season", "week")),
 }
 

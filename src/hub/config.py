@@ -134,6 +134,17 @@ class PollConfig:
     stale_after: int = 600              # watchdog threshold
 
 
+# Which of `PoolConfig`'s rules nobody has confirmed with the commissioner. Named here, beside
+# the settings themselves, so the caveat the survivor panel publishes cannot drift from the
+# thing it is a caveat about -- a hand-written list in the publisher would be a second copy
+# free to go stale the moment one of these is settled.
+#
+# `co_survivor_rule` is the one that matters: it decides how a shared pot splits, so every
+# dollar figure on that panel is conditional on it.
+UNCONFIRMED_POOL_RULES: tuple[str, ...] = (
+    "co_survivor_rule", "playoff_continuation", "buyback_cap")
+
+
 @dataclass
 class PoolConfig:
     """The survivor pool's rules, as the commissioner states them.
