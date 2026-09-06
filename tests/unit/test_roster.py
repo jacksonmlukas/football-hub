@@ -470,3 +470,50 @@ def test_the_writer_refuses_a_frame_with_no_players(tmp_path):
         R.write(pl.DataFrame(schema=cols), p)
     assert not p.exists(), "a refused write must not leave a file behind"
 
+
+
+def _rostered(tmp_path, players=(("Chase", "WR", 19.7),)):
+    """A roster parquet with every column `lock` and the publisher read."""
+    p = tmp_path / "roster.parquet"
+    pl.DataFrame(
+        {"player": [r[0] for r in players], "pos": [r[1] for r in players],
+         "nfl_team": ["CIN"] * len(players), "mu": [r[2] for r in players],
+         "sd": [6.0] * len(players), "projected": [True] * len(players),
+         "starting": [True] * len(players), "injury_status": ["ACTIVE"] * len(players),
+         "available": [True] * len(players), "can_start": [True] * len(players),
+         "missing_games": [0] * len(players)}).write_parquet(p)
+    return p
+
+
+def test_a_last_good_serve_leaves_the_rosters_own_date_alone(tmp_path, monkeypatch, capsys):
+    """Issue #122. The serve was correct; the write after it was not.
+
+    Execution used to fall through to the write, which rewrote the same file it had just
+    read. The publisher dates the panel from that mtime, so a roster from a failed sync
+    claimed it was synced now -- and because every later failure renewed the claim, three
+    weeks of outage published as three fresh Sundays, on the one panel about the operator's
+    own team, on the day the lineup is set.
+
+    Asserted on the file rather than on a call count: what the panel reads is the mtime, so
+    the mtime is the thing that has to hold still.
+    """
+    p = _rostered(tmp_path)
+    monkeypatch.setattr(R, "fetch", lambda: (_ for _ in ()).throw(RuntimeError("ESPN down")))
+    before = p.stat().st_mtime_ns
+
+    assert R.main(["--write", "--out", str(p)]) == 0
+    assert p.stat().st_mtime_ns == before, (
+        "a served roster rewrote its own file, so its age restarts at every failure")
+    assert "not written" in capsys.readouterr().out
+
+
+def test_a_fetched_roster_is_still_written(tmp_path, monkeypatch):
+    """The control the test above needs. Skipping the write on a *successful* sync would
+    pass that assertion too, and would be a far worse bug -- the roster would never update.
+    """
+    p = _rostered(tmp_path, [("Chase", "WR", 19.7)])
+    (tmp_path / "synced").mkdir()
+    fresh = _rostered(tmp_path / "synced", [("Chase", "WR", 19.7), ("Bijan", "RB", 17.1)])
+    monkeypatch.setattr(R, "fetch", lambda: pl.read_parquet(fresh))
+    assert R.main(["--write", "--out", str(p)]) == 0
+    assert pl.read_parquet(p).height == 2, "a successful sync must still write"

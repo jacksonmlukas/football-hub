@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import math
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 
@@ -58,7 +59,19 @@ def stamp() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
-def artifact(name: str, source: str, rows: list[Any], **extra: Any) -> dict[str, Any]:
+def file_stamp(path: Path) -> str:
+    """When a file was last written, in the shape `stamp` gives, for artifacts read off disk.
+
+    An artifact derived from a file is as fresh as that file, not as fresh as the run that
+    opened it. Stamping the run's own clock on it is how a producer that read week-old data
+    publishes a panel dated today -- see `artifact`'s `as_of`.
+    """
+    return datetime.fromtimestamp(path.stat().st_mtime, UTC).replace(
+        microsecond=0).isoformat()
+
+
+def artifact(name: str, source: str, rows: list[Any],
+             as_of: str | None = None, **extra: Any) -> dict[str, Any]:
     """The shape every published artifact has, so two writers of one file cannot disagree.
 
     `generated_at` is the freshness stamp the page ages a panel by and the watchdog reads as
@@ -68,11 +81,23 @@ def artifact(name: str, source: str, rows: list[Any], **extra: Any) -> dict[str,
     `extra` is for what one artifact has and another does not -- the league a scoreboard is
     for, the season a slate belongs to. It cannot displace the envelope: a caller passing
     `rows` or `generated_at` here would be redefining the thing this exists to fix.
+
+    `as_of` is how a producer says its rows are older than its run, and it is deliberately
+    *not* spelled `generated_at`. A producer that re-derives from a live source is as fresh as
+    its run and takes the default; one that reads a file is only as fresh as the file and
+    passes `file_stamp(path)`. Leaving the default in place there is what let a served roster
+    publish as this week's (issue #122).
+
+    The spelling matters because `generated_at` in `extra` still has to raise. That is the
+    accidental override the guard below was written for, and giving the deliberate path the
+    same name would have retired the guard while appearing to keep it -- the keyword would
+    bind to the parameter and never reach the check. The existing envelope test caught this.
     """
     # GUARD envelope-cannot-be-overridden: extra never displaces the shape every reader depends on
     clash = {"name", "source", "generated_at", "n", "rows"} & set(extra)
     if clash:
         raise ValueError(f"{sorted(clash)} belong to the envelope and cannot be overridden")
     # /GUARD
-    return {"name": name, "source": source, "generated_at": stamp(),
+    return {"name": name, "source": source,
+            "generated_at": as_of if as_of is not None else stamp(),
             "n": len(rows), "rows": rows, **extra}

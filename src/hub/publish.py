@@ -576,7 +576,13 @@ def roster(out: Path | None = None,
             "can_start": r.get("can_start", True),
             "missing_games": r.get("missing_games", 0),
         })
+    # Dated from the parquet, not from this run. The roster CLI serves last-good when ESPN is
+    # unreachable and no longer rewrites the file, so this mtime is the last *successful*
+    # sync -- and the page ages the panel from `generated_at`. Stamping now instead is how
+    # last week's starters, withheld list and add/drops published as this week's, every
+    # Sunday, on the one panel about the operator's own team (issue #122).
     payload = jsonio.artifact("roster", "roster.parquet", rows,
+                        as_of=jsonio.file_stamp(src),
                         set_total=lk.set_total, optimal_total=lk.best_total, gain=lk.gain,
                         withheld=lk.withheld, start=lk.start, sit=lk.bench)
     return _publish(out or SITE, "roster", payload)

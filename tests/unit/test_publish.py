@@ -1360,3 +1360,43 @@ def test_a_second_empty_run_does_not_rewrite_the_empty_artifact(barren):
     assert (barren / "roster.json").stat().st_mtime_ns == written, (
         "the empty artifact was rewritten, which advances its age every run")
     assert json.loads((barren / "roster.json").read_text())["generated_at"] == stamp
+
+
+def test_the_roster_panel_is_dated_from_the_parquet_not_from_the_run(site, tmp_path):
+    """Issue #122, the other half. The serve keeps the file's date; this reads it.
+
+    Every producer used to stamp `generated_at` with its own clock, which is right for one
+    that re-derives its rows from a live source and wrong for one that opens a file. The page
+    ages the panel from that field, so a roster last synced a fortnight ago published as
+    today's -- last week's starters, withheld list and add/drops, presented as this week's.
+
+    An old mtime rather than a recent one, because a stamp of `now` passes any assertion that
+    only checks the field is present and well formed.
+    """
+    import os
+    import time
+
+    src = tmp_path / "roster.parquet"
+    _roster_frame([("Chase", "WR", 19.7)]).write_parquet(src)
+    a_fortnight = time.time() - 14 * 24 * 3600
+    os.utime(src, (a_fortnight, a_fortnight))
+
+    payload = publish.roster(out=site, path=src)
+    assert isinstance(payload, dict)
+    assert payload["generated_at"] == jsonio.file_stamp(src), (
+        "the panel is dated from the run that read the file, so a served roster claims to be "
+        "this week's")
+    assert payload["generated_at"] < jsonio.stamp(), "a fortnight ago is not now"
+
+    # And the manifest carries it through, because that is what the page actually reads.
+    entry = publish.Artifact("roster", lambda: payload, "no roster yet").record(site)
+    assert entry["generated_at"] == jsonio.file_stamp(src)
+
+
+def test_a_producer_that_derives_its_rows_still_stamps_its_own_run(site, tmp_path):
+    """The control. Dating every artifact from a file would be the same error inverted --
+    a producer that recomputes from a live source is as fresh as its run, and the default
+    has to keep saying so."""
+    before = jsonio.stamp()
+    got = jsonio.artifact("anything", "somewhere", [{"a": 1}])
+    assert got["generated_at"] >= before

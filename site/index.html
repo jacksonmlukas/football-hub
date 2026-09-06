@@ -563,7 +563,11 @@ async function render() {
              who is hurt this week, so settle it at lock.</p>`
         : `<p class="empty">The set lineup is already the best available one.</p>`;
     panel("p-roster", {
-      age: `${ros.n} rostered`,
+      // Synced, not published. `generated_at` on this artifact is the roster parquet's own
+      // date, because the CLI serves last-good without rewriting it -- so this is when ESPN
+      // last answered, which on lineup day is the number that matters. It used to be the
+      // time the page was built, which is always "just now" (issue #122).
+      age: `${ros.n} rostered · synced ${ago(ros.generated_at)}`,
       warn: rArt?.stale ? `Stale: ${rArt.reason ?? "unknown"}` : null,
       html: heldNote + note + table([
         { label: "", get: r => r.starting ? "S" : "", cls: r => r.starting ? "good" : "" },

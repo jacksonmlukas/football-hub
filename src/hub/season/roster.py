@@ -263,6 +263,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
     # for a roster this run had never read.
     path = Path(a.out) if a.out else ROSTER_PARQUET
 
+    served = False
     try:
         df = fetch()
     except Exception as e:                       # graceful degradation, per CLAUDE.md
@@ -270,6 +271,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
             print(f"hub.season.roster: ESPN unreachable ({e}); "
                   f"serving last-good {path}", file=sys.stderr)
             df = pl.read_parquet(path)
+            served = True
         else:
             print(f"hub.season.roster: {e}", file=sys.stderr)
             return 1
@@ -307,7 +309,14 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
             print("  ESPN's injury field does not carry suspensions; its games projection "
                   "does.")
 
-    if a.write:
+    if a.write and served:
+        # Not written: this frame was just read from that same file, and writing it back
+        # would reset its modification time. The publisher dates the panel from that mtime,
+        # so a rewrite makes a roster from a failed sync claim it was synced now -- and every
+        # later failure renews the claim, so three weeks of outage publish as three fresh
+        # Sundays. `hub.draft.board` skips its persist for this reason; the roster did not.
+        print(f"  not written: served last-good, so {path} keeps its own date")
+    elif a.write:
         try:
             print(f"  wrote {write(df, path)}")
         except ValueError as e:
