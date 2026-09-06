@@ -71,6 +71,32 @@ class EntryOutcome(NamedTuple):
     share: float        # expected fraction of the pot under an even split
 
 
+def _plural(n: int, word: str) -> str:
+    """`1 team`, `2 teams`. A count printed beside a decision is read by a person."""
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+class Buyback(NamedTuple):
+    """A $20 decision, priced. Every field is reported rather than folded into a verdict.
+
+    `net` is the answer and its sign is the recommendation: positive means the equity bought
+    exceeds the fee paid. `breakeven` is the fee at which that flips, so the margin is visible
+    instead of implied -- a net of +$0.40 and a net of +$40 are the same verdict and very
+    different bets.
+    """
+    available: bool
+    reason: str
+    pot: float          # what the pot becomes once the expected buybacks are in
+    field: int          # live entries once they are, ours included
+    spent: int          # teams the re-entry inherits, which is why it is not a fresh entry
+    share: float        # our expected fraction of that pot
+    equity: float       # share * pot, in dollars
+    fee: float
+    net: float          # equity - fee. Positive means buy back
+    breakeven: float    # the fee at which net is zero, which is the equity
+    recommend: bool
+
+
 class _Week(NamedTuple):
     """One week's games and prices, in a shape the trial loop can use without re-querying."""
     games: tuple[tuple[str, str, float], ...]   # (team_a, team_b, P(team_a wins))
@@ -185,6 +211,84 @@ def entry_outcome(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
         share += 1.0 / n
     return EntryOutcome(trials=trials, survives=survived / trials,
                         sole=sole / trials, share=share / trials)
+
+
+def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
+            ledger: Sequence[str], live_entries: int, pot: float,
+            rival_buybacks: int = 0, pool: PoolConfig | None = None,
+            trials: int = DEFAULT_TRIALS,
+            rng: np.random.Generator | None = None) -> Buyback:
+    """Whether paying the fee to re-enter is worth it, and the fee at which that changes.
+
+    Not a survival question. Re-entering buys a share of a pot that the buybacks themselves
+    enlarge, against a field those same buybacks refill -- so a rival re-entry moves the
+    numerator and the denominator together, and modelling only the first would make every
+    buyback look better than it is.
+
+    **The re-entry is not a fresh entry.** It carries the teams already spent, which the
+    commissioner confirmed, so the same $20 buys less in week 6 than in week 2. That is why
+    the equity comes from `entry_outcome` on the real ledger rather than from one over the
+    field, which is ledger-blind and identical in both.
+
+    `rival_buybacks` is an argument, not a model. Nobody has observed this pool's rivals and
+    Hidden Picks means nobody can before a deadline, so a propensity fitted here would be an
+    invention wearing a number's clothes. The caller states an assumption and the figure moves
+    with it.
+
+    Future re-entries are not priced. A buyback that is itself later lost could be bought back
+    again while the rule still allows it, and that option has value this ignores -- so the
+    figure is a floor rather than a point.
+
+    **The equity assumes the pot splits evenly among co-survivors**, which is what
+    `entry_outcome.share` measures. `PoolConfig.co_survivor_rule` carries that as its default
+    and it is the one rule nobody has confirmed; under a rollover or a tiebreak the same share
+    is worth something else, and this figure would need the rule applied rather than assumed.
+    """
+    cfg = pool or PoolConfig()
+    if cfg.buyback_cap <= 0:
+        return Buyback(False, "no buybacks: the cap is zero", pot, live_entries,
+                       len(set(ledger)), 0.0, 0.0, cfg.buyback_fee, 0.0, 0.0, False)
+    if week > cfg.buyback_cutoff_week:
+        return Buyback(False,
+                       f"no buyback: week {week} is past week "
+                       f"{cfg.buyback_cutoff_week}, the last one that allows it",
+                       pot, live_entries, len(set(ledger)), 0.0, 0.0, cfg.buyback_fee,
+                       0.0, 0.0, False)
+
+    # Ours plus theirs, bounded by the cap. Both sides of the ledger move: the fees enlarge
+    # the pot and the entries refill the field.
+    rivals = max(0, min(int(rival_buybacks), cfg.buyback_cap))
+    field = live_entries + 1 + rivals
+    grown = pot + (1 + rivals) * cfg.buyback_fee
+
+    out = entry_outcome(grid, weeks, entries=field, ledger=ledger, pool=cfg,
+                        trials=trials, rng=rng)
+    equity = out.share * grown
+    net = equity - cfg.buyback_fee
+    yes = net > 0
+    return Buyback(
+        available=True,
+        reason=(f"{'BUY BACK' if yes else 'DO NOT BUY BACK'}: "
+                f"${equity:.2f} of equity against a ${cfg.buyback_fee:.2f} fee, "
+                f"re-entering with {_plural(len(set(ledger)), 'team')} already spent"),
+        pot=grown, field=field, spent=len(set(ledger)), share=out.share,
+        equity=equity, fee=cfg.buyback_fee, net=net, breakeven=equity, recommend=yes)
+
+
+def report(b: Buyback, *, places: int = 2) -> list[str]:
+    """The decision as lines rather than prints, so it can be composed and asserted on.
+
+    `hub.models.experiment.paired_report` exists for the same reason: a block that prints
+    cannot be capped, composed, or tested.
+    """
+    if not b.available:
+        return [f"\n  {b.reason}"]
+    return [
+        f"\n  {b.reason}",
+        f"  pot ${b.pot:.{places}f} across {b.field} entries   "
+        f"share {b.share * 100:.1f}%   net ${b.net:+.{places}f}",
+        f"  breakeven fee ${b.breakeven:.{places}f}",
+    ]
 
 
 def simulate(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
