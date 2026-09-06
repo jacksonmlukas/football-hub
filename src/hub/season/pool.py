@@ -43,6 +43,7 @@ import numpy as np
 import polars as pl
 
 from hub.config import PoolConfig
+from hub.season.survivor import MIN_PROB
 
 # Enough that the ending-week distribution is stable to about a percentage point, which is
 # finer than any decision downstream reads it at. Callers wanting a tighter tail pass more.
@@ -69,6 +70,8 @@ class EntryOutcome(NamedTuple):
     survives: float     # P(this entry outlasts the final week at all)
     sole: float         # P(it is the only one that does)
     share: float        # expected fraction of the pot under an even split
+    share_sd: float = 0.0   # spread of that fraction across trials, so a caller can say
+                            # how finely two of these figures can be told apart
 
 
 def _plural(n: int, word: str) -> str:
@@ -95,6 +98,52 @@ class Buyback(NamedTuple):
     net: float          # equity - fee. Positive means buy back
     breakeven: float    # the fee at which net is zero, which is the equity
     recommend: bool
+
+
+class Candidate(NamedTuple):
+    """One legal pick for a week, and what taking it is worth."""
+    team: str
+    win_prob: float
+    survives: float             # P(the season is survived, having taken this now)
+    expected_dollars: float     # net of what the entry has already paid in
+    is_fallback: bool           # the team auto-pick would assign for nothing
+
+
+class Weekly(NamedTuple):
+    """A week's recommendation, and the free alternative it has to beat.
+
+    `given_up` is `fallback.survives - recommend.survives`, and it is the number
+    `hub.season.journal` refuses a departure without: ADR-0014's logging duty is the week, the
+    chalk pick, ours, and the probability cost accepted.
+
+    It is **signed on purpose**. A departure that survives better than the free pick has given
+    up nothing and gained something, and clamping that to zero would file it as "the two plans
+    survive alike" -- which is a different claim, and a false one. Zero is reserved for the case
+    where they really do survive alike.
+    """
+    week: int
+    recommend: str
+    fallback: str
+    matched: bool
+    given_up: float
+    pot: float
+    resolution: float           # the dollar difference this many trials can actually resolve
+    candidates: list[Candidate]
+
+    @property
+    def decisive(self) -> bool:
+        """Whether the recommendation is distinguishable from the free pick at all.
+
+        False does not mean the pick is wrong; it means the simulation cannot tell the two
+        apart, and `docs/method.md` rule 13 is that a null past the resolution is unresolved
+        rather than refuted. A week that lands here should take the free pick, because it is
+        free -- and should say that is why.
+        """
+        if self.matched:
+            return True
+        fb = next((c for c in self.candidates if c.is_fallback), None)
+        return fb is None or abs(self.candidates[0].expected_dollars
+                                 - fb.expected_dollars) > self.resolution
 
 
 class _Week(NamedTuple):
@@ -199,18 +248,24 @@ def entry_outcome(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
     ours = set(ledger)
     survived = sole = 0
     share = 0.0
+    # Kept per trial, not just summed: two candidate picks are compared by their means, and a
+    # difference smaller than the spread of what was averaged is not a difference.
+    each = [0.0] * 0
     for _ in range(trials):
         led = [set(ours)] + [set() for _ in range(entries - 1)]
         alive = [True] * entries
         _play(rng, wks, weeks, led, alive)
         if not alive[0]:
+            each.append(0.0)
             continue
         n = sum(alive)
         survived += 1
         sole += int(n == 1)
         share += 1.0 / n
+        each.append(1.0 / n)
     return EntryOutcome(trials=trials, survives=survived / trials,
-                        sole=sole / trials, share=share / trials)
+                        sole=sole / trials, share=share / trials,
+                        share_sd=float(np.std(each)) if each else 0.0)
 
 
 def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
@@ -273,6 +328,127 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
                 f"re-entering with {_plural(len(set(ledger)), 'team')} already spent"),
         pot=grown, field=field, spent=len(set(ledger)), share=out.share,
         equity=equity, fee=cfg.buyback_fee, net=net, breakeven=equity, recommend=yes)
+
+
+def auto_pick(grid: pl.DataFrame, week: int, ledger: Sequence[str] = ()) -> str | None:
+    """What the pool assigns when nobody submits: the best available team by the betting market.
+
+    Not a courtesy. `docs/method.md` rule 5 says gate against the simplest thing that already
+    works, and this is that thing -- free, automatic, and available every week. A season of
+    weeks where the recommendation matched it is a season the model earned nothing, which is
+    only countable if the fallback is worked out and written down beside the pick.
+    """
+    spent = set(ledger)
+    wk = grid.filter((pl.col("week") == week) & (pl.col("win_prob") > MIN_PROB))
+    wk = wk.filter(~pl.col("team").is_in(list(spent))) if spent else wk
+    if wk.is_empty():
+        return None
+    # Sorted on team as well, so a tie does not let row order pick the fallback.
+    return str(wk.sort(["win_prob", "team"], descending=[True, False])["team"][0])
+
+
+def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
+           ledger: Sequence[str] = (), entries: int, pot: float, outlay: float = 0.0,
+           pool: PoolConfig | None = None, top: int = 6,
+           trials: int = 400, rng: np.random.Generator | None = None) -> Weekly:
+    """This week's pick, what it is worth, and what it cost against the free one.
+
+    A candidate is worth `P(it wins this week)` times what the rest of the season is worth
+    with it spent -- which `entry_outcome` already answers, over the weeks still to come and
+    against the field. Two things follow from using the simulator rather than a formula, and
+    both are properties this had to have: future team value is discounted by the chance the
+    pool is still running, because a season that ends in week 6 never reaches the weeks a
+    reservation was made for; and a double-pick week nobody survives to contributes nothing,
+    for the same reason and without a special case.
+
+    **The approximation, stated.** The field is not advanced through this week before the rest
+    is valued, so rival attrition in the current week is not credited to any candidate. That
+    understates every figure by close to the same factor, which leaves the ranking -- the part
+    a recommendation is -- intact.
+
+    **Every candidate plays the same season.** Each one gets a generator reseeded to the same
+    value, so the field draws the identical results and the only difference between two figures
+    is the pick itself. Letting them draw independently was tried first and is what a naive
+    reading of "use the rng you were passed" gives you: on a grid where the top teams are close,
+    the ranking then moved with the seed, and the week recommended departing from the free pick
+    over an edge of one survival point that was entirely sampling noise. Paired trials cost
+    nothing and remove it.
+
+    **The figures are net of `outlay`** -- the entry fee, plus any buyback already paid. That
+    money is spent whichever team is picked, so subtracting it shifts every candidate by the
+    same amount and cannot reorder them. It is subtracted anyway, because the question "which
+    of these is best" and the question "is any of them worth having" have different answers,
+    and only the second one notices that the entry cost something.
+
+    Only the `top` most likely teams are valued. Each one costs a simulation, and a team the
+    betting market prices below the sixth-best is not a candidate for a pick whose whole
+    purpose is surviving the week.
+    """
+    cfg = pool or PoolConfig()
+    rng = rng or np.random.default_rng(0)
+    spent = set(ledger)
+    wk = grid.filter((pl.col("week") == week) & (pl.col("win_prob") > MIN_PROB))
+    wk = wk.filter(~pl.col("team").is_in(list(spent))) if spent else wk
+    if wk.is_empty():
+        raise ValueError(f"week {week} has no legal pick left: {len(spent)} teams are spent")
+
+    ahead = [w for w in weeks if w > week]
+    free = auto_pick(grid, week, ledger)
+    ranked = wk.sort(["win_prob", "team"], descending=[True, False]).head(top)
+
+    seed = int(rng.integers(2 ** 32))
+    cands: list[Candidate] = []
+    sd: dict[str, float] = {}
+    for r in ranked.iter_rows(named=True):
+        team, p = str(r["team"]), float(r["win_prob"])
+        if ahead:
+            rest = entry_outcome(grid, ahead, entries=entries, ledger=[*spent, team],
+                                 pool=cfg, trials=trials, rng=np.random.default_rng(seed))
+            survives, share = rest.survives, rest.share
+            sd[team] = rest.share_sd
+        else:
+            # Nothing left to play: surviving this week is surviving, and the pot is split
+            # with whoever else is still standing -- which the field statistics cannot say
+            # from here, so it is claimed as an outright win rather than guessed at.
+            survives, share = 1.0, 1.0
+        cands.append(Candidate(team, p, p * survives, p * share * pot - outlay, team == free))
+
+    cands.sort(key=lambda c: (-c.expected_dollars, c.team))
+    best = cands[0]
+    fb = next((c for c in cands if c.is_fallback), None)
+    # Two independent means differ by at best the root-sum-square of their standard errors.
+    # The paired trials make the real figure smaller than this, so it is an upper bound and
+    # errs toward calling a week undecided -- which is the safe direction when the alternative
+    # is free.
+    res = (float(np.hypot(sd.get(best.team, 0.0), sd.get(fb.team if fb else "", 0.0)))
+           / np.sqrt(trials) * pot)
+    return Weekly(
+        week=week, recommend=best.team, fallback=free or "none available",
+        matched=best.team == free,
+        given_up=(fb.survives - best.survives) if fb else 0.0,
+        pot=pot, resolution=res, candidates=cands)
+
+
+def weekly_report(w: Weekly, *, places: int = 2) -> list[str]:
+    """The week as lines rather than prints, so it can be composed and asserted on."""
+    head = (f"\n  week {w.week}: {w.recommend}"
+            + (" -- which is what auto-pick would have given you for nothing"
+               if w.matched else f", over auto-pick's {w.fallback}"))
+    body = [f"  ${c.expected_dollars:.{places}f}  {c.team:<4} "
+            f"win {c.win_prob * 100:.0f}%  survives {c.survives * 100:.1f}%"
+            + ("   <- free" if c.is_fallback else "")
+            for c in w.candidates]
+    # A departure can be free: gaining survival over the free pick is the case worth having,
+    # and reading it out as a cost of zero would say the two plans were alike, which they were
+    # not. `docs/method.md` rule 4 is about exactly this class of unread sign.
+    verb = "costs" if w.given_up > 0 else "gains"
+    cost = ([] if w.matched else
+            [f"  {verb} {abs(w.given_up) * 100:.2f} points of survival "
+             f"against the free pick {w.fallback}"])
+    undecided = ([] if w.decisive else
+                 [f"  but that is inside the ${w.resolution:.{places}f} these trials can "
+                  f"resolve, so take {w.fallback} -- it is free and no worse"])
+    return [head, *body, *cost, *undecided]
 
 
 def report(b: Buyback, *, places: int = 2) -> list[str]:
