@@ -167,6 +167,51 @@ def test_degraded_is_silent_when_nothing_degraded():
     assert "built without" in report.degraded(("adp",))[0]
 
 
+# --- built or served, which is the same question asked once ------------------
+
+def test_a_built_board_reports_only_what_it_was_built_without():
+    """Unchanged for the normal night: the stages that did not make it, and nothing else."""
+    assert report.built_or_served(_rep(sos=True, td_luck=True, durability=True, adp=True,
+                                       scoring_checked=True, roster_checked=True),
+                                  None) == []
+    out = report.built_or_served(_rep(sos=True), None)
+    assert len(out) == 1 and "built without" in out[0] and "SERVED" not in out[0]
+
+
+def _served(**flags):
+    from hub.draft.board import SERVED, BuildReport
+    return BuildReport(source=SERVED, **flags)
+
+
+def test_a_served_board_names_itself_its_age_and_what_it_holds():
+    """Readable without knowing the fallback exists, which is the whole requirement: a
+    reader who has never seen a build fail still learns that this board is not tonight's."""
+    out = "\n".join(report.built_or_served(_served(adp=True, td_luck=True), 3.5))
+    assert "SERVED BOARD" in out and "3.5h ago" in out and "not rebuilt just now" in out
+    assert "it carries" in out and "td_luck" in out and "adp" in out
+    assert "built without" not in out, \
+        "a board off disk was not built by this run, and must not claim to have been"
+
+
+def test_a_served_board_that_carries_nothing_says_that_rather_than_nothing():
+    out = "\n".join(report.built_or_served(_served(), 1.0))
+    assert "no optional signal at all" in out
+
+
+def test_a_served_board_carrying_everything_still_says_it_is_served():
+    """The distinguishing line cannot be a side effect of something being missing."""
+    out = "\n".join(report.built_or_served(
+        _served(sos=True, td_luck=True, durability=True, adp=True,
+                scoring_checked=True, roster_checked=True), 2.0))
+    assert "SERVED BOARD" in out and "every optional signal" in out
+
+
+def test_an_unknown_age_is_said_rather_than_formatted():
+    """`build_or_last_good` always has an age here. A renderer that raises on a missing one
+    would take the draft-night output down for a number that is decoration."""
+    assert "age unknown" in "\n".join(report.built_or_served(_served(adp=True), None))
+
+
 def test_sos_reports_both_ends_and_the_swaps():
     df = _board(pos=["RB"] * 4, team=["A", "B", "C", "D"],
                 adp=[10.0, 12.0, 60.0, 90.0],

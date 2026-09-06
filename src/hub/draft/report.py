@@ -33,6 +33,32 @@ def degraded(stages: tuple[str, ...]) -> list[str]:
     return [f"  built without: {', '.join(stages)}"] if stages else []
 
 
+def built_or_served(report: BuildReport, age_h: float | None) -> list[str]:
+    """Where the board below came from, and what is on it.
+
+    One renderer for both cases, and the decision inside it, for the reason `td_luck` takes
+    the whole report rather than two booleans: a caller that branches on the flags itself is
+    a caller that can branch differently from the next one.
+
+    The served case says so in the section a reader gets on every other night, because that
+    is the one place they are already looking. `build_or_last_good` shouts BUILD FAILED
+    above this, but the fallback exists exactly so a drafter does not have to know it does:
+    "SERVED BOARD" beside a list of what the board carries is readable without knowing that
+    a build was attempted at all, and it is the line that separates a degraded board from a
+    board whose signals genuinely had nothing to say.
+    """
+    if not report.served:
+        return degraded(report.degraded())
+    age = f"built {age_h:.1f}h ago" if age_h is not None else "age unknown"
+    carried = ", ".join(report.carried()) or "no optional signal at all"
+    missing = report.degraded()
+    return [f"\n  SERVED BOARD -- {age}, and not rebuilt just now.",
+            "  every section below is that board's, not tonight's.",
+            f"  it carries, read off the board itself: {carried}",
+            f"  not on it, or not recorded on it: {', '.join(missing)}" if missing
+            else "  it carries every optional signal."]
+
+
 def mistyped(suggestions: dict[str, str | None]) -> list[str]:
     """A misspelt pick leaves that player on the board as available, and the next
     recommendation can hand back someone already drafted. This is the sharp edge of typing

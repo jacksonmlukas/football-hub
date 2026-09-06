@@ -176,6 +176,38 @@ def test_touchdown_luck_and_durability_attach_when_available(offline):
     assert "td_luck" in b.columns and "missed" in b.columns
 
 
+def test_a_served_report_names_the_columns_build_actually_leaves(offline):
+    """What keeps `BuildReport.of_served` in step with the builder it reads after.
+
+    A board recovered from disk is described by reading four columns off it, and that list
+    is a second declaration of what the stages leave behind -- the kind that goes quietly
+    wrong. So it is checked against a board `build` really produced: every stage that flags
+    itself here, apart from the two checks that write no column at all, has to be
+    recoverable from the frame. A stage that leaves a column and is missing from
+    `STAGE_COLUMN` is a panel the served path silently drops.
+    """
+    from hub.draft import durability
+    from hub.draft import regression as td
+    offline.setattr(board, "playoff_sos", lambda **k: pl.DataFrame(
+        {"team": ["KC"], "pos": ["RB"], "wk15_17_sos": [1.1],
+         "sos_games": pl.Series([3], dtype=pl.UInt32)}))
+    offline.setattr(td, "prior_season", lambda season: pl.DataFrame({"player": NAMES[:3]}))
+    offline.setattr(durability, "prior_season",
+                    lambda season: pl.DataFrame({"player": NAMES[:3]}))
+    offline.setattr(td, "attach", lambda b, s: b.with_columns(pl.lit(1.0).alias("td_luck")))
+    offline.setattr(durability, "attach", lambda b, s: b.with_columns(
+        pl.lit(2).cast(pl.Int64).alias("missed")))
+    offline.setattr(board, "espn_adp", lambda *a, **k: pl.DataFrame(
+        {"player": [NAMES[0], NAMES[1]], "adp": [1.5, 2.5], "proj_ppg": [18.0, 16.0],
+         "injury_status": ["ACTIVE", "QUESTIONABLE"]}))
+
+    b, built = board.build()
+    assert set(built.carried()) == set(board.STAGE_COLUMN), (
+        "the four column-leaving stages all ran; the two checks write nothing and are "
+        "correctly absent from STAGE_COLUMN")
+    assert set(board.BuildReport.of_served(b).carried()) == set(built.carried())
+
+
 def test_a_scoring_mismatch_is_shouted_not_swallowed(offline, capsys):
     """Every projection is scored on the wrong weights until it is fixed, so this is one of
     the few things allowed to interrupt the operator."""

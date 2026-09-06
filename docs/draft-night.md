@@ -142,6 +142,7 @@ which ESPN does not retain ([ADR-0010](adr/0010-edge-is-displayed-but-never-rank
 | `NOT ON THE BOARD: 'x'` | mistyped pick | re-enter with the suggested spelling, then `--undo 1` the bad one |
 | board build fails on a source | SoS, touchdown luck, durability and the two league checks each degrade on their own | it will say which, and print `built without: ...`; the board still builds |
 | `BUILD FAILED: ...` then `serving the last good board` | **no network at all**, or ffverse/ESPN down. The two spine fetches have no in-build fallback, so the whole build is skipped | nothing. It prints how old the board is and carries on to THE PICK. ADP is that stale; every other column is a season-long number and does not move. Rebuild when the network returns |
+| `SERVED BOARD -- built 3.5h ago` | the same thing, said in the section that on a normal night says what degraded | nothing. Every panel the board's own columns support still prints, and the line below it lists what it carries — a served board is not a thinner board |
 | poller says the board is many hours old | you did not rebuild today | `make draft`, then restart the poller |
 | wrong pick recorded | — | `--undo N` removes the last N |
 

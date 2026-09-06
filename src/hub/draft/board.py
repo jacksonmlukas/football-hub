@@ -478,6 +478,12 @@ def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,
     The exception is deliberately broad. Any failure to build is a failure to build, and
     falling back to a board that is *known* to have been good is safe in a way that guessing
     at which exception types are transient is not.
+
+    **The report describes the board that is returned, whichever board that is.** It used to
+    hand back a `BuildReport()` on this path -- every flag false, for a board carrying its
+    td-luck, injury, SoS and ADP columns -- so three renderers suppressed themselves and the
+    operator relying on the fallback got *fewer* sections than on a normal night, with
+    nothing saying why. `BuildReport.of_served` derives it from the board instead.
     """
     try:
         board, report = build(league_size, season)
@@ -487,13 +493,26 @@ def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,
         print(f"  serving the last good board instead, built {age:.1f}h ago.")
         print("  ADP is that old. Everything else on it is a season-long number "
               "and does not move.")
-        return board, BuildReport(), age
+        return board, BuildReport.of_served(board), age
     return board, report, None
+
+
+# Where this board came from: built by the run that is printing it, or served off disk by
+# `build_or_last_good` because the build could not happen. It is on the report rather than
+# beside it because every consumer that asks what the board carries is asking about one
+# board, and "what it carries" and "whether it was built" are two halves of one answer.
+BUILT, SERVED = "built", "served"
+
+# The column each optional stage leaves on the board. Only these four leave anything: the
+# scoring and roster checks compare the league's settings against this repo's and write
+# nothing, which is why a served board cannot claim them either way.
+STAGE_COLUMN = {"sos": "wk15_17_sos", "td_luck": "td_luck",
+                "durability": "missed", "adp": "adp"}
 
 
 @dataclass
 class BuildReport:
-    """Which optional stages made it into the board.
+    """Which optional stages made it into the board, and whether the board was built at all.
 
     `build` degrades on purpose: a board that will not build because one advisory column is
     unavailable is the operator-dependence CLAUDE.md warns about. But the report layer used
@@ -505,6 +524,14 @@ class BuildReport:
     Sniffing gets the common case right and the interesting case wrong: a stage that ran and
     returned an all-null column is indistinguishable from one that never ran, and the
     difference is exactly what an operator on the clock needs to know.
+
+    **`of_served` reads the columns, and that is not the same act.** A board recovered from
+    disk was written by a run that is over; its columns are the only evidence of that run
+    there is, so reading them is a derivation rather than a guess, and it is made once, here,
+    instead of four times by consumers who each guessed differently. What it cannot recover
+    is the all-null case above -- so a served report says a stage ran when its column is
+    there, which is the reading that costs a reader the least: at worst a section renders
+    thin, where the alternative suppressed three sections outright.
     """
     sos: bool = False
     td_luck: bool = False
@@ -512,10 +539,35 @@ class BuildReport:
     adp: bool = False
     scoring_checked: bool = False
     roster_checked: bool = False
+    source: str = BUILT
+
+    @classmethod
+    def of_served(cls, board: pl.DataFrame) -> BuildReport:
+        """What a board read back off disk carries, derived from that board.
+
+        The two checks stay false and mean what they say: nothing checked this league's
+        scoring or roster shape on *this* run, because this run did not get that far.
+        """
+        return cls(source=SERVED,
+                   **{flag: col in board.columns for flag, col in STAGE_COLUMN.items()})
+
+    @property
+    def served(self) -> bool:
+        """Whether this describes a board off disk rather than one built just now."""
+        return self.source == SERVED
 
     def degraded(self) -> tuple[str, ...]:
         """Stages that did not make it, in declaration order."""
-        return tuple(k for k, v in vars(self).items() if not v)
+        return tuple(k for k, v in vars(self).items() if isinstance(v, bool) and not v)
+
+    def carried(self) -> tuple[str, ...]:
+        """Stages that did, in the same order. The complement of `degraded`.
+
+        Both read every *bool* on the report rather than a list of stage names kept beside
+        it, so a seventh stage is still one declaration -- which is the property `_stage`
+        was written for. `source` is a string precisely so it stays out of both.
+        """
+        return tuple(k for k, v in vars(self).items() if isinstance(v, bool) and v)
 
 
 def _check_scoring(board: pl.DataFrame) -> None:
@@ -920,8 +972,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     board, report, stale_h = build_or_last_good(a.league_size, a.season)
-    if stale_h is None:
-        _emit(report_mod.degraded(report.degraded()))
+    # Both paths, one renderer. This used to be `degraded()` under `if stale_h is None`, so
+    # the night the fallback fired was the night the output said nothing about what the
+    # board held -- see `report_mod.built_or_served`.
+    _emit(report_mod.built_or_served(report, stale_h))
 
     # A mistyped pick is silent otherwise: the misspelt player stays on the board as
     # available and the next recommendation can hand back someone already drafted. ESPN
