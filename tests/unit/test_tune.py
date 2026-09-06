@@ -191,25 +191,65 @@ def test_ranks_do_not_depend_on_the_order_the_rows_arrive_in():
 
 def test_a_block_of_zeros_does_not_drag_the_correlation_down():
     """`actual_points` is `fill_null(0.0)`, so every player with no production is an exact
-    tie. Ranking those arbitrarily biased rho low -- +0.563 against a true +0.650."""
+    tie. Ranking those arbitrarily biases rho low -- which is a claim about the *average* of
+    arbitrary orderings, and is asserted here as one.
+
+    **This test went red four times before it said what it meant.** It first pinned the naive
+    value at 0.6123, the figure on macOS arm64, and CI on linux x86-64 returned 0.5654 three
+    times: `argsort`'s default is quicksort, which is unstable, so a block of tied zeros is
+    ordered differently on different builds. The response was to stop pinning the naive value
+    and compare the two sides instead -- which moved the machine-dependence out of a constant
+    and into the comparison, where it was harder to see and fired less often. It fired on
+    2026-09-05: 0.63610 against 0.63753, red on linux, green on arm64.
+
+    Measured rather than guessed, over 200 seeded orderings of the tied block:
+
+        corrected (stable, ties averaged)   0.636095
+        naive, mean over arbitrary orders   0.616040   sd 0.008969
+        naive, range                        0.590514 -- 0.641172
+        orderings that beat corrected             0.5%
+
+    So a single arbitrary ordering beating the corrected one is not a platform quirk, it is a
+    1-in-200 draw, and the old assertion was a coin flip with those odds on every run. The
+    machine only decided *which* draw. Comparing one sample against one sample could never
+    have been sound.
+
+    The ties are now broken by a seeded key through `lexsort`, so no unstable sort is
+    consulted and the orderings are the same on any build. The margin below is the measured
+    gap, not a number chosen to clear today: 0.0201 between the corrected value and the mean,
+    against a standard error of the mean of 0.0006 -- about 32 of them. Requiring five leaves
+    the assertion unable to be crossed by sampling noise while still failing outright if
+    averaging ties stops helping.
+    """
     rng = np.random.default_rng(1)
     a = np.concatenate([rng.gamma(2, 40, 270), np.zeros(180)])
     pred = np.arange(1, len(a) + 1, dtype=float)
-    order = np.argsort(-a + rng.normal(0, 60, len(a)))
-    a = a[order]
-    naive = a.argsort().argsort().astype(float)
+    a = a[np.argsort(-a + rng.normal(0, 60, len(a)))]
+
     # `score` negates, because a good board pairs a LOW adj_ecr with HIGH points.
     corrected = -float(np.corrcoef(pred, tune.average_ranks(a))[0, 1])
-    understated = -float(np.corrcoef(pred, naive)[0, 1])
-    assert corrected > understated
 
-    # Only the corrected side is pinned. `average_ranks` sorts stably and averages tie groups,
-    # so it is the same number on any machine. The naive side is deliberately *not* pinned:
-    # `argsort`'s default is quicksort, which is unstable, so it orders a block of tied zeros
-    # differently on different builds. This assertion originally pinned it at 0.6123 -- the
-    # value on macOS arm64 -- and CI on linux x86-64 returned 0.5654 and went red three times.
-    # That is the bug this test is about, demonstrated harder than intended: the naive ranking
-    # is not merely order-dependent within a dataset, it is platform-dependent across machines.
+    def naive_rho(key: np.ndarray) -> float:
+        """Rank `a` with ties broken by `key` -- an arbitrary order, chosen explicitly."""
+        order = np.lexsort((key, a))
+        ranks = np.empty(len(a), dtype=float)
+        ranks[order] = np.arange(len(a), dtype=float)
+        return -float(np.corrcoef(pred, ranks)[0, 1])
+
+    keys = np.random.default_rng(7)
+    naive = np.array([naive_rho(keys.random(len(a))) for _ in range(200)])
+
+    gap = corrected - naive.mean()
+    standard_error = naive.std(ddof=1) / np.sqrt(len(naive))
+    assert gap > 5 * standard_error, (
+        f"averaging tied ranks gained {gap:.4f} over the mean of {len(naive)} arbitrary "
+        f"orderings, against a standard error of {standard_error:.4f}. The correction is "
+        f"supposed to lift rho well clear of what arbitrary tie-ordering gives; this is "
+        f"inside the noise of the thing it is being compared to.")
+
+    # The corrected side is pinned and the naive side is not, deliberately. `average_ranks`
+    # sorts stably and averages tie groups, so it is the same number on any machine; the
+    # naive side is a distribution, and its individual draws are not.
     assert corrected == pytest.approx(0.6361, abs=1e-3)
 
 
