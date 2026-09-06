@@ -10,6 +10,8 @@ schema change does.
 
 All offline.
 """
+import json
+
 import polars as pl
 import pytest
 from polars.exceptions import ColumnNotFoundError
@@ -567,3 +569,73 @@ def test_the_components_ride_alongside_the_total_without_moving_it():
         assert old.sort("player_id")[c].equals(new.sort("player_id")[c]), f"{c} moved"
     assert "exp_receptions" in new.columns
     assert "xfp_components_per_game" in new.columns
+
+
+def test_a_build_failure_with_no_parquet_falls_back_to_the_published_board(
+        tmp_path, offline, capsys):
+    """Issue #120. The fallback's own read could raise, and then named the wrong input.
+
+    Narrowing the market stage's absorption made this reachable: the build now fails where it
+    used to absorb, and on a machine with no parquet `last_good` raised `FileNotFoundError`
+    whose remedy sentence is "Run `make draft` first" -- the command that just failed. Not an
+    exotic state. It is a fresh clone, and it is every CI runner, because `data/processed/` is
+    gitignored as redistributed third-party data.
+
+    The committed artifact is what survives that, `docs/draft-night.md` already calls it the
+    fallback, and nothing fell back to it.
+    """
+    from hub.draft import report as report_mod
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "draft_board.json").write_text(json.dumps(
+        [{"player": "Published", "pos": "RB", "vor": 1.0, "adp": 3.0}]))
+    offline.setattr(board, "espn_adp", lambda *a, **k: _live_adp())
+    offline.setattr(board, "_attach_market", _a_refactor_renamed_a_column)
+
+    served, report, age = board.build_or_last_good(
+        path=tmp_path / "nothing.parquet", site=site)
+    printed = capsys.readouterr().out
+
+    assert served["player"].to_list() == ["Published"]
+    assert report.served and age is None, "the committed artifact carries no age to report"
+    assert "BUILD FAILED" in printed and "serving the published one" in printed
+    # The renderer already had this branch and nothing could reach it.
+    assert "age unknown" in "\n".join(report_mod.built_or_served(report, age))
+
+
+def test_with_neither_board_the_build_failure_is_what_escapes(tmp_path, offline):
+    """The third criterion, and the one that decides whether a reader is helped.
+
+    Both fallbacks are gone, so something has to be raised. Raising the missing file puts
+    "Run `make draft` first" on the last line of the traceback -- an instruction to repeat the
+    command that just failed -- and demotes the arithmetic defect that actually broke to a
+    context line readers skip. Raised the other way round: the build failure escapes, and the
+    missing file is its cause.
+    """
+    offline.setattr(board, "espn_adp", lambda *a, **k: _live_adp())
+    offline.setattr(board, "_attach_market", _a_refactor_renamed_a_column)
+
+    with pytest.raises(Exception) as caught:
+        board.build_or_last_good(path=tmp_path / "nothing.parquet", site=tmp_path / "empty")
+    assert not isinstance(caught.value, FileNotFoundError), (
+        "the missing file is not what the operator has to act on")
+    assert isinstance(caught.value.__cause__, FileNotFoundError), (
+        "and it is not discarded either -- it is why the fallback could not cover")
+
+
+def test_a_served_published_board_is_not_written_to_the_parquet(tmp_path, offline, capsys):
+    """`main` used to persist on `stale_h is None`, which meant "built just now". The age is
+    `None` on two paths now, and writing the published board to the parquet would date a
+    top-300 artifact as a freshly built board -- the mtime lie issue #122 fixed for the
+    roster, arriving here through a new path."""
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "draft_board.json").write_text(json.dumps(
+        [{"player": "Published", "pos": "RB", "vor": 1.0, "adp": 3.0}]))
+    offline.setattr(board, "espn_adp", lambda *a, **k: _live_adp())
+    offline.setattr(board, "_attach_market", _a_refactor_renamed_a_column)
+
+    parquet = tmp_path / "nothing.parquet"
+    _served, report, _age = board.build_or_last_good(path=parquet, site=site)
+    assert report.served, "the guard `main` reads is the report, not the age"
+    assert not parquet.exists(), "the published board must not become the built one"

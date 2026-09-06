@@ -456,6 +456,7 @@ def readable(path: Path | None = None,
 
 def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,
                        path: Path | None = None, now: float | None = None,
+                       site: Path | None = None,
                        ) -> tuple[pl.DataFrame, BuildReport, float | None]:
     """Build the board, and if the build cannot happen at all, serve the last good one.
 
@@ -496,7 +497,25 @@ def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,
         # an implicit `__context__` a reader skips. Narrowing that stage's absorption
         # made that path reachable, so the ordering stopped being academic.
         print(f"\n  BUILD FAILED: {type(exc).__name__}: {exc}")
-        board, age = last_good(path, now)
+        try:
+            board, age = last_good(path, now)
+        except FileNotFoundError as gone:
+            # The parquet is the better fallback and it is not here. That is not exotic: it is
+            # a fresh clone and it is every CI runner, because `data/processed/` is gitignored
+            # as redistributed third-party data. The committed artifact is what survives that,
+            # and `docs/draft-night.md` already names it as *the* fallback -- it was simply
+            # the one board nothing fell back to.
+            try:
+                board = published(site)
+            except FileNotFoundError:
+                # The build failure is what the operator has to act on; the missing file is
+                # how we know we could not paper over it. Raised in that order, because the
+                # other way round ends a traceback on "Run `make draft` first" -- the command
+                # they just ran -- with the real cause demoted to a context line readers skip.
+                raise exc from gone
+            print("  no board on disk; serving the published one "
+                  "(top 300 by consensus, enough for all 192 picks).")
+            return board, BuildReport.of_served(board), None
         print(f"  serving the last good board instead, built {age:.1f}h ago.")
         print("  ADP is that old. Everything else on it is a season-long number "
               "and does not move.")
@@ -1021,10 +1040,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.taken:
         _emit(report_mod.mistyped(state_mod.suggest_unmatched(
             board, [n.strip() for n in a.taken.split(",") if n.strip()])))
-    # Not when serving last-good: rewriting the file resets its mtime, so the age printed
+    # Not when the board was served: rewriting the file resets its mtime, so the age printed
     # above would immediately become a lie, and every later run would report a fresh board
     # that is actually as stale as the first failure.
-    if stale_h is None:
+    #
+    # Asked of the report rather than of `stale_h`. The age is `None` on two paths now --
+    # built just now, and served from the published artifact, which carries no age -- and
+    # only one of them may be written. `report.served` is the thing actually being asked.
+    if not report.served:
         _persist(board)
 
         # Keep a dated copy of today's ADP before the next build overwrites it. ESPN does
