@@ -133,6 +133,36 @@ def market_strategy(by: str = "ecr"):
     return pick
 
 
+FORESIGHT = "_foresight"
+
+
+def with_foresight(board: pl.DataFrame, realised: pl.DataFrame) -> pl.DataFrame:
+    """The board plus a market that already knows how the season went.
+
+    `FORESIGHT` is a lower-is-better ranking of realised season points, which is exactly the
+    shape `market_pick` reads -- so the foresight arm is the *incumbent arm reading a perfect
+    ranking*, not a second strategy. That matters for what the ceiling means: it isolates the
+    value of knowing the ranking, holding the drafting rule fixed, so the gap between it and
+    the arm under test is attributable to the ranking rather than to two different players
+    behaving differently.
+
+    Row order is preserved because `play` indexes the board by row.
+
+    A player with no realised row ranks last, not null. He scored nothing, which is what
+    `score_roster` already assumes about him, and a null would sort him into the middle of a
+    lower-is-better column.
+    """
+    seen = (realised.group_by("player")
+                    .agg(pl.col("points").sum().alias("_pts")))
+    keyed = board.with_columns(
+        pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("_k"))
+    joined = keyed.join(seen, left_on="_k", right_on="player", how="left")
+    return (joined.with_columns(pl.col("_pts").fill_null(-1.0))
+                  .with_columns(pl.col("_pts").rank("ordinal", descending=True)
+                                  .cast(pl.Float64).alias(FORESIGHT))
+                  .drop("_k", "_pts"))
+
+
 def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds: int,
                        n_draft_sims: int, n_season_sims: int, seed: int,
                        tiebreak: str = "ecr"):
@@ -223,6 +253,77 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
             })
     out = pl.DataFrame(rows)
     return out.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
+
+
+def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], *,
+            n_drafts: int = 20, seed: int = 0, my_slot: int | None = None,
+            teams: int | None = None, rounds: int = DEFAULT_ROUNDS) -> pl.DataFrame:
+    """What a drafter who already knew the season achieves against the incumbent arm.
+
+    This bounds what *any* board could deliver, which is the number the underpowered-gate rule
+    in `docs/gate-power.md` compares an effect against. A gate whose MDE exceeds this cannot
+    resolve a real effect from a perfect one, and reporting an interval from it would be
+    reporting noise with a decimal point.
+
+    **Its own paired frame, not a third column on `compare`'s.** Widening that frame would
+    move the sweep digest `tests/unit/test_experiment.py` pins and re-price every verdict that
+    rests on it, as a side effect of adding a diagnostic -- and `docs/track-record.md` rule 1
+    makes those numbers commit-dated. The two frames share `season`, `draft` and the same
+    seeds, so they pair row for row.
+
+    **Recomputed per season set, never cached.** A ceiling served from a run over other
+    seasons is a bound on a different question, and it would be indistinguishable from a right
+    answer: same units, same shape, plausible size. Taking `boards` by value and returning a
+    frame is what makes that impossible to get wrong.
+
+    Common random numbers with `compare`: the same `seed + 1000 * season + k` room, so the
+    incumbent column here is that same column there, drawn against the same field.
+    """
+    cfg = RosterConfig()
+    my_slot = cfg.slot if my_slot is None else my_slot
+    teams = cfg.teams if teams is None else teams
+
+    rows = []
+    for season in sorted(boards):
+        board, real = boards[season], realised[season]
+        seeing = with_foresight(board, real)
+        arm_a, arm_c = market_strategy(), market_strategy(by=FORESIGHT)
+        for k in range(n_drafts):
+            room = seed + 1000 * season + k
+            a_names, a_pos = play(board, arm_a, my_slot=my_slot, teams=teams,
+                                  rounds=rounds, rng=np.random.default_rng(room))
+            c_names, c_pos = play(seeing, arm_c, my_slot=my_slot, teams=teams,
+                                  rounds=rounds, rng=np.random.default_rng(room))
+            rows.append({
+                "season": season, "draft": k,
+                "market": score_roster(a_names, a_pos, real),
+                "foresight": score_roster(c_names, c_pos, real),
+            })
+    out = pl.DataFrame(rows)
+    return out.with_columns((pl.col("foresight") - pl.col("market")).alias("diff"))
+
+
+def with_ceiling(summary: dict, bound: pl.DataFrame) -> tuple[dict, str]:
+    """The summary carrying its ceiling, and a warning when the ceiling does not bound.
+
+    A ceiling below the effect it is meant to bound is not a tight result, it is a broken one:
+    either the foresight arm is not seeing the season or the arm under test is being scored on
+    something else. Said loudly rather than published quietly, because the number's whole use
+    is as an upper bound in `docs/gate-power.md`, and a bound that does not bound would be
+    read as a tight one.
+
+    Returned rather than printed, and taking the frame rather than computing it, because
+    reaching this through `main` needs the boards -- and a rule exercised only behind a
+    network is a rule with no test. The coverage ratchet has now made that point three times
+    in this repo; this is the shape that answers it.
+    """
+    top = float(np.asarray(bound["diff"].to_numpy()).mean())
+    out = dict(summary, ceiling=top)
+    if top < summary["mean"]:
+        return out, (f"\n  CEILING BELOW THE EFFECT: {top:+.2f} < {summary['mean']:+.2f}. One "
+                     f"of the two is measuring something the other is not; do not read the "
+                     f"interval below as bounded.")
+    return out, ""
 
 
 # Your first six turns from slot 3 of 12. Fixed rather than read from the live draft state,
@@ -451,6 +552,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--draft-sims", type=int, default=12)
     ap.add_argument("--season-sims", type=int, default=250)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--ceiling", action="store_true",
+                    help="also play a foresight arm and report what any board could deliver")
     ap.add_argument("--out", default=None, help="write the paired rows to this parquet path")
     ap.add_argument("--board", default=None,
                     help="parquet snapshot of the board. Written if absent, reused if "
@@ -557,6 +660,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     paired = compare(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
                      n_draft_sims=a.draft_sims, n_season_sims=a.season_sims)
     s = summarise(paired, seed=a.seed)
+    if a.ceiling:
+        print("  measuring the ceiling: the same arm, given the season in advance ...")
+        bound = ceiling(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds)
+        s, warning = with_ceiling(s, bound)
+        if warning:
+            print(warning)
 
     for line in paired_report(s, arm_a="optimizer", arm_b="market"):
         print(line)

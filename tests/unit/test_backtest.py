@@ -647,3 +647,116 @@ def test_a_pinned_load_changes_the_published_data_digest(monkeypatch):
     assert "over 1 pinned source(s)" in said
     # And the config stamp is unmoved by the data changing -- they answer different questions.
     assert pinned["cfg_digest"][0] == unpinned["cfg_digest"][0]
+
+
+# --- the ceiling a gate is measured against (issue #42) --------------------
+
+def _season(n=48, weeks=4, flip=True):
+    """A board whose consensus is *wrong*, and the season that shows it.
+
+    Deliberately adversarial: realised points run opposite to ECR, so a drafter who knew the
+    season would take players the market ranks last. A board where consensus is already right
+    would let a broken foresight arm pass by doing nothing.
+    """
+    board = _board(n)
+    rows = []
+    for i in range(n):
+        pts = float(i + 1) if flip else float(n - i)
+        for w in range(1, weeks + 1):
+            rows.append((f"P{i}", w, pts))
+    return board, _realised(rows)
+
+
+def test_the_foresight_market_ranks_on_what_actually_happened():
+    from hub.draft.backtest import FORESIGHT, with_foresight
+    board, real = _season(8, weeks=2)
+    seeing = with_foresight(board, real)
+    # P7 scored most, so it is rank 1 in a lower-is-better market; P0 scored least.
+    order = seeing.sort(FORESIGHT)["player"].to_list()
+    assert order[0] == "P7" and order[-1] == "P0"
+    assert seeing.height == board.height, "the board's rows must not move; play indexes them"
+    assert seeing["player"].to_list() == board["player"].to_list()
+
+
+def test_a_player_with_no_realised_row_ranks_last_not_null():
+    """He scored nothing, which is what `score_roster` already assumes. A null would sort
+    into the middle of a lower-is-better column and hand him a mid-round pick."""
+    from hub.draft.backtest import FORESIGHT, with_foresight
+    board, real = _season(4, weeks=1)
+    seeing = with_foresight(board, real.filter(pl.col("player") != player_key("P3")))
+    assert seeing[FORESIGHT].null_count() == 0
+    worst = seeing.sort(FORESIGHT, descending=True)["player"][0]
+    assert worst == "P3"
+
+
+def test_the_ceiling_arm_never_loses_to_the_market_in_any_season():
+    """Criterion one, and it is what makes the number a ceiling rather than a third arm.
+
+    An arm that knows the season and still loses is not bounding anything, and would make
+    every comparison against it meaningless in the safe-looking direction -- an effect could
+    clear a ceiling that was simply low.
+    """
+    from hub.draft.backtest import ceiling
+    boards, reals = {}, {}
+    for season in (2023, 2024):
+        b, r = _season()
+        boards[season], reals[season] = b, r
+    got = ceiling(boards, reals, n_drafts=4, my_slot=1, teams=4, rounds=6)
+    by_season = got.group_by("season").agg(pl.col("diff").mean().alias("gain"))
+    assert (by_season["gain"] > 0).all(), (
+        f"the foresight arm lost a season: {by_season.to_dicts()}")
+
+
+def test_the_ceiling_is_recomputed_for_the_season_set_it_is_given():
+    """Criterion four. A ceiling served from a run over other seasons bounds a different
+    question and is indistinguishable from a right answer -- same units, same shape,
+    plausible size."""
+    from hub.draft.backtest import ceiling
+    b, r = _season()
+    one = ceiling({2023: b}, {2023: r}, n_drafts=2, my_slot=1, teams=4, rounds=6)
+    two = ceiling({2023: b, 2024: b}, {2023: r, 2024: r}, n_drafts=2, my_slot=1,
+                  teams=4, rounds=6)
+    assert sorted(one["season"].unique().to_list()) == [2023]
+    assert sorted(two["season"].unique().to_list()) == [2023, 2024]
+    assert two.height == 2 * one.height
+
+
+def test_the_ceiling_bounds_the_arm_under_test_on_the_same_frame():
+    """Criterion two. The ceiling and the gate share `season`, `draft` and their seeds, so
+    they pair row for row -- and a ceiling that does not bound the effect means one of the two
+    is measuring something the other is not.
+
+    Asserted on the shared `market` column, which is the strongest form available: both frames
+    play the same incumbent in the same rooms, so if that column disagrees the pairing is
+    broken and neither difference is comparable.
+    """
+    from hub.draft.backtest import ceiling, compare
+    board = _full_board()
+    real = _flat_realised(board)
+    boards, reals = {2024: board}, {2024: real}
+    kw = {"n_drafts": 2, "rounds": 4, "seed": 0}
+    gate = compare(boards, reals, n_draft_sims=2, n_season_sims=10, **kw)
+    top = ceiling(boards, reals, **kw)
+
+    assert gate["market"].to_list() == top["market"].to_list(), (
+        "the two frames do not share an incumbent, so their differences are not comparable")
+    assert float(top["diff"].to_numpy().mean()) >= float(gate["diff"].to_numpy().mean()), (
+        "the ceiling does not bound the arm under test, so it bounds nothing")
+
+
+def test_a_ceiling_that_does_not_bound_says_so_loudly():
+    """The number's whole use is as an upper bound. A ceiling below the effect means one of
+    the two is measuring something the other is not, and publishing it quietly would let a
+    reader take a broken bound for a tight one."""
+    from hub.draft.backtest import with_ceiling
+    bound = pl.DataFrame({"diff": [1.0, 1.0]})
+    _s, warning = with_ceiling({"mean": 5.0}, bound)
+    assert "CEILING BELOW THE EFFECT" in warning and "+1.00 < +5.00" in warning
+
+
+def test_a_ceiling_that_bounds_carries_the_number_and_says_nothing():
+    from hub.draft.backtest import with_ceiling
+    bound = pl.DataFrame({"diff": [40.0, 42.0]})
+    s, warning = with_ceiling({"mean": -19.66}, bound)
+    assert s["ceiling"] == 41.0 and warning == ""
+    assert s["mean"] == -19.66, "the summary it was given must come back intact"

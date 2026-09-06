@@ -42,7 +42,7 @@ FLOOR: dict[str, int] = {
     "src/hub/draft/adherence.py": 1,
     "src/hub/draft/adp_history.py": 0,
     "src/hub/draft/availability.py": 17,
-    "src/hub/draft/backtest.py": 76,
+    "src/hub/draft/backtest.py": 82,
     "src/hub/draft/board.py": 15,
     "src/hub/draft/calibrate.py": 2,
     "src/hub/draft/cohort.py": 0,
