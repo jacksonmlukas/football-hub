@@ -12,6 +12,7 @@ All offline.
 """
 import json
 
+import numpy as np
 import polars as pl
 import pytest
 from polars.exceptions import ColumnNotFoundError
@@ -639,3 +640,73 @@ def test_a_served_published_board_is_not_written_to_the_parquet(tmp_path, offlin
     _served, report, _age = board.build_or_last_good(path=parquet, site=site)
     assert report.served, "the guard `main` reads is the report, not the age"
     assert not parquet.exists(), "the published board must not become the built one"
+
+
+# --- the two advisory stages that feed the one that is not (issue #121) ----
+
+def test_absorbing_a_correction_stage_says_so_beside_the_ranking():
+    """Issue #121. `built without: td_luck` was read as "the board is thinner". For these
+    two it means something else: the correction never applied, so Corrected ADP -- what THE
+    PICK ranks on -- is a different order. The flags were already right; nothing connected
+    them to the ranking that consumed their absence.
+    """
+    from hub.draft import report as report_mod
+    ran = board.BuildReport(adp=True, td_luck=True, durability=True)
+    assert ran.corrections_missing() == ()
+    assert "CORRECTED ADP" not in "\n".join(report_mod.built_or_served(ran, None))
+
+    without_luck = board.BuildReport(adp=True, td_luck=False, durability=True)
+    assert without_luck.corrections_missing() == ("touchdown luck",)
+    said = "\n".join(report_mod.built_or_served(without_luck, None))
+    assert "CORRECTED ADP is missing touchdown luck" in said
+    assert "different order" in said and "not a thinner board" in said
+
+    both = board.BuildReport(adp=True, td_luck=False, durability=False)
+    assert both.corrections_missing() == ("touchdown luck", "durability")
+
+
+def test_a_board_with_no_adp_claims_no_missing_corrections():
+    """An ECR-only board did not compute a corrected ranking at all, so it has none to be
+    missing terms from. Saying "missing touchdown luck" there would point at the wrong
+    thing -- the ranking is raw consensus, and the board already says so."""
+    ecr_only = board.BuildReport(adp=False, td_luck=False, durability=False)
+    assert ecr_only.corrections_missing() == ()
+
+
+def test_a_missing_correction_actually_moves_the_corrected_ranking():
+    """The demonstration the ticket asks for, as numbers rather than as an argument.
+
+    Both `correct_projection` functions return the frame untouched when their column is
+    absent, so this is the arithmetic an absorbed stage produces. If this ever stops moving
+    the ranking, the two stages really are advisory and the note above should go.
+    """
+    from hub.draft import durability
+    from hub.draft import regression as td
+    from hub.draft.optimize import corrected_adp
+
+    rng = np.random.default_rng(0)
+    n = 120
+    b = pl.DataFrame({
+        "player": [f"p{i}" for i in range(n)],
+        "pos": ["QB", "WR", "RB", "TE"] * (n // 4),
+        "adp": np.sort(rng.uniform(1, 180, n)),
+        "proj_blend": np.sort(rng.uniform(60, 320, n))[::-1],
+        "games": [17] * n,
+        "td_luck": rng.normal(0, 3, n),
+        "missed": rng.integers(0, 6, n).astype(float),
+    })
+
+    def rank(frame: pl.DataFrame) -> list[str]:
+        raw = frame["proj_blend"]
+        f = td.correct_projection(frame)
+        f = durability.correct_projection(f)
+        f = f.with_columns((pl.col("proj_blend") - raw).alias("proj_correction"))
+        f = f.with_columns(corrected_adp(f).alias("adp_corrected"))
+        return f.sort("adp_corrected")["player"].to_list()
+
+    with_both = rank(b)
+    without_luck = rank(b.drop("td_luck"))
+    assert with_both != without_luck, (
+        "absorbing the touchdown-luck stage left the corrected ranking identical, which "
+        "would make it advisory after all -- and would make the printed note wrong")
+    assert rank(b.drop("missed")) != with_both, "same for durability"

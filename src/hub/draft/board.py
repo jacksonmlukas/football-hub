@@ -582,6 +582,34 @@ class BuildReport:
         """Whether this describes a board off disk rather than one built just now."""
         return self.source == SERVED
 
+    def corrections_missing(self) -> tuple[str, ...]:
+        """Correction terms Corrected ADP was computed *without*, when it was computed at all.
+
+        Two of the five stages the ADR calls advisory leave a column that the sixth stage's
+        arithmetic then reads, and both `correct_projection` functions return the frame
+        untouched when their column is absent. So absorbing a touchdown-luck or durability
+        outage does not leave a thinner board -- it leaves a board whose Corrected ADP is a
+        different ranking, computed from a subset of the corrections, reported as having run.
+
+        Measured on the 457-player board of 2026-09-06, absorbing one stage each:
+
+            td_luck      346/457 players' Corrected ADP moves, up to 28.1 picks;
+                         110 of the first 192 change rank, by up to 19 places
+            durability   350/457 move, up to 36.8 picks; 134 of the first 192
+                         change rank, by up to 36 places
+
+        Wider than the players the term applies to, because `optimize.corrected_adp` fits
+        `market_curve` on the corrected `proj_blend` -- so dropping a term re-fits the curve
+        every player is priced against, not only the ones it corrects.
+
+        Derived rather than recorded. The flags were already right; nothing connected them to
+        the ranking that consumed their absence, which is the whole of issue #121.
+        """
+        if not self.adp:
+            return ()
+        return tuple(term for term, ran in (("touchdown luck", self.td_luck),
+                                            ("durability", self.durability)) if not ran)
+
     def degraded(self) -> tuple[str, ...]:
         """Stages that did not make it, in declaration order."""
         return tuple(k for k, v in vars(self).items() if isinstance(v, bool) and not v)
@@ -671,6 +699,12 @@ def _stage(board: pl.DataFrame, report: BuildReport, flag: str, label: str,
         return board
 
 
+# The board column each correction term reads, and the stage that leaves it. `_attach_market`
+# consumes these; `STAGE_COLUMN` above says which stage produces them. The two dicts overlap
+# on purpose -- that overlap *is* the dependency the ADR did not describe.
+CORRECTION_COLUMN = {"touchdown luck": "td_luck", "durability": "missed"}
+
+
 def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
                    season: int, season_ahead: int) -> pl.DataFrame:
     """Everything the market contributes once ADP is in hand.
@@ -709,6 +743,10 @@ def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
     # rather than recomputing it means the number THE PICK ranks on and the number
     # printed beside it can never disagree.
     raw = board["proj_blend"]
+    # Each `correct_projection` below returns the frame untouched when its column is absent,
+    # and says nothing about having done so. Two of the five stages the ADR calls advisory
+    # leave those columns, so absorbing one of them lands here as a term that silently does
+    # not apply -- see `BuildReport.corrections_missing` (issue #121).
     board = td_regression.correct_projection(board)
     # And for his own availability history, where the market leaves a residual: QB and
     # WR. Running backs are left alone -- the market already prices their durability.

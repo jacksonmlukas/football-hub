@@ -48,7 +48,7 @@ def built_or_served(report: BuildReport, age_h: float | None) -> list[str]:
     board whose signals genuinely had nothing to say.
     """
     if not report.served:
-        return degraded(report.degraded())
+        return degraded(report.degraded()) + _corrections_note(report)
     age = f"built {age_h:.1f}h ago" if age_h is not None else "age unknown"
     carried = ", ".join(report.carried()) or "no optional signal at all"
     missing = report.degraded()
@@ -56,7 +56,31 @@ def built_or_served(report: BuildReport, age_h: float | None) -> list[str]:
             "  every section below is that board's, not tonight's.",
             f"  it carries, read off the board itself: {carried}",
             f"  not on it, or not recorded on it: {', '.join(missing)}" if missing
-            else "  it carries every optional signal."]
+            else "  it carries every optional signal."] + _corrections_note(report)
+
+
+def _corrections_note(report: BuildReport) -> list[str]:
+    """Which corrections reached Corrected ADP, said where the ranking is.
+
+    `degraded` already names the stages that did not run, and that line was read as meaning
+    the board is thinner. For two of them it means something else: touchdown luck and
+    durability leave columns the ADP stage's arithmetic reads, and both corrections return
+    the frame untouched when their column is absent -- so the board is not thinner, its
+    Corrected ADP is a different ranking. On the 457-player board of 2026-09-06, absorbing
+    either moved more than 340 players and reordered over a hundred of the first 192 picks.
+
+    Printed rather than refused. Refusing would turn a ten-minute outage into no board on the
+    night the board exists for, which is the operator-dependence CLAUDE.md warns about. What
+    an operator cannot do is act on a ranking whose inputs they cannot see (issue #121).
+    """
+    if not report.adp:
+        return []
+    missing = report.corrections_missing()
+    if not missing:
+        return []
+    return [f"\n  CORRECTED ADP is missing {' and '.join(missing)}.",
+            "  THE PICK ranks on it, so this is a different order -- not a thinner board.",
+            "  the stages above did not fail silently; this is what their absence did."]
 
 
 def mistyped(suggestions: dict[str, str | None]) -> list[str]:
