@@ -656,3 +656,54 @@ def test_digests_reports_all_three_and_names_them():
     assert set(got) == {"cfg", "fitted", "data"}
     assert got["cfg"] == config_digest(HubConfig())
     assert got["fitted"] == fitted_digest()
+
+
+# --- the reason lives with the numbers (issue #109) ------------------------
+
+def test_every_not_fitted_module_states_its_own_reason():
+    """ADR-0006 says a fitted constant lives beside its provenance. Its mirror image did not:
+    the claim that some other module's floats are settings rather than fitted quantities lived
+    as twenty prose entries here, five hundred lines from any of the numbers they describe.
+
+    A module-level object rather than a scanned comment. The comment convention earns its
+    regex for guards, because a guard wraps a block and there is nothing else it could be.
+    This is a module-level fact about a module, so the check imports it -- no regex that can
+    silently match fewer modules than it did yesterday, which is the failure this repo keeps
+    finding.
+
+    This is the expand half of expand-then-contract: the registry still stands and still names
+    every module, so a declaration that was never written is caught here rather than by a
+    reshaped check that might have the same gap as the omission.
+    """
+    import importlib
+    undeclared = []
+    for module in NOT_FITTED:
+        mod = importlib.import_module(module)
+        said = getattr(mod, "NOT_FITTED_BECAUSE", None)
+        if not isinstance(said, str) or not said.strip():
+            undeclared.append(module)
+    assert not undeclared, (
+        f"registered as not-fitted in config.py but saying nothing where the numbers are: "
+        f"{undeclared}. Add `NOT_FITTED_BECAUSE = \"...\"` to each.")
+
+
+def test_a_module_that_declares_a_reason_is_not_registered_twice_over():
+    """The contract half. A declaration is the record, so a module carrying one and *not* in
+    the registry is fine once the registry goes -- but while both stand they must agree, or
+    the migration has produced two sources of truth that can drift."""
+    import importlib
+    import pkgutil
+
+    import hub
+    declaring = set()
+    for info in pkgutil.walk_packages(hub.__path__, prefix="hub."):
+        try:
+            mod = importlib.import_module(info.name)
+        except Exception:                      # a module that cannot import is another test's
+            continue
+        if isinstance(getattr(mod, "NOT_FITTED_BECAUSE", None), str):
+            declaring.add(info.name)
+    assert declaring == set(NOT_FITTED), (
+        f"the registry and the declarations disagree. Only in the registry: "
+        f"{sorted(set(NOT_FITTED) - declaring)}; only declared: "
+        f"{sorted(declaring - set(NOT_FITTED))}")

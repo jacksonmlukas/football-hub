@@ -58,6 +58,14 @@ from hub.models.panel import (
     build_panel,
 )
 
+NOT_FITTED_BECAUSE = (
+    "the Weekly projection. MULTIPLIER_LO/HI bound a fitted multiplier, MIN_UNITS is a volume "
+    "floor below which a per-unit efficiency rate is noise, TAIL_Q is the slice the shrinkage "
+    "experiment scores and the two SHRINK_GRIDs are search grids -- all settings. The "
+    "multiplier's coefficients are fitted at run time from the panel and never frozen into "
+    "the module, the same shape as hub.models.injury. See docs/weekly-screen.md "
+)
+
 # The multiplier is bounded. A snap share that doubled is real information; a multiplier of 4
 # on a player's target count is an extrapolation past anything in the fit, and the cost of
 # being wrong upward on a lineup is asymmetric -- you start him.

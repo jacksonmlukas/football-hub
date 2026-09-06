@@ -17,6 +17,12 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 
+NOT_FITTED_BECAUSE = (
+    "the consensus adjustment and its lambda. DEFAULT_LAMBDA is 0.0 -- the sweep found "
+    "nothing to tune (docs/lambda-sweep.md) -- and its only callers are hub.draft.tune and "
+    "hub.draft.evaluate, both offline harnesses. Nothing at predict time reads it. "
+)
+
 # Nudge strength, set to zero by measurement rather than judgment.
 #
 # The reasoning below is intact and may still be right in principle -- consensus does

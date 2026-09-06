@@ -55,6 +55,12 @@ from hub.models.panel import (
     consensus_pin,
 )
 
+NOT_FITTED_BECAUSE = (
+    "the Phase 1 screen for week-level features. DEGENERATE is a floating-point tolerance -- "
+    "below it a residual is rounding error rather than a signal -- and nothing here predicts: "
+    "it reads outcomes and reports correlations. See docs/weekly-screen.md "
+)
+
 # A cell smaller than this is a correlation on noise. 40 is roughly a tenth of a normal week.
 MIN_CELL = 40
 

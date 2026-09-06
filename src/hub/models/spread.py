@@ -50,6 +50,12 @@ from hub.config import DRAFTED_POSITIONS
 from hub.models.experiment import MIN_SE, expanding_seasons, paired_gain
 from hub.models.predict import WEEKLY_K, WEEKLY_K_POOLED
 
+NOT_FITTED_BECAUSE = (
+    "a measurement that adopted nothing -- it tested whether per-player weekly spread beats "
+    "K[position] and kept the incumbent. MIN_PPG and MIN_SE are a sample threshold and a "
+    "significance bar, both settings. See docs/player-spread.md "
+)
+
 # Matching docs/weekly-spread.md's sample exactly, so the two measurements are comparable.
 # Below 8 games the sd is a handful of numbers; below 3 ppg the ratio sd/sqrt(mu) is
 # dominated by whether he happened to score once.

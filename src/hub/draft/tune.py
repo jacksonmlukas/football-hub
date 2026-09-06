@@ -39,6 +39,10 @@ from hub.config import SEASON_COMPLETED
 from hub.draft.projection import adjusted
 from hub.names import player_key
 
+NOT_FITTED_BECAUSE = (
+    "hyperparameter search grid, run offline and never at predict time "
+)
+
 ROOT = Path(__file__).resolve().parents[3]
 SWEEP_OUT = ROOT / "docs" / "lambda-sweep.md"
 

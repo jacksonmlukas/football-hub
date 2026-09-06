@@ -36,6 +36,12 @@ from hub.cli import unavailable
 from hub.config import SEASON_AHEAD, PoolConfig
 from hub.paths import SITE
 
+NOT_FITTED_BECAUSE = (
+    "MIN_PROB is a floor that keeps a zero out of a log, and THIN_ROWS a count of grid rows. "
+    "Both are settings; the win probabilities themselves come from hub.models.market at run "
+    "time. "
+)
+
 # Below this a team is treated as unpickable rather than fed to log(). A survivor pick at
 # 1% is never the answer, and log(0) is negative infinity.
 MIN_PROB = 1e-4

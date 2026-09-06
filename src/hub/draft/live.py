@@ -41,6 +41,10 @@ from hub.draft.board import (
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.state import DraftState, remaining, take
 
+NOT_FITTED_BECAUSE = (
+    "operational -- a refresh budget in seconds, same class as `poll` "
+)
+
 # A run is three or more picks at one position inside the last five -- the skill's
 # definition, not an invention.
 RUN_WINDOW = 5

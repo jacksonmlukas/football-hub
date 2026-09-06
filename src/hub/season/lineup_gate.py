@@ -49,6 +49,12 @@ from hub.models.experiment import (
 )
 from hub.names import player_key
 
+NOT_FITTED_BECAUSE = (
+    "the walk-forward gate for the lineup optimiser. OPP_MU and OPP_SD describe the "
+    "*opponent* a simulated week is played against -- a fixture for scoring two arms against "
+    "each other, not an input any published prediction can reach. "
+)
+
 # What the optimiser is assumed to be playing against each week. The league's own weekly team
 # scores would be better and are not reconstructable for a simulated roster, so this is a
 # stated assumption rather than a measurement -- and it is held identical across both arms,

@@ -52,6 +52,10 @@ from hub.draft.season import (
     talent_cv_for,
 )
 
+NOT_FITTED_BECAUSE = (
+    "a synthetic fixture league for the variance sweep "
+)
+
 TEAMS = 12
 CHUNK = 4000
 

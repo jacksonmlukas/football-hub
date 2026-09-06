@@ -29,6 +29,10 @@ from hub.models.experiment import BOOTSTRAP
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
 
+NOT_FITTED_BECAUSE = (
+    "model-comparison harness; it reads predictions, never makes them "
+)
+
 DEFAULT_HOLDOUT = 0.3
 
 

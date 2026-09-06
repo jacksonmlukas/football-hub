@@ -33,6 +33,12 @@ from hub.draft.state import load as load_state
 from hub.names import player_key
 from hub.paths import BOARD_PARQUET
 
+NOT_FITTED_BECAUSE = (
+    "STALE_HOURS is how old the as-drafted board copy may be before the replay says it is a "
+    "rehearsal leftover -- an operational freshness check on a file, not a quantity any "
+    "prediction reads. "
+)
+
 # docs/decisions.md, fixed 2026-08-27 before the draft rather than chosen in January.
 THRESHOLD = 12
 ROUNDS = 16

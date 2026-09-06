@@ -40,6 +40,12 @@ from hub.models.experiment import expanding_seasons
 from hub.models.market import MARGIN_SD
 from hub.models.scoring_rules import log_loss
 
+NOT_FITTED_BECAUSE = (
+    "the recorded output of the MARGIN_SD fit, used by a test to guard the live constant -- "
+    "an assertion about a prediction, not an input. The live number lives in "
+    "hub.models.market, which IS registered. "
+)
+
 # What the 2026-08-24 fit found, kept so a test can guard the live constant against it -- the
 # same pattern `hub.draft.calibrate.FITTED_CI95` uses for TALENT_CV. A refit updates both.
 FITTED_SD = 12.741

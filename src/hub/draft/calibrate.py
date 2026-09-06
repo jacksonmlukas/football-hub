@@ -49,6 +49,11 @@ from hub.config import DRAFTED_POSITIONS
 # for quarterbacks -- 0.55 over-subtracts badly for the steadiest position.
 from hub.draft.season import WEEKLY_K, WEEKLY_K_POOLED
 
+NOT_FITTED_BECAUSE = (
+    "the recorded output of a fit, used by tests to guard the live constants -- an assertion "
+    "about predictions, not an input "
+)
+
 TEAM_GAMES = 17
 DRAFTED_THROUGH = 168          # 14 rounds x 12 teams: the roster the simulator holds
 

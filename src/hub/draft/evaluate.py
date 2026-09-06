@@ -28,6 +28,10 @@ from hub.cli import unavailable
 from hub.draft.projection import adjusted
 from hub.league import FLEX_FROM, FLEX_SLOTS, STARTERS
 
+NOT_FITTED_BECAUSE = (
+    "offline harness for scoring draft strategies against each other "
+)
+
 TEAMS = 12
 ROUNDS = 16
 

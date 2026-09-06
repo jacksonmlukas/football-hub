@@ -51,6 +51,12 @@ from hub.config import FANTASY_WEEKS
 from hub.league import STARTERS, starting_lineup
 from hub.models.experiment import Actions, gate, paired_report, per_season, summarise
 
+NOT_FITTED_BECAUSE = (
+    "Gate B for the Weekly projection. VOID_FLOOR is the share of roster-weeks lost to a join "
+    "failure above which a run is not reported at all -- a pre-registered guard, not a fitted "
+    "quantity. See docs/weekly-projection-plan.md "
+)
+
 # The fantasy regular season. 15-17 is the playoffs, reported apart; 18 is meaningless.
 GATE_WEEKS = FANTASY_WEEKS
 

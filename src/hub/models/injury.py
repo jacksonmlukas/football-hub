@@ -57,6 +57,13 @@ from hub.config import DRAFTED_POSITIONS
 from hub.models.experiment import MIN_SE, expanding_seasons, paired_gain
 from hub.names import practice_key
 
+NOT_FITTED_BECAUSE = (
+    "the retention table is fitted at run time from nflverse and never frozen into the "
+    "module, so nothing here is a fitted constant. SHRINK_GRID is a search grid, and the "
+    "significance bar it gates on now lives in hub.models.experiment as MIN_SE -- both "
+    "settings. See docs/weekly-injury.md "
+)
+
 # Positions this league drafts.
 
 # Weeks of healthy play needed before a player's own baseline means anything. Below this, one

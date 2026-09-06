@@ -48,6 +48,12 @@ import polars as pl
 
 from hub.names import player_key
 
+NOT_FITTED_BECAUSE = (
+    "MIN_SE is the significance bar every gate reads -- a setting, and the one this module "
+    "exists to stop being declared twice. Nothing here predicts; it holds the walk-forward "
+    "protocol. "
+)
+
 # One column list, so both harnesses hit one cache entry. `nflverse._cache_path` keys on the
 # sorted column set -- deliberately, so a caller asking for six columns is never served an
 # earlier caller's five -- which means two callers asking for different slices of the same
