@@ -360,11 +360,13 @@ def _as_of_filter(source: str, df: pl.DataFrame, as_of: date) -> pl.DataFrame:
     is null cannot be placed in time, so it does not survive a pinned load.
     """
     col = APPEND_ONLY[source]
+    # GUARD append-only-column-vanished: an as-of that cannot be applied refuses the archive
     if col not in df.columns:
         raise ContractViolation(
             f"{source} is declared append-only on {col!r} and that column is not there; "
             f"got {len(df.columns)} columns from upstream. The as-of cannot be applied, and "
             "returning the unfiltered archive would be the drift the pin exists to catch.")
+    # /GUARD
     scraped = (pl.col(col).str.to_date(strict=False) if df.schema[col] == pl.Utf8
                else pl.col(col).cast(pl.Date))
     return df.filter(scraped <= pl.lit(as_of))

@@ -272,6 +272,37 @@ def test_a_child_that_errored_is_told_apart_from_one_that_failed(tmp_path):
 # leverage refusal code in the repo -- fourteen contracts, every fetch boundary, one function
 # -- and because it is the module whose declared dtypes were "read by nothing" for months by
 # its own docstring's account. Widening it is one line per module and one honest sentence.
+#
+# **The second entry, and what it deliberately leaves out.** `fetch/nflverse.py` is watched
+# for `ContractViolation` and nothing else. That exception is raised in this repo for one
+# reason -- a frame reached a boundary that nothing can vouch for, so it is not served -- and
+# `grep -rn "except ContractViolation" src tests scripts` finds no catcher, so there is no
+# caller for whom one is ordinary control flow. That is the property that makes the
+# judgement safe to make once here, the same one `contracts.py` has.
+#
+# It is narrower than the module's whole refusal vocabulary, and the omission is measured
+# rather than assumed. The module raises three types and every one of the eight is a refusal:
+# `WideFrameRefused` six times (one being the declared `wide-frame-refused` guard),
+# `UnattributedPoints` once, and this `ContractViolation`. `WideFrameRefused` is the next
+# shape to add and `UnattributedPoints` the one after, but two of the five unmarked
+# `WideFrameRefused` cannot be marked today without work this entry does not do:
+#
+#   * `load_rankings`'s unknown-page refusal is not load-bearing under today's tests. Deleting
+#     it by hand on 2026-09-06 left all 77 of `unit/test_fetch_nflverse.py` green, because
+#     `_raw_ff_rankings` then refuses with the same exception type and a message that still
+#     contains the two page names the test asserts on. That is the "asserted the outcome, not
+#     that this guard produced it" shape from the week of 2026-09-04, found here rather than
+#     by luck -- and marking it before its test can tell the two refusals apart would put a
+#     green tick on exactly that.
+#   * `_raw_ff_rankings`'s own refusal is what stops a bad partition key reaching
+#     `nfl.load_ff_rankings`, so a mutant without it makes the child run fetch the live 1.83M
+#     -row archive. A guard whose excision is a network call is an `# UNPROVED` argument or a
+#     fixture, not a marker.
+#
+# Naming those two here is the point of the entry rather than an apology for it: an under-
+# covering scope says which refusals it is not reading and why, where a budget says only that
+# a number moved. Adding the shape is a one-line change to `raises` once those two are dealt
+# with (#62).
 
 PY_UNPROVED = marker("UNPROVED", "#")
 
@@ -297,6 +328,17 @@ class Watched:
     why: str
 
 
+def _entry(stem: str) -> Watched:
+    """One entry by module name, for the controls that need a particular module's shape.
+
+    `WATCHED[0]` was fine while there was one entry and becomes a silent mis-aim the moment
+    there are two: a control written for `contracts.py`'s collector would start running
+    against whichever entry happens to be first, and pass for the wrong reason.
+    """
+    (found,) = [w for w in WATCHED if w.path.stem == stem]
+    return found
+
+
 WATCHED = (
     Watched(
         path=SRC / "contracts.py",
@@ -307,6 +349,21 @@ WATCHED = (
              "there is no ordinary control flow here for a scan to mistake for a guard. That "
              "is what makes the judgement safe to make once, in this entry, rather than per "
              "statement by whoever is reading."),
+    ),
+    Watched(
+        path=SRC / "fetch" / "nflverse.py",
+        collects=(),
+        raises=("ContractViolation",),
+        why=("This is the loader every nflverse number in the repo comes through, so a row "
+             "that gets past it is a row in a published board. A `ContractViolation` raised "
+             "here says the frame cannot be vouched for and is not being served; nothing in "
+             "`src`, `tests` or `scripts` catches one, so there is no caller for whom it is "
+             "ordinary control flow, which is what makes the judgement safe to make once in "
+             "this entry. `collects` is empty because this module has no accumulator -- it "
+             "refuses by raising, at the statement that found the problem. Deliberately "
+             "narrower than the module's full vocabulary: see the note above on the two "
+             "`WideFrameRefused` refusals that cannot be marked yet, and why saying so is "
+             "the entry working rather than the entry apologising."),
     ),
 )
 
@@ -378,15 +435,26 @@ def test_the_watched_shapes_still_find_the_module_they_watch():
     refusals, and stays green forever over a module it has stopped reading. A scan that has
     gone blind is indistinguishable from a module with nothing to find, which is the
     "passing tests, dead guard" shape from the week of 2026-09-04 -- so the denominator is
-    asserted rather than assumed, and each declared shape has to account for itself."""
+    asserted rather than assumed, and each declared shape has to account for itself.
+
+    *Declared* shape. A module that refuses by raising and never accumulates -- which is
+    every refusal in `fetch/nflverse.py` -- declares `collects=()`, and an empty tuple has
+    nothing to account for. What must never pass is an entry declaring no shape at all: that
+    reads a module and finds nothing by construction, which is this same failure written into
+    the entry rather than arrived at by drift."""
     for watched in WATCHED:
         text = watched.path.read_text()
-        alone = (
-            (f"collects={watched.collects!r}",
-             Watched(watched.path, watched.collects, (), watched.why)),
-            (f"raises={watched.raises!r}",
-             Watched(watched.path, (), watched.raises, watched.why)),
-        )
+        alone = [(f"{field}={names!r}", probe)
+                 for field, names, probe in (
+                     ("collects", watched.collects,
+                      Watched(watched.path, watched.collects, (), watched.why)),
+                     ("raises", watched.raises,
+                      Watched(watched.path, (), watched.raises, watched.why)))
+                 if names]
+        assert alone, (
+            f"{watched.path.name} is watched for no refusal shape at all, so the gate reads "
+            f"it and finds nothing however many refusals it grows. An entry declares at "
+            f"least one of `collects` and `raises`.")
         for shape, probe in alone:
             assert _refusals(text, probe), (
                 f"nothing in {watched.path.name} matches its declared {shape} any more, so "
@@ -395,28 +463,45 @@ def test_the_watched_shapes_still_find_the_module_they_watch():
                 f"refuses with now.")
 
 
-def test_a_new_undeclared_refusal_is_named_immediately():
+# Every (module, shape) pair `WATCHED` declares. The controls below are parametrized over
+# these rather than written against one entry, because an entry nothing splices into is an
+# entry nobody has watched read anything -- which is what `WATCHED[0]` quietly became the
+# moment there were two.
+COLLECT_SHAPES = [(w, name) for w in WATCHED for name in w.collects]
+RAISE_SHAPES = [(w, exc) for w in WATCHED for exc in w.raises]
+
+
+@pytest.mark.parametrize(("watched", "collector"), COLLECT_SHAPES,
+                         ids=[f"{w.path.stem}-{n}" for w, n in COLLECT_SHAPES])
+def test_a_new_undeclared_refusal_is_named_immediately(watched, collector):
     """The positive control. Splice a refusal onto the watched module and require the report
     to say what it is and where -- not "1 refusal is undeclared", which is the count restated.
 
     Without this the gate only ever runs against a module that already satisfies it, which is
     the same vacuum as a canary proving one pattern of five."""
-    watched = WATCHED[0]
-    spliced = watched.path.read_text() + '\ndef _later(problems):\n    problems.append("x")\n'
+    spliced = (watched.path.read_text()
+               + f'\ndef _later({collector}):\n    {collector}.append("x")\n')
     got = _undeclared(spliced, watched)
     assert len(got) == 1, f"the splice was not the only undeclared refusal: {got}"
-    assert 'problems.append("x")' in got[0], f"the report does not say what it is: {got[0]}"
+    assert f'{collector}.append("x")' in got[0], (
+        f"the report does not say what it is: {got[0]}")
     assert got[0].startswith("line "), f"nor where it is: {got[0]}"
 
 
-def test_a_check_that_raises_instead_of_appending_is_caught_too():
+@pytest.mark.parametrize(("watched", "exc"), RAISE_SHAPES,
+                         ids=[f"{w.path.stem}-{e}" for w, e in RAISE_SHAPES])
+def test_a_check_that_raises_instead_of_appending_is_caught_too(watched, exc):
     """The hole the second shape closes. A seventh check could refuse directly rather than
-    adding to `problems`, and a gate that only knew the list would not see it."""
-    watched = WATCHED[0]
+    adding to `problems`, and a gate that only knew the list would not see it.
+
+    It is also the *only* shape `fetch/nflverse.py` has: that module keeps no accumulator and
+    refuses at the statement that found the problem, so this parametrization is what proves
+    its entry reads it at all."""
     spliced = (watched.path.read_text()
-               + '\ndef _later(df):\n    raise ContractViolation("straight to the exit")\n')
+               + f'\ndef _later(df):\n    raise {exc}("straight to the exit")\n')
     got = _undeclared(spliced, watched)
-    assert len(got) == 1 and "ContractViolation" in got[0], got
+    assert len(got) == 1 and exc in got[0], got
+    assert got[0].startswith("line "), f"the report does not say where it is: {got[0]}"
 
 
 def test_prose_naming_a_refusal_is_not_read_as_one():
@@ -425,7 +510,7 @@ def test_prose_naming_a_refusal_is_not_read_as_one():
     red on it -- a gate firing on its own explanation, which is the shape that gets a gate
     deleted rather than satisfied. Kept as a test because the cheap fix (skip comment lines,
     as the shell scan must) passes today and breaks on the next docstring or error string."""
-    watched = WATCHED[0]
+    watched = _entry("contracts")
     spliced = (watched.path.read_text()
                + '\ndef _later():\n    """Mentions problems.append( and ContractViolation."""\n'
                  '    return "raise ContractViolation( in a string, too"\n')
@@ -441,7 +526,7 @@ def test_an_unproved_block_declares_a_refusal_the_same_way_a_guard_does():
     the one live example -- has to have somewhere to go, or the person who meets one deletes
     the gate instead. Both verbs come from `guardlib.marker`, so this checks the second one is
     actually wired here rather than only in `test_preflight.py`."""
-    watched = WATCHED[0]
+    watched = _entry("contracts")
     text = watched.path.read_text()
     naked = text + '\ndef _later(problems):\n    problems.append("x")\n'
     covered = (text + '\ndef _later(problems):\n'
