@@ -571,3 +571,117 @@ def test_the_published_plan_stamps_each_row_with_the_seasons_it_came_from(tmp_pa
 
 def test_an_absent_plan_is_no_history_rather_than_an_error(tmp_path):
     assert survivor.published_plan(tmp_path / "nothing.json") == []
+
+
+# --- weeks that take two teams ------------------------------------------------
+#
+# Both have to win. The objective already said so -- surviving both is the product, which the
+# sum of logs expresses -- and the no-repeat constraint already spanned the season. What is new
+# is that the two picks must not be the two sides of one fixture, which under one pick a week
+# was unreachable and under two is reachable, fatal, and attractive across a season.
+
+from hub.config import PoolConfig  # noqa: E402
+
+
+def _fx(rows):
+    """rows: (week, team_a, team_b, p_a) -- a grid carrying the fixture key `solve` needs."""
+    out = []
+    for i, (w, a, b, p) in enumerate(rows):
+        gid = f"{w}-{i}"
+        out += [(w, a, float(p), gid), (w, b, 1.0 - float(p), gid)]
+    return pl.DataFrame({"week": [r[0] for r in out], "team": [r[1] for r in out],
+                         "win_prob": [r[2] for r in out], "game_id": [r[3] for r in out]})
+
+
+_DOUBLE = PoolConfig(double_pick_weeks=(2,))
+
+
+def test_a_double_week_takes_two_teams_and_a_single_week_takes_one():
+    g = _fx([(1, "KC", "LV", 0.9), (1, "SF", "SEA", 0.8),
+             (2, "BUF", "NYJ", 0.85), (2, "DAL", "NYG", 0.75)])
+    plan = survivor.solve(g, [1, 2], pool=_DOUBLE)
+    by_week = plan.group_by("week").len().sort("week")
+    assert by_week["len"].to_list() == [1, 2]
+    wk2 = plan.filter(pl.col("week") == 2)["team"].to_list()
+    assert len(set(wk2)) == 2
+
+
+def test_both_teams_have_to_win_so_survival_multiplies_them():
+    """Not one of them: a double week is survived only if neither pick loses."""
+    g = _fx([(1, "KC", "LV", 0.9), (2, "BUF", "NYJ", 0.8), (2, "DAL", "NYG", 0.75)])
+    plan = survivor.solve(g, [1, 2], pool=_DOUBLE)
+    assert survivor.survival(plan) == pytest.approx(0.9 * 0.8 * 0.75)
+
+
+def test_the_two_picks_are_never_the_two_sides_of_one_fixture():
+    """The constraint that only exists once a week takes two. Both sides of a game are the
+    two highest-probability rows available here, so an unconstrained solver would reach for
+    them: one of them loses, and the week is lost with it."""
+    g = _fx([(2, "KC", "LV", 0.55), (2, "SF", "SEA", 0.54), (2, "BUF", "NYJ", 0.53)])
+    plan = survivor.solve(g, [2], pool=_DOUBLE)
+    picked = plan["team"].to_list()
+    gids = g.filter(pl.col("team").is_in(picked) & (pl.col("week") == 2))["game_id"].to_list()
+    assert len(set(gids)) == 2, "the two picks came from one fixture"
+
+
+def test_two_teams_sharing_a_slot_but_not_a_fixture_stay_jointly_pickable():
+    """The exclusion keys on the fixture, not the kickoff -- a dozen games share a Sunday."""
+    g = _fx([(2, "KC", "LV", 0.9), (2, "SF", "SEA", 0.88)]).with_columns(
+        pl.lit(dt.datetime(2026, 9, 13, 13, 0)).alias("kickoff"))
+    plan = survivor.solve(g, [2], pool=_DOUBLE)
+    assert sorted(plan["team"].to_list()) == ["KC", "SF"]
+
+
+def test_a_team_spent_earlier_is_unavailable_in_either_slot():
+    g = _fx([(2, "KC", "LV", 0.9), (2, "SF", "SEA", 0.85), (2, "BUF", "NYJ", 0.8)])
+    plan = survivor.solve(g, [2], spent=["KC"], pool=_DOUBLE)
+    assert "KC" not in plan["team"].to_list()
+    assert len(plan) == 2
+
+
+def test_a_double_week_priced_by_one_fixture_needs_a_pick_rather_than_raising():
+    """The failure this avoids is season-wide: called covered, the week hands the solver an
+    unsatisfiable equality and `publish.survivor` keeps a stale plan for the weeks that were
+    fine. Reported as needing a pick instead."""
+    g = _fx([(1, "KC", "LV", 0.9), (2, "SF", "SEA", 0.8)])
+    cov = survivor.coverage(g, [1, 2], _DOUBLE)
+    assert cov.covered == [1] and cov.missing == [2]
+    survivor.solve(g, cov.covered, pool=_DOUBLE)      # the weeks that were fine still plan
+
+
+def test_with_no_double_weeks_configured_the_plan_is_todays():
+    g = _fx([(1, "KC", "LV", 0.9), (1, "SF", "SEA", 0.8),
+             (2, "BUF", "NYJ", 0.85), (2, "DAL", "NYG", 0.75)])
+    plain = survivor.solve(g, [1, 2])
+    empty = survivor.solve(g, [1, 2], pool=PoolConfig(double_pick_weeks=()))
+    assert plain.to_dicts() == empty.to_dicts()
+    assert len(plain) == 2
+
+
+def test_a_double_week_solves_the_same_way_twice():
+    g = _fx([(2, "KC", "LV", 0.9), (2, "SF", "SEA", 0.85), (2, "BUF", "NYJ", 0.8)])
+    a = survivor.solve(g, [2], pool=_DOUBLE)
+    b = survivor.solve(g, [2], pool=_DOUBLE)
+    assert a.to_dicts() == b.to_dicts()
+
+
+def test_a_double_week_without_a_fixture_key_is_refused():
+    """Rather than silently taking both sides of a game nobody can identify."""
+    g = _fx([(2, "KC", "LV", 0.9), (2, "SF", "SEA", 0.8)]).drop("game_id")
+    with pytest.raises(ValueError, match="game_id"):
+        survivor.solve(g, [2], pool=_DOUBLE)
+
+
+def test_the_cli_counts_weeks_and_reports_picks_beside_them(capsys, monkeypatch):
+    """The caption printed `picks.height` as a week count, which reads "24 planned weeks" for
+    an eighteen-week season once a week can take two."""
+    g = _fx([(1, "KC", "LV", 0.9), (2, "BUF", "NYJ", 0.8), (2, "DAL", "NYG", 0.75)])
+    plan = survivor.solve(g, [1, 2], pool=_DOUBLE)
+    monkeypatch.setattr(survivor, "grid_from_schedule", lambda *a, **k: g)
+    monkeypatch.setattr(survivor, "plan_remaining", lambda *a, **k: survivor.RemainingPlan(
+        picks=plan, coverage=survivor.Coverage([1, 2], [], []), played=[], spent=[],
+        snapshot_only=[]))
+    survivor.main(["--season", "2026"])
+    out = capsys.readouterr().out
+    assert "survives the 2 planned weeks" in out
+    assert "(3 picks)" in out

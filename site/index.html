@@ -610,8 +610,14 @@ async function render() {
     // is the panel's warning and not part of the scope sentence below it.
     const missing = surv.unpriced_weeks ?? [];
     const from = sRows[0]?.week;
+    const sWeeks = new Set(sRows.map(r => r.week)).size;
     panel("p-survivor", {
-      age: `${sRows.length} weeks from wk ${from} · survives ${pct(surv.survival ?? 0)}`,
+      // Weeks, not rows: a double-pick week contributes two rows and one week, so counting
+      // rows read "24 weeks" for an eighteen-week plan. The pick count rides alongside
+      // because it is the other thing a reader wants and the two are no longer the same.
+      age: `${sWeeks} wk${sWeeks === 1 ? "" : "s"} from wk ${from}`
+         + (sRows.length !== sWeeks ? ` · ${sRows.length} picks` : "")
+         + ` · survives ${pct(surv.survival ?? 0)}`,
       warn: sArt?.stale ? `Stale: ${sArt.reason ?? "unknown"}`
           : (missing.length
              ? `Weeks ${missing.join(", ")} have no posted spread yet and still need a pick.`
