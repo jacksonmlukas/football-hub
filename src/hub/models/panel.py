@@ -219,32 +219,49 @@ def prior_means(df: pl.DataFrame, keys: Sequence[str], values: Sequence[str], *,
     return pl.concat(frames).sort([*keys, "season", "week"])
 
 
-def trend(df: pl.DataFrame, col: str, key: str, out: str, weeks: int = 18) -> pl.DataFrame:
-    """mean(w-3..w-1) - mean(w-6..w-4), over *calendar weeks* rather than appearances.
+def _on_calendar_grid(df: pl.DataFrame, col: str, key: str, out: str, weeks: int,
+                      expr: pl.Expr) -> pl.DataFrame:
+    """Measure a window `expr` on a complete (`key`, season, week) grid, joined back onto `df`.
 
-    Reindexed onto a complete (player, season, week) grid first. Shifting over row order would
-    make a player who missed week 5 compare weeks 6,4,3 against 2,1 -- strictly prior, so not
-    leakage, but not the quantity `docs/snap-trend-signal.md` defines either, and missed games
-    are exactly the interesting case for a usage trend.
+    The reindex both week-window features below are built on, and the reason either of them is
+    more than a `shift`. Shifting over row order would make a player who missed week 5 compare
+    weeks 6,4,3 against 2,1 -- strictly prior, so not leakage, but not the quantity
+    `docs/snap-trend-signal.md` defines either, and missed games are exactly the interesting
+    case for a usage trend. So every (`key`, season) is crossed with weeks 1..`weeks`, `df` is
+    left-joined onto that, and a week a player missed becomes a null row the shift *counts*
+    rather than a row that is not there.
+
+    `expr` is written against `pl.col(col)` and carries no `.over` of its own: which rows a
+    window may see is the grid's business, not the caller's. Only `out` is joined back, onto
+    `df`'s own rows, so the grid weeks a caller never had do not survive into what it gets.
     """
     if df.select(key, "season", "week").is_duplicated().any():
         raise ValueError(
-            f"trend() needs one row per ({key}, season, week) and got duplicates. Called with "
+            f"{out} needs one row per ({key}, season, week) and got duplicates. Called with "
             f"a team key on a player-week panel, each join fans out by the roster size and "
             f"five chained calls take the process out on memory -- which is how this guard "
-            f"came to exist. Compute the trend on the unique frame, then join it on.")
+            f"came to exist. Compute the feature on the unique frame, then join it on.")
     grid = (df.select(key, "season").unique()
               .join(pl.DataFrame({"week": list(range(1, weeks + 1))},
                                  schema={"week": pl.Int64}), how="cross"))
     g = (grid.join(df.select(key, "season", "week", col), on=[key, "season", "week"],
                    how="left")
              .sort([key, "season", "week"])
-             .with_columns(
-                 (pl.col(col).shift(1).rolling_mean(3, min_samples=2).over([key, "season"])
-                  - pl.col(col).shift(4).rolling_mean(3, min_samples=2).over([key, "season"]))
-                 .alias(out)))
+             .with_columns(expr.over([key, "season"]).alias(out)))
     return df.join(g.select(key, "season", "week", out), on=[key, "season", "week"],
                    how="left")
+
+
+def trend(df: pl.DataFrame, col: str, key: str, out: str, weeks: int = 18) -> pl.DataFrame:
+    """mean(w-3..w-1) - mean(w-6..w-4), over *calendar weeks* rather than appearances.
+
+    The calendar part is `_on_calendar_grid`, where the rule and what it costs are written
+    down; what is here is the difference of two three-week means measured on that grid.
+    """
+    return _on_calendar_grid(
+        df, col, key, out, weeks,
+        pl.col(col).shift(1).rolling_mean(3, min_samples=2)
+        - pl.col(col).shift(4).rolling_mean(3, min_samples=2))
 
 
 def recent_mean(df: pl.DataFrame, col: str, key: str = "player_id", *, window: int = 3,
@@ -258,23 +275,12 @@ def recent_mean(df: pl.DataFrame, col: str, key: str = "player_id", *, window: i
     falls from +0.127 to +0.049, so most of that effect *was* recent form, and on targets from
     +0.124 to +0.087. Five of five seasons either way.
 
-    Reindexed onto a complete calendar grid for the same reason `trend` is.
+    Measured on the same complete calendar grid `trend` is, and for the reason written down
+    with it in `_on_calendar_grid`.
     """
-    if df.select(key, "season", "week").is_duplicated().any():
-        raise ValueError(
-            f"trend() needs one row per ({key}, season, week) and got duplicates. Called with "
-            f"a team key on a player-week panel, each join fans out by the roster size and "
-            f"five chained calls take the process out on memory -- which is how this guard "
-            f"came to exist. Compute the trend on the unique frame, then join it on.")
-    grid = (df.select(key, "season").unique()
-              .join(pl.DataFrame({"week": list(range(1, weeks + 1))},
-                                 schema={"week": pl.Int64}), how="cross"))
-    g = (grid.join(df.select(key, "season", "week", col), on=[key, "season", "week"], how="left")
-             .sort([key, "season", "week"])
-             .with_columns(pl.col(col).shift(1).rolling_mean(window, min_samples=2)
-                             .over([key, "season"]).alias(f"{col}_recent")))
-    return df.join(g.select(key, "season", "week", f"{col}_recent"),
-                   on=[key, "season", "week"], how="left")
+    return _on_calendar_grid(
+        df, col, key, f"{col}_recent", weeks,
+        pl.col(col).shift(1).rolling_mean(window, min_samples=2))
 
 
 # Team scheme, per (team, season, week), from `ftn_charting`. Screened as trends and not as

@@ -45,13 +45,22 @@ def test_recent_mean_is_strictly_prior():
     assert out["targets_recent"].to_list()[0] is None, "week 1 has no history"
 
 
-def test_recent_mean_counts_calendar_weeks_not_appearances():
-    """A player who missed week 3 has a two-week window, not one padded from week 1."""
+def test_the_calendar_grid_counts_weeks_and_not_appearances():
+    """The reindex `trend` and `recent_mean` both shift over, asserted once for the two.
+
+    A player who missed week 3 must carry week 3 as a null the window counts, not have week
+    2 slide into its place: `shift(1)` at week 4 reaches the week he missed. Asserted here
+    rather than through one of the callers because it was covered through `recent_mean`
+    alone, which left `trend` -- the function whose docstring stated the rule -- with no test
+    of it at all, and neither of them noticed.
+    """
     p = pl.DataFrame({"player_id": ["a"] * 3, "season": [2024] * 3,
                       "week": [1, 2, 4], "targets": [10.0, 10.0, 4.0]})
-    out = pnl.recent_mean(p, "targets").sort("week")
-    assert out["targets_recent"].to_list()[2] == pytest.approx(10.0), \
-        "week 4 averages weeks 1-3, of which only 1 and 2 exist"
+    out = pnl._on_calendar_grid(p, "targets", "player_id", "prev", 18,
+                                pl.col("targets").shift(1)).sort("week")
+    assert out["prev"].to_list() == [None, 10.0, None], \
+        "week 2 follows week 1; week 4 follows the week 3 he missed, not week 2"
+    assert out.height == 3, "the grid weeks he has no row on do not survive the join back"
 
 
 def test_a_midweek_scrape_belongs_to_the_week_it_is_inside():
