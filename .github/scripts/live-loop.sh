@@ -100,8 +100,15 @@ while :; do
   # Measured from the start of the cycle, so the cadence is the interval rather than the
   # interval plus however long ESPN and the dispatch took. That is what makes the cadence a
   # number this can be held to.
-  nap=$(( interval - (now - cycle_at) ))
+  work=$(( now - cycle_at ))
+  nap=$(( interval - work ))
   [ "$nap" -lt 0 ] && nap=0
+  # Printed because it is the property, and counting completed cycles against the wall clock
+  # is not: on a loaded machine the work outgrows the interval, the nap goes to zero, and a
+  # count-based assertion fails while the pacing is exactly right. This line says what the
+  # loop *asked for*, which is the thing that distinguishes pacing from the cycle start from
+  # sleeping the interval on top of the work. Issue #115.
+  echo "  paced: work ${work}s, nap ${nap}s, interval ${interval}s"
   sleep "$nap"
 done
 

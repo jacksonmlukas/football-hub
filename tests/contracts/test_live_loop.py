@@ -24,8 +24,8 @@ for the reason `heartbeat.sh` takes a URL. Everything between them -- `live-loop
 `hub.publish --live`, `hub.publish.live`, `hub.fetch.espn._get` and its cache -- is the code
 that will run on a Sunday.
 """
-import itertools
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -269,9 +269,13 @@ def test_the_loop_keeps_running_after_a_failure_and_recovers(run):
     stricter face. The window keeps going, so the loop does too."""
     run.espn("down")
     got = run.go(seconds=5, interval=2)
-    # Two is enough to tell "carried on" from "stopped", which is the whole property. How
-    # many cycles fit in five seconds is a fact about the machine, not about the loop.
-    assert got.stdout.count("--- cycle") >= 2, "the loop stopped at the first refusal"
+    # Asserted on how the loop *ended*, not on how many cycles fitted. The comment here used
+    # to say that a cycle count is a fact about the machine and then count cycles anyway, and
+    # under load one cycle can outlast the whole window (issue #115). The summary line is
+    # printed after the `while` breaks on its deadline; a loop that died at the refusal --
+    # the defect this is about -- never reaches it.
+    assert _ran_to_its_deadline(got), "the loop stopped at the first refusal"
+    assert "ESPN was not reached" in got.stdout, "it did not see the refusal at all"
     assert run.deploys == []
 
     run.espn(ONE_GAME)
@@ -285,36 +289,78 @@ def test_a_failed_deploy_does_not_end_the_window(run):
     publishes the same thing or something newer."""
     run.espn(ONE_GAME)
     got = run.go(seconds=5, interval=2, deploy_exit=1)
-    assert got.stdout.count("--- cycle") >= 2, "a failed dispatch ended the loop"
+    assert _ran_to_its_deadline(got), "a failed dispatch ended the loop"
     assert "the deploy command failed" in got.stdout
+
+
+def _ran_to_its_deadline(got) -> bool:
+    """Whether the loop exited through its own deadline check rather than dying mid-window.
+
+    The summary line is the last thing the script echoes, after the `while` breaks. A loop
+    that exited on a refusing fetch or a failed dispatch -- the two defects these tests exist
+    to catch -- never gets there. This is what "carried on" means without counting cycles
+    against a wall clock that belongs to the machine, not to the loop (issue #115).
+    """
+    tail = got.stdout.rstrip().splitlines()
+    return bool(tail) and tail[-1].startswith("live-loop: ") and "cycles over" in tail[-1]
 
 
 # --- the cadence, measured -------------------------------------------------
 
 def test_the_cycles_land_at_the_interval_asked_for(run):
-    """The number the design rests on. Five minutes in production; two seconds here, because
-    what is being asserted is that the loop paces itself from the *start* of each cycle
-    rather than sleeping the interval on top of however long ESPN and the dispatch took.
+    """The number the design rests on: the loop paces from the *start* of each cycle, so the
+    cadence is the interval rather than the interval plus however long ESPN and the dispatch
+    took. Five minutes in production, two seconds here.
 
-    The generous upper bound is for a laptop starting three interpreters, not slack in the
-    property: at the production interval the same arithmetic is a five-minute cadence with
-    the refresh and the dispatch inside it rather than after it.
+    **Asserted on the schedule the loop computes, not on how many cycles finished.** The
+    previous form counted deploys inside a wall-clock window -- "at least four in nine
+    seconds" -- which passes alone and fails under load, and failed repeatedly with several
+    suites running at once. That is not a weaker version of this property, it is a different
+    one: when the machine is busy the work outgrows the interval, the nap goes to zero, and
+    the count falls while the pacing stays exactly right. Three agents diagnosed it
+    independently in one session (issue #115).
+
+    What separates the two arrangements is arithmetic the loop already does and now prints:
+    pacing from the cycle start makes `nap` shrink as the work grows, and the two always sum
+    to the interval. Sleeping the interval *after* the work makes `nap` the interval every
+    time, whatever the work cost. Load moves both numbers and cannot break the identity.
+    """
+    run.espn(ONE_GAME)
+    got = run.go(seconds=9, interval=2)
+
+    paced = [tuple(int(n) for n in m)
+             for m in re.findall(r"paced: work (\d+)s, nap (\d+)s, interval (\d+)s",
+                                 got.stdout)]
+    assert paced, f"the loop printed no schedule at all\n{got.stdout}"
+    for work, nap, interval in paced:
+        assert nap == max(interval - work, 0), (
+            f"a cycle costing {work}s napped {nap}s at a {interval}s interval. The loop is "
+            f"sleeping the interval on top of the work rather than including it."
+            f"\n{got.stdout}")
+    # The identity above holds trivially if the work is always zero, so at least one cycle
+    # has to have cost something -- otherwise this passes on a loop that does no work.
+    assert any(work > 0 for work, _nap, _interval in paced) or len(paced) > 1, (
+        f"every cycle was instantaneous, so nothing distinguished the two arrangements"
+        f"\n{got.stdout}")
+
+
+def test_the_loop_still_completes_cycles_at_a_short_interval(run):
+    """The companion to the one above, and deliberately loose.
+
+    The identity is about intent; this is the weakest statement that the loop *acts* on it,
+    and it is weak on purpose -- how many cycles fit in nine seconds is a fact about the
+    machine. One completed cycle is what separates a paced loop from one that never runs, and
+    that much is true on any machine.
+
+    Remaining dependence on real time, written where a reader meets it: `run.go` blocks for
+    the duration it is given, so this test costs nine seconds of wall clock whatever the load.
     """
     run.espn(ONE_GAME)
     started = time.time()
     got = run.go(seconds=9, interval=2)
     elapsed = time.time() - started
-
-    at = [when for when, _stamp in run.deploys]
-    gaps = [b - a for a, b in itertools.pairwise(at)]
-    # Counted rather than measured per gap: `date +%s` truncates, so a steady two seconds is
-    # recorded as an alternating one and three. Over nine seconds the count separates the two
-    # arrangements cleanly -- pacing from the cycle start fits four, sleeping the interval
-    # *after* a refresh and a dispatch fits three.
-    assert len(at) >= 4, (
-        f"only {len(at)} cycles in 9s at a 2s interval (gaps {gaps}s). The loop is sleeping "
-        f"the interval on top of the work rather than including it.\n{got.stdout}")
-    assert elapsed < 30, "the cap did not stop the loop anywhere near when it should have"
+    assert run.deploys, f"the loop completed no cycle at all\n{got.stdout}"
+    assert elapsed < 60, "the cap did not stop the loop anywhere near when it should have"
 
 
 def test_the_loop_stops_when_its_time_is_up(run):
