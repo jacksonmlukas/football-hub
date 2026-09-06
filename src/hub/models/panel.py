@@ -42,6 +42,9 @@ class PanelSpec(NamedTuple):
     *beyond* consensus -- cannot run without it, while the two gate consumers must not have it.
     """
     consensus: bool = True
+    # `expected` swaps the four columns of `EXPECTED` in the frame the *priors* are taken
+    # over, and nothing else: the week itself stays realised, because it is the outcome. What
+    # that costs and why it is the right way round is written at the coalesce in `build_panel`.
     expected: bool = False              # ff_opportunity's expected receptions and yardage
     routes: bool = False                # pass-play participation; a measured null, kept for re-runs
     scheme: bool = False                # FTN team scheme rates; six of six null
@@ -600,18 +603,44 @@ def build_panel(seasons: Sequence[int] = SEASONS,
         pl.col("player_display_name").map_elements(player_key, return_dtype=pl.Utf8).alias("key"))
     p = stats.join(game_context(seasons), on=["season", "week", "team"], how="left")
 
-    if spec.expected:
-        stats = stats.join(expected_weekly(seasons), on=["season", "week", "key"], how="left")
-        # Where `ff_opportunity` has no row for him, the realised value stands in rather than
-        # a null propagating into every prior downstream.
-        stats = stats.with_columns(
-            [pl.coalesce(pl.col(exp), pl.col(real)).alias(real)
-             for real, exp in EXPECTED.items()])
-
+    # `tds` and `yds` are formed here, on the realised frame and *above* the coalesce rather
+    # than below it. They are a pair -- `td_rate_prior` is the one over the other -- and below
+    # the coalesce `yds` picked up the expected yardage while `tds`, which deliberately has no
+    # expected version here (see `EXPECTED`), stayed realised. The rate became realised
+    # touchdowns per expected yard, which is not a rate of anything. The same slip left the
+    # Panel's own week disagreeing with itself: the total said one thing and the three columns
+    # it is the sum of said another, on 342 of 344 rows of the frozen archive against 0 under
+    # the default spec.
     counted = stats.with_columns(
         (pl.col("receiving_tds") + pl.col("rushing_tds") + pl.col("passing_tds")).alias("tds"),
         (pl.col("receiving_yards") + pl.col("rushing_yards")
          + pl.col("passing_yards")).alias("yds"))
+
+    if spec.expected:
+        counted = counted.join(expected_weekly(seasons), on=["season", "week", "key"],
+                               how="left")
+        # Where `ff_opportunity` has no row for him, the realised value stands in rather than
+        # a null propagating into every prior downstream.
+        #
+        # **What this spec swaps is the four columns of `EXPECTED`, and nothing else.** Not
+        # the Panel's week: `p` is bound above and keeps realised play, because the week is
+        # the *outcome* the projection is fitted against and scored on, and a week whose
+        # components were expected while its `fantasy_points_ppr` stayed realised would be
+        # the same disagreement one level up. What the swap reaches is the frame the priors
+        # are taken over, which is what the stability argument for `ff_opportunity` was ever
+        # about -- a better estimate of the rate he carries into next week, not a better
+        # account of the week that happened. `docs/expected-and-routes.md` measured it null.
+        #
+        # So under this spec the Panel carries two yardage measurements, on purpose. The
+        # components' priors are expected, because `hub.models.weekly` divides each by a count
+        # to hold an efficiency. `yds_prior` is realised, because it is the touchdown rate's
+        # denominator and the numerator beside it is. Those two do not add up to each other
+        # and are not meant to; the totals that do have to agree are the ones inside a single
+        # measurement, which is what `test_panel` asserts under each spec.
+        counted = counted.with_columns(
+            [pl.coalesce(pl.col(exp), pl.col(real)).alias(real)
+             for real, exp in EXPECTED.items()])
+
     p = p.join(counted.select("player_id", "season", "week", "tds", "yds"),
                on=["player_id", "season", "week"], how="left")
     own = prior_means(counted.sort(["player_id", "season", "week"]), ["player_id"],

@@ -597,6 +597,74 @@ def test_the_expected_spec_moves_the_priors_and_not_the_realised_columns(monkeyp
         f"only {moved.height} priors moved; the expected frame is not reaching them"
 
 
+# Every spec `build_panel` is called with anywhere in the tree. `routes` and `scheme` are the
+# two this archive deliberately cannot drive -- see the fixtures README -- and neither touches
+# a yardage column, so the pair below is the whole population for this question.
+_TOTALLED_SPECS = ((pnl.SCREEN_SPEC, "default"), (pnl.PanelSpec(expected=True), "expected"))
+
+
+@pytest.mark.parametrize(("spec", "which"), _TOTALLED_SPECS,
+                         ids=[w for _, w in _TOTALLED_SPECS])
+def test_a_total_on_the_panel_is_the_sum_of_the_columns_beside_it(monkeypatch, tmp_path,
+                                                                  spec, which):
+    """`yds` and `tds` are sums of columns the Panel also carries. Under every spec.
+
+    They were not. `p` was bound from the realised frame and the two totals were rebuilt from
+    the *coalesced* one afterwards, so under `expected=True` the total was an expected
+    quantity while the three columns it is the sum of stayed realised: they disagreed on
+    **342 of 344** rows of this archive, against 0 under the default spec.
+
+    Not leakage. Both quantities belong to week w, nothing sees its own outcome, and the
+    assertion above this one passes either way -- which is exactly why this needs its own
+    test. It is the Panel giving two answers to one question, and the touchdown-rate prior
+    dividing one of them by the other.
+
+    An identity rather than a tolerated rate of disagreement, because there is no number of
+    rows on which a total may stop being the sum of its parts.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS, spec)
+    assert p.height > 0, "an empty Panel would satisfy this vacuously"
+    for total, parts in (("yds", ("receiving_yards", "rushing_yards", "passing_yards")),
+                         ("tds", ("receiving_tds", "rushing_tds", "passing_tds"))):
+        summed = pl.col(parts[0]) + pl.col(parts[1]) + pl.col(parts[2])
+        off = p.filter((pl.col(total) - summed).abs() > 1e-9)
+        assert off.height == 0, (
+            f"under the {which} spec, {off.height} of {p.height} rows carry a `{total}` that "
+            f"is not {' + '.join(parts)} on the same row. The Panel is then measuring two "
+            f"different things under one name, and whichever consumer reads the total is "
+            f"reading a quantity the columns beside it contradict.")
+
+
+def test_the_touchdown_rate_prior_divides_one_measurement_by_itself(monkeypatch, tmp_path):
+    """`tds_prior / yds_prior`, and both sides realised whichever spec asked for the Panel.
+
+    `EXPECTED` deliberately leaves touchdowns out -- everything below the opportunity is an
+    efficiency and efficiency is what regresses, which is the whole content of this feature at
+    -0.040 across five of five seasons. So the numerator has no expected version by choice,
+    and a denominator that took one turned the rate into realised touchdowns per expected
+    yard, which is not a rate of anything.
+
+    Pinned as **bit-identical between the two specs** rather than as a property of one of
+    them: the touchdown rate is the same measurement whoever asked for the Panel, and the only
+    way that stays true is if nothing upstream of it moves. The last assertion is the premise
+    -- the spec must still be reaching the priors it is for, or this would hold by the flag
+    doing nothing at all.
+    """
+    arc.install(monkeypatch, tmp_path)
+    on = ["player_id", "season", "week"]
+    plain = pnl.build_panel(arc.SEASONS).sort(on)
+    xp = pnl.build_panel(arc.SEASONS, pnl.PanelSpec(expected=True)).sort(on)
+    assert plain.height == xp.height, "the spec chooses a measurement, not a row set"
+    for col in ("tds", "yds", "tds_prior", "yds_prior", "td_rate_prior"):
+        assert plain[col].equals(xp[col]), (
+            f"`{col}` moved under `expected=True`. The touchdown rate is a realised count "
+            f"over a realised total on both sides, so neither it nor either of its two "
+            f"inputs may depend on which sources a caller asked for.")
+    assert not plain["receiving_yards_prior"].equals(xp["receiving_yards_prior"]), \
+        "the expected spec is reaching nothing, so the four assertions above are vacuous"
+
+
 def test_an_injected_board_lands_on_the_season_it_was_built_for(monkeypatch, tmp_path):
     """`spec.ranks` is injected rather than fetched, and this is what the injection has to do.
 
