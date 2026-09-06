@@ -19,6 +19,40 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
+## Commit trailers, and the sweep they need
+
+A commit that finishes a ticket ends with `Closes #<n>`. GitHub acts on it: pushed to the
+default branch, the ticket closes itself with reason `completed`. `Fixes` and `Resolves` work
+the same way. The trailer is the mechanism, not decoration on top of one.
+
+A commit that lands a coherent *part* of a ticket ends with `Advances #<n>` instead, and says
+in its body what is not done. That is the honest trailer and it should keep being used — but
+it is inert, and that is the defect it carries:
+
+> **`Advances` leaves an obligation on a future commit that has no way to know it inherited
+> one.** Measured 2026-09-05: four tickets had ever carried `Advances`, and none ever received
+> a `Closes`. Two of them (#34, #53) were finished and still open. Both were finished by
+> commits about something else — #34's last criterion landed under a message calling it *"the
+> catch on the way through"*, #53's inside two commits about review findings. Neither had any
+> reason to think about a ticket it was silently completing. #34 was the head of the dependency
+> graph, blocking 23 tickets while being done.
+
+So the escalation cannot be a rule about trailers. The commit that would have to obey it does
+not know the rule applies to it. It has to be a sweep:
+
+```sh
+scripts/partial_work.sh
+```
+
+Every open ticket carrying an `Advances` that no later commit resolved. Everything on it is
+either still partial — leave it — or finished and open, which is the case no trailer catches.
+The queue is short by construction and a ticket leaves it the moment something closes it. Run
+it when picking work off the frontier: a ticket on this list may already be built.
+
+`scripts/partial_work.sh --numbers` is the same query without the network, for a checkout with
+no `gh` credentials.
+
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
