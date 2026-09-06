@@ -488,8 +488,15 @@ def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,
     try:
         board, report = build(league_size, season)
     except Exception as exc:
-        board, age = last_good(path, now)
+        # Printed *before* the fallback is attempted, because the fallback can raise. On a
+        # machine with no board on disk -- a fresh clone, and every CI runner, since
+        # `data/processed/` is gitignored -- `last_good` raises `FileNotFoundError` whose
+        # remedy sentence is "Run `make draft` first": the command the operator just ran. With
+        # this print below it, the real cause never reached the terminal and survived only as
+        # an implicit `__context__` a reader skips. Narrowing that stage's absorption
+        # made that path reachable, so the ordering stopped being academic.
         print(f"\n  BUILD FAILED: {type(exc).__name__}: {exc}")
+        board, age = last_good(path, now)
         print(f"  serving the last good board instead, built {age:.1f}h ago.")
         print("  ADP is that old. Everything else on it is a season-long number "
               "and does not move.")

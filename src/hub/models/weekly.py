@@ -488,11 +488,16 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         ap.print_help()
         return 0
     try:
-        panel = build_panel(SEASONS, PanelSpec(expected=a.expected)).filter(
-            pl.col("week").is_in(list(FANTASY_WEEKS))
-            & (pl.col("games_before") >= MIN_GAMES_BEFORE))
+        panel = build_panel(SEASONS, PanelSpec(expected=a.expected))
     except Exception as e:
         return unavailable("hub.models.weekly", "the sources the Panel is built from", e)
+    # Outside the guard deliberately. The filter is this repo's own logic over the Panel's own
+    # columns, so a `ColumnNotFoundError` on `week` or `games_before` is a defect here, not a
+    # source being unreachable -- and reporting a defect as an outage is what the board's
+    # market stage was just hardened against. `weekly_screen` guards the build alone; this
+    # matches it.
+    panel = panel.filter(pl.col("week").is_in(list(FANTASY_WEEKS))
+                         & (pl.col("games_before") >= MIN_GAMES_BEFORE))
     print(f"  {panel.height} player-weeks over {panel['season'].n_unique()} seasons")
     errs = walk_forward(panel)
     print("\n".join(diagnostic(errs)))

@@ -54,8 +54,9 @@ the moment make stops being cheaper than the alternative.
 > takes its three inputs instead of a frame with three magic column names, and `main` takes
 > `argv` like the other sixteen CLIs. Coverage went 25% → 46%.
 >
-> **Note, 2026-09-06 (issue #106).** The four handlers are one handler now — `board._stage`
-> — and it carries the distinction the count was pointing at. Five of its six stages are
+> **Note, 2026-09-06 (issue #106).** The four handlers had already become one, `board._stage`,
+> in an earlier change. What #106 adds is the distinction the count above was pointing at.
+> Five of the wrapper's six stages are
 > advisory: they reach a source of their own, and a board without what they add is thinner
 > and still correct, so their guard absorbs everything, unchanged. The sixth computes the
 > blended projection, both corrections and Corrected ADP, which is what THE PICK ranks on;
