@@ -196,7 +196,7 @@ def season_points(realised: np.ndarray, pos: Sequence[str], score: np.ndarray,
 
 
 def compare(g: GateInputs, *, weeks: Sequence[int] = GATE_WEEKS, churn: bool = False,
-            z: float = 0.0, mask_pool: bool = True) -> pl.DataFrame:
+            z: float = 0.0, mask_pool: bool = True, ceiling: bool = False) -> pl.DataFrame:
     """One row per roster-week, with or without waiver churn.
 
     `churn=False` is the frozen gate. `z` ranks waiver adds by a lower confidence bound rather
@@ -219,13 +219,28 @@ def compare(g: GateInputs, *, weeks: Sequence[int] = GATE_WEEKS, churn: bool = F
                               free, wks, churn=churn, addable=add)
             b = season_points(g.realised[season], g.pos[season], g.weekly[season], roster,
                               free, wks, churn=churn, addable=add, add_score=lcb)
+            # The ceiling: the same rule reading what actually happened. Full foresight is
+            # right *here* -- unlike the lineup gate, where both arms already share a
+            # projection -- because what separates these two arms is the projection itself,
+            # so the largest effect any weekly projection could show is what a perfect one
+            # would (#43). Its units are this gate's own points per roster-week and are never
+            # compared against the draft backtest's.
+            c = (season_points(g.realised[season], g.pos[season], g.realised[season], roster,
+                               free, wks, churn=churn, addable=add) if ceiling else None)
             for w in wks:
-                rows.append({"season": season, "roster": k, "week": w,
-                             "consensus": a[w], "weekly": b[w]})
+                row = {"season": season, "roster": k, "week": w,
+                       "consensus": a[w], "weekly": b[w]}
+                if c is not None:
+                    row["foresight"] = c[w]
+                rows.append(row)
     out = pl.DataFrame(rows)
     if out.is_empty():
         return out
-    return out.with_columns((pl.col("weekly") - pl.col("consensus")).alias("diff"))
+    out = out.with_columns((pl.col("weekly") - pl.col("consensus")).alias("diff"))
+    if ceiling:
+        out = out.with_columns(
+            (pl.col("foresight") - pl.col("consensus")).alias("ceiling_diff"))
+    return out
 
 
 # The pre-registered actions, fixed in `docs/weekly-projection-plan.md` before this ran.

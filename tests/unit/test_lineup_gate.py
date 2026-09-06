@@ -203,3 +203,90 @@ def test_a_roster_of_one_position_still_reports():
     got = lg.compare({2024: [r]}, {2024: _flat(r)})
     assert got.height == 1
     assert got["optimiser"][0] == 0.0
+
+
+# --- the ceiling is a variance oracle, not foresight (issue #43) -----------
+
+def _volatile_roster():
+    """A roster where the projection is right on average and wrong about spread.
+
+    Every player projects the same mu, so sorting on projection cannot tell them apart and
+    the only information available is how much they swing. That is the quantity this gate's
+    ceiling is meant to bound, isolated.
+    """
+    names = [("QB1", "QB"), ("RB1", "RB"), ("RB2", "RB"), ("WR1", "WR"), ("WR2", "WR"),
+             ("WR3", "WR"), ("TE1", "TE"), ("WR4", "WR"), ("RB3", "RB")]
+    return [(n, p, 12.0, 2.0) for n, p in names]
+
+
+def _swingy(roster, weeks=14):
+    """Realised weeks where half the roster is steady and half alternates hard."""
+    rows = []
+    for i, (n, _p, _m, _s) in enumerate(roster):
+        for w in range(1, weeks + 1):
+            pts = 12.0 if i % 2 == 0 else (24.0 if w % 2 == 0 else 0.0)
+            rows.append((n, w, pts))
+    return _realised(rows)
+
+
+def test_the_oracle_changes_only_the_spread():
+    """Criterion two. Both arms already see the same `mu`; the optimiser's only advantage is
+    that it reads `sd`. A ceiling that also knew `mu` would bound a different question --
+    the one this module records an earlier arm accidentally measuring at +31 a game."""
+    import inspect
+
+    from hub.season import lineup_gate as lg
+    roster = _volatile_roster()
+    grid = lg.weekly_grid([n for n, _, _, _ in roster], _swingy(roster), 14)
+    names = [n for n, _, _, _ in roster]
+    pos = [p for _, p, _, _ in roster]
+    mu = [m for _, _, m, _ in roster]
+
+    # The projection reaches the oracle untouched: same object, not a recomputed one.
+    src = inspect.getsource(lg.variance_oracle_points)
+    assert "grid.mean" not in src, "the oracle is reading realised means, so it is foresight"
+    got = lg.variance_oracle_points(grid, names, pos, mu)
+    assert got > 0
+
+
+def test_full_foresight_is_strictly_larger_than_the_variance_oracle():
+    """Criterion three. The two must not be quietly interchangeable: a ceiling that drifted
+    into full foresight would make this gate look powered when it was not."""
+    from hub.season import lineup_gate as lg
+    # A contested flex and a real bench, which is what makes the two arms able to differ at
+    # all: with a roster the size of the lineup everybody starts and every arm scores the
+    # same. `S` is steady and better; `V` swings to a lower mean. Both project the same `mu`,
+    # so only the realised numbers separate them -- and they separate them differently
+    # depending on which realised number an arm is allowed to see.
+    base = [("QB1", "QB"), ("RB1", "RB"), ("RB2", "RB"), ("WR1", "WR"), ("WR2", "WR"),
+            ("TE1", "TE"), *[(f"F{i}", "WR") for i in range(4)]]
+    roster = [(n, p, 22.0, 2.0) for n, p in base] + [("S", "WR", 22.0, 2.0),
+                                                     ("V", "WR", 22.0, 2.0)]
+    names = [n for n, _, _, _ in roster]
+    pos = [p for _, p, _, _ in roster]
+    mu = [m for _, _, m, _ in roster]
+    rows = []
+    for n, _p, _m, _s in roster:
+        for w in range(1, 15):
+            pts = (25.0 if n == "S" else 40.0 if (n == "V" and w % 2 == 0)
+                   else 0.0 if n == "V" else 1.0 if n.startswith("F") else 10.0)
+            rows.append((n, w, pts))
+    grid = lg.weekly_grid(names, _realised(rows), 14)
+
+    oracle = lg.variance_oracle_points(grid, names, pos, mu)
+    foresight = lg.foresight_lineup_points(grid, pos)
+    assert foresight > oracle, (
+        f"full foresight ({foresight:.2f}) did not beat the variance oracle ({oracle:.2f}), "
+        f"so the two bound the same thing and one of them is mislabelled")
+
+
+def test_the_gate_reports_its_ceiling_beside_its_effect():
+    """Criterion one, in this gate's own units -- points per team game, which are not the
+    draft backtest's and are never compared against them."""
+    from hub.season import lineup_gate as lg
+    roster = _volatile_roster()
+    got = lg.compare({2024: [roster]}, {2024: _swingy(roster)}, weeks=14, ceiling=True)
+    assert {"oracle", "ceiling_diff"} <= set(got.columns)
+    assert got["ceiling_diff"][0] >= got["diff"][0]
+    plain = lg.compare({2024: [roster]}, {2024: _swingy(roster)}, weeks=14)
+    assert "oracle" not in plain.columns, "the ceiling must be opt-in, not a shape change"

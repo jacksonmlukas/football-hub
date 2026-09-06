@@ -188,14 +188,22 @@ def test_compare_emits_one_row_per_roster_week_and_skips_uncovered_weeks():
     assert (out["diff"] == 0.0).all(), "identical arms differ by nothing"
 
 
-def test_compare_takes_one_argument_and_three_options():
-    """It took twelve parameters to run thirty-six lines -- the interface was the larger half."""
+def test_compare_takes_one_argument_and_a_named_set_of_options():
+    """It took twelve parameters to run thirty-six lines -- the interface was the larger half.
+
+    The set is pinned rather than counted, so adding one is a decision someone makes on
+    purpose. `ceiling` was added for #43 and is the shape this test should allow: opt-in,
+    defaulting off, and adding a column rather than changing what the gate measures. A
+    parameter that moved the effect would deserve to fail here.
+    """
     import inspect
     sig = inspect.signature(G.compare)
     positional = [p for p in sig.parameters.values()
                   if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD]
     assert len(positional) == 1 and positional[0].name == "g"
-    assert set(sig.parameters) - {"g"} == {"weeks", "churn", "z", "mask_pool"}
+    assert set(sig.parameters) - {"g"} == {"weeks", "churn", "z", "mask_pool", "ceiling"}
+    assert sig.parameters["ceiling"].default is False, (
+        "the ceiling must be opt-in; on by default it would change every existing run")
 
 
 # --- the waiver rule, and the artifact it was written with ------------------
@@ -350,3 +358,50 @@ def test_a_frozen_roster_cannot_see_the_waiver_score_at_all():
     with_lcb = G.season_points(realised, pos, score, roster, pool, [1, 2], churn=False,
                                add_score=np.zeros_like(score))
     assert plain == with_lcb
+
+
+# --- the weekly gate's ceiling is full foresight (issue #43) ---------------
+
+def test_the_weekly_gates_ceiling_is_a_perfect_projection():
+    """Full foresight is right *here*, unlike the lineup gate.
+
+    What separates these two arms is the projection itself -- consensus against the weekly
+    model -- so the largest effect any weekly projection could show is what a perfect one
+    would. In the lineup gate both arms already share a projection and only spread differs,
+    which is why its ceiling is a variance oracle and the two are not interchangeable.
+    """
+    import numpy as np
+
+    # Real numbers, and deliberately so: the default fixture is all zeros, on which every
+    # comparison below holds no matter what the ceiling reads. A test that passes when the
+    # foresight arm is handed consensus instead of the realised frame is asserting the
+    # outcome rather than that the arm produced it -- which is the shape this repo keeps
+    # finding, so it is worth not shipping another one.
+    pos = _pos()
+    n = len(pos)
+    rng = np.random.default_rng(0)
+    realised = rng.uniform(0, 30, (n, 18))
+    # Consensus and the weekly model are both wrong, in different directions.
+    g = _inputs(realised={2024: realised},
+                consensus={2024: realised[::-1].copy()},
+                weekly={2024: rng.uniform(0, 30, (n, 18))},
+                rosters={2024: [list(range(n))]})
+
+    got = G.compare(g, weeks=[5], ceiling=True)
+    assert {"foresight", "ceiling_diff"} <= set(got.columns)
+    # A perfect projection cannot be beaten by either arm on the frame it is scored on, and
+    # here it strictly beats both -- so the assertion has something to fail on.
+    assert (got["foresight"] > got["consensus"]).all()
+    assert (got["foresight"] > got["weekly"]).all()
+    assert float(got["ceiling_diff"].to_numpy().mean()) > float(got["diff"].to_numpy().mean())
+
+
+def test_the_ceiling_is_opt_in_and_does_not_change_the_frozen_gate():
+    """On by default it would widen every existing run's frame and re-price the verdicts that
+    rest on it, as a side effect of adding a diagnostic."""
+    g = _inputs()
+    plain = G.compare(g, weeks=[5])
+    withc = G.compare(g, weeks=[5], ceiling=True)
+    assert "foresight" not in plain.columns
+    assert plain["diff"].to_list() == withc["diff"].to_list(), (
+        "asking for the ceiling changed the effect the gate reports")

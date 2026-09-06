@@ -120,11 +120,50 @@ def optimiser_lineup_points(grid: np.ndarray, names: Sequence[str], pos: Sequenc
     return float(grid[idx, :].sum() / grid.shape[1])
 
 
+def variance_oracle_points(grid: np.ndarray, names: Sequence[str], pos: Sequence[str],
+                           mu: Sequence[float], opp_mu: float = OPP_MU,
+                           opp_sd: float = OPP_SD) -> float:
+    """The optimiser given the spread it is guessing at, and nothing else.
+
+    **The ceiling for this gate, and deliberately not full foresight.** Both arms here already
+    see the same `mu`; the optimiser's only advantage is that it also reads `sd`. So the
+    largest effect this gate could show is what a *perfect* `sd` buys, holding the projection
+    fixed -- and an arm that also knew `mu` would be bounding a different question, the one
+    `optimiser_lineup_points` records an earlier version of this gate accidentally measuring
+    at +31 points a game (#43).
+
+    The true spread is the realised week-to-week standard deviation, which is what `sd` is an
+    estimate of. `mu` is passed through untouched, so this arm and the treatment arm differ in
+    exactly one input.
+
+    A one-week grid has no spread to measure, so its sd is zero rather than undefined: with a
+    single observation there is nothing for a variance-aware rule to know, which is the
+    honest reading and not a degenerate one.
+    """
+    spread = grid.std(axis=1, ddof=0) if grid.shape[1] > 1 else np.zeros(grid.shape[0])
+    return optimiser_lineup_points(grid, names, pos, mu,
+                                   [float(x) for x in spread], opp_mu, opp_sd)
+
+
+def foresight_lineup_points(grid: np.ndarray, pos: Sequence[str]) -> float:
+    """The baseline rule handed a perfect projection: start the season's actual best.
+
+    Not this gate's ceiling -- it is here so the two cannot be quietly interchanged. It knows
+    `mu` as well as `sd`, so it bounds "what is a lineup worth" rather than "what is knowing
+    the spread worth", and it is strictly the larger of the two. A ceiling that silently
+    became this one would make the gate look powered when it was not.
+
+    Chosen once from realised season means, the same shape as `projection_lineup_points`, so
+    the only difference between them is the quality of the projection.
+    """
+    return projection_lineup_points(grid, pos, [float(x) for x in grid.mean(axis=1)])
+
+
 Roster = list[tuple[str, str, float, float]]   # (player, position, mu, sd)
 
 
 def compare(rosters: dict[int, list[Roster]], realised: dict[int, pl.DataFrame],
-            weeks: int = REG_SEASON_WEEKS) -> pl.DataFrame:
+            weeks: int = REG_SEASON_WEEKS, *, ceiling: bool = False) -> pl.DataFrame:
     """Paired: one row per roster. `rosters` maps a season to the rosters drafted in it.
 
     Pure -- frames and lists in, a frame out, no network -- so the statistics are testable
@@ -139,13 +178,22 @@ def compare(rosters: dict[int, list[Roster]], realised: dict[int, pl.DataFrame],
             mu = [m for _, _, m, _ in roster]
             sd = [v for _, _, _, v in roster]
             grid = weekly_grid(names, real, weeks)
-            rows.append({
+            row = {
                 "season": season, "roster": k,
                 "projection": projection_lineup_points(grid, pos, mu),
                 "optimiser": optimiser_lineup_points(grid, names, pos, mu, sd),
-            })
+            }
+            if ceiling:
+                row["oracle"] = variance_oracle_points(grid, names, pos, mu)
+            rows.append(row)
     out = pl.DataFrame(rows)
-    return out.with_columns((pl.col("optimiser") - pl.col("projection")).alias("diff"))
+    out = out.with_columns((pl.col("optimiser") - pl.col("projection")).alias("diff"))
+    if ceiling:
+        # Its own column rather than its own frame, because unlike the draft backtest this
+        # gate's paired frame is not pinned by a digest -- and the arms share a roster, so
+        # splitting them would mean rebuilding the same grid twice.
+        out = out.with_columns((pl.col("oracle") - pl.col("projection")).alias("ceiling_diff"))
+    return out
 
 
 # The pre-registered actions, fixed before the numbers and quoted in this module's own
