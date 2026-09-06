@@ -553,7 +553,7 @@ def pool_digest(cfg: PoolConfig) -> str:
 
     Not folded into `digests()` either, for the same reason stated from the other side: that
     helper answers "which run produced this row" for every gate in the repo, and a draft
-    board has no pool. The survivor artifact and the decision ledger call this one directly.
+    board has no pool. The survivor artifact and the decision journal call this one directly.
     """
     d = OmegaConf.to_container(OmegaConf.structured(cfg), resolve=True)
     canonical = OmegaConf.to_yaml(OmegaConf.create(d), sort_keys=True)

@@ -13,7 +13,13 @@ origin: docs/brainstorms/2026-09-05-survivor-and-board-realism-requirements.md
 Extend the survivor solver to the pool that exists — two-team weeks, a season-long used-team
 ledger, and an expected-dollar objective over the survival objective it already solves — and
 repair the board so a player with no usable prior season stops receiving his own consensus
-rank back with a durability bonus attached. A decision ledger sits under both.
+rank back with a durability bonus attached. A decision journal sits under both.
+
+> **Renamed 2026-09-05.** U5's record was "the decision ledger" throughout this plan. **Ledger**
+> is the set of teams an entry has spent — the sense R2, R17 and U3 use, and the one shipped code
+> already carries (`hub.season.pool` takes `ledger`/`ledgers`, `buyback_restores_ledger` is a pool-config
+> field). One word for both was the collision; U5's is the **Decision journal** now, and `CONTEXT.md`
+> defines both. The used-team uses below are correct and unchanged.
 
 ---
 
@@ -87,7 +93,7 @@ them.
 **The record** — U5
 
 - R15. Every decision with a pick or money behind it is logged with its inputs, the price at the time of decision, the free fallback it was chosen over, and the outcome.
-- R16. The ledger records what each decision cost to produce, including API credits consumed.
+- R16. The decision journal records what each decision cost to produce, including API credits consumed.
 
 ---
 
@@ -100,7 +106,7 @@ them.
   row and folded into `FitSpec`, so covering pool rules would invalidate every cached NFL fit
   and issue a new model version for the weekly prediction and the draft board, neither of which
   can read a pool rule. Pool rules join `poll` and `quota` in the digest's exclusion list, and a
-  separate pool digest stamps the survivor artifact and the ledger.
+  separate pool digest stamps the survivor artifact and the decision journal.
 
 - **Two-team weeks generalise the existing formulation rather than replacing it.** `solve`
   maximises the sum of `log(win_prob)` under a per-week equality constraint and a season-wide
@@ -148,9 +154,9 @@ them.
   printed disclaimer and the module docstring's "not implemented" claim become false and are
   retired in the same unit.
 
-- **The ledger is append-only through the existing store.** `store.write` refuses to overwrite
+- **The decision journal is append-only through the existing store.** `store.write` refuses to overwrite
   a partition unless the caller says so, which is the guarantee a decision record needs. A
-  ledger that could be rewritten is not a record.
+  journal that could be rewritten is not a record.
 
 ---
 
@@ -186,7 +192,7 @@ flowchart TB
   F --> H[expected net dollars per legal action]
   G --> H
   H --> I[recommendation + auto-pick fallback]
-  I --> J[decision ledger]
+  I --> J[decision journal]
   J -.->|after games| K[outcome appended]
 ```
 
@@ -198,7 +204,7 @@ flowchart TB
     I53["#53 survivor renames"] -.coordinate.-> U2[U2 two-team weeks]
     U1[U1 pool rules as config] --> U2
     U1 --> U3[U3 field simulator]
-    U1 --> U5[U5 decision ledger]
+    U1 --> U5[U5 decision journal]
     U3 --> U4[U4 buyback EV]
   end
   subgraph gated["gated on in-flight work"]
@@ -236,7 +242,7 @@ a detail, and playoff continuation decides whether the 24-team ledger arithmetic
 season.
 
 It hangs on `HubConfig` for Hydra overrides but is added to `config_digest`'s exclusion tuple
-beside `poll` and `quota`. A separate pool digest stamps the survivor artifact and the ledger,
+beside `poll` and `quota`. A separate pool digest stamps the survivor artifact and the decision journal,
 so two runs under different pool rules stay distinguishable without moving a model version.
 
 Week sets are tuples, not sets: `config_digest` builds a structured config and OmegaConf rejects
@@ -431,7 +437,7 @@ count of teams the re-entry would inherit.
 
 ---
 
-#### U5. The decision ledger
+#### U5. The decision journal
 
 **Goal:** Every pick and every dollar decision lands in an append-only record with the price it
 was made at and the free fallback it beat.
@@ -441,8 +447,8 @@ was made at and the free fallback it beat.
 **Dependencies:** U1
 
 **Files:**
-- `src/hub/season/ledger.py` — new
-- `tests/unit/test_ledger.py` — new
+- `src/hub/season/journal.py` — new
+- `tests/unit/test_journal.py` — new
 
 **Approach:** Two append-only row kinds, not one mutable row. `store.write` writes a whole
 partition and refuses to overwrite one whose contents differ, so writing a decision and later
@@ -477,7 +483,7 @@ and it costs a column rather than a programme.
 - Appending an outcome to an existing decision does not mutate the original row.
 - Covers AE7. A decision whose recommendation matches the auto-pick fallback is recorded as such, so weeks where picking manually bought nothing are countable.
 - A decision made when no betting market price was available records that absence rather than a null that reads as zero.
-- The ledger is queryable by season and week through the existing store path.
+- The journal is queryable by season and week through the existing store path.
 - Cost is recorded per decision, is zero when no API call was made, and is null with a stated reason when the balance is unknown on either side.
 - The survival probability given up against the auto-pick fallback is recorded, and is non-zero whenever the recommendation differs from the fallback.
 - Two decisions in the same week write to distinct partitions rather than colliding.
@@ -670,7 +676,7 @@ Carried from the origin document.
 ### Deferred to Follow-Up Work
 
 - A dashboard panel for the pool. `hub.publish.survivor` already writes a survivor artifact; extending it to carry pool state and the buyback figure is real work this plan does not size.
-- Backfilling the ledger with decisions already made this season.
+- Backfilling the journal with decisions already made this season.
 
 ---
 
@@ -743,9 +749,13 @@ Carried from the origin document.
   rather than deterministic? Measurable once the simulator exists, and it did not arise while the
   field was a single block.
 
-- Should the ledger record the auto-pick fallback the pool *would* have assigned, which requires
-  knowing the spread at lock time, or the fallback as computed at decision time? They differ when
-  lines move late, and the second is cheaper.
+- *Which* auto-pick fallback does the journal record: the team the pool would have assigned at
+  lock time, which requires knowing the spread then, or the fallback as computed at decision
+  time? They differ when lines move late, and the second is cheaper. **The recording half is no
+  longer open** — #80 records a decision that matches the fallback, #84 prices the survival
+  probability given up against it, and #100 names it in the weekly output. None of the three
+  pins which of the two definitions it is, so that half stands, and #80 decides it because it
+  writes the column.
 
 - Should the survivor module read the repo's tie convention rather than assuming ties have zero
   mass? Win probabilities come from a continuous margin model, which prices a tie at exactly
@@ -765,7 +775,7 @@ Carried from the origin document.
 - `src/hub/config.py` — the settings-versus-fitted-constants distinction, and `config_digest`
   coverage, which is why pool rules belong there.
 - `src/hub/store.py` — `write` refuses to overwrite a partition whose contents differ, which is
-  the append-only guarantee the ledger needs and also the reason an outcome cannot be attached to
+  the append-only guarantee the journal needs and also the reason an outcome cannot be attached to
   an already-written decision row.
 - `src/hub/config.py` — `config_digest` excludes `poll` and `quota` so operational settings cannot
   move a model version; `src/hub/models/ratings.py` stamps the digest on every prediction row and
@@ -776,7 +786,7 @@ Carried from the origin document.
 - `scripts/preflight_public.sh` — patterns and canary cases cover exactly four credential shapes,
   proved by the canary self-check, so a fifth credential needs its own pattern to be seen at all.
 - `docs/decisions.md` — the survivor contrarian threshold registered under ADR-0014, whose logging
-  obligation the ledger's survival-cost column satisfies.
+  obligation the journal's survival-cost column satisfies.
 - `src/hub/draft/prior_signal.py` — `join_by_player`'s null-preserving docstring against
   `priced()`'s `fill_null(0.0)` three lines below.
 - `src/hub/draft/board.py` — the monotone rolling-median imputation of `xfp_per_game` in

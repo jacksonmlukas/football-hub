@@ -235,6 +235,23 @@ _Avoid_: edge (which means something else entirely here).
 A candidate the simulation cannot separate from the best one — within two standard errors of
 the difference. A tie is reported as a tie rather than broken by noise.
 
+**Ledger**:
+The teams an entry has already spent and cannot pick again — one per entry, ours and every
+rival's. `hub.season.pool` takes it as `ledger` for one entry and `ledgers` for the field, and
+a buyback inherits it rather than clearing it (`buyback_restores_ledger`), which is the whole
+reason a late re-entry is worth less than an early one: the figure moves with the teams
+already gone.
+
+**Decision journal**:
+Every pick and every dollar decision, appended in the order they were made, carrying the
+inputs behind each one, the betting-market price at the time, and the free auto-pick it was
+chosen over. Outcomes attach after the games without rewriting the original row. A journal and
+not a Ledger, and the accounting sense is why: a journal is entries in the order they
+happened, a Ledger is the account they roll up into. The two were one word across five tickets
+until #80 was specified, which is the collision this entry exists to stop.
+_Avoid_: decision ledger — a Ledger is the set of teams an entry has spent, and it is that in
+shipped code (`hub.season.pool`, `buyback_restores_ledger`) rather than only in prose.
+
 ### What the page publishes
 
 **Kept**:

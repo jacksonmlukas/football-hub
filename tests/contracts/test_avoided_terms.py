@@ -168,6 +168,15 @@ CHECKED: dict[str, Rule] = {
     "the plan unqualified": Rule("phrase", "the entry forbids the bare phrase and names the "
                                            "qualified forms that are fine",
                                  pattern="the plan"),
+    # The Ledger and the Decision journal were one word across five survivor tickets until
+    # #80 was specified. The Ledger owns it by possession: `hub.season.pool` takes the
+    # used-team set as `ledger`/`ledgers` and `buyback_restores_ledger` is a pool-config
+    # field, so renaming that side would move `pool_digest` to settle a prose collision. A
+    # bare `ledger` is therefore correct almost everywhere and unscannable; the two-word
+    # phrase only ever names the journal, which is what makes this one decidable.
+    "decision ledger": Rule("phrase", "the Ledger is the used-team set and shipped code "
+                                      "names it that; the two-word phrase is always the "
+                                      "journal wearing the taken word"),
     # Checked rather than parked. The one form that is decidably not an as-of date is the
     # keyword argument -- `difflib.get_close_matches(cutoff=0.85)` is a similarity threshold
     # -- and `_adp_saturation_cutoff` is already excluded by the word boundary. Everything
