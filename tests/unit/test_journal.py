@@ -97,7 +97,8 @@ def test_a_pick_that_matched_the_free_one_is_recorded_as_such(tmp_path):
     """`docs/method.md` rule 5: gate against the simplest thing that already works. A season
     of weeks where we took auto-pick's team anyway is a season the model earned nothing."""
     _decide(tmp_path, chose="LAC", fallback="LAC")
-    _decide(tmp_path, week=2, chose="SF", fallback="KC", at=AT + dt.timedelta(days=7))
+    _decide(tmp_path, week=2, chose="SF", fallback="KC", survival_given_up=0.02,
+            at=AT + dt.timedelta(days=7))
     got = journal.read(2026, base=tmp_path).sort("week")
     assert got["matched_fallback"].to_list() == [True, False]
     assert journal.unmatched_weeks(2026, base=tmp_path) == [1]
@@ -125,3 +126,46 @@ def test_an_empty_store_reads_as_an_empty_journal(tmp_path):
     got = journal.read(2026, base=tmp_path)
     assert got.is_empty()
     assert isinstance(got, pl.DataFrame)
+
+
+# --- what a decision cost, which one rule makes mandatory ---------------------
+
+
+def test_a_departure_from_the_free_pick_must_say_what_it_cost(tmp_path):
+    """The column was optional and the obligation is not. `docs/decisions.md` registers the
+    survivor contrarian threshold under ADR-0014, whose own logging duty is the week, the
+    chalk pick, ours, and the probability cost accepted -- so a journal that accepts the entry
+    anyway records a decision taken in breach of its rule, and records it as complete."""
+    with pytest.raises(ValueError, match="ADR-0014"):
+        _decide(tmp_path, chose="SF", fallback="KC", survival_given_up=None)
+
+
+def test_zero_is_an_answer_and_not_an_omission(tmp_path):
+    """Two plans that survive alike cost nothing to choose between. That is a finding; None
+    is a blank."""
+    _decide(tmp_path, chose="SF", fallback="KC", survival_given_up=0.0)
+    got = journal.read(2026, base=tmp_path)
+    assert got["survival_given_up"][0] == 0.0
+
+
+def test_taking_the_free_pick_needs_no_cost_recorded(tmp_path):
+    """Nothing was given up, so there is nothing to record. The obligation binds departures."""
+    _decide(tmp_path, chose="LAC", fallback="LAC")
+    got = journal.read(2026, base=tmp_path)
+    assert got["matched_fallback"][0] is True and got["survival_given_up"][0] is None
+
+
+def test_what_a_departure_gave_up_is_read_back(tmp_path):
+    _decide(tmp_path, chose="SF", fallback="KC", survival_given_up=0.031)
+    got = journal.read(2026, base=tmp_path)
+    assert got["survival_given_up"][0] == pytest.approx(0.031)
+    assert got["matched_fallback"][0] is False
+
+
+def test_a_decision_that_cost_no_credits_records_a_zero(tmp_path):
+    """Distinct from unknown. The balance was read on both sides and had not moved, which
+    says the decision was made and cost nothing -- not that nobody looked."""
+    _decide(tmp_path, credits_before=500.0, credits_after=500.0)
+    got = journal.read(2026, base=tmp_path)
+    assert got["cost_credits"][0] == 0.0
+    assert got["cost_note"][0] is None
