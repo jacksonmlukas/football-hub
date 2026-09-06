@@ -23,9 +23,10 @@ import pytest
 SITE = Path(__file__).resolve().parents[2] / "site" / "data"
 
 # `manifest.json` is the index rather than an artifact -- it has no `name` of its own, and the
-# names it carries are the other files'. `draft_board.json` is a bare list of rows, written by
-# the board builder rather than through the envelope, which `publish._board` records.
-NOT_ENVELOPES = {"manifest.json", "draft_board.json"}
+# names it carries are the other files'. It is the only one left: `draft_board.json` was here
+# too, as a bare list of rows, and #107 put it in the envelope with the other three
+# accommodations its shape required.
+NOT_ENVELOPES = {"manifest.json"}
 
 # Carries the envelope's `name` and `generated_at` but not its row shape. The track record is
 # a calibration summary rather than a collection of rows -- it counts in `n_scored` and has no

@@ -517,12 +517,19 @@ async function render() {
         : "no manifest — run `make slate`";
 
   // --- draft board
-  const board = await load("draft_board");
+  const boardArt = await load("draft_board");
+  // The envelope since #107. A clone on an older commit still has the bare list this used to
+  // be, and reading both is one `??` -- cheaper than a page that renders nothing for anyone
+  // who has not pulled.
+  const board = Array.isArray(boardArt) ? boardArt : (boardArt?.rows ?? null);
   const bArt = findArt(man, "draft_board");
   if (Array.isArray(board) && board.length) {
     const rows = board.filter(r => r.vor != null).slice(0, 12);
     panel("p-board", {
-      age: `${board.length} players`,
+      // Dated, at last. This panel could never be stale and could never be aged, because the
+      // producer reported no stamp -- on the artifact whose freshness matters most on draft
+      // night. `built` rather than `synced`: a board is built, not fetched.
+      age: `${board.length} players · built ${ago(boardArt?.generated_at)}`,
       warn: bArt?.stale ? `Stale: ${bArt.reason ?? "unknown"}` : null,
       html: table([
         { label: "player", get: r => r.player ?? "" },

@@ -13,6 +13,8 @@ Two things are tested here that were previously unreachable:
     survived so long.
 """
 
+import json
+
 import polars as pl
 import pytest
 
@@ -392,3 +394,36 @@ def test_a_served_board_is_not_rewritten(served, tmp_path, capsys):
     assert served.stat().st_mtime == before, "serving last-good must not rewrite it"
     assert not (tmp_path / "site" / "draft_board.json").exists(), \
         "nor republish it to the site as though it were today's"
+
+
+def test_the_published_board_carries_the_envelope(tmp_path, monkeypatch):
+    """Issue #107. It was a bare list of rows, and four things existed only for that shape.
+
+    The cost was not tidiness. With no stamp the board panel could never be stale and could
+    never be aged, so a board built four days ago and one built this morning were identical
+    to the page -- on the artifact whose freshness matters most on draft night.
+    """
+    from hub import publish
+
+    out = tmp_path / "site"
+    board._persist(
+        pl.DataFrame({"player": ["A"], "pos": ["WR"], "vor": [1.0], "adp": [2.0]}),
+        out=out, path=tmp_path / "b.parquet")
+
+    got = json.loads((out / "draft_board.json").read_text())
+    assert isinstance(got, dict), "still a bare list, so the page cannot date it"
+    assert got["name"] == "draft_board" and got["n"] == 1
+    assert got["rows"][0]["player"] == "A"
+    # And the stamp reader needs no type branch to reach it.
+    assert publish._generated_at(out / "draft_board.json") == got["generated_at"]
+
+
+def test_an_older_clones_bare_list_still_reads(tmp_path):
+    """The published board is a committed artifact, so a clone on a commit from before #107
+    has the old shape. `published` reads both rather than raising on one -- which is what lets
+    `readable` serve the committed board across that boundary."""
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "draft_board.json").write_text(json.dumps(
+        [{"player": "Older", "pos": "RB", "vor": 1.0, "adp": 3.0}]))
+    assert board.published(site)["player"].to_list() == ["Older"]

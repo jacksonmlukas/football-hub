@@ -419,7 +419,12 @@ def published(site: Path | None = None) -> pl.DataFrame:
     path = (site / "draft_board.json") if site else BOARD_JSON
     if not path.exists():
         raise FileNotFoundError(f"no published board at {path}")
-    return pl.DataFrame(json.loads(path.read_text()))
+    got = json.loads(path.read_text())
+    # The envelope since #107. A list is the shape this file had before that, and a clone
+    # sitting on an older commit still has one -- reading both is what lets `readable` serve
+    # the committed artifact across that boundary rather than raising on it.
+    rows = got["rows"] if isinstance(got, dict) else got
+    return pl.DataFrame(rows)
 
 
 def readable(path: Path | None = None,
@@ -1000,8 +1005,16 @@ def _persist(board: pl.DataFrame, *, out: Path | None = None,
     _archive(board)
     # Through `hub.jsonio`, not `json`, because a bare `NaN` is not JSON and the page that
     # reads this file is the draft-night fallback -- see that module's docstring.
-    out.joinpath("draft_board.json").write_text(
-        jsonio.dumps(board.head(300).to_dicts()))
+    #
+    # In the envelope, like every other published artifact. It was a bare list of rows, and
+    # four things existed only to accommodate that: a producer that could not report a stamp,
+    # a branch in the stamp reader testing whether the document was an object at all, a named
+    # exemption in the envelope contract, and a separate age helper. The cost was not
+    # tidiness -- with no stamp the board panel was *never* stale and could not be aged, so a
+    # board built four days ago and one built this morning looked identical to the page, on
+    # the artifact whose freshness matters most on draft night (issue #107).
+    out.joinpath("draft_board.json").write_text(jsonio.dumps(
+        jsonio.artifact("draft_board", "draft_board.parquet", board.head(300).to_dicts())))
 
 
 def main(argv: Sequence[str] | None = None) -> int:

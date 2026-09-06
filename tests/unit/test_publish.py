@@ -562,18 +562,36 @@ def test_last_goods_timestamp_survives_a_failed_producer(name, tmp_path):
     assert got["generated_at"] == "2026-09-01T00:00:00+00:00"
 
 
-def test_a_list_shaped_artifact_does_not_crash_the_manifest(tmp_path):
-    """`draft_board.json` is a bare list of rows, so a `.get` on it raises. That branch was
-    unreachable while draft_board bypassed the contract; it is reachable now."""
+def test_a_damaged_artifact_does_not_crash_the_manifest(tmp_path):
+    """This used to be about `draft_board.json`, which was a bare list of rows, so a `.get`
+    on it raised. #107 put it in the envelope, so no artifact is list-shaped any more -- and
+    what is left to defend against is a file that is damaged or hand-edited, which is a
+    failure to read rather than a second shape to support."""
     (tmp_path / "draft_board.json").write_text('[{"player": "x"}]')
     got = publish.Artifact("draft_board", lambda: None, "run `make draft`").record(tmp_path)
     assert got["present"] is True and got["generated_at"] is None
 
 
+def test_the_board_panel_can_finally_be_dated(tmp_path):
+    """The point of #107. The producer returned `{"generated_at": None}` unconditionally, so
+    the board panel was never stale and could not be aged -- on the artifact whose freshness
+    matters most on draft night."""
+    from hub import jsonio
+    (tmp_path / "draft_board.json").write_text(jsonio.dumps(jsonio.artifact(
+        "draft_board", "draft_board.parquet", [{"player": "x"}],
+        as_of="2026-09-04T17:22:50+00:00")))
+    got = next(a for a in publish.artifacts(2026, 1, out=tmp_path)
+               if a.name == "draft_board").record(tmp_path)
+    assert got["generated_at"] == "2026-09-04T17:22:50+00:00", (
+        "the board panel still cannot be aged")
+
+
 def test_a_present_board_is_not_stale_and_an_absent_one_is(tmp_path):
     board = next(a for a in publish.artifacts(2026, 1, out=tmp_path) if a.name == "draft_board")
     assert board.record(tmp_path)["stale"] is True
-    (tmp_path / "draft_board.json").write_text('[{"player": "x"}]')
+    from hub import jsonio
+    (tmp_path / "draft_board.json").write_text(jsonio.dumps(jsonio.artifact(
+        "draft_board", "draft_board.parquet", [{"player": "x"}])))
     assert board.record(tmp_path)["stale"] is False
 
 

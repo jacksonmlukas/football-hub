@@ -591,16 +591,21 @@ def roster(out: Path | None = None,
 # --- everything, plus a manifest -----------------------------------------
 
 def _generated_at(path: Path) -> str | None:
-    """Last-good's timestamp, or None if the file has no dict to read it from.
+    """Last-good's timestamp, or None if the file cannot be read.
 
-    `draft_board.json` is a list of rows, so a bare `.get` on it raises. That branch was
-    unreachable while draft_board bypassed the contract below; it is reachable now.
+    The type branch is gone with #107. It existed for `draft_board.json` alone, which was a
+    bare list of rows, so a bare `.get` on it raised -- one accommodation of four for the one
+    artifact that skipped the envelope. It carries the envelope now, like every other file
+    here, so there is one shape to read.
     """
     try:
-        got = json.loads(path.read_text())
-    except (OSError, ValueError):
+        return json.loads(path.read_text()).get("generated_at")
+    except (OSError, ValueError, AttributeError):
+        # Unreadable, not JSON, or JSON that is not an object. The last is caught rather than
+        # branched on: `isinstance(got, dict)` here meant "there is a second artifact shape",
+        # and #107 removed the artifact that had one. What is left is a file that is damaged
+        # or hand-edited, which is a failure to read rather than a shape to support.
         return None
-    return got.get("generated_at") if isinstance(got, dict) else None
 
 
 class Artifact(NamedTuple):
@@ -642,11 +647,20 @@ class Artifact(NamedTuple):
 def _board(out: Path) -> dict[str, Any] | None:
     """`draft_board.json` has no producer here -- `hub.draft.board` writes it.
 
-    So its "producer" only reports whether it is there. It carries no `generated_at` because
-    the file is a bare list of rows; the board's own age comes from the parquet's mtime, via
-    `board.board_age_hours`.
+    So this reports whether it is there and hands back what it says about itself. It used to
+    return `{"generated_at": None}`, which is why the board panel could never be stale and
+    could never be aged: the one artifact whose freshness matters most on draft night was the
+    one the page could not date (issue #107). ADR-0020 is untouched -- what changed is the
+    file's shape, not who writes it.
     """
-    return {"generated_at": None} if (out / "draft_board.json").exists() else None
+    p = out / "draft_board.json"
+    if not p.exists():
+        return None
+    try:
+        got = json.loads(p.read_text())
+    except ValueError:
+        return None
+    return got if isinstance(got, dict) else {"generated_at": None}
 
 
 def artifacts(season: int, week: int, base: Path | None = None,
