@@ -96,8 +96,24 @@ def record(*, season: int, week: int, kind: str, chose: str,
 
     `credits_before`/`credits_after` are the odds fetcher's balance either side of the work
     this decision needed. Either one unknown means the cost is unknown, which is recorded as
-    such: a zero would claim the decision was free.
+    such: a zero would claim the decision was free. Equal readings *are* a zero, and that is a
+    different claim -- the decision was made and cost nothing.
+
+    Refuses a pick that departs from the free one without saying what that cost. The column
+    was optional and the obligation is not: `docs/decisions.md` registers the survivor
+    contrarian threshold under ADR-0014, and the rule's own logging duty is the week, the
+    chalk pick, ours, and the probability cost accepted. A journal that lets the entry be
+    written anyway records a decision taken in breach of the rule it was taken under, and
+    records it as though nothing were missing. `0.0` is a legitimate answer -- the two plans
+    survive alike -- and is not the same claim as never having worked it out.
     """
+    if fallback is not None and chose != fallback and survival_given_up is None:
+        raise ValueError(
+            f"week {week}: {chose!r} departs from the free pick {fallback!r} without "
+            "recording what it gave up. docs/decisions.md registers the survivor contrarian "
+            "threshold under ADR-0014, whose logging duty is the week, the chalk pick, ours, "
+            "and the probability cost accepted. Pass survival_given_up -- 0.0 if the two "
+            "plans survive alike, which is an answer and not an omission.")
     at = at or datetime.now(UTC).replace(tzinfo=None)
     k = key(season, week, kind, at)
     known = credits_before is not None and credits_after is not None
