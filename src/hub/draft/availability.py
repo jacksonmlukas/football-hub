@@ -12,9 +12,12 @@ question that actually drives a pick: will he still be there at my next turn?
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import polars as pl
 
+from hub.league import preseason_start
 from hub.names import player_key
 
 # Fraction of the room drafting off ESPN's default board. Estimate it from your own
@@ -142,22 +145,51 @@ def historical_picks(league_id: int, years: list[int]) -> pl.DataFrame:
             lg = League(league_id=league_id, year=yr,
                         espn_s2=os.environ.get("ESPN_S2") or None,
                         swid=os.environ.get("ESPN_SWID") or None)
-            snap = (allr.filter((pl.col("page_type") == "redraft-overall")
-                                # scrape_date is an ISO string, which sorts correctly
-                                # as text; casting it just to compare would be waste.
-                                & (pl.col("scrape_date") < f"{yr}-09-01")
-                                & (pl.col("ecr").is_not_null()))
-                        .sort("scrape_date", descending=True)
-                        .unique(subset=["player"], keep="first"))
-            ecr = {player_key(r["player"]): r["ecr"] for r in snap.iter_rows(named=True)}
-            for i, pick in enumerate(lg.draft or [], start=1):
-                e = ecr.get(player_key(pick.playerName))
-                if e is not None:
-                    rows.append({"year": yr, "pick": float(i), "ecr": float(e)})
+            # Bounded below by the season's own preseason, like `board.consensus` (#38).
+            # Without it a pick whose only rank came from an earlier preseason was matched
+            # and fitted as though the room had priced him that year -- so the fit learned
+            # from ranks nobody in that draft could see.
+            names = [p.playerName for p in (lg.draft or [])]
+            fitted, said = picks_against_preseason(allr, yr, names)
+            rows.extend(fitted)
+            print(said)
         except Exception as exc:
             print(f"  {yr} draft history unavailable ({type(exc).__name__}); skipping.")
     return pl.DataFrame(rows, schema={"year": pl.Int64, "pick": pl.Float64,
                                       "ecr": pl.Float64})
+
+
+def picks_against_preseason(allr: pl.DataFrame, year: int,
+                            names: Sequence[str]) -> tuple[list[dict], str]:
+    """Draft picks paired with the ECR their own preseason published, and what to say about it.
+
+    **Bounded below as well as above (#38).** Taking the latest scrape per player before the
+    draft and nothing more matched a pick whose only rank came from an earlier preseason, and
+    fitted it as though the room had priced him that year -- so the fit learned from ranks
+    nobody in that draft could see. `hub.draft.board.consensus` is bounded the same way and by
+    the same rule.
+
+    The count is returned rather than printed for the reason `stamped_for_publication` is:
+    reaching this through `historical_picks` needs an ESPN session, and a rule that can only
+    be exercised behind a credential is a rule with no test.
+    """
+    opens = preseason_start(f"{year}-09-01")
+    snap = (allr.filter((pl.col("page_type") == "redraft-overall")
+                        # scrape_date is an ISO string, which sorts correctly as text;
+                        # casting it just to compare would be waste.
+                        & (pl.col("scrape_date") < f"{year}-09-01")
+                        & (pl.col("scrape_date") >= opens)
+                        & (pl.col("ecr").is_not_null()))
+                .sort("scrape_date", descending=True)
+                .unique(subset=["player"], keep="first"))
+    ecr = {player_key(r["player"]): r["ecr"] for r in snap.iter_rows(named=True)}
+    rows = [{"year": year, "pick": float(i), "ecr": float(ecr[player_key(n)])}
+            for i, n in enumerate(names, start=1) if player_key(n) in ecr]
+    # Said, because the bound lowers it: a pick whose only rank predates this season's
+    # preseason is unmatched now rather than fitted on a stale ECR, and a fit that silently
+    # learns from fewer picks is a fit nobody can check.
+    said = (f"  {year}: {len(rows)}/{len(names)} picks matched a rank scraped since {opens}")
+    return rows, said
 
 
 def fit_pick_noise(league_id: int, years: list[int],

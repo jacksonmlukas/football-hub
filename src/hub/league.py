@@ -88,3 +88,31 @@ def starting_lineup(pos: Sequence[str], score: Sequence[float] | np.ndarray) -> 
     # `order` is already descending, so the first FLEX_SLOTS leftovers are the best ones.
     starters.extend(flex[:FLEX_SLOTS])
     return starters
+
+
+# The month a season's preseason ranking window opens. July: FantasyPros' redraft board for a
+# season first appears in early July, and `hub.draft.tune.holdout` has bounded on
+# `{season}-07-01` since it was written -- this is that convention, stated once instead of
+# spelled out at each call site.
+PRESEASON_OPENS_MONTH = 7
+
+
+def preseason_start(as_of: str) -> str:
+    """The ISO date the ranking window opens for the season `as_of` falls in.
+
+    A board built as of a date must not admit ranks scraped years earlier. `consensus` took
+    the latest scrape per player at or before its as-of and had no lower bound at all, so a
+    player ranked once in a prior preseason and never again sat mid-pool as a draftable option
+    on every later historical board -- carrying an ECR from a season he did not play (#38).
+
+    **A season, not a rolling year.** An as-of in January belongs to the season that started
+    the previous July, so `2025-01-20` opens at `2024-07-01`. Taking twelve months back
+    instead would put two preseasons in the window and rank a player on the older of them
+    whenever the newer one skipped him, which is the same defect wearing a bound.
+
+    Derived from the as-of it is given, so a mid-season as-of gets its own season's window
+    rather than the one nearest a hardcoded date.
+    """
+    year, month = int(as_of[:4]), int(as_of[5:7])
+    season = year if month >= PRESEASON_OPENS_MONTH else year - 1
+    return f"{season}-{PRESEASON_OPENS_MONTH:02d}-01"

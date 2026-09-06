@@ -145,3 +145,46 @@ def test_a_points_spread_is_not_mistaken_for_a_pick_spread():
     from hub.draft.availability import _sigma
     scored = pl.DataFrame({"mu_pick": [10.0], "sd": [7.9]})   # weekly points, not picks
     assert _sigma(scored)[0] == pytest.approx(A + B * 10.0)
+
+
+# --- picks are fitted against their own preseason (issue #38) --------------
+
+def _ranks(*rows):
+    """(player, ecr, scrape_date) in the archive's shape."""
+    return pl.DataFrame({
+        "page_type": ["redraft-overall"] * len(rows),
+        "player": [r[0] for r in rows],
+        "ecr": [r[1] for r in rows],
+        "scrape_date": [r[2] for r in rows],
+    })
+
+
+def test_a_pick_whose_only_rank_predates_the_preseason_is_not_fitted():
+    """The defect. Taking the latest scrape before the draft and nothing more matched a pick
+    whose only rank came from an earlier preseason, and fitted it as though the room had
+    priced him that year -- so the fit learned from ranks nobody in that draft could see."""
+    from hub.draft.availability import picks_against_preseason
+    allr = _ranks(("Stale Guy", 40.0, "2022-08-10"), ("Priced", 12.0, "2024-08-20"))
+    rows, said = picks_against_preseason(allr, 2024, ["Priced", "Stale Guy"])
+    assert [r["ecr"] for r in rows] == [12.0]
+    assert [r["pick"] for r in rows] == [1.0], "the pick number is the draft slot, not the row"
+    assert "1/2 picks matched" in said and "2024-07-01" in said
+
+
+def test_a_pick_ranked_in_this_preseason_is_fitted_on_this_seasons_rank():
+    """The control: the bound must not drop a pick that was genuinely priced that year, and
+    must use the current rank when an older one also exists."""
+    from hub.draft.availability import picks_against_preseason
+    allr = _ranks(("Both", 40.0, "2022-08-10"), ("Both", 11.0, "2024-08-20"))
+    rows, said = picks_against_preseason(allr, 2024, ["Both"])
+    assert [r["ecr"] for r in rows] == [11.0]
+    assert "1/1 picks matched" in said
+
+
+def test_a_rank_scraped_after_the_draft_is_still_excluded():
+    """The upper bound predates this change and has to survive it -- a rank published after
+    the draft is hindsight, which is the whole reason the window exists at all."""
+    from hub.draft.availability import picks_against_preseason
+    allr = _ranks(("Late", 5.0, "2024-10-01"))
+    rows, said = picks_against_preseason(allr, 2024, ["Late"])
+    assert rows == [] and "0/1 picks matched" in said

@@ -46,6 +46,7 @@ from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.state import DraftState, remaining
 from hub.fetch import nflverse
 from hub.fetch.nflverse import RANKINGS_COLS, load_rankings
+from hub.league import preseason_start
 from hub.models import components
 from hub.models.predict import blend
 from hub.names import player_key
@@ -204,14 +205,28 @@ def consensus(as_of: str | None = None) -> pl.DataFrame:
     # two routed readers of this archive -- key the same cache entry and cannot drift apart
     # into two half-filled copies of a 1.8M-row table.
     allr = load_rankings("all", as_of=as_of, cols=RANKINGS_COLS)
-    snap = (allr.filter((pl.col("page_type") == CONSENSUS_PAGE)
-                        & (pl.col("ecr").is_not_null()))
-                .sort("scrape_date", descending=True)
-                .unique(subset=["player"], keep="first"))
+    # Bounded below as well as above (#38). The upper bound is the loader's as-of; without a
+    # lower one this took the latest scrape per player *ever*, so a player ranked once in a
+    # prior preseason and never again sat mid-pool on every later board, draftable, carrying
+    # an ECR from a season he did not play. `scrape_date` is an ISO string and sorts correctly
+    # as text, which is why the comparison does not cast.
+    opens = preseason_start(as_of)
+    within = allr.filter((pl.col("page_type") == CONSENSUS_PAGE)
+                         & (pl.col("ecr").is_not_null()))
+    snap = (within.filter(pl.col("scrape_date") >= opens)
+                  .sort("scrape_date", descending=True)
+                  .unique(subset=["player"], keep="first"))
+    # Reported, not silent: this drops players from every historical board, which re-prices
+    # the backtest and everything downstream of it. A height that moves without a line saying
+    # so is the kind of change nobody connects to its cause.
+    stale = within.select("player").unique().height - snap.height
+    if stale:
+        print(f"    consensus as of {as_of}: {snap.height} ranked in this preseason, "
+              f"{stale} dropped whose last scrape predates {opens}")
     if snap.is_empty():
         raise ContractViolation(
-            f"ff_rankings: no `{CONSENSUS_PAGE}` rows scraped on or before {as_of}; the "
-            f"archive starts 2020-10-16, so a season before 2021 cannot be replayed")
+            f"ff_rankings: no `{CONSENSUS_PAGE}` rows scraped between {opens} and {as_of}; "
+            f"the archive starts 2020-10-16, so a season before 2021 cannot be replayed")
     return _select_consensus(snap)
 
 

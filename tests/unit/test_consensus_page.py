@@ -204,7 +204,7 @@ def test_an_archive_with_no_consensus_page_before_the_date_still_names_the_page(
     early = _dated(("Guy", 3.0, "2022-08-01"))
     _patch(monkeypatch, tmp_path,
            early.with_columns(pl.lit("dynasty-overall").alias("page_type")))
-    with pytest.raises(ContractViolation, match="scraped on or before 2022-09-01"):
+    with pytest.raises(ContractViolation, match="scraped between 2022-07-01 and 2022-09-01"):
         consensus(as_of="2022-09-01")
 
 
@@ -319,3 +319,66 @@ def test_the_boundary_day_is_inside_the_replay_as_of(monkeypatch, tmp_path):
     assert consensus(as_of=f"{yr}-08-31")["ecr"][0] == 12.0, (
         "a scrape landing exactly on the as-of was dropped; the filter is documented as "
         "inclusive and the replay date depends on it being so")
+
+
+# --- the window is bounded below, not only above (issue #38) ---------------
+
+def test_a_player_ranked_only_in_an_earlier_preseason_is_off_the_board(monkeypatch, tmp_path):
+    """The defect. `consensus` took the latest scrape per player at or before its as-of and
+    had no lower bound, so a player ranked once in 2022 and never again sat mid-pool on the
+    2024 board -- draftable, carrying an ECR from a season he did not play."""
+    from hub.draft.board import consensus
+    _patch(monkeypatch, tmp_path, _dated(("Gone", 40.0, "2022-08-10"),
+                                         ("Current", 12.0, "2024-08-20")))
+    got = consensus(as_of="2024-08-31")
+    assert got["player"].to_list() == ["Current"]
+
+
+def test_a_player_ranked_in_two_preseasons_is_ranked_on_the_current_one(monkeypatch, tmp_path):
+    """The bound must not reach back for an older rank when a newer one exists -- that is the
+    same defect wearing a window."""
+    from hub.draft.board import consensus
+    _patch(monkeypatch, tmp_path, _dated(("Both", 40.0, "2022-08-10"),
+                                         ("Both", 11.0, "2024-08-20")))
+    got = consensus(as_of="2024-08-31")
+    assert got.height == 1 and got["ecr"][0] == 11.0
+
+
+def test_the_bound_follows_a_mid_season_as_of(monkeypatch, tmp_path):
+    """Derived from the as-of it is given. A November as-of belongs to the season that opened
+    that July, and a January one to the season that opened the *previous* July -- twelve
+    months back instead would put two preseasons in the window."""
+    from hub.draft.board import consensus
+    _patch(monkeypatch, tmp_path, _dated(("Old", 40.0, "2023-08-10"),
+                                         ("New", 12.0, "2024-08-20")))
+    assert consensus(as_of="2024-11-15")["player"].to_list() == ["New"]
+    assert consensus(as_of="2025-01-20")["player"].to_list() == ["New"]
+
+
+def test_the_live_path_is_exempt_and_that_is_deliberate(monkeypatch, tmp_path):
+    """No `as_of` reads the current `draft` page, which is one scrape of today's board -- it
+    has no historical window to bound and nothing older in it to exclude.
+
+    Asserted rather than left implicit: the exemption is the reason the bound cannot simply be
+    pushed into the loader for every caller, and a reader meeting `preseason_start` only on
+    the dated path should find out here why.
+    """
+    import hub.fetch.nflverse as nv
+    from hub.draft.board import consensus
+    frame = _dated(("Only", 3.0, "2019-01-01"))       # far outside any preseason window
+    monkeypatch.setattr(nv, "RAW", tmp_path / "raw")
+    monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: frame)
+    assert consensus()["player"].to_list() == ["Only"], (
+        "the live board applied a historical window to today's scrape")
+
+
+def test_the_dropped_count_is_reported(monkeypatch, tmp_path, capsys):
+    """Criterion six. This drops players from every historical board, which re-prices the
+    backtest and everything downstream; a height that moves with no line saying so is the
+    change nobody connects to its cause."""
+    from hub.draft.board import consensus
+    _patch(monkeypatch, tmp_path, _dated(("Gone", 40.0, "2022-08-10"),
+                                         ("Current", 12.0, "2024-08-20")))
+    consensus(as_of="2024-08-31")
+    out = capsys.readouterr().out
+    assert "1 dropped" in out and "2024-07-01" in out
