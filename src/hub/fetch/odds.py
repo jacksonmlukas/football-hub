@@ -36,6 +36,7 @@ from typing import Any
 import polars as pl
 
 from hub import store
+from hub.cli import unavailable
 from hub.config import SEASON_AHEAD
 from hub.contracts import ODDS_SNAPSHOT
 from hub.paths import STATE_DIR
@@ -314,6 +315,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (QuotaFloor, MultiplierRefused) as e:
         print(f"hub.fetch.odds: {e}", file=sys.stderr)
         return 1
+    except Exception as e:
+        # The two above are this repo refusing to spend; anything else is the source being
+        # unreachable, and a snapshot that cannot be taken must not take the slate down with
+        # it -- `make slate` puts a leading `-` on this line for the same reason.
+        return unavailable("hub.fetch.odds", "the betting market's prices", e)
     return 0
 
 

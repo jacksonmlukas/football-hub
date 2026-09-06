@@ -32,6 +32,7 @@ from typing import Any, NamedTuple
 import polars as pl
 
 from hub import schedule
+from hub.cli import unavailable
 from hub.config import SEASON_AHEAD, PoolConfig
 from hub.paths import SITE
 
@@ -464,7 +465,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--weeks", type=int, default=NFL_WEEKS)
     a = ap.parse_args(argv)
 
-    grid = grid_from_schedule(a.season)
+    try:
+        grid = grid_from_schedule(a.season)
+    except Exception as e:
+        return unavailable("hub.season.survivor", f"the {a.season} schedule and its prices", e)
     try:
         # The same call `hub.publish.survivor` makes, which is the point of it existing.
         got = plan_remaining(grid, a.season, prior=published_plan(),

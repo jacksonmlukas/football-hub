@@ -46,6 +46,7 @@ from typing import NamedTuple, cast
 import numpy as np
 import polars as pl
 
+from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS
 from hub.models.components import SCORING, td_rate
 from hub.models.experiment import expanding_seasons
@@ -486,9 +487,12 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     if not a.fit:
         ap.print_help()
         return 0
-    panel = build_panel(SEASONS, PanelSpec(expected=a.expected)).filter(
-        pl.col("week").is_in(list(FANTASY_WEEKS))
-        & (pl.col("games_before") >= MIN_GAMES_BEFORE))
+    try:
+        panel = build_panel(SEASONS, PanelSpec(expected=a.expected)).filter(
+            pl.col("week").is_in(list(FANTASY_WEEKS))
+            & (pl.col("games_before") >= MIN_GAMES_BEFORE))
+    except Exception as e:
+        return unavailable("hub.models.weekly", "the sources the Panel is built from", e)
     print(f"  {panel.height} player-weeks over {panel['season'].n_unique()} seasons")
     errs = walk_forward(panel)
     print("\n".join(diagnostic(errs)))

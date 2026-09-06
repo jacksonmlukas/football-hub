@@ -40,6 +40,7 @@ from typing import NamedTuple, cast
 import numpy as np
 import polars as pl
 
+from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS, digests, resolved_config
 from hub.models.experiment import MIN_SE
 from hub.models.panel import (
@@ -310,7 +311,10 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         ap.print_help()
         return 0
     seasons = [int(x) for x in a.seasons.split(",") if x]
-    panel = build_panel(seasons, PanelSpec(routes=a.routes, scheme=a.scheme), as_of=a.as_of)
+    try:
+        panel = build_panel(seasons, PanelSpec(routes=a.routes, scheme=a.scheme), as_of=a.as_of)
+    except Exception as e:
+        return unavailable("hub.models.weekly_screen", "the sources the Panel is built from", e)
     # What the run read, printed where the run is read. Until the archive was routed through
     # the fetch layer there was nothing to print: two screens a week apart disagreed and
     # nothing said whether the code or the rankings had moved -- which is the correction

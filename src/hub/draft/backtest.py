@@ -45,6 +45,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from hub.cli import unavailable
 from hub.config import (
     DraftConfig,
     RosterConfig,
@@ -434,7 +435,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if a.diagnose_corrections:
         print("  building the live board ...")
-        board, _ = build()
+        try:
+            board, _ = build()
+        except Exception as e:
+            return unavailable("hub.draft.backtest", "the live board", e)
         rep = correction_report(board)
         print(f"\n  Corrected ADP moves {rep.height} of {board.height} players.")
         print(f"  Clamp: {DraftConfig().correction_clamp_frac:.0%} of each player's own ADP.\n")
@@ -471,7 +475,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"  board pinned from {snap}")
         else:
             print("  building the live board ...")
-            board, _ = build()
+            try:
+                board, _ = build()
+            except Exception as e:
+                return unavailable("hub.draft.backtest", "the live board", e)
             if snap:
                 board.write_parquet(snap)
                 print(f"  board snapshot written to {snap}")
@@ -505,9 +512,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
-    boards, realised = walk_forward_inputs(
-        seasons, board_as_of,
-        on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
+    try:
+        boards, realised = walk_forward_inputs(
+            seasons, board_as_of,
+            on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
+    except Exception as e:
+        return unavailable("hub.draft.backtest", "the boards these seasons are drafted from", e)
 
     print(f"  playing {a.drafts} drafts x {len(seasons)} seasons, "
           f"{a.draft_sims} x {a.season_sims} sims per optimizer call ...")

@@ -24,6 +24,7 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.cli import unavailable
 from hub.draft.projection import adjusted
 from hub.league import FLEX_FROM, FLEX_SLOTS, STARTERS
 
@@ -150,7 +151,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         ap.print_help()
         return 0
 
-    pool = holdout(a.signal_season, a.board_season)
+    try:
+        pool = holdout(a.signal_season, a.board_season)
+    except Exception as e:
+        return unavailable("hub.draft.evaluate", "the holdout seasons", e)
     got = evaluate(pool, DEFAULT_GRID, n_sims=a.sims)
     print(f"  {a.signal_season}->{a.board_season}: {pool.height} players, "
           f"{got['n_trials'][0]:,} drafts per lambda")

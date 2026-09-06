@@ -30,6 +30,7 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 
 # A player needs a real sample before his own mean and spread mean anything. Eight weeks is
@@ -129,7 +130,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     print(f"  loading weekly player stats for {seasons} ...")
-    z = standardised(nfl.load_player_stats(seasons=seasons, summary_level="week"))
+    try:
+        z = standardised(nfl.load_player_stats(seasons=seasons, summary_level="week"))
+    except Exception as e:
+        return unavailable("hub.models.correlate", "nflverse weekly player stats", e)
     print(f"  {z.height} player-weeks after standardising "
           f"(>= {MIN_WEEKS} weeks, non-zero spread)")
 

@@ -28,6 +28,7 @@ from typing import Any
 
 import polars as pl
 
+from hub.cli import unavailable
 from hub.draft.board import DRAFTED_POSITIONS, MIN_GAMES, SLOTS, last_good, replacement_levels
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.state import DraftState, remaining, take
@@ -352,7 +353,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if a.replay is not None:
         from hub.draft import state as state_mod
-        board = _load_board()
+        try:
+            board = _load_board()
+        except FileNotFoundError as e:
+            return unavailable("hub.draft.live", "the board on disk", e)
         st = state_mod.sync_from_espn(a.replay)
         if not st.taken:
             print(f"hub.draft.live: no {a.replay} draft to replay", file=sys.stderr)
@@ -364,7 +368,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.poll is None:
         ap.print_help()
         return 0
-    return poll(a.poll, my_slot=a.slot)
+    try:
+        return poll(a.poll, my_slot=a.slot)
+    except FileNotFoundError as e:
+        # The board is the only file this reads before the loop starts, and the loop has
+        # absorbed its own exceptions since 2026-08-27. A poller that cannot start says so.
+        return unavailable("hub.draft.live", "the board on disk", e)
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ import numpy as np
 import polars as pl
 
 # The incumbent. Imported rather than restated so the two cannot drift apart.
+from hub.cli import unavailable
 from hub.models.experiment import expanding_seasons
 from hub.models.market import MARGIN_SD
 from hub.models.scoring_rules import log_loss
@@ -197,7 +198,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     import nflreadpy as nfl
 
     print("  loading schedules ...")
-    resid = residuals(nfl.load_schedules())
+    try:
+        resid = residuals(nfl.load_schedules())
+    except Exception as e:
+        return unavailable("hub.models.margin", "nflverse schedules", e)
     whole = fit(resid)
     print(f"\n  full sample: n={int(whole['n'])}  sd={whole['sd']:.3f} +/-{whole['se']:.3f}  "
           f"mean residual {whole['mean']:+.3f}")

@@ -45,6 +45,7 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.models.experiment import MIN_SE, expanding_seasons, paired_gain
 from hub.models.predict import WEEKLY_K, WEEKLY_K_POOLED
@@ -346,7 +347,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     import nflreadpy as nfl
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
-    stats = nfl.load_player_stats(seasons=seasons)
+    try:
+        stats = nfl.load_player_stats(seasons=seasons)
+    except Exception as e:
+        return unavailable("hub.models.spread", "nflverse weekly player stats", e)
     try:
         snaps, xw = nfl.load_snap_counts(seasons=seasons), nfl.load_ff_playerids()
     except Exception as exc:

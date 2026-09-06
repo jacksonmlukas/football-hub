@@ -255,16 +255,21 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
         prog="hub.season.roster",
         description="Write data/processed/roster.parquet from your ESPN team and the board.")
     ap.add_argument("--write", action="store_true", help="persist; otherwise just print")
-    ap.add_argument("--out", default=None, help="override the output path")
+    ap.add_argument("--out", default=None,
+                    help="override the roster path, both the last-good read and the write")
     a = ap.parse_args(list(argv) if argv is not None else None)
+    # One path, read and written. `--out` used to move only the write, so a run pointed at a
+    # fresh file served the *default* last-good and then wrote somewhere else -- last-good
+    # for a roster this run had never read.
+    path = Path(a.out) if a.out else ROSTER_PARQUET
 
     try:
         df = fetch()
     except Exception as e:                       # graceful degradation, per CLAUDE.md
-        if ROSTER_PARQUET.exists():
+        if path.exists():
             print(f"hub.season.roster: ESPN unreachable ({e}); "
-                  f"serving last-good {ROSTER_PARQUET}", file=sys.stderr)
-            df = pl.read_parquet(ROSTER_PARQUET)
+                  f"serving last-good {path}", file=sys.stderr)
+            df = pl.read_parquet(path)
         else:
             print(f"hub.season.roster: {e}", file=sys.stderr)
             return 1
@@ -304,7 +309,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
 
     if a.write:
         try:
-            print(f"  wrote {write(df, Path(a.out) if a.out else None)}")
+            print(f"  wrote {write(df, path)}")
         except ValueError as e:
             # The refusal above, reported rather than raised. An empty sync has to leave the
             # last-good parquet where it is, and a traceback on a Sunday is the

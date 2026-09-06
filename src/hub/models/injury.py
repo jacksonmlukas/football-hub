@@ -52,6 +52,7 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.models.experiment import MIN_SE, expanding_seasons, paired_gain
 from hub.names import practice_key
@@ -382,9 +383,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     print(f"  loading injuries and weekly stats for {seasons} ...")
-    obs = observations(
-        nfl.load_injuries(seasons=seasons),
-        nfl.load_player_stats(seasons=seasons, summary_level="week"))
+    try:
+        obs = observations(
+            nfl.load_injuries(seasons=seasons),
+            nfl.load_player_stats(seasons=seasons, summary_level="week"))
+    except Exception as e:
+        return unavailable("hub.models.injury", "nflverse injuries and weekly player stats", e)
     print(f"  {obs.height} designated player-weeks with a usable healthy baseline")
 
     table = penalty_table(obs)

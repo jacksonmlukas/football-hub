@@ -34,6 +34,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from hub.cli import unavailable
 from hub.config import SEASON_COMPLETED
 from hub.draft.projection import adjusted
 from hub.names import player_key
@@ -318,7 +319,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         ap.print_help()
         return 0
 
-    df = holdout(a.signal_season, a.board_season)
+    try:
+        df = holdout(a.signal_season, a.board_season)
+    except Exception as e:
+        return unavailable("hub.draft.tune", "the holdout seasons", e)
     swept = sweep(df)
     print(f"  projection_lambda sweep: {a.signal_season} signal -> "
           f"{a.board_season} board -> {a.board_season} results")

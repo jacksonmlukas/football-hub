@@ -39,6 +39,7 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.cli import unavailable
 from hub.models import components
 from hub.models.components import SCORING
 from hub.models.experiment import expanding_seasons
@@ -247,7 +248,10 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
         return 0
 
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
-    d = pairs(seasons)
+    try:
+        d = pairs(seasons)
+    except Exception as e:
+        return unavailable("hub.models.component_error", "the nflverse player seasons", e)
     if d.is_empty():
         print("  nothing paired -- need at least two consecutive seasons", file=sys.stderr)
         return 1

@@ -28,10 +28,24 @@ immediately found a further bug of the same family: against a genuinely empty st
 An empty store does not have an empty `preds` table, it has no `preds` view at all, because
 `store.connect` builds a view per directory that exists. **That is the state of a fresh
 clone** -- which is what the public gets when this repo flips on 2026-09-04.
+
+**What #111 fixed is the other half of that same idea.** `CLI_MODULES` was held against the
+source tree by a scan; the list of modules actually *driven* against absent input was held
+against nothing, and it had four of the twenty-nine on it -- chosen by hand, and neither of
+the two worth the most among them. One property now runs over every entry point in the tree:
+non-zero exit, the missing thing named, no traceback. Eighteen of them answered a failed
+fetch with a traceback until it did, and answer with `hub.cli.unavailable` now.
 """
 import importlib
+import socket
 
+import dotenv
 import pytest
+import requests.adapters
+from nflreadpy import config as nflconfig
+
+from hub import store
+from hub.fetch import nflverse
 
 # Every module with a CLI. A new one missing from this list is caught by
 # `test_every_cli_module_is_covered_here` below rather than by nobody.
@@ -69,28 +83,162 @@ def test_help_needs_no_network_and_no_data(name, capsys):
     assert "usage:" in capsys.readouterr().out
 
 
-# The paths that actually touch local state. Each is run with its input absent, which is the
-# case that produced every bug this file exists for.
+# --- absent input, for every entry point ------------------------------------
+#
+# A fresh clone is not only a directory with no parquet in it. It has no key in the
+# environment, no `.env` to supply one, nothing cached from upstream, and -- on the runner
+# that will publish this repo, and on a laptop on a plane -- no network either. Those
+# arrive together, and any one of them alone is a state no operator is ever in.
+#
+# So the world is built once, here, and every module below is driven through the same one.
+# The alternative is a fixture that knows which constant each CLI reads, which is the
+# per-CLI knowledge this file exists to avoid: the roots below are the whole repo's, not any
+# module's. `hub.fetch.nflverse.RAW` is where every cached upstream release lands and
+# `hub.store.DATA` is where every partition does, so redirecting those two empties the store
+# and the cache for all of the store-backed commands at once.
+#
+# It also stops this file reading its answer off the machine it runs on, in both directions.
+# Every one of `board`, `ratings`, `roster` and `survivor` exits 0 on a developer's clone and
+# refuses on a fresh one, because each degrades to local state that a developer has and a
+# fresh clone does not -- a green tick meaning "this laptop has a `data/` directory". And in
+# the other direction, nine of these commands passed alone and exited 0 under the full
+# suite until the last two lines of the fixture below existed, because something earlier in
+# the run had already fetched what they wanted.
+
+
+@pytest.fixture
+def a_fresh_clone(monkeypatch, tmp_path):
+    """Nothing on the network, no credential, and nothing cached anywhere."""
+    def refuse(*_a, **_k):
+        raise OSError("the network is absent (no test here reaches one)")
+
+    # Two levers on the network, because the socket alone is not one. Blocking it stops a
+    # connection being *made*, and `requests.Session` -- which `nflreadpy`, `espn_api` and
+    # this repo's own fetch layer all hold on to -- pools connections that are already open.
+    # A test that fetched for real earlier in the session leaves one there.
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", refuse)
+    # Patched rather than merely unset: `load_dotenv` is called *inside* the functions that
+    # read a key, so a developer's own `.env` would otherwise decide whether a CLI refuses.
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
+    for key in ("CFBD_API_KEY", "ODDS_API_KEY", "ESPN_S2", "ESPN_SWID", "ESPN_LEAGUE_ID"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(nflverse, "RAW", tmp_path / "raw")
+    monkeypatch.setattr(store, "DATA", tmp_path / "processed")
+    # The third cache, and the one that is not this repo's: `nflreadpy` keeps every release
+    # it has downloaded in this *process*, so an earlier test's fetch answers a later
+    # command with no network needed at all. Turned off through its own configuration rather
+    # than by emptying it, so a developer's warm cache survives this file having run.
+    nflconfig.update_config(cache_mode="off")
+    yield
+    nflconfig.reset_config()
+
+
+# Every CLI, each with the argv that puts it in front of the input it needs. The argv
+# differs because the commands differ; what is asserted about the result does not, and that
+# is the point -- see `test_absent_input_is_reported_not_raised` below. A command that names
+# a file takes an absent one, a command that names a store takes an empty one, and the rest
+# are driven on the path they actually run, with the world above around them.
+#
+# `--status-path`, `--quota-path`, `--state-path` and `--out` are here for a second reason:
+# they keep a refusal from writing its record over the real one. A contract test that
+# overwrites `site/data/cfbd.json` to prove a point has broken the thing it was checking.
 ABSENT_INPUT = [
-    ("hub.season.lineup", ["--opp-mu", "110", "--roster", "{tmp}/nope.parquet"]),
+    ("hub.draft.adherence", ["--board", "{tmp}/nope.parquet"]),
+    ("hub.draft.backtest", []),
+    ("hub.draft.calibrate", []),
+    ("hub.draft.evaluate", ["--sweep"]),
+    ("hub.draft.live", ["--replay", "2024"]),
+    ("hub.draft.tune", ["--sweep"]),
+    ("hub.fetch.cfbd", ["--week", "1", "--status-path", "{tmp}/cfbd.json",
+                        "--quota-path", "{tmp}/quota.json"]),
+    ("hub.fetch.nflverse", ["--refresh"]),
+    ("hub.fetch.odds", ["--snapshot", "--state-path", "{tmp}/odds.json"]),
     ("hub.inspect", ["{tmp}/nope"]),
+    ("hub.models.component_error", ["--run"]),
     ("hub.models.conformal", ["--recalibrate", "--store", "{tmp}"]),
+    ("hub.models.correlate", []),
     ("hub.models.eval", ["--compare", "a,b", "--store", "{tmp}"]),
+    ("hub.models.injury", ["--fit"]),
+    ("hub.models.margin", ["--fit"]),
+    ("hub.models.ratings", ["--fit"]),
+    ("hub.models.spread", ["--fit"]),
+    ("hub.models.weekly", ["--fit"]),
+    ("hub.models.weekly_screen", ["--run"]),
+    ("hub.publish", ["--live", "--out", "{tmp}"]),
+    ("hub.season.lineup", ["--opp-mu", "110", "--roster", "{tmp}/nope.parquet"]),
+    ("hub.season.lineup_gate", []),
+    ("hub.season.roster", ["--out", "{tmp}/roster.parquet"]),
+    ("hub.season.survivor", []),
+    ("hub.season.weekly_gate", ["--run"]),
+    ("hub.store", ["--verify"]),
 ]
 
 
 @pytest.mark.parametrize("name,argv", ABSENT_INPUT)
-def test_absent_input_is_reported_not_raised(name, argv, tmp_path, capsys):
+def test_absent_input_is_reported_not_raised(name, argv, tmp_path, capsys, a_fresh_clone):
+    """One property, asserted identically of every entry point: it exits non-zero, it says
+    what it could not read, and it does not hand back a traceback.
+
+    Deliberately nothing stronger. Which sentence a command prints, which exit code it picks
+    out of the non-zero ones, and which of its inputs it happens to miss first are all
+    per-CLI facts, and a test that pinned them here would be twenty-seven things to maintain
+    that no operator is helped by. The three assertions below are the whole of what a person
+    at a terminal needs: that the command failed, that they can tell what to go and get, and
+    that they are reading a sentence rather than a stack.
+    """
     mod = importlib.import_module(name)
     filled = [a.replace("{tmp}", str(tmp_path)) for a in argv]
     try:
         code = mod.main(filled)
     except SystemExit as e:                      # argparse's own exit is a sentence too
         code = e.code
+    except Exception as e:
+        pytest.fail(f"{name} raised {type(e).__name__}: {e}\n"
+                    f"Absent input is what a fresh clone hands every command here, and the "
+                    f"answer to it is a sentence and a non-zero exit, not a traceback.")
     assert isinstance(code, int) and code != 0, f"{name} should fail, and say so"
     out = capsys.readouterr()
     assert "Traceback" not in (out.out + out.err)
     assert (out.out + out.err).strip(), f"{name} failed silently, which is worse"
+
+
+def test_every_cli_is_driven_against_absent_input():
+    """The list above, held against the repo -- which is what nothing did until issue #111.
+
+    `CLI_MODULES` has been kept complete by a scan of the source since this file was
+    written. What was driven against absent input was four of those twenty-nine, chosen by
+    hand, and the gap was invisible: every test in here passed, `--help` passed for all
+    twenty-nine, and the two entry points worth the most -- the board's, whose docstring
+    records that all three bugs found in the draft-night rehearsal lived below its `main`,
+    and the publisher's -- were not among the four. A list nothing holds against the repo is
+    the one part of a contract file that decays, which is the failure the rest of it exists
+    to prevent.
+
+    Two modules are not driven, and the two reasons are different in kind:
+
+      * `hub.draft.leverage` has no input for absence to arrive at. It reads no file, opens
+        no socket and takes no credential: it simulates this league's bracket from the
+        constants in `hub.draft.season`, and `--sims` is the only thing it is given. Driving
+        it would mean inventing a refusal -- a floor on `--sims` written for this test and
+        for no caller -- and a green tick over a guard that guards nothing is the exact
+        shape this repo spent the week of 2026-09-04 removing.
+      * `hub.draft.board` is a missing source change rather than a missing test, and it is
+        the one entry point here that most needs it. Offline with no board on disk, `main`
+        reaches `last_good`, which raises `FileNotFoundError` -- a sentence, but raised, so
+        a fresh clone gets the traceback in place of it. It also has no flag naming the
+        board it reads, so nothing can point it at an absent one the way `adherence
+        --board` can. Both are changes to `src/hub/draft/board.py`, which was being edited
+        elsewhere when #111 landed; the entry belongs in `ABSENT_INPUT` the day they land,
+        and this subtraction goes with it.
+    """
+    driven = {name for name, _ in ABSENT_INPUT}
+    assert driven == set(CLI_MODULES) - {"hub.draft.leverage", "hub.draft.board"}, (
+        f"not driven against absent input: "
+        f"{sorted(set(CLI_MODULES) - driven - {'hub.draft.leverage', 'hub.draft.board'})}; "
+        f"driven but not a CLI: {sorted(driven - set(CLI_MODULES))}")
 
 
 def test_every_cli_module_is_covered_here():

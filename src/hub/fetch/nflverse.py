@@ -37,6 +37,7 @@ from typing import Any
 import polars as pl
 
 from hub import store
+from hub.cli import unavailable
 from hub.config import SEASON_COMPLETED, digests, pin_fold, resolved_config
 from hub.contracts import (
     FF_OPPORTUNITY,
@@ -629,7 +630,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not a.refresh:
         ap.print_help()
         return 0
-    return refresh(season=a.season, cache=RAW)
+    try:
+        return refresh(season=a.season, cache=RAW)
+    except Exception as e:
+        return unavailable("hub.fetch.nflverse", f"the nflverse releases for {a.season}", e)
 
 
 if __name__ == "__main__":

@@ -36,6 +36,7 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.cli import unavailable
 from hub.draft.board import board_as_of
 from hub.league import REG_SEASON_WEEKS, starting_lineup
 from hub.models.experiment import (
@@ -179,9 +180,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     rosters: dict[int, list] = {}
 
-    boards, realised = walk_forward_inputs(
-        seasons, board_as_of,
-        on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
+    try:
+        boards, realised = walk_forward_inputs(
+            seasons, board_as_of,
+            on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
+    except Exception as e:
+        return unavailable("hub.season.lineup_gate", "the boards the rosters are drafted from", e)
     for yr in seasons:
         board = boards[yr]
         # mu and sd from the same object the simulator uses, so the optimiser is fed exactly

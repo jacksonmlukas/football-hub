@@ -46,6 +46,7 @@ from typing import NamedTuple
 import numpy as np
 import polars as pl
 
+from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS
 from hub.league import STARTERS, starting_lineup
 from hub.models.experiment import Actions, gate, paired_report, per_season, summarise
@@ -311,8 +312,11 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         return 0
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     from hub.season.weekly_gate_data import assemble_universe
-    inputs = assemble_universe(seasons, drafts=a.drafts, seed=a.seed, shrink=a.shrink,
-                               expected=a.expected)
+    try:
+        inputs = assemble_universe(seasons, drafts=a.drafts, seed=a.seed, shrink=a.shrink,
+                                   expected=a.expected)
+    except Exception as e:
+        return unavailable("hub.season.weekly_gate", "the gate's inputs", e)
     cover = coverage(inputs)
     paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool)
     s = summarise(paired, cluster=CLUSTER, seed=a.seed)

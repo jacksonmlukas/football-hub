@@ -40,6 +40,7 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
+from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 
 # The weekly spread the model assumes, from `hub.draft.season.weekly_moments`:
@@ -290,7 +291,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     a = ap.parse_args(argv)
     seasons = [int(s) for s in a.seasons.split(",")]
 
-    df = draft_outcomes(seasons)
+    try:
+        df = draft_outcomes(seasons)
+    except Exception as e:
+        return unavailable("hub.draft.calibrate", "your league's past drafts", e)
     got = fit_talent_cv(df, debias=True)
     from hub.draft.season import TALENT_CV, TALENT_CV_BY_POS
 

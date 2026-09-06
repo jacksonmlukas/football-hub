@@ -21,6 +21,7 @@ from pathlib import Path
 import duckdb
 import polars as pl
 
+from hub.cli import unavailable
 from hub.config import SEASON_COMPLETED
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -421,7 +422,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not a.verify:
         ap.print_help()
         return 0
-    return verify(season=a.season)
+    try:
+        return verify(season=a.season)
+    except Exception as e:
+        return unavailable("hub.store", f"the {a.season} nflverse schedules", e)
 
 
 if __name__ == "__main__":
