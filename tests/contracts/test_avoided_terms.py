@@ -455,8 +455,6 @@ OUTSTANDING: dict[tuple[str, str], tuple[int, str]] = {
     ("src/hub/draft/optimize.py", "p(win) as a standalone term"): (1, "the same"),
     ("src/hub/draft/regression.py", "p(win) as a standalone term"): (1, "the same"),
     ("src/hub/draft/season.py", "p(win) as a standalone term"): (1, "the same"),
-    ("src/hub/draft/availability.py", "pick position"): (1, "a Slot, spelled as the entry "
-                                                            "forbids"),
     ("src/hub/models/experiment.py", "pick position"): (1, "the same spelling"),
     ("src/hub/models/experiment.py", "training data"): (1, "the Panel, named as the entry "
                                                            "forbids"),

@@ -188,3 +188,116 @@ def test_a_rank_scraped_after_the_draft_is_still_excluded():
     allr = _ranks(("Late", 5.0, "2024-10-01"))
     rows, said = picks_against_preseason(allr, 2024, ["Late"])
     assert rows == [] and "0/1 picks matched" in said
+
+
+# --- pick noise fitted on a pick number, constrained (issue #40) -----------
+
+def _picks(a_true, b_true, n=60, drafts=4, pool=192, seed=0):
+    """Synthetic drafts whose pick dispersion really is `a_true + b_true * pick`.
+
+    `pick` is where the player went; `ecr` is where the room expected him. Building it this
+    way round means the fit has to recover the parameters from the deviation, which is what
+    it does in production.
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    for yr in range(2021, 2021 + drafts):
+        want = np.linspace(1, pool, n)
+        sigma = a_true + b_true * want
+        went = want + rng.normal(0.0, sigma)
+        for w, g in zip(want, went, strict=True):
+            rows.append({"year": yr, "pick": float(g), "ecr": float(w)})
+    return pl.DataFrame(rows)
+
+
+def test_the_fit_recovers_a_known_slope_and_intercept():
+    """Criterion one: a positive true intercept, so the constraint never binds and the fit is
+    doing ordinary work."""
+    from hub.draft.availability import noise_from_picks
+    df = _picks(a_true=4.0, b_true=0.20, n=120, seed=1)
+    (a, b), said = noise_from_picks(df)
+    assert a == pytest.approx(4.0, abs=1.5), said
+    assert b == pytest.approx(0.20, abs=0.05), said
+
+
+def test_the_constrained_fit_does_not_exceed_the_truncated_one():
+    """Criterion two, and the defect itself.
+
+    The old refit ran through `max(sigma_hat - a, 0)`, zeroing every residual below the pinned
+    intercept instead of letting it pull the slope down -- so the slope was fitted to the
+    upper envelope of the data. Where the unconstrained intercept goes negative, that is
+    exactly where it bites.
+    """
+    from hub.draft.availability import _constrained, noise_from_picks
+    df = _picks(a_true=0.2, b_true=0.30, n=120, seed=3)   # tiny intercept: constraint binds
+    x = df["ecr"].to_numpy().astype(float)
+    y = np.abs(df["pick"].to_numpy().astype(float) - x) * np.sqrt(np.pi / 2.0)
+    unconstrained_a = float(np.polyfit(x, y, 1)[1])
+    assert unconstrained_a < 1.0, "this fixture is meant to make the constraint bind"
+
+    _a, b = _constrained(x, y)
+    truncated = float(np.dot(x, np.maximum(y - 1.0, 0.0)) / np.dot(x, x))
+    # Strictly, not `<=`. The ticket says "does not exceed", which equality satisfies -- and
+    # equality is exactly what the unfixed implementation produces, so a `<=` here passes
+    # against the defect it is meant to catch. Truncation drops negative residuals, so it is
+    # strictly larger whenever any observation falls below the floor, which this fixture
+    # guarantees.
+    assert (y < 1.0).any(), "no sub-floor residual, so the two fits cannot differ"
+    assert b < truncated, (
+        f"the constrained slope {b:.4f} is not below the truncated {truncated:.4f}, so "
+        f"dropping the sub-floor residuals is not what was inflating it")
+    (_fa, fb), _said = noise_from_picks(df)
+    assert fb < truncated
+
+
+def test_the_slope_is_reported_with_a_draft_clustered_interval():
+    """Criterion three. Picks inside one draft are anything but independent -- one manager
+    reaching in round two moves every later pick in that room -- so an interval over picks
+    would be several times too tight."""
+    from hub.draft.availability import noise_from_picks
+    df = _picks(a_true=3.0, b_true=0.2, n=100, drafts=4, seed=5)
+    _fit, said = noise_from_picks(df, draws=200)
+    assert "clustered on the draft" in said and "slope 95% CI" in said
+    assert "over 4 drafts" in said
+
+
+def test_the_fit_is_restricted_to_the_draftable_pool():
+    """Criterion, and the other half of the defect: `_sigma` applies this to `mu_pick`, a
+    pick position, while the fit read `ecr` over a 300-plus consensus board of which about
+    192 are ever taken. Ranks past the last pick are not pick positions."""
+    from hub.draft.availability import noise_from_picks
+    inside = _picks(a_true=3.0, b_true=0.2, n=80, pool=180, seed=7)
+    # Players ranked far past anything that was ever drafted, with wild deviations.
+    tail = pl.DataFrame({"year": [2021] * 40,
+                         "pick": [float(i) for i in range(1, 41)],
+                         "ecr": [float(400 + i) for i in range(40)]})
+    _fit, said = noise_from_picks(pl.concat([inside, tail]))
+    assert f"inside a {inside['pick'].to_numpy().max():.0f}-pick pool" in said or "pool" in said
+    # The tail must not reach the fit: fitted with it, the slope is visibly different.
+    with_tail, _ = noise_from_picks(pl.concat([inside, tail]))
+    without, _ = noise_from_picks(inside)
+    assert with_tail == pytest.approx(without, abs=1e-9), (
+        "observations outside the draftable pool changed the fit, so they were not excluded")
+
+
+def test_below_the_floor_the_fit_falls_back_loudly():
+    """Criterion four. A quiet fallback is a fitted-looking number that was never fitted."""
+    from hub.draft.availability import noise_from_picks
+    thin = _picks(a_true=3.0, b_true=0.2, n=5, drafts=2)
+    got, said = noise_from_picks(thin, default=(2.0, 0.18))
+    assert got == (2.0, 0.18)
+    assert "keeping the (2.0, 0.18) prior" in said
+
+
+def test_enough_picks_but_too_few_inside_the_pool_falls_back_too():
+    """The other floor, and it is a different sentence. A room can have plenty of matched
+    picks and still have almost none whose consensus rank was ever a pick number -- which is
+    a fit with nothing to say about the axis it will be applied on, not a thin one."""
+    from hub.draft.availability import noise_from_picks
+    inside = _picks(a_true=3.0, b_true=0.2, n=5, drafts=2, pool=20)
+    tail = pl.DataFrame({"year": [2021] * 80,
+                         "pick": [float(i % 20 + 1) for i in range(80)],
+                         "ecr": [float(400 + i) for i in range(80)]})
+    got, said = noise_from_picks(pl.concat([inside, tail]), default=(2.0, 0.18))
+    assert got == (2.0, 0.18)
+    assert "inside the draftable pool" in said and "keeping the" in said

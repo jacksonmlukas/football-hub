@@ -87,7 +87,7 @@ def availability(df: pl.DataFrame, picks: list[int], n_sims: int = 5000,
                  w: float = DEFAULT_ESPN_WEIGHT, seed: int = 0) -> pl.DataFrame:
     """P(player is still on the board) at each of your upcoming pick numbers.
 
-    Simulates draft orders by drawing a noisy pick position per player and ranking them,
+    Simulates draft orders by drawing a noisy pick number per player and ranking them,
     which preserves the constraint that exactly one player goes at each slot.
     """
     if df.height == 0:
@@ -202,26 +202,81 @@ def fit_pick_noise(league_id: int, years: list[int],
     whole board.
     """
     df = historical_picks(league_id, years)
-    if df.height < 50:
-        print(f"  only {df.height} matched historical picks; keeping the {default} prior.")
-        return default
-    mu = df["ecr"].to_numpy()
-    # Absolute deviation of a normal is sigma*sqrt(2/pi); rescale to a real sigma.
-    sigma_hat = np.abs(df["pick"].to_numpy() - mu) * np.sqrt(np.pi / 2.0)
-    b, a = (float(x) for x in np.polyfit(mu, sigma_hat, 1))
+    fitted, said = noise_from_picks(df, default)
+    print(said)
+    return fitted
 
-    # An unconstrained line through this data wants a negative intercept -- early picks
-    # are near-deterministic, so the fit pays for its slope by going below zero at the
-    # top of the board. Sigma cannot be negative, so pin the intercept at a floor and
-    # refit the slope through it rather than throwing an informative slope away.
+
+def _constrained(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+    """`sigma = a + b*x`, least squares, with `a` pinned at `MIN_SIGMA` if it would go below.
+
+    An unconstrained line through this data wants a negative intercept: early picks are
+    near-deterministic, so the fit pays for its slope by going below zero at the top of the
+    board. Sigma cannot be negative.
+
+    **Pinned and refitted over every observation, not over the ones above the floor.** The
+    previous version refitted through `max(sigma_hat - a, 0)`, which zeroes every residual
+    below the pinned intercept instead of letting it pull the slope down -- so the slope was
+    fitted to the upper envelope of the data and came out too steep (#40). The residual for a
+    point below the floor is negative and belongs in the sum.
+    """
+    b, a = (float(v) for v in np.polyfit(x, y, 1))
     if a < MIN_SIGMA:
         a = MIN_SIGMA
-        b = float(np.dot(mu, np.maximum(sigma_hat - a, 0.0)) / np.dot(mu, mu))
-    if not (0.0 < a < 50.0 and 0.0 <= b < 2.0):
-        print(f"  fitted noise (a={a:.2f}, b={b:.3f}) is out of range; keeping {default}.")
-        return default
-    print(f"  fitted pick noise from {df.height} picks: sigma = {a:.2f} + {b:.3f} * mu")
+        b = float(np.dot(x, y - a) / np.dot(x, x))
     return a, b
+
+
+def noise_from_picks(df: pl.DataFrame, default: tuple[float, float] = (2.0, 0.18),
+                     draws: int = 2000, seed: int = 0) -> tuple[tuple[float, float], str]:
+    """`sigma(pick)` fitted from where this room's picks actually landed, and what to say.
+
+    **Fitted on a pick number over the draftable pool, not a rank over the whole board.**
+    `_sigma` applies this to `mu_pick` -- an expected *pick number* -- while the fit read
+    `ecr`, a rank over a 300-plus-player consensus board of which about 192 are ever taken.
+    Fitting on one axis and predicting on another stretched the x-range by half again and
+    flattened the slope to cover ranks that are not picks at all (#40).
+
+    The interval is bootstrapped over **drafts**, not picks. Four drafts supply every
+    observation, and picks inside one draft are anything but independent -- one manager
+    reaching in round two moves every later pick in that room. Resampling picks would report
+    an interval several times too tight, which is the same error `docs/gate-power.md` is about
+    one layer up.
+
+    Returned rather than printed, and taking a frame rather than a league id, because reaching
+    this through `fit_pick_noise` needs an ESPN session.
+    """
+    if df.height < 50:
+        return default, (f"  only {df.height} matched historical picks; keeping the "
+                         f"{default} prior.")
+    pool = float(df["pick"].to_numpy().max())
+    inside = df.filter(pl.col("ecr") <= pool)
+    if inside.height < 50:
+        return default, (f"  only {inside.height} picks inside the draftable pool of "
+                         f"{pool:.0f}; keeping the {default} prior.")
+
+    x = inside["ecr"].to_numpy().astype(float)
+    # Absolute deviation of a normal is sigma*sqrt(2/pi); rescale to a real sigma.
+    y = np.abs(inside["pick"].to_numpy().astype(float) - x) * np.sqrt(np.pi / 2.0)
+    a, b = _constrained(x, y)
+    if not (0.0 < a < 50.0 and 0.0 <= b < 2.0):
+        return default, (f"  fitted noise (a={a:.2f}, b={b:.3f}) is out of range; keeping "
+                         f"{default}.")
+
+    drafts = inside["year"].unique().to_list()
+    rng = np.random.default_rng(seed)
+    slopes = []
+    for _ in range(draws):
+        pick = rng.choice(drafts, size=len(drafts), replace=True)
+        rows = pl.concat([inside.filter(pl.col("year") == yr) for yr in pick])
+        xs = rows["ecr"].to_numpy().astype(float)
+        ys = np.abs(rows["pick"].to_numpy().astype(float) - xs) * np.sqrt(np.pi / 2.0)
+        slopes.append(_constrained(xs, ys)[1])
+    lo, hi = (float(v) for v in np.percentile(slopes, [2.5, 97.5]))
+    return (a, b), (
+        f"  fitted pick noise from {inside.height} picks inside a {pool:.0f}-pick pool over "
+        f"{len(drafts)} drafts: sigma = {a:.2f} + {b:.3f} * pick "
+        f"(slope 95% CI [{lo:.3f}, {hi:.3f}], clustered on the draft)")
 
 
 def fit_espn_weight(league_id: int, years: list[int]) -> float:
