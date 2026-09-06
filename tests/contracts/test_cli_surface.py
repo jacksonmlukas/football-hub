@@ -45,6 +45,7 @@ import requests.adapters
 from nflreadpy import config as nflconfig
 
 from hub import store
+from hub.draft import board, state
 from hub.fetch import nflverse
 
 # Every module with a CLI. A new one missing from this list is caught by
@@ -127,6 +128,19 @@ def a_fresh_clone(monkeypatch, tmp_path):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(nflverse, "RAW", tmp_path / "raw")
     monkeypatch.setattr(store, "DATA", tmp_path / "processed")
+    # The board and the draft state, patched on the modules that *bind* them rather than on
+    # `hub.paths`. `hub.draft.board` does `from hub.paths import BOARD_PARQUET` at import, so
+    # rebinding the source module never reaches it; `hub.draft.state` resolves `STATE` at call
+    # time on purpose, and says so where it does it.
+    #
+    # Without these two, the poller read the developer's own board and draft state. Its
+    # absent-input case passed by taking a pre-existing branch and never reaching the handler
+    # it was added for -- and it *inverted* once the draft state held picks, because replay
+    # then succeeds and exits zero. Green on a clone that had not drafted, red on one that
+    # had, for a reason with nothing to do with absent input.
+    monkeypatch.setattr(board, "BOARD_PARQUET", tmp_path / "processed" / "draft_board.parquet")
+    monkeypatch.setattr(board, "BOARD_JSON", tmp_path / "site" / "draft_board.json")
+    monkeypatch.setattr(state, "STATE", tmp_path / "processed" / "draft_state.json")
     # The third cache, and the one that is not this repo's: `nflreadpy` keeps every release
     # it has downloaded in this *process*, so an earlier test's fetch answers a later
     # command with no network needed at all. Turned off through its own configuration rather
@@ -385,3 +399,69 @@ def test_nothing_reads_the_preds_view_around_the_one_reader():
     assert not bad, (
         f"these query `preds` directly instead of `store.predictions()`: {bad}. "
         f"That returns one row per fitted version, not one per game.")
+
+
+# --- the general form of the defect above -------------------------------------
+#
+# Redirecting the two roots the fixture started with was not enough, and the way that failed
+# is the point: the poller read a path nobody had thought about, its absent-input case passed
+# by reaching a different branch, and the failure only became visible when the draft state
+# changed underneath it. Any path constant added later can do the same thing silently.
+#
+# So every path under the repo root is accounted for here -- redirected by the fixture, or
+# named with the reason it does not need to be. A new one fails this test until someone
+# decides which it is.
+
+REAL_ROOTS_NOT_REDIRECTED: dict[str, str] = {
+    "ROOT": "the repo itself. Reading it is reading the source, which is the same on any "
+            "clone and is what the CLIs are made of.",
+    "SITE": "committed and in git, so it is identical on every clone -- reading it cannot "
+            "make a verdict depend on the machine. `BOARD_JSON` under it *is* redirected, "
+            "because an absent board is exactly what these cases are about.",
+    "STATE_DIR": "committed, and read only by the odds fetcher's credit floor, which never "
+                 "reaches it here -- the key is deleted, so it refuses upstream.",
+    "DATA": "the parent of PROCESSED. Nothing binds it directly; the CLIs bind the leaves.",
+    "ROSTER_PARQUET": "bound at import by `hub.season.roster` and `hub.publish`, and NOT "
+                      "redirected. Its case is safe for a different reason: the CLI is driven "
+                      "with `--out` at a tmp path, and `--out` moves the last-good *read* as "
+                      "well as the write, so it reads an absent file. That is a real "
+                      "dependency -- if `--out` ever stops moving the read, this case starts "
+                      "reading the developer's own roster and this note is wrong.",
+}
+
+
+def test_every_path_under_the_repo_root_is_redirected_or_explained(a_fresh_clone, tmp_path):
+    """A CLI must not be able to read the machine it runs on without someone deciding so.
+
+    The fixture cannot redirect what it does not know about, and the modules that matter bind
+    their paths at import -- so patching `hub.paths` reaches nothing. This holds the list
+    itself: a constant added to `hub.paths` is either redirected on the module that binds it,
+    or listed above with why it is safe to read for real.
+    """
+    from pathlib import Path
+
+    from hub import paths as paths_mod
+    from hub import store as store_mod
+    from hub.draft import board as board_mod
+    from hub.draft import state as state_mod
+
+    redirected = {
+        "BOARD_PARQUET": board_mod.BOARD_PARQUET,
+        "BOARD_JSON": board_mod.BOARD_JSON,
+        "PROCESSED": store_mod.DATA,
+    }
+    for name, value in redirected.items():
+        assert tmp_path in Path(value).parents or Path(value) == tmp_path or \
+               str(tmp_path) in str(value), (
+            f"{name} still points at {value}, which is on the machine running the test. A CLI "
+            f"reading it decides its own verdict from ambient state.")
+    assert str(tmp_path) in str(state_mod.STATE), (
+        "the draft state is not redirected, so a clone that has drafted and one that has not "
+        "give different verdicts -- which is exactly how the poller's case inverted")
+
+    declared = set(redirected) | set(REAL_ROOTS_NOT_REDIRECTED)
+    actual = {n for n, v in vars(paths_mod).items() if n.isupper() and isinstance(v, Path)}
+    assert actual <= declared, (
+        f"new path constants in `hub.paths`: {sorted(actual - declared)}. Redirect each on the "
+        f"module that binds it, or add it to REAL_ROOTS_NOT_REDIRECTED with why a CLI may read "
+        f"the real one. The fixture cannot protect a path nobody listed.")
