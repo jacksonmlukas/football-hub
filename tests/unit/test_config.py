@@ -8,7 +8,6 @@ from hub import config
 from hub.config import (
     FITTED_EXTRA,
     FITTED_MODULES,
-    NOT_FITTED,
     NOT_IN_DIGEST,
     UNPINNED,
     DraftConfig,
@@ -183,7 +182,11 @@ def test_every_module_holding_a_fitted_constant_is_registered():
 
     src = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
     registered = {m.rsplit(".", 1)[-1] for m in FITTED_MODULES}
-    registered |= {m.rsplit(".", 1)[-1] for m in NOT_FITTED}
+    # Generated from the declarations, not maintained beside them. Each not-fitted module
+    # states its own reason in `NOT_FITTED_BECAUSE`, so the set of excluded modules is a
+    # consequence of what the modules say rather than a second list that can disagree with
+    # them -- the "compute it or stop claiming it" correction issue #109 asked for.
+    registered |= {m.rsplit(".", 1)[-1] for m in not_fitted_modules()}
     # A module can also be covered constant-by-constant rather than wholesale: registered
     # into the digest through FITTED_EXTRA, or deliberately excluded through NOT_IN_DIGEST.
     # `hub.models.components` is both -- three of its constants are live and four describe
@@ -660,50 +663,64 @@ def test_digests_reports_all_three_and_names_them():
 
 # --- the reason lives with the numbers (issue #109) ------------------------
 
-def test_every_not_fitted_module_states_its_own_reason():
-    """ADR-0006 says a fitted constant lives beside its provenance. Its mirror image did not:
-    the claim that some other module's floats are settings rather than fitted quantities lived
-    as twenty prose entries here, five hundred lines from any of the numbers they describe.
+def not_fitted_modules() -> dict[str, str]:
+    """Every module under `hub` that declares itself not-fitted, and why.
 
-    A module-level object rather than a scanned comment. The comment convention earns its
-    regex for guards, because a guard wraps a block and there is nothing else it could be.
-    This is a module-level fact about a module, so the check imports it -- no regex that can
-    silently match fewer modules than it did yesterday, which is the failure this repo keeps
-    finding.
+    The registry this replaces lived in `config.py` and was the reason that module churned:
+    a measured float anywhere meant editing it. The knowledge is about the constant, so it is
+    kept with the constant, and any list of exclusions is derived from here.
 
-    This is the expand half of expand-then-contract: the registry still stands and still names
-    every module, so a declaration that was never written is caught here rather than by a
-    reshaped check that might have the same gap as the omission.
+    Import errors are swallowed rather than reported. A module that cannot import is a defect
+    the rest of the suite fails on directly, and letting it break the exclusion list would
+    turn one broken module into a wall of unrelated "unregistered float" failures.
     """
-    import importlib
-    undeclared = []
-    for module in NOT_FITTED:
-        mod = importlib.import_module(module)
-        said = getattr(mod, "NOT_FITTED_BECAUSE", None)
-        if not isinstance(said, str) or not said.strip():
-            undeclared.append(module)
-    assert not undeclared, (
-        f"registered as not-fitted in config.py but saying nothing where the numbers are: "
-        f"{undeclared}. Add `NOT_FITTED_BECAUSE = \"...\"` to each.")
-
-
-def test_a_module_that_declares_a_reason_is_not_registered_twice_over():
-    """The contract half. A declaration is the record, so a module carrying one and *not* in
-    the registry is fine once the registry goes -- but while both stand they must agree, or
-    the migration has produced two sources of truth that can drift."""
     import importlib
     import pkgutil
 
     import hub
-    declaring = set()
+    found: dict[str, str] = {}
     for info in pkgutil.walk_packages(hub.__path__, prefix="hub."):
         try:
             mod = importlib.import_module(info.name)
-        except Exception:                      # a module that cannot import is another test's
+        except Exception:
             continue
-        if isinstance(getattr(mod, "NOT_FITTED_BECAUSE", None), str):
-            declaring.add(info.name)
-    assert declaring == set(NOT_FITTED), (
-        f"the registry and the declarations disagree. Only in the registry: "
-        f"{sorted(set(NOT_FITTED) - declaring)}; only declared: "
-        f"{sorted(declaring - set(NOT_FITTED))}")
+        said = getattr(mod, "NOT_FITTED_BECAUSE", None)
+        if isinstance(said, str) and said.strip():
+            found[info.name] = said
+    return found
+
+
+def test_every_not_fitted_module_gives_a_reason_worth_reading():
+    """The declaration is the record now, so it has to carry what the registry carried.
+
+    A bare marker would pass the exclusion check while saying nothing -- and the whole point
+    of the registry it replaces was that an exclusion is "a decision on the record, not a
+    module quietly falling off FITTED_MODULES". A module can exclude itself here, so the
+    reason is the only thing standing between that and a silent opt-out.
+    """
+    said = not_fitted_modules()
+    assert said, "no module declares itself not-fitted, so the exclusion list is empty"
+    thin = {m: r for m, r in said.items() if len(r.split()) < 8}
+    assert not thin, (
+        f"these exclude themselves without saying enough to be checked later: {thin}")
+
+
+def test_a_module_holding_an_unregistered_float_is_still_caught(tmp_path):
+    """The property the registry existed for, asserted against the reshaped check.
+
+    Proved by construction rather than by trusting the rewrite: a module with a module-level
+    float and no declaration must be visible to the scan and absent from the exclusion set.
+    This is what expand-then-contract was protecting -- if the reshaped check had the same
+    gap as a missed declaration, nothing else here would notice.
+    """
+    import ast
+
+    holder = tmp_path / "newthing.py"
+    holder.write_text("SOME_COEFFICIENT = 0.42\n")
+    tree = ast.parse(holder.read_text())
+    floats = [t.id for node in tree.body if isinstance(node, ast.Assign)
+              for t in node.targets
+              if isinstance(t, ast.Name) and t.id.isupper() and _holds_a_float(node.value)]
+    assert floats == ["SOME_COEFFICIENT"], "the scan no longer sees a module-level float"
+    assert holder.stem not in {m.rsplit(".", 1)[-1] for m in not_fitted_modules()}, (
+        "an undeclared module counts as registered, so the check cannot fail for it")
