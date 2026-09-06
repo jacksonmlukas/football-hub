@@ -14,6 +14,7 @@ Why not Postgres: single user, no concurrent writers, no network. Nothing to buy
 """
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
@@ -347,7 +348,23 @@ def latest_week(season: int, league: str | None = None,
     return int(got["w"][0]) if got.height and got["w"][0] is not None else None
 
 
-def verify(season: int = SEASON_COMPLETED, base: Path | None = None) -> int:
+def schedules_for(season: int) -> pl.DataFrame:
+    """The reach for nflverse, and the only part of `--verify` that is one.
+
+    Separate so the CLI's guard can span it and nothing else. Everything `verify` does after
+    this is the storage layer -- the write, the catalog views, the as-of join -- which is
+    precisely what `--verify` exists to surface, and which it reports by *returning* rather
+    than raising. So the exceptions that reach the CLI past this line are storage-layer
+    defects, and calling them "the nflverse schedules unavailable" sends the operator to
+    re-fetch data that is fine (issue #119).
+    """
+    import nflreadpy as nfl
+    return (nfl.load_schedules()
+            .filter((pl.col("season") == season) & pl.col("spread_line").is_not_null()))
+
+
+def verify(season: int = SEASON_COMPLETED, base: Path | None = None,
+           sched: pl.DataFrame | None = None) -> int:
     """Exercise the whole path against real games and real closing lines.
 
     The unit tests prove the as-of semantics on a case built to break a naive join. This
@@ -363,11 +380,8 @@ def verify(season: int = SEASON_COMPLETED, base: Path | None = None) -> int:
     """
     import tempfile
 
-    import nflreadpy as nfl
-
     root = base or Path(tempfile.mkdtemp(prefix="hub-store-verify-"))
-    sched = (nfl.load_schedules()
-             .filter((pl.col("season") == season) & pl.col("spread_line").is_not_null()))
+    sched = schedules_for(season) if sched is None else sched
     if sched.is_empty():
         print(f"  no {season} games with a published spread; nothing to verify")
         return 1
@@ -423,11 +437,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         ap.print_help()
         return 0
     try:
-        return verify(season=a.season)
+        sched = schedules_for(a.season)
     except Exception as e:
+        # The guard spans the reach for the source and nothing else.
         return unavailable("hub.store", f"the {a.season} nflverse schedules", e)
+    try:
+        return verify(season=a.season, sched=sched)
+    except Exception as e:
+        # And what is left is ours. A catalog error, a contract violation out of the write,
+        # or an as-of join failure is the storage layer failing -- the thing this flag exists
+        # to find. Reported in its own words rather than as a vendor being unreachable.
+        print(f"hub.store: the storage layer failed verification: "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(main())

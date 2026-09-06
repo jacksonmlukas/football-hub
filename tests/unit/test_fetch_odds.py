@@ -321,3 +321,73 @@ def test_the_strict_zip_never_protected_against_this(monkeypatch):
     monkeypatch.setitem(__import__("sys").modules, "nflreadpy", _Nfl)
     assert odds._team_abbrs({"Y"})["A"] == "Y"
     assert len(odds._team_abbrs({"Y"})) == 1, "two rows, one name, one entry"
+
+
+# --- whose failure was it (issue #119) ------------------------------------
+
+def test_the_market_not_answering_is_reported_as_the_markets(monkeypatch, paths, capsys):
+    """The half that was always right, kept as the control. Without it the test below passes
+    on a CLI that calls everything a repo-side defect, which is the same error inverted."""
+    def _down(params, key):
+        raise ConnectionError("odds.api unreachable")
+    monkeypatch.setattr(odds, "_http_get", _down)
+    monkeypatch.setattr(odds, "_api_key", lambda: "test-key")
+
+    assert odds.main(["--snapshot", "--state-path", str(paths["state"])]) == 1
+    err = capsys.readouterr().err
+    assert "the betting market's prices unavailable" in err
+    assert "ConnectionError" in err
+
+
+def test_a_failure_after_the_credit_is_spent_is_not_the_markets(
+        transport, teams, monkeypatch, paths, capsys):
+    """Issue #119. The guard spanned the whole snapshot, so the schedule join against a
+    different provider, the contract check and the write all printed as the betting market
+    being unavailable -- naming the one source that had just answered.
+
+    The credit is the reason this matters rather than being a wording complaint. It is spent
+    and recorded by the time any of these can fail, so the operator is told to retry a fetch
+    that worked, and the retry spends another against a metered monthly quota.
+    """
+    transport()
+    monkeypatch.setattr(odds, "_schedule", lambda season: (_ for _ in ()).throw(
+        RuntimeError("nflverse schedules did not load")))
+
+    assert odds.main(["--snapshot", "--state-path", str(paths["state"])]) == 1
+    err = capsys.readouterr().err
+    assert "unavailable" not in err, "the market answered; it is not the thing that failed"
+    assert "a credit was spent" in err and "nflverse schedules did not load" in err
+    assert "not the betting market's" in err
+
+
+def test_a_contract_failure_leaves_no_half_written_snapshot(
+        transport, teams, monkeypatch, paths):
+    """The write is all-or-nothing. Interleaved, a contract failure on the second week left
+    the first on disk with a fresh timestamp while the CLI reported nothing was fetched --
+    and the as-of join reads a half-written snapshot as a whole one."""
+    # Two weeks, because one partition cannot be written partially.
+    monkeypatch.setattr(odds, "_schedule", lambda season: pl.DataFrame({
+        "game_id": ["2025_01_DAL_PHI", "2025_02_KC_LAC"],
+        "season": [2025, 2025], "week": [1, 2],
+        "gameday": ["2025-09-04", "2025-09-11"],
+        "home_team": ["PHI", "LAC"], "away_team": ["DAL", "KC"]}))
+    transport([_event("Philadelphia Eagles", "Dallas Cowboys", "2025-09-04", -8.5),
+               _event("Los Angeles Chargers", "Kansas City Chiefs", "2025-09-11", -3.0)])
+    seen: list = []
+    real = odds.ODDS_SNAPSHOT
+
+    class _FailsOnTheSecond:
+        """The contract is a frozen dataclass, so the module name is what moves."""
+        def validate(self, part):
+            seen.append(part)
+            if len(seen) > 1:
+                raise ValueError("contract violated on the second partition")
+            return real.validate(part)
+    monkeypatch.setattr(odds, "ODDS_SNAPSHOT", _FailsOnTheSecond())
+    wrote: list = []
+    monkeypatch.setattr(odds.store, "write",
+                        lambda *a, **k: wrote.append(a) or (paths["store"] / "x"))
+
+    with pytest.raises(odds.SnapshotIncomplete):
+        odds.snapshot(2025, state_path=paths["state"], base=paths["store"])
+    assert wrote == [], "a partition was written before every partition had been checked"

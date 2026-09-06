@@ -599,3 +599,35 @@ def test_reading_a_narrowed_week_still_returns_every_declared_column(tmp_path):
     store.write(_one_prediction(week=2), "preds", "nfl", 2026, 2, base=tmp_path)
     got = store.predictions(season=2026, week=2, base=tmp_path)
     assert got.height == 1 and got["season"].to_list() == [2026]
+
+
+# --- whose failure was it (issue #119) ------------------------------------
+
+def test_nflverse_not_answering_is_reported_as_nflverse(monkeypatch, capsys):
+    """The control. Narrowing the guard must not stop the one case it was right about."""
+    monkeypatch.setattr(store, "schedules_for", lambda season: (_ for _ in ()).throw(
+        ConnectionError("nflverse unreachable")))
+    assert store.main(["--verify", "--season", "2025"]) == 1
+    err = capsys.readouterr().err
+    assert "the 2025 nflverse schedules unavailable" in err
+
+
+def test_a_storage_failure_is_not_reported_as_nflverse(monkeypatch, capsys):
+    """Issue #119. The guard spanned the whole of `verify`, and `verify` signals a failed
+    verification by *returning* rather than raising -- so every exception that reached the
+    CLI past the fetch was a catalog error, a contract violation out of the write, or an
+    as-of join failure. Precisely the storage-layer defects `--verify` exists to surface,
+    reported as the schedules being unavailable, sending the operator to re-fetch data that
+    is fine.
+    """
+    monkeypatch.setattr(store, "schedules_for", lambda season: pl.DataFrame(
+        {"season": [2025], "spread_line": [3.0], "game_id": ["2025_01_DAL_PHI"],
+         "gameday": ["2025-09-04"], "gametime": ["20:00"]}))
+    monkeypatch.setattr(store, "write", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("duckdb catalog is missing a view")))
+
+    assert store.main(["--verify", "--season", "2025"]) == 1
+    err = capsys.readouterr().err
+    assert "unavailable" not in err, "nflverse answered; the storage layer is what failed"
+    assert "the storage layer failed verification" in err
+    assert "duckdb catalog is missing a view" in err

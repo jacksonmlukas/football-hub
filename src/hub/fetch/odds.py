@@ -69,6 +69,17 @@ class QuotaFloor(Exception):
     """Stored balance is below the floor. Refused before spending a credit."""
 
 
+class SnapshotIncomplete(Exception):
+    """The betting market answered, the credit is spent, and what failed after is ours.
+
+    A snapshot is a fetch followed by four things that are not one: recording the credit, a
+    schedule join against a *different* provider, the contract check, and the write. Reporting
+    any of those as "the betting market's prices unavailable" names the one source that
+    worked, and sends an operator to retry -- which spends another credit from a metered
+    monthly quota against a problem that is not there (issue #119).
+    """
+
+
 def _api_key() -> str | None:
     from dotenv import load_dotenv
     load_dotenv()
@@ -219,9 +230,30 @@ def snapshot(season: int = SEASON_AHEAD, *, markets: str = MARKET, regions: str 
     if not key:
         raise QuotaFloor("no ODDS_API_KEY set; cannot fetch")
 
+    # The reach for the source, and the only part of this function that is one. Its errors
+    # are the betting market's and are reported as such; everything below has answered.
     payload, headers = _http_get(
         {"markets": markets, "regions": regions, "oddsFormat": "american"}, key)
 
+    try:
+        return _record(payload, headers, season, when, state_path, base, floor)
+    except Exception as exc:
+        raise SnapshotIncomplete(
+            f"the betting market answered and a credit was spent, then "
+            f"{type(exc).__name__}: {exc}. "
+            f"Retrying spends another credit against a problem that is not the "
+            f"betting market's."
+        ) from exc
+
+
+def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetime,
+            state_path: Path | None, base: Path | None, floor: int) -> pl.DataFrame:
+    """Everything after the betting market has answered: the credit, join, check and write.
+
+    Split out so the guard above spans the reach for the source and nothing else. It is one
+    function rather than four because the caller's question is binary -- did the betting
+    market answer -- and "which of ours broke" is the exception it carries.
+    """
     remaining_hdr = headers.get("x-requests-remaining")
     remaining = int(float(remaining_hdr)) if remaining_hdr is not None else None
     _write_state(state_path, remaining, when)
@@ -266,12 +298,19 @@ def snapshot(season: int = SEASON_AHEAD, *, markets: str = MARKET, regions: str 
 
     df = pl.DataFrame(rows, schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
                                     "captured_at": pl.Datetime, "week": pl.Int64})
-    for wk in sorted(set(df["week"].to_list())):
-        part = df.filter(pl.col("week") == wk).drop("week")
+    # Every partition is checked before any is written. Interleaved, a contract failure on
+    # week 3 left weeks 1 and 2 on disk carrying a fresh timestamp while the CLI reported
+    # that nothing had been fetched -- a half-written snapshot the as-of join would read as
+    # a whole one. Checking first costs one extra pass over a frame of at most a few hundred
+    # rows and makes the write all-or-nothing (issue #119).
+    parts = [(wk, df.filter(pl.col("week") == wk).drop("week"))
+             for wk in sorted(set(df["week"].to_list()))]
+    for _wk, part in parts:
         # Asserted on what is stored, which is where the boundary is. Validating the whole
         # pull instead would fail `min_rows` on a pull that matched nothing -- and a pull
         # matching nothing writes nothing, so there is no partition to be wrong about.
         ODDS_SNAPSHOT.validate(part)
+    for wk, part in parts:
         # Snapshots append. A fixed name would overwrite the morning's line with the
         # afternoon's and leave the as-of join nothing to resolve.
         store.write(part, "lines", "nfl", season, wk, base=base,
@@ -312,13 +351,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     try:
         snapshot(a.season, state_path=spath)
-    except (QuotaFloor, MultiplierRefused) as e:
+    except (QuotaFloor, MultiplierRefused, SnapshotIncomplete) as e:
+        # The first two are this repo refusing to spend; the third is this repo failing
+        # after it already has. None is the betting market being unreachable, and saying so
+        # names the one source that worked -- then sends the operator to retry, which spends
+        # another credit from a metered monthly quota (issue #119).
         print(f"hub.fetch.odds: {e}", file=sys.stderr)
         return 1
     except Exception as e:
-        # The two above are this repo refusing to spend; anything else is the source being
-        # unreachable, and a snapshot that cannot be taken must not take the slate down with
-        # it -- `make slate` puts a leading `-` on this line for the same reason.
+        # What is left is the reach for the betting market itself, and a snapshot that
+        # taken must not take the slate down with it -- `make slate` puts a leading `-` on
+        # this line for the same reason.
         return unavailable("hub.fetch.odds", "the betting market's prices", e)
     return 0
 
