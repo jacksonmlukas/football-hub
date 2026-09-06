@@ -24,6 +24,7 @@ import pytest
 
 from hub.league import REG_SEASON_WEEKS
 from hub.names import player_key
+from hub.season import weekly_gate as G
 from hub.season import weekly_gate_data as wgd
 from hub.season.weekly_gate import UNRANKED, VOID_FLOOR, coverage
 
@@ -141,8 +142,21 @@ def test_the_arm_under_test_falls_back_to_the_incumbent_where_it_has_no_projecti
 
     weekly, cons, se = universe.weekly[2024], universe.consensus[2024], universe.se[2024]
     assert fallback.any() and (~fallback).any(), "both halves have to exist to compare them"
-    assert np.array_equal(weekly[fallback], cons[fallback]), \
-        "with no projection the arm under test is the incumbent's own number, not a zero"
+
+    # The fallback is still a fallback -- a player the model cannot price is scored, not
+    # benched, or the arm under test would be handed a smaller universe than the incumbent
+    # and the gate could not fail. What changed with #44 is its *units*: it used to be the
+    # incumbent's own number, negated ECR, sitting in a column of fantasy points, so every
+    # projected player outranked every unprojected one whatever either was worth.
+    ranked_fallback = fallback & (cons > G.UNRANKED)
+    assert ranked_fallback.any(), "no ranked-but-unprojected cell, so nothing to check"
+    assert (weekly[ranked_fallback] > G.UNRANKED).all(), (
+        "a player the model cannot price was benched rather than scored, so the two arms no "
+        "longer see the same universe")
+    # One scale: the fallback lands inside the range of the projections it sits beside.
+    priced = weekly[~fallback]
+    assert weekly[ranked_fallback].min() >= priced.min() - 1e-9
+    assert weekly[ranked_fallback].max() <= priced.max() + 1e-9
     assert not np.isnan(weekly).any(), "and never a NaN, which no lineup search can order"
     assert se[fallback].max() == 0.0, \
         "no projection means no standard error, so a lower bound moves nothing"
@@ -171,3 +185,47 @@ def test_the_panel_behind_the_gate_keeps_the_players_consensus_never_ranked(monk
     assert screen_side.filter((pl.col("key") == UNLISTED_BUT_SCORED[0][0])
                               & (pl.col("season") == 2024)
                               & (pl.col("week") == UNLISTED_BUT_SCORED[0][1])).is_empty()
+
+
+# --- the treatment arm scores on one scale (issue #44) ---------------------
+
+def test_the_fallback_is_neither_above_nor_below_every_projected_player():
+    """Both directions of the same defect.
+
+    The old column put negated ECR beside fantasy points, so every projected player outranked
+    every unprojected one -- a projected two-point scrub above a rank-1 star. The obvious
+    naive fix, using ECR unnegated, inverts it. Neither is a scale; both are an ordering by
+    which column a player arrived in.
+    """
+    cons = np.array([[-1.0], [-5.0], [-50.0], [-200.0]])       # negated ECR, best first
+    mu = np.array([[np.nan], [20.0], [8.0], [np.nan]])          # two projected, two not
+    got = wgd._one_scale(cons, mu)[:, 0]
+
+    priced = got[[1, 2]]
+    imputed = got[[0, 3]]
+    assert not (imputed > priced.max()).all(), "the fallback sorts above every projection"
+    assert not (imputed < priced.min()).all(), "the fallback sorts below every projection"
+    # And it is monotone in rank: the rank-1 player is scored at least as well as rank-200.
+    assert got[0] >= got[3]
+
+
+def test_the_fallback_is_scored_at_the_points_its_neighbours_carry():
+    """The calibration, stated as a number. A player the model cannot price, ranked exactly
+    between two it can, is scored between their projections -- reading off nothing but the
+    week's own paired observations."""
+    cons = np.array([[-10.0], [-20.0], [-30.0]])
+    mu = np.array([[18.0], [np.nan], [6.0]])
+    got = wgd._one_scale(cons, mu)[:, 0]
+    assert got[0] == 18.0 and got[2] == 6.0, "a projected player keeps his own projection"
+    assert 6.0 < got[1] < 18.0
+    assert got[1] == pytest.approx(12.0), "halfway in rank is halfway in points here"
+
+
+def test_a_week_with_nothing_to_calibrate_against_leaves_the_player_unscoreable():
+    """Guessing from no paired observation would be inventing a number and calling it a
+    projection. Unscoreable is the honest answer, and it is what consensus already says about
+    a player its own page does not list."""
+    cons = np.array([[-10.0], [-20.0]])
+    mu = np.array([[np.nan], [np.nan]])
+    got = wgd._one_scale(cons, mu)[:, 0]
+    assert (got == G.UNRANKED).all()

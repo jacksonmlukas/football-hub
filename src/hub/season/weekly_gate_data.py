@@ -46,6 +46,44 @@ def preseason_ranks(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover
 WEEKS = REG_SEASON_WEEKS
 
 
+def _one_scale(cons: np.ndarray, mu: np.ndarray) -> np.ndarray:
+    """The arm under test, scored in points throughout -- including where it must fall back.
+
+    **The defect this replaces.** The fallback was `np.where(np.isnan(mu), cons, mu)`, which
+    put two incommensurable things in one column: `cons` is negated ECR, roughly -1 to -300,
+    and `mu` is fantasy points, roughly 0 to 30. So every player the model could project
+    outranked every player it could not, whatever either was worth -- a projected two-point
+    scrub sorted above a rank-1 star. The fallback was meant to stop the arm being handicapped
+    and instead handed it a preference unrelated to either estimate (#44).
+
+    **Why a fallback at all, rather than a sentinel.** Benching everyone the model cannot price
+    would hand consensus information the arm under test lacks, and a gate whose arms see
+    different universes is the defect that made the first `lineup_gate` unable to fail. The
+    fallback's intent was right; only its units were wrong.
+
+    **What replaces it, and what it assumes.** Per week, among players carrying both a rank and
+    a projection, consensus rank and points are paired observations of the same players. An
+    unprojected player is scored at the points those paired players carry *at his rank* --
+    linear interpolation through them, which is monotone in rank and reads off nothing but the
+    week's own numbers. It assumes only that consensus ordering carries information about
+    points, which is the premise of using consensus as the incumbent at all: if that were
+    false the gate would have no control arm.
+
+    A week with no paired player has nothing to calibrate against, so its unprojected players
+    keep `UNRANKED` -- unscoreable rather than guessed at.
+    """
+    out = np.where(np.isnan(mu), UNRANKED, mu)
+    for w in range(cons.shape[1]):
+        col_c, col_m = cons[:, w], mu[:, w]
+        paired = ~np.isnan(col_m) & (col_c > UNRANKED)
+        need = np.isnan(col_m) & (col_c > UNRANKED)
+        if not paired.any() or not need.any():
+            continue
+        order = np.argsort(col_c[paired])
+        out[need, w] = np.interp(col_c[need], col_c[paired][order], col_m[paired][order])
+    return out
+
+
 def _matrix(keys: Sequence[str], lookup: dict[tuple[str, int], float],
             default: float) -> np.ndarray:
     """(roster, weeks) from a {(player key, week): value} map, with a stated default."""
@@ -140,7 +178,7 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         cons = _matrix(keys, ecr_of, UNRANKED)
         consensus[yr] = cons
         mu = _matrix(keys, mu_of, float("nan"))
-        weekly[yr] = np.where(np.isnan(mu), cons, mu)
+        weekly[yr] = _one_scale(cons, mu)
         # Addable only where BOTH arms can score him. See the pre-registration in
         # docs/weekly-projection-plan.md: consensus ranks 35.8% of the pool, so an unmasked
         # pool would hand the arm under test six hundred players the incumbent cannot see.
