@@ -220,10 +220,12 @@ def _raw_ff_rankings(pages: Sequence[str]) -> pl.DataFrame:
     who passed two pages would get one of them, and a board built from the wrong scale is
     the failure `hub.draft.board._select_consensus` already exists to prevent.
     """
+    # GUARD rankings-partition-key: a key that is not one known page never reaches nflreadpy
     if len(pages) != 1 or pages[0] not in RANKINGS_PAGES:
         raise WideFrameRefused(
             f"ff_rankings is keyed by one page type, not by {list(pages)!r}. "
             f"Known: {', '.join(RANKINGS_PAGES)}; use load_rankings(page, as_of=...).")
+    # /GUARD
     import nflreadpy as nfl
     # nflreadpy types the argument as a `Literal`, and the check above is what narrows it --
     # a membership test in a module-level tuple, which no type checker follows.
@@ -457,9 +459,11 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
     pin carries no `pinned_at`, because those rows reproduce from the as-of alone; every
     other source is labelled and stamped. See `APPEND_ONLY` and `Pin.pinned_at`.
     """
+    # GUARD unknown-source-refused: a name the registry does not know reaches no fetcher
     if source not in SOURCES:
         raise WideFrameRefused(
             f"unknown source {source!r}. Known: {', '.join(sorted(SOURCES))}")
+    # /GUARD
 
     # GUARD wide-frame-refused [unit/test_fetch_nflverse.py]: a wide source is never whole
     if source in WIDE and not cols:
@@ -487,11 +491,13 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
         reproducible = True
 
     if cols:
+        # GUARD column-vanished-upstream: a column that stopped arriving is named, not selected
         missing = [c for c in cols if c not in df.columns]
         if missing:
             raise WideFrameRefused(
                 f"{source} has no column {missing!r}; "
                 f"got {len(df.columns)} columns from upstream")
+        # /GUARD
         df = df.select(list(cols))
 
     if contract is not None:
@@ -537,16 +543,20 @@ def load_rankings(page: str = "draft", as_of: str | date | None = None,
     is the mistake `_select_consensus` refuses. This loader validates and caches; it does not
     choose a page for you.
     """
+    # GUARD rankings-season-list-refused: a year cannot key an archive that is not by year
     if seasons is not None:
         raise WideFrameRefused(
             f"ff_rankings is not season-partitioned, so seasons={seasons!r} cannot key a "
             f"load of it: the archive is one table of every scrape of every page. Bound it "
             f"with as_of=, and filter `scrape_date` downstream for a lower bound.")
+    # /GUARD
+    # GUARD unknown-rankings-page: a page FF_RANKINGS does not describe never reaches a load
     if page not in RANKINGS_PAGES:
         raise WideFrameRefused(
             f"unknown rankings page {page!r}. Known: {', '.join(RANKINGS_PAGES)}. "
             f"nflreadpy also offers 'week', whose columns are a different table -- see "
             f"RANKINGS_PAGES.")
+    # /GUARD
     return load("ff_rankings", seasons=[page], cols=cols, refresh=refresh, cache=cache,
                 as_of=as_of)
 

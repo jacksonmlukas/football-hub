@@ -974,29 +974,99 @@ def test_the_new_sources_are_not_wide():
 
 
 # --- the rankings loader: a page type and an as-of ---------------------------
+#
+# Three refusals stand between a caller and the live archive, and all three are `# GUARD`
+# blocks whose excision this file has to notice. That is what the two fixtures below are for:
+# a mutant of `hub.fetch.nflverse` with any one of them deleted goes on to *fetch*, and the
+# 1.83M-row DynastyProcess archive is not something a guard harness may pull down to prove a
+# point. Shutting both doors also lets these tests say the one thing the exception type
+# cannot -- which refusal fired -- because all three raise `WideFrameRefused`.
 
-def test_the_rankings_loader_refuses_a_season_list():
+
+@pytest.fixture
+def no_live_rankings(monkeypatch):
+    """nflreadpy's own door, shut.
+
+    `_raw_ff_rankings`'s refusal is the last thing between a bad partition key and
+    `nfl.load_ff_rankings`, so the mutant that proves it is by construction one that calls
+    the real function. Blocked here rather than declared unprovable: an `# UNPROVED` block
+    would have been an argument about a fetch, and this is the fetch not happening.
+    """
+    def _blocked(*args, **kwargs):
+        raise AssertionError(
+            f"nflreadpy.load_ff_rankings{args!r} was called -- the refusal under test is "
+            f"supposed to fire before the live archive is reached for at all")
+
+    import nflreadpy
+    monkeypatch.setattr(nflreadpy, "load_ff_rankings", _blocked)
+
+
+@pytest.fixture
+def no_rankings_fetch(monkeypatch, no_live_rankings):
+    """Every reach for the archive, recorded and served locally. Returns the record.
+
+    The record is the assertion `load_rankings`'s two refusals need. Both must fire before
+    `load` is called, and a test that only names the exception cannot say so: deleting the
+    unknown-page check by hand on 2026-09-06 left all 77 tests here green, because
+    `_raw_ff_rankings` refuses the same call with the same `WideFrameRefused` and a message
+    that also lists every page in `RANKINGS_PAGES`. An empty record tells the two apart by
+    where each happens rather than by what it says.
+    """
+    reached: list[list[str]] = []
+
+    def _record(pages):
+        reached.append(list(pages))
+        return _rankings_frame()
+
+    monkeypatch.setattr(nv, "_raw_ff_rankings", _record)
+    return reached
+
+
+def test_the_rankings_loader_refuses_a_season_list(no_rankings_fetch, tmp_path):
     """The source is one table of every scrape, so a season list identifies nothing. It is
     refused rather than ignored: a caller who believes they have bounded a load to 2024 and
-    has not is exactly the reader who would then publish a number from the whole archive."""
+    has not is exactly the reader who would then publish a number from the whole archive.
+
+    Nothing downstream reads `seasons`, so a loader that stopped refusing would not raise
+    something else -- it would quietly serve the whole archive. That is why the refusal is
+    pinned to the fetch not happening rather than to an exception arriving.
+    """
     with pytest.raises(nv.WideFrameRefused, match="not season-partitioned"):
-        nv.load_rankings("all", seasons=[2024])
+        nv.load_rankings("all", seasons=[2024], cache=tmp_path)
+    assert no_rankings_fetch == [], (
+        "the season list was refused only after the archive had been fetched")
 
 
-def test_a_season_list_is_refused_at_the_other_door_too(tmp_path):
+def test_a_season_list_is_refused_at_the_other_door_too(no_live_rankings, tmp_path):
     """`load_rankings` is a front door, not a fence. Reaching `load` directly with a year
-    where the page belongs has to fail there as well, and before any network call."""
+    where the page belongs has to fail there as well, and before any network call.
+
+    `no_live_rankings` rather than `no_rankings_fetch`: this is the refusal *inside*
+    `_raw_ff_rankings`, so replacing that function would replace the thing under test.
+    """
     with pytest.raises(nv.WideFrameRefused, match="one page type"):
         nv.load("ff_rankings", seasons=[2024], cache=tmp_path)
 
 
-def test_an_unknown_rankings_page_is_refused_and_names_the_known_ones():
+def test_an_unknown_rankings_page_is_refused_and_names_the_known_ones(no_rankings_fetch,
+                                                                     tmp_path):
     """`week` is a real nflreadpy page and deliberately not served: its columns are a
     different table (`page_pos`, `player_name`, `rank`), so `FF_RANKINGS` would either have
-    to be loosened to cover both or fail on every weekly load."""
-    with pytest.raises(nv.WideFrameRefused) as e:
-        nv.load_rankings("week")
+    to be loosened to cover both or fail on every weekly load.
+
+    Matched on `load_rankings`'s own wording and paired with an empty fetch record, because
+    the exception type alone cannot distinguish this refusal from `_raw_ff_rankings`'s. The
+    earlier version asserted only that the message contained "draft" and "all", which the
+    downstream refusal's message does too -- so it held over a mutant with this check
+    deleted, which is the "asserted the outcome the guard was meant to produce" shape
+    `tests/contracts/test_guards_are_load_bearing.py` exists to catch (#62).
+    """
+    with pytest.raises(nv.WideFrameRefused, match="unknown rankings page") as e:
+        nv.load_rankings("week", cache=tmp_path)
     assert "draft" in str(e.value) and "all" in str(e.value)
+    assert no_rankings_fetch == [], (
+        "the page was refused only after the archive had been reached for, so this passes "
+        "just as well with `load_rankings`'s own check deleted")
 
 
 def test_the_page_is_part_of_the_cache_key(fake_rankings, tmp_path, monkeypatch):

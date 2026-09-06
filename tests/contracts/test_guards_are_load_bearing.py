@@ -273,36 +273,38 @@ def test_a_child_that_errored_is_told_apart_from_one_that_failed(tmp_path):
 # -- and because it is the module whose declared dtypes were "read by nothing" for months by
 # its own docstring's account. Widening it is one line per module and one honest sentence.
 #
-# **The second entry, and what it deliberately leaves out.** `fetch/nflverse.py` is watched
-# for `ContractViolation` and nothing else. That exception is raised in this repo for one
-# reason -- a frame reached a boundary that nothing can vouch for, so it is not served -- and
-# `grep -rn "except ContractViolation" src tests scripts` finds no catcher, so there is no
-# caller for whom one is ordinary control flow. That is the property that makes the
-# judgement safe to make once here, the same one `contracts.py` has.
+# **The second entry, and what it still leaves out.** `fetch/nflverse.py` is watched for
+# `ContractViolation` and `WideFrameRefused`. Each is raised in this repo for one reason --
+# a frame reached a boundary that nothing can vouch for, or a frame was asked for in a shape
+# this module will not return -- and `grep -rn "except ContractViolation" src tests scripts`,
+# repeated for `WideFrameRefused`, finds no catcher either time, so for neither is there a
+# caller to whom one is ordinary control flow. That is the property that makes the judgement
+# safe to make once here, the same one `contracts.py` has.
 #
-# It is narrower than the module's whole refusal vocabulary, and the omission is measured
-# rather than assumed. The module raises three types and every one of the eight is a refusal:
-# `WideFrameRefused` six times (one being the declared `wide-frame-refused` guard),
-# `UnattributedPoints` once, and this `ContractViolation`. `WideFrameRefused` is the next
-# shape to add and `UnattributedPoints` the one after, but two of the five unmarked
-# `WideFrameRefused` cannot be marked today without work this entry does not do:
+# The module raises three types and every one of the eight is a refusal: `WideFrameRefused`
+# six times, `UnattributedPoints` once, and this `ContractViolation`. `WideFrameRefused` was
+# left out when this entry was written, because two of its six could not be marked that day
+# and marking the other four would have put a green tick beside the two that could not.
+# Both are dealt with now (#62), and how is the useful half:
 #
-#   * `load_rankings`'s unknown-page refusal is not load-bearing under today's tests. Deleting
-#     it by hand on 2026-09-06 left all 77 of `unit/test_fetch_nflverse.py` green, because
-#     `_raw_ff_rankings` then refuses with the same exception type and a message that still
-#     contains the two page names the test asserts on. That is the "asserted the outcome, not
-#     that this guard produced it" shape from the week of 2026-09-04, found here rather than
-#     by luck -- and marking it before its test can tell the two refusals apart would put a
-#     green tick on exactly that.
+#   * `load_rankings`'s unknown-page refusal was not load-bearing under the tests as written.
+#     Deleting it by hand on 2026-09-06 left all 77 of `unit/test_fetch_nflverse.py` green,
+#     because `_raw_ff_rankings` then refuses with the same exception type and a message that
+#     still contains the two page names the test asserted on. That is the "asserted the
+#     outcome, not that this guard produced it" shape from the week of 2026-09-04, found here
+#     rather than by luck. The test now matches `load_rankings`'s own wording and asserts that
+#     the archive was never reached for, so the two refusals are told apart by *where* each
+#     fires rather than by what it says.
 #   * `_raw_ff_rankings`'s own refusal is what stops a bad partition key reaching
 #     `nfl.load_ff_rankings`, so a mutant without it makes the child run fetch the live 1.83M
-#     -row archive. A guard whose excision is a network call is an `# UNPROVED` argument or a
-#     fixture, not a marker.
+#     -row archive. That is a fixture rather than an argument: `no_live_rankings` in
+#     `unit/test_fetch_nflverse.py` shuts nflreadpy's door, and the excision then proves the
+#     guard against a call that never leaves the machine. `UNPROVED_HERE` stays empty, which
+#     is the honest outcome -- an exemption nobody had to spend.
 #
-# Naming those two here is the point of the entry rather than an apology for it: an under-
-# covering scope says which refusals it is not reading and why, where a budget says only that
-# a number moved. Adding the shape is a one-line change to `raises` once those two are dealt
-# with (#62).
+# `UnattributedPoints` is still unwatched and is the next shape to add. Saying so is the
+# point of the entry rather than an apology for it: an under-covering scope says which
+# refusals it is not reading and why, where a budget says only that a number moved.
 
 PY_UNPROVED = marker("UNPROVED", "#")
 
@@ -353,17 +355,17 @@ WATCHED = (
     Watched(
         path=SRC / "fetch" / "nflverse.py",
         collects=(),
-        raises=("ContractViolation",),
+        raises=("ContractViolation", "WideFrameRefused"),
         why=("This is the loader every nflverse number in the repo comes through, so a row "
              "that gets past it is a row in a published board. A `ContractViolation` raised "
-             "here says the frame cannot be vouched for and is not being served; nothing in "
-             "`src`, `tests` or `scripts` catches one, so there is no caller for whom it is "
-             "ordinary control flow, which is what makes the judgement safe to make once in "
-             "this entry. `collects` is empty because this module has no accumulator -- it "
-             "refuses by raising, at the statement that found the problem. Deliberately "
-             "narrower than the module's full vocabulary: see the note above on the two "
-             "`WideFrameRefused` refusals that cannot be marked yet, and why saying so is "
-             "the entry working rather than the entry apologising."),
+             "here says the frame cannot be vouched for and is not being served; a "
+             "`WideFrameRefused` says it was asked for in a shape this module will not "
+             "return. Nothing in `src`, `tests` or `scripts` catches either, so there is no "
+             "caller for whom one is ordinary control flow, which is what makes the "
+             "judgement safe to make once in this entry. `collects` is empty because this "
+             "module has no accumulator -- it refuses by raising, at the statement that "
+             "found the problem. Still narrower than the module's full vocabulary: "
+             "`UnattributedPoints` is unwatched, and the note above says why."),
     ),
 )
 
