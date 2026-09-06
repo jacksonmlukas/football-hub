@@ -49,6 +49,12 @@ from hub.season.survivor import MIN_PROB
 # finer than any decision downstream reads it at. Callers wanting a tighter tail pass more.
 DEFAULT_TRIALS = 2000
 
+# `weekly` runs one simulation per candidate rather than one per call, so its real cost is
+# `top` times this -- 2400 trials at the default six, which is the same work as a single
+# DEFAULT_TRIALS run. The resolution it publishes falls as 1/sqrt(trials), so a caller who
+# needs a finer verdict than a week returns can raise this and watch the figure move.
+WEEKLY_TRIALS = 400
+
 
 class PoolOutcome(NamedTuple):
     """What one simulation says about the contest, as distributions rather than points."""
@@ -250,7 +256,7 @@ def entry_outcome(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
     share = 0.0
     # Kept per trial, not just summed: two candidate picks are compared by their means, and a
     # difference smaller than the spread of what was averaged is not a difference.
-    each = [0.0] * 0
+    each: list[float] = []
     for _ in range(trials):
         led = [set(ours)] + [set() for _ in range(entries - 1)]
         alive = [True] * entries
@@ -350,7 +356,7 @@ def auto_pick(grid: pl.DataFrame, week: int, ledger: Sequence[str] = ()) -> str 
 def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
            ledger: Sequence[str] = (), entries: int, pot: float, outlay: float = 0.0,
            pool: PoolConfig | None = None, top: int = 6,
-           trials: int = 400, rng: np.random.Generator | None = None) -> Weekly:
+           trials: int = WEEKLY_TRIALS, rng: np.random.Generator | None = None) -> Weekly:
     """This week's pick, what it is worth, and what it cost against the free one.
 
     A candidate is worth `P(it wins this week)` times what the rest of the season is worth
@@ -417,9 +423,12 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     best = cands[0]
     fb = next((c for c in cands if c.is_fallback), None)
     # Two independent means differ by at best the root-sum-square of their standard errors.
-    # The paired trials make the real figure smaller than this, so it is an upper bound and
-    # errs toward calling a week undecided -- which is the safe direction when the alternative
-    # is free.
+    # This overstates that figure twice over, and both are deliberate. The trials are paired,
+    # so the two candidates are correlated and the true spread of the difference is smaller.
+    # And the standard error here is on `share * pot`, while the figures being compared are
+    # `win_prob * share * pot`: the win probability is left out, which inflates the threshold
+    # by roughly 1/win_prob. Both err toward calling a week undecided, which is the safe
+    # direction when the alternative is free.
     res = (float(np.hypot(sd.get(best.team, 0.0), sd.get(fb.team if fb else "", 0.0)))
            / np.sqrt(trials) * pot)
     return Weekly(
@@ -441,10 +450,16 @@ def weekly_report(w: Weekly, *, places: int = 2) -> list[str]:
     # A departure can be free: gaining survival over the free pick is the case worth having,
     # and reading it out as a cost of zero would say the two plans were alike, which they were
     # not. `docs/method.md` rule 4 is about exactly this class of unread sign.
-    verb = "costs" if w.given_up > 0 else "gains"
-    cost = ([] if w.matched else
-            [f"  {verb} {abs(w.given_up) * 100:.2f} points of survival "
-             f"against the free pick {w.fallback}"])
+    # Survival is counted over a whole number of trials, so two candidates landing on exactly
+    # the same figure is a real outcome rather than a float coincidence -- and reading that out
+    # as gaining zero points would claim a direction the trials did not find.
+    if w.given_up == 0.0:
+        said = f"  survives exactly as well as the free pick {w.fallback}"
+    else:
+        verb = "costs" if w.given_up > 0 else "gains"
+        said = (f"  {verb} {abs(w.given_up) * 100:.2f} points of survival "
+                f"against the free pick {w.fallback}")
+    cost = [] if w.matched else [said]
     undecided = ([] if w.decisive else
                  [f"  but that is inside the ${w.resolution:.{places}f} these trials can "
                   f"resolve, so take {w.fallback} -- it is free and no worse"])
