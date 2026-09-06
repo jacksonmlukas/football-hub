@@ -12,6 +12,7 @@ All offline.
 """
 import polars as pl
 import pytest
+from polars.exceptions import ColumnNotFoundError
 
 from hub.draft import board
 
@@ -335,22 +336,97 @@ def test_build_has_no_hand_rolled_degrade_blocks_left():
     assert not [n for n in ast.walk(fn) if isinstance(n, ast.Try)]
 
 
-def test_the_market_block_degrades_instead_of_serving_stale(offline, capsys):
-    """The ADP stage was the one stage outside `_stage`: `report.adp = True` set by hand, and
-    ~40 lines after it under no `try`. So a failure in the corrections did not degrade -- it
-    propagated to `build_or_last_good`, which served yesterday's board. A far bigger hammer
-    than ECR-only mode, for a stage that is advisory by design."""
-    offline.setattr(board, "espn_adp", lambda *a, **k: pl.DataFrame(
-        {"player": [NAMES[0]], "adp": [1.5], "proj_ppg": [18.0],
-         "injury_status": ["ACTIVE"]}))
+# --- one policy, two kinds of failure --------------------------------------
+#
+# Folding the ADP stage into `_stage` stopped it bypassing the degradation policy, and put a
+# stage that is *not* advisory under a handler written for stages that are. An advisory
+# stage adds a signal the board is better for having: source down, board thinner, board
+# still correct. This one computes the blended projection, both corrections and Corrected
+# ADP -- what THE PICK ranks on -- so a board without it is not a thinner board, it is a
+# board ranking on something else, while the run reports itself as having fallen back to
+# consensus. True for an outage. False for a `ColumnNotFoundError` out of a refactor.
+#
+# Raised rather than asserted: the three below drive each kind of failure through and read
+# the two outcomes. A test that inspected the handler's shape instead would pass on a
+# handler widened back by one keyword, which is the failure the whole guard habit exists
+# for. Issue #106.
 
-    def _boom(*a, **k):
-        raise RuntimeError("market maths broke")
-    offline.setattr(board, "_attach_market", _boom)
+
+def _live_adp():
+    """ESPN's frame as `_parse_market` types it, so the stage has real work to do."""
+    return pl.DataFrame({"player": [NAMES[0], NAMES[1]], "adp": [1.5, 2.5],
+                         "proj_ppg": [18.0, 16.0],
+                         "injury_status": ["ACTIVE", "QUESTIONABLE"]})
+
+
+def _source_is_down(*a, **k):
+    raise ConnectionError("nflverse is down")
+
+
+def _a_refactor_renamed_a_column(*a, **k):
+    raise ColumnNotFoundError("proj_ppg")
+
+
+def test_an_advisory_stage_whose_source_is_down_still_degrades(offline, capsys):
+    """The half that must not move. A board is better for having weeks 15-17 SoS on it and
+    correct without it, so an unreachable source is a thinner board and a printed reason."""
+    offline.setattr(board, "playoff_sos", _source_is_down)
+    offline.setattr(board, "espn_adp", lambda *a, **k: _live_adp())
     b, report = board.build()
-    assert report.adp is False, "a failed stage must not leave its flag set"
-    assert "adp" not in b.columns, "the board reverts, so it really is ECR-only"
-    assert "running ECR-only mode" in capsys.readouterr().out
+    assert b.height > 0 and report.sos is False
+    assert "wk15_17_sos" not in b.columns, "thinner, and really thinner"
+    assert "adp_corrected" in b.columns, "and still ranking on what THE PICK ranks on"
+    assert "  weeks 15-17 SoS unavailable (ConnectionError); board built without it." \
+        in capsys.readouterr().out
+
+
+def test_a_defect_in_the_stage_the_pick_ranks_on_is_not_absorbed(offline, capsys):
+    """The other half. The same policy, a failure it was never proved against: nothing in
+    `_attach_market` reaches a source -- the outage is `espn_adp`'s, one layer up -- so a
+    missing column here is a defect, and a defect that degrades is a board ranking on raw
+    consensus with a line underneath saying that was the intention."""
+    offline.setattr(board, "espn_adp", lambda *a, **k: _live_adp())
+    offline.setattr(board, "_attach_market", _a_refactor_renamed_a_column)
+    with pytest.raises(ColumnNotFoundError):
+        board.build()
+    out = capsys.readouterr().out
+    assert "market corrections FAILED (ColumnNotFoundError" in out, \
+        "and the operator is told which stage, which `BUILD FAILED` alone cannot say"
+    assert "unavailable" not in out.split("market corrections")[-1]
+
+
+def test_the_two_failures_are_two_different_nights(offline, tmp_path, capsys):
+    """Both kinds, one fixture, read the way the operator reads them.
+
+    The outage builds a board and prints what it was built without; the defect builds no
+    board at all and reaches `build_or_last_good`, which serves the last good one and says
+    so. Under one blanket handler these two printed the same line and returned boards that
+    differed only in a column nobody was told about.
+    """
+    from hub.draft import report as report_mod
+    last_good = tmp_path / "draft_board.parquet"
+    pl.DataFrame({"player": ["Yesterday"], "pos": ["RB"], "vor": [1.0], "adp": [3.0]}
+                 ).write_parquet(last_good)
+    offline.setattr(board, "espn_adp", lambda *a, **k: _live_adp())
+    offline.setattr(board, "playoff_sos", _source_is_down)
+
+    built, outage_report, fresh = board.build_or_last_good(path=last_good)
+    printed = capsys.readouterr().out
+    reads = "\n".join(report_mod.built_or_served(outage_report, fresh))
+    assert fresh is None and outage_report.served is False
+    assert built.height > 1 and "adp_corrected" in built.columns
+    assert "BUILD FAILED" not in printed
+    assert "built without: sos" in reads and "SERVED BOARD" not in reads
+
+    offline.setattr(board, "_attach_market", _a_refactor_renamed_a_column)
+    served, defect_report, age = board.build_or_last_good(path=last_good)
+    printed = capsys.readouterr().out
+    reads = "\n".join(report_mod.built_or_served(defect_report, age))
+    assert age is not None and defect_report.served is True
+    assert served["player"].to_list() == ["Yesterday"], \
+        "the last good board, not a board quietly missing Corrected ADP"
+    assert "BUILD FAILED" in printed and "ColumnNotFoundError" in printed
+    assert "SERVED BOARD" in reads and "built without" not in reads
 
 
 def test_every_optional_stage_goes_through_the_helper():

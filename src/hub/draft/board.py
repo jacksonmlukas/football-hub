@@ -599,12 +599,21 @@ def _check_roster(board: pl.DataFrame) -> None:
 def _stage(board: pl.DataFrame, report: BuildReport, flag: str, label: str,
            run: Callable[[pl.DataFrame], pl.DataFrame | None], *, live: bool = True,
            skip_note: str | None = None,
-           on_fail: str = "board built without it.") -> pl.DataFrame:
+           on_fail: str = "board built without it.",
+           absorbs: tuple[type[Exception], ...] = (Exception,)) -> pl.DataFrame:
     """Run one optional build stage under the repo's degradation policy.
 
     A board that will not build because one advisory column is unavailable is the
-    operator-dependence CLAUDE.md warns about, so every stage here fails soft: say what
+    operator-dependence CLAUDE.md warns about, so every advisory stage fails soft: say what
     broke, leave the flag false, carry on.
+
+    **`absorbs` is that policy's scope, and it is not the same for every stage.** An advisory
+    stage reaches a source of its own -- nflverse, ESPN's settings -- and adds a signal the
+    board is better for having, so if that reach fails the board is thinner and still
+    correct: any exception is the outage this policy was written for, which is the default
+    here and is unchanged. A stage that reaches nothing has no outage left to absorb, and a
+    blanket handler over it converts a defect into a board that is not thinner but different
+    -- `build`'s ADP stage says why it declares an empty set.
 
     This was written out five times -- 48 lines, 31% of `build()` -- and the cost was not the
     duplication. `BuildReport` exists because the *consumers* used to infer what had happened
@@ -624,6 +633,14 @@ def _stage(board: pl.DataFrame, report: BuildReport, flag: str, label: str,
         setattr(report, flag, True)
         return board if out is None else out
     except Exception as e:
+        # GUARD unabsorbed-stage-failure-is-raised [unit/test_board_build.py]: deleting it
+        # puts every failure back under one blanket handler, so a defect in a stage THE PICK
+        # ranks on degrades quietly into a board that ranks on something else.
+        if not isinstance(e, absorbs):
+            print(f"  {label} FAILED ({type(e).__name__}); this stage is not advisory, so "
+                  f"the board is not built without it.")
+            raise
+        # /GUARD
         print(f"  {label} unavailable ({type(e).__name__}); {on_fail}")
         return board
 
@@ -636,14 +653,17 @@ def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
     under no `try` at all -- forty-odd lines including `_attach_edge`, `proj_blend`, both
     corrections and `corrected_adp` -- while `report.adp = True` was set by hand above it.
     So the one stage whose flag two renderers read was the one stage the degradation
-    policy did not cover, and a failure anywhere in here did not degrade: it propagated to
-    `build_or_last_good` and served YESTERDAY'S board, which is a far bigger hammer than
-    degrading for a stage that is advisory by design.
+    policy did not cover. Folding it in was right: a flag set by hand beside forty lines of
+    untried arithmetic is how the consumers' guards drifted apart in the first place.
 
-    On failure `_stage` returns the board it was handed, so the `adp` column is not on it
-    either -- the outcome is exactly ECR-only mode, which is why the failure note uses the
-    same words `espn_adp` uses when the fetch itself comes back empty. One outcome, one
-    vocabulary.
+    **What the fold also did was put this stage under a handler written for stages that are
+    advisory, and this one is not.** Everything below computes what THE PICK ranks on -- the
+    blended projection, both corrections and Corrected ADP (ADR-0011). Absorbing a failure
+    here does not leave a thinner board, it leaves a board ranking on raw consensus while
+    the run reports itself as having fallen back to consensus on purpose, which is true for
+    an outage and false for a defect. Hence `absorbs=()` at the call site: the source failure
+    belongs to `espn_adp` and is caught before this is reached, so there is nothing left in
+    here for a guard to absorb.
     """
     board = _attach_edge(board, adp, league_size)
     # The forecast the optimiser plays on: the market's forward projection, nudged by
@@ -754,12 +774,21 @@ def build(league_size: int = 12, season: int = SEASON_COMPLETED, *,
     board = _stage(board, report, "durability", "durability",
                    lambda b: durability.attach(b, durability.prior_season(season)))
 
+    # The one stage that is not advisory, and so the one stage whose guard absorbs nothing.
+    # Its *outage* is handled by the `espn_adp` call below, outside `_stage`: that catches
+    # the fetch failure, prints ECR-only mode and returns None, so the stage never runs and
+    # the board really is thinner. What reaches `_attach_market` is a frame whose schema
+    # `hub.fetch.espn._parse_market` pins -- a field ESPN stops sending arrives as a null,
+    # not as a missing column -- so every remaining failure in here is arithmetic failing,
+    # which is a defect. A defect must reach `build_or_last_good`, which serves the last
+    # good board and says so; degrading would hand back a board ranking on raw consensus
+    # with a line claiming that was the intent. ADR-0003, and issue #106.
     adp = espn_adp(league_size, season_ahead) if live else None
     if adp is not None:
         board = _stage(board, report, "adp", "market corrections",
                        lambda b: _attach_market(b, adp, league_size=league_size,
                                                 season=season, season_ahead=season_ahead),
-                       on_fail="running ECR-only mode.")
+                       absorbs=())
     # The board's columns are its interface -- roughly fourteen modules read them by name --
     # and this contract was declared in `hub.contracts` and applied to nothing at all. It
     # covers only what something downstream reads *unconditionally*; the optional columns

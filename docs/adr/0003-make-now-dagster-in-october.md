@@ -54,6 +54,16 @@ the moment make stops being cheaper than the alternative.
 > takes its three inputs instead of a frame with three magic column names, and `main` takes
 > `argv` like the other sixteen CLIs. Coverage went 25% → 46%.
 >
+> **Note, 2026-09-06 (issue #106).** The four handlers are one handler now — `board._stage`
+> — and it carries the distinction the count was pointing at. Five of its six stages are
+> advisory: they reach a source of their own, and a board without what they add is thinner
+> and still correct, so their guard absorbs everything, unchanged. The sixth computes the
+> blended projection, both corrections and Corrected ADP, which is what THE PICK ranks on;
+> its outage is handled a layer up by `espn_adp`, so what a blanket handler over it would
+> absorb is a defect, and the board it would return is not thinner but different. That stage
+> declares `absorbs=()` and its failures reach `build_or_last_good`, which serves the last
+> good board and says loudly that it did.
+>
 > Still true: `build` prints and fetches. Splitting it properly means separating the fetch
 > from the assembly, which is the Dagster port's job — the asset boundary wants to be
 > between them anyway. Not worth doing twice before a draft that is ten days out.
