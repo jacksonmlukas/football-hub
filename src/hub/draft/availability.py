@@ -72,15 +72,25 @@ def _sigma(df: pl.DataFrame) -> np.ndarray:
     widens with ADP, because the back of the board is far less predictable than the front.
     """
     mu = df["mu_pick"].to_numpy()
-    heuristic = pick_noise(mu)
+    base = pick_noise(mu)
     # `ecr_sd`, not `sd`. This is the spread of the *consensus rank*, in picks. It was
     # called `sd` on the board, which is also what a player's weekly points spread is
     # called; reading the wrong one here would have produced a confident, plausible and
     # entirely wrong availability curve, since both are small positive floats.
+    #
+    # It **widens** the base rather than replacing it (#41). Replacing meant a player the
+    # experts happen to agree about was priced as more predictable than the base model says
+    # anyone at his rank is -- so expert consensus, which is not evidence about how this room
+    # drafts, could make a pick look safer than any measurement supports. Widening is the
+    # weaker and truer statement: disagreement can only add uncertainty.
+    #
+    # `maximum`, not quadrature. The base is fitted from where picks actually landed relative
+    # to consensus, so it already carries whatever disagreement contributed to that scatter;
+    # adding the two in variance would count it twice.
     if "ecr_sd" in df.columns:
         sd = df["ecr_sd"].fill_null(0.0).to_numpy()
-        return np.where(sd > 0, np.maximum(sd, 1.0), heuristic)
-    return heuristic
+        return np.maximum(base, sd)
+    return base
 
 
 def availability(df: pl.DataFrame, picks: list[int], n_sims: int = 5000,

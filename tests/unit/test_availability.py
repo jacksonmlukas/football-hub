@@ -301,3 +301,67 @@ def test_enough_picks_but_too_few_inside_the_pool_falls_back_too():
     got, said = noise_from_picks(pl.concat([inside, tail]), default=(2.0, 0.18))
     assert got == (2.0, 0.18)
     assert "inside the draftable pool" in said and "keeping the" in said
+
+
+# --- one base dispersion, three readers (issue #41) ------------------------
+
+def test_all_three_readers_resolve_to_the_same_base_at_scale_one():
+    """Criterion one. Availability, the simulated room and the lambda evaluation used three
+    models that disagreed by construction -- and only one of them was fitted."""
+    from hub.draft.availability import _sigma, pick_noise
+    from hub.draft.evaluate import OPP_NOISE as EVAL_SCALE
+    from hub.draft.optimize import simulate_remaining_draft  # noqa: F401  -- reads the base
+
+    ranks = np.array([1.0, 24.0, 96.0, 192.0])
+    base = pick_noise(ranks)
+    # availability, with no expert disagreement to widen it
+    got = _sigma(pl.DataFrame({"mu_pick": ranks}))
+    assert np.allclose(got, base)
+    # the room and the evaluation both scale that same base, and both default to 1.0
+    import inspect
+
+    from hub.draft.optimize import simulate_remaining_draft as _room
+    assert inspect.signature(_room).parameters["opp_noise"].default == 1.0
+    assert EVAL_SCALE == 1.0, "the evaluation still carries its own absolute sigma"
+
+
+def test_the_rooms_scale_moves_and_availabilitys_does_not():
+    """Criterion two. How loosely opponents follow their own board is a different question
+    from where a player goes, so the room keeps a knob and availability does not."""
+    from hub.draft.availability import _sigma, pick_noise
+    ranks = np.array([10.0, 100.0])
+    base = pick_noise(ranks)
+    assert np.allclose(1.5 * base, pick_noise(ranks) * 1.5)
+    # availability has no scale to turn: the same board gives the same sigma.
+    twice = _sigma(pl.DataFrame({"mu_pick": ranks}))
+    assert np.allclose(twice, base)
+
+
+def test_expert_disagreement_widens_the_base_and_never_narrows_it():
+    """Criterion three. Replacing meant a player the experts agree about was priced as more
+    predictable than the base says anyone at his rank is -- so expert consensus, which is not
+    evidence about how this room drafts, could make a pick look safer than any measurement
+    supports."""
+    from hub.draft.availability import _sigma, pick_noise
+    ranks = np.array([50.0, 50.0, 50.0])
+    base = pick_noise(ranks)[0]
+    df = pl.DataFrame({"mu_pick": ranks, "ecr_sd": [0.0, base / 2.0, base * 3.0]})
+    got = _sigma(df)
+    assert got[0] == pytest.approx(base), "no disagreement recorded, so the base stands"
+    assert got[1] == pytest.approx(base), "a narrow disagreement must not narrow the base"
+    assert got[2] == pytest.approx(base * 3.0), "a wide one widens it"
+    assert (got >= base - 1e-9).all()
+
+
+def test_the_evaluations_noise_is_a_scale_that_can_express_the_old_flat_one():
+    """Criterion four. The old model was flat: the same 8-pick uncertainty about the first
+    pick as the hundred and ninetieth, which is the opposite of what the other two say."""
+    from hub.draft.availability import pick_noise
+    from hub.draft.evaluate import LEGACY_FLAT_NOISE, equivalent_scale
+
+    ecr = np.arange(1.0, 193.0)
+    s = equivalent_scale(ecr)
+    assert (s * pick_noise(ecr)).mean() == pytest.approx(LEGACY_FLAT_NOISE)
+    # And it is a scale, not a constant: it still widens down the board where the old did not.
+    sigma = s * pick_noise(ecr)
+    assert sigma[-1] > sigma[0] * 5

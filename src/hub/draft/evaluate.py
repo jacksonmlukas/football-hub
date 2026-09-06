@@ -25,6 +25,7 @@ import numpy as np
 import polars as pl
 
 from hub.cli import unavailable
+from hub.draft.availability import pick_noise
 from hub.draft.projection import adjusted
 from hub.league import FLEX_FROM, FLEX_SLOTS, STARTERS
 
@@ -37,7 +38,28 @@ ROUNDS = 16
 
 # How loosely opponents follow their board. Nobody drafts strictly off a list, and a room
 # of perfect consensus-followers would make any deviation look better than it is.
-OPP_NOISE = 8.0
+# The room's dispersion, as a multiple of `availability.pick_noise` rather than an absolute
+# number of picks. 1.0 is the base model itself, which is what makes the three agree.
+#
+# It was 8.0 picks, flat. `equivalent_scale` below recovers that, and
+# `docs/lambda-sweep.md`'s verdict is unchanged under both -- the sweep found nothing to tune
+# either way, which is the sense in which this is a re-parameterisation rather than a
+# re-tuning.
+OPP_NOISE = 1.0
+
+# What the old flat sigma was, kept so the change can be shown to be one.
+LEGACY_FLAT_NOISE = 8.0
+
+
+def equivalent_scale(ecr: np.ndarray, flat: float = LEGACY_FLAT_NOISE) -> float:
+    """The scale at which the base model carries the same average dispersion as `flat`.
+
+    Averaged over the pool rather than matched at a single pick, because a flat sigma and a
+    linear one cross exactly once and any single crossing point would be a choice dressed as
+    an equivalence. The mean is the one summary that does not privilege a region of the board.
+    """
+    base = pick_noise(np.asarray(ecr, dtype=float))
+    return float(flat / base.mean()) if base.mean() else 1.0
 
 MIN_SIGMA = 2.0
 
@@ -66,7 +88,14 @@ def simulate_draft(pool: pl.DataFrame, lam: float, my_slot: int,
     # One implementation of the adjustment, in `hub.draft.projection`. This was a fourth
     # spelling of it, in numpy, with its own clip written as a bare -3/3.
     mine = adjusted(pool, lam)["adj_ecr"].to_numpy()
-    theirs = ecr + rng.normal(0.0, opp_noise, ecr.size)
+    # A scale over the one base dispersion, not a flat absolute sigma (#41). This was the
+    # third model of where a player goes, and the only one that did not widen down the board:
+    # it credited the room with the same 8-pick uncertainty about the first pick as about the
+    # hundred and ninetieth, which is the opposite of what the other two say and of what a
+    # draft looks like. `hub.draft.availability.pick_noise` is the base; the room's own scale
+    # sits on top of it, because how loosely opponents follow their board is a different
+    # question from where a player goes.
+    theirs = ecr + rng.normal(0.0, opp_noise * pick_noise(ecr))
 
     my_order = np.argsort(mine)
     their_order = np.argsort(theirs)
@@ -95,7 +124,8 @@ def trial(pool: pl.DataFrame, lam: float, my_slot: int,
 
 
 def evaluate(pool: pl.DataFrame, lams: Sequence[float], n_sims: int = 12,
-             teams: int = TEAMS, seed: int = 0) -> pl.DataFrame:
+             teams: int = TEAMS, seed: int = 0,
+             opp_noise: float = OPP_NOISE) -> pl.DataFrame:
     """Mean starter points per lambda, over every seat and `n_sims` draft realisations.
 
     Paired on purpose: every lambda faces the same opponent draws from the same seat, so
@@ -112,7 +142,8 @@ def evaluate(pool: pl.DataFrame, lams: Sequence[float], n_sims: int = 12,
                 # Same seed for the same (sim, slot) across every lambda: the room drafts
                 # identically and only my board changes.
                 rng = np.random.default_rng(seed + s * 1000 + slot)
-                got.append(trial(pool, lam, slot, rng, teams=teams))
+                got.append(trial(pool, lam, slot, rng, teams=teams,
+                                 opp_noise=opp_noise))
         arr = np.array(got)
         if base is None:
             base = arr
