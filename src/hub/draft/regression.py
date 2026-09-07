@@ -120,8 +120,34 @@ def correct_projection(board: pl.DataFrame, column: str = "proj_blend") -> pl.Da
     This is what connects the signal to the objective. `hub.draft.optimize` scores seasons
     against `proj_blend`, so a bias left in that column is a bias in every P(win) it
     reports -- and a signal that is only printed is decoration.
+
+    **Silent when `td_luck` is absent, on purpose, and that silence has a price.** It is paid
+    one caller away and caught there; the comment on the early return says by what.
     """
     if column not in board.columns or "td_luck" not in board.columns:
+        # Two absences, one return, and they do not cost the same thing.
+        #
+        # `column` is `proj_blend`, which only the ADP stage leaves. Without it there is no
+        # Corrected ADP for this term to be missing *from*, and the build report says so by
+        # naming nothing at all when its `adp` flag is false.
+        #
+        # `td_luck` gone from a board that does carry `proj_blend` is the expensive one, and
+        # it is the whole of issue #121. `board.build` absorbs the touchdown-luck stage
+        # rather than refusing to build -- correctly; a board that will not build for one
+        # advisory column is the operator-dependence CLAUDE.md warns about -- and
+        # `_attach_market` then computes Corrected ADP from the terms that did apply and
+        # reports it as having run. What comes out is a different ranking rather than a
+        # thinner board: 346 of 457 players moved by up to 28.1 picks, 110 of the first 192
+        # changing rank by up to 19 places. Wider than the quarterbacks and receivers this
+        # term touches, because `optimize.corrected_adp` re-fits the curve every player is
+        # priced against, not only the ones corrected.
+        #
+        # Nothing is recorded from here and nothing should be: this runs inside `_stage`, and
+        # the report is what records a stage rather than what the stage writes to. The catch
+        # is `BuildReport.corrections_missing`, which derives the missing terms from flags the
+        # build already set. `hub.draft.report` prints them beside the ranking for an operator
+        # on the clock, and `hub.models.experiment.require_corrections` refuses the board
+        # outright for a Gate, where a season short a term is a second arm and not a thin one.
         return board
     adjustment = prior_signal.priced("td_luck", TD_LUCK_BETA)
     return board.with_columns(

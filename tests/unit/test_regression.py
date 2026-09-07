@@ -167,3 +167,40 @@ def test_the_correction_cannot_drive_a_projection_negative():
 def test_a_board_without_the_signal_passes_through():
     board = pl.DataFrame({"player": ["A"], "pos": ["QB"], "proj_blend": [22.0]})
     assert R.correct_projection(board)["proj_blend"][0] == 22.0
+
+
+def test_the_silent_no_op_names_where_it_is_caught():
+    """The pass-through above is deliberate and it is not free -- issue #121 -- and this
+    function is where a reader lands to find that out.
+
+    A reader who arrives here sees an early return with no consequence attached, which is
+    exactly how the no-op survived long enough to need measuring. So the site names its
+    catchers, and this holds the naming to catchers that exist and still catch: the names
+    are resolved as live symbols rather than matched as prose, and the behaviour they
+    describe is exercised beside them. Rename either one and leave the comment behind, and
+    this fails rather than leaving a reader pointed at nothing.
+
+    Nothing here reads a `BuildReport`. This is a producer -- it runs inside `_stage`, and
+    the report records the stage rather than being read by it.
+    """
+    import inspect
+
+    from hub.draft import board as board_mod
+    from hub.models import experiment
+
+    source = inspect.getsource(R.correct_projection)
+    assert getattr(board_mod.BuildReport, "corrections_missing", None) is not None
+    assert getattr(experiment, "require_corrections", None) is not None
+    assert "corrections_missing" in source, (
+        "the silence is not free and this is where a reader finds out what catches it")
+    assert "require_corrections" in source, "and what refuses it for a Gate"
+
+    # Named, and true. The board is returned untouched...
+    board = pl.DataFrame({"player": ["A"], "pos": ["QB"], "proj_blend": [22.0]})
+    assert R.correct_projection(board).equals(board)
+    # ...the report derives the term from the flags the build already set...
+    absorbed = board_mod.BuildReport(adp=True, td_luck=False, durability=True)
+    assert "touchdown luck" in absorbed.corrections_missing()
+    # ...and a Gate refuses the season rather than pooling it with whole ones.
+    with pytest.raises(experiment.CorrectionMissing):
+        experiment.require_corrections(2025, absorbed)

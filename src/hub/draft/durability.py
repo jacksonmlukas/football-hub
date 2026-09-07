@@ -118,11 +118,34 @@ def correct_projection(board: pl.DataFrame, column: str = "proj_blend") -> pl.Da
 
     Today's designation is priced separately and only where it transfers -- Out, Doubtful
     and IR. QUESTIONABLE is carried for judgment and not priced; see `INJURY_BETA`.
+
+    **Silent when `missed` is absent, on purpose, and that silence has a price.** It is paid
+    one caller away and caught there; the comments on the two returns say by what.
     """
     if column not in board.columns:
+        # The cheap absence, and the reason the expensive one is the branch below rather than
+        # this line. `column` is `proj_blend`, which only the ADP stage leaves, so this fires
+        # on a board that has no Corrected ADP at all -- nothing to be short a term, and
+        # `hub.draft.board.BuildReport.corrections_missing` names nothing when `adp` is false.
         return board
     adjustment = pl.lit(0.0)
     if "missed" in board.columns:
+        # The expensive absence is this condition being false, and it is the whole of issue
+        # #121. `board.build` absorbs the durability stage rather than refusing to build --
+        # correctly; a board that will not build for one advisory column is the
+        # operator-dependence CLAUDE.md warns about -- and `_attach_market` then computes
+        # Corrected ADP from the terms that did apply and reports it as having run. What
+        # comes out is a different ranking rather than a thinner board: 350 of 457 players
+        # moved by up to 36.8 picks, 134 of the first 192 changing rank by up to 36 places.
+        # Wider than the quarterbacks and receivers this term touches, because
+        # `optimize.corrected_adp` re-fits the curve every player is priced against.
+        #
+        # Nothing is recorded from here and nothing should be: this runs inside `_stage`, and
+        # the report is what records a stage rather than what the stage writes to. The catch
+        # is `BuildReport.corrections_missing`, which derives the missing terms from flags the
+        # build already set. `hub.draft.report` prints them beside the ranking for an operator
+        # on the clock, and `hub.models.experiment.require_corrections` refuses the board
+        # outright for a Gate, where a season short a term is a second arm and not a thin one.
         adjustment = adjustment + prior_signal.priced("missed", BETA)
     if "injury_status" in board.columns:
         # Applied at every position, unlike the durability trait: being ruled out is news,
