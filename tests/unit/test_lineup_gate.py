@@ -280,13 +280,171 @@ def test_full_foresight_is_strictly_larger_than_the_variance_oracle():
         f"so the two bound the same thing and one of them is mislabelled")
 
 
+def _contested_flex():
+    """A roster whose last starting slot only a true spread gets right, and the season for it.
+
+    Every player projects the same `mu` and carries the same `sd`, so neither sorting on
+    projection nor an optimiser reading a flat spread can tell the three flex candidates
+    apart: **the two arms tie by construction and this gate's own effect is exactly zero.**
+    The realised weeks then separate them. `SWINGY` alternates 0 and 30 for a mean of 15
+    where both alternatives sit flat at 5, and eight starters at a projected ten apiece is
+    below `OPP_MU`, so a rule that could read the real spread starts him and collects it.
+
+    The zero effect is the fixture's whole point. `_volatile_roster` above scores 96.0 on the
+    baseline, the optimiser *and* the oracle, so `ceiling >= effect` holds there whatever the
+    ceiling arm reads -- a passing assertion over three copies of one number. Here the two
+    are +0.00 and +10.00 and the comparison has something to fail on.
+    """
+    base = [("QB1", "QB"), ("RB1", "RB"), ("RB2", "RB"), ("WR1", "WR"), ("WR2", "WR"),
+            ("WR3", "WR"), ("TE1", "TE"), ("STEADY", "WR"), ("SWINGY", "WR"),
+            ("SPARE", "WR")]
+    roster = [(n, p, 10.0, 2.0) for n, p in base]
+    rows = []
+    for n, _p in base:
+        for w in range(1, 15):
+            pts = (30.0 if w % 2 == 0 else 0.0) if n == "SWINGY" else \
+                  5.0 if n in ("STEADY", "SPARE") else 10.0
+            rows.append((n, w, pts))
+    return roster, _realised(rows)
+
+
 def test_the_gate_reports_its_ceiling_beside_its_effect():
     """Criterion one, in this gate's own units -- points per team game, which are not the
-    draft backtest's and are never compared against them."""
-    from hub.season import lineup_gate as lg
-    roster = _volatile_roster()
-    got = lg.compare({2024: [roster]}, {2024: _swingy(roster)}, weeks=14, ceiling=True)
+    draft backtest's and are never compared against them.
+
+    The numbers are the assertion: the baseline and the optimiser both take 75.0 a game and
+    the variance oracle takes 85.0, so the effect is +0.00 against a ceiling of +10.00. A
+    fixture on which those two coincide would let a ceiling arm that had quietly become the
+    control arm pass this.
+    """
+    roster, real = _contested_flex()
+    got = lg.compare({2024: [roster]}, {2024: real}, weeks=14, ceiling=True)
     assert {"oracle", "ceiling_diff"} <= set(got.columns)
-    assert got["ceiling_diff"][0] >= got["diff"][0]
-    plain = lg.compare({2024: [roster]}, {2024: _swingy(roster)}, weeks=14)
+    assert got["projection"][0] == pytest.approx(75.0)
+    assert got["optimiser"][0] == pytest.approx(75.0)
+    assert got["oracle"][0] == pytest.approx(85.0)
+    assert got["diff"][0] == pytest.approx(0.0)
+    assert got["ceiling_diff"][0] == pytest.approx(10.0)
+    assert got["ceiling_diff"][0] > got["diff"][0]
+    plain = lg.compare({2024: [roster]}, {2024: real}, weeks=14)
     assert "oracle" not in plain.columns, "the ceiling must be opt-in, not a shape change"
+
+
+# --- and an operator can ask for it (issue #134) --------------------------
+#
+# #43 built the arm and left it unreachable: `compare` took the option and nothing passed it
+# one, so `docs/gate-power.md` stage 2 -- which compares each gate's MDE against its own
+# ceiling -- could not be run for this gate at all. What that stage needs is the number said
+# beside the effect it bounds, in the unit this harness measures in.
+
+def test_asking_for_the_ceiling_does_not_move_the_effect_the_gate_reports():
+    """Asserted rather than assumed, and on the frame where the ceiling is a real number: an
+    all-flat roster holds this no matter what the extra arm does to the columns beside it."""
+    roster, real = _contested_flex()
+    plain = lg.compare({2024: [roster]}, {2024: real}, weeks=14)
+    withc = lg.compare({2024: [roster]}, {2024: real}, weeks=14, ceiling=True)
+    assert plain["projection"].to_list() == withc["projection"].to_list()
+    assert plain["optimiser"].to_list() == withc["optimiser"].to_list()
+    assert plain["diff"].to_list() == withc["diff"].to_list(), (
+        "asking for the ceiling changed the effect the gate reports")
+
+
+def test_the_ceiling_line_names_its_arm_its_unit_and_that_it_travels_nowhere():
+    """Stage 2 reads three gates' ceilings and holds each against its own MDE. Three numbers
+    in three units under one word is the confusion the line is written to prevent, so it
+    carries the arm and the unit rather than a bare figure -- and this gate's arm is a
+    perfect *spread*, which `foresight_lineup_points` exists to stop it being mistaken for.
+    """
+    roster, real = _contested_flex()
+    paired = lg.compare({2024: [roster]}, {2024: real}, weeks=14, ceiling=True)
+    said = lg.ceiling_report(_sum(-1.0, 1.0), paired)
+    assert len(said) == 1, "a ceiling that bounds the effect says one thing and no more"
+    assert "+10.00" in said[0]
+    assert lg.UNIT in said[0]
+    assert "not foresight" in said[0]
+    assert "not comparable" in said[0]
+
+
+def test_a_ceiling_that_does_not_bound_the_effect_says_so_loudly():
+    """A bound that does not bound reads exactly like a tight one, and a tight one is what
+    would license a verdict nothing supports. The draft gate has said this since #42; until
+    now neither season gate could say it at all."""
+    paired = pl.DataFrame({"diff": [4.0, 6.0], "ceiling_diff": [1.0, 1.0]})
+    said = lg.ceiling_report(_sum(4.0, 6.0), paired)
+    assert len(said) == 2
+    assert "CEILING BELOW THE EFFECT" in said[1]
+    assert "+1.00" in said[1] and "+5.00" in said[1]
+
+
+def test_a_run_that_asked_for_no_ceiling_prints_no_ceiling_line():
+    """Not a blank and not a `nan` set against a unit -- the shape `paired_report` already
+    uses for a field nothing computed, because `nan` beside a unit reads as a measurement."""
+    roster, real = _contested_flex()
+    plain = lg.compare({2024: [roster]}, {2024: real}, weeks=14)
+    assert lg.ceiling_report(_sum(-1.0, 1.0), plain) == []
+
+
+# --- what produced these rows (issue #133) --------------------------------
+#
+# The gate wrote a bare parquet: no configuration digest, no data digest. Two runs over
+# different archives were therefore indistinguishable after the fact, which is the silent
+# case the pinning layer exists to remove -- and this is the gate ADR-0012 defers to.
+
+def test_the_published_frame_names_the_config_and_the_data_that_made_it(tmp_path,
+                                                                        monkeypatch):
+    """The file a reader is left with has to say what it was scored against.
+
+    Read back off disk rather than off the returned frame, because what a later reader opens
+    is the parquet, and a stamp that lived only in memory would satisfy every assertion about
+    the return value while publishing the same bare rows as before.
+    """
+    from hub.config import UNPINNED
+    from hub.fetch import nflverse as nv
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    paired = pl.DataFrame({"season": [2024, 2025], "roster": [0, 0], "diff": [1.0, -2.0]})
+    out = tmp_path / "lineup_paired.parquet"
+
+    said = lg.publish_paired(paired, str(out))
+    back = pl.read_parquet(out)
+
+    assert back.height == paired.height
+    assert {"cfg_digest", "data_digest"} <= set(back.columns)
+    assert back["data_digest"].unique().to_list() == [UNPINNED], (
+        "a run that pinned nothing must say so rather than publishing eight characters that "
+        "look like a digest of data")
+    assert "nothing was loaded through the pinning layer" in said
+    assert "2 paired rows" in said and str(out) in said
+
+
+def test_a_pinned_load_moves_this_gates_data_digest_and_leaves_its_config_alone(tmp_path,
+                                                                                monkeypatch):
+    """The property a reader acts on: two runs over different archives do not carry the same
+    stamp, and the archive moving does not pretend the model moved with it."""
+    from hub.config import UNPINNED
+    from hub.fetch import nflverse as nv
+
+    paired = pl.DataFrame({"season": [2024], "roster": [0], "diff": [1.0]})
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    lg.publish_paired(paired, str(tmp_path / "unpinned.parquet"))
+    unpinned = pl.read_parquet(tmp_path / "unpinned.parquet")
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {
+        "entry": nv.Pin(source="player_stats", as_of="2026-09-04", digest="abcd1234",
+                        rows=10, pinned_at=None)})
+    said = lg.publish_paired(paired, str(tmp_path / "pinned.parquet"))
+    pinned = pl.read_parquet(tmp_path / "pinned.parquet")
+
+    assert unpinned["data_digest"][0] == UNPINNED
+    assert pinned["data_digest"][0] != UNPINNED
+    assert "over 1 pinned source(s)" in said
+    assert pinned["cfg_digest"][0] == unpinned["cfg_digest"][0]
+
+
+def test_this_gate_stamps_by_the_one_rule_rather_than_by_a_second_copy_of_it():
+    """Two gates that agree because somebody keeps them agreeing is the arrangement this
+    module already records losing: `cohort` is imported rather than restated because the
+    recipe had been written out twice. The same argument decides the stamp."""
+    from hub.draft import backtest as bt
+
+    assert lg.stamped_for_publication is bt.stamped_for_publication

@@ -37,6 +37,7 @@ import numpy as np
 import polars as pl
 
 from hub.cli import unavailable
+from hub.draft.backtest import stamped_for_publication
 from hub.draft.board import board_as_of
 from hub.league import REG_SEASON_WEEKS, starting_lineup
 from hub.models.experiment import (
@@ -61,6 +62,18 @@ NOT_FITTED_BECAUSE = (
 # so it cannot favour either.
 OPP_MU = 110.0
 OPP_SD = 25.0
+
+# This gate's own unit, named once so the effect and the ceiling printed under it cannot end
+# up quoted in two different ones.
+UNIT = "points per game"
+
+# What this gate's ceiling *is*, spelled where it is printed. The draft backtest's ceiling is
+# a drafter who knew the season and the weekly gate's is a perfect weekly projection; this
+# one is a perfect spread over a projection both arms already share. Three gates, three
+# questions, three harnesses -- and `docs/gate-power.md` stage 2 compares each gate's MDE
+# against its own ceiling and never against another's, so the line says which one it is
+# rather than leaving a reader to take three numbers in three units for one quantity.
+CEILING_ARM = "a perfect spread, not foresight"
 
 
 def weekly_grid(names: Sequence[str], realised: pl.DataFrame,
@@ -196,6 +209,61 @@ def compare(rosters: dict[int, list[Roster]], realised: dict[int, pl.DataFrame],
     return out
 
 
+def ceiling_report(summary: dict[str, float], paired: pl.DataFrame) -> list[str]:
+    """The ceiling beside the effect, and a loud line when it does not bound it.
+
+    Nothing at all when the frame carries no ceiling, which is how a run without `--ceiling`
+    prints exactly what it printed before. Same shape `paired_report` uses for `mde`: a field
+    nothing computed prints nothing, because a `nan` set against a unit reads as a
+    measurement and silence does not.
+
+    **A ceiling below the effect it is meant to bound is not a tight result, it is a broken
+    one** -- either the oracle arm is not reading the realised spread or the arm under test is
+    being scored on something else. Said loudly rather than published quietly, because the
+    number's whole use is as an upper bound and a bound that does not bound reads exactly
+    like a tight one. `backtest.with_ceiling` says the same thing for the draft gate; the two
+    are separate because the sentence naming *which* ceiling this is differs, and #135's
+    shared gate protocol is where they become one.
+
+    Lines rather than prints, so the rule is reachable without the network `main` needs --
+    the same reason `paired_report` returns lines and `publish_paired` below returns its own.
+    """
+    if "ceiling_diff" not in paired.columns:
+        return []
+    top = float(np.asarray(paired["ceiling_diff"].to_numpy()).mean())
+    out = [f"  ceiling ({CEILING_ARM}) {top:+.2f} {UNIT}, measured on this gate's own "
+           f"harness -- not comparable with another gate's"]
+    if top < summary["mean"]:
+        out.append(f"\n  CEILING BELOW THE EFFECT: {top:+.2f} < {summary['mean']:+.2f}. One "
+                   f"of the two is measuring something the other is not; do not read the "
+                   f"interval above as bounded.")
+    return out
+
+
+def publish_paired(paired: pl.DataFrame, path: str) -> str:
+    """Write the paired rows carrying what produced them, and return the line a reader gets.
+
+    Until this landed, this gate wrote a bare parquet -- no configuration digest, no data
+    digest -- so two runs over different archives were indistinguishable after the fact.
+    That is the silent case the pinning layer exists to remove (issue #71), left standing on
+    the gate whose verdict ADR-0012 defers to.
+
+    The rule is `backtest.stamped_for_publication` itself and not a second copy that agrees
+    with it. This module already records what the other choice costs: `cohort` is imported
+    rather than restated because the recipe had been written out in two places, and "a
+    formula copied by hand into two places is one that eventually differs in one". It lives
+    under `hub.draft` today because the draft gate needed it first; issue #135's shared gate
+    protocol is where it stops being addressed through a draft module.
+
+    A function rather than three lines under `if a.out:`, because reaching those needs a
+    network, and a stamping rule only reachable behind a network is a stamping rule with no
+    test. `stamped_for_publication` names the same reason for the same shape.
+    """
+    stamped, said = stamped_for_publication(paired)
+    stamped.write_parquet(path)
+    return f"\n  wrote {stamped.height} paired rows to {path}\n{said}"
+
+
 # The pre-registered actions, fixed before the numbers and quoted in this module's own
 # docstring above. The rule choosing between them is `experiment.gate` -- ADR-0019.
 ACTIONS = Actions(
@@ -224,6 +292,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="rosters per season, drafted by the market arm")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--ceiling", action="store_true",
+                    help="also score the variance oracle -- the same optimiser handed the "
+                         "realised spread, the projection untouched -- and report the "
+                         "largest effect this gate could show. `docs/gate-power.md` stage 2")
     ap.add_argument("--parameter-uncertainty", action="store_true",
                     help="add sigma_pos/sqrt(games) to sd -- the quantity ADR-0012 never "
                          "measured; see docs/parameter-uncertainty.md")
@@ -273,10 +345,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for roster in drafted.rosters]
         rosters[yr] = made
 
-    paired = compare(rosters, realised)
+    paired = compare(rosters, realised, ceiling=a.ceiling)
     s = summarise(paired, seed=a.seed)
-    for line in paired_report(s, arm_a="optimiser", arm_b="projections",
-                              unit="points per game"):
+    for line in [*paired_report(s, arm_a="optimiser", arm_b="projections", unit=UNIT),
+                 *ceiling_report(s, paired)]:
         print(line)
     print(f"\n  {verdict(s, per_season(paired))[1]}")
     print("\n  Both arms see only projections. The optimiser's sole advantage is that it")
@@ -284,8 +356,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("  Limitation: projections are static across the season, because weekly historical")
     print("  projections do not exist. This measures variance-awareness, not in-season news.")
     if a.out:
-        paired.write_parquet(a.out)
-        print(f"\n  wrote {paired.height} paired rows to {a.out}")
+        print(publish_paired(paired, a.out))
     return 0
 
 

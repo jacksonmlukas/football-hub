@@ -84,6 +84,36 @@ def test_help_needs_no_network_and_no_data(name, capsys):
     assert "usage:" in capsys.readouterr().out
 
 
+# --- the flag stage 2 of the power measurement is run with --------------------
+#
+# `docs/gate-power.md` stage 2 compares each gate's MDE against **its own** foresight ceiling
+# and closes the tickets under a gate that cannot clear it. Getting those three numbers means
+# running three commands, so the flag that produces one is part of this repo's CLI surface in
+# the way `--help` is: recorded here, not left to each gate.
+#
+# It was not, and that is what #134 was. #43 gave the weekly gate and the lineup gate a
+# ceiling arm each, both reachable only as a keyword argument to a `compare` no operator
+# calls -- so the measurement stage 2 exists to take could be taken for one of the three.
+
+GATES_WITH_A_CEILING = (
+    "hub.draft.backtest", "hub.season.lineup_gate", "hub.season.weekly_gate",
+)
+
+
+@pytest.mark.parametrize("name", GATES_WITH_A_CEILING)
+def test_every_gate_offers_its_ceiling_under_the_one_flag_name(name, capsys):
+    """One name across all three, because a measurement taken three ways is three
+    measurements. What each gate's ceiling *means* is its own -- a foresight drafter, a
+    perfect weekly projection, a perfect spread -- and each says so on the line it prints;
+    what an operator types to ask for one must not also be per-gate."""
+    mod = importlib.import_module(name)
+    with pytest.raises(SystemExit):
+        mod.main(["--help"])
+    assert "--ceiling" in capsys.readouterr().out, (
+        f"{name} builds a ceiling column that no command line can reach, so "
+        f"docs/gate-power.md stage 2 cannot be run for it")
+
+
 # --- absent input, for every entry point ------------------------------------
 #
 # A fresh clone is not only a directory with no parquet in it. It has no key in the

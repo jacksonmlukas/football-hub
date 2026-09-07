@@ -396,12 +396,91 @@ def test_the_weekly_gates_ceiling_is_a_perfect_projection():
     assert float(got["ceiling_diff"].to_numpy().mean()) > float(got["diff"].to_numpy().mean())
 
 
+def _three_separate_numbers():
+    """A week where the incumbent is wrong, the arm under test is better, and neither is
+    perfect -- so the effect and the ceiling are two different numbers.
+
+    Player `i` scores `i`. Consensus ranks on `-i`, which is the worst available ordering;
+    the weekly model has the top of the board right and the bottom reversed, so it is better
+    than consensus and short of perfect. The three arms come out at 41.0, 55.0 and 60.0 for
+    an effect of +14.000 against a ceiling of +19.000.
+
+    The separation is the fixture's point. `_inputs()` is all zeros, on which every arm
+    scores nothing and every comparison between a ceiling and an effect holds no matter what
+    the foresight arm reads -- a passing assertion over three copies of one number.
+    """
+    n = len(_pos())
+    points = np.arange(n, dtype=float)
+    half = points.copy()
+    half[:7] = half[:7][::-1]
+    return _inputs(realised={2024: np.tile(points.reshape(-1, 1), (1, 18))},
+                   consensus={2024: np.tile((-points).reshape(-1, 1), (1, 18))},
+                   weekly={2024: np.tile(half.reshape(-1, 1), (1, 18))})
+
+
 def test_the_ceiling_is_opt_in_and_does_not_change_the_frozen_gate():
     """On by default it would widen every existing run's frame and re-price the verdicts that
-    rest on it, as a side effect of adding a diagnostic."""
-    g = _inputs()
+    rest on it, as a side effect of adding a diagnostic.
+
+    Driven on a frame where the arms actually differ. Asserting this over the all-zero
+    fixture would hold with the foresight arm scoring the roster on consensus, on the weekly
+    model, or on nothing at all.
+    """
+    g = _three_separate_numbers()
     plain = G.compare(g, weeks=[5])
     withc = G.compare(g, weeks=[5], ceiling=True)
     assert "foresight" not in plain.columns
-    assert plain["diff"].to_list() == withc["diff"].to_list(), (
+    assert plain["consensus"].to_list() == withc["consensus"].to_list() == [41.0]
+    assert plain["weekly"].to_list() == withc["weekly"].to_list() == [55.0]
+    assert plain["diff"].to_list() == withc["diff"].to_list() == [14.0], (
         "asking for the ceiling changed the effect the gate reports")
+
+
+# --- and an operator can ask for it (issue #134) --------------------------
+#
+# #43 built the arm and left it unreachable: `compare` took the option and nothing passed it
+# one, so `docs/gate-power.md` stage 2 -- which compares each gate's MDE against its own
+# ceiling -- could not be run for this gate at all.
+
+def test_the_ceiling_and_the_effect_this_gate_reports_are_different_numbers():
+    """The number stage 2 needs, and it has to be able to differ from the one it bounds."""
+    got = G.compare(_three_separate_numbers(), weeks=[5], ceiling=True)
+    assert got["foresight"].to_list() == [60.0]
+    assert got["diff"].to_list() == [14.0]
+    assert got["ceiling_diff"].to_list() == [19.0]
+    assert got["ceiling_diff"][0] > got["diff"][0]
+
+
+def test_the_ceiling_line_names_its_arm_its_unit_and_that_it_travels_nowhere():
+    """Stage 2 reads three gates' ceilings and holds each against its own MDE. Three numbers
+    in three units under one word is the confusion the line is written to prevent, so it
+    carries the arm and the unit rather than a bare figure. Full foresight is the right arm
+    *here* and the wrong one for the lineup gate, whose arms already share a projection.
+    """
+    paired = G.compare(_three_separate_numbers(), weeks=[5], ceiling=True)
+    said = G.ceiling_report(_summary(14.0, 8.0, 20.0), paired)
+    assert len(said) == 1, "a ceiling that bounds the effect says one thing and no more"
+    assert "+19.000" in said[0], "this gate quotes three places; +19.00 would be another's"
+    assert G.UNIT in said[0]
+    assert G.CEILING_ARM in said[0]
+    assert "not comparable" in said[0]
+
+
+def test_a_ceiling_that_does_not_bound_the_effect_says_so_loudly():
+    """A bound that does not bound reads exactly like a tight one, and a tight one is what
+    would license a verdict nothing supports. The draft gate has said this since #42; until
+    now neither season gate could say it at all."""
+    paired = pl.DataFrame({"diff": [0.4, 0.6], "ceiling_diff": [0.1, 0.1]})
+    said = G.ceiling_report(_summary(0.5, 0.3, 0.7), paired)
+    assert len(said) == 2
+    assert "CEILING BELOW THE EFFECT" in said[1]
+    assert "+0.100" in said[1] and "+0.500" in said[1]
+
+
+def test_a_run_that_asked_for_no_ceiling_prints_no_ceiling_line():
+    """Not a blank and not a `nan` set against a unit -- the shape `paired_report` already
+    uses for a field nothing computed, because `nan` beside a unit reads as a measurement.
+    A VOID run and an empty frame take the same branch, neither carrying the column."""
+    plain = G.compare(_three_separate_numbers(), weeks=[5])
+    assert G.ceiling_report(_summary(14.0, 8.0, 20.0), plain) == []
+    assert G.ceiling_report(_summary(14.0, 8.0, 20.0), G.compare(_inputs(), weeks=[9])) == []
