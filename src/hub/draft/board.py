@@ -559,11 +559,39 @@ def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,
 # board, and "what it carries" and "whether it was built" are two halves of one answer.
 BUILT, SERVED = "built", "served"
 
-# The column each optional stage leaves on the board. Only these four leave anything: the
-# scoring and roster checks compare the league's settings against this repo's and write
-# nothing, which is why a served board cannot claim them either way.
-STAGE_COLUMN = {"sos": "wk15_17_sos", "td_luck": "td_luck",
-                "durability": "missed", "adp": "adp"}
+# Every column each optional stage leaves on the board, sentinel first. Only these four
+# stages leave anything: the scoring and roster checks compare the league's settings against
+# this repo's and write nothing, which is why a served board cannot claim them either way.
+#
+# It is the full set and not one column per stage because "which stage left this column" is
+# the question consumers actually ask, and for the ADP stage the answer is nine columns. Two
+# of those nine are ones no reader would guess. `injury_status` arrives in ESPN's ADP payload
+# (`hub.fetch.espn._parse_market`), so it belongs to this stage rather than to durability,
+# even though `durability.correct_projection` is what prices it -- absorb the ADP stage and
+# today's designations leave with it. `proj_ppg` arrives the same way, and it is what
+# `proj_blend` is a blend *of*. The rest are this stage's own arithmetic: `consensus_pick`
+# and `edge` from `_attach_edge`, then `proj_blend`, `proj_correction`, `adp_corrected` and
+# `vor_proj` -- what THE PICK ranks on.
+#
+# Declared here rather than restated at each site that needs it. Every consumer asking what
+# an absorbed stage took with it used to answer in its own prose, which is the arrangement
+# `CORRECTION_STAGE` below exists because the repo already got wrong once.
+STAGE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "sos": ("wk15_17_sos", "sos_games"),
+    "td_luck": ("td_luck",),
+    "durability": ("missed",),
+    "adp": ("adp", "proj_ppg", "injury_status", "consensus_pick", "edge",
+            "proj_blend", "proj_correction", "adp_corrected", "vor_proj"),
+}
+
+# The one column per stage that *stands for* the stage, which is a different question from
+# the one above and is why the sentinel is derived rather than listed a second time. A board
+# read back off disk has no record of which stages ran, so `BuildReport.of_served` asks one
+# column per stage and takes its presence as the answer; asking all nine would make a stage
+# that half-wrote its columns unanswerable, and there is nothing on a served board to break
+# the tie with. The first column declared above is that column, and the order is load-bearing
+# for exactly that reason: it has to be one the stage cannot finish without.
+STAGE_COLUMN = {flag: cols[0] for flag, cols in STAGE_COLUMNS.items()}
 
 # The board column each Correction term reads. `_attach_market` is where they are read;
 # `STAGE_COLUMN` above says which stage leaves each one. The two dicts overlap on purpose --
@@ -619,6 +647,15 @@ class BuildReport:
     @classmethod
     def of_served(cls, board: pl.DataFrame) -> BuildReport:
         """What a board read back off disk carries, derived from that board.
+
+        **`STAGE_COLUMN`, not `STAGE_COLUMNS`, and the difference is the question.** A
+        consumer asking what an absorbed stage took with it wants every column that stage
+        leaves -- nine, for the ADP stage. This asks the opposite way round: given a frame
+        and no record of the run that wrote it, did the stage happen? One column per stage
+        answers that, and the full set does not, because a board carrying eight of the ADP
+        stage's nine columns has nothing on it to say whether the ninth was never written or
+        dropped by a reader in between. Reading the sentinel gives one answer where reading
+        all nine would give a report with no way to be right.
 
         The two checks stay false and mean what they say: nothing checked this league's
         scoring or roster shape on *this* run, because this run did not get that far.

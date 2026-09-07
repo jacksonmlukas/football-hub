@@ -212,6 +212,108 @@ def test_a_served_report_names_the_columns_build_actually_leaves(offline):
     assert set(board.BuildReport.of_served(b).carried()) == set(built.carried())
 
 
+# --- what each stage leaves, against the declaration that says so (issue #143) ----------
+#
+# `STAGE_COLUMN` answers "did this stage run", which is one column per stage. Consumers ask
+# the other question -- which columns leave with an absorbed stage -- and every one of them
+# used to answer it in its own prose. `STAGE_COLUMNS` is that answer once, and prose is
+# exactly the thing that cannot be held to a build, so this is.
+
+
+def _prior_td_season():
+    """`regression.prior_season`'s frame, so the real `attach` has real work to do."""
+    n = 8
+    return pl.DataFrame({
+        "player": NAMES[:n],
+        "pos": [POS[i % len(POS)] for i in range(n)],
+        "g": pl.Series([16] * n, dtype=pl.UInt32),
+        "receiving_yards": [800.0] * n, "receiving_tds": [6.0] * n,
+        "rushing_yards": [200.0] * n, "rushing_tds": [2.0] * n,
+        "passing_yards": [0.0] * n, "passing_tds": [0.0] * n,
+    })
+
+
+def _prior_missed_season():
+    """`durability.prior_season`'s frame. `ppg` has to clear `MIN_PPG` or nothing survives."""
+    n = 8
+    return pl.DataFrame({
+        "player": NAMES[:n],
+        "pos": [POS[i % len(POS)] for i in range(n)],
+        "g": pl.Series([13] * n, dtype=pl.UInt32),
+        "ppg": [14.0] * n,
+    })
+
+
+def _build_with_every_stage(offline, absorb: str | None = None):
+    """Build with all four column-leaving stages running, bar the one named.
+
+    Both prior-season modules keep their **real** `attach`; only the fetch under it is
+    stubbed. A stand-in that writes the column the declaration names would prove that the
+    stand-in agrees with the declaration, which is not the claim.
+
+    Every stage is set either way round on every call, so two builds in one test do not
+    inherit each other's patches.
+    """
+    from hub.draft import durability
+    from hub.draft import regression as td
+    offline.setattr(board, "playoff_sos",
+                    _source_is_down if absorb == "sos" else lambda **k: pl.DataFrame(
+                        {"team": ["KC"], "pos": ["RB"], "wk15_17_sos": [1.1],
+                         "sos_games": pl.Series([3], dtype=pl.UInt32)}))
+    offline.setattr(td, "prior_season",
+                    _source_is_down if absorb == "td_luck"
+                    else lambda season: _prior_td_season())
+    offline.setattr(durability, "prior_season",
+                    _source_is_down if absorb == "durability"
+                    else lambda season: _prior_missed_season())
+    # The ADP stage absorbs nothing, so its outage is `espn_adp` returning None -- the one
+    # path by which this stage is legitimately absent, and the one `build` is written for.
+    offline.setattr(board, "espn_adp",
+                    (lambda *a, **k: None) if absorb == "adp" else lambda *a, **k: _live_adp())
+    return board.build()
+
+
+@pytest.mark.parametrize("stage", ["sos", "td_luck", "durability", "adp"])
+def test_a_stage_leaves_exactly_the_columns_declared_for_it(offline, stage):
+    """Absorb one stage and diff the board against the whole one. What went missing is what
+    that stage leaves, measured rather than asserted, and `STAGE_COLUMNS` has to name it.
+
+    Both directions fail here, which is the point of an equality rather than a subset: a
+    column the stage leaves and the declaration omits is a consumer told an absorbed stage
+    cost it less than it did, and a column the declaration names and the stage does not
+    leave is one told it cost more. The ADP stage's nine are where this earns its keep --
+    `injury_status` and `proj_ppg` reach the board through ESPN's ADP payload, so they
+    leave with this stage and not with durability, and no reader guesses that.
+    """
+    whole, report = _build_with_every_stage(offline)
+    assert set(report.carried()) == set(board.STAGE_COLUMNS), (
+        "the baseline has to be a board with every column-leaving stage on it")
+
+    thin, thin_report = _build_with_every_stage(offline, absorb=stage)
+    assert getattr(thin_report, stage) is False, f"{stage} was meant to be absorbed"
+
+    assert set(whole.columns) - set(thin.columns) == set(board.STAGE_COLUMNS[stage]), (
+        f"the columns {stage} really leaves are not the ones STAGE_COLUMNS names for it")
+    assert not set(thin.columns) - set(whole.columns), (
+        f"absorbing {stage} added a column, so the diff is not only what it leaves")
+
+
+def test_the_sentinel_is_one_of_the_columns_its_stage_leaves(offline):
+    """`STAGE_COLUMN` is derived from the first column of each entry above, so this cannot
+    drift -- but the *choice* can. A sentinel has to be a column the stage cannot finish
+    without, since `of_served` reads its presence as the stage having run, and the entry
+    above says the ordering carries that. This holds the derivation to a real build.
+    """
+    whole, _ = _build_with_every_stage(offline)
+    for flag, col in board.STAGE_COLUMN.items():
+        assert col == board.STAGE_COLUMNS[flag][0]
+        assert col in whole.columns, f"{flag}'s sentinel is not on a board that ran it"
+        thin, _report = _build_with_every_stage(offline, absorb=flag)
+        assert col not in thin.columns, (
+            f"{col} survives {flag} being absorbed, so a served board would claim the stage "
+            "ran when it did not")
+
+
 def test_a_scoring_mismatch_is_shouted_not_swallowed(offline, capsys):
     """Every projection is scored on the wrong weights until it is fixed, so this is one of
     the few things allowed to interrupt the operator."""
