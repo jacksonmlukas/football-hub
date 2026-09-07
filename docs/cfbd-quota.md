@@ -83,6 +83,30 @@ three calls. The two scheduled runs can land in different college weeks, so the 
 weeks a week: **6 calls, ~26 a month**, comfortably inside the 5–8/week the table above budgets.
 Two runs inside one college week cost three, because the second reads the cache.
 
+## The cache can be corrected, and says how old it is
+
+Until #175 the cache was permanent by file existence: if `data/raw/cfbd/{endpoint}/{stem}.parquet`
+was there it was returned, with no maximum age, no refresh parameter and nothing recording when
+the bytes arrived. On a metered source that is the expensive half rather than the cheap one — it
+is both the reason to cache and the reason a stale price could never be put right.
+
+Three things changed, and the default did not:
+
+- **A written entry carries its capture time**, in a `.capture.json` beside it — the same
+  sidecar-next-to-the-entry shape `hub.fetch.nflverse` writes its `Pin` in. `cfbd.captured_at(...)`
+  reads it back without fetching anything.
+- **`refresh=True` re-fetches**, and `max_age=timedelta(...)` re-fetches an entry captured longer
+  ago than that. On the CLI: `--refresh` and `--max-age-hours`. Three endpoints in a week, so a
+  refreshed week is three calls, which is why neither has a default.
+- **A refusal serves rather than raises.** A refresh that would pass the run ceiling or the monthly
+  budget, or one with no key to make it with, prints what it did and hands back the cached payload
+  with its capture time. Nothing to serve is still a raise.
+
+An entry written before this change has nothing beside it and reads back as an **unknown** capture
+time — never the file's mtime, which a clone, a copy or a restore rewrites, and which therefore
+dates the file rather than the fetch. Unknown means "ask again"; a plausible wrong number means
+"no need to". An unknown age is treated as past any stated `max_age` for the same reason.
+
 ## No test spends a call
 
 `hub.fetch.cfbd._http_get` is the only function in the module that reaches the network, and it
