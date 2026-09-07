@@ -14,11 +14,22 @@ never revisited.
 So the enforcing piece is not the four call sites -- it is this, which makes a fifth inert
 contract impossible to add without someone deciding not to.
 
+Three questions now, and they are the three a declaration can be let down by.
+
 The second half of the file asks the other question a declaration makes: not "is this applied
 anywhere" but "has it ever met the thing it describes". `verified_against_live` records that,
 and the only assertion on it was that the attribute is a `bool` -- on a field declared
 `bool = True`. Flipping both CFBD contracts to `True`, which erases the entire distinction the
 field exists to record, left all twenty tests here green. Measured on 2026-09-05.
+
+The third asks whether a boundary that applied a contract kept what the contract handed back.
+`validate` gained a return value when a Contract learned to repair as well as refuse, and
+three fetch boundaries went on persisting the frame they were already holding -- so a declared
+repair fired, the frame passed, and the units the source happened to send were written and
+pinned anyway. Worse than the refusal those sites used to give, because the frame passed and
+nothing said so. Those three are fixed; the scan below is what stops a fourth, and it lives
+here because this file exists precisely for the case where one instance of a shape is found
+and the others survive for want of anything connecting them.
 """
 import ast
 import collections
@@ -161,6 +172,120 @@ def test_every_declared_contract_is_applied_somewhere():
         f"source, or delete the declaration.")
 
 
+# --- and is what it returned the frame that gets stored? (issue #141) ---------
+#
+# Applying a contract stopped being the whole question when `validate` gained a return value.
+# A `Normalisation` repairs a declared upstream variation and hands back the repaired frame,
+# so a boundary that calls `validate` and then persists the frame it was already holding has
+# applied the contract and thrown the repair away: the units the source happened to send are
+# written, pinned and served from cache, and the frame *passed*, so nothing says so. That is
+# worse than the refusal those boundaries used to give.
+#
+# Three sites did exactly that and are fixed. This is the part that was not, and the shape is
+# one this repo has already watched recur -- a declaration that is correct, and a call site
+# that quietly does not honour it. It belongs here for the reason the half above exists: one
+# instance of that shape was found and fixed by hand while four survived, for want of
+# anything connecting them.
+#
+# **The rule cannot be "never discard the return".** `hub.fetch.espn.live_state` correctly
+# drops it: the frame it validates is a projection built for the check, and `out` -- the
+# payload every caller reads -- is what gets returned, so there is nothing stored for a
+# repair to reach. So the scan tells a persisting site from a non-persisting one by the only
+# thing visible in the source: whether the returned value goes anywhere at all. A statement
+# that evaluates `validate` for effect has discarded it; an assignment, a return, an
+# argument to something that consumes it, has not.
+#
+# **And the exemption has to speak.** A site that legitimately discards says so in a
+# `# NOT PERSISTED:` note on the call, carrying the reason. An exemption nobody wrote down is
+# indistinguishable from the defect -- it is the same statement -- so a silent one is exactly
+# what this refuses. That is also why the note is a marker with a reason after it rather than
+# a list of blessed line numbers kept here: the justification lives with the call it
+# justifies, the way every other marker in this repo does, and a line that moves takes its
+# reason with it.
+
+NOT_PERSISTED = "NOT PERSISTED:"
+
+# Enough of a sentence to be a reason rather than a token. Measured against the shortest
+# honest one this repo has: `live_state`'s note is 180 characters. A bare `# NOT PERSISTED:`
+# would otherwise buy the exemption while saying nothing, which is the defect wearing the
+# marker's clothes.
+_MIN_REASON = 40
+
+
+def _discarded_calls(value: ast.AST) -> list[ast.Call]:
+    """The calls inside a discarded expression whose own return also goes nowhere.
+
+    Descends only through the constructs that *pass the discarding on*: a comprehension
+    evaluated for effect discards its element, a tuple or list literal discards its members.
+    Everything else consumed the value. That distinction is the whole scan --
+    `store.write(CONTRACT.validate(part), ...)` is a bare statement and is correct, because
+    the validated frame is the argument being written, and a rule that read "the statement is
+    an expression" would report it as the defect.
+    """
+    if isinstance(value, ast.Call):
+        return [value]
+    if isinstance(value, ast.ListComp | ast.SetComp | ast.GeneratorExp):
+        return _discarded_calls(value.elt)
+    if isinstance(value, ast.Tuple | ast.List):
+        return [c for e in value.elts for c in _discarded_calls(e)]
+    if isinstance(value, ast.Await):
+        return _discarded_calls(value.value)
+    return []
+
+
+def _note_above(text: str, lineno: int) -> str:
+    """The `NOT PERSISTED:` reason written on the statement at `lineno`, or "".
+
+    Read off the contiguous comment block immediately above the call, so the note has to sit
+    on the statement it excuses. A blank line between the two ends the block: a reason parked
+    a paragraph away is one that stops describing the call it was written for, which is the
+    drift `# GUARD` markers are kept adjacent for.
+    """
+    lines = text.splitlines()
+    block: list[str] = []
+    i = lineno - 2                                       # the line above, zero-indexed
+    while i >= 0 and lines[i].strip().startswith("#"):
+        block.append(lines[i].strip().lstrip("#").strip())
+        i -= 1
+    block.reverse()
+    for n, line in enumerate(block):
+        if NOT_PERSISTED in line:
+            rest = " ".join([line.split(NOT_PERSISTED, 1)[1], *block[n + 1:]])
+            return rest.strip()
+    return ""
+
+
+def _discards_in(tree: ast.AST, declared: set[str], text: str) -> list[tuple[int, str, str]]:
+    """Every site that validates a declared contract and drops what it returned.
+
+    `(line, contract, reason)` -- with `reason` the written exemption, empty when there is
+    none. Both halves are returned rather than only the offenders, so the tests can assert
+    that a legitimate discard is *seen and excused* rather than merely absent, which is the
+    way a scan quietly narrows to nothing.
+    """
+    registries = _registries(tree, declared)
+    bindings = _bindings(tree, declared, registries)
+    out: list[tuple[int, str, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Expr):
+            continue
+        for call in _discarded_calls(node.value):
+            if not (isinstance(call.func, ast.Attribute) and call.func.attr == "validate"):
+                continue
+            recv = call.func.value
+            if not isinstance(recv, ast.Name):
+                continue
+            names = ({recv.id} & declared) or bindings.get(recv.id, set())
+            reason = _note_above(text, node.lineno)
+            out += [(node.lineno, name, reason) for name in sorted(names)]
+    return out
+
+
+def _unexplained(tree: ast.AST, declared: set[str], text: str) -> list[tuple[int, str, str]]:
+    """The discards with no written reason, or with one too short to be one."""
+    return [d for d in _discards_in(tree, declared, text) if len(d[2]) < _MIN_REASON]
+
+
 def _guard(source: str) -> set[str]:
     """Run the guard over a planted module. The guard itself, not a restatement of it."""
     import textwrap
@@ -242,6 +367,204 @@ def test_an_unresolvable_receiver_counts_for_nothing_rather_than_everything():
         def load(get_contract, df):
             get_contract().validate(df)
     """) == set()
+
+
+def _discards(source: str) -> list[tuple[int, str, str]]:
+    """Run the return-value scan over a planted module. The scan itself, not a restatement."""
+    import textwrap
+    text = textwrap.dedent(source)
+    return _discards_in(ast.parse(text), _declared(), text)
+
+
+def _unexplained_planted(source: str) -> list[tuple[int, str, str]]:
+    import textwrap
+    text = textwrap.dedent(source)
+    return _unexplained(ast.parse(text), _declared(), text)
+
+
+def test_no_boundary_stores_a_frame_other_than_the_one_validate_returned():
+    """**The guard.** Three sites validated a frame, discarded the answer, and persisted what
+    they were already holding -- so a declared repair fired, the frame passed, and the units
+    the source happened to send were written and pinned anyway."""
+    offenders = []
+    for path in sorted(SRC.rglob("*.py")):
+        if path.name == "contracts.py":
+            continue
+        text = path.read_text()
+        offenders += [f"  {path.relative_to(SRC.parents[1])}:{line} validates {name} and "
+                      f"drops what it returned"
+                      for line, name, _ in _unexplained(ast.parse(text), _declared(), text)]
+    assert not offenders, (
+        "a contract's return value is the only way a declared repair reaches anybody, and "
+        "these evaluate it for effect:\n" + "\n".join(offenders) + "\n\n"
+        f"Store what `validate` handed back -- `df = CONTRACT.validate(df)` -- rather than "
+        f"the frame you were holding. If this site validates something it does *not* "
+        f"persist, say so on the call with a `# {NOT_PERSISTED} <why>` note of at least "
+        f"{_MIN_REASON} characters; `hub.fetch.espn.live_state` is the one that legitimately "
+        f"does, and its note is the model.")
+
+
+def test_the_return_scan_sees_the_one_site_that_is_allowed_to_discard():
+    """This scan's premise, and the reason it is not the assertion above on its own. A scan
+    that resolved no `.validate` at all would report no offenders and read exactly as green,
+    which is the failure mode this file was written about. The exempt site is the proof there
+    is something to see: it must be found, and found excused."""
+    text = (SRC / "fetch" / "espn.py").read_text()
+    seen = _discards_in(ast.parse(text), _declared(), text)
+    assert [(n, bool(r)) for _, n, r in seen] == [("ESPN_SCOREBOARD", True)], (
+        f"the scoreboard check is the one validate in the tree whose return is correctly "
+        f"dropped, and the scan resolved {seen}")
+    assert not _unexplained(ast.parse(text), _declared(), text)
+
+
+@pytest.mark.parametrize(("module", "fixed", "reverted"), [
+    ("fetch/nflverse.py", "        df = contract.validate(df)",
+     "        contract.validate(df)"),
+    ("fetch/cfbd.py", "                df = contract.validate(df)",
+     "                contract.validate(df)"),
+    ("fetch/odds.py", "    parts = [(wk, ODDS_SNAPSHOT.validate(part)) for wk, part in parts]",
+     "    [ODDS_SNAPSHOT.validate(part) for wk, part in parts]"),
+])
+def test_reverting_any_of_the_three_fixed_sites_fails_the_scan(module, fixed, reverted):
+    """Each of the three, put back the way it was, against the real scan and the real file.
+
+    A planted module proves the scan reads a shape; this proves it reads *these* shapes, in
+    the files they live in. The `odds` revert is a comprehension evaluated for effect rather
+    than a bare call, which is the second discarding form and the reason the scan descends
+    into one.
+    """
+    text = (SRC / module).read_text()
+    assert text.count(fixed) == 1, f"{module} no longer holds the fixed line {fixed!r}"
+    broken = text.replace(fixed, reverted)
+    assert broken != text
+    assert _unexplained(ast.parse(broken), _declared(), broken), (
+        f"{module} reverted to discarding the return and the scan did not notice")
+
+
+def test_a_validate_whose_return_is_stored_is_not_a_discard():
+    assert _discards("""
+        from hub.contracts import ODDS_SNAPSHOT
+        def snapshot(df):
+            df = ODDS_SNAPSHOT.validate(df)
+            store.write(df)
+    """) == []
+
+
+def test_a_validate_whose_return_is_handed_back_is_not_a_discard():
+    assert _discards("""
+        from hub.contracts import DRAFT_BOARD
+        def build(board):
+            return DRAFT_BOARD.validate(board)
+    """) == []
+
+
+def test_a_validate_whose_return_is_what_gets_written_is_not_a_discard():
+    """The false positive a coarser rule produces. The statement discards *its* value and
+    the validated frame is the argument being stored, which is the correct shape."""
+    assert _discards("""
+        from hub.contracts import ODDS_SNAPSHOT
+        def snapshot(part):
+            store.write(ODDS_SNAPSHOT.validate(part), "lines")
+    """) == []
+
+
+def test_a_validate_inside_a_kept_comprehension_is_not_a_discard():
+    """`hub.fetch.odds`' shape: every partition checked before any is written."""
+    assert _discards("""
+        from hub.contracts import ODDS_SNAPSHOT
+        def snapshot(parts):
+            parts = [(wk, ODDS_SNAPSHOT.validate(p)) for wk, p in parts]
+    """) == []
+
+
+def test_a_bare_validate_is_a_discard_and_says_which_contract():
+    got = _discards("""
+        from hub.contracts import ODDS_SNAPSHOT
+        def snapshot(df):
+            ODDS_SNAPSHOT.validate(df)
+            store.write(df)
+    """)
+    assert [(n, r) for _, n, r in got] == [("ODDS_SNAPSHOT", "")]
+    assert len(_unexplained_planted("""
+        from hub.contracts import ODDS_SNAPSHOT
+        def snapshot(df):
+            ODDS_SNAPSHOT.validate(df)
+            store.write(df)
+    """)) == 1
+
+
+def test_a_comprehension_evaluated_for_effect_is_a_discard():
+    """The same defect one indirection out: every partition is checked, and the checked
+    frames are thrown away."""
+    assert len(_unexplained_planted("""
+        from hub.contracts import ODDS_SNAPSHOT
+        def snapshot(parts):
+            [ODDS_SNAPSHOT.validate(p) for wk, p in parts]
+            for wk, p in parts:
+                store.write(p, "lines")
+    """)) == 1
+
+
+def test_a_contract_reached_through_a_registry_is_scanned_too():
+    """The indirection every nflverse and CFBD boundary uses. A scan that only saw the direct
+    form would leave the two modules the three fixed sites live in unwatched."""
+    assert len(_unexplained_planted("""
+        from hub.contracts import PBP, SCHEDULES, Contract
+        SOURCES: dict[str, Contract | None] = {"pbp": PBP, "schedules": SCHEDULES}
+        def load(source, df):
+            contract = SOURCES[source]
+            if contract is not None:
+                contract.validate(df)
+            df.write_parquet(path)
+    """)) == 2
+
+
+def test_a_written_exemption_excuses_the_discard():
+    got = _discards("""
+        from hub.contracts import ESPN_SCOREBOARD
+        def live_state(out):
+            # NOT PERSISTED: the frame is a projection built here for the check, and `out`
+            # is what every caller reads, so there is nothing stored for a repair to reach.
+            ESPN_SCOREBOARD.validate(frame(out))
+            return out
+    """)
+    assert len(got) == 1 and got[0][1] == "ESPN_SCOREBOARD"
+    assert "projection built here" in got[0][2]
+    assert _unexplained_planted("""
+        from hub.contracts import ESPN_SCOREBOARD
+        def live_state(out):
+            # NOT PERSISTED: the frame is a projection built here for the check, and `out`
+            # is what every caller reads, so there is nothing stored for a repair to reach.
+            ESPN_SCOREBOARD.validate(frame(out))
+            return out
+    """) == []
+
+
+def test_an_exemption_that_says_nothing_does_not_excuse_anything():
+    """**The thing being prevented.** A marker with no reason under it is the defect wearing
+    the exemption's clothes: the statement is identical, and the next reader has been handed
+    a word rather than an argument."""
+    assert len(_unexplained_planted("""
+        from hub.contracts import ODDS_SNAPSHOT
+        def snapshot(df):
+            # NOT PERSISTED: n/a
+            ODDS_SNAPSHOT.validate(df)
+            store.write(df)
+    """)) == 1
+
+
+def test_an_exemption_parked_away_from_its_call_does_not_reach_it():
+    """A reason a paragraph above stops describing the call it was written for, which is why
+    every marker in this repo sits on the thing it marks."""
+    assert len(_unexplained_planted("""
+        from hub.contracts import ODDS_SNAPSHOT
+        def snapshot(df):
+            # NOT PERSISTED: the frame is a projection built here for the check alone, and
+            # there is nothing stored anywhere for a declared repair to reach.
+
+            ODDS_SNAPSHOT.validate(df)
+            store.write(df)
+    """)) == 1
 
 
 @pytest.mark.parametrize("name", sorted(_declared()))

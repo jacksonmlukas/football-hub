@@ -248,9 +248,13 @@ def live_state(league: str = "nfl", *, allow_cache: bool = True) -> list[dict]:
     # five minutes through a game window, so drift -- a renamed field, a null where there was
     # never one, duplicated ids -- has to fail here rather than reach the page. Both callers
     # already degrade on an exception: `publish.live` keeps last-good, `poll` serves stale.
-    # The one validate in this package whose return is correctly dropped: the frame is a
-    # projection built here for the check, and `out` -- the payload every caller reads --
-    # is what gets returned. There is nothing stored for a repair to reach.
+    # NOT PERSISTED: the frame is a projection built here for the check, and `out` -- the
+    # payload every caller reads -- is what gets returned, so there is nothing stored for a
+    # declared repair to reach. This is the one validate in the repo whose return is
+    # correctly dropped, and the note is what makes it distinguishable from the three that
+    # dropped theirs by accident: the statement is identical, so an exemption nobody wrote
+    # down cannot be told from the defect. `tests/contracts/test_every_contract_is_applied.py`
+    # reads this marker.
     ESPN_SCOREBOARD.validate(scoreboard_frame(out))
     return out
 
