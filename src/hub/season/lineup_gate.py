@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 import polars as pl
@@ -41,10 +41,13 @@ from hub.draft.backtest import stamped_for_publication
 from hub.draft.board import board_as_of
 from hub.league import REG_SEASON_WEEKS, starting_lineup
 from hub.models.experiment import (
+    SEASON_CLUSTER,
     Actions,
     gate,
     paired_report,
     per_season,
+    review_width,
+    small_sample_report,
     summarise,
     walk_forward_inputs,
 )
@@ -74,6 +77,51 @@ UNIT = "points per game"
 # against its own ceiling and never against another's, so the line says which one it is
 # rather than leaving a reader to take three numbers in three units for one quantity.
 CEILING_ARM = "a perfect spread, not foresight"
+
+# ---------------------------------------------------------------------------
+# WHICH CEILING THIS GATE DECLARES -- ISSUE #138, AND NOT AN AGENT'S TO DECIDE
+# ---------------------------------------------------------------------------
+#
+# **The open question.** `docs/gate-power.md` pre-registers stage 2 against a *foresight*
+# ceiling. Issue #43 then deliberately built a **variance oracle** instead, and argued for it:
+# both arms of this gate already see the same `mu`, so the optimiser's only advantage is that
+# it reads `sd`, and the largest effect this gate could show is what a perfect `sd` buys. A
+# foresight arm also knows `mu` and so bounds a different question -- strictly larger, and
+# `foresight_lineup_points` exists precisely so the two cannot be quietly interchanged.
+#
+# Both readings are defensible and they disagree about whether this gate is runnable, because
+# the ceiling is the denominator stage 2 divides by. Which one the lineup gate *declares* is a
+# pre-registration question: the document says one thing and the code was built to say
+# another, and resolving that means deciding whether a pre-registration may be re-read after
+# the arm it names was built. **That is #138 and it is a human's to answer.** Nothing here
+# chooses it.
+#
+# **So the mechanism takes the arm as a parameter.** The not-runnable rule in
+# `experiment.gate` works against whatever ceiling it is handed and never inspects which arm
+# produced it; `--ceiling-arm` selects one on the command line; and the default below is the
+# gate's *declared* arm. #138's answer is this one line and nothing else -- change the string
+# and every path follows it, because no other line in the tree names an arm.
+#
+# It defaults to the variance oracle because that is what #43 shipped and what this gate has
+# been running: the default is a statement of the status quo, not of the answer.
+DECLARED_CEILING_ARM = "variance-oracle"
+
+# The two arms, by the names `--ceiling-arm` accepts, each wrapped to one signature so the
+# choice is a lookup rather than a branch. `foresight` is `foresight_lineup_points`, which
+# takes no `mu` because it computes its own from the realised grid -- the wrapper absorbs that
+# difference so nothing downstream knows which arm ran.
+CEILING_ARMS: dict[str, Callable[..., float]] = {
+    "variance-oracle": lambda grid, names, pos, mu: variance_oracle_points(
+        grid, names, pos, mu),
+    "foresight": lambda grid, names, pos, mu: foresight_lineup_points(grid, pos),
+}
+
+# What each arm is called where it is printed, so a run under a non-default arm cannot be read
+# as a run under the default one.
+CEILING_ARM_NAMES = {
+    "variance-oracle": CEILING_ARM,
+    "foresight": "full foresight -- mu and sd both known",
+}
 
 
 def weekly_grid(names: Sequence[str], realised: pl.DataFrame,
@@ -176,12 +224,20 @@ Roster = list[tuple[str, str, float, float]]   # (player, position, mu, sd)
 
 
 def compare(rosters: dict[int, list[Roster]], realised: dict[int, pl.DataFrame],
-            weeks: int = REG_SEASON_WEEKS, *, ceiling: bool = False) -> pl.DataFrame:
+            weeks: int = REG_SEASON_WEEKS, *, ceiling: bool = False,
+            ceiling_arm: str = DECLARED_CEILING_ARM) -> pl.DataFrame:
     """Paired: one row per roster. `rosters` maps a season to the rosters drafted in it.
 
     Pure -- frames and lists in, a frame out, no network -- so the statistics are testable
     without hitting nflverse. Same reason `backtest.compare` is.
+
+    `ceiling_arm` names which arm the `oracle` column is played by, and defaults to the arm
+    this gate declares. It is a parameter rather than a fixed call because *which* arm this
+    gate's ceiling should be is open as #138 -- see `DECLARED_CEILING_ARM` above. Nothing
+    downstream branches on it: the column, the interval and the not-runnable rule are the same
+    whichever arm filled it.
     """
+    play_ceiling = CEILING_ARMS[ceiling_arm]
     rows = []
     for season in sorted(rosters):
         real = realised[season]
@@ -197,7 +253,7 @@ def compare(rosters: dict[int, list[Roster]], realised: dict[int, pl.DataFrame],
                 "optimiser": optimiser_lineup_points(grid, names, pos, mu, sd),
             }
             if ceiling:
-                row["oracle"] = variance_oracle_points(grid, names, pos, mu)
+                row["oracle"] = play_ceiling(grid, names, pos, mu)
             rows.append(row)
     out = pl.DataFrame(rows)
     out = out.with_columns((pl.col("optimiser") - pl.col("projection")).alias("diff"))
@@ -209,7 +265,8 @@ def compare(rosters: dict[int, list[Roster]], realised: dict[int, pl.DataFrame],
     return out
 
 
-def ceiling_report(summary: dict[str, float], paired: pl.DataFrame) -> list[str]:
+def ceiling_report(summary: dict[str, float], paired: pl.DataFrame, *,
+                   ceiling_arm: str = DECLARED_CEILING_ARM) -> list[str]:
     """The ceiling beside the effect, and a loud line when it does not bound it.
 
     Nothing at all when the frame carries no ceiling, which is how a run without `--ceiling`
@@ -231,8 +288,8 @@ def ceiling_report(summary: dict[str, float], paired: pl.DataFrame) -> list[str]
     if "ceiling_diff" not in paired.columns:
         return []
     top = float(np.asarray(paired["ceiling_diff"].to_numpy()).mean())
-    out = [f"  ceiling ({CEILING_ARM}) {top:+.2f} {UNIT}, measured on this gate's own "
-           f"harness -- not comparable with another gate's"]
+    out = [f"  ceiling ({CEILING_ARM_NAMES[ceiling_arm]}) {top:+.2f} {UNIT}, measured on this "
+           f"gate's own harness -- not comparable with another gate's"]
     if top < summary["mean"]:
         out.append(f"\n  CEILING BELOW THE EFFECT: {top:+.2f} < {summary['mean']:+.2f}. One "
                    f"of the two is measuring something the other is not; do not read the "
@@ -296,6 +353,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="also score the variance oracle -- the same optimiser handed the "
                          "realised spread, the projection untouched -- and report the "
                          "largest effect this gate could show. `docs/gate-power.md` stage 2")
+    ap.add_argument("--ceiling-arm", default=DECLARED_CEILING_ARM,
+                    choices=sorted(CEILING_ARMS),
+                    help="which arm the ceiling is measured with. The default is the arm "
+                         "this gate declares; whether that is the right one is issue #138, "
+                         "a pre-registration question this flag does not answer")
     ap.add_argument("--parameter-uncertainty", action="store_true",
                     help="add sigma_pos/sqrt(games) to sd -- the quantity ADR-0012 never "
                          "measured; see docs/parameter-uncertainty.md")
@@ -345,12 +407,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for roster in drafted.rosters]
         rosters[yr] = made
 
-    paired = compare(rosters, realised, ceiling=a.ceiling)
-    s = summarise(paired, seed=a.seed)
-    for line in [*paired_report(s, arm_a="optimiser", arm_b="projections", unit=UNIT),
-                 *ceiling_report(s, paired)]:
+    paired = compare(rosters, realised, ceiling=a.ceiling, ceiling_arm=a.ceiling_arm)
+    # The ceiling reaches `summarise` as well as `ceiling_report`, because the not-runnable
+    # rule in `experiment.gate` reads it off the summary. Without this it printed beside the
+    # effect and no rule could act on it.
+    top = (float(np.asarray(paired["ceiling_diff"].to_numpy()).mean())
+           if "ceiling_diff" in paired.columns else None)
+    # `SEASON_CLUSTER`, not the roster this gate used to take. Issue #45.
+    s = summarise(paired, cluster=SEASON_CLUSTER, seed=a.seed, ceiling=top)
+    seasons_tbl = per_season(paired)
+    # `ceiling_arm=None`: this gate renders its own ceiling line through `ceiling_report`,
+    # which names *which* ceiling it is and warns when it fails to bound. Letting the generic
+    # block print one too would print the number twice and call it perfect foresight, which is
+    # the one thing this gate's ceiling is not.
+    for line in [*paired_report(s, arm_a="optimiser", arm_b="projections", unit=UNIT,
+                                ceiling_arm=None),
+                 *small_sample_report(s, seasons_tbl, unit=UNIT),
+                 *review_width("lineup", s),
+                 *ceiling_report(s, paired, ceiling_arm=a.ceiling_arm)]:
         print(line)
-    print(f"\n  {verdict(s, per_season(paired))[1]}")
+    print(f"\n  {verdict(s, seasons_tbl)[1]}")
     print("\n  Both arms see only projections. The optimiser's sole advantage is that it")
     print("  reads `sd` as well as `mu`, so it can start upside when the matchup wants it.")
     print("  Limitation: projections are static across the season, because weekly historical")

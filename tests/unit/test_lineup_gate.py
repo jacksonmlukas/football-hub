@@ -249,29 +249,41 @@ def test_the_oracle_changes_only_the_spread():
     assert got > 0
 
 
-def test_full_foresight_is_strictly_larger_than_the_variance_oracle():
-    """Criterion three. The two must not be quietly interchangeable: a ceiling that drifted
-    into full foresight would make this gate look powered when it was not."""
-    from hub.season import lineup_gate as lg
-    # A contested flex and a real bench, which is what makes the two arms able to differ at
-    # all: with a roster the size of the lineup everybody starts and every arm scores the
-    # same. `S` is steady and better; `V` swings to a lower mean. Both project the same `mu`,
-    # so only the realised numbers separate them -- and they separate them differently
-    # depending on which realised number an arm is allowed to see.
+def _separating_roster():
+    """A roster and a season on which the two candidate ceiling arms give different numbers.
+
+    A contested flex and a real bench, which is what makes the two arms able to differ at all:
+    with a roster the size of the lineup everybody starts and every arm scores the same. `S`
+    is steady and better; `V` swings to a lower mean. Both project the same `mu`, so only the
+    realised numbers separate them -- and they separate them differently depending on which
+    realised number an arm is allowed to see.
+
+    Shared by the two tests that hold the arms apart, because a fixture on which they
+    coincided would let either of them pass while proving nothing -- which is the failure
+    `_contested_flex` has for this particular question: there both arms take 85.0.
+    """
     base = [("QB1", "QB"), ("RB1", "RB"), ("RB2", "RB"), ("WR1", "WR"), ("WR2", "WR"),
             ("TE1", "TE"), *[(f"F{i}", "WR") for i in range(4)]]
     roster = [(n, p, 22.0, 2.0) for n, p in base] + [("S", "WR", 22.0, 2.0),
                                                      ("V", "WR", 22.0, 2.0)]
-    names = [n for n, _, _, _ in roster]
-    pos = [p for _, p, _, _ in roster]
-    mu = [m for _, _, m, _ in roster]
     rows = []
     for n, _p, _m, _s in roster:
         for w in range(1, 15):
             pts = (25.0 if n == "S" else 40.0 if (n == "V" and w % 2 == 0)
                    else 0.0 if n == "V" else 1.0 if n.startswith("F") else 10.0)
             rows.append((n, w, pts))
-    grid = lg.weekly_grid(names, _realised(rows), 14)
+    return roster, _realised(rows)
+
+
+def test_full_foresight_is_strictly_larger_than_the_variance_oracle():
+    """Criterion three. The two must not be quietly interchangeable: a ceiling that drifted
+    into full foresight would make this gate look powered when it was not."""
+    from hub.season import lineup_gate as lg
+    roster, real = _separating_roster()
+    names = [n for n, _, _, _ in roster]
+    pos = [p for _, p, _, _ in roster]
+    mu = [m for _, _, m, _ in roster]
+    grid = lg.weekly_grid(names, real, 14)
 
     oracle = lg.variance_oracle_points(grid, names, pos, mu)
     foresight = lg.foresight_lineup_points(grid, pos)
@@ -328,6 +340,70 @@ def test_the_gate_reports_its_ceiling_beside_its_effect():
     assert got["ceiling_diff"][0] > got["diff"][0]
     plain = lg.compare({2024: [roster]}, {2024: real}, weeks=14)
     assert "oracle" not in plain.columns, "the ceiling must be opt-in, not a shape change"
+
+
+# --- which arm the ceiling is, which is #138 and not this code's to decide -----
+#
+# `docs/gate-power.md` pre-registers stage 2 against a *foresight* ceiling; #43 deliberately
+# built a variance oracle and argued for it. The two disagree about whether this gate is
+# runnable, because the ceiling is the denominator stage 2 divides by. #45 builds the
+# mechanism and takes the arm as a parameter; #138 answers which arm is declared.
+#
+# So what is asserted here is that the choice is *reachable and honest* -- both arms run, they
+# genuinely differ, the printed line names which one ran, and the default is the status quo.
+# Nothing here asserts which arm is right.
+
+
+def test_both_ceiling_arms_are_reachable_and_give_different_ceilings():
+    """The parameter is real only if the two arms disagree, so this runs on the fixture built
+    to separate them -- not on `_contested_flex`, where both arms take 85.0 and this test
+    would pass against a parameter that selected nothing at all."""
+    roster, real = _separating_roster()
+    oracle = lg.compare({2024: [roster]}, {2024: real}, weeks=14, ceiling=True,
+                        ceiling_arm="variance-oracle")
+    sight = lg.compare({2024: [roster]}, {2024: real}, weeks=14, ceiling=True,
+                       ceiling_arm="foresight")
+    assert sight["oracle"][0] > oracle["oracle"][0], (
+        "the two arms produced the same ceiling, so the parameter selects nothing")
+    # The arm under test and the incumbent are untouched by the choice: only the bound moves.
+    assert sight["diff"][0] == pytest.approx(oracle["diff"][0])
+
+
+def test_the_declared_arm_is_the_default_and_is_the_variance_oracle_today():
+    """The default is a statement of the status quo -- what #43 shipped and what this gate has
+    been running -- and not of #138's answer. If #138 lands and this changes, it changes
+    here and nowhere else."""
+    assert lg.DECLARED_CEILING_ARM == "variance-oracle"
+    roster, real = _contested_flex()
+    default = lg.compare({2024: [roster]}, {2024: real}, weeks=14, ceiling=True)
+    named = lg.compare({2024: [roster]}, {2024: real}, weeks=14, ceiling=True,
+                       ceiling_arm=lg.DECLARED_CEILING_ARM)
+    assert default["oracle"][0] == pytest.approx(named["oracle"][0])
+
+
+def test_one_line_switches_every_path_that_names_an_arm():
+    """#138's answer has to be a one-line change, which is only true if nothing else in the
+    tree names an arm. `DECLARED_CEILING_ARM` is the default of `compare`, of `ceiling_report`
+    and of the CLI flag, so all three follow it."""
+    import inspect
+
+    for fn in (lg.compare, lg.ceiling_report):
+        default = inspect.signature(fn).parameters["ceiling_arm"].default
+        assert default == lg.DECLARED_CEILING_ARM, fn.__name__
+    assert set(lg.CEILING_ARMS) == set(lg.CEILING_ARM_NAMES)
+    assert lg.DECLARED_CEILING_ARM in lg.CEILING_ARMS
+
+
+def test_the_printed_line_names_the_arm_that_actually_ran():
+    """A run under a non-default arm must not be readable as a run under the default one --
+    the ceiling's whole use is as a bound, and two arms bound different questions."""
+    roster, real = _contested_flex()
+    for arm, expected in [("variance-oracle", "not foresight"),
+                          ("foresight", "full foresight")]:
+        paired = lg.compare({2024: [roster]}, {2024: real}, weeks=14, ceiling=True,
+                            ceiling_arm=arm)
+        said = "\n".join(lg.ceiling_report(_sum(-1.0, 1.0), paired, ceiling_arm=arm))
+        assert expected in said, arm
 
 
 # --- and an operator can ask for it (issue #134) --------------------------

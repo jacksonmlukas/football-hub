@@ -7,8 +7,12 @@ because both copies lived inside a `main()` that needs a network.
 
 All offline.
 """
+import functools
 import hashlib
+import json
 import math
+import re
+import statistics
 from typing import Any
 
 import numpy as np
@@ -425,6 +429,312 @@ def test_an_unclustered_summary_still_reports_its_unit_count():
     assert s["clusters"] == s["n"] == 60
 
 
+# --- #45 criterion 1: the season as the unit --------------------------------
+#
+# The load-bearing test of the whole ticket, and the one with a way to pass while proving
+# nothing. `summarise(cluster=("season",))` and `summarise()` return the same interval on any
+# frame whose rows are already independent, so a fixture built without a real season effect
+# would make both assertions below true no matter what the clustering code did. Two ceiling
+# tests in this repo stood on exactly that shape for months.
+#
+# So the fixture is built to the claim #45 actually makes -- *within-season rows are
+# near-identical* -- and `test_the_fixture_would_catch_a_clustering_that_did_nothing` proves
+# the fixture can tell the two estimators apart before anything else asserts on it.
+
+
+def _near_identical_seasons(seed=0):
+    """Four seasons, twenty rows each, with almost all the variance *between* seasons.
+
+    The shape #45 argues the real gates have: rows inside a season share a board, a pool and
+    one realisation of the year, so they differ by a whisker (sd 0.05) while the seasons
+    differ by a lot (sd 3.0). Row-resampling sees eighty observations and reports an interval
+    about sqrt(20) too narrow; season-resampling sees the four there are.
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    for season in range(2022, 2026):
+        level = rng.normal(0.0, 3.0)
+        for draft in range(20):
+            rows.append({"season": season, "draft": draft,
+                         "diff": level + rng.normal(0.0, 0.05)})
+    return pl.DataFrame(rows)
+
+
+def test_the_fixture_would_catch_a_clustering_that_did_nothing():
+    """Before asserting that clustering widens, prove the fixture *can* show it not widening.
+
+    A fixture on which the row bootstrap and the season bootstrap agree would let a
+    `summarise` that ignored `cluster` entirely pass every assertion below it. Here they
+    disagree by more than a factor of four, so an implementation that silently dropped the
+    argument would fail rather than pass quietly.
+    """
+    df = _near_identical_seasons()
+    row = experiment.summarise(df, bootstrap=2000, seed=1)
+    season = experiment.summarise(df, cluster=experiment.SEASON_CLUSTER, bootstrap=2000,
+                                  seed=1)
+    assert row["clusters"] == 80 and season["clusters"] == 4
+    ratio = (season["hi"] - season["lo"]) / (row["hi"] - row["lo"])
+    assert ratio > 4.0, f"the two estimators barely differ on this fixture (x{ratio:.2f})"
+
+
+def test_clustering_on_the_season_widens_the_interval_on_near_identical_rows():
+    """Criterion 1, first half. The interval that treats twenty near-identical rows as twenty
+    observations is far too narrow, and clustering is what admits it."""
+    df = _near_identical_seasons()
+    row = experiment.summarise(df, bootstrap=2000, seed=1)
+    season = experiment.summarise(df, cluster=experiment.SEASON_CLUSTER, bootstrap=2000,
+                                  seed=1)
+    assert season["hi"] - season["lo"] > row["hi"] - row["lo"]
+    assert season["se"] > row["se"]
+
+
+def test_clustering_on_the_season_leaves_the_mean_alone_on_balanced_seasons():
+    """Criterion 1, second half. Only the precision moves. A mean that shifted would mean
+    clustering had changed the estimate rather than what is claimed about it -- and on
+    balanced seasons the mean of the season means *is* the mean of the rows.
+
+    **This half cannot fail on a `summarise` that ignores clustering entirely**, and that is
+    not a weakness to hide: the equality it asserts is true precisely because both estimators
+    give the same mean here. Mutation-tested on 2026-09-07 -- disabling the cluster branch
+    leaves this green. So it also asserts the clustering actually *happened*, which is what
+    stops it reading as though it covered both halves, and the widening half above is what
+    carries the load.
+    """
+    df = _near_identical_seasons()
+    row = experiment.summarise(df, bootstrap=2000, seed=1)
+    season = experiment.summarise(df, cluster=experiment.SEASON_CLUSTER, bootstrap=2000,
+                                  seed=1)
+    assert season["mean"] == pytest.approx(row["mean"])
+    assert season["n"] == row["n"] == 80
+    assert season["clusters"] == 4 and row["clusters"] == 80, \
+        "the two summaries resampled the same unit, so the equality above proves nothing"
+
+
+def test_an_unbalanced_season_moves_the_mean_and_that_is_the_estimator_not_a_bug():
+    """The other half of the claim, stated so it cannot be mistaken for the first. Clustering
+    reweights: each season counts once whatever its row count. On a *balanced* frame that is
+    the same number as the row mean, which is why the criterion says balanced -- and asserting
+    it on an unbalanced frame too would be asserting something false."""
+    df = pl.concat([_near_identical_seasons(),
+                    pl.DataFrame({"season": [2022] * 40, "draft": list(range(20, 60)),
+                                  "diff": [50.0] * 40})])
+    row = experiment.summarise(df, bootstrap=500, seed=1)
+    season = experiment.summarise(df, cluster=experiment.SEASON_CLUSTER, bootstrap=500,
+                                  seed=1)
+    assert season["mean"] != pytest.approx(row["mean"])
+
+
+# --- #45 criterion 2: the reference distribution the cluster count justifies ------
+
+# The published table, so the quantile is checked against something outside this repo rather
+# than against itself. Two-sided 95%, i.e. the 0.975 quantile.
+_T_TABLE = {1: 12.70620, 2: 4.302653, 3: 3.182446, 4: 2.776445, 5: 2.570582,
+            7: 2.364624, 8: 2.306004, 10: 2.228139, 30: 2.042272, 100: 1.983972,
+            1000: 1.962339}
+
+
+@pytest.mark.parametrize("df", sorted(_T_TABLE))
+def test_the_t_quantile_matches_the_table(df):
+    """`_t_cdf` closes in elementary functions for integer df and is inverted by bisection.
+    Both halves are wrong in ways that would still look plausible -- an off-by-one in the odd
+    recursion moves df=3 to 2.35 -- so it is pinned to the published values."""
+    assert experiment.t_quantile(0.975, df) == pytest.approx(_T_TABLE[df], abs=1e-5)
+
+
+def test_the_mde_is_the_t_quantile_not_the_normal_one():
+    """Criterion 2, and the amendment of 2026-09-07 that motivates it. At four clusters the
+    normal quantile is the wrong reference distribution, and it is wrong in the direction that
+    flatters the gate: it makes the published SE and the published interval consistent with
+    each other rather than correct."""
+    normal = (statistics.NormalDist().inv_cdf(0.975)
+              + statistics.NormalDist().inv_cdf(0.80))
+    got = experiment.minimum_detectable_effect(3.67, clusters=4)
+    assert got == pytest.approx((3.182446 + 0.8416212) * 3.67, abs=1e-4)
+    assert got > normal * 3.67
+
+
+def test_the_published_arithmetic_reproduces():
+    """The two numbers #45 states, recomputed rather than trusted: 10.29 against 14.77 on the
+    draft gate's published season-clustered SE of 3.67, and the 1.44x between them.
+
+    The normal figure lands on 10.28 from an SE rounded to 3.67 and on 10.29 from the 3.6712
+    that rounds to it, which is the rounding in the published table rather than a
+    disagreement -- so the ratio, which is free of it, is what the assertion rests on."""
+    se = 3.67
+    z = statistics.NormalDist().inv_cdf(0.975) + statistics.NormalDist().inv_cdf(0.80)
+    t = experiment.minimum_detectable_effect(se, clusters=4)
+    assert z * se == pytest.approx(10.28, abs=0.01)
+    assert t == pytest.approx(14.77, abs=0.01)
+    assert t / (z * se) == pytest.approx(1.44, abs=0.005)
+
+
+def test_the_standard_error_under_the_mde_is_the_intervals_own_bootstrap():
+    """The half of the rule that a second bootstrap agreeing by luck would fake.
+
+    **Asserting `mde == minimum_detectable_effect(se, k)` does not test this**, and the first
+    version of this test did exactly that: `mde` is computed *from* `se`, so that identity
+    holds however `se` was obtained. A `summarise` that drew a whole second bootstrap under a
+    different seed and reported its standard deviation passed it -- measured, by mutation, on
+    2026-09-07. That is precisely the defect `docs/gate-power.md` names.
+
+    So the draws are reconstructed here from the documented algorithm -- the seed, the RNG, the
+    index draw -- and `lo`, `hi` and `se` are all required to come out of that one vector. A
+    second bootstrap cannot satisfy this one, because a different seed gives a different
+    standard deviation and nothing about the reconstruction is approximate.
+    """
+    df = _near_identical_seasons()
+    s = experiment.summarise(df, cluster=experiment.SEASON_CLUSTER, bootstrap=2000, seed=1)
+
+    units = (df.group_by(["season"]).agg(pl.col("diff").mean().alias("u"))
+               .sort(["season"])["u"].to_numpy().astype(float))
+    rng = np.random.default_rng(1)
+    draws = units[rng.integers(0, len(units), size=(2000, len(units)))].mean(axis=1)
+
+    assert s["lo"] == float(np.percentile(draws, 2.5))
+    assert s["hi"] == float(np.percentile(draws, 97.5))
+    assert s["se"] == float(draws.std(ddof=1)), \
+        "the reported SE is not the standard deviation of the interval's own draws"
+    assert s["mde"] == experiment.minimum_detectable_effect(s["se"], int(s["clusters"]))
+
+    # And it tracks the interval it sits under: a wider interval is a bigger SE is a bigger
+    # MDE. The row-clustered run of the same frame is the comparison.
+    row = experiment.summarise(df, bootstrap=2000, seed=1)
+    assert (s["hi"] - s["lo"] > row["hi"] - row["lo"]) and s["mde"] > row["mde"]
+
+
+def test_a_single_cluster_has_no_mde_rather_than_an_infinite_one():
+    """One observation has no degrees of freedom for a t. NaN is `Field.NO_DATA` and renders
+    no line, which is the honest answer -- a run with one season has no power to report."""
+    one = pl.DataFrame({"season": [2024] * 5, "diff": [1.0, 2.0, 3.0, 4.0, 5.0]})
+    s = experiment.summarise(one, cluster=experiment.SEASON_CLUSTER, bootstrap=200, seed=1)
+    assert s["clusters"] == 1
+    assert experiment.reading(s, "mde") is experiment.Field.NO_DATA
+
+
+# --- #45 criteria 3 and 4: what a four-cluster run has to show ---------------
+
+
+def _small(clusters=4):
+    df = pl.DataFrame({"season": list(range(2022, 2022 + clusters)),
+                       "diff": [1.0 + i for i in range(clusters)]})
+    return experiment.summarise(df, cluster=experiment.SEASON_CLUSTER, bootstrap=500, seed=1)
+
+
+def test_the_t_interval_is_reported_beside_the_percentile_one_at_few_clusters():
+    """Criterion 3. A nonparametric percentile bootstrap over four units under-covers, so both
+    are printed and neither is presented as the answer."""
+    lines = experiment.small_sample_report(_small(4))
+    joined = "\n".join(lines)
+    assert "95% t CI" in joined and "percentile" in joined
+    assert "4 clusters" in joined
+
+
+@pytest.mark.parametrize("k", [2, 4, 8])
+def test_both_intervals_show_at_or_below_eight_clusters(k):
+    assert experiment.small_sample_report(_small(k)) != []
+
+
+def test_nothing_is_printed_above_eight_clusters():
+    """The block is confined to the case that motivates it: a gate with many units prints
+    exactly what it printed before."""
+    many = experiment.summarise(_clustered(), cluster=("season", "roster"), bootstrap=200,
+                                seed=1)
+    assert many["clusters"] == 6
+    big = experiment.summarise(_clustered(), bootstrap=200, seed=1)
+    assert big["clusters"] == 60
+    assert experiment.small_sample_report(big) == []
+
+
+def test_the_two_intervals_actually_differ_so_printing_both_says_something():
+    """Otherwise this is two renderings of one number. The t interval is the wider here,
+    which is the direction the under-coverage argument predicts."""
+    s = _small(4)
+    half = experiment.t_quantile(0.975, 3) * s["se"]
+    assert (s["mean"] - half) < s["lo"] and (s["mean"] + half) > s["hi"]
+
+
+def test_the_four_season_means_are_printed():
+    """Criterion 4. An interval over four replications is a claim a reader should be able to
+    check by eye -- one season carrying the whole effect is visible in the four and invisible
+    in the interval."""
+    seasons = _gate_seasons([0.3, -0.5, 0.9, 0.1])
+    lines = experiment.small_sample_report(_small(4), seasons)
+    joined = "\n".join(lines)
+    assert "4 replications" in joined
+    for year, gain in zip(range(2022, 2026), ["+0.30", "-0.50", "+0.90", "+0.10"],
+                          strict=True):
+        assert f"{year} {gain}" in joined
+
+
+def test_the_season_means_are_omitted_rather_than_faked_when_none_are_handed_in():
+    joined = "\n".join(experiment.small_sample_report(_small(4)))
+    assert "replications" not in joined
+
+
+# --- #45 criterion 5: an interval that narrowed has to say so ----------------
+
+
+def test_a_narrower_interval_prints_the_ratio_and_requires_review():
+    """Criterion 5, and it exists because this happened. On 2026-09-07 the weekly screen
+    (#169) came back with five of nine intervals *narrower* under clustering -- the opposite
+    of what the argument predicts -- and it was caught only because someone compared."""
+    got = experiment.narrowing(width=1.0, previous=2.0)
+    assert got.requires_review
+    joined = "\n".join(got.lines)
+    assert "REQUIRES REVIEW" in joined and "NARROWER" in joined
+    assert "0.50" in joined, "the ratio itself has to be on the line"
+
+
+def test_a_wider_interval_is_noted_and_does_not_require_review():
+    got = experiment.narrowing(width=2.0, previous=1.0)
+    assert not got.requires_review and got.ratio == pytest.approx(2.0)
+    assert "2.00x" in "\n".join(got.lines)
+
+
+def test_an_equal_interval_does_not_require_review():
+    """The boundary. Narrower is the trigger, not different."""
+    assert not experiment.narrowing(width=1.0, previous=1.0).requires_review
+
+
+def test_a_first_run_has_nothing_to_compare_and_says_nothing():
+    got = experiment.narrowing(width=1.0, previous=None)
+    assert got.lines == [] and not got.requires_review
+
+
+def test_the_width_is_recorded_for_the_next_run_and_carries_the_review_flag(tmp_path):
+    """Printed lines scroll past; the record is what a later reader has. Two runs of the same
+    gate: the first has nothing to compare against, the second compares against the first."""
+    path = tmp_path / "gate-width.json"
+    first = {"lo": -2.0, "hi": 2.0, "clusters": 4.0}
+    assert experiment.review_width("draft", first, path=path) == []
+    assert json.loads(path.read_text())["draft"]["width"] == pytest.approx(4.0)
+
+    second = {"lo": -0.5, "hi": 0.5, "clusters": 4.0}
+    said = experiment.review_width("draft", second, path=path)
+    assert "REQUIRES REVIEW" in "\n".join(said)
+    entry = json.loads(path.read_text())["draft"]
+    assert entry["requires_review"] is True and entry["width"] == pytest.approx(1.0)
+
+
+def test_one_gate_s_history_is_not_another_s(tmp_path):
+    """Keyed by name, so three gates do not overwrite each other and read a narrowing that is
+    really a different gate's interval."""
+    path = tmp_path / "gate-width.json"
+    experiment.review_width("draft", {"lo": -2.0, "hi": 2.0, "clusters": 4.0}, path=path)
+    assert experiment.review_width("weekly", {"lo": -0.5, "hi": 0.5, "clusters": 4.0},
+                                   path=path) == []
+    assert set(json.loads(path.read_text())) == {"draft", "weekly"}
+
+
+def test_an_unreadable_history_costs_a_line_and_not_the_run(tmp_path):
+    """CLAUDE.md's degradation rule. A gate that cannot read its own history still has a
+    verdict; a harness that dies because a JSON file is half-written does not."""
+    path = tmp_path / "gate-width.json"
+    path.write_text("{ this is not json")
+    assert experiment.review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0},
+                                   path=path) == []
+
+
 # --- the Gate, which was a rule three modules each remembered --------------------
 #
 # `CONTEXT.md` defines a Gate exactly -- does this beat the simplest thing that already
@@ -594,14 +904,24 @@ def test_an_existing_caller_s_block_is_byte_identical(site):
 
 
 @pytest.mark.parametrize("site", sorted(BLOCKS_BEFORE))
-def test_a_summary_straight_out_of_summarise_renders_the_same_two_lines(site):
+def test_a_summary_straight_out_of_summarise_renders_the_two_lines_plus_its_mde(site):
     """The goldens above are hand-built dicts, which cannot show whether the real product of
-    `summarise` has grown a line. This does."""
-    kwargs, _ = BLOCKS_BEFORE[site]
+    `summarise` has grown a line. This does -- and since #45 it has grown exactly one.
+
+    `gate-power.md` predicted this before it was built: *"supplying the key changes every
+    gate's printed output, and moves the sweep digest."* The two original lines are still
+    byte-identical, the new one is the MDE, and no caller here hands in a ceiling."""
+    kwargs, before = BLOCKS_BEFORE[site]
     lines = experiment.paired_report(experiment.summarise(_paired_frame(), bootstrap=200,
                                                           seed=1), **kwargs)
-    assert len(lines) == 2
-    assert "MDE" not in "\n".join(lines) and "ceiling" not in "\n".join(lines)
+    assert len(lines) == 3
+    assert "MDE at 80% power" in lines[2]
+    assert "ceiling" not in "\n".join(lines)
+    # The two that were there are still exactly where and what they were. The numbers differ
+    # from the goldens above -- those are a hand-built summary, this is a real frame -- so it
+    # is the skeleton that is compared: every character that is not a digit or a sign.
+    skeleton = functools.partial(re.sub, r"[-+0-9.]+", "#")
+    assert [skeleton(ln) for ln in lines[:2]] == [skeleton(b) for b in before]
 
 
 # --- the breadth proof ------------------------------------------------------
@@ -640,8 +960,10 @@ def _sweep_frames() -> list[pl.DataFrame]:
     return frames
 
 
-def _sweep_blocks() -> list[tuple[str, list[str]]]:
-    """Every call site's rendered block, over every frame, cluster setting and seed."""
+def _sweep_labelled() -> list[tuple[str, list[str], dict[str, float]]]:
+    """Every call site's rendered block, over every frame, cluster setting and seed -- with
+    the summary that produced it, so an assertion can ask *why* a block has the lines it has
+    rather than inferring it from the label."""
     out = []
     for f_i, frame in enumerate(_sweep_frames()):
         for cluster in _SWEEP_CLUSTERS:
@@ -650,15 +972,28 @@ def _sweep_blocks() -> list[tuple[str, list[str]]]:
                 for site in sorted(BLOCKS_BEFORE):
                     kwargs, _ = BLOCKS_BEFORE[site]
                     out.append((f"{f_i}|{cluster}|{seed}|{site}",
-                                experiment.paired_report(s, **kwargs)))
+                                experiment.paired_report(s, **kwargs), s))
     return out
+
+
+def _sweep_blocks() -> list[tuple[str, list[str]]]:
+    return [(label, lines) for label, lines, _ in _sweep_labelled()]
 
 
 def _digest(parts: list[str]) -> str:
     return hashlib.sha256("\n--\n".join(parts).encode()).hexdigest()[:16]
 
 
-BLOCK_SWEEP_DIGEST = "bf5b1af281ea0f0c"
+# **Moved once, by #45, and this is the record of it.** The digest was `bf5b1af281ea0f0c` from
+# 2026-09-05 until `summarise` began computing an MDE. `docs/gate-power.md` predicted the move
+# before the work started -- *"supplying the key changes every gate's printed output, and moves
+# the sweep digest that `tests/unit/test_experiment.py` pins. That is the digest doing its
+# job."* -- and `test_every_block_grew_exactly_the_mde_line` below is what says the move is
+# only that. A re-recorded digest with no readable assertion beside it would be a rubber stamp.
+BLOCK_SWEEP_DIGEST = "5c1be1a2ba3ba17f"
+
+# Unmoved, and it has to be: `_gate_sweep({})` hands in neither an `mde` nor a `ceiling`, so
+# the NOT-RUNNABLE branch cannot fire and all eighty verdicts are the ones ADR-0019 gave.
 GATE_SWEEP_DIGEST = "7c0084a7ec69757d"
 
 
@@ -671,12 +1006,31 @@ def test_the_whole_rendered_sweep_is_byte_identical():
         == BLOCK_SWEEP_DIGEST
 
 
-def test_no_block_in_the_sweep_grew_a_line():
-    """The readable half of the digest above: today nothing computes an MDE and no caller
-    hands in a ceiling, so every one of the 738 blocks is exactly the two lines it was."""
-    for label, lines in _sweep_blocks():
-        assert len(lines) == 2, label
-        assert "MDE" not in "\n".join(lines) and "ceiling" not in "\n".join(lines)
+def test_every_block_grew_exactly_the_mde_line_and_nothing_else():
+    """The readable half of the digest above, and the whole reason re-recording it is honest.
+
+    A moved digest says *something* changed. This says what: every block that can carry an
+    MDE grew that one line, in third place, below the interval; every block that cannot --
+    an empty frame, or one whose cluster count is 1, which has no degrees of freedom for a t
+    -- is byte-identical to the two lines it was; and no block anywhere grew a ceiling,
+    because no caller in this sweep hands one in.
+    """
+    grew, unchanged = 0, 0
+    for label, lines, s in _sweep_labelled():
+        assert "ceiling" not in "\n".join(lines), label
+        if experiment.reading(s, "mde") is experiment.Field.VALUE:
+            assert len(lines) == 3, label
+            assert lines[2].startswith("  MDE at 80% power "), label
+            assert "95% CI" in lines[1], label
+            grew += 1
+        else:
+            assert len(lines) == 2, label
+            assert "MDE" not in "\n".join(lines), label
+            unchanged += 1
+    # Both branches are actually exercised: a test where every block took one arm would prove
+    # only that arm. 18 empty-frame blocks plus the single-cluster ones stay at two lines.
+    assert grew and unchanged, (grew, unchanged)
+    assert grew + unchanged == 738
 
 
 def test_only_the_empty_frame_renders_a_nan_across_the_sweep():
@@ -715,14 +1069,146 @@ def test_the_eighty_gate_verdicts_are_unmoved():
     {},
     {"ceiling": 1.2},
     {"ceiling": 0.0},
+    {"mde": 0.44},
     {"mde": 0.44, "ceiling": 1.2},
     {"mde": float("nan"), "ceiling": float("nan")},
+    {"mde": float("nan"), "ceiling": 1.2},
+    {"mde": 99.0, "ceiling": float("nan")},
 ])
-def test_no_state_of_either_field_moves_a_gate_verdict(extra):
-    """`gate` is ADR-0019's two halves and nothing else today. U4 adds a not-runnable branch
-    ahead of every branch but VOID; until it does, a summary carrying these fields in any
-    state must reach exactly the verdict a summary without them reaches."""
+def test_a_runnable_gate_reaches_the_verdict_adr_0019_gave_it(extra):
+    """The not-runnable branch fires on one condition and leaves every other case alone.
+
+    Each row here is a state that must NOT trip it: no ceiling measured, no MDE computed,
+    either of them present-but-no-data, and an MDE that sits comfortably below its ceiling.
+    A gate that has not shown it cannot run has shown nothing, and `Field.NO_SLOT` and
+    `Field.NO_DATA` are that third state rather than a licence to guess.
+    """
     assert _gate_sweep(extra) == _gate_sweep({})
+
+
+def test_an_mde_above_the_ceiling_is_not_runnable():
+    """Criterion 8. The gate cannot separate a real effect from a perfect one, so it records
+    that it cannot run instead of publishing a null."""
+    status, said = experiment.gate(_gate_summary(-0.4, 0.9) | {"mde": 2.0, "ceiling": 1.2},
+                                   _gate_seasons([0.3, -0.5, 0.9]), _ACTIONS)
+    assert status == "NOT-RUNNABLE"
+    assert "not planned" in said and "2.000" in said and "1.200" in said
+
+
+def test_not_runnable_preempts_every_branch_but_void():
+    """Criterion 8's *ordering*, which is the whole point of it. A gate whose MDE exceeds its
+    ceiling would otherwise publish one of ADOPT, REMOVE or SHOW -- and SHOW, the null, is
+    exactly the verdict `docs/gate-power.md` exists to stop an underpowered gate printing."""
+    underpowered = {"mde": 99.0, "ceiling": 1.2}
+    for lo, hi in _GATE_INTERVALS:
+        for gains in _GATE_GAINS:
+            summary = _gate_summary(lo, hi) | underpowered
+            status, _ = experiment.gate(summary, _gate_seasons(gains), _ACTIONS)
+            assert status == "NOT-RUNNABLE", (lo, hi, gains)
+    # Including the branch that would otherwise ADOPT, and the empty one that would SHOW.
+    assert experiment.gate(_gate_summary(0.4, 1.2) | underpowered,
+                           _gate_seasons([0.3, 0.5, 0.9]), _ACTIONS)[0] == "NOT-RUNNABLE"
+    assert experiment.gate(_gate_summary(0.4, 1.2, clusters=0) | underpowered,
+                           _gate_seasons([0.3]), _ACTIONS)[0] == "NOT-RUNNABLE"
+
+
+def test_void_still_preempts_not_runnable():
+    """The one branch above it. A void gate's inputs are broken, which makes its MDE and its
+    ceiling untrustworthy too -- there is nothing to compare."""
+    status, said = experiment.gate(_gate_summary(-0.4, 0.9) | {"mde": 99.0, "ceiling": 1.2},
+                                   _gate_seasons([0.3]), _ACTIONS, void="VOID: join failure.")
+    assert status == "VOID" and said == "VOID: join failure."
+
+
+def test_a_ceiling_of_zero_makes_any_positive_mde_not_runnable():
+    """A measured zero is a value, not an absence -- a perfect arm gaining nothing over the
+    incumbent is the strongest finding a ceiling can carry, and no gate can resolve an effect
+    inside it. The comparison is signed for this reason rather than absolute."""
+    status, _ = experiment.gate(_gate_summary(-0.4, 0.9) | {"mde": 0.01, "ceiling": 0.0},
+                                _gate_seasons([0.3]), _ACTIONS)
+    assert status == "NOT-RUNNABLE"
+
+
+def test_an_mde_exactly_at_the_ceiling_still_runs():
+    """The boundary, stated. `exceeds` is strict: a gate that can just resolve its ceiling has
+    not been shown unable to run."""
+    status, _ = experiment.gate(_gate_summary(-0.4, 0.9) | {"mde": 1.2, "ceiling": 1.2},
+                                _gate_seasons([0.3, -0.5, 0.9]), _ACTIONS)
+    assert status == "SHOW"
+
+
+def test_a_runnable_gate_still_does_not_adopt_at_two_of_three_seasons():
+    """Criterion 7, and the worked example `docs/method.md` records as correctly failed: an
+    interval excluding zero is not enough on its own, and the every-season half is what stops
+    one lucky season carrying a verdict. Asserted here *with* an MDE and a ceiling present, so
+    the new branch cannot be what produced the answer."""
+    summary = _gate_summary(0.1, 1.2) | {"mde": 0.44, "ceiling": 1.2}
+    status, said = experiment.gate(summary, _gate_seasons([0.4, 0.3, -0.2]), _ACTIONS)
+    assert status == "SHOW"
+    assert "Won 2/3 seasons" in said
+    assert "the sign is not consistent across seasons" in said
+
+
+# --- the restated figures, so the documents cannot drift from the code -------
+
+
+def test_the_restated_weekly_gate_figures_reproduce():
+    """`docs/weekly-blend-gate.md`'s 2026-09-07 season-clustered restatement, recomputed.
+
+    That gate builds its paired frame from the network and persists nothing, so the numbers on
+    the page were derived rather than re-run -- a cluster bootstrap resamples the *cluster
+    means*, and under `SEASON_CLUSTER` those are exactly the four per-season gains the page
+    already published, over four balanced seasons. This is that derivation, pinned, so the
+    document and the code cannot drift apart quietly.
+    """
+    published = {2022: -0.452, 2023: -1.490, 2024: -0.868, 2025: -1.204}
+    frame = pl.DataFrame({"season": list(published), "diff": list(published.values())})
+    s = experiment.summarise(frame, cluster=experiment.SEASON_CLUSTER, seed=0)
+
+    assert s["clusters"] == 4
+    assert s["mean"] == pytest.approx(-1.004, abs=0.001)
+    assert (s["lo"], s["hi"]) == (pytest.approx(-1.347, abs=0.001),
+                                  pytest.approx(-0.640, abs=0.001))
+    assert s["se"] == pytest.approx(0.191, abs=0.001)
+    assert s["mde"] == pytest.approx(0.768, abs=0.001)
+
+    # The verdict does not move: every season is negative, so no resample reaches zero.
+    seasons = pl.DataFrame({"season": list(published), "n": [500] * 4,
+                            "gain": list(published.values())})
+    assert experiment.gate(s, seasons, _ACTIONS)[0] == "REMOVE"
+
+
+def test_the_weekly_percentile_interval_narrows_and_the_t_interval_widens():
+    """The finding the restatement turns on, and the one criterion 5 exists to surface.
+
+    Against the published roster-clustered [-1.391, -0.621] the season-clustered *percentile*
+    interval is narrower -- a percentile bootstrap over four units cannot express a tail it
+    never drew -- while the t interval on the same four units is much wider. Both facts on the
+    same run, which is why the small-sample block prints both and why a narrowing has to
+    announce itself rather than read as precision."""
+    published = {2022: -0.452, 2023: -1.490, 2024: -0.868, 2025: -1.204}
+    frame = pl.DataFrame({"season": list(published), "diff": list(published.values())})
+    s = experiment.summarise(frame, cluster=experiment.SEASON_CLUSTER, seed=0)
+
+    was = -0.621 - -1.391
+    percentile = s["hi"] - s["lo"]
+    t_width = 2 * experiment.t_quantile(0.975, 3) * s["se"]
+    assert percentile < was, "the percentile interval no longer narrows; restate the doc"
+    assert t_width > was
+    assert percentile / was == pytest.approx(0.92, abs=0.01)
+
+    said = experiment.narrowing(percentile, was)
+    assert said.requires_review and "REQUIRES REVIEW" in "\n".join(said.lines)
+
+
+def test_the_restated_draft_gate_mdes_reproduce():
+    """`docs/gate-power.md`'s restated table: the same SEs, the t quantile instead of the
+    normal, and the 1.44x that only matters at four clusters."""
+    assert experiment.minimum_detectable_effect(1.79, 80) == pytest.approx(5.07, abs=0.01)
+    assert experiment.minimum_detectable_effect(3.67, 4) == pytest.approx(14.77, abs=0.01)
+    # Stage 1's margin against the gate's own reported effect, before and after.
+    assert 19.66 / experiment.minimum_detectable_effect(3.67, 4) == pytest.approx(1.33,
+                                                                                 abs=0.01)
 
 
 # --- no data is not no slot -------------------------------------------------
@@ -735,7 +1221,12 @@ def test_no_data_and_no_slot_are_different_answers():
     empty = experiment.summarise(pl.DataFrame())
     assert experiment.reading(empty, "mean") is experiment.Field.NO_DATA
     assert experiment.reading(empty, "ceiling") is experiment.Field.NO_SLOT
-    assert experiment.reading(empty, "mde") is experiment.Field.NO_SLOT
+    # Since #45 `summarise` computes an MDE, so on an empty frame the answer moves from "this
+    # producer does not compute the field" to "it does, and this run scored nothing into it" --
+    # which puts all three states on one summary, where before it took two.
+    assert experiment.reading(empty, "mde") is experiment.Field.NO_DATA
+    assert experiment.reading(experiment.summarise(_paired_frame(), bootstrap=200, seed=1),
+                              "mde") is experiment.Field.VALUE
 
 
 def test_a_ceiling_measured_on_a_harness_survives_an_empty_frame():
@@ -750,12 +1241,14 @@ def test_a_ceiling_measured_on_a_harness_survives_an_empty_frame():
 
 def test_nan_means_no_data_and_nothing_else():
     """The invariant that keeps the two apart, stated both ways. A summary over rows carries
-    no NaN anywhere; the empty summary carries NaN for exactly the four computed fields."""
+    no NaN anywhere; the empty summary carries NaN for exactly the six computed fields --
+    four until #45 added `se` and `mde`, which are computed here and so have a slot to be
+    empty in."""
     full = experiment.summarise(_paired_frame(), bootstrap=200, seed=1, ceiling=1.2)
     assert [k for k, v in full.items() if math.isnan(v)] == []
     empty = experiment.summarise(pl.DataFrame())
     assert sorted(k for k, v in empty.items() if math.isnan(v)) == [
-        "hi", "lo", "mean", "p_better"]
+        "hi", "lo", "mde", "mean", "p_better", "se"]
 
 
 def test_the_empty_frame_still_reports_what_it_reported_before():
@@ -768,12 +1261,14 @@ def test_the_empty_frame_still_reports_what_it_reported_before():
         assert experiment.reading(s, field) is experiment.Field.NO_DATA
 
 
-def test_a_summary_today_has_no_slot_for_either_field():
-    """Nothing computes an MDE and no caller hands in a ceiling, so `summarise` claims
-    neither. The key's presence is the claim that this producer computes the field."""
+def test_a_summary_claims_the_mde_and_not_the_ceiling():
+    """The key's presence is the claim that this producer computes the field, and #45 moves
+    exactly one of the two: `summarise` now computes an MDE from its own bootstrap, and still
+    cannot compute a ceiling -- measuring one means playing an extra arm and only the harness
+    knows what its arms are."""
     s = experiment.summarise(_paired_frame(), bootstrap=200, seed=1)
-    assert "mde" not in s and "ceiling" not in s
-    assert experiment.reading(s, "mde") is experiment.Field.NO_SLOT
+    assert "mde" in s and "se" in s and "ceiling" not in s
+    assert experiment.reading(s, "mde") is experiment.Field.VALUE
     assert experiment.reading(s, "ceiling") is experiment.Field.NO_SLOT
 
 
@@ -825,6 +1320,26 @@ def test_the_ceiling_line_renders_when_it_has_a_value():
     joined = "\n".join(lines)
     assert "ceiling (perfect foresight) +1.20 points per team game" in joined
     assert "MDE" not in joined, "the one with no slot must not appear at all"
+
+
+def test_the_ceiling_line_names_the_arm_the_caller_gives_it():
+    """Two of the three gates bound perfect foresight and the lineup gate bounds a perfect
+    *spread*. A block that called the second one foresight would be the confusion
+    `lineup_gate.foresight_lineup_points` exists as a separate function to prevent."""
+    lines = experiment.paired_report(_summary() | {"ceiling": 1.2}, arm_a="a", arm_b="b",
+                                     ceiling_arm="a perfect spread, not foresight")
+    assert "ceiling (a perfect spread, not foresight) +1.20" in "\n".join(lines)
+    assert "perfect foresight)" not in "\n".join(lines)
+
+
+def test_a_caller_that_renders_its_own_ceiling_line_is_not_given_a_second_one():
+    """`None` says the caller prints its own. The lineup gate passes it, because it has a
+    `ceiling_report` that names the arm and warns when the ceiling fails to bound -- and
+    without this the number appeared twice, once under the wrong name. Found by rendering the
+    block rather than by any assertion, which is why there is now an assertion."""
+    s = _summary() | {"ceiling": 1.2}
+    assert experiment.paired_report(s, arm_a="a", arm_b="b", ceiling_arm=None) \
+        == experiment.paired_report(_summary(), arm_a="a", arm_b="b")
 
 
 def test_the_mde_line_renders_when_it_has_a_value():

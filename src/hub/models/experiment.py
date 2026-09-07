@@ -37,9 +37,12 @@ its own incumbent and its own sentences.
 """
 from __future__ import annotations
 
+import json
 import math
+import statistics
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from enum import Enum
+from pathlib import Path
 from typing import NamedTuple, Protocol
 
 import numpy as np
@@ -47,6 +50,7 @@ import numpy.typing as npt
 import polars as pl
 
 from hub.names import player_key
+from hub.paths import STATE_DIR
 
 NOT_FITTED_BECAUSE = (
     "MIN_SE is the significance bar every gate reads -- a setting, and the one this module "
@@ -170,6 +174,115 @@ def walk_forward_inputs(
 # "the repo's usual bar". A gate wanting a different bar passes its own; what it must not do
 # is declare a second 2.0.
 MIN_SE = 2.0
+
+
+# What one independent observation is, for every gate in this repo. One name, declared once,
+# for the same reason `MIN_SE` is: it was three different answers in three harnesses --
+# `backtest.compare` and `lineup_gate.compare` took the row, `weekly_gate.compare` took
+# `("season", "roster")` -- and nobody chose that either.
+#
+# **The claim is about the data, not about the power.** Within a season the rows share a
+# board, a player pool, a schedule and one realisation of the year; what varies independently
+# between them is the season. `docs/gate-power.md` fixes the consequence before the numbers:
+# the cluster "is either true or false about the data, not chosen to suit the power", and it
+# does not suit the power -- it costs it. Four seasons is four observations, the interval that
+# admits it is wide, and the gates that cannot clear their own ceiling under it say so through
+# the not-runnable branch in `gate` rather than publishing a null they were never able to find.
+SEASON_CLUSTER: tuple[str, ...] = ("season",)
+
+# Two-sided 5%, 80% power -- the pre-registered pair in `docs/gate-power.md`.
+POWER = 0.80
+ALPHA = 0.05
+
+# At or below this many clusters the percentile bootstrap is reported *beside* a t interval
+# rather than alone. A nonparametric percentile bootstrap resamples the units it was given,
+# and over four of them the resample space is 4**4 = 256 distinct multisets -- it cannot
+# express a tail it never drew, so it under-covers, and it does so silently and narrowly.
+# The t interval makes a distributional assumption the percentile one does not; neither is
+# right, and printing both is the honest render of a disagreement that only exists because
+# the cluster count is small.
+SMALL_CLUSTERS = 8
+
+
+def _t_cdf(t: float, df: int) -> float:
+    """`P(T <= t)` for Student's t on *integer* degrees of freedom, from the standard library.
+
+    Exact rather than approximate, and no dependency: for integer `df` the t CDF closes in
+    elementary functions of `theta = arctan(t / sqrt(df))`, with one recursion for odd `df`
+    and another for even. `hub.draft.tune` records the same trade -- "scipy is not a declared
+    dependency" -- and `hub.models.coverage._z` takes the normal quantile out of `statistics`
+    for the same reason. `df` is always a cluster count minus one here, so integer is not a
+    restriction this has to apologise for.
+    """
+    th = math.atan(t / math.sqrt(df))
+    cos = math.cos(th)
+    if df == 1:
+        return 0.5 + th / math.pi
+    if df % 2 == 1:
+        coef, total = 1.0, 0.0
+        for j in range(1, (df - 1) // 2 + 1):
+            if j > 1:
+                coef *= (2 * j - 2) / (2 * j - 1)
+            total += coef * cos ** (2 * j - 1)
+        return 0.5 + (th + math.sin(th) * total) / math.pi
+    coef, total = 1.0, 0.0
+    for j in range(1, df // 2 + 1):
+        if j > 1:
+            coef *= (2 * j - 3) / (2 * j - 2)
+        total += coef * cos ** (2 * j - 2)
+    return 0.5 + 0.5 * math.sin(th) * total
+
+
+def t_quantile(p: float, df: int) -> float:
+    """The `p` quantile of Student's t on `df` degrees of freedom.
+
+    Bisection on `_t_cdf`, which is monotone, to a tolerance far below anything a printed
+    interval shows. Verified against the published table at
+    `tests/unit/test_experiment.py::test_the_t_quantile_matches_the_table`.
+    """
+    if df < 1:
+        raise ValueError(f"t has no {df} degrees of freedom")
+    lo, hi = 0.0, 1.0
+    while _t_cdf(hi, df) < p:
+        hi *= 2.0
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        if _t_cdf(mid, df) < p:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+def minimum_detectable_effect(se: float, clusters: int) -> float:
+    """The smallest effect this run had 80% power to detect, two-sided at 5%.
+
+    `(t(0.975, k-1) + z(0.80)) * se`, where `k` is the number of clusters and `se` is the
+    standard deviation of the bootstrap draws that produced the interval -- the same
+    bootstrap, not a second one that happens to agree. That half of the rule is
+    `docs/gate-power.md`'s and has not moved.
+
+    **The quantile is a t and this is a correction, dated 2026-09-07.** The criterion first
+    written for #45 said "not a t approximation", against the failure mode of a second
+    bootstrap; it also ruled out the t *quantile*, and at four clusters the normal quantile is
+    simply the wrong reference distribution. It does not make the MDE wrong by a rounding --
+    it makes the published SE and the published interval consistent with each other rather
+    than correct. At four clusters `t(0.975, 3)` is 3.1824 against `z(0.975)`'s 1.9600, so the
+    normal understates the MDE by **1.44x**: on the draft gate's published season-clustered SE
+    of 3.67 it reads 10.29 where the honest number is 14.77.
+
+    Only the 0.975 quantile is a t. The 0.80 power term stays normal: it is a statement about
+    where the alternative's sampling distribution sits, not about estimating a variance from
+    `k` observations, and that is the standard form rather than a convenience.
+
+    Returns NaN when there is no dispersion to speak of -- one cluster has no degrees of
+    freedom for a t, and a run with a single independent observation has no power to report
+    rather than infinite power.
+    """
+    if clusters < 2 or not math.isfinite(se):
+        return float("nan")
+    return (t_quantile(1.0 - ALPHA / 2.0, clusters - 1)
+            + statistics.NormalDist().inv_cdf(POWER)) * se
 
 
 def expanding_seasons(
@@ -319,7 +432,8 @@ def reading(summary: Mapping[str, float], field: str) -> Field:
 
 def paired_report(s: dict, *, arm_a: str, arm_b: str,
                   unit: str = "points per team game", places: int = 2,
-                  show_n: bool = True) -> list[str]:
+                  show_n: bool = True,
+                  ceiling_arm: str | None = "perfect foresight") -> list[str]:
     """The n / interval / P(better) block, as lines rather than prints.
 
     Returned rather than printed for the reason `hub.draft.report` exists: a block that prints
@@ -329,9 +443,10 @@ def paired_report(s: dict, *, arm_a: str, arm_b: str,
     rounds to +0.22 at two -- while every doc and ADR quotes it as +0.215. `show_n` because
     that gate prints its own roster-week count, with the cluster count beside it.
 
-    `mde` and `ceiling` render only when they carry a value. Nothing computes either yet, so
-    every caller today gets exactly the two lines it got before -- not a placeholder, not a
-    blank, not a line reading `nan`. A field with a slot and no data prints nothing either:
+    `mde` and `ceiling` render only when they carry a value. Since #45 every real run computes
+    an `mde`, so every caller gains that one line and gains it in the same place; a caller
+    that hands in no ceiling still prints no ceiling line -- not a placeholder, not a blank,
+    not a line reading `nan`. A field with a slot and no data prints nothing either:
     `nan` set against a unit is the watchdog's 56.7 years, and silence is the honest render of
     a number that was not computed. Order is deliberate: the effect, the interval around it,
     the smallest effect the run could have resolved, and then how much there was to resolve.
@@ -350,9 +465,145 @@ def paired_report(s: dict, *, arm_a: str, arm_b: str,
     # rather than a predicate that folds them together.
     if reading(s, "mde") is Field.VALUE:
         lines.append(f"  MDE at 80% power {s['mde']:+.{places}f} {unit}")
-    if reading(s, "ceiling") is Field.VALUE:
-        lines.append(f"  ceiling (perfect foresight) {s['ceiling']:+.{places}f} {unit}")
+    # `ceiling_arm` is the caller's, for the same reason `unit` is. Two of the three gates
+    # bound *perfect foresight* and the lineup gate bounds a *perfect spread*, and a line that
+    # called the second one foresight would be the exact confusion
+    # `lineup_gate.foresight_lineup_points` exists as a separate function to prevent -- a
+    # ceiling that had quietly become full foresight makes an underpowered gate look powered.
+    # `None` says the caller renders its own ceiling line, so this one is not printed twice:
+    # the weekly and lineup gates each have a `ceiling_report` that says more than this can.
+    if reading(s, "ceiling") is Field.VALUE and ceiling_arm is not None:
+        lines.append(f"  ceiling ({ceiling_arm}) {s['ceiling']:+.{places}f} {unit}")
     return lines
+
+
+def small_sample_report(s: Mapping[str, float], seasons: pl.DataFrame | None = None, *,
+                        unit: str = "points per team game", places: int = 2,
+                        small: int = SMALL_CLUSTERS) -> list[str]:
+    """What a reader needs when the interval above rests on very few units. Lines, not prints.
+
+    Nothing at all above `small` clusters, so a gate with a hundred rosters prints exactly
+    what it printed before and this block is confined to the case that motivates it.
+
+    **The t interval beside the percentile one**, because a nonparametric percentile bootstrap
+    over four units under-covers: it can only resample the four numbers it was handed, so its
+    tails are drawn from a space of 256 multisets and it is narrow in a way that looks like
+    precision. The t interval assumes a normal sampling distribution the bootstrap does not.
+    Neither is right. Printing one would be choosing; printing both says the two disagree and
+    by how much, which is the fact.
+
+    **And the cluster means themselves**, when a frame of them is handed in. Four numbers is
+    few enough to read, and an interval over four replications is a claim a reader should be
+    able to check by eye -- one season carrying the whole effect is visible in the four and
+    invisible in the interval. `per_season` produces exactly this frame, and under
+    `SEASON_CLUSTER` the season means *are* the cluster means rather than a second grouping
+    that happens to agree.
+    """
+    k = int(s.get("clusters", 0))
+    if not k or k > small or reading(s, "se") is not Field.VALUE:
+        return []
+    half = t_quantile(1.0 - ALPHA / 2.0, k - 1) * s["se"] if k > 1 else float("nan")
+    lines = [f"\n  {k} clusters -- few enough that the percentile bootstrap under-covers, so "
+             f"both intervals are shown"]
+    if math.isfinite(half):
+        lines.append(f"  95% t CI [{s['mean'] - half:+.{places}f}, "
+                     f"{s['mean'] + half:+.{places}f}] {unit}   "
+                     f"(percentile [{s['lo']:+.{places}f}, {s['hi']:+.{places}f}])")
+    if seasons is not None and not seasons.is_empty():
+        means = "  ".join(f"{int(r['season'])} {r['gain']:+.{places}f}"
+                          for r in seasons.iter_rows(named=True))
+        lines.append(f"  the {seasons.height} replications the interval rests on: {means}")
+    return lines
+
+
+# Where a gate's last season-clustered interval width is remembered between runs. Under
+# `state/` with the odds poller and the CFBD quota, which is where this repo keeps the small
+# facts one run leaves for the next -- not under `data/processed/`, which is measured output.
+WIDTH_STATE = STATE_DIR / "gate-width.json"
+
+
+class Narrowing(NamedTuple):
+    """Whether this run's interval narrowed against the last, and what to say about it."""
+    ratio: float
+    requires_review: bool
+    lines: list[str]
+
+
+def narrowing(width: float, previous: float | None, *, places: int = 2) -> Narrowing:
+    """Did the season-clustered interval get *narrower* than last time? Pure; the IO is below.
+
+    **Narrower is not automatically wrong, but it must be visible.** #45's clustering argument
+    predicts widening -- within-season rows are near-identical, so pooling them into one
+    reading per season should cost precision. On 2026-09-07 the weekly screen (#169) ran it
+    and five of nine intervals came back *narrower*, which is the opposite of what the
+    argument predicts and was noticed only because someone happened to compare. A prediction
+    that fails silently is not a prediction.
+
+    So the run says so itself, with the ratio, and records that it requires review. It does
+    not fail and it does not refuse: a narrower interval has real causes -- a cluster mean is
+    an average and averaging removes within-cluster noise, so a gate whose variance was mostly
+    *within* season honestly tightens -- and a rule that treated it as an error would be
+    pre-judging the very thing that wants looking at.
+    """
+    if previous is None or not (math.isfinite(width) and math.isfinite(previous)) \
+            or previous <= 0:
+        return Narrowing(float("nan"), False, [])
+    ratio = width / previous
+    if ratio >= 1.0:
+        return Narrowing(ratio, False, [
+            f"  interval width {width:.{places}f} against the previous run's "
+            f"{previous:.{places}f} -- {ratio:.2f}x, wider as clustering predicts"])
+    return Narrowing(ratio, True, [
+        f"\n  REQUIRES REVIEW: this run's season-clustered interval is NARROWER than the "
+        f"previous one -- {width:.{places}f} against {previous:.{places}f}, a ratio of "
+        f"{ratio:.2f}.",
+        "  Clustering on the season predicts widening. Narrower is not automatically wrong "
+        "-- a gate whose variance sat within the season honestly tightens -- but it "
+        "contradicts the argument the cluster was chosen on, and #169 found five of nine "
+        "intervals doing this unnoticed. Read it before quoting the interval."])
+
+
+def _width_state(path: Path) -> dict:
+    """Whatever is on disk, or nothing. Never raises -- CLAUDE.md's degradation rule.
+
+    A gate that could not read its own history still has a verdict to report; what it loses is
+    one comparison line, and losing that is strictly better than a harness that dies because a
+    JSON file is half-written.
+    """
+    try:
+        got = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+def review_width(name: str, summary: Mapping[str, float], *,
+                 path: Path = WIDTH_STATE, places: int = 2,
+                 write: bool = True) -> list[str]:
+    """Compare this run's interval width with the last one under `name`, and record this one.
+
+    The comparison is against the *previous run of this gate*, keyed by name, so three gates
+    do not overwrite each other's history. `requires_review` is written into the record as
+    well as printed, because the printed line scrolls past and the record is what a later
+    reader has.
+    """
+    width = float(summary["hi"]) - float(summary["lo"])
+    state = _width_state(path)
+    entry = state.get(name)
+    previous = None
+    if isinstance(entry, dict) and isinstance(entry.get("width"), int | float):
+        previous = float(entry["width"])
+    said = narrowing(width, previous, places=places)
+    if write:
+        state[name] = {"width": width, "clusters": float(summary.get("clusters", 0)),
+                       "lo": float(summary["lo"]), "hi": float(summary["hi"]),
+                       "requires_review": said.requires_review}
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
+        except OSError:
+            pass
+    return said.lines
 
 
 # The paired bootstrap, matching `hub.models.eval.compare`.
@@ -402,22 +653,22 @@ def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
     [-0.249, +0.659] against a re-run's [-0.251, +0.663] for an identical +0.215. Same defect
     as improvements #18, one layer down.
 
-    **`mde` and `ceiling` are the two fields whose producers have not landed, so a summary
-    carries each only when something filled it -- and today nothing computes an `mde` and no
-    caller hands in a `ceiling`.** They are the two numbers a gate needs before a null it
-    reports means anything: the smallest effect this run could have resolved at 80% power,
-    and the largest one there was to find -- what a perfect-foresight arm gains over this
-    gate's own incumbent, on this gate's own harness, in this gate's own units. `mde` will be
-    computed here, from the same cluster-mean vector the interval comes from, and the key
-    appears when it does. `ceiling` arrives from the caller instead, because measuring it
-    means playing an extra arm and only the harness knows what its arms are -- so it appears
-    exactly when a caller hands one in.
+    **`se` and `mde` are computed here, from this bootstrap; `ceiling` still arrives from the
+    caller.** They are the two numbers a gate needs before a null it reports means anything:
+    the smallest effect this run could have resolved at 80% power, and the largest one there
+    was to find -- what a perfect arm gains over this gate's own incumbent, on this gate's own
+    harness, in this gate's own units. `mde` is `minimum_detectable_effect(se, clusters)` over
+    the same draws that give `lo` and `hi`, which is what makes the standard error under the
+    interval the interval's own. `ceiling` cannot be computed here, because measuring it means
+    playing an extra arm and only the harness knows what its arms are -- so it appears exactly
+    when a caller hands one in.
 
     A key's *presence* is this producer's claim to compute the field; a NaN inside one is its
-    claim to have computed nothing this time. Neither field is read by anything yet, and that
-    is deliberate: they exist now so the units that compute them change no call site's
-    signature. Until then a block that has neither prints neither, and `gate` decides on the
-    same two halves ADR-0019 fixed.
+    claim to have computed nothing this time. So `mde` is always present and is NaN on an
+    empty frame or a single cluster -- no rows, or no degrees of freedom for a t -- while
+    `ceiling` is absent entirely unless a caller supplied one. A block renders neither NaN,
+    and `gate` reads both: an MDE above a ceiling is NOT-RUNNABLE, ahead of every branch but
+    VOID, and a gate with no ceiling still decides on the two halves ADR-0019 fixed.
     """
     # A ceiling the caller measured is a fact about its harness rather than about these
     # rows, so it is carried onto the empty summary too -- that pairing, a real ceiling beside
@@ -426,7 +677,8 @@ def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
     carried = {} if ceiling is None else {"ceiling": ceiling}
     if paired.is_empty():
         return {"n": 0, "clusters": 0, "mean": float("nan"), "lo": float("nan"),
-                "hi": float("nan"), "p_better": float("nan")} | carried
+                "hi": float("nan"), "p_better": float("nan"), "se": float("nan"),
+                "mde": float("nan")} | carried
     if cluster:
         keys = list(cluster)
         units = (paired.group_by(keys).agg(pl.col("diff").mean().alias("_unit"))
@@ -437,11 +689,18 @@ def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, len(units), size=(bootstrap, len(units)))
     draws = units[idx].mean(axis=1)
+    # The interval's own bootstrap, read twice. `se` is the standard deviation of these draws
+    # and `mde` is a quantile pair times it -- so the standard error under the MDE is by
+    # construction the one the interval above it was drawn from, which is the half of
+    # `docs/gate-power.md`'s rule that a second bootstrap agreeing by luck would fake.
+    se = float(draws.std(ddof=1)) if len(draws) > 1 else float("nan")
     return {"n": float(paired.height), "clusters": float(len(units)),
             "mean": float(units.mean()),
             "lo": float(np.percentile(draws, 2.5)),
             "hi": float(np.percentile(draws, 97.5)),
-            "p_better": float((draws > 0).mean())} | carried
+            "p_better": float((draws > 0).mean()),
+            "se": se,
+            "mde": minimum_detectable_effect(se, len(units))} | carried
 
 
 # --- the Gate ---------------------------------------------------------------
@@ -488,9 +747,39 @@ def gate(summary: dict, seasons: pl.DataFrame, actions: Actions,
     `void` is the caller's own precondition, already phrased -- the weekly gate voids above a
     join-failure rate. A gate whose inputs are broken has no verdict to read, and what counts
     as broken is specific to the gate, so this honours the condition rather than defining it.
+
+    **NOT-RUNNABLE comes second, ahead of every branch but VOID**, and that order is the whole
+    point of it. `docs/gate-power.md` stage 2: a gate whose MDE exceeds its own measured
+    ceiling cannot separate a real effect from a perfect one, so every branch below it would
+    be reading noise with a decimal point -- including, and especially, the middle one. A null
+    published from an underpowered gate is the failure this branch exists to prevent, and a
+    null is what the middle branch prints. Ordering this after SHOW would let exactly the
+    verdict that must not be published be published first.
+
+    VOID stays above it because a void gate's inputs are broken, which makes its MDE and its
+    ceiling untrustworthy too -- there is nothing to compare.
+
+    It fires only when *both* numbers are present as values. A gate that measured no ceiling
+    has not shown that it cannot run; it has shown nothing, and `Field.NO_SLOT` is that
+    third state rather than a licence to guess. Every gate in the repo today that hands in no
+    ceiling therefore reaches precisely the verdict it reached before.
+
+    The comparison is signed rather than absolute. A ceiling of zero -- a perfect-foresight
+    arm gaining nothing over the incumbent -- is the strongest finding a ceiling can carry,
+    and any positive MDE exceeds it, which is the correct reading and not an edge case.
     """
     if void:
         return "VOID", void
+    if reading(summary, "mde") is Field.VALUE and reading(summary, "ceiling") is Field.VALUE \
+            and summary["mde"] > summary["ceiling"]:
+        return "NOT-RUNNABLE", (
+            f"NOT RUNNABLE: the smallest effect this gate could resolve at 80% power is "
+            f"{summary['mde']:+.3f}, against a ceiling of {summary['ceiling']:+.3f} -- the "
+            f"largest effect there was to find. Over {int(summary.get('clusters', 0))} "
+            f"independent clusters this design cannot tell a real effect from a perfect one, "
+            f"so no verdict below is reported. `docs/gate-power.md` stage 2: this is *not "
+            f"planned*, not *failed* -- the arm did not lose, the question cannot be answered "
+            f"with the data that exists.")
     if not summary.get("clusters"):
         return "SHOW", f"{actions.show} Nothing measured -- no paired observation."
     won = int((seasons["gain"] > 0).sum())

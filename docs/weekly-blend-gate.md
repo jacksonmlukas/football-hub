@@ -63,6 +63,73 @@ recorded as pending, not taken — the same treatment the draft gate's REMOVE re
 
 The rows below are kept as published. They are superseded, not wrong at the time.
 
+## Restated 2026-09-07 — the unit becomes the season, and the percentile interval narrows
+
+Issue #45 moved every gate's resampling unit from the roster to the **season**. This gate
+clustered on `("season", "roster")`; it now clusters on `("season",)`, so its interval is over
+four units rather than 160. `docs/method.md` rule 13: a dated restatement beside the original,
+not an edit over the top of it.
+
+**The argument is the one that already moved this gate once.** A roster's fourteen weeks share
+its players, its bye and its draft — which is why resampling rows was wrong. A season's forty
+rosters share a board, a player pool, a schedule and one realisation of the year, which is the
+same argument one level up. The previous correction stopped a level short.
+
+| | re-run 2026-09-07 (roster-clustered) | **restated (season-clustered)** |
+|---|---|---|
+| weekly − consensus | −1.004 | **−1.004** |
+| clusters | 160 | **4** |
+| 95% CI, percentile | [−1.391, −0.621] | **[−1.347, −0.640]** |
+| 95% CI, t on 3 df | — | **[−1.611, −0.396]** |
+| bootstrap SE | — | **0.191** |
+| MDE at 80% power | — | **0.768** |
+| seasons won | 0 of 4 | 0 of 4 |
+| verdict | REMOVE | **REMOVE** |
+
+**How these were obtained, and the limit on them.** Not from a re-run: this gate builds its
+paired frame from the network and persists nothing, which is the same reason `gate-power.md`
+could not measure it. But a cluster bootstrap resamples the *cluster means*, and under
+`("season",)` those are exactly the four per-season gains already published above — −0.452,
+−1.490, −0.868, −1.204 — over four balanced seasons. So the season-clustered statistic is
+recoverable from the page itself, with the same seed and bootstrap count the harness uses.
+The inputs are rounded to three decimals, so these carry about ±0.001; the authoritative
+figures still want a harness run, and a frozen paired frame for this gate remains the right
+answer.
+
+**The mean does not move**, and that is the check that the clustering changed the claim rather
+than the estimate: the seasons are balanced, so the mean of the season means is the mean of
+the rows. −1.0035, which is the −1.004 already published.
+
+**The verdict does not move.** All four season means are negative, so no resample of them can
+reach zero; the interval excludes zero in the same direction, 0 of 4 seasons still lose, and
+the pre-registered rule still says REMOVE. As before, the disposition is recorded as pending
+rather than taken.
+
+### The percentile interval got *narrower*, and that is the flagged case
+
+`[−1.347, −0.640]` is **0.707** wide against the roster-clustered `[−1.391, −0.621]`'s
+**0.770** — a ratio of **0.92**. Clustering on a coarser unit is supposed to widen. This run
+therefore **requires review** under #45's criterion 5, which exists because the weekly screen
+(#169) hit exactly this on 2026-09-07: five of nine intervals narrowed under clustering and it
+was noticed only because someone compared.
+
+**It is not a defect here, and the reason is the other half of the same ticket.** A
+nonparametric percentile bootstrap over four units resamples four numbers: its draws are means
+of multisets drawn from a space of 256, and it cannot express a tail it never drew. It
+under-covers, and it under-covers *narrowly* — which looks exactly like precision. The t
+interval on the same four units is `[−1.611, −0.396]`, **1.215** wide, which is 1.58x the
+roster-clustered interval and the widening the argument predicts.
+
+So the percentile interval narrowed and the honest interval widened, on the same data, in the
+same run. That is precisely why criterion 3 prints both at eight clusters or fewer and why
+criterion 5 makes a narrowing announce itself instead of passing as a tighter result.
+
+**Against the ceiling.** The MDE is **0.768** against a reported effect of −1.004, so this
+gate can resolve the effect it reports — stage 1, on the weak comparator. Stage 2 needs this
+gate's **foresight ceiling**, which has never been measured: nothing here hands `summarise` a
+ceiling, so the NOT-RUNNABLE branch does not fire and cannot. What this restatement establishes
+is that the question is now askable of this gate, not that it has been answered.
+
 ## The result
 
 | gate | weekly − consensus | 95% CI | seasons won | verdict |
