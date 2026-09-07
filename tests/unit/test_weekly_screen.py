@@ -112,14 +112,117 @@ def test_a_feature_missing_before_its_week_is_excluded_not_zero_filled():
     assert cells["week"].unique().to_list() == [2]
 
 
-def test_the_standard_error_is_across_cells():
+# --- the se is over the unit the verdict reads (issue #169) ------------------
+#
+# The se used to be taken across the season-week cells while `verdict` requires the sign to
+# hold across the per-season means. The precision came from dozens of correlated cells and
+# the decision from four or five seasons, so the interval was too narrow for the rule
+# reading it. That is docs/method.md rule 3 -- repeated measures are not independent
+# observations -- broken by the screen that exists to enforce it.
+
+
+def test_the_standard_error_is_across_seasons():
     cells = pl.DataFrame({"season": [2023, 2023, 2024, 2024], "week": [1, 2, 1, 2],
                           "r": [0.1, 0.2, 0.3, 0.4], "n": [100, 100, 100, 100]})
     s = ws.summarise(cells)
     assert s["r"] == pytest.approx(0.25)
-    expected = float(np.std([0.1, 0.2, 0.3, 0.4], ddof=1) / np.sqrt(4))
+    expected = float(np.std([0.15, 0.35], ddof=1) / np.sqrt(2))
     assert s["se"] == pytest.approx(expected)
+    assert s["seasons"] == 2 and s["cells"] == 4
     assert s["n"] == 400, "n is reported, but it is not what the se is built from"
+
+
+def test_the_season_clustered_se_is_wider_on_within_season_correlated_cells():
+    """The load-bearing case, built so the two answers genuinely differ.
+
+    Cells inside a season agree closely and the seasons disagree, which is what
+    within-season correlation looks like: almost all the variance is *between* the units
+    the verdict reads and almost none within them. Treating the cells as independent
+    divides that between-season spread by sqrt(20) instead of sqrt(4).
+
+    A fixture where the two agree would prove nothing -- with one cell per season they are
+    identical by construction, and `test_a_single_cell_per_season_is_the_same_either_way`
+    below pins that as the boundary rather than passing it off as the test.
+    """
+    per_season = [0.30, 0.10, -0.05, 0.25]
+    rows = [{"season": 2022 + s, "week": w, "r": mu + 0.001 * w, "n": 100}
+            for s, mu in enumerate(per_season) for w in range(1, 6)]
+    cells = pl.DataFrame(rows)
+
+    s = ws.summarise(cells)
+    flat = cells["r"].to_numpy().astype(float)
+    by_cell = float(flat.std(ddof=1) / np.sqrt(len(flat)))
+
+    assert s["cells"] == 20 and s["seasons"] == 4
+    assert s["se"] > by_cell, (
+        f"season-clustered se {s['se']:.5f} must exceed the cell se {by_cell:.5f}")
+    assert s["se"] > 1.9 * by_cell, "and by roughly sqrt(cells per season), not marginally"
+    assert abs(s["t"]) < abs(float(np.mean(flat)) / by_cell), "so the t shrinks with it"
+
+
+def test_a_single_cell_per_season_is_the_same_either_way():
+    """The boundary the test above must not be standing on: with one cell per season the
+    cell vector *is* the season vector, so the two standard errors coincide. Asserted so a
+    future fixture that quietly collapses to this case is visible rather than reassuring."""
+    cells = pl.DataFrame({"season": [2022, 2023, 2024, 2025], "week": [1, 1, 1, 1],
+                          "r": [0.30, 0.10, -0.05, 0.25], "n": [100] * 4})
+    s = ws.summarise(cells)
+    flat = cells["r"].to_numpy().astype(float)
+    assert s["se"] == pytest.approx(float(flat.std(ddof=1) / np.sqrt(4)))
+
+
+def test_r_is_the_mean_of_the_season_means_when_the_seasons_are_unbalanced():
+    """`r` is the season vector's mean, not the cell vector's, and the two differ exactly
+    when a season contributes fewer cells than the others.
+
+    This is not a fixture detail. `wind` is real and unbalanced -- 7 cells in 2022 against
+    11 in every other season, because a cell under `MIN_CELL` is dropped -- and its `r` is
+    the one figure on `docs/weekly-screen.md` that the #169 correction moves, from -0.024 to
+    -0.020. Every balanced fixture in this file agrees under both definitions and so pins
+    nothing here; a mutation putting the cell mean back survived all of them.
+
+    A t whose numerator comes from the cells and whose denominator comes from the seasons is
+    the same defect the se half fixed, wearing the other hat.
+    """
+    thin, fat = 0.60, 0.00
+    cells = pl.DataFrame({
+        "season": [2023] * 2 + [2024] * 8,
+        "week": list(range(1, 3)) + list(range(1, 9)),
+        "r": [thin] * 2 + [fat] * 8,
+        "n": [100] * 10})
+    s = ws.summarise(cells)
+
+    assert s["per_season"] == {2023: pytest.approx(thin), 2024: pytest.approx(fat)}
+    assert s["r"] == pytest.approx(0.30), "the two season means, weighted equally"
+    assert s["r"] != pytest.approx(float(cells["r"].to_numpy().mean())), (
+        "and not the cell mean, which the thin season pulls to 0.12")
+    assert s["t"] == pytest.approx(s["r"] / s["se"]), "numerator and denominator agree"
+
+
+def test_the_report_names_the_unit_the_t_is_built_from():
+    """55 cells printed beside a t of 5.7 reads as a 55-unit statistic unless the header
+    says otherwise, which is the misreading #169 corrected. Also the only test on `report`,
+    which `main` calls and `main` is `pragma: no cover` -- so a missing key here would
+    reach an operator as a KeyError from a command that had run for minutes."""
+    rows = ws.screen(_panel(), [ws.Feature("feat", "+", 1)]).to_dicts()
+    lines = ws.report(rows)
+    assert lines[0] == "", "a blank line before the block, as every report here opens"
+    assert "szn" in lines[1] and "cells" in lines[1]
+    assert "t is over the seasons" in lines[2]
+    assert lines[-1].split()[0] == "feat"
+
+
+def test_the_reported_t_and_the_verdict_read_the_same_seasons():
+    """`verdict` counts sign agreement over `per_season`; `t` is now built from the same
+    vector. The two used to be a season-level rule beside a cell-level precision."""
+    rows = [{"season": 2022 + s, "week": w, "r": mu, "n": 100}
+            for s, mu in enumerate([0.30, 0.10, -0.05, 0.25]) for w in range(1, 6)]
+    s = ws.summarise(pl.DataFrame(rows))
+    seasons = np.array([s["per_season"][k] for k in sorted(s["per_season"])])
+
+    assert s["r"] == pytest.approx(float(seasons.mean()))
+    assert s["se"] == pytest.approx(float(seasons.std(ddof=1) / np.sqrt(len(seasons))))
+    assert s["t"] == pytest.approx(s["r"] / s["se"])
 
 
 def test_per_season_means_are_over_that_season_s_cells():

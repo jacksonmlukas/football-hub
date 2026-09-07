@@ -24,6 +24,13 @@ THE DESIGN, PRE-REGISTERED in `docs/weekly-projection-plan.md` before the first 
   * A feature clears only if its pre-stated sign holds in **every** season and the pooled
     statistic clears `MIN_SE`. A sign that flips between seasons is a bug, not a signal
     (protocol item 4), and it is the cheapest diagnostic available.
+  * **The season is the unit of replication, so the standard error is over the seasons.**
+    Cells are how the correlation is computed without repeating a player; they are not
+    independent of each other, sharing a schedule, a rules year and one consensus source.
+    The verdict rests on four or five season means and the interval has to rest on the same
+    four or five -- an se over dozens of cells beside a verdict over seasons reports a
+    precision the decision never had. Issue #169; `docs/method.md` rule 3, one level up
+    from the pooling this screen was already built to avoid.
 
 THE CONFOUND, which the first run found and which no available data removes: `weekly-op` is
 FantasyPros' Monday ranking, scraped a median of six days before kickoff. Any feature carrying
@@ -173,22 +180,49 @@ def cell_correlations(panel: pl.DataFrame, feature: str, *, min_week: int = 1,
 
 
 def summarise(cells: pl.DataFrame) -> dict:
-    """Pooled correlation, its standard error across cells, and the per-season means.
+    """The season means, their standard error, and the pooled correlation over them.
 
-    The standard error is of the *cell* correlations, not of the pooled player-weeks. Cells
-    within a season share players, so this is not fully independent either -- but it is the
-    difference between a mild overstatement and the fourteen-fold one that pooling gives.
+    **The unit is the season, because the season is what the verdict evaluates.** `verdict`
+    requires the pre-stated sign to hold in every season -- it reads `per_season` and
+    nothing else -- so the decision rests on four or five numbers. The standard error used
+    to be taken across the *cells*: dozens of season-weeks, and the reported precision came
+    from those while the decision came from the seasons. The interval was too narrow for
+    the rule reading it, and a t built on one unit beside a verdict built on another is two
+    claims about different quantities printed on one line. Issue #169.
+
+    That is `docs/method.md` **rule 3** -- repeated measures are not independent
+    observations -- broken by the screen that exists to enforce it. Cells inside a season
+    share players, a schedule, a rules year and one consensus source; the module docstring
+    above says pooling player-weeks would inflate every t by roughly sqrt(14), and taking
+    the season-weeks as independent is the same error one level up. The old docstring knew:
+    it called cells "not fully independent either" and kept them anyway.
+
+    Clustering by averaging within the unit and treating the unit vector as the sample is
+    `experiment.summarise`'s `cluster` argument, in the module that names getting this wrong
+    as the most expensive mistake in the repo's record.
+
+    `cells` and `n` are still reported. They describe the sample and are worth printing;
+    they are simply not what the interval is built from -- which was the confusion.
     """
     if cells.is_empty():
         return {"r": float("nan"), "se": float("nan"), "t": float("nan"),
-                "cells": 0, "n": 0, "per_season": {}}
-    r = cells["r"].to_numpy().astype(float)
-    se = float(r.std(ddof=1) / np.sqrt(len(r))) if len(r) > 1 else 0.0
+                "cells": 0, "n": 0, "seasons": 0, "per_season": {}}
     per = {int(s): float(cast(float, cells.filter(pl.col("season") == s)["r"].mean()))
            for s in sorted(cells["season"].unique().to_list())}
-    return {"r": float(r.mean()), "se": se,
-            "t": float(r.mean() / se) if se > 0 else 0.0,
-            "cells": len(r), "n": int(cells["n"].sum()), "per_season": per}
+    # The season means, in season order. Sorted for the reason `cell_correlations` sorts:
+    # a float mean that depends on group order is not re-derivable, and `docs/track-record.md`
+    # rests on a published run being reproducible bit for bit.
+    seasons = np.array([per[s] for s in sorted(per)], dtype=float)
+    se = (float(seasons.std(ddof=1) / np.sqrt(len(seasons)))
+          if len(seasons) > 1 else 0.0)
+    # The mean *of the season means*, not of the cells: with unequal cells per season the
+    # two differ, and a t whose numerator and denominator come from different units is the
+    # defect in another form. Balanced seasons make them identical.
+    r = float(seasons.mean())
+    return {"r": r, "se": se,
+            "t": float(r / se) if se > 0 else 0.0,
+            "cells": cells.height, "n": int(cells["n"].sum()),
+            "seasons": len(seasons), "per_season": per}
 
 
 def verdict(summary: dict, sign: str, *, min_se: float = MIN_SE) -> tuple[str, str]:
@@ -222,11 +256,17 @@ def verdict(summary: dict, sign: str, *, min_se: float = MIN_SE) -> tuple[str, s
 
 
 def report(rows: Sequence[dict]) -> list[str]:
-    """Lines, not prints -- the reason `hub.draft.report` exists."""
-    out = ["", f"  {'feature':16} {'pre':>4} {'r':>9} {'t':>7} {'cells':>6}  verdict"]
+    """Lines, not prints -- the reason `hub.draft.report` exists.
+
+    Both counts are printed, and the header says which one the `t` is built from. A reader
+    seeing 55 cells beside a t of 5.7 will read the t as a 55-unit statistic unless the
+    column tells them otherwise, and that misreading is exactly what #169 corrected.
+    """
+    out = ["", f"  {'feature':16} {'pre':>4} {'r':>9} {'t':>7} {'cells':>6} {'szn':>4}"
+               "  verdict", "  (t is over the seasons; cells are how each season is built)"]
     for row in rows:
         out.append(f"  {row['feature']:16} {row['sign']:>4} {row['r']:+9.4f} "
-                   f"{row['t']:+7.2f} {row['cells']:6d}  {row['note']}")
+                   f"{row['t']:+7.2f} {row['cells']:6d} {row['seasons']:4d}  {row['note']}")
     return out
 
 
@@ -242,8 +282,8 @@ def screen(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES) -> pl.Da
         s = summarise(cell_correlations(panel, f.name, min_week=f.min_week))
         status, note = verdict(s, f.sign)
         rows.append({"feature": f.name, "sign": f.sign, "r": s["r"], "se": s["se"],
-                     "t": s["t"], "cells": s["cells"], "n": s["n"],
-                     "status": status, "note": note,
+                     "t": s["t"], "cells": s["cells"], "seasons": s["seasons"],
+                     "n": s["n"], "status": status, "note": note,
                      "per_season": str({k: round(v, 4) for k, v in s["per_season"].items()})})
     return pl.DataFrame(rows).sort("r", descending=True)
 
@@ -270,7 +310,7 @@ def screen_joint(panel: pl.DataFrame, survivors: Sequence[Feature]) -> pl.DataFr
                                         controls=(*CONTROLS, *others)))
         status, note = verdict(s, f.sign)
         rows.append({"feature": f.name, "sign": f.sign, "r": s["r"], "t": s["t"],
-                     "cells": s["cells"], "status": status,
+                     "cells": s["cells"], "seasons": s["seasons"], "status": status,
                      "note": note, "controls": ", ".join(others) or "-"})
     return pl.DataFrame(rows).sort("r", descending=True)
 

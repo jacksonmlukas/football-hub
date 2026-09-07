@@ -11,7 +11,9 @@ not there, and everything it says afterwards is worthless.
 
 Splits are temporal by default. A random split leaks -- a prediction for week 10 that had
 week 12 in its fit is not a prediction -- and that is `docs/track-record.md` rule 1 one layer
-up.
+up. The window is keyed on the **(season, week) pair**: keying it on the week number alone
+deduplicated the week across every season, so "the last 30%" meant the late weeks of *every*
+season and 2022 trained a model evaluated on 2022. Issue #168.
 
     uv run python -m hub.models.eval --compare market_baseline,ratings_v2
 """
@@ -174,10 +176,42 @@ def _paired(a: pl.DataFrame, b: pl.DataFrame, na: str, nb: str) -> pl.DataFrame:
     return j
 
 
-def _holdout_weeks(weeks: Sequence[int], holdout: float) -> list[int]:
-    uniq = sorted({int(w) for w in weeks})
+def _holdout_window(cells: Sequence[tuple[int, int]],
+                    holdout: float) -> list[tuple[int, int]]:
+    """The last `holdout` fraction of the **(season, week)** windows, in time order.
+
+    Keyed on the pair, because a week number is not a point in time. This collected week
+    *numbers*, deduplicated them across every season and kept the last few -- so "the last
+    30% of the data" meant weeks 13 through 18 of *every* season, and the filter that applied
+    it matched on the week alone. Data from 2022 trained a model evaluated on 2022, which is
+    a within-season split wearing a temporal split's name, and `docs/track-record.md` rule 1
+    is the rule it was there to keep. Issue #168.
+
+    Sorting tuples orders them the way time does -- season first, then week -- so the
+    returned window is a contiguous suffix of the timeline and everything before it is
+    strictly earlier. `test_no_training_cell_is_at_or_after_the_holdout` asserts that of the
+    split itself rather than of any number computed downstream of it.
+
+    A single season is unchanged, which is the case the broken version got right: with one
+    season the pairs sort by week and the suffix is the same set of weeks.
+    """
+    uniq = sorted({(int(s), int(w)) for s, w in cells})
     n = max(1, round(len(uniq) * holdout))
     return uniq[-n:]
+
+
+def _cells(j: pl.DataFrame) -> list[tuple[int, int]]:
+    """Every row's (season, week). A frame without a season column is one season.
+
+    Not a guess: `_paired` keys on the columns both frames carry, and a pair of frames with
+    no season between them spans no more than the one season the caller assembled. That is
+    exactly the single-season case `_holdout_window` leaves alone, so it is named here
+    rather than left to a `KeyError` at the filter.
+    """
+    weeks = [int(w) for w in j["week"].to_list()]
+    if "season" not in j.columns:
+        return [(0, w) for w in weeks]
+    return list(zip((int(s) for s in j["season"].to_list()), weeks, strict=True))
 
 
 def compare(a: pl.DataFrame, b: pl.DataFrame, split: str = "temporal",
@@ -189,24 +223,54 @@ def compare(a: pl.DataFrame, b: pl.DataFrame, split: str = "temporal",
     the same games for both models on every resample -- so it measures the difference rather
     than the sum of two models' sampling noise, which is the same common-random-numbers
     argument the draft optimizer uses.
+
+    **The resampling unit is the (season, week) cell, which is the unit the split has.** The
+    holdout is a suffix of the season-week timeline, so a season-week is one replication of
+    the thing being held out; resampling games inside it treated sixteen games sharing a
+    week's weather, a week's injury news and one fitted model version as sixteen independent
+    draws. That is `docs/method.md` rule 3 -- repeated measures are not independent
+    observations -- and it was being broken underneath a split that was itself within-season
+    by construction. Issue #168; `experiment.summarise`'s `cluster` argument is the same
+    correction one module over.
+
+    A comparison with one season-week in the window has one replication and the interval
+    collapses to a point. That is the honest reading of it and not a defect to paper over:
+    an interval needs more than one independent observation to be an interval.
     """
     na, nb = _labels(a, b, names)
     j = _paired(a, b, na, nb)
-    weeks: list[int] = []
+    window: list[tuple[int, int]] = []
     if split == "temporal" and "week" in j.columns:
-        weeks = _holdout_weeks(j["week"].to_list(), holdout)
-        j = j.filter(pl.col("week").is_in(weeks))
+        window = _holdout_window(_cells(j), holdout)
+        # An explicit OR over the pairs rather than a struct membership test: `week` and
+        # `season` arrive as Int32 from the store and as python ints from the window, and
+        # #25 was exactly a holdout filter comparing a column against the wrong dtype.
+        j = j.filter(pl.any_horizontal(
+            *[(pl.col("week") == w) & ((pl.col("season") == s)
+                                       if "season" in j.columns else pl.lit(True))
+              for s, w in window]))
         if j.height == 0:
             raise NoOverlap(f"{na} and {nb} share no games in the holdout window")
 
+    # Sorted before grouping, and grouped in order. `group_by` promises neither the order of
+    # the groups nor the order of rows within one, and the bootstrap indexes into that order
+    # -- the same defect `weekly_screen.cell_correlations` records, and the one that moved a
+    # published interval in `docs/weekly-blend-gate.md` while leaving its mean alone.
+    keys = [c for c in ("season", "week") if c in j.columns]
+    j = j.sort([*keys, "game_id"]) if "game_id" in j.columns else j.sort(keys)
     pa = j["home_win_prob"].to_numpy()
     pb = j["home_win_prob_b"].to_numpy()
     y = j["home_won"].to_numpy().astype(int)
     la, lb = log_loss(pa, y), log_loss(pb, y)
 
+    cells = ([g["_i"].to_numpy() for _, g in
+              j.with_row_index("_i").group_by(keys, maintain_order=True)]
+             if keys else [np.arange(j.height)])
     rng = np.random.default_rng(seed)
-    idx = rng.integers(0, len(y), size=(bootstrap, len(y)))
-    deltas = np.array([log_loss(pa[i], y[i]) - log_loss(pb[i], y[i]) for i in idx])
+    pick = rng.integers(0, len(cells), size=(bootstrap, len(cells)))
+    deltas = np.array([
+        (lambda i: log_loss(pa[i], y[i]) - log_loss(pb[i], y[i]))(
+            np.concatenate([cells[c] for c in row])) for row in pick])
 
     scored = pl.DataFrame({"home_win_prob": pa, "home_won": y})
     scored_b = pl.DataFrame({"home_win_prob": pb, "home_won": y})
@@ -214,7 +278,8 @@ def compare(a: pl.DataFrame, b: pl.DataFrame, split: str = "temporal",
         "delta": la - lb, "log_loss_a": la, "log_loss_b": lb,
         "brier_a": brier(pa, y), "brier_b": brier(pb, y),
         "ci95": (float(np.percentile(deltas, 2.5)), float(np.percentile(deltas, 97.5))),
-        "n_scored": j.height, "holdout_weeks": weeks, "split": split,
+        "n_scored": j.height, "holdout_window": window, "cells": len(cells),
+        "split": split,
         "reliability_a": reliability(scored), "reliability_b": reliability(scored_b),
     }
 
@@ -249,9 +314,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"hub.models.eval: {e}", file=sys.stderr)
         return 1
 
-    w = got["holdout_weeks"]
+    # The season is printed with the week because the window is keyed on both. It used to
+    # print "weeks 8-10", which is what a split that had discarded the season could say and
+    # a split that holds out time cannot -- weeks 8-10 of *which* season was the defect.
+    w = got["holdout_window"]
+    span = (f"{w[0][0]} wk {w[0][1]}" if len(w) == 1
+            else f"{w[0][0]} wk {w[0][1]} to {w[-1][0]} wk {w[-1][1]}")
     print(f"  {names[0]} vs {names[1]} on {got['n_scored']} games"
-          + (f", weeks {w[0]}-{w[-1]} held out" if w else " (all games)"))
+          + (f", {span} held out" if w else " (all games)"))
+    print(f"    the interval resamples {got['cells']} season-week cells, not "
+          f"{got['n_scored']} games -- a week is the unit the split holds out")
     print(f"    log loss  {names[0]:<20} {got['log_loss_a']:.4f}")
     print(f"    log loss  {names[1]:<20} {got['log_loss_b']:.4f}")
     print(f"    brier     {names[0]:<20} {got['brier_a']:.4f}")
