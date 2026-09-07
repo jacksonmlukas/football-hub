@@ -20,12 +20,22 @@ import pytest
 from hub.models import eval as me
 
 
-def _preds(probs, outcomes, week=1, model="a"):
+def _preds(probs, outcomes, week=1, model="a", season=2026):
+    """`week` and `season` take a scalar or one value per row.
+
+    Per-row because the split is keyed on the *pair* (issue #168), so a fixture that can
+    only put every row in one season cannot exercise it -- and a fixture that can only put
+    every row in one week hands the cluster bootstrap a single replication.
+    """
     n = len(probs)
+    def col(v):
+        return pl.Series(list(v) if isinstance(v, (list, tuple, range, np.ndarray))
+                         else [v] * n, dtype=pl.Int32)
+
     return pl.DataFrame({
         "game_id": [f"g{i}" for i in range(n)],
-        "season": pl.Series([2026] * n, dtype=pl.Int32),
-        "week": pl.Series([week] * n, dtype=pl.Int32),
+        "season": col(season),
+        "week": col(week),
         "model": [model] * n,
         "home_win_prob": list(probs),
         "home_won": list(outcomes)})
@@ -44,12 +54,35 @@ def test_a_model_scored_against_itself_reports_no_edge():
 
 def test_the_interval_around_no_edge_is_not_degenerate():
     """A zero-width interval would pass the test above while telling you nothing. Two
-    genuinely different models must produce a real interval."""
+    genuinely different models must produce a real interval.
+
+    Spread over ten weeks because the interval resamples season-week cells (issue #168).
+    The fixture this replaced put all 300 games in week 1, which is one replication of the
+    unit the split holds out -- and one replication has no interval around it. It read as a
+    300-game interval only because the bootstrap was resampling games.
+    """
     rng = np.random.default_rng(1)
     p = rng.uniform(0.2, 0.8, 300)
     y = (rng.uniform(size=300) < p).astype(int)
-    got = me.compare(_preds(p, y), _preds(np.clip(p + 0.05, 0.01, 0.99), y, model="b"))
+    wk = [1 + i % 10 for i in range(300)]
+    got = me.compare(_preds(p, y, week=wk),
+                     _preds(np.clip(p + 0.05, 0.01, 0.99), y, week=wk, model="b"))
     assert got["ci95"][1] > got["ci95"][0]
+
+
+def test_one_season_week_in_the_window_has_no_interval_to_report():
+    """The other side of the test above, said out loud rather than left as a surprise.
+
+    A window holding one season-week holds one replication of the unit the split works in,
+    so every resample is the same cell and the interval is a point. Reporting a width there
+    would be reporting the sampling noise of games the split never treated as separable.
+    """
+    rng = np.random.default_rng(11)
+    p = rng.uniform(0.2, 0.8, 200)
+    y = (rng.uniform(size=200) < p).astype(int)
+    got = me.compare(_preds(p, y), _preds(np.clip(p + 0.05, 0.01, 0.99), y, model="b"))
+    assert got["cells"] == 1
+    assert got["ci95"][0] == got["ci95"][1] == pytest.approx(got["delta"])
 
 
 # --- it can find a real difference ----------------------------------------
@@ -79,7 +112,122 @@ def test_a_temporal_split_holds_out_the_later_weeks():
     b = pl.concat([_preds([0.6] * 20, [1] * 20, week=w, model="b") for w in range(1, 11)])
     got = me.compare(a, b, split="temporal", holdout=0.3)
     assert got["n_scored"] == 60, "the last 3 of 10 weeks"
-    assert got["holdout_weeks"] == [8, 9, 10]
+    assert got["holdout_window"] == [(2026, 8), (2026, 9), (2026, 10)]
+
+
+# --- the split holds out time, not a set of week numbers (issue #168) --------
+#
+# The holdout collected week *numbers*, deduplicated them across every season and kept the
+# last few, and the filter matched on the week alone. "The last 30% of the data" therefore
+# meant the late weeks of *every* season: 2022 trained a model that was then evaluated on
+# 2022. These assert the property of the split itself. A test that checks the metric the
+# split produces is not this test -- a within-season split returns a perfectly ordinary
+# number, which is the whole reason the defect survived.
+
+
+def test_no_training_cell_is_at_or_after_the_holdout():
+    """The property that makes a split temporal, asserted on the split.
+
+    Every (season, week) outside the window is strictly earlier than every one inside it,
+    ordered season-first the way time is. Nothing here computes a delta.
+    """
+    cells = [(s, w) for s in (2022, 2023, 2024, 2025) for w in range(1, 19)]
+    window = me._holdout_window(cells, 0.3)
+    train = [c for c in cells if c not in set(window)]
+
+    assert train and window
+    assert max(train) < min(window), "a training cell at or after a holdout cell is a leak"
+    assert set(train) | set(window) == set(cells), "and every cell is on exactly one side"
+
+
+def test_the_window_does_not_reach_back_into_earlier_seasons():
+    """The defect stated as its consequence: weeks 13-18 of 2022 were in the holdout while
+    weeks 1-12 of 2022 were in the training window, so a model saw the season it was scored
+    on. The corrected window is a contiguous suffix of the timeline, so a season is either
+    wholly held out, wholly training, or the single season the boundary falls inside.
+
+    Thirty per cent of four eighteen-week seasons is 22 cells, which reaches back into 2024
+    -- that is a suffix crossing a season boundary and not the defect. The defect is a
+    season appearing on *both* sides, and 2022 and 2023 are entirely training here.
+    """
+    cells = [(s, w) for s in (2022, 2023, 2024, 2025) for w in range(1, 19)]
+    window = me._holdout_window(cells, 0.3)
+    train = [c for c in cells if c not in set(window)]
+
+    assert not {s for s, _ in window} & {2022, 2023}
+    assert len({s for s, _ in window} & {s for s, _ in train}) <= 1, (
+        "at most the one season the boundary falls inside is split")
+    assert window == cells[-len(window):], "the window is a contiguous suffix"
+
+
+def test_the_same_week_number_in_two_seasons_is_two_windows():
+    """Keyed on the pair, so the two are distinguishable at all -- the deduplication that
+    collapsed them is what made the filter unable to name a season."""
+    both = me._holdout_window([(2024, 5), (2025, 5)], 1.0)
+    assert both == [(2024, 5), (2025, 5)]
+    assert me._holdout_window([(2024, 5), (2025, 5)], 0.5) == [(2025, 5)]
+
+
+def test_a_single_season_split_is_unchanged():
+    """The case the broken version got right, pinned so the fix does not move it."""
+    cells = [(2026, w) for w in range(1, 11)]
+    assert [w for _, w in me._holdout_window(cells, 0.3)] == [8, 9, 10]
+
+
+def test_the_filter_holds_out_the_pair_and_not_the_week_number():
+    """End to end: two seasons of ten weeks, and the earlier season is entirely training.
+
+    Under the week-number split this scored 2024 weeks 8-10 alongside 2025's -- twice the
+    games, half of them from a season on both sides of the split.
+    """
+    def season(s, model):
+        return pl.concat([_preds([0.6] * 4, [1] * 4, week=w, season=s, model=model)
+                          for w in range(1, 11)])
+
+    a = pl.concat([season(2024, "a"), season(2025, "a")])
+    b = pl.concat([season(2024, "b"), season(2025, "b")])
+    got = me.compare(a, b, split="temporal", holdout=0.3)
+
+    assert got["holdout_window"] == [(2025, 5), (2025, 6), (2025, 7), (2025, 8),
+                                     (2025, 9), (2025, 10)]
+    assert got["n_scored"] == 24, "six cells of four games, all in the later season"
+
+
+# --- the interval resamples the unit the split has (issue #168) --------------
+
+
+def test_the_interval_resamples_cells_not_games():
+    """Games inside one season-week share a week's weather, news and model version.
+
+    Built so the two answers genuinely differ: every game in a cell carries the same delta
+    and the cells disagree, which is the correlated case. Resampling games averages the
+    disagreement away and returns an interval far too tight; resampling cells keeps it. The
+    game-level interval is computed here rather than assumed, so the comparison is real.
+    """
+    rng = np.random.default_rng(7)
+    per_cell, size = [0.9, 0.9, 0.9, 0.1, 0.1, 0.1], 25
+    pa, pb, y, wk = [], [], [], []
+    for w, q in enumerate(per_cell, start=1):
+        pa += [q] * size
+        pb += [0.5] * size
+        y += [1] * size          # identical inside a cell, opposite between cells
+        wk += [w] * size
+
+    got = me.compare(_preds(pa, y, week=wk), _preds(pb, y, week=wk, model="b"),
+                     split="all", seed=0)
+    assert got["cells"] == len(per_cell)
+    clustered = got["ci95"][1] - got["ci95"][0]
+
+    d = np.array([_ll(a, o) - _ll(b, o) for a, b, o in zip(pa, pb, y, strict=True)])
+    idx = rng.integers(0, len(d), size=(4000, len(d)))
+    by_game = np.percentile(d[idx].mean(axis=1), [2.5, 97.5])
+    assert clustered > 3 * (by_game[1] - by_game[0]), (
+        f"cell-clustered {clustered:.4f} must be wider than game-level "
+        f"{by_game[1] - by_game[0]:.4f} on within-cell correlated games")
+
+
+def _ll(p, y):
+    return -(y * np.log(p) + (1 - y) * np.log(1 - p))
 
 
 def test_scoring_everything_is_available_but_not_the_default():
@@ -311,7 +459,7 @@ def test_a_comparison_runs_end_to_end_from_a_real_store(tmp_path):
     b = me.load_predictions("b", base=base, schedules=sched)
 
     got = me.compare(a, b, split="temporal", holdout=0.3)
-    assert got["holdout_weeks"] == [8, 9, 10]
+    assert got["holdout_window"] == [(2026, 8), (2026, 9), (2026, 10)]
     assert got["n_scored"] == 24, "the last 3 of 10 weeks, 8 games each"
     assert got["delta"] < 0, "every home team won; 0.6 beats 0.5"
 
@@ -328,7 +476,10 @@ def test_the_store_path_reaches_the_cli(capsys, tmp_path, monkeypatch):
 
     assert me.main(["--compare", "a,b", "--store", str(base)]) == 0
     out = capsys.readouterr().out
-    assert "on 24 games" in out and "weeks 8-10 held out" in out
+    # The season is printed with the week: "weeks 8-10" was what a split that had thrown the
+    # season away could say, and naming which season's week 8 is the visible half of #168.
+    assert "on 24 games" in out and "2026 wk 8 to 2026 wk 10 held out" in out
+    assert "resamples 3 season-week cells" in out
 
 
 # --- the outcome source can be down (issue #63) ------------------------------
