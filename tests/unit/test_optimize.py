@@ -193,6 +193,24 @@ UNCORRELATED_FUTURES = [
 ]
 
 
+def test_a_single_future_reports_no_error_bar_rather_than_a_spurious_one(): 
+    """One simulated future cannot separate anybody, and must not pretend to.
+
+    `ddof=1` over a single column is a division by zero, so both error bars are set to
+    exactly zero here and every gap `rank_tiers` computes from them is undefined rather than
+    infinite. The branch existed before #167 for `lift_se`; that ticket gave it a second
+    column to zero and no test reached either, which the coverage ratchet caught on the
+    merge. It is reachable in earnest: a caller asking for one simulation gets this frame.
+    """
+    got = _lift_frame(["A", "B"], np.array([[1.0], [0.0]], dtype=float))
+    assert got["lift_se"].to_list() == [0.0, 0.0]
+    assert got["lead_gap_se"].to_list() == [0.0, 0.0], (
+        "a single future produced a non-zero standard error for the paired difference"
+    )
+    # The lift itself is still real -- it is the mean of one number, not an estimate of one.
+    assert got.sort("player")["lift"].to_list() == pytest.approx([0.5, -0.5])
+
+
 def _futures(rows):
     """The candidate frame `win_probability` would return for these simulated futures."""
     return _lift_frame(["A", "B", "C", "D"], np.array(rows, dtype=float))
