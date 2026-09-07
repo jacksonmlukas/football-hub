@@ -87,6 +87,47 @@ _VERIFICATION_NOTES: dict[bool | None, str] = {False: _UNVERIFIED_NOTE, None: _U
 # /GUARD
 
 
+def _announce(name: str, rescaled: dict[str, str]) -> None:
+    """Say, on the terminal, that a declared repair fired.
+
+    A repair that *succeeds* was silent until #140, and the silence became load-bearing the
+    day the repaired frame started reaching the cache: a whole-percent refresh is rescaled,
+    written, pinned and served from that cache forever after, with nothing anywhere saying
+    the units moved upstream. Before a contract could repair, the same response was refused
+    loudly and somebody went and looked. Noticing that a source changed shape is the entire
+    reason this module exists, so the second verb has to pay for the noticing it removed.
+
+    One line per column, naming the column, the rule's own stated reason and the contract --
+    which is the source -- so a reader can go and check upstream without opening this file.
+
+    It sits in `validate` rather than at each of the four boundaries because a boundary that
+    has to remember is a boundary that will not: `conform` reports on the same terms, and no
+    call site can be the one that forgot.
+
+    **Reporting may not break the live path.** This runs at a fetch boundary CLAUDE.md
+    requires to degrade rather than raise, and `hub.publish.live` reads one of them every
+    five minutes through a game window with its stdout wherever the runner put it. A `print`
+    that fails -- a closed stream, a full one -- must cost the announcement and not the
+    frame, so the failure is swallowed here. It is the one place in this module where
+    swallowing is right: nothing reads what this writes, and the refusals that everything
+    downstream *does* read are untouched by it.
+    """
+    try:
+        for col in sorted(rescaled):
+            print(f"  {name}: {col} was rescaled on ingest -- {rescaled[col]}")
+    except Exception:                          # the announcement is not worth the frame
+        pass
+
+
+def _reasons(fired: list[tuple[Normalisation, list[str]]]) -> dict[str, str]:
+    """Each rescaled column, against the reason the rule moving it gives.
+
+    One statement of that mapping, read by the frame the repair produces, by the refusal a
+    still-broken bound raises, and by the boundary that records what it stored.
+    """
+    return {c: rule.because for rule, present in fired for c in present}
+
+
 @dataclass(frozen=True)
 class Normalisation:
     """A known upstream variation a contract answers by restating a column rather than
@@ -172,8 +213,16 @@ class Contract:
         below sees and what a caller gets back, which is what makes a repair a thing this
         file states once rather than a thing each consumer works out. A caller that discards
         the return still gets the refusal; `conform` is how a consumer asks for the frame.
+
+        A repair that fires says so on the terminal before any check below runs. `_announce`
+        argues why that belongs here rather than at each boundary, and why a repair that
+        *succeeded* is the case worth reporting.
         """
         df, rescaled = self._normalised(df)
+        # GUARD repair-is-announced: a repair that succeeds is reported, not only one that
+        # leaves a bound broken afterwards
+        _announce(self.name, rescaled)
+        # /GUARD
         problems = []
         # GUARD too-few-rows-refused: a truncated response is refused rather than served
         if df.height < self.min_rows:
@@ -235,21 +284,21 @@ class Contract:
         # /GUARD
         return df
 
-    def _normalised(self, df: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, str]]:
-        """The frame with every declared repair applied, and why each one fired.
+    def _triggered(self, df: pl.DataFrame) -> list[tuple[Normalisation, list[str]]]:
+        """Each declared repair this frame trips, with the columns it will rescale.
 
-        No refusal lives here on purpose. A normalisation that does not fire leaves the
-        column alone and every check in `validate` runs on the frame the source sent; one
-        that does fire hands those same checks a repaired column and is named in the
-        returned mapping, so a bound that is still broken can say the numbers it is quoting
-        are not the ones that arrived.
+        *Whether* a repair fires is decided here and nowhere else. `_normalised` applies
+        exactly what this names and decides nothing of its own, and `repairs` reports it
+        without touching the frame -- so a boundary that has to record a repair writes down
+        the answer the boundary applied rather than re-deriving the trigger beside it. Two
+        derivations of one declaration is the shape this package keeps being bitten by.
 
         A column that is missing, or that has arrived as the wrong kind of thing entirely,
         is skipped rather than rescaled -- multiplying a `Utf8` column would raise something
         that is not a `ContractViolation`, and the dtype refusal downstream is the answer
         the reader wants for that frame anyway.
         """
-        applied: dict[str, str] = {}
+        out: list[tuple[Normalisation, list[str]]] = []
         for rule in self.normalisations:
             # One decision for the whole rule, not one per column. A units change is a fact
             # about the response -- the declaration says so itself, "PFR does not publish
@@ -264,10 +313,39 @@ class Contract:
             tops = [float(cast(float, t)) for c in present if (t := df[c].max()) is not None]
             if not tops or max(tops) <= rule.above:
                 continue
+            out.append((rule, present))
+        return out
+
+    def repairs(self, df: pl.DataFrame) -> dict[str, str]:
+        """Which declared repairs this frame trips, and the reason each one gives.
+
+        The reporting verb, for a boundary that has to write the answer down rather than
+        watch it go past. `hub.fetch.nflverse.load` asks it so the `Pin` beside a cache entry
+        can record that the archive under it was rescaled on ingest; `Pin.rescaled` argues
+        why a pin has to say so and why the terminal line alone does not.
+
+        **Ask it of the frame that arrived, before validating, and not after.** It reads what
+        it is given, so a frame that has already been repaired trips nothing and answers
+        `{}` -- correct, and exactly the wrong thing to record. The one caller does ask
+        first, and a test holds it there.
+        """
+        return _reasons(self._triggered(df))
+
+    def _normalised(self, df: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, str]]:
+        """The frame with every declared repair applied, and why each one fired.
+
+        No refusal lives here on purpose. A normalisation that does not fire leaves the
+        column alone and every check in `validate` runs on the frame the source sent; one
+        that does fire hands those same checks a repaired column and is named in the
+        returned mapping, so a bound that is still broken can say the numbers it is quoting
+        are not the ones that arrived -- and so `validate` can say the repair happened at
+        all.
+        """
+        fired = self._triggered(df)
+        for rule, present in fired:
             for c in present:
                 df = df.with_columns(pl.col(c) * rule.scale)
-                applied[c] = rule.because
-        return df, applied
+        return df, _reasons(fired)
 
     def conform(self, df: pl.DataFrame, *columns: str) -> pl.DataFrame:
         """The columns a consumer names, repaired and checked as this contract declares them.

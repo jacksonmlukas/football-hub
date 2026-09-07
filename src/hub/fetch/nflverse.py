@@ -299,6 +299,37 @@ class Pin:
     Before #33 the two were not symmetric: `APPEND_ONLY` named `ff_rankings`, `SOURCES` did
     not, and a load of it was refused at the unknown-source check before the as-of filter was
     ever consulted, so every pin a real caller could write carried a stamp.
+
+    **`rescaled` is #140's open question, answered yes.** The ticket left it deliberately: a
+    pin currently claims to describe what the source sent, and after a `Contract` repairs a
+    declared upstream variation that is no longer quite true, so should the pin say so. It
+    should, and the reason is the same one that made the silence worth fixing at all.
+
+    The terminal line `hub.contracts._announce` writes is emitted once, by the fetch that
+    repaired. Every later read of that entry is a cache hit -- `load` returns the parquet
+    without re-validating -- so nothing prints again while the repaired frame is served from
+    that entry for as long as it stands. The report answers "what just happened"; it cannot
+    answer "what am I serving", and the second question is the one a gate asks in November
+    about a refresh in September. The pin is the only record that lives beside the entry for
+    as long as the entry does, and `refresh` already reads pins back to say what a run was
+    computed on.
+
+    `pinned_at` is the precedent and not merely a neighbour: it is already a field recording
+    *how* a load was obtained rather than what it contains, for the same reason -- to keep a
+    property of the fetch from being silently assumed by a later reader.
+
+    **The argument against, and why it loses.** `digest` already moves when a repair fires,
+    since it is computed on the frame that is written -- so a repair is not invisible to two
+    pins compared side by side. But a moved digest is what a stat correction, a grown archive
+    and a units change all look like; it says "not the bytes you had" and cannot say which.
+    Naming the columns is the difference between that and "these three arrived in units the
+    declaration did not expect, and were multiplied by a hundredth on the way in", which is
+    the sentence somebody needs to go and check upstream.
+
+    Empty is the ordinary state and means no declared repair fired -- not that nobody looked,
+    because every load of a source with a contract asks. A pin written before this field
+    existed reads back empty too, which understates by exactly one case and is the same
+    degradation `data_pin` already documents for a field it has never heard of.
     """
 
     source: str
@@ -306,6 +337,7 @@ class Pin:
     digest: str
     rows: int
     pinned_at: str | None = None
+    rescaled: tuple[str, ...] = ()
 
 
 def content_digest(df: pl.DataFrame) -> str:
@@ -448,8 +480,14 @@ def _pin_beside(path: Path) -> Pin | None:
     if not isinstance(raw, dict):
         return None
     known = {f.name for f in fields(Pin)}
+    kept = {k: v for k, v in raw.items() if k in known}
+    # JSON has no tuple, so the one field holding several column names comes back a list.
+    # Closed here rather than left to the reader: `Pin` is frozen and therefore hashable,
+    # and a list inside one is a pin that is a `Pin` right up until something hashes it.
+    if isinstance(kept.get("rescaled"), list):
+        kept["rescaled"] = tuple(kept["rescaled"])
     try:
-        return Pin(**{k: v for k, v in raw.items() if k in known})
+        return Pin(**kept)
     except TypeError:
         return None
 
@@ -539,7 +577,16 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
         # /GUARD
         df = df.select(list(cols))
 
+    rescaled: tuple[str, ...] = ()
     if contract is not None:
+        # Asked of the frame as it arrived, and therefore before the line below repairs it:
+        # `Contract.repairs` reads what it is handed, so the other order records "nothing was
+        # rescaled" about a frame that was. `Pin.rescaled` says why this is written down at
+        # all when the boundary has already said it on the terminal.
+        # GUARD rescale-is-pinned [unit/test_fetch_nflverse.py]: a cache entry whose archive
+        # was repaired on ingest carries that fact for as long as the entry stands
+        rescaled = tuple(sorted(contract.repairs(df)))
+        # /GUARD
         # The *returned* frame, because a declared repair only reaches anybody through it.
         # Dropping it here wrote whatever units the source happened to send, pinned them,
         # and served them from cache forever after -- and the frame passed, so nothing said
@@ -555,6 +602,7 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
         digest=pin_digest(source, iso, df),
         rows=df.height,
         pinned_at=None if reproducible else datetime.now(UTC).isoformat(timespec="seconds"),
+        rescaled=rescaled,
     )
     _pin_path(path).write_text(json.dumps(asdict(pin), indent=2, sort_keys=True) + "\n")
     _remember(path, pin)
