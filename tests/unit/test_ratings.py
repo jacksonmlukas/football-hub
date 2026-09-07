@@ -17,6 +17,7 @@ import pytest
 from hub import schedule, store
 from hub.fetch import nflverse
 from hub.models import ratings
+from hub.models.base import Forecaster
 
 
 def _sched(rows):
@@ -102,6 +103,61 @@ def test_it_prints_a_summary_not_rows(sched, tmp_path, capsys):
 def test_main_without_fit_prints_help(capsys):
     assert ratings.main([]) == 0
     assert "fit" in capsys.readouterr().out
+
+
+# --- the interface, and the tripwire on it (issue #205) ---------------------
+#
+# `test_it_never_predicts_a_week_it_was_fit_through` above asserts the *outcome* the
+# tripwire produces, on a fixture that could not leak anyway -- the shape that left eight
+# guards green and dead in the week of 2026-09-04. These assert that the check is reached
+# from this module, which is what `make slate` runs.
+
+class _Leaks:
+    """A conforming `Forecaster` that predicts the week it was fit through.
+
+    Stamping `fit_through_week` from the week it is handed, rather than from the spec, is
+    exactly how a real leak arrives: nothing crashes, every column is present, and the rows
+    look better than they should.
+    """
+    name = "leaks"
+    version = "leaks-1"
+
+    def fit(self, spec):
+        return self
+
+    def predict(self, games):
+        return games.select(["game_id", "league", "season", "week"]).with_columns([
+            pl.lit(0.6).alias("home_win_prob"),
+            pl.lit(1.0).alias("margin_mean"),
+            pl.lit(0.0).alias("margin_lo"),
+            pl.lit(2.0).alias("margin_hi"),
+            pl.lit(self.name).alias("model"),
+            pl.lit(self.version).alias("version"),
+            pl.lit("schedule").alias("price_source"),
+            pl.col("week").cast(pl.Int32).alias("fit_through_week"),
+            pl.lit(dt.datetime(2026, 9, 1)).alias("predicted_at"),
+        ])
+
+
+def test_the_model_this_module_publishes_is_named_by_the_interface():
+    """ADR-0002's protocol, and not a class this module happens to import."""
+    assert isinstance(ratings.forecaster(), Forecaster)
+
+
+def test_a_leaking_model_is_refused_by_the_writer_rather_than_published(sched, tmp_path,
+                                                                       monkeypatch):
+    """The tripwire, reached from the CLI `Makefile:12` runs.
+
+    Substituted at `forecaster`, so what is exercised is the whole of `fit` -- week choice,
+    spec, write path -- with only the model swapped. A passthrough cannot leak, which is
+    why the old arrangement could lose the check without a test noticing.
+    """
+    sched([("a", 1, 3.0, 7), ("b", 2, -1.0, None)])
+    monkeypatch.setattr(ratings, "forecaster", _Leaks)
+    with pytest.raises(ValueError, match="LEAKAGE"):
+        ratings.fit(2026, cache=tmp_path / "cache", base=tmp_path / "store")
+    assert not (tmp_path / "store" / "preds").exists(), (
+        "a refused fit must reach no partition; the record is the timestamp")
 
 
 # The pricing rule itself -- which source priced a game, and the fallback -- is

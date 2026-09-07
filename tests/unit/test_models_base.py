@@ -9,6 +9,7 @@ from hub.models.base import (
     Conformalized,
     FitSpec,
     Forecaster,
+    forecast,
     validate_predictions,
 )
 
@@ -74,6 +75,39 @@ def test_leakage_is_caught():
     out = Dummy().fit(spec).predict(_games(week=7))
     with pytest.raises(ValueError, match="LEAKAGE"):
         validate_predictions(out, spec)
+
+
+# --- the write path, which is where the tripwire has to sit (issue #205) ------
+#
+# `test_leakage_is_caught` above calls `validate_predictions` itself, so it proves the check
+# catches a leak and nothing else. It stayed green through a year in which the only caller
+# was one untyped line in `hub.models.ratings`. These are about the check being *reached*.
+
+
+def test_the_write_path_fits_predicts_and_checks_against_one_spec():
+    spec = FitSpec("nfl", 2026, 6)
+    out = forecast(Dummy(), spec, _games(week=7))
+    assert out.height == 30
+    assert set(PREDICTION_SCHEMA).issubset(out.columns)
+
+
+def test_a_leaking_forecaster_cannot_reach_a_row_anything_publishes():
+    """The tripwire on the path, not beside it.
+
+    A model fit through week 7 predicting week 7 is the shape that looks like success. It
+    must not be possible to obtain rows from a `Forecaster` without this firing, because
+    the alternative -- every writer remembering -- is what left it reachable from one line.
+    """
+    with pytest.raises(ValueError, match="LEAKAGE"):
+        forecast(Dummy(), FitSpec("nfl", 2026, 7), _games(week=7))
+
+
+def test_the_write_path_leaves_the_model_fitted_for_its_caller():
+    """`fit` returns self by the protocol's contract, and `hub.models.ratings` prints the
+    fitted version off its own reference afterwards."""
+    model = Dummy()
+    forecast(model, FitSpec("nfl", 2026, 6), _games(week=7))
+    assert model.version != "dummy-unfit"
 
 
 def test_probability_out_of_range_is_caught():
