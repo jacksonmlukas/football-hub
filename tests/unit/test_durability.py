@@ -137,6 +137,44 @@ def test_the_injury_markdown_applies_to_every_position():
     assert all(v < 14.0 for v in got)
 
 
+def test_the_silent_no_op_names_where_it_is_caught():
+    """A board with no `missed` column is corrected for today's designation and nothing
+    else, silently. That is deliberate and it is not free -- issue #121 -- and this function
+    is where a reader lands to find that out.
+
+    A reader who arrives here sees a branch quietly not taken, which is exactly how the
+    no-op survived long enough to need measuring. So the site names its catchers, and this
+    holds the naming to catchers that exist and still catch: the names are resolved as live
+    symbols rather than matched as prose, and the behaviour they describe is exercised
+    beside them. Rename either one and leave the comment behind, and this fails rather than
+    leaving a reader pointed at nothing.
+
+    Nothing here reads a `BuildReport`. This is a producer -- it runs inside `_stage`, and
+    the report records the stage rather than being read by it.
+    """
+    import inspect
+
+    from hub.draft import board as board_mod
+    from hub.models import experiment
+
+    source = inspect.getsource(D.correct_projection)
+    assert getattr(board_mod.BuildReport, "corrections_missing", None) is not None
+    assert getattr(experiment, "require_corrections", None) is not None
+    assert "corrections_missing" in source, (
+        "the silence is not free and this is where a reader finds out what catches it")
+    assert "require_corrections" in source, "and what refuses it for a Gate"
+
+    # Named, and true. The durability term does not apply and nothing says so here...
+    board = pl.DataFrame({"player": ["A"], "pos": ["WR"], "proj_blend": [14.0]})
+    assert D.correct_projection(board).equals(board)
+    # ...the report derives the term from the flags the build already set...
+    absorbed = board_mod.BuildReport(adp=True, td_luck=True, durability=False)
+    assert "durability" in absorbed.corrections_missing()
+    # ...and a Gate refuses the season rather than pooling it with whole ones.
+    with pytest.raises(experiment.CorrectionMissing):
+        experiment.require_corrections(2025, absorbed)
+
+
 def test_a_status_worth_flagging_is_recognised():
     assert D.is_flagworthy("OUT") and D.is_flagworthy("INJURY_RESERVE")
     assert D.is_flagworthy("QUESTIONABLE") and D.is_flagworthy("DOUBTFUL")
