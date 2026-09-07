@@ -750,12 +750,6 @@ def _stage(board: pl.DataFrame, report: BuildReport, flag: str, label: str,
         return board
 
 
-# The board column each correction term reads, and the stage that leaves it. `_attach_market`
-# consumes these; `STAGE_COLUMN` above says which stage produces them. The two dicts overlap
-# on purpose -- that overlap *is* the dependency the ADR did not describe.
-
-
-
 def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
                    season: int, season_ahead: int) -> pl.DataFrame:
     """Everything the market contributes once ADP is in hand.
