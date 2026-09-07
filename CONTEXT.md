@@ -204,7 +204,9 @@ no use to a module that has to keep going, so the module that could not use it w
 copy of the schema instead. A **Normalisation** is what the second verb can say: one declared
 whole-column repair for one known upstream variation, applied before the bound it protects is
 checked. It widens what a Contract can say and never what it will accept — a value the repair
-cannot bring inside the bound is refused exactly as before.
+cannot bring inside the bound is refused exactly as before. A repair that fires says so twice:
+on the terminal as it happens, and in the **Pin** beside the cache entry it wrote, because the
+repaired frame is served from that entry long after the line has scrolled past.
 
 ### In-season
 

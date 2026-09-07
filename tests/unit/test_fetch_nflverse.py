@@ -618,6 +618,93 @@ def test_an_archive_filtered_at_its_as_of_needs_no_pinned_at(fake_archive, tmp_p
     assert pin is not None and pin.pinned_at is None
 
 
+# --- the pin records a repair, and why it is the pin that does (issue #140) ---
+#
+# `hub.contracts` says a rescaled column on the terminal, which answers "what just
+# happened". Every read of the entry after this one is a cache hit that re-validates
+# nothing and prints nothing, while the repaired frame is served from that entry for as
+# long as it stands -- so the terminal cannot answer "what am I serving", and the sidecar
+# beside the entry is the only thing that outlives the fetch. `Pin.rescaled` argues the
+# decision in full.
+
+
+def _snaps(**over):
+    """A snap-counts frame carrying everything `SNAP_COUNTS` requires, in fractions."""
+    base = {"game_id": ["2024_01_A_B"], "season": pl.Series([2024], dtype=pl.Int32),
+            "week": pl.Series([1], dtype=pl.Int32), "game_type": ["REG"], "player": ["A"],
+            "pfr_player_id": ["AaaaBb00"], "position": ["WR"], "team": ["A"],
+            "opponent": ["B"], "offense_snaps": [55.0], "offense_pct": [0.85],
+            "defense_pct": [0.0], "st_pct": [0.2]}
+    base.update(over)
+    return pl.DataFrame(base)
+
+
+def test_a_pin_records_that_its_archive_was_rescaled_on_ingest(monkeypatch, tmp_path):
+    """The whole-percent refresh, end to end. It is repaired, written, and the record beside
+    what was written names the columns that moved -- so a gate reading this pin in November
+    can tell a units change from any other reason the bytes are not what they were."""
+    monkeypatch.setattr(nv, "_raw_snap_counts",
+                        lambda seasons: _snaps(offense_pct=[85.0], st_pct=[20.0]))
+    got = nv.load("snap_counts", seasons=[2024], cache=tmp_path)
+    assert got["offense_pct"][0] == pytest.approx(0.85), "the repaired frame was not stored"
+
+    pin = nv.data_pin("snap_counts", [2024], cache=tmp_path)
+    assert pin is not None
+    assert pin.rescaled == ("defense_pct", "offense_pct", "st_pct"), (
+        f"the pin says {pin.rescaled}; a run that reads it is entitled to know its archive "
+        f"is not in the units the source sent")
+
+
+def test_a_pin_from_an_ordinary_refresh_records_no_rescaling(monkeypatch, tmp_path):
+    """Empty is the ordinary state, and it means the declared repair did not fire -- not
+    that nobody asked. Every load of a source with a contract asks."""
+    monkeypatch.setattr(nv, "_raw_snap_counts", lambda seasons: _snaps())
+    nv.load("snap_counts", seasons=[2024], cache=tmp_path)
+    pin = nv.data_pin("snap_counts", [2024], cache=tmp_path)
+    assert pin is not None and pin.rescaled == ()
+
+
+def test_the_pinned_columns_are_the_ones_the_repair_actually_moved(monkeypatch, tmp_path):
+    """A record derived beside the thing it records is a record that drifts from it. What
+    the pin names is read off the contract that did the repairing, so this compares the pin
+    against the frame rather than against a list written out here.
+
+    Every rescaled column is non-zero on purpose. Zero is a fixed point of the
+    multiplication, so a `defense_pct` of 0.0 -- an ordinary line for a receiver -- is
+    rescaled and does not move, and reading "moved" off the values would then accuse the pin
+    of naming a column it was right to name.
+    """
+    sent = _snaps(offense_pct=[85.0], st_pct=[20.0], defense_pct=[3.0])
+    monkeypatch.setattr(nv, "_raw_snap_counts", lambda seasons: sent)
+    got = nv.load("snap_counts", seasons=[2024], cache=tmp_path)
+    moved = tuple(sorted(c for c in sent.columns
+                         if sent.schema[c].is_numeric() and sent[c][0] != got[c][0]))
+    pin = nv.data_pin("snap_counts", [2024], cache=tmp_path)
+    assert pin is not None and pin.rescaled == moved
+
+
+def test_a_rescaled_pin_survives_the_round_trip_through_its_sidecar(monkeypatch, tmp_path):
+    """JSON has no tuple, so the field comes back a list unless the read closes it -- and a
+    frozen `Pin` holding a list is a pin that is a `Pin` until something hashes it."""
+    monkeypatch.setattr(nv, "_raw_snap_counts",
+                        lambda seasons: _snaps(offense_pct=[85.0], st_pct=[20.0]))
+    nv.load("snap_counts", seasons=[2024], cache=tmp_path)
+    pin = nv.data_pin("snap_counts", [2024], cache=tmp_path)
+    assert pin is not None and isinstance(pin.rescaled, tuple)
+    assert hash(pin) is not None
+
+
+def test_a_pin_written_before_this_field_existed_reads_as_no_repair(tmp_path):
+    """The other direction of the same degradation `data_pin` already documents: a sidecar
+    from a version that never knew about repairs must read back as a pin, understating by
+    exactly one case rather than failing to load at all."""
+    _write_pin(tmp_path, json.dumps({
+        "source": "ff_opportunity", "as_of": "2026-09-04", "digest": "aaaaaaaa",
+        "rows": 1200, "pinned_at": None}))
+    pin = nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04")
+    assert pin is not None and pin.rescaled == ()
+
+
 def test_a_pin_that_was_never_written_reads_as_none(tmp_path):
     """Graceful degradation: caches written before this unit have no pin beside them, and
     asking for one must answer "nothing recorded" rather than raise on a cold tree."""

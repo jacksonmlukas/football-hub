@@ -256,6 +256,88 @@ def test_conform_does_not_apply_the_volume_floor():
         _REPAIRED.validate(empty.with_columns(pl.lit(1.0).alias("other")))
 
 
+# --- a repair that succeeds says so (issue #140) ------------------------------
+#
+# The mapping of rescaled column to reason was used in exactly one place: the refusal a
+# column earns by being rescaled and *still* sitting outside its bound. So the case the
+# declaration was written for -- the repair that works -- was the one case nobody was told
+# about, and it stopped being harmless the day the repaired frame reached the cache. A
+# whole-percent refresh is now rescaled, written, pinned and served from that cache
+# afterwards; before the second verb existed the same response was refused loudly and
+# somebody went and looked.
+
+
+def test_a_repair_that_fires_says_so_where_a_person_will_see_it(capsys):
+    """The whole ticket. A repair that succeeded left no trace anywhere at all."""
+    _REPAIRED.validate(_repairable(pct=50.0))
+    said = capsys.readouterr().out
+    assert "pct" in said, f"the rescaled column is not named: {said!r}"
+    assert "the upstream ships whole percents" in said, (
+        f"the rule's own stated reason is not carried, so the reader is told a number moved "
+        f"and not why anyone thinks it should have: {said!r}")
+    assert "t_repaired" in said, (
+        f"the source is not named, so a reader cannot go and check upstream without first "
+        f"working out which contract spoke: {said!r}")
+
+
+def test_a_frame_that_trips_no_repair_says_nothing(capsys):
+    """Every honest refresh goes through here. A line on each of them is a line nobody reads,
+    and the announcement is worth having only while it means something happened."""
+    _REPAIRED.validate(_repairable())
+    assert capsys.readouterr().out == ""
+
+
+def test_every_column_a_repair_moves_is_named_and_not_just_the_first(capsys):
+    """One decision moves several columns, and a reader checking upstream needs all of them
+    -- `SNAP_COUNTS` rescales three at once."""
+    _WHOLE_RULE.validate(pl.DataFrame({"key": ["a"], "pct": [85.0], "other": [0.8]}))
+    said = capsys.readouterr().out
+    assert "pct" in said and "other" in said, said
+
+
+def test_a_refusal_after_a_repair_reports_the_repair_as_well(capsys):
+    """The two messages answer different questions and the refusal does not replace the
+    report: one says the units moved upstream, the other says the move was not enough."""
+    with pytest.raises(ContractViolation):
+        _REPAIRED.validate(_repairable(pct=500.0))
+    assert "rescaled on ingest" in capsys.readouterr().out
+
+
+def test_a_terminal_that_cannot_be_written_to_does_not_take_down_the_fetch(monkeypatch):
+    """CLAUDE.md's rule, at the boundary it was written for. `hub.publish.live` validates
+    every five minutes through a game window with its stdout wherever the runner put it, and
+    a report that raises would convert a repaired frame into a dead overlay -- turning the
+    fix for a silent success into a louder failure than the silence."""
+    def broken(*_a, **_k):
+        raise OSError("stdout is closed")
+
+    monkeypatch.setattr("builtins.print", broken)
+    out = _REPAIRED.validate(_repairable(pct=50.0))
+    assert out["pct"][0] == pytest.approx(0.5), (
+        "the announcement failed and took the repaired frame with it")
+
+
+def test_what_a_frame_reports_is_what_the_repair_actually_moved():
+    """`repairs` is what a boundary writes down, so it has to be the same answer the frame
+    was given rather than a second derivation of the trigger beside the one that fired."""
+    df = pl.DataFrame({"key": ["a"], "pct": [85.0], "other": [0.8]})
+    said = _WHOLE_RULE.repairs(df)
+    assert set(said) == {"pct", "other"}
+    assert set(said.values()) == {"the upstream ships whole percents"}
+
+    out = _WHOLE_RULE.validate(df)
+    moved = {c for c in ("pct", "other") if out[c][0] != df[c][0]}
+    assert moved == set(said), f"reported {sorted(said)}, moved {sorted(moved)}"
+
+
+def test_a_frame_that_has_already_been_repaired_reports_nothing():
+    """The ordering a caller has to get right, written down where it can go red. `repairs`
+    reads the frame it is handed, so asking it after `validate` answers "nothing was
+    rescaled" about a frame that was -- which is the wrong thing to pin."""
+    df = pl.DataFrame({"key": ["a"], "pct": [85.0], "other": [0.8]})
+    assert _WHOLE_RULE.repairs(_WHOLE_RULE.validate(df)) == {}
+
+
 def test_the_percent_repair_covers_every_column_the_percent_bound_covers():
     """The shipped declaration, held to the reason it was written as one rule for three
     columns: a units change hits `offense_pct`, `defense_pct` and `st_pct` at once, so a
