@@ -181,6 +181,44 @@ def test_a_backtest_is_never_labelled_a_track_record(site, base, monkeypatch):
     assert got.get("is_backtest") is not None
 
 
+# --- the interval coverage the record now carries (issue #176) ------------
+
+
+def test_the_record_carries_the_weekly_interval_coverage(site, base, monkeypatch, tmp_path):
+    """The consumption criterion of issue #176: the measurement is on the page.
+
+    Log loss and Brier score the *game* probability. Whether the weekly player interval
+    covers was measured once, in a document, and read by nothing -- so it is published
+    beside them, from the artifact `hub.models.coverage --measure --write` leaves."""
+    from hub.models import coverage
+    art = tmp_path / "interval_coverage.json"
+    coverage.write_summary({"centre": "prior", "lookahead": False, "n": 16061,
+                            "gate_subset": "unclipped", "gate_n": 10536,
+                            "gate_cov80": 0.774, "band": 0.02,
+                            "verdict": "UNDER-COVERS"}, art)
+    monkeypatch.setattr(coverage, "ARTIFACT", art)
+    _scored_one(base, monkeypatch, site)
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    assert got["interval_coverage"]["verdict"] == "UNDER-COVERS"
+    assert got["interval_coverage"]["centre"] == "prior"
+    on_page = json.loads((site / "track_record.json").read_text())
+    assert on_page["interval_coverage"]["gate_cov80"] == pytest.approx(0.774)
+
+
+def test_no_measurement_drops_the_field_rather_than_the_page(site, base, monkeypatch,
+                                                             tmp_path):
+    """`data/processed/` is gitignored, so a fresh clone has no measurement. The record must
+    still publish -- graceful degradation, the same call `_scored` makes about schedules."""
+    from hub.models import coverage
+    monkeypatch.setattr(coverage, "ARTIFACT", tmp_path / "absent.json")
+    _scored_one(base, monkeypatch, site)
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    assert got["interval_coverage"] is None
+    assert got["n_scored"] == 1, "the rest of the record is unaffected"
+
+
 # --- a tied game is scored one way (issue #64) ----------------------------
 #
 # The record derived the outcome as `result > 0`, so a tie arrived as a home loss and was
