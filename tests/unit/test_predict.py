@@ -158,6 +158,31 @@ def _star(pass_catchers: int) -> tuple[np.ndarray, np.ndarray]:
     return pos, np.array(["ONE"] * (pass_catchers + 1))
 
 
+def _block(pos) -> np.ndarray:
+    """The correlation block `correlated_normal` builds for one team's positions.
+
+    Built from the shipped `TEAMMATE_RHO` rather than written out, so a refit that changes
+    what a real board's blocks look like changes what these tests are handed.
+    """
+    pos = list(pos)
+    r = np.eye(len(pos))
+    for i in range(len(pos)):
+        for j in range(i + 1, len(pos)):
+            r[i, j] = r[j, i] = predict.teammate_rho(pos[i], pos[j])
+    return r
+
+
+def _bipartite(quarterbacks: int, catchers: int) -> np.ndarray:
+    """The real failure mode from #171: a team carrying a second quarterback.
+
+    One quarterback makes the block a star, which is PSD until its catchers' squared
+    correlations sum past one -- around nineteen receivers, so never. Two make it bipartite:
+    each quarterback correlates with every catcher and with the other at zero, and the bound
+    halves. All four blocks that failed on the live board of 2026-09-07 are this shape.
+    """
+    return _block(["QB"] * quarterbacks + ["WR"] * catchers)
+
+
 def _teams(good: int, bad_pass_catchers: int = 0) -> tuple[np.ndarray, np.ndarray]:
     """`good` two-man teams that factor, plus optionally one that does not."""
     pos: list[str] = []
@@ -172,39 +197,259 @@ def _teams(good: int, bad_pass_catchers: int = 0) -> tuple[np.ndarray, np.ndarra
     return np.array(pos), np.array(team)
 
 
-def test_a_block_that_will_not_factor_is_counted_rather_than_skipped():
+def test_a_block_that_will_not_factor_is_repaired_rather_than_dropped():
+    """Issue #187, which changes #171's answer without touching #171's question.
+
+    The block still will not factor. What used to happen next was a fall back to
+    independence; what happens now is a repair to the nearest valid correlation matrix, so
+    the team is drawn correlated under a matrix a *stated* distance from the fitted one.
+    `independent` goes to zero by repair rather than by silence.
+    """
     pos, team = _teams(good=20, bad_pass_catchers=19)
     report = predict.CorrelationReport()
     predict.correlated_normal(np.random.default_rng(0), (4, pos.size), pos, team,
                               report=report)
     assert report.blocks == 21, "every block carrying a correlation should be counted"
-    assert report.independent == 1
-    assert report.share == pytest.approx(1 / 21)
+    assert report.independent == 0, "a repairable block must not fall back to independence"
+    assert report.repaired == 1
+    assert report.repaired_share == pytest.approx(1 / 21)
 
 
-def test_a_run_that_lost_a_block_is_distinguishable_from_one_that_lost_none():
-    """The whole defect: both runs return an array of the same shape and dtype, and before
-    this there was nothing else to tell them apart."""
+def test_the_repair_is_recorded_per_team_with_the_size_of_the_change():
+    """Pre-registered in #187: if repair changes a block materially, the size of the change
+    is published per team. Recorded whether or not it looks material -- the judgement of
+    whether 0.013 matters is the reader's, and it cannot be made against a figure that was
+    withheld for being small."""
+    pos, team = _teams(good=20, bad_pass_catchers=19)
+    report = predict.CorrelationReport()
+    predict.correlated_normal(np.random.default_rng(0), (4, pos.size), pos, team,
+                              report=report)
+    assert set(report.repairs) == {"ONE"}, "the repair is filed under the team that needed it"
+    got = report.repairs["ONE"]
+    assert got.min_eig_before < 0.0, "the block being repaired is the one that will not factor"
+    assert got.min_eig_after >= 0.0, "and the repaired one is a valid correlation matrix"
+    assert got.moved > 0.0, "a repair that moved nothing is a repair that did not happen"
+    assert got.size == 20
+    lines = "\n".join(report.repair_lines())
+    assert "ONE" in lines and f"{got.moved:.4f}" in lines
+
+
+def test_a_repaired_run_is_distinguishable_from_one_that_needed_no_repair():
+    """#171's defect, carried forward: both runs return an array of the same shape and
+    dtype, so the report is the only thing that can tell them apart. Repair does not put
+    that back -- it changes what the run has to say, not whether it says anything."""
     clean_pos, clean_team = _teams(good=21)
-    lost_pos, lost_team = _teams(good=20, bad_pass_catchers=19)
+    fixed_pos, fixed_team = _teams(good=20, bad_pass_catchers=19)
     clean = predict.CorrelationReport()
-    lost = predict.CorrelationReport()
+    fixed = predict.CorrelationReport()
     predict.correlated_normal(np.random.default_rng(0), (4, clean_pos.size),
                               clean_pos, clean_team, report=clean)
-    predict.correlated_normal(np.random.default_rng(0), (4, lost_pos.size),
-                              lost_pos, lost_team, report=lost)
-    assert not clean.degraded()
-    assert lost.degraded()
-    assert clean.note() != lost.note()
-    assert "independently" in lost.note()
+    predict.correlated_normal(np.random.default_rng(0), (4, fixed_pos.size),
+                              fixed_pos, fixed_team, report=fixed)
+    assert not clean.repairs and clean.repair_lines() == []
+    assert fixed.repairs
+    assert clean.note() != fixed.note()
+    assert "repair" in fixed.note()
 
 
-def test_a_run_that_loses_more_than_the_floor_refuses():
-    """It does not hand back a correlated simulation it did not perform. A single team,
-    entirely independent, is 100% of the blocks."""
-    pos, team = _star(19)
+def test_a_block_that_cannot_be_repaired_still_falls_back_and_still_voids(monkeypatch):
+    """**#171's counter has to stay able to fire.** Repair is attempted and checked, not
+    assumed: a block that will not factor *after* repair is still drawn independently, still
+    counted, and still refuses past the floor.
+
+    A NaN correlation is the case that gets there -- a refit that writes one into
+    `TEAMMATE_RHO` produces a block no projection can mend, as against the merely non-PSD
+    block above, which the repair handles. Without a path like this the void would be a
+    check that cannot fire, which is what #187's decision says to avoid.
+    """
+    monkeypatch.setitem(predict.TEAMMATE_RHO, ("QB", "WR"), float("nan"))
+    pos, team = _star(3)
     with pytest.raises(predict.CorrelationVoid, match="would not factor"):
         predict.correlated_normal(np.random.default_rng(0), (4, pos.size), pos, team)
+
+
+def test_the_repaired_block_is_a_valid_correlation_matrix():
+    """Not merely factorable: unit diagonal, symmetric, and PSD. A repair that returned a
+    covariance matrix would factor and would silently rescale every player's spread."""
+    r = _bipartite(quarterbacks=2, catchers=10)
+    assert np.linalg.eigvalsh(r).min() < 0.0, "the fixture has to be broken to be repaired"
+    fixed = predict.nearest_correlation(r)
+    assert np.allclose(np.diag(fixed), 1.0)
+    assert np.allclose(fixed, fixed.T)
+    assert np.linalg.eigvalsh(fixed).min() >= 0.0
+    np.linalg.cholesky(fixed)
+
+
+def test_the_repair_is_nearer_than_a_bare_eigenvalue_clip():
+    """"Nearest" is the claim, so it is the thing to test. Clipping the eigenvalues at zero
+    is the obvious one-liner and is *not* nearest: rescaling its diagonal back to one moves
+    it again, by an amount that one-liner never measures. Higham's alternating projections
+    converge on the intersection of both constraints instead."""
+    r = _bipartite(quarterbacks=2, catchers=10)
+    w, v = np.linalg.eigh(r)
+    clipped = (v * np.maximum(w, 0.0)) @ v.T
+    d = np.sqrt(np.diag(clipped))
+    clipped = clipped / np.outer(d, d)
+    near = predict.nearest_correlation(r)
+    once = predict.nearest_correlation(r, iterations=1)
+    assert (np.linalg.norm(near - r, "fro")
+            < np.linalg.norm(clipped - r, "fro")), "the repair should be the nearer of the two"
+    # And the iteration has to be doing something. Without this the test passes on a single
+    # projection, which already beats the clip above -- so it would hold "nearest" against
+    # the one-liner while saying nothing about whether the algorithm converges. The margin
+    # is small (about 8e-6 on this block, against correlations quoted to three decimals);
+    # it is asserted because the docstring claims *nearest*, not because 8e-6 moves a roster.
+    assert (np.linalg.norm(near - r, "fro")
+            < np.linalg.norm(once - r, "fro")), "converging should beat one projection"
+    assert np.linalg.eigvalsh(clipped).min() < np.linalg.eigvalsh(near).min(), (
+        "and the clip lands on the boundary of the PSD cone, where a Cholesky is a coin "
+        "toss -- which is what the eigenvalue floor in the repair exists to clear")
+
+
+def test_two_teams_with_the_same_block_are_each_recorded_under_their_own_name():
+    """The blocks are cached, because one run factors the same handful of them thousands of
+    times. Two teams with the same positions build the *same* block and share a cache entry,
+    so a cached team name would file both repairs under whichever team was seen first --
+    and the per-team record exists precisely to say which team was repaired."""
+    pos, _ = _star(19)
+    both_pos = np.concatenate([pos, pos])
+    both_team = np.array(["AAA"] * pos.size + ["ZZZ"] * pos.size)
+    report = predict.CorrelationReport()
+    predict.correlated_normal(np.random.default_rng(0), (4, both_pos.size),
+                              both_pos, both_team, report=report)
+    assert set(report.repairs) == {"AAA", "ZZZ"}
+    assert report.repairs["AAA"].team == "AAA"
+    assert report.repairs["ZZZ"].team == "ZZZ"
+
+
+def test_the_block_cache_does_not_survive_a_refit(monkeypatch):
+    """The cache is keyed on the block and not on the positions that built it. Keyed on
+    positions it would serve a factor of the old numbers the moment `TEAMMATE_RHO` moved --
+    so a refit, or a test that monkeypatches the table, would go on measuring the model
+    nobody is running."""
+    pos = np.array(["QB", "WR"])
+    team = np.array(["ONE", "ONE"])
+    kw = {"pos": pos, "nfl_team": team}
+    before = predict.correlated_normal(np.random.default_rng(5), (20000, 2), **kw)
+    monkeypatch.setitem(predict.TEAMMATE_RHO, ("QB", "WR"), 0.80)
+    after = predict.correlated_normal(np.random.default_rng(5), (20000, 2), **kw)
+    assert np.corrcoef(before[:, 0], before[:, 1])[0, 1] < 0.35
+    assert np.corrcoef(after[:, 0], after[:, 1])[0, 1] > 0.70
+
+
+def test_free_agents_are_not_teammates():
+    """"FA" is a label in the team column, not a team. Two free agents share no quarterback,
+    so correlating them is correlating strangers -- and on the 2024 board they are a single
+    43-player block, the worst-conditioned on it by an order of magnitude.
+
+    This is load-bearing *because* of the repair. Before it, that block failed to factor and
+    fell back to independence, which is the right answer for a free agent and was arrived at
+    by accident; repairing it instead would turn an accidentally-correct independent draw
+    into a confidently-wrong correlated one.
+    """
+    pos = np.array(["QB", "WR", "QB", "WR"])
+    report = predict.CorrelationReport()
+    z = predict.correlated_normal(np.random.default_rng(2), (40000, 4), pos,
+                                  np.array(["FA", "FA", "KC", "KC"]), report=report)
+    assert report.blocks == 1, "only the real team carries a block"
+    assert abs(np.corrcoef(z[:, 0], z[:, 1])[0, 1]) < 0.03, "two free agents stay independent"
+    assert np.corrcoef(z[:, 2], z[:, 3])[0, 1] > 0.15, "the real team still correlates"
+
+
+# --- a committee: a within-team pairing that carries a negative correlation ---
+#
+# Issue #187's first criterion. The structure could express only "these two rise together";
+# a handcuff, a committee backfield and a target split all need "one rises when the other
+# falls", and until the repair above existed a negative entry could not be carried at all --
+# it is what makes a block non-PSD in the first place.
+#
+# **These fixtures set the correlation rather than reading a fitted one, and deliberately.**
+# `docs/correlation.md` measures RB1-RB2 at +0.013 and puts every non-quarterback pairing
+# inside +/-0.03 of zero, so there is no fitted negative within-team number to ship. What is
+# tested here is that the machinery carries whichever sign a fit produces, and what the
+# *direction* of the resulting combined distribution then is.
+
+
+def _committee(rho: float, monkeypatch) -> None:
+    """Two backs on one team who take from each other at `rho`."""
+    monkeypatch.setitem(predict.TEAMMATE_RHO, ("RB", "RB"), rho)
+
+
+def test_a_within_team_pairing_can_carry_a_negative_correlation(monkeypatch):
+    """The criterion itself. The draw has to come back negatively correlated -- a structure
+    that clamped the fit at zero, or repaired the sign away, would pass every PSD check and
+    price a committee as two independent backs."""
+    _committee(-0.30, monkeypatch)
+    z = predict.correlated_normal(np.random.default_rng(7), (60000, 2),
+                                  np.array(["RB", "RB"]), np.array(["ONE", "ONE"]))
+    assert np.corrcoef(z[:, 0], z[:, 1])[0, 1] == pytest.approx(-0.30, abs=0.02)
+
+
+def test_a_committee_is_narrower_than_two_independent_backs_not_wider(monkeypatch):
+    """**This falsifies #187's second pre-registered outcome.**
+
+    The ticket pre-registers that *two players in a committee produce a wider combined
+    distribution than two independent players with the same marginals*. Holding the marginals
+    fixed, the combined variance is `s1^2 + s2^2 + 2*rho*s1*s2`, so the sign of the change is
+    the sign of rho and nothing else. A committee is negatively correlated by the ticket's own
+    definition -- "one rises when the other falls" -- so its combined distribution is
+    strictly **narrower**. The two halves of the pre-registration contradict each other, and
+    no implementation can satisfy both.
+
+    Asserted in both directions so the test is not measuring its own fixture: the same code
+    gives wider for a positive pairing and narrower for a negative one, which is what makes
+    the negative case a finding rather than an artefact.
+    """
+    sd = 6.0
+    pair = [(sd, "RB", "ONE"), (sd, "RB", "ONE")]
+    apart = [(sd, "RB", "ONE"), (sd, "RB", "TWO")]
+
+    _committee(-0.30, monkeypatch)
+    committee = predict.group_sd(pair)
+    independent = predict.group_sd(apart)
+    assert independent == pytest.approx(sd * np.sqrt(2.0))
+    assert committee < independent, "a negative pairing narrows the combined distribution"
+    assert committee == pytest.approx(sd * np.sqrt(2.0 - 0.60))
+
+    _committee(+0.30, monkeypatch)
+    assert predict.group_sd(pair) > independent, (
+        "and a positive one widens it -- so the direction tracks the fitted sign, and the "
+        "assertion above is not an artefact of the fixture")
+
+
+def test_the_committee_direction_holds_in_the_draw_and_not_only_in_the_formula(monkeypatch):
+    """`group_sd` is a closed form, so on its own it re-derives the algebra above rather than
+    testing the simulator. This measures the same direction on the drawn weekly points that a
+    roster is actually priced on, transform and clip included."""
+    _committee(-0.30, monkeypatch)
+    pos = np.array(["RB", "RB"])
+    mu, sd = np.array([12.0, 12.0]), np.array([6.0, 6.0])
+    skew = predict.weekly_skew_for(pos)
+    rng = np.random.default_rng(11)
+    z_pair = predict.correlated_normal(rng, (200000, 2), pos, np.array(["ONE", "ONE"]))
+    z_apart = predict.correlated_normal(rng, (200000, 2), pos, np.array(["ONE", "TWO"]))
+    together = predict.skewed(mu, sd, skew, z_pair).sum(axis=1)
+    apart = predict.skewed(mu, sd, skew, z_apart).sum(axis=1)
+    assert together.std() < apart.std() * 0.95, (
+        "the committee's combined distribution is narrower in the draw too")
+
+
+def test_a_committee_block_that_will_not_factor_is_repaired_with_its_sign_intact(monkeypatch):
+    """The negative pairing is what makes a block non-PSD, so the two halves of #187 meet
+    here: the repair has to keep a committee a committee. A repair that dragged the pairing
+    up through zero would satisfy every PSD check by deleting the thing being modelled."""
+    _committee(-0.95, monkeypatch)
+    monkeypatch.setitem(predict.TEAMMATE_RHO, ("RB", "WR"), 0.80)
+    pos = np.array(["RB", "RB", "WR"])
+    report = predict.CorrelationReport()
+    predict.correlated_normal(np.random.default_rng(0), (4, 3), pos,
+                              np.array(["ONE"] * 3), report=report)
+    assert report.repaired == 1, "the fixture has to be broken to be repaired"
+    assert report.independent == 0
+    z = predict.correlated_normal(np.random.default_rng(13), (60000, 3), pos,
+                                  np.array(["ONE"] * 3))
+    assert np.corrcoef(z[:, 0], z[:, 1])[0, 1] < -0.30, (
+        "the repaired committee is still a committee")
 
 
 def test_the_floor_is_a_share_and_not_a_count():

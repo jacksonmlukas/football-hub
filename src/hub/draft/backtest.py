@@ -206,7 +206,8 @@ def draft_root(seed: int, season: int, k: int) -> np.random.SeedSequence:
 def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds: int,
                        n_draft_sims: int, n_season_sims: int,
                        seed: int | np.random.SeedSequence,
-                       tiebreak: str = "ecr"):
+                       tiebreak: str = "ecr",
+                       correlation: CorrelationReport | None = None):
     """Arm B. Top of `win_probability` over `recommend()`'s shortlist, ties broken by `by`.
 
     The tie-break is not a tidy default: `rank_tiers` exists because the top two candidates
@@ -233,7 +234,8 @@ def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds:
             return _pool_index(pool, names[0])
         wp = win_probability(board, state, names, my_slot=my_slot, teams=teams,
                              rounds=rounds, n_draft_sims=n_draft_sims,
-                             n_season_sims=n_season_sims, seed=seed)
+                             n_season_sims=n_season_sims, seed=seed,
+                             report=correlation)
         leaders = rank_tiers(wp).filter(pl.col("co_leader"))["player"].to_list()
         ranked = (board.filter(pl.col("player").is_in(leaders))
                        .sort(tiebreak, nulls_last=True))
@@ -257,7 +259,8 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
             n_drafts: int = 20, seed: int = 0, my_slot: int | None = None,
             teams: int | None = None, rounds: int = DEFAULT_ROUNDS,
             n_draft_sims: int = 12, n_season_sims: int = 250,
-            on_draft: Callable[[int, int, int], None] | None = None) -> pl.DataFrame:
+            on_draft: Callable[[int, int, int], None] | None = None,
+            correlation: CorrelationReport | None = None) -> pl.DataFrame:
     """Paired arm A against arm B, one row per (season, draft).
 
     Pure: takes frames, returns a frame, touches no network. That is what makes the
@@ -301,7 +304,8 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
                                   rounds=rounds, rng=stream(root, ROOM))
             arm_b = optimizer_strategy(board, my_slot=my_slot, teams=teams, rounds=rounds,
                                        n_draft_sims=n_draft_sims,
-                                       n_season_sims=n_season_sims, seed=root)
+                                       n_season_sims=n_season_sims, seed=root,
+                                       correlation=correlation)
             b_names, b_pos = play(board, arm_b, my_slot=my_slot, teams=teams,
                                   rounds=rounds, rng=stream(root, ROOM))
             # A callback, not a print, so `compare` stays pure and the tests stay quiet. This
@@ -805,6 +809,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                   f"{r['leader_pos'] or ''!s:<4} {r['lift']*100:>+6.2f}%  "
                   f"{r['co_leaders']:>6}  {r['candidates']:>5}")
         print(f"\n  {correlation.note()}")
+        # The per-team repair record (#187). Printed beside the note rather than folded into
+        # it: the note says how many blocks were repaired and this says how far each one
+        # moved, which is the figure that decides whether a repair mattered.
+        for line in correlation.repair_lines():
+            print(line)
         bad = tripwire(board, got)
         print()
         if bad:
@@ -835,9 +844,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"    {label} {season}: draft {k}/{of}", flush=True)
         return say
 
+    # Owned here for the same reason `diagnose`'s is: every simulated season inside `compare`
+    # writes into it, and a count that lives inside the call dies with its stack frame.
+    correlation = CorrelationReport()
     paired = compare(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
                      n_draft_sims=a.draft_sims, n_season_sims=a.season_sims,
-                     on_draft=_tick("paired") if a.progress else None)
+                     on_draft=_tick("paired") if a.progress else None,
+                     correlation=correlation)
+    print(f"\n  {correlation.note()}")
+    for line in correlation.repair_lines():
+        print(line)
     # `SEASON_CLUSTER`, not the row this gate used to take: the eighty (season, draft) rows
     # are twenty rooms drawn against four boards, and what varies independently between them
     # is the season. Issue #45; the effect is unmoved and the interval widens.

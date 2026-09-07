@@ -22,7 +22,7 @@ Unifying must not quietly swap a validated number for a tidier one.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import polars as pl
@@ -146,6 +146,83 @@ def skewed(mean, sd, skew, z):
 _INDEPENDENT_FLOOR = 0.05
 
 
+# A repaired block whose smallest eigenvalue lands exactly on zero is on the boundary of the
+# PSD cone, and a Cholesky of it fails about as often as it succeeds. This lifts the floor off
+# the boundary by an amount far below the third decimal any correlation here is quoted to.
+_EIG_FLOOR = 1e-8
+
+
+def nearest_correlation(r: np.ndarray, *, iterations: int = 100,
+                        tol: float = 1e-9) -> np.ndarray:
+    """The nearest valid correlation matrix to `r`, in Frobenius norm.
+
+    Higham's alternating projections with Dykstra's correction (2002): project onto the PSD
+    cone, project onto unit diagonal, repeat. Both sets are convex, so this converges to the
+    nearest point of their intersection rather than to whichever one a single clip happens to
+    land on -- a bare eigenvalue clip is *not* the nearest correlation matrix, because
+    rescaling its diagonal back to one moves it again by an amount nobody measures.
+
+    **This is the repair, and the repair exists so that the fit does not have to be
+    constrained.** Estimating within-team correlations under a PSD constraint would mean
+    constraining the estimate to be representable, which chooses the answer for the
+    solver's convenience and -- worse -- makes `CorrelationReport.independent` permanently
+    zero, since a fit that cannot produce an invalid block can never fail to factor. Fit
+    freely, repair second, record what the repair cost: then the constraint's price is a
+    number in `CorrelationReport.repairs` that somebody can look at, rather than a bias
+    nobody can see. Issue #187.
+
+    The final clip is not part of Higham: the algorithm converges *to* the boundary of the
+    PSD cone, where the smallest eigenvalue is zero to within rounding and `np.linalg.cholesky`
+    is a coin toss. Lifting it to `_EIG_FLOOR` and rescaling the diagonal (a congruence, so
+    it preserves PSD) buys a factorisation that always succeeds for 1e-8 of movement.
+    """
+    y = np.array(r, dtype=float)
+    ds = np.zeros_like(y)
+    for _ in range(iterations):
+        rk = y - ds
+        w, v = np.linalg.eigh(rk)
+        x = (v * np.maximum(w, 0.0)) @ v.T
+        ds = x - rk
+        y = x.copy()
+        np.fill_diagonal(y, 1.0)
+        if np.linalg.norm(y - x, "fro") <= tol:
+            break
+    w, v = np.linalg.eigh(y)
+    if w.min() < _EIG_FLOOR:
+        y = (v * np.maximum(w, _EIG_FLOOR)) @ v.T
+        d = np.sqrt(np.diag(y))
+        y = y / np.outer(d, d)
+    np.fill_diagonal(y, 1.0)
+    return y
+
+
+@dataclass(frozen=True)
+class BlockRepair:
+    """What repairing one team's block cost, in the units the block is quoted in.
+
+    Recorded per team rather than per factorisation: the same team is factored thousands of
+    times in a run and the repair is identical every time, so a count here would measure the
+    simulation's size and not the model's. `CorrelationReport.repaired` carries the count.
+
+    `moved` is the Frobenius norm of the whole change and `largest_shift` the biggest move
+    on any single pairing. Both are published, because they answer different questions: a
+    block can move a lot in total while no one correlation moves much, and that is a
+    materially different repair from one that halves a single edge.
+    """
+    team: str
+    size: int
+    min_eig_before: float
+    min_eig_after: float
+    moved: float
+    largest_shift: float
+
+    def line(self) -> str:
+        """One team's repair, for the run's output."""
+        return (f"    {self.team}: {self.size}x{self.size}, smallest eigenvalue "
+                f"{self.min_eig_before:+.4f} -> {self.min_eig_after:+.4f}, moved "
+                f"{self.moved:.4f} (largest single pairing {self.largest_shift:+.4f})")
+
+
 class CorrelationVoid(RuntimeError):
     """Too much of a correlated draw was drawn independently for it to be one.
 
@@ -180,15 +257,49 @@ class CorrelationReport:
     once per draw -- so a run's `blocks` counts into the thousands. `share` is the figure to
     read and is the same either way; the raw counts are kept because a share with no
     denominator cannot say whether it came from one block or ten thousand.
+
+    `repaired` counts factorisations that needed a repair to factor, and `repairs` holds one
+    `BlockRepair` per *team* that needed one -- see `BlockRepair` for why the two units
+    differ. A repaired block is not a degraded one: it was drawn correlated, under a matrix
+    a stated distance from the fitted one. That distance is the thing to look at, and it is
+    published rather than counted, because "four blocks were repaired" says nothing about
+    whether the repair mattered.
     """
     blocks: int = 0
     independent: int = 0
+    repaired: int = 0
+    repairs: dict[str, BlockRepair] = field(default_factory=dict)
     floor: float = _INDEPENDENT_FLOOR
 
     @property
     def share(self) -> float:
         """The share of correlated blocks that fell back to independence."""
         return self.independent / self.blocks if self.blocks else 0.0
+
+    @property
+    def repaired_share(self) -> float:
+        """The share of correlated blocks that needed repair to factor."""
+        return self.repaired / self.blocks if self.blocks else 0.0
+
+    def record(self, repair: BlockRepair) -> None:
+        """Count one repaired factorisation, keeping one record per team."""
+        self.repaired += 1
+        self.repairs.setdefault(repair.team, repair)
+
+    def repair_lines(self) -> list[str]:
+        """The per-team repair record, published whenever anything was repaired.
+
+        Pre-registered in #187: *if repair changes a block materially, the size of the change
+        is published per team*. Published whether or not it looks material, for the reason
+        `note` is said on every run -- a figure that appears only when somebody judged it
+        large is a figure whose absence means either "small" or "nobody looked".
+        """
+        if not self.repairs:
+            return []
+        return [f"  repaired to the nearest valid correlation matrix "
+                f"({len(self.repairs)} team{'s' if len(self.repairs) > 1 else ''}, "
+                f"{self.repaired_share:.1%} of factorisations):"] + \
+               [self.repairs[t].line() for t in sorted(self.repairs)]
 
     def degraded(self) -> bool:
         """Whether any block failed. What makes a degraded run distinguishable from a clean
@@ -202,6 +313,10 @@ class CorrelationReport:
         if not self.blocks:
             return "correlation: no team block carried a correlation to apply."
         if not self.independent:
+            if self.repaired:
+                return (f"correlation: all {self.blocks} team blocks factored, "
+                        f"{self.repaired} of them ({self.repaired_share:.1%}) after repair "
+                        f"to the nearest valid matrix.")
             return f"correlation: all {self.blocks} team blocks factored."
         return (f"correlation: {self.independent} of {self.blocks} team blocks would not "
                 f"factor ({self.share:.1%}); those teams' players were simulated "
@@ -217,6 +332,68 @@ class CorrelationReport:
                 f"correlation structure exists to replace -- so this is not a correlated "
                 f"simulation and is not reported as one. Check `TEAMMATE_RHO` and the "
                 f"positions on the board that produced these blocks.")
+
+
+# Factored blocks, keyed on the block itself. One run factors the same handful of blocks
+# thousands of times -- `win_probability` is candidates x draft-sims x seasons -- and the
+# repair below is an eigendecomposition per iteration, which is affordable once per distinct
+# block and not once per draw.
+#
+# **Keyed on the matrix and not on the positions that built it.** A positions key would be
+# stale the moment `TEAMMATE_RHO` changed under it, which is exactly what a refit does and
+# exactly what a test that monkeypatches the table does -- so the cache would quietly serve a
+# factor of the old numbers and the test would pass against a model nobody is running.
+#
+# The cached value carries no team name. Two teams with the same positions build the *same*
+# block and so share a key, and a cached `BlockRepair` would report the second team's repair
+# under the first team's name -- which is the one thing the per-team record exists to get
+# right. The measured quantities are cached; the name is attached per call.
+_FACTORS: dict[bytes, tuple[np.ndarray | None, tuple[int, float, float, float, float] | None]] = {}
+_FACTOR_CACHE_MAX = 4096
+
+
+def _factor(r: np.ndarray, team: str) -> tuple[np.ndarray | None, BlockRepair | None]:
+    """Cholesky factor for one team's block, repairing it first if it will not factor.
+
+    Returns `(chol, repair)`. `chol` is None only if the *repaired* block will not factor
+    either, which is what leaves `CorrelationReport.independent` able to fire at all: repair
+    is not assumed to work, it is attempted and checked.
+    """
+    key = r.tobytes()
+    got = _FACTORS.get(key)
+    if got is None:
+        got = _measure(r)
+        if len(_FACTORS) < _FACTOR_CACHE_MAX:
+            _FACTORS[key] = got
+    chol, facts = got
+    if facts is None:
+        return chol, None
+    size, before, after, moved, largest = facts
+    return chol, BlockRepair(team=team, size=size, min_eig_before=before,
+                             min_eig_after=after, moved=moved, largest_shift=largest)
+
+
+def _measure(r: np.ndarray):
+    """Factor one block, repairing if needed. The team-independent half of `_factor`."""
+    try:
+        return np.linalg.cholesky(r), None
+    except np.linalg.LinAlgError:
+        pass
+    # The repair is attempted, not assumed. `nearest_correlation` throws rather than returns
+    # on a block that is not merely non-PSD -- a NaN out of a bad refit is the case -- and an
+    # unrepairable block has to leave the run the way it always did, drawn independently and
+    # counted, rather than taking the whole simulation down with it.
+    try:
+        fixed = nearest_correlation(r)
+        chol = np.linalg.cholesky(fixed)
+    except np.linalg.LinAlgError:
+        return None, None
+    delta = fixed - r
+    return chol, (int(r.shape[0]),
+                  float(np.linalg.eigvalsh(r).min()),
+                  float(np.linalg.eigvalsh(fixed).min()),
+                  float(np.linalg.norm(delta, "fro")),
+                  float(delta.flat[np.abs(delta).argmax()]))
 
 
 def correlated_normal(rng, size, pos, nfl_team, *,
@@ -238,7 +415,7 @@ def correlated_normal(rng, size, pos, nfl_team, *,
         return z
     report = CorrelationReport() if report is None else report
     teams = np.asarray(nfl_team, dtype=object)
-    for team in {t for t in teams.tolist() if t is not None}:
+    for team in {t for t in teams.tolist() if t is not None and t not in NOT_A_TEAM}:
         idx = np.flatnonzero(teams == team)
         if idx.size < 2:
             continue
@@ -252,15 +429,32 @@ def correlated_normal(rng, size, pos, nfl_team, *,
         # either line puts this back to a bare `continue`, which simulates that team
         # independently and leaves nothing anywhere saying so.
         report.blocks += 1
-        try:
-            chol = np.linalg.cholesky(r)
-        except np.linalg.LinAlgError:
+        chol, repair = _factor(r, str(team))
+        if chol is None:
             report.independent += 1
             continue
+        # /GUARD
+        # GUARD a-block-that-will-not-factor-is-repaired [unit/test_predict.py]: dropping
+        # the record leaves the run silently drawing a team under a matrix it did not fit.
+        if repair is not None:
+            report.record(repair)
         # /GUARD
         z[..., idx] = z[..., idx] @ chol.T
     report.check()
     return z
+
+
+# Values in a board's team column that are not a team. Free agents share the label and share
+# no quarterback, so correlating them is correlating strangers -- on the 2024 board that is a
+# single 43-player "team" whose block is the worst-conditioned on the board by an order of
+# magnitude (smallest eigenvalue -0.914, against -0.335 for the worst real one).
+#
+# **It has to be excluded here rather than repaired.** Before #187 that block failed to
+# factor and fell back to independence, which is the right answer for a free agent and was
+# reached by accident. Repair would have turned an accidentally-correct independent draw into
+# a confidently-wrong correlated one -- so the repair made this worse until the exclusion
+# landed beside it. `playoff_sos._canon_team` has held the same rule since it was written.
+NOT_A_TEAM = frozenset({"FA", ""})
 
 
 # Within-game correlation between teammates, measured on standardised weekly points,

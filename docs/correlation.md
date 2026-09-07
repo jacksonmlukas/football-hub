@@ -138,6 +138,91 @@ never in scope for the component layer.
 > Fixing it is a modelling question and not this one's: two quarterbacks on a team are not
 > independent of each other, and `TEAMMATE_RHO` has no entry saying so.
 
+## The block is repaired rather than dropped
+
+> **Measured 2026-09-07**, issue #187, under [method.md rule 13](method.md). **Nothing above
+> is edited.** The four blocks and their eigenvalues are re-measured below on the same live
+> board and agree with the section above to the digit it quotes.
+
+A block that will not factor is now repaired to its **nearest valid correlation matrix**
+(Higham's alternating projections) and the repair is recorded per team, rather than the
+team being dropped to an independent draw. `CorrelationReport.independent` goes to zero by
+repair; `repaired` and `repairs` carry what it cost.
+
+The fit is **not** constrained to stay PSD. Constraining it would mean constraining the
+estimate to be representable, and it would make #171's counter permanently zero — a check
+that cannot fire. The counter still can: a block that will not factor *after* repair (a NaN
+out of a bad refit is the case that gets there) is still counted and still voids past the
+floor. The floor is unchanged at 5%.
+
+**On the live board of 2026-09-07** — the same board as the section above, 4 of 33 blocks,
+12.5% of factorisations:
+
+| team | block | smallest eigenvalue before | after | moved (Frobenius) | largest single pairing |
+|---|---|---|---|---|---|
+| LAR | 16x16 | −0.0845 | +0.0000 | 0.0915 | +0.0250 |
+| ATL | 13x13 | −0.0665 | +0.0000 | 0.0708 | +0.0126 |
+| SF | 17x17 | −0.0454 | +0.0000 | 0.0492 | +0.0134 |
+| WAS | 17x17 | −0.0423 | +0.0000 | 0.0459 | +0.0125 |
+
+No single pairing moves more than **+0.025**, against fitted edges of +0.232 and +0.225. The
+repair is spread thinly across a whole block rather than concentrated on one edge, which is
+what makes it a numerical repair and not a refit.
+
+**The 2024 backtest board is worse and this is where the gate actually runs.** `--seasons 2024
+--drafts 2` repairs **14 of 32** blocks (43.8% of factorisations), with blocks of 16x16 to
+22x22 against the live board's 13x13 to 17x17, and moves up to 0.354 (NE, smallest eigenvalue
+−0.335). The blocks are board-sized rather than roster-sized — issue #187's remaining
+criterion, untouched here — so a backtest board carries every listed player on a team at once
+and fails far more often than a live draft board does.
+
+### Free agents are not a team
+
+Found while measuring the above and fixed beside it. `"FA"` is a value in the team column,
+not a team, and `correlated_normal` was correlating every free agent with every other as
+though they shared a quarterback. On the 2024 board that is one 43-player block with a
+smallest eigenvalue of **−0.914**, worse than the worst real team by an order of magnitude.
+
+It mattered only once repair existed. Before it, that block failed to factor and fell back to
+independence — the right answer for a free agent, reached by accident. Repairing it instead
+would have turned an accidentally-correct independent draw into a confidently-wrong
+correlated one, so the repair made this *worse* until the exclusion landed with it.
+`playoff_sos._canon_team` has excluded `"FA"` since it was written.
+
+### The pre-registered committee direction is falsified
+
+#187 pre-registers that *two players in a committee produce a wider combined distribution
+than two independent players with the same marginals*. **It cannot hold as written, and no
+implementation can satisfy it.** Holding the marginals fixed, the combined variance is
+`s1² + s2² + 2ρ·s1·s2`, so the sign of the change *is* the sign of ρ. A committee is
+negatively correlated by the ticket's own definition — "one rises when the other falls" — and
+a negative ρ makes the combined distribution strictly **narrower**. The same holds for the
+best-lineup max, where `Var(max) = 1 − (1−ρ)/π` for a standard pair and also falls with ρ.
+
+The two halves of the pre-registration point in opposite directions: it asks for a negative
+correlation and for the effect of a positive one. Which half survives is a modelling question
+and is left open here — see the note below on #213, where the mechanism now lives.
+
+Measured rather than assumed: `test_a_committee_is_narrower_than_two_independent_backs_not_wider`
+asserts both directions, so the fixture cannot pass by accident.
+
+### Nothing negative is shipped
+
+The machinery now carries a negative within-team pairing end to end — it is fitted freely,
+survives the repair with its sign intact, and shows up in the draw. **No negative value is
+added to `TEAMMATE_RHO`**, because there is no fitted one to add: the position-level table
+above puts every non-quarterback pairing within ±0.03 of zero, and RB1–RB2 at **+0.013**.
+Shipping a hand-set negative number would be inventing the precision this document exists to
+avoid.
+
+#187's amendment of 2026-09-07 puts the mechanism in **#213** — team-level attempt counts
+with player shares as Dirichlet-multinomial, where negative teammate correlation falls out of
+the shared simplex rather than a fitted term. That is where a real negative number should
+come from, and it is also the reading under which "wider" could be true: two players on one
+team share the team's volume, so a positive net covariance from the shared count can outweigh
+the negative share split. That is a claim about #213's fitted output, not something this
+change can settle.
+
 ## Reproduce
 
 The measurement and gate run from `hub.fetch.nflverse` weekly player stats; see
