@@ -47,11 +47,14 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import (
+    NO_FRAMES,
     DraftConfig,
     RosterConfig,
+    commit,
     config_digest,
     data_digest,
     drafted_positions,
+    frames_digest,
     resolved_config,
 )
 from hub.draft.board import BuildReport, board_as_of
@@ -97,6 +100,22 @@ LIMITATIONS = (
     "arm B is the POST-FIX optimizer: win_probability now seeds every seat with the roster "
     "it already holds. P0 measured the pre-fix one, which was blind to your own roster, so "
     "any movement from P0's +0.04 cannot be read as 'the shortlist tipped it'",
+    # Issue #196, and the one limitation here that is about comparability between runs rather
+    # than between this harness and the product. Left as a limitation rather than fixed: both
+    # draws are vectorised over the whole frame in one call, so making a player's draw a
+    # function of his identity rather than of his row would re-pair every player in every
+    # existing figure -- a larger change to the thing being measured than either #195 or #196
+    # is, and one that should be made deliberately with a re-run rather than in passing. What
+    # closes the reporting half of it is `board_digest`: the coupling is undetectable without
+    # a stamp naming the frame, and detectable with one.
+    "the noise is drawn per Board ROW, not per player: both stochastic quantities are arrays "
+    "whose last axis is the Board's height (optimize.simulate_remaining_draft draws one "
+    "pick-noise normal per row; predict.correlated_normal draws (n_sims, weeks, mu.size)). "
+    "Probed directly: drop one player and everyone ABOVE him keeps his pick-noise draw, "
+    "nobody below him does, and no player's season draw survives at all. So any commit that "
+    "moves Board membership -- MIN_GAMES, the xFP imputation, a join key, the as-of boundary "
+    "by a day -- re-pairs the whole board and is a total re-draw, not a small perturbation. "
+    "Two runs are comparable only at an identical board_digest",
 )
 
 def score_roster(names: Sequence[str], pos: Sequence[str], realised: pl.DataFrame,
@@ -608,8 +627,31 @@ def verdict(summary: dict[str, float], seasons: pl.DataFrame) -> tuple[str, str]
     return gate(summary, seasons, ACTIONS)
 
 
-def stamped_for_publication(paired: pl.DataFrame) -> tuple[pl.DataFrame, str]:
+def stamped_for_publication(paired: pl.DataFrame,
+                            boards: dict[int, pl.DataFrame] | None = None,
+                            ) -> tuple[pl.DataFrame, str]:
     """The paired frame carrying what produced it, and the line a reader gets.
+
+    **Four stamps, and until #196 there were two.** `cfg_digest` says which model, `data_digest`
+    says which upstream bytes -- and neither says which *Board*, which is the object `compare`
+    is actually handed, or which *code* read it.
+
+    `board_digest` closes the first gap. The Board is built from those bytes by `board_as_of`,
+    through joins, an as-of boundary, a `MIN_GAMES` filter and an xFP imputation, and any of
+    them can change its membership without a source byte moving -- `90a9bbb` dropped 814 of
+    1,372 players from 2025 at an unchanged data digest. `compare`'s docstring says *"Pure:
+    takes frames, returns a frame, touches no network"*, and purity with respect to the network
+    had been getting read as reproducibility. It is not: it is a statement about what the
+    function does not touch, and the frames it does take were unrecorded.
+
+    `commit` closes the second. `docs/gate-power.md` records the draft gate's effect moving
+    8.07 points across 270 commits at an identical data digest, with no owning commit --
+    a movement nobody can attribute because the runs recorded which bytes they read and never
+    which tree read them. `docs/track-record.md` rule 1 makes these numbers commit-dated.
+
+    `boards` is optional and defaults to `NO_FRAMES`, which is a sentinel and not a hash, so a
+    caller that did not hand its frames over says so rather than publishing eight
+    legitimate-looking characters that name nothing.
 
     `resolved_config()`, not `HubConfig()`: ADR-0007 keeps this file so a later reader can tell
     which configuration produced these rows, and the defaults are that only while `conf/`
@@ -629,13 +671,22 @@ def stamped_for_publication(paired: pl.DataFrame) -> tuple[pl.DataFrame, str]:
     """
     pins = pins_this_run()
     data = data_digest(pins)
+    played = NO_FRAMES if boards is None else frames_digest(boards)
+    made_by = commit()
     stamped = paired.with_columns(
         pl.lit(config_digest(resolved_config())).alias("cfg_digest"),
-        pl.lit(data).alias("data_digest"))
+        pl.lit(data).alias("data_digest"),
+        pl.lit(played).alias("board_digest"),
+        pl.lit(made_by).alias("commit"))
     # Said as well as stored, because the reader deciding whether two runs are comparable is
     # usually reading the terminal, not the parquet.
     said = (f"  data: {data} over {len(pins)} pinned source(s)"
-            + ("" if pins else " -- nothing was loaded through the pinning layer"))
+            + ("" if pins else " -- nothing was loaded through the pinning layer")
+            + f"\n  board: {played}"
+            + ("" if boards else " -- the run did not hand over the frames it played")
+            + f"\n  commit: {made_by}"
+            + ("-- a dirty tree; this run is not that commit" if made_by.endswith("-dirty")
+               else ""))
     return stamped, said
 
 
@@ -814,7 +865,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"    - {line}")
 
     if a.out:
-        stamped, said = stamped_for_publication(paired)
+        stamped, said = stamped_for_publication(paired, boards)
         stamped.write_parquet(a.out)
         print(f"\n  wrote {paired.height} paired rows to {a.out}\n{said}")
     return 0

@@ -317,11 +317,19 @@ def test_the_strategy_sees_picks_in_order_so_it_can_rebuild_the_state():
 # --- limitations are recorded before the numbers, not after ---------------
 
 def test_the_named_gaps_between_harness_and_product_are_recorded():
-    """A limitation discovered after the result is a rationalisation. These are the four
-    the design fixed in advance."""
-    assert len(bt.LIMITATIONS) == 5
+    """A limitation discovered after the result is a rationalisation. These are the five the
+    design fixed in advance, plus one #196 measured.
+
+    The sixth is a different kind and is counted here anyway. The first five are gaps between
+    this harness and the tool it audits, fixed before the numbers. The row-coupling one was
+    found afterwards, by probe -- which is exactly the position the docstring above calls a
+    rationalisation, and the reason it is stated as a limitation with its consequence rather
+    than argued away. It is not a gap against the product; it is a bound on which two runs of
+    this harness may be compared at all.
+    """
+    assert len(bt.LIMITATIONS) == 6
     joined = " ".join(bt.LIMITATIONS)
-    for expected in ("consensus", "xFP", "ties", "simulated", "POST-FIX"):
+    for expected in ("consensus", "xFP", "ties", "simulated", "POST-FIX", "board_digest"):
         assert expected in joined
 
 
@@ -1008,3 +1016,190 @@ def test_a_negative_seed_still_runs():
     got = bt.compare({2024: board}, {2024: _flat_realised(board)}, n_drafts=1, seed=-7,
                      **_SMALL)
     assert got.height == 1
+
+
+# --- which Board a run was measured on (issue #196) ------------------------
+#
+# A run stamped `cfg_digest` and `data_digest`, and the second is a digest of the upstream
+# *source bytes* -- a good digest of the wrong object. The Board is what `compare` is handed,
+# and nothing hashed it: `docs/gate-power.md` carries three runs at the data digest `621cb5dd`
+# that were played on frames nobody can now name.
+
+
+def test_the_frozen_board_digests_to_a_pinned_value():
+    """Offline and pinned, because a digest nobody can reproduce is a decoration.
+
+    The fixture is the Board already frozen under #108. If this value moves, either the
+    fixture moved or the digest's own rule did, and both are things a reader of an old figure
+    needs told rather than absorbed.
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    import panelarchive as arc
+
+    from hub.config import frame_digest
+
+    board = arc.frame("draft_board")
+    assert (board.height, len(board.columns)) == (200, 32)
+    assert frame_digest(board) == "f9fe3e88"
+
+
+def test_two_boards_differing_by_one_player_do_not_share_a_digest():
+    """The property the stamp exists for, and the reason it is worth having.
+
+    `90a9bbb` dropped 814 of 1,372 players from 2025 at an unchanged data digest. Under the
+    row-coupled draw that is a total re-draw of everyone's future, not a small perturbation --
+    so two runs either side of it are not comparable, and nothing in the output said so.
+    """
+    from hub.config import frame_digest
+
+    board = _full_board()
+    assert frame_digest(board) != frame_digest(board.head(board.height - 1))
+
+
+def test_row_order_is_in_the_digest():
+    """Position pairs a player with his draw, so two orderings are two experiments.
+
+    Both stochastic quantities are indexed by row: `simulate_remaining_draft` draws one
+    pick-noise normal per Board row and `predict.correlated_normal` draws an array whose last
+    axis is the Board's height. A digest that sorted the rows out would call two different
+    experiments the same one.
+    """
+    from hub.config import frame_digest
+
+    board = _full_board()
+    assert frame_digest(board) != frame_digest(board.reverse())
+
+
+def test_the_column_set_is_in_the_digest():
+    """Which columns a frame carries decides which code runs on it.
+
+    `correction_report` returns an empty frame when the corrected columns are absent, and
+    `diagnose` advances by consensus rather than by the draft market on a board with no `adp`.
+    A frame that lost a column is a different frame even where every retained value matches.
+
+    The rename is the load-bearing half. Dropping a column also drops a cell from every row,
+    so a digest over the cells alone would catch it and the column set would still be doing no
+    work; renaming holds every value fixed and moves only the header. `adp` -> `adp2` also
+    keeps its place under `sorted`, so the cells are not merely equal as a set but identical
+    in order.
+    """
+    from hub.config import frame_digest
+
+    board = _full_board()
+    assert frame_digest(board) != frame_digest(board.drop("adp"))
+    renamed = board.rename({"adp": "adp2"})
+    assert renamed.select(sorted(renamed.columns)).rows() == \
+        board.select(sorted(board.columns)).rows(), "the rename must move nothing but a name"
+    assert frame_digest(board) != frame_digest(renamed)
+
+
+def test_a_run_that_played_no_frames_says_so_rather_than_hashing_nothing():
+    """A sha of the empty string is eight legitimate-looking characters that compare equal
+    across every such run -- the false-provenance shape `data_digest` argues against."""
+    from hub.config import NO_FRAMES, frames_digest
+
+    assert frames_digest({}) == NO_FRAMES
+
+
+def test_the_same_frames_under_different_seasons_are_different_runs():
+    """The key is folded in beside the digest. One board played as 2024 and the same board
+    played as 2025 are two experiments, and a digest over the values alone would miss it."""
+    from hub.config import frames_digest
+
+    board = _full_board()
+    assert frames_digest({2024: board}) != frames_digest({2025: board})
+
+
+def test_the_paired_frame_names_the_board_it_was_measured_on(monkeypatch):
+    """Two runs on different Boards are distinguishable from their stamps alone, which is the
+    criterion -- without reading the frames back."""
+    from hub.draft import backtest as bt
+    from hub.fetch import nflverse as nv
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    paired = pl.DataFrame({"season": [2024], "effect": [1.0]})
+    board = _full_board()
+
+    one, said = bt.stamped_for_publication(paired, {2024: board})
+    two, _ = bt.stamped_for_publication(paired, {2024: board.head(board.height - 1)})
+
+    assert {"board_digest", "commit"} <= set(one.columns)
+    assert one["board_digest"][0] != two["board_digest"][0], (
+        "two runs on different Boards carry the same stamp, so the stamp is decoration")
+    assert one["cfg_digest"][0] == two["cfg_digest"][0], (
+        "the Board is not the model -- a different frame must not move the model version")
+    assert f"board: {one['board_digest'][0]}" in said
+
+
+def test_a_run_that_hands_over_no_boards_stamps_the_sentinel(monkeypatch):
+    """`stamped_for_publication` keeps its one-argument form for the callers that have no
+    frames to give, and those runs must say `noframes` rather than a plausible hash."""
+    from hub.config import NO_FRAMES
+    from hub.draft import backtest as bt
+    from hub.fetch import nflverse as nv
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    stamped, said = bt.stamped_for_publication(pl.DataFrame({"season": [2024]}))
+    assert stamped["board_digest"].unique().to_list() == [NO_FRAMES]
+    assert "did not hand over the frames it played" in said
+
+
+def test_the_run_stamps_the_commit_that_produced_it(monkeypatch):
+    """`docs/track-record.md` rule 1 makes these numbers commit-dated, and #190 records an
+    effect moving 8.07 points across 270 commits with no owning commit -- because no run ever
+    recorded which tree read the bytes."""
+    from hub.config import NO_COMMIT
+    from hub.draft import backtest as bt
+    from hub.fetch import nflverse as nv
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    stamped, said = bt.stamped_for_publication(pl.DataFrame({"season": [2024]}))
+    got = stamped["commit"][0]
+    assert got, "the commit column is empty"
+    assert got == NO_COMMIT or got[:8].isalnum()
+    assert f"commit: {got}" in said
+
+
+def test_an_unreachable_git_tree_degrades_rather_than_raising(monkeypatch):
+    """A gate that dies because it could not find git is a gate that stops being run."""
+    import subprocess
+
+    from hub import config as cfg
+
+    def boom(*a, **kw):
+        raise OSError("no git here")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert cfg.commit() == cfg.NO_COMMIT
+
+
+def test_a_dirty_tree_is_not_stamped_as_its_commit(monkeypatch):
+    """A SHA claims "this tree is that commit". A tree with uncommitted changes is not one,
+    and printing the SHA alone would be a stamp that names the wrong thing."""
+    import subprocess
+
+    from hub import config as cfg
+
+    class Done:
+        def __init__(self, out):
+            self.stdout = out
+
+    def fake(args, **kw):
+        return Done("deadbeefcafe\n" if "rev-parse" in args else " M src/hub/config.py\n")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    assert cfg.commit() == "deadbeef-dirty"
+
+
+def test_the_sentinels_are_not_mistakable_for_digests():
+    """Eight characters so the stamps line up, and not eight *hex* characters, so a reader can
+    tell a sentinel from a hash without being told. The same line `UNPINNED` holds."""
+    from hub.config import NO_COMMIT, NO_FRAMES
+
+    for sentinel in (NO_COMMIT, NO_FRAMES):
+        assert len(sentinel) == 8
+        with pytest.raises(ValueError):
+            int(sentinel, 16)
