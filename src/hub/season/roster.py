@@ -160,10 +160,20 @@ class Lock(NamedTuple):
     Here rather than in `hub.publish` because it is a *decision*, not a rendering. It lived in
     the site writer for one evening, which meant the only way to ask it was to publish a
     website, and it could not be tested without a parquet on disk.
+
+    **The lineup and the moves toward it are both carried, because they are read by different
+    callers.** The CLI prints the moves; the Sunday panel ticks the lineup. This used to return
+    the moves alone and `hub.publish.roster` rebuilt the lineup from them -- the set starters,
+    less those to sit, plus those to start. That algebra is exact whenever there is a
+    comparison to price, and both branches below that decline to price one return empty moves,
+    so it collapsed to "the lineup as set is the best one" and ticked every current starter on
+    a roster this function had just refused to name a lineup for (issue #130). A caller holding
+    only the deltas cannot tell "no change" from "no answer"; holding the lineup, it can.
     """
     set_total: float | None
     best_total: float | None
     gain: float | None
+    best_lineup: list[str]           # who is in the best lineup; empty when there is none
     start: list[str]                 # who should start, availability respected
     bench: list[str]                 # set starters who should not
     withheld: list[str]              # excluded as unavailable, whatever they project
@@ -197,22 +207,23 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False) -> Lock:
     withheld = ([] if pool.height == proj.height
                 else sorted(set(proj["player"]) - set(pool["player"])))
     if pool.is_empty():
-        return Lock(None, None, None, [], [], withheld)
+        return Lock(None, None, None, [], [], [], withheld)
 
     try:
         best = best_by_points(pool)["starters"]
     except (NoLegalLineup, TooManyLineups):
         # Withholding can make a thin roster unfillable, and a lock that raises would take
         # the whole slate down with it -- CLAUDE.md's degradation rule. Report the players
-        # withheld, which is the actionable half, and no comparison.
-        return Lock(None, None, None, [], [], withheld)
+        # withheld, which is the actionable half, and no comparison -- which means no lineup
+        # either. Both are empty here so that a reader of either one sees the same refusal.
+        return Lock(None, None, None, [], [], [], withheld)
     # Priced over `pool`, so both totals count the same players. A withheld starter drops out
     # of the set lineup's value rather than out of one side of a subtraction.
     set_total = float(pool.filter(pl.col("starting"))["mu"].sum())
     best_total = float(best["mu"].sum())
-    start, was = set(best["player"]), set(proj.filter(pl.col("starting"))["player"])
+    chosen, was = set(best["player"]), set(proj.filter(pl.col("starting"))["player"])
     return Lock(set_total, best_total, best_total - set_total,
-                sorted(start - was), sorted(was - start), withheld)
+                sorted(chosen), sorted(chosen - was), sorted(was - chosen), withheld)
 
 
 def fetch(board: pl.DataFrame | None = None) -> pl.DataFrame:  # pragma: no cover - network

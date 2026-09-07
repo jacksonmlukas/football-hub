@@ -1452,6 +1452,48 @@ def test_the_roster_panel_is_dated_from_the_parquet_not_from_the_run(site, tmp_p
     assert entry["generated_at"] == jsonio.file_stamp(src)
 
 
+# --- the best-XI tick, which is the lock's answer and not the panel's ------
+#
+# `roster` used to rebuild the best lineup out of the lock's two deltas -- the set starters,
+# less those to sit, plus those to start. Correct wherever the lock priced a comparison, and
+# silently wrong on the two branches where it declined to: both return empty deltas, so the
+# subtraction and the union both do nothing and the set lineup published as the best one. A
+# roster that can field nobody legally ticked everybody (issue #130).
+
+
+# Eight players filling QB1/RB2/WR3/TE1/FLEX1 exactly, all of them set as starters. The
+# lineup as set is therefore the best one, which is the healthy shape the tick has always
+# rendered correctly -- and the control the declined roster below is measured against.
+_FILLS_EVERY_SLOT = [("Love", "QB", 14.9), ("Jacobs", "RB", 15.5), ("Tuten", "RB", 8.8),
+                     ("Chase", "WR", 19.6), ("Rice", "WR", 14.9), ("Collins", "WR", 14.4),
+                     ("McLaurin", "WR", 10.6), ("Andrews", "TE", 9.2)]
+
+
+def test_the_best_eleven_tick_is_the_lineup_the_lock_chose(site, tmp_path):
+    """The healthy half. Every one of these eight is in the lock's lineup, so every one of
+    them carries the tick -- and the panel is asserting something that was computed."""
+    src = tmp_path / "roster.parquet"
+    _roster_frame(_FILLS_EVERY_SLOT).write_parquet(src)
+    payload = publish.roster(out=site, path=src)
+    assert isinstance(payload, dict)
+    assert payload["gain"] == pytest.approx(0.0), "nothing to swap; the lock still has an answer"
+    assert ({r["player"] for r in payload["rows"] if r["best_start"]}
+            == {n for n, _, _ in _FILLS_EVERY_SLOT})
+
+
+def test_a_roster_whose_lock_declined_ticks_nobody(site, tmp_path):
+    """The reproduction on the issue, published. Two players cannot fill QB/RB2/WR3/TE1/FLEX1,
+    so the lock declines -- and a panel that shows a best XI where the lock refused to name
+    one is asserting something nothing computed."""
+    src = tmp_path / "roster.parquet"
+    _roster_frame([("Chase", "WR", 19.7), ("Love", "QB", 14.9)]).write_parquet(src)
+    payload = publish.roster(out=site, path=src)
+    assert isinstance(payload, dict)
+    assert payload["gain"] is None, "no legal lineup; the lock has nothing to compare"
+    ticked = [r["player"] for r in payload["rows"] if r["best_start"]]
+    assert not ticked, f"the page renders a best-XI tick for {ticked} off a declined lock"
+
+
 def test_a_producer_that_derives_its_rows_still_stamps_its_own_run(site, tmp_path):
     """The control. Dating every artifact from a file would be the same error inverted --
     a producer that recomputes from a live source is as fresh as its run, and the default
