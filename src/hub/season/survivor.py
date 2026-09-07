@@ -173,9 +173,21 @@ def solve(grid: pl.DataFrame, weeks: Sequence[int] | None = None,
     for w in weeks:
         wk = [x[(w, t)] for ww, t, _, _ in options if ww == w]
         need = picks_in[w]
-        if len(wk) < need:
+        # Fixtures, not rows -- the same correction `coverage` already carries. Two picks
+        # have to come from two *games*: both sides of one fixture cannot both win, so a
+        # double-pick week whose only usable teams are the two sides of one game has one
+        # usable fixture and no way to cover itself. Counted on rows it passes here, and the
+        # `one_side` constraint below then makes the whole season infeasible -- which raises
+        # for the season and names none of the week that caused it.
+        fixtures = {gid for ww, _, _, gid in options if ww == w and gid}
+        have, unit = (len(fixtures), "usable fixture(s)") if fixtures \
+            else (len(wk), "pickable team(s)")
+        if have < need:
             raise Infeasible(
-                f"week {w} needs {need} pick(s) and has {len(wk)} pickable team(s)")
+                f"week {w} needs {need} pick(s) and has {have} {unit}"
+                + (f", from {len(wk)} pickable team(s) -- two picks cannot come from both "
+                   "sides of one fixture, because one of them loses"
+                   if fixtures and len(wk) > have else ""))
         prob += pulp.lpSum(wk) == need, f"picks_wk{w}"
         # Never both sides of one fixture: one of them loses, so the week is lost.
         by_game: dict[str, list] = {}
