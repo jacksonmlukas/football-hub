@@ -8,7 +8,7 @@ and no ability to run an A/B test. This repo is organised around that problem â€
 useful thing in it is the record of what got measured and then *removed*.
 
 **The method is written up in one place: [docs/method.md](docs/method.md)** â€” the two tests,
-the twelve rules, and the specific mistake behind each one.
+the thirteen rules, and the specific mistake behind each one.
 
 ## What this repo has actually concluded
 
