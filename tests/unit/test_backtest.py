@@ -816,3 +816,195 @@ def test_a_ceiling_that_bounds_carries_the_number_and_says_nothing():
     s, warning = with_ceiling({"mean": -19.66}, bound)
     assert s["ceiling"] == 41.0 and warning == ""
     assert s["mean"] == -19.66, "the summary it was given must come back intact"
+
+
+# --- the seed lattice (issue #195) ----------------------------------------
+#
+# The defect these hold: `compare` used to build one integer per draft and hand the same
+# integer to two different levels of the experiment -- to the room as a seed, and to
+# `optimizer_strategy`, whose rollouts opened `default_rng(seed + k)`. At `k = 0` that was
+# bit-for-bit the room being played, so one of arm B's evaluation futures WAS the room it was
+# about to be scored in, at every pick. Arm A got nothing of the kind, which is why the leak
+# is one-directional and the measured effect is if anything understated.
+#
+# These are asserted on the *streams*, not on the answers. Two runs whose answers differ is
+# consistent with any seeding at all; what has to be true is that no generator opened at one
+# level is a generator opened at another.
+
+
+def _stream_spy(monkeypatch):
+    """Record the state of every generator this package opens, by level.
+
+    `simulate_remaining_draft` consumes its generator exactly once, at the top, before either
+    `forced` or `state` is read -- so the state at entry identifies the stream, and two calls
+    recording the same state are two plays of one room. `forced` is what separates the two
+    kinds of call: an evaluation rollout always names the candidate it is testing, and the
+    room being played never does.
+
+    Both namespaces are patched because both hold a reference: `backtest.play` imported the
+    function, and `optimize.win_probability` calls it where it is defined.
+    """
+    from hub.draft import optimize as opt
+
+    seen: dict[str, list] = {"room": [], "rollout": [], "season": [], "log": []}
+    real_draft = opt.simulate_remaining_draft
+    real_season = opt.champion_probability
+
+    def _key(rng):
+        return repr(rng.bit_generator.state)
+
+    def _note(level, rng):
+        seen[level].append(_key(rng))
+        seen["log"].append((level, _key(rng)))
+
+    def draft_spy(board, state, *, forced=None, rng=None, **kw):
+        _note("rollout" if forced is not None else "room", rng)
+        return real_draft(board, state, forced=forced, rng=rng, **kw)
+
+    def season_spy(rosters, mu, sd, pos, *, rng=None, **kw):
+        _note("season", rng)
+        return real_season(rosters, mu, sd, pos, rng=rng, **kw)
+
+    monkeypatch.setattr(opt, "simulate_remaining_draft", draft_spy)
+    monkeypatch.setattr(bt, "simulate_remaining_draft", draft_spy)
+    monkeypatch.setattr(opt, "champion_probability", season_spy)
+    return seen
+
+
+def _rollouts_by_draft(log):
+    """The evaluation futures each draft in a sweep opened, in sweep order.
+
+    Segmented on the room calls rather than on the seeds, which is the point: `compare` plays
+    each draft's room exactly twice -- once per arm -- before moving on, so every second room
+    call opens a new draft. That boundary is a property of the loop and is the same before and
+    after #195, which is what lets this same helper read both.
+    """
+    out: list[set] = []
+    rooms = 0
+    for level, key in log:
+        if level == "room":
+            if rooms % 2 == 0:
+                out.append(set())
+            rooms += 1
+        elif level == "rollout" and out:
+            out[-1].add(key)
+    return out
+
+
+_SMALL = {"rounds": 3, "n_draft_sims": 3, "n_season_sims": 5}
+
+
+def _varied_realised(board):
+    """Realised points that differ between players, so a roster's score identifies it.
+
+    `_flat_realised` pays everyone the same, which makes `score_roster` a function of roster
+    *size* alone -- fine for the tests that only need a number, and useless for any assertion
+    about which players a room delivered. Anything comparing two rooms has to be able to tell
+    two rosters apart.
+    """
+    names = board["player"].to_list()
+    return pl.DataFrame(
+        {"player": [player_key(n) for n in names for _ in range(14)],
+         "week": [w for _ in names for w in range(1, 15)],
+         "points": [float(20 - i % 17) for i, _ in enumerate(names) for _ in range(14)]},
+        schema={"player": pl.Utf8, "week": pl.Int64, "points": pl.Float64})
+
+
+def test_no_evaluation_future_is_the_room_it_is_scored_in(monkeypatch):
+    """The load-bearing one, and it fails on the code that shipped before #195.
+
+    Arm B chooses by playing futures forward and reading off how often it wins. If one of
+    those futures is the very room the resulting roster is then graded in, arm B is being
+    scored partly on a draft it has already seen, and arm A -- which plays no futures at all
+    -- is not. That is foresight, it runs one way, and no amount of pairing removes it.
+    """
+    board = _full_board()
+    seen = _stream_spy(monkeypatch)
+    bt.compare({2024: board}, {2024: _flat_realised(board)}, n_drafts=1, seed=0, **_SMALL)
+
+    assert seen["room"] and seen["rollout"], "the spy caught neither level"
+    assert not set(seen["room"]) & set(seen["rollout"]), (
+        "an evaluation future is the room it is scored in -- arm B is reading its own "
+        "grading draft")
+
+
+def test_a_seasons_rooms_are_not_the_next_seasons_simulated_seasons(monkeypatch):
+    """The cross-level collision, asserted rather than assumed.
+
+    The season-simulation seeds were `room + 1000 + k` and the rooms were
+    `seed + 1000 * season + k`, so a season simulation inside 2024 landed exactly on a 2025
+    room -- twenty times per season pair. ADR-0019 ties adoption to consistency across
+    held-out seasons, which is the comparison this contaminates.
+    """
+    board = _full_board()
+    real = _flat_realised(board)
+    seen = _stream_spy(monkeypatch)
+    bt.compare({2024: board, 2025: board}, {2024: real, 2025: real},
+               n_drafts=2, seed=0, **_SMALL)
+
+    assert seen["season"], "the spy caught no season simulation"
+    assert not set(seen["room"]) & set(seen["season"]), (
+        "a simulated season is drawn from a stream that is also somebody's room")
+
+
+def test_consecutive_drafts_share_no_evaluation_futures(monkeypatch):
+    """Rooms one apart used to share 11 of their 12 futures.
+
+    `experiment.summarise` records the cluster choice as "one row per (season, draft),
+    independent rooms: no cluster". The rooms were independent; arm B's evaluations of them
+    were not, and that is the repeated-measures shape `docs/signal-screens.md` records as
+    having once turned noise into a 4-sigma result.
+    """
+    board = _full_board()
+    seen = _stream_spy(monkeypatch)
+    bt.compare({2024: board}, {2024: _flat_realised(board)}, n_drafts=2, seed=0, **_SMALL)
+
+    first, second = _rollouts_by_draft(seen["log"])
+    assert first and second, "a draft opened no futures of its own"
+    assert not first & second, (
+        f"two drafts in one sweep share {len(first & second)} of their evaluation futures")
+
+
+def test_both_arms_are_played_in_the_identical_room(monkeypatch):
+    """The property the whole design rests on, and which #195 must not cost.
+
+    Making the levels non-overlapping is easy to do by making everything different, which
+    would also make the two arms face two different fields and turn a paired comparison into
+    an unpaired one. So this is asserted, not assumed: one room per draft, played twice.
+    """
+    board = _full_board()
+    seen = _stream_spy(monkeypatch)
+    bt.compare({2024: board}, {2024: _flat_realised(board)}, n_drafts=2, seed=0, **_SMALL)
+
+    assert len(seen["room"]) == 4, "two arms x two drafts is four plays of a room"
+    assert len(set(seen["room"])) == 2, (
+        "the two arms must face the same field -- one distinct room per draft, not four")
+    assert seen["room"][0] == seen["room"][1] and seen["room"][2] == seen["room"][3]
+
+
+def test_the_ceiling_is_played_in_compares_own_rooms():
+    """`ceiling`'s incumbent column has to be `compare`'s incumbent column.
+
+    It is the bound `docs/gate-power.md` prices every effect against, and a bound drawn
+    against a different field is a bound on a different question -- same units, same shape,
+    plausible size, and wrong. Both now reach the room through `draft_root`, so this is a
+    property of one function rather than of two copies of an expression staying in step.
+    """
+    board = _full_board()
+    # Varied, not flat: under flat realised points every roster scores the same and this
+    # assertion holds for any two rooms whatever, which is an assertion about nothing.
+    real = _varied_realised(board)
+    kw = {"n_drafts": 2, "rounds": 6, "seed": 5}
+    paired = bt.compare({2024: board}, {2024: real}, n_draft_sims=2, n_season_sims=5, **kw)
+    bound = bt.ceiling({2024: board}, {2024: real}, **kw)
+    assert bound["market"].to_list() == pytest.approx(paired["market"].to_list())
+
+
+def test_a_negative_seed_still_runs():
+    """`--seed` is a plain int and a negative one used to work. A seeding change is not the
+    place to start rejecting one -- `SeedSequence` refuses negative entropy, so the root
+    folds rather than raises."""
+    board = _full_board()
+    got = bt.compare({2024: board}, {2024: _flat_realised(board)}, n_drafts=1, seed=-7,
+                     **_SMALL)
+    assert got.height == 1

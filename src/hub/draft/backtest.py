@@ -57,9 +57,12 @@ from hub.config import (
 from hub.draft.board import BuildReport, board_as_of
 from hub.draft.optimize import (
     DEFAULT_ROUNDS,
+    ROOM,
     market_pick,
     rank_tiers,
+    root_seed,
     simulate_remaining_draft,
+    stream,
     win_probability,
 )
 from hub.draft.season import CorrelationReport, lineup_points
@@ -166,8 +169,24 @@ def with_foresight(board: pl.DataFrame, realised: pl.DataFrame) -> pl.DataFrame:
                   .drop("_k", "_pts"))
 
 
+def draft_root(seed: int, season: int, k: int) -> np.random.SeedSequence:
+    """The root every stream of one (season, draft) descends from.
+
+    One function rather than a repeated expression, because `compare` and `ceiling` are
+    paired against each other -- `ceiling`'s incumbent column has to be `compare`'s incumbent
+    column, drawn against the same field -- and two copies of a seeding rule are two rules as
+    soon as one of them is edited. It used to be the expression `seed + 1000 * season + k`
+    written out twice.
+
+    What descends from it is `optimize.ROOM`, `optimize.ROLLOUT` and `optimize.SEASON_SIM`;
+    the tree is documented there.
+    """
+    return root_seed(seed, season, k)
+
+
 def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds: int,
-                       n_draft_sims: int, n_season_sims: int, seed: int,
+                       n_draft_sims: int, n_season_sims: int,
+                       seed: int | np.random.SeedSequence,
                        tiebreak: str = "ecr"):
     """Arm B. Top of `win_probability` over `recommend()`'s shortlist, ties broken by `by`.
 
@@ -230,6 +249,15 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     used 6 x 120 -- a quarter of the live budget -- and produced -5.79 [-9.17, -2.45], an
     artifact that vanished at adequate power. Lower them and you are measuring a different
     optimizer.
+
+    **The season stays the cluster, and #195 is why the question was asked.** Before it, the
+    rows were dependent for two separate reasons: they share a board, a player pool and one
+    realisation of the year (issue #45's argument), and consecutive drafts' arm-B evaluations
+    shared 11 of their 12 futures, which is a dependence the seeding manufactured and which
+    no clustering key named. The second reason is gone -- each draft's futures are now its
+    own -- and the first is untouched, because it is a claim about the data rather than about
+    the code. So the answer is unchanged and the reasoning behind it is now one reason
+    instead of two; `tests/contracts/test_gates_cluster_on_the_season.py` holds the call.
     """
     cfg = RosterConfig()
     my_slot = cfg.slot if my_slot is None else my_slot
@@ -241,15 +269,22 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
         arm_a = market_strategy()
         for k in range(n_drafts):
             # Common random numbers: the same room, twice. The only thing that differs
-            # between the arms is who sits in my seat.
-            room = seed + 1000 * season + k
+            # between the arms is who sits in my seat. `stream(root, ROOM)` is a pure
+            # function of the root, so the two calls below open one room and both arms play
+            # it -- the pairing is unchanged by #195 and is asserted, not assumed.
+            #
+            # What #195 changed is the level *below* this line. Arm B's evaluation rollouts
+            # and its season simulations now hang off the same root as separate coordinates,
+            # so they can no longer be the room they are scored in, and two consecutive
+            # drafts no longer share futures.
+            root = draft_root(seed, season, k)
             a_names, a_pos = play(board, arm_a, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=np.random.default_rng(room))
+                                  rounds=rounds, rng=stream(root, ROOM))
             arm_b = optimizer_strategy(board, my_slot=my_slot, teams=teams, rounds=rounds,
                                        n_draft_sims=n_draft_sims,
-                                       n_season_sims=n_season_sims, seed=room)
+                                       n_season_sims=n_season_sims, seed=root)
             b_names, b_pos = play(board, arm_b, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=np.random.default_rng(room))
+                                  rounds=rounds, rng=stream(root, ROOM))
             # A callback, not a print, so `compare` stays pure and the tests stay quiet. This
             # run takes long enough that a caller needs to know it is alive: the first attempt
             # was killed at 49 minutes having emitted nothing at all, because the only output
@@ -287,8 +322,10 @@ def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     answer: same units, same shape, plausible size. Taking `boards` by value and returning a
     frame is what makes that impossible to get wrong.
 
-    Common random numbers with `compare`: the same `seed + 1000 * season + k` room, so the
-    incumbent column here is that same column there, drawn against the same field.
+    Common random numbers with `compare`: the same `draft_root(seed, season, k)` room, so the
+    incumbent column here is that same column there, drawn against the same field. Both reach
+    the room through that one function rather than through two copies of an expression, which
+    is what keeps the claim true after a seeding change rather than only before one.
     """
     cfg = RosterConfig()
     my_slot = cfg.slot if my_slot is None else my_slot
@@ -300,11 +337,11 @@ def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
         seeing = with_foresight(board, real)
         arm_a, arm_c = market_strategy(), market_strategy(by=FORESIGHT)
         for k in range(n_drafts):
-            room = seed + 1000 * season + k
+            root = draft_root(seed, season, k)
             a_names, a_pos = play(board, arm_a, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=np.random.default_rng(room))
+                                  rounds=rounds, rng=stream(root, ROOM))
             c_names, c_pos = play(seeing, arm_c, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=np.random.default_rng(room))
+                                  rounds=rounds, rng=stream(root, ROOM))
             if on_draft is not None:
                 on_draft(season, k + 1, n_drafts)
             rows.append({
@@ -390,6 +427,12 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
     teams = cfg.teams if teams is None else teams
     want = set(picks)
     rows: list[dict] = []
+    # The same seeding tree `compare` uses, and for the same reason: the draft advanced below
+    # is the room every `win_probability` call in it is evaluated against, so on the old
+    # arithmetic rollout 0 was that room. Two runs at two commits still walk an identical
+    # path, which is the property this function exists for -- the root is a function of
+    # `seed` alone.
+    root = root_seed(seed)
 
     from hub.draft.board import recommend
 
@@ -407,7 +450,7 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
             if len(names) >= 2:
                 wp = rank_tiers(win_probability(
                     board, state, names, my_slot=my_slot, teams=teams, rounds=rounds,
-                    n_draft_sims=n_draft_sims, n_season_sims=n_season_sims, seed=seed,
+                    n_draft_sims=n_draft_sims, n_season_sims=n_season_sims, seed=root,
                     report=correlation))
                 top = wp.row(0, named=True)
                 pos_of = dict(zip(board["player"].to_list(), board["pos"].to_list(), strict=True))
@@ -442,7 +485,7 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
         return _pool_index(pool, name) if name else int(live[0])
 
     simulate_remaining_draft(board, DraftState(taken=[]), my_slot=my_slot, teams=teams,
-                             rounds=rounds, rng=np.random.default_rng(seed), my_pick=pick)
+                             rounds=rounds, rng=stream(root, ROOM), my_pick=pick)
     return pl.DataFrame(rows)
 
 
@@ -747,6 +790,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     # `SEASON_CLUSTER`, not the row this gate used to take: the eighty (season, draft) rows
     # are twenty rooms drawn against four boards, and what varies independently between them
     # is the season. Issue #45; the effect is unmoved and the interval widens.
+    #
+    # Re-examined under #195, which removed a second and undeclared source of dependence
+    # between the rows, and left unchanged: see `compare`'s docstring for why the surviving
+    # reason is sufficient on its own.
     s = summarise(paired, cluster=SEASON_CLUSTER, seed=a.seed)
     if a.ceiling:
         print("  measuring the ceiling: the same arm, given the season in advance ...")

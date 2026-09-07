@@ -279,3 +279,86 @@ on the grounds that both arms of that gate already share `mu`. The two bound dif
 questions, and which one this gate declares is **#138** — a pre-registration question, not an
 implementation detail. The mechanism takes it as a parameter and declares nothing:
 `hub.season.lineup_gate.DECLARED_CEILING_ARM` is the single line #138 sets.
+
+# Restated 2026-09-07: every number above was measured on a harness with a foresight leak
+
+Under [method.md rule 13](method.md). **Nothing in the tables above is edited.** They record
+what those runs returned, and they still do. What is restated is what they are evidence *of*,
+because the harness that produced them has been found to have been scoring one of its two arms
+partly on a draft it had already seen.
+
+## The mechanism
+
+`backtest.compare` built one integer per draft, `seed + 1000 * season + k`, and handed the same
+integer to two different levels of the same experiment: to the room, as the seed the eleven
+opponents were drawn from, and to `optimizer_strategy` as `seed`. Inside, `win_probability`
+opened `default_rng(seed + k)` for each of its `n_draft_sims` evaluation futures. At `k = 0`
+that is `default_rng(room)` — bit-for-bit the room being played.
+
+`simulate_remaining_draft` consumes its generator exactly once, at the top, before either
+`forced` or `state` is read, so the draw depends only on the seed and on `mu_pick`. **One of
+arm B's twelve evaluation futures was therefore the room it was about to be scored in, at every
+one of its picks.** Arm A plays no futures at all and got nothing of the kind.
+
+Two further consequences of the same arithmetic:
+
+- consecutive drafts' rooms sat one apart, so they shared **11 of their 12** evaluation
+  futures — a repeated-measures dependence between rows that no clustering key named;
+- the season-simulation seeds `room + 1000 + k` landed exactly on the next season's room
+  lattice, **20 times per season pair** — and [ADR-0019](adr/0019-a-gate-requires-every-season.md)
+  ties adoption to consistency *across held-out seasons*, which is the comparison that
+  contaminates.
+
+Fixed under #195: the room, the rollouts and the season simulation are now three spawn
+coordinates of one `SeedSequence` root per `(season, draft)` rather than three offsets on one
+integer. Offsets on a shared line stay separate only while nobody changes the counts; spawn
+coordinates cannot meet at all. `tests/unit/test_backtest.py` asserts the disjointness on the
+generator states, and asserts it in the form that fails on the pre-#195 code.
+
+## The direction, which is the part that matters
+
+**The leak favours arm B.** Arm B is the arm under test; arm A is the incumbent. So every
+effect in the tables above — all of them negative, all of them against arm B — is if anything
+**understated**. A harness that hands the treatment arm a look at its own grading draft and
+still measures it losing by eleven to twenty points has not overstated the loss.
+
+That is why this restatement does **not** disturb the REMOVE disposition. It rests on sign and
+on consistency across held-out seasons, and the leak runs the other way from the sign. What it
+does disturb is any reading of the tables as *magnitudes*, which the section above had already
+withdrawn on separate grounds — the eight points of drift at a fixed data digest (#190).
+
+## What a re-run should now be expected to show
+
+**#194 measures this**, and it should now be able to. Setting expectations before the number
+arrives, which is the point of writing them here:
+
+1. **The effect should move, and the sign should not.** Removing a one-directional advantage
+   from arm B should push the measured effect *further* from zero, not towards it — a larger
+   loss for championship equity, not a smaller one. An effect that moves towards zero, or
+   changes sign, would mean the leak was not the dominant term and something else is being
+   measured; either would be a finding in its own right and belongs in #190.
+2. **The run-to-run spread should narrow, and this is #194's actual question.** Two of the
+   three collisions were between rows *within* one sweep. With them gone, the eighty rows are
+   closer to the eighty independent observations the frame's shape claims, so the same sweep
+   re-run at a different seed should vary less than it did.
+3. **The size of the shift is bounded by `1/n_draft_sims`.** One of twelve futures was leaking,
+   so a first-order guess is that arm B loses about a twelfth of whatever the leak was worth.
+   That is a guess and not a prediction; it is written down so that a much larger movement is
+   recognised as needing its own explanation rather than absorbed.
+4. **The seasons should stay 4 of 4.** The cross-level collision was the one that could plausibly
+   have manufactured agreement between adjacent seasons. If consistency across held-out seasons
+   *survives* its removal, ADR-0019's second condition is standing on its own for the first
+   time.
+
+None of the four is a licence to quote a magnitude. #190 is open on eight points of unattributed
+drift at a fixed data digest, and #195 and #196 together are its leading mechanism rather than
+its resolution.
+
+## What was measured on which board is now recorded
+
+Separately, under #196: a run stamped `cfg_digest` and `data_digest`, and the second is a digest
+of the upstream *source bytes*, one layer above the Board. Nothing hashed the Board itself,
+which is what `compare` is actually handed — so the table above can say `621cb5dd` for three runs
+and still not name the frames they were played on. `board_digest` now stamps that, and the
+paired output carries the commit that produced it. The rows above predate the stamp and cannot
+be given one retroactively; a re-run under #194 will carry all four.
