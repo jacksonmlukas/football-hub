@@ -113,6 +113,42 @@ def validate_predictions(df: pl.DataFrame, spec: FitSpec) -> pl.DataFrame:
     return df
 
 
+def forecast(model: Forecaster, spec: FitSpec, games: pl.DataFrame) -> pl.DataFrame:
+    """Fit, predict, check. The one path from a `Forecaster` to a row anything publishes.
+
+    ADR-0002 says leakage is enforced at the type boundary, and until now that sentence
+    described nothing: the boundary had no code on it. `hub.models.ratings` -- the module
+    that writes the published predictions -- built a spec, named a concrete class, fitted
+    it, predicted, and then remembered to call `validate_predictions` on the way past. So
+    the highest-value check in this codebase was reachable from exactly one function that
+    nothing typed, and Track A replacing "the middle of that function" would have carried
+    the obligation to remember it again. A check nothing can reach reports nothing and
+    cannot fail, which is this repo's recurring defect rather than a new one.
+
+    The three steps are here together because they have to agree about one `spec`. Split
+    across a caller they are three statements that can drift: fit through one week, predict
+    another, and check against a third reads as success at every step. Leakage does not
+    crash -- it looks good -- so the gap has to be structural.
+
+    `model` is typed as the protocol and not as a class, which is the point of ADR-0002
+    holding at all: what replaces the passthrough is substituted here, and cannot arrive
+    without the check. `fit` returns self by the protocol's own contract, so a caller that
+    kept its reference reads the fitted `version` off it afterwards.
+
+    Nothing about this settles #136. It is the half of that issue that needs no answer:
+    whatever is decided about where the protocol's payoff lands, the shipped writer going
+    around it and the tripwire hanging off an untyped call are wrong either way.
+    """
+    out = model.fit(spec).predict(games)
+    # GUARD leakage-is-reached [unit/test_ratings.py unit/test_models_base.py]: delete it
+    # and a leaking model publishes clean, from the CLI `Makefile:12` runs. Ratings leads
+    # the selectors because reachability is the claim: the harness runs under `-x`, so the
+    # first file it reddens is the one this guard is evidence about.
+    validate_predictions(out, spec)
+    # /GUARD
+    return out
+
+
 class Conformalized:
     """Wraps any Forecaster and replaces its intervals with calibrated ones.
 

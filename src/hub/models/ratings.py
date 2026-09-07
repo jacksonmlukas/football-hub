@@ -10,7 +10,15 @@ something that works rather than construction against a gap.
 **It has no edge and does not claim one.** Predictions written here carry
 `model="market_baseline"`, so they cannot be mistaken in the track record for output from
 a model that has learned something. Track A -- the Bayesian state-space ratings -- replaces
-the middle of this function and nothing else.
+what `forecaster()` returns and nothing else.
+
+**What this module is, and what it is not.** It is the *writer*: it decides which week may
+be predicted, stamps provenance, and files partitions. It is not a model, and it no longer
+does a model's job by hand -- fitting, predicting and checking are `hub.models.base.forecast`
+against a `Forecaster`, which is the interface ADR-0002 says every track implements. This
+used to name a concrete class and remember to call `validate_predictions` afterwards, so
+the leakage tripwire hung off one untyped call and would have had to be remembered again by
+whoever wrote Track A (issue #205).
 
     uv run python -m hub.models.ratings --fit
 """
@@ -27,7 +35,7 @@ import polars as pl
 
 from hub import schedule, store
 from hub.config import SEASON_AHEAD, config_digest
-from hub.models.base import FitSpec, validate_predictions
+from hub.models.base import FitSpec, Forecaster, forecast
 from hub.models.market import MarketBaseline
 
 
@@ -68,6 +76,22 @@ def live_config():
     return resolved_config()
 
 
+def forecaster() -> Forecaster:
+    """The model this run publishes, named by its interface rather than by its class.
+
+    Its own function for `live_config`'s reason -- a test can substitute one, and there is
+    a single source -- and for one more: the return type is ADR-0002's protocol, so this is
+    the seam Track A arrives at. Replacing the passthrough is a substitution here, not an
+    edit to the middle of `fit`, and `hub.models.base.forecast` will check whatever arrives
+    the same way.
+
+    Still `MarketBaseline`, and the module docstring says why that is honest: it writes
+    under the baseline's own name and version, so nothing in the track record can later
+    credit it with an edge it never had.
+    """
+    return MarketBaseline()
+
+
 def _with_committed(part: pl.DataFrame, season: int, week: int, name: str,
                     base: Path | None) -> pl.DataFrame:
     """This run's predictions, plus any already committed for a game it can no longer make.
@@ -94,13 +118,15 @@ def _with_committed(part: pl.DataFrame, season: int, week: int, name: str,
 
 def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | None = None,
         base: Path | None = None, at: datetime | None = None) -> pl.DataFrame:
-    """Fit through week-1, predict `week`, validate, write versioned predictions."""
+    """Pick a week, drive a `Forecaster` through `base.forecast`, write the rows it checked."""
     games = schedule.priced_games(season, at=at, cache=cache, base=base)
     wk = week if week is not None else target_week(games, at)
 
     # Fit through the week before the one being predicted. The gap is the leakage
-    # tripwire in validate_predictions, and it is load-bearing: leakage looks like
-    # success rather than failure, so it has to be structural rather than remembered.
+    # tripwire, and it is load-bearing: leakage looks like success rather than failure, so
+    # it has to be structural rather than remembered -- which is why the fit, the
+    # prediction and the check now happen together in `base.forecast` against this one
+    # spec, rather than as three statements here that can drift apart.
     # The config digest has to actually reach the spec. It defaulted to "default", so every
     # run under every configuration produced the same version string -- provenance that was
     # present in the schema and absent in the data.
@@ -112,9 +138,8 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
     slate = schedule.forecastable(whole, at).drop("result")
     under_way = whole.height - slate.height
 
-    model = MarketBaseline().fit(spec)
-    preds = model.predict(slate)
-    validate_predictions(preds, spec)
+    model = forecaster()
+    preds = forecast(model, spec, slate)
     preds = preds.with_columns(pl.lit(digest).alias("cfg_digest"),
                                pl.lit(spec.digest).alias("fit_digest"))
     # One partition per price source, because the version string now carries the source and
@@ -148,7 +173,9 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
     print(f"    {slate.height - cov['unpriced']} of {slate.height} games priced: "
           f"{cov['snapshot']} from a dated snapshot, {cov['schedule']} from the moving "
           f"field, {cov['unpriced']} unpriced")
-    print(f"    model={MarketBaseline.name} version={model.version}"
+    # Read off the fitted object rather than off a class name, so the line says what ran
+    # and not what this module used to import.
+    print(f"    model={model.name} version={model.version}"
           f" fit_through_week={spec.through_week}")
     return preds
 
