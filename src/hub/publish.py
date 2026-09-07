@@ -21,7 +21,7 @@ import json
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 import polars as pl
 
@@ -62,6 +62,80 @@ class Kept(NamedTuple):
     same defect one layer down.
     """
     why: str
+
+
+class Reading(NamedTuple):
+    """A producer's answer, decoded. The reader's half of the thing `Kept` is half of.
+
+    `Kept` concentrates what a producer *says*. Nothing owned what a caller *hears*, so the
+    three states were decoded at four sites and no two the same way: `Artifact.record` built
+    the manifest entry inline, two CLI branches ran their own three-way cascade over
+    different count keys, and the `live` branch checked two states and relied on whoever
+    read it already knowing the third could not arrive. `CONTEXT.md` is explicit that the
+    manifest's `reason` is all a reader gets, so four decodings of one answer were four
+    chances for the panel to say the wrong sentence about why it is not current.
+
+    `fresh` is this run's payload, or None. `reason` is None exactly when `fresh` is not,
+    and otherwise is the producer's own sentence -- a `Kept` answered, so it says why in its
+    own words -- or the panel's standing one, which belongs only to a producer that did not
+    answer at all. Telling a reader to run a sync that had just run and found an empty
+    league is issue #27, and it is the distinction this pair exists to keep.
+    """
+    fresh: dict[str, Any] | None
+    reason: str | None
+
+    @property
+    def stale(self) -> bool:
+        """What the manifest says about all three states, which is why it names none of
+        them. The reason does that, and only the reason."""
+        return self.fresh is None
+
+    def sentence(self, said: Callable[[dict[str, Any]], str]) -> str:
+        """One line for a reader. `said` renders a payload -- a row count, a pair of counts
+        -- and is the only part of the decoding that differs between callers, which is why
+        it is the only part they still write.
+
+        The other two states already carry their words. That asymmetry is the point: a
+        caller cannot accidentally give a producer that answered and a producer that did
+        not the same sentence, because it never writes either one.
+        """
+        return said(self.fresh) if self.fresh is not None else cast(str, self.reason)
+
+
+def read(answer: dict[str, Any] | Kept | None, standing: str, *,
+         keeps: bool = True) -> Reading:
+    """The one decoding of `Kept | payload | None`.
+
+    `standing` is the panel's sentence for a producer that did not run, and is used for
+    that state alone.
+
+    `keeps` is the `live` branch's assumption, made checkable rather than remembered. That
+    branch was written knowing `live` never answers `Kept` -- ADR-0018 has it relay someone
+    else's fact, so there is no last-good of this repo's to hold -- and knowing it was all
+    that kept a two-way check correct. An unstated invariant that a reader has to already
+    hold is the shape this whole change is about, so it is stated: a producer declared not
+    to keep and answering `Kept` is refused here rather than mis-rendered downstream.
+
+    A refusal and not a degradation, for `hub.models.predict.CorrelationVoid`'s reason
+    rather than against `CLAUDE.md`'s. Serving last-good needs a last-good to serve; what
+    the fallback would put on the page here is a frozen overlay under a fresh timestamp, on
+    the one artifact whose whole job is to move, and nothing downstream could tell. It
+    cannot fire on a bad Sunday either, only on a change ADR-0018 forbids.
+    """
+    if isinstance(answer, dict):
+        return Reading(answer, None)
+    if isinstance(answer, Kept):
+        # GUARD a-producer-that-cannot-keep-is-refused [unit/test_publish.py]: deleting it
+        # puts `live` back to an assumption a reader has to already hold.
+        if not keeps:
+            raise ValueError(
+                "a producer declared not to keep last-good answered Kept: "
+                f"{answer.why!r}. ADR-0018 is why `live` is declared that way -- a live "
+                "score is relayed, not asserted, so there is nothing of this repo's to "
+                "keep. Either the producer or the declaration is wrong.")
+        # /GUARD
+        return Reading(None, answer.why)
+    return Reading(None, standing)
 
 
 def _last_good_n(out: Path, name: str, key: str = "n") -> int:
@@ -635,25 +709,26 @@ class Artifact(NamedTuple):
     stands -- here is why"; or **None**, meaning there is nothing fresh *and* nothing kept,
     so the panel's standing reason is the best sentence available. It never builds a manifest
     entry itself; that is this module's single job.
+
+    `keeps` is whether this producer can answer `Kept` at all. Every one here can except
+    `live`, which ADR-0018 keeps out of the last-good rule entirely; `read` refuses rather
+    than rendering if that ever stops being true.
     """
     name: str
     produce: Callable[[], dict[str, Any] | Kept | None]
     reason: str
+    keeps: bool = True
 
     def record(self, out: Path) -> dict[str, Any]:
-        payload = self.produce()
+        # Decoded by `read` and not here. This site and the three CLI branches were four
+        # spellings of one cascade, and the manifest's `reason` is all a reader gets.
+        seen = read(self.produce(), self.reason, keeps=self.keeps)
         path = out / f"{self.name}.json"
         present = path.exists()
-        fresh = payload if isinstance(payload, dict) else None
         return {
-            "name": self.name, "present": present, "stale": fresh is None,
-            # Three states, because a reader acts on the reason. A `Kept` was produced by a
-            # source that answered, so it says so in its own words; `self.reason` is the
-            # standing sentence for a source that did not run, and stamping that on a panel
-            # whose source *did* run sent the reader to fix what already worked (issue #27).
-            "reason": None if fresh else (payload.why if isinstance(payload, Kept)
-                                          else self.reason),
-            "generated_at": (fresh.get("generated_at") if fresh
+            "name": self.name, "present": present, "stale": seen.stale,
+            "reason": seen.reason,
+            "generated_at": (seen.fresh.get("generated_at") if seen.fresh
                              else (_generated_at(path) if present else None)),
         }
 
@@ -687,7 +762,9 @@ def artifacts(season: int, week: int, base: Path | None = None,
                  f"no predictions in the store for {season} week {week}"),
         Artifact("track_record", lambda: track_record(base=base, out=out),
                  "no scored predictions"),
-        Artifact("live", lambda: live(out=out), "ESPN scoreboard unavailable"),
+        # `keeps=False`: ADR-0018 keeps `live` out of the last-good rule, so a `Kept` from
+        # it is a contract violation rather than a panel to render.
+        Artifact("live", lambda: live(out=out), "ESPN scoreboard unavailable", keeps=False),
         Artifact("roster", lambda: roster(out=out),
                  "no roster yet -- run `python -m hub.season.roster --write`"),
         Artifact("draft_board", lambda: _board(out), "run `make draft`"),
@@ -809,18 +886,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.week is None:
         a.week = default_week(a.season)
 
-    # `isinstance(..., dict)` rather than a truth test on every one of these: a `Kept` is a
-    # non-empty tuple and so is truthy, and indexing it for a row count raises.
+    # `read` rather than a truth test on any of these: a `Kept` is a non-empty tuple and so
+    # is truthy, and indexing it for a row count raises. Each branch now writes only the
+    # sentence for its own payload; the other two states carry their own words.
     if a.predictions:
-        got = predictions(a.season, a.week)
+        seen = read(predictions(a.season, a.week), "nothing in the store; left as-is")
         print(f"  {preds_name(a.season, a.week)}: "
-              + (f"{got['n']} games" if isinstance(got, dict)
-                 else got.why if isinstance(got, Kept)
-                 else "nothing in the store; left as-is"))
+              + seen.sentence(lambda got: f"{got['n']} games"))
         return 0
     if a.live:
-        got = live(out=a.out, league=a.league)
-        print("  live: " + (f"{got['n']} games" if got else "unavailable; last-good kept"))
+        seen = read(live(out=a.out, league=a.league), "unavailable; last-good kept",
+                    keeps=False)
+        print("  live: " + seen.sentence(lambda got: f"{got['n']} games"))
         # Three outcomes, two exit codes, and the split is the one the refresher acts on:
         # games and no games are both ESPN answering, and both are worth publishing
         # (ADR-0018). Not reaching ESPN at all is the third, and nothing about it should
@@ -828,14 +905,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         # refreshed. `NOTHING_FRESH` rather than 1 because this is not a failure: the
         # overlay is intact, last-good stands, and the caller is being told which of the
         # three happened. `.github/scripts/live-loop.sh` is the caller that branches on it.
-        return 0 if got else NOTHING_FRESH
+        return NOTHING_FRESH if seen.stale else 0
     if a.track_record:
-        got = track_record()
-        print("  track_record: " + (
-            f"{got['n_scored']} scored, {got['n_preregistered']} pre-registered"
-            if isinstance(got, dict)
-            else got.why if isinstance(got, Kept)
-            else "nothing to score; last-good kept"))
+        seen = read(track_record(), "nothing to score; last-good kept")
+        print("  track_record: " + seen.sentence(
+            lambda got: f"{got['n_scored']} scored, "
+                        f"{got['n_preregistered']} pre-registered"))
         return 0
     if not a.all:
         ap.print_help()

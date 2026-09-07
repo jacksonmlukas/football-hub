@@ -288,7 +288,12 @@ answer emptiness *before* its carry-forward merge, so it asks `_keeping` directl
 handing a payload over, and `_keeping` on a page with nothing published returns `None` — no
 artifact is written and the panel carries the producer's standing reason. The distinction is
 the manifest's `reason`, which is all a reader gets: "no roster yet — run `… --write`" is the
-wrong instruction for a sync that ran and found an empty league.
+wrong instruction for a sync that ran and found an empty league. **Reading the three states is
+`hub.publish.read`, once**, for that reason: the decoding was written out at four sites and no
+two of them agreed, which is four chances to say the wrong one of those two sentences. A
+caller supplies only how to describe its own payload — the other two states already carry
+their words — and declares whether it can answer Kept at all, which is how `live` stopped
+resting on a reader knowing that it cannot.
 _Avoid_: stale (which is what the manifest says about *all three* of those, and so cannot
 name this one), skipped, failed — a Kept producer did run.
 

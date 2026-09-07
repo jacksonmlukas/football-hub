@@ -600,6 +600,82 @@ def test_last_goods_timestamp_survives_a_failed_producer(name, tmp_path):
     assert got["generated_at"] == "2026-09-01T00:00:00+00:00"
 
 
+# --- one reader for the three states (issue #202) ---------------------------
+#
+# The decoding used to be written out at `Artifact.record` and at three CLI branches, no two
+# alike, and the manifest's `reason` is all a reader gets. These are about the decoding
+# itself, and then about each state arriving at the manifest with the sentence it should.
+
+def _said(got):
+    return f"{got['n']} games"
+
+
+def test_a_payload_is_read_as_this_runs_answer():
+    seen = publish.read({"n": 3}, "standing")
+    assert seen.stale is False and seen.reason is None
+    assert seen.sentence(_said) == "3 games"
+
+
+def test_a_producer_that_answered_and_kept_says_so_in_its_own_words():
+    """The half issue #27 was: a source that ran must not borrow the standing sentence."""
+    seen = publish.read(publish.Kept("read and empty; keeping the 4 row(s)"), "standing")
+    assert seen.stale is True and seen.fresh is None
+    assert seen.sentence(_said) == "read and empty; keeping the 4 row(s)"
+
+
+def test_a_producer_that_did_not_run_gets_the_standing_sentence():
+    seen = publish.read(None, "no roster yet -- run `python -m hub.season.roster --write`")
+    assert seen.stale is True
+    assert seen.sentence(_said).startswith("no roster yet")
+
+
+def test_the_two_not_current_states_do_not_share_a_sentence():
+    """What a reader of the panel needs from them, stated as the difference it is."""
+    kept = publish.read(publish.Kept("the source was read and came back empty"), "standing")
+    never = publish.read(None, "standing")
+    assert kept.stale is never.stale is True, "both are not current, and the flag cannot part them"
+    assert kept.reason != never.reason
+
+
+def test_a_producer_declared_unable_to_keep_is_refused_rather_than_rendered(tmp_path):
+    """`live`'s assumption, enforced instead of remembered.
+
+    It was a two-way check written in the knowledge that `live` never answers Kept: a Kept
+    is truthy, so the old branch would have indexed a tuple for a row count and exited 0 --
+    a deploy, over an overlay nothing refreshed. ADR-0018 is why the declaration is right;
+    this is why it is checked.
+    """
+    with pytest.raises(ValueError, match="declared not to keep"):
+        publish.read(publish.Kept("kept it"), "standing", keeps=False)
+    got = publish.Artifact("live", lambda: None, "ESPN scoreboard unavailable", keeps=False)
+    assert got.record(tmp_path)["reason"] == "ESPN scoreboard unavailable", (
+        "the declaration must not disturb the two states `live` does answer")
+
+
+def test_the_live_panel_is_the_one_declared_unable_to_keep():
+    """Read off `artifacts()` rather than restated, so a seventh panel cannot arrive with
+    the wrong declaration and a matching assertion."""
+    declared = {a.name: a.keeps for a in publish.artifacts(2026, 1, out=pathlib.Path("."))}
+    assert declared["live"] is False
+    assert all(v for k, v in declared.items() if k != "live")
+
+
+@pytest.mark.parametrize(
+    "answer, reason",
+    [({"n": 1, "generated_at": "2026-09-02T00:00:00+00:00"}, None),
+     (publish.Kept("the source was read and came back empty"),
+      "the source was read and came back empty"),
+     (None, "no scored predictions")])
+def test_each_of_the_three_states_reaches_the_manifest_with_its_own_reason(
+        answer, reason, tmp_path):
+    """Through `publish_all`, because the manifest is what the page reads and the `reason`
+    in it is the whole of what the panel can say."""
+    art = publish.Artifact("track_record", lambda: answer, "no scored predictions")
+    got = art.record(tmp_path)
+    assert got["reason"] == reason
+    assert got["stale"] is (reason is not None)
+
+
 def test_a_damaged_artifact_does_not_crash_the_manifest(tmp_path):
     """This used to be about `draft_board.json`, which was a bare list of rows, so a `.get`
     on it raised. #107 put it in the envelope, so no artifact is list-shaped any more -- and
