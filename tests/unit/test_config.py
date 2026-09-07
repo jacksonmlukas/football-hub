@@ -15,6 +15,7 @@ from hub.config import (
     PollConfig,
     PoolConfig,
     RosterConfig,
+    UnpinnedRead,
     config_digest,
     data_digest,
     digests,
@@ -514,6 +515,46 @@ def test_when_the_rows_were_taken_does_not_move_the_digest():
     early = _StubPin("player_stats", "2026-09-04", rows, pinned_at="2026-09-04T01:00:00+00:00")
     late = _StubPin("player_stats", "2026-09-04", rows, pinned_at="2026-09-05T09:00:00+00:00")
     assert data_digest([early]) == data_digest([late])
+
+
+def test_a_read_that_names_no_bytes_unpins_the_whole_digest():
+    """Issue #165, in one line. A run that read two sources and pinned one has to say
+    `unpinned` -- publishing a hash of the one it managed names the wrong set of bytes."""
+    pinned = _StubPin("ff_opportunity", "2026-09-04", "aaaaaaaa")
+    assert data_digest([pinned, UnpinnedRead("player_stats")]) == UNPINNED
+
+
+def test_a_partial_run_is_not_the_run_that_read_only_the_part_it_pinned():
+    """The reason the partial case is worse than the total one: it is invisible. Without
+    this, a run over three sources with two pinned compared *equal* to a run that read only
+    those two, and there was nothing in either digest to tell them apart."""
+    two = [_StubPin("ff_opportunity", "2026-09-04", "aaaaaaaa"),
+           _StubPin("player_stats", "2026-09-04", "bbbbbbbb")]
+    assert data_digest([*two, UnpinnedRead("pbp")]) != data_digest(two)
+
+
+def test_one_unpinned_read_is_enough_however_many_pinned_ones_surround_it():
+    """All of the bytes or none of them. A majority of pins is not a digest."""
+    many = [_StubPin(f"s{i}", "2026-09-04", f"{i:08x}") for i in range(6)]
+    assert data_digest([*many[:3], UnpinnedRead("pbp"), *many[3:]]) == UNPINNED
+
+
+def test_an_unpinned_read_is_told_apart_without_reading_the_sources_back():
+    """The sentinel is what a reader sees, so the answer to "which bytes" is legible from
+    the printed line alone rather than by going back to the cache tree."""
+    mixed = data_digest([_StubPin("ff_opportunity", "2026-09-04", "aaaaaaaa"),
+                         UnpinnedRead("player_stats", "2026-09-04")])
+    assert mixed == UNPINNED
+    with pytest.raises(ValueError):
+        int(mixed, 16)
+
+
+def test_an_unpinned_read_satisfies_the_shape_data_digest_reads():
+    """It stands where a pin stands, which is what lets a caller record one without the
+    callers downstream growing a branch for it."""
+    read = UnpinnedRead("player_stats", "2026-09-04")
+    assert (read.source, read.as_of, read.digest) == ("player_stats", "2026-09-04", UNPINNED)
+    assert UnpinnedRead("pbp").as_of is None
 
 
 def test_a_run_that_pinned_nothing_says_so_rather_than_hashing_air():

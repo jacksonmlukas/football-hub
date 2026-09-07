@@ -28,7 +28,8 @@ import hashlib
 import io
 import json
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, fields
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -38,7 +39,14 @@ import polars as pl
 
 from hub import store
 from hub.cli import unavailable
-from hub.config import SEASON_COMPLETED, digests, pin_fold, resolved_config
+from hub.config import (
+    SEASON_COMPLETED,
+    DataPin,
+    UnpinnedRead,
+    digests,
+    pin_fold,
+    resolved_config,
+)
 from hub.contracts import (
     FF_OPPORTUNITY,
     FF_RANKINGS,
@@ -340,8 +348,9 @@ class Pin:
     rescaled: tuple[str, ...] = ()
 
 
-def content_digest(df: pl.DataFrame) -> str:
-    """A hash of what the frame holds, reproducible in a fresh interpreter.
+def content_digest(df: pl.DataFrame, key: Sequence[str]) -> str:
+    """A hash of what the frame holds, reproducible in a fresh interpreter and independent
+    of the order the source happened to hand the rows over in.
 
     Not `hash()`: it is salted per process, so a digest resting on it would change on every
     run and could name nothing.
@@ -352,12 +361,35 @@ def content_digest(df: pl.DataFrame) -> str:
     digest would have moved on a cache hit alone. The canonical form is instead the column
     names and dtypes followed by the frame's CSV bytes: text, exact for floats
     (`0.1 + 0.2` writes as `0.30000000000000004`), and distinguishing a null from an empty
-    string. It is order-sensitive, which is right -- a reordered frame is not the frame a
-    published number was computed on.
+    string.
+
+    Those bytes are order-sensitive, so the rows are put in a declared order before they are
+    written. The argument that used to stand here -- that a reordered frame is not the frame
+    a published number was computed on -- is true of a *published* frame and does not carry
+    to one just read off the wire, where the row order is the source's whim. Left alone it
+    reported drift that had not happened, which is the failure this hash exists to detect and
+    therefore the one it must not manufacture.
+
+    `key` is the contract's declared unique key; `pin_digest` reads it from `SOURCES`.
+    Sorting on it alone would be canonical only while it really is unique, so every remaining
+    column follows it as the tiebreak. Rows that tie through all of them are identical rows
+    and write identical bytes whichever way the tie fell, so the digest is a function of the
+    frame's content whether the key is unique, duplicated, or absent.
+
+    Absent is the ordinary case rather than the corner: eight of the nine nflverse contracts
+    declare no unique key, and a pinned load whose `cols=` omitted the key leaves a frame
+    without it. Neither falls back to insertion order -- with no usable key every column is
+    the key. `key` has no default so that each caller states which it has, rather than
+    omitting the argument and getting the silent fallback this replaced.
     """
+    # Declared key first, then the rest of the frame; with no usable key this is every
+    # column, which is a total order over anything that is not a duplicate row.
+    by = [c for c in key if c in df.columns]
+    by += [c for c in df.columns if c not in by]
+    ordered = df.sort(by) if by else df
     head = ";".join(f"{c}:{df.schema[c]}" for c in df.columns).encode()
     buf = io.BytesIO()
-    df.write_csv(buf)
+    ordered.write_csv(buf)
     return hashlib.sha256(head + b"\n" + buf.getvalue()).hexdigest()[:8]
 
 
@@ -371,9 +403,16 @@ def pin_digest(source: str, as_of: str | None, df: pl.DataFrame) -> str:
 
     Eight hex characters, the length `config_digest` and `fitted_digest` already use, since
     a gate output prints the two side by side.
+
+    The order the rows hash in comes from the contract registered for `source`, which is the
+    only place the unique key is declared -- so a caller cannot pass a key that disagrees
+    with the one the frame was validated against. A source with no contract declares no key,
+    and `content_digest` orders on the whole frame instead.
     """
+    contract = SOURCES.get(source)
+    key = () if contract is None else contract.unique
     return hashlib.sha256(
-        pin_fold(source, as_of, content_digest(df)).encode()).hexdigest()[:8]
+        pin_fold(source, as_of, content_digest(df, key)).encode()).hexdigest()[:8]
 
 
 def _as_of_date(as_of: str | date | None) -> date | None:
@@ -449,26 +488,72 @@ def _pin_path(path: Path) -> Path:
 #
 # Both paths record: a cache hit reads the sidecar beside the entry it served. A run that
 # answered entirely from cache has read data and has to be able to say which.
-_READ_THIS_RUN: dict[str, Pin] = {}
+#
+# Every read, including one with no pin to read. An entry written before pinning existed, or
+# one whose sidecar write was interrupted, used to contribute nothing here -- so a run that
+# read three sources with two pinned published a digest over two, and nothing said so.
+# `config.UnpinnedRead` is what such a read records instead, and `config.data_digest` turns
+# the run's whole answer into the sentinel when it sees one.
+_READ_THIS_RUN: dict[str, DataPin] = {}
 
 
-def pins_this_run() -> tuple[Pin, ...]:
-    """Every nflverse entry this process has loaded, in the order first read.
+@contextmanager
+def reads_of_one_run() -> Iterator[None]:
+    """Scope the reads below to one run, so a component's digest names its own bytes.
 
-    Empty is a truthful answer and `config.NO_DATA` is what a digest over it says: a run that
+    The dict above is process-global and used never to be reset, which is right for a process
+    that is one run and wrong the moment it is not: a build driving the board, the gate and
+    the publisher in turn folded all three components' reads into every component's digest.
+    Each then named bytes it had not read, and the digests of three different questions came
+    out identical -- which is precisely the claim a digest exists to be able to deny.
+
+    Reads made inside the block still reach the enclosing run on the way out. The scope
+    narrows what a component *reports*, and must not become a way for a run to lose a read:
+    a helper that opened a scope of its own would otherwise leave its caller's digest short by
+    exactly the sources the helper loaded, which is the defect in this file's other half
+    wearing a different hat. First read still wins, on both sides of the boundary.
+    """
+    global _READ_THIS_RUN
+    outer = _READ_THIS_RUN
+    _READ_THIS_RUN = {}
+    try:
+        yield
+    finally:
+        inner = _READ_THIS_RUN
+        _READ_THIS_RUN = outer
+        for entry, read in inner.items():
+            _READ_THIS_RUN.setdefault(entry, read)
+
+
+def pins_this_run() -> tuple[DataPin, ...]:
+    """Every nflverse entry this run has loaded, in the order first read.
+
+    A run rather than a process: `reads_of_one_run` above is what makes the difference real,
+    and a caller that wants only its own reads opens one. Without a scope this is still every
+    read the process has made, which is the right answer for the ordinary case of one run per
+    process and the wrong one for a build running several components in turn.
+
+    Empty is a truthful answer and `config.UNPINNED` is what a digest over it says: a run that
     loaded nothing pinned nothing. Callers fold this through `config.data_digest`.
+
+    Entries whose pin could not be read come back as `config.UnpinnedRead` rather than not
+    coming back, so the count here is the number of entries read and not the number that
+    happened to have a sidecar.
     """
     return tuple(_READ_THIS_RUN.values())
 
 
-def _remember(path: Path, pin: Pin | None) -> None:
+def _remember(path: Path, read: DataPin) -> None:
     """Record what an entry held, once per entry. First read wins.
 
     A second load of the same entry in one process returns the same bytes -- the cache path is
     a function of the key -- so re-recording would only reorder the digest's inputs.
+
+    `read` is not optional. It used to be, and a `None` meant nothing was recorded at all,
+    which is how an entry with no readable pin left the digest looking complete. A caller with
+    no pin passes `config.UnpinnedRead`, which says so.
     """
-    if pin is not None:
-        _READ_THIS_RUN.setdefault(str(path), pin)
+    _READ_THIS_RUN.setdefault(str(path), read)
 
 
 def _pin_beside(path: Path) -> Pin | None:
@@ -550,10 +635,17 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
     # /GUARD
 
     stamp = _as_of_date(as_of)
+    iso = stamp.isoformat() if stamp is not None else None
     path = _cache_path(source, seasons, cols, cache, stamp)
     if path.exists() and not refresh:
-        # A cache hit is still a read, and the run has to be able to say what it read.
-        _remember(path, _pin_beside(path))
+        # A cache hit is still a read, and the run has to be able to say what it read --
+        # including when there is no pin beside the entry to say it with. An entry written
+        # before pinning existed, or one whose sidecar write was interrupted, is a read of
+        # bytes this run cannot name, and `UnpinnedRead` is how it says that. Dropping it
+        # instead left the digest short by one source and looking complete, which is the one
+        # outcome the sentinel exists to prevent.
+        served = _pin_beside(path)
+        _remember(path, served if served is not None else UnpinnedRead(source, iso))
         return pl.read_parquet(path)
 
     contract = SOURCES[source]
@@ -595,7 +687,6 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
 
     path.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(path)
-    iso = stamp.isoformat() if stamp is not None else None
     pin = Pin(
         source=source,
         as_of=iso,
@@ -704,14 +795,18 @@ def refresh(season: int = SEASON_COMPLETED, cache: Path | None = None,
     """
     print(f"  nflverse refresh: season {season}")
     total_rows = 0
-    pins: list[Pin] = []
+    pins: list[DataPin] = []
     for table, cols, label in (("pbp", list(PBP_COLS), "play-by-play"),
                                ("ff_opportunity", None, "ff_opportunity")):
         df = load(table, seasons=[season], cols=cols, refresh=True, cache=cache)
         # Read back from the sidecar rather than re-digesting `df` here, so what is printed is
         # what a later reader of this cache entry will compute -- one path to the number.
-        if (pin := data_pin(table, [season], cols=cols, cache=cache)) is not None:
-            pins.append(pin)
+        #
+        # A sidecar that will not read is recorded rather than skipped. Skipping it printed a
+        # `data` digest over one source while the line above said two had been fetched, and
+        # nothing on the line said which of the two it named.
+        pin = data_pin(table, [season], cols=cols, cache=cache)
+        pins.append(pin if pin is not None else UnpinnedRead(table))
         n_weeks, rows = _write_by_week(df, table, season, base)
         total_rows += rows
         print(f"    {label:<16} {rows:>7,} rows | {len(df.columns):>3} cols | "
