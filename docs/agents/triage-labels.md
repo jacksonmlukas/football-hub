@@ -128,3 +128,36 @@ exactly that state on 2026-09-05. No label was added for it — the window is tr
 itself on the next push, and a label for it would have to be removed by hand afterwards, which is
 the drift this whole section is avoiding. During that window the tracker genuinely does not know;
 `git log --grep 'Closes #<n>'` does.
+
+## `ready-for-human` carries a drafted decision (adopted 2026-09-07)
+
+A ticket earns `ready-for-human` when it contains an unmade decision, not when nobody has
+picked it up. The failure mode the label had developed was the second one: #136 and #138 sat
+labelled for weeks while several others were labelled for a choice among three named options
+that nobody had written down.
+
+**So whenever a ticket's human part is a choice among a small number of named options, the
+decision is drafted into the ticket rather than left to be written from scratch.** The draft
+is a *pre-registration*: it names the candidates, recommends one, states what each outcome
+would mean, and keeps the reasoning separate from the conclusion so the reasoning can be
+rejected on its own. It is marked `PROPOSED` and the label does not change until it is
+adopted.
+
+This is not a way around `docs/method.md` rule 1. Rule 1 requires the decision to precede the
+numbers; it does not require a particular person to make it. A drafted pre-registration
+written before the run satisfies it. A number measured first and a rule chosen after does not,
+whoever writes either.
+
+**Two kinds of ticket stay human however they are drafted**, and their tickets say which they
+are:
+
+- **The decision is the point.** #138 asks whether to amend a pre-registered rule after the
+  effect sizes are known. Delegating that launders the decision through a process that looks
+  like work; the rule it produced would carry no more authority than the numbers that prompted
+  it.
+- **The decision is waiting on evidence, not on a person.** #136 reopens ADR-0002 and the
+  modelling programme may still supply the adapter that answers it. Deciding now is deciding
+  early.
+
+For both, the decision-free half is split out where one exists — #205 and #207 are those
+splits — so the ticket that stays human is only the part that has to.
