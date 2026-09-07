@@ -141,7 +141,8 @@ class Weekly(NamedTuple):
         """Whether the recommendation is distinguishable from the free pick at all.
 
         False does not mean the pick is wrong; it means the simulation cannot tell the two
-        apart, and `docs/method.md` rule 13 is that a null past the resolution is unresolved
+        apart, and `docs/method.md` rule 12 is that a gate which cannot run is an absence of
+        evidence rather than evidence against
         rather than refuted. A week that lands here should take the free pick, because it is
         free -- and should say that is why.
         """

@@ -80,8 +80,8 @@ def _hand(gap: float, resolution: float, *, matched: bool = False) -> pool.Weekl
 
 
 def test_a_gap_the_trials_cannot_resolve_is_not_a_recommendation():
-    """`docs/method.md` rule 13: a difference smaller than what the run could detect is
-    unresolved, not established. The free pick wins that tie because it is free."""
+    """`docs/method.md` rule 12: a gate that cannot run is an absence of evidence, so a
+    difference smaller than the run could detect is unresolved rather than established. The free pick wins that tie because it is free."""
     w = _hand(gap=2.0, resolution=5.0)
     assert not w.decisive
     assert "it is free and no worse" in "\n".join(pool.weekly_report(w))
