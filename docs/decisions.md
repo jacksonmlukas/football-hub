@@ -250,7 +250,9 @@ toward RB, so flex allocation is ~even (0.45 RB / 0.50 WR), not WR-dominant.
 | Desktop app does not inherit exported shell vars | Local environment editor: env dropdown → Local → gear |
 | Pyrefly's default preset is `basic`, silencing most errors | `preset = "default"` in `[tool.pyrefly]` |
 | Hatchling cannot infer the package (`football-hub` vs `src/hub`) | `[tool.hatch.build.targets.wheel] packages = ["src/hub"]` |
-| PEP 735 `[dependency-groups]` are not extras, so `.[dev]` fails | dev lives in `[project.optional-dependencies]` |
+| ~~PEP 735 `[dependency-groups]` are not extras, so `.[dev]` fails~~ | ~~dev lives in `[project.optional-dependencies]`~~ **Reversed 2026-09-06 (#142).** `dev` is now `[dependency-groups]`. The row was written for a `pip install .[dev]` path that no longer exists anywhere: README, SETUP.md, the Makefile and all five workflows use `uv sync --all-extras`, `make setup`'s `uv pip install -e .` was removed on 2026-08-24 (`gaps.md`), and the modern-python shim blocks `uv pip` outright. What the extra *did* cost is below. |
+| A fresh worktree has no toolchain: as an extra, `dev` was in no venv uv built on its own | `[dependency-groups]` is installed by default on every `uv sync` **and every `uv run`**, so the first command in a worktree brings its own gates. `--all-extras` still installs it; groups are orthogonal to extras |
+| `uv run pytest` in a venv without pytest falls through to PATH and runs Homebrew's | It reported `ModuleNotFoundError: No module named 'polars'` — an environment fault wearing a code error's costume. Nothing detects this; only having pytest *in* the venv prevents it |
 | Polars types `min()`/`max()` as the union of every dtype | Guard None, then `cast(float, ...)` — do not silence |
 | `site.api.espn.com` began 403ing scripted traffic Aug 2026 | Retry `site.web.api.espn.com` and non-browser User-Agents |
 | conda auto-activating shadows the venv Python | `conda config --set auto_activate_base false` |

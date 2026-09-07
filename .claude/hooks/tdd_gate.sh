@@ -23,12 +23,15 @@ fail_hook() {  # the gate itself is broken; say so in its own words, not the cod
   exit 2
 }
 
-# The environment is a precondition, not a finding. A worktree venv built without the dev
-# extras has no pyrefly at all, and "not installed" must not read as "your code is wrong".
+# The environment is a precondition, not a finding, and "not installed" must not read as
+# "your code is wrong". #142 made this branch unreachable in the case that produced it -- the
+# toolchain is a default `[dependency-groups]` group, so the venv uv builds for a fresh
+# worktree already has pyrefly. The branch stays: it is what would report a venv broken some
+# other way, and the hint is now the plain sync (there is no `dev` extra to name any more).
 if ! probe=$(uv run pyrefly --version 2>&1); then
   fail_hook "pyrefly is not installed in this environment." \
             "  $probe" \
-            "  In a fresh worktree: uv sync --extra dev"
+            "  Rebuild the environment: uv sync"
 fi
 
 # Naming the paths is what makes the gate portable: an explicit path bypasses pyrefly's

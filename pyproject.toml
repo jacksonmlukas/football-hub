@@ -17,9 +17,32 @@ dependencies = [
   "hydra-core>=1.3",
 ]
 
+# `bayes` and `seq` are genuinely optional *features*: nothing in `src/` or `tests/` imports
+# torch, numpyro, jax or arviz, so an environment without them still runs every gate.
 [project.optional-dependencies]
 bayes = ["numpyro", "jax", "arviz"]
 seq = ["torch"]
+
+# The toolchain the three gates run on is a PEP 735 group, not an extra, and the difference is
+# the whole point: uv installs the default groups on *every* `uv sync` and every `uv run`,
+# while an extra is installed only when someone names it. As an extra, `dev` was absent from
+# every venv uv built on its own -- which is every fresh git worktree, since a worktree starts
+# with no `.venv` and the first `uv run` creates one. Four agents in one session each rebuilt
+# the same diagnosis before they could check their own work, and the per-edit gate spent that
+# session correctly reporting that it could not run.
+#
+# Two failures, not one. `ruff` and `pyrefly` were simply absent and said so. `pytest` was
+# worse: `uv run` falls through to PATH when the venv has no such binary, so it found
+# Homebrew's global pytest, ran it against a venv with no polars, and reported
+# `ModuleNotFoundError: No module named 'polars'` -- a plausible-looking code error produced
+# entirely by the environment.
+#
+# This reverses the `[dependency-groups]` row in `docs/decisions.md`, which chose an extra so
+# `pip install .[dev]` would work. Nothing in this repo installs that way: README, SETUP.md,
+# the Makefile and all five workflows use `uv sync --all-extras`, and `uv pip` is blocked by
+# the modern-python shim outright. `--all-extras` still installs this group, because groups
+# are orthogonal to extras -- so no documented command changes.
+[dependency-groups]
 dev = ["pytest", "pytest-cov", "ruff", "pyrefly>=1.0", "hypothesis"]
 
 [build-system]

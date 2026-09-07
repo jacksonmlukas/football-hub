@@ -726,15 +726,17 @@ bayes = [
     { name = "jax", version = "0.11.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "numpyro" },
 ]
+seq = [
+    { name = "torch" },
+]
+
+[package.dev-dependencies]
 dev = [
     { name = "hypothesis" },
     { name = "pyrefly" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
-]
-seq = [
-    { name = "torch" },
 ]
 
 [package.metadata]
@@ -743,7 +745,6 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.1" },
     { name = "espn-api", specifier = ">=0.44" },
     { name = "hydra-core", specifier = ">=1.3" },
-    { name = "hypothesis", marker = "extra == 'dev'" },
     { name = "jax", marker = "extra == 'bayes'" },
     { name = "mapie", specifier = ">=1.0" },
     { name = "nflreadpy", specifier = ">=0.1" },
@@ -751,17 +752,22 @@ requires-dist = [
     { name = "polars", specifier = ">=1.0" },
     { name = "pulp" },
     { name = "pyarrow" },
-    { name = "pyrefly", marker = "extra == 'dev'", specifier = ">=1.0" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "python-dotenv" },
     { name = "requests" },
-    { name = "ruff", marker = "extra == 'dev'" },
     { name = "scikit-learn" },
     { name = "torch", marker = "extra == 'seq'" },
     { name = "typer" },
 ]
-provides-extras = ["bayes", "seq", "dev"]
+provides-extras = ["bayes", "seq"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "hypothesis" },
+    { name = "pyrefly", specifier = ">=1.0" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
 
 [[package]]
 name = "fsspec"
