@@ -139,6 +139,13 @@ blend is a model in its own right and should be gated as one, once, cleanly. See
 
 That clean run happened, under [ADR-0017](0017-the-market-usage-blend-is-a-model-not-a-shrinkage.md):
 frozen **+0.215** CI [−0.242, +0.684] on four held-out seasons, churn **−1.806**. The
+> **Superseded 2026-09-07 (#44).** Re-run under the identical command after the treatment
+> arm stopped scoring on a mixed-scale column: **−1.004**, CI **[−1.391, −0.621]**, 0 of 4
+> seasons, verdict **REMOVE**. The figure below is kept as published. This ADR's decision
+> — shown and never ranked on — was taken on a number that has since changed sign, and
+> whether it survives is not settled here. See `docs/weekly-blend-gate.md`.
+>
+> The
 every-season half fails — it lost 2025 — and the frozen gain decays monotonically across the
 four seasons, **+0.983 → −0.504**, negative in the one closest to the season being drafted.
 

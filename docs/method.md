@@ -210,7 +210,7 @@ one in `README.md`, ADR-0009 and ADR-0019. Issue #45 is open.
 negated consensus rank and fantasy points in one column, so every player it could project
 outranked every player it could not, whatever either was worth. Repairing that changes the arm
 under test, which the commit says itself: *"the frozen +0.215 will move — and re-running it is
-the next action, not something this commit may claim"* (`7873de6`). Nothing re-ran it. **+0.215**
+the next action, not something this commit may claim"* (`7873de6`). Nothing re-ran it. **+0.215** *(re-run 2026-09-07 (#44): **−1.004**, verdict REMOVE — this incident is now discharged; see `docs/weekly-blend-gate.md`)*
 is still the headline of [weekly-blend-gate.md](weekly-blend-gate.md), ADR-0016 and ADR-0017.
 Issue #44 is open on its fourth criterion alone — *the gate's result is re-run and the movement
 recorded* — with the code half verified done.

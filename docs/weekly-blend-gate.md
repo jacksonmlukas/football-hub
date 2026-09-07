@@ -6,6 +6,40 @@ which fixed every rule and was committed *before* the run — the commit order i
 **2,000 roster-weeks over 160 rosters, four held-out seasons, 79 covered weeks.
 Join failure 0.1% against a 2% floor.**
 
+## Restated 2026-09-07 — the effect changes sign and the verdict reverses
+
+The arm under test was scoring on a column holding two incommensurable things: negated ranks
+for players it could not project, and fantasy points for those it could. Any player carrying a
+projection therefore outranked every player carrying only a rank, whatever either was worth.
+`7873de6` fixed that and said so plainly — *"the frozen +0.215 will move, and re-running it is
+the next action, not something this commit may claim."* This is that re-run, issue #44.
+
+Same command as the Reproduce section below, unchanged: five seasons supplied, forty drafts,
+`--shrink mae-market`. Same shape as the original — 2,000 roster-weeks over 160 rosters on the
+79 weeks consensus covers.
+
+| | superseded | re-run 2026-09-07 |
+|---|---|---|
+| weekly − consensus | **+0.215** | **−1.004** |
+| 95% CI | [−0.242, +0.684] | **[−1.391, −0.621]** |
+| seasons won | 3 of 4 | **0 of 4** |
+| P(weekly better) | — | **0.0%** |
+| verdict | SHOW, NEVER RANK ON | **REMOVE** |
+
+Per season: 2022 −0.452, 2023 −1.490, 2024 −0.868, 2025 −1.204. Worse in every held-out
+season, and the interval no longer straddles zero.
+
+**What moved, and why it moves this far.** The mixed-scale column was not noise — it was a
+systematic advantage to the arm under test, because carrying a projection at all was worth
+more than any amount of being ranked well. Removing it does not shrink the effect toward zero;
+it takes the effect through zero, because the advantage was the effect.
+
+**The disposition is not applied here.** The pre-registered rule says REMOVE, and REMOVE means
+deleting the module rather than shipping it as an option. That is a product decision and it is
+recorded as pending, not taken — the same treatment the draft gate's REMOVE received.
+
+The rows below are kept as published. They are superseded, not wrong at the time.
+
 ## The result
 
 | gate | weekly − consensus | 95% CI | seasons won | verdict |
