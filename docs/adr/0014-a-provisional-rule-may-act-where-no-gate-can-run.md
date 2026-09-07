@@ -1,6 +1,8 @@
 # A provisional rule may act where no gate can run
 
-**Status:** accepted 2026-08-27.
+**Status:** accepted 2026-08-27. **Amended 2026-09-07** (issue #51) — criterion 2 is closed
+against a reclassification; the five requirements are otherwise unchanged. **Re-scored
+2026-09-07**: requirement 4 is currently discharged by no code, see below.
 
 **Decision.** A decision rule may be adopted without passing a gate **only** when all five hold:
 
@@ -52,6 +54,47 @@ than a degree:
 A gate that fired against you is *evidence*. A gate that cannot run is an *absence of evidence*.
 Only the second is eligible.
 
+### Amendment, 2026-09-07: a reclassification is not a second door into criterion 2
+
+Issue #51, following the precondition
+[ADR-0019](0019-a-gate-requires-every-season.md) gained on 2026-09-07 under #45.
+
+That precondition made **NOT-RUNNABLE a computed branch**: a Gate whose minimum detectable
+effect exceeds its measured ceiling reports that it cannot run, and reports no verdict. When
+this ADR was written, "no gate can run" was a standing property of a question — the snap trend's
+harness cannot resolve its decision at any *n* this project will see. It is now also something a
+gate that *already ran* can be reclassified as, by measuring a ceiling that did not exist
+before.
+
+Read literally, that is a second door into criterion 2, and it opens onto exactly the thing the
+loophole section above closes. Championship equity is **permanently excluded** because a gate
+fired against it at −19.66. If that gate's ceiling were later measured and its MDE found to
+exceed it, the gate would report NOT-RUNNABLE — and criterion 2, read as a status check, would
+read as satisfied. A mechanical reclassification would have erased a recorded adverse result and
+made a failed decision eligible for provisional adoption, without anyone deciding anything.
+
+**So, added ahead of criterion 2 and taking nothing away from it:**
+
+> **A Gate reclassified NOT-RUNNABLE is not, by that fact, a gate that never ran.** A
+> NOT-RUNNABLE reclassification withdraws a *verdict*; it does not withdraw the *observations*
+> that produced it. Where an adverse result is on the record, criterion 2 is not satisfied by
+> the reclassification alone. It is satisfied only by a re-measurement, on a harness able to
+> resolve the question, that does not come back adverse.
+
+**Why this direction and not the other.** A reclassification is real information and it is
+information *against* the gate, not for the arm: it says the run should not have been asked, and
+the honest consequence is that its verdict stops being quotable. Nothing about that makes the
+arm look better. Treating the same fact as a licence to act on the arm would take a result this
+repo paid to measure and convert it, by arithmetic, into permission — which is the shape of
+every failure the five requirements exist to prevent. The five requirements are unchanged; this
+adds a precondition ahead of the second, in the same way #45 added one ahead of ADR-0019's two
+halves.
+
+**What it does not move.** The eligibility table below is reached identically. The snap trend
+qualifies for the reason it always did — its harness cannot resolve the decision at any
+reachable *n*, which is a property of the design and not a reclassification of a run. No entry
+in that table changes state under this amendment, and the count is still one.
+
 ## How many things qualify today: one
 
 This is the part worth checking a year from now, because it is the evidence that the mechanism
@@ -74,6 +117,22 @@ ADR should be revisited rather than stretched.
 Requirements 4 and 5 above are obligations on *this document*, not aspirations. Until 2026-08-27
 it did not meet them, which made the horizon clause the one part of its own rule the ADR
 violated. Here they are, per rule.
+
+> **Re-scored 2026-09-07 (issue #51): requirement 4 is discharged by no code.** What follows
+> specifies the log completely, and `hub.season.journal.record` implements it — with real
+> invariant checks written against `pool.Weekly`'s field names. A call-site census across
+> `src/` finds **no caller**; `pool.py` mentions it in prose at two places and nothing invokes
+> it. So the one requirement whose whole purpose is to let a provisional rule stop being
+> provisional is, today, met by a specification and a module rather than by a log.
+>
+> This is not a re-decision — the requirement is right and the module matches it. It is the
+> observation that the requirement is unmet in the tree, and that its invariant checks are
+> exercised only by hand-built fixtures, so a units or sign-convention mismatch with a real
+> `Weekly` would surface the first time it is wired up rather than now. **Owned by #204.**
+>
+> It bears directly on the horizon below. A horizon of *150 logged claims* is counted from a
+> log; a log that no code writes reaches 150 never, which converts the weaker of the two
+> provisional rules into a permanent one by omission rather than by argument.
 
 ### The waiver tiebreaker
 

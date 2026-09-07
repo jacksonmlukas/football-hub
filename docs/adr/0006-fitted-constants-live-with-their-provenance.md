@@ -45,4 +45,23 @@ So the rule is not relaxed, it is made true: coverage by the digest is what matt
   in `FITTED_MODULES` or `NOT_FITTED`. Known limitation, stated rather than hidden: it scans
   for floats, so an integer threshold in an unregistered module still slips through — which is
   how `board.MIN_GAMES` escaped until `FITTED_EXTRA` picked it up by hand.
+
+  > **Re-scored 2026-09-07 (issue #51): this limitation is understated, and #201 reopens it.**
+  > The sentence above frames the gap as a stray *threshold* — one number, one hand-repair, a
+  > rounding error on a rule that otherwise holds. The live instances are not thresholds. They
+  > are **shape** constants that set the extent of a random draw: `REG_SEASON_WEEKS = 14`,
+  > `PLAYOFF_ROUNDS = 3`, `PLAYOFF_TEAMS = 6`, `DEFAULT_ROUNDS = 14`, `cohort.ROUNDS` /
+  > `cohort.DRAFTS`, and the `n_draft_sims` / `n_season_sims` defaults.
+  >
+  > By the finding in #196 each of those fixes the seed-to-outcome map, so moving any one of
+  > them re-prices every published Gate interval **while leaving both digests byte-identical**.
+  > That is the failure this ADR exists to prevent, reached through the type system rather than
+  > through a missing registration — and it is a materially larger claim than the one weighed
+  > here, which is why it is a re-scoring and not a footnote.
+  >
+  > **This ADR's decision is not disturbed.** The split between a setting and a fitted constant
+  > holds, and so does *coverage by the digest is what matters*. What is wrong is the size this
+  > file assigns to its own escape hatch. **Owned by #201**, whose criteria require that a
+  > digest move when any of these move, or that their exclusion become a recorded decision
+  > rather than a consequence of being written as `int`.
 - Refitting anything now moves the model version, which is the point.

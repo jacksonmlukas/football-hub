@@ -46,3 +46,20 @@ measurement that drove it.
   disagreement can be attributed to changed code or changed constants.
 - It does not apply to exploration. Screening a signal, sizing an effect, sanity-checking an
   API — all fine ad hoc. The trigger is *citation*: when the number becomes a reason.
+
+> **Re-scored 2026-09-07 (issue #51): this rule says a harness must exist, and does not say
+> where.** It is the half of a pair with
+> [ADR-0009](0009-championship-equity-does-not-pick.md), which removed championship equity from
+> the product while leaving its code in place. This ADR is why that code may not simply be
+> deleted — a measurement that steered a decision stays re-runnable. The two therefore pull
+> opposite ways on the same thousand lines, and the gap is that **neither names a home** for
+> code whose only job is to keep a removed measurement re-runnable.
+>
+> Measured rather than asserted: on 2026-09-06 a call-site census found `hub/draft/leverage.py`
+> with zero importers, `tag_for` and `cost_of_waiting` with zero callers, and
+> `win_probability` / `champion_probability` / `rank_tiers` reachable only from
+> `hub.draft.backtest` — all of it inside the package a reader takes for the draft product.
+>
+> **Nothing here is withdrawn.** The requirement is unchanged and the code should stay. What is
+> missing is a place that says *this is an exhibit, not a dependency*, so the distinction does
+> not have to be re-derived by census. **Owned by #198.**

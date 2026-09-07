@@ -1,8 +1,11 @@
 # The market/Usage blend is a model, and gets one clean gate
 
-**Status:** accepted 2026-08-29. **Resolved: SHOW.** Run under these rules the same day; the
-result is in [weekly-blend-gate.md](../weekly-blend-gate.md) and summarised at the foot of this
-file. The proposal was committed before the run, so the commit order is the record.
+**Status:** accepted 2026-08-29. **Resolved: SHOW — superseded 2026-09-07 (#44).** Run under
+these rules the same day; the result is in [weekly-blend-gate.md](../weekly-blend-gate.md) and
+summarised at the foot of this file. The proposal was committed before the run, so the commit
+order is the record. The rules below are unchanged; the numbers they were read against are not,
+and the pre-registration is re-scored against the re-run in
+[its own section](#re-scored-2026-09-07-the-pre-registration-against-the-re-run) below.
 
 **Decision.** The market/Usage blend stops being treated as a repair to the Weekly projection
 and is gated once, as a model in its own right, under rules fixed here.
@@ -118,3 +121,45 @@ worth nothing now. No mechanism is asserted for the decay.
 
 **Consequence, as fixed above:** ADR-0016 stands, the blend is printed beside consensus and
 never sorted on, and **the rescue attempts end.**
+
+---
+
+## Re-scored 2026-09-07: the pre-registration against the re-run
+
+Issue #51. The rules above were fixed before the run and are not touched here. What follows
+reads them against **−1.004, CI [−1.391, −0.621], 0 of 4 seasons** — the interval the re-run
+produced under #44 — rather than against the **+0.215** they were first read against. Per
+season: 2022 **−0.452**, 2023 **−1.490**, 2024 **−0.868**, 2025 **−1.204**.
+
+| fixed in advance | read against +0.215 | read against −1.004 |
+|---|---|---|
+| **Pre-stated expectation**, frozen: *positive but small, interval containing zero* | met | **not met** — negative, and the interval excludes zero |
+| **Pre-stated expectation**, churn: *negative, between −1.5 and −3* | met at −1.806 | not re-reported by the re-run; the superseded −1.806 is the only figure on the churn gate |
+| **Pre-stated expectation**, *2022 in line with the rest* | met | met — and more strictly, see below |
+| **Verdict**, on ADR-0019's two halves | SHOW: interval contains zero, 3 of 4 seasons | **REMOVE**: the interval excludes zero **and** the sign holds in every held-out season, both in the same direction |
+| **Tripwire 1**, join failure above 2% → VOID | silent, at 0.1% | silent — same run, same join |
+| **Tripwire 2**, 2022 disagreeing in sign with the other three → inconclusive | silent, though 2023–24 were positive and 2025 was not | silent, and for the first time all four seasons agree |
+| **Tripwire 3**, churn positive → suspect | silent | silent |
+
+**Two things are worth stating plainly, and neither is a decision.**
+
+**The re-run satisfies the pre-registered bar more completely than the run it supersedes.** The
++0.215 result was SHOW because it failed the every-season half; the −1.004 result meets *both*
+halves, in the negative direction, and no tripwire fires on it. Read only against the rules
+fixed here, this is the cleanest reading the gate has produced.
+
+**And the pre-registration did not anticipate the thing that actually moved.** None of the
+tripwires above is about how an unprojected player is scored, and that is the choice the effect
+turned out to be dominated by: [weekly-blend-gate.md](../weekly-blend-gate.md) measures
+**+0.215 / −1.004 / +0.537** across three defensible handlings, a spread of 1.5 points against a
+largest reported effect of 1.0. A verdict that flips across a choice nobody pre-registered is
+not a verdict this ADR's rules can adjudicate — *"what it does not establish is the weekly
+model's own merit, in either direction."* The MDE is 0.768 and the effect is −1.004, so #45's
+NOT-RUNNABLE precondition does not fire and, absent a foresight ceiling for this gate, cannot.
+
+**What is deliberately left open.** The REMOVE branch above says *"delete it"* and says nothing
+about what becomes of [ADR-0016](0016-the-weekly-projection-is-shown-and-never-ranked-on.md) —
+only the ADOPT branch names it. So the pre-registration is silent on exactly the case that
+occurred. That gap, and whether the disposition is applied at all, belong to **#44**, where the
+disposition is recorded as pending rather than taken. This section re-scores; it does not
+resolve.
