@@ -35,12 +35,28 @@ def _stats(season, n=8):
          "fantasy_points_ppr": [r[5] for r in rows]})
 
 
+class _Report:
+    """The half of a Board's build report a Gate reads, stubbed.
+
+    Structural, like the protocol it satisfies, and for the same reason: the module under
+    test must not reach into `hub.draft`, so a test of its plumbing has no business doing it
+    either. That the *real* report satisfies the protocol is one test below, once, where a
+    drift between the two would be caught rather than assumed.
+    """
+
+    def __init__(self, *missing: str) -> None:
+        self._missing = missing
+
+    def corrections_missing(self) -> tuple[str, ...]:
+        return self._missing
+
+
 # --- the season loop --------------------------------------------------------
 
 def test_inputs_are_gathered_per_season():
     boards, realised = experiment.walk_forward_inputs(
         [2023, 2024],
-        lambda yr: (_board(), None),
+        lambda yr: (_board(), _Report()),
         load_stats=_stats)
     assert set(boards) == {2023, 2024} and set(realised) == {2023, 2024}
     assert boards[2023].height == 8 and realised[2024].height > 0
@@ -76,18 +92,71 @@ def test_experiment_does_not_reach_into_draft():
     assert reaches == [], f"experiment reaches into draft: {reaches}"
 
 
+# --- the Board a Gate is handed (issue #131) --------------------------------
+#
+# `build` degrades stage by stage on purpose, and two of those stages leave a column a
+# **Correction** reads. Absorbing one does not leave a thinner Board -- it leaves one whose
+# Corrected ADP is a different ranking, reported as having run. Every Gate in the repo reached
+# the Board through this function and took `[0]`, so four seasons could be scored with one of
+# them built that way and the published interval said nothing about it.
+
+
+def test_a_gate_refuses_a_board_missing_a_correction_it_ranks_on():
+    """The refusal, and the three things the sentence has to carry: which season, which term,
+    and that the season is a *different ranking* rather than a thinner board -- because
+    "built without td_luck" was read as the second for as long as anything read it at all.
+    """
+    with pytest.raises(experiment.CorrectionMissing) as refused:
+        experiment.walk_forward_inputs(
+            [2023, 2024],
+            lambda yr: (_board(), _Report() if yr == 2023 else _Report("touchdown luck")),
+            load_stats=_stats)
+    said = str(refused.value)
+    assert "2024" in said, "which season has to be in it; the other three are fine"
+    assert "touchdown luck" in said
+    assert "thinner" in said and "different ranking" in said
+
+
+def test_a_gate_scores_a_board_that_carries_every_correction():
+    """The other half, and the one that stops the guard being widened into a Gate that never
+    runs. A whole Board is scored without comment."""
+    boards, realised = experiment.walk_forward_inputs(
+        [2023, 2024], lambda yr: (_board(), _Report()), load_stats=_stats)
+    assert set(boards) == {2023, 2024} and set(realised) == {2023, 2024}
+
+
+def test_a_board_that_computed_no_corrected_ranking_is_not_refused():
+    """An ECR-only board -- which is every board `board_as_of` builds, since ESPN publishes
+    ADP for the current season only -- has no corrected ranking to have been computed from a
+    subset. `corrections_missing` already says so by returning nothing, and a Gate that
+    refused it would refuse every backtest this repo runs."""
+    from hub.draft.board import BuildReport
+    experiment.require_corrections(2024, BuildReport(adp=False, td_luck=False))
+
+
+def test_the_real_build_report_answers_the_protocol_a_gate_types_against():
+    """`CorrectionReport` is structural so that this module never imports `hub.draft`, and the
+    price of structural typing is that nothing checks the two ends agree. This is that check,
+    once, against the class the three call sites actually hand over."""
+    from hub.draft.board import BuildReport
+    whole = BuildReport(adp=True, td_luck=True, durability=True)
+    experiment.require_corrections(2024, whole)
+    with pytest.raises(experiment.CorrectionMissing, match="durability"):
+        experiment.require_corrections(2024, BuildReport(adp=True, td_luck=True))
+
+
 def test_the_progress_hook_is_a_hook_not_a_print(capsys):
     """A caller under a line cap must be able to stay quiet, and this module must not own
     stdout -- the same reason `hub.draft.report` returns lines."""
     seen = []
-    experiment.walk_forward_inputs([2024], lambda yr: (_board(), None),
+    experiment.walk_forward_inputs([2024], lambda yr: (_board(), _Report()),
                                    load_stats=_stats, on_season=seen.append)
     assert seen == [2024]
     assert capsys.readouterr().out == ""
 
 
 def test_no_hook_is_silent(capsys):
-    experiment.walk_forward_inputs([2024], lambda yr: (_board(), None),
+    experiment.walk_forward_inputs([2024], lambda yr: (_board(), _Report()),
                                    load_stats=_stats)
     assert capsys.readouterr().out == ""
 

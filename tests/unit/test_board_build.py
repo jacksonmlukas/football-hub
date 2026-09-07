@@ -673,6 +673,37 @@ def test_a_board_with_no_adp_claims_no_missing_corrections():
     assert ecr_only.corrections_missing() == ()
 
 
+def test_the_corrections_a_report_names_are_the_ones_declared():
+    """`CORRECTION_STAGE` is derived from the two dicts that already exist rather than being
+    a third list of the same terms. This holds the derivation to them."""
+    assert set(board.CORRECTION_STAGE) == set(board.CORRECTION_COLUMN)
+    for term, flag in board.CORRECTION_STAGE.items():
+        assert board.STAGE_COLUMN[flag] == board.CORRECTION_COLUMN[term], (
+            f"{term} reads {board.CORRECTION_COLUMN[term]}, which no stage leaves")
+    short = board.BuildReport(adp=True)
+    assert set(short.corrections_missing()) == set(board.CORRECTION_COLUMN), (
+        "a board that ran none of the correction stages is missing every declared term")
+
+
+def test_a_third_correction_needs_no_second_declaration_to_reach_a_gate(monkeypatch):
+    """A **Correction** is a shape and not a module (ADR-0021), so these two dicts are the
+    only place the repo says how many there are.
+
+    `corrections_missing` used to name "touchdown luck" and "durability" in its own body,
+    which made `CORRECTION_COLUMN` -- written to say which column each term reads --
+    consumed by nothing at all. A third Correction wired into a stage and a column would
+    then have been absent from every Gate's view of the board while the flag beside it said
+    its stage had run: `BuildReport`'s own defect, one level up. Adding a term here rather
+    than asserting the two the repo has today is what tells the derivation from the
+    coincidence that the hand-written pair matched it.
+    """
+    monkeypatch.setitem(board.CORRECTION_STAGE, "snap share", "sos")
+    named = board.BuildReport(adp=True, td_luck=True, durability=True, sos=False)
+    assert named.corrections_missing() == ("snap share",)
+    ran = board.BuildReport(adp=True, td_luck=True, durability=True, sos=True)
+    assert ran.corrections_missing() == ()
+
+
 def test_a_missing_correction_actually_moves_the_corrected_ranking():
     """The demonstration the ticket asks for, as numbers rather than as an argument.
 

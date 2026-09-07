@@ -40,7 +40,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from enum import Enum
-from typing import NamedTuple
+from typing import NamedTuple, Protocol
 
 import numpy as np
 import numpy.typing as npt
@@ -63,9 +63,72 @@ PLAYER_STATS_COLS: tuple[str, ...] = (
 )
 
 
+class CorrectionReport(Protocol):
+    """The half of a Board's build report a Gate reads.
+
+    Structural, and that is the whole reason it is declared rather than imported:
+    `hub.draft.board.BuildReport` satisfies it without this module reaching into `hub.draft`.
+    Six `draft/` modules import `models/` and nothing points back -- `board_as_of` was moved
+    out of here for exactly that, and `test_experiment_does_not_reach_into_draft` holds the
+    direction. The parameter below used to be typed `object`, which is the same non-import
+    with nothing said about what a Gate needs from what it is handed.
+    """
+
+    def corrections_missing(self) -> tuple[str, ...]:
+        """Correction terms this Board's own ranking was computed without."""
+        ...
+
+
+class CorrectionMissing(RuntimeError):
+    """A Board reached a Gate short a Correction its ranking is computed from."""
+
+
+def require_corrections(season: int, report: CorrectionReport) -> None:
+    """Refuse a Board whose ranking was computed from a subset of the Corrections.
+
+    `hub.draft.board.build` degrades stage by stage on purpose, and two of those stages leave
+    a column a **Correction** reads. Absorbing one does not leave a thinner Board: both
+    `correct_projection` functions return the frame untouched when their column is absent, so
+    what comes out is a Corrected ADP computed from a subset of the terms and reported as
+    having run. Issue #121 measured it -- absorbing touchdown luck alone moves 346 of 457
+    players by up to 28.1 picks, and 110 of the first 192 change rank.
+
+    **Refuse rather than record, and the reason is what a Gate is.** CLAUDE.md's degradation
+    rule is written for the live path: on draft night an hours-old ADP beats a stack trace,
+    and `hub.draft.report` therefore *records* this in the terminal, beside the board, where
+    an operator on the clock is reading and the alternative is no board at all. A Gate is not
+    that path. It is a harness nobody runs on a clock, and what it produces is a published
+    interval that `docs/track-record.md` makes commit-dated -- so serving a degraded season
+    here keeps nobody working, it publishes a number measured on two different arms and dates
+    it as one. ADR-0019 sharpens that: a Gate adopts only when the sign holds in **every**
+    held-out season, which is a comparison of the seasons *to each other*, and a season built
+    without a Correction is a different arm rather than a thinner one. A footnote under an
+    interval does not survive being quoted; a run that stopped does.
+
+    Refusing costs the operator nothing they cannot see: both harnesses already wrap
+    `walk_forward_inputs` in a `try` that ends in `hub.cli.unavailable`, so this arrives as a
+    named input, one sentence and a non-zero exit rather than a traceback.
+
+    Nothing is refused for having no Corrected ADP at all. `board_as_of` builds every Board a
+    Gate scores today and ESPN publishes ADP for the current season only, so those Boards rank
+    on consensus and have no corrected ranking to be short a term -- `corrections_missing`
+    says so by returning nothing, and a rule that read "no ADP" as "no touchdown luck" would
+    refuse every backtest in the repo for a Correction none of them applies.
+    """
+    missing = report.corrections_missing()
+    if not missing:
+        return
+    raise CorrectionMissing(
+        f"the {season} board was built without {' and '.join(missing)}, and its Corrected "
+        f"ADP was computed anyway -- so that season is a different ranking from the others' "
+        f"and not a thinner board. Issue #121: absorbing touchdown luck alone moves 346 of "
+        f"457 players by up to 28.1 picks. Rebuild {season} with every Correction, or run "
+        f"the seasons that carry them and say which those were.")
+
+
 def walk_forward_inputs(
     seasons: Sequence[int],
-    build_board: Callable[[int], tuple[pl.DataFrame, object]],
+    build_board: Callable[[int], tuple[pl.DataFrame, CorrectionReport]],
     *,
     load_stats: Callable[[int], pl.DataFrame] | None = None,
     on_season: Callable[[int], None] | None = None,
@@ -77,6 +140,11 @@ def walk_forward_inputs(
     consistent direction -- and needed a function-local import to do it. That function now
     lives in `hub.draft.board`, beside the `build` whose rule it states.
 
+    **It returns a pair and this used to take `[0]`.** Every Gate in the repo reaches its
+    Boards through here, so that one subscript was where a Board built while a Correction
+    stage was absorbed became indistinguishable from a whole one. The report is now read
+    rather than dropped; `require_corrections` says what is done with it and why.
+
     `on_season` is a progress hook rather than a print, so a caller under a line cap can stay
     quiet and this module stays free of stdout.
     """
@@ -85,7 +153,13 @@ def walk_forward_inputs(
     for yr in seasons:
         if on_season is not None:
             on_season(yr)
-        boards[yr] = build_board(yr)[0]
+        board, report = build_board(yr)
+        # GUARD a-gate-refuses-a-season-short-a-correction: deleting it puts the season back
+        # in the pool, and one season whose Corrected ADP came from a subset of the terms is
+        # a second arm inside an interval published as one.
+        require_corrections(yr, report)
+        # /GUARD
+        boards[yr] = board
         realised[yr] = realised_ppg((load_stats or _stats)(yr))
     return boards, realised
 
