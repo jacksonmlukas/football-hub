@@ -61,6 +61,21 @@ to this paragraph:
 A unification that changed one of these would have been a very different decision, and would
 have needed reopening the ADR it changed rather than this one.
 
+> **Re-scored 2026-09-07 (issue #51): the third row is superseded, and the conclusion drawn
+> from it survives anyway.** The frozen weekly gate re-ran under #44 at **−1.004**,
+> CI **[−1.391, −0.621]**, **0 of 4** seasons — so the row above records an interval and a
+> season count that no longer describe that gate.
+>
+> Re-scored on the re-run, the row reads REMOVE rather than SHOW. **But the claim this table
+> makes is about the unification, not about the gate's value**, and it holds either way: an
+> interval excluding zero in the negative direction, with the sign holding in every held-out
+> season, is REMOVE under the strict bar *and* REMOVE under the looser interval-only bar the
+> other two gates used. Before and after still agree, which is what this section asserts.
+>
+> The row is left as published rather than edited, per `docs/method.md` rule 13, and
+> `tests/unit/test_experiment.py` continues to assert from the recorded statistics.
+> **Owned by #44.**
+
 ## What is deliberately not unified
 
 Ten functions in this repo are called `verdict` and only three are this rule. The others are

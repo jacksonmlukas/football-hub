@@ -104,7 +104,8 @@ agent's context, which is the most expensive mistake available in this repo.
 
 - [`CONTEXT.md`](CONTEXT.md) — the glossary. Three different things get called "the market"
   here, and the entry exists to stop that.
-- [`docs/architecture.md`](docs/architecture.md) — index of twelve decision records.
+- [`docs/architecture.md`](docs/architecture.md) — the index of all twenty-three decision
+  records, each with what it rests on and whether that still holds.
 - [`docs/decisions.md`](docs/decisions.md) — the working journal, including corrections issued
   against this project's own conclusions.
 - [`docs/next.md`](docs/next.md) — what is open, what is closed, and why.

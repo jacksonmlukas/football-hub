@@ -1,6 +1,26 @@
 # The Weekly projection is shown and never ranked on
 
-**Status:** accepted 2026-08-28.
+**Status:** accepted 2026-08-28. **Re-scored 2026-09-07** — the closing figure changed sign
+and the decision is not re-decided here; see below.
+
+> **Re-scoring, 2026-09-07 (issue #51).** What this ADR rests on has moved, and this note says
+> how far, not what to do about it.
+>
+> The decision itself was taken on the Weekly projection's own gate — frozen **−0.304**,
+> CI [−1.043, +0.415], 2 of 3 seasons lost — and **that figure has not moved.** What moved is
+> the figure this ADR was *closed* on: the market/Usage blend's **+0.215** became **−1.004**
+> under #44, 0 of 4 seasons, and the pre-registered branch on it is REMOVE rather than SHOW.
+> So the ADR's own evidence stands and its closing argument does not.
+>
+> The re-run is itself qualified, and the qualification is why nothing is settled here:
+> `docs/weekly-blend-gate.md` records that the three defensible ways of scoring an unprojected
+> player give **+0.215 / −1.004 / +0.537**, a spread of 1.5 points — larger than any effect any
+> of them reports. Its own conclusion is that the gate is measuring its fallback rather than the
+> weekly model, and that *"what it does not establish is the weekly model's own merit, in either
+> direction."*
+>
+> **Owned by #44**, whose disposition is recorded as pending rather than taken. A reader should
+> not take the REMOVE below as applied, and should not take the SHOW above as still evidenced.
 
 **Decision.** `hub.models.weekly` stays in the repo, is printed beside weekly consensus, and
 **does not set lineups**. Start your highest-ranked player by consensus rank.
@@ -139,15 +159,14 @@ blend is a model in its own right and should be gated as one, once, cleanly. See
 
 That clean run happened, under [ADR-0017](0017-the-market-usage-blend-is-a-model-not-a-shrinkage.md):
 frozen **+0.215** CI [−0.242, +0.684] on four held-out seasons, churn **−1.806**. The
-> **Superseded 2026-09-07 (#44).** Re-run under the identical command after the treatment
-> arm stopped scoring on a mixed-scale column: **−1.004**, CI **[−1.391, −0.621]**, 0 of 4
-> seasons, verdict **REMOVE**. The figure below is kept as published. This ADR's decision
-> — shown and never ranked on — was taken on a number that has since changed sign, and
-> whether it survives is not settled here. See `docs/weekly-blend-gate.md`.
->
-> The
 every-season half fails — it lost 2025 — and the frozen gain decays monotonically across the
 four seasons, **+0.983 → −0.504**, negative in the one closest to the season being drafted.
+
+> **Superseded 2026-09-07 (#44).** Re-run under the identical command after the treatment
+> arm stopped scoring on a mixed-scale column: **−1.004**, CI **[−1.391, −0.621]**, 0 of 4
+> seasons, verdict **REMOVE**. The figures above are kept as published. This ADR's decision
+> — shown and never ranked on — was taken on a number that has since changed sign, and
+> whether it survives is not settled here. See `docs/weekly-blend-gate.md`.
 
 (Restated 2026-08-30. It first ran at frozen **+0.711** [+0.313, +1.129] and churn **−2.006**,
 against a `board_as_of` that was not reproducible — improvements.md #18. Those figures are

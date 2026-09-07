@@ -266,6 +266,11 @@ the removals in its commit messages.
 Fourteen things have been measured properly. **Two came back positive** — and one of those two
 produced a decision that then failed its own gate.
 
+This fourteen counts **measurements**, not decision records. There are twenty-three of those,
+in [`docs/adr/`](adr/). The two numbers were equal for eleven days in August and this file
+carried both, which is how the Primary sources table below came to describe the ADRs with the
+count belonging to the table beneath this line — corrected 2026-09-07 under #51.
+
 | # | attempt | result |
 |---|---|---|
 | 1–2 | Expected-vs-actual points; recency-weighted | null — r = 0.21 self-persistence |
@@ -315,5 +320,5 @@ The most useful artifact in this repo is the record of what was measured and the
 | The one positive screen | [snap-trend-signal.md](snap-trend-signal.md) |
 | The one adopted model | [weekly-injury.md](weekly-injury.md) |
 | Why the ceiling closed a question | [player-spread.md](player-spread.md) |
-| Fourteen decisions, with their trade-offs | [`docs/adr/`](adr/) |
+| Twenty-three decisions, with their trade-offs | [`docs/adr/`](adr/), indexed in [architecture.md](architecture.md) |
 | Objectives, and how objective 1 is judged | [decisions.md](decisions.md) |

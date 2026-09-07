@@ -119,3 +119,23 @@ accurate enough to beat following consensus and filling your starting slots.
   docstring, which records that.
 - Reopening this means re-running `hub.draft.backtest`, not re-arguing from first principles
   about how good a season simulator ought to be.
+
+> **Re-scored 2026-09-07 (issue #51): this ADR and [ADR-0007](0007-measurements-that-steer-the-product-are-committed-code.md)
+> pull opposite ways, and neither is wrong.** *"The code stays"* above is the REMOVE this ADR
+> ordered, applied in `e56873c`; ADR-0007 independently requires a measurement that steered the
+> product to stay committed and re-runnable. Both hold. What neither says is **where** such code
+> should live, and a call-site census run on 2026-09-06 shows what that gap costs: roughly a
+> thousand lines — `win_probability`, `champion_probability`, `rank_tiers`, `tag_for`,
+> `cost_of_waiting`, all of `hub/draft/leverage.py` — sit inside the draft package downstream of
+> no product decision, indistinguishable at a glance from code the product reads.
+>
+> The consequence is not tidiness. Nothing that ships reads it, so nothing that ships could
+> complain, and two defects accumulated in it for 270 commits without any product-level signal.
+> `backtest.py:227` still names *"the shipped 12 × 250"*, and there is no shipped path for the
+> referent to point at.
+>
+> **Neither ADR is reopened by this.** The verdict stands, the code stays, and the question is
+> only where it lives so a reader can tell the exhibit from the product. **Owned by #198**,
+> which names the conflict explicitly and fills the gap rather than re-litigating either side.
+> `hub.draft.cohort`'s use of `simulate_remaining_draft` is *not* part of the removed arm — it
+> serves the other two Gates.
