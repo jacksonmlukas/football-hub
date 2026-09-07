@@ -48,6 +48,7 @@ FLOOR: dict[str, int] = {
     "src/hub/draft/cohort.py": 0,
     "src/hub/draft/durability.py": 5,
     "src/hub/draft/evaluate.py": 14,
+    "src/hub/draft/fit_corrections.py": 22,
     "src/hub/draft/leverage.py": 1,
     "src/hub/draft/live.py": 10,
     "src/hub/draft/optimize.py": 3,

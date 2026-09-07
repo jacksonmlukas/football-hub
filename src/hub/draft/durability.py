@@ -41,6 +41,20 @@ TEAM_GAMES = 17
 #   WR  -0.151  [-0.266, -0.045]   99.6%   applied
 #   TE  -0.097  [-0.242, +0.062]   89.0%   not applied
 #   RB  -0.065  [-0.293, +0.167]   71.2%   not applied -- the market already prices it
+#
+# **REFITTED 2026-09-07. The constants below are unchanged; #48 is where they move or do
+# not.** `hub.draft.fit_corrections` fits against `proj_blend`, the column
+# `correct_projection` actually writes to, rather than `proj_ppg`. Unlike touchdown luck, this
+# signal barely moves with the baseline -- so both halves of the bracket say the same thing.
+# Over 2018-2025, season-clustered:
+#
+#   QB  -0.486  [-0.591, -0.377]  reproduced; the gap to -0.457 is under the MDE, so this is
+#               agreement rather than evidence of agreement
+#   WR  -0.327  [-0.394, -0.261]  UNREPRODUCED and resolved: about twice the shipped -0.151,
+#               and the only one of the five corrections that beats no-correction out of
+#               sample -- 7/7 held-out seasons
+#
+# See docs/fitted-corrections.md.
 BETA: dict[str, float] = {"QB": -0.457, "WR": -0.151}
 
 # Below this a player was not a starter, and his missed games are being a backup rather than
@@ -67,6 +81,19 @@ FLAG_STATUS = frozenset({"OUT", "DOUBTFUL", "QUESTIONABLE", "INJURY_RESERVE"})
 # 1. IR has no coefficient of its own, since nobody on IR appears on a practice report;
 # starting a season there means missing at least four games by rule, so it is at least as
 # severe as Out and borrowing that number understates it.
+#
+# **REFITTED 2026-09-07. Unchanged here; #48 decides.** `hub.draft.fit_corrections` returns
+# **-0.833, 95% CI [-1.475, -0.211]** season-clustered over 2018-2025 -- about half the
+# shipped size, and -1.631 is outside the interval. Read it with its two sample counts, which
+# this comment and docs/durability.md previously published without reconciling: the regression
+# runs on 4,595 player-seasons and **68 of them carry the designation**. The MDE is 1.051,
+# larger than the point estimate itself, so the run can say the shipped value is outside the
+# interval and cannot pin the level. Held out, applying it beats applying nothing in 1 season
+# of 7.
+#
+# The refit cannot speak to INJURY_RESERVE at all, for the same reason the original could not:
+# a week-1 practice report has no IR rows. One number serving three keys is the part of this
+# that no amount of refitting fixes. See docs/fitted-corrections.md.
 INJURY_BETA: dict[str, float] = {
     "OUT": -1.631, "DOUBTFUL": -1.631, "INJURY_RESERVE": -1.631,
 }

@@ -53,6 +53,21 @@ MIN_GAMES = 6
 #
 # The level of the projections is fine -- the coefficient on proj_ppg is 0.95-1.04 across
 # positions. This is specifically a touchdown bias, not a calibration problem.
+#
+# **REFITTED 2026-09-07 AND BOTH ARE DISPUTED. The constants below are unchanged; #48 is
+# where they move or do not.** `hub.draft.fit_corrections` is the first committed harness for
+# them, and it fits against `proj_blend` -- the column `correct_projection` actually writes to
+# -- rather than `proj_ppg`, which is one of the two halves that column is built from. The two
+# halves disagree about touchdowns by construction: `xfp_per_game` is an expectation and has
+# already regressed them, `proj_ppg` carries them forward. Over 2018-2025:
+#
+#   QB  +0.504  [-0.150, +0.939]  sign-reversed, and positive against every baseline that can
+#               be reconstructed, so no ESPN projection could produce -0.540
+#   WR  -0.117  [-0.323, +0.095]  reproduced but underpowered, and it changes sign inside the
+#               baseline bracket -- not resolvable without a projection that no longer exists
+#
+# Held out, applying either constant scores worse than applying no correction at all.
+# See docs/fitted-corrections.md for the population, the bracket and what it does not say.
 TD_LUCK_BETA: dict[str, float] = {"QB": -0.540, "WR": -0.286}
 
 _PHASES = (("receiving_yards", "receiving_tds", "rec", 6.0),

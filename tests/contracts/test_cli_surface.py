@@ -54,6 +54,7 @@ from hub.fetch import nflverse
 # `test_every_cli_module_is_covered_here` below rather than by nobody.
 CLI_MODULES = (
     "hub.draft.adherence", "hub.draft.backtest", "hub.draft.board", "hub.draft.calibrate", "hub.draft.evaluate",
+    "hub.draft.fit_corrections",
     "hub.draft.leverage", "hub.draft.live", "hub.draft.tune", "hub.fetch.cfbd",
     "hub.fetch.nflverse", "hub.fetch.odds", "hub.inspect", "hub.models.conformal",
     "hub.models.coverage",
@@ -226,6 +227,7 @@ ABSENT_INPUT = [
     ("hub.draft.backtest", []),
     ("hub.draft.calibrate", []),
     ("hub.draft.evaluate", ["--sweep"]),
+    ("hub.draft.fit_corrections", ["--fit", "--seasons", "2024,2025"]),
     ("hub.draft.live", ["--replay", "2024"]),
     ("hub.draft.tune", ["--sweep"]),
     ("hub.fetch.cfbd", ["--week", "1", "--status-path", "{tmp}/cfbd.json",
