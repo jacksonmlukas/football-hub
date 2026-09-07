@@ -845,3 +845,54 @@ def test_the_weekly_slate_passes_a_refresh_through_to_every_endpoint(transport, 
     assert len(calls) == 3
     cfbd.week(2026, 3, cache=paths["cache"], quota_path=paths["quota"], refresh=True)
     assert len(calls) == 6, "a refreshed week is three calls again, not zero"
+
+
+# --- the capture sidecar's own failure modes (issue #175) --------------------
+#
+# `captured_at` is built on one claim: unknown beats confidently wrong, because unknown means
+# "ask again" and a fabricated time means "no need to". Every path that reaches `None` is that
+# claim being kept, and the coverage ratchet caught all of them arriving untested.
+
+
+def test_a_sidecar_that_is_not_an_object_reads_as_unknown(tmp_path):
+    """Valid JSON, wrong shape. A list parses and has no capture time in it."""
+    entry = tmp_path / "games.json"
+    entry.write_text("[]")
+    cfbd._capture_path(entry).write_text('["2026-09-07T00:00:00+00:00"]')
+    assert cfbd._capture_beside(entry) is None
+
+
+def test_a_sidecar_whose_timestamp_is_not_a_string_reads_as_unknown(tmp_path):
+    """The key is present and the value is a number -- an epoch, plausibly, and not ours."""
+    entry = tmp_path / "games.json"
+    entry.write_text("[]")
+    cfbd._capture_path(entry).write_text(json.dumps({"captured_at": 1757203200}))
+    assert cfbd._capture_beside(entry) is None
+
+
+def test_a_sidecar_whose_timestamp_will_not_parse_reads_as_unknown(tmp_path):
+    """A string that is not a timestamp. `fromisoformat` raises and the answer is unknown,
+    not today -- the whole point of the field is that it dates the fetch."""
+    entry = tmp_path / "games.json"
+    entry.write_text("[]")
+    cfbd._capture_path(entry).write_text(json.dumps({"captured_at": "last Tuesday"}))
+    assert cfbd._capture_beside(entry) is None
+
+
+def test_a_sidecar_that_cannot_be_written_does_not_take_the_payload_down(tmp_path):
+    """A fetched week is worth more than its stamp.
+
+    The call has already been spent against a metered quota by the time the sidecar is
+    written, so a failure here must cost the capture time and not the rows. What it leaves
+    behind is an entry that reads back unknown, which is exactly the state the reader is
+    built for.
+    """
+    entry = tmp_path / "sub" / "games.json"
+    entry.parent.mkdir()
+    entry.write_text("[]")
+    entry.parent.chmod(0o500)                      # writable no longer
+    try:
+        cfbd._record_capture(entry)                # must not raise
+        assert cfbd._capture_beside(entry) is None
+    finally:
+        entry.parent.chmod(0o700)                  # so tmp_path can be cleaned up
