@@ -230,7 +230,7 @@ def test_a_child_that_errored_is_told_apart_from_one_that_failed(tmp_path):
 # signalling a caller catches (`NoLegalLineup`, `Infeasible`, `NoOverlap`) and `SystemExit`
 # from a `main`. Asking for a marker or a written exemption on all 74 is a gate nobody
 # finishes and everybody turns off, and this repo has the incident: `preflight_public.sh`
-# carried a `# noqa`-shaped exemption budget until it was replaced by named exceptions. A
+# carried a `noqa`-shaped exemption budget until it was replaced by named exceptions. A
 # noisy gate is worse than none, because it is switched off *and* it was the last thing
 # looking.
 #
