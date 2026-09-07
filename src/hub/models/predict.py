@@ -22,6 +22,8 @@ Unifying must not quietly swap a validated number for a tidier one.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import polars as pl
 
@@ -112,16 +114,118 @@ def skewed(mean, sd, skew, z):
     return np.clip(mean + sd * y, 0.0, None)
 
 
-def correlated_normal(rng, size, pos, nfl_team):
+# Above this share of a run's correlated blocks failing to factor, the draw refuses rather
+# than handing back a "correlated" simulation that is mostly not one.
+#
+# Private and lower-cased in intent, for the reason `board._TD_LUCK_NOTE` is: this is a
+# pre-registered guard rather than a fitted quantity, so it must not move the model version.
+# See `hub.config.FITTED_MODULES`. Its opposite number is `weekly_gate.VOID_FLOOR`, which
+# voids a gate run above a join-failure rate, and it is tight for the same reason that one is
+# -- the error is *directional*. A block that will not factor is not drawn with noise added,
+# it is drawn under the exact model this structure exists to replace: for a quarterback and
+# his own pass catchers, independence turns a nominal 80% interval into 72.9% coverage
+# against the correlated 80.4% (docs/correlation.md).
+#
+# Set from those two published figures rather than from any board: a share s of blocks
+# falling back costs roughly s x 7.5 points of coverage on the lineups those blocks price, so
+# holding that under half a point wants s below about 0.07. A twentieth is that, rounded
+# toward the tighter side, and it is stated here BEFORE it was measured against a real board
+# -- which matters, because the first board it met fails it (see docs/correlation.md,
+# 2026-09-07) and a floor chosen after the fact would have been chosen to clear it.
+_INDEPENDENT_FLOOR = 0.05
+
+
+class CorrelationVoid(RuntimeError):
+    """Too much of a correlated draw was drawn independently for it to be one.
+
+    A refusal rather than a degradation, and deliberately not the repo's usual graceful
+    fallback: CLAUDE.md's rule is that a failed *fetch* serves last-good state instead of
+    erroring, because hours-old ADP beats a stack trace. There is no last-good draw. What the
+    fallback would serve here is a simulation reported as correlated and performed
+    independently, which is worse than no answer because nothing downstream can tell.
+    """
+
+
+@dataclass
+class CorrelationReport:
+    """How much of a correlated draw was actually correlated.
+
+    The shape is `hub.draft.board.BuildReport`'s and the reason is the same one: a run that
+    quietly did less than it claims used to be invisible, because the only record of the
+    degradation was a `continue` statement. There the consumers *sniffed* for the evidence
+    and drifted apart; here there was no evidence to sniff for -- a block simulated
+    independently leaves a `z` of exactly the shape and dtype a correlated one leaves.
+
+    Owned by the caller and mutated by the draw, which is `board._stage(board, report, ...)`
+    rather than a return value, because one run makes thousands of draws (`win_probability`
+    is candidates x draft sims) and the count that matters is the run's, not one call's.
+
+    `blocks` counts the blocks that carried a correlation to lose. A team with one skill
+    player, or with no quarterback, has an identity block and is not counted either way:
+    nothing about it is degraded by being drawn independently, and folding those in would
+    make the share read low exactly when the affected teams were few.
+
+    The unit is one factorisation and not one team, because one run factors the same team
+    once per draw -- so a run's `blocks` counts into the thousands. `share` is the figure to
+    read and is the same either way; the raw counts are kept because a share with no
+    denominator cannot say whether it came from one block or ten thousand.
+    """
+    blocks: int = 0
+    independent: int = 0
+    floor: float = _INDEPENDENT_FLOOR
+
+    @property
+    def share(self) -> float:
+        """The share of correlated blocks that fell back to independence."""
+        return self.independent / self.blocks if self.blocks else 0.0
+
+    def degraded(self) -> bool:
+        """Whether any block failed. What makes a degraded run distinguishable from a clean
+        one -- the question a `continue` in a loop cannot answer afterwards."""
+        return self.independent > 0
+
+    def note(self) -> str:
+        """One line for the run's output. Said on every run, not only degraded ones: a line
+        that appears only when something broke is a line whose absence means either "nothing
+        broke" or "nobody looked"."""
+        if not self.blocks:
+            return "correlation: no team block carried a correlation to apply."
+        if not self.independent:
+            return f"correlation: all {self.blocks} team blocks factored."
+        return (f"correlation: {self.independent} of {self.blocks} team blocks would not "
+                f"factor ({self.share:.1%}); those teams' players were simulated "
+                f"independently.")
+
+    def check(self) -> None:
+        """Refuse a run that dropped more than the floor. Raises `CorrelationVoid`."""
+        if self.blocks and self.share > self.floor:
+            raise CorrelationVoid(
+                f"{self.independent} of {self.blocks} team correlation blocks would not "
+                f"factor ({self.share:.1%}), against a floor of {self.floor:.0%}. Those "
+                f"teams' players would be simulated independently, which is the model the "
+                f"correlation structure exists to replace -- so this is not a correlated "
+                f"simulation and is not reported as one. Check `TEAMMATE_RHO` and the "
+                f"positions on the board that produced these blocks.")
+
+
+def correlated_normal(rng, size, pos, nfl_team, *,
+                      report: CorrelationReport | None = None):
     """Standard normals correlated between teammates, independent otherwise.
 
     Only the quarterback's edges carry anything -- QB-WR +0.232, QB-TE +0.225, QB-RB +0.054,
     everything else within a few points of zero (docs/correlation.md). Applied by Cholesky
     on each NFL team's own small block, which is exact and costs nothing at 32 teams.
+
+    **A block that will not factor is counted and, past a floor, refused.** It used to be
+    caught and skipped, so that team's players were drawn independently with no counter, no
+    warning and nothing recorded. `report` is the caller's own `CorrelationReport` when it
+    wants the count to survive the call; without one the accounting still happens locally,
+    so the refusal holds for every caller rather than only the instrumented ones.
     """
     z = rng.standard_normal(size)
     if nfl_team is None:
         return z
+    report = CorrelationReport() if report is None else report
     teams = np.asarray(nfl_team, dtype=object)
     for team in {t for t in teams.tolist() if t is not None}:
         idx = np.flatnonzero(teams == team)
@@ -133,11 +237,18 @@ def correlated_normal(rng, size, pos, nfl_team):
                 r[i, j] = r[j, i] = teammate_rho(str(pos[idx[i]]), str(pos[idx[j]]))
         if not np.any(r - np.eye(idx.size)):
             continue
+        # GUARD a-block-that-will-not-factor-is-counted [unit/test_predict.py]: deleting
+        # either line puts this back to a bare `continue`, which simulates that team
+        # independently and leaves nothing anywhere saying so.
+        report.blocks += 1
         try:
             chol = np.linalg.cholesky(r)
         except np.linalg.LinAlgError:
+            report.independent += 1
             continue
+        # /GUARD
         z[..., idx] = z[..., idx] @ chol.T
+    report.check()
     return z
 
 

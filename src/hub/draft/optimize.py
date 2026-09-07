@@ -56,7 +56,7 @@ from hub.draft.picks import MY_SLOT, TEAMS, snake_picks
 from hub.draft.season import champion_probability
 from hub.draft.state import DraftState, remaining, roster_for
 from hub.league import FLEX_CAPACITY, FLEX_FROM, STARTERS
-from hub.models.predict import WEEKLY_SKEW_POOLED, moments
+from hub.models.predict import WEEKLY_SKEW_POOLED, CorrelationReport, moments
 from hub.names import player_key
 
 # Bench depth beyond the 8 starting slots. Deep enough that saturation is punished,
@@ -221,13 +221,20 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
 def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str], *,
                     my_slot: int, teams: int = 12, rounds: int = DEFAULT_ROUNDS,
                     n_draft_sims: int = 24, n_season_sims: int = 300,
-                    w: float = DEFAULT_ESPN_WEIGHT, seed: int = 0) -> pl.DataFrame:
+                    w: float = DEFAULT_ESPN_WEIGHT, seed: int = 0,
+                    report: CorrelationReport | None = None) -> pl.DataFrame:
     """P(you win the league) for each candidate, averaged over simulated drafts.
 
     Scored over the *whole board*, and rosters include the players each seat already holds.
     They used to include only picks made during the simulation, which made the objective
     blind to your own roster: holding a quarterback, it ranked a second one above a
     startable back.
+
+    `report` is a `CorrelationReport` the caller owns, and every one of the candidates x
+    draft-sims simulations below writes into it. Passing one is how a run learns that some
+    team's players were simulated independently -- a correlation block that will not factor
+    falls back to the model the structure exists to replace, and the count is the only
+    evidence of it, since the draw it produces has exactly the shape a correlated one has.
     """
     pool = blended_adp(board, w)
     pred = moments(pool)
@@ -258,7 +265,7 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
                                                rng=np.random.default_rng(seed + k))
             p = champion_probability(rosters, mu, sd, pos, n_sims=n_season_sims,
                                      rng=np.random.default_rng(seed + 1000 + k),
-                                     nfl_team=nfl_team, skew=skew)
+                                     nfl_team=nfl_team, skew=skew, report=report)
             mat[i, k] = p[my_slot - 1]
 
     return _lift_frame(candidates, mat)

@@ -62,7 +62,7 @@ from hub.draft.optimize import (
     simulate_remaining_draft,
     win_probability,
 )
-from hub.draft.season import lineup_points
+from hub.draft.season import CorrelationReport, lineup_points
 from hub.draft.state import DraftState
 from hub.fetch.nflverse import pins_this_run
 from hub.league import REG_SEASON_WEEKS
@@ -350,7 +350,8 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
              picks: Sequence[int] = DIAGNOSE_PICKS,
              my_slot: int | None = None, teams: int | None = None,
              rounds: int = DEFAULT_ROUNDS, n_draft_sims: int = 12,
-             n_season_sims: int = 250, seed: int = 0) -> pl.DataFrame:
+             n_season_sims: int = 250, seed: int = 0,
+             correlation: CorrelationReport | None = None) -> pl.DataFrame:
     """What championship equity recommends at each of your first turns.
 
     Run once before a change to the objective and once after, and diff. The draft is advanced
@@ -373,6 +374,13 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
     absorbed -- so this moves who owns the question rather than what `--diagnose` draws. That
     is the point: the two agreeing is a property of today's stages, not a rule, and the
     report is where the rule lives.
+
+    **`correlation` is the second report, and it is about the simulation rather than the
+    board.** `BuildReport` says which stages built the frame this reads; a `CorrelationReport`
+    says how much of the season simulation underneath was actually correlated. They are two
+    reports because they are two runs: the board was built once, and the equity below is
+    thousands of draws made now. Passing one in is what carries the count out to `main`,
+    which is the only place with an output to put it in.
     """
     cfg = RosterConfig()
     my_slot = cfg.slot if my_slot is None else my_slot
@@ -396,7 +404,8 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
             if len(names) >= 2:
                 wp = rank_tiers(win_probability(
                     board, state, names, my_slot=my_slot, teams=teams, rounds=rounds,
-                    n_draft_sims=n_draft_sims, n_season_sims=n_season_sims, seed=seed))
+                    n_draft_sims=n_draft_sims, n_season_sims=n_season_sims, seed=seed,
+                    report=correlation))
                 top = wp.row(0, named=True)
                 pos_of = dict(zip(board["player"].to_list(), board["pos"].to_list(), strict=True))
                 # Does any co-leader fill a slot you cannot currently start? The tripwire
@@ -679,8 +688,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             if snap:
                 board.write_parquet(snap)
                 print(f"  board snapshot written to {snap}")
+        # Owned here rather than inside `diagnose`, so the count survives the call. Every
+        # simulated season below writes into it; `note()` is said whether or not anything
+        # failed, because a line that appears only on a bad run reads the same as no line.
+        correlation = CorrelationReport()
         got = diagnose(board, report, rounds=a.rounds, n_draft_sims=a.draft_sims,
-                       n_season_sims=a.season_sims, seed=a.seed)
+                       n_season_sims=a.season_sims, seed=a.seed, correlation=correlation)
         if got.is_empty():
             print("  no pick produced a rankable shortlist; nothing to compare.")
             return 1
@@ -694,6 +707,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"  {r['pick']:>4}  {r['held']:<16} {str(r['leader'])[:24]:<24} "
                   f"{r['leader_pos'] or ''!s:<4} {r['lift']*100:>+6.2f}%  "
                   f"{r['co_leaders']:>6}  {r['candidates']:>5}")
+        print(f"\n  {correlation.note()}")
         bad = tripwire(board, got)
         print()
         if bad:

@@ -110,6 +110,34 @@ either.
 **QB–opposing-DST (~−0.45 per the doc) is unmeasured**, since this league's DST handling was
 never in scope for the component layer.
 
+## A block that will not factor
+
+> **Measured 2026-09-07**, issue #171. `correlated_normal` used to catch the Cholesky failure
+> and `continue`, so a block that is not positive semi-definite was simulated **independently**
+> — the exact model the three numbers above exist to replace — with no counter, no warning and
+> nothing recorded. The draw it produces has the shape and dtype of a correlated one, so there
+> was no evidence of it anywhere.
+>
+> It is counted now (`CorrelationReport`), and above a pre-registered share of blocks the draw
+> refuses rather than reporting a correlated simulation it did not perform.
+>
+> **On the live 457-player board of 2026-09-07, four of thirty-three blocks will not factor**
+> — LAR (−0.085 smallest eigenvalue), ATL (−0.067), SF (−0.045), WAS (−0.042) — which is
+> 12.1%, against the 5% floor. So `win_probability` now refuses on that board. That is the
+> correct reading and not a regression: those four teams' players have been drawn
+> independently since correlation landed, and the only thing that changed is that it says so.
+>
+> **The cause is a second quarterback.** The block is a star while a team has one — PSD
+> exactly while its pass catchers' squared correlations sum below one, which at +0.232 turns
+> over around nineteen receivers and never happens. Two quarterbacks make it bipartite
+> instead: each is correlated with every catcher and with the other at zero, and the bound
+> halves. All four failing teams carry two or three quarterbacks and seven or more catchers;
+> every single-quarterback team on the board factors comfortably. A board lists a depth chart,
+> so this is a property of real boards rather than an edge case.
+>
+> Fixing it is a modelling question and not this one's: two quarterbacks on a team are not
+> independent of each other, and `TEAMMATE_RHO` has no entry saying so.
+
 ## Reproduce
 
 The measurement and gate run from `hub.fetch.nflverse` weekly player stats; see
