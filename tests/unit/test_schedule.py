@@ -214,3 +214,94 @@ def test_a_schedule_without_times_carries_a_null_kickoff_rather_than_guessing(sc
     sched([("a", 1, 3.0, None, "KC", "LV", None, None)])
     assert schedule.priced_games(2026, at=dt.datetime(2026, 9, 6),
                                  base=tmp_path)["kickoff"].to_list() == [None]
+
+
+# --- which league the games are actually from ---------------------------------
+#
+# Issue #174. This module fetched nflverse's NFL season whatever league it was asked for and
+# then stamped the asked-for name onto the rows, so `priced_games(league="cfb")` returned the
+# NFL schedule wearing a college name. Worse than a refusal, because the name is what every
+# reader downstream believes -- `store.write` partitions on it -- and nothing re-derives it.
+
+
+def test_the_games_an_nfl_request_returns_are_the_nfl_sources_own_rows(sched, tmp_path):
+    """Identity, not the label. The rows that come back are the ones nflverse handed over --
+    same keys, same clubs -- which is what "these are NFL games" can mean without reading the
+    column that was the bug."""
+    sched([("2026_01_LV_KC", 1, 3.0, None, "KC", "LV")])
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 6), base=tmp_path,
+                                league="nfl")
+    assert got["game_id"].to_list() == ["2026_01_LV_KC"]
+    assert got["home_team"].to_list() == ["KC"] and got["away_team"].to_list() == ["LV"]
+
+
+def test_a_college_request_returns_college_games_or_refuses_naming_the_league(sched, tmp_path):
+    """The assertion #174 turns on, and it deliberately does not read the `league` column:
+    that column said whatever the caller asked for while the rows underneath were the NFL
+    season either way, so a test reading it back is the defect restated as a test.
+
+    Written as the acceptance criterion itself rather than as today's branch of it -- college
+    games, or a refusal that names the league -- so a real college loader arriving later
+    keeps this test honest instead of having to delete it. What must never happen is the
+    third thing, which is what shipped: nflverse's NFL game answering a college question.
+    """
+    sched([("2026_01_LV_KC", 1, 3.0, None, "KC", "LV")])
+    try:
+        got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 6), base=tmp_path,
+                                    league="cfb")
+    except schedule.LeagueUnavailable as refused:
+        assert "cfb" in str(refused)
+    else:
+        assert "2026_01_LV_KC" not in got["game_id"].to_list()
+        assert set(got["home_team"].to_list()) != {"KC"}
+
+
+def test_the_refusal_says_which_leagues_can_be_produced(sched, tmp_path):
+    """A caller who has just been refused needs the next move in the same sentence."""
+    sched([("a", 1, 3.0, None)])
+    with pytest.raises(schedule.LeagueUnavailable, match="nfl"):
+        schedule.priced_games(2026, at=dt.datetime(2026, 9, 6), base=tmp_path, league="cfb")
+
+
+def test_an_unknown_league_is_refused_rather_than_served_the_nfl_season(sched, tmp_path):
+    sched([("a", 1, 3.0, None)])
+    with pytest.raises(schedule.LeagueUnavailable, match="xfl"):
+        schedule.priced_games(2026, at=dt.datetime(2026, 9, 6), base=tmp_path, league="xfl")
+
+
+def test_a_loader_filed_under_a_league_its_rows_are_not_is_refused(sched, monkeypatch,
+                                                                   tmp_path):
+    """#174 as a mechanism rather than a promise.
+
+    Deriving the name from the source is only true while the registry is honest, and one
+    wrong entry -- `cfb` pointing at the NFL loader -- reproduces the whole defect a line at
+    a time. The frame carries the name its loader gave it, so the two can be compared, and
+    the disagreement is refused at the seam.
+    """
+    sched([("2026_01_LV_KC", 1, 3.0, None, "KC", "LV")])
+    monkeypatch.setitem(schedule.SLATES, "cfb", schedule._nfl_slate)
+    with pytest.raises(schedule.LeagueUnavailable, match="cfb"):
+        schedule.priced_games(2026, at=dt.datetime(2026, 9, 6), base=tmp_path, league="cfb")
+
+
+def test_the_league_column_is_written_by_the_loader_and_not_by_the_argument():
+    """Read off the source, the way `test_every_source_the_rule_can_emit_is_classified` is.
+
+    A behavioural test cannot see this: `priced_games(league="nfl")` returns "nfl" whether
+    the string came from the loader or from the argument, which is exactly why the bug
+    survived a suite. What separates them is where the literal is written, so that is what
+    is asserted -- `priced_games` may not name the league column at all.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(schedule.priced_games))
+    aliased = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "alias" and node.args
+                and isinstance(node.args[0], ast.Constant)):
+            aliased.add(node.args[0].value)
+    assert "league" not in aliased, (
+        "`priced_games` writes the league column itself. It has to come from the loader that "
+        "fetched the rows, or it is the argument talking about the rows again -- issue #174.")
