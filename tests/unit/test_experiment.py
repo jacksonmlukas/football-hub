@@ -1378,3 +1378,38 @@ def test_both_render_below_the_interval_in_a_stated_order():
                                      arm_a="a", arm_b="b")
     assert len(lines) == 4
     assert "95% CI" in lines[1] and "MDE" in lines[2] and "ceiling" in lines[3]
+
+
+# --- the two guards #45 added, which arrived untested -------------------------------------
+
+
+def test_the_t_quantile_refuses_a_degrees_of_freedom_it_has_no_table_for():
+    """`t_quantile` is solved by bisection on the exact CDF, and the CDF is undefined below
+    one degree of freedom. A gate with one cluster has none, and the honest answer there is a
+    refusal naming the number rather than a quantile solved on a distribution that does not
+    exist."""
+    for df in (0, -1):
+        with pytest.raises(ValueError, match=f"t has no {df} degrees of freedom"):
+            experiment.t_quantile(0.975, df)
+    # The boundary is usable: one degree of freedom is a real, if very wide, t.
+    assert experiment.t_quantile(0.975, 1) > experiment.t_quantile(0.975, 3) > 0
+
+
+def test_a_width_state_that_cannot_be_written_does_not_take_the_gate_down(tmp_path):
+    """The narrowing record is a convenience, and the gate's verdict is not.
+
+    `review_width` remembers the previous interval so criterion 5 can report a run that
+    narrowed. If that file cannot be written -- a read-only checkout, a runner with no state
+    directory -- the gate must still return its verdict. What it loses is the comparison on
+    the *next* run, which is the right thing to lose.
+    """
+    d = tmp_path / "ro"
+    d.mkdir()
+    path = d / "gate-width.json"
+    d.chmod(0o500)                                  # writable no longer
+    try:
+        got = experiment.review_width("draft", {"lo": -2.0, "hi": -1.0, "clusters": 4.0}, path=path)
+        assert got is not None, "a gate lost its verdict to a state file it could not write"
+        assert not path.exists(), "the fixture did not actually make the write fail"
+    finally:
+        d.chmod(0o700)
