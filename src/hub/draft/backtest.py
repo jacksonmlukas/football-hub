@@ -47,19 +47,25 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import (
+    NO_FRAMES,
     DraftConfig,
     RosterConfig,
+    commit,
     config_digest,
     data_digest,
     drafted_positions,
+    frames_digest,
     resolved_config,
 )
 from hub.draft.board import BuildReport, board_as_of
 from hub.draft.optimize import (
     DEFAULT_ROUNDS,
+    ROOM,
     market_pick,
     rank_tiers,
+    root_seed,
     simulate_remaining_draft,
+    stream,
     win_probability,
 )
 from hub.draft.season import CorrelationReport, lineup_points
@@ -94,6 +100,22 @@ LIMITATIONS = (
     "arm B is the POST-FIX optimizer: win_probability now seeds every seat with the roster "
     "it already holds. P0 measured the pre-fix one, which was blind to your own roster, so "
     "any movement from P0's +0.04 cannot be read as 'the shortlist tipped it'",
+    # Issue #196, and the one limitation here that is about comparability between runs rather
+    # than between this harness and the product. Left as a limitation rather than fixed: both
+    # draws are vectorised over the whole frame in one call, so making a player's draw a
+    # function of his identity rather than of his row would re-pair every player in every
+    # existing figure -- a larger change to the thing being measured than either #195 or #196
+    # is, and one that should be made deliberately with a re-run rather than in passing. What
+    # closes the reporting half of it is `board_digest`: the coupling is undetectable without
+    # a stamp naming the frame, and detectable with one.
+    "the noise is drawn per Board ROW, not per player: both stochastic quantities are arrays "
+    "whose last axis is the Board's height (optimize.simulate_remaining_draft draws one "
+    "pick-noise normal per row; predict.correlated_normal draws (n_sims, weeks, mu.size)). "
+    "Probed directly: drop one player and everyone ABOVE him keeps his pick-noise draw, "
+    "nobody below him does, and no player's season draw survives at all. So any commit that "
+    "moves Board membership -- MIN_GAMES, the xFP imputation, a join key, the as-of boundary "
+    "by a day -- re-pairs the whole board and is a total re-draw, not a small perturbation. "
+    "Two runs are comparable only at an identical board_digest",
 )
 
 def score_roster(names: Sequence[str], pos: Sequence[str], realised: pl.DataFrame,
@@ -166,8 +188,24 @@ def with_foresight(board: pl.DataFrame, realised: pl.DataFrame) -> pl.DataFrame:
                   .drop("_k", "_pts"))
 
 
+def draft_root(seed: int, season: int, k: int) -> np.random.SeedSequence:
+    """The root every stream of one (season, draft) descends from.
+
+    One function rather than a repeated expression, because `compare` and `ceiling` are
+    paired against each other -- `ceiling`'s incumbent column has to be `compare`'s incumbent
+    column, drawn against the same field -- and two copies of a seeding rule are two rules as
+    soon as one of them is edited. It used to be the expression `seed + 1000 * season + k`
+    written out twice.
+
+    What descends from it is `optimize.ROOM`, `optimize.ROLLOUT` and `optimize.SEASON_SIM`;
+    the tree is documented there.
+    """
+    return root_seed(seed, season, k)
+
+
 def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds: int,
-                       n_draft_sims: int, n_season_sims: int, seed: int,
+                       n_draft_sims: int, n_season_sims: int,
+                       seed: int | np.random.SeedSequence,
                        tiebreak: str = "ecr"):
     """Arm B. Top of `win_probability` over `recommend()`'s shortlist, ties broken by `by`.
 
@@ -230,6 +268,15 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     used 6 x 120 -- a quarter of the live budget -- and produced -5.79 [-9.17, -2.45], an
     artifact that vanished at adequate power. Lower them and you are measuring a different
     optimizer.
+
+    **The season stays the cluster, and #195 is why the question was asked.** Before it, the
+    rows were dependent for two separate reasons: they share a board, a player pool and one
+    realisation of the year (issue #45's argument), and consecutive drafts' arm-B evaluations
+    shared 11 of their 12 futures, which is a dependence the seeding manufactured and which
+    no clustering key named. The second reason is gone -- each draft's futures are now its
+    own -- and the first is untouched, because it is a claim about the data rather than about
+    the code. So the answer is unchanged and the reasoning behind it is now one reason
+    instead of two; `tests/contracts/test_gates_cluster_on_the_season.py` holds the call.
     """
     cfg = RosterConfig()
     my_slot = cfg.slot if my_slot is None else my_slot
@@ -241,15 +288,22 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
         arm_a = market_strategy()
         for k in range(n_drafts):
             # Common random numbers: the same room, twice. The only thing that differs
-            # between the arms is who sits in my seat.
-            room = seed + 1000 * season + k
+            # between the arms is who sits in my seat. `stream(root, ROOM)` is a pure
+            # function of the root, so the two calls below open one room and both arms play
+            # it -- the pairing is unchanged by #195 and is asserted, not assumed.
+            #
+            # What #195 changed is the level *below* this line. Arm B's evaluation rollouts
+            # and its season simulations now hang off the same root as separate coordinates,
+            # so they can no longer be the room they are scored in, and two consecutive
+            # drafts no longer share futures.
+            root = draft_root(seed, season, k)
             a_names, a_pos = play(board, arm_a, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=np.random.default_rng(room))
+                                  rounds=rounds, rng=stream(root, ROOM))
             arm_b = optimizer_strategy(board, my_slot=my_slot, teams=teams, rounds=rounds,
                                        n_draft_sims=n_draft_sims,
-                                       n_season_sims=n_season_sims, seed=room)
+                                       n_season_sims=n_season_sims, seed=root)
             b_names, b_pos = play(board, arm_b, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=np.random.default_rng(room))
+                                  rounds=rounds, rng=stream(root, ROOM))
             # A callback, not a print, so `compare` stays pure and the tests stay quiet. This
             # run takes long enough that a caller needs to know it is alive: the first attempt
             # was killed at 49 minutes having emitted nothing at all, because the only output
@@ -287,8 +341,10 @@ def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     answer: same units, same shape, plausible size. Taking `boards` by value and returning a
     frame is what makes that impossible to get wrong.
 
-    Common random numbers with `compare`: the same `seed + 1000 * season + k` room, so the
-    incumbent column here is that same column there, drawn against the same field.
+    Common random numbers with `compare`: the same `draft_root(seed, season, k)` room, so the
+    incumbent column here is that same column there, drawn against the same field. Both reach
+    the room through that one function rather than through two copies of an expression, which
+    is what keeps the claim true after a seeding change rather than only before one.
     """
     cfg = RosterConfig()
     my_slot = cfg.slot if my_slot is None else my_slot
@@ -300,11 +356,11 @@ def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
         seeing = with_foresight(board, real)
         arm_a, arm_c = market_strategy(), market_strategy(by=FORESIGHT)
         for k in range(n_drafts):
-            room = seed + 1000 * season + k
+            root = draft_root(seed, season, k)
             a_names, a_pos = play(board, arm_a, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=np.random.default_rng(room))
+                                  rounds=rounds, rng=stream(root, ROOM))
             c_names, c_pos = play(seeing, arm_c, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=np.random.default_rng(room))
+                                  rounds=rounds, rng=stream(root, ROOM))
             if on_draft is not None:
                 on_draft(season, k + 1, n_drafts)
             rows.append({
@@ -390,6 +446,12 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
     teams = cfg.teams if teams is None else teams
     want = set(picks)
     rows: list[dict] = []
+    # The same seeding tree `compare` uses, and for the same reason: the draft advanced below
+    # is the room every `win_probability` call in it is evaluated against, so on the old
+    # arithmetic rollout 0 was that room. Two runs at two commits still walk an identical
+    # path, which is the property this function exists for -- the root is a function of
+    # `seed` alone.
+    root = root_seed(seed)
 
     from hub.draft.board import recommend
 
@@ -407,7 +469,7 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
             if len(names) >= 2:
                 wp = rank_tiers(win_probability(
                     board, state, names, my_slot=my_slot, teams=teams, rounds=rounds,
-                    n_draft_sims=n_draft_sims, n_season_sims=n_season_sims, seed=seed,
+                    n_draft_sims=n_draft_sims, n_season_sims=n_season_sims, seed=root,
                     report=correlation))
                 top = wp.row(0, named=True)
                 pos_of = dict(zip(board["player"].to_list(), board["pos"].to_list(), strict=True))
@@ -442,7 +504,7 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
         return _pool_index(pool, name) if name else int(live[0])
 
     simulate_remaining_draft(board, DraftState(taken=[]), my_slot=my_slot, teams=teams,
-                             rounds=rounds, rng=np.random.default_rng(seed), my_pick=pick)
+                             rounds=rounds, rng=stream(root, ROOM), my_pick=pick)
     return pl.DataFrame(rows)
 
 
@@ -565,8 +627,31 @@ def verdict(summary: dict[str, float], seasons: pl.DataFrame) -> tuple[str, str]
     return gate(summary, seasons, ACTIONS)
 
 
-def stamped_for_publication(paired: pl.DataFrame) -> tuple[pl.DataFrame, str]:
+def stamped_for_publication(paired: pl.DataFrame,
+                            boards: dict[int, pl.DataFrame] | None = None,
+                            ) -> tuple[pl.DataFrame, str]:
     """The paired frame carrying what produced it, and the line a reader gets.
+
+    **Four stamps, and until #196 there were two.** `cfg_digest` says which model, `data_digest`
+    says which upstream bytes -- and neither says which *Board*, which is the object `compare`
+    is actually handed, or which *code* read it.
+
+    `board_digest` closes the first gap. The Board is built from those bytes by `board_as_of`,
+    through joins, an as-of boundary, a `MIN_GAMES` filter and an xFP imputation, and any of
+    them can change its membership without a source byte moving -- `90a9bbb` dropped 814 of
+    1,372 players from 2025 at an unchanged data digest. `compare`'s docstring says *"Pure:
+    takes frames, returns a frame, touches no network"*, and purity with respect to the network
+    had been getting read as reproducibility. It is not: it is a statement about what the
+    function does not touch, and the frames it does take were unrecorded.
+
+    `commit` closes the second. `docs/gate-power.md` records the draft gate's effect moving
+    8.07 points across 270 commits at an identical data digest, with no owning commit --
+    a movement nobody can attribute because the runs recorded which bytes they read and never
+    which tree read them. `docs/track-record.md` rule 1 makes these numbers commit-dated.
+
+    `boards` is optional and defaults to `NO_FRAMES`, which is a sentinel and not a hash, so a
+    caller that did not hand its frames over says so rather than publishing eight
+    legitimate-looking characters that name nothing.
 
     `resolved_config()`, not `HubConfig()`: ADR-0007 keeps this file so a later reader can tell
     which configuration produced these rows, and the defaults are that only while `conf/`
@@ -586,13 +671,22 @@ def stamped_for_publication(paired: pl.DataFrame) -> tuple[pl.DataFrame, str]:
     """
     pins = pins_this_run()
     data = data_digest(pins)
+    played = NO_FRAMES if boards is None else frames_digest(boards)
+    made_by = commit()
     stamped = paired.with_columns(
         pl.lit(config_digest(resolved_config())).alias("cfg_digest"),
-        pl.lit(data).alias("data_digest"))
+        pl.lit(data).alias("data_digest"),
+        pl.lit(played).alias("board_digest"),
+        pl.lit(made_by).alias("commit"))
     # Said as well as stored, because the reader deciding whether two runs are comparable is
     # usually reading the terminal, not the parquet.
     said = (f"  data: {data} over {len(pins)} pinned source(s)"
-            + ("" if pins else " -- nothing was loaded through the pinning layer"))
+            + ("" if pins else " -- nothing was loaded through the pinning layer")
+            + f"\n  board: {played}"
+            + ("" if boards else " -- the run did not hand over the frames it played")
+            + f"\n  commit: {made_by}"
+            + ("-- a dirty tree; this run is not that commit" if made_by.endswith("-dirty")
+               else ""))
     return stamped, said
 
 
@@ -747,6 +841,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     # `SEASON_CLUSTER`, not the row this gate used to take: the eighty (season, draft) rows
     # are twenty rooms drawn against four boards, and what varies independently between them
     # is the season. Issue #45; the effect is unmoved and the interval widens.
+    #
+    # Re-examined under #195, which removed a second and undeclared source of dependence
+    # between the rows, and left unchanged: see `compare`'s docstring for why the surviving
+    # reason is sufficient on its own.
     s = summarise(paired, cluster=SEASON_CLUSTER, seed=a.seed)
     if a.ceiling:
         print("  measuring the ceiling: the same arm, given the season in advance ...")
@@ -767,7 +865,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"    - {line}")
 
     if a.out:
-        stamped, said = stamped_for_publication(paired)
+        stamped, said = stamped_for_publication(paired, boards)
         stamped.write_parquet(a.out)
         print(f"\n  wrote {paired.height} paired rows to {a.out}\n{said}")
     return 0

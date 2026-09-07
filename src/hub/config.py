@@ -25,10 +25,11 @@ at the point of the decision.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
+import polars as pl
 from hydra import compose, initialize_config_dir
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
@@ -516,6 +517,103 @@ def data_digest(pins: Iterable[DataPin]) -> str:
     if not rows:
         return UNPINNED
     return hashlib.sha256("\n".join(rows).encode()).hexdigest()[:8]
+
+
+# What `commit()` answers when it cannot reach a git tree: an installed wheel, a tarball, a
+# container with no `.git`. Same trade as `UNPINNED` -- eight characters so the stamps line up
+# where they are printed together, and not eight *hex* characters, so a reader can tell a
+# sentinel from a SHA without being told.
+NO_COMMIT = "nocommit"
+
+
+def commit() -> str:
+    """The commit this code is running from, or `NO_COMMIT`, or a SHA marked dirty.
+
+    `docs/track-record.md` rule 1 counts a prediction only if its commit predates kickoff, and
+    `docs/gate-power.md` records an effect moving 8.07 points across 270 commits at an
+    identical data digest with **no owning commit** -- because the runs that produced those
+    figures recorded which *bytes* they read and never which *code* read them. Two of the three
+    published magnitudes in that table cannot be attributed to a tree at all. This is the
+    missing third of a run's identity: config, data, and the code.
+
+    **A dirty tree returns `<sha>-dirty` and that is deliberate.** A SHA claims "this tree is
+    that commit"; a tree with uncommitted changes is not, and printing the SHA alone would be
+    the false-provenance failure `data_digest` argues against one layer up -- a stamp that
+    looks entirely legitimate and names the wrong thing. It costs the eight-character
+    alignment, and honest is worth more than aligned.
+
+    Degrades rather than raises, per the repo's standing rule: a gate that dies because it
+    could not find git is a gate that stops being run.
+    """
+    import subprocess
+    try:
+        run = ["git", "-C", str(paths.ROOT)]
+        sha = subprocess.run([*run, "rev-parse", "HEAD"], capture_output=True, text=True,
+                             timeout=5, check=True).stdout.strip()[:8]
+        dirty = subprocess.run([*run, "status", "--porcelain"], capture_output=True,
+                               text=True, timeout=5, check=True).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return NO_COMMIT
+    # No `if not sha` guard: `rev-parse` under `check=True` either prints a SHA or raises, so
+    # a guard for the empty string would be a statement nothing can reach -- and this module's
+    # coverage floor is zero, which is the mechanism that says so rather than a preference.
+    return f"{sha}-dirty" if dirty else sha
+
+
+def frame_digest(frame: pl.DataFrame) -> str:
+    """Stable 8-char hash of a frame a gate was measured on: its rows and its column set.
+
+    `data_digest` is a digest of the right object one layer too high. It covers the upstream
+    source *bytes*, and what `backtest.compare` is handed is a **Board** -- built from those
+    bytes by `board_as_of`, through joins, an as-of boundary, a `MIN_GAMES` filter and an xFP
+    imputation, any of which can change membership without a single source byte moving. Three
+    runs in `docs/gate-power.md` carry the digest `621cb5dd` and were played on frames nobody
+    can now identify.
+
+    **Row order is in the digest, not sorted out of it, and that is the point rather than an
+    oversight.** Both stochastic quantities in this harness are drawn as arrays whose last
+    axis is the Board's height -- `optimize.simulate_remaining_draft` draws one pick-noise
+    normal per row, and `predict.correlated_normal` draws `(n_sims, weeks, mu.size)`. Position
+    in the frame is therefore what pairs a player with his draw, so two frames holding the same
+    players in a different order are two different experiments and must not compare equal.
+
+    The column set is in it for the reason `correction_report` shows: which columns a frame
+    carries decides which code path runs on it, so a frame that lost `adp` is a different frame
+    even where every retained value is identical.
+
+    Cell by cell through `repr`, which is round-trippable for floats and keeps a null distinct
+    from the string that spells it. Not `hash_rows`, whose stability is a promise polars makes
+    to itself across versions and not one to a digest that a test pins.
+    """
+    cols = sorted(frame.columns)
+    lines = ["\x1f".join(cols)]
+    lines += ["\x1f".join(repr(v) for v in row)
+              for row in frame.select(cols).iter_rows()]
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()[:8]
+
+
+def frames_digest(frames: Mapping[Any, pl.DataFrame]) -> str:
+    """One digest over every frame a run played, keyed by season.
+
+    Folded here rather than at the gate, so that the answer to "which Boards was this run
+    measured on" is not re-derived once per harness -- the shape `experiment.gate` exists to
+    prevent one level up, where three modules each remembered ADR-0019 and two of them
+    remembered it wrong.
+
+    Sorted by key, so the answer does not depend on the order a caller happened to build the
+    mapping in; the key is folded in beside its digest, so two runs over the same frames
+    assigned to different seasons do not compare equal.
+    """
+    rows = sorted(f"{k}={frame_digest(v)}" for k, v in frames.items())
+    if not rows:
+        return NO_FRAMES
+    return hashlib.sha256("\n".join(rows).encode()).hexdigest()[:8]
+
+
+# What `frames_digest` answers for a run that played no frames at all. A hash of the empty
+# string is eight legitimate-looking hex characters that compare equal across every such run
+# and tell a reader nothing, which is the case the sentinels above exist for.
+NO_FRAMES = "noframes"
 
 
 def digests(cfg: HubConfig | object, pins: Iterable[DataPin]) -> dict[str, str]:

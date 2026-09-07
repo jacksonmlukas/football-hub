@@ -317,11 +317,19 @@ def test_the_strategy_sees_picks_in_order_so_it_can_rebuild_the_state():
 # --- limitations are recorded before the numbers, not after ---------------
 
 def test_the_named_gaps_between_harness_and_product_are_recorded():
-    """A limitation discovered after the result is a rationalisation. These are the four
-    the design fixed in advance."""
-    assert len(bt.LIMITATIONS) == 5
+    """A limitation discovered after the result is a rationalisation. These are the five the
+    design fixed in advance, plus one #196 measured.
+
+    The sixth is a different kind and is counted here anyway. The first five are gaps between
+    this harness and the tool it audits, fixed before the numbers. The row-coupling one was
+    found afterwards, by probe -- which is exactly the position the docstring above calls a
+    rationalisation, and the reason it is stated as a limitation with its consequence rather
+    than argued away. It is not a gap against the product; it is a bound on which two runs of
+    this harness may be compared at all.
+    """
+    assert len(bt.LIMITATIONS) == 6
     joined = " ".join(bt.LIMITATIONS)
-    for expected in ("consensus", "xFP", "ties", "simulated", "POST-FIX"):
+    for expected in ("consensus", "xFP", "ties", "simulated", "POST-FIX", "board_digest"):
         assert expected in joined
 
 
@@ -816,3 +824,382 @@ def test_a_ceiling_that_bounds_carries_the_number_and_says_nothing():
     s, warning = with_ceiling({"mean": -19.66}, bound)
     assert s["ceiling"] == 41.0 and warning == ""
     assert s["mean"] == -19.66, "the summary it was given must come back intact"
+
+
+# --- the seed lattice (issue #195) ----------------------------------------
+#
+# The defect these hold: `compare` used to build one integer per draft and hand the same
+# integer to two different levels of the experiment -- to the room as a seed, and to
+# `optimizer_strategy`, whose rollouts opened `default_rng(seed + k)`. At `k = 0` that was
+# bit-for-bit the room being played, so one of arm B's evaluation futures WAS the room it was
+# about to be scored in, at every pick. Arm A got nothing of the kind, which is why the leak
+# is one-directional and the measured effect is if anything understated.
+#
+# These are asserted on the *streams*, not on the answers. Two runs whose answers differ is
+# consistent with any seeding at all; what has to be true is that no generator opened at one
+# level is a generator opened at another.
+
+
+def _stream_spy(monkeypatch):
+    """Record the state of every generator this package opens, by level.
+
+    `simulate_remaining_draft` consumes its generator exactly once, at the top, before either
+    `forced` or `state` is read -- so the state at entry identifies the stream, and two calls
+    recording the same state are two plays of one room. `forced` is what separates the two
+    kinds of call: an evaluation rollout always names the candidate it is testing, and the
+    room being played never does.
+
+    Both namespaces are patched because both hold a reference: `backtest.play` imported the
+    function, and `optimize.win_probability` calls it where it is defined.
+    """
+    from hub.draft import optimize as opt
+
+    seen: dict[str, list] = {"room": [], "rollout": [], "season": [], "log": []}
+    real_draft = opt.simulate_remaining_draft
+    real_season = opt.champion_probability
+
+    def _key(rng):
+        return repr(rng.bit_generator.state)
+
+    def _note(level, rng):
+        seen[level].append(_key(rng))
+        seen["log"].append((level, _key(rng)))
+
+    def draft_spy(board, state, *, forced=None, rng=None, **kw):
+        _note("rollout" if forced is not None else "room", rng)
+        return real_draft(board, state, forced=forced, rng=rng, **kw)
+
+    def season_spy(rosters, mu, sd, pos, *, rng=None, **kw):
+        _note("season", rng)
+        return real_season(rosters, mu, sd, pos, rng=rng, **kw)
+
+    monkeypatch.setattr(opt, "simulate_remaining_draft", draft_spy)
+    monkeypatch.setattr(bt, "simulate_remaining_draft", draft_spy)
+    monkeypatch.setattr(opt, "champion_probability", season_spy)
+    return seen
+
+
+def _rollouts_by_draft(log):
+    """The evaluation futures each draft in a sweep opened, in sweep order.
+
+    Segmented on the room calls rather than on the seeds, which is the point: `compare` plays
+    each draft's room exactly twice -- once per arm -- before moving on, so every second room
+    call opens a new draft. That boundary is a property of the loop and is the same before and
+    after #195, which is what lets this same helper read both.
+    """
+    out: list[set] = []
+    rooms = 0
+    for level, key in log:
+        if level == "room":
+            if rooms % 2 == 0:
+                out.append(set())
+            rooms += 1
+        elif level == "rollout" and out:
+            out[-1].add(key)
+    return out
+
+
+_SMALL = {"rounds": 3, "n_draft_sims": 3, "n_season_sims": 5}
+
+
+def _varied_realised(board):
+    """Realised points that differ between players, so a roster's score identifies it.
+
+    `_flat_realised` pays everyone the same, which makes `score_roster` a function of roster
+    *size* alone -- fine for the tests that only need a number, and useless for any assertion
+    about which players a room delivered. Anything comparing two rooms has to be able to tell
+    two rosters apart.
+    """
+    names = board["player"].to_list()
+    return pl.DataFrame(
+        {"player": [player_key(n) for n in names for _ in range(14)],
+         "week": [w for _ in names for w in range(1, 15)],
+         "points": [float(20 - i % 17) for i, _ in enumerate(names) for _ in range(14)]},
+        schema={"player": pl.Utf8, "week": pl.Int64, "points": pl.Float64})
+
+
+def test_no_evaluation_future_is_the_room_it_is_scored_in(monkeypatch):
+    """The load-bearing one, and it fails on the code that shipped before #195.
+
+    Arm B chooses by playing futures forward and reading off how often it wins. If one of
+    those futures is the very room the resulting roster is then graded in, arm B is being
+    scored partly on a draft it has already seen, and arm A -- which plays no futures at all
+    -- is not. That is foresight, it runs one way, and no amount of pairing removes it.
+    """
+    board = _full_board()
+    seen = _stream_spy(monkeypatch)
+    bt.compare({2024: board}, {2024: _flat_realised(board)}, n_drafts=1, seed=0, **_SMALL)
+
+    assert seen["room"] and seen["rollout"], "the spy caught neither level"
+    assert not set(seen["room"]) & set(seen["rollout"]), (
+        "an evaluation future is the room it is scored in -- arm B is reading its own "
+        "grading draft")
+
+
+def test_a_seasons_rooms_are_not_the_next_seasons_simulated_seasons(monkeypatch):
+    """The cross-level collision, asserted rather than assumed.
+
+    The season-simulation seeds were `room + 1000 + k` and the rooms were
+    `seed + 1000 * season + k`, so a season simulation inside 2024 landed exactly on a 2025
+    room -- twenty times per season pair. ADR-0019 ties adoption to consistency across
+    held-out seasons, which is the comparison this contaminates.
+    """
+    board = _full_board()
+    real = _flat_realised(board)
+    seen = _stream_spy(monkeypatch)
+    bt.compare({2024: board, 2025: board}, {2024: real, 2025: real},
+               n_drafts=2, seed=0, **_SMALL)
+
+    assert seen["season"], "the spy caught no season simulation"
+    assert not set(seen["room"]) & set(seen["season"]), (
+        "a simulated season is drawn from a stream that is also somebody's room")
+
+
+def test_consecutive_drafts_share_no_evaluation_futures(monkeypatch):
+    """Rooms one apart used to share 11 of their 12 futures.
+
+    `experiment.summarise` records the cluster choice as "one row per (season, draft),
+    independent rooms: no cluster". The rooms were independent; arm B's evaluations of them
+    were not, and that is the repeated-measures shape `docs/signal-screens.md` records as
+    having once turned noise into a 4-sigma result.
+    """
+    board = _full_board()
+    seen = _stream_spy(monkeypatch)
+    bt.compare({2024: board}, {2024: _flat_realised(board)}, n_drafts=2, seed=0, **_SMALL)
+
+    first, second = _rollouts_by_draft(seen["log"])
+    assert first and second, "a draft opened no futures of its own"
+    assert not first & second, (
+        f"two drafts in one sweep share {len(first & second)} of their evaluation futures")
+
+
+def test_both_arms_are_played_in_the_identical_room(monkeypatch):
+    """The property the whole design rests on, and which #195 must not cost.
+
+    Making the levels non-overlapping is easy to do by making everything different, which
+    would also make the two arms face two different fields and turn a paired comparison into
+    an unpaired one. So this is asserted, not assumed: one room per draft, played twice.
+    """
+    board = _full_board()
+    seen = _stream_spy(monkeypatch)
+    bt.compare({2024: board}, {2024: _flat_realised(board)}, n_drafts=2, seed=0, **_SMALL)
+
+    assert len(seen["room"]) == 4, "two arms x two drafts is four plays of a room"
+    assert len(set(seen["room"])) == 2, (
+        "the two arms must face the same field -- one distinct room per draft, not four")
+    assert seen["room"][0] == seen["room"][1] and seen["room"][2] == seen["room"][3]
+
+
+def test_the_ceiling_is_played_in_compares_own_rooms():
+    """`ceiling`'s incumbent column has to be `compare`'s incumbent column.
+
+    It is the bound `docs/gate-power.md` prices every effect against, and a bound drawn
+    against a different field is a bound on a different question -- same units, same shape,
+    plausible size, and wrong. Both now reach the room through `draft_root`, so this is a
+    property of one function rather than of two copies of an expression staying in step.
+    """
+    board = _full_board()
+    # Varied, not flat: under flat realised points every roster scores the same and this
+    # assertion holds for any two rooms whatever, which is an assertion about nothing.
+    real = _varied_realised(board)
+    kw = {"n_drafts": 2, "rounds": 6, "seed": 5}
+    paired = bt.compare({2024: board}, {2024: real}, n_draft_sims=2, n_season_sims=5, **kw)
+    bound = bt.ceiling({2024: board}, {2024: real}, **kw)
+    assert bound["market"].to_list() == pytest.approx(paired["market"].to_list())
+
+
+def test_a_negative_seed_still_runs():
+    """`--seed` is a plain int and a negative one used to work. A seeding change is not the
+    place to start rejecting one -- `SeedSequence` refuses negative entropy, so the root
+    folds rather than raises."""
+    board = _full_board()
+    got = bt.compare({2024: board}, {2024: _flat_realised(board)}, n_drafts=1, seed=-7,
+                     **_SMALL)
+    assert got.height == 1
+
+
+# --- which Board a run was measured on (issue #196) ------------------------
+#
+# A run stamped `cfg_digest` and `data_digest`, and the second is a digest of the upstream
+# *source bytes* -- a good digest of the wrong object. The Board is what `compare` is handed,
+# and nothing hashed it: `docs/gate-power.md` carries three runs at the data digest `621cb5dd`
+# that were played on frames nobody can now name.
+
+
+def test_the_frozen_board_digests_to_a_pinned_value():
+    """Offline and pinned, because a digest nobody can reproduce is a decoration.
+
+    The fixture is the Board already frozen under #108. If this value moves, either the
+    fixture moved or the digest's own rule did, and both are things a reader of an old figure
+    needs told rather than absorbed.
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    import panelarchive as arc
+
+    from hub.config import frame_digest
+
+    board = arc.frame("draft_board")
+    assert (board.height, len(board.columns)) == (200, 32)
+    assert frame_digest(board) == "f9fe3e88"
+
+
+def test_two_boards_differing_by_one_player_do_not_share_a_digest():
+    """The property the stamp exists for, and the reason it is worth having.
+
+    `90a9bbb` dropped 814 of 1,372 players from 2025 at an unchanged data digest. Under the
+    row-coupled draw that is a total re-draw of everyone's future, not a small perturbation --
+    so two runs either side of it are not comparable, and nothing in the output said so.
+    """
+    from hub.config import frame_digest
+
+    board = _full_board()
+    assert frame_digest(board) != frame_digest(board.head(board.height - 1))
+
+
+def test_row_order_is_in_the_digest():
+    """Position pairs a player with his draw, so two orderings are two experiments.
+
+    Both stochastic quantities are indexed by row: `simulate_remaining_draft` draws one
+    pick-noise normal per Board row and `predict.correlated_normal` draws an array whose last
+    axis is the Board's height. A digest that sorted the rows out would call two different
+    experiments the same one.
+    """
+    from hub.config import frame_digest
+
+    board = _full_board()
+    assert frame_digest(board) != frame_digest(board.reverse())
+
+
+def test_the_column_set_is_in_the_digest():
+    """Which columns a frame carries decides which code runs on it.
+
+    `correction_report` returns an empty frame when the corrected columns are absent, and
+    `diagnose` advances by consensus rather than by the draft market on a board with no `adp`.
+    A frame that lost a column is a different frame even where every retained value matches.
+
+    The rename is the load-bearing half. Dropping a column also drops a cell from every row,
+    so a digest over the cells alone would catch it and the column set would still be doing no
+    work; renaming holds every value fixed and moves only the header. `adp` -> `adp2` also
+    keeps its place under `sorted`, so the cells are not merely equal as a set but identical
+    in order.
+    """
+    from hub.config import frame_digest
+
+    board = _full_board()
+    assert frame_digest(board) != frame_digest(board.drop("adp"))
+    renamed = board.rename({"adp": "adp2"})
+    assert renamed.select(sorted(renamed.columns)).rows() == \
+        board.select(sorted(board.columns)).rows(), "the rename must move nothing but a name"
+    assert frame_digest(board) != frame_digest(renamed)
+
+
+def test_a_run_that_played_no_frames_says_so_rather_than_hashing_nothing():
+    """A sha of the empty string is eight legitimate-looking characters that compare equal
+    across every such run -- the false-provenance shape `data_digest` argues against."""
+    from hub.config import NO_FRAMES, frames_digest
+
+    assert frames_digest({}) == NO_FRAMES
+
+
+def test_the_same_frames_under_different_seasons_are_different_runs():
+    """The key is folded in beside the digest. One board played as 2024 and the same board
+    played as 2025 are two experiments, and a digest over the values alone would miss it."""
+    from hub.config import frames_digest
+
+    board = _full_board()
+    assert frames_digest({2024: board}) != frames_digest({2025: board})
+
+
+def test_the_paired_frame_names_the_board_it_was_measured_on(monkeypatch):
+    """Two runs on different Boards are distinguishable from their stamps alone, which is the
+    criterion -- without reading the frames back."""
+    from hub.draft import backtest as bt
+    from hub.fetch import nflverse as nv
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    paired = pl.DataFrame({"season": [2024], "effect": [1.0]})
+    board = _full_board()
+
+    one, said = bt.stamped_for_publication(paired, {2024: board})
+    two, _ = bt.stamped_for_publication(paired, {2024: board.head(board.height - 1)})
+
+    assert {"board_digest", "commit"} <= set(one.columns)
+    assert one["board_digest"][0] != two["board_digest"][0], (
+        "two runs on different Boards carry the same stamp, so the stamp is decoration")
+    assert one["cfg_digest"][0] == two["cfg_digest"][0], (
+        "the Board is not the model -- a different frame must not move the model version")
+    assert f"board: {one['board_digest'][0]}" in said
+
+
+def test_a_run_that_hands_over_no_boards_stamps_the_sentinel(monkeypatch):
+    """`stamped_for_publication` keeps its one-argument form for the callers that have no
+    frames to give, and those runs must say `noframes` rather than a plausible hash."""
+    from hub.config import NO_FRAMES
+    from hub.draft import backtest as bt
+    from hub.fetch import nflverse as nv
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    stamped, said = bt.stamped_for_publication(pl.DataFrame({"season": [2024]}))
+    assert stamped["board_digest"].unique().to_list() == [NO_FRAMES]
+    assert "did not hand over the frames it played" in said
+
+
+def test_the_run_stamps_the_commit_that_produced_it(monkeypatch):
+    """`docs/track-record.md` rule 1 makes these numbers commit-dated, and #190 records an
+    effect moving 8.07 points across 270 commits with no owning commit -- because no run ever
+    recorded which tree read the bytes."""
+    from hub.config import NO_COMMIT
+    from hub.draft import backtest as bt
+    from hub.fetch import nflverse as nv
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    stamped, said = bt.stamped_for_publication(pl.DataFrame({"season": [2024]}))
+    got = stamped["commit"][0]
+    assert got, "the commit column is empty"
+    assert got == NO_COMMIT or got[:8].isalnum()
+    assert f"commit: {got}" in said
+
+
+def test_an_unreachable_git_tree_degrades_rather_than_raising(monkeypatch):
+    """A gate that dies because it could not find git is a gate that stops being run."""
+    import subprocess
+
+    from hub import config as cfg
+
+    def boom(*a, **kw):
+        raise OSError("no git here")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert cfg.commit() == cfg.NO_COMMIT
+
+
+def test_a_dirty_tree_is_not_stamped_as_its_commit(monkeypatch):
+    """A SHA claims "this tree is that commit". A tree with uncommitted changes is not one,
+    and printing the SHA alone would be a stamp that names the wrong thing."""
+    import subprocess
+
+    from hub import config as cfg
+
+    class Done:
+        def __init__(self, out):
+            self.stdout = out
+
+    def fake(args, **kw):
+        return Done("deadbeefcafe\n" if "rev-parse" in args else " M src/hub/config.py\n")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    assert cfg.commit() == "deadbeef-dirty"
+
+
+def test_the_sentinels_are_not_mistakable_for_digests():
+    """Eight characters so the stamps line up, and not eight *hex* characters, so a reader can
+    tell a sentinel from a hash without being told. The same line `UNPINNED` holds."""
+    from hub.config import NO_COMMIT, NO_FRAMES
+
+    for sentinel in (NO_COMMIT, NO_FRAMES):
+        assert len(sentinel) == 8
+        with pytest.raises(ValueError):
+            int(sentinel, 16)

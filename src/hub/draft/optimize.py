@@ -63,6 +63,64 @@ from hub.names import player_key
 # shallow enough that the simulated draft stays cheap.
 DEFAULT_ROUNDS = 14
 
+# --- the seeding tree (issue #195) ------------------------------------------------------
+#
+# Three different things in this package need randomness, and they are at three different
+# *levels* of the same experiment:
+#
+#   ROOM        the eleven opponents you are actually drafting against, and which is the
+#               room your roster is scored in;
+#   ROLLOUT     the draft futures a candidate is evaluated over, inside `win_probability`;
+#   SEASON_SIM  the seasons each of those futures is played out for.
+#
+# Until #195 these were arithmetic offsets on one integer -- the room was `seed`, rollout k
+# opened `default_rng(seed + k)`, and season sim k opened `default_rng(seed + 1000 + k)`.
+# Offsets on a shared line are not separate streams, they are one line read from different
+# places, and a line read from different places eventually reads itself:
+#
+#   * rollout 0 opened `default_rng(seed)`, bit-for-bit the room being scored, so one of
+#     arm B's twelve evaluation futures WAS the room it was about to be graded in, at every
+#     pick. Arm A got nothing of the kind, so the leak is one-directional;
+#   * consecutive drafts, whose rooms sat one apart, shared 11 of their 12 futures;
+#   * `seed + 1000 + k` landed on the next season's room lattice, because the room itself
+#     was `seed + 1000 * season + k`.
+#
+# The fix is not a bigger offset. A bigger offset is the same defect with a larger constant,
+# and it stays correct only for as long as nobody changes `n_draft_sims` or the number of
+# drafts. `SeedSequence` spawn coordinates are what actually separate streams: two distinct
+# coordinate paths hash to unrelated states, so a level cannot arrive at another level's
+# stream by counting, whatever the counts are.
+ROOM, ROLLOUT, SEASON_SIM = 0, 1, 2
+
+# `SeedSequence` refuses a negative entropy word, and `--seed` is a plain `int` from argparse.
+# Fold rather than raise: a negative seed used to run, and a seeding change is not the place
+# to start rejecting one.
+_ENTROPY_MASK = (1 << 64) - 1
+
+
+def root_seed(*parts: int | np.random.SeedSequence) -> np.random.SeedSequence:
+    """The root every stream of one experiment descends from.
+
+    Pass the coordinates that identify the experiment -- for the backtest, `(seed, season,
+    draft)`. A `SeedSequence` passed alone is returned as-is, which is what lets a caller
+    that already holds a root hand it down instead of flattening it back to an integer and
+    re-deriving something that only looks like it.
+    """
+    if len(parts) == 1 and isinstance(parts[0], np.random.SeedSequence):
+        return parts[0]
+    return np.random.SeedSequence([int(p) & _ENTROPY_MASK for p in parts])  # type: ignore[arg-type]
+
+
+def stream(root: np.random.SeedSequence, *path: int) -> np.random.Generator:
+    """One level's generator, at coordinate `path` under `root`.
+
+    Deterministic and repeatable: calling this twice with the same root and path returns two
+    generators in the same state, which is exactly what "the same room, twice" needs. What it
+    does not do is let two different paths meet, which is what the arithmetic did.
+    """
+    return np.random.default_rng(
+        np.random.SeedSequence(entropy=root.entropy, spawn_key=(*root.spawn_key, *path)))
+
 # What a pluggable draft strategy is handed, and what it returns.
 #
 #   pool   -- the board, with `mu_pick` attached; indices are board rows
@@ -221,7 +279,8 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
 def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str], *,
                     my_slot: int, teams: int = 12, rounds: int = DEFAULT_ROUNDS,
                     n_draft_sims: int = 24, n_season_sims: int = 300,
-                    w: float = DEFAULT_ESPN_WEIGHT, seed: int = 0,
+                    w: float = DEFAULT_ESPN_WEIGHT,
+                    seed: int | np.random.SeedSequence = 0,
                     report: CorrelationReport | None = None) -> pl.DataFrame:
     """P(you win the league) for each candidate, averaged over simulated drafts.
 
@@ -235,6 +294,14 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     team's players were simulated independently -- a correlation block that will not factor
     falls back to the model the structure exists to replace, and the count is the only
     evidence of it, since the draw it produces has exactly the shape a correlated one has.
+
+    **`seed` may be a `SeedSequence`, and a caller that is itself a level of a larger
+    experiment should pass one.** An integer is a root of its own, which is right for the
+    live board -- there is one draft and it is this one. `backtest.compare` is the other
+    case: it plays a room and then evaluates candidates *inside* that room, so its room and
+    this function's rollouts have to be two coordinates of one tree rather than two integers
+    that happen to differ. Handing down the root is what makes them so; handing down an
+    integer is how rollout 0 came to be the room itself (issue #195).
     """
     pool = blended_adp(board, w)
     pred = moments(pool)
@@ -257,14 +324,21 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     # only thing that differs between two columns is the player at this pick. The levels
     # still carry the full noise of the simulation, but the *difference* between two
     # candidates is paired, and the paired difference is what the decision needs.
+    #
+    # `seed` names the experiment, and the two levels below hang off it as coordinates rather
+    # than as offsets -- see the seeding tree above. Future k is still the same future for
+    # every candidate, which is the whole point of the paired design; what it is no longer is
+    # the room this evaluation is about to be scored in, or the future the next draft in the
+    # sweep evaluates against (issue #195).
+    root = root_seed(seed)
     mat = np.empty((len(candidates), n_draft_sims))
     for i, c in enumerate(candidates):
         for k in range(n_draft_sims):
             rosters = simulate_remaining_draft(board, state, my_slot=my_slot, teams=teams,
                                                rounds=rounds, forced=c, w=w,
-                                               rng=np.random.default_rng(seed + k))
+                                               rng=stream(root, ROLLOUT, k))
             p = champion_probability(rosters, mu, sd, pos, n_sims=n_season_sims,
-                                     rng=np.random.default_rng(seed + 1000 + k),
+                                     rng=stream(root, SEASON_SIM, k),
                                      nfl_team=nfl_team, skew=skew, report=report)
             mat[i, k] = p[my_slot - 1]
 
