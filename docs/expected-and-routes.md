@@ -77,6 +77,27 @@ Screened against the *other* survivors rather than against each other, both clea
 | snap_trend | +0.038 (2.8 se), 5/5 | **+0.0425 (3.04 se), 5/5** |
 | route_trend | +0.032 (2.4 se), 5/5 | +0.0341 (2.51 se), 5/5 |
 
+> **The four `se` figures restated 2026-09-07.** Issue #169, under [method.md rule
+> 13](method.md): the screen's standard error was over the season-week cells while its
+> verdict is over the per-season means, so every `se` this page quotes came from the wrong
+> unit. Re-run over the seasons on the same panel, which reproduced all four published
+> figures under the superseded estimator first:
+>
+> | | alone | vs the other survivors |
+> |---|---|---|
+> | snap_trend | +0.038 (**3.39** se), 5/5 | **+0.0425 (3.74 se), 5/5** |
+> | route_trend | +0.032 (**2.39** se), 5/5 | +0.0341 (**2.64** se), 5/5 |
+>
+> **Every `r` is unchanged, both verdicts are unchanged, and the conclusion this table
+> exists to support — that the snap version is the stronger of the two — is unchanged and
+> is now slightly clearer.** `route_trend` stays out of `FEATURES`.
+>
+> **Not restated: the annihilation pair.** The +0.017 at 1.4 se and −0.001 quoted above
+> re-ran to +0.014 at 1.07 se and +0.001 under the *superseded* estimator, so that gap is
+> archive drift in the participation source and not something #169 caused. Restating it
+> here would attribute it to the wrong correction. Both readings kill both features, which
+> is the only thing the paragraph rests on.
+
 **So the access-beats-presence distinction does not survive here.** A hypothesis for why,
 untested: the distinction the literature draws is about *levels* — a back with 80% of snaps and
 30% of routes — and a **trend** differences the level out. If a player's run/pass snap mix is

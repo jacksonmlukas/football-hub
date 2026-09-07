@@ -82,6 +82,23 @@ it would be silent, because a leaking model does not crash, it looks good. The A
 noise into an apparent 4-sigma result. Screens now report one row per player per anchor, and
 never pool anchors.
 
+**The second incident, in the module that enforces the first.** The weekly screen refuses to
+pool player-weeks — its docstring says pooling would inflate every `t` by about √14 — and then
+took its standard error across the 55 season-week **cells** while its `verdict()` requires the
+sign to hold across the five **per-season means**. The precision came from dozens of cells and
+the decision from five seasons, so the `t` on the page and the rule reading it were about
+different quantities. Corrected over the seasons
+([weekly-screen.md](weekly-screen.md), issue #169), and one status moved: the prior TD rate
+against passing attempts, published as a null at 1.9 se, is a **broken pre-stated null** at
+2.7 se across 5/5 seasons.
+
+**The rule cuts both ways, which is the part worth keeping.** The correction *narrowed* five of
+the nine intervals rather than widening them, because for these features the week-to-week
+scatter inside a season is large and averages out while the between-season scatter is small.
+Clustering is not a synonym for a wider interval; it is a claim about which observations are
+exchangeable, and the number moves whichever way the data says. Choosing the unit by the
+direction it moves the answer is the failure this whole page exists to prevent.
+
 ### 4. A significant result whose sign flips between seasons is a bug, not a finding
 
 The cheapest diagnostic available, and it was the tell in both errors above.
