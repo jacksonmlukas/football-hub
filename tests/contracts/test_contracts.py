@@ -222,6 +222,105 @@ def test_a_frame_under_the_trigger_everywhere_is_left_entirely_alone():
     assert out["other"][0] == pytest.approx(0.008)
 
 
+# --- a bad reading is not a units change (issue #149) -------------------------
+#
+# The trigger was one-sided: some value in the rule taller than `above`. A units change and
+# a single corrupt reading look identical from the top, so one bad number inside an
+# otherwise-correct fractional frame bought a hundred-fold rescale of every column in the
+# rule -- and the rescaled frame then sat comfortably inside the bound that would have
+# refused the original, which is the whole reason the bound is declared. The mirror image
+# of the ordering fix: `validate` returns the repaired frame and the fetch boundaries
+# persist that return, so those units are what is written, pinned and served afterwards.
+#
+# The two frames below differ only in whether the column is percents *throughout*. Either
+# one alone restates the behaviour that already existed; the pair is the test.
+
+
+def _fractional(**override):
+    """Four honest rows of fractions, in both columns of one rule."""
+    df = pl.DataFrame({"key": ["a", "b", "c", "d"],
+                       "pct": [0.82, 0.0, 0.90, 0.61],
+                       "other": [0.14, 0.0, 0.21, 0.18]})
+    return df.with_columns(**override) if override else df
+
+
+_ONE_BAD = pl.Series("pct", [0.82, 0.0, 0.90, 87.0])
+"""The same frame with one reading corrupt. 87.0 is chosen to be indistinguishable from a
+percent -- an impossible number would be refused by the bound whatever the trigger did, and
+would prove nothing about telling the two cases apart."""
+
+_WHOLE_PERCENTS = pl.DataFrame({"key": ["a", "b", "c", "d"],
+                                "pct": [82.0, 0.0, 90.0, 61.0],
+                                "other": [14.0, 0.0, 21.0, 18.0]})
+"""The same frame after the units change this repair exists for."""
+
+
+def test_one_corrupt_value_in_a_fractional_frame_is_refused_and_not_rescaled():
+    """A column that is fractions everywhere except in one row is fractions with a bad
+    reading in it, and the bound is what answers that.
+
+    Rescaling it instead moves the other three rows by a hundred to bring the fourth inside
+    a range it has no business being inside -- and the frame then passes, silently, in the
+    units nothing sent. `validate` returns what it repaired and the fetch boundaries write
+    the return, so that frame is what gets pinned and served from cache from then on.
+    """
+    with pytest.raises(ContractViolation, match=r"pct range \[0.0, 87.0\]"):
+        _WHOLE_RULE.validate(_fractional(pct=_ONE_BAD))
+
+
+def test_the_corrupt_frame_is_refused_with_the_numbers_that_actually_arrived():
+    """The refusal quotes 87.0 and not 0.87. A trigger that fired here would hand the reader
+    a range built from numbers no source sent, and the one thing the message needs to do is
+    send somebody upstream to look at the row that is wrong."""
+    with pytest.raises(ContractViolation) as e:
+        _WHOLE_RULE.validate(_fractional(pct=_ONE_BAD))
+    assert "after rescaling" not in str(e.value), (
+        f"the frame was rescaled before it was refused, so a corrupt reading was treated as "
+        f"a units change: {e.value}")
+    assert _WHOLE_RULE.repairs(_fractional(pct=_ONE_BAD)) == {}, (
+        "a boundary would pin this archive as rescaled on ingest")
+
+
+def test_a_frame_genuinely_in_whole_percents_is_still_repaired():
+    """The other half, and without it the change above is just a stricter refusal. Every
+    non-zero share in `pct` is a height no fraction reaches, which is the source saying its
+    units moved -- so the rule fires and moves every column it declares."""
+    out = _WHOLE_RULE.validate(_WHOLE_PERCENTS)
+    assert out["pct"].to_list() == pytest.approx([0.82, 0.0, 0.90, 0.61]), (
+        "0.0 is a fixed point of the multiplication and an ordinary line for a player who "
+        "took no snap of that kind; a trigger that read it as a fraction would refuse the "
+        "very frame this rule is for")
+    assert out["other"].to_list() == pytest.approx([0.14, 0.0, 0.21, 0.18]), (
+        "the column carrying no evidence of its own was left in the units the other one "
+        "proved the frame was not in -- the half-repaired frame this rule exists to prevent")
+
+
+def test_a_column_of_zeroes_cannot_carry_the_rule_on_its_own():
+    """Zero is the one value that means the same in both units, so it is evidence for
+    neither. A receiver's `defense_pct` is 0.0 in every honest refresh, and a trigger that
+    counted it would call every such column percents and rescale the frame around it."""
+    zeroed = pl.DataFrame({"key": ["a", "b"], "pct": [0.0, 0.0], "other": [0.5, 0.4]})
+    assert _WHOLE_RULE.validate(zeroed)["other"].to_list() == pytest.approx([0.5, 0.4])
+
+
+def test_narrowing_by_row_does_not_turn_a_bad_reading_into_a_units_change():
+    """A consumer holds a slice, and narrowing by row moves the observed maximum -- which is
+    exactly what the old trigger read. The slice below is the corrupt row and one honest one:
+    the maximum says percents and the column still does not."""
+    sliced = _fractional(pct=_ONE_BAD)[2:]
+    assert sliced["pct"].max() == 87.0, "the slice no longer carries the corrupt reading"
+    with pytest.raises(ContractViolation, match="pct range"):
+        _WHOLE_RULE.conform(sliced, "key", "pct", "other")
+
+
+def test_narrowing_by_row_still_repairs_a_slice_of_a_whole_percent_frame():
+    """And the same narrowing on the frame the repair is for. A consumer reading two rows of
+    a percent refresh is reading percents, and gets the fraction it asked the contract for
+    rather than a refusal it cannot use."""
+    out = _WHOLE_RULE.conform(_WHOLE_PERCENTS[2:], "key", "pct", "other")
+    assert out["pct"].to_list() == pytest.approx([0.90, 0.61])
+
+
 def test_conform_narrows_what_is_checked_and_not_what_is_repaired():
     """What a consumer answers for is the columns it reads; what the units are is not its
     call.

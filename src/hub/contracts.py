@@ -128,6 +128,44 @@ def _reasons(fired: list[tuple[Normalisation, list[str]]]) -> dict[str, str]:
     return {c: rule.because for rule, present in fired for c in present}
 
 
+def _reads_as_percents(s: pl.Series, above: float) -> bool:
+    """Whether this column can only be the percent form of the quantity it declares.
+
+    The two halves of a `Normalisation`'s trigger, asked of one column and answered
+    together, because either half alone is satisfied by a frame the other refuses:
+
+      * **implausible as fractions** -- no value in the column is one a fraction reaches.
+        Not *some* value, which is all the trigger used to ask: a fractional frame with one
+        corrupt reading in it satisfies "some value is too tall" exactly as a percent frame
+        does, and the two are then indistinguishable to it.
+      * **plausible as percents** -- every value in it is one a percent reaches. A column of
+        fractions carrying one bad number says, read as percents, that everybody else took
+        under one and a half percent of the snaps, which is not a thing a snap frame says.
+
+    Both halves are the same comparison seen from the two sides, so they are one line: the
+    column's *minimum*, not its maximum. A units change is a whole-column fact -- PFR does
+    not publish half a column as percents -- so the bottom of the column is where a units
+    change shows and where a single corrupt reading does not.
+
+    Zero is skipped and cannot carry the column on its own. It is the one value that means
+    the same thing in both units, so it is evidence for neither, and it is ordinary: a
+    receiver's `defense_pct` is 0.0 in every honest refresh. Counting it would make every
+    all-zero column say "percents" and rescale the frame around it.
+
+    Nothing here bounds the column from above. A value too tall to *be* a percent -- 500,
+    which a hundredth of leaves at 5 -- is a question about validity and not about units,
+    and `validate` asks it afterwards against the declared range, where the refusal can say
+    the numbers it quotes were rescaled. Answering it here instead would take that sentence
+    away from the reader and put nothing in its place.
+    """
+    seen = s.drop_nulls()
+    seen = seen.filter(seen != 0)
+    if seen.is_empty():
+        return False
+    low = seen.min()
+    return low is not None and float(cast(float, low)) > above
+
+
 @dataclass(frozen=True)
 class Normalisation:
     """A known upstream variation a contract answers by restating a column rather than
@@ -142,7 +180,10 @@ class Normalisation:
 
     **Narrow on purpose, and it widens the vocabulary rather than softening the guard.** A
     units change is a whole-column fact -- PFR does not publish half a column as percents --
-    so the trigger is the column's own maximum and the repair is one multiplication.
+    so the trigger is a whole column of the declared quantity reading as percents and the
+    repair is one multiplication. `above` is the height that separates the two readings: a
+    column every one of whose non-zero values clears it cannot be fractions and can be
+    percents, and `_reads_as_percents` argues why both halves of that have to be asked.
     `validate` checks the declared range *after* this has run, so a value the factor cannot
     bring back inside the bound is refused exactly as it was before, and anything needing a
     row-level decision is not a normalisation and never becomes one.
@@ -297,6 +338,17 @@ class Contract:
         is skipped rather than rescaled -- multiplying a `Utf8` column would raise something
         that is not a `ContractViolation`, and the dtype refusal downstream is the answer
         the reader wants for that frame anyway.
+
+        **What fires it is a whole column, and it used to be a single value.** A one-sided
+        trigger -- some value in the rule is taller than `above` -- cannot tell a units
+        change from one bad reading, because both look exactly like that from the top. One
+        corrupt number inside an otherwise-correct fractional frame therefore bought a
+        hundred-fold rescale of every column in the rule, and the rescaled frame then sat
+        comfortably inside the very bound that would have refused it (#149). That mattered
+        more once `validate` began returning the repaired frame and the fetch boundaries
+        began persisting the return (#140/#141): the corrupted units are what is written,
+        pinned and served from cache afterwards, where before the damage ended with the
+        read. `_reads_as_percents` is the two-sided question, per column.
         """
         out: list[tuple[Normalisation, list[str]]] = []
         for rule in self.normalisations:
@@ -308,10 +360,16 @@ class Contract:
             # trips nothing and sits inside its bound. Nothing refuses that frame, because
             # every column in it is individually plausible, and a reader gets eighty percent
             # where the source said eight tenths of one.
+            #
+            # `any`, and it stays one decision for the rule: the columns of one quantity do
+            # not all carry the evidence. A whole-percent refresh leaves `st_pct` full of
+            # ordinary specialists' shares -- 0.14, 0.22 -- which read as percents are tiny
+            # and read as fractions are ordinary, so that column says nothing either way.
+            # One column that can only be percents is the response saying its units moved,
+            # and the rule then moves everything it declares, which is the paragraph above.
             present = [c for c in rule.columns
                        if c in df.columns and df.schema[c].is_numeric()]
-            tops = [float(cast(float, t)) for c in present if (t := df[c].max()) is not None]
-            if not tops or max(tops) <= rule.above:
+            if not any(_reads_as_percents(df[c], rule.above) for c in present):
                 continue
             out.append((rule, present))
         return out
@@ -655,9 +713,11 @@ SNAP_COUNTS = Contract(
         Normalisation(
             columns=("offense_pct", "defense_pct", "st_pct"), above=1.5, scale=0.01,
             because="PFR publishes these as fractions and nflverse has shipped them as whole "
-                    "percents. A share above 1.5 can only be the percent form -- the honest "
-                    "ceiling is 1.01, PFR's own rounding -- so the hundred comes back out "
-                    "before the bound is checked"),
+                    "percents. A whole column of shares above 1.5 can only be the percent "
+                    "form -- the honest ceiling is 1.01, PFR's own rounding -- so the "
+                    "hundred comes back out before the bound is checked. A column that only "
+                    "reaches 1.5 in places is a fractional column with a bad reading in it, "
+                    "and the bound is what answers that"),
     ),
     min_rows=1,
     # Checked against `nflverse_snap_counts.json`, a real 2024 capture.

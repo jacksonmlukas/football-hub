@@ -164,6 +164,29 @@ def test_a_whole_percent_capture_reaches_one_answer_down_one_path():
     assert_frame_equal(read, snap_usage(df, xw).sort("player_id"))
 
 
+def test_one_corrupt_share_in_the_real_capture_is_refused_and_not_rescaled():
+    """The units change above, and the thing it must not be confused with, on the same
+    capture (#149).
+
+    The row set here is fractions: six starters at 1.0 and two players who took no
+    offensive snap. Putting 87.0 into one row leaves a column that is fractions everywhere
+    else, and a trigger reading only the frame's tallest value cannot tell that from the
+    percent refresh above -- it rescales all three columns by a hundred, the bad row lands
+    at 0.87, and the frame passes the very bound that exists to refuse it. 87.0 is chosen
+    to be a plausible percent; an impossible number would be refused whatever fired.
+    """
+    df = frame("nflverse_snap_counts.json").with_columns(
+        pl.col("season").cast(pl.Int32), pl.col("week").cast(pl.Int32))
+    holed = df.with_columns(
+        pl.when(pl.int_range(pl.len()) == 0).then(pl.lit(87.0))
+          .otherwise(pl.col("offense_pct")).alias("offense_pct"))
+    assert shape_only(SNAP_COUNTS).repairs(holed) == {}, (
+        "a boundary would pin this archive as rescaled on ingest, and serve it in units "
+        "nothing upstream sent")
+    with pytest.raises(ContractViolation, match=r"offense_pct range \[0.0, 87.0\]"):
+        shape_only(SNAP_COUNTS).validate(holed)
+
+
 def test_a_snap_share_no_rescaling_can_rescue_is_still_refused():
     """The repair widens what this contract can say and does not soften what it refuses.
     A hundredth of 500 is 5, which is not a snap share however it was published."""
