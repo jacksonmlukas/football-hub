@@ -17,8 +17,8 @@ records an odds snapshot that lost every primetime game to it, and `hub.schedule
 converts rather than offsetting for the same reason. Prose did not hold it the first two
 times, so this is the third statement of the rule and the first one a test can fail.
 
-Five properties. The second and third are about the monitor rather than the refresher, and
-the last two are what the move to `live.yml` has to keep true:
+Six properties. The second, third and sixth are about the monitor rather than the refresher,
+and the fourth and fifth are what the move to `live.yml` has to keep true:
 
   1. Every Eastern hour a game can be in progress is covered, in both daylight-saving states.
   2. The watchdog never watches an hour nothing refreshes -- a monitor wider than the thing
@@ -34,13 +34,30 @@ the last two are what the move to `live.yml` has to keep true:
      its mapping would publish the wrong board for a whole day, which is what happened on
      2026-09-05: professional pre-season games on the page while the college board was the
      one with games in progress.
+  6. A watchdog *run* knows whether it is still inside the window it was scheduled for, and
+     says so rather than measuring when it is not.
+
+Property 6 is the one properties 2 and 3 cannot reach, and issue #208 is what it costs. Those
+two hold the *crons* inside the windows; nothing held the *runs*. A cron is a request for a
+start and GitHub drops scheduled workflows under load -- `live.yml` records these starts
+arriving 97-126 minutes apart -- so on 2026-09-07 the run behind `*/10 0-5  * * 1` (Monday
+00:00-05:59 UTC) executed at 09:21Z, measured a heartbeat that nothing was refreshing because
+its window had closed, and filed issue #193. Every cron property in this file passed that day
+and was passing while it happened.
+
+Its preseason half is the same defect one step earlier: before the season's first game there
+is no window at all, so there is nothing to be late for and nothing to measure. #193 could
+not clear because a healthy check needs a window, the first window needs the first game, and
+the first game was two days out.
 """
 import datetime as dt
 import re
+import subprocess
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
+import yaml
 
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 ET = ZoneInfo("America/New_York")
@@ -294,3 +311,250 @@ def test_the_watchdog_marks_the_incidents_it_files_and_closes_only_those():
         f"no way to tell its own incident from a human's")
     close = text.split("Close the incident on recovery", 1)[1]
     assert tag in close, "the recovery branch does not filter on the marker"
+
+
+# --- 6. the run, not the cron ------------------------------------------------
+#
+# Everything above is about where the crons are written. A cron is a request for a start,
+# and what this section adds is about where a run actually landed.
+
+WINDOW_STATE = Path(__file__).resolve().parents[2] / ".github" / "scripts" / "window_state.sh"
+WATCHDOG = WORKFLOWS / "watchdog.yml"
+
+# The real dates from #193 and #208. The season's first game is the Wednesday; the incident
+# was filed on the Monday before it by a run scheduled for 00:00-05:59Z that executed at
+# 09:21Z; the next Monday-adjacent cron was the Tuesday.
+FIRST_GAME = "2026-09-09"
+FILED_AT = dt.datetime(2026, 9, 7, 9, 21, tzinfo=UTC)
+NEXT_CRON_AT = dt.datetime(2026, 9, 8, 3, 0, tzinfo=UTC)
+# A Monday in the season proper, so the preseason branch is not what is being read.
+IN_SEASON = dt.datetime(2026, 10, 12, tzinfo=UTC)
+
+
+def _state(cron: str, when: dt.datetime, season_opens: str = FIRST_GAME) -> str:
+    got = subprocess.run(
+        [str(WINDOW_STATE), cron, season_opens, str(int(when.timestamp()))],
+        capture_output=True, text=True, timeout=60)
+    assert got.returncode == 0, got.stderr
+    return got.stdout.strip()
+
+
+def test_a_run_that_executes_inside_its_window_measures():
+    """The case that has to keep working. Suppressing the false alarm is easy if the check is
+    allowed to stop checking, and that is the failure this file's subject has had twice."""
+    got = _state("*/10 0-5  * * 1", IN_SEASON.replace(hour=4, minute=12))
+    assert got.startswith("inside "), got
+    assert int(got.split()[1]) == 108 * 60, "the window runs to 05:59:59, so 04:12 has 108m"
+
+
+def test_a_run_delayed_past_its_window_says_so_rather_than_measuring():
+    """**The load-bearing case, and the one #208 is about.**
+
+    Scheduled inside the window by a cron every property above holds in place, executed after
+    it closed. There is nothing to measure: the `live` loop has stopped, so the published
+    heartbeat is expected to age and its age is not evidence of anything.
+    """
+    got = _state("*/10 0-5  * * 1", IN_SEASON.replace(hour=9, minute=21))
+    assert got.startswith("late "), got
+    assert int(got.split()[1]) == 3 * 3600 + 21 * 60, "09:21 is 3h21m after a 06:00 close"
+
+
+def test_the_run_that_filed_193_is_not_a_run_that_measures():
+    """The incident itself, replayed on both of its counts.
+
+    On the day, the preseason branch is what catches it -- the first game was two days out.
+    Given a season already under way, the delay is: same cron, same clock, still not a
+    measurement. Either alone is enough to keep it from filing, which is why both are asked.
+    """
+    assert _state("*/10 0-5  * * 1", FILED_AT) == f"preseason {FIRST_GAME}"
+    assert _state("*/10 0-5  * * 1", FILED_AT, "2026-09-01") == "late 12060"
+
+
+def test_before_the_first_game_a_run_inside_its_window_still_has_nothing_to_watch():
+    """The preseason case, which is not the delayed one and is the one most easily skipped.
+
+    This run is exactly where it was asked to be -- the Tuesday cron, executing in the middle
+    of its own window. The crons fire every week of the year, so being inside a window says
+    nothing about a game being played inside it. This is the run that clears #193.
+    """
+    assert _state("*/10 1-5  * * 2", NEXT_CRON_AT) == f"preseason {FIRST_GAME}"
+
+
+def test_a_season_date_already_past_suppresses_nothing():
+    """Which way the constant rots. `SEASON_OPENS` is a date somebody has to change each
+    August, so the question is what a stale one costs: an old date means every run measures,
+    which is the behaviour without this check at all. A monitor that goes quiet when nobody
+    updates it is the other direction and is not reachable here."""
+    assert _state("*/10 1-5  * * 2", NEXT_CRON_AT, "2026-09-01").startswith("inside ")
+    assert _state("*/10 1-5  * * 2", NEXT_CRON_AT, "").startswith("inside ")
+
+
+def test_a_cron_this_check_cannot_read_measures_rather_than_going_quiet():
+    """A step in the hour field is not a window shape this repo writes, and widening it to
+    "every hour" would report a run as inside a window it was never scheduled in. Refused --
+    and refused *towards* measuring, because the workflow treats an unreadable cron as a
+    reason to check rather than as a reason to stay silent."""
+    assert _state("*/10 */2 * * 1", IN_SEASON.replace(hour=4)) == "unparseable"
+    assert _state("*/10 0-5 17 * 1", IN_SEASON.replace(hour=4)) == "unparseable"
+    assert _state("", IN_SEASON.replace(hour=9)) == "unscheduled"
+
+
+def test_a_run_that_is_merely_early_is_not_reported_as_a_week_late():
+    """Walking backwards from a weekly cron always finds last week's window. GitHub delays
+    rather than advances, so this is unreachable in production and is here because "six days
+    late" is the reading a one-directional search would have printed for it."""
+    got = _state("*/10 17-23 * * 0", dt.datetime(2026, 10, 11, 16, 30, tzinfo=UTC))
+    assert got == "early 1800", got
+
+
+def test_every_watchdog_cron_can_be_read_by_the_check_that_gates_on_it():
+    """The premise. A check answering `unparseable` for every real cron would be one that
+    never suppresses anything, and every assertion above would still pass."""
+    for cron in _crons("watchdog.yml"):
+        _minute, hour, _dom, _mon, dow = cron.split()
+        day, at = min(_hours(dow)), min(_hours(hour)) + 1
+        # The Sunday of the in-season week above, plus the cron's own day and hour.
+        sunday = IN_SEASON - dt.timedelta(days=(IN_SEASON.weekday() + 1) % 7)
+        when = (sunday + dt.timedelta(days=day)).replace(hour=at)
+        assert _state(cron, when).startswith("inside "), (
+            f"{cron!r} is not readable as a window by window_state.sh; the watchdog would "
+            f"measure every run without ever establishing where it landed")
+
+
+# --- 6, in the workflow: what the run does with the answer --------------------
+
+
+def _run_step(name: str, **expressions: str) -> dict[str, str]:
+    """Run one step's shell out of `watchdog.yml`, with its `${{ }}` expressions bound.
+
+    The step is executed rather than grepped for. A pair of greps that finds "preseason" and
+    finds "closes=true" in the same file does not say the first produces the second, and the
+    workflow schedule check `test_guards_are_load_bearing.py` was written for was built
+    exactly that way.
+    """
+    steps = yaml.safe_load(WATCHDOG.read_text())["jobs"]["heartbeat"]["steps"]
+    script = next(s["run"] for s in steps if s.get("name") == name)
+
+    def bind(m: re.Match) -> str:
+        key = m.group(1).strip()
+        assert key in expressions, f"{name!r} reads {key!r}, which this test does not bind"
+        return expressions[key]
+
+    script = re.sub(r"\$\{\{([^}]+)\}\}", bind, script)
+    out = Path(subprocess.run(["mktemp"], capture_output=True, text=True,
+                              check=True).stdout.strip())
+    got = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60,
+                         env={"PATH": "/usr/bin:/bin:/usr/local/bin",
+                              "GITHUB_OUTPUT": str(out), "GITHUB_STEP_SUMMARY": "/dev/null"})
+    assert got.returncode == 0, got.stderr
+    parsed: dict[str, str] = {}
+    lines = out.read_text().splitlines()
+    while lines:
+        key, _, value = lines.pop(0).partition("=")
+        if "<<" in key:
+            key, _, delim = key.partition("<<")
+            value = ""
+            while lines and lines[0] != delim:
+                value += lines.pop(0) + "\n"
+            if lines:
+                lines.pop(0)
+        parsed[key] = value.strip()
+    return parsed
+
+
+VERDICT = "What this run can conclude"
+
+
+def _verdict(state: str, detail: str = "", stale: str = "false") -> dict[str, str]:
+    return _run_step(VERDICT, **{
+        "steps.window.outputs.state": state,
+        "steps.window.outputs.detail": detail,
+        "steps.window.outputs.at": "09:21:07Z",
+        "steps.window.outputs.cron": "*/10 0-5  * * 1",
+        "steps.check.outputs.stale": stale,
+    })
+
+
+def test_a_stale_heartbeat_outside_a_window_is_not_an_incident():
+    """Both halves of #208, read off the workflow's own branch rather than off its prose. The
+    heartbeat is stale in every one of these -- what changes is whether anything was supposed
+    to be refreshing it."""
+    for state, detail in (("late", "12060"), ("early", "1800")):
+        got = _verdict(state, detail, stale="true")
+        assert got["verdict"] == "no-window", got
+        assert got["closes"] == "false", "a delayed run cannot observe health either"
+    assert _verdict("preseason", FIRST_GAME, stale="true")["verdict"] == "no-window"
+
+
+def test_an_incident_the_season_has_not_started_for_closes_without_waiting_for_a_game():
+    """#193's actual exit. A healthy check needs a window, the first window needs the first
+    game, and the incident would otherwise sit open across the two days before kickoff --
+    which is what teaches an operator to skim this workflow on the Sunday."""
+    got = _verdict("preseason", FIRST_GAME, stale="true")
+    assert got["closes"] == "true", got
+    assert FIRST_GAME in got["close_note"], got["close_note"]
+    assert "no healthy check is possible yet" in got["close_note"]
+    # The distinction the ticket record keeps once the comment has scrolled away: this
+    # incident did not end, it was never founded. A bare close records `completed` for both.
+    assert got["close_reason"] == "not planned", got
+    assert _verdict("inside", "6480")["close_reason"] == "completed"
+
+
+def test_a_stale_heartbeat_inside_a_window_is_still_an_incident():
+    """The alarm this workflow exists to raise. Every suppression above is also reachable by
+    a check that has quietly stopped checking, and this says it has not."""
+    got = _verdict("inside", "6480", stale="true")
+    assert got["verdict"] == "stale" and got["closes"] == "false", got
+    got = _verdict("inside", "6480", stale="false")
+    assert got["verdict"] == "healthy" and got["closes"] == "true", got
+
+    # A dispatch and an unreadable cron measure too: an operator asked, or nothing could be
+    # established, and neither is a reason to go quiet.
+    for state in ("unscheduled", "unparseable"):
+        assert _verdict(state, stale="true")["verdict"] == "stale", state
+
+
+def test_the_incident_body_says_which_window_its_number_came_from():
+    """The out-of-window case has to be tellable from a stall *in the issue text*, by a reader
+    who is not going to go and work out what the clock was doing."""
+    inside = _verdict("inside", "6480", stale="true")["measured"]
+    assert "inside the window this run was scheduled for" in inside, inside
+    assert "09:21:07Z" in inside and "*/10 0-5  * * 1" in inside
+    assert "`" not in inside, (
+        "this text is substituted into a double-quoted bash string in the filing step, where "
+        "a backtick is a command substitution rather than markdown")
+    assert "dispatch" in _verdict("unscheduled", stale="true")["measured"]
+
+
+def test_the_verdict_is_what_gates_filing_and_closing():
+    """The tie between the branch tested above and the steps that act on it. Without it the
+    verdict could be computed correctly and ignored, which is the shape every guard in
+    `tests/contracts/test_guards_are_load_bearing.py` was written for."""
+    steps = {s["name"]: s for s in
+             yaml.safe_load(WATCHDOG.read_text())["jobs"]["heartbeat"]["steps"] if "name" in s}
+    assert VERDICT in steps, "the workflow no longer decides what a run can conclude"
+
+    filing = next(s for n, s in steps.items() if n.startswith("File or update"))
+    assert filing["if"] == "steps.verdict.outputs.verdict == 'stale'", (
+        f"the incident is filed on {filing['if']!r} rather than on the verdict, so a run that "
+        f"landed outside its window would file one again")
+    assert "steps.verdict.outputs.measured" in filing["run"], (
+        "the body does not say which window its number was measured in")
+
+    closing = next(s for n, s in steps.items() if n.startswith("Close the incident"))
+    assert closing["if"] == "steps.verdict.outputs.closes == 'true'"
+    assert "--reason" in closing["run"], (
+        "a bare `gh issue close` silently records `completed`, so the two ways an alarm stops "
+        "standing become indistinguishable (docs/agents/issue-tracker.md)")
+
+    window = next(s for n, s in steps.items() if n.startswith("Which window"))
+    assert "github.event.schedule" in yaml.safe_dump(window), (
+        "the run does not ask which cron scheduled it, so it has no window to compare against "
+        "and is back to measuring against a clock it cannot see")
+    assert "SEASON_OPENS" in window["run"], "the preseason case is never consulted"
+
+
+def test_the_season_opens_on_a_date_the_workflow_can_read():
+    opens = yaml.safe_load(WATCHDOG.read_text())["env"]["SEASON_OPENS"]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(opens)), opens
+    assert dt.date.fromisoformat(str(opens))

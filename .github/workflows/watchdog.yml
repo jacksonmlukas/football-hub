@@ -27,8 +27,17 @@ on:
   # before the window opened -- an incident by construction, twice a week for eighteen weeks.
   # Starting an hour in means the deploy has already run six times by the first check.
   #
+  # *Never trusted to have run when it was asked to.* A cron here is a request for a start.
+  # GitHub queues scheduled workflows and drops them under load -- `live.yml` records these
+  # starts arriving 97-126 minutes apart -- so a run placed inside a window executes outside
+  # it often enough that #193 is the second incident this file has filed for a reason that
+  # was never about the thing it watches. The two rules above place the crons; they cannot
+  # place the *runs*, so the job below asks where it actually landed before it measures
+  # anything.
+  #
   # The hours follow Eastern in both daylight-saving states, for the reason `live.yml`
-  # spells out. `tests/contracts/test_game_windows.py` asserts both rules against both files.
+  # spells out. `tests/contracts/test_game_windows.py` asserts all three rules against both
+  # files.
   schedule:
     - cron: "*/10 17-23 * * 0"   # Sunday daytime, from an hour into the window
     - cron: "*/10 0-5  * * 1"    # Sunday night -- the window has been open since 16:00 UTC
@@ -42,11 +51,52 @@ permissions:
   contents: read
   issues: write
 
+env:
+  # The season's first game. A fact about the calendar, not a copy of the window's hours --
+  # the same reason `live.yml` is allowed to hold "Saturday is college" while holding no
+  # copy of the window itself.
+  #
+  # It exists because the crons above fire every week of the year, so in August a run can be
+  # perfectly inside its window and still be watching an overlay that no game will ever move.
+  # #193 was filed on the Monday before this date and could not clear: the next
+  # Monday-adjacent cron was the Tuesday and the first game was the Wednesday, so no healthy
+  # check could occur before kickoff.
+  #
+  # A date in the past suppresses nothing, so leaving this stale next August costs monitoring
+  # of a preseason nobody is watching rather than silence in a season somebody is.
+  # `tests/contracts/test_game_windows.py` holds that direction.
+  SEASON_OPENS: "2026-09-09"
+
 jobs:
   heartbeat:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # **Whether this run is still inside the window it was scheduled for**, which is the
+      # context the check below cannot see and without which its number means nothing.
+      #
+      # A cron is a request for a start, not a guarantee of one: GitHub queues scheduled
+      # workflows and drops them under load, and `live.yml` records those starts being
+      # delivered 97-126 minutes apart. So a run scheduled inside a window routinely executes
+      # after it, at which point the `live` loop has stopped, nothing is refreshing
+      # `live.json`, and its age growing is the correct state rather than a failure.
+      #
+      # The cron string GitHub hands the run *is* the window definition, so nothing here
+      # restates which hours a window covers -- the drift this repo keeps paying for.
+      - name: Which window this run is in
+        id: window
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          set +e
+          STATE=$(.github/scripts/window_state.sh "$SCHEDULE" "$SEASON_OPENS")
+          echo "state=${STATE%% *}" >> "$GITHUB_OUTPUT"
+          case "$STATE" in *" "*) echo "detail=${STATE#* }" ;; *) echo "detail=" ;; esac \
+            >> "$GITHUB_OUTPUT"
+          echo "at=$(date -u +%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "cron=${SCHEDULE:-none}" >> "$GITHUB_OUTPUT"
+          echo "window state: $STATE (cron '${SCHEDULE:-none}')"
 
       # The check is a script rather than eight lines of inline shell because it could not
       # pass and nothing could see that. It read `.ts`, which only `hub.fetch.espn.poll`
@@ -84,6 +134,84 @@ jobs:
                           echo "why=live.json carries no readable generated_at, so its writer and this check disagree about the schema" >> "$GITHUB_OUTPUT" ;;
           esac
 
+      # The two readings put together: an age, and whether an age was expected to move.
+      #
+      # A stale heartbeat is only evidence of a stall when something was supposed to be
+      # refreshing it. Two states mean nothing was:
+      #
+      #   * `late` / `early` -- this run executed outside the window it was scheduled for.
+      #     The `live` loop is not running, so the age is the correct state. It files
+      #     nothing; the in-window runs ten minutes apart are what catch a real stall, and
+      #     a delayed run pretending to be one of them is how #193 happened.
+      #   * `preseason` -- there is no window at all yet, so there is nothing to be late for.
+      #     This one *closes* a standing incident: before the first game a stale heartbeat is
+      #     unfounded whoever filed it, and an incident that has to wait for a game to clear
+      #     is an incident that teaches an operator to skim the watchdog.
+      #
+      # Every other state -- inside a window, a dispatch an operator asked for, a cron this
+      # check could not read -- measures. The fall-throughs point at monitoring, never at
+      # silence.
+      - name: What this run can conclude
+        id: verdict
+        run: |
+          AT="${{ steps.window.outputs.at }}"
+          CRON="${{ steps.window.outputs.cron }}"
+          case "${{ steps.window.outputs.state }}" in
+            preseason)
+              echo "verdict=no-window" >> "$GITHUB_OUTPUT"
+              echo "reason=preseason"  >> "$GITHUB_OUTPUT"
+              echo "closes=true"       >> "$GITHUB_OUTPUT"
+              # `not planned`, and the close reason is the distinction the ticket record
+              # keeps after the comment has scrolled away: this incident did not end, it was
+              # never founded. `docs/agents/issue-tracker.md` -- never close without a reason,
+              # because a bare close silently records `completed` and stops discriminating.
+              echo "close_reason=not planned" >> "$GITHUB_OUTPUT"
+              {
+                echo "close_note<<NOTE"
+                echo "Closed without a healthy check, because no healthy check is possible yet."
+                echo "The season's first game is ${{ steps.window.outputs.detail }} and no game"
+                echo "window has opened, so nothing refreshes live.json and its age growing is the"
+                echo "correct state rather than a failure. This incident was filed against a"
+                echo "heartbeat nobody expected to move."
+                echo "NOTE"
+              } >> "$GITHUB_OUTPUT" ;;
+            late|early)
+              echo "verdict=no-window" >> "$GITHUB_OUTPUT"
+              echo "reason=delayed"    >> "$GITHUB_OUTPUT"
+              echo "closes=false"      >> "$GITHUB_OUTPUT" ;;
+            *)
+              if [ "${{ steps.check.outputs.stale }}" = "true" ]; then
+                echo "verdict=stale"   >> "$GITHUB_OUTPUT"
+                echo "closes=false"    >> "$GITHUB_OUTPUT"
+              else
+                echo "verdict=healthy" >> "$GITHUB_OUTPUT"
+                echo "closes=true"     >> "$GITHUB_OUTPUT"
+                echo "close_reason=completed" >> "$GITHUB_OUTPUT"
+                {
+                  echo "close_note<<NOTE"
+                  echo "Heartbeat healthy again, measured at $AT inside the window this run was"
+                  echo "scheduled for (cron '$CRON')."
+                  echo "NOTE"
+                } >> "$GITHUB_OUTPUT"
+              fi
+              # What the incident body says about where its number came from, so a reader can
+              # tell a stall from a late arrival without going to the clock themselves.
+              #
+              # Quoted with apostrophes rather than backticks deliberately: this text is
+              # substituted into a double-quoted bash string in the filing step below, where a
+              # backtick is a command substitution rather than markdown.
+              {
+                echo "measured<<NOTE"
+                case "${{ steps.window.outputs.state }}" in
+                  inside)      echo "Measured at $AT, inside the window this run was scheduled for (cron '$CRON', which still had ${{ steps.window.outputs.detail }}s to run)." ;;
+                  unscheduled) echo "Measured at $AT by a manual dispatch, which has no window behind it to be inside of." ;;
+                  *)           echo "Measured at $AT; the cron behind this run ('$CRON') could not be read, so this check could not confirm it is inside its window." ;;
+                esac
+                echo "NOTE"
+              } >> "$GITHUB_OUTPUT" ;;
+          esac
+          echo "window ${{ steps.window.outputs.state }}, heartbeat stale=${{ steps.check.outputs.stale }}"
+
       # `set +e` and the `||` fallbacks are the point of this step, not defensive noise.
       # On 2026-09-04 the label did not exist in the repo, `gh issue create --label` failed,
       # and the whole job exited 1 -- so the watchdog reported nothing at exactly the moment
@@ -92,7 +220,7 @@ jobs:
       # nothing is wrong. Filing the incident is the job; the label is decoration, and
       # decoration must never be able to silence the alarm.
       - name: File or update the incident issue
-        if: steps.check.outputs.stale == 'true'
+        if: steps.verdict.outputs.verdict == 'stale'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -122,7 +250,15 @@ jobs:
           republishing a cached board, so a flat heartbeat is the honest report of both.
 
           The dashboard serves last-good state, so nothing is broken — it is just not moving.
-          This issue auto-closes on the next healthy check."
+
+          ${{ steps.verdict.outputs.measured }}
+
+          An incident is only ever filed from inside a window, so this is a stall rather than
+          a run that arrived late — GitHub delays scheduled workflows by tens of minutes, and
+          a watchdog run that executes after its window closed reports that instead of
+          measuring a heartbeat nothing is expected to move (#208). This issue closes on the
+          next healthy check inside a window, or on the first check before the season's first
+          game, whichever reaches it first."
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "$BODY"
           else
@@ -141,8 +277,16 @@ jobs:
       # label describes the subject, not the author. `<!-- watchdog-heartbeat -->` is written
       # into the body above and matched here, so an issue a person opened about a genuine
       # outage survives the next healthy check.
-      - name: Close the incident on recovery
-        if: steps.check.outputs.stale == 'false'
+      # Two ways an alarm stops standing, and one loop, because the dangerous half of this
+      # step is which issues it touches rather than when it runs. A second copy of the marker
+      # filter is a second place for it to drift back to closing a human's issue.
+      #
+      # The second way is the preseason one, and it is the half that clears #193 without
+      # waiting for a game: a healthy check needs a window, the first window needs the first
+      # game, and an incident that sits open across the two days before kickoff is what
+      # teaches an operator to stop reading this workflow.
+      - name: Close the incident on recovery, or when there was no window to be late for
+        if: steps.verdict.outputs.closes == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -150,5 +294,27 @@ jobs:
           for n in $(gh issue list --repo "${{ github.repository }}" \
                       --label incident --state open --json number,body \
                       --jq ".[] | select(.body | contains(\"$MARKER\")) | .number"); do
-            gh issue close "$n" --repo "${{ github.repository }}" --comment "Heartbeat healthy again."
+            gh issue close "$n" --repo "${{ github.repository }}" \
+              --reason "${{ steps.verdict.outputs.close_reason }}" \
+              --comment "${{ steps.verdict.outputs.close_note }}"
           done
+
+      # A run that executed outside its window files nothing and closes nothing: it cannot
+      # observe health, and it must not report the absence of a refresh nobody asked for as
+      # an outage. It says so where the run itself is read.
+      #
+      # The cost is that a genuinely dead publisher goes unreported by *this* run. The runs
+      # ten minutes either side of it are inside the window and do report it, which is the
+      # whole reason the watchdog runs every ten minutes rather than once.
+      - name: Say that this run landed outside its window
+        if: steps.verdict.outputs.reason == 'delayed'
+        run: |
+          {
+            echo "### Outside its window, so nothing was measured"
+            echo
+            echo "Scheduled by cron \`${{ steps.window.outputs.cron }}\`, executed at"
+            echo "${{ steps.window.outputs.at }} -- ${{ steps.window.outputs.state }} by"
+            echo "${{ steps.window.outputs.detail }}s. The \`live\` loop only runs inside a"
+            echo "window, so outside one the published heartbeat is expected to age and its"
+            echo "age (${{ steps.check.outputs.age }}s) is not evidence of anything."
+          } >> "$GITHUB_STEP_SUMMARY"
