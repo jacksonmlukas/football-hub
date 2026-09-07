@@ -37,6 +37,7 @@ import numpy as np
 import polars as pl
 
 from hub.cli import unavailable
+from hub.draft.backtest import stamped_for_publication
 from hub.draft.board import board_as_of
 from hub.league import REG_SEASON_WEEKS, starting_lineup
 from hub.models.experiment import (
@@ -196,6 +197,30 @@ def compare(rosters: dict[int, list[Roster]], realised: dict[int, pl.DataFrame],
     return out
 
 
+def publish_paired(paired: pl.DataFrame, path: str) -> str:
+    """Write the paired rows carrying what produced them, and return the line a reader gets.
+
+    Until this landed, this gate wrote a bare parquet -- no configuration digest, no data
+    digest -- so two runs over different archives were indistinguishable after the fact.
+    That is the silent case the pinning layer exists to remove (issue #71), left standing on
+    the gate whose verdict ADR-0012 defers to.
+
+    The rule is `backtest.stamped_for_publication` itself and not a second copy that agrees
+    with it. This module already records what the other choice costs: `cohort` is imported
+    rather than restated because the recipe had been written out in two places, and "a
+    formula copied by hand into two places is one that eventually differs in one". It lives
+    under `hub.draft` today because the draft gate needed it first; issue #135's shared gate
+    protocol is where it stops being addressed through a draft module.
+
+    A function rather than three lines under `if a.out:`, because reaching those needs a
+    network, and a stamping rule only reachable behind a network is a stamping rule with no
+    test. `stamped_for_publication` names the same reason for the same shape.
+    """
+    stamped, said = stamped_for_publication(paired)
+    stamped.write_parquet(path)
+    return f"\n  wrote {stamped.height} paired rows to {path}\n{said}"
+
+
 # The pre-registered actions, fixed before the numbers and quoted in this module's own
 # docstring above. The rule choosing between them is `experiment.gate` -- ADR-0019.
 ACTIONS = Actions(
@@ -284,8 +309,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("  Limitation: projections are static across the season, because weekly historical")
     print("  projections do not exist. This measures variance-awareness, not in-season news.")
     if a.out:
-        paired.write_parquet(a.out)
-        print(f"\n  wrote {paired.height} paired rows to {a.out}")
+        print(publish_paired(paired, a.out))
     return 0
 
 

@@ -290,3 +290,69 @@ def test_the_gate_reports_its_ceiling_beside_its_effect():
     assert got["ceiling_diff"][0] >= got["diff"][0]
     plain = lg.compare({2024: [roster]}, {2024: _swingy(roster)}, weeks=14)
     assert "oracle" not in plain.columns, "the ceiling must be opt-in, not a shape change"
+
+
+# --- what produced these rows (issue #133) --------------------------------
+#
+# The gate wrote a bare parquet: no configuration digest, no data digest. Two runs over
+# different archives were therefore indistinguishable after the fact, which is the silent
+# case the pinning layer exists to remove -- and this is the gate ADR-0012 defers to.
+
+def test_the_published_frame_names_the_config_and_the_data_that_made_it(tmp_path,
+                                                                        monkeypatch):
+    """The file a reader is left with has to say what it was scored against.
+
+    Read back off disk rather than off the returned frame, because what a later reader opens
+    is the parquet, and a stamp that lived only in memory would satisfy every assertion about
+    the return value while publishing the same bare rows as before.
+    """
+    from hub.config import UNPINNED
+    from hub.fetch import nflverse as nv
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    paired = pl.DataFrame({"season": [2024, 2025], "roster": [0, 0], "diff": [1.0, -2.0]})
+    out = tmp_path / "lineup_paired.parquet"
+
+    said = lg.publish_paired(paired, str(out))
+    back = pl.read_parquet(out)
+
+    assert back.height == paired.height
+    assert {"cfg_digest", "data_digest"} <= set(back.columns)
+    assert back["data_digest"].unique().to_list() == [UNPINNED], (
+        "a run that pinned nothing must say so rather than publishing eight characters that "
+        "look like a digest of data")
+    assert "nothing was loaded through the pinning layer" in said
+    assert "2 paired rows" in said and str(out) in said
+
+
+def test_a_pinned_load_moves_this_gates_data_digest_and_leaves_its_config_alone(tmp_path,
+                                                                                monkeypatch):
+    """The property a reader acts on: two runs over different archives do not carry the same
+    stamp, and the archive moving does not pretend the model moved with it."""
+    from hub.config import UNPINNED
+    from hub.fetch import nflverse as nv
+
+    paired = pl.DataFrame({"season": [2024], "roster": [0], "diff": [1.0]})
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    lg.publish_paired(paired, str(tmp_path / "unpinned.parquet"))
+    unpinned = pl.read_parquet(tmp_path / "unpinned.parquet")
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {
+        "entry": nv.Pin(source="player_stats", as_of="2026-09-04", digest="abcd1234",
+                        rows=10, pinned_at=None)})
+    said = lg.publish_paired(paired, str(tmp_path / "pinned.parquet"))
+    pinned = pl.read_parquet(tmp_path / "pinned.parquet")
+
+    assert unpinned["data_digest"][0] == UNPINNED
+    assert pinned["data_digest"][0] != UNPINNED
+    assert "over 1 pinned source(s)" in said
+    assert pinned["cfg_digest"][0] == unpinned["cfg_digest"][0]
+
+
+def test_this_gate_stamps_by_the_one_rule_rather_than_by_a_second_copy_of_it():
+    """Two gates that agree because somebody keeps them agreeing is the arrangement this
+    module already records losing: `cohort` is imported rather than restated because the
+    recipe had been written out twice. The same argument decides the stamp."""
+    from hub.draft import backtest as bt
+
+    assert lg.stamped_for_publication is bt.stamped_for_publication
