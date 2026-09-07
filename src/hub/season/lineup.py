@@ -177,6 +177,25 @@ def opponent_moments(players: pl.DataFrame, slots: Mapping[str, int] | None = No
     `docs/championship-leverage.md` names this model and flags it as unvalidated: it should
     be checked against actual historical lineups via `espn-api`, which has not been done.
     Assuming they optimise against *you* would model an opponent nobody in this league is.
+
+    **Deliberately ahead of its caller, and this is what it is waiting for.** Nothing calls
+    this outside its own tests: `optimize` takes `opp_mu`/`opp_sd` as numbers and `main` takes
+    them from `--opp-mu`, typed by an operator, because the input this needs does not exist
+    here. `hub.season.roster` fetches `my_team` and only that, so no opponent's players are
+    ever in hand -- and until they are, this function has nothing to be handed. Two things
+    would give it a caller, in order:
+
+    1. an opponent roster from `espn-api`, at which point `main` can derive the moments it
+       currently asks an operator to type;
+    2. the validation the doc flags -- do this league's managers actually start their best
+       projections? Wiring an unchecked opponent model into the lineup would replace a number
+       a person entered with a number nobody has tested, which is worse than the typing.
+
+    Kept rather than deleted for the reason `best_by_points` is: it *is* the opponent model,
+    and it is the shape the answer takes once there is a roster to point it at. But it is a
+    zero-adapter seam -- deleting it changes the behaviour of nothing currently running --
+    which ADR-0020 is clear is weak evidence for a seam. If (1) lands and this still has no
+    caller, that is the moment to delete it rather than to keep waiting.
     """
     got = best_by_points(players, slots, flex_from)
     return {"mu": got["mu"], "sd": got["sd"], "starters": got["starters"]}

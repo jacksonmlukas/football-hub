@@ -43,7 +43,7 @@ import numpy as np
 import polars as pl
 
 from hub.config import PoolConfig
-from hub.season.survivor import MIN_PROB
+from hub.season.survivor import MIN_PROB, week_fixtures
 
 # Enough that the ending-week distribution is stable to about a percentage point, which is
 # finer than any decision downstream reads it at. Callers wanting a tighter tail pass more.
@@ -120,7 +120,16 @@ class Weekly(NamedTuple):
 
     `given_up` is `fallback.survives - recommend.survives`, and it is the number
     `hub.season.journal` refuses a departure without: ADR-0014's logging duty is the week, the
-    chalk pick, ours, and the probability cost accepted.
+    chalk pick, ours, and the probability cost accepted. `journal.record_weekly` is what
+    carries this shape over there, and it recomputes the difference from the candidate
+    actually entered rather than forwarding this field -- which is a cost against the
+    *recommendation* and is the wrong comparison for an overridden pick.
+
+    **It is not the quantity ADR-0014's threshold is stated in.** The rule fires on a
+    win-probability cost of under ~8pp; this is a season-survival difference, and the two
+    routinely disagree in sign, because buying survival later with a lower win probability now
+    is the entire thesis of a survivor plan. Named in `journal.record_weekly`, which is where
+    the column is written and where the choice between them has to be made.
 
     It is **signed on purpose**. A departure that survives better than the free pick has given
     up nothing and gained something, and clamping that to zero would file it as "the two plans
@@ -170,10 +179,17 @@ class _Week(NamedTuple):
     first two counted a fixture only when both sides were priced while `prob` was built from
     every row in the week, so a half-priced fixture put a team in `prob` that no draw could
     ever produce a result for.
+
+    `teams` is every team a game here can return a result for; `pickable` is the subset an
+    entry is allowed to *take*, which is `hub.season.survivor.MIN_PROB` applied here as it is
+    applied in `auto_pick` and `weekly`. They are not the same set and the difference is the
+    point: a hopeless side still has to be drawn, because its opponent's win depends on it,
+    and it still must never be handed to an entry as a pick.
     """
     games: tuple[tuple[str, str, float], ...]   # (team_a, team_b, P(team_a wins))
     teams: tuple[str, ...]                      # sorted, so iteration order is not a set's
     prob: dict[str, float]
+    pickable: frozenset[str]                    # teams above MIN_PROB: what a pick may take
     picks: int                                  # 1, or 2 in a double-pick week
     dropped: int = 0                            # fixtures in the week priced on one side only
 
@@ -189,9 +205,25 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
     A fixture priced on one side only is dropped, and the count of what was dropped rides on
     the week rather than being discarded -- a week built from half of what was asked for is
     still an answer, but not the one the caller asked for, and the difference has to be
-    readable. A week where *every* fixture is dropped is refused outright: it is the case
-    `hub.season.survivor.coverage` was hardened against by counting fixtures rather than rows,
-    and it arrives here as a whole field eliminated in a week that was simply not covered.
+    readable. A week with fewer completely priced fixtures than it takes picks is refused
+    outright: it is the case `hub.season.survivor.coverage` was hardened against by counting
+    fixtures rather than rows, and it arrives here as a whole field eliminated in a week that
+    was simply not covered.
+
+    **The count is against the picks the week takes, not against zero.** A double-pick week
+    with one priced fixture has two teams and no way to cover itself -- `_pick` hands the
+    entry both sides of that one game, one of them loses, and every entry in the field dies
+    with certainty in a week `survivor.solve` calls infeasible and `coverage` calls missing.
+    That reads out as `ending_week` naming a week nobody could have played, which is exactly
+    what refusing a wholly unpriced week was for; zero was where the guard stopped rather than
+    where the reasoning did.
+
+    **What is usable is `hub.season.survivor.week_fixtures`**, read here and by `coverage`,
+    which is the one place the rule is stated. This side uses its *drawable* half -- both
+    sides priced -- because a game with one row cannot be played out. `MIN_PROB` is not part
+    of that test and is applied to `_Week.pickable` instead: a hopeless side is undrawable
+    only in the sense that nobody may pick it, and dropping its fixture would refuse to
+    simulate a week the board has fully priced.
     """
     if "game_id" not in grid.columns:
         raise ValueError(
@@ -199,25 +231,24 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
             "team and its opponent can both win in the same trial")
     cfg = pool or PoolConfig()
     out = []
-    for w in weeks:
-        wk = grid.filter(pl.col("week") == w)
+    for f in week_fixtures(grid, weeks, cfg):
+        wk = grid.filter(pl.col("week") == f.week)
         games = []
-        dropped = 0
-        for gid in sorted(wk["game_id"].unique().to_list()):
+        for gid in f.drawable:
             side = wk.filter(pl.col("game_id") == gid).sort("team")
-            if side.height != 2:
-                dropped += 1    # a game only one side of which is priced is not a game
-                continue
             a, b = side["team"][0], side["team"][1]
             games.append((str(a), str(b), float(side["win_prob"][0])))
-        if not games:
+        if len(games) < f.needs:
             raise UnpricedWeek(
-                f"week {w} has no completely priced fixture: "
-                f"{_plural(len(games) + dropped, 'fixture')} in the grid, "
-                f"{_plural(dropped, 'fixture')} priced on one side only. Refused rather "
-                "than simulated -- with no team to pick, every entry is eliminated at once "
-                "and the ending week would report the contest ending in a week the grid "
-                "never covered.")
+                (f"week {f.week} has no completely priced fixture: " if not games else
+                 f"week {f.week} takes {_plural(f.needs, 'pick')} and has only "
+                 f"{_plural(len(games), 'completely priced fixture')} to take them from: ")
+                + f"{_plural(len(games) + len(f.half), 'fixture')} in the grid, "
+                f"{_plural(len(f.half), 'fixture')} priced on one side only. Refused rather "
+                "than simulated -- with no legal pick to field, every entry is eliminated at "
+                "once and the ending week would report the contest ending in a week the grid "
+                "never covered. Two picks cannot come from both sides of one fixture, because "
+                "one of them loses, which is the same refusal `survivor.solve` already makes.")
         teams = tuple(sorted({t for g in games for t in (g[0], g[1])}))
         # Restricted to the fixtures `games` and `teams` were built from, and each side keeps
         # the win probability its own row carried rather than one minus its opponent's: the
@@ -226,7 +257,8 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
         prob = {str(r["team"]): float(r["win_prob"]) for r in wk.iter_rows(named=True)
                 if str(r["team"]) in priced}
         out.append(_Week(tuple(games), teams, prob,
-                         2 if w in tuple(cfg.double_pick_weeks) else 1, dropped))
+                         frozenset(t for t in teams if prob[t] > MIN_PROB),
+                         f.needs, len(f.half)))
     return out
 
 
@@ -235,15 +267,25 @@ def _pick(rng: np.random.Generator, week: _Week, ledger: set[str], k: int) -> li
 
     None when the entry cannot field a legal pick -- it has spent too many teams to cover the
     week, which is elimination by the no-repeat rule rather than by losing.
+
+    **Drawn from `pickable`, not from `teams`.** A team below `MIN_PROB` is one `auto_pick`
+    and `weekly` both refuse to hand us, and it was still reachable here -- so our own entry
+    was valued over seasons in which it made picks the pick side would never have allowed.
+    Its sampling weight was near zero either way, which is why the figures barely move; what
+    moves is that one rule now says what may be taken, in both places that take one.
+
+    That also retires a guard. This returned None a second time when the weights summed to
+    zero -- a whole week of teams the betting market gives no chance -- which was the only way a
+    zero-priced team could reach the sampler at all. Every member of `pickable` is above
+    `MIN_PROB` by construction, so a non-empty `avail` cannot sum to zero and the branch was
+    unreachable rather than merely untaken. Deleted, because a guard that cannot fire still
+    reads as a case someone has thought about.
     """
-    avail = [t for t in week.teams if t not in ledger]
+    avail = [t for t in week.teams if t in week.pickable and t not in ledger]
     if len(avail) < k:
         return None
     w = np.array([week.prob[t] for t in avail], dtype=float)
-    total = w.sum()
-    if total <= 0:
-        return None
-    return [str(t) for t in rng.choice(avail, size=k, replace=False, p=w / total)]
+    return [str(t) for t in rng.choice(avail, size=k, replace=False, p=w / w.sum())]
 
 
 def _play(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int],

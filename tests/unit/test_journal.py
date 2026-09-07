@@ -7,10 +7,11 @@ import datetime as dt
 from pathlib import Path
 from typing import TypedDict, Unpack
 
+import numpy as np
 import polars as pl
 import pytest
 
-from hub.season import journal
+from hub.season import journal, pool
 
 AT = dt.datetime(2026, 9, 7, 12, 0)
 
@@ -348,3 +349,89 @@ def test_a_season_nobody_decided_anything_in_has_no_unmatched_weeks(tmp_path):
     """A fresh clone, not an error. Nothing was chosen, so nothing departed from the free
     pick."""
     assert journal.unmatched_weeks(2026, base=tmp_path) == []
+
+
+# --- ADR-0014's checks against a real `Weekly`, rather than against fixtures written to
+# --- satisfy them. Every survival figure below comes out of the simulator.
+
+def _hoard() -> pl.DataFrame:
+    """KC is barely the best pick in week 1 and a near-lock in week 2, so the recommendation
+    departs from the free pick -- which is the only case ADR-0014's duty binds."""
+    rows = []
+    for wk, games in {1: [("KC", "LV", 0.70), ("SF", "SEA", 0.68), ("BUF", "NYJ", 0.66)],
+                      2: [("KC", "LV", 0.97), ("SF", "SEA", 0.55), ("BUF", "NYJ", 0.54)]
+                      }.items():
+        for i, (a, b, p) in enumerate(games):
+            rows += [(wk, a, p, f"{wk}-{i}"), (wk, b, 1 - p, f"{wk}-{i}")]
+    return pl.DataFrame({"week": [r[0] for r in rows], "team": [r[1] for r in rows],
+                         "win_prob": [r[2] for r in rows], "game_id": [r[3] for r in rows]})
+
+
+def _weekly():
+    return pool.weekly(_hoard(), [1, 2], week=1, entries=12, pot=420.0, trials=400,
+                       rng=np.random.default_rng(0))
+
+
+def test_the_duty_is_discharged_against_a_real_weekly_and_the_signs_agree(tmp_path):
+    """The check no caller was exercising, run on figures the simulator produced.
+
+    `Weekly.given_up` is `fallback.survives - recommend.survives` and `_check_adr_0014`
+    recomputes exactly that from the two figures on the row: the sign conventions agree, and
+    a departure that *gains* survival is written as a negative cost rather than clamped."""
+    w = _weekly()
+    assert not w.matched and w.given_up < 0      # the departure survives better here
+    k = journal.record_weekly(w, season=2026, at=AT, base=tmp_path)
+
+    got = journal.read(2026, base=tmp_path)
+    row = got.filter(pl.col("key") == k).to_dicts()[0]
+    assert row["chose"] == w.recommend and row["fallback"] == w.fallback
+    assert row["survival_given_up"] == pytest.approx(w.given_up)
+    assert (row["fallback_survives"] - row["chose_survives"]
+            == pytest.approx(row["survival_given_up"]))
+    assert journal.unmatched_weeks(2026, base=tmp_path) == [1]
+
+
+def test_the_logged_cost_is_not_the_quantity_the_rule_fires_on(tmp_path):
+    """The finding of #204, pinned so it cannot be quietly reconciled later.
+
+    ADR-0014 adopts the contrarian threshold as "the win-probability cost is under ~8pp" and
+    `docs/decisions.md` logs "the probability cost accepted". `survival_given_up` is a
+    season-survival difference, and on this grid the two disagree in sign as well as scale --
+    the chalk is 2.0pp better on the week and 9.9pp worse over the season. That is the thesis
+    of the survivor plan working as intended, not a defect in either number, which is exactly
+    why writing one under the other's name would be the error."""
+    w = _weekly()
+    chose = next(c for c in w.candidates if c.team == w.recommend)
+    fb = next(c for c in w.candidates if c.is_fallback)
+
+    week_cost = fb.win_prob - chose.win_prob                # what the ADR thresholds on
+    assert week_cost == pytest.approx(0.02, abs=1e-9)       # 2.0pp, and under ~8pp
+    assert w.given_up == pytest.approx(-0.0985, abs=5e-4)   # -9.9pp, the other direction
+
+    journal.record_weekly(w, season=2026, at=AT, base=tmp_path)
+    row = journal.read(2026, base=tmp_path).to_dicts()[0]
+    # The taken team's own price is on the row; the chalk's is not, so the cost the rule is
+    # stated in cannot be reconstructed from the journal.
+    assert row["market_price"] == pytest.approx(chose.win_prob)
+    assert "fallback_price" not in row and "win_prob_given_up" not in row
+
+
+def test_an_overridden_pick_is_costed_against_what_was_entered(tmp_path):
+    """`Weekly.given_up` is a cost against the *recommendation*. Forwarded blindly for an
+    operator who took something else, it files a comparison nobody made -- and the invariant
+    catches it, which is the check doing real work rather than restating its inputs."""
+    w = _weekly()
+    other = next(c for c in w.candidates
+                 if c.team not in (w.recommend, w.fallback))
+    k = journal.record_weekly(w, season=2026, chose=other.team, at=AT, base=tmp_path)
+    row = journal.read(2026, base=tmp_path).filter(pl.col("key") == k).to_dicts()[0]
+    assert row["chose"] == other.team
+    assert row["chose_survives"] == pytest.approx(other.survives)
+    assert row["survival_given_up"] != pytest.approx(w.given_up)
+
+
+def test_a_team_the_week_never_priced_is_refused_rather_than_costed(tmp_path):
+    """A row whose survival figures came from a candidate nobody valued would satisfy the
+    ADR-0014 check and mean nothing -- the fourth way past a duty that is about content."""
+    with pytest.raises(ValueError, match="not one of the teams this week priced"):
+        journal.record_weekly(_weekly(), season=2026, chose="MIA", base=tmp_path)
