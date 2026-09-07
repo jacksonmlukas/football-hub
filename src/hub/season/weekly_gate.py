@@ -79,6 +79,22 @@ VOID_FLOOR = 0.02
 
 WAIVER_LOOK = 15
 
+# This gate's own unit, named once so the effect and the ceiling printed under it cannot end
+# up quoted in two different ones. Three places rather than two, because this gate's effect
+# is a tenth the size of the draft gate's and rounds to +0.22 at two, while every doc and ADR
+# quotes it as +0.215.
+UNIT = "points per team-week"
+PLACES = 3
+
+# What this gate's ceiling *is*, spelled where it is printed. Full foresight is right here:
+# what separates these two arms is the projection itself, so the largest effect any weekly
+# projection could show is what a perfect one would. The lineup gate's arms already share a
+# projection, so its ceiling is a perfect *spread* and the two bound different questions --
+# and `docs/gate-power.md` stage 2 compares each gate's MDE against its own ceiling and never
+# against another's, so the line says which one it is rather than leaving a reader to take
+# three numbers in three units for one quantity.
+CEILING_ARM = "perfect foresight"
+
 
 class GateInputs(NamedTuple):
     """Everything one gate run reads, as one thing rather than nine.
@@ -243,6 +259,38 @@ def compare(g: GateInputs, *, weeks: Sequence[int] = GATE_WEEKS, churn: bool = F
     return out
 
 
+def ceiling_report(summary: dict, paired: pl.DataFrame) -> list[str]:
+    """The ceiling beside the effect, and a loud line when it does not bound it.
+
+    Nothing at all when the frame carries no ceiling, which is how a run without `--ceiling`
+    prints exactly what it printed before. Same shape `paired_report` uses for `mde`: a field
+    nothing computed prints nothing, because a `nan` set against a unit reads as a
+    measurement and silence does not. It is also what a VOID run and an empty frame get,
+    since neither carries the column.
+
+    **A ceiling below the effect it is meant to bound is not a tight result, it is a broken
+    one** -- either the foresight arm is not reading the realised frame or the arm under test
+    is being scored on something else. Said loudly rather than published quietly, because the
+    number's whole use is as an upper bound and a bound that does not bound reads exactly
+    like a tight one. `backtest.with_ceiling` says the same thing for the draft gate; the two
+    are separate because the sentence naming *which* ceiling this is differs, and #135's
+    shared gate protocol is where they become one.
+
+    Lines rather than prints, so the rule is reachable without the network `main` needs --
+    the same reason `paired_report` returns lines.
+    """
+    if "ceiling_diff" not in paired.columns:
+        return []
+    top = float(np.asarray(paired["ceiling_diff"].to_numpy()).mean())
+    out = [f"  ceiling ({CEILING_ARM}) {top:+.{PLACES}f} {UNIT}, measured on this gate's own "
+           f"harness -- not comparable with another gate's"]
+    if top < summary["mean"]:
+        out.append(f"\n  CEILING BELOW THE EFFECT: {top:+.{PLACES}f} < "
+                   f"{summary['mean']:+.{PLACES}f}. One of the two is measuring something "
+                   f"the other is not; do not read the interval above as bounded.")
+    return out
+
+
 # The pre-registered actions, fixed in `docs/weekly-projection-plan.md` before this ran.
 # Asymmetric on purpose: the Weekly projection is the complicated thing and the burden sits
 # on it. The middle branch is the expected one and it carries an *action* rather than being a
@@ -324,6 +372,10 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                     default=None,
                     help="shrink thin-sample projections toward the positional mean; "
                          "'mae' is the pre-registered fit, 'tail' the exploratory one")
+    ap.add_argument("--ceiling", action="store_true",
+                    help="also score a foresight arm -- the same lineup rule reading what "
+                         "actually happened -- and report the largest effect any weekly "
+                         "projection could show. `docs/gate-power.md` stage 2")
     ap.add_argument("--seasons", default="2022,2023,2024,2025")
     ap.add_argument("--drafts", type=int, default=20, help="rosters per season")
     ap.add_argument("--seed", type=int, default=0)
@@ -339,7 +391,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     except Exception as e:
         return unavailable("hub.season.weekly_gate", "the gate's inputs", e)
     cover = coverage(inputs)
-    paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool)
+    paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
+                     ceiling=a.ceiling)
     s = summarise(paired, cluster=CLUSTER, seed=a.seed)
     seasons_tbl = per_season(paired)
     mode = ("one add/drop a week, pool both arms can score" if a.churn and not a.open_pool
@@ -356,8 +409,9 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     print(f"  unranked {cover['unranked']:.1%}, of which a join failure "
           f"{cover['join_failure']:.1%} (floor {VOID_FLOOR:.0%})")
     print(seasons_tbl)
-    print("\n".join(paired_report(s, arm_a="weekly", arm_b="consensus",
-                                   unit="points per team-week", places=3, show_n=False)))
+    print("\n".join([*paired_report(s, arm_a="weekly", arm_b="consensus", unit=UNIT,
+                                    places=PLACES, show_n=False),
+                      *ceiling_report(s, paired)]))
     print(f"\n  {verdict(s, seasons_tbl, cover)[1]}")
     return 0
 
