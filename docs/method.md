@@ -171,6 +171,56 @@ equity failed a gate that ran and is permanently excluded. Exactly one thing qua
 and the ADR counts them — if that count ever grows, the mechanism has stopped being an
 exception.
 
+### 13. A measurement that contradicts a published number is not finished until it moves
+
+**A measurement that contradicts a published number is not finished until the published number
+moves.** Measuring is the cheap half. The published figure is what anyone reads, so a refutation
+that stops at the working note leaves a number standing that its own author already knows is
+wrong, and the reader of the artifact has no way to see the correction.
+
+**The incidents.** Three, all of them landing on 2026-09-06.
+
+*A season-clustered interval, measured and reverted.* ADR-0009 publishes championship equity at
+−19.66 pts/team-game, 95% CI **[−23.16, −16.20]**, bootstrapped over 80 rows. Re-run on the same
+frame with the season as the unit of replication — four independent replications, not eighty —
+it is **[−26.68, −11.45]**, at an MDE of 10.29 ([gate-power.md](gate-power.md), `2496a73`). The
+verdict survives; the interval does not. The producer that would have printed it was *"tried,
+reverted, and is recorded here"* because supplying the key moved a pinned digest, so
+`experiment.summarise` still says nothing computes an MDE, and the narrow interval is still the
+one in `README.md`, ADR-0009 and ADR-0019. Issue #45 is open.
+
+*A gate figure invalidated by its own fix, never re-run.* The weekly gate's treatment arm scored
+negated consensus rank and fantasy points in one column, so every player it could project
+outranked every player it could not, whatever either was worth. Repairing that changes the arm
+under test, which the commit says itself: *"the frozen +0.215 will move — and re-running it is
+the next action, not something this commit may claim"* (`7873de6`). Nothing re-ran it. **+0.215**
+is still the headline of [weekly-blend-gate.md](weekly-blend-gate.md), ADR-0016 and ADR-0017.
+Issue #44 is open on its fourth criterion alone — *the gate's result is re-run and the movement
+recorded* — with the code half verified done.
+
+*An estimator repaired, its estimate left pinned.* `fit_pick_noise` carried two defects, both
+inflating the fitted slope: it fitted against a consensus rank over a 300-plus-player board and
+was applied to an expected pick number, and it refitted through `max(sigma_hat − a, 0)`, which
+zeroes every residual under the pinned intercept and so fits the slope to the upper envelope of
+the data. Both were fixed (`02488c0`). `PICK_NOISE_SLOPE` is still **0.253**, the value the
+uncorrected fit produced (`6ffd302`) — held in place by a test asserting it, under a comment
+describing a fit the code no longer performs, and the board's cost of waiting is still computed
+from it. Issue #150 is open.
+
+**What "moved" means.** Not an edit over the top of the old figure: a superseded number keeps
+its original text here, the same convention [architecture.md](architecture.md) states for a
+superseded decision. It means a **dated restatement beside the original** — the superseded
+figure, the cause, and whether the verdict moves, said explicitly — in the form
+[weekly-blend-gate.md](weekly-blend-gate.md) already carries twice. And it means the new figure
+comes from a **re-run**, not from an argument about which way the old one would have gone.
+
+**What it costs.** Rule 8 closes a question by computing the ceiling; rule 12 acts where no gate
+*can* run, and says so. This is the third case, and the most expensive of the three, because
+here the gate ran and answered. The whole cost of measuring was paid and then discarded at the
+last step, and what is left on the page is a number this repo's own record contradicts. A
+project whose most useful artifact is its record of what was measured and removed cannot keep
+the removals in its commit messages.
+
 ---
 
 ## The record
