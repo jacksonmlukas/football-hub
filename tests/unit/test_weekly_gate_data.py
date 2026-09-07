@@ -279,3 +279,63 @@ def test_a_week_with_nothing_to_calibrate_against_leaves_the_player_unscoreable(
     mu = np.array([[np.nan], [np.nan]])
     got = wgd._one_scale(cons, mu)[:, 0]
     assert (got == G.UNRANKED).all()
+
+
+# --- and the assembly says which cells those were (issue #207) --------------
+
+def test_the_assembly_carries_the_mask_that_says_which_cells_are_the_models_own(universe):
+    """`weekly` is a mixture and the arithmetic that made it is thrown away at the return.
+
+    Until #207 nothing left this module saying which cells were the model's own number and
+    which were the fallback, so the share of each -- and any re-scoring under a different
+    treatment of the fallback -- had to be reconstructed by probing the column from outside.
+    The mask is re-derived here from the Panel the assembly built, the same way the fallback
+    test above does it, rather than read off `addable`: that mask is `projected` *and ranked*,
+    so checking one against the other would compare the fallback with itself.
+    """
+    from hub.models.panel import PanelSpec, build_panel
+    panel = build_panel(arc.SEASONS, PanelSpec(consensus=False))
+    priced = {(r["key"], r["week"]) for r in
+              panel.filter(pl.col("season") == 2024).select("key", "week").iter_rows(named=True)}
+    board = arc.frame("draft_board")
+    keys = [player_key(p) for p in board["player"].to_list()]
+    want = np.array([[(k, w) in priced for w in range(1, REG_SEASON_WEEKS + 1)]
+                     for k in keys])
+
+    got = universe.projected[2024]
+    assert got.dtype == np.dtype(bool)
+    assert got.shape == universe.weekly[2024].shape
+    assert want.any() and not want.all(), "both halves have to exist to compare them"
+    assert np.array_equal(got, want)
+    # The mask and the column agree about what the model priced, which is the join the
+    # mixture and every treatment of the fallback are counted across.
+    assert (universe.weekly[2024][got] > G.UNRANKED).all()
+    assert (universe.addable[2024] & ~got).sum() == 0, \
+        "addable is the other half of the same isnan and stays that way"
+
+
+def test_the_three_treatments_are_reachable_from_a_real_assembly(universe):
+    """The end of the path #207 opens, driven offline: a real `GateInputs` splits into three
+    shares that sum to one and re-scores under all three treatments of its fallback.
+
+    The published figures -- 54.2 / 16.7 / 29.1 and a 1.5-point spread -- are properties of the
+    production run, not of this capture: the archive trims the board to 200 players and the
+    consensus page to 16 of them, which is the same artefact the join-failure test above
+    records for `unranked`. What is asserted here is that the quantities exist on a real
+    assembly and are the three the gate names, so the shares the run prints are counted off
+    the same column the verdict is read from.
+    """
+    mix = G.mixture(universe)
+    assert mix["cells"] == coverage(universe)["cells"], "one universe, both blocks"
+    assert (mix["projection"] + mix["fallback"] + mix["unscoreable"]) == pytest.approx(1.0)
+    assert all(mix[k] > 0 for k in ("projection", "fallback", "unscoreable")), \
+        "all three groups are non-empty here, so the treatments have something to disagree on"
+
+    weekly = universe.weekly[2024]
+    stripped = G.under_treatment(universe, "unscoreable").weekly[2024]
+    mixed = G.under_treatment(universe, "mixed scale").weekly[2024]
+    fallback = ~universe.projected[2024]
+    assert (stripped[fallback] == UNRANKED).all()
+    assert (mixed[fallback] == universe.consensus[2024][fallback]).all()
+    assert np.array_equal(stripped[~fallback], weekly[~fallback])
+    assert np.array_equal(mixed[~fallback], weekly[~fallback])

@@ -79,6 +79,15 @@ def _one_scale(cons: np.ndarray, mu: np.ndarray) -> np.ndarray:
 
     A week with no paired player has nothing to calibrate against, so its unprojected players
     keep `UNRANKED` -- unscoreable rather than guessed at.
+
+    **This is one of three treatments, and it is the one the gate reports under.** The other
+    two are derivable from what this returns beside `~np.isnan(mu)`, and
+    `hub.season.weekly_gate.TREATMENTS` holds all three with the role of each: the column
+    below is the primary, an unprojected player scored `UNRANKED` throughout is the
+    *unscoreable* comparison, and the superseded mixed scale is `cons` in those cells. Which
+    one is primary was decided in #206 and is not a property of this function; that the gate
+    reports the spread across all three rather than one number is #207, and it is why the
+    `projected` mask leaves here at all.
     """
     out = np.where(np.isnan(mu), UNRANKED, mu)
     for w in range(cons.shape[1]):
@@ -113,7 +122,7 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     waiver arm adds and drops, and a per-roster matrix cannot represent a player who was not
     on the roster when the matrix was built.
 
-    Returns a `GateInputs`: nine aligned collections that used to be a positional tuple.
+    Returns a `GateInputs`: ten aligned collections that used to be a positional tuple.
     """
     from collections.abc import Sequence as _Seq
 
@@ -159,6 +168,9 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     pool: dict[int, list[list[int]]] = {}
     addable: dict[int, np.ndarray] = {}
     se: dict[int, np.ndarray] = {}
+    # Not `projected`: that name is the list of per-season projection frames thirty lines up,
+    # and rebinding it here would leave one name for two things in one function.
+    priced: dict[int, np.ndarray] = {}
 
     for yr in sorted(set(proj["season"].unique().to_list()) & set(seasons)):
         print(f"  building the {yr} board as of {yr}-09-01 ...", flush=True)
@@ -192,6 +204,14 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         consensus[yr] = cons
         mu = _matrix(keys, mu_of, float("nan"))
         weekly[yr] = _one_scale(cons, mu)
+        # Which cells of that column are the model's own number, carried out rather than left
+        # behind. Everything the fallback did is `~projected`, so the gate can re-score the
+        # same rows under the other two treatments of it without re-reading the network -- and
+        # the mixture it prints is counted off this mask instead of being discovered by
+        # probing (#207). `addable` is the *other* half of the same `np.isnan` and is a pool
+        # mask, not a cell classification; deriving one from the other would tie the waiver
+        # rule to the fallback report.
+        priced[yr] = ~np.isnan(mu)
         # Addable only where BOTH arms can score him. See the pre-registration in
         # docs/weekly-projection-plan.md: consensus ranks 35.8% of the pool, so an unmasked
         # pool would hand the arm under test six hundred players the incumbent cannot see.
@@ -207,7 +227,7 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         # time -- two readings of one frame is how they come to disagree.
         rosters[yr], pool[yr], pos[yr] = made.rosters, made.pool, made.pos
     return GateInputs(rosters, pos, realised, consensus, weekly, pool, addable, se,
-                      covered_weeks(ecr))
+                      covered_weeks(ecr), priced)
 
 
 def covered_weeks(ecr: pl.DataFrame) -> set[tuple[int, int]]:

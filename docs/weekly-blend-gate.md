@@ -46,6 +46,11 @@ unscoreable — gives **+0.537 [+0.133, +0.939]**, so the fallback is worth **�
 | rank-interpolated (this re-run) | −1.004 |
 | unscoreable | +0.537 |
 
+> **This table was maintained by hand and is not any more (2026-09-07, #207).** Every figure in
+> it was obtained by probing the arm from outside the gate and typing the answer in here. The
+> gate prints the shares and all three effects itself now — see *the gate prints the spread*
+> below, which carries its block rather than a second copy of these numbers.
+
 **The gate is measuring the fallback, not the weekly model.** The spread across three choices
 is 1.5 points, larger than any effect any of them reports. And no row above is a clean
 measurement of the arm: the mixed scale handed it a preference unrelated to either estimate;
@@ -129,6 +134,63 @@ gate can resolve the effect it reports — stage 1, on the weak comparator. Stag
 gate's **foresight ceiling**, which has never been measured: nothing here hands `summarise` a
 ceiling, so the NOT-RUNNABLE branch does not fire and cannot. What this restatement establishes
 is that the question is now askable of this gate, not that it has been answered.
+
+## Restated 2026-09-07 — the gate prints the spread, and this page stops keeping it
+
+Issue #207. Two sections up, this page carries a three-row table and a mixture — 54.2% model
+projection, 16.7% rank-interpolated, 29.1% unscoreable — that no run ever printed. Both were
+obtained by probing the arm from outside and typed in here, so the shipped gate reported one of
+the three numbers and the 1.5-point spread across them lived only on this page. It could go
+stale against the code without anything noticing, which is the failure mode
+[method.md](method.md) rule 13 exists downstream of.
+
+The gate now emits this with every run, off the same paired frame the verdict is read from and
+under the same seed and the same `("season",)` cluster #45 fixed:
+
+```text
+  the arm's score column over 2000 roster-week cells: 54.2% model projection, 16.7%
+  rank-interpolated, 29.1% unscoreable
+
+  the same rows under each treatment of the fallback, same seed and same cluster -- the
+  verdict below is the primary's, and #206 is where that was chosen:
+    rank-interpolated (primary)  -1.004  95% CI [-1.347, -0.640]
+    unscoreable (comparison)     +0.537  95% CI [+0.133, +0.939]
+    mixed scale (superseded)     +0.215  95% CI [-0.242, +0.684]
+  spread across treatments 1.541 points per team-week -- larger than any effect any of them
+  reports (1.004). How much of the verdict is the fallback.
+    rank-interpolated: reads off nothing but the week's own paired observations, so neither
+      arm gets information the other lacks -- the only one of the three not disqualified,
+      which is not the same as correct (#206)
+    unscoreable: benches every player the arm cannot price while consensus still ranks and
+      starts him -- a free lineup rule the arm did not earn, which is the
+      different-universes defect `_one_scale` names
+    mixed scale: negated ranks and fantasy points in one column, so carrying a projection at
+      all beat being ranked well; removed by #44 and scored here only because it is the
+      treatment the published +0.215 was measured under
+```
+
+No new flag: it is the published command in *Reproduce* below, unchanged. The cost is that a
+run scores three arms against the incumbent rather than one — the primary's frame is the one
+the verdict is read off and is not re-scored, so it is two extra scorings and not three.
+
+**Which of those figures is a run and which is a transcription.** The block above is the
+formatter over the 2026-09-07 measurements, not a captured run: this gate builds its paired
+frame from the network and persists nothing, the same limit the section above records for the
+season-clustered restatement. So:
+
+| line | standing |
+|---|---|
+| the three shares | as measured 2026-09-07, and now what the gate counts off its own column |
+| the three effects | as measured 2026-09-07. They do not move under #45's re-clustering — the seasons are balanced, so the mean of the season means is the mean of the rows, which is the check the restatement above already made for −1.004 |
+| the primary's interval | the **season-clustered** one restated above |
+| the two comparison intervals | the **roster-clustered** ones as first published. Nothing has re-clustered them, and a run prints season-clustered intervals for all three, so these two will move when one is taken |
+| the spread, and *larger* | computed by the gate from the three means in front of it, not carried |
+
+**Nothing here picks a treatment.** Rank-interpolation is primary, that was decided in #206 on
+2026-09-07 as a pre-registration, and the verdict line below the block is still the primary's
+alone. What this changes is that a reader of the output can see how much of that verdict is the
+fallback without leaving the terminal. The limitation the primary carries — that the arm is
+scored on a second estimator's error — is unchanged and is why #206 stayed open.
 
 ## The result
 

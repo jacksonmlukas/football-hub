@@ -51,7 +51,10 @@ def _inputs(**over):
         "realised": {2024: np.zeros((n, 18))}, "consensus": {2024: np.zeros((n, 18))},
         "weekly": {2024: np.zeros((n, 18))}, "pool": {2024: [[]]},
         "addable": {2024: np.ones((n, 18), dtype=bool)}, "se": {2024: np.zeros((n, 18))},
-        "covered": {(2024, 5)}}
+        "covered": {(2024, 5)},
+        # Every cell the model's own number unless a test says otherwise, so a fixture that
+        # cares about the fallback has to build one rather than inherit it.
+        "projected": {2024: np.ones((n, 18), dtype=bool)}}
     base.update(over)
     return G.GateInputs(**base)
 
@@ -85,10 +88,16 @@ def test_coverage_ignores_weeks_the_incumbent_does_not_cover():
 def test_the_inputs_are_one_thing_rather_than_nine():
     """They were a nine-value positional tuple threaded through twelve parameters, and the
     ordering was knowledge duplicated across the return, the unpack and two call sites --
-    checked nowhere. Swapping `consensus` and `weekly` inverts the entire result."""
+    checked nowhere. Swapping `consensus` and `weekly` inverts the entire result.
+
+    Ten since #207, and the count is asserted rather than dropped for exactly the reason the
+    nine were: a positional constructor is still what `assemble_universe` calls, so a field
+    appended in the wrong place is a silent re-labelling of two columns.
+    """
     g = _inputs()
-    assert len(G.GateInputs._fields) == 9
+    assert len(G.GateInputs._fields) == 10
     assert G.GateInputs._fields[3:5] == ("consensus", "weekly")
+    assert G.GateInputs._fields[-1] == "projected"
     assert g._replace(covered={(2024, 9)}).covered == {(2024, 9)}, "and it is replaceable"
 
 
@@ -506,3 +515,230 @@ def test_a_run_that_asked_for_no_ceiling_prints_no_ceiling_line():
     plain = G.compare(_three_separate_numbers(), weeks=[5])
     assert G.ceiling_report(_summary(14.0, 8.0, 20.0), plain) == []
     assert G.ceiling_report(_summary(14.0, 8.0, 20.0), G.compare(_inputs(), weeks=[9])) == []
+
+
+# --- the fallback, and the three treatments a run reports under --------------
+#
+# #207. The arm under test scores on a mixture and the gate never said so: 54.2% model
+# projection, 16.7% rank-interpolated, 29.1% unscoreable, measured 2026-09-07. The three
+# treatments of the middle group are 1.5 points apart, further than any of them is from zero,
+# and a run printed one of them. Which one is *primary* is #206 and was decided there; these
+# hold that a run reports all three, and that the numbers it reports are ones it computed.
+
+def _flat(lines):
+    """The block as one line, so an assertion is about what it says and not where it folds.
+
+    These blocks are wrapped to a terminal, so a sentence's line breaks move whenever a number
+    in front of it changes width. Asserting on the folded text would make the width of `-1.004`
+    load-bearing; asserting on the words holds the claim and lets the wrap move.
+    """
+    return " ".join(" ".join(lines).split())
+
+
+def _mixture_fixture():
+    """A column of exactly 1,000 cells split 542 / 167 / 291 -- the published shares.
+
+    A thousand players over one covered week rather than a plausible roster, because the
+    quantity under test is a ratio and the honest way to pin a ratio is to build one whose
+    numerator and denominator are both counted by hand. 54.2 / 16.7 / 29.1 to one decimal is
+    what the gate prints and what `docs/weekly-blend-gate.md` carries.
+    """
+    n = 1000
+    projected = np.zeros((n, 18), dtype=bool)
+    projected[:542, 4] = True
+    weekly = np.full((n, 18), G.UNRANKED)
+    weekly[:542, 4] = 9.0                 # the model's own number
+    weekly[542:709, 4] = 5.0              # interpolated: no projection, but scoreable
+    # 709:1000 keep UNRANKED -- no projection and nothing to interpolate from.
+    return _inputs(rosters={2024: [list(range(n))]}, pos={2024: ["WR"] * n},
+                   realised={2024: np.zeros((n, 18))}, consensus={2024: np.zeros((n, 18))},
+                   weekly={2024: weekly}, projected={2024: projected},
+                   addable={2024: np.ones((n, 18), dtype=bool)},
+                   se={2024: np.zeros((n, 18))}, pool={2024: [[]]})
+
+
+def test_the_mixture_shares_are_the_ones_the_gate_prints():
+    """The three shares, counted rather than carried. They were learned by probing the arm and
+    written into a table by hand; the gate reports them with the result now, which is what
+    stops the published figures and the shipped code drifting apart."""
+    mix = G.mixture(_mixture_fixture(), weeks=[5])
+    assert mix["cells"] == 1000.0
+    assert mix["projection"] == pytest.approx(0.542)
+    assert mix["fallback"] == pytest.approx(0.167)
+    assert mix["unscoreable"] == pytest.approx(0.291)
+    said = _flat(G.mixture_report(mix))
+    assert "1000 roster-week cells" in said
+    assert "54.2% model projection" in said
+    assert "16.7% rank-interpolated" in said
+    assert "29.1% unscoreable" in said
+
+
+def test_the_three_shares_partition_the_column_and_nothing_else():
+    """They sum to one because every cell is exactly one of the three, and a cell the gate
+    does not read is in none of them -- the same rule `coverage` follows, so the two blocks
+    printed side by side describe one universe rather than two."""
+    mix = G.mixture(_mixture_fixture(), weeks=[5])
+    assert mix["projection"] + mix["fallback"] + mix["unscoreable"] == pytest.approx(1.0)
+    off = G.mixture(_mixture_fixture()._replace(covered=set()), weeks=[5])
+    assert off["cells"] == 0.0
+    assert G.mixture_report(off) == [], "no cells is not a share of zero, it is no share"
+
+
+def _fallback_column():
+    """Ten players, six of them receivers, and five cells the model could not price.
+
+    The shape is chosen so the *ordering among the unprojected* decides the lineup: one QB,
+    two RBs and one TE fill their slots however they are scored, six receivers compete for
+    three WR slots and the flex, and only one of the six carries a projection. So each
+    treatment starts a different set, by construction rather than by luck -- which is the
+    whole of what #206 says about this gate.
+    """
+    pos = ["QB", "RB", "RB", "TE"] + ["WR"] * 6
+    n = len(pos)
+    projected = np.zeros((n, 18), dtype=bool)
+    projected[:5, 4] = True               # the four forced slots, and receiver 4
+
+    weekly = np.full((n, 18), G.UNRANKED)
+    weekly[:4, 4] = [10.0, 9.0, 8.0, 7.0]
+    weekly[4, 4] = 100.0                  # the one projected receiver, top under every arm
+    weekly[5:, 4] = [50.0, 40.0, 1.0, 2.0, 3.0]     # interpolated: 5 and 6 start, 9 flexes
+
+    cons = np.zeros((n, 18))
+    cons[:4, 4] = [-1.0, -2.0, -3.0, -4.0]
+    cons[4:, 4] = [-70.0, -60.0, -50.0, -40.0, -30.0, -20.0]   # 9, 8, 7 are the ranked ones
+
+    realised = np.zeros((n, 18))
+    realised[4:, 4] = [0.0, 1.0, 2.0, 4.0, 8.0, 16.0]
+    return _inputs(rosters={2024: [list(range(n))]}, pos={2024: pos},
+                   realised={2024: realised}, consensus={2024: cons},
+                   weekly={2024: weekly}, projected={2024: projected},
+                   addable={2024: np.zeros((n, 18), dtype=bool)},
+                   se={2024: np.zeros((n, 18))}, pool={2024: [[]]})
+
+
+def test_the_unscoreable_treatment_benches_exactly_the_cells_the_model_could_not_price():
+    """Strip the interpolation and an unprojected player becomes one this arm cannot start.
+    Exactly those cells and no others: a treatment that also moved a projected cell would be
+    measuring something besides the fallback."""
+    g = _fallback_column()
+    got = G.under_treatment(g, "unscoreable").weekly[2024]
+    priced, col = g.projected[2024], g.weekly[2024]
+    assert (got[~priced] == G.UNRANKED).all()
+    assert (got[priced] == col[priced]).all()
+    assert not np.array_equal(got, col), "the fixture has a fallback cell to strip"
+
+
+def test_the_mixed_scale_treatment_is_the_column_44_removed():
+    """The superseded one, reproduced rather than described: negated ECR in the cells with no
+    projection and fantasy points everywhere else, which is the `np.where(np.isnan(mu), cons,
+    mu)` #44 deleted. It is scored only because the published +0.215 was measured under it."""
+    g = _fallback_column()
+    got = G.under_treatment(g, "mixed scale").weekly[2024]
+    priced, col, cons = g.projected[2024], g.weekly[2024], g.consensus[2024]
+    assert (got[~priced] == cons[~priced]).all()
+    assert (got[priced] == col[priced]).all()
+
+
+def test_the_primary_treatment_is_the_column_the_assembly_already_built():
+    """It hands back the same object rather than a copy that happens to agree, so no run can
+    score the primary row against a column the verdict was not read off."""
+    g = _fallback_column()
+    assert G.under_treatment(g, G.PRIMARY_TREATMENT) is g
+    with pytest.raises(ValueError, match="no such treatment"):
+        G.under_treatment(g, "whatever-sounds-better")
+
+
+def test_the_waiver_pool_does_not_move_with_the_fallback():
+    """`addable` is the players *both* arms can score, which is already `projected` and ranked,
+    so it is identical under all three. Moving it with the treatment would confound the
+    fallback with the churn rule and the spread would stop being a spread across fallbacks."""
+    g = _fallback_column()
+    for t in G.TREATMENTS:
+        other = G.under_treatment(g, t.name)
+        assert np.array_equal(other.addable[2024], g.addable[2024])
+        assert other.realised[2024] is g.realised[2024]
+        assert other.consensus[2024] is g.consensus[2024]
+
+
+def test_the_same_rows_score_to_three_different_numbers():
+    """The whole of #207 in one assertion, on a fixture whose arithmetic is on paper.
+
+    Consensus starts receivers 9, 8, 7 and 6 for 30 points. The arm under test starts 4, 5, 6
+    and 9 under interpolation (19); 4, 5, 6 and 7 under *unscoreable*, where the five it
+    cannot price tie at `UNRANKED` and the lineup takes them in order (7); and 4, 9, 8 and 7
+    under the mixed scale, where ranks decide among the unprojected (28). One set of rows,
+    three treatments, three effects.
+    """
+    got = {e.treatment.name: e.summary["mean"]
+           for e in G.treatment_effects(_fallback_column(), weeks=[5])}
+    assert got == {"rank-interpolated": pytest.approx(19.0 - 30.0),
+                   "unscoreable": pytest.approx(7.0 - 30.0),
+                   "mixed scale": pytest.approx(28.0 - 30.0)}
+
+
+def test_the_primary_row_is_the_frame_the_verdict_was_read_off():
+    """Handed back rather than re-scored, so a run plays three arms and not four -- and so the
+    primary line in the table cannot disagree with the effect printed above it."""
+    g = _fallback_column()
+    paired = G.compare(g, weeks=[5])
+    effects = G.treatment_effects(g, weeks=[5], primary=paired)
+    mean = float(np.asarray(paired["diff"].to_numpy()).mean())
+    assert effects[0].treatment.role == "primary"
+    assert effects[0].summary["mean"] == pytest.approx(mean)
+    assert effects[0].seasons["gain"].to_list() == [pytest.approx(mean)]
+    # And it is handed to the primary *only*. A frame reused across the table would print
+    # three copies of one effect under three names, which is the single-treatment report
+    # wearing the shape of the fix for it.
+    assert [e.summary["mean"] for e in effects[1:]] == [
+        pytest.approx(7.0 - 30.0), pytest.approx(28.0 - 30.0)]
+
+
+def _effect(name, role, mean, lo, hi):
+    return G.TreatmentEffect(
+        G.Treatment(name, role, f"why {name}"),
+        {"n": 2000.0, "clusters": 4.0, "mean": mean, "lo": lo, "hi": hi, "p_better": 0.0,
+         "se": 0.191, "mde": 0.768},
+        _seasons([mean, mean, mean, mean]))
+
+
+def _published():
+    """The three effects as measured on 2026-09-07, on the mixture above."""
+    return [_effect("rank-interpolated", "primary", -1.004, -1.347, -0.640),
+            _effect("unscoreable", "comparison", 0.537, 0.133, 0.939),
+            _effect("mixed scale", "superseded", 0.215, -0.242, 0.684)]
+
+
+def test_the_three_published_effects_print_side_by_side_with_their_spread():
+    """What a reader of the output gets, at the numbers the document carried by hand. The
+    spread is 1.541 -- larger than any of the three is from zero, which is the finding -- and
+    it is subtracted from the numbers in front of it rather than quoted."""
+    said = _flat(G.treatment_report(_published()))
+    assert "-1.004 95% CI [-1.347, -0.640]" in said
+    assert "+0.537 95% CI [+0.133, +0.939]" in said
+    assert "+0.215 95% CI [-0.242, +0.684]" in said
+    assert "spread across treatments 1.541 " + G.UNIT in said
+    assert "larger than any effect any of them reports (1.004)" in said
+    assert "rank-interpolated (primary)" in said and "mixed scale (superseded)" in said
+    assert "#206" in said, "the block says where the primary was chosen and does not choose"
+
+
+def test_a_spread_smaller_than_the_effects_says_smaller():
+    """The comparison is computed, not asserted. A gate whose fallback stopped mattering would
+    print a line that reads correctly rather than one restating 2026-09-07."""
+    tight = [_effect("rank-interpolated", "primary", -1.004, -1.1, -0.9),
+             _effect("unscoreable", "comparison", -0.900, -1.0, -0.8)]
+    said = _flat(G.treatment_report(tight))
+    assert "spread across treatments 0.104" in said
+    assert "smaller than any effect any of them reports (1.004)" in said
+
+
+def test_one_treatment_is_not_a_comparison_and_prints_nothing():
+    """A number beside itself is the single-treatment report this replaces, and a spread of
+    zero printed across it would read as a finding. An unscored treatment is listed rather
+    than dropped, because a missing row reads as one nobody ran."""
+    assert G.treatment_report(_published()[:1]) == []
+    empty = G.TreatmentEffect(G.Treatment("empty", "comparison", "no rows"),
+                              G.summarise(pl.DataFrame()), _seasons([]))
+    said = _flat(G.treatment_report([*_published(), empty]))
+    assert "empty (comparison)" in said and "nothing scored" in said
+    assert "spread across treatments 1.541" in said, "and it does not enter the spread"

@@ -34,12 +34,20 @@ THE RULES, pre-registered in `docs/weekly-projection-plan.md` before this ran:
   * **Inactive weeks score zero**, not missing: starting a player who did not play is the most
     expensive weekly mistake there is and an honest lineup score has to eat it.
 
+AND THE ARM UNDER TEST IS A MIXTURE, which a run now says out loud. Its score column is the
+model's own projection where there is one and a **fallback** everywhere else, and on
+2026-09-07 that was 54.2% projection, 16.7% fallback, 29.1% unscoreable. The three ways of
+treating the middle group are 1.5 points apart -- further than any of the three is from zero
+-- so a run prints the mixture and scores the identical rows under each of them. `TREATMENTS`
+holds the three and which is primary; that choice is #206's and this block does not make it.
+
     uv run python -m hub.season.weekly_gate --run
 """
 from __future__ import annotations
 
 import argparse
 import sys
+import textwrap
 from collections.abc import Sequence
 from typing import NamedTuple
 
@@ -52,9 +60,11 @@ from hub.league import STARTERS, starting_lineup
 from hub.models.experiment import (
     SEASON_CLUSTER,
     Actions,
+    Field,
     gate,
     paired_report,
     per_season,
+    reading,
     review_width,
     small_sample_report,
     summarise,
@@ -124,6 +134,13 @@ class GateInputs(NamedTuple):
     Every array is over the season's **universe** -- every player on that season's board -- so
     a roster is a list of indices into it and can change week to week, which is what waiver
     churn needs and what a per-roster matrix cannot express.
+
+    `projected` is the tenth, added by #207. `weekly` is a *mixture* -- the model's own number
+    where it has one and a fallback everywhere else -- and until this mask travelled with it
+    the gate could neither say how much of its own score column was which, nor re-score the
+    same rows under a different treatment of the fallback. Both of those were done by hand
+    against a document instead. It is a classification of cells and not a lineup rule: the
+    arms' universes are set by `weekly` and `addable`, and this changes neither.
     """
     rosters: dict[int, list[list[int]]]         # season -> one index list per drafted roster
     pos: dict[int, Sequence[str]]               # season -> position per universe index
@@ -134,6 +151,7 @@ class GateInputs(NamedTuple):
     addable: dict[int, np.ndarray]              # season -> mask: both arms can score him
     se: dict[int, np.ndarray]                   # season -> standard error of the weekly mean
     covered: set[tuple[int, int]]               # the (season, week) pairs consensus ranks
+    projected: dict[int, np.ndarray]            # season -> mask: `weekly` is the model's own
 
 
 def lineup_projection(roster: Sequence[int], pos: Sequence[str],
@@ -370,6 +388,224 @@ def coverage(g: GateInputs, weeks: Sequence[int] = GATE_WEEKS) -> dict[str, floa
             "join_failure": failed / cells}
 
 
+# --- the fallback, and the three things a run could do with it ---------------
+#
+# The arm under test does not score in one currency. `weekly_gate_data._one_scale` builds its
+# column from the model's own projection where there is one and a **fallback** everywhere
+# else, and on 2026-09-07 that column was 54.2% projection, 16.7% fallback and 29.1%
+# unscoreable. What the gate does with the middle group moved the answer by 1.5 points --
+# further than any of the three answers is itself from zero -- and a run printed one of them.
+#
+# So a run prints all three. That is #207, and it decides nothing: which treatment is
+# *primary* is #206, it was decided there on 2026-09-07, and rank-interpolation won it for
+# being the only one of the three that gives neither arm information the other lacks. The
+# verdict still comes off the primary alone. What changes is that a reader can see how much of
+# the verdict is the fallback without re-deriving it from a document.
+
+PRIMARY_TREATMENT = "rank-interpolated"
+
+
+class Treatment(NamedTuple):
+    """One way of scoring the players the model cannot price, and its standing.
+
+    `role` is what this treatment is *for*, and it is data rather than prose because the
+    report has to be able to say which line the verdict came off. `why` is the disqualifying
+    argument -- or, for the primary, the argument that it is the only one not disqualified --
+    and it is carried here so the treatments print with their reasons rather than as a bare
+    table of three numbers a reader is left to rank by size.
+    """
+    name: str
+    role: str
+    why: str
+
+
+TREATMENTS: tuple[Treatment, ...] = (
+    Treatment(PRIMARY_TREATMENT, "primary",
+              "reads off nothing but the week's own paired observations, so neither arm gets "
+              "information the other lacks -- the only one of the three not disqualified, "
+              "which is not the same as correct (#206)"),
+    Treatment("unscoreable", "comparison",
+              "benches every player the arm cannot price while consensus still ranks and "
+              "starts him -- a free lineup rule the arm did not earn, which is the "
+              "different-universes defect `_one_scale` names"),
+    Treatment("mixed scale", "superseded",
+              "negated ranks and fantasy points in one column, so carrying a projection at "
+              "all beat being ranked well; removed by #44 and scored here only because it is "
+              "the treatment the published +0.215 was measured under"),
+)
+
+
+def under_treatment(g: GateInputs, name: str) -> GateInputs:
+    """The same inputs with the fallback cells re-scored, and nothing else touched.
+
+    Every treatment is a function of the two columns already assembled: `weekly` carries the
+    model's projection wherever `projected` is true, so the cells the treatments differ in are
+    exactly `~projected` and no re-assembly is needed to reach them. Which is why `projected`
+    is carried rather than recomputed -- a second `np.isnan` here would be a second definition
+    of what "the model could price him" means, in a different module from the one that
+    decided it.
+
+    **`addable` is deliberately not re-scored.** It is `(cons > UNRANKED) & projected` and so
+    already excludes every fallback cell from the waiver pool under all three treatments. The
+    pool is therefore identical across them and the only thing that varies is how a *rostered*
+    unprojected player is scored -- which is the whole quantity #206 is about. Moving the pool
+    with it would confound the fallback with the churn rule and make the spread unreadable.
+    """
+    if name == PRIMARY_TREATMENT:
+        return g
+    if name not in {t.name for t in TREATMENTS}:
+        raise ValueError(f"no such treatment: {name!r}")
+    weekly = {}
+    for season, col in g.weekly.items():
+        priced = g.projected[season]
+        # `unscoreable`: strip the interpolation, so a player this arm cannot price is one it
+        # cannot start. `mixed scale`: the pre-#44 column, negated ECR in those same cells.
+        other = UNRANKED if name == "unscoreable" else g.consensus[season]
+        weekly[season] = np.where(priced, col, other)
+    return g._replace(weekly=weekly)
+
+
+def mixture(g: GateInputs, weeks: Sequence[int] = GATE_WEEKS) -> dict[str, float]:
+    """What the arm's score column is made of, over the cells the gate actually reads.
+
+    Three shares that sum to one, counted over roster-weeks on the weeks consensus covers --
+    the same cells `coverage` walks, and for the same reason: what the lineup rule reads is a
+    roster, so a share taken over the whole board would describe a column no arm ever sorts.
+
+      * **projection** -- the model's own number.
+      * **fallback** -- no projection, but ranked and in a week with something to calibrate
+        against, so `_one_scale` interpolated one.
+      * **unscoreable** -- no projection and nothing to interpolate from, so `UNRANKED`.
+
+    Reported with the result rather than discovered by probing, which is what it took to learn
+    the figures the published table carried.
+    """
+    cells = priced = fallback = unscoreable = 0
+    for season, made in g.rosters.items():
+        for roster in made:
+            for w in weeks:
+                if (season, w) not in g.covered:
+                    continue
+                on = g.projected[season][roster, w - 1]
+                col = g.weekly[season][roster, w - 1]
+                cells += on.size
+                priced += int(on.sum())
+                fallback += int((~on & (col > UNRANKED)).sum())
+                unscoreable += int((~on & (col <= UNRANKED)).sum())
+    if not cells:
+        return {"cells": 0.0, "projection": float("nan"), "fallback": float("nan"),
+                "unscoreable": float("nan")}
+    return {"cells": float(cells), "projection": priced / cells,
+            "fallback": fallback / cells, "unscoreable": unscoreable / cells}
+
+
+def mixture_report(mix: dict[str, float], *,
+                   fallback_name: str = PRIMARY_TREATMENT) -> list[str]:
+    """The mixture beside the effect. Lines, not prints, like every other block here.
+
+    Nothing at all when nothing was counted, for the reason `ceiling_report` prints nothing
+    without a ceiling: a percentage of no cells is not a small number, it is not a number.
+    """
+    if not mix["cells"] or reading(mix, "projection") is not Field.VALUE:
+        return []
+    return ["\n" + _wrapped(
+        f"the arm's score column over {int(mix['cells'])} roster-week cells: "
+        f"{mix['projection']:.1%} model projection, {mix['fallback']:.1%} {fallback_name}, "
+        f"{mix['unscoreable']:.1%} unscoreable", "  ")]
+
+
+def _wrapped(text: str, indent: str, *, hang: bool = False, width: int = 92) -> str:
+    """One paragraph, folded to a terminal. Hyphens are never a break point here.
+
+    The treatments' reasons are sentences rather than fields, and an operator reading a
+    180-column line in an 80-column terminal reads the first half of it. `break_on_hyphens`
+    is off because the sentences carry `different-universes` and `rank-interpolated`, and a
+    treatment's own name split across two lines is not greppable in a pasted run.
+
+    `hang` indents the continuation, which is right for a list item and wrong for the
+    paragraph above one: a prose line continuing at the depth of the rows underneath it reads
+    as a row.
+    """
+    return textwrap.fill(text, width=width, initial_indent=indent, break_on_hyphens=False,
+                         subsequent_indent=indent + ("  " if hang else ""))
+
+
+class TreatmentEffect(NamedTuple):
+    """One treatment, scored. The same summary shape every other block on this page reads."""
+    treatment: Treatment
+    summary: dict
+    seasons: pl.DataFrame
+
+
+def treatment_effects(g: GateInputs, *, weeks: Sequence[int] = GATE_WEEKS,
+                      churn: bool = False, z: float = 0.0, mask_pool: bool = True,
+                      seed: int = 0, primary: pl.DataFrame | None = None,
+                      treatments: Sequence[Treatment] = TREATMENTS) -> list[TreatmentEffect]:
+    """Score the identical rows under each treatment of the fallback.
+
+    Identical in every other respect on purpose: same weeks, same churn rule, same pool mask,
+    same seed, and `summarise` under the same `CLUSTER` #45 fixed. A spread measured across
+    three runs that also differed in their seed would be a spread across seeds, which is the
+    reading this block exists to rule out -- #206 records seed 0 at -1.004 and seed 7 at
+    -1.188, so 0.18 points of seed noise against the 1.5 the fallback is worth.
+
+    `primary` is the paired frame the caller already built for the verdict, handed back in so
+    a run scores three arms rather than four. Handing in a *different* frame would put a
+    primary row in this table that the verdict was not read off, so the caller passes the
+    frame it printed or nothing at all.
+    """
+    out = []
+    for t in treatments:
+        paired = (primary if t.name == PRIMARY_TREATMENT and primary is not None
+                  else compare(under_treatment(g, t.name), weeks=weeks, churn=churn, z=z,
+                               mask_pool=mask_pool))
+        out.append(TreatmentEffect(t, summarise(paired, cluster=CLUSTER, seed=seed),
+                                   per_season(paired)))
+    return out
+
+
+def treatment_report(effects: Sequence[TreatmentEffect], *, unit: str = UNIT,
+                     places: int = PLACES) -> list[str]:
+    """Every treatment's effect side by side, and how far apart they are.
+
+    **The spread is computed, and so is its comparison with the effects.** The claim that
+    matters -- that the choice of fallback moves the answer further than any of the answers is
+    itself from zero -- is exactly the kind a document restates until it is stale, so the line
+    reads `larger` or `smaller` off the numbers in front of it rather than asserting what held
+    on 2026-09-07.
+
+    Nothing at all under two scored treatments: one number side by side with itself is the
+    single-treatment report this replaces, and a spread of zero printed across it would be
+    worse than printing nothing. A treatment whose frame was empty carries no mean and is
+    listed as such rather than dropped, because a missing row would read as one nobody ran.
+    """
+    scored = [e for e in effects if reading(e.summary, "mean") is Field.VALUE]
+    if len(scored) < 2:
+        return []
+    label = {e.treatment.name: f"{e.treatment.name} ({e.treatment.role})" for e in effects}
+    pad = max(len(v) for v in label.values())
+    lines = ["\n" + _wrapped("the same rows under each treatment of the fallback, same seed "
+                             "and same cluster -- the verdict below is the primary's, and "
+                             "#206 is where that was chosen:", "  ")]
+    for e in effects:
+        name = label[e.treatment.name]
+        if reading(e.summary, "mean") is not Field.VALUE:
+            lines.append(f"    {name:<{pad}}  nothing scored")
+            continue
+        lines.append(f"    {name:<{pad}}  {e.summary['mean']:+.{places}f}  "
+                     f"95% CI [{e.summary['lo']:+.{places}f}, "
+                     f"{e.summary['hi']:+.{places}f}]")
+    means = [e.summary["mean"] for e in scored]
+    spread, biggest = max(means) - min(means), max(abs(m) for m in means)
+    lines.append(_wrapped(
+        f"spread across treatments {spread:.{places}f} {unit} -- "
+        f"{'larger' if spread > biggest else 'smaller'} than any effect any of them reports "
+        f"({biggest:.{places}f}). How much of the verdict is the fallback.", "  "))
+    lines.extend(_wrapped(f"{e.treatment.name}: {e.treatment.why}", "    ", hang=True)
+                 for e in effects)
+    return lines
+
+
 def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - network
     ap = argparse.ArgumentParser(
         prog="hub.season.weekly_gate",
@@ -407,10 +643,17 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     except Exception as e:
         return unavailable("hub.season.weekly_gate", "the gate's inputs", e)
     cover = coverage(inputs)
+    mix = mixture(inputs)
     paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
                      ceiling=a.ceiling)
     s = summarise(paired, cluster=SEASON_CLUSTER, seed=a.seed)
     seasons_tbl = per_season(paired)
+    # The primary's frame is handed back rather than rebuilt, so this is two extra scorings
+    # and not three, and the primary row below is the one the verdict is read off. No
+    # `--ceiling` on the comparisons: the ceiling is a property of the harness rather than of
+    # the fallback, and scoring a foresight arm three times would say the same thing thrice.
+    effects = treatment_effects(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
+                                seed=a.seed, primary=paired)
     mode = ("one add/drop a week, pool both arms can score" if a.churn and not a.open_pool
             else "one add/drop a week, OPEN POOL -- not the gate" if a.churn
             else "frozen rosters")
@@ -429,7 +672,9 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                                     places=PLACES, show_n=False),
                       *small_sample_report(s, seasons_tbl, unit=UNIT, places=PLACES),
                       *review_width("weekly", s, places=PLACES),
-                      *ceiling_report(s, paired)]))
+                      *ceiling_report(s, paired),
+                      *mixture_report(mix),
+                      *treatment_report(effects)]))
     print(f"\n  {verdict(s, seasons_tbl, cover)[1]}")
     return 0
 
