@@ -137,6 +137,110 @@ def test_teammates_correlate_and_others_do_not():
     assert abs(np.corrcoef(apart[:, 0], apart[:, 1])[0, 1]) < 0.05
 
 
+# --- a block that will not factor ------------------------------------------
+#
+# Issue #171. A block that is not positive semi-definite used to be caught and skipped, so
+# that team's players were drawn independently -- the exact model the correlation structure
+# exists to replace -- with no counter, no warning and nothing recorded. The draw it produces
+# has the shape and dtype of a correlated one, so the count is the only evidence there is.
+
+
+def _star(pass_catchers: int) -> tuple[np.ndarray, np.ndarray]:
+    """One team: a quarterback and `pass_catchers` receivers, as (pos, nfl_team).
+
+    Only the quarterback's edges are non-zero, so the block is a star and is PSD exactly
+    while the receivers' squared correlations sum below one. At +0.232 that turns over
+    between 18 and 19 receivers -- an absurd roster, and the point: this is a numerical
+    property of `TEAMMATE_RHO` rather than a mock, so a refit that makes real blocks fail
+    is caught by the same code path these tests drive.
+    """
+    pos = np.array(["QB"] + ["WR"] * pass_catchers)
+    return pos, np.array(["ONE"] * (pass_catchers + 1))
+
+
+def _teams(good: int, bad_pass_catchers: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """`good` two-man teams that factor, plus optionally one that does not."""
+    pos: list[str] = []
+    team: list[str] = []
+    for i in range(good):
+        pos += ["QB", "WR"]
+        team += [f"T{i}", f"T{i}"]
+    if bad_pass_catchers:
+        p, t = _star(bad_pass_catchers)
+        pos += p.tolist()
+        team += t.tolist()
+    return np.array(pos), np.array(team)
+
+
+def test_a_block_that_will_not_factor_is_counted_rather_than_skipped():
+    pos, team = _teams(good=20, bad_pass_catchers=19)
+    report = predict.CorrelationReport()
+    predict.correlated_normal(np.random.default_rng(0), (4, pos.size), pos, team,
+                              report=report)
+    assert report.blocks == 21, "every block carrying a correlation should be counted"
+    assert report.independent == 1
+    assert report.share == pytest.approx(1 / 21)
+
+
+def test_a_run_that_lost_a_block_is_distinguishable_from_one_that_lost_none():
+    """The whole defect: both runs return an array of the same shape and dtype, and before
+    this there was nothing else to tell them apart."""
+    clean_pos, clean_team = _teams(good=21)
+    lost_pos, lost_team = _teams(good=20, bad_pass_catchers=19)
+    clean = predict.CorrelationReport()
+    lost = predict.CorrelationReport()
+    predict.correlated_normal(np.random.default_rng(0), (4, clean_pos.size),
+                              clean_pos, clean_team, report=clean)
+    predict.correlated_normal(np.random.default_rng(0), (4, lost_pos.size),
+                              lost_pos, lost_team, report=lost)
+    assert not clean.degraded()
+    assert lost.degraded()
+    assert clean.note() != lost.note()
+    assert "independently" in lost.note()
+
+
+def test_a_run_that_loses_more_than_the_floor_refuses():
+    """It does not hand back a correlated simulation it did not perform. A single team,
+    entirely independent, is 100% of the blocks."""
+    pos, team = _star(19)
+    with pytest.raises(predict.CorrelationVoid, match="would not factor"):
+        predict.correlated_normal(np.random.default_rng(0), (4, pos.size), pos, team)
+
+
+def test_the_floor_is_a_share_and_not_a_count():
+    """One lost block in twenty-one is inside the floor and reported; two in twenty-two is
+    outside it and refused. A guard keyed to the count alone would treat these the same."""
+    inside_pos, inside_team = _teams(good=20, bad_pass_catchers=19)
+    predict.correlated_normal(np.random.default_rng(0), (4, inside_pos.size),
+                              inside_pos, inside_team)
+    report = predict.CorrelationReport(blocks=22, independent=2)
+    assert report.share > report.floor
+    with pytest.raises(predict.CorrelationVoid):
+        report.check()
+
+
+def test_the_accounting_does_not_move_a_run_with_nothing_to_report():
+    """A clean run is unchanged. The counters read the block the Cholesky already built,
+    so nothing about the draw depends on whether a report was passed."""
+    pos, team = _teams(good=8)
+    kw = {"pos": pos, "nfl_team": team}
+    with_report = predict.correlated_normal(np.random.default_rng(3), (200, pos.size),
+                                            report=predict.CorrelationReport(), **kw)
+    without = predict.correlated_normal(np.random.default_rng(3), (200, pos.size), **kw)
+    assert np.array_equal(with_report, without)
+
+
+def test_a_team_with_nothing_to_correlate_is_not_counted_as_a_block():
+    """Two receivers correlate at zero, so their block is the identity and independence
+    costs it nothing. Counting it would make the share read low exactly when the teams that
+    did lose something were few."""
+    report = predict.CorrelationReport()
+    predict.correlated_normal(np.random.default_rng(0), (4, 2), np.array(["WR", "WR"]),
+                              np.array(["ONE", "ONE"]), report=report)
+    assert report.blocks == 0
+    assert report.note() == "correlation: no team block carried a correlation to apply."
+
+
 # --- components live on the same object -----------------------------------
 
 def test_the_component_line_is_reachable_from_the_same_object():

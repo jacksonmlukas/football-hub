@@ -56,6 +56,8 @@ from hub.models.predict import (  # noqa: F401
     WEEKLY_K_POOLED,
     WEEKLY_SKEW,
     WEEKLY_SKEW_POOLED,
+    CorrelationReport,
+    CorrelationVoid,
     correlated_normal,
     skewed,
     talent_cv_for,
@@ -101,13 +103,18 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
                    rng: np.random.Generator | None = None,
                    talent_cv: float | np.ndarray | None = None,
                    nfl_team: np.ndarray | None = None,
-                   skew: np.ndarray | None = None) -> np.ndarray:
+                   skew: np.ndarray | None = None,
+                   report: CorrelationReport | None = None) -> np.ndarray:
     """Weekly points for every team. Returns (sims, weeks, teams).
 
     Realised talent is drawn once per season, then weekly points are drawn around it.
     Without that first draw the projection IS the truth, and any strategy that ranks on
     the projection drafts with perfect foresight while an ADP-following opponent does
     not -- which is not an edge, it is a leak.
+
+    `report` is the caller's `CorrelationReport`, carried through so that a run making many
+    simulations counts its unfactorable blocks once for the run rather than losing the
+    count with each call's stack frame.
     """
     rng = rng or np.random.default_rng(0)
     # None means per position; a scalar is still accepted, which is what the sweeps in
@@ -128,7 +135,7 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
     ratio = np.divide(true_mu, mu[None, :], out=np.zeros_like(true_mu),
                       where=mu[None, :] > 0)
     sd_eff = (sd[None, :] * np.sqrt(ratio))[:, None, :]
-    z = _correlated_normal(rng, (n_sims, weeks, mu.size), pos, nfl_team)
+    z = _correlated_normal(rng, (n_sims, weeks, mu.size), pos, nfl_team, report=report)
     # Skew comes from the caller when it has it. `hub.models.predict.moments` already
     # returns a skew column alongside mu and sd; recomputing it here from `pos` agreed only
     # because both routes read the same table, and would go on agreeing right up until one
@@ -198,7 +205,8 @@ def champion_probability(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarr
                          rng: np.random.Generator | None = None,
                          talent_cv: float | np.ndarray | None = None,
                          nfl_team: np.ndarray | None = None,
-                         skew: np.ndarray | None = None) -> np.ndarray:
+                         skew: np.ndarray | None = None,
+                         report: CorrelationReport | None = None) -> np.ndarray:
     """P(each team wins the league). Returns (teams,) summing to 1.
 
     14-week H2H regular season, top 6 seeds, two byes, then single elimination on one-week
@@ -208,7 +216,8 @@ def champion_probability(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarr
     rng = rng or np.random.default_rng(0)
     teams = len(rosters)
     pts = simulate_weeks(rosters, mu, sd, pos, n_sims,
-                         REG_SEASON_WEEKS + PLAYOFF_ROUNDS, rng, talent_cv, nfl_team, skew)
+                         REG_SEASON_WEEKS + PLAYOFF_ROUNDS, rng, talent_cv, nfl_team, skew,
+                         report)
     _, seeds = seed_table(pts)
     champs = np.array([champion(pts, seeds, s) for s in range(n_sims)])
     return np.bincount(champs, minlength=teams) / n_sims

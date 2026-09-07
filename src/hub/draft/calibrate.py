@@ -24,10 +24,15 @@ Two corrections, both of which move the answer:
   so 2022 is missing a quarter of its draft, uniformly across rounds. Fitting on it reads
   as more predictable than the season was. The headline excludes it; `--seasons` does not.
 
-Result on 2023-25, 460 drafted skill players inside pick 168: **0.411, 95% CI
-[0.384, 0.437]**, which puts the old 0.35 about 4.6 standard errors low. Only the second
-moment was fitted, and the quantiles came out right on their own -- observed p10/p90 of
-0.43/1.55 against 0.44/1.56 for the normal the model assumes, with skew 0.07.
+Result on 2023-25, 460 drafted player-seasons over 235 players inside pick 168: **0.408,
+95% CI [0.370, 0.453]**, which still puts the old 0.35 well outside the interval. Only the
+second moment was fitted, and the quantiles came out right on their own -- observed p10/p90
+of 0.43/1.55 against 0.44/1.56 for the normal the model assumes, with skew 0.07.
+
+**The interval is over the player, and the curve is refitted inside it** (issue #172). It
+used to be over the player-*season*, around a curve fitted once outside the resample, with
+the noise correction indexed by the same draw as the residuals -- and it read
+[0.380, 0.434], 54% narrower on the same point estimate. Restated in docs/talent-cv.md.
 
     uv run python -m hub.draft.calibrate
 """
@@ -36,6 +41,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 import polars as pl
@@ -56,31 +62,58 @@ NOT_FITTED_BECAUSE = (
 
 TEAM_GAMES = 17
 DRAFTED_THROUGH = 168          # 14 rounds x 12 teams: the roster the simulator holds
+# Fewest players a position needs before it gets a curve of its own. Named rather than typed
+# twice: the point estimate and every bootstrap refit have to drop a thin position on the
+# same rule, or the interval is around a different estimator than the one it is reported for.
+MIN_PER_POSITION = 20
 
 # Recorded so `test_the_current_constant_is_inside_the_fitted_interval` can guard against a
 # silent revert to a guessed value.
-FITTED_CI95 = (0.380, 0.434)
+#
+# RE-RUN 2026-09-07 under the corrected bootstrap, issue #172: [0.380, 0.434] -> this, 54%
+# wider on an unchanged point estimate of 0.408. The old interval treated the fitted curve as
+# known, and refitting it inside each resample is almost the whole of the movement. Restated
+# in docs/talent-cv.md rather than edited over the top of the old figure.
+FITTED_CI95 = (0.370, 0.453)
 # Shrunk, debiased per-position values behind `season.TALENT_CV_BY_POS`.
-FITTED_BY_POS = {"QB": 0.419, "RB": 0.501, "WR": 0.418, "TE": 0.321}
+#
+# These moved in the same re-run, and not because any raw estimate did -- all four are
+# unchanged. `_shrink` reads `se_by_position` to decide how much of the spread between
+# positions is real, so correcting the standard errors necessarily moves the shrunk values:
+# RB 0.501 -> 0.482 and TE 0.321 -> 0.332, with QB and WR inside a thousandth. Leaving these
+# pinned to a standard error the estimator no longer produces is the "estimator repaired, its
+# estimate left pinned" failure docs/method.md rule 13 names.
+FITTED_BY_POS = {"QB": 0.419, "RB": 0.482, "WR": 0.419, "TE": 0.332}
 
 
-def _curve(sub: pl.DataFrame) -> np.ndarray:
+def _curve_of(real: np.ndarray, logpick: np.ndarray, season: np.ndarray) -> np.ndarray:
     """E[points per team game | pick] for one position: a power law with season intercepts.
 
     Log-log because the pick-to-points relationship is roughly a power law and a linear fit
     would put the error in the wrong place at the top of the board, which is where the
     roster's value is.
+
+    Takes arrays rather than a frame because the bootstrap refits it thousands of times on
+    resampled rows, and a resample is an index gather. Season intercepts come from the
+    seasons *present* in the rows handed in, so a draw that misses a season fits the design
+    it actually has rather than a column of zeros.
     """
-    real = sub["total"].to_numpy() / TEAM_GAMES
-    x = np.log(sub["pick"].to_numpy().astype(float))
-    seasons = sorted(set(sub["season"].to_list()))
-    cols = [np.ones_like(x), x] + [
-        (sub["season"].to_numpy() == s).astype(float) for s in seasons[1:]]
-    beta, *_ = np.linalg.lstsq(np.column_stack(cols), np.log(real + 1.0), rcond=None)
-    pred = np.clip(np.exp(np.column_stack(cols) @ beta) - 1.0, 0.5, None)
+    seasons = np.unique(season)
+    cols = [np.ones_like(logpick), logpick] + [
+        (season == s).astype(float) for s in seasons[1:]]
+    x = np.column_stack(cols)
+    beta, *_ = np.linalg.lstsq(x, np.log(real + 1.0), rcond=None)
+    pred = np.clip(np.exp(x @ beta) - 1.0, 0.5, None)
     # Calibrate the level: a curve that sat high or low on average would have that bias
     # counted as dispersion.
     return pred * float(np.mean(real / pred))
+
+
+def _curve(sub: pl.DataFrame) -> np.ndarray:
+    """`_curve_of` for one position's rows as a frame."""
+    return _curve_of(sub["total"].to_numpy() / TEAM_GAMES,
+                     np.log(sub["pick"].to_numpy().astype(float)),
+                     sub["season"].to_numpy())
 
 
 def simulate_seasons(mu: np.ndarray, cv: float, games: np.ndarray,
@@ -147,11 +180,175 @@ def nominal_for(target: float, mu: np.ndarray, games: np.ndarray, picks: np.ndar
     return 0.5 * (lo + hi)
 
 
-def rng_boot(r: np.ndarray, nv: np.ndarray, bootstrap: int, seed: int) -> np.ndarray:
-    """Bootstrap distribution of the noise-corrected dispersion."""
+@dataclass(frozen=True)
+class Block:
+    """One position's rows, as arrays, so a resample is an index gather.
+
+    Arrays rather than a frame because the bootstrap refits everything below thousands of
+    times, and a `DataFrame.filter` inside that loop cost more than the least squares it was
+    feeding. `unit` is the resample unit each row belongs to -- see `cluster_rows` -- carried
+    per row so a pooled draw can be split back across positions without a join.
+    """
+    pos: str
+    real: np.ndarray        # points per team game
+    pick: np.ndarray
+    season: np.ndarray
+    total: np.ndarray
+    games: np.ndarray
+
+    @classmethod
+    def of(cls, sub: pl.DataFrame, pos: str) -> Block:
+        return cls(pos=pos,
+                   real=sub["total"].to_numpy() / TEAM_GAMES,
+                   pick=sub["pick"].to_numpy().astype(float),
+                   season=sub["season"].to_numpy(),
+                   total=sub["total"].to_numpy().astype(float),
+                   games=sub["games"].to_numpy().astype(float))
+
+    def curve(self, idx: np.ndarray | None = None) -> np.ndarray:
+        """E[points per team game | pick] over these rows, or the ones `idx` names."""
+        return _curve_of(self.real if idx is None else self.real[idx],
+                         np.log(self.pick if idx is None else self.pick[idx]),
+                         self.season if idx is None else self.season[idx])
+
+
+def ratio_and_noise(block: Block, idx: np.ndarray | None = None,
+                    ) -> tuple[np.ndarray, np.ndarray]:
+    """One position's realized/projected ratios, and each row's weekly-sampling share.
+
+    Both are derived from the rows named by `idx`, **including the curve** -- which is the
+    whole reason this takes an index. The bootstrap has to be able to re-run every step on a
+    resample, and a step that reaches outside the rows it was given cannot be.
+
+    The ratios come out with mean exactly 1 by construction: `_curve_of` rescales its
+    prediction by `mean(real / pred)`, so dividing through by it again is the identity. That
+    is why nothing here normalises, and why `mean_ratio` is a check on the level rather than
+    a step in the fit.
+
+    Weekly sampling contribution to Var(ratio), per player. A season total is a sum of `g`
+    weekly draws, so its spread shrinks with games played and has to come off player by
+    player rather than at some average rate. Under sd = k*sqrt(talent), a season total over g
+    games has variance g * k^2 * talent, so as a share of the squared prediction the
+    correction is linear in realised scoring rather than quadratic in it. That linearity is
+    why the residual bias this leaves is small enough for `nominal_for` to mop up.
+    """
+    real = block.real if idx is None else block.real[idx]
+    total = block.total if idx is None else block.total[idx]
+    g = block.games if idx is None else block.games[idx]
+    pred = block.curve(idx)
+    kk = WEEKLY_K.get(block.pos, WEEKLY_K_POOLED)
+    ppg = np.where(g > 0, total / np.maximum(g, 1), 0.0)
+    nv = kk ** 2 * g * ppg / (TEAM_GAMES ** 2 * np.maximum(pred, 1e-6) ** 2)
+    return real / pred, nv
+
+
+def _dispersion(r: np.ndarray, nv: np.ndarray) -> float:
+    """Dispersion of the ratios net of the weekly sampling inside them."""
+    return float(np.sqrt(max(r.var(ddof=1) - nv.mean(), 1e-9)))
+
+
+def cluster_rows(df: pl.DataFrame) -> np.ndarray:
+    """The resample unit of each row: the **player**, as a 0-based code per row.
+
+    The unit is the player and not the player-season, because a player drafted in three of
+    these seasons is one draw from the population of drafted players and not three. His three
+    outcomes are correlated -- the same talent produced all of them -- and resampling rows
+    treats them as independent, which is the same understatement `hub.models.experiment`
+    clusters on the season to avoid.
+
+    A frame with no `player` column gets one unit per row, which is the truth for a frame
+    holding one season per player and is what every synthetic fixture here is. It is not a
+    silent fallback: `fit_talent_cv` reports `clusters` beside `n`, so a frame that lost its
+    identifier reads as 460 units over 460 rows and a frame that kept it does not.
+
+    **Coded by first appearance, not by how the identifiers happen to sort.** `np.unique`
+    numbers them lexicographically, and the bootstrap indexes into that numbering -- so
+    renaming the players permutes which of them each draw takes, and the percentiles move
+    while the mean does not. That is the defect [weekly-blend-gate.md] records against
+    `cluster_bootstrap`, one module over, and it is worth not repeating: it also made a frame
+    with one season per player disagree with the same frame with the column dropped, which is
+    two answers to a question that has one.
+    """
+    if "player" not in df.columns:
+        return np.arange(df.height)
+    ids = df["player"].cast(pl.Utf8).fill_null("").to_numpy()
+    if not ids.size:
+        return np.zeros(0, dtype=int)
+    _, first, inverse = np.unique(ids, return_index=True, return_inverse=True)
+    rank = np.empty(first.size, dtype=int)
+    rank[np.argsort(first)] = np.arange(first.size)
+    return rank[inverse]
+
+
+def _units_to_rows(unit: np.ndarray) -> list[np.ndarray]:
+    """Row indices per unit, grouped by a sort rather than a scan per unit."""
+    if not unit.size:
+        return []
+    order = np.argsort(unit, kind="stable")
+    return np.split(order, np.cumsum(np.bincount(unit))[:-1])
+
+
+def cluster_boot(blocks: Sequence[Block], unit: np.ndarray, bootstrap: int,
+                 seed: int) -> np.ndarray:
+    """Bootstrap distribution of the noise-corrected dispersion. Three corrections, #172.
+
+    **The curve is refitted inside the resample.** It used to be fitted once, outside, and
+    the bootstrap resampled the residuals that fit produced -- so the interval carried the
+    spread of the residuals around a curve it treated as known, and omitted the uncertainty
+    of the curve itself. The curve is estimated from the same 460 players; it is not known.
+
+    **The unit is the player**, via `cluster_rows`, so all of one player's seasons move
+    together and a player who was drafted three times is one draw rather than three.
+
+    **The residual and the noise term come from independent draws.** The correction
+    subtracted is an estimate in its own right, and indexing it by the same draw as the
+    residuals ties them: a draw that happens to take high-scoring players raises `var(r)` and
+    `mean(nv)` together, so their difference is steadied by the pairing rather than by the
+    data. Two draws let the two estimates vary as independently as they do.
+
+    All three push the same way, and they should: each is a source of variation the old
+    interval left out.
+
+    `blocks` are the positions to pool over and `unit` is the resample unit of every row
+    across all of them, in `blocks` order -- so one draw of players is split back across
+    positions by a mask rather than a join.
+    """
     rng = np.random.default_rng(seed)
-    return np.array([np.sqrt(max(r[i].var(ddof=1) - nv[i].mean(), 1e-9))
-                     for i in (rng.integers(0, len(r), len(r)) for _ in range(bootstrap))])
+    rows_of = _units_to_rows(unit)
+    n_units = len(rows_of)
+    # Which block each global row belongs to, and where inside it.
+    block_of = np.concatenate([np.full(b.real.size, i) for i, b in enumerate(blocks)]) \
+        if blocks else np.zeros(0, dtype=int)
+    local_of = np.concatenate([np.arange(b.real.size) for b in blocks]) \
+        if blocks else np.zeros(0, dtype=int)
+
+    def draw() -> tuple[np.ndarray, np.ndarray]:
+        if not n_units:
+            return np.array([0.0, 0.0]), np.array([0.0])
+        rows = np.concatenate([rows_of[k]
+                               for k in rng.integers(0, n_units, n_units)])
+        codes = block_of[rows]
+        rs, nvs = [], []
+        for i, block in enumerate(blocks):
+            # A draw can leave a position too thin to fit a curve on; it is dropped for that
+            # draw on the same rule the point estimate drops it, or the interval would be
+            # around a different estimator than the one it is reported for.
+            sel = local_of[rows[codes == i]]
+            if sel.size < MIN_PER_POSITION:
+                continue
+            r, nv = ratio_and_noise(block, sel)
+            rs.append(r)
+            nvs.append(nv)
+        if not rs:
+            return np.array([0.0, 0.0]), np.array([0.0])
+        return np.concatenate(rs), np.concatenate(nvs)
+
+    out = np.empty(bootstrap)
+    for b in range(bootstrap):
+        r, _ = draw()
+        _, nv = draw()
+        out[b] = _dispersion(r, nv)
+    return out
 
 
 def _shrink(by_pos: dict, se_pos: dict, pooled: float) -> dict:
@@ -185,49 +382,43 @@ def fit_talent_cv(df: pl.DataFrame, bootstrap: int = 2000, seed: int = 0,
     model clips talent and weekly points at zero. See `nominal_for`.
     """
     df = df.filter(pl.col("pos").is_in(DRAFTED_POSITIONS) & (pl.col("pick") <= DRAFTED_THROUGH))
-    ratios, noise, by_pos, per_pos, shape = [], [], {}, {}, {}
+    unit_all = cluster_rows(df)
+    pos_all = df["pos"].to_numpy()
+    ratios, noise, by_pos, shape = [], [], {}, {}
+    blocks: list[Block] = []
+    units: list[np.ndarray] = []
     for pos in DRAFTED_POSITIONS:
-        sub = df.filter(pl.col("pos") == pos)
-        if sub.height < 20:
+        keep = np.flatnonzero(pos_all == pos)
+        if keep.size < MIN_PER_POSITION:
             continue
-        real = sub["total"].to_numpy() / TEAM_GAMES
-        pred = _curve(sub)
-        r = real / pred
-        g = sub["games"].to_numpy().astype(float)
-        # Weekly sampling contribution to Var(ratio), per player. A season total is a sum of
-        # `g` weekly draws, so its spread shrinks with games played and has to come off
-        # player by player rather than at some average rate.
-        #
-        # Under sd = k*sqrt(talent), a season total over g games has variance
-        # g * k^2 * talent, so as a share of the squared prediction the correction is
-        # linear in realised scoring rather than quadratic in it. That linearity is why
-        # the residual bias this leaves is small enough for `nominal_for` to mop up.
-        mean_g = float(g.mean()) or 1.0
-        kk = WEEKLY_K.get(pos, WEEKLY_K_POOLED)
-        ppg = np.where(g > 0, sub["total"].to_numpy() / np.maximum(g, 1), 0.0)
-        nv = kk ** 2 * g * ppg / (TEAM_GAMES ** 2 * np.maximum(pred, 1e-6) ** 2)
-        by_pos[pos] = float(np.sqrt(max(r.var(ddof=1) - nv.mean(), 1e-9)))
-        per_pos[pos] = (r / r.mean(), nv)
-        # projected per-game points, for the debias step: pred is per *team* game
-        shape[pos] = (pred * TEAM_GAMES / mean_g, g, sub["pick"].to_numpy())
+        block = Block.of(df[keep], pos)
+        r, nv = ratio_and_noise(block)
+        mean_g = float(block.games.mean()) or 1.0
+        by_pos[pos] = _dispersion(r, nv)
+        blocks.append(block)
+        units.append(unit_all[keep])
+        # projected per-game points, for the debias step: the curve is per *team* game
+        shape[pos] = (block.curve() * TEAM_GAMES / mean_g, block.games, block.pick)
         ratios.append(r)
         noise.append(nv)
 
     if not ratios:
         raise ValueError("no position had enough drafted players to fit")
 
-    se_pos = {}
-    for pos, (r_p, nv_p) in per_pos.items():
-        rr = rng_boot(r_p, nv_p, bootstrap, seed)
-        se_pos[pos] = float(rr.std())
+    # Each position's own interval, resampled within that position: a quarterback's seasons
+    # say nothing about the spread among tight ends, so the pooled draw is the wrong unit
+    # here. The unit codes are re-based per position so `bincount` stays dense.
+    se_pos = {b.pos: float(cluster_boot([b], np.unique(u, return_inverse=True)[1],
+                                        bootstrap, seed).std())
+              for b, u in zip(blocks, units, strict=True)}
 
     r = np.concatenate(ratios)
     nv = np.concatenate(noise)
     mean_ratio = float(r.mean())
-    r = r / mean_ratio
-    cv = float(np.sqrt(max(r.var(ddof=1) - nv.mean(), 1e-9)))
+    cv = _dispersion(r, nv)
 
-    bs = rng_boot(r, nv, bootstrap, seed)
+    pooled_unit = np.unique(np.concatenate(units), return_inverse=True)[1]
+    bs = cluster_boot(blocks, pooled_unit, bootstrap, seed)
 
     out_nominal, nominal_by_pos = None, {}
     if debias:
@@ -250,6 +441,10 @@ def fit_talent_cv(df: pl.DataFrame, bootstrap: int = 2000, seed: int = 0,
             "se_by_position": se_pos,
             "raw_sd": float(r.std(ddof=1)), "mean_ratio": mean_ratio,
             "by_position": by_pos, "n": int(df.height),
+            # The unit the interval was resampled over, said out loud beside the row count.
+            # `clusters == n` means one season per player; anything less means a player is
+            # in here more than once and was drawn once.
+            "clusters": int(np.unique(unit_all).size),
             "seasons": sorted(set(df["season"].to_list())),
             "ci95": (float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))),
             "se": float(bs.std())}
@@ -281,6 +476,11 @@ def draft_outcomes(seasons: Sequence[int], fetch=None) -> pl.DataFrame:
                 continue
             avg = st.get("appliedAverage")
             rows.append({"season": int(season), "pick": int(pick_of[p["id"]]),
+                         # ESPN's player id, and the reason it is carried: the bootstrap
+                         # resamples the *player*, so a back drafted in all three seasons is
+                         # one draw and not three. Without it every row is its own unit and
+                         # the interval reads too narrow.
+                         "player": str(p["id"]),
                          "pos": POSN.get(p.get("defaultPositionId") or 0, "?"),
                          "total": float(st["appliedTotal"]),
                          "games": round(st["appliedTotal"] / avg) if avg else 0})
@@ -303,8 +503,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     got = fit_talent_cv(df, debias=True)
     from hub.draft.season import TALENT_CV, TALENT_CV_BY_POS
 
-    print(f"  fitted on {got['n']} drafted skill players, seasons {got['seasons']}, "
-          f"picks 1-{DRAFTED_THROUGH}")
+    print(f"  fitted on {got['n']} drafted player-seasons over {got['clusters']} players, "
+          f"seasons {got['seasons']}, picks 1-{DRAFTED_THROUGH}")
+    print("    resampled over the player, and the curve refitted inside each draw")
     print(f"    raw dispersion of realized/projected : {got['raw_sd']:.3f}")
     print(f"    weekly sampling, removed             : {got['weekly']:.3f}")
     print(f"    dispersion net of it                 : {got['talent_cv']:.3f}  "

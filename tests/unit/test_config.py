@@ -675,8 +675,18 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     `PICK_NOISE_SLOPE_CI` published beside them, so `fitted_digest` went `d5598b96` ->
     `3d6fc111`. ADR-0006 is the reason that is a feature: a refit that did *not* move the
     model version would be the bug.
+
+    **Moved again 2026-09-07 (#172): `ab32cf62` -> `105b2b64`**, `fitted_digest` `3d6fc111`
+    -> `df2c1948`. Same reason, one layer further back. `hub.draft.calibrate`'s bootstrap was
+    corrected -- the curve is refitted inside each resample, the unit is the player rather
+    than the player-season, and the noise term takes its own draw -- which widened every
+    per-position standard error. `_shrink` reads those errors to decide how much of the
+    spread between positions is real, so `TALENT_CV_BY_POS` moved RB 0.50 -> 0.48 and
+    TE 0.32 -> 0.33 without any raw estimate changing. The pooled `TALENT_CV` did not move at
+    all; only its interval did, [0.380, 0.434] -> [0.370, 0.453]. Restated in
+    docs/talent-cv.md.
     """
-    assert config_digest(HubConfig()) == "ab32cf62"
+    assert config_digest(HubConfig()) == "105b2b64"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

@@ -165,6 +165,20 @@ def test_the_draft_optimizer_prices_stacks():
     assert "nfl_team" in src, "champion_probability must receive NFL team identity"
 
 
+def test_the_run_can_be_told_how_much_of_it_was_actually_correlated():
+    """Issue #171. A run makes candidates x draft-sims simulations, and a block that will
+    not factor is silently independent in every one of them. The caller owns the report, so
+    the count survives the calls rather than dying with each stack frame."""
+    board = _board(n=60).with_columns(
+        pl.Series("team", [f"T{i % 8}" for i in range(60)]))
+    report = optimize.CorrelationReport()
+    win_probability(board, DraftState(), ["P0", "P1"], my_slot=3, rounds=6,
+                    n_draft_sims=2, n_season_sims=20, report=report)
+    assert report.blocks > 0, "no block was counted, so nothing could have been reported"
+    assert not report.degraded()
+    assert report.note() == f"correlation: all {report.blocks} team blocks factored."
+
+
 # --- saying only what the simulation can resolve --------------------------
 #
 # Two fixtures carry the whole argument for the paired standard error, and they are built to

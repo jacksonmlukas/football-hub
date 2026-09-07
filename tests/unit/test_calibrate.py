@@ -281,3 +281,148 @@ def test_a_standard_error_is_reported_per_position():
     got = calibrate.fit_talent_cv(_by_pos(dict.fromkeys(("QB", "RB", "WR", "TE"), 0.35)))
     assert set(got["se_by_position"]) == {"QB", "RB", "WR", "TE"}
     assert all(0 < v < 0.2 for v in got["se_by_position"].values())
+
+
+# --- what the interval is an interval over ---------------------------------
+#
+# Issue #172. Three things worked against the interval meaning what it claimed. The curve was
+# fitted once *outside* the resample, so the interval omitted the fit's own uncertainty. The
+# resample unit was the player-*season*, so a player drafted three times counted as three
+# independent draws. And the residual and the noise term were indexed by the same draw, which
+# tied two quantities that vary independently. All three understate.
+
+
+def _one_frame(players=80, repeats=1, seed=3, tied=True):
+    """The same rows either way; only the `player` column differs.
+
+    Each player's seasons are the *same* outcome repeated, which is the extreme of what makes
+    the unit matter: a player whose seasons are perfectly correlated contributes one draw's
+    worth of information however many rows he occupies. Independent seasons would leave the
+    two bootstraps agreeing, and correctly so -- the unit only matters when the rows inside
+    it are related.
+
+    `tied=False` relabels every row as its own player, which is what resampling the
+    player-season amounts to. So the pair below differs in exactly one thing.
+    """
+    rng = np.random.default_rng(seed)
+    pick = rng.integers(1, 169, players)
+    pos = np.array(["QB", "RB", "WR", "TE"] * -(-players // 4))[:players]
+    mu = 26.0 * pick ** -0.28
+    g = np.full(players, 15)
+    total = calibrate.simulate_seasons(mu, 0.40, g, rng)
+    rows = []
+    for s in range(repeats):
+        rows.append(pl.DataFrame({
+            "season": [2023 + s] * players, "pick": pick, "pos": pos,
+            "total": total, "games": g,
+            "player": [f"p{i}" if tied else f"p{i}s{s}" for i in range(players)]}))
+    return pl.concat(rows)
+
+
+def test_a_player_s_seasons_are_one_draw_and_not_three():
+    """The load-bearing one: it fails on the old resampling.
+
+    Both frames hold the identical 240 rows and produce the identical point estimate. The
+    only difference is whether the three rows a player occupies are labelled as his. Under
+    the old bootstrap -- which resampled rows -- the two intervals were the same, because
+    nothing in the fit could see the difference. Under a player bootstrap the tied frame has
+    80 units where the loose one has 240, and its interval has to be materially wider.
+
+    Asserting "wider than before" would not do this: the old code passes that on any frame
+    where the new one happens to differ. This asserts the property that separates them.
+    """
+    kw = {"bootstrap": 400, "seed": 1}
+    tied = calibrate.fit_talent_cv(_one_frame(repeats=3, tied=True), **kw)
+    loose = calibrate.fit_talent_cv(_one_frame(repeats=3, tied=False), **kw)
+
+    assert tied["n"] == loose["n"] == 240
+    assert tied["clusters"] == 80 and loose["clusters"] == 240
+    assert tied["talent_cv"] == pytest.approx(loose["talent_cv"], abs=1e-12), (
+        "the rows are identical, so only the interval may move")
+
+    def width(got):
+        return got["ci95"][1] - got["ci95"][0]
+
+    # sqrt(3) = 1.73 is the ratio perfectly correlated triples imply; 1.4 leaves room for
+    # bootstrap noise while staying far above the 1.0 the old resampling would give.
+    assert width(tied) > 1.4 * width(loose), (
+        f"tied {width(tied):.4f} vs loose {width(loose):.4f} -- a player's seasons are "
+        f"being counted as independent draws")
+
+
+def test_the_curve_is_refitted_inside_each_draw_from_its_own_resample():
+    """The other two corrections, pinned where they are visible.
+
+    The curve is refitted per draw rather than once outside -- so the count scales with
+    `bootstrap` rather than being one -- and each replicate takes **two** draws, one for the
+    residuals and one for the noise term, so the two estimates are not tied to the same
+    resampled players. Two draws per replicate is the factor of two below.
+
+    A distributional assertion cannot separate these cleanly: all three corrections widen the
+    interval, so any "it got wider" test passes for whichever one happens to be present.
+    Counting the refits says which.
+    """
+    df = _one_frame(players=60, repeats=1).with_columns(pl.lit("RB").alias("pos"))
+    block = calibrate.Block.of(df, "RB")
+    unit = calibrate.cluster_rows(df)
+
+    seen = []
+    original = calibrate.Block.curve
+
+    def counted(self, idx=None):
+        seen.append(None if idx is None else idx.size)
+        return original(self, idx)
+
+    calibrate.Block.curve = counted
+    try:
+        calibrate.cluster_boot([block], unit, bootstrap=7, seed=0)
+    finally:
+        calibrate.Block.curve = original
+
+    assert len(seen) == 14, (
+        f"expected 7 replicates x 2 independent draws, each refitting the curve; got "
+        f"{len(seen)} refits")
+    assert all(n == 60 for n in seen), "every refit is on a full resample of the units"
+
+
+def test_one_season_per_player_gives_the_same_answer_either_way():
+    """So the change is a correction and not a rescale. With one season per player there is
+    nothing to cluster, and dropping the identifier must not move the interval."""
+    df = _one_frame(players=200, repeats=1)
+    kw = {"bootstrap": 500, "seed": 2}
+    named = calibrate.fit_talent_cv(df, **kw)
+    anonymous = calibrate.fit_talent_cv(df.drop("player"), **kw)
+    assert named["clusters"] == anonymous["clusters"] == 200
+    assert named["ci95"][0] == pytest.approx(anonymous["ci95"][0], abs=1e-12)
+    assert named["ci95"][1] == pytest.approx(anonymous["ci95"][1], abs=1e-12)
+
+
+def test_the_fit_says_how_many_units_it_resampled():
+    """`n` is rows and `clusters` is draws, and a reader who cannot see both cannot tell
+    which one the interval is over."""
+    got = calibrate.fit_talent_cv(_one_frame(players=100, repeats=2), bootstrap=50)
+    assert got["n"] == 200 and got["clusters"] == 100
+
+
+def test_the_outcomes_frame_carries_the_player_so_the_unit_survives_the_fetch():
+    """Without an identifier every row is its own unit, which is the defect. It has to come
+    out of `draft_outcomes`, not be reconstructed later from pick and position."""
+    df = calibrate.draft_outcomes(
+        [2024], fetch=_fetch([(11, 1), (22, 5)], [(11, 2, 170.0, 10.0), (22, 3, 96.0, 8.0)]))
+    assert df["player"].to_list() == ["11", "22"]
+
+
+def test_renaming_the_players_does_not_move_the_interval():
+    """The units are the same units whatever they are called. `np.unique` numbers them
+    lexicographically and the bootstrap indexes into that numbering, so coding them by sort
+    order makes a rename permute which players each draw takes -- moving the percentiles
+    while leaving the mean alone. That is the defect docs/weekly-blend-gate.md records
+    against `cluster_bootstrap`, and this is the line that stops it landing here."""
+    df = _one_frame(players=90, repeats=2)
+    renamed = df.with_columns(
+        ("z" + pl.col("player").str.slice(1).str.reverse()).alias("player"))
+    kw = {"bootstrap": 300, "seed": 4}
+    a = calibrate.fit_talent_cv(df, **kw)
+    b = calibrate.fit_talent_cv(renamed, **kw)
+    assert a["clusters"] == b["clusters"] == 90
+    assert a["ci95"] == pytest.approx(b["ci95"], abs=1e-12)
