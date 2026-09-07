@@ -895,12 +895,19 @@ def fake_rankings(monkeypatch):
 # The three, and how to break each one. Every entry names a column whose disappearance, whose
 # nullity or whose scale change is a failure somebody downstream would otherwise absorb:
 # `ecr` is the board's rank, `report_status` is the designation `hub.models.injury` fits on,
-# `offense_pct` is the snap share `hub.models.panel` reads, and the `85.0` in that row is the
-# unit change -- PFR publishing whole percents -- rather than an impossible number.
+# `offense_pct` is the snap share `hub.models.panel` reads.
+#
+# That row's value used to be `85.0`, the unit change -- PFR publishing whole percents --
+# chosen over an impossible number because it is the case that looks plausible. #132 made
+# that a *declared repair* rather than a refusal, so it no longer belongs in a table of
+# breakages: `SNAP_COUNTS` rescales it and the bound is checked afterwards. `500.0` is what
+# survives the rescaling -- a hundredth of it is 5.0, which is not a snap share however it
+# was published -- so this row still asks the question the others ask. The unit change gets
+# its own test below, because "accepted here" is now a fact worth pinning.
 BREAKAGES = {
     "ff_rankings": (_rankings_frame, "ecr", "scrape_date", "ecr", 5000.0),
     "injuries": (_injuries_frame, "report_status", "gsis_id", "week", 99),
-    "snap_counts": (_snaps_frame, "offense_pct", "game_id", "offense_pct", 85.0),
+    "snap_counts": (_snaps_frame, "offense_pct", "game_id", "offense_pct", 500.0),
 }
 
 RAW_FETCHER = {"ff_rankings": "_raw_ff_rankings", "injuries": "_raw_injuries",
@@ -965,6 +972,25 @@ def test_a_value_outside_its_plausible_range_is_refused(source, monkeypatch, tmp
     with pytest.raises(ContractViolation, match="range"):
         _load(source, df.with_columns(pl.lit(bad).cast(df.schema[col]).alias(col)),
               monkeypatch, tmp_path)
+
+
+def test_the_unit_change_is_repaired_here_rather_than_refused(monkeypatch, tmp_path):
+    """The case the row above used to carry, kept where it can be seen.
+
+    A snap share of 85.0 is PFR publishing whole percents, and until #132 three places in
+    this repo disagreed about it: `SNAP_COUNTS` refused the frame, `hub.models.spread`
+    divided the identical case by a hundred and carried on, and this file asserted the
+    refusal. Two of those moved when the repair was declared; this is the third, and it is
+    a test rather than a deletion because "the loader accepts this" is exactly the fact a
+    reader of the table above would otherwise have to infer from an absence.
+
+    What makes it safe to accept is that the bound is checked *after* the rescaling, which
+    is the parametrised row above: 500.0 survives the hundred and is still refused.
+    """
+    df = _snaps_frame()
+    percents = df.with_columns(pl.lit(85.0).cast(df.schema["offense_pct"]).alias("offense_pct"))
+    got = _load("snap_counts", percents, monkeypatch, tmp_path)
+    assert got.height == df.height, "the whole-percent frame was refused, not repaired"
 
 
 def test_the_new_sources_are_not_wide():
