@@ -343,6 +343,85 @@ def test_a_recommended_change_is_never_priced_as_a_loss(unavailable, slots):
         assert lk.gain == pytest.approx(0.0)
 
 
+# --- the lineup itself, which the lock used to compute and throw away ---------
+#
+# `lock` builds `best_by_points(pool)["starters"]` and returned only the two deltas, so the one
+# consumer that needs the lineup -- `hub.publish.roster`, for the panel's best-XI tick --
+# rebuilt it as `(set starters - sit) | start`. That algebra is exact wherever the lock priced
+# a comparison, and wrong on both branches where it declined to price one: the deltas are empty
+# there, so the reconstruction collapsed to "the lineup as set is the best one" and every
+# current starter published with a tick beside him. The lock's own comment on the unfillable
+# branch reads "no comparison"; the artifact published one anyway (issue #130).
+#
+# These are the assertions that used to need a published website to make.
+
+def test_the_lock_hands_back_the_lineup_it_worked_out():
+    """Love at QB, Jacobs and Tuten at RB, Chase Rice and Collins at WR, Andrews at TE, and
+    McLaurin in the flex ahead of Lloyd.
+
+    Written out rather than derived from the deltas, because deriving it from the deltas is
+    the defect.
+    """
+    lk = R.lock(_squad())
+    assert sorted(lk.best_lineup) == [
+        "Bhayshul Tuten", "Ja'Marr Chase", "Jordan Love", "Josh Jacobs", "Mark Andrews",
+        "Nico Collins", "Rashee Rice", "Terry McLaurin"]
+    assert "MarShawn Lloyd" not in lk.best_lineup, "the one set starter the lock wants sat"
+
+
+def test_a_lock_that_could_not_fill_a_lineup_names_nobody_in_one():
+    """The reproduction on the issue, as a unit test. Withholding every receiver leaves the
+    three WR slots unfillable, so the lock declines -- and a decline has no lineup to name."""
+    lk = R.lock(_squad(unavailable={n for n, pos, _, _ in _SQUAD if pos == "WR"}))
+    assert lk.gain is None
+    assert lk.best_lineup == []
+
+
+def test_a_lock_with_nobody_left_to_pick_from_names_nobody_in_a_lineup():
+    """The other declining branch, and it declines the same way. Both projected players are
+    short of a full slate -- the kicker, whom the board does not project, is what makes the
+    roster's own maximum a full one -- so the pool empties before the optimiser is asked.
+
+    Both of them are set as starters, which is the case that matters: there is a lineup as
+    set here for the old reconstruction to have published as the best one.
+    """
+    players = [_p("Josh Jacobs", "RB", 10.0, 110.0, slot="RB"),
+               _p("Ja'Marr Chase", "WR", 10.0, 110.0, slot="WR"),
+               _p("Eddy Pineiro", "K", 10.0, 170.0, slot="K")]
+    df = R.build(E.roster_rows(_Team([], players)),
+                 _board(player=["Josh Jacobs", "Ja'Marr Chase"], proj_blend=[15.5, 19.6],
+                        pos=["RB", "WR"]))
+    assert df.filter(pl.col("projected") & pl.col("starting")).height == 2, \
+        "the premise: two set starters, either of which could be wrongly ticked"
+
+    lk = R.lock(df)
+    assert lk.withheld == ["Ja'Marr Chase", "Josh Jacobs"]
+    assert lk.gain is None
+    assert lk.best_lineup == []
+
+
+@pytest.mark.parametrize("unavailable,slots", [
+    ((), None),
+    (("Josh Jacobs",), _JACOBS_STARTS),
+    (("Josh Jacobs", "MarShawn Lloyd"), _JACOBS_STARTS),
+    (("Josh Jacobs",), {"Josh Jacobs": "RB", "Terry McLaurin": "RB/WR/TE"}),
+    (("Ja'Marr Chase",), {"Ja'Marr Chase": "WR", "Terry McLaurin": "BE"}),
+    (("Mark Andrews",), None),
+])
+def test_the_lineup_and_the_deltas_stay_two_views_of_one_answer(unavailable, slots):
+    """The lineup and the moves toward it are one decision said twice, so they may not
+    disagree. Wherever the lock prices a comparison this is exactly the arithmetic the
+    publisher used to do for itself -- which is why the defect only ever showed on the
+    branches where it does not, and why fixing it costs the deltas nothing."""
+    df = _squad(unavailable=set(unavailable), slots=slots)
+    lk = R.lock(df)
+    if lk.gain is None:
+        assert lk.best_lineup == []
+        return
+    was = set(df.filter(pl.col("projected") & pl.col("starting"))["player"])
+    assert set(lk.best_lineup) == (was - set(lk.bench)) | set(lk.start)
+
+
 # --- injured reserve, which is a slot you cannot start from -------------------
 
 def test_injured_reserve_is_not_a_starting_slot():

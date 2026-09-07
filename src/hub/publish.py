@@ -542,9 +542,10 @@ def roster(out: Path | None = None,
     without a network round trip and shows last-good when a sync fails -- the same contract
     every other artifact here keeps.
 
-    `season.roster.lock` computes set-versus-best, including which players are withheld as
-    unavailable. That arithmetic lived here for one evening, which meant the only way to ask
-    the Sunday question was to publish a website; it is a decision, not a rendering.
+    `season.roster.lock` computes set-versus-best -- the lineup it would set, the moves that
+    reach it, and which players are withheld as unavailable. That arithmetic lived here for
+    one evening, which meant the only way to ask the Sunday question was to publish a website;
+    it is a decision, not a rendering. Nothing here re-derives any part of it.
     """
     src = path or ROSTER_PARQUET
     if not src.exists():
@@ -557,18 +558,22 @@ def roster(out: Path | None = None,
     # one place this rule is meant to live; `hub.season.roster.write` refuses to create the
     # empty parquet in the first place.
     lk = lock(df)
-    # The best lineup, reconstructed from the moves: the set starters, less those to sit,
-    # plus those to start. Parenthesised because `-` binds tighter than `|` and the reader
-    # should not have to know that.
-    was = set(df.filter(pl.col("projected") & pl.col("starting"))["player"])
-    start = (was - set(lk.bench)) | set(lk.start)
+    # The lock's own lineup, read rather than rebuilt. This used to reconstruct it from the
+    # two deltas -- the set starters, less those to sit, plus those to start -- which agrees
+    # with the lock wherever it priced a comparison and says nothing at all where it did not.
+    # Both of `lock`'s declining branches return empty deltas, so the subtraction and the
+    # union each did nothing, `start` collapsed to the lineup as set, and every current
+    # starter published `best_start: true` under a null `gain`. The page renders that as a
+    # best-XI tick, so a roster that can field no legal lineup ticked everybody (issue #130).
+    # An empty lineup ticks nobody, which is what declining means.
+    best = set(lk.best_lineup)
 
     rows = []
     for r in df.iter_rows(named=True):
         rows.append({
             "player": r["player"], "pos": r["pos"], "nfl_team": r["nfl_team"],
             "mu": r["mu"], "sd": r["sd"], "projected": r["projected"],
-            "starting": r["starting"], "best_start": r["player"] in start,
+            "starting": r["starting"], "best_start": r["player"] in best,
             "injury_status": r["injury_status"],
             "available": r.get("available", True),
             # Two neighbouring facts, and the panel needs both: `available` is whether we
