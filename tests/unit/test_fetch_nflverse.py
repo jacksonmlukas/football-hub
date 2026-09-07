@@ -991,6 +991,18 @@ def test_the_unit_change_is_repaired_here_rather_than_refused(monkeypatch, tmp_p
     percents = df.with_columns(pl.lit(85.0).cast(df.schema["offense_pct"]).alias("offense_pct"))
     got = _load("snap_counts", percents, monkeypatch, tmp_path)
     assert got.height == df.height, "the whole-percent frame was refused, not repaired"
+    assert max(got["offense_pct"].to_list()) <= 1.05, (
+        "the loader returned the percent frame it was handed. `validate` repairs and returns; "
+        "a caller that drops the return caches and pins the units the source happened to send, "
+        "and every later read comes off that cache"
+    )
+
+    cached = next(p for p in tmp_path.rglob("*.parquet"))
+    assert max(pl.read_parquet(cached)["offense_pct"].to_list()) <= 1.05, (
+        f"{cached.name} holds whole percents. Refusing used to keep this frame out of the "
+        "cache entirely; repairing it and then writing the unrepaired one is worse than "
+        "either, because nothing downstream can tell which units it got"
+    )
 
 
 def test_the_new_sources_are_not_wide():

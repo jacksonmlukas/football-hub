@@ -251,13 +251,22 @@ class Contract:
         """
         applied: dict[str, str] = {}
         for rule in self.normalisations:
-            for c in rule.columns:
-                if c not in df.columns or not df.schema[c].is_numeric():
-                    continue
-                top = df[c].max()
-                if top is not None and float(cast(float, top)) > rule.above:
-                    df = df.with_columns(pl.col(c) * rule.scale)
-                    applied[c] = rule.because
+            # One decision for the whole rule, not one per column. A units change is a fact
+            # about the response -- the declaration says so itself, "PFR does not publish
+            # half a column as percents" -- and deciding column by column lets a frame
+            # through half-repaired: `offense_pct` at 85.0 trips its own trigger and comes
+            # back a fraction, while `st_pct` at 0.8, which is the percent form of 0.008,
+            # trips nothing and sits inside its bound. Nothing refuses that frame, because
+            # every column in it is individually plausible, and a reader gets eighty percent
+            # where the source said eight tenths of one.
+            present = [c for c in rule.columns
+                       if c in df.columns and df.schema[c].is_numeric()]
+            tops = [float(cast(float, t)) for c in present if (t := df[c].max()) is not None]
+            if not tops or max(tops) <= rule.above:
+                continue
+            for c in present:
+                df = df.with_columns(pl.col(c) * rule.scale)
+                applied[c] = rule.because
         return df, applied
 
     def conform(self, df: pl.DataFrame, *columns: str) -> pl.DataFrame:
@@ -297,9 +306,13 @@ class Contract:
             non_null=tuple(c for c in self.non_null if c in keep),
             unique=tuple(c for c in self.unique if c in keep),
             ranges={c: r for c, r in self.ranges.items() if c in keep},
-            normalisations=tuple(
-                replace(rule, columns=cols) for rule in self.normalisations
-                if (cols := tuple(c for c in rule.columns if c in keep))),
+            # Narrowed to the columns named -- except the repairs, which are not narrowed.
+            # A `Normalisation` is a fact about the response and is decided across all the
+            # columns it names; splitting it per caller puts back the half-repaired frame
+            # `_normalised` exists to prevent, and `conform` hands back the whole frame, so
+            # those other columns leave here in a reader's hands either way. What narrows is
+            # what is *checked*: a consumer answers for the columns it reads.
+            normalisations=self.normalisations,
             min_rows=0,
         ).validate(df)
 

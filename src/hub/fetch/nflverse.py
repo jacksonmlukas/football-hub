@@ -540,7 +540,11 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
         df = df.select(list(cols))
 
     if contract is not None:
-        contract.validate(df)
+        # The *returned* frame, because a declared repair only reaches anybody through it.
+        # Dropping it here wrote whatever units the source happened to send, pinned them,
+        # and served them from cache forever after -- and the frame passed, so nothing said
+        # so. Refusing used to keep such a frame out of the cache entirely.
+        df = contract.validate(df)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(path)

@@ -34,10 +34,22 @@ fi
 # Naming the paths is what makes the gate portable: an explicit path bypasses pyrefly's
 # `project-excludes` and its ignore-file handling, so a worktree checks what the primary
 # checkout checks.
+# There are files to check. Asked of the tree rather than of pyrefly, so that "the checker
+# found nothing wrong" and "the checker was pointed at nothing" cannot arrive as one answer.
+expected=$(find "${TARGETS[@]}" -name '*.py' -not -path '*/.venv/*' 2>/dev/null | wc -l)
+if [ "$expected" -eq 0 ]; then
+  fail_hook "no Python files under ${TARGETS[*]} in $ROOT, so there was nothing to check."
+fi
+
 types=$(uv run pyrefly check "${TARGETS[@]}" 2>&1)
 status=$?
-if grep -q 'No Python files matched' <<<"$types"; then
-  fail_hook "pyrefly matched no files under ${TARGETS[*]}, so nothing was checked." \
+# A non-zero exit means a finding *or* a refusal to start, and only one of those is about
+# the code. A finding names a file and a line; nothing else does. Matching that shape rather
+# than pyrefly's "No Python files matched" sentence means a reworded message downgrades to
+# "could not run" instead of quietly restoring the defect this hook was written for.
+if [ $status -ne 0 ] && ! grep -qE '[^ ]+\.py:[0-9]+' <<<"$types"; then
+  fail_hook "pyrefly exited $status without naming a file, and $expected Python files exist \
+under ${TARGETS[*]}. It checked nothing." \
             "$(printf '%s\n' "$types" | tail -5)"
 fi
 if [ $status -ne 0 ]; then

@@ -36,7 +36,9 @@ the two worth the most among them. One property now runs over every entry point 
 non-zero exit, the missing thing named, no traceback. Eighteen of them answered a failed
 fetch with a traceback until it did, and answer with `hub.cli.unavailable` now.
 """
+import ast
 import importlib
+import inspect
 import socket
 
 import dotenv
@@ -112,6 +114,35 @@ def test_every_gate_offers_its_ceiling_under_the_one_flag_name(name, capsys):
     assert "--ceiling" in capsys.readouterr().out, (
         f"{name} builds a ceiling column that no command line can reach, so "
         f"docs/gate-power.md stage 2 cannot be run for it")
+
+
+@pytest.mark.parametrize("name", GATES_WITH_A_CEILING)
+def test_the_ceiling_flag_reaches_the_comparison_it_asks_for(name):
+    """Accepting the flag is not answering it.
+
+    The test above proves an operator can *type* `--ceiling`; a `main` that parsed it and
+    dropped it would pass that and print the same summary it always did, which is the shape
+    of the defect #134 was filed for -- a ceiling built and unreachable -- moved one step
+    later. Read off the source because these `main`s are `# pragma: no cover - network`:
+    what can be checked without a season of data is that the parsed flag is handed to the
+    call that computes the arm.
+    """
+    mod = importlib.import_module(name)
+    src = inspect.getsource(mod)
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "main")
+    # The parsed flag is read somewhere in `main`. Deliberately not "forwarded as
+    # `ceiling=`": the draft gate branches on it (`if a.ceiling:`) and the two season gates
+    # pass it down, and pinning either spelling would make this a test of house style. What
+    # it refuses is the one thing that cannot be right -- a flag declared, parsed, and never
+    # looked at again.
+    read = [n for n in ast.walk(fn)
+            if isinstance(n, ast.Attribute) and n.attr == "ceiling"
+            and isinstance(n.ctx, ast.Load)]
+    assert read, (
+        f"{name}.main declares --ceiling and never reads it back. The flag is accepted and "
+        f"the ceiling is still unreachable, which is issue #134 one step further in: "
+        f"docs/gate-power.md stage 2 would run, print, and measure nothing.")
 
 
 # --- absent input, for every entry point ------------------------------------

@@ -305,11 +305,12 @@ def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetim
     # rows and makes the write all-or-nothing (issue #119).
     parts = [(wk, df.filter(pl.col("week") == wk).drop("week"))
              for wk in sorted(set(df["week"].to_list()))]
-    for _wk, part in parts:
-        # Asserted on what is stored, which is where the boundary is. Validating the whole
-        # pull instead would fail `min_rows` on a pull that matched nothing -- and a pull
-        # matching nothing writes nothing, so there is no partition to be wrong about.
-        ODDS_SNAPSHOT.validate(part)
+    # Asserted on what is stored, which is where the boundary is. Validating the whole pull
+    # instead would fail `min_rows` on a pull that matched nothing -- and a pull matching
+    # nothing writes nothing, so there is no partition to be wrong about. The return is kept
+    # rather than dropped so that a repair this contract may one day declare reaches the
+    # partition actually written; today it declares none and this rebuilds the same frames.
+    parts = [(wk, ODDS_SNAPSHOT.validate(part)) for wk, part in parts]
     for wk, part in parts:
         # Snapshots append. A fixed name would overwrite the morning's line with the
         # afternoon's and leave the as-of join nothing to resolve.

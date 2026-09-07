@@ -21,6 +21,7 @@ and the only assertion on it was that the attribute is a `bool` -- on a field de
 field exists to record, left all twenty tests here green. Measured on 2026-09-05.
 """
 import ast
+import collections
 import functools
 import pathlib
 
@@ -616,3 +617,30 @@ def test_an_unresolvable_frame_counts_for_nothing_rather_than_everything():
         def test_real_slice(load_frame):
             PBP.validate(load_frame("nflverse_pbp.json").pipe(reshape))
     """) == {"PBP": {"nflverse_pbp.json"}}
+
+
+def test_no_module_declares_the_same_constant_twice():
+    """A second assignment to a module-level constant silently wins, and agrees until it does not.
+
+    `hub.draft.board` carried two `CORRECTION_COLUMN` dicts for the length of one review: a
+    new one beside the `CORRECTION_STAGE` derived from it, and the original two hundred lines
+    below, rebinding it at import with the same literal. Identical, so nothing broke and no
+    test could notice -- until a third Correction was added to one of them and not the other,
+    which is the failure the change introducing the duplicate was written to *prevent*.
+
+    Here rather than left as a fix, for the reason this file exists: a declaration nothing
+    connects is one that drifts, and the person who understands why does not stay forever.
+    """
+    offenders = []
+    for path in sorted(SRC.rglob("*.py")):
+        seen: collections.Counter[str] = collections.Counter()
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id.isupper():
+                        seen[target.id] += 1
+        offenders += [f"  {path.relative_to(SRC.parents[1])}: {name} declared {n} times"
+                      for name, n in sorted(seen.items()) if n > 1]
+    assert not offenders, (
+        "a module-level constant is declared more than once; the last one wins:\n"
+        + "\n".join(offenders))

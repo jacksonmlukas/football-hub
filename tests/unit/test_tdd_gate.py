@@ -94,6 +94,27 @@ def test_checking_nothing_is_reported_as_the_gate_failing_not_the_code(gate):
     assert "pytest" not in calls, "the gate ran tests it could not vouch for"
 
 
+def test_a_reworded_refusal_still_downgrades_to_could_not_run(gate):
+    """The gate must not depend on pyrefly's exact sentence.
+
+    The first version of this fix matched the literal `No Python files matched`, and the
+    test above hands the stub that same string -- so between them they proved only that the
+    hook recognises its own fixture. A pyrefly release that reworded the line would have put
+    the original defect straight back, silently, with the suite green.
+
+    What separates the two cases structurally is that a *finding* names a file and a line
+    and a refusal to start does not. This is the reworded message, and it must still be
+    read as the gate failing rather than the code.
+    """
+    proc, calls = gate(STUB_PYREFLY_EXIT=1,
+                       STUB_PYREFLY_OUT="warning: nothing to do; include patterns matched 0 targets")
+    assert proc.returncode == 2
+    assert "could not run" in proc.stderr.lower(), (
+        f"a reworded refusal was read as a type error: {proc.stderr!r}"
+    )
+    assert "pytest" not in calls
+
+
 def test_a_missing_pyrefly_names_itself_rather_than_the_code(gate):
     """A worktree venv without the dev extras has no pyrefly at all."""
     proc, calls = gate(STUB_NO_PYREFLY=1)

@@ -108,6 +108,21 @@ against the range it protects.
 """
 
 
+_WHOLE_RULE = Contract(
+    name="t_whole_rule",
+    required={"key": pl.Utf8, "pct": pl.Float64, "other": pl.Float64},
+    non_null=("key",),
+    ranges={"pct": (0, 1.05), "other": (0, 1.05)},
+    normalisations=(Normalisation(columns=("pct", "other"), above=1.5, scale=0.01,
+                                  because="the upstream ships whole percents"),),
+    min_rows=1,
+)
+"""The shape `SNAP_COUNTS` actually has: one repair naming *several* columns of the same
+quantity. `_REPAIRED` above names one, which cannot express the case where the columns
+disagree about whether the trigger was tripped -- and that case is the whole reason a
+`Normalisation` takes a tuple of columns rather than one."""
+
+
 def _repairable(**override):
     df = pl.DataFrame({"key": ["a"], "pct": [0.5], "other": [1.0]})
     return df.with_columns(**override) if override else df
@@ -178,11 +193,58 @@ def test_conform_hands_back_the_repaired_column_and_not_only_a_verdict():
     assert _REPAIRED.conform(df, "key", "pct")["pct"][0] == pytest.approx(0.5)
 
 
-def test_conform_leaves_a_column_the_consumer_did_not_name_alone():
-    """A caller that named one column gets one column changed. Repairing a column it never
-    asked about would make the return value depend on declarations it cannot see."""
-    df = pl.DataFrame({"key": ["a"], "pct": [50.0]})
-    assert _REPAIRED.conform(df, "key")["pct"][0] == 50.0
+def test_the_repair_is_one_decision_for_every_column_it_declares():
+    """A units change is a fact about the source, not about a column.
+
+    `Normalisation` argues its own trigger this way -- "PFR does not publish half a column
+    as percents" -- and the frozen capture puts three columns of the same quantity side by
+    side. Deciding per column instead lets a frame through half-repaired: `offense_pct` at
+    85.0 trips a per-column trigger and comes back 0.85, while `st_pct` at 0.8 -- eight
+    tenths of one percent, the percent form of 0.008 -- trips nothing, sits inside
+    `[0, 1.05]`, and is read by anything downstream as eighty percent. Nothing refuses it,
+    because on its own it is a plausible share. One hundred-fold error, silent, in the
+    column `hub.models.panel` reads.
+    """
+    df = pl.DataFrame({"key": ["a"], "pct": [85.0], "other": [0.8]})
+    out = _WHOLE_RULE.conform(df, "key", "pct", "other")
+    assert out["pct"][0] == pytest.approx(0.85)
+    assert out["other"][0] == pytest.approx(0.008), (
+        "one column tripped the trigger and the other was left in the units the first one "
+        "proved the frame was not in"
+    )
+
+
+def test_a_frame_under_the_trigger_everywhere_is_left_entirely_alone():
+    """The other half of one decision: no column trips it, so no column moves."""
+    df = pl.DataFrame({"key": ["a"], "pct": [0.85], "other": [0.008]})
+    out = _WHOLE_RULE.conform(df, "key", "pct", "other")
+    assert out["pct"][0] == pytest.approx(0.85)
+    assert out["other"][0] == pytest.approx(0.008)
+
+
+def test_conform_narrows_what_is_checked_and_not_what_is_repaired():
+    """What a consumer answers for is the columns it reads; what the units are is not its
+    call.
+
+    This asserted the opposite until the review of #132: that naming one column repaired
+    only that one, so a return value never depended on a declaration the caller had not
+    named. The reasoning does not survive `conform` handing back the *whole* frame. A
+    consumer that names `offense_pct` still receives `st_pct`, and narrowing the repair
+    left that column in units the frame had already proved it was not in -- the
+    half-repaired frame under a different door. Narrowing the checks is the part that was
+    always right: an empty `ranges` here, and no refusal for a column nobody read.
+    """
+    df = pl.DataFrame({"key": ["a"], "pct": [85.0], "other": [0.8]})
+    out = _WHOLE_RULE.conform(df, "key")
+    assert out["pct"][0] == pytest.approx(0.85), "the repair is the frame's, not the caller's"
+    assert out["other"][0] == pytest.approx(0.008)
+
+    # ...and the narrowing that does happen. 1.2 is above the bound and below the trigger,
+    # so no repair reaches it and the only question left is whether anybody read it.
+    unread = pl.DataFrame({"key": ["a"], "pct": [1.2], "other": [0.5]})
+    assert _WHOLE_RULE.conform(unread, "key")["pct"][0] == pytest.approx(1.2)
+    with pytest.raises(ContractViolation, match="pct range"):
+        _WHOLE_RULE.conform(unread, "key", "pct")
 
 
 def test_conform_does_not_apply_the_volume_floor():

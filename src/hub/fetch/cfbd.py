@@ -348,7 +348,7 @@ def week(year: int, week_no: int, *, cache: Path | None = None,
             if not df.height:
                 contract = replace(contract, min_rows=0)
             if df.width:
-                contract.validate(df)
+                df = contract.validate(df)  # the repaired frame is the one stored
         # /GUARD
         out[endpoint] = df
         print(f"    {endpoint:<14} {df.height:>6,} rows | {len(df.columns):>3} cols")
