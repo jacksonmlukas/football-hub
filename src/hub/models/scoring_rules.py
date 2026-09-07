@@ -14,6 +14,7 @@ things (see `CONTEXT.md`).
 """
 from __future__ import annotations
 
+import itertools
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -47,24 +48,51 @@ def brier(probs: Sequence[float] | np.ndarray,
     return float(np.mean((q - np.asarray(outcomes, dtype=float)) ** 2))
 
 
+def reliability_by(df: pl.DataFrame, edges: Sequence[float], *, on: str,
+                   prob: str = "home_win_prob", outcome: str = "home_won",
+                   places: int = 1) -> list[dict[str, Any]]:
+    """Predicted versus actual, binned on `on` rather than on the probability itself.
+
+    `reliability` bins a probability against its own value, which answers "when the model
+    said 70%, did it happen 70% of the time". That is the right question when the model is
+    the thing under test and the wrong one when the *input* is: a survivor pick is chosen by
+    spread, so a miss concentrated in one spread range is invisible in a diagram whose bins
+    are probabilities, because every game in a probability bin came from roughly one spread
+    anyway. Binning on the input is how a miss gets attributed to the range it lives in.
+
+    `edges` are bin boundaries, low to high; the last bin includes its upper edge so nothing
+    at the top of the range falls out of the diagram. Empty bins are kept, for the reason
+    `reliability` keeps them.
+
+    `gap` is actual minus predicted, so a positive gap is a model that was *under*-confident.
+    """
+    if df.is_empty():
+        return []
+    out = []
+    for i, (lo, hi) in enumerate(itertools.pairwise(edges)):
+        last = i == len(edges) - 2
+        sel = df.filter((pl.col(on) >= lo)
+                        & ((pl.col(on) <= hi) if last else (pl.col(on) < hi)))
+        n = sel.height
+        p = float(cast(float, sel[prob].mean())) if n else None
+        a = float(cast(float, sel[outcome].mean())) if n else None
+        out.append({"bin": f"{lo:.{places}f}-{hi:.{places}f}", "n": n,
+                    "predicted": p, "actual": a,
+                    "gap": (a - p) if (p is not None and a is not None) else None})
+    return out
+
+
 def reliability(df: pl.DataFrame, n_bins: int = 10) -> list[dict[str, Any]]:
     """Reliability diagram: predicted versus actual, with the count in each bin.
 
     Counts are not decoration. `docs/track-record.md` asks for them because a bin holding
     four games says nothing, and a diagram that hides its bin sizes invites exactly the
     over-reading the page exists to prevent.
+
+    The equal-width probability case of `reliability_by`, rather than a second copy of the
+    binning loop. The bins and their labels are unchanged: the last one used to admit its
+    upper edge by comparing against 1.01, which for a probability validated into [0, 1] is
+    the same set of rows as including the edge.
     """
-    if df.is_empty():
-        return []
-    out = []
-    for i in range(n_bins):
-        lo, hi = i / n_bins, (i + 1) / n_bins
-        sel = df.filter((pl.col("home_win_prob") >= lo)
-                        & (pl.col("home_win_prob") < (hi if i < n_bins - 1 else 1.01)))
-        n = sel.height
-        out.append({
-            "bin": f"{lo:.1f}-{hi:.1f}", "n": n,
-            "predicted": float(cast(float, sel["home_win_prob"].mean())) if n else None,
-            "actual": float(cast(float, sel["home_won"].mean())) if n else None,
-        })
-    return out
+    edges = [i / n_bins for i in range(n_bins + 1)]
+    return reliability_by(df, edges, on="home_win_prob")

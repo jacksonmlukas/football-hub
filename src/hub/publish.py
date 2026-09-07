@@ -27,6 +27,7 @@ import polars as pl
 
 from hub import jsonio, schedule, store
 from hub.config import SEASON_AHEAD, UNCONFIRMED_POOL_RULES, PoolConfig
+from hub.models import coverage
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
 from hub.paths import ROSTER_PARQUET
@@ -419,6 +420,14 @@ def track_record(base: Path | None = None, out: Path | None = None,
                  "commit predates kickoff -- see docs/track-record.md."),
         "seasons": seasons,
         "bins": newest["bins"], "log_loss": newest["log_loss"], "brier": newest["brier"],
+        # The other half of the record, and the half that was never on the page. Log loss
+        # and Brier score the *game* probability; `interval_coverage` is whether the weekly
+        # player interval covers, from `hub.models.coverage`. It reads the last committed
+        # measurement rather than running one -- a Sunday refresh does not fit five seasons
+        # of player-weeks -- and it is None when none has been made, which is the graceful
+        # degradation `CLAUDE.md` requires: a missing research artifact drops a field, it
+        # does not take the page down.
+        "interval_coverage": coverage.published_summary(),
     }
     return _publish(out, "track_record", payload, count_key="n_scored")
 
