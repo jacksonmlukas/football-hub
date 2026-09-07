@@ -19,13 +19,14 @@ of it rather than one per feature.
 """
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
 from typing import NamedTuple
 
 import polars as pl
 
 from hub.config import DRAFTED_POSITIONS, SEASON_COMPLETED
-from hub.contracts import INJURIES, SNAP_COUNTS
+from hub.contracts import INJURIES, SNAP_COUNTS, ContractViolation
 from hub.fetch.nflverse import RANKINGS_COLS, Pin, data_pin, load_rankings
 from hub.models import components
 from hub.models.experiment import expanding_weeks
@@ -445,6 +446,22 @@ def injury_severity(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover
     (status, practice) retention table in `hub.models.injury` is the real instrument and it is
     already measured at this grain (+0.170 MAE at 3.8 se); this ordinal exists only so the
     screen has *something* in the injury slot, and a null here is a null about the ordinal.
+
+    **Three shapes this once accepted and now refuses**, each of them a refusal on purpose.
+    `game_status` standing in for `report_status` and `player_name` for `full_name` were read
+    for years by a private lookup that took whichever name arrived: that is the Week 7 failure
+    this repo names, a rename passing as a working column, and the ordinal it produces is
+    computed from something `INJURIES` never promised. The third is a frame with no
+    `practice_status` at all, which used to become the string "None" -- and "None" is already a
+    legal designation here, meaning "on the report, nothing said about practice". A whole
+    column of it is indistinguishable from a real week in which nobody was designated, so the
+    (status, practice) pair `hub.models.injury` keys its retention table on would have
+    narrowed to status alone with nothing saying so.
+
+    What that refusal costs the live path is what ADR-0023 settles, one level up:
+    `build_panel` degrades around it rather than propagating it, and what it degrades to is
+    null rather than healthy. Refusing here and coping there is what keeps one statement of
+    what this source may return.
     """
     import nflreadpy as nfl
     inj = INJURIES.conform(nfl.load_injuries(seasons=list(seasons)),
@@ -467,6 +484,45 @@ def injury_severity(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover
                .group_by(["season", "week", "key"])
                .agg(pl.col("inj_sev").max(), pl.col("status").first(),
                     pl.col("practice").first()))
+
+
+# The three columns the injury report contributes, with the dtypes `injury_severity` returns
+# them in. Named once because the degraded path has to produce them without the report.
+INJURY_COLUMNS = {"inj_sev": pl.Float64, "status": pl.Utf8, "practice": pl.Utf8}
+
+
+def injury_columns(p: pl.DataFrame, seasons: Sequence[int]) -> pl.DataFrame:
+    """The Panel's three injury columns, joined on -- or null, if the report was refused.
+
+    ADR-0023. `injury_severity` refuses a report whose columns are not the ones `INJURIES`
+    declares, `build_panel` calls it unconditionally, and the Sunday panel is the live path
+    CLAUDE.md's degradation rule is written for: one renamed column at nflverse would
+    otherwise cost the whole panel rather than the one feature that reads it.
+
+    **Null, and not `Healthy`.** The fill below is what "this player has no row on the injury
+    report" means, and a refused report is not that -- it is "nobody has one, and no one
+    knows". Filling it would publish a league in perfect health on the week the source broke,
+    and `inj_sev` would reach `hub.models.weekly_screen` as a measured zero on every row.
+    Null is the one value in these columns that has never meant anything else -- the fill
+    below leaves none on a served Panel, and `injury_severity` says a null here is a null
+    about the ordinal. The screen reports it as nothing measured, and the refusal goes to
+    stderr in the contract's own words, naming the column that was not there.
+
+    Only a `ContractViolation` degrades. A source that changed shape is what the Panel can
+    serve around; a `TypeError` inside the ordinal is this module being wrong, and swallowing
+    that would hide a defect behind a column of nulls that looks exactly like a quiet week.
+    """
+    try:
+        sev = injury_severity(seasons)
+    except ContractViolation as e:                # graceful degradation, per CLAUDE.md
+        print(f"hub.models.panel: the injury report was refused, so the Panel carries "
+              f"null injury columns rather than healthy ones -- {e}", file=sys.stderr)
+        return p.with_columns([pl.lit(None, dtype=dt).alias(c)
+                               for c, dt in INJURY_COLUMNS.items()])
+    return (p.join(sev, on=["season", "week", "key"], how="left")
+             .with_columns(pl.col("inj_sev").fill_null(0.0),
+                           pl.col("status").fill_null("Healthy"),
+                           pl.col("practice").fill_null("Healthy")))
 
 
 def week_windows(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
@@ -600,7 +656,9 @@ def build_panel(seasons: Sequence[int] = SEASONS,
     report it under the stronger result's name.
 
     `status` and `practice` are carried regardless, because Gate B builds a complete
-    player-week grid where a missing row is a zero, and that is where the term belongs.
+    player-week grid where a missing row is a zero, and that is where the term belongs. If the
+    injury report itself is refused, all three of its columns are carried **null** and the
+    Panel is served without them rather than not served at all -- `injury_columns` and ADR-0023.
     """
     stats = weekly_stats(seasons).with_columns(
         pl.col("player_display_name").map_elements(player_key, return_dtype=pl.Utf8).alias("key"))
@@ -688,10 +746,7 @@ def build_panel(seasons: Sequence[int] = SEASONS,
             rates = trend(rates, r, "posteam", f"{r}_trend")
         p = p.join(rates, left_on=["team", "season", "week"],
                    right_on=["posteam", "season", "week"], how="left")
-    p = p.join(injury_severity(seasons), on=["season", "week", "key"], how="left")
-    p = p.with_columns(pl.col("inj_sev").fill_null(0.0),
-                       pl.col("status").fill_null("Healthy"),
-                       pl.col("practice").fill_null("Healthy"))
+    p = injury_columns(p, seasons)
     for c in USAGE:
         p = recent_mean(p, c)
     if spec.ranks is not None:
