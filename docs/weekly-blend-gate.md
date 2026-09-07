@@ -34,6 +34,29 @@ systematic advantage to the arm under test, because carrying a projection at all
 more than any amount of being ranked well. Removing it does not shrink the effect toward zero;
 it takes the effect through zero, because the advantage was the effect.
 
+**What this re-run cannot separate, measured 2026-09-07.** The fix replaced the mixed-scale
+fallback with rank-interpolated points, which is a *new estimator* sitting inside the arm under
+test. The arm's score column is a mixture: 54.2% model projection, 16.7% rank-interpolated,
+29.1% unscoreable. Re-scoring with the interpolation stripped out — an unprojected player simply
+unscoreable — gives **+0.537 [+0.133, +0.939]**, so the fallback is worth **−1.546** to the arm.
+
+| how unprojected players are handled | effect |
+|---|---|
+| mixed scale (superseded) | +0.215 |
+| rank-interpolated (this re-run) | −1.004 |
+| unscoreable | +0.537 |
+
+**The gate is measuring the fallback, not the weekly model.** The spread across three choices
+is 1.5 points, larger than any effect any of them reports. And no row above is a clean
+measurement of the arm: the mixed scale handed it a preference unrelated to either estimate;
+the interpolation makes it carry that estimator's error; and *unscoreable* hands it a free rule
+against starting players it cannot price, while consensus still ranks and starts them — the
+"arms see different universes" defect `_one_scale`'s own docstring names.
+
+What the re-run does establish is that **+0.215 was not a property of the weekly model**, and
+that the verdict is not robust to a choice nobody has justified. What it does not establish is
+the weekly model's own merit, in either direction.
+
 **The disposition is not applied here.** The pre-registered rule says REMOVE, and REMOVE means
 deleting the module rather than shipping it as an option. That is a product decision and it is
 recorded as pending, not taken — the same treatment the draft gate's REMOVE received.
