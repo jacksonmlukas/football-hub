@@ -17,6 +17,7 @@ import panelarchive as arc
 import polars as pl
 import pytest
 
+from hub.contracts import ContractViolation
 from hub.models import panel as pnl
 from hub.names import player_key
 
@@ -689,3 +690,112 @@ def test_an_injected_board_lands_on_the_season_it_was_built_for(monkeypatch, tmp
     assert p.filter((pl.col("season") == 2024)
                     & pl.col("preseason_ecr").is_null()).height == 0, \
         "and every 2024 player here is on that board, so none should come back unpriced"
+
+
+# --- the injury report's three shapes, and what the Panel does with a refusal -----------
+#
+# ADR-0023. #132 routed `injury_severity` through `INJURIES.conform` and deleted the private
+# lookup it had used, and three of the deleted lines were tolerances rather than duplication:
+# `game_status` for `report_status`, `player_name` for `full_name`, and a missing
+# `practice_status` filled with the string "None". All three are refusals now, none of them
+# was covered in either direction, and "whatever nflverse shipped this week" is not a record
+# of a decision. These are.
+_REFUSED_SHAPES = (
+    ("report_status", lambda df: df.rename({"report_status": "game_status"}), "game_status"),
+    ("full_name", lambda df: df.rename({"full_name": "player_name"}), "player_name"),
+    ("practice_status", lambda df: df.drop("practice_status"), None),
+)
+_SHAPE_IDS = ("renamed status", "renamed name", "no practice column")
+
+
+@pytest.mark.parametrize(("declared", "edit", "arrived"), _REFUSED_SHAPES, ids=_SHAPE_IDS)
+def test_the_injury_ordinal_refuses_the_three_shapes_it_used_to_accept(monkeypatch, tmp_path,
+                                                                       declared, edit,
+                                                                       arrived):
+    """Each refusal is deliberate, and it speaks in the declaration's vocabulary.
+
+    A fallback that takes `game_status` when `report_status` is gone is how a silent rename
+    goes unnoticed -- the Week 7 failure this repo names -- and it computes the ordinal from a
+    column `INJURIES` never promised. The old code raised when *neither* spelling was present,
+    so what the deletion changed is only which frames it refuses, and this pins which.
+
+    The missing practice column is the case that looks like a plain narrowing and is not.
+    `practice_key` fills a null cell with "None", and `INJURIES` leaves `practice_status` out
+    of `non_null` on purpose, so "None" is already a designation meaning "on the report,
+    nothing said about practice". A whole column of it is indistinguishable from a real week
+    in which nobody was designated -- and it silently narrows the (status, practice) pair
+    `hub.models.injury` keys its retention table on to `status` alone. ADR-0023.
+
+    The message names the column the contract declares and not the one that arrived: the next
+    reader is being told which declaration to go and change, not offered a synonym.
+    """
+    arc.install(monkeypatch, tmp_path, edits={"injuries": edit})
+    with pytest.raises(ContractViolation) as e:
+        pnl.injury_severity(arc.SEASONS)
+    assert declared in str(e.value), \
+        f"the refusal must name `{declared}`, which is what `INJURIES` declares"
+    if arrived is not None:
+        assert arrived not in str(e.value), (
+            f"`{arrived}` is the name that turned up, not a name this repo knows. A "
+            f"message that offers it invites the fallback back in as a bugfix.")
+
+
+@pytest.mark.parametrize(("declared", "edit", "arrived"), _REFUSED_SHAPES, ids=_SHAPE_IDS)
+def test_a_refused_injury_report_nulls_three_columns_and_not_the_panel(monkeypatch, tmp_path,
+                                                                      capsys, declared, edit,
+                                                                      arrived):
+    """ADR-0023's live half: `build_panel` degrades around the refusal above, to null.
+
+    `build_panel` calls `injury_severity` unconditionally and the Sunday panel is the live
+    path CLAUDE.md's degradation rule is written for, so a refusal must not cost the other
+    forty columns. What it costs is the three columns the report contributes.
+
+    **Null, and not `Healthy`.** The fill under the join means "this player has no row on the
+    injury report"; a refused report means nobody has one and nothing is known. Spelling that
+    `Healthy` would publish a league in perfect health on the week the source broke, with
+    `inj_sev` reaching the screen as a measured zero on every row -- the same silent narrowing
+    as filling "None", one level up.
+    """
+    arc.install(monkeypatch, tmp_path)
+    healthy = pnl.build_panel(arc.SEASONS).sort(["player_id", "season", "week"])
+    capsys.readouterr()
+
+    arc.install(monkeypatch, tmp_path, edits={"injuries": edit})
+    p = pnl.build_panel(arc.SEASONS).sort(["player_id", "season", "week"])
+    err = capsys.readouterr().err
+
+    assert p.height == healthy.height and p.height > 0, \
+        "the refusal cost rows, so the Panel was not served around it"
+    assert p["snap_trend"].equals(healthy["snap_trend"]), \
+        "nothing but the injury columns may move when the injury report is refused"
+    for col in ("inj_sev", "status", "practice"):
+        assert col in p.columns, f"`{col}` must still be here for a consumer reading it"
+        assert p[col].null_count() == p.height, (
+            f"`{col}` carries {p.height - p[col].null_count()} non-null values on "
+            f"a Panel built with no injury report. Null is the only honest value here.")
+    assert "Healthy" not in set(p["status"].to_list()) | set(p["practice"].to_list()), \
+        "a refused report is not a league in perfect health"
+    assert "None" not in set(p["practice"].to_list()), \
+        "and it is not a week in which nobody was designated either"
+    assert declared in err, \
+        f"the operator is told nothing about `{declared}`, so the loss is silent"
+    if arrived is not None:
+        assert arrived not in err, "the message names the declaration, not the arrival"
+
+
+def test_the_panel_only_degrades_around_a_contract_violation(monkeypatch, tmp_path):
+    """A source that changed shape is servable. This module being wrong is not.
+
+    `injury_columns` catches `ContractViolation` and nothing wider. A bare `except Exception`
+    there would hide a defect in the ordinal itself behind three columns of nulls that look
+    exactly like a quiet week -- indistinguishable, on the frame, from the degradation the
+    test above asserts, and served every Sunday until someone read the ordinal closely.
+    """
+    arc.install(monkeypatch, tmp_path)
+
+    def broken(_seasons):
+        raise TypeError("the ordinal is wrong, not the source")
+
+    monkeypatch.setattr(pnl, "injury_severity", broken)
+    with pytest.raises(TypeError, match="the ordinal is wrong"):
+        pnl.build_panel(arc.SEASONS)
