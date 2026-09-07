@@ -122,6 +122,39 @@ in a loss. And stage 1 is a weak bar by construction, as the rule says -- passin
 MDE sits below the point estimate the noise itself produced. The real bar is stage 2 against
 the foresight ceiling, and #42 has not been built.
 
+## Re-measured 2026-09-07, and the effect does not reproduce
+
+Two re-runs of the draft gate over the same four seasons and the same 80 (season, draft)
+pairs. Neither reproduces the published figure, and the second isolates how much of the gap
+the pick-noise refit accounts for.
+
+| run | effect | 95% CI | estimator | constants | data digest |
+|---|---|---|---|---|---|
+| published (P0b) | **−19.66** | [−23.16, −16.20] | pre-repair | 1.00 / 0.253 | not recorded |
+| re-run A | **−12.48** | [−14.97, −10.03] | repaired | 1.00 / 0.253 | `621cb5dd` |
+| re-run B | **−11.59** | [−14.52, −8.64] | repaired | 1.31 / 0.169 | `621cb5dd` |
+
+**The refit is not the explanation.** Between A and B the only change is the pick-noise
+constants #150 shipped, and the effect moves **0.89** points. Between the published figure and
+A it moves **7.18**, and nothing in the tree accounts for that. The refit is eleven percent of
+the total movement.
+
+**The movement is in the code, not the data.** A and B carry the same digest over the same
+eight pinned sources, so the input bytes are identical and the difference is entirely what the
+harness did with them. The published run recorded no digest at all, which is why the first leg
+cannot be closed the same way — and is its own argument for #165, which made a partially
+pinned run declare itself rather than print a clean-looking digest over the wrong set.
+
+**The verdict has never been in question.** All three runs are worse in 4 of 4 held-out
+seasons, all three intervals exclude zero, and `P(optimizer better)` is 0.0% in every one. The
+pre-registered rule says REMOVE on any of them. What is in question is whether any of the
+three magnitudes means anything, and until the 7.18 is attributed, none of them should be
+quoted as the size of the effect.
+
+Paired rows for both re-runs are under `data/processed/gate/`, which is gitignored, so a
+future re-run has something to diff against on this machine and nothing to diff against on a
+fresh clone. Issue #190 carries the attribution work.
+
 ## Why the other two gates are unmeasured
 
 `weekly_gate.compare` and `lineup_gate.compare` build their paired frames from the network at
