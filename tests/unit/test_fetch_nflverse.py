@@ -943,6 +943,29 @@ def test_refresh_names_the_data_it_pulled(fake_pbp, fake_ffo, tmp_path, capsys):
     assert f"fitted {fitted_digest()}" in out
 
 
+def test_refresh_says_unpinned_when_one_of_its_two_sidecars_will_not_read(
+        fake_pbp, fake_ffo, tmp_path, capsys, monkeypatch):
+    """The same defect as the cache-hit path, on the path that prints the line (issue #165).
+
+    `refresh` fetches two sources and prints one `data` digest. Skipping the sidecar it could
+    not read published a digest over *one* source, three lines under a summary saying two had
+    been fetched -- and nothing on the line said which of the two it named. That is the
+    partial case exactly: legitimate-looking, and wrong about which bytes it stands for.
+    """
+    from hub.config import UNPINNED
+    fake_pbp()
+    fake_ffo()
+    readable = nv.data_pin
+    monkeypatch.setattr(nv, "data_pin", lambda source, *a, **kw: (
+        None if source == "pbp" else readable(source, *a, **kw)))
+
+    nv.refresh(season=2025, cache=tmp_path, base=tmp_path / "store")
+    out = capsys.readouterr().out
+    assert "ff_opportunity" in out, "the fixture stopped fetching two sources"
+    assert f"data {UNPINNED}" in out, (
+        "one of two sidecars would not read and the line named the other one alone")
+
+
 def test_refresh_names_the_config_the_run_resolved(fake_pbp, fake_ffo, tmp_path, capsys,
                                                    monkeypatch):
     """A configuration the run actually had reaches the line, rather than the defaults.
@@ -1384,6 +1407,150 @@ def test_a_cache_hit_is_still_a_read(fake_rankings, tmp_path, monkeypatch):
     pins = nv.pins_this_run()
     assert len(pins) == 1, "a cache hit recorded nothing, so a re-run names no data"
     assert pins[0].digest, "the pin beside the served entry was not read"
+
+
+# --- a partial digest is a false one, and reads belong to a run (issue #165) ---
+#
+# Two defects, one premise: the digest covers every byte a run read, or it says `unpinned`.
+# A cache hit whose sidecar could not be read used to contribute nothing, so a run that read
+# three sources with two pinned published a digest over two -- and the reads were
+# process-global besides, so a build running several components in turn folded all of their
+# reads into each of their digests.
+
+def _sidecar(cache):
+    """The one pin written under a rankings cache tree, found rather than recomputed.
+
+    Rebuilding the cache key here would be a second statement of `_cache_path`, free to agree
+    with it right up until one of them moved -- and a test that then quietly stopped touching
+    the file it meant to touch.
+    """
+    found = sorted((cache / "ff_rankings").glob("*.pin.json"))
+    assert len(found) == 1, found
+    return found[0]
+
+
+def test_a_cache_hit_with_no_pin_unpins_the_run(fake_rankings, tmp_path, monkeypatch):
+    """The invisible case. An entry written before pinning existed, or one whose sidecar
+    write was interrupted, is a read of bytes the run cannot name -- and it used to leave
+    the digest looking complete rather than saying so."""
+    from hub.config import UNPINNED, data_digest
+
+    fake_rankings()
+    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    _sidecar(tmp_path).unlink()                                  # the interrupted write
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+
+    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    read = nv.pins_this_run()
+    assert len(read) == 1, "the read dropped out of the run entirely"
+    assert read[0].source == "ff_rankings" and read[0].digest == UNPINNED
+    assert data_digest(read) == UNPINNED
+
+
+def test_a_run_that_mixes_a_pinned_and_an_unpinned_hit_says_unpinned(
+        fake_rankings, fake_ffo, tmp_path, monkeypatch):
+    """Two sources, one pin between them. The digest of the one it managed would be eight
+    hex characters naming the wrong set of bytes -- and would compare equal to a run that
+    had read only that one source."""
+    from hub.config import UNPINNED, data_digest
+
+    fake_rankings()
+    fake_ffo()
+    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+    pinned_only = data_digest(nv.pins_this_run())
+    assert pinned_only != UNPINNED
+
+    _sidecar(tmp_path).unlink()
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+
+    both = nv.pins_this_run()
+    assert len(both) == 2, "the unpinned read is not in the run"
+    assert data_digest(both) == UNPINNED, (
+        "a run that read two sources and pinned one published a digest over the one")
+    assert data_digest(both) != pinned_only
+
+
+def test_a_sidecar_that_will_not_parse_unpins_the_run_too(fake_rankings, tmp_path,
+                                                          monkeypatch):
+    """`_pin_beside` answers None three ways and only one of them is a missing file. A
+    half-written sidecar is the one that happens under an interrupted build.
+
+    The digest alone would not hold this: an unrecorded read and a recorded unpinned one both
+    come out `unpinned` when the unpinned read is the only one. So the read itself is asserted
+    -- the count is the number of entries this run touched, not the number that happened to
+    have a sidecar."""
+    from hub.config import UNPINNED, data_digest
+
+    fake_rankings()
+    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    _sidecar(tmp_path).write_text('{"source": "ff_rankings", "as_of": "2026-')
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+
+    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    read = nv.pins_this_run()
+    assert len(read) == 1, "a read this run made is not in what the run says it read"
+    assert read[0].digest == UNPINNED
+    assert data_digest(read) == UNPINNED
+
+
+def test_two_components_in_one_process_name_their_own_reads(fake_rankings, fake_ffo,
+                                                            tmp_path, monkeypatch):
+    """One build running the board, the gate and the publisher folded all three components'
+    reads into every component's digest, so three different questions came out with one
+    answer -- which is the comparison a digest exists to be able to deny."""
+    from hub.config import data_digest
+
+    fake_rankings()
+    fake_ffo()
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+
+    with nv.reads_of_one_run():
+        nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+        first = data_digest(nv.pins_this_run())
+        assert [p.source for p in nv.pins_this_run()] == ["ff_rankings"]
+
+    with nv.reads_of_one_run():
+        nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+        second = data_digest(nv.pins_this_run())
+        assert [p.source for p in nv.pins_this_run()] == ["ff_opportunity"], (
+            "the second component's digest named a source only the first one read")
+
+    assert first != second
+
+
+def test_a_scope_hands_its_reads_back_to_the_run_around_it(fake_rankings, fake_ffo,
+                                                           tmp_path, monkeypatch):
+    """The scope narrows what a component reports and must not become a way for a run to
+    lose a read. A helper opening a scope of its own would otherwise leave its caller's
+    digest short by exactly the sources the helper loaded -- which is the other half of this
+    issue wearing a different hat."""
+    fake_rankings()
+    fake_ffo()
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+    with nv.reads_of_one_run():
+        nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    assert sorted(p.source for p in nv.pins_this_run()) == ["ff_opportunity", "ff_rankings"]
+
+
+def test_a_scope_that_raises_still_restores_the_run_around_it(fake_rankings, tmp_path,
+                                                              monkeypatch):
+    """A component that fails half way through must not take the enclosing run's reads with
+    it, or the digest printed after a caught failure names less than the run read."""
+    fake_rankings()
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+
+    with pytest.raises(RuntimeError), nv.reads_of_one_run():
+        raise RuntimeError("the component fell over")
+    assert [p.source for p in nv.pins_this_run()] == ["ff_rankings"]
 
 
 def test_reading_the_same_entry_twice_does_not_double_the_digest(fake_rankings, tmp_path,

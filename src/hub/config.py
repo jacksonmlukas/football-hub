@@ -440,6 +440,37 @@ def pin_fold(source: str, as_of: str | None, digest: str) -> str:
 UNPINNED = "unpinned"
 
 
+@dataclass(frozen=True)
+class UnpinnedRead:
+    """A read a run made that names no bytes, and which therefore unpins the whole digest.
+
+    The sentinel above answers for a run that pinned *nothing*. The case it did not answer
+    for is the partial one: a cache hit on an entry written before pinning existed, or one
+    whose sidecar write was interrupted, contributed nothing at all -- so a run that read
+    three sources with two pinned produced a digest over two. Eight hex characters that look
+    entirely legitimate, naming the wrong set of bytes.
+
+    That is worse than the total case rather than a smaller version of it. A run that pinned
+    nothing says `unpinned` and a reader knows where they stand; a run that pinned two of
+    three says nothing at all, and the digest compares equal to a later run that read only
+    those two. It is the failure the sentinel was designed to prevent, arriving through the
+    one door it left open.
+
+    So a read with no pin is *recorded*, carrying this as its digest, and `data_digest` below
+    turns the whole run's answer into the sentinel when it sees one. Not a `Pin` with a blank
+    digest: a `Pin` is what was written beside a cache entry, and one this process invented
+    would be indistinguishable from a record that came off disk. This type says what it is,
+    and it is the only thing that satisfies `DataPin` without naming bytes.
+
+    `as_of` is carried even though it does not reach the digest, because the reason a run went
+    unpinned is the first thing anyone asks and the answer is usually which load it was.
+    """
+
+    source: str
+    as_of: str | None = None
+    digest: str = UNPINNED
+
+
 def data_digest(pins: Iterable[DataPin]) -> str:
     """Stable 8-char hash of the data a run actually loaded, or `UNPINNED` for none.
 
@@ -468,8 +499,20 @@ def data_digest(pins: Iterable[DataPin]) -> str:
     argues there for what goes in and what stays out. Sorted and de-duplicated, so the answer
     does not depend on which source a gate happened to load first, or on one archive being
     reached through two call sites.
+
+    All of the bytes, or none of them. One `UnpinnedRead` in the set unpins the answer, so a
+    run that read three sources and pinned two says `unpinned` rather than publishing a hash
+    of the two it managed. A digest over a subset is not a weaker claim than a digest over the
+    whole; it is a false one, because it compares equal to a run that read only that subset.
+    `UnpinnedRead` argues the case above.
     """
-    rows = sorted({pin_fold(p.source, p.as_of, p.digest) for p in pins})
+    read = list(pins)
+    # GUARD partial-pinning-unpins-the-run [unit/test_config.py]: a read that names no bytes
+    # takes the whole digest with it rather than dropping out of it
+    if any(p.digest == UNPINNED for p in read):
+        return UNPINNED
+    # /GUARD
+    rows = sorted({pin_fold(p.source, p.as_of, p.digest) for p in read})
     if not rows:
         return UNPINNED
     return hashlib.sha256("\n".join(rows).encode()).hexdigest()[:8]
