@@ -3,10 +3,20 @@ renaming a field and your projections going quietly wrong for three weeks.
 
 Every fetch function asserts its contract at the boundary. Violations raise loudly
 and the pipeline serves last-good state rather than propagating bad data.
+
+**A contract has two verbs, and for a long time it had one.** `validate` refuses a frame
+that breaks the declaration. `conform` hands a consumer the columns it names, in the shape
+this file declares them -- because refusal is not an answer a module that has to keep going
+can use, and the one that could not use it grew a private copy of the schema instead. That
+copy is what issue #132 was: `SNAP_COUNTS` bounded `offense_pct` and named the day PFR ships
+whole percents as the failure it exists to catch, while `hub.models.spread.snap_usage` --
+a module this file names as its own consumer -- detected the same case forty lines away and
+divided by a hundred, with nothing pointing at the other. A declaration nobody can read is a
+declaration somebody will restate.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import polars as pl
@@ -15,7 +25,9 @@ NOT_FITTED_BECAUSE = (
     "declared plausibility bounds, not fitted inputs. A range here says what a source may "
     "plausibly return -- SNAP_COUNTS bounds offense_pct at [0, 1.05], measured over 2019-25 "
     "where PFR's own rounding reaches 1.01 -- so moving one changes what the fetch layer "
-    "refuses and never what a prediction computes. Stated as a module rather than constant by "
+    "refuses. The one number here a consumer's arithmetic can reach is a Normalisation's, and "
+    "it is the same kind of number read from the other side: 0.01 is what a percent *is*, and "
+    "1.5 is a height no honest fraction reaches. Stated as a module rather than constant by "
     "constant because every float in this file is that kind of number by construction, and "
     "because #71 established that adding a data source must not move a model version: the "
     "eleven contracts before #33 held only integer bounds and this scan had never met one of "
@@ -76,12 +88,45 @@ _VERIFICATION_NOTES: dict[bool | None, str] = {False: _UNVERIFIED_NOTE, None: _U
 
 
 @dataclass(frozen=True)
+class Normalisation:
+    """A known upstream variation a contract answers by restating a column rather than
+    refusing it.
+
+    The second thing a declaration can say, and the reason it can be read at all. A contract
+    whose whole vocabulary is refusal leaves a consumer that must cope with a recurring
+    variation nowhere to say so *inside* the contract, so it says it privately: `SNAP_COUNTS`
+    refused the whole-percent form of `offense_pct` while `hub.models.spread.snap_usage`
+    repaired the identical case forty lines away, two answers to one variation with nothing
+    reconciling them. One of them was going to move without the other.
+
+    **Narrow on purpose, and it widens the vocabulary rather than softening the guard.** A
+    units change is a whole-column fact -- PFR does not publish half a column as percents --
+    so the trigger is the column's own maximum and the repair is one multiplication.
+    `validate` checks the declared range *after* this has run, so a value the factor cannot
+    bring back inside the bound is refused exactly as it was before, and anything needing a
+    row-level decision is not a normalisation and never becomes one.
+
+    `because` is carried into the refusal a rescaled column still earns, which is the one
+    message where a reader needs to know the frame was not the frame the source sent.
+    """
+
+    columns: tuple[str, ...]
+    above: float
+    scale: float
+    because: str
+
+
+@dataclass(frozen=True)
 class Contract:
     name: str
     required: dict[str, type]                      # column -> polars dtype family
     non_null: tuple[str, ...] = ()
     unique: tuple[str, ...] = ()
     ranges: dict[str, tuple[float, float]] = field(default_factory=dict)
+    # The repairs this declaration owns, applied before any bound is checked. Empty for
+    # thirteen of the fourteen contracts, because a source that has never varied has nothing
+    # to declare here and an unexercised repair is worse than none.
+    normalisations: tuple[Normalisation, ...] = ()
     min_rows: int = 1
     # Whether this declaration has ever been checked against a real response. Two were
     # written from documentation and never run, so their first failure is as likely to mean
@@ -122,7 +167,13 @@ class Contract:
         this module must sit inside a `# GUARD` or a `# UNPROVED` block, so a seventh check
         cannot land unmarked. The `# GUARD` blocks are then proved the usual way -- deleted
         one at a time, with `tests/contracts/test_contracts.py` required to go red.
+
+        The declared normalisations run first and the frame they produce is what every check
+        below sees and what a caller gets back, which is what makes a repair a thing this
+        file states once rather than a thing each consumer works out. A caller that discards
+        the return still gets the refusal; `conform` is how a consumer asks for the frame.
         """
+        df, rescaled = self._normalised(df)
         problems = []
         # GUARD too-few-rows-refused: a truncated response is refused rather than served
         if df.height < self.min_rows:
@@ -157,10 +208,19 @@ class Contract:
         # /GUARD
         # GUARD out-of-range-refused: a units change inside a plausible column is caught
         for c, (lo, hi) in self.ranges.items():
-            if c in df.columns:
+            # Numeric, because `<` between a `str` and an `int` is a `TypeError` and not a
+            # refusal: a bounded column that arrived as text used to come out of here as a
+            # stack trace, past the dtype problem already sitting in `problems` that says
+            # exactly what happened. Found by declaring that `_normalised` may skip a
+            # column of the wrong kind and leave the dtype check to answer for it.
+            if c in df.columns and df.schema[c].is_numeric():
                 mn, mx = df[c].min(), df[c].max()
                 if mn is not None and (cast(float, mn) < lo or cast(float, mx) > hi):
-                    problems.append(f"{c} range [{mn}, {mx}] outside [{lo}, {hi}]")
+                    # A column that was rescaled and *still* does not fit says so. Without
+                    # it the reader sees a range refusal quoting numbers no source sent,
+                    # which is the one way a normalisation could mislead rather than help.
+                    tail = f" after rescaling: {rescaled[c]}" if c in rescaled else ""
+                    problems.append(f"{c} range [{mn}, {mx}] outside [{lo}, {hi}]{tail}")
         # /GUARD
         # The one exit, marked for the same reason as the six checks above it: a seventh
         # check that raised here directly rather than appending would be a refusal the
@@ -174,6 +234,74 @@ class Contract:
             raise ContractViolation(f"{self.name}: " + "; ".join(problems) + note)
         # /GUARD
         return df
+
+    def _normalised(self, df: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, str]]:
+        """The frame with every declared repair applied, and why each one fired.
+
+        No refusal lives here on purpose. A normalisation that does not fire leaves the
+        column alone and every check in `validate` runs on the frame the source sent; one
+        that does fire hands those same checks a repaired column and is named in the
+        returned mapping, so a bound that is still broken can say the numbers it is quoting
+        are not the ones that arrived.
+
+        A column that is missing, or that has arrived as the wrong kind of thing entirely,
+        is skipped rather than rescaled -- multiplying a `Utf8` column would raise something
+        that is not a `ContractViolation`, and the dtype refusal downstream is the answer
+        the reader wants for that frame anyway.
+        """
+        applied: dict[str, str] = {}
+        for rule in self.normalisations:
+            for c in rule.columns:
+                if c not in df.columns or not df.schema[c].is_numeric():
+                    continue
+                top = df[c].max()
+                if top is not None and float(cast(float, top)) > rule.above:
+                    df = df.with_columns(pl.col(c) * rule.scale)
+                    applied[c] = rule.because
+        return df, applied
+
+    def conform(self, df: pl.DataFrame, *columns: str) -> pl.DataFrame:
+        """The columns a consumer names, repaired and checked as this contract declares them.
+
+        The reading verb. `validate` answers "is this whole response servable", which is the
+        fetch boundary's question and no use to a module holding a slice of one; this answers
+        "may I read these columns, and are they in the units you say", which is what a
+        consumer was hand-rolling a second schema to find out. Everything it enforces is the
+        same declaration `validate` enforces, narrowed -- there is one statement of what the
+        source may return, and asking it a smaller question does not create a second.
+
+        Narrowed to the columns named and no further. `hub.models.spread.snap_usage` reads
+        four of `SNAP_COUNTS`' thirteen, so demanding all thirteen would refuse a legitimate
+        slice; the frozen capture `tests/panelarchive.py` drives the Panel from holds exactly
+        the five columns `hub.models.panel.injury_severity` reads, and no more. `min_rows`
+        goes the same way: how big a response has to be is a fact about a refresh, and a
+        consumer is handed whatever the boundary has already vouched for.
+
+        Naming a column this contract does not declare is itself a refusal, and it is the
+        one that catches the drift this method exists to end. A consumer that starts reading
+        a column the source never promised has left the declaration behind, and it should
+        hear about it here rather than three joins later.
+        """
+        # GUARD undeclared-column-refused: a consumer reading past the declaration is caught
+        unknown = sorted(set(columns) - set(self.required))
+        if unknown:
+            raise ContractViolation(
+                f"{self.name}: asked for {unknown}, which this contract does not declare. "
+                f"It declares {sorted(self.required)} -- add the column here if the source "
+                f"really returns it, rather than reading it on trust.")
+        # /GUARD
+        keep = set(columns)
+        return replace(
+            self,
+            required={c: dt for c, dt in self.required.items() if c in keep},
+            non_null=tuple(c for c in self.non_null if c in keep),
+            unique=tuple(c for c in self.unique if c in keep),
+            ranges={c: r for c, r in self.ranges.items() if c in keep},
+            normalisations=tuple(
+                replace(rule, columns=cols) for rule in self.normalisations
+                if (cols := tuple(c for c in rule.columns if c in keep))),
+            min_rows=0,
+        ).validate(df)
 
 
 # The board frame is the widest interface in the repo: ~14 modules read columns off it by
@@ -415,6 +543,11 @@ INJURIES = Contract(
 # units change -- so a ceiling at 1 would fail an honest refresh. `defense_pct` and `st_pct`
 # ride along unread because a units change would hit all three at once and they cost nothing.
 #
+# And because a units change hits all three at once, the repair names all three. It is one
+# declaration and not one per column for the same reason the bound above is three copies of
+# one number: PFR does not switch units on a single column, and a repair that mended
+# `offense_pct` alone would leave the other two refusing the very frame it had just accepted.
+#
 # Not unique on anything a single column can express: the key is (game_id, pfr_player_id),
 # which the 181,477 rows over 2019-25 do respect and this contract cannot say.
 SNAP_COUNTS = Contract(
@@ -427,6 +560,14 @@ SNAP_COUNTS = Contract(
     non_null=("game_id", "season", "week", "game_type", "player", "pfr_player_id", "team"),
     ranges={"week": (1, 22), "offense_snaps": (0, 130), "offense_pct": (0, 1.05),
             "defense_pct": (0, 1.05), "st_pct": (0, 1.05)},
+    normalisations=(
+        Normalisation(
+            columns=("offense_pct", "defense_pct", "st_pct"), above=1.5, scale=0.01,
+            because="PFR publishes these as fractions and nflverse has shipped them as whole "
+                    "percents. A share above 1.5 can only be the percent form -- the honest "
+                    "ceiling is 1.01, PFR's own rounding -- so the hundred comes back out "
+                    "before the bound is checked"),
+    ),
     min_rows=1,
     # Checked against `nflverse_snap_counts.json`, a real 2024 capture.
     verified_against_live=True,

@@ -47,6 +47,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
+from hub.contracts import SNAP_COUNTS
 from hub.models.experiment import MIN_SE, expanding_seasons, paired_gain
 from hub.models.predict import WEEKLY_K, WEEKLY_K_POOLED
 
@@ -105,23 +106,22 @@ def snap_usage(snaps: pl.DataFrame, crosswalk: pl.DataFrame) -> pl.DataFrame:
     nflverse's `gsis_id`, so this join is unavoidable. Players it cannot match come back
     absent rather than zero: a missing snap share is unknown, and zero would assert he
     never played.
+
+    **The four columns and the units are asked of `SNAP_COUNTS`, not restated here.** This
+    function used to hold its own list of required columns and its own answer to nflverse
+    shipping whole percents -- detect a share above 1.5, divide by a hundred -- while the
+    contract that bounds the same column *refused* that frame. Two answers to one upstream
+    variation, in two files, with nothing pointing at the other, and the repair became
+    unreachable the moment anything routed this source through the contract. The bound and
+    the repair are one declaration now, and this asks it for them.
     """
-    need = {"season", "week", "pfr_player_id", "offense_pct"}
-    missing = need - set(snaps.columns)
-    if missing:
-        raise ValueError(f"snap_usage needs {sorted(missing)}")
     if not {"pfr_id", "gsis_id"} <= set(crosswalk.columns):
         raise ValueError("crosswalk needs pfr_id and gsis_id")
+    s = SNAP_COUNTS.conform(snaps, "season", "week", "pfr_player_id", "offense_pct")
 
-    s = snaps
     if "position" in s.columns:
         s = s.filter(pl.col("position").is_in(DRAFTED_POSITIONS))
     pct = pl.col("offense_pct").cast(pl.Float64)
-    # nflverse has shipped this both as a fraction and as a percentage. Detect rather than
-    # assume: a share above 1.5 can only be the percent form.
-    top = s.select(pl.col("offense_pct").cast(pl.Float64).max()).item() if s.height else None
-    if top is not None and float(top) > 1.5:
-        pct = pct / 100.0
 
     xw = (crosswalk.select(pl.col("pfr_id").cast(pl.Utf8),
                            pl.col("gsis_id").cast(pl.Utf8).alias("player_id"))

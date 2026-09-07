@@ -32,6 +32,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from polars.testing import assert_frame_equal
 
 from hub.contracts import (
     CFBD_GAMES,
@@ -46,6 +47,7 @@ from hub.contracts import (
     SNAP_COUNTS,
     ContractViolation,
 )
+from hub.models.spread import snap_usage
 
 FIXTURES = Path(__file__).resolve().parents[1] / "golden" / "fixtures"
 
@@ -131,13 +133,43 @@ def test_snap_counts_contract_holds_on_the_real_slice():
     assert df["offense_pct"].min() == 0.0
 
 
-def test_snap_percentages_arriving_as_whole_percents_are_caught():
-    """The units change the range exists for, on the real capture rather than a made-up
-    frame: every snap share multiplied by a hundred is a plausible number in a column
-    `hub.models.panel.snap_share` reads and nothing prints."""
+def test_a_whole_percent_capture_reaches_one_answer_down_one_path():
+    """The units change the declaration exists for, on the real capture rather than a
+    made-up frame, and read from both ends of it.
+
+    Until #132 this was two assertions in two files with two different expected results and
+    nothing checking that they agreed. Here the contract *refused* the whole-percent frame,
+    because every snap share multiplied by a hundred is a plausible number in a column
+    `hub.models.panel.snap_share` reads and nothing prints. Forty lines from the contract,
+    `hub.models.spread.snap_usage` divided the identical case by a hundred and carried on,
+    and `tests/unit/test_spread.py` asserted that it did. Whichever was right, routing this
+    source through the contract would have made the other unreachable.
+
+    The repair is declared beside the bound now, so there is one answer, and this is where
+    the two ends are tied to it: the contract hands back the capture's own numbers, and the
+    consumer computes what it computes from the frame that never varied.
+    """
+    pcts = ("offense_pct", "defense_pct", "st_pct")
+    df = frame("nflverse_snap_counts.json").with_columns(
+        pl.col("season").cast(pl.Int32), pl.col("week").cast(pl.Int32))
+    percents = df.with_columns([pl.col(c) * 100 for c in pcts])
+
+    repaired = shape_only(SNAP_COUNTS).validate(percents)
+    for c in pcts:
+        assert repaired[c].to_list() == pytest.approx(df[c].to_list()), c
+
+    xw = pl.DataFrame({"pfr_id": df["pfr_player_id"], "gsis_id": df["pfr_player_id"]})
+    read = snap_usage(percents, xw).sort("player_id")
+    assert read.height == 1, "the capture no longer carries a drafted-position row to read"
+    assert_frame_equal(read, snap_usage(df, xw).sort("player_id"))
+
+
+def test_a_snap_share_no_rescaling_can_rescue_is_still_refused():
+    """The repair widens what this contract can say and does not soften what it refuses.
+    A hundredth of 500 is 5, which is not a snap share however it was published."""
     df = frame("nflverse_snap_counts.json").with_columns(
         pl.col("season").cast(pl.Int32), pl.col("week").cast(pl.Int32),
-        (pl.col("offense_pct") * 100).alias("offense_pct"))
+        (pl.col("offense_pct") + 500).alias("offense_pct"))
     with pytest.raises(ContractViolation, match="offense_pct range"):
         shape_only(SNAP_COUNTS).validate(df)
 
