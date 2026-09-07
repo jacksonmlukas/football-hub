@@ -35,6 +35,37 @@ file contents, stack traces already resolved, exploratory dead ends.
 Every module must produce a usable answer with zero attention. If a fetch fails, serve last-good
 state from `data/processed/` rather than erroring. Systems that need an operator die in October.
 
+## Worktrees
+
+A worktree starts with no `.venv`; the first `uv run` builds one. That environment is the one the
+rules assume, so **there is no setup step** — run the gates directly:
+
+```bash
+uv run ruff check src tests        # lint
+uv run pyrefly check src tests     # types (name the paths; see below)
+uv run pytest tests/unit -q        # tests
+```
+
+Three things make that true, and each of them was a session someone lost:
+
+- The toolchain (`pytest`, `ruff`, `pyrefly`, `pytest-cov`, `hypothesis`) is a `[dependency-groups]`
+  group in `pyproject.toml`, **not an extra**. uv installs default groups on every `uv sync` and
+  every `uv run`; it installs an extra only when asked. As an extra it was in no venv uv ever built
+  on its own. If you are tempted to move it back, read the comment above it first.
+- Never trust `uv run pytest` to fail loudly. With no pytest in the venv, `uv run` falls through to
+  `PATH` and runs whatever global pytest exists — against a venv missing the project's deps, so it
+  reports `ModuleNotFoundError` on a first-party import. That is an environment fault dressed as a
+  code error, and only having pytest in the venv prevents it.
+- `pyrefly check` with no paths resolves its own file set in project mode, where it honours
+  `.git/info/exclude` — which ignores `.claude/worktrees/`. Inside a worktree that matches zero
+  files. **Always name `src tests`.** `.claude/hooks/tdd_gate.sh` does, and it must stay that way;
+  do not "fix" it by editing the exclude file, which is what keeps agent worktrees out of the
+  primary checkout's `git status`.
+
+`.env` is gitignored and is carried in by `.worktreeinclude`. Nothing else the gates need is
+gitignored. The suite is already written for a tree with no `data/` — that is the fresh-clone case
+`test_board_build.py` and `test_board_main.py` exist to hold — so a worktree runs it unmodified.
+
 ## Agent skills
 
 ### Issue tracker
