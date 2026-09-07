@@ -10,6 +10,7 @@ import pytest
 
 from hub.draft import optimize
 from hub.draft.optimize import (
+    _lift_frame,
     _need_score,
     market_pick,
     rank_tiers,
@@ -165,6 +166,50 @@ def test_the_draft_optimizer_prices_stacks():
 
 
 # --- saying only what the simulation can resolve --------------------------
+#
+# Two fixtures carry the whole argument for the paired standard error, and they are built to
+# DISAGREE with each other -- one where the two formulas differ by a factor of two and one
+# where they agree to five figures. A single fixture on which both give the same answer would
+# have passed the old code and the new one alike and proved nothing about either.
+#
+# Each is four candidates scored over ten shared simulated futures, the shape `win_probability`
+# produces: row i column k is candidate i's championship equity in future k, and column k is
+# the same future for everyone.
+
+# A and B are helped by the same futures -- the rollouts where the run on their position comes
+# late. Their lifts correlate at +0.80, so the gap between them is steadier than either lift.
+CORRELATED_FUTURES = [
+    [0.4634, 0.4800, 0.4604, 0.4488, 0.4518, 0.4697, 0.4657, 0.4642, 0.4478, 0.4482],
+    [0.4447, 0.4836, 0.4432, 0.4383, 0.4439, 0.4787, 0.4663, 0.4375, 0.4435, 0.4403],
+    [0.3966, 0.3800, 0.3996, 0.4112, 0.4082, 0.3903, 0.3943, 0.3958, 0.4122, 0.4118],
+    [0.3973, 0.3584, 0.3988, 0.4037, 0.3981, 0.3633, 0.3757, 0.4045, 0.3985, 0.4017],
+]
+# Same shape, but A's and B's lifts are independent across futures -- correlation +0.00004.
+UNCORRELATED_FUTURES = [
+    [0.4361, 0.4404, 0.4755, 0.4963, 0.4690, 0.4527, 0.5025, 0.4467, 0.4389, 0.4419],
+    [0.4184, 0.4431, 0.4623, 0.4604, 0.4568, 0.4610, 0.4228, 0.4758, 0.4331, 0.4664],
+    [0.4239, 0.4196, 0.3845, 0.3637, 0.3910, 0.4073, 0.3575, 0.4133, 0.4211, 0.4181],
+    [0.4216, 0.3969, 0.3777, 0.3796, 0.3832, 0.3790, 0.4172, 0.3642, 0.4069, 0.3736],
+]
+
+
+def _futures(rows):
+    """The candidate frame `win_probability` would return for these simulated futures."""
+    return _lift_frame(["A", "B", "C", "D"], np.array(rows, dtype=float))
+
+
+def _lift_correlation(rows, i, j):
+    mat = np.array(rows, dtype=float)
+    diff = mat - mat.mean(axis=0)[None, :]
+    return float(np.corrcoef(diff[i], diff[j])[0, 1])
+
+
+def _quadrature_gap_se(frame, player):
+    """The superseded expression: two `lift_se` values combined as if unrelated."""
+    lead = float(frame["lift_se"][0])
+    mine = float(frame.filter(pl.col("player") == player)["lift_se"][0])
+    return (lead ** 2 + mine ** 2) ** 0.5
+
 
 def test_candidates_the_simulation_cannot_separate_are_marked_as_tied():
     """At pick 3 the top two differ by 0.17 points of championship equity with standard
@@ -173,7 +218,8 @@ def test_candidates_the_simulation_cannot_separate_are_marked_as_tied():
     players."""
     df = pl.DataFrame({"player": ["A", "B", "C"], "p_win": [0.48, 0.479, 0.40],
                        "lift": [0.035, 0.033, -0.050],
-                       "lift_se": [0.005, 0.005, 0.006]})
+                       "lift_se": [0.005, 0.005, 0.006],
+                       "lead_gap_se": [0.0, 0.007, 0.008]})
     got = rank_tiers(df)
     lead = dict(zip(got["player"].to_list(), got["co_leader"].to_list(), strict=True))
     assert lead["A"] and lead["B"], "0.002 apart with se 0.005 is not a distinction"
@@ -184,24 +230,91 @@ def test_a_clear_winner_is_not_diluted_into_a_tie():
     """The other direction. A tiering rule that called everything tied would be as useless
     as one that called everything separable."""
     df = pl.DataFrame({"player": ["A", "B"], "p_win": [0.50, 0.40],
-                       "lift": [0.05, -0.05], "lift_se": [0.004, 0.004]})
+                       "lift": [0.05, -0.05], "lift_se": [0.004, 0.004],
+                       "lead_gap_se": [0.0, 0.006]})
     got = rank_tiers(df)
     assert got.filter(pl.col("co_leader"))["player"].to_list() == ["A"]
 
 
-def test_the_gap_is_measured_in_pooled_standard_errors():
-    """Both candidates carry sampling error, so the comparison uses the standard error of
-    the difference, not the leader's alone."""
-    df = pl.DataFrame({"player": ["A", "B"], "p_win": [0.5, 0.45],
-                       "lift": [0.02, 0.0], "lift_se": [0.01, 0.01]})
-    got = rank_tiers(df)
-    b = got.filter(pl.col("player") == "B")["gap_se"][0]
-    assert b == pytest.approx(0.02 / (0.01 ** 2 + 0.01 ** 2) ** 0.5, rel=1e-6)
+def test_the_gap_is_the_standard_error_of_the_paired_difference():
+    """The two lifts come off the same simulated seasons, so the error on their difference is
+    the spread of that difference -- one number per future, taken before it is averaged.
+
+    On `CORRELATED_FUTURES` the leader A and the rival B differ by 0.008 of championship
+    equity. The paired standard error of that gap is 0.0034421, so the gap is 2.32 of them.
+    The superseded quadrature expression put the error at 0.0064602 and the gap at 1.24,
+    which is a different answer, not a rounder one."""
+    got = rank_tiers(_futures(CORRELATED_FUTURES))
+    b = got.filter(pl.col("player") == "B")
+    assert float(b["lead_gap_se"][0]) == pytest.approx(0.0034421, abs=5e-7)
+    assert float(b["gap_se"][0]) == pytest.approx(2.3242, abs=5e-4)
+    assert _quadrature_gap_se(got, "B") == pytest.approx(0.0064602, abs=5e-7)
+
+
+def test_the_gap_is_measured_against_the_leader_not_the_first_row():
+    """Whose gap it is depends on who leads on lift, not on where the caller put him. The
+    same futures with the rows reversed must give B the same 2.32."""
+    got = rank_tiers(_lift_frame(["D", "C", "B", "A"],
+                                 np.array(CORRELATED_FUTURES[::-1], dtype=float)))
+    assert got["player"].to_list() == ["A", "B", "C", "D"]
+    b = got.filter(pl.col("player") == "B")
+    assert float(b["gap_se"][0]) == pytest.approx(2.3242, abs=5e-4)
+
+
+def test_correlated_lifts_are_tighter_paired_than_in_quadrature():
+    """The claim the fix rests on, asserted rather than assumed. A's and B's lifts rise and
+    fall together (+0.80 across the ten futures), and quadrature has no way to know that: it
+    is the formula for two unrelated estimates. It reports 0.0064602 where the paired
+    difference reports 0.0034421 -- 53% of it, a whole factor, not a rounding."""
+    assert _lift_correlation(CORRELATED_FUTURES, 0, 1) == pytest.approx(0.8010, abs=5e-4)
+    got = _futures(CORRELATED_FUTURES)
+    paired = float(got.filter(pl.col("player") == "B")["lead_gap_se"][0])
+    quad = _quadrature_gap_se(got, "B")
+    assert paired < quad
+    assert paired / quad == pytest.approx(0.5328, abs=5e-4)
+
+
+def test_uncorrelated_lifts_land_on_the_same_number_either_way():
+    """The control, and the reason this is a correction rather than a rescale. On
+    `UNCORRELATED_FUTURES` A's and B's lifts are independent (+0.00004), which is the one case
+    quadrature is the right formula for -- and there the two agree to five figures. A fix that
+    moved every number by a constant would fail here, and so would a fixture chosen to make
+    both formulas agree everywhere: the correlated pair above separates them by a factor of
+    two on the same code path."""
+    assert _lift_correlation(UNCORRELATED_FUTURES, 0, 1) == pytest.approx(0.0, abs=1e-3)
+    got = _futures(UNCORRELATED_FUTURES)
+    paired = float(got.filter(pl.col("player") == "B")["lead_gap_se"][0])
+    quad = _quadrature_gap_se(got, "B")
+    assert paired == pytest.approx(0.0099086, abs=5e-7)
+    assert quad == pytest.approx(0.0099087, abs=5e-7)
+    assert paired == pytest.approx(quad, rel=1e-3)
+
+
+def test_the_tier_that_moves_is_the_one_with_correlated_lifts():
+    """Which boundary the change actually moves, named once rather than asserted in general.
+
+    B is the only candidate to cross the two-standard-error line on either fixture. On
+    `CORRELATED_FUTURES` he was tied for the lead at 1.24 quadrature errors and is 2.32 paired
+    ones away, so he leaves the tier: the drafter is told to take A. On `UNCORRELATED_FUTURES`
+    he sits at 1.008 either way and stays in it. C and D are 3.9 or more errors adrift under
+    both expressions on both fixtures and never move."""
+    moved = {}
+    for name, rows in (("correlated", CORRELATED_FUTURES),
+                       ("uncorrelated", UNCORRELATED_FUTURES)):
+        got = rank_tiers(_futures(rows))
+        lead_lift = float(got["lift"][0])
+        for r in got.iter_rows(named=True):
+            quad = _quadrature_gap_se(got, r["player"])
+            was = ((lead_lift - r["lift"]) / quad) < 2.0 if quad else True
+            if was != r["co_leader"]:
+                moved.setdefault(name, []).append(r["player"])
+    assert moved == {"correlated": ["B"]}
 
 
 def test_the_leader_is_zero_standard_errors_from_itself():
     df = pl.DataFrame({"player": ["A", "B"], "p_win": [0.5, 0.4],
-                       "lift": [0.02, 0.0], "lift_se": [0.01, 0.01]})
+                       "lift": [0.02, 0.0], "lift_se": [0.01, 0.01],
+                       "lead_gap_se": [0.0, 0.014]})
     got = rank_tiers(df)
     assert got["gap_se"][0] == pytest.approx(0.0)
 
@@ -209,9 +322,29 @@ def test_the_leader_is_zero_standard_errors_from_itself():
 def test_zero_error_estimates_do_not_divide_by_zero():
     """One draft rollout gives a standard error of zero, and the CLI allows it."""
     df = pl.DataFrame({"player": ["A", "B"], "p_win": [0.5, 0.4],
-                       "lift": [0.02, 0.0], "lift_se": [0.0, 0.0]})
+                       "lift": [0.02, 0.0], "lift_se": [0.0, 0.0],
+                       "lead_gap_se": [0.0, 0.0]})
     got = rank_tiers(df)
     assert all(v is not None for v in got["gap_se"].to_list())
+
+
+def test_a_frame_without_the_paired_error_is_refused():
+    """The quantity cannot be reconstructed from `lift_se`, so a frame that lacks it is not
+    something to fall back on -- it is a caller who has not been through `win_probability`."""
+    df = pl.DataFrame({"player": ["A", "B"], "p_win": [0.5, 0.4],
+                       "lift": [0.02, 0.0], "lift_se": [0.01, 0.01]})
+    with pytest.raises(ValueError, match="lead_gap_se"):
+        rank_tiers(df)
+
+
+def test_the_simulation_hands_the_tiering_its_paired_error():
+    """The two halves meet: `win_probability` measures the column `rank_tiers` divides by."""
+    out = win_probability(_board(), DraftState(), ["P0", "P1", "P50"], my_slot=3,
+                          rounds=8, n_draft_sims=3, n_season_sims=40)
+    assert "lead_gap_se" in out.columns
+    assert float(out["lead_gap_se"][0]) == pytest.approx(0.0), "the leader against itself"
+    assert (out["lead_gap_se"] >= 0).all()
+    assert rank_tiers(out)["co_leader"].any()
 
 
 def test_a_significantly_positive_candidate_is_never_labelled_avoid():
@@ -221,7 +354,8 @@ def test_a_significantly_positive_candidate_is_never_labelled_avoid():
     board that is not a cosmetic bug."""
     df = pl.DataFrame({"player": ["A", "B", "C"], "p_win": [0.50, 0.46, 0.41],
                        "lift": [0.04, 0.0095, -0.030],
-                       "lift_se": [0.004, 0.0037, 0.005]})
+                       "lift_se": [0.004, 0.0037, 0.005],
+                       "lead_gap_se": [0.0, 0.0054, 0.0064]})
     r = rank_tiers(df)
     got = {x["player"]: tag_for(x["co_leader"], x["lift"], x["lift_se"])
            for x in r.iter_rows(named=True)}
@@ -232,7 +366,8 @@ def test_a_significantly_positive_candidate_is_never_labelled_avoid():
 
 def test_a_candidate_indistinguishable_from_the_field_is_left_unmarked():
     df = pl.DataFrame({"player": ["A", "B"], "p_win": [0.50, 0.45],
-                       "lift": [0.04, 0.001], "lift_se": [0.004, 0.004]})
+                       "lift": [0.04, 0.001], "lift_se": [0.004, 0.004],
+                       "lead_gap_se": [0.0, 0.0057]})
     r = rank_tiers(df)
     got = {x["player"]: tag_for(x["co_leader"], x["lift"], x["lift_se"])
            for x in r.iter_rows(named=True)}

@@ -261,16 +261,51 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
                                      nfl_team=nfl_team, skew=skew)
             mat[i, k] = p[my_slot - 1]
 
+    return _lift_frame(candidates, mat)
+
+
+def _lift_frame(candidates: list[str], mat: np.ndarray) -> pl.DataFrame:
+    """The candidate table, with both error bars taken across the shared futures.
+
+    `mat` is one row per candidate and one column per simulated future, and column k is the
+    SAME future for every candidate -- common random numbers. That is what lets every
+    subtraction below be paired.
+
+    Two error bars come out of it and they are not interchangeable:
+
+    * `lift_se` -- the error on one candidate's own distance from the field.
+    * `lead_gap_se` -- the error on the *gap* between the leader and this candidate, which is
+      the spread of their per-future difference. `rank_tiers` reads this one and nothing else.
+
+    They are separate columns because the second cannot be recovered from the first. Adding
+    two `lift_se` values in quadrature is the formula for a difference between two unrelated
+    estimates, and two lifts read off the same futures are not unrelated: where they rise and
+    fall together it is too wide, and where they trade off against each other it is too
+    narrow. Only the per-future difference knows which, so it is measured here rather than
+    reconstructed later.
+    """
+    n = mat.shape[1]
     field = mat.mean(axis=0)                       # the field, per simulated future
     diff = mat - field[None, :]                    # paired lift, same futures
-    se = diff.std(axis=1, ddof=1) / np.sqrt(n_draft_sims) if n_draft_sims > 1 else \
-        np.zeros(len(candidates))
+    lift = diff.mean(axis=1)
+    # The leader by lift, which is the row `rank_tiers` measures every gap against -- it
+    # sorts on the same column, so the two agree on who the leader is.
+    lead = int(np.argmax(lift))
+    if n > 1:
+        se = diff.std(axis=1, ddof=1) / np.sqrt(n)
+        # The field term cancels out of the subtraction, so this is the spread of
+        # `mat[lead] - mat[i]`: one number per future, differenced before it is averaged.
+        gap_se = (diff[lead][None, :] - diff).std(axis=1, ddof=1) / np.sqrt(n)
+    else:
+        se = np.zeros(len(candidates))
+        gap_se = np.zeros(len(candidates))
 
     return pl.DataFrame({
         "player": candidates,
         "p_win": mat.mean(axis=1),
-        "lift": diff.mean(axis=1),
+        "lift": lift,
         "lift_se": se,
+        "lead_gap_se": gap_se,
     }).sort("lift", descending=True)
 
 
@@ -424,16 +459,29 @@ def rank_tiers(wp: pl.DataFrame) -> pl.DataFrame:
     with standard errors near 0.5 -- printing a strict order there asserts a distinction the
     simulation cannot make, and re-running names a different one.
 
-    Gaps are in standard errors of the *difference*, since both candidates carry sampling
-    error, and anything inside two of them is reported as tied for the lead.
+    Gaps are in standard errors of the *difference*, taken across the same simulated seasons
+    that produced both lifts: `lead_gap_se`, which `win_probability` measures from the
+    per-future difference itself. Anything inside two of them is reported as tied for the
+    lead.
+
+    This used to add the two `lift_se` values in quadrature, which is the standard error of a
+    difference between two *unrelated* estimates. These two are drawn from one set of
+    simulated seasons and move together, so the quadrature figure was wrong in both
+    directions and by no fixed factor: too wide where two lifts rise and fall together --
+    which is the case a tie tier exists for, and there it held players in a tier the
+    simulation can in fact separate -- and too narrow where they trade off against each other.
     """
+    if "lead_gap_se" not in wp.columns:
+        raise ValueError(
+            "rank_tiers needs `lead_gap_se`, the standard error of the paired difference, "
+            "which `win_probability` measures across the futures both lifts came from. "
+            "Combining two `lift_se` values in quadrature is not the same number.")
     top = wp.sort("lift", descending=True)
     lead_lift = float(top["lift"][0])
-    lead_se = float(top["lift_se"][0] or 0.0)
-    pooled = (pl.col("lift_se").fill_null(0.0) ** 2 + lead_se ** 2).sqrt()
+    paired = pl.col("lead_gap_se").fill_null(0.0)
     gap = (pl.lit(lead_lift) - pl.col("lift"))
     return top.with_columns(
-        pl.when(pooled > 0).then(gap / pooled).otherwise(
+        pl.when(paired > 0).then(gap / paired).otherwise(
             pl.when(gap.abs() > 0).then(pl.lit(float("inf"))).otherwise(pl.lit(0.0))
         ).alias("gap_se")
     ).with_columns((pl.col("gap_se") < 2.0).alias("co_leader"))
