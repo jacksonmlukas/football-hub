@@ -151,9 +151,36 @@ pre-registered rule says REMOVE on any of them. What is in question is whether a
 three magnitudes means anything, and until the 7.18 is attributed, none of them should be
 quoted as the size of the effect.
 
-Paired rows for both re-runs are under `data/processed/gate/`, which is gitignored, so a
-future re-run has something to diff against on this machine and nothing to diff against on a
-fresh clone. Issue #190 carries the attribution work.
+**A third run rules out a single cause.** `90a9bbb` — the commit that bound the board to its
+own preseason and dropped 814 of 1,372 players from 2025 — was the strongest candidate for the
+7.18. Run at that commit, with the same old constants the published figure used:
+
+| point in history | effect | commits since the one above |
+|---|---|---|
+| published (P0b) | −19.66 | — |
+| at `90a9bbb` | **−15.65** | 259 |
+| session start | −12.48 | 11 |
+| shipped constants | −11.59 | the refit |
+
+So the effect did not step once. It moved **4.01** points over the first 259 commits, **3.17**
+over the next 11, and **0.89** with the refit. No commit in the shortlist owns it, and the
+recent stretch moved it faster per commit than the long one.
+
+**That is the finding, and it is worse than a wrong number.** The data digest is `621cb5dd` in
+every one of these runs — the same eight pinned sources, the same bytes — so nothing about the
+inputs changed across 270 commits while the answer moved by eight points. A harness that
+returns a different effect at fixed inputs as unrelated code lands is not measuring the arm it
+names, and no figure it has produced can be quoted as the size of the effect. The three
+published occurrences of −19.66 are not one stale number; they are a number of unknown
+provenance.
+
+What this does **not** disturb: every run is worse in 4 of 4 held-out seasons with an interval
+excluding zero and `P(optimizer better)` at 0.0%. The REMOVE disposition rests on the sign and
+the consistency, neither of which has moved.
+
+Paired rows for all three re-runs are under `data/processed/gate/`, which is gitignored, so a
+future re-run has something to diff against on this machine and nothing on a fresh clone.
+Issue #190 carries the attribution work.
 
 ## Why the other two gates are unmeasured
 
