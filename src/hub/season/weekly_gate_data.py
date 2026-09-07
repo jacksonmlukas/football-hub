@@ -13,7 +13,7 @@ import polars as pl
 
 from hub.fetch import nflverse
 from hub.league import REG_SEASON_WEEKS
-from hub.models.experiment import realised_ppg
+from hub.models.experiment import realised_ppg, require_corrections
 from hub.models.panel import PanelSpec, build_panel, weekly_consensus
 from hub.names import player_key
 from hub.season.weekly_gate import UNRANKED, GateInputs
@@ -30,11 +30,19 @@ def preseason_ranks(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover
     Deliberately not the weekly ranking: this is the market's opinion four months before the
     week, which is a different quantity from the Friday page Gate B measures against. It is
     what the market-implied shrinkage regresses toward.
+
+    The board's report is read even though only `ecr` is selected here, and no **Correction**
+    moves that column. The board short a term is the same board `assemble_universe` drafts a
+    **Cohort** from later in the same run, so the question is not whether this column is
+    affected but whether the run should start at all -- and refusing at the first board that
+    is short a term costs an operator one build rather than four and a discarded interval.
+    `hub.models.experiment.require_corrections` holds the rule and the reason.
     """
     from hub.draft.board import board_as_of
     frames = []
     for yr in seasons:
-        b = board_as_of(yr)[0]
+        b, report = board_as_of(yr)
+        require_corrections(yr, report)
         frames.append(b.select(
             pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("key"),
             pl.lit(yr).cast(pl.Int64).alias("season"),
@@ -157,7 +165,12 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         # `board_as_of` is reproducible as of improvements.md #18 -- it sorts on
         # (ecr, player) and its DvP aggregation no longer hands a hash-ordered
         # frame to a mean -- so the workaround that used to sort here is gone.
-        board = board_as_of(yr)[0]
+        board, report = board_as_of(yr)
+        # The Cohort below is drafted from this board, so a season whose Corrected ADP came
+        # from a subset of the Corrections is a season drafted off a different ranking rather
+        # than a thinner one -- and the gate would pool it with the others and publish one
+        # interval over two arms. `require_corrections` holds the rule and the reason.
+        require_corrections(yr, report)
         names = board["player"].to_list()
         keys = [player_key(n) for n in names]
 

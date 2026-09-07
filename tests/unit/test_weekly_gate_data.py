@@ -23,6 +23,7 @@ import polars as pl
 import pytest
 
 from hub.league import REG_SEASON_WEEKS
+from hub.models import experiment
 from hub.names import player_key
 from hub.season import weekly_gate as G
 from hub.season import weekly_gate_data as wgd
@@ -185,6 +186,47 @@ def test_the_panel_behind_the_gate_keeps_the_players_consensus_never_ranked(monk
     assert screen_side.filter((pl.col("key") == UNLISTED_BUT_SCORED[0][0])
                               & (pl.col("season") == 2024)
                               & (pl.col("week") == UNLISTED_BUT_SCORED[0][1])).is_empty()
+
+
+# --- the Board this assembly is handed (issue #131) ------------------------
+#
+# Both entry points here reached the Board with `board_as_of(yr)[0]`, so a season built while
+# a Correction stage was absorbed arrived indistinguishable from a whole one. The rule is
+# `hub.models.experiment.require_corrections` and the reason to refuse rather than record is
+# written there; these two hold that Gate B actually asks.
+
+
+def _short_board(monkeypatch, missing_flag: str) -> None:
+    """Serve the frozen board with a report saying one correction stage did not run."""
+    import hub.draft.board as brd
+    report = brd.BuildReport(adp=True, td_luck=True, durability=True)
+    setattr(report, missing_flag, False)
+    monkeypatch.setattr(brd, "board_as_of",
+                        lambda season: (arc.frame("draft_board"), report))
+
+
+def test_the_assembly_refuses_a_board_whose_corrected_ranking_lost_a_term(monkeypatch,
+                                                                         tmp_path):
+    """The **Cohort** every season-level gate is scored on is drafted from this board, so a
+    board short a term is a season drafted from a different ranking -- not a thinner one."""
+    arc.install(monkeypatch, tmp_path, board=True)
+    _short_board(monkeypatch, "durability")
+    with pytest.raises(experiment.CorrectionMissing, match="durability"):
+        wgd.assemble_universe(arc.SEASONS)
+
+
+def test_the_preseason_ranks_refuse_the_same_board(monkeypatch, tmp_path):
+    """This one reads `ecr` alone, which no Correction moves, and it refuses anyway.
+
+    The shrinkage target it builds is scored in the same run that drafts a Cohort from the
+    same board, so the question is not whether this column is affected but whether the run
+    should start. Failing at the first board that is short a term costs an operator one build
+    rather than four and a discarded interval.
+    """
+    arc.install(monkeypatch, tmp_path, board=True)
+    _short_board(monkeypatch, "td_luck")
+    with pytest.raises(experiment.CorrectionMissing, match="touchdown luck"):
+        wgd.preseason_ranks([2024])
 
 
 # --- the treatment arm scores on one scale (issue #44) ---------------------

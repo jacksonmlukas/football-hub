@@ -565,6 +565,25 @@ BUILT, SERVED = "built", "served"
 STAGE_COLUMN = {"sos": "wk15_17_sos", "td_luck": "td_luck",
                 "durability": "missed", "adp": "adp"}
 
+# The board column each Correction term reads. `_attach_market` is where they are read;
+# `STAGE_COLUMN` above says which stage leaves each one. The two dicts overlap on purpose --
+# that overlap *is* the dependency ADR-0021 does not describe, because a Correction is a
+# shape rather than a module and no module writes the list of them down.
+CORRECTION_COLUMN = {"touchdown luck": "td_luck", "durability": "missed"}
+
+# Term -> the report flag whose stage leaves the column that term reads, so the Corrections
+# are declared once and every consumer of the report sees all of them.
+#
+# It is derived because the last arrangement was two lists that had to agree and did not:
+# `CORRECTION_COLUMN` was consumed by nothing at all, and `corrections_missing` named
+# "touchdown luck" and "durability" itself. A third Correction -- ADR-0021 says what one
+# would cost, not that there will never be one -- would have been wired into a stage and a
+# column and stayed invisible to every Gate reading this report, while the flag beside it
+# said its stage had run. That is the same defect `BuildReport` was written for, one level up.
+CORRECTION_STAGE = {term: flag
+                    for term, col in CORRECTION_COLUMN.items()
+                    for flag, stage_col in STAGE_COLUMN.items() if stage_col == col}
+
 
 @dataclass
 class BuildReport:
@@ -632,13 +651,15 @@ class BuildReport:
         `market_curve` on the corrected `proj_blend` -- so dropping a term re-fits the curve
         every player is priced against, not only the ones it corrects.
 
-        Derived rather than recorded. The flags were already right; nothing connected them to
-        the ranking that consumed their absence, which is the whole of issue #121.
+        Derived rather than recorded, and the *terms* are derived too -- `CORRECTION_STAGE`,
+        so that adding a Correction is one declaration rather than three. The flags were
+        already right; nothing connected them to the ranking that consumed their absence,
+        which is the whole of issue #121.
         """
         if not self.adp:
             return ()
-        return tuple(term for term, ran in (("touchdown luck", self.td_luck),
-                                            ("durability", self.durability)) if not ran)
+        return tuple(term for term, flag in CORRECTION_STAGE.items()
+                     if not getattr(self, flag))
 
     def degraded(self) -> tuple[str, ...]:
         """Stages that did not make it, in declaration order."""
@@ -907,6 +928,12 @@ def board_as_of(season: int) -> tuple[pl.DataFrame, BuildReport]:
     The temporal rule itself is `build`'s, documented on `build`, and now stated next to it: a
     strategy scored against rankings published after the season is hindsight wearing a
     backtest's clothes.
+
+    **The second element is not optional, and every caller of this one is a Gate.** It used to
+    be dropped -- `board_as_of(yr)[0]` at all three cross-package sites -- so a season whose
+    Correction stage was absorbed arrived at a Gate indistinguishable from a whole one and was
+    scored as if it were. `BuildReport.corrections_missing` names exactly that, and
+    `hub.models.experiment.require_corrections` is what a Gate does about it. Take the pair.
 
     **August 31, not September 1, and the two name the same instant.** `consensus` is inclusive
     of its as-of day -- one convention, the loader's, since it stopped keeping its own -- so the
