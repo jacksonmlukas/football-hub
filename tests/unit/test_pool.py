@@ -165,6 +165,54 @@ def test_a_week_nothing_prices_is_refused_rather_than_read_as_the_pool_ending():
     assert "2 fixtures priced on one side only" in str(e.value)
 
 
+def test_a_double_pick_week_with_one_fixture_is_refused_rather_than_killing_the_field():
+    """The same refusal as the week above, counted against the picks the week takes instead
+    of against zero -- which is where the guard stopped and not where its reasoning did.
+
+    One priced fixture in a double-pick week gives `_pick` two teams and forces it to take
+    both sides of one game. One of them loses, so every entry in the field dies with
+    certainty, and `ending_week` then names week 1 as the week the contest finished -- a week
+    `survivor.coverage` calls missing and `survivor.solve` calls infeasible. Asserting only
+    that something raises would not separate that from a pool that really ended, so the same
+    grid is asserted on both sides of the rule: it is a legal week at one pick and a refusal
+    at two."""
+    g = _grid([(1, "KC", "LV", 0.85)])
+    assert pool.weeks_from_grid(g, [1])[0].picks == 1     # fine when the week takes one
+
+    dbl = PoolConfig(double_pick_weeks=(1,))
+    with pytest.raises(pool.UnpricedWeek, match="takes 2 picks") as e:
+        pool.simulate(g, [1], entries=4, pool=dbl, trials=50,
+                      rng=np.random.default_rng(0))
+    assert "1 completely priced fixture" in str(e.value)
+
+
+def test_a_team_below_the_floor_is_drawn_but_never_handed_to_an_entry():
+    """One rule for what may be taken, read by the simulator as well as by `auto_pick`.
+
+    LV is priced at 1e-5. Its fixture still has to be *drawn* -- KC's win depends on it, and
+    dropping the fixture would refuse to simulate a week the board has fully priced -- so LV
+    stays in `teams` and in `prob`. It is not in `pickable`, because `auto_pick` and `weekly`
+    both refuse it, and our own entry was being valued over seasons in which it took teams
+    the pick side would never have allowed.
+
+    Asserted at `_pick` rather than through `simulate`, because the two answers are
+    indistinguishable downstream: an entry handed LV loses with probability 1 - 1e-5, so
+    "eliminated for having no legal pick" and "eliminated holding a team it should never have
+    been offered" both read out as the same ending week. The difference is only visible where
+    the choice is made."""
+    g = _grid([(1, "KC", "LV", 0.99999), (1, "SF", "SEA", 0.6)])
+    wk = pool.weeks_from_grid(g, [1])[0]
+    assert "LV" in wk.teams and "LV" in wk.prob
+    assert wk.pickable == frozenset({"KC", "SF", "SEA"})
+    assert pool.auto_pick(g, 1) == "KC"
+
+    rng = np.random.default_rng(0)
+    # An entry holding everything but LV has no legal pick, rather than one it may not take.
+    assert pool._pick(rng, wk, {"KC", "SF", "SEA"}, 1) is None
+    # And LV is never among the picks offered while other teams remain.
+    assert all(pool._pick(rng, wk, {"KC"}, 1) != ["LV"] for _ in range(50))
+
+
 def test_a_partially_priced_week_says_how_many_fixtures_it_dropped():
     """The week is still usable and is not what was asked for, and both have to be readable."""
     g = pl.concat([_grid([(1, "KC", "LV", 0.8)]), _half(1, "SF", 0.7, "1-solo")])

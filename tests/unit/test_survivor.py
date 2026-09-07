@@ -700,3 +700,44 @@ def test_the_cli_counts_weeks_and_reports_picks_beside_them(capsys, monkeypatch)
     out = capsys.readouterr().out
     assert "survives the 2 planned weeks" in out
     assert "(3 picks)" in out
+
+
+def test_one_rule_says_what_a_usable_week_is_and_names_its_two_halves():
+    """The finding of #204, pinned: *pickable* and *drawable* are different statements about
+    a fixture, and until now each consumer decided one of them privately.
+
+    Three fixtures in a week. One is priced on both sides, one on a single side, and one on
+    both sides of which the underdog is below the floor. A pick may be taken from all three
+    -- each offers a side worth having -- and only two of them can be played out, because a
+    game whose opponent has no row has no result to draw. The floor is not a coverage test:
+    the 0.9999 favourite's fixture is drawable and its opponent is simply never pickable."""
+    g = pl.concat([
+        _fx([(1, "KC", "LV", 0.8)]),
+        pl.DataFrame({"week": [1], "team": ["SF"], "win_prob": [0.7], "game_id": ["solo"]}),
+        pl.DataFrame({"week": [1, 1], "team": ["BUF", "NYJ"],
+                      "win_prob": [0.9999, 1e-5], "game_id": ["lop", "lop"]})])
+    f = survivor.week_fixtures(g, [1])[0]
+    assert f.week == 1 and f.needs == 1
+    assert f.pickable == ("1-0", "lop", "solo")
+    assert f.drawable == ("1-0", "lop")
+    assert f.half == ("solo",)
+
+
+def test_a_double_week_needs_two_fixtures_by_the_same_rule_both_consumers_read():
+    """`needs` rides on the answer rather than being recomputed by each caller. It was, and
+    the two callers disagreed: this week is missing here and was simulated there."""
+    g = _fx([(1, "KC", "LV", 0.9), (2, "SF", "SEA", 0.8)])
+    assert [f.needs for f in survivor.week_fixtures(g, [1, 2], _DOUBLE)] == [1, 2]
+    cov = survivor.coverage(g, [1, 2], _DOUBLE)
+    assert cov.covered == [1] and cov.missing == [2]
+
+
+def test_a_grid_with_no_fixture_key_prices_teams_and_draws_nothing():
+    """The fallback `coverage` already had, said once. Without `game_id` a fixture cannot be
+    identified, so every priced team is its own pickable option -- the old row count -- and
+    nothing at all is drawable, which is why `pool.weeks_from_grid` refuses such a grid."""
+    g = pl.DataFrame({"week": [1, 1, 1], "team": ["KC", "LV", "SF"],
+                      "win_prob": [0.8, 0.2, 1e-9]})
+    f = survivor.week_fixtures(g, [1])[0]
+    assert f.pickable == ("KC", "LV") and f.drawable == () and f.half == ()
+    assert survivor.coverage(g, [1]).covered == [1]

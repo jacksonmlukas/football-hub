@@ -36,6 +36,13 @@ no free pick beside it, the zero the error message itself suggested, and a `kind
 recognised. `_check_adr_0014` is where each of those is closed, and the shape of the fix is
 that a cost is a *difference* -- so both figures it is the difference of are on the row, and
 the cost is checked against them.
+
+**And an invariant with no caller is checked only against fixtures written to satisfy it.**
+Those checks name `pool.Weekly`'s fields and nothing supplied one, so a units or
+sign-convention disagreement between the two shapes could not have shown up. `record_weekly`
+is the adapter that closes that, and the disagreement it found -- the column ADR-0014's rule
+would be judged by is not the quantity ADR-0014's rule fires on -- is written down there
+rather than quietly reconciled.
 """
 from __future__ import annotations
 
@@ -48,6 +55,7 @@ from typing import Any
 import polars as pl
 
 from hub import store
+from hub.season.pool import Weekly
 
 # Two tables, not two schemas in one. The store builds a view per directory, and a
 # directory holding partitions of differing shape has no single view to build -- a
@@ -245,6 +253,69 @@ def record(*, season: int, week: int, kind: str, chose: str,
     }, schema=SCHEMA)
     store.write(row, TABLE, LEAGUE, season, week, name=k, base=base)
     return k
+
+
+def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
+                  credits_before: float | None = None, credits_after: float | None = None,
+                  at: datetime | None = None, base: Path | None = None) -> str:
+    """Record a week `hub.season.pool.weekly` priced. The caller ADR-0014's duty was missing.
+
+    `_check_adr_0014` was written against `pool.Weekly`'s field names and had no caller, so
+    every figure it checks was only ever supplied by a hand-built fixture. This is the
+    adapter, and it is the only place the two shapes meet -- which is where a units or
+    sign-convention disagreement between them can be seen at all.
+
+    **`chose` is what was entered, not what was recommended.** They are usually the same and
+    the argument exists for when they are not: an operator may override, and a journal records
+    the decision rather than the advice. `Weekly.given_up` cannot be forwarded in that case --
+    it is `fallback.survives - recommend.survives` by construction, so against an overridden
+    pick it is a cost from a comparison nobody made. The difference is recomputed from the
+    candidate actually taken, and `_check_adr_0014` refuses the row if the two disagree.
+
+    **The quantity mismatch, named rather than folded away.** ADR-0014 adopts the survivor
+    contrarian threshold as "take a differentiation week when the win-probability *cost* is
+    under ~8pp", and `docs/decisions.md` logs "the probability cost accepted". What is written
+    to `survival_given_up` is a *season-survival* difference, which is a different quantity:
+    on the grid in `tests/unit/test_journal.py` the chalk pick is 2.0pp better on the week and
+    9.9pp *worse* over the season, so the two costs differ in sign as well as scale. That is
+    not incidental -- the whole thesis of the survivor plan is that a lower win probability
+    now can buy a higher survival later, so the two routinely disagree.
+
+    Neither is relabelled as the other. `market_price` carries the taken team's own win
+    probability, so the week's price is on the row; the chalk's price is not, so the
+    win-probability cost the ADR's threshold is stated in is **not recoverable from the
+    journal today**. Recording it would mean adding columns to what a provisional rule logs,
+    which is ADR-0014's decision and not this function's -- so it is surfaced here rather than
+    settled here.
+
+    **Who calls this.** An operator, at the point the week's pick is entered: `pool.weekly`
+    prices the week and this writes down what was done about it. There is no scheduled job
+    above either of them, and this does not add one -- `weekly` is a pure pricing function
+    that the tests call hundreds of times, and a store write inside it would file a decision
+    every time anybody asked what a week was worth.
+    """
+    by_team = {c.team: c for c in w.candidates}
+    took = chose if chose is not None else w.recommend
+    if took not in by_team:
+        raise ValueError(
+            f"week {w.week}: {took!r} is not one of the teams this week priced "
+            f"({', '.join(sorted(by_team))}). A row whose survival figures came from a "
+            "candidate nobody valued would satisfy ADR-0014's check and mean nothing.")
+    fb = next((c for c in w.candidates if c.is_fallback), None)
+    return record(
+        season=season, week=w.week, kind="pick", chose=took,
+        fallback=w.fallback,
+        # `weekly_report` already refuses to stringify an absent auto-pick, and the note is
+        # the same fact in the column that exists to carry it.
+        fallback_note=(None if w.fallback is not None else
+                       "auto-pick had no team left to assign, so there was nothing free"),
+        market_price=by_team[took].win_prob,
+        price_note="win probability off the board's grid at the moment of the decision",
+        expected_dollars=by_team[took].expected_dollars,
+        chose_survives=by_team[took].survives,
+        fallback_survives=fb.survives if fb is not None else None,
+        survival_given_up=(fb.survives - by_team[took].survives) if fb is not None else None,
+        credits_before=credits_before, credits_after=credits_after, at=at, base=base)
 
 
 def settle(k: str, *, survived: bool, season: int | None = None, week: int | None = None,

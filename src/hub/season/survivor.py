@@ -265,6 +265,75 @@ def spent_teams(prior: Sequence[Mapping[str, Any]], weeks: Sequence[int],
     return sorted(out)
 
 
+class WeekFixtures(NamedTuple):
+    """One week's fixtures, sorted by which of the two questions each one can answer.
+
+    There is one rule for a usable week and it has two halves, because *pickable* and
+    *drawable* are different statements about a fixture and were never written down as such.
+
+    **Pickable** is what `solve`, `auto_pick` and `pool.weekly` need: a side priced above
+    `MIN_PROB`, which is a floor on what may be *taken* -- a survivor pick at 1% is never the
+    answer, and log(0) is negative infinity.
+
+    **Drawable** is what `pool.weeks_from_grid` needs: *both* sides priced, at any
+    probability, because a game whose opponent has no row cannot be played out. The floor does
+    not belong here. A fixture priced 0.9999 against 0.0001 is perfectly drawable and its
+    hopeless side is not pickable, and folding those into one test would refuse to simulate a
+    week that is fully priced.
+
+    They were an unstated rule apiece and disagreed three ways, each verified: the floor was
+    applied on the coverage side and not on the simulator side, so a team `auto_pick` refuses
+    was still available to our own entry inside the simulation; a fixture priced on one side
+    only counted as coverage and was refused a draw, so `plan_remaining` published a plan for
+    a week `pool` would not price at all; and a double-pick week counted its picks against
+    fixtures here and against nothing there, so a week `solve` calls infeasible was simulated
+    as the whole field eliminated -- the exact reading `UnpricedWeek` exists to prevent.
+
+    `needs` rides along because it is the third thing both consumers have to agree on and the
+    one they disagreed about most expensively.
+    """
+    week: int
+    needs: int                  # picks this week takes: 1, or 2 in a double-pick week
+    pickable: tuple[str, ...]   # fixtures with a side priced above MIN_PROB
+    drawable: tuple[str, ...]   # fixtures with both sides priced, at any probability
+    half: tuple[str, ...]       # the rest: priced on one side only, so drawable by neither
+
+
+def week_fixtures(grid: pl.DataFrame, weeks: Sequence[int],
+                  pool: PoolConfig | None = None) -> list[WeekFixtures]:
+    """What each requested week has to offer, counted in fixtures rather than rows.
+
+    Fixtures, not rows, everywhere: the grid carries one row per team per game, so a count of
+    rows says nothing about how many *games* a week has to take two picks from. Both callers
+    had reached that correction separately and neither had said so in a place the other read.
+
+    A grid with no `game_id` cannot identify a fixture at all. Every priced team is then its
+    own pickable option -- which is the old row count, and what `coverage` fell back to -- and
+    nothing is drawable, which is why `pool.weeks_from_grid` refuses such a grid outright
+    rather than guessing which rows are two sides of one game.
+    """
+    doubles = tuple(pool.double_pick_weeks) if pool is not None else ()
+    has_gid = "game_id" in grid.columns
+    out = []
+    for raw in weeks:
+        w = int(raw)
+        wk = grid.filter(pl.col("week") == w)
+        needs = 2 if w in doubles else 1
+        if not has_gid:
+            out.append(WeekFixtures(w, needs, tuple(
+                str(t) for t in wk.filter(pl.col("win_prob") > MIN_PROB)["team"]), (), ()))
+            continue
+        sides: dict[str, list[float]] = {}
+        for r in wk.iter_rows(named=True):
+            sides.setdefault(str(r["game_id"]), []).append(float(r["win_prob"]))
+        out.append(WeekFixtures(
+            w, needs,
+            tuple(sorted(g for g, ps in sides.items() if any(p > MIN_PROB for p in ps))),
+            tuple(sorted(g for g, ps in sides.items() if len(ps) == 2)),
+            tuple(sorted(g for g, ps in sides.items() if len(ps) != 2))))
+    return out
+
+
 class Coverage(NamedTuple):
     """The requested weeks, sorted into what the betting market has done about them.
 
@@ -288,29 +357,22 @@ def coverage(grid: pl.DataFrame, weeks: Sequence[int],
     In August the board runs a handful of weeks deep, so a solve over "the season" quietly
     becomes a solve over whatever is posted. A remaining plan is still the best available
     answer for the weeks it covers -- it just is not a season, and must not print like one.
+
+    **Covered is the pickable half of `week_fixtures`**, which is the question this asks: can
+    `solve` plan the week. It is not the drawable half, and the difference is real rather than
+    an oversight -- a fixture priced on one side only offers a team to pick and no game to
+    play out, so it is covered here and refused by `pool.weeks_from_grid`. Named, because it
+    was decided twice by two functions that never mentioned each other.
     """
-    doubles = tuple(pool.double_pick_weeks) if pool is not None else ()
-    usable = grid.filter(pl.col("win_prob") > MIN_PROB)
+    fx = week_fixtures(grid, weeks, pool)
+    # Rows, for `thin` alone -- `THIN_ROWS` is a row count and says so.
     counts = {int(r["week"]): int(r["len"])
-              for r in usable.group_by("week").len().iter_rows(named=True)}
-    # Fixtures, not rows. A week taking two picks needs two *games* to take them from; priced
-    # by one, it would be called covered, hand the solver an unsatisfiable equality, and raise
-    # for the whole season -- which `publish.survivor` turns into a kept stale plan for the
-    # seventeen weeks that were fine.
-    if "game_id" in usable.columns:
-        have = {int(r["week"]): int(r["game_id"])
-                for r in usable.group_by("week").agg(
-                    pl.col("game_id").n_unique()).iter_rows(named=True)}
-    else:
-        # No fixture key, so fixtures cannot be counted -- and `solve` refuses a double-pick
-        # week without one, so the only question left is the old one: is anything priced.
-        have = counts
-    need = {w: (2 if w in doubles else 1) for w in weeks}
-    weeks = list(weeks)
+              for r in grid.filter(pl.col("win_prob") > MIN_PROB)
+              .group_by("week").len().iter_rows(named=True)}
     return Coverage(
-        covered=[w for w in weeks if have.get(w, 0) >= need[w]],
-        missing=[w for w in weeks if have.get(w, 0) < need[w]],
-        thin=[w for w in weeks if 0 < counts.get(w, 0) < THIN_ROWS],
+        covered=[f.week for f in fx if len(f.pickable) >= f.needs],
+        missing=[f.week for f in fx if len(f.pickable) < f.needs],
+        thin=[f.week for f in fx if 0 < counts.get(f.week, 0) < THIN_ROWS],
     )
 
 
