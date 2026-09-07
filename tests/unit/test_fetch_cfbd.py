@@ -635,3 +635,213 @@ def test_a_week_with_rows_outside_the_declared_range_is_still_a_violation(transp
     transport(payload=[{**_GAME, "week": 99}])
     with pytest.raises(ContractViolation):
         cfbd.week(2026, 3, cache=paths["cache"], quota_path=paths["quota"])
+
+
+# --- the cache says when it was captured, and can be refreshed -----------------
+#
+# #175. The cache was permanent by file existence: if the path was there it was returned,
+# with no maximum age, no refresh parameter and nothing recording when the bytes arrived. On
+# a metered source that is the expensive half rather than the cheap one -- it is both the
+# reason to cache and the reason a stale price could never be corrected.
+
+
+def _seed(transport, paths, payload=None):
+    """One cached week, fetched once through the patched transport."""
+    calls = transport(payload)
+    cfbd.bulk("games", year=2026, week=1, cache=paths["cache"], quota_path=paths["quota"])
+    return calls
+
+
+def _entry(paths, endpoint="games", year=2026, week=1):
+    return cfbd._cache_path(endpoint, year, week, paths["cache"])
+
+
+def _forget_the_capture(paths):
+    """An entry as it was written before #175: a payload with nothing beside it."""
+    cfbd._capture_path(_entry(paths)).unlink()
+
+
+def _age(paths, hours):
+    """Backdate the capture record beside one cache entry."""
+    when = datetime.now(UTC) - timedelta(hours=hours)
+    cfbd._capture_path(_entry(paths)).write_text(
+        json.dumps({"captured_at": when.isoformat()}))
+    return when
+
+
+def _spend_the_month(paths):
+    paths["quota"].write_text(
+        json.dumps({cfbd._month_key(): cfbd.FREE_TIER_MONTHLY}))
+
+
+def test_a_fetched_payload_records_when_it_was_captured(transport, paths):
+    _seed(transport, paths)
+    when = cfbd.captured_at("games", 2026, 1, cache=paths["cache"])
+    assert when is not None, "a payload with no capture time is the state #175 is about"
+    assert datetime.now(UTC) - when < timedelta(minutes=5)
+
+
+def test_a_cached_read_is_still_free_and_leaves_the_capture_time_alone(transport, paths):
+    """The capture time belongs to the fetch, not to the read. Re-stamping it on every read
+    would make a payload from September look like one from this morning."""
+    calls = _seed(transport, paths)
+    first = cfbd.captured_at("games", 2026, 1, cache=paths["cache"])
+    cfbd.bulk("games", year=2026, week=1, cache=paths["cache"], quota_path=paths["quota"])
+    assert len(calls) == 1
+    assert cfbd.captured_at("games", 2026, 1, cache=paths["cache"]) == first
+
+
+def test_a_forced_refresh_refetches_and_replaces_what_the_cache_holds(transport, paths):
+    """Both halves, because either alone passes while the other is broken: the call is made,
+    and the payload that comes back is the new one rather than the entry on disk."""
+    _seed(transport, paths, [_GAME])
+    calls = transport([dict(_GAME, id=2)])
+    got = cfbd.bulk("games", year=2026, week=1, cache=paths["cache"],
+                    quota_path=paths["quota"], refresh=True)
+    assert len(calls) == 2, "the seed call, and this one"
+    assert got["id"].to_list() == [2]
+    served = cfbd.bulk("games", year=2026, week=1, cache=paths["cache"],
+                       quota_path=paths["quota"])
+    assert served["id"].to_list() == [2], "the refreshed payload is what the cache now holds"
+
+
+def test_an_entry_inside_a_stated_age_is_served_without_a_call(transport, paths):
+    calls = _seed(transport, paths)
+    _age(paths, hours=2)
+    cfbd.bulk("games", year=2026, week=1, cache=paths["cache"], quota_path=paths["quota"],
+              max_age=timedelta(hours=6))
+    assert len(calls) == 1
+
+
+def test_an_entry_past_a_stated_age_is_refetched_rather_than_served(transport, paths):
+    calls = _seed(transport, paths)
+    _age(paths, hours=30)
+    cfbd.bulk("games", year=2026, week=1, cache=paths["cache"], quota_path=paths["quota"],
+              max_age=timedelta(hours=6))
+    assert len(calls) == 2
+
+
+def test_no_age_stated_means_the_entry_stands_however_old_it_is(transport, paths):
+    """The default every existing caller gets, and the two scheduled runs with it. A default
+    bound here would have them re-fetching weeks they already hold, against 1,000 a month."""
+    calls = _seed(transport, paths)
+    _age(paths, hours=24 * 400)
+    cfbd.bulk("games", year=2026, week=1, cache=paths["cache"], quota_path=paths["quota"])
+    assert len(calls) == 1
+
+
+def test_an_entry_written_before_this_reads_back_unknown_rather_than_invented(transport,
+                                                                              paths):
+    """#175's fourth criterion. Every entry already on disk has nothing beside it, and the
+    answer for those is that nobody knows -- not a number that looks like one."""
+    _seed(transport, paths)
+    _forget_the_capture(paths)
+    assert _entry(paths).exists(), "the payload is still there; only its record is gone"
+    assert cfbd.captured_at("games", 2026, 1, cache=paths["cache"]) is None
+
+
+def test_the_capture_time_is_never_taken_from_the_files_own_mtime(transport, paths):
+    """The mtime is a real number about the wrong thing. A clone, a copy, a restore or a
+    `touch` rewrites it, so it dates the file and not the fetch -- and it is exactly the
+    plausible-looking answer that would make "unknown" quietly disappear."""
+    _seed(transport, paths)
+    _forget_the_capture(paths)
+    os.utime(_entry(paths), None)
+    assert cfbd.captured_at("games", 2026, 1, cache=paths["cache"]) is None
+
+
+def test_an_entry_of_unknown_age_is_still_read_rather_than_erroring(transport, paths):
+    calls = _seed(transport, paths)
+    _forget_the_capture(paths)
+    got = cfbd.bulk("games", year=2026, week=1, cache=paths["cache"],
+                    quota_path=paths["quota"])
+    assert len(calls) == 1 and got.height == 1
+
+
+def test_an_unknown_capture_time_cannot_satisfy_a_stated_age(transport, paths):
+    """It cannot be shown to be inside the bound, and serving it would answer a question
+    about age with a silence that reads as a yes. One call that was not needed is the cheaper
+    error than a stale price nothing can correct."""
+    calls = _seed(transport, paths)
+    _forget_the_capture(paths)
+    cfbd.bulk("games", year=2026, week=1, cache=paths["cache"], quota_path=paths["quota"],
+              max_age=timedelta(days=365))
+    assert len(calls) == 2
+
+
+def test_a_refresh_that_would_exceed_the_monthly_budget_serves_the_cache_and_says_so(
+        transport, paths, capsys):
+    """#175's third criterion. The refusal is the refusal this module always made; what it
+    must not do is lose the payload already on disk while making it."""
+    calls = _seed(transport, paths)
+    _spend_the_month(paths)
+    got = cfbd.bulk("games", year=2026, week=1, cache=paths["cache"],
+                    quota_path=paths["quota"], refresh=True)
+    assert len(calls) == 1, "nothing was spent"
+    assert got.height == 1, "and the cached payload came back"
+    out = capsys.readouterr().out
+    assert "not refreshed" in out and "cached" in out
+    assert "budget" in out, "the line says why, not just that"
+
+
+def test_a_refresh_past_the_run_ceiling_serves_the_cache_and_says_so(transport, paths,
+                                                                     monkeypatch, capsys):
+    calls = _seed(transport, paths)
+    monkeypatch.setattr(cfbd, "_CALLS_THIS_RUN", cfbd.MAX_CALLS_PER_RUN)
+    got = cfbd.bulk("games", year=2026, week=1, cache=paths["cache"],
+                    quota_path=paths["quota"], refresh=True)
+    assert len(calls) == 1 and got.height == 1
+    assert "not refreshed" in capsys.readouterr().out
+
+
+def test_a_refresh_with_no_key_serves_the_cache_rather_than_raising(transport, paths,
+                                                                    monkeypatch, capsys):
+    """Graceful degradation, and the same branch: a refresh nobody can make must not take
+    down a caller that had a perfectly good answer sitting on disk."""
+    calls = _seed(transport, paths)
+    monkeypatch.setattr(cfbd, "_api_key", lambda: None)
+    got = cfbd.bulk("games", year=2026, week=1, cache=paths["cache"],
+                    quota_path=paths["quota"], refresh=True)
+    assert len(calls) == 1 and got.height == 1
+    assert "not refreshed" in capsys.readouterr().out
+
+
+def test_a_refusal_with_nothing_cached_still_raises(transport, paths):
+    """The other half of the same branch. A refusal with no payload behind it has nothing to
+    serve, and must not become an empty frame that reads like an answer."""
+    transport()
+    _spend_the_month(paths)
+    with pytest.raises(cfbd.QuotaExceeded):
+        cfbd.bulk("games", year=2026, week=2, cache=paths["cache"],
+                  quota_path=paths["quota"])
+
+
+def test_the_served_line_says_when_the_capture_time_is_unknown(transport, paths,
+                                                                monkeypatch, capsys):
+    """What a refused refresh serves is an entry of *some* age, and the operator reading the
+    line has to be told which -- including that nobody knows, which is what every entry
+    written before #175 will say."""
+    _seed(transport, paths)
+    _forget_the_capture(paths)
+    monkeypatch.setattr(cfbd, "_CALLS_THIS_RUN", cfbd.MAX_CALLS_PER_RUN)
+    cfbd.bulk("games", year=2026, week=1, cache=paths["cache"], quota_path=paths["quota"],
+              refresh=True)
+    assert "unknown" in capsys.readouterr().out
+
+
+def test_the_served_line_names_the_capture_time_when_there_is_one(transport, paths,
+                                                                   monkeypatch, capsys):
+    _seed(transport, paths)
+    when = _age(paths, hours=50)
+    monkeypatch.setattr(cfbd, "_CALLS_THIS_RUN", cfbd.MAX_CALLS_PER_RUN)
+    cfbd.bulk("games", year=2026, week=1, cache=paths["cache"], quota_path=paths["quota"],
+              refresh=True)
+    assert when.isoformat() in capsys.readouterr().out
+
+
+def test_the_weekly_slate_passes_a_refresh_through_to_every_endpoint(transport, paths):
+    calls = transport()
+    cfbd.week(2026, 3, cache=paths["cache"], quota_path=paths["quota"])
+    assert len(calls) == 3
+    cfbd.week(2026, 3, cache=paths["cache"], quota_path=paths["quota"], refresh=True)
+    assert len(calls) == 6, "a refreshed week is three calls again, not zero"

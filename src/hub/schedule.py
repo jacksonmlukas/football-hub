@@ -37,6 +37,7 @@ the slate rather than admit what priced it.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import NamedTuple
@@ -72,22 +73,40 @@ def _kickoff() -> pl.Expr:
                  .alias("kickoff"))
 
 
-def priced_games(season: int, *, at: datetime | None = None, cache: Path | None = None,
-                 base: Path | None = None, league: str = "nfl") -> pl.DataFrame:
-    """Every scheduled game, priced from the dated snapshot where one exists.
+class Slate(NamedTuple):
+    """One league's scheduled games, and the league the rows actually came from.
 
-    Carries `close_spread` -- the number to use -- alongside the two candidates it was
-    chosen from, plus `price_source` naming which one won and `priced_at` naming the
-    snapshot that did it. A game neither source prices keeps a null `close_spread` and a
-    null source: absent from the plan rather than guessed at.
-
-    `at` defaults to now, in UTC and naive, which is how `hub.fetch.odds` stamps
-    `captured_at`. Passing a *local* `datetime.now()` silently asks the as-of question hours
-    in the past and hides the morning's snapshots -- it did, in the first measurement taken
-    against this rule, and the coverage it reported looked entirely plausible.
+    The name travels *with* the rows because it is a fact about the source that produced
+    them and not about the argument that asked for them. Issue #174 is what the other
+    arrangement costs: this module fetched nflverse's NFL season whatever league it was
+    asked for and then stamped the asked-for name onto the result, so a caller asking for
+    college was handed NFL games labelled `cfb`. Nothing downstream re-derives that label --
+    `store.write` partitions on it and every reader treats it as true -- which makes a wrong
+    one worse than a refusal.
     """
+    games: pl.DataFrame
+    league: str
+
+
+class LeagueUnavailable(Exception):
+    """Nothing here can produce this league's games, and the refusal names it.
+
+    Named on purpose. A silent substitution is the defect; an exception carrying the league
+    that was asked for is a caller's only way to tell "no college schedule" from "no games
+    this week".
+    """
+
+
+def _nfl_slate(season: int, cache: Path | None) -> Slate:
+    """The NFL season from nflverse, in this module's columns.
+
+    The literal below belongs to this loader: it names where these rows came from, which is
+    the one thing that can make the column true. `priced_games` never writes it, and the
+    same string is what the frame is filed under, so the two cannot drift apart.
+    """
+    league = "nfl"
     sched = nflverse.load("schedules", seasons=[season], cache=cache)
-    games = sched.select(
+    return Slate(sched.select(
         pl.col("game_id"),
         pl.lit(league).alias("league"),
         pl.col("season").cast(pl.Int32),
@@ -101,9 +120,65 @@ def priced_games(season: int, *, at: datetime | None = None, cache: Path | None 
         # whether a game may still be predicted.
         (_kickoff() if {"gameday", "gametime"} <= set(sched.columns)
          else pl.lit(None, dtype=pl.Datetime).alias("kickoff")),
-    )
+    ), league)
+
+
+# League to loader. A league is here when something in this repo can actually produce its
+# games, and `cfb` is absent because nothing can. `hub.fetch.cfbd` pulls college games, but
+# no price reaches them: `hub.fetch.odds` polls the NFL alone, so `store.lines_as_of` has
+# never had a `league=cfb` row written for it to find, and CFBD's own lines endpoint is
+# per-week -- a season of them is fifteen calls against a run ceiling of twelve. A key added
+# here before those exist is exactly how the NFL season came to be served under a college
+# name; the refusal below says which of them is missing.
+SLATES: dict[str, Callable[[int, Path | None], Slate]] = {"nfl": _nfl_slate}
+
+
+def priced_games(season: int, *, at: datetime | None = None, cache: Path | None = None,
+                 base: Path | None = None, league: str = "nfl") -> pl.DataFrame:
+    """Every scheduled game, priced from the dated snapshot where one exists.
+
+    Carries `close_spread` -- the number to use -- alongside the two candidates it was
+    chosen from, plus `price_source` naming which one won and `priced_at` naming the
+    snapshot that did it. A game neither source prices keeps a null `close_spread` and a
+    null source: absent from the plan rather than guessed at.
+
+    `at` defaults to now, in UTC and naive, which is how `hub.fetch.odds` stamps
+    `captured_at`. Passing a *local* `datetime.now()` silently asks the as-of question hours
+    in the past and hides the morning's snapshots -- it did, in the first measurement taken
+    against this rule, and the coverage it reported looked entirely plausible.
+
+    `league` selects a loader in `SLATES` and is never written onto the rows. A league no
+    loader can produce raises `LeagueUnavailable` naming it, which is issue #174: this used
+    to fetch the NFL season for every league and label it with whatever was asked for, so a
+    college caller received NFL games under a college name and no reader could tell. The
+    NFL path is the one it always was -- same source, same columns, same order.
+    """
+    build = SLATES.get(league)
+    # GUARD unserved-league-is-refused: a league nothing can produce raises, saying which
+    if build is None:
+        raise LeagueUnavailable(
+            f"no schedule here for league {league!r}; this module can produce "
+            f"{sorted(SLATES)}. Refused rather than answered with the NFL season under a "
+            f"{league!r} name -- which every reader would have believed, and which is the "
+            f"whole of issue #174. For college: `hub.fetch.cfbd` fetches the games, and "
+            f"nothing yet prices them.")
+    # /GUARD
+    slate = build(season, cache)
+    # GUARD league-is-the-sources-own: rows filed under a name they disagree with are refused
+    #
+    # The mechanism rather than the promise. `_nfl_slate` writing its own name into the
+    # column is what makes the column true; this is what keeps the *filing* honest, so a
+    # future entry that pointed `cfb` at an NFL loader would be caught here instead of
+    # reproducing #174 one registry line later.
+    if slate.league != league:
+        raise LeagueUnavailable(
+            f"asked for league {league!r} and the loader filed under it returned "
+            f"{slate.league!r} games. The league column names the source its rows came "
+            f"from, so this frame cannot be served as {league!r}.")
+    # /GUARD
+    games = slate.games
     moment = at or datetime.now(UTC).replace(tzinfo=None)
-    snaps = store.lines_as_of(moment, season, league, base=base).rename(
+    snaps = store.lines_as_of(moment, season, slate.league, base=base).rename(
         {"close_spread": "snapshot_spread", "captured_at": "priced_at"})
     return (games.join(snaps, on="game_id", how="left")
                  .with_columns(

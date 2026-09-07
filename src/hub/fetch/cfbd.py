@@ -19,6 +19,17 @@ So this module does not ask callers to remember the rule. Three independent guar
 Every response is cached under `data/raw/cfbd/`. Caching here is a quota mechanism, not a
 speed one: a completed season is never re-fetched.
 
+**And the cache can now be corrected** (#175). It used to be permanent by file existence --
+if the path was there it was returned, with no maximum age, no refresh parameter and nothing
+recording when the bytes arrived. That is the expensive half of a metered source rather than
+the cheap one: it is both the reason to cache and the reason a stale price could never be
+put right. So a written entry carries its capture time in a `.capture.json` beside it,
+`refresh=True` re-fetches, and `max_age` states a bound past which an entry is re-fetched
+instead of served. An entry written before this reads back as an *unknown* capture time and
+never a guessed one -- the file's mtime dates the file, not the fetch. Both parameters
+default off, so nothing that was not asked to refresh spends anything, and a refresh that
+cannot be afforded serves the cached payload and says that it did.
+
 Those three are about a loop. A fourth is about the suite: `_http_get` refuses to run under
 pytest at all, outside the one directory that exists to hit live APIs. Tests patch the
 transport and should, but a test suite that only fails to spend quota because nobody has set
@@ -34,6 +45,7 @@ the exit code reaches nobody.
 
     uv run python -m hub.fetch.cfbd --quota
     uv run python -m hub.fetch.cfbd --week 3
+    uv run python -m hub.fetch.cfbd --week 3 --refresh
 """
 from __future__ import annotations
 
@@ -240,13 +252,145 @@ def _cache_path(endpoint: str, year: int, week: int | None, cache: Path | None) 
     return root / endpoint / f"{stem}.parquet"
 
 
+def _capture_path(path: Path) -> Path:
+    """The capture record sits beside its cache entry, the way `nflverse._pin_path` does.
+
+    Beside rather than in a registry of its own, for the reason ADR-0006 keeps a fitted
+    constant with its provenance: a record kept away from the thing it describes is one that
+    stops matching it. Beside rather than *inside*, because the entry is a third-party
+    payload this module re-validates against a declared contract, and a `captured_at` column
+    would be a column CFBD never sent turning up in every frame the contract checks.
+    """
+    return path.with_suffix(".capture.json")
+
+
+def _capture_beside(path: Path) -> datetime | None:
+    """When the payload at `path` was fetched, or None where nothing on disk says.
+
+    None is the honest answer three ways and they are all one answer: an entry written
+    before this existed has no record beside it, an interrupted write leaves a file that is
+    not JSON, and a hand-edited one can hold anything.
+
+    The file's own mtime is deliberately not consulted, and that is #175's fourth criterion.
+    A clone, a copy, a restore or a `touch` rewrites it, so it dates the *file* and not the
+    fetch -- and a capture time that is confidently wrong is worse than one that is missing,
+    because unknown means "ask again" and a fabricated one means "no need to". Every entry
+    written before this change reads back unknown here, which is the truth about it.
+    """
+    try:
+        raw = json.loads(_capture_path(path).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict) or not isinstance(raw.get("captured_at"), str):
+        return None
+    try:
+        when = datetime.fromisoformat(raw["captured_at"])
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
+
+
+def _record_capture(path: Path) -> None:
+    """Stamp a freshly written entry with the moment it was fetched.
+
+    A failure here is swallowed on purpose: a payload that could not be stamped is still a
+    payload, and taking a fetched week down over its sidecar would spend the call and throw
+    the rows away. What it costs is an entry that reads back as unknown, which is the state
+    the reader above is built for.
+    """
+    payload = {"captured_at": jsonio.stamp()}
+    try:
+        _capture_path(path).write_text(jsonio.dumps(payload, indent=2))
+    except OSError:
+        pass
+
+
+def captured_at(endpoint: str, year: int, week: int | None = None, *,
+                cache: Path | None = None) -> datetime | None:
+    """When the cached payload for one key was fetched, or None where nothing says.
+
+    Public because the age of the bytes is a question a caller has to be able to ask without
+    fetching anything: `max_age` acts on it, and a report saying how old a served college
+    price is needs the same number. Before #175 there was no way to ask at all -- the cache
+    was permanent by file existence, so a price captured in September was indistinguishable
+    in January from one captured that morning.
+    """
+    return _capture_beside(_cache_path(endpoint, year, week, cache))
+
+
+def _past_its_age(captured: datetime | None, *, refresh: bool, max_age: timedelta | None,
+                  now: datetime | None = None) -> bool:
+    """Whether a cached entry has to be fetched again before it may be served.
+
+    Three states rather than two. `refresh=True` is a caller saying so outright. `max_age`
+    is a caller stating a bound the bytes have to be inside. Neither given, the entry stands
+    however old it is -- the behaviour this module has always had, kept as the default on
+    purpose: a completed season does not move, and a default bound would have the two
+    scheduled runs re-fetching weeks they already hold against a budget of 1,000 a month.
+
+    An entry of *unknown* age is past a stated bound. It cannot be shown to be inside one,
+    and serving it would answer a question about age with a silence that reads as a yes.
+    Nothing reaches this without a caller having asked for a bound first, and a refusal to
+    spend serves the cache anyway -- so the worst case here is one call that was not needed,
+    against a stale price that could never be corrected, which is what #175 was filed about.
+    """
+    if refresh:
+        return True
+    if max_age is None:
+        return False
+    if captured is None:
+        return True
+    return (now or datetime.now(UTC)) - captured > max_age
+
+
+def _cannot_spend(key: str | None, quota_path: Path | None) -> Exception | None:
+    """Why this call must not be made, or None if it may be.
+
+    Returned rather than raised, and that is the whole of #175's third criterion. A refusal
+    with a cached payload behind it and a refusal with nothing behind it are different
+    events: the first is a degradation the caller should be told about and served through,
+    the second has nothing to serve. Raising here made every refusal the second kind, which
+    was harmless only while the cache could never be asked to refresh.
+    """
+    # GUARD run-ceiling-stops-a-loop [unit/test_fetch_cfbd.py]: a loop stops at call 13
+    if _CALLS_THIS_RUN >= MAX_CALLS_PER_RUN:
+        return QuotaExceeded(
+            f"{MAX_CALLS_PER_RUN} calls in one run; a week costs 5-8. This is a loop.")
+    # /GUARD
+    if quota_used(quota_path) >= FREE_TIER_MONTHLY:
+        return QuotaExceeded(
+            f"monthly budget of {FREE_TIER_MONTHLY:,} is spent. Waiting beats a second key: "
+            f"multiple keys are a terms violation that gets access revoked.")
+    if not key:
+        return LoopRefused("no CFBD_API_KEY set; cannot fetch")
+    return None
+
+
+def _describe(endpoint: str, year: int, week: int | None) -> str:
+    """One cache key in words, for a line an operator reads."""
+    return f"{endpoint} {year}" if week is None else f"{endpoint} {year} week {week}"
+
+
 def bulk(endpoint: str, year: int, week: int | None = None, *,
          extra: Mapping[str, Any] | None = None,
-         cache: Path | None = None, quota_path: Path | None = None) -> pl.DataFrame:
+         cache: Path | None = None, quota_path: Path | None = None,
+         refresh: bool = False, max_age: timedelta | None = None) -> pl.DataFrame:
     """One bulk pull. There is no way to ask this for a single team.
 
     Note the signature: endpoint, year, week. A caller who wants Alabama pulls the week and
     filters in polars, because that is one call instead of one hundred and thirty-six.
+
+    **The cache is no longer permanent by file existence** (#175). A written entry carries
+    the moment it was captured, `refresh=True` re-fetches it outright, and `max_age` states
+    a bound past which it is re-fetched rather than served. Neither given, the entry stands
+    however old it is, which is what every existing caller gets and what the two scheduled
+    runs still do.
+
+    And a refusal serves rather than raises where there is something to serve: a refresh
+    that would pass the run ceiling or the monthly budget, or one with no key to make it
+    with, prints what it did and hands back the cached payload with its capture time -- or
+    with the fact that its capture time is unknown, which is what an entry written before
+    any of this reads back as.
     """
     global _CALLS_THIS_RUN
 
@@ -268,22 +412,32 @@ def bulk(endpoint: str, year: int, week: int | None = None, *,
         params.update(extra)
 
     path = _cache_path(endpoint, year, week, cache)
-    if path.exists():
+    captured = _capture_beside(path)
+    held = path.exists()
+    if held and not _past_its_age(captured, refresh=refresh, max_age=max_age):
         return pl.read_parquet(path)
 
-    # GUARD run-ceiling-stops-a-loop [unit/test_fetch_cfbd.py]: a loop stops at call 13
-    if _CALLS_THIS_RUN >= MAX_CALLS_PER_RUN:
-        raise QuotaExceeded(
-            f"{MAX_CALLS_PER_RUN} calls in one run; a week costs 5-8. This is a loop.")
-    # /GUARD
-    if quota_used(quota_path) >= FREE_TIER_MONTHLY:
-        raise QuotaExceeded(
-            f"monthly budget of {FREE_TIER_MONTHLY:,} is spent. Waiting beats a second key: "
-            f"multiple keys are a terms violation that gets access revoked.")
-
     key = _api_key()
-    if not key:
-        raise LoopRefused("no CFBD_API_KEY set; cannot fetch")
+    refused = _cannot_spend(key, quota_path)
+    # GUARD a-refused-refresh-serves-the-cache [unit/test_fetch_cfbd.py]: refuse, and still
+    # answer
+    #
+    # The refusal is the one this module always made; what changes is that there is now
+    # something behind it. A refresh that cannot be afforded must not also lose the payload
+    # already on disk -- CLAUDE.md's degradation rule, and the reason `make slate` marks
+    # this source optional. And it says so out loud, because a served-stale payload that
+    # reads like a fresh one is the whole of what #175 was filed about.
+    if refused is not None and held:
+        where = _describe(endpoint, year, week)
+        age = ("captured " + captured.isoformat() if captured
+               else "whose capture time is unknown")
+        print(f"  cfbd: {where} was not refreshed: {refused} "
+              f"Serving the cached payload, {age}.")
+        return pl.read_parquet(path)
+    # /GUARD
+    if refused is not None:
+        raise refused
+    assert key is not None      # `_cannot_spend` refuses a missing key above
 
     # Counted in `finally`, because the quota is spent by the *request*, not by the reply.
     # These two lines used to sit after the call, so anything `_http_get` raised -- a 429, a
@@ -303,6 +457,7 @@ def bulk(endpoint: str, year: int, week: int | None = None, *,
     df = pl.DataFrame(payload, infer_schema_length=None) if payload else pl.DataFrame()
     path.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(path)
+    _record_capture(path)
     return df
 
 
@@ -313,12 +468,19 @@ CONTRACTS: dict[str, Contract] = {"games": CFBD_GAMES, "lines": CFBD_LINES}
 
 
 def week(year: int, week_no: int, *, cache: Path | None = None,
-         quota_path: Path | None = None) -> dict[str, pl.DataFrame]:
-    """The documented weekly slate: games, lines, box scores. Three calls, not 408."""
+         quota_path: Path | None = None, refresh: bool = False,
+         max_age: timedelta | None = None) -> dict[str, pl.DataFrame]:
+    """The documented weekly slate: games, lines, box scores. Three calls, not 408.
+
+    `refresh` and `max_age` are handed straight to `bulk` and mean what they mean there.
+    Three endpoints, so a refresh of a week costs three calls and not one -- which is why
+    neither has a default that would make a scheduled run pay it.
+    """
     out: dict[str, pl.DataFrame] = {}
     print(f"  CFBD week {week_no}, {year}")
     for endpoint in WEEKLY:
-        df = bulk(endpoint, year, week_no, cache=cache, quota_path=quota_path)
+        df = bulk(endpoint, year, week_no, cache=cache, quota_path=quota_path,
+                  refresh=refresh, max_age=max_age)
         # A registry rather than a branch, and the same shape `hub.fetch.nflverse` uses:
         # `box` has no declared contract and is not being given a weak one to fill the row.
         #
@@ -532,6 +694,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--week", type=int, default=None,
                     help=f"pull one week's bulk slate; defaults to the week counted from "
                          f"${CFB_WEEK_ONE_ENV}")
+    ap.add_argument("--refresh", action="store_true",
+                    help="re-fetch this week even if it is cached; spends quota")
+    ap.add_argument("--max-age-hours", type=float, default=None,
+                    help="re-fetch a cached week captured longer ago than this, and one "
+                         "whose capture time is unknown; unset, a cached week is served "
+                         "whatever its age")
     ap.add_argument("--year", type=int, default=SEASON_AHEAD)
     ap.add_argument("--status-path", default=None,
                     help="where to record what this run did (default site/data/cfbd.json)")
@@ -568,7 +736,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     try:
-        got = week(a.year, week_no, quota_path=qpath)
+        got = week(a.year, week_no, quota_path=qpath, refresh=a.refresh,
+                   max_age=(timedelta(hours=a.max_age_hours)
+                            if a.max_age_hours is not None else None))
     except Exception as e:
         # Caught rather than raised, because the traceback goes to the same place the exit
         # code does -- nowhere. An optional source that is down must not halt the slate
