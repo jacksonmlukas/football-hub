@@ -45,6 +45,69 @@ market opinion with nothing carried over.
 
 ## Result
 
+> **Interval restated 2026-09-07 — it was over the wrong unit, around a curve it treated as
+> known.** Issue #172. Everything in the table below is a figure from the 2026-08-23 fit and
+> keeps its original text; what follows supersedes the interval and the two shrunk
+> per-position values, and comes from a re-run rather than an argument.
+>
+> | | published | re-run 2026-09-07 |
+> |---|---|---|
+> | dispersion net of weekly sampling | 0.408 | **0.408** (unchanged) |
+> | 95% CI | [0.380, 0.434] | **[0.370, 0.453]** |
+> | width | 0.054 | **0.083**, 54% wider |
+> | population | 460 player-seasons | **460 player-seasons over 235 players** |
+> | RB, shrunk and debiased | 0.501, **+2.6 se** from the pool | **0.482, +1.7 se** |
+> | TE, shrunk and debiased | 0.321, −3.9 se | **0.332, −3.8 se** |
+>
+> (The [0.387, 0.440] in the table below is older still — it predates the square-root spread
+> law, which the two constants are coupled through. [0.380, 0.434] is what the shipped code
+> produced up to today, and is the figure this supersedes.)
+>
+> **Three defects, and they are not equal.** The bootstrap fitted the curve *once, outside*
+> the resample and then resampled the residuals that fit produced; its resample unit was the
+> player-*season*, so a player drafted three times counted as three independent draws; and it
+> indexed the weekly-noise correction by the same draw as the residuals, tying two estimates
+> that vary independently. Switching them on one at a time, against the old width of 0.053
+> (4,000 replicates, same seed):
+>
+> | correction | width | vs old |
+> |---|---|---|
+> | *(none — reproduces the published interval)* | 0.053 | 1.00× |
+> | player as the resample unit | 0.051 | 0.97× |
+> | noise term from its own draw | 0.054 | 1.02× |
+> | **curve refitted inside the draw** | **0.075** | **1.42×** |
+> | all three (shipped) | 0.080 | 1.52× |
+>
+> **The refit is essentially the whole of it.** The curve is a power law in pick number with
+> season intercepts — four parameters, estimated from the same 460 rows the residuals are
+> measured against — and treating it as known omitted its uncertainty from every interval
+> downstream.
+>
+> **The unit was the wrong unit and it barely matters here, which is worth stating rather
+> than hiding.** 140 of the 235 players appear more than once, so nearly half the rows were
+> being counted as independent — and yet clustering alone moves the width by 0.97×, inside
+> Monte Carlo noise. The reason is measurable: **the correlation between one player's two
+> residual ratios is +0.013** over 310 within-player pairs. The market re-prices him every
+> August, so his 2024 miss carries almost no information about his 2023 miss, and the repeated
+> rows really were close to independent draws. The unit is still wrong to leave as the
+> player-season — the correction costs nothing and becomes load-bearing the moment those
+> residuals correlate — but on this data it is the refit that moved the number.
+>
+> **What the verdict does not do is move.** 0.35 was 4.6 se low against the old interval and
+> is still far outside the new one; `TALENT_CV = 0.42` still sits inside it. The interval is
+> wider, which makes the result weaker rather than differently-shaped.
+>
+> **One shipped constant changes its status.** No raw per-position estimate moved — QB 0.407,
+> RB 0.471, WR 0.387, TE 0.282 are what they were. But `calibrate._shrink` reads the
+> per-position standard errors to decide how much of the spread between positions is real, and
+> those errors were understated by the same three defects, by 1.05× (TE) to 2.09× (QB). Larger
+> errors shrink harder, so **`TALENT_CV_BY_POS` moves RB 0.50 → 0.48 and TE 0.32 → 0.33**.
+> More importantly, **RB no longer clears two standard errors from the pool** (+2.6 se →
+> +1.7 se). "An early running back is more of a lottery than his projection suggests" is now a
+> direction the fit leans, not a difference it establishes; only TE still separates. The
+> per-position split stays, because a shrunk estimate is still the best available number, but
+> it is no longer two significant differences — it is one.
+
 460 drafted skill players, 2023-25, inside pick 168 (14 rounds × 12 teams — the roster the
 simulator actually holds):
 

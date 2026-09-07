@@ -43,17 +43,28 @@ import polars as pl
 # inside the number on purpose: scoring is measured per team game, and the simulator benches
 # a low-talent player the same way you bench an injured one.
 #
-# A single scalar is a compromise. RB fits at 0.50 and TE at 0.32, which is a real
-# difference and not noise; see the doc.
+# A single scalar is a compromise. RB fits above it and TE below; see the doc.
 TALENT_CV = 0.42
 
-# Per position, from the same fit. Only two of these are really different from the pool:
-# RB sits +2.6 se above it and TE -3.8 se below, while QB and WR are within one standard
-# error and shrink back onto 0.41. That is the honest reading -- an early running back is
-# more of a lottery than his projection suggests, and a tight end less of one -- and it is
-# why these are shrunk estimates rather than the four raw numbers, which would treat every
-# difference between 51 and 200 players as real.
-TALENT_CV_BY_POS = {"QB": 0.42, "RB": 0.50, "WR": 0.42, "TE": 0.32}
+# Per position, from the same fit, shrunk toward the pool in proportion to each position's
+# own standard error rather than taken raw -- four positions holding 51 to 200 player-seasons
+# do not support four independent numbers.
+#
+# REFITTED 2026-09-07 under the corrected bootstrap, issue #172. RB 0.50 -> 0.48 and
+# TE 0.32 -> 0.33; QB and WR do not move. **No raw estimate changed** -- QB 0.407, RB 0.471,
+# WR 0.387, TE 0.282 are what they were. What changed is the standard errors those raw
+# numbers carry, and `calibrate._shrink` reads them to decide how much of the spread between
+# positions is real: understated errors shrink too little and so overstate the differences.
+# The corrected errors are larger by 1.05x (TE) to 2.09x (QB), so every position is pulled
+# further toward the pool.
+#
+# **The reading is weaker than it was.** Only TE now sits beyond two standard errors of the
+# pool (-3.8 se). RB was +2.6 se and is +1.7 se, which by this repo's own two-se bar is no
+# longer distinguishable from the pool -- so "an early running back is more of a lottery than
+# his projection suggests" is now a direction the fit leans rather than a difference it
+# establishes. The number is still the best estimate available and is still shrunk toward the
+# pool; what it is not any more is significant. See docs/talent-cv.md.
+TALENT_CV_BY_POS = {"QB": 0.42, "RB": 0.48, "WR": 0.42, "TE": 0.33}
 
 
 def talent_cv_for(pos: np.ndarray) -> np.ndarray:
