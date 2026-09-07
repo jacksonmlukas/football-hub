@@ -12,6 +12,7 @@ import polars as pl
 import pytest
 
 from hub.draft import backtest as bt
+from hub.draft.board import BuildReport
 from hub.names import player_key
 
 # --- the pre-registered decision rule, as executable code ------------------
@@ -453,6 +454,59 @@ def test_diagnose_advances_by_the_draft_market_not_by_equity():
     assert "Advance by the market" in src
 
 
+def test_diagnose_asks_the_report_which_market_it_advances_by(monkeypatch):
+    """Issue #131 at the site left out of it, because the file was owned elsewhere.
+
+    Both directions, because the frame and the report agree on every board reachable today --
+    so a test built from a reachable board would pass against the column-sniff it replaces
+    and prove nothing. What is being held is the rule: which market this advances by is what
+    `build` recorded, not what the frame it was handed happens to carry.
+    """
+    seen = []
+    real = bt.market_pick
+
+    def spy(pool, counts, by="adp"):
+        seen.append(by)
+        return real(pool, counts, by=by)
+
+    monkeypatch.setattr(bt, "market_pick", spy)
+
+    with_column = _board(60).with_columns(pl.col("ecr").alias("adp"))
+    bt.diagnose(with_column, BuildReport(adp=False), picks=(), rounds=2)
+    assert set(seen) == {"ecr"}, "the column is there and the report says the stage was not"
+
+    seen.clear()
+    bt.diagnose(_board(60), BuildReport(adp=True), picks=(), rounds=2)
+    assert set(seen) == {"adp"}, "the column is absent and the report is still what is asked"
+
+
+def test_the_corrections_gate_says_when_it_could_not_run(monkeypatch, capsys):
+    """A board no draft market reached has no Corrected ADP, so nothing moved -- and the
+    lines below would render that as a clean ADR-0011 gate. The gate has to say it did not
+    run and exit non-zero, which is the shape `hub.cli.unavailable` gives the fetch failures
+    beside it."""
+    from hub.draft import board as board_mod
+
+    monkeypatch.setattr(board_mod, "build",
+                        lambda *a, **k: (_board(8), board_mod.BuildReport(adp=False)))
+    assert bt.main(["--diagnose-corrections"]) == 1
+    said = capsys.readouterr().out
+    assert "no draft market reached this board" in said
+    assert "tripwire clear" not in said, "a gate that could not run has not passed"
+
+
+def test_the_corrections_gate_runs_on_a_board_that_has_a_corrected_ranking(monkeypatch,
+                                                                            capsys):
+    """The other half, so the refusal above cannot be widened into a gate that never runs."""
+    from hub.draft import board as board_mod
+
+    b = _corrected([(10.0, 11.5, -0.5), (50.0, 50.0, 0.0)])
+    monkeypatch.setattr(board_mod, "build",
+                        lambda *a, **k: (b, board_mod.BuildReport(adp=True)))
+    assert bt.main(["--diagnose-corrections"]) == 0
+    assert "tripwire clear" in capsys.readouterr().out
+
+
 # --- the corrected-ADP gate (ADR-0011) ------------------------------------
 #
 # Fixed before the numbers, and deliberately NOT "did the recommendation change" -- it is
@@ -591,8 +645,8 @@ def test_the_optimizer_arm_returns_a_live_player():
 
 def test_diagnose_reports_one_row_per_requested_pick():
     board = _full_board(n=140)
-    got = bt.diagnose(board, picks=(3, 22), my_slot=3, teams=12, rounds=3,
-                      n_draft_sims=2, n_season_sims=10)
+    got = bt.diagnose(board, BuildReport(adp=True), picks=(3, 22), my_slot=3, teams=12,
+                      rounds=3, n_draft_sims=2, n_season_sims=10)
     assert set(got["pick"].to_list()) <= {3, 22}
     assert {"leader", "lift", "co_leaders", "need_co_led"} <= set(got.columns)
 
@@ -600,9 +654,11 @@ def test_diagnose_reports_one_row_per_requested_pick():
 def test_diagnose_advances_by_the_draft_market_so_both_runs_share_a_path():
     """Two runs at two commits must walk the same draft, or the comparison is not one."""
     board = _full_board(n=140)
+    rep = BuildReport(adp=True)
     kw = {"picks": (3, 22), "my_slot": 3, "teams": 12, "rounds": 3,
               "n_draft_sims": 2, "n_season_sims": 10, "seed": 0}
-    assert bt.diagnose(board, **kw)["held"].to_list() == bt.diagnose(board, **kw)["held"].to_list()
+    assert (bt.diagnose(board, rep, **kw)["held"].to_list()
+            == bt.diagnose(board, rep, **kw)["held"].to_list())
 
 
 # --- what produced these rows (issue #71) ---------------------------------

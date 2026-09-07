@@ -54,7 +54,7 @@ from hub.config import (
     drafted_positions,
     resolved_config,
 )
-from hub.draft.board import board_as_of
+from hub.draft.board import BuildReport, board_as_of
 from hub.draft.optimize import (
     DEFAULT_ROUNDS,
     market_pick,
@@ -346,7 +346,8 @@ def with_ceiling(summary: dict, bound: pl.DataFrame) -> tuple[dict, str]:
 DIAGNOSE_PICKS = (3, 22, 27, 46, 51, 70)
 
 
-def diagnose(board: pl.DataFrame, *, picks: Sequence[int] = DIAGNOSE_PICKS,
+def diagnose(board: pl.DataFrame, report: BuildReport, *,
+             picks: Sequence[int] = DIAGNOSE_PICKS,
              my_slot: int | None = None, teams: int | None = None,
              rounds: int = DEFAULT_ROUNDS, n_draft_sims: int = 12,
              n_season_sims: int = 250, seed: int = 0) -> pl.DataFrame:
@@ -357,6 +358,21 @@ def diagnose(board: pl.DataFrame, *, picks: Sequence[int] = DIAGNOSE_PICKS,
     runs and the only thing that can differ is what equity says about the same situation.
 
     Returns one row per pick: what you hold, who equity names, and by how much.
+
+    **`report` says which market that is, and it is required rather than defaulted for the
+    same reason `board_as_of` stopped letting a caller drop one.** Which market to advance by
+    is a question about what `build` did -- did the stage that leaves `adp` run -- and this
+    site used to answer it a second time, privately, by looking for the column. Issue #131
+    gave that question one owner; this site was left out of that change because the file was
+    owned elsewhere at the time, and what it was left holding is its own copy of the answer
+    and of the string `"adp"` -- which is `board.STAGE_COLUMN["adp"]` restated somewhere
+    nothing would ever update it.
+
+    No board changes hands differently for this. On every board reachable today the column
+    and the flag agree -- a stage that leaves no column is one the report already calls
+    absorbed -- so this moves who owns the question rather than what `--diagnose` draws. That
+    is the point: the two agreeing is a property of today's stages, not a rule, and the
+    report is where the rule lives.
     """
     cfg = RosterConfig()
     my_slot = cfg.slot if my_slot is None else my_slot
@@ -405,8 +421,12 @@ def diagnose(board: pl.DataFrame, *, picks: Sequence[int] = DIAGNOSE_PICKS,
                     **{f"held_{p.lower()}": int(counts.get(p, 0))
                        for p in drafted_positions()},
                 })
-        # Advance by the market so the path is identical across runs.
-        name = market_pick(avail, counts, by="adp" if "adp" in avail.columns else "ecr")
+        # Advance by the market so the path is identical across runs. Which market is the
+        # report's answer rather than this frame's: `avail` is a row slice of the board, so
+        # its columns are the board's, and asking them here is the sniffing issue #131 gave
+        # one owner. A board carrying no draft market is replayed on consensus, which is what
+        # a past season gets in any case -- see `market_pick`, which keeps the two apart.
+        name = market_pick(avail, counts, by="adp" if report.adp else "ecr")
         return _pool_index(pool, name) if name else int(live[0])
 
     simulate_remaining_draft(board, DraftState(taken=[]), my_slot=my_slot, teams=teams,
@@ -457,6 +477,18 @@ def correction_report(board: pl.DataFrame) -> pl.DataFrame:
     gated the roster-seeding fix: run it, read it, and check the tripwire below before
     shipping a change to what the draft ranks on.
     """
+    # Columns read for arithmetic rather than for provenance, which is why this one survives
+    # issue #131 rather than becoming a `report.adp`. What follows selects these five and
+    # subtracts two of them, so their presence is a precondition on the operation -- the same
+    # guard, on three of the same columns, that `optimize.corrected_adp` keeps for the same
+    # reason. It is not a second guess at what `build` did, and it must not become one: this
+    # is also reached from `correction_tripwire` with a hand-built frame and no report behind
+    # it, and answering "can I subtract these" out of a report would refuse that frame for a
+    # stage it never claimed to have run.
+    #
+    # The provenance question a frame genuinely cannot answer -- absent Corrected ADP, or one
+    # that moved nobody -- belongs to the caller, and `main` asks the report before it renders
+    # a word of this.
     need = {"player", "pos", "adp", "adp_corrected", "proj_correction"}
     if not need <= set(board.columns):
         return pl.DataFrame(schema={"player": pl.Utf8, "pos": pl.Utf8, "adp": pl.Float64,
@@ -584,9 +616,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.diagnose_corrections:
         print("  building the live board ...")
         try:
-            board, _ = build()
+            board, report = build()
         except Exception as e:
             return unavailable("hub.draft.backtest", "the live board", e)
+        # Why the board has no Corrected ADP is the report's to answer, and it has to be
+        # answered *here*, before anything below reads the frame. `correction_report` is
+        # honest about its own frame -- no corrected column, no moves -- but zero moves
+        # rendered by the lines below is "the corrections are clean", and on a board whose
+        # market stage never ran that is a gate reporting a pass it did not run. Same shape
+        # as issue #121 one level down: an absent stage arriving indistinguishable from a
+        # stage that had nothing to say.
+        if not report.adp:
+            print("\n  no draft market reached this board, so it carries no ADP and no "
+                  "Corrected ADP for ADR-0011 to gate.\n  Nothing moved because nothing was "
+                  "computed -- which is not the same as nothing needing to move.")
+            return 1
         rep = correction_report(board)
         print(f"\n  Corrected ADP moves {rep.height} of {board.height} players.")
         print(f"  Clamp: {DraftConfig().correction_clamp_frac:.0%} of each player's own ADP.\n")
@@ -620,17 +664,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         snap = Path(a.board) if a.board else None
         if snap and snap.exists():
             board = pl.read_parquet(snap)
+            # A pinned board is a board off disk, which is what `of_served` is for: the run
+            # that wrote it is over and its columns are the only evidence of it there is. It
+            # also keeps the pin intact -- the report is a function of the pinned board, so
+            # two runs at two commits get the same one, which a second `build()` would not.
+            report = BuildReport.of_served(board)
             print(f"  board pinned from {snap}")
         else:
             print("  building the live board ...")
             try:
-                board, _ = build()
+                board, report = build()
             except Exception as e:
                 return unavailable("hub.draft.backtest", "the live board", e)
             if snap:
                 board.write_parquet(snap)
                 print(f"  board snapshot written to {snap}")
-        got = diagnose(board, rounds=a.rounds, n_draft_sims=a.draft_sims,
+        got = diagnose(board, report, rounds=a.rounds, n_draft_sims=a.draft_sims,
                        n_season_sims=a.season_sims, seed=a.seed)
         if got.is_empty():
             print("  no pick produced a rankable shortlist; nothing to compare.")
