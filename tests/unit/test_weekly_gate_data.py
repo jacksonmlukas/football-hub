@@ -103,10 +103,18 @@ def test_a_player_the_page_did_not_list_is_ranked_last_and_still_scores(universe
 def test_the_join_failure_the_floor_guards_against_is_reachable_from_the_assembly(universe):
     """What `VOID_FLOOR` is measured against, reached by running the assembly.
 
-    Three roster-weeks of 3,080 -- 0.097% -- against a pre-registered floor of 2%. The number
+    Four roster-weeks of 3,080 -- 0.130% -- against a pre-registered floor of 2%. The number
     is a property of this capture and its draw, not of production; what it establishes is that
     the quantity the floor reads is one a real assembly can make non-zero. A version of this
     that could only ever report zero would leave the floor guarding nothing.
+
+    **Restated 2026-09-07 (#150): three roster-weeks, 0.097%, until the pick-noise refit.**
+    The draw is the thing that moved. `assemble_universe` simulates twenty drafts through
+    `availability.pick_noise`, and refitting it -- `1.00 + 0.253*pick` to `1.31 + 0.169*pick`,
+    a narrower room -- put Gus Edwards on three of the twenty rosters where he had been on two.
+    Michael Pittman Jr. is still on one. Same two players, one more roster-week, and the two
+    the parametrized test above names are unchanged. Nothing about the floor moves: 0.130% is
+    still non-zero and still an order of magnitude under 2%.
 
     `unranked` is deliberately not asserted as a rate. The board carries 200 players and the
     archive's consensus page carries 16 of them, so 88% of cells are unranked here against
@@ -116,8 +124,8 @@ def test_the_join_failure_the_floor_guards_against_is_reachable_from_the_assembl
     """
     cover = coverage(universe)
     assert cover["cells"] == 3080.0
-    assert cover["join_failure"] * cover["cells"] == pytest.approx(3.0), \
-        "three roster-weeks where the page had no row and the player played"
+    assert cover["join_failure"] * cover["cells"] == pytest.approx(4.0), \
+        "four roster-weeks where the page had no row and the player played"
     assert 0 < cover["join_failure"] < VOID_FLOOR, \
         "non-zero, so the floor has something to read; under it, so this capture is not void"
 

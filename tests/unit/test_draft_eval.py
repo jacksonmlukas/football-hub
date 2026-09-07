@@ -81,11 +81,24 @@ def test_a_draft_is_deterministic_under_a_seed():
 
 
 def test_drafting_earlier_is_worth_more():
-    """Sanity: if slot did not matter the simulation would not be modelling a draft."""
+    """Sanity: if slot did not matter the simulation would not be modelling a draft.
+
+    **Powered 2026-09-07 (#150).** It ran twelve seeds a side and compared the two raw means,
+    which on the law it was written against is a paired t of **+0.19** -- it was passing on the
+    sign of noise. Refitting `availability.pick_noise` flipped that sign without touching
+    anything this test is about, which is the only reason it was ever looked at.
+
+    Paired on the seed, which is what the two arms already share, and run to 200: slot 1 beats
+    slot 12 by **+50.0** points a draft at **t = +4.1** under the shipped law, and by **+38.2**
+    at **t = +3.5** under the superseded one. The claim was true both times; the measurement of
+    it was not, either time. The bar is `experiment.MIN_SE`, the repo's usual two.
+    """
     pool = _pool()
-    early = np.mean([ev.trial(pool, 0.0, 1, np.random.default_rng(s)) for s in range(12)])
-    late = np.mean([ev.trial(pool, 0.0, 12, np.random.default_rng(s)) for s in range(12)])
-    assert early > late
+    d = np.array([ev.trial(pool, 0.0, 1, np.random.default_rng(s))
+                  - ev.trial(pool, 0.0, 12, np.random.default_rng(s))
+                  for s in range(200)])
+    se = d.std(ddof=1) / np.sqrt(d.size)
+    assert d.mean() > 2.0 * se, f"slot 1 over slot 12: {d.mean():+.1f} +- {se:.1f}"
 
 
 # --- the evaluation -------------------------------------------------------

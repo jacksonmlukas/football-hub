@@ -1,0 +1,153 @@
+# Pick noise, refitted — and the board either side of it
+
+**Re-run 2026-09-07**, under [method.md rule 13](method.md) — *a measurement that contradicts a
+published number is not finished until the published number moves*. This is the third of that
+rule's three incidents, and the one it names as open.
+
+The estimator was repaired on 2026-09-04 (`02488c0`). The estimate was not re-run, and a test
+asserting the old pair held the two apart. Nothing here is a new method: it is the same fitter,
+on the same four drafts, finally asked what it says.
+
+## The result
+
+`sigma(pick) = a + b * pick`, fitted by `fit_pick_noise(league, [2022, 2023, 2024, 2025])`.
+
+| | intercept `a` | slope `b` | slope 95% CI | population fitted |
+|---|---|---|---|---|
+| **shipped now** | **1.31** | **0.169** | **[0.159, 0.179]** | 672 picks inside a 204-pick pool, 4 drafts |
+| superseded | 1.00 | 0.253 | *none published* | stated as "734 picks", over the whole consensus list |
+
+Unrounded, the re-run returns `a = 1.3127`, `b = 0.16860`. The constants ship rounded to the
+precision `noise_from_picks` prints, which is the precision the superseded pair used too.
+
+The interval is bootstrapped over **drafts**, n = 4 — not over the 672 picks. One manager
+reaching in round two moves every later pick in that room, so a pick-level interval would be
+several times too tight. That is [gate-power.md](gate-power.md)'s error, one layer down.
+
+> **What caused the move.** Two defects in `fit_pick_noise`, both inflating the slope, both
+> fixed in `02488c0` and neither re-run afterwards:
+>
+> 1. It fitted an `ecr` rank over a 300-plus-player consensus list, while `_sigma` applies the
+>    result to `mu_pick`, an expected **pick number**. Fitting on one axis and predicting on
+>    another stretched the x-range by half again and flattened the slope to cover ranks that
+>    are not picks at all. The fit now runs on the draftable pool: 672 of the 732 matched
+>    picks, the ones whose consensus rank was ever a pick number.
+> 2. It refitted through `max(sigma_hat − a, 0)`, which zeroes every residual under the pinned
+>    intercept instead of letting it pull the slope down — so the slope was fitted to the upper
+>    envelope of the data.
+>
+> **And a third thing, which is why the intercept moved too.** 1.00 was exactly `MIN_SIGMA`.
+> `_constrained` pins the intercept there whenever the unconstrained line wants to go negative,
+> so the published intercept was the floor speaking rather than the data. Neither shipped
+> number had been identified by the corrected fit. At 1.31 the constraint no longer binds.
+
+> **The direction reverses, and that is the finding.** The superseded comment argued the fit
+> *widened* a `2.0 + 0.18 * mu` prior that was over-confident about who survives deep on the
+> board. Repaired, the fit is **narrower than that prior at every pick in the pool**:
+>
+> | at pick | prior | superseded fit | shipped now |
+> |---|---|---|---|
+> | 3 | 2.5 | 1.8 | 1.8 |
+> | 24 | 6.3 | 7.1 | 5.4 |
+> | 100 | 20.0 | 26.3 | 18.2 |
+> | 204 | 38.7 | 52.6 | 35.7 |
+>
+> A narrower sigma means the simulated room drafts closer to consensus, so a player ranked
+> ahead of your next turn is *more* certainly gone. Availability falls, `cost_of_waiting`
+> rises, and the correction pushes the board **toward** scarcity — the opposite of what the
+> superseded comment concluded from the same repair.
+
+## A board built before and after
+
+`readable()` board of 2026-09-04, 457 rows, availability at 20,000 sims, seed 0, `w = 0.5`.
+Slot 3 of 12, so the scarcity turns are the ones with a 19-pick wait: 3 → 22, 27 → 46, 51 → 70,
+75 → 94. Every figure below is `P(still on the board at my next turn)`.
+
+**Turn 3 → 22.** Three players move by more than 5 points and none by 10. The top ten by
+`cost_of_waiting` do not reorder.
+
+| player | before | after |
+|---|---|---|
+| Drake London | 0.175 | **0.093** |
+| Nico Collins | 0.449 | **0.371** |
+| Trey McBride | 0.438 | **0.369** |
+| Saquon Barkley | 0.314 | **0.267** |
+| Omarion Hampton | 0.500 | **0.456** |
+| Garrett Wilson | 0.898 | **0.943** |
+
+**Turn 27 → 46.** Nineteen move by more than 5 points, nine by more than 10, and the top ten
+reorders for the first time.
+
+| player | before | after |
+|---|---|---|
+| Kyren Williams | 0.297 | **0.159** |
+| Javonte Williams | 0.286 | **0.150** |
+| Breece Hall | 0.272 | **0.136** |
+| Tetairoa McMillan | 0.313 | **0.180** |
+| Ladd McConkey | 0.345 | **0.213** |
+| Zay Flowers | 0.242 | **0.117** |
+
+**Turn 51 → 70.** Thirty-one move by more than 5 points, twelve by more than 10.
+
+| player | before | after | rank by `cost_of_waiting` |
+|---|---|---|---|
+| Rome Odunze | 0.344 | **0.191** | 8 → 3 |
+| Bucky Irving | 0.215 | **0.075** | 9 → 6 |
+| Jameson Williams | 0.261 | **0.108** | 23 → 17 |
+| David Montgomery | 0.315 | **0.158** | — |
+| Luther Burden III | 0.317 | **0.161** | — |
+| Emeka Egbuka | — | — | 2 → 1 |
+
+**Turn 75 → 94.** Forty-nine move by more than 5 points, twenty-two by more than 10.
+
+| player | before | after | rank by `cost_of_waiting` |
+|---|---|---|---|
+| Courtland Sutton | 0.341 | **0.196** | 9 → 4 |
+| DK Metcalf | 0.316 | **0.168** | 19 → 12 |
+| Jaylen Warren | 0.278 | **0.130** | 20 → 14 |
+| Sam LaPorta | 0.280 | **0.130** | — |
+| Tucker Kraft | 0.365 | **0.221** | — |
+| Tony Pollard | 0.386 | **0.242** | — |
+
+Every direction is the same one, and the size grows with the pick number, which is what a slope
+correction of −0.084 has to look like. Round one is nearly untouched — sigma at pick 22 differs
+by less than two picks — and by round seven a fifth of the players you might wait on have moved
+by more than ten points of survival probability.
+
+**The rank column is the part that changes a decision.** `cost_of_waiting` is `VOR × P(gone by
+your next turn)`, so a falling availability lifts a player up the scarcity board. Rome Odunze,
+Courtland Sutton, DK Metcalf, Jaylen Warren, Bucky Irving and Emeka Egbuka all rise; nobody
+falls far, because the correction moves in one direction for everyone and only the size differs.
+
+## What does not move
+
+The `w = 0.5` mixed-room prior: `fit_espn_weight` still cannot be estimated, for the reason its
+docstring gives. `MIN_SIGMA` is unchanged at 1.0 — what changed is that the shipped intercept is
+no longer sitting on it. `evaluate.OPP_NOISE` stays 1.0, a scale over this base rather than an
+absolute sigma, so the three readers still resolve to one dispersion.
+
+`config_digest` moves from `281b7b7a` to `ab32cf62` and `fitted_digest` from `d5598b96` to
+`3d6fc111`. That is [ADR-0006](adr/0006-fitted-constants-live-with-their-provenance.md) working:
+a refit is supposed to move the model version. The prediction artifacts already committed under
+`site/data/` keep their `281b7b7a` stamp, because each records the version that produced it.
+
+## Reproduce
+
+```bash
+uv run python -m hub.draft.board --fit-noise      # two most recent drafts
+```
+
+The figures above come from all four drafts, which is the span the superseded constants claimed:
+
+```python
+from hub.draft.availability import historical_picks, noise_from_picks
+from hub.fetch.espn import resolve_league_id
+
+df = historical_picks(resolve_league_id(), [2022, 2023, 2024, 2025])
+(a, b), said = noise_from_picks(df, draws=2000, seed=0)
+```
+
+It needs an ESPN session — `historical_picks` is network-bound, which is why
+`noise_from_picks` takes a frame and returns its sentence rather than printing one. The 2026-09-07
+run matched 732 of 792 picks against a rank scraped inside their own preseason
+(189/204, 187/204, 178/192, 178/192), and 672 of those fell inside the 204-pick pool.

@@ -204,7 +204,7 @@ def resolved_config() -> HubConfig:
     The one thing `HubConfig()` is not. ADR-0004 says the digest folded into every model
     version is over the *resolved* config, and a bare `HubConfig()` is the resolved config
     only for as long as `conf/config.yaml` overrides nothing that diverges from a default --
-    which is true today (both digests are `281b7b7a`, measured 2026-09-05) and is a
+    which is true today (both digests are `ab32cf62`, re-measured 2026-09-07) and is a
     coincidence rather than a property. The first divergent override would have a gate print
     a model version for a model nobody ran: provenance present in the schema and absent in
     the data, which is the defect `models/ratings.py` records from when `cfg_digest`

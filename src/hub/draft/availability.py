@@ -50,14 +50,52 @@ def blended_adp(df: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT) -> pl.DataFram
     return df.with_columns((w * espn + (1 - w) * pl.col("ecr")).alias("mu_pick"))
 
 
-# How far a real pick strays from consensus, fitted on 734 picks across this league's
-# 2022-25 drafts by `fit_pick_noise`. It replaces a heuristic of 2.0 + 0.18*mu that had
-# never been checked against a draft, and the two disagree where it matters: at ADP 100 the
-# heuristic says sigma is 20 and the fit says 26. Being over-confident about who survives
-# inflates cost_of_waiting and pushes the board toward taking a player now who would in fact
-# have lasted.
-PICK_NOISE_INTERCEPT = 1.00
-PICK_NOISE_SLOPE = 0.253
+# How far a real pick strays from consensus: sigma(pick) = a + b * pick, fitted by
+# `fit_pick_noise` on **672 picks inside the 204-pick draftable pool** of this league's four
+# drafts, 2022-25. That is the population `_sigma` evaluates -- an expected pick number -- and
+# it is strictly smaller than the 732 matched picks those four drafts supply, because a
+# consensus rank past the last pick anyone ever made is not a pick number at all.
+#
+# ------------------------------------------------------------------------------------------
+# **Restated 2026-09-07 (#150), from a re-run of the repaired fitter.** The superseded figures,
+# kept as they stood: **sigma = 1.00 + 0.253 * mu**, described here as "fitted on 734 picks
+# across this league's 2022-25 drafts", replacing "a heuristic of 2.0 + 0.18*mu ... at ADP 100
+# the heuristic says sigma is 20 and the fit says 26".
+#
+# **The cause.** `fit_pick_noise` carried two defects, both inflating the slope, and `02488c0`
+# fixed both: it fitted an `ecr` rank over a 300-plus-player consensus list while `_sigma`
+# applies the result to `mu_pick`, an expected pick number; and it refitted through
+# `max(sigma_hat - a, 0)`, which zeroes every residual under the pinned intercept and so fits
+# the slope to the upper envelope of the data. Nothing re-ran the fit after that repair, and
+# `test_the_noise_law_is_the_fitted_one` asserted 1.00/0.253 -- so a repaired estimator and the
+# estimate it was built to replace sat here disagreeing, with the assertion holding them apart.
+# `docs/method.md` rule 13 names this case as one of its three.
+#
+# **1.00 was not a measurement.** It is exactly `MIN_SIGMA`. `_constrained` pins the intercept
+# there whenever the unconstrained line wants to go negative, so that figure was the floor
+# speaking rather than the data. The re-run's intercept clears the floor, so the constraint no
+# longer binds and the number below is identified.
+#
+# **The re-run.** `fit_pick_noise(league, [2022, 2023, 2024, 2025])` on 2026-09-07: 732 of 792
+# picks matched a rank scraped inside their own preseason, 672 of those inside a 204-pick pool,
+# over four drafts. It returns a = 1.3127, b = 0.16860, slope 95% CI [0.159, 0.179] clustered
+# on the draft -- rounded below to the precision the fitter prints.
+#
+# **The direction reverses, and that is the finding.** What stood here argued the fit *widened*
+# a prior that was over-confident about who survives. The repaired fit is narrower than that
+# prior at every pick in the pool: at pick 100 sigma is 18.2, against the prior's 20.0 and the
+# superseded fit's 26.3. So availability falls, `cost_of_waiting` rises, and the correction
+# pushes the board toward scarcity rather than away from it -- the opposite of what it said.
+# A board built either side of it is in `docs/pick-noise.md`, with the players who moved.
+# ------------------------------------------------------------------------------------------
+PICK_NOISE_INTERCEPT = 1.31
+PICK_NOISE_SLOPE = 0.169
+
+# Beside the point estimate, never behind it. Bootstrapped over **drafts**, n = 4, not over
+# picks: one manager reaching in round two moves every later pick in that room, so a
+# pick-level interval would be several times too tight -- the same error `docs/gate-power.md`
+# is about one layer up. `noise_from_picks` prints this pair on every fit.
+PICK_NOISE_SLOPE_CI = (0.159, 0.179)
 
 
 def pick_noise(mu):

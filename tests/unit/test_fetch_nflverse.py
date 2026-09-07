@@ -827,7 +827,8 @@ def test_refresh_names_the_data_it_pulled(fake_pbp, fake_ffo, tmp_path, capsys):
     answer to be wrong about.
 
     What it is worth on the day it fails: the two agree only while nothing in `conf/`
-    diverges from a default (both `281b7b7a`, measured 2026-09-05), and the first override
+    diverges from a default (both `ab32cf62`, re-measured 2026-09-07 -- `281b7b7a` until the
+    pick-noise refit in #150), and the first override
     that does is exactly when the two remaining bare-`HubConfig()` provenance stamps -- and
     any reader who assumed the printed `cfg` was the shipped defaults -- become wrong. Red
     here means "`conf/` now says something; go and see who is still not listening", not

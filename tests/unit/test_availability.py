@@ -64,29 +64,65 @@ def test_empty_board_does_not_crash():
 
 # --- the pick-noise constants, now measured rather than assumed -----------
 
-def test_the_noise_law_is_the_fitted_one():
-    """`fit_pick_noise` existed and was never called: the heuristic 2.0 + 0.18*mu was still
-    hardcoded in two places, including the opponent model inside the win-probability
-    simulation. Fitted on 734 real picks from this league's 2022-25 drafts it comes out at
-    1.00 + 0.253*mu.
+def test_the_shipped_law_is_the_one_the_current_fitter_produced():
+    """What the superseded pin got wrong, and it was not the arithmetic.
 
-    The difference is not cosmetic deep in the board. At ADP 100 the heuristic says sigma is
-    20 and the fit says 26, so the heuristic is over-confident about who survives -- which
-    inflates cost_of_waiting and pushes the board toward 'take him now' on players who would
-    in fact have lasted."""
+    This asserted 1.00 + 0.253*mu -- the output of a fitter with two defects that `02488c0`
+    repaired and nothing re-ran. So the assertion was the thing stopping the repaired
+    estimator and the shipped estimate being reconciled: they disagreed, and the disagreement
+    could not be resolved without failing a test (#150, `docs/method.md` rule 13).
+
+    The figures below are a re-run of the fitter *in this tree*, on the same four drafts,
+    2026-09-07: 672 picks inside a 204-pick pool, a = 1.3127, b = 0.16860. Rounded to the
+    precision `noise_from_picks` prints, which is the precision the superseded pair used too.
+    """
     from hub.draft.availability import PICK_NOISE_INTERCEPT, PICK_NOISE_SLOPE
-    assert PICK_NOISE_INTERCEPT == pytest.approx(1.00, abs=0.01)
-    assert PICK_NOISE_SLOPE == pytest.approx(0.253, abs=0.005)
+    assert PICK_NOISE_INTERCEPT == pytest.approx(1.31, abs=0.005)
+    assert PICK_NOISE_SLOPE == pytest.approx(0.169, abs=0.0005)
 
 
-def test_the_fitted_law_is_wider_late_and_tighter_early():
-    """The shape of the correction, pinned so a refit that inverts it is noticed."""
+def test_the_slope_ships_with_its_draft_clustered_interval():
+    """The estimate does not travel alone.
+
+    A slope quoted bare reads as exact, and this one has four independent replications behind
+    it -- four drafts, not 672 picks. The interval is the fitter's own, clustered on the
+    draft, and it has to contain the number shipped beside it or one of the two is stale.
+    """
+    from hub.draft.availability import PICK_NOISE_SLOPE as B
+    from hub.draft.availability import PICK_NOISE_SLOPE_CI as CI
+
+    lo, hi = CI
+    assert lo < hi, CI
+    assert lo <= B <= hi, f"the shipped slope {B} sits outside its own interval {CI}"
+
+
+def test_the_intercept_is_a_fitted_value_and_not_the_sigma_floor():
+    """The superseded intercept was exactly `MIN_SIGMA`, which is not a coincidence.
+
+    `_constrained` pins the intercept at the floor whenever the unconstrained line wants to go
+    negative. An intercept sitting exactly on it is therefore the constraint speaking and not
+    the data -- a number that was never identified, quoted as though it had been. The repaired
+    fit clears the floor, so the constraint no longer binds.
+    """
+    from hub.draft.availability import MIN_SIGMA, PICK_NOISE_INTERCEPT
+
+    assert PICK_NOISE_INTERCEPT > MIN_SIGMA
+
+
+def test_the_refitted_law_is_tighter_than_the_prior_it_replaced():
+    """The shape of the correction, pinned so a refit that inverts it is noticed -- and it has
+    just inverted what stood here.
+
+    The superseded pin claimed the fit was narrower than 2.0 + 0.18*mu early and *wider* late,
+    making that prior over-confident about who survives deep on the board. Repaired, the fit is
+    narrower than the prior at every pick in the draftable pool, which moves every availability
+    the other way: fewer survivors, higher cost_of_waiting.
+    """
     from hub.draft.availability import PICK_NOISE_INTERCEPT as A
     from hub.draft.availability import PICK_NOISE_SLOPE as B
-    early_fit, early_heur = A + B * 3, 2.0 + 0.18 * 3
-    late_fit, late_heur = A + B * 100, 2.0 + 0.18 * 100
-    assert early_fit < early_heur
-    assert late_fit > late_heur
+
+    for pick in (1, 3, 24, 100, 204):
+        assert A + B * pick < 2.0 + 0.18 * pick, pick
 
 
 def test_sigma_uses_the_fitted_law_when_there_is_no_consensus_spread():

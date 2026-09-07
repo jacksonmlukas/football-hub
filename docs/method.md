@@ -207,6 +207,27 @@ uncorrected fit produced (`6ffd302`) — held in place by a test asserting it, u
 describing a fit the code no longer performs, and the board's cost of waiting is still computed
 from it. Issue #150 is open.
 
+> **Restated 2026-09-07 — the third incident is closed.** `fit_pick_noise(league, [2022, 2023,
+> 2024, 2025])` was re-run in the tree that holds the repair, and the shipped constants are now
+> what it returned. **`PICK_NOISE_SLOPE` 0.253 → 0.169** and **`PICK_NOISE_INTERCEPT` 1.00 →
+> 1.31**, with the slope's draft-clustered 95% CI **[0.159, 0.179]** — four drafts, not 672
+> picks — published beside the point estimate for the first time. The population is named as
+> well: **672 picks inside a 204-pick draftable pool** over four drafts, not the "734 picks
+> across this league's 2022-25 drafts" the superseded comment claimed over a whole board.
+>
+> **The cause is the one this entry describes**, plus one it did not: 1.00 was exactly
+> `MIN_SIGMA`, the floor `_constrained` pins the intercept at when the unconstrained line wants
+> to go negative — so it was the constraint speaking, not the data, and neither shipped number
+> had been identified by the corrected fit. The repaired intercept clears the floor.
+>
+> **The direction reverses.** The superseded pin said the fitted law was *wider* than the
+> 2.0 + 0.18 prior deep on the board, making that prior over-confident about who survives.
+> Repaired, it is narrower than the prior at every pick in the pool — at pick 100, sigma 18.2
+> against the prior's 20.0 and the superseded fit's 26.3 — so availability falls and
+> `cost_of_waiting` rises, pushing the board toward scarcity rather than away from it. A board
+> built either side of the change, naming the players whose availability moved, is in
+> [pick-noise.md](pick-noise.md). Issue #150 is closed; #44 and #45 are still open.
+
 **What "moved" means.** Not an edit over the top of the old figure: a superseded number keeps
 its original text here, the same convention [architecture.md](architecture.md) states for a
 superseded decision. It means a **dated restatement beside the original** — the superseded
