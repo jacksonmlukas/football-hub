@@ -579,3 +579,20 @@ def test_a_model_with_nothing_stored_never_reaches_the_fetch(monkeypatch):
     monkeypatch.setattr(me, "_schedules", _down)
     got = me.load_predictions("m")
     assert got.is_empty() and "home_won" in got.columns
+
+
+def test_a_frame_with_no_season_column_is_one_season_of_cells():
+    """The single-season case, named rather than left to raise.
+
+    `_paired` keys on the columns both frames carry, so a pair with no season between them
+    spans no more than the one season the caller assembled — which is exactly the case
+    `_holdout_window` leaves alone. Season zero is a placeholder that keeps the cell a pair,
+    so everything downstream sorts and clusters on the same shape whether or not the season
+    survived the join.
+    """
+    got = me._cells(pl.DataFrame({"week": [3, 1, 2]}))
+    assert got == [(0, 3), (0, 1), (0, 2)]
+    assert all(isinstance(c, tuple) and len(c) == 2 for c in got), (
+        "the no-season path must still yield (season, week) pairs, or the clustering below "
+        "it sees a different shape than every other path produces"
+    )

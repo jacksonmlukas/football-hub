@@ -87,7 +87,7 @@ FLOOR: dict[str, int] = {
     "src/hub/models/spread.py": 9,
     "src/hub/models/volume.py": 1,
     "src/hub/models/weekly.py": 3,
-    "src/hub/models/weekly_screen.py": 4,
+    "src/hub/models/weekly_screen.py": 0,
     "src/hub/names.py": 0,
     "src/hub/paths.py": 0,
     "src/hub/publish.py": 32,
