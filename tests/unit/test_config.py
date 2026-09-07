@@ -625,10 +625,17 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     on the strength of these two agreeing. They agree because `conf/config.yaml` sets
     `teams`, `slot` and `wr` to the values the dataclasses already default to. The day an
     override diverges, this is the test that says which of the two moved and that the answer
-    is `conf/` rather than a bug -- and `281b7b7a` is what the docs and every committed
-    artifact record for the defaults.
+    is `conf/` rather than a bug.
+
+    **Moved 2026-09-07 (#150): `281b7b7a` -> `ab32cf62`.** The superseded digest is kept
+    here rather than edited away, because the artifacts under `site/data/` still stamp it
+    and that is correct -- each records the model version that produced it. What moved is
+    the code: `PICK_NOISE_INTERCEPT` and `PICK_NOISE_SLOPE` were refitted and
+    `PICK_NOISE_SLOPE_CI` published beside them, so `fitted_digest` went `d5598b96` ->
+    `3d6fc111`. ADR-0006 is the reason that is a feature: a refit that did *not* move the
+    model version would be the bug.
     """
-    assert config_digest(HubConfig()) == "281b7b7a"
+    assert config_digest(HubConfig()) == "ab32cf62"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 
