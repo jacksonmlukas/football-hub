@@ -1205,6 +1205,35 @@ def test_the_unit_change_is_repaired_here_rather_than_refused(monkeypatch, tmp_p
     )
 
 
+def test_one_corrupt_share_is_refused_rather_than_rescaled_into_the_cache(monkeypatch,
+                                                                            tmp_path):
+    """The mirror of the test above, and the reason it matters here rather than in a unit
+    test of the contract alone (#149).
+
+    A trigger that fires on the tallest value in the frame cannot tell PFR switching to
+    whole percents from one corrupt reading in an otherwise-correct fractional refresh. The
+    second one rescaled every share in the frame by a hundred to bring the bad row inside a
+    bound it had no business being inside -- and because `validate` returns what it repaired
+    and this loader writes the return, those units were what landed in the parquet, in the
+    pin beside it, and in every later read off that cache.
+
+    87.0 rather than an impossible number on purpose: an impossible one is refused whatever
+    the trigger does, and would prove nothing about telling the two cases apart.
+    """
+    df = _snaps_frame()
+    holed = df.with_columns(
+        pl.when(pl.int_range(pl.len()) == 0).then(pl.lit(87.0))
+          .otherwise(pl.col("offense_pct")).alias("offense_pct"))
+    monkeypatch.setattr(nv, "_raw_snap_counts", lambda seasons: holed)
+    with pytest.raises(ContractViolation, match="offense_pct range"):
+        nv.load("snap_counts", seasons=[2024], cache=tmp_path)
+
+    assert not list(tmp_path.rglob("*.parquet")), (
+        "the corrupt frame was rescaled and written; every later read comes off that cache, "
+        "in units nothing upstream ever sent")
+    assert nv.data_pin("snap_counts", [2024], cache=tmp_path) is None
+
+
 def test_the_new_sources_are_not_wide():
     """25, 17 and 16 columns. `WIDE` is for the two that cost a session to hand back whole,
     and listing a 16-column source there would make the refusal a formality nobody reads."""
