@@ -685,8 +685,33 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     TE 0.32 -> 0.33 without any raw estimate changing. The pooled `TALENT_CV` did not move at
     all; only its interval did, [0.380, 0.434] -> [0.370, 0.453]. Restated in
     docs/talent-cv.md.
+
+    **Moved again 2026-09-07 (#187): `105b2b64` -> `0c6fab17`.** `hub.models.predict` is in
+    `FITTED_MODULES`, so every upper-case module-level name in it is swept into the digest,
+    and #187 added four while making non-factorable correlation blocks repair rather than
+    silently fall back to independence.
+
+    One of the four is a real model change and earns the move: `NOT_A_TEAM` excludes `FA`
+    from being correlated as though it were a roster. It had been a 43-player block with a
+    minimum eigenvalue of -0.914, harmless only because it failed to factor and fell back to
+    independence -- which is the right answer for a free agent reached by accident, and which
+    repair would have turned into a confidently wrong correlated draw. Excluding it moved the
+    gate's own output, -14.36 to -15.23 on the two-draft run.
+
+    **The other three do not earn it, and that is a finding rather than a fix.**
+    `_FACTOR_CACHE_MAX` is a cache bound, `_FACTORS` is the cache itself, and `_EIG_FLOOR` is
+    the tolerance that decides what counts as positive semi-definite -- only the last is
+    arguably a modelling choice. A cache size should not identify a model version. It does
+    here because the rule is "an upper-case module-level name in a registered module", which
+    is a naming convention standing in for the question of whether something is a
+    measurement. That is #201's finding one step further on: there the coverage was decided
+    by whether a constant was written as a float, here by whether it was written in capitals.
+
+    The digest was checked to be stable at runtime despite `_FACTORS` being mutable and
+    populated during a draw -- it is not hashed by content, so the model version does not
+    move as a process runs.
     """
-    assert config_digest(HubConfig()) == "105b2b64"
+    assert config_digest(HubConfig()) == "0c6fab17"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 
