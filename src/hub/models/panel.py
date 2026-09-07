@@ -16,6 +16,15 @@ opponent -- count as week-w information; anything derived from play uses weeks <
 `docs/method.md` rule #2, the invariant this repo records violating at 7.4 se, and the expanding
 aggregates below route through `hub.models.experiment.expanding_weeks` so there is one statement
 of it rather than one per feature.
+
+**And the Panel now says which of its columns keep it.** The realised week-level frame is what
+everything is assembled on, so week w's own `targets`, `offense_pct`, `tds` and fifteen more
+ride along to the return -- deliberately, because a projection is fitted *against* them. What
+they were not is distinguishable: using the Panel correctly meant knowing from suffix
+convention alone which of sixty columns were safe, and the one caller that got it right got it
+right by being careful. `feature_columns` and `outcome_columns` answer it instead,
+`require_features` refuses a raw one where a feature was meant, and `_served` refuses to hand
+back a column that is on neither side. #203.
 """
 from __future__ import annotations
 
@@ -171,15 +180,23 @@ def expected_weekly(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover
               .agg([pl.col(c).sum() for c in (*EXPECTED.values(), XFP_WEEK)]))
 
 
+# What `weekly_stats` reads from `player_stats`. A module constant rather than a local list
+# because it is read twice: once to narrow the fetch, and once by `column_role` below, which
+# classifies every one of these as week *w*'s own realised play. Stating it in one place is
+# what makes a column added here land on the outcome side of the Panel's rule by
+# construction, instead of depending on whoever added it also remembering to say so.
+WEEK_STATS_COLS: tuple[str, ...] = (
+    "player_id", "player_display_name", "position", "season", "week", "team",
+    "opponent_team", OUTCOME, "target_share", "receiving_yards", "rushing_yards",
+    "passing_yards", "receiving_tds", "rushing_tds", "passing_tds", "season_type",
+    "targets", "receptions", "carries", "attempts", "completions",
+    "passing_interceptions", "fumbles_lost_total")
+
+
 def weekly_stats(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
     import nflreadpy as nfl
     ps = nfl.load_player_stats(seasons=list(seasons), summary_level="week")
-    want = ["player_id", "player_display_name", "position", "season", "week", "team",
-            "opponent_team", OUTCOME, "target_share", "receiving_yards", "rushing_yards",
-            "passing_yards", "receiving_tds", "rushing_tds", "passing_tds", "season_type",
-            "targets", "receptions", "carries", "attempts", "completions",
-            "passing_interceptions", "fumbles_lost_total"]
-    ps = ps.select([c for c in want if c in ps.columns])
+    ps = ps.select([c for c in WEEK_STATS_COLS if c in ps.columns])
     if "season_type" in ps.columns:
         ps = ps.filter(pl.col("season_type") == "REG").drop("season_type")
     return (ps.filter(pl.col("position").is_in(DRAFTED_POSITIONS))
@@ -621,6 +638,216 @@ def best_per_week(joined: pl.DataFrame) -> pl.DataFrame:
                                 pl.col("week").cast(pl.Int64)))
 
 
+# --- which side of the rule each column the Panel hands back is on ----------------------
+#
+# The rule at the top of this module is kept *mechanically* for the derived features --
+# `prior_means`, `trend` and `recent_mean` all route through `expanding_weeks` and
+# `.shift(1)`, so there is one statement of it -- and it was never kept for the frame those
+# are built on. `build_panel` starts from the realised week-level frame and never strips it,
+# so `targets`, `receptions`, `offense_pct`, `tds`, `yds` and a dozen more of week w's own
+# outcome ride along to the return.
+#
+# **They are kept on purpose and the keeping is not the defect.** `hub.models.weekly` fits
+# its multiplier with `targets` on the left-hand side, `weekly_screen.screen_usage` screens
+# against **Usage**, and Gate B scores a lineup on realised points. Every one of those is
+# reading a realised column *as an outcome*, which is the only thing it is.
+#
+# The defect was that the return said nothing about which was which, so using the Panel
+# correctly meant knowing from suffix convention alone which of sixty columns were safe. A
+# caller naming `offense_pct` where it meant `snap_trend` got a leak and nothing refused.
+# Today's one screen is disciplined, and that is a property of the caller. #176 is what this
+# species costs when nobody catches it: a coverage measurement centred on each player's own
+# realised mean, published, and worth 3.7 points of headline once corrected.
+#
+# So the Panel names four sides, puts every column it serves on exactly one of them, and
+# **refuses to hand back a column that is on none** -- the default for a column nobody has
+# classified is unsafe, which is the direction a leakage guard has to fail in.
+
+
+IDENTITY: tuple[str, ...] = ("player_id", "player_display_name", "key", "season", "week",
+                             "team", "position")
+"""Who the row is about and which week it is. The row's address, not a measurement."""
+
+
+PRE_KICKOFF: tuple[str, ...] = (
+    # **The line.** `game_context` is one row per (team, season, week) of what the betting
+    # market and the schedule publish before the game -- the spread, the total, the derived
+    # team total, and the fixture facts around it.
+    "opp", "own_spread", "total_line", "implied_total", "rest", "roof", "wind", "is_home",
+    # **The opponent**, under the name `player_stats` gives it. `opp` above is the same fact
+    # off the schedule; the fixture is known months out either way.
+    "opponent_team",
+    # **The injury report.** Named once in `INJURY_COLUMNS`, because the degraded path has to
+    # produce the same three without it, and spelled from there rather than beside it.
+    *INJURY_COLUMNS,
+    # Consensus, and the preseason board. Not among the three the module docstring names, and
+    # the same species: `assign_weeks` and `CONSENSUS_MAX_LEAD_DAYS` exist to keep a scrape on
+    # the near side of the kickoff it is assigned to, and `lead_days` is that distance itself
+    # -- the confound `docs/weekly-screen.md` reads the whole screen against. `preseason_ecr`
+    # is an August **Consensus** opinion about a September season. Both have to stay
+    # reachable: `ecr` is half of `weekly_screen.CONTROLS`, and `preseason_ecr` is what
+    # `hub.models.weekly`'s consensus-anchored shrinkage regresses toward.
+    "ecr", "lead_days", "preseason_ecr")
+"""Facts published *for* week w, which `docs/method.md` rule #2 counts as week-w information.
+
+The exceptions the rule names, and a Panel that made them unreachable would have been broken
+rather than tightened -- a screen with no line, no injury report and no opponent measures
+nothing this repo asks about.
+"""
+
+
+DERIVED_SUFFIXES: tuple[str, ...] = ("_prior", "_recent", "_trend")
+"""What `prior_means`, `recent_mean` and `trend` name their output.
+
+A *consequence* of the rule rather than a convention beside it: all three route through
+`expanding_weeks` and `.shift(1)`, so there is no way to get one of these names except by
+going through the one statement of the rule. That is a claim, not a proof -- nothing stops a
+future author naming a realised column `foo_trend` -- and what tests the claim is
+`test_no_feature_moves_when_its_own_weeks_play_is_rewritten`, which runs its perturbation
+over exactly the set `feature_columns` returns.
+"""
+
+
+DERIVED: tuple[str, ...] = ("ppg_before", "games_before", "dvp")
+"""The three derived columns that carry no suffix, because they were renamed or reshaped.
+
+`ppg_before` and `games_before` are `prior_means`' `fantasy_points_ppr_prior` and `prior_n`
+renamed at the join; `dvp` is `allowed_prior` over its positional league mean. `td_rate_prior`
+needs no entry: it is one prior over another and the suffix already says so.
+"""
+
+
+OUTCOMES: tuple[str, ...] = (
+    # Week w's own realised play, taken from the fetch declaration rather than restated, so
+    # this set grows with `weekly_stats` instead of drifting behind it. The keys and the
+    # opponent come out because they are already spoken for above, and `season_type` never
+    # reaches the Panel -- `weekly_stats` filters on it and drops it.
+    *(c for c in WEEK_STATS_COLS
+      if c not in IDENTITY and c not in PRE_KICKOFF and c != "season_type"),
+    # The two totals `build_panel` forms from the columns above, on the realised frame.
+    "tds", "yds",
+    # The share of week w's snaps he actually took. `snap_trend` is the feature built from it.
+    "offense_pct",
+    # `spec.routes`: the share of week w's charted pass plays he was on the field for.
+    "route_pct",
+    # `spec.scheme`: how the offence actually played week w. `{r}_trend` is the feature.
+    "pass_rate", *SCHEME)
+"""Week w's own outcome, kept as an intermediate and never usable as a feature for week w.
+
+Legitimate to read *as an outcome* -- `hub.models.weekly` fits against these and the Usage
+screen measures against them -- which is what `require_features` refuses and
+`cell_correlations`' `outcome=` parameter is for.
+"""
+
+
+class PanelRuleViolation(ValueError):
+    """A column was about to be used on the wrong side of the before-its-outcome rule.
+
+    Two cases, one name, because they are one mistake at two depths. `_served` raises it for a
+    column that reached the return on none of the four sides -- nobody has said whether it is
+    measured before week w or on it. `require_features` raises it for a column that *is*
+    classified, as week w's own outcome, and was handed over where a feature was meant.
+
+    Deliberately not a `ContractViolation`, which `injury_columns` catches and degrades
+    around. That one means a source changed shape and the Panel can be served anyway; this one
+    means this repo is wrong about its own frame, and serving around it would be serving a
+    Panel whose one rule nobody is keeping.
+    """
+
+
+def column_role(name: str) -> str | None:
+    """Which side of the before-its-outcome rule a column is on. None if it is on none.
+
+    Order matters at one place only: `opponent_team` and the identity columns are also
+    `player_stats` columns, so they are answered before `OUTCOMES` -- which is why `OUTCOMES`
+    subtracts them at its own definition rather than relying on the order here.
+    """
+    if name in IDENTITY:
+        return "identity"
+    if name in PRE_KICKOFF:
+        return "pre-kickoff"
+    if name in DERIVED or name.endswith(DERIVED_SUFFIXES):
+        return "derived"
+    if name in OUTCOMES:
+        return "outcome"
+    return None
+
+
+FEATURE_ROLES: tuple[str, ...] = ("pre-kickoff", "derived")
+"""The two roles the rule permits as a feature for week w."""
+
+
+def feature_columns(p: pl.DataFrame) -> tuple[str, ...]:
+    """The Panel's columns that satisfy its rule: measured before week w, or published for it.
+
+    What a caller asks instead of reading suffixes. In frame order, so a `select` over it
+    keeps the Panel's own column order.
+    """
+    return tuple(c for c in p.columns if column_role(c) in FEATURE_ROLES)
+
+
+def outcome_columns(p: pl.DataFrame) -> tuple[str, ...]:
+    """The Panel's raw week-w columns: this week's own outcome, kept as an intermediate."""
+    return tuple(c for c in p.columns if column_role(c) == "outcome")
+
+
+def require_features(p: pl.DataFrame, names: Sequence[str]) -> None:
+    """Raise if any name is week w's own outcome, or is not on `p` at all.
+
+    The refusal criterion 2 of #203 asks for, at the seam where a column becomes a feature.
+    A caller that means a realised column as an **outcome** says so by another route --
+    `weekly_screen.cell_correlations` takes it as `outcome=`, `hub.models.weekly` puts it on
+    the left-hand side of a fit -- and neither goes through here.
+
+    **Refuses the named outcomes, not the unrecognised.** Default-deny belongs at
+    `build_panel`'s own boundary, where the frame really is a Panel and an unclassified
+    column is this module having grown one; here it would only refuse the hand-built frames
+    the screen's own unit tests are written on, which are not Panels and do not claim to be.
+    The two compose: nothing unclassified can reach a served Panel in the first place, so on
+    a Panel this check is total.
+    """
+    bad = [c for c in names if c not in p.columns or column_role(c) == "outcome"]
+    if not bad:
+        return
+    lines = []
+    for c in sorted(set(bad)):
+        if c not in p.columns:
+            lines.append(f"  `{c}` is not on this frame at all")
+            continue
+        kin = [k for k in (f"{c}_prior", f"{c}_recent", f"{c}_trend") if k in p.columns]
+        beside = f"; measured before its week it is {' or '.join(kin)}" if kin else ""
+        lines.append(f"  `{c}` is week w's own outcome{beside}")
+    raise PanelRuleViolation(
+        "these cannot be features of the week they are measured on:\n" + "\n".join(lines)
+        + "\n`hub.models.panel.feature_columns` lists what may be. A realised column is a "
+          "legitimate *outcome* -- say so with `outcome=` rather than passing it here.")
+
+
+def _served(p: pl.DataFrame) -> pl.DataFrame:
+    """The Panel, checked column by column on the way out. The boundary the rule is kept at.
+
+    Every source above narrows with an explicit `select`, so the way a raw outcome column
+    starts surviving to the return is a change *here* -- a new join, a new total, a source
+    that grew a column and was joined whole. That change now has to say which side of the
+    rule its column is on, and until it does the Panel refuses to serve it.
+
+    **Raising, on the live Sunday path.** CLAUDE.md's degradation rule is about a source that
+    changed shape, which `injury_columns` serves around; this is the same distinction that
+    module already draws one level down, where a `ContractViolation` degrades and a
+    `TypeError` does not. An unclassified column is this repo being wrong about its own
+    frame, and a Panel served with one is a Panel whose rule nobody is keeping.
+    """
+    unknown = [c for c in p.columns if column_role(c) is None]
+    if not unknown:
+        return p
+    raise PanelRuleViolation(
+        f"the Panel was about to hand back {unknown}, and nothing says whether they are "
+        f"measured before week w or on it. Add each to `IDENTITY`, `PRE_KICKOFF`, `DERIVED` "
+        f"or `OUTCOMES` in hub.models.panel. If it is week w's own play it belongs in "
+        f"`OUTCOMES`, where `require_features` will refuse it as a feature and callers that "
+        f"want it as an outcome still reach it -- which is the whole point of naming it.")
+
+
 def build_panel(seasons: Sequence[int] = SEASONS,
                 spec: PanelSpec = SCREEN_SPEC,
                 as_of: str | None = None) -> pl.DataFrame:  # pragma: no cover - network
@@ -659,6 +886,13 @@ def build_panel(seasons: Sequence[int] = SEASONS,
     player-week grid where a missing row is a zero, and that is where the term belongs. If the
     injury report itself is refused, all three of its columns are carried **null** and the
     Panel is served without them rather than not served at all -- `injury_columns` and ADR-0023.
+
+    **What comes back, and how a caller tells one half from the other.** Both returns go
+    through `_served`, which puts every column on one of the four sides named above it and
+    refuses one that is on none. So the frame carries week w's own realised play *and* the
+    features measured before it, as it always did, and `feature_columns` now says which are
+    which -- `outcome_columns` says the rest, and `require_features` is what refuses a caller
+    that reaches for one of those where a feature was meant.
     """
     stats = weekly_stats(seasons).with_columns(
         pl.col("player_display_name").map_elements(player_key, return_dtype=pl.Utf8).alias("key"))
@@ -758,6 +992,6 @@ def build_panel(seasons: Sequence[int] = SEASONS,
         # The gate needs a projection for every rostered player, including the ones consensus
         # does not list -- being unranked is the incumbent's *answer*, not a reason to have no
         # projection. Only the screen, which measures beyond consensus, requires it to exist.
-        return p
-    return p.join(weekly_consensus(seasons, as_of=as_of),
-                  on=["season", "week", "key"], how="inner")
+        return _served(p)
+    return _served(p.join(weekly_consensus(seasons, as_of=as_of),
+                          on=["season", "week", "key"], how="inner"))

@@ -143,22 +143,23 @@ def play_derived_columns() -> set[str]:
 
     Derived from the captures rather than listed by hand: every column of `player_stats` and
     `snap_counts` is a fact about week *w*'s play, plus the two totals `build_panel` adds from
-    them. Anything else on the Panel is a **feature**, and a feature is what the
-    before-its-outcome rule is about. Written out as a list, this would be the same
-    read-the-source assertion in a different costume -- a column added to the panel would
-    quietly join the exempt set instead of being tested.
+    them. Written out as a list, this would be the same read-the-source assertion in a
+    different costume -- a column added to the panel would quietly join the exempt set instead
+    of being tested.
+
+    **This is now a second opinion rather than the only one.** Which of the Panel's columns
+    are features is `hub.models.panel.feature_columns`' answer, because #203 moved it onto the
+    interface -- it used to live here, which made it a property of the tests rather than of
+    the thing under test, and a caller could not consult it at all. What this keeps is
+    independence: it reads the captured frames and the module reads its own declarations, so
+    `test_the_modules_outcome_set_agrees_with_what_the_captures_supply` is two derivations
+    meeting rather than one restated.
     """
     return set(frame("player_stats").columns) | set(frame("snap_counts").columns) | {
         # `tds` and `yds` are week-w sums `build_panel` forms from the columns above, and
         # `offense_pct` is the snap capture's own column under the name the join gives it.
         "tds", "yds", "offense_pct",
     }
-
-
-def features(panel: pl.DataFrame) -> list[str]:
-    """The Panel's feature columns: everything not measured on the outcome week."""
-    raw = play_derived_columns()
-    return [c for c in panel.columns if c not in raw]
 
 
 def rows_up_to(panel: pl.DataFrame, season: int, week: int,

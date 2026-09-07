@@ -112,6 +112,43 @@ def test_a_feature_missing_before_its_week_is_excluded_not_zero_filled():
     assert cells["week"].unique().to_list() == [2]
 
 
+def test_the_screen_refuses_a_raw_outcome_column_as_a_feature_or_as_a_control():
+    """#203, at the seam where a column becomes a feature.
+
+    `FEATURES` above names derived features and pre-kickoff facts only, and it always did --
+    which made the screen correct by the care of whoever last edited a tuple rather than by
+    anything refusing. A caller naming `targets` where it meant `targets_recent` correlated
+    this week's points against this week's own targets and got a number back.
+
+    Asked once in `cell_correlations`, which `screen`, `screen_joint` and `screen_usage` all
+    route through, so the three are covered by the one question.
+    """
+    p = _usage_panel()
+    with pytest.raises(pnl.PanelRuleViolation, match="targets"):
+        ws.cell_correlations(p, "targets")
+    with pytest.raises(pnl.PanelRuleViolation, match="targets"):
+        ws.cell_correlations(p, "feat", controls=("ppg_before", "targets"))
+    with pytest.raises(pnl.PanelRuleViolation, match="targets"):
+        ws.screen(p, [ws.Feature("targets", "+", 1)])
+
+
+def test_the_same_raw_column_is_still_reachable_as_the_outcome_it_is():
+    """The other side of the refusal, and the reason it is not simply a ban.
+
+    **Usage** is the premise of the multiplier form: a feature that moves points without
+    moving counts cannot be applied as a Usage multiplier, so the screen has to run *against*
+    `targets`. Naming it as `outcome=` is a caller saying it means the realised column as an
+    outcome, which is what it is. A refusal with no way through would have broken
+    `screen_usage` rather than tightened it.
+    """
+    p = _usage_panel()
+    p = pnl.recent_mean(pnl.prior_means(p, ["player_id"], ["targets"], within_season=True)
+                        .join(p, on=["player_id", "season", "week"], how="right"), "targets")
+    cells = ws.cell_correlations(p, "feat", outcome="targets",
+                                 controls=("targets_prior", "targets_recent", "ecr"))
+    assert not cells.is_empty(), "the Usage screen must still be able to run"
+
+
 # --- the se is over the unit the verdict reads (issue #169) ------------------
 #
 # The se used to be taken across the season-week cells while `verdict` requires the sign to
