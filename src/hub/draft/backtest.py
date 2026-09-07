@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -215,7 +215,8 @@ def play(board: pl.DataFrame, strategy, *, my_slot: int, teams: int, rounds: int
 def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], *,
             n_drafts: int = 20, seed: int = 0, my_slot: int | None = None,
             teams: int | None = None, rounds: int = DEFAULT_ROUNDS,
-            n_draft_sims: int = 12, n_season_sims: int = 250) -> pl.DataFrame:
+            n_draft_sims: int = 12, n_season_sims: int = 250,
+            on_draft: Callable[[int, int, int], None] | None = None) -> pl.DataFrame:
     """Paired arm A against arm B, one row per (season, draft).
 
     Pure: takes frames, returns a frame, touches no network. That is what makes the
@@ -246,6 +247,12 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
                                        n_season_sims=n_season_sims, seed=room)
             b_names, b_pos = play(board, arm_b, my_slot=my_slot, teams=teams,
                                   rounds=rounds, rng=np.random.default_rng(room))
+            # A callback, not a print, so `compare` stays pure and the tests stay quiet. This
+            # run takes long enough that a caller needs to know it is alive: the first attempt
+            # was killed at 49 minutes having emitted nothing at all, because the only output
+            # was buffered behind a pipe and the per-season lines never reached anyone.
+            if on_draft is not None:
+                on_draft(season, k + 1, n_drafts)
             rows.append({
                 "season": season, "draft": k,
                 "market": score_roster(a_names, a_pos, real),
@@ -257,7 +264,8 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
 
 def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], *,
             n_drafts: int = 20, seed: int = 0, my_slot: int | None = None,
-            teams: int | None = None, rounds: int = DEFAULT_ROUNDS) -> pl.DataFrame:
+            teams: int | None = None, rounds: int = DEFAULT_ROUNDS,
+            on_draft: Callable[[int, int, int], None] | None = None) -> pl.DataFrame:
     """What a drafter who already knew the season achieves against the incumbent arm.
 
     This bounds what *any* board could deliver, which is the number the underpowered-gate rule
@@ -294,6 +302,8 @@ def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
                                   rounds=rounds, rng=np.random.default_rng(room))
             c_names, c_pos = play(seeing, arm_c, my_slot=my_slot, teams=teams,
                                   rounds=rounds, rng=np.random.default_rng(room))
+            if on_draft is not None:
+                on_draft(season, k + 1, n_drafts)
             rows.append({
                 "season": season, "draft": k,
                 "market": score_roster(a_names, a_pos, real),
@@ -552,6 +562,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--draft-sims", type=int, default=12)
     ap.add_argument("--season-sims", type=int, default=250)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--progress", action="store_true",
+                    help="one line per draft, so a long run can be watched rather than trusted")
     ap.add_argument("--ceiling", action="store_true",
                     help="also play a foresight arm and report what any board could deliver")
     ap.add_argument("--out", default=None, help="write the paired rows to this parquet path")
@@ -657,12 +669,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(f"  playing {a.drafts} drafts x {len(seasons)} seasons, "
           f"{a.draft_sims} x {a.season_sims} sims per optimizer call ...")
+    def _tick(label: str):
+        """One line per draft, flushed. A long run that says nothing is a run someone kills."""
+        def say(season: int, k: int, of: int) -> None:
+            print(f"    {label} {season}: draft {k}/{of}", flush=True)
+        return say
+
     paired = compare(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
-                     n_draft_sims=a.draft_sims, n_season_sims=a.season_sims)
+                     n_draft_sims=a.draft_sims, n_season_sims=a.season_sims,
+                     on_draft=_tick("paired") if a.progress else None)
     s = summarise(paired, seed=a.seed)
     if a.ceiling:
         print("  measuring the ceiling: the same arm, given the season in advance ...")
-        bound = ceiling(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds)
+        bound = ceiling(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
+                        on_draft=_tick("ceiling") if a.progress else None)
         s, warning = with_ceiling(s, bound)
         if warning:
             print(warning)

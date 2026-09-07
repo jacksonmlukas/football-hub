@@ -348,7 +348,15 @@ def _is_mention(line: str, start: int, end: int) -> bool:
 
 
 # `def f`, `class C`, `NAME = ...`, and the guard markers, whose names are declarations too.
-_PY_NAME = re.compile(r"^\s*(?:def|class)\s+(?P<n>[A-Za-z_][A-Za-z0-9_]*)"
+#
+# The indent is `[ \t]*`, not `\s*`, and the difference is which line the hit names. `\s`
+# matches a newline, so `^\s*def` anchored on the blank line above a top-level `def` matches
+# from *there* and the hit is reported two lines early -- reproduced as line 2 for a `def` on
+# line 4. The message is the whole product of this scan: a reader who follows it to a blank
+# line, finds nothing, and stops trusting the tool is the failure this file exists to prevent,
+# arriving through the tool itself. `_DECLARED` below was written with the correct class and
+# the two halves disagreeing about one file is how this surfaced (issue #129).
+_PY_NAME = re.compile(r"^[ \t]*(?:def|class)\s+(?P<n>[A-Za-z_][A-Za-z0-9_]*)"
                       r"|^(?P<c>[A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=]+)?="
                       r"|^\s*#\s*(?:GUARD|UNPROVED)\s+(?P<g>[a-z0-9][a-z0-9-]*)", re.M)
 _SH_NAME = re.compile(r"^(?P<c>[A-Za-z_][A-Za-z0-9_]*)="
@@ -874,3 +882,38 @@ def test_nothing_scanned_uses_a_term_its_glossary_forbids():
         "a regex at all, move it to UNCHECKED and say why. A name under `tests/` is a name "
         "you own outright, so rename it: an exemption there is a test that teaches the wrong "
         "word to the next reader, which is the whole reason names are scanned.")
+
+
+# --- a hit names the line it is on (issue #129) -----------------------------
+
+def _planted(tmp_path: Path, body: str) -> Path:
+    p = tmp_path / "planted.py"
+    p.write_text(body)
+    return p
+
+
+def test_a_name_hit_reports_the_line_the_declaration_is_on(tmp_path):
+    """`\\s` matches a newline, so `^\\s*def` anchored on the blank line above a top-level
+    `def` matched from there and reported two lines early.
+
+    The blank line is the fixture, not decoration: without it the anchor and the declaration
+    are on the same line and the defect does not reproduce at all. That is why this went
+    unnoticed -- every hit in a file whose declarations are not preceded by a blank line was
+    reported correctly.
+    """
+    rule = Rule("name", "a planted rule", owners=())
+    body = "import os\n\n\ndef the_market_thing():\n    pass\n"      # `def` is line 4
+    got = scan((_planted(tmp_path, body),), {"market": rule})
+    assert len(got) == 1, got
+    assert got[0].line == 4, (
+        f"reported line {got[0].line} for a declaration on line 4; a message that sends a "
+        f"reader to a blank line is how a scan stops being read")
+
+
+def test_a_phrase_hit_reports_its_line_too(tmp_path):
+    """The other half, asserted here so the two paths cannot drift apart again -- which is
+    exactly how this defect surfaced, with `_DECLARED` and `_PY_NAME` disagreeing."""
+    rule = Rule("phrase", "a planted rule")
+    body = "import os\n\n\n# a comment about the market here\n"      # comment is line 4
+    got = scan((_planted(tmp_path, body),), {"the market": rule})
+    assert len(got) == 1 and got[0].line == 4, got

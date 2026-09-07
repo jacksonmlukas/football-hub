@@ -134,10 +134,10 @@ class Shrink(NamedTuple):
     # (position, component) -> (a, b, lo, hi) in log(1 + count) = a + b*log(rank). When
     # present the pull is toward what the player's *preseason* rank implies rather than
     # toward his position's average, which is the market-implied variant.
-    market: dict[tuple[str, str], tuple[float, float, float, float]] | None = None
+    consensus_prior: dict[tuple[str, str], tuple[float, float, float, float]] | None = None
 
 
-def fit_market_prior(train: pl.DataFrame,
+def fit_consensus_prior(train: pl.DataFrame,
                      ) -> dict[tuple[str, str], tuple[float, float, float, float]]:
     """`log(1 + count per game) = a + b*log(preseason rank)`, per position, per Usage count.
 
@@ -169,14 +169,14 @@ def fit_market_prior(train: pl.DataFrame,
     return out
 
 
-def market_target(df: pl.DataFrame, col: str,
-                  market: dict[tuple[str, str], tuple[float, float, float, float]],
+def consensus_target(df: pl.DataFrame, col: str,
+                  prior: dict[tuple[str, str], tuple[float, float, float, float]],
                   ) -> np.ndarray:
     """What each player's preseason rank implies for `col`, per game. NaN where unfitted."""
     ranks = df["preseason_ecr"].to_numpy().astype(float)
     out = np.full(len(ranks), np.nan)
     for i, (pos, r) in enumerate(zip(df["position"].to_list(), ranks, strict=True)):
-        fit = market.get((pos, col))
+        fit = prior.get((pos, col))
         if fit is None or not np.isfinite(r) or r <= 0:
             continue
         a, b, lo, hi = fit
@@ -229,15 +229,15 @@ def fit_shrink(train: pl.DataFrame, coefs: dict[str, float], *,
     seasons only and never on the held-out ones.
     """
     vol_mean, eff_mean = _pos_means(train)
-    market = fit_market_prior(train) if target.startswith("market") else None
+    prior = fit_consensus_prior(train) if target.startswith("market") else None
     if target == "market-only":
-        return Shrink(PURE_MARKET_K, PURE_MARKET_K, vol_mean, eff_mean, market)
+        return Shrink(PURE_MARKET_K, PURE_MARKET_K, vol_mean, eff_mean, prior)
     actual = train["fantasy_points_ppr"].to_numpy().astype(float)
-    best = Shrink(0.0, 0.0, vol_mean, eff_mean, market)
+    best = Shrink(0.0, 0.0, vol_mean, eff_mean, prior)
     best_loss = float("inf")
     for vk in VOLUME_SHRINK_GRID:
         for ek in EFF_SHRINK_GRID:
-            cand = Shrink(vk, ek, vol_mean, eff_mean, market)
+            cand = Shrink(vk, ek, vol_mean, eff_mean, prior)
             mu = project(train, coefs, shrink=cand)["mu"].to_numpy().astype(float)
             if objective == "mae":
                 loss = float(np.abs(mu - actual).mean())
@@ -257,7 +257,7 @@ PURE_MARKET_K = 1e9
 
 
 def _shrunk(df: pl.DataFrame, col: str, k: float, means: dict, key: str,
-            market: dict | None = None) -> np.ndarray:
+            prior: dict | None = None) -> np.ndarray:
     """`n/(n+k)` of his own, the rest of the target. `k = 0` returns his own untouched.
 
     The target is his position's average, or -- in the market-implied variant -- what his
@@ -270,8 +270,8 @@ def _shrunk(df: pl.DataFrame, col: str, k: float, means: dict, key: str,
         return own
     n = np.nan_to_num(df["games_before"].to_numpy().astype(float), nan=0.0)
     target = np.array([means.get((p, key), 0.0) for p in df["position"].to_list()])
-    if market is not None and "preseason_ecr" in df.columns:
-        implied = market_target(df, key, market)
+    if prior is not None and "preseason_ecr" in df.columns:
+        implied = consensus_target(df, key, prior)
         target = np.where(np.isnan(implied), target, implied)
     w = n / (n + k)
     return w * own + (1.0 - w) * target
@@ -327,7 +327,7 @@ def project(now: pl.DataFrame, coefs: dict[str, float],
         if shrink is None:
             return np.nan_to_num(now[f"{col}_prior"].to_numpy().astype(float), nan=0.0)
         return _shrunk(now, col, shrink.volume_k, shrink.volume_mean, col,
-                       shrink.market)
+                       shrink.consensus_prior)
 
     tgt = prior("targets") * m["targets"]
     car = prior("carries") * m["carries"]
