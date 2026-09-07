@@ -189,6 +189,22 @@ A third case exists and is not a third test: a signal passes a screen and its de
 be gated at any n this project will see. That is a **provisional rule**, above.
 _Avoid_: validate, backtest — both hide which question is being asked.
 
+### At the boundary
+
+**Contract**:
+What a source is allowed to return, declared once in `hub.contracts` and applied where the
+source is read: which columns, of which dtype family, which keys may not be null or repeat,
+and the range a plausible response stays inside. It has **two verbs, and for a long time it
+had one**. It *refuses* a frame that breaks the declaration — that is `validate`, and it is
+why a fetch failure serves last-good state instead of propagating a bad frame. It also
+*answers* a consumer that names the columns it reads, handing back those columns repaired
+into the units the declaration states — that is `conform`, and it exists because refusal is
+no use to a module that has to keep going, so the module that could not use it wrote a second
+copy of the schema instead. A **Normalisation** is what the second verb can say: one declared
+whole-column repair for one known upstream variation, applied before the bound it protects is
+checked. It widens what a Contract can say and never what it will accept — a value the repair
+cannot bring inside the bound is refused exactly as before.
+
 ### In-season
 
 **Usage**:

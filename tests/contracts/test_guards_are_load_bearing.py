@@ -346,11 +346,16 @@ WATCHED = (
         path=SRC / "contracts.py",
         collects=("problems",),
         raises=("ContractViolation",),
-        why=("`Contract.validate` is a refusal and nothing else: every entry appended to "
-             "`problems` becomes a `ContractViolation` at the foot of the same function, so "
-             "there is no ordinary control flow here for a scan to mistake for a guard. That "
-             "is what makes the judgement safe to make once, in this entry, rather than per "
-             "statement by whoever is reading."),
+        why=("Both of this module's verbs refuse and neither does anything else: every entry "
+             "appended to `problems` becomes a `ContractViolation` at the foot of "
+             "`Contract.validate`, and the one raise outside it -- `conform` meeting a "
+             "consumer that named a column the contract does not declare -- is the same kind "
+             "of statement, reached before any frame is read. So there is no ordinary control "
+             "flow here for a scan to mistake for a guard, which is what makes the judgement "
+             "safe to make once, in this entry, rather than per statement by whoever is "
+             "reading. `Normalisation` is the module's one non-refusing shape and it collects "
+             "and raises nothing, so it is invisible to this scan by construction rather than "
+             "by exemption."),
     ),
     Watched(
         path=SRC / "fetch" / "nflverse.py",

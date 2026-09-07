@@ -25,6 +25,7 @@ from typing import NamedTuple
 import polars as pl
 
 from hub.config import DRAFTED_POSITIONS, SEASON_COMPLETED
+from hub.contracts import INJURIES, SNAP_COUNTS
 from hub.fetch.nflverse import RANKINGS_COLS, Pin, data_pin, load_rankings
 from hub.models import components
 from hub.models.experiment import expanding_weeks
@@ -419,10 +420,19 @@ def snap_share(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - ne
     Snaps key on `pfr_player_id` and everything else on `gsis_id`; joining on the normalised
     name instead is what `hub.names.player_key` is for, and `docs/snap-trend-signal.md` records
     the crosswalk at 99.8%.
+
+    The five columns it reads are asked of `SNAP_COUNTS` rather than taken on trust, which is
+    also how `offense_pct` arrives as a fraction whichever way nflverse shipped it. This
+    function loads from nflreadpy directly, so no contract had ever seen the frame, and it
+    never had the private repair `hub.models.spread.snap_usage` had either -- a whole-percent
+    refresh would have multiplied `snap_trend` by a hundred here while the same refresh came
+    out right over there. One variation, one declaration, one answer.
     """
     import nflreadpy as nfl
-    s = nfl.load_snap_counts(seasons=list(seasons)).filter(pl.col("game_type") == "REG")
-    return (s.select(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64),
+    s = SNAP_COUNTS.conform(nfl.load_snap_counts(seasons=list(seasons)),
+                            "season", "week", "game_type", "player", "offense_pct")
+    return (s.filter(pl.col("game_type") == "REG")
+             .select(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64),
                      pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("key"),
                      pl.col("offense_pct").cast(pl.Float64))
              .group_by(["season", "week", "key"]).agg(pl.col("offense_pct").max()))
@@ -437,29 +447,22 @@ def injury_severity(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover
     screen has *something* in the injury slot, and a null here is a null about the ordinal.
     """
     import nflreadpy as nfl
-    inj = nfl.load_injuries(seasons=list(seasons))
-    cols = {c.lower(): c for c in inj.columns}
-    status = cols.get("report_status") or cols.get("game_status")
-    name = cols.get("full_name") or cols.get("player_name")
-    if status is None or name is None:
-        raise ValueError(
-            "nflverse injuries changed shape: expected a status and a name column, got "
-            f"{sorted(inj.columns)}")
-    sev = (pl.when(pl.col(status) == "Out").then(3.0)
-             .when(pl.col(status) == "Doubtful").then(2.0)
-             .when(pl.col(status) == "Questionable").then(1.0).otherwise(0.0))
+    inj = INJURIES.conform(nfl.load_injuries(seasons=list(seasons)),
+                           "season", "week", "full_name", "report_status", "practice_status")
+    sev = (pl.when(pl.col("report_status") == "Out").then(3.0)
+             .when(pl.col("report_status") == "Doubtful").then(2.0)
+             .when(pl.col("report_status") == "Questionable").then(1.0).otherwise(0.0))
     # `status` and `practice` are carried alongside the ordinal because they are the cells
     # `hub.models.injury` fits its retention table on -- the ordinal is for the screen, the
     # pair is for the model. Practice status arrives as prose ("Did Not Participate In
     # Practice") and the first seven characters separate the three cases, which is the
     # normalisation `injury.observations` already uses.
-    prac = cols.get("practice_status")
-    practice = practice_key(prac) if prac else pl.lit("None")
     return (inj.select(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64),
-                       pl.col(name).map_elements(player_key, return_dtype=pl.Utf8).alias("key"),
+                       pl.col("full_name").map_elements(player_key, return_dtype=pl.Utf8)
+                         .alias("key"),
                        sev.alias("inj_sev"),
-                       pl.col(status).fill_null("None").alias("status"),
-                       practice.alias("practice"))
+                       pl.col("report_status").fill_null("None").alias("status"),
+                       practice_key("practice_status").alias("practice"))
                .sort("inj_sev", descending=True)
                .group_by(["season", "week", "key"])
                .agg(pl.col("inj_sev").max(), pl.col("status").first(),

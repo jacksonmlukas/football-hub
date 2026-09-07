@@ -7,10 +7,13 @@ whether anything richer earns its way in.
 
 All offline.
 """
+from dataclasses import replace
+
 import numpy as np
 import polars as pl
 import pytest
 
+from hub.contracts import SNAP_COUNTS, ContractViolation
 from hub.models import spread
 from hub.models.predict import WEEKLY_K
 
@@ -86,11 +89,45 @@ _XW = pl.DataFrame({"pfr_id": ["P1"], "gsis_id": ["a"]})
 
 
 def test_snap_share_arrives_as_a_fraction_however_nflverse_ships_it():
-    """nflverse has shipped this both ways. Detecting beats assuming."""
+    """nflverse has shipped this both ways. Detecting beats assuming -- and the detecting is
+    `SNAP_COUNTS`', not this module's. The answer used to live here, in a private repair
+    beside a contract that refused the same frame; what this now asserts is that the
+    declaration reaches the consumer, not that the consumer has its own copy."""
     frac = spread.snap_usage(_snaps([(2023, w, "P1", "WR", 0.5) for w in range(1, 9)]), _XW)
     pct = spread.snap_usage(_snaps([(2023, w, "P1", "WR", 50.0) for w in range(1, 9)]), _XW)
     assert frac["snap_pct"][0] == pytest.approx(0.5)
     assert pct["snap_pct"][0] == pytest.approx(0.5)
+
+
+def test_a_snap_share_no_rescaling_can_rescue_reaches_the_consumer_as_a_refusal():
+    """The repair widened what a contract can say to a consumer and did not soften what it
+    refuses to one: a hundredth of 500 is 5, and 5 is not a share."""
+    rows = [(2023, w, "P1", "WR", 500.0) for w in range(1, 9)]
+    with pytest.raises(ContractViolation, match="offense_pct range"):
+        spread.snap_usage(_snaps(rows), _XW)
+
+
+def test_snap_usage_refuses_a_frame_missing_a_column_the_contract_declares():
+    """The presence check this function used to hold itself. It names the contract now, so
+    a reader is sent to the declaration that was broken rather than to this function."""
+    df = _snaps([(2023, 1, "P1", "WR", 0.5)]).drop("offense_pct")
+    with pytest.raises(ContractViolation, match="nflverse_snap_counts: missing columns"):
+        spread.snap_usage(df, _XW)
+
+
+def test_snap_usage_refuses_a_declaration_that_has_stopped_naming_what_it_reads(monkeypatch):
+    """The drift the ticket was about, made to happen.
+
+    Two statements of one schema cannot be held together by anybody noticing. This function
+    asks `SNAP_COUNTS` for four columns by name, so a declaration that loses one -- renamed
+    upstream, dropped by hand, moved to another contract -- refuses here, at the read. The
+    private column list it used to carry would have gone on agreeing with itself.
+    """
+    drifted = replace(SNAP_COUNTS, required={c: dt for c, dt in SNAP_COUNTS.required.items()
+                                             if c != "offense_pct"})
+    monkeypatch.setattr(spread, "SNAP_COUNTS", drifted)
+    with pytest.raises(ContractViolation, match=r"asked for \['offense_pct'\]"):
+        spread.snap_usage(_snaps([(2023, 1, "P1", "WR", 0.5)]), _XW)
 
 
 def test_a_growing_role_has_positive_drift():
