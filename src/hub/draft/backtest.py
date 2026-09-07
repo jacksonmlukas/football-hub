@@ -68,11 +68,14 @@ from hub.fetch.nflverse import pins_this_run
 from hub.league import REG_SEASON_WEEKS
 from hub.models.experiment import (
     BOOTSTRAP,  # noqa: F401 -- re-exported: tests reach it as `bt.BOOTSTRAP`
+    SEASON_CLUSTER,
     Actions,
     gate,
     paired_report,
     per_season,
     realised_ppg,  # noqa: F401 -- same
+    review_width,
+    small_sample_report,
     summarise,
     walk_forward_inputs,
 )
@@ -741,7 +744,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     paired = compare(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
                      n_draft_sims=a.draft_sims, n_season_sims=a.season_sims,
                      on_draft=_tick("paired") if a.progress else None)
-    s = summarise(paired, seed=a.seed)
+    # `SEASON_CLUSTER`, not the row this gate used to take: the eighty (season, draft) rows
+    # are twenty rooms drawn against four boards, and what varies independently between them
+    # is the season. Issue #45; the effect is unmoved and the interval widens.
+    s = summarise(paired, cluster=SEASON_CLUSTER, seed=a.seed)
     if a.ceiling:
         print("  measuring the ceiling: the same arm, given the season in advance ...")
         bound = ceiling(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
@@ -750,9 +756,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if warning:
             print(warning)
 
-    for line in paired_report(s, arm_a="optimizer", arm_b="market"):
+    seasons_tbl = per_season(paired)
+    for line in [*paired_report(s, arm_a="optimizer", arm_b="market"),
+                 *small_sample_report(s, seasons_tbl),
+                 *review_width("draft", s)]:
         print(line)
-    print(f"\n  {verdict(s, per_season(paired))[1]}")
+    print(f"\n  {verdict(s, seasons_tbl)[1]}")
     print("\n  Limitations, fixed before the run:")
     for line in LIMITATIONS:
         print(f"    - {line}")

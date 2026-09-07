@@ -1,11 +1,20 @@
 # A Gate requires every season, not only the interval
 
-**Status:** accepted 2026-09-04.
+**Status:** accepted 2026-09-04. **Amended 2026-09-07** (issue #45) with a precondition; the
+adoption bar itself is unchanged.
 
 **Decision.** A **Gate** adopts only when the pooled interval excludes zero **and** the sign
 holds in every held-out season. It removes only when both hold in the other direction.
 Everything else shows and is never ranked on. One implementation, `hub.models.experiment.gate`,
 read by every gate in the repo.
+
+**Amendment, 2026-09-07 — a Gate must first be able to run.** Before any of the three branches
+above is read, a Gate whose **minimum detectable effect exceeds its measured ceiling** records
+that it *cannot run* and reports no verdict. Both halves of the adoption bar are untouched:
+this adds a precondition ahead of them, it does not weaken or restate either one. The
+amendment is set out in full below.
+
+---
 
 ## The question
 
@@ -70,3 +79,77 @@ A gate whose held-out seasons are too few for consistency to mean anything. At t
 every-season requirement is close to a coin flip and the interval is doing all the work. No
 gate in the repo runs at fewer than three, and one that did should say so rather than quietly
 inheriting a bar built for four.
+
+---
+
+# Amendment, 2026-09-07: a Gate must first be able to run
+
+Issue #45, under the rule pre-registered in [gate-power.md](../gate-power.md) on 2026-09-06 —
+before any of these numbers were known.
+
+**Amended rather than replaced, and that is the point.** Nothing above is withdrawn. The two
+halves of the adoption bar are exactly the two halves accepted on 2026-09-04, the table of
+what the unification did not move still holds, and every gate that can run reaches the verdict
+this ADR gave it. What is added is a question that must be answered *before* those halves are
+read.
+
+## The precondition
+
+> A Gate whose **minimum detectable effect exceeds its measured ceiling** reports
+> **NOT-RUNNABLE** and no verdict. The MDE is the smallest effect the run had 80% power to
+> detect, two-sided at 5%; the ceiling is the largest effect there was to find — what a
+> perfect arm gains over that gate's own incumbent, on that gate's own harness, in that gate's
+> own units.
+
+It sits **ahead of every branch but VOID**. VOID stays above it because a void gate's inputs
+are broken, which makes its MDE and its ceiling untrustworthy too — there is nothing to
+compare. Everything else sits below it.
+
+## Why ahead of SHOW, and not after it
+
+Because SHOW is the branch that would otherwise be wrong, and it is the likely one.
+
+A gate that cannot resolve its own ceiling cannot tell a real effect from a perfect one. Every
+branch below the precondition would be reading noise with a decimal point — but the two
+excluding branches are self-limiting, since an underpowered gate rarely produces an interval
+that excludes zero. The middle branch is not. It prints a null, a null from an underpowered
+gate looks exactly like a null from a well-powered one, and this repo's record is largely a
+record of nulls. Ordering the precondition after SHOW would let precisely the verdict that
+must not be published be published first.
+
+`docs/method.md` already separates the three ways a question closes: rule 8 closes one by
+computing a ceiling, rule 12 acts where no gate *can* run and says so, rule 13 restates a
+number that moved. This is the disposition for a gate that ran and should not have been asked.
+
+## Not planned, not failed
+
+A gate that cannot run closes its dependent tickets as **not planned**. *Failed* would say the
+arm lost. *Not planned* says the design cannot answer the question with the data that exists,
+which is a different and more useful thing for a future reader — and the arm may well be fine.
+
+## What it does not move, checked rather than hoped
+
+The precondition fires only when **both** numbers are present as values. A gate that measured
+no ceiling has not shown it cannot run; it has shown nothing, and `experiment.Field.NO_SLOT`
+is that third state rather than a licence to guess. Every published verdict in the table above
+was reached without a ceiling in its summary and is reached identically now —
+`tests/unit/test_experiment.py` holds the eighty-verdict sweep at its recorded digest, and
+`test_a_runnable_gate_reaches_the_verdict_adr_0019_gave_it` runs it again for each state
+either field can be in.
+
+The comparison is signed rather than absolute, so a **measured ceiling of zero** — a perfect
+arm gaining nothing at all over the incumbent — makes any positive MDE not-runnable. That is
+the correct reading of the strongest finding a ceiling can carry, not an edge case.
+
+## What this amendment does not decide
+
+**Which arm a gate's ceiling is measured with.** For the draft gate and the weekly gate the
+arm is settled and is full foresight. For the **lineup gate it is not**: gate-power.md's
+stage 2 pre-registers a foresight ceiling and issue #43 deliberately built a *variance oracle*
+instead, on the argument that both arms of that gate already share `mu`. The two bound
+different questions and disagree about whether that gate is runnable.
+
+That is a pre-registration question — whether a pre-registration may be re-read after the arm
+it names was built — and it is open as **#138**. The mechanism here takes the arm as a
+parameter and never inspects which arm produced the number it was handed;
+`hub.season.lineup_gate.DECLARED_CEILING_ARM` is the one line #138 changes.

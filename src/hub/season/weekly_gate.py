@@ -49,7 +49,16 @@ import polars as pl
 from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS
 from hub.league import STARTERS, starting_lineup
-from hub.models.experiment import Actions, gate, paired_report, per_season, summarise
+from hub.models.experiment import (
+    SEASON_CLUSTER,
+    Actions,
+    gate,
+    paired_report,
+    per_season,
+    review_width,
+    small_sample_report,
+    summarise,
+)
 
 NOT_FITTED_BECAUSE = (
     "Gate B for the Weekly projection. VOID_FLOOR is the share of roster-weeks lost to a join "
@@ -60,12 +69,19 @@ NOT_FITTED_BECAUSE = (
 # The fantasy regular season. 15-17 is the playoffs, reported apart; 18 is meaningless.
 GATE_WEEKS = FANTASY_WEEKS
 
-# What one independent observation is here. A roster's fourteen weeks share its players, its
-# bye and its draft, so they are one observation with fourteen readings -- resampling rows
-# would report an interval about sqrt(14) too narrow, which is signal-screens.md protocol
-# item 3 and the error that once produced an apparent 4-sigma result. `experiment.summarise`
-# takes this and does the clustering; it used to be a second bootstrap living here.
-CLUSTER: tuple[str, ...] = ("season", "roster")
+# What one independent observation is here -- `experiment.SEASON_CLUSTER`, declared once for
+# every gate in the repo rather than three times in three harnesses.
+#
+# **This was `("season", "roster")` until #45, and the change is a widening.** The old comment
+# was right about what it saw: a roster's fourteen weeks share its players, its bye and its
+# draft, so resampling rows reports an interval about sqrt(14) too narrow -- signal-screens.md
+# protocol item 3, the error that once produced an apparent 4-sigma result. The correction did
+# not go far enough. Forty rosters within one season are drafted from one board, over one
+# player pool, against one schedule, and score one realisation of that year; they are forty
+# readings of a season, not forty independent observations, and the same argument that
+# promoted the roster over the row promotes the season over the roster. There are four
+# seasons, and the interval that says so is much wider than the one this gate published.
+CLUSTER: tuple[str, ...] = SEASON_CLUSTER
 
 # A player the consensus page does not list is ranked behind every player it does.
 UNRANKED = -1e9
@@ -393,7 +409,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     cover = coverage(inputs)
     paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
                      ceiling=a.ceiling)
-    s = summarise(paired, cluster=CLUSTER, seed=a.seed)
+    s = summarise(paired, cluster=SEASON_CLUSTER, seed=a.seed)
     seasons_tbl = per_season(paired)
     mode = ("one add/drop a week, pool both arms can score" if a.churn and not a.open_pool
             else "one add/drop a week, OPEN POOL -- not the gate" if a.churn
@@ -404,13 +420,15 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         mode += ", expected priors"
     if a.lcb:
         mode += f", waiver LCB z={a.lcb}"
-    print(f"\n  {int(s['n'])} roster-weeks over {int(s['clusters'])} rosters, "
+    print(f"\n  {int(s['n'])} roster-weeks over {int(s['clusters'])} seasons, "
           f"on the {len(inputs.covered)} weeks consensus covers   [{mode}]")
     print(f"  unranked {cover['unranked']:.1%}, of which a join failure "
           f"{cover['join_failure']:.1%} (floor {VOID_FLOOR:.0%})")
     print(seasons_tbl)
     print("\n".join([*paired_report(s, arm_a="weekly", arm_b="consensus", unit=UNIT,
                                     places=PLACES, show_n=False),
+                      *small_sample_report(s, seasons_tbl, unit=UNIT, places=PLACES),
+                      *review_width("weekly", s, places=PLACES),
                       *ceiling_report(s, paired)]))
     print(f"\n  {verdict(s, seasons_tbl, cover)[1]}")
     return 0

@@ -108,6 +108,12 @@ network and have nothing on disk, so they are **not measured here** -- see below
 | row (current) | 80 | -19.66 | [-23.16, -16.20] | 1.79 | **5.03** |
 | season | 4 | -19.66 | [-26.68, -11.45] | 3.67 | **10.29** |
 
+> **The two MDEs in this table are superseded, restated 2026-09-07 under #45.** They were
+> computed with a normal quantile, `(z(0.975) + z(0.80)) * SE`, which is what item 2 of the
+> rule above specified. At four clusters that is the wrong reference distribution, and the
+> corrected figures are below. The SEs, the effects and the intervals are unchanged and were
+> never in question — this restates the power arithmetic built on them, not the measurement.
+
 The season-clustered interval was checked against `experiment.summarise(cluster=("season",))`
 and reproduces it exactly, so the standard error above comes from the same bootstrap that
 produces the published interval rather than from a second one that happens to agree.
@@ -206,3 +212,70 @@ That is the digest doing its job. It also means this is a change to published ga
 rather than a measurement, so it belongs to #45 with its blockers done and a before/after on
 the affected verdicts, not to a probe. It was tried, reverted, and is recorded here so #45
 starts knowing the plumbing exists and the digest will move.
+
+---
+
+# Restated 2026-09-07: the MDE's reference distribution, under #45
+
+The rule above, item 2, specified `(z(0.975) + z(0.80)) * SE`. **The quantile is wrong at four
+clusters and the rule is corrected to `(t(0.975, k-1) + z(0.80)) * SE`**, `k` the cluster
+count. The SE still comes from the same bootstrap that produces the interval; that half is
+unchanged and is the half the original wording was written to protect.
+
+`docs/method.md` rule 13: this is a dated restatement beside the original, not an edit over
+the top of it. The superseded figures keep their text in the table above.
+
+**Why it is a correction and not a preference.** `SE` is estimated from `k` observations, so
+the reference distribution for a two-sided interval on it is a t on `k-1` degrees of freedom.
+With `k = 4` that is `t(0.975, 3) = 3.1824` against `z(0.975) = 1.9600` — the normal
+understates the MDE by **1.44x**. Using the normal makes the published SE and the published
+interval consistent with each other rather than correct. Only the 0.975 term is a t; the 0.80
+power term stays normal, which is the standard form.
+
+| gate | clusters | t(0.975, k−1) | SE | MDE, superseded (normal) | **MDE, restated (t)** |
+|---|---|---|---|---|---|
+| draft, row-clustered | 80 | 1.9905 | 1.79 | 5.03 | **5.07** |
+| draft, season-clustered | 4 | 3.1824 | 3.67 | 10.29 | **14.77** |
+
+At 80 clusters the correction is **1.1%**; at 4 it is **44%**. That is the whole shape of the
+thing — the normal quantile is a good approximation exactly where the cluster count is large
+enough not to need it, and the case this repo is actually in is the other one.
+
+*(On the SE rounded to 3.67 the normal arithmetic lands on 10.28 rather than the 10.29 in the
+table above; the SE that reproduces 10.29 exactly is 3.6729, which rounds to 3.67 and gives a
+t MDE of 14.78. The ratio, which is free of the rounding, is 1.4364 either way. The restated
+figures above are quoted on the published 3.67.)*
+
+**Stage 1 still passes for the draft gate, with a much thinner margin.** The comparator is the
+gate's own reported effect, |−19.66|, and the restated season-clustered MDE is 14.77:
+19.66 / 14.77 = **1.33x**, where the superseded arithmetic read 1.9x. It passes, and stage 1
+was already "a low bar by construction". Nothing about the REMOVE disposition moves — it rests
+on the sign and the 4-of-4 consistency, neither of which any of this touches — and the effect
+itself is under attribution as #190, which is the larger question hanging over the number.
+
+**For the weekly gate the correction is the difference between underpowered and not remotely
+close**, and that is now measurable: see the restatement in
+[weekly-blend-gate.md](weekly-blend-gate.md).
+
+## Both gates now report this themselves
+
+The finding recorded above — that adding the MDE is not additive — is discharged. `summarise`
+computes `se` and `mde` from the interval's own bootstrap; `paired_report` prints the MDE line
+whose plumbing was already there; the block sweep digest moved once, from `bf5b1af281ea0f0c`
+to `5c1be1a2ba3ba17f`, and `test_every_block_grew_exactly_the_mde_line_and_nothing_else` is
+what says the move is only that. All three harnesses now pass `SEASON_CLUSTER`, asserted on
+the call by `tests/contracts/test_gates_cluster_on_the_season.py`.
+
+**Stage 2 is now mechanised but is not thereby answered.** `experiment.gate` reports
+NOT-RUNNABLE when a gate's MDE exceeds its ceiling, ahead of every branch but VOID
+([ADR-0019](adr/0019-a-gate-requires-every-season.md), amended). It fires only when a gate
+hands in a measured ceiling, so the two gates that have never measured one still reach the
+verdicts they reached before. What stage 2 needs to actually run is what the section above
+already says it needs: frozen paired frames for the two network-built gates.
+
+**And for the lineup gate, stage 2's comparator is still open.** This document pre-registers
+that stage against a *foresight* ceiling; #43 built a **variance oracle** and argued for it,
+on the grounds that both arms of that gate already share `mu`. The two bound different
+questions, and which one this gate declares is **#138** — a pre-registration question, not an
+implementation detail. The mechanism takes it as a parameter and declares nothing:
+`hub.season.lineup_gate.DECLARED_CEILING_ARM` is the single line #138 sets.

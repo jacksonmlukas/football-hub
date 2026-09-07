@@ -142,33 +142,55 @@ def test_nothing_measured_does_not_adopt():
 
 # --- pairing and the cluster bootstrap -------------------------------------
 
-def _paired(rosters=6, weeks=10, gain=1.0, seed=0):
+def _paired(seasons=4, rosters=6, weeks=10, gain=1.0, seed=0):
+    """Roster-weeks with an effect at *both* levels a cluster could be drawn at.
+
+    The season carries the larger one (sd 5.0) and the roster a smaller one (sd 1.5) nested
+    inside it, which is the shape the real gate has and the shape that lets the three
+    candidate units be told apart: row, roster, season each give a different interval here.
+    A fixture flat at either level would let two of the three agree and prove nothing.
+    """
     rng = np.random.default_rng(seed)
     rows = []
-    for k in range(rosters):
-        offset = rng.normal(0, 5.0)      # a roster-level effect, shared by all its weeks
-        for w in range(1, weeks + 1):
-            d = gain + offset + rng.normal(0, 1.0)
-            rows.append({"season": 2024, "roster": k, "week": w,
-                         "consensus": 100.0, "weekly": 100.0 + d, "diff": d})
+    for season in range(2022, 2022 + seasons):
+        year = rng.normal(0, 5.0)        # a season-level effect, shared by all its rosters
+        for k in range(rosters):
+            offset = rng.normal(0, 1.5)  # a roster-level effect, shared by all its weeks
+            for w in range(1, weeks + 1):
+                d = gain + year + offset + rng.normal(0, 1.0)
+                rows.append({"season": season, "roster": k, "week": w,
+                             "consensus": 100.0, "weekly": 100.0 + d, "diff": d})
     return pl.DataFrame(rows)
 
 
-def test_the_bootstrap_resamples_rosters_not_rows():
-    """A roster's weeks share its players, its bye and its draft. Resampling rows would treat
-    ten readings as ten observations and report an interval far too narrow -- protocol item 3,
-    which turned noise into an apparent 4-sigma result once already."""
+def test_the_bootstrap_resamples_seasons_not_rosters_or_rows():
+    """Issue #45 moved this gate's unit from the roster to the season, and the argument that
+    moved it is the one that had already moved it from the row to the roster.
+
+    A roster's ten weeks share its players, its bye and its draft. But its season's six
+    rosters share a board, a player pool, a schedule and one realisation of the year -- so
+    they are six readings of a season, not six observations, and resampling them reports an
+    interval too narrow for the same reason resampling rows did. Protocol item 3, one level
+    further up.
+
+    All three units are asserted here, in order, because the failure this guards against is
+    stopping one level short -- which is exactly what the previous version of this gate did.
+    """
     from hub.models.experiment import summarise
     paired = _paired()
-    clustered = summarise(paired, cluster=G.CLUSTER, bootstrap=2000, seed=1)
-    naive = summarise(paired, bootstrap=2000, seed=1)
-    naive_width = naive["hi"] - naive["lo"]
-    assert clustered["hi"] - clustered["lo"] > 2 * naive_width, \
-        "clustering must widen the interval when the roster effect is real"
-    assert clustered["clusters"] == 6 and clustered["n"] == 60
-    # The unclustered arm is the same statistic with the unit left at the row -- which is the
-    # mistake, stated through the same interface rather than as a separate function.
-    assert naive["clusters"] == 60
+    season = summarise(paired, cluster=G.CLUSTER, bootstrap=2000, seed=1)
+    roster = summarise(paired, cluster=("season", "roster"), bootstrap=2000, seed=1)
+    row = summarise(paired, bootstrap=2000, seed=1)
+
+    widths = [row["hi"] - row["lo"], roster["hi"] - roster["lo"],
+              season["hi"] - season["lo"]]
+    assert widths[0] < widths[1] < widths[2], \
+        f"each coarser unit must widen the interval: {widths}"
+    assert season["clusters"] == 4 and roster["clusters"] == 24 and row["clusters"] == 240
+    assert season["n"] == roster["n"] == row["n"] == 240
+    # The mean is untouched by any of it: these seasons are balanced, so what moves is the
+    # claim about precision and never the estimate.
+    assert season["mean"] == pytest.approx(row["mean"])
 
 
 def test_an_empty_frame_reports_rather_than_crashing():
