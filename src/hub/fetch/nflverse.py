@@ -340,8 +340,9 @@ class Pin:
     rescaled: tuple[str, ...] = ()
 
 
-def content_digest(df: pl.DataFrame) -> str:
-    """A hash of what the frame holds, reproducible in a fresh interpreter.
+def content_digest(df: pl.DataFrame, key: Sequence[str]) -> str:
+    """A hash of what the frame holds, reproducible in a fresh interpreter and independent
+    of the order the source happened to hand the rows over in.
 
     Not `hash()`: it is salted per process, so a digest resting on it would change on every
     run and could name nothing.
@@ -352,12 +353,35 @@ def content_digest(df: pl.DataFrame) -> str:
     digest would have moved on a cache hit alone. The canonical form is instead the column
     names and dtypes followed by the frame's CSV bytes: text, exact for floats
     (`0.1 + 0.2` writes as `0.30000000000000004`), and distinguishing a null from an empty
-    string. It is order-sensitive, which is right -- a reordered frame is not the frame a
-    published number was computed on.
+    string.
+
+    Those bytes are order-sensitive, so the rows are put in a declared order before they are
+    written. The argument that used to stand here -- that a reordered frame is not the frame
+    a published number was computed on -- is true of a *published* frame and does not carry
+    to one just read off the wire, where the row order is the source's whim. Left alone it
+    reported drift that had not happened, which is the failure this hash exists to detect and
+    therefore the one it must not manufacture.
+
+    `key` is the contract's declared unique key; `pin_digest` reads it from `SOURCES`.
+    Sorting on it alone would be canonical only while it really is unique, so every remaining
+    column follows it as the tiebreak. Rows that tie through all of them are identical rows
+    and write identical bytes whichever way the tie fell, so the digest is a function of the
+    frame's content whether the key is unique, duplicated, or absent.
+
+    Absent is the ordinary case rather than the corner: eight of the nine nflverse contracts
+    declare no unique key, and a pinned load whose `cols=` omitted the key leaves a frame
+    without it. Neither falls back to insertion order -- with no usable key every column is
+    the key. `key` has no default so that each caller states which it has, rather than
+    omitting the argument and getting the silent fallback this replaced.
     """
+    # Declared key first, then the rest of the frame; with no usable key this is every
+    # column, which is a total order over anything that is not a duplicate row.
+    by = [c for c in key if c in df.columns]
+    by += [c for c in df.columns if c not in by]
+    ordered = df.sort(by) if by else df
     head = ";".join(f"{c}:{df.schema[c]}" for c in df.columns).encode()
     buf = io.BytesIO()
-    df.write_csv(buf)
+    ordered.write_csv(buf)
     return hashlib.sha256(head + b"\n" + buf.getvalue()).hexdigest()[:8]
 
 
@@ -371,9 +395,16 @@ def pin_digest(source: str, as_of: str | None, df: pl.DataFrame) -> str:
 
     Eight hex characters, the length `config_digest` and `fitted_digest` already use, since
     a gate output prints the two side by side.
+
+    The order the rows hash in comes from the contract registered for `source`, which is the
+    only place the unique key is declared -- so a caller cannot pass a key that disagrees
+    with the one the frame was validated against. A source with no contract declares no key,
+    and `content_digest` orders on the whole frame instead.
     """
+    contract = SOURCES.get(source)
+    key = () if contract is None else contract.unique
     return hashlib.sha256(
-        pin_fold(source, as_of, content_digest(df)).encode()).hexdigest()[:8]
+        pin_fold(source, as_of, content_digest(df, key)).encode()).hexdigest()[:8]
 
 
 def _as_of_date(as_of: str | date | None) -> date | None:

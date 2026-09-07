@@ -596,6 +596,95 @@ def test_the_digest_is_reproducible_in_a_fresh_process(fake_ffo, tmp_path):
     assert seen == {pin.digest}, seen
 
 
+# --- the digest is a function of content, not of arrival order (issue #166) ---
+#
+# The hash is over CSV bytes, which are order-sensitive, and nothing put the rows in an order
+# first. A source handing back the same rows in a different order therefore reported drift
+# that had not happened -- from the one mechanism the tree relies on to say two runs saw the
+# same bytes. `content_digest` now orders on the contract's declared unique key, then on every
+# remaining column as the tiebreak.
+
+def _shuffled(df: pl.DataFrame) -> pl.DataFrame:
+    """The same rows, in an order no read of this frame would produce by accident."""
+    return df.reverse()
+
+
+def test_the_same_rows_in_a_different_order_are_the_same_digest():
+    """The bug, stated. Two fetches that differ only in row order named different bytes."""
+    df = pl.DataFrame({"game_id": ["c", "a", "b"], "away_score": [3, 1, 2]})
+    assert nv.content_digest(df, ("game_id",)) == nv.content_digest(_shuffled(df),
+                                                                   ("game_id",))
+
+
+def test_a_source_with_no_declared_key_is_ordered_on_every_column():
+    """Eight of the nine nflverse contracts declare no unique key, so this is the ordinary
+    path rather than the corner: with no key the whole row is the key, and the alternative
+    -- falling through to insertion order -- is the bug for eight sources out of nine."""
+    df = pl.DataFrame({"player": ["c", "a", "b"], "points": [3.5, 1.5, 2.5]})
+    assert nv.content_digest(df, ()) == nv.content_digest(_shuffled(df), ())
+
+
+def test_a_change_confined_to_one_row_still_moves_the_digest():
+    """Order-insensitivity that also lost content would be worse than the bug it replaced:
+    the digest would stop naming bytes at all."""
+    df = pl.DataFrame({"game_id": ["a", "b", "c"], "away_score": [1, 2, 3]})
+    moved = pl.DataFrame({"game_id": ["a", "b", "c"], "away_score": [1, 2, 4]})
+    assert nv.content_digest(df, ("game_id",)) != nv.content_digest(moved, ("game_id",))
+
+
+def test_a_duplicated_key_does_not_leave_the_order_undecided():
+    """Sorting on the declared key alone is canonical only while the key really is unique.
+    A frame that ties on it -- which `content_digest` is reachable with, since the contract
+    is what enforces uniqueness and not this function -- would otherwise have its tied rows
+    ordered by whatever the sort did with them."""
+    df = pl.DataFrame({"game_id": ["a", "a", "b"], "away_score": [2, 1, 3]})
+    assert nv.content_digest(df, ("game_id",)) == nv.content_digest(_shuffled(df),
+                                                                   ("game_id",))
+
+
+def test_a_key_the_frame_does_not_carry_is_ordered_on_what_it_does_carry():
+    """A pinned load whose `cols=` left the key out still has to hash reproducibly, and the
+    contract's `unique` names a column that is not in the frame."""
+    df = pl.DataFrame({"away_score": [3, 1, 2]})
+    assert nv.content_digest(df, ("game_id",)) == nv.content_digest(_shuffled(df),
+                                                                    ("game_id",))
+
+
+def test_the_key_has_to_be_stated_rather_than_defaulted():
+    """The silent fallback is the defect. A caller that has no key says so by passing `()`;
+    one that forgets is refused rather than served insertion order."""
+    with pytest.raises(TypeError):
+        nv.content_digest(pl.DataFrame({"a": [1]}))    # type: ignore[missing-argument]
+
+
+def test_the_pin_digest_takes_its_order_from_the_registered_contract(fake_ffo, tmp_path,
+                                                                     monkeypatch):
+    """End to end through `load`: the ordering reaches the published pin, so an archive that
+    came back reordered does not read as an archive that moved."""
+    frame = fake_ffo()
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+    before = nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04")
+
+    monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: _shuffled(frame))
+    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04",
+            refresh=True)
+    after = nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04")
+
+    assert before is not None and after is not None
+    assert before.digest == after.digest, (
+        "the same rows came back in a different order and the pin reported drift")
+
+
+def test_a_source_that_declares_a_unique_key_reaches_the_keyed_path():
+    """`schedules` is the one nflverse contract with a `unique`, so the keyed branch is
+    reachable rather than argued for. If this list changes, the branch above is still
+    exercised by the tests that pass a key directly."""
+    from hub.contracts import SCHEDULES
+
+    assert nv.SOURCES["schedules"] is SCHEDULES
+    assert SCHEDULES.unique == ("game_id",)
+
+
 def test_a_source_that_revises_in_place_carries_a_pinned_at(monkeypatch, tmp_path):
     """`player_stats` mirrors an upstream that rewrites -- `_write_by_week` says so where it
     passes `replace=True`. An as-of cannot reproduce those rows, so the pin records when they
