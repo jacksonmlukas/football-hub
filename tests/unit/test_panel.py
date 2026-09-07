@@ -456,12 +456,17 @@ def test_no_feature_moves_when_its_own_weeks_play_is_rewritten(monkeypatch, tmp_
     would arrive on somebody else's row.
 
     What may move on the rewritten row is what the archive itself supplies -- the realised
-    columns and the two totals built from them -- and `panelarchive.play_derived_columns`
-    derives that exempt set from the captures rather than listing it, so a feature added to
-    the Panel is tested rather than quietly exempted.
+    columns and the two totals built from them.
+
+    **Run over `panel.feature_columns`, which is what makes that classification a claim under
+    test.** The exempt set used to be derived here in the harness, so the module could say
+    nothing about which of its own columns kept its own rule (#203). Now the module says it
+    and this asserts it: a column `column_role` calls derived -- including any future one that
+    merely *ends* in `_prior`, `_recent` or `_trend` without going through `expanding_weeks`
+    -- is perturbed here like every other feature, and a mislabelled one moves and fails.
     """
     base, after = _both_panels(monkeypatch, tmp_path, season, week, name)
-    feats = arc.features(base)
+    feats = pnl.feature_columns(base)
     before = arc.rows_up_to(base, season, week).select(feats)
     got = arc.rows_up_to(after, season, week).select(feats)
     assert before.height == got.height, (
@@ -485,7 +490,7 @@ def test_the_rewritten_week_does_reach_the_features_that_are_allowed_to_see_it(
     weeks are exactly where that week's play is *supposed* to arrive: it is their past.
     """
     base, after = _both_panels(monkeypatch, tmp_path, season, week, name)
-    feats = arc.features(base)
+    feats = pnl.feature_columns(base)
     later = ((pl.col("season") > season)
              | ((pl.col("season") == season) & (pl.col("week") > week)))
     a = base.filter(later).sort(["player_id", "season", "week"]).select(feats)
@@ -799,3 +804,247 @@ def test_the_panel_only_degrades_around_a_contract_violation(monkeypatch, tmp_pa
     monkeypatch.setattr(pnl, "injury_severity", broken)
     with pytest.raises(TypeError, match="the ordinal is wrong"):
         pnl.build_panel(arc.SEASONS)
+
+
+# --- which side of its own rule each column is on (#203) --------------------------------
+#
+# The rule is kept mechanically for the derived features and was kept nowhere for the frame
+# they are built on: `build_panel` starts from the realised week-level frame and never strips
+# it, so week w's own `targets`, `receptions`, `offense_pct`, `tds` and `yds` reach the
+# return alongside the features. They are meant to -- `hub.models.weekly` fits against them
+# and the Usage screen measures against them -- and what was missing is that the return said
+# nothing about which was which. #176 is the cost when this species is not caught: a coverage
+# measurement centred on each player's own realised mean, published, and 81.1% -> 77.4% once
+# corrected.
+#
+# Every spec `build_panel` is called with anywhere in the tree, so a column that reaches only
+# the gate's panel is classified too. `routes` and `scheme` are the two this archive cannot
+# drive (see the fixtures README); their raw columns are asserted by name in the last test
+# here rather than through a Panel that cannot be built.
+_SPECS = (
+    (pnl.SCREEN_SPEC, "screen"),
+    (pnl.PanelSpec(consensus=False), "gate"),
+    (pnl.PanelSpec(expected=True), "expected"),
+)
+
+
+@pytest.mark.parametrize(("spec", "which"), _SPECS, ids=[w for _, w in _SPECS])
+def test_every_column_the_panel_hands_back_is_on_exactly_one_side_of_its_rule(monkeypatch,
+                                                                             tmp_path,
+                                                                             spec, which):
+    """The partition is total and disjoint, over the frame that is actually served.
+
+    Total is the half that matters: a column on no side is a column a caller can only judge
+    by its suffix, which is the whole defect. Disjoint is what makes `feature_columns` and
+    `outcome_columns` a decision rather than two overlapping opinions.
+
+    Derived from the served frame rather than compared against a list of today's columns --
+    a list would pass forever while the next column slipped past it.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS, spec)
+    feats, outs = set(pnl.feature_columns(p)), set(pnl.outcome_columns(p))
+    ident = {c for c in p.columns if pnl.column_role(c) == "identity"}
+    assert p.height > 0 and len(p.columns) > 40, "an empty frame would satisfy this vacuously"
+    assert feats | outs | ident == set(p.columns), (
+        f"{sorted(set(p.columns) - (feats | outs | ident))} are on no side of the rule; "
+        f"`_served` should have refused the frame before it got here")
+    assert not (feats & outs) and not (feats & ident) and not (outs & ident), \
+        "a column on two sides is not a classification"
+    assert feats and outs, "both halves must be non-empty or the split is not doing anything"
+
+
+def test_the_five_columns_the_issue_names_are_outcomes_and_not_features(monkeypatch,
+                                                                       tmp_path):
+    """The specific leak #203 opens on, pinned by name. A caller naming one gets refused.
+
+    Not the general guarantee -- that is the test above and the refusal below -- but the five
+    that were reachable as features on the day the issue was written. `offense_pct` is the
+    sharpest of them: `snap_trend` is built from it and is this repo's one durable in-season
+    signal, so the wrong one of that pair is exactly the reach a tired Sunday makes.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS)
+    named = ("targets", "receptions", "offense_pct", "tds", "yds")
+    assert set(named) <= set(pnl.outcome_columns(p)), \
+        "these are week w's own outcome and the Panel must say so"
+    for c in named:
+        with pytest.raises(pnl.PanelRuleViolation) as e:
+            pnl.require_features(p, ["snap_trend", c])
+        assert f"`{c}`" in str(e.value), "the refusal must name the column that caused it"
+        assert "snap_trend" not in str(e.value), \
+            "and not the one that was fine, or the message sends a reader nowhere"
+
+
+def test_the_refusal_points_at_the_column_measured_before_the_week(monkeypatch, tmp_path):
+    """A refusal that only says no costs the next reader the lookup the message could do.
+
+    `targets` has two columns beside it that are the same quantity measured before the week --
+    the season-to-date prior and the last three weeks. Naming them is the difference between
+    a guard and a wall.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS)
+    with pytest.raises(pnl.PanelRuleViolation) as e:
+        pnl.require_features(p, ["targets"])
+    assert "targets_prior" in str(e.value) and "targets_recent" in str(e.value), \
+        "both of `targets`' before-the-week measurements are on this frame and go unnamed"
+    with pytest.raises(pnl.PanelRuleViolation) as e:
+        pnl.require_features(p, ["not_a_column_at_all"])
+    assert "not on this frame" in str(e.value), \
+        "a name that is on no side because it is on no frame says the simpler thing"
+
+
+def test_the_three_named_pre_kickoff_exceptions_stay_usable_as_week_w_information(monkeypatch,
+                                                                                  tmp_path):
+    """The line, the injury report and the opponent are week-*w* information by the rule.
+
+    `docs/method.md` rule #2 and `CONTEXT.md`'s **Panel** entry both name them: they are
+    published *for* week w and are legitimately available before kickoff. A tightening that
+    put them out of a caller's reach would have broken the Panel rather than tightened it --
+    a screen with no line, no injury report and no opponent measures nothing this repo asks.
+
+    Consensus rides here too. Not one of the three, and the same species: `assign_weeks` and
+    `CONSENSUS_MAX_LEAD_DAYS` exist to keep a scrape on the near side of its kickoff, and
+    `ecr` is half of `weekly_screen.CONTROLS`, so a Panel that refused it would refuse the
+    screen's own control set.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS)
+    line = ("own_spread", "total_line", "implied_total", "rest", "roof", "wind", "is_home")
+    report = ("inj_sev", "status", "practice")
+    opponent = ("opp", "opponent_team")
+    consensus = ("ecr", "lead_days")
+    for group in (line, report, opponent, consensus):
+        assert set(group) <= set(pnl.feature_columns(p)), \
+            f"{sorted(set(group) - set(pnl.feature_columns(p)))} became unreachable"
+        pnl.require_features(p, list(group))       # raises if any of them is refused
+    assert set(pnl.INJURY_COLUMNS) == set(report), \
+        "the report's three are named once in `INJURY_COLUMNS`; this must not drift from it"
+
+
+def test_the_injected_preseason_board_is_pre_kickoff_and_not_unclassified(monkeypatch,
+                                                                          tmp_path):
+    """`spec.ranks` is caller-supplied, so it is the one join whose columns come from outside.
+
+    An August **Consensus** opinion about a September season is as pre-kickoff as a fact gets,
+    and `hub.season.weekly_gate_data.preseason_ranks` is the caller that injects it. Left
+    undeclared, `_served` would refuse the gate's own panel -- so this is the case where the
+    boundary check has to be right about a column this module does not itself build.
+    """
+    arc.install(monkeypatch, tmp_path)
+    board = arc.frame("draft_board")
+    ranks = board.select(
+        pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("key"),
+        pl.lit(2024).cast(pl.Int64).alias("season"),
+        pl.col("ecr").alias("preseason_ecr")).drop_nulls("preseason_ecr")
+    p = pnl.build_panel(arc.SEASONS, pnl.PanelSpec(consensus=False, ranks=ranks))
+    assert pnl.column_role("preseason_ecr") == "pre-kickoff"
+    assert "preseason_ecr" in pnl.feature_columns(p)
+    pnl.require_features(p, ["preseason_ecr"])
+
+
+# The extra column a source grows in the two tests below. A realised quantity on purpose:
+# yards after the catch is week w's own play, so a Panel that served it unremarked is exactly
+# the leak #203 is about.
+_GROWN = "yards_after_catch"
+
+
+def _snap_share_that_grew_a_column(monkeypatch):
+    """`snap_share`, returning one more realised column than it used to.
+
+    Monkeypatched at this repo's own function rather than at the capture, because every source
+    narrows with an explicit `select` -- so the way a raw outcome column really starts
+    surviving to the return is an edit *there*: a new join, a new total, or a source joined
+    whole after it grew a column upstream. This stands in for that edit. Same technique as
+    `test_the_panel_only_degrades_around_a_contract_violation` above.
+    """
+    real = pnl.snap_share
+
+    def grown(seasons):
+        return real(seasons).with_columns(pl.lit(1.0).alias(_GROWN))
+
+    monkeypatch.setattr(pnl, "snap_share", grown)
+
+
+def test_the_panel_refuses_to_serve_a_column_that_is_on_neither_side(monkeypatch, tmp_path):
+    """**The load-bearing one.** A new raw outcome column reaching the return is refused.
+
+    A test that checked today's known columns against a list would pass forever while the
+    next one slipped through, so this adds one the module has never heard of and asserts the
+    Panel will not hand it back. The default for an unclassified column is unsafe, which is
+    the only direction a leakage guard may fail in: a column nobody has classified is one a
+    caller can judge by its suffix and nothing else, which is the defect itself.
+
+    The refusal has to be actionable, so it names the column and where to declare it. A
+    reader who meets this message is being told to make a decision, not to delete a line.
+    """
+    arc.install(monkeypatch, tmp_path)
+    _snap_share_that_grew_a_column(monkeypatch)
+    with pytest.raises(pnl.PanelRuleViolation) as e:
+        pnl.build_panel(arc.SEASONS)
+    msg = str(e.value)
+    assert _GROWN in msg, "the refusal must name the column that caused it"
+    assert "OUTCOMES" in msg and "PRE_KICKOFF" in msg, \
+        "and where to put it, or the next reader's cheapest fix is to delete the guard"
+
+
+def test_declaring_the_grown_column_serves_it_and_refuses_it_as_a_feature(monkeypatch,
+                                                                          tmp_path):
+    """The other half: the refusal above is a fork in the road, not a dead end.
+
+    Without this, "the Panel refuses" is satisfiable by a Panel that refuses everything, and
+    the test above would pass against a guard that had simply broken the assembly. Declaring
+    the grown column an outcome is the resolution its own message asks for, and what that buys
+    is the distinction the issue is about -- it is served, a fit could use it as an outcome,
+    and `require_features` refuses it where a feature was meant.
+    """
+    arc.install(monkeypatch, tmp_path)
+    _snap_share_that_grew_a_column(monkeypatch)
+    monkeypatch.setattr(pnl, "OUTCOMES", (*pnl.OUTCOMES, _GROWN))
+    p = pnl.build_panel(arc.SEASONS)
+    assert _GROWN in p.columns, "declared, it is served -- the raw columns are kept on purpose"
+    assert _GROWN in pnl.outcome_columns(p) and _GROWN not in pnl.feature_columns(p)
+    with pytest.raises(pnl.PanelRuleViolation, match=_GROWN):
+        pnl.require_features(p, [_GROWN])
+
+
+def test_the_modules_outcome_set_agrees_with_what_the_captures_supply(monkeypatch, tmp_path):
+    """Two derivations of the same set, meeting. Neither is a restatement of the other.
+
+    `panelarchive.play_derived_columns` reads the captured `player_stats` and `snap_counts`
+    frames; `panel.OUTCOMES` reads this module's own declarations. A column the module calls
+    an outcome that the captures do not supply from week-w play is a misclassification in one
+    direction, and a play-derived column the module does not account for is the other.
+
+    The two sets are not equal and should not be: the captures also carry the row's own
+    address (`player_id`, `season`, `week`, ...) and the opponent, which are facts about the
+    fixture rather than about the play.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS)
+    captured = arc.play_derived_columns()
+    assert set(pnl.outcome_columns(p)) <= captured, (
+        f"{sorted(set(pnl.outcome_columns(p)) - captured)} are called week-w outcomes by the "
+        f"module and are not week-w play in the captures")
+    unaccounted = ((set(p.columns) & captured) - set(pnl.outcome_columns(p))
+                   - set(pnl.IDENTITY) - {"opponent_team"})
+    assert not unaccounted, (
+        f"{sorted(unaccounted)} come off a week-w capture and reach the Panel as something "
+        f"other than an outcome, the row's address, or the opponent")
+
+
+def test_the_opt_in_specs_raw_columns_are_declared_though_the_archive_cannot_drive_them():
+    """`routes` and `scheme` join raw week-w measurements too, and this capture cannot run them.
+
+    `route_pct` is the share of week w's charted pass plays he was on the field for, and the
+    scheme rates are how the offence actually played week w -- each joined onto the Panel
+    beside the `_trend` built from it, which is the same shape as `offense_pct`/`snap_trend`
+    and the same reach. The fixtures README records why the capture cannot drive either spec,
+    so the classification is asserted here rather than through a Panel that cannot be built.
+    """
+    for c in ("route_pct", "pass_rate", *pnl.SCHEME):
+        assert pnl.column_role(c) == "outcome", \
+            f"`{c}` is measured on week w's own plays and nothing says so"
+        assert pnl.column_role(f"{c}_trend") == "derived", \
+            f"`{c}_trend` is the feature built from it and must stay reachable"

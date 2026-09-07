@@ -60,6 +60,7 @@ from hub.models.panel import (
     PanelSpec,
     build_panel,
     consensus_pin,
+    require_features,
 )
 
 NOT_FITTED_BECAUSE = (
@@ -153,7 +154,16 @@ def cell_correlations(panel: pl.DataFrame, feature: str, *, min_week: int = 1,
     carries, attempts -- and not only against points. That is the premise of the multiplier
     form: a feature that moves points but not counts cannot be applied as a Usage multiplier,
     whatever it does to the total.
+
+    **This is the seam where a column becomes a feature, so this is where the Panel's rule is
+    asked.** `feature` and every control must be measured before week w or published for it;
+    `outcome` is the one parameter that may be week w's own play, and naming it there is how a
+    caller says it means the realised column *as an outcome*. Before #203 the difference was a
+    suffix convention and `FEATURES` below was the only thing keeping it -- which made the
+    screen correct by the care of whoever last edited a tuple. `screen`, `screen_joint` and
+    `screen_usage` all route through here, so asking once covers the three.
     """
+    require_features(panel, [feature, *controls])
     need = [outcome, feature, *controls]
     # Sorted before grouping, and grouped in order. `group_by` promises neither the order of
     # the groups nor the order of rows within one, and both reach floating-point sums here:
