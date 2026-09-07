@@ -6,6 +6,38 @@ which fixed every rule and was committed *before* the run — the commit order i
 **2,000 roster-weeks over 160 rosters, four held-out seasons, 79 covered weeks.
 Join failure 0.1% against a 2% floor.**
 
+## Observed 2026-09-07, and two of the figures above are not what they appeared
+
+The gate now prints its own fallback block (#207). Running it on the published command gives
+numbers that do **not** match the ones recorded earlier in this document, in two ways, and both
+corrections matter more than the block itself.
+
+**The shares were measured over the wrong population.** Earlier here: 54.2% model projection,
+16.7% rank-interpolated, 29.1% unscoreable. The gate reports **76.9 / 8.7 / 14.5** over 28,000
+roster-week cells. Both are right about what they counted — the first is over the season's whole
+universe, the second over the cells the arm is actually scored on. The second is the one that
+bears on the verdict, and it is the one the gate now prints. A rostered player is far likelier
+to be projectable than a player on the board, which is the whole of the difference.
+
+**The mixed-scale treatment scores +0.525 today, not the published +0.215.** The reconstruction
+is faithful — `np.where(priced, col, consensus)` is exactly the pre-#44
+`np.where(np.isnan(mu), cons, mu)`, checked against `7873de6` — so this is not a coding error.
+It is the same column, scored on today's tree, giving a different answer.
+
+**That gap is itself a measurement.** The published +0.215 was taken before #150 refit the
+pick-noise constants, and those constants build the room the gate's rosters are drafted in. So
+the gate is scoring different rosters than it was, and an identical treatment moves 0.31 points
+as a result. This is #190's finding in the other gate: a harness whose figures move with code
+that is not about the arm under test.
+
+The mixed-scale row in the gate's block is therefore **the pre-#44 column scored today**, not
+the published +0.215 re-measured. The two should not be read as the same number, and the block
+labels it superseded for a different reason than this one.
+
+What is unaffected: the primary at −1.004 and the REMOVE verdict, both measured post-#150 and
+reproduced here; and the finding that the spread across treatments (1.552) exceeds the largest
+effect any of them reports (1.004).
+
 ## Restated 2026-09-07 — the effect changes sign and the verdict reverses
 
 The arm under test was scoring on a column holding two incommensurable things: negated ranks
