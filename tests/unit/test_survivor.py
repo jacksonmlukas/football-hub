@@ -613,6 +613,21 @@ def test_both_teams_have_to_win_so_survival_multiplies_them():
     assert survivor.survival(plan) == pytest.approx(0.9 * 0.8 * 0.75)
 
 
+def test_a_double_pick_week_with_one_usable_fixture_is_refused_for_the_true_reason():
+    """The pre-check counts fixtures, because two picks have to come from two games.
+
+    Counted on rows these two teams look like enough for two picks; they are the two sides of
+    one fixture, so one of them loses and the week cannot be covered. Counted on rows the
+    check passes, the `one_side` constraint below makes the program infeasible, and what
+    surfaces is "no full-season plan" for the whole season -- naming neither the week nor the
+    reason, which is the one thing an entrant needs to know."""
+    g = _fx([(2, "KC", "LV", 0.8)])
+    with pytest.raises(survivor.Infeasible, match="both sides of one fixture") as e:
+        survivor.solve(g, [2], pool=_DOUBLE)
+    assert "week 2" in str(e.value)
+    assert "no full-season plan" not in str(e.value)
+
+
 def test_the_two_picks_are_never_the_two_sides_of_one_fixture():
     """The constraint that only exists once a week takes two. Both sides of a game are the
     two highest-probability rows available here, so an unconstrained solver would reach for

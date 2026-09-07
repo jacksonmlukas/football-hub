@@ -129,7 +129,7 @@ class Weekly(NamedTuple):
     """
     week: int
     recommend: str
-    fallback: str
+    fallback: str | None       # None when auto-pick had no team left to assign
     matched: bool
     given_up: float
     pot: float
@@ -153,12 +153,29 @@ class Weekly(NamedTuple):
                                  - fb.expected_dollars) > self.resolution
 
 
+class UnpricedWeek(ValueError):
+    """A week the grid cannot price, which is a different answer from a week nobody survived.
+
+    The two are indistinguishable downstream if this is not raised: a week with no usable
+    fixture leaves every entry unable to field a pick, the field is eliminated at once, and
+    `PoolOutcome.ending_week` reports the contest ending in a week that was never covered.
+    A missing grid is not a result, so it is refused here rather than counted there.
+    """
+
+
 class _Week(NamedTuple):
-    """One week's games and prices, in a shape the trial loop can use without re-querying."""
+    """One week's games and prices, in a shape the trial loop can use without re-querying.
+
+    `games`, `teams` and `prob` all come off the same set of fixtures. They were not: the
+    first two counted a fixture only when both sides were priced while `prob` was built from
+    every row in the week, so a half-priced fixture put a team in `prob` that no draw could
+    ever produce a result for.
+    """
     games: tuple[tuple[str, str, float], ...]   # (team_a, team_b, P(team_a wins))
     teams: tuple[str, ...]                      # sorted, so iteration order is not a set's
     prob: dict[str, float]
     picks: int                                  # 1, or 2 in a double-pick week
+    dropped: int = 0                            # fixtures in the week priced on one side only
 
 
 def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
@@ -168,6 +185,13 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
     Needs `game_id`: a week that takes two picks must know which rows are two sides of one
     fixture, both so the game is drawn once and so nobody is handed both sides. Raises rather
     than falling back to per-team draws, which would let a team and its opponent both win.
+
+    A fixture priced on one side only is dropped, and the count of what was dropped rides on
+    the week rather than being discarded -- a week built from half of what was asked for is
+    still an answer, but not the one the caller asked for, and the difference has to be
+    readable. A week where *every* fixture is dropped is refused outright: it is the case
+    `hub.season.survivor.coverage` was hardened against by counting fixtures rather than rows,
+    and it arrives here as a whole field eliminated in a week that was simply not covered.
     """
     if "game_id" not in grid.columns:
         raise ValueError(
@@ -178,16 +202,31 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
     for w in weeks:
         wk = grid.filter(pl.col("week") == w)
         games = []
+        dropped = 0
         for gid in sorted(wk["game_id"].unique().to_list()):
             side = wk.filter(pl.col("game_id") == gid).sort("team")
             if side.height != 2:
-                continue        # a game only one side of which is priced is not a game
+                dropped += 1    # a game only one side of which is priced is not a game
+                continue
             a, b = side["team"][0], side["team"][1]
             games.append((str(a), str(b), float(side["win_prob"][0])))
+        if not games:
+            raise UnpricedWeek(
+                f"week {w} has no completely priced fixture: "
+                f"{_plural(len(games) + dropped, 'fixture')} in the grid, "
+                f"{_plural(dropped, 'fixture')} priced on one side only. Refused rather "
+                "than simulated -- with no team to pick, every entry is eliminated at once "
+                "and the ending week would report the contest ending in a week the grid "
+                "never covered.")
         teams = tuple(sorted({t for g in games for t in (g[0], g[1])}))
-        prob = {str(r["team"]): float(r["win_prob"]) for r in wk.iter_rows(named=True)}
+        # Restricted to the fixtures `games` and `teams` were built from, and each side keeps
+        # the win probability its own row carried rather than one minus its opponent's: the
+        # grid prices both sides and they need not sum to exactly one.
+        priced = set(teams)
+        prob = {str(r["team"]): float(r["win_prob"]) for r in wk.iter_rows(named=True)
+                if str(r["team"]) in priced}
         out.append(_Week(tuple(games), teams, prob,
-                         2 if w in tuple(cfg.double_pick_weeks) else 1))
+                         2 if w in tuple(cfg.double_pick_weeks) else 1, dropped))
     return out
 
 
@@ -433,17 +472,28 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     res = (float(np.hypot(sd.get(best.team, 0.0), sd.get(fb.team if fb else "", 0.0)))
            / np.sqrt(trials) * pot)
     return Weekly(
-        week=week, recommend=best.team, fallback=free or "none available",
+        week=week, recommend=best.team, fallback=free,
         matched=best.team == free,
         given_up=(fb.survives - best.survives) if fb else 0.0,
         pot=pot, resolution=res, candidates=cands)
 
 
 def weekly_report(w: Weekly, *, places: int = 2) -> list[str]:
-    """The week as lines rather than prints, so it can be composed and asserted on."""
-    head = (f"\n  week {w.week}: {w.recommend}"
-            + (" -- which is what auto-pick would have given you for nothing"
-               if w.matched else f", over auto-pick's {w.fallback}"))
+    """The week as lines rather than prints, so it can be composed and asserted on.
+
+    A week with no auto-pick says that, rather than naming one. `fallback` is `None` there
+    and was the string `"none available"`, which every reader of the field had to know to
+    compare against -- including `hub.season.journal`, which would have recorded a survival
+    cost against a free pick that did not exist.
+    """
+    if w.fallback is None:
+        against = " -- auto-pick had no team left to assign, so there is nothing free to " \
+                  "beat this week"
+    elif w.matched:
+        against = " -- which is what auto-pick would have given you for nothing"
+    else:
+        against = f", over auto-pick's {w.fallback}"
+    head = f"\n  week {w.week}: {w.recommend}{against}"
     body = [f"  ${c.expected_dollars:.{places}f}  {c.team:<4} "
             f"win {c.win_prob * 100:.0f}%  survives {c.survives * 100:.1f}%"
             + ("   <- free" if c.is_fallback else "")
@@ -460,7 +510,7 @@ def weekly_report(w: Weekly, *, places: int = 2) -> list[str]:
         verb = "costs" if w.given_up > 0 else "gains"
         said = (f"  {verb} {abs(w.given_up) * 100:.2f} points of survival "
                 f"against the free pick {w.fallback}")
-    cost = [] if w.matched else [said]
+    cost = [] if w.matched or w.fallback is None else [said]
     undecided = ([] if w.decisive else
                  [f"  but that is inside the ${w.resolution:.{places}f} these trials can "
                   f"resolve, so take {w.fallback} -- it is free and no worse"])
@@ -491,8 +541,15 @@ def simulate(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
 
     `ledgers` is what each entry has already spent, in entry order, for a mid-season run. Left
     out, every entry starts clean -- which is week 1 and is the case the model knows least
-    about.
+    about. Given, there must be exactly one per entry: the two are matched by position, so a
+    short list is not "the rest start clean", it is an entry reading the wrong ledger or an
+    index error thrown partway through a trial, and neither is an answer.
     """
+    if ledgers is not None and len(ledgers) != entries:
+        raise ValueError(
+            f"{_plural(len(ledgers), 'starting ledger')} for {entries} entries: `ledgers` is "
+            "matched to entries by position, so it has to name every one of them. Pass a "
+            "ledger per entry -- an empty set for an entry that has spent nothing.")
     rng = rng or np.random.default_rng(0)
     wks = weeks_from_grid(grid, weeks, pool)
     ended: Counter[int] = Counter()

@@ -132,6 +132,67 @@ def test_a_grid_without_a_game_key_is_refused():
         pool.weeks_from_grid(g, [1])
 
 
+# --- a week the grid cannot price, which is not a week nobody survived --------
+
+
+def _half(week, team, p, gid):
+    """One side of a fixture with no opponent beside it -- what the grid holds when only one
+    team in a game has a posted price. `weeks_from_grid` drops the fixture, and a week made
+    entirely of these is a week with no games and no teams."""
+    return pl.DataFrame({"week": [week], "team": [team], "win_prob": [float(p)],
+                         "game_id": [gid]})
+
+
+def test_a_week_nothing_prices_is_refused_rather_than_read_as_the_pool_ending():
+    """The distinction this guard exists for, asserted on both sides of it.
+
+    Two grids, and every entry is left with nothing in each. They are not the same fact. The
+    first is a pool that ended in week 1 -- the only entry had to hold a team that cannot
+    win -- and `ending_week[1] == 1.0` is the true answer. The second is a week where each
+    fixture is priced on one side only, so there is no team to pick at all; the field is
+    eliminated for want of a grid, and reporting that as an ending week names a week nobody
+    played as the week the contest finished. Asserting only that something raises would not
+    separate these, because before the guard *neither* raised and both returned 1.0."""
+    ended = _grid([(1, "KC", "LV", 0.0)])       # KC cannot win, and our entry must hold KC
+    out = pool.simulate(ended, [1], entries=1, ledgers=[{"LV"}], trials=50,
+                        rng=np.random.default_rng(0))
+    assert out.ending_week[1] == 1.0
+    assert out.co_survivors == {}
+
+    unpriced = pl.concat([_half(1, "KC", 0.6, "1-a"), _half(1, "SF", 0.7, "1-b")])
+    with pytest.raises(pool.UnpricedWeek, match="no completely priced fixture") as e:
+        pool.simulate(unpriced, [1], entries=1, trials=50, rng=np.random.default_rng(0))
+    assert "2 fixtures priced on one side only" in str(e.value)
+
+
+def test_a_partially_priced_week_says_how_many_fixtures_it_dropped():
+    """The week is still usable and is not what was asked for, and both have to be readable."""
+    g = pl.concat([_grid([(1, "KC", "LV", 0.8)]), _half(1, "SF", 0.7, "1-solo")])
+    wk = pool.weeks_from_grid(g, [1])[0]
+    assert wk.dropped == 1
+    assert wk.teams == ("KC", "LV")
+
+
+def test_the_prices_and_the_team_list_come_from_the_same_fixtures():
+    """They disagreed by construction: the team list counted completely priced fixtures while
+    the prices were read off every row in the week, so a team no draw could ever return a
+    result for still carried a weight."""
+    g = pl.concat([_grid([(1, "KC", "LV", 0.8)]), _half(1, "SF", 0.99, "1-solo")])
+    wk = pool.weeks_from_grid(g, [1])[0]
+    assert set(wk.prob) == set(wk.teams) == {"KC", "LV"}
+    assert {t for a, b, _ in wk.games for t in (a, b)} == set(wk.teams)
+
+
+def test_fewer_starting_ledgers_than_entries_is_refused():
+    """Matched to entries by position, so a short list is either an entry reading somebody
+    else's spent teams or an index error thrown partway through a trial. Neither is a pool
+    outcome, so it is refused before any trial runs."""
+    g = _grid([(1, "KC", "LV", 0.8), (1, "SF", "SEA", 0.7)])
+    with pytest.raises(ValueError, match="every one of them"):
+        pool.simulate(g, [1], entries=3, ledgers=[{"KC"}], trials=10,
+                      rng=np.random.default_rng(0))
+
+
 # --- our own entry, carrying what it has already spent ------------------------
 #
 # The quantity a buyback is priced against. The failure to avoid is one-over-the-field, which

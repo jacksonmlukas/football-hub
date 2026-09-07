@@ -220,3 +220,35 @@ def test_the_same_seed_prices_the_week_the_same_way_twice():
     assert a == b
     # And the answer does not move with an unrelated seed, because the board is not close.
     assert a.candidates == b.candidates
+
+
+def test_an_absent_auto_pick_is_carried_through_rather_than_stringified(monkeypatch):
+    """`fallback` was the string "none available" when there was nothing to fall back to.
+
+    That is a value every reader had to know to compare against, and one of them is
+    `hub.season.journal`, which would have taken it for a team and recorded a survival cost
+    against a free pick that does not exist. `auto_pick` already answers `None`, and the week
+    carries that answer through.
+
+    Reached through `auto_pick` rather than by handing `weekly` a grid: the two apply the same
+    filter, so today the empty-grid branch always raises first and the absence is a shape the
+    type allows rather than a state this grid can reach. Pinning it at the seam is what says
+    the answer is passed along and not converted on the way."""
+    assert pool.auto_pick(FLAT, 1, ["KC", "SF", "BUF", "LV", "SEA", "NYJ"]) is None
+    monkeypatch.setattr(pool, "auto_pick", lambda *a, **k: None)
+    w = _weekly(FLAT, [1, 2, 3], week=1, top=2)
+    assert w.fallback is None
+    assert not w.matched
+    assert not any(c.is_fallback for c in w.candidates)
+
+
+def test_a_week_with_no_free_pick_says_so_rather_than_naming_one():
+    """The other half: a report that has no fallback to name must not name one anyway. Under
+    the sentinel it read "over auto-pick's none available", and under a bare `None` it would
+    read "over auto-pick's None" -- a team by either spelling."""
+    w = pool.Weekly(week=1, recommend="SF", fallback=None, matched=False, given_up=0.0,
+                    pot=420.0, resolution=1.0,
+                    candidates=[pool.Candidate("SF", 0.8, 0.5, 100.0, False)])
+    lines = "\n".join(pool.weekly_report(w))
+    assert "none available" not in lines and "None" not in lines
+    assert "no team left to assign" in lines
