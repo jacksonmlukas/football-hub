@@ -129,7 +129,7 @@ class Weekly(NamedTuple):
     """
     week: int
     recommend: str
-    fallback: str
+    fallback: str | None       # None when auto-pick had no team left to assign
     matched: bool
     given_up: float
     pot: float
@@ -472,17 +472,28 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     res = (float(np.hypot(sd.get(best.team, 0.0), sd.get(fb.team if fb else "", 0.0)))
            / np.sqrt(trials) * pot)
     return Weekly(
-        week=week, recommend=best.team, fallback=free or "none available",
+        week=week, recommend=best.team, fallback=free,
         matched=best.team == free,
         given_up=(fb.survives - best.survives) if fb else 0.0,
         pot=pot, resolution=res, candidates=cands)
 
 
 def weekly_report(w: Weekly, *, places: int = 2) -> list[str]:
-    """The week as lines rather than prints, so it can be composed and asserted on."""
-    head = (f"\n  week {w.week}: {w.recommend}"
-            + (" -- which is what auto-pick would have given you for nothing"
-               if w.matched else f", over auto-pick's {w.fallback}"))
+    """The week as lines rather than prints, so it can be composed and asserted on.
+
+    A week with no auto-pick says that, rather than naming one. `fallback` is `None` there
+    and was the string `"none available"`, which every reader of the field had to know to
+    compare against -- including `hub.season.journal`, which would have recorded a survival
+    cost against a free pick that did not exist.
+    """
+    if w.fallback is None:
+        against = " -- auto-pick had no team left to assign, so there is nothing free to " \
+                  "beat this week"
+    elif w.matched:
+        against = " -- which is what auto-pick would have given you for nothing"
+    else:
+        against = f", over auto-pick's {w.fallback}"
+    head = f"\n  week {w.week}: {w.recommend}{against}"
     body = [f"  ${c.expected_dollars:.{places}f}  {c.team:<4} "
             f"win {c.win_prob * 100:.0f}%  survives {c.survives * 100:.1f}%"
             + ("   <- free" if c.is_fallback else "")
@@ -499,7 +510,7 @@ def weekly_report(w: Weekly, *, places: int = 2) -> list[str]:
         verb = "costs" if w.given_up > 0 else "gains"
         said = (f"  {verb} {abs(w.given_up) * 100:.2f} points of survival "
                 f"against the free pick {w.fallback}")
-    cost = [] if w.matched else [said]
+    cost = [] if w.matched or w.fallback is None else [said]
     undecided = ([] if w.decisive else
                  [f"  but that is inside the ${w.resolution:.{places}f} these trials can "
                   f"resolve, so take {w.fallback} -- it is free and no worse"])
