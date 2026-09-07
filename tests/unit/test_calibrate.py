@@ -426,3 +426,83 @@ def test_renaming_the_players_does_not_move_the_interval():
     b = calibrate.fit_talent_cv(renamed, **kw)
     assert a["clusters"] == b["clusters"] == 90
     assert a["ci95"] == pytest.approx(b["ci95"], abs=1e-12)
+
+
+# --- the empty and too-thin cases the clustered bootstrap has to survive (#172) ----------
+#
+# Refitting inside each draw (#172) gave `cluster_boot` three new ways to be handed nothing
+# to fit: an empty frame, a draw whose every position falls under `MIN_PER_POSITION`, and the
+# no-blocks case. The coverage ratchet caught all three arriving untested. They are not
+# hypothetical -- a resample of 235 players can miss a thin position entirely, and the reason
+# the point estimate drops such a position is the same reason a draw must.
+
+
+def test_clustering_an_empty_frame_yields_no_units():
+    """`np.unique` on an empty array is fine; the guard is so the caller gets an empty
+    *integer* index rather than a float one, which would silently make every downstream
+    `rows[codes == i]` select nothing."""
+    got = calibrate.cluster_rows(pl.DataFrame({"player": []}, schema={"player": pl.Utf8}))
+    assert got.size == 0
+    assert got.dtype == np.dtype(int)
+
+
+def test_a_frame_with_no_player_column_clusters_each_row_on_its_own():
+    """The unit is the player where there is one. Where there is not, falling back to the
+    row is the honest answer -- and is what #172 changed *away* from as a default, so it
+    stays reachable only when nothing better exists."""
+    got = calibrate.cluster_rows(pl.DataFrame({"total": [1.0, 2.0, 3.0]}))
+    assert got.tolist() == [0, 1, 2]
+
+
+def test_no_units_yields_no_rows():
+    got = calibrate._units_to_rows(np.zeros(0, dtype=int))
+    assert got == []
+
+
+def test_a_bootstrap_with_no_units_at_all_still_returns_replicates():
+    """The *other* degenerate guard, and it needs its own test.
+
+    An earlier version of the test below passed no blocks and no units, which returns at this
+    guard and never reaches the one further down. Mutating that second branch to raise left
+    the suite green -- covering one guard while claiming both. They are separate branches and
+    they get separate tests.
+    """
+    got = calibrate.cluster_boot([], np.zeros(0, dtype=int), bootstrap=3, seed=0)
+    assert got.size == 3
+    assert np.isfinite(got).all()
+
+
+def test_fitting_with_no_position_thick_enough_refuses_by_name():
+    """The point estimate's own version of the guard the draw has. Every position under the
+    floor means there is no curve to report, and saying so beats returning a dispersion of
+    nothing."""
+    n = calibrate.MIN_PER_POSITION - 5
+    thin = pl.DataFrame({"pos": ["RB"] * n,
+                         "total": np.linspace(100.0, 300.0, n),
+                         "pick": np.arange(1.0, n + 1.0),
+                         "season": np.full(n, 2024),
+                         "games": np.full(n, 17.0),
+                         "player": [f"P{i}" for i in range(n)]})
+    with pytest.raises(ValueError, match="no position had enough"):
+        calibrate.fit_talent_cv(thin, bootstrap=4)
+
+
+def test_a_draw_that_fits_nothing_returns_a_degenerate_pair_rather_than_raising():
+    """Every position under the floor in this draw. The point estimate drops such a position
+    on the same rule, so a draw that drops all of them has nothing to report -- and must say
+    so with a shape the caller can still take a dispersion of, rather than raising and
+    voiding a bootstrap over one unlucky resample.
+    """
+    # Real units and a real block, but fewer rows than `MIN_PER_POSITION`, so every draw
+    # reaches the fit and drops the only position it has. Reaching that branch needs units:
+    # with none, the guard above it returns first, and a version of this test built that way
+    # left "raise instead of returning" alive.
+    n = calibrate.MIN_PER_POSITION - 5
+    sub = pl.DataFrame({"total": np.linspace(100.0, 300.0, n),
+                        "pick": np.arange(1.0, n + 1.0),
+                        "season": np.full(n, 2024),
+                        "games": np.full(n, 17.0)})
+    block = calibrate.Block.of(sub, "RB")
+    got = calibrate.cluster_boot([block], np.arange(n), bootstrap=4, seed=0)
+    assert got.size == 4, "a draw that fits nothing must still produce a replicate"
+    assert np.isfinite(got).all(), f"a degenerate draw leaked a non-finite dispersion: {got}"
