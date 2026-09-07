@@ -15,6 +15,7 @@ So the gate now reports three outcomes, not two: passed, failed, and could not r
 tests hold the third one open. They drive the hook as a subprocess with a stub `uv` on
 PATH, because the real one would re-enter the very suite this file lives in.
 """
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -60,10 +61,15 @@ def gate(tmp_path):
     log = tmp_path / "calls.log"
     log.write_text("")
 
-    def run(**env) -> tuple[subprocess.CompletedProcess, str]:
+    def run(edited: str | None = None, **env) -> tuple[subprocess.CompletedProcess, str]:
         e = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}",
              "UV_CALL_LOG": str(log), **{k: str(v) for k, v in env.items()}}
-        proc = subprocess.run([str(HOOK)], capture_output=True, text=True, env=e)
+        # The hook is a PostToolUse hook: the harness hands it the tool event on stdin, the
+        # same shape `guard_data_reads.py` already reads. No event means no named file.
+        event = "" if edited is None else json.dumps(
+            {"tool_name": "Edit", "tool_input": {"file_path": edited}})
+        proc = subprocess.run([str(HOOK)], input=event,
+                              capture_output=True, text=True, env=e)
         return proc, log.read_text()
     return run
 
@@ -134,6 +140,61 @@ def test_a_real_type_error_still_fails_the_gate_and_holds_back_the_tests(gate):
     assert "could not run" not in proc.stderr.lower()
     assert "bad-return" in proc.stderr, "the finding itself should reach the reader"
     assert "pytest" not in calls
+
+
+def test_an_edit_runs_the_tests_that_bear_on_it_and_not_the_whole_suite(gate):
+    """The cost of a per-edit gate has to fit an edit.
+
+    This ran `pytest tests/unit tests/contracts` -- about 2,380 tests, four minutes -- after
+    every Edit and Write. It was invisible for the session in which it was written, because
+    the type check above it was failing first and the suite never ran. Once it did run, the
+    arithmetic was twenty edits to eighty minutes, and agents began routing around it by
+    making their edits through Bash heredocs, which the hook does not see. A gate people
+    learn to avoid is worse than one that is merely slow: it still costs everyone who does
+    not know the trick, and it has stopped covering the ones who do.
+    """
+    _, calls = gate(edited="src/hub/draft/board.py")
+    ran = [c for c in calls.splitlines() if "pytest" in c]
+    assert ran, f"no tests ran for an edit to a covered module; calls were {calls!r}"
+    assert "tests/unit tests/contracts" not in ran[0], (
+        "the whole suite ran for a single-file edit"
+    )
+    assert "test_board" in ran[0], (
+        f"the tests that reference the edited module were not the ones run: {ran[0]!r}"
+    )
+
+
+def test_a_module_no_test_references_says_so_rather_than_passing_quietly(gate):
+    """Nothing to run is a fact about the coverage, not a pass.
+
+    The failure this repo keeps rediscovering is a check that cannot fail. A gate that finds
+    no tests for a module and prints its usual success line is exactly that, and it would
+    report most loudly on precisely the modules that need tests most.
+    """
+    # Assembled from parts: spelling the module name here would put it in this very file,
+    # and the scan would dutifully find its own test as the one that references it.
+    unreferenced = "src/hub/" + "zqx" + "_absent" + ".py"
+    proc, calls = gate(edited=unreferenced)
+    assert "pytest" not in calls, "a test run was invented for a module nothing references"
+    assert "no test" in proc.stdout.lower() or "no test" in proc.stderr.lower(), (
+        f"the gate passed silently on an unreferenced module: {proc.stdout!r} {proc.stderr!r}"
+    )
+
+
+def test_editing_a_test_file_runs_that_file(gate):
+    """The obvious case, and the one a module-to-test mapping alone would miss."""
+    _, calls = gate(edited="tests/unit/test_roster.py")
+    ran = [c for c in calls.splitlines() if "pytest" in c]
+    assert ran and "tests/unit/test_roster.py" in ran[0], f"got {ran!r}"
+
+
+def test_an_edit_with_no_python_in_it_type_checks_and_says_it_ran_no_tests(gate):
+    """Editing a document is not a reason to run the suite, nor to claim it passed."""
+    proc, calls = gate(edited="docs/method.md")
+    assert "pyrefly check" in calls, "the type check was skipped"
+    assert "pytest" not in calls, "the suite ran for a documentation edit"
+    assert proc.returncode == 0
+    assert "no test" in proc.stdout.lower()
 
 
 def test_a_failing_test_fails_the_gate(gate):
