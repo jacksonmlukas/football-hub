@@ -1,13 +1,13 @@
 {
   "name": "survivor",
   "source": "hub.season.survivor",
-  "generated_at": "2026-09-06T22:47:01+00:00",
+  "generated_at": "2026-09-09T15:00:50+00:00",
   "n": 24,
   "rows": [
     {
       "week": 1,
-      "team": "LAC",
-      "win_prob": 0.7837344437707137
+      "team": "JAX",
+      "win_prob": 0.7476578734980865
     },
     {
       "week": 2,
@@ -27,7 +27,7 @@
     {
       "week": 5,
       "team": "DET",
-      "win_prob": 0.7476578734980867
+      "win_prob": 0.7476578734980865
     },
     {
       "week": 6,
@@ -67,7 +67,7 @@
     {
       "week": 13,
       "team": "PHI",
-      "win_prob": 0.7476578734980867
+      "win_prob": 0.7476578734980865
     },
     {
       "week": 13,
@@ -76,12 +76,12 @@
     },
     {
       "week": 14,
-      "team": "CAR",
-      "win_prob": 0.5777798142127708
+      "team": "CHI",
+      "win_prob": 0.6670120023224967
     },
     {
       "week": 14,
-      "team": "CHI",
+      "team": "LAC",
       "win_prob": 0.6670120023224967
     },
     {
@@ -97,7 +97,7 @@
     {
       "week": 16,
       "team": "BAL",
-      "win_prob": 0.7779374803179051
+      "win_prob": 0.777937480317905
     },
     {
       "week": 16,
@@ -106,8 +106,8 @@
     },
     {
       "week": 17,
-      "team": "JAX",
-      "win_prob": 0.6082280606232515
+      "team": "ATL",
+      "win_prob": 0.5468592666108859
     },
     {
       "week": 17,
@@ -131,7 +131,7 @@
     "buyback_cap"
   ],
   "season": 2026,
-  "survival": 0.0004978866879820898,
+  "survival": 0.0004929977069341719,
   "unpriced_weeks": [],
   "weeks_remaining": [
     1,
@@ -157,9 +157,14 @@
   "spent": [],
   "snapshot_only_weeks": [
     8,
+    9,
+    10,
+    11,
+    12,
     13,
     14,
     15,
+    16,
     17,
     18
   ]

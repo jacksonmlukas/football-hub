@@ -1,0 +1,16 @@
+{
+  "name": "cfbd",
+  "source": "hub.fetch.cfbd",
+  "generated_at": "2026-09-09T15:00:44+00:00",
+  "season": 2026,
+  "week": null,
+  "fetched": false,
+  "stale": true,
+  "reason": "nothing was fetched: CFB_WEEK_ONE is not set, so nothing here knows which college week it is. Set it to the date of the season's first game (YYYY-MM-DD), or pass --week N",
+  "rows_by_endpoint": {},
+  "quota": {
+    "month": "2026-09",
+    "used": 0,
+    "limit": 1000
+  }
+}
