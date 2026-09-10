@@ -10,6 +10,12 @@ is the whole point: a field playing chalk dies *together*, and the correlation i
 whether the pool reaches week 13 at all. Drawing per entry would make eliminations independent,
 which would thin the field smoothly and stretch the contest far past anything real.
 
+**And no entry is handed both sides of one fixture**, ours or a rival's. One of them loses, so
+a double-pick week spending them together is lost by construction and can eliminate the entry
+outright -- which is a loss the simulator inflicted rather than one the pool did. The game
+identity was read for the draw and never for the pick until #156; `_Week.fixture` is where it
+is now stated, and `_pick` and `_Ours.plays` are the two places that read it.
+
 **Rivals are sampled, not deterministic**, and that is a correction rather than a refinement.
 Twenty-one rivals following one deterministic rule against identical empty ledgers pick the
 identical team every week and die in the same week: the surviving count is 21 until it is 0,
@@ -276,12 +282,21 @@ class _Week(NamedTuple):
     applied here, once per week per run, rather than inside `_pick` where a reader would have
     to check it had not leaked into a price. Only the teams in `pickable` have one, because
     they are the only teams the sampler can reach.
+
+    `fixture` is which game each team is in, and it is carried rather than rebuilt because
+    `_pick` needs it -- once per live entry per week per trial, not once per week per run.
+    It was rebuilt on demand while the only readers were `_greedy` and `_Ours`, and the whole
+    of #156 is that the *sampler* was not one of them: `games` is the only field on this week
+    that still knows two rows are two sides of one fixture, and `teams`, `prob`, `pickable`
+    and `weight` have each flattened that away. A rule stated on a shape the code doing the
+    work cannot see is a rule nothing enforces.
     """
     games: tuple[tuple[str, str, float], ...]   # (team_a, team_b, P(team_a wins))
     teams: tuple[str, ...]                      # sorted, so iteration order is not a set's
     prob: dict[str, float]
     pickable: frozenset[str]                    # teams above MIN_PROB: what a pick may take
     weight: dict[str, float]                    # rival sampling weight; see above
+    fixture: dict[str, int]                     # team -> which game in `games` it plays in
     picks: int                                  # 1, or 2 in a double-pick week
     dropped: int = 0                            # fixtures in the week priced on one side only
 
@@ -293,6 +308,13 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
     Needs `game_id`: a week that takes two picks must know which rows are two sides of one
     fixture, both so the game is drawn once and so nobody is handed both sides. Raises rather
     than falling back to per-team draws, which would let a team and its opponent both win.
+
+    **Both halves of that sentence are now wired to something.** The first was: `games` pairs
+    the rows and `_play` draws each pair once. The second was prose -- the identity was used
+    for the draw and never for the pick, where the only exclusion applied was the entry's own
+    ledger, so `_pick` handed a rival both sides of one game in a double-pick week and the
+    entry lost by construction (#156). `_Week.fixture` is that identity in the shape the
+    sampler can read, built here beside `games` so the two cannot drift.
 
     A fixture priced on one side only is dropped, and the count of what was dropped rides on
     the week rather than being discarded -- a week built from half of what was asked for is
@@ -371,15 +393,30 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
         pickable = frozenset(t for t in teams if prob[t] > MIN_PROB)
         out.append(_Week(tuple(games), teams, prob, pickable,
                          {t: prob[t] ** k for t in sorted(pickable)},
+                         {t: i for i, g in enumerate(games) for t in (g[0], g[1])},
                          f.needs, len(f.half)))
     return out
 
 
 def _pick(rng: np.random.Generator, week: _Week, ledger: set[str], k: int) -> list[str] | None:
-    """`k` teams this entry has not used, sampled toward the best available.
+    """`k` teams this entry has not used, one per fixture, sampled toward the best available.
 
     None when the entry cannot field a legal pick -- it has spent too many teams to cover the
     week, which is elimination by the no-repeat rule rather than by losing.
+
+    **One per fixture, which is #156 and was the whole of the defect.** Both sides of one game
+    cannot both win, so a double-pick week spending them together is lost the moment it is
+    entered -- and it can eliminate the entry outright. `hub.season.survivor.solve` forbids it
+    as `one_side_wk` and `_best_available` takes one team per fixture, so our own entry was
+    never exposed; this sampler, which is what prices the *money*, drew `k` teams out of a flat
+    list and the only exclusion it applied was the ledger. The two counts that matter are
+    therefore different counts: `k` distinct *teams* were always available where `k` distinct
+    *fixtures* were not, and the second is the one a week can actually be covered from.
+
+    The draw is sequential rather than one `size=k` call, because the legal set narrows after
+    each pick: taking a team removes its opponent as well as itself. At `k == 1` that is the
+    identical `rng.choice` call on the identical list, so nothing about a single-pick week --
+    which is every week outside 13 through 18 -- moves by a float.
 
     **This is the whole of the field's sampling rule, and since #151 it is theirs alone**: our
     own entry replays a plan and reaches this function through no path. So how hard the field
@@ -407,10 +444,18 @@ def _pick(rng: np.random.Generator, week: _Week, ledger: set[str], k: int) -> li
     every other power.
     """
     avail = [t for t in week.teams if t in week.pickable and t not in ledger]
-    if len(avail) < k:
+    # Fixtures, not teams. A double-pick week whose only legal teams are the two sides of one
+    # game cannot be covered at all, and saying so here is what makes that elimination the
+    # no-repeat rule's rather than a loss the entry was handed.
+    if len({week.fixture[t] for t in avail}) < k:
         return None
-    w = np.array([week.weight[t] for t in avail], dtype=float)
-    return [str(t) for t in rng.choice(avail, size=k, replace=False, p=w / w.sum())]
+    out: list[str] = []
+    while len(out) < k:
+        w = np.array([week.weight[t] for t in avail], dtype=float)
+        got = str(rng.choice(avail, size=1, replace=False, p=w / w.sum())[0])
+        out.append(got)
+        avail = [t for t in avail if week.fixture[t] != week.fixture[got]]
+    return out
 
 
 def _chalk_share(week: _Week) -> tuple[str, float]:
@@ -437,20 +482,7 @@ def _chalk_share(week: _Week) -> tuple[str, float]:
     return best, week.weight[best] / total
 
 
-def _fixtures(week: _Week) -> dict[str, int]:
-    """Which game each team is in, so two picks are never the two sides of one.
-
-    `_Week.games` is the only place that pairing survives -- `teams`, `prob` and `pickable`
-    have all flattened it -- and the constraint is the one `hub.season.survivor.solve` states
-    as `one_side_wk`: both sides of a fixture cannot win, so a double-pick week spending them
-    together is lost by construction. Rebuilt here rather than carried on `_Week` because it
-    is wanted once per week per run, not once per trial.
-    """
-    return {t: i for i, g in enumerate(week.games) for t in (g[0], g[1])}
-
-
-def _best_available(week: _Week, ledger: set[str], k: int,
-                    fixtures: dict[str, int]) -> tuple[str, ...] | None:
+def _best_available(week: _Week, ledger: set[str], k: int) -> tuple[str, ...] | None:
     """The `k` likeliest teams this entry may still take, one per fixture. None if it cannot.
 
     The stated fallback, and it is deliberately the greedy rule `hub.season.survivor`'s own
@@ -466,10 +498,10 @@ def _best_available(week: _Week, ledger: set[str], k: int,
     taken: set[int] = set()
     for t in sorted((t for t in week.teams if t in week.pickable and t not in ledger),
                     key=lambda t: (-week.prob[t], t)):
-        if fixtures[t] in taken:
+        if week.fixture[t] in taken:
             continue
         out.append(t)
-        taken.add(fixtures[t])
+        taken.add(week.fixture[t])
         if len(out) == k:
             return tuple(sorted(out))
     return None
@@ -504,7 +536,7 @@ def _greedy(wks: Sequence[_Week], weeks: Sequence[int], ledger: set[str], why: s
     led = set(ledger)
     out: dict[int, tuple[str, ...]] = {}
     for week, w in zip(wks, weeks, strict=True):
-        got = _best_available(week, led, week.picks, _fixtures(week))
+        got = _best_available(week, led, week.picks)
         if got is None:
             break       # nothing legal left: the entry is eliminated there, not given a repeat
         out[w] = got
@@ -589,18 +621,23 @@ class _Ours:
         self.weeks = tuple(weeks)
         self.cfg = cfg
         self.plan = plan if plan is not None else _solved(wks, weeks, ledger, cfg)
-        self.fixtures = tuple(_fixtures(w) for w in wks)
         self.memo: dict[tuple[int, frozenset[str]], tuple[str, ...] | None] = {}
         self.replans = 0
 
     def plays(self, at: int, teams: Sequence[str], ledger: set[str]) -> bool:
-        """Whether these picks are legal in this week for an entry holding this ledger."""
+        """Whether these picks are legal in this week for an entry holding this ledger.
+
+        The three conditions are the same three `_pick` now applies to a rival, which is the
+        point of #156: our entry has always been held to one team per fixture -- by `solve`'s
+        `one_side_wk`, by `_best_available`, and by this line -- and the field was not. One
+        rule, checked on both sides of the branch in `_play`.
+        """
         week = self.wks[at]
         if len(teams) != week.picks:
             return False
         if any(t in ledger or t not in week.pickable for t in teams):
             return False
-        return len({self.fixtures[at][t] for t in teams}) == len(teams)
+        return len({week.fixture[t] for t in teams}) == len(teams)
 
     def picks(self, at: int, ledger: set[str]) -> list[str] | None:
         """This week's picks: our plan's, or a fresh solve where our plan will not play."""

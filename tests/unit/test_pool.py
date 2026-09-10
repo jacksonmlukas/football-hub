@@ -116,14 +116,43 @@ def test_the_same_seed_reproduces_the_same_outcome():
     assert a == b
 
 
-def test_a_double_pick_week_takes_two_distinct_teams():
+def test_a_double_pick_week_takes_two_teams_from_two_fixtures():
     """Weeks 13-18 need two, both of which must win. Read from the pool config, so a rule
-    correction is a re-run."""
+    correction is a re-run.
+
+    **Asserted on the game identities and not on the team names**, which is #156. Two distinct
+    teams is satisfied by KC and LV -- the two sides of one fixture -- so the old form of this
+    test passed against a sampler that handed an entry a week it had already lost. The names
+    differ in exactly the case the rule exists to forbid, which is why they cannot be the
+    thing checked.
+    """
     g = _grid([(13, "KC", "LV", 0.8), (13, "SF", "SEA", 0.7)])
     wk = pool.weeks_from_grid(g, [13], PoolConfig(double_pick_weeks=(13,)))[0]
     assert wk.picks == 2
-    got = pool._pick(np.random.default_rng(0), wk, set(), 2)
-    assert got is not None and len(set(got)) == 2
+    rng = np.random.default_rng(0)
+    for _ in range(200):
+        got = pool._pick(rng, wk, set(), 2)
+        assert got is not None and len(set(got)) == 2
+        assert len({wk.fixture[t] for t in got}) == 2
+
+
+def test_an_entry_that_cannot_field_two_fixtures_is_eliminated_rather_than_given_both_sides():
+    """The other half of the same rule, from the ledger rather than from the draw.
+
+    Two teams are left and they are the two sides of one game, so this week cannot be covered:
+    one of the pair loses whatever is picked. `None` is elimination by the no-repeat rule --
+    the entry spent too much to cover the week -- and it is a different answer from picking and
+    losing, which the count above it distinguishes: there are two legal *teams* here and one
+    legal *fixture*, and only the second is what a week can be covered from.
+    """
+    g = _grid([(13, "KC", "LV", 0.8), (13, "SF", "SEA", 0.7)])
+    wk = pool.weeks_from_grid(g, [13], PoolConfig(double_pick_weeks=(13,)))[0]
+    avail = {t for t in wk.pickable if t not in {"SF", "SEA"}}
+    assert avail == {"KC", "LV"}
+    assert pool._pick(np.random.default_rng(0), wk, {"SF", "SEA"}, 2) is None
+    # And one pick from that same fixture is still perfectly legal, so this is a statement
+    # about covering two picks and not about the fixture being unusable.
+    assert pool._pick(np.random.default_rng(0), wk, {"SF", "SEA"}, 1) is not None
 
 
 def test_a_grid_without_a_game_key_is_refused():
@@ -627,8 +656,7 @@ def test_a_double_pick_week_is_planned_as_two_teams_from_two_fixtures():
     assert len({t for ts in plan.picks.values() for t in ts}) == 24
     # Two picks, two games: the sides of one fixture never appear together.
     wk = pool.weeks_from_grid(g, weeks, PoolConfig())[12]
-    fx = pool._fixtures(wk)
-    assert len({fx[t] for t in plan.picks[13]}) == 2
+    assert len({wk.fixture[t] for t in plan.picks[13]}) == 2
 
 
 def test_a_ledger_with_nothing_left_ends_the_entry_rather_than_repeating_a_team():
@@ -717,6 +745,96 @@ def test_a_double_week_with_one_fixture_left_eliminates_rather_than_taking_both_
     assert out.survives == 0.0
     assert out.plan is not None and out.plan.picks == {}
     assert "both sides of one fixture" in out.plan.source
+
+
+# --- no entry takes both sides of one fixture (#156) -----------------------------------------
+#
+# The rule the week builder's own docstring stated and nothing enforced on the pick side. The
+# game identity was read for the *draw* -- so a team and its opponent could not both win -- and
+# never for the *pick*, where the only exclusion applied was the entry's own ledger. In a
+# double-pick week that hands an entry a week it has already lost, and can eliminate it
+# outright. `solve` forbids it as `one_side_wk` and `_best_available` takes one team per
+# fixture, so the defect lived exactly where the money is priced: the rival sampler.
+#
+# It was unreachable before #151 and #152 -- under the old field rule almost nothing survived
+# to week 13 -- which is why a test written against it then would have passed vacuously.
+
+
+def _watch_picks(monkeypatch) -> list[tuple[int, int]]:
+    """Every set of picks any entry is handed, as (teams asked for, fixtures they span).
+
+    Both sides of `_play`'s branch, because #156 applies to our own entry as well as to
+    rivals: a rival reaches `pool._pick` and our entry reaches `pool._Ours.picks`, and the
+    two are the only ways a pick enters a trial.
+
+    Watched rather than reconstructed afterwards, because a self-inflicted elimination leaves
+    no trace in `EntryOutcome`. The entry is simply gone, and being handed both sides of one
+    game reads out identically to having picked two favourites and lost one.
+    """
+    seen: list[tuple[int, int]] = []
+    real_pick, real_ours = pool._pick, pool._Ours.picks
+
+    def watched_pick(rng, week, ledger, k):
+        got = real_pick(rng, week, ledger, k)
+        if got is not None:
+            seen.append((len(got), len({week.fixture[t] for t in got})))
+        return got
+
+    def watched_ours(self, at, ledger):
+        got = real_ours(self, at, ledger)
+        if got is not None:
+            seen.append((len(got), len({self.wks[at].fixture[t] for t in got})))
+        return got
+
+    monkeypatch.setattr(pool, "_pick", watched_pick)
+    monkeypatch.setattr(pool._Ours, "picks", watched_ours)
+    return seen
+
+
+def test_the_self_inflicted_elimination_rate_in_a_double_pick_season_is_zero(monkeypatch):
+    """The acceptance criterion, counted over a season rather than argued from one draw.
+
+    Every week here takes two picks, so every pick handed out is a chance to break the rule --
+    on a real board that would be six weeks in eighteen, and only for the entries that got
+    there. A self-inflicted elimination is a pick set spanning fewer fixtures than it names
+    teams: one of that pair loses with certainty, so the week is lost at the moment it is
+    entered and no draw can save it.
+
+    The rate is zero and not merely small. It is a constraint, not a tendency: there is no
+    trial count at which one of these is acceptable.
+    """
+    weeks = list(range(1, 7))
+    g = _board(weeks)
+    cfg = PoolConfig(double_pick_weeks=tuple(weeks))
+    seen = _watch_picks(monkeypatch)
+    out = pool.entry_outcome(g, weeks, entries=12, pool=cfg, trials=200,
+                             rng=np.random.default_rng(0))
+    # The season has to have actually been played, or a rate of zero is a rate over nothing.
+    assert out.survives > 0.0
+    assert len(seen) > 4000
+    assert all(n == 2 for n, _ in seen), "every week here takes two picks"
+    self_inflicted = [s for s in seen if s[1] < s[0]]
+    assert self_inflicted == []
+    assert len(self_inflicted) / len(seen) == 0.0
+
+
+def test_the_rule_reaches_our_own_entry_and_not_only_the_field(monkeypatch):
+    """The same count with the field removed, so our arm cannot hide behind twenty rivals.
+
+    One entry, which is ours: every pick recorded came through `_Ours` and the plan it
+    replays. Our side was already correct -- the optimiser's `one_side_wk` and
+    `_best_available`'s one-per-fixture walk see to that -- and it is pinned here because
+    "the rule applies to our own entry as well as rivals" is a claim about both arms, and a
+    claim held by only one of them is a claim nothing re-checks when the other moves.
+    """
+    weeks = list(range(1, 7))
+    g = _board(weeks)
+    cfg = PoolConfig(double_pick_weeks=tuple(weeks))
+    seen = _watch_picks(monkeypatch)
+    out = pool.entry_outcome(g, weeks, entries=1, pool=cfg, trials=50,
+                             rng=np.random.default_rng(0))
+    assert out.plan is not None and "optimiser" in out.plan.source
+    assert seen and all(n == 2 and f == 2 for n, f in seen)
 
 
 # --- Field concentration (#152) -------------------------------------------------------------
