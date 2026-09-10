@@ -12,6 +12,10 @@
       {
         "matcher": "Read|Bash",
         "hooks": [{ "type": "command", "command": ".claude/hooks/guard_data_reads.py" }]
+      },
+      {
+        "matcher": "Read|Bash|Edit|Write",
+        "hooks": [{ "type": "command", "command": ".claude/hooks/worktree_base.sh" }]
       }
     ],
     "PostToolUse": [

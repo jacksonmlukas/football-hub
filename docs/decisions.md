@@ -247,6 +247,7 @@ toward RB, so flex allocation is ~even (0.45 RB / 0.50 WR), not WR-dominant.
 | Gotcha | Fix |
 |---|---|
 | Worktree sessions lose gitignored `.env`, silently degrading to ECR-only mode | `.worktreeinclude` lists `.env` |
+| The harness picks a worktree's base, and it is not always `main`'s tip — three agents got 13 and 17 commits behind on 2026-09-06/07, two of them onto tickets that were unimplementable there. Not fixable from the repository: nothing here runs at worktree creation | `.claude/hooks/worktree_base.sh` refuses the **first tool call** — `Read` and `Bash` included, not just the edit tools — until `main` is merged in, and clears itself once it is. Verified against a worktree created three commits behind after a real push (#191) |
 | Desktop app does not inherit exported shell vars | Local environment editor: env dropdown → Local → gear |
 | Pyrefly's default preset is `basic`, silencing most errors | `preset = "default"` in `[tool.pyrefly]` |
 | Hatchling cannot infer the package (`football-hub` vs `src/hub`) | `[tool.hatch.build.targets.wheel] packages = ["src/hub"]` |

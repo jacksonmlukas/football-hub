@@ -37,6 +37,29 @@ state from `data/processed/` rather than erroring. Systems that need an operator
 
 ## Worktrees
 
+**Your worktree may not start from the tip of `main`, and you cannot tell from inside.** The
+harness picks the base; on 2026-09-06/07 three agents got worktrees 13 and 17 commits behind,
+and two of them found their ticket unimplementable at that base because the change it followed
+on from had already landed. Every safeguard in this repo — pytest, pyrefly, the guard excisions,
+the mutation checks — runs inside your worktree and would agree with a stale one, so nothing
+here catches it for you except `.claude/hooks/worktree_base.sh`, which refuses your first tool
+call and tells you how far behind you are. If it fires:
+
+```bash
+git merge --no-edit main
+```
+
+Then **re-read the files your ticket names** before continuing — the point of the refusal is
+that what you already read may be gone.
+
+Silence is not a certificate. The hook is deliberately quiet in the primary checkout and
+outside any repository, so "it did not fire" means *either* the base is current *or* you are
+not in a worktree. If you want the fact rather than the absence of a complaint, ask for it:
+
+```bash
+git rev-list --count HEAD..main
+```
+
 A worktree starts with no `.venv`; the first `uv run` builds one. That environment is the one the
 rules assume, so **there is no setup step** — run the gates directly:
 
