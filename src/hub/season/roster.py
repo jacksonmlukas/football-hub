@@ -107,6 +107,16 @@ def market(joined: pl.DataFrame) -> pl.DataFrame:
 
     The board's own `proj_ppg` remains the fallback, so a player ESPN does not project keeps
     the draft-day number rather than losing his projection entirely.
+
+    **The column test below is arithmetic and not provenance**, which is the distinction
+    `tests/contracts/test_stage_columns_are_asked_of_the_report.py` requires a survivor to
+    name. `proj_ppg` is a draft-market stage column and a `BuildReport` could answer for it --
+    but that is not what is being asked here. Both names are *operands*: `espn_avg` replaces
+    `proj_ppg` wherever ESPN still prices the player, and without either there is no refresh
+    to compute, so the frame is refused rather than the run. `espn_avg` is not a stage column
+    at all and no report answers for it, so a report could satisfy at most half the test. And
+    the frame is an ESPN roster joined to a board, not a Board: no `BuildReport` describes it,
+    and `report_for` would derive one from the wrong frame's columns.
     """
     if "espn_avg" not in joined.columns or "proj_ppg" not in joined.columns:
         return joined

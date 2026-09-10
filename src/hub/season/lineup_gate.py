@@ -38,7 +38,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.draft.backtest import stamped_for_publication
-from hub.draft.board import board_as_of
+from hub.draft.board import BuildReport, board_as_of
 from hub.league import REG_SEASON_WEEKS, starting_lineup
 from hub.models.experiment import (
     SEASON_CLUSTER,
@@ -368,9 +368,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     rosters: dict[int, list] = {}
 
+    # The report `board_as_of` returns beside each board, kept rather than dropped (#231).
+    # `walk_forward_inputs` reads it -- `require_corrections` is the whole reason it takes the
+    # pair -- and then returns boards alone, so by the time the Cohort below is drafted the
+    # recorded answer is gone and `simulate_remaining_draft` derives a fresh one from the
+    # frame. Captured here rather than by widening that function's return, because the
+    # knowledge is this gate's: it is the caller that holds a report and has somewhere to put
+    # it. Nothing else reads this dict.
+    reports: dict[int, BuildReport] = {}
+
+    def _as_of_keeping_the_report(yr: int) -> tuple[pl.DataFrame, BuildReport]:
+        board, report = board_as_of(yr)
+        reports[yr] = report
+        return board, report
+
     try:
         boards, realised = walk_forward_inputs(
-            seasons, board_as_of,
+            seasons, _as_of_keeping_the_report,
             on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
     except Exception as e:
         return unavailable("hub.season.lineup_gate", "the boards the rosters are drafted from", e)
@@ -400,7 +414,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # The same Cohort the weekly gate scores, from the same seeded recipe. Both used to
         # write it out, and a formula copied by hand into two places is one that eventually
         # differs in one.
-        drafted = cohort(board, yr, drafts=a.drafts, seed=a.seed)
+        drafted = cohort(board, yr, drafts=a.drafts, seed=a.seed, report=reports[yr])
         who_at = board["player"].to_list()
         made = [[(who_at[i], drafted.pos[i], proj_of.get(who_at[i], 0.0),
                   sd_of.get(who_at[i], 0.0)) for i in roster]

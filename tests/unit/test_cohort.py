@@ -20,6 +20,7 @@ import polars as pl
 import pytest
 
 from hub.draft import cohort as C
+from hub.draft.board import BuildReport
 
 
 def _board(n=200):
@@ -118,6 +119,91 @@ def test_a_null_position_becomes_a_stated_placeholder_not_none():
 def test_a_degenerate_cohort_is_a_shape_not_a_crash(drafts):
     got = C.cohort(_board(), 2024, drafts=drafts)
     assert len(got.rosters) == drafts
+
+
+# --- the report travels with the frame (#231) ------------------------------
+#
+# `cohort` had no `report` parameter, so the two season-side gates -- both of which unpack
+# `board, report = board_as_of(yr)` and have already read the report to refuse a season short
+# a Correction -- handed the frame on alone and let `board.report_for` derive a fresh one from
+# its columns. The re-derivation agrees on a historical board, which is why nothing ranked
+# differently; agreeing today is exactly the condition that stops holding without saying so.
+
+
+def _disagreeing_board(n=200):
+    """A board carrying `adp`, where `adp` and `ecr` order the room differently.
+
+    The stock fixture sets both to `i + 1`, so `w * adp + (1 - w) * ecr` is the same number
+    whichever the report says -- a frame on which this seam cannot be observed at all. Here
+    the draft market reverses consensus, so `blended_adp` produces a different `mu_pick`, the
+    opponents perceive a different board, and the cohort that falls out is different.
+    """
+    df = _board(n)
+    return df.with_columns(pl.Series("adp", [float(n - i) for i in range(n)]))
+
+
+def test_the_report_the_caller_holds_is_used_and_not_re_derived():
+    """The acceptance criterion, on a frame whose report disagrees with what it implies.
+
+    `adp` is on this board, so `BuildReport.of_served` derives `adp=True` and `blended_adp`
+    blends the draft market in. Handing `cohort` a report that says the stage did not run must
+    produce the ECR-only room instead -- which is only observable if the passed report is what
+    reaches `simulate_remaining_draft`. If it is dropped, both calls take the derivation and
+    the two cohorts are identical.
+    """
+    board = _disagreeing_board()
+    derived = C.cohort(board, 2024, drafts=2, seed=0)
+    said_no_market = C.cohort(board, 2024, drafts=2, seed=0,
+                              report=BuildReport(adp=False))
+    assert derived.rosters != said_no_market.rosters, (
+        "the report passed in was dropped and `report_for` derived one from the frame, which "
+        "is the re-guess #199's report layer exists to end")
+    # And the other direction, so the assertion above cannot pass on a report that is merely
+    # *different* rather than *used*: a report agreeing with the frame reproduces it exactly.
+    assert C.cohort(board, 2024, drafts=2, seed=0,
+                    report=BuildReport(adp=True)).rosters == derived.rosters
+
+
+def test_the_report_stays_optional():
+    """The expand half of expand-then-contract. Every caller and fixture holding only a frame
+    keeps working and keeps getting the derivation it already got -- which is what let the
+    eleven #199 sites move one at a time, and what lets these two move without the rest."""
+    import inspect
+    param = inspect.signature(C.cohort).parameters["report"]
+    assert param.default is None, (
+        "making `report` required turns every frame-only caller into a break, which is the "
+        "contract half of this change and not part of it")
+    board = _disagreeing_board()
+    assert C.cohort(board, 2024, drafts=1, seed=0).rosters == \
+        C.cohort(board, 2024, drafts=1, seed=0, report=None).rosters
+
+
+def test_no_gate_calls_the_cohort_without_the_report_it_is_holding():
+    """The half of #231 that is about the callers, and it has to be a scan.
+
+    `report` is optional so that a caller with only a frame keeps working -- which means a
+    gate that stops passing it goes back to the re-derivation silently, and no assertion about
+    `cohort`'s behaviour would notice. Both season-side gates already hold a `BuildReport`:
+    `require_corrections` reads it before either of them drafts anything. Holding the recorded
+    answer and letting it be inferred again downstream is the act this ticket closes, so what
+    is pinned is that neither of them does it.
+    """
+    import ast
+    import pathlib
+
+    season = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub" / "season"
+    bare = []
+    for path in sorted(season.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == "cohort"):
+                continue
+            if not any(kw.arg == "report" for kw in node.keywords):
+                bare.append(f"{path.name}:{node.lineno}")
+    assert not bare, (
+        f"{bare} draft a Cohort without passing the report they unpacked from `board_as_of`, "
+        f"so `simulate_remaining_draft` re-derives one from the frame's columns. Pass it: the "
+        f"parameter is optional for frame-only callers, and a gate is not one.")
 
 
 def test_the_cohort_is_what_the_gates_used_to_build_for_themselves():

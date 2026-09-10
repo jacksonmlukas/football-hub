@@ -1,4 +1,4 @@
-"""Every place in `hub.draft` that asks a frame what a build stage left, and why it may.
+"""Every place in `hub` that asks a frame what a build stage left, and why it may.
 
 `BuildReport` exists because consumers used to infer what had happened by sniffing for
 columns, and issue #131 gave that question one owner. But the report could not *travel*:
@@ -34,6 +34,29 @@ could not see it":
 of the two acts it is -- reading a column for its *arithmetic*, or asking it for
 *provenance* -- and the word `provenance` has to appear in the enclosing function, because
 that is the distinction #164 wrote down and the one a reader needs to check the claim.
+
+**Everything under `src/hub`, with no directory filter, and that is #148's own finding
+turned on this file.** It scanned `src/hub/draft` only, because the eleven sites #199
+collected were all there. A site outside the scanned directory was therefore invisible, and
+one existed: `season.roster.market` -- named in #148's leftover list, and never entered by
+any of the tickets that settled the rest, because none of their scans could see it. That is
+the same defect `tests/unit/test_config.py` records against its own predecessor, in almost
+the same words: a directory list inside a test is a second exclusion mechanism and a silent
+one. Scanning everything costs nothing and means a new package is covered the day it lands.
+
+Modules are keyed by their path under `src/hub`, not by basename, so two files that share a
+name cannot merge into one census entry.
+
+**One extension is measured and deliberately not taken, so it is not rediscovered.** The
+`bound` pass reads collection literals assigned to a name; it does not read the *iterable of
+a comprehension*, so `[c for c in ("proj_blend", ...) if c in frame.columns]` is invisible to
+it. That form is a stage-column read by any reading -- #148's leftover list names
+`season.roster.build`'s column selection, which is exactly one. Adding four lines for
+comprehension targets catches nine sites rather than seven: `season/roster.py:build` and
+`models/predict.py:moments`, the latter being the projection-currency selection that
+`optimize.simulate_remaining_draft`'s own comment names as the other half of its coupling.
+Both want a `provenance` sentence in a function this file does not own, so the widening and
+those two entries are one change and it is not this one.
 """
 import ast
 from pathlib import Path
@@ -42,7 +65,7 @@ import pytest
 
 from hub.draft.board import STAGE_COLUMNS
 
-DRAFT = Path(__file__).resolve().parents[2] / "src" / "hub" / "draft"
+SRC = Path(__file__).resolve().parents[2] / "src" / "hub"
 
 STAGE_COLUMN_NAMES = frozenset(c for cols in STAGE_COLUMNS.values() for c in cols)
 
@@ -59,27 +82,32 @@ COLLECTION = (ast.Set, ast.List, ast.Tuple, ast.Dict)
 # fell from eight to six because it did. #199 left them here on purpose rather than landing
 # them without the rule test #146's acceptance criteria asked for.
 SURVIVORS: dict[tuple[str, str], str] = {
-    ("backtest.py", "correction_report"):
+    ("draft/backtest.py", "correction_report"):
         "arithmetic: selects five columns and subtracts two, and `correction_tripwire` "
         "reaches it with hand-built frames that have no report behind them (#164)",
-    ("optimize.py", "corrected_adp"):
+    ("draft/optimize.py", "corrected_adp"):
         "arithmetic, and a producer besides -- `board._attach_market` calls it during the "
         "build, before the stage whose flag it would read has been marked",
-    ("durability.py", "correct_projection"):
+    ("draft/durability.py", "correct_projection"):
         "producer: runs inside `board._stage`, which is what sets the flag, so no report "
         "describing this frame exists yet",
-    # `("regression.py", "correct_projection")` was the fourth survivor -- "producer, same as
-    # durability's" -- until #48 deleted the function. Its site did not move to the report; it
-    # stopped existing, because #186 found the correction it guarded did not earn its place.
-    # Recorded here rather than dropped silently, since the count below is the criterion and a
-    # number that fell needs a reason as much as one that rose.
+    ("draft/regression.py", "correct_projection"):
+        "producer, same as durability's",
+    # Found by widening the scan past `hub.draft` (#148). Never entered by #131, #143-#147,
+    # #164 or #199, and not because anyone judged it -- because no scan any of them ran
+    # reached `hub.season`. It is on #148's own leftover list all the same.
+    ("season/roster.py", "market"):
+        "arithmetic: both columns are operands of the refresh -- `espn_avg` replaces "
+        "`proj_ppg` where ESPN still prices the player -- and `espn_avg` is not a stage "
+        "column at all, so no report answers half the test. The frame is an ESPN roster "
+        "joined to a board, not a Board, and no `BuildReport` describes it",
 }
 
-# Two sites per function at two of them, one at the third. Stated as a number because that is
-# the acceptance criterion: a new sniff has to move a figure a person wrote down. Eight until
-# #146, when `report.injuries` stopped being two of them; six until #48 removed
-# `regression.correct_projection`, which was the fifth.
-EXPECTED_SITES = 5
+# Two sites per function at two of them, one at the other three. Stated as a number because
+# that is the acceptance criterion: a new sniff has to move a figure a person wrote down.
+# Eight until #146; `report.injuries` was two of them and is now none. Six until #148 widened
+# the scan past `hub.draft` and `season.roster.market` came into view.
+EXPECTED_SITES = 7
 
 
 def _stage_literals(node: ast.AST) -> set[str]:
@@ -115,8 +143,8 @@ def _sites(path: Path) -> list[tuple[str, int, frozenset[str]]]:
 
 
 def _census() -> list[tuple[str, str, int, frozenset[str]]]:
-    return [(p.name, fn, line, cols)
-            for p in sorted(DRAFT.glob("*.py"))
+    return [(p.relative_to(SRC).as_posix(), fn, line, cols)
+            for p in sorted(SRC.rglob("*.py"))
             for fn, line, cols in _sites(p)]
 
 
@@ -150,7 +178,7 @@ def test_each_survivor_says_which_of_the_two_acts_it_is(module: str, function: s
     line and are opposite acts, so a survivor has to name the distinction. `provenance` is
     the word #164 used for it, and every survivor's reason above turns on it.
     """
-    src = (DRAFT / module).read_text()
+    src = (SRC / module).read_text()
     fn = next(n for n in ast.walk(ast.parse(src))
               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
               and n.name == function)
@@ -181,7 +209,7 @@ def consumer(board, report):
     pool = board.filter(pl.col("adp") > 1)  # not a membership test
     return pool
 '''
-    path = DRAFT / "__scan_probe__.py"
+    path = SRC / "draft" / "__scan_probe__.py"
     path.write_text(src)
     try:
         got = _sites(path)
