@@ -115,6 +115,12 @@ effort. It is no longer a route to objective 1 and should not be proposed as one
   season. Forward archiving continues because it is free; the purchase is declined.
 * **The survivor field model.** Superseded by the crude contrarian threshold above.
 * **The deep-simulation programme as a route to winning.** See above; it is objective 2 work.
+* **Seven research angles, declined 2026-09-07.** A non-quarterback spread adjustment, an
+  offensive-line continuity model, a rest-differential angle, west-coast travel, a
+  fast-surrogate distillation, aggregating a betting-market-conditioned player model into a
+  game prediction, and beating totals by aggregation. Each with its evidence and the condition
+  that reopens it, alongside the arithmetic that bounds the bottom-up programme, in
+  [ADR-0025](adr/0025-systematic-bias-bounds-the-bottom-up-plan-and-seven-angles-are-declined.md).
 
 ### Horizon: assume one season, keep only cheap accruals
 

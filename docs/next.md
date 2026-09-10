@@ -579,3 +579,10 @@ had been fitted.
   More moving parts than anything in the repo, ten days out, with `--taken` already tested
   end to end against 192 real picks.
 - **Season-long player props.** Settled: The Odds API does not carry them.
+- **Seven angles from the research thread of 2026-09-07**, declined with their evidence and
+  their reopen conditions in
+  [ADR-0025](adr/0025-systematic-bias-bounds-the-bottom-up-plan-and-seven-angles-are-declined.md).
+  Two of them — aggregating a betting-market-conditioned player model into a game prediction,
+  and beating totals by aggregation — are declined by the arithmetic recorded there rather
+  than by taste: a 3% bias in projected **Usage** is about 0.75 points a team and 1.5 on the
+  total, against a band of about one point.
