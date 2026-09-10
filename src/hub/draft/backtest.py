@@ -108,6 +108,20 @@ LIMITATIONS = (
     # is, and one that should be made deliberately with a re-run rather than in passing. What
     # closes the reporting half of it is `board_digest`: the coupling is undetectable without
     # a stamp naming the frame, and detectable with one.
+    # Issue #199. Named here rather than closed, because closing it needs a preseason ESPN
+    # projection for a past season and ESPN publishes one for the current season only -- the
+    # same wall the first two limitations hit. What #199 changed is that the choice is now
+    # made by the Board's `BuildReport` instead of falling out of whether a column happened
+    # to be on the frame, so it is a decision with a line of code behind it and a limitation
+    # with a line here, rather than an accident nothing recorded.
+    "the ROOM ranks in a different currency in the two worlds: on a live Board the greedy "
+    "and the simulated opponents rank on vor_proj (replacement-adjusted proj_blend, which "
+    "blends in ESPN's projection), and on every backtested Board they rank on vor "
+    "(replacement-adjusted prior-season xFP). It follows the draft-market stage, because "
+    "the season underneath is scored on the same split -- models.predict.moments coalesces "
+    "proj_blend and proj_ppg before falling through to xfp_per_game -- so ranking and "
+    "scoring stay in one currency. What cannot be made to match is the two harnesses: arm "
+    "B's room is a prior-season-xFP room and the shipped room is not",
     "the noise is drawn per Board ROW, not per player: both stochastic quantities are arrays "
     "whose last axis is the Board's height (optimize.simulate_remaining_draft draws one "
     "pick-noise normal per row; predict.correlated_normal draws (n_sims, weeks, mu.size)). "
@@ -207,6 +221,7 @@ def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds:
                        n_draft_sims: int, n_season_sims: int,
                        seed: int | np.random.SeedSequence,
                        tiebreak: str = "ecr",
+                       report: BuildReport | None = None,
                        correlation: CorrelationReport | None = None):
     """Arm B. Top of `win_probability` over `recommend()`'s shortlist, ties broken by `by`.
 
@@ -223,7 +238,7 @@ def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds:
         state = DraftState(taken=list(taken))
         overall = len(taken) + 1
         try:
-            _, rec = recommend(board, overall, rounds=rounds, state=state)
+            _, rec = recommend(board, overall, rounds=rounds, state=state, report=report)
         except ValueError:
             rec = pool[[int(i) for i in live]].head(10)
         names = [n for n in rec["player"].to_list()
@@ -235,7 +250,7 @@ def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds:
         wp = win_probability(board, state, names, my_slot=my_slot, teams=teams,
                              rounds=rounds, n_draft_sims=n_draft_sims,
                              n_season_sims=n_season_sims, seed=seed,
-                             report=correlation)
+                             report=report, correlation=correlation)
         leaders = rank_tiers(wp).filter(pl.col("co_leader"))["player"].to_list()
         ranked = (board.filter(pl.col("player").is_in(leaders))
                        .sort(tiebreak, nulls_last=True))
@@ -244,11 +259,12 @@ def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds:
 
 
 def play(board: pl.DataFrame, strategy, *, my_slot: int, teams: int, rounds: int,
-         rng: np.random.Generator) -> tuple[list[str], list[str]]:
+         rng: np.random.Generator,
+         report: BuildReport | None = None) -> tuple[list[str], list[str]]:
     """Play one draft with `strategy` in my seat. Returns (my player names, my positions)."""
     rosters = simulate_remaining_draft(board, DraftState(taken=[]), my_slot=my_slot,
                                        teams=teams, rounds=rounds, rng=rng,
-                                       my_pick=strategy)
+                                       my_pick=strategy, report=report)
     mine = rosters[my_slot - 1]
     names = [board["player"][int(i)] for i in mine]
     pos = [board["pos"][int(i)] or "NA" for i in mine]
@@ -465,7 +481,8 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
         if overall in want:
             state = DraftState(taken=list(taken))
             try:
-                _, rec = recommend(board, overall, rounds=rounds, state=state)
+                _, rec = recommend(board, overall, rounds=rounds, state=state,
+                                   report=report)
                 names = [n for n in rec["player"].to_list()
                          if n in set(avail["player"].to_list())]
             except ValueError:
@@ -474,7 +491,7 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
                 wp = rank_tiers(win_probability(
                     board, state, names, my_slot=my_slot, teams=teams, rounds=rounds,
                     n_draft_sims=n_draft_sims, n_season_sims=n_season_sims, seed=root,
-                    report=correlation))
+                    report=report, correlation=correlation))
                 top = wp.row(0, named=True)
                 pos_of = dict(zip(board["player"].to_list(), board["pos"].to_list(), strict=True))
                 # Does any co-leader fill a slot you cannot currently start? The tripwire
@@ -508,7 +525,8 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
         return _pool_index(pool, name) if name else int(live[0])
 
     simulate_remaining_draft(board, DraftState(taken=[]), my_slot=my_slot, teams=teams,
-                             rounds=rounds, rng=stream(root, ROOM), my_pick=pick)
+                             rounds=rounds, rng=stream(root, ROOM), my_pick=pick,
+                             report=report)
     return pl.DataFrame(rows)
 
 

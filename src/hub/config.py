@@ -321,20 +321,62 @@ def _canonical(v: Any) -> str:
     return repr(v)
 
 
+def _assigned_at_module_level(mod: Any) -> set[str]:
+    """Names this module *assigns*, as opposed to names it imports.
+
+    The sweep below used to separate the two by type, on the reasoning that "a re-export is
+    not a number". Python disagrees about one case and it reached production: `bool` subclasses
+    `int`, so when issue #199 added `from typing import TYPE_CHECKING` to
+    `hub.draft.availability`, `TYPE_CHECKING = False` passed the numeric test and a standard-
+    library import began identifying the model version. The digest moved, no measurement had
+    changed, and under ADR-0006 that is a version claiming a difference that does not exist.
+
+    Asking the source what it assigns decides the question the docstring was already trying to
+    ask, and decides it for imports this repo has not made yet. Same defect as issue #201 from
+    the other side: there, coverage turns on whether a constant is written as a float; here, on
+    whether a re-export happens to be one.
+    """
+    import ast
+    import inspect
+
+    try:
+        tree = ast.parse(inspect.getsource(mod))
+    except (OSError, TypeError) as e:
+        # Returning an empty set here would drop every constant in this module from the digest
+        # and change the model version without saying anything -- a guard answering "nothing"
+        # when it cannot answer, which is the failure this whole function was added to fix.
+        # Every module in `FITTED_MODULES` is a file in this repo, so this cannot happen
+        # without something being badly wrong.
+        raise RuntimeError(
+            f"cannot read the source of {getattr(mod, '__name__', mod)!r}, so which of its "
+            f"names are constants and which are imports is unknown. The digest is not "
+            f"computable over a module it cannot read, and guessing would silently move "
+            f"every model version stamped afterwards.") from e
+    assigned: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            assigned |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            assigned.add(node.target.id)
+    return assigned
+
+
 def fitted_constants() -> dict[str, Any]:
     """Every fitted constant in the prediction modules, as {"module.NAME": value}.
 
     Public module-level names in upper case, which is the repo's own convention for a
-    constant. Callables, modules and imported types are skipped -- a re-export is not a
-    number.
+    constant, and **assigned by the module rather than imported into it** -- see
+    `_assigned_at_module_level` for the import that got in. Callables and modules are skipped
+    besides.
     """
     from importlib import import_module
 
     out: dict[str, Any] = {}
     for name in FITTED_MODULES:
         mod = import_module(name)
+        assigned = _assigned_at_module_level(mod)
         for attr in dir(mod):
-            if attr.startswith("_") or not attr.isupper():
+            if attr.startswith("_") or not attr.isupper() or attr not in assigned:
                 continue
             v = getattr(mod, attr)
             if isinstance(v, (int, float, str, dict, set, frozenset, list, tuple)):

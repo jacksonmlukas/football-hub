@@ -31,6 +31,12 @@ def _board(n=180):
         "sd": [3.0] * n,
         "adp": [float(i + 1) for i in range(n)],
         "vor": [float(n - i) for i in range(n)],
+        # Carried because `adp` above is: `vor_proj` is `board.STAGE_COLUMNS["adp"]`, so a
+        # frame claiming that stage and not carrying it is a board `build` cannot emit --
+        # and since #199 the room asks the report which of the two currencies it ranks in
+        # rather than asking this frame. Equal to `vor` on purpose: the fixture supplies
+        # what its report claims without changing any ordering these tests assert on.
+        "vor_proj": [float(n - i) for i in range(n)],
         "xfp_per_game": [max(0.0, 20.0 - i * 0.1) for i in range(n)],
     })
 
@@ -121,6 +127,60 @@ def test_my_greedy_fills_its_starting_slots():
         assert mine.count(p) >= min(n, 1), f"no {p} drafted"
 
 
+# --- which currency the room ranks in -------------------------------------
+
+def _two_currency_board(n=60):
+    """One frame carrying both VOR columns, ordered against each other.
+
+    `vor` prefers the last player on the board and `vor_proj` prefers the first, so which
+    of the two the room ranked in is readable off a single pick. Every position is the
+    same, so `_need_score` never breaks the tie and the currency is the only thing left.
+    """
+    return pl.DataFrame({
+        "player": [f"P{i}" for i in range(n)],
+        "pos": ["RB"] * n,
+        "ecr": [float(i + 1) for i in range(n)],
+        "adp": [float(i + 1) for i in range(n)],
+        "vor": [float(i) for i in range(n)],
+        "vor_proj": [float(n - i) for i in range(n)],
+    })
+
+
+def test_the_room_ranks_in_the_currency_the_report_names():
+    """Issue #199, and the site with a live consequence rather than only an owner.
+
+    A rule test on one frame and two reports, for #164's reason: on every board `build` can
+    emit, `vor_proj` is present exactly when `report.adp` is true, so a test built from a
+    reachable board would pass against `"vor_proj" in pool.columns` and prove nothing. The
+    frame here carries both columns and does not move; only the report does.
+
+    What it holds is the decision the ticket asked for: the live room ranks on the
+    replacement-adjusted blended projection and every backtested room ranks on
+    replacement-adjusted prior-season xFP, because the draft-market stage is what leaves the
+    first -- and that is now read off the report and named in `backtest.LIMITATIONS`, rather
+    than falling out of a column nobody chose.
+    """
+    from hub.draft.board import BuildReport
+    board = _two_currency_board()
+    kw = {"my_slot": 1, "teams": 2, "rounds": 1}
+
+    on_proj = simulate_remaining_draft(board, DraftState(), report=BuildReport(adp=True),
+                                       **kw)
+    on_xfp = simulate_remaining_draft(board, DraftState(), report=BuildReport(adp=False),
+                                      **kw)
+    assert board["player"][int(on_proj[0][0])] == "P0", "vor_proj tops out at the first row"
+    assert board["player"][int(on_xfp[0][0])] == "P59", "vor tops out at the last"
+
+
+def test_a_room_handed_no_report_still_ranks_and_says_so_through_one_owner():
+    """With only a frame, `board.report_for` derives one -- `BuildReport.of_served`, the
+    single derivation, rather than a twelfth private guess. This board carries `adp`, so
+    that derivation says the draft-market stage ran and the projection scale is the one."""
+    board = _two_currency_board()
+    got = simulate_remaining_draft(board, DraftState(), my_slot=1, teams=2, rounds=1)
+    assert board["player"][int(got[0][0])] == "P0"
+
+
 # --- win probability ------------------------------------------------------
 
 def test_returns_a_probability_per_candidate():
@@ -172,8 +232,10 @@ def test_the_run_can_be_told_how_much_of_it_was_actually_correlated():
     board = _board(n=60).with_columns(
         pl.Series("team", [f"T{i % 8}" for i in range(60)]))
     report = optimize.CorrelationReport()
+    # `correlation`, not `report`: since #199 this function takes two reports about two runs
+    # -- the `BuildReport` describing the board, and this one describing the simulation.
     win_probability(board, DraftState(), ["P0", "P1"], my_slot=3, rounds=6,
-                    n_draft_sims=2, n_season_sims=20, report=report)
+                    n_draft_sims=2, n_season_sims=20, correlation=report)
     assert report.blocks > 0, "no block was counted, so nothing could have been reported"
     assert not report.degraded()
     assert report.note() == f"correlation: all {report.blocks} team blocks factored."
@@ -782,3 +844,43 @@ def test_a_player_near_the_smoothing_window_boundary_is_covered():
     want = adp + _closed_form(adp, raw, corr)
     assert np.allclose(got, want, atol=1e-9)
     assert got[30] > adp[30], "a downgraded player should be taken later, not earlier"
+
+
+def test_a_frame_whose_report_claims_a_stage_it_lacks_says_so(_board_min=None):
+    """Review of #199 found this raising `ColumnNotFoundError` four frames deep.
+
+    A frame carrying `adp` but not `vor_proj` is incoherent: it says the draft-market stage
+    ran while missing one of that stage's columns. `build` cannot emit one -- the stage runs
+    under `_stage(..., absorbs=())`, so a failure inside it aborts the build -- but these are
+    public functions taking a bare `pl.DataFrame`, and a fixture or a board off disk from
+    before the column existed can be one.
+
+    Before #199 this degraded: `optimize` sniffed `"vor_proj" in pool.columns` and fell back to
+    `vor`. That is not the behaviour to restore. Quietly ranking on a currency the caller does
+    not believe it is ranking on is what let the live room use `proj_blend` while every
+    backtested room used prior-season xFP, with nothing recording that the two differ -- the
+    defect #199 exists to close. So it still refuses; it just explains itself now.
+    """
+    import polars as pl
+    import pytest as _pytest
+
+    from hub.draft import optimize as O
+    from hub.draft.board import BuildReport
+
+    incoherent = pl.DataFrame({
+        "player": ["A", "B"], "pos": ["RB", "WR"],
+        "adp": [1.0, 2.0], "vor": [10.0, 9.0],      # `adp` present, `vor_proj` absent
+    })
+    claims_the_stage_ran = BuildReport.of_served(incoherent)
+    assert claims_the_stage_ran.adp, "premise: the sentinel column makes the report say it ran"
+
+    with _pytest.raises(ValueError, match="vor_proj") as caught:
+        O._greedy_currency(incoherent, claims_the_stage_ran)
+    assert "report" in str(caught.value), (
+        "the refusal does not tell the caller the report and the frame disagree")
+
+    # And it is not refusing everything: the same frame with a report that does not claim the
+    # stage ranks on `vor` without complaint.
+    honest = BuildReport()
+    assert not honest.adp
+    assert O._greedy_currency(incoherent, honest).tolist() == [10.0, 9.0]

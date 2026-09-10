@@ -139,6 +139,12 @@ def correct_projection(board: pl.DataFrame, column: str = "proj_blend") -> pl.Da
     **Silent when `td_luck` is absent, on purpose, and that silence has a price.** It is paid
     one caller away and caught there; the comment on the early return says by what.
     """
+    # **This survives issue #199 because it is a producer, not a consumer.** It reads the
+    # frame rather than the report for the reason `durability.correct_projection` gives at
+    # length: it runs inside `board._stage`, which is what sets the flag a report would
+    # answer from, so no report describing this frame exists yet. Asking a column here is
+    # not a provenance guess competing with the report -- it is a stage checking its own
+    # input before it writes.
     if column not in board.columns or "td_luck" not in board.columns:
         # Two absences, one return, and they do not cost the same thing.
         #

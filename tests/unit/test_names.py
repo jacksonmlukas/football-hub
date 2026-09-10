@@ -101,11 +101,63 @@ def test_paths_agrees_with_the_declarations_it_replaces():
     assert (ROOT / "data") == DATA.parent if DATA.name == "processed" else True
 
 
-def test_adp_history_no_longer_imports_a_board_builder():
+def test_adp_history_does_not_import_a_board_builder_at_module_scope():
+    """No import *cycle*, which is narrower than no mention of `board`.
+
+    `board` imports `adp_history`, so a module-level runtime import back is a cycle and the
+    interpreter says so. An import under `if TYPE_CHECKING:` and an import inside a function
+    body are neither — the first never executes, the second executes after both modules are
+    built. #199 needs `report_for` and `BuildReport` from `board`, and reaches them by exactly
+    those two routes.
+
+    This test used to `ast.walk` the whole tree and forbid any `ImportFrom` naming `board`,
+    which fails on both of them. That is the shape this repo keeps finding: a check standing in
+    for the property it means, passing and failing on something adjacent to it. So the scan is
+    scoped to module scope outside `TYPE_CHECKING`, and the property itself is asserted below
+    rather than left to the proxy.
+    """
     import ast
     import pathlib
     src = (pathlib.Path(__file__).resolve().parents[2] / "src" / "hub" / "draft"
            / "adp_history.py")
-    mods = {n.module for n in ast.walk(ast.parse(src.read_text()))
-            if isinstance(n, ast.ImportFrom) and n.module}
-    assert not any("board" in m for m in mods), f"cycle is back: {mods}"
+    tree = ast.parse(src.read_text())
+
+    def executes_on_import(body: list[ast.stmt]) -> list[ast.ImportFrom]:
+        """Imports reached by simply importing the module.
+
+        Descends through `if`/`try`/`with`, which do run, and stops at `def` and `class`,
+        whose bodies do not -- a function-local import runs on first call, by which time both
+        modules exist. `if TYPE_CHECKING:` never runs at all.
+        """
+        found: list[ast.ImportFrom] = []
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            test = getattr(node, "test", None)
+            if (isinstance(node, ast.If) and isinstance(test, ast.Name)
+                    and test.id == "TYPE_CHECKING"):
+                continue
+            if isinstance(node, ast.ImportFrom):
+                found.append(node)
+            for field in ("body", "orelse", "finalbody"):
+                found += executes_on_import(getattr(node, field, []) or [])
+        return found
+
+    mods = {n.module for n in executes_on_import(tree.body) if n.module}
+    assert not any("board" in m for m in mods), (
+        f"a module-level runtime import of board is a cycle: {sorted(mods)}. "
+        f"Reach it under `if TYPE_CHECKING:` or from inside the function that needs it.")
+
+
+def test_adp_history_imports_on_its_own_without_cycling():
+    """The property the scan above is a proxy for, asserted directly.
+
+    A fresh interpreter importing only this module is the thing that would actually raise on a
+    cycle, and it stays true however the imports are written -- including forms the scan has
+    not been taught about.
+    """
+    import subprocess
+    import sys
+    done = subprocess.run([sys.executable, "-c", "import hub.draft.adp_history"],
+                          capture_output=True, text=True)
+    assert done.returncode == 0, f"importing adp_history alone failed:\n{done.stderr}"
