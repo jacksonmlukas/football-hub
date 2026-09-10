@@ -201,6 +201,11 @@ under the same seed and the same `("season",)` cluster #45 fixed:
       treatment the published +0.215 was measured under
 ```
 
+> **The block above is the pre-#206 shape (2026-09-10).** It is kept as printed because
+> it is what produced the spread. A run today scores the same three treatments on the
+> restricted rows, where they cannot differ, above a coverage line and an `UNANSWERED`
+> line — see *the fallback is removed rather than chosen* below.
+
 No new flag: it is the published command in *Reproduce* below, unchanged. The cost is that a
 run scores three arms against the incumbent rather than one — the primary's frame is the one
 the verdict is read off and is not re-scored, so it is two extra scorings and not three.
@@ -223,6 +228,77 @@ season-clustered restatement. So:
 alone. What this changes is that a reader of the output can see how much of that verdict is the
 fallback without leaving the terminal. The limitation the primary carries — that the arm is
 scored on a second estimator's error — is unchanged and is why #206 stayed open.
+
+## Restated 2026-09-10 — the fallback is removed rather than chosen, and what that unmeasures
+
+Issue #206, decided 2026-09-09 under
+[ADR-0024](adr/0024-a-modelling-decision-becomes-agent-work-when-its-alternatives-can-be-measured.md).
+The section above measures three ways of scoring a player the model cannot price and finds
+them **1.5 points apart, further than any of the three is from zero**. The disposition is
+none of them.
+
+**The gate now scores only the roster-weeks both arms can price.** Both arms are handed the
+same mask — `weekly_gate.priced_by_both`, which is the `addable` mask the harness already
+carried for the free-agent pool — so a player the model cannot project, or the consensus page
+does not rank, is started by *neither* arm rather than guessed at for one. [method.md](method.md)
+rule 6 then holds **by construction** rather than by two arms being trusted to apply a fallback
+symmetrically, and the cells the three treatments disagreed about are the cells nothing scores.
+
+**Why not simply pick one.** Forcing *unscoreable* on both arms is the same rule reached by a
+mechanism two arms have to be trusted to apply the same way. Rank-interpolation leaves the arm
+under test carrying a second estimator's error, which is the defect the ticket names. Neither
+of those is answered by preferring the treatment with the better number — the best number is
+the one to be most suspicious of, and *unscoreable*'s +0.537 came from a free lineup rule.
+
+**What it costs, and it is a cost.** The result speaks for the share of the slate both arms
+can price and for **nothing else**. Whether the weekly projection beats consensus *on the
+players it cannot price* is **UNANSWERED** — not absent, not negative, not implied. What would
+answer it is a projection for those players; a rule for scoring them without one is the thing
+that was removed. A run prints that sentence, in those words, beside the coverage share.
+
+### The gate says what it covers, and the block above becomes history
+
+A run now prints the covered share, the two reasons for the rest, and the unanswered line,
+counted off the same mask it scored on. The three-treatment block is still printed and has
+stopped being a choice: scored on the restricted rows the treatments cannot reach a scored
+cell, so they agree, and **a spread of anything but zero is an alarm** — it says the
+restriction missed an arm, a week or the waiver rule, and the effect is once again partly the
+fallback. `--unrestricted` re-derives the pre-#206 universe the published figures were measured
+on; it is not the gate and a run under it says so on its mode line.
+
+### And restricting the rows creates a failure mode, which is counted
+
+If the priceable side of a roster fits inside the starting slots, every player either arm can
+price starts, both arms field the identical team, and the row's difference is **zero by
+construction rather than by measurement** — [ADR-0012](adr/0012-the-lineup-optimiser-waits-for-real-variance.md)'s
+structural zero arriving down a different road. This is not hypothetical: it fired on the
+offline archive the first time #206 ran end to end. That capture trims the consensus page to
+16 of 200 board players, so **10.1%** of its roster-week cells are priced by both arms, **every
+scored roster-week is forced**, and the effect is +0.000 against +0.075 for the same rows
+unrestricted. A run therefore prints the forced share, and says `THE ARMS NEVER DISAGREE` when
+it is 100%. There is no threshold in between: a share above which a run should be disbelieved
+would be a constant nobody fitted.
+
+### What is measured here, and what is not
+
+**Nothing on this page is re-measured by #206, and no figure above moves.** This gate builds
+its paired frame from the network and persists nothing — the same limit recorded twice above,
+for the season-clustered restatement and for the printed block. So:
+
+| figure | standing after #206 |
+|---|---|
+| **−1.004**, CI [−1.347, −0.640], 0 of 4 seasons, REMOVE | the **rank-interpolated** treatment over the **pre-#206 universe**. Stands as published and as the record of what that treatment gives. It is no longer what the shipped gate reports |
+| +0.537 *unscoreable*, +0.215 *mixed scale*, spread 1.5 | unchanged, and now the record of **why** the fallback was removed rather than a menu it was chosen from |
+| the mixture 54.2 / 16.7 / 29.1, and the run's 76.9 / 8.7 / 14.5 | unchanged. The gate still prints the column's composition, labelled *as assembled*, because the size of the group it declines to guess at is the cost of declining |
+| **the restricted effect, its interval and its covered share** | **not measured.** A run is what produces them, and the authoritative figures still want one |
+
+**So the REMOVE verdict is not carried forward and is not withdrawn.** It was read off a
+treatment the gate no longer reports, over a universe the gate no longer scores. Nothing here
+replaces it, because nothing here ran. What #44's re-run established stands unchanged — that
+**+0.215 was not a property of the weekly model** — and what it did not establish is still not
+established: the weekly model's own merit, in either direction.
+[ADR-0016](adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md) is not re-derived
+from any of this, and its own note already says why.
 
 ## The result
 
