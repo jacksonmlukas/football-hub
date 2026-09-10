@@ -58,10 +58,27 @@ fi
 
 # Fail closed on an unreadable event, the way tdd_gate.sh does. An empty read here means the
 # event shape changed under us, and a hook that quietly checks nothing when its input surprises
-# it is the defect this repo already carries scars from. There is no tool filter to fall
-# through: whatever arrived, the tree is either current or it is not.
+# it is the defect this repo already carries scars from.
 EVENT="$(cat 2>/dev/null || true)"
 : "${EVENT:=}"
+
+# **The remedy is never refused.** The first version of this hook refused every tool call
+# without exception, which meant it also refused `git merge --no-edit main` -- the one command
+# its own message tells you to run. Three agents hit that deadlock within minutes of each other
+# on 2026-09-09, each tried the prescribed merge four times, and each had to abandon its ticket
+# with work uncommitted. A guard that blocks its own fix is worse than no guard: it converts a
+# one-command correction into a lost session.
+#
+# So a Bash call driving `git` passes. That is the whole escape hatch, and it is narrow in the
+# way that matters: `git` cannot write source the way `sed -i`, a heredoc or `cat >` can, which
+# are the evasion paths widening this hook to Bash was meant to close. Inspection verbs are in
+# alongside the remedy because an agent that cannot run `git status` cannot tell whether the
+# merge it just ran worked.
+GIT_VERBS='merge|rebase|pull|fetch|status|log|diff|show|branch|remote|worktree|stash|checkout|restore|switch|add|commit|rev-parse|rev-list|merge-base|describe|config'
+if printf '%s' "$EVENT" | grep -Eq "\"tool_name\"[[:space:]]*:[[:space:]]*\"Bash\"" &&
+   printf '%s' "$EVENT" | grep -Eq "\bgit[[:space:]]+(-[A-Za-z]+[[:space:]]+[^[:space:]]+[[:space:]]+)*($GIT_VERBS)\b"; then
+  exit 0
+fi
 
 # A linked worktree's git dir sits under the primary's; in the primary checkout the two paths
 # are identical. Compared as git prints them, which works on older git than `--path-format`

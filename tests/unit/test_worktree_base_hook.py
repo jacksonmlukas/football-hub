@@ -268,3 +268,71 @@ def test_no_git_on_path_refuses_rather_than_assuming_the_best(repo):
     assert done.returncode == 2, (
         f"no git, and the hook waved the edit through: {done.stdout}{done.stderr}")
     assert "git" in (done.stdout + done.stderr).lower()
+
+
+# --- the guard must never block its own remedy -----------------------------
+
+@pytest.mark.parametrize("command", [
+    "git merge --no-edit main",
+    "git merge main",
+    "git rebase main",
+    "git -C /some/worktree merge --no-edit main",
+    "cd /some/worktree && git merge --no-edit main",
+    "git fetch origin && git merge --no-edit main",
+    "git status --short",
+    "git log --oneline -5",
+], ids=["plain", "bare", "rebase", "dash-C", "cd-then", "fetch-then", "status", "log"])
+def test_the_prescribed_remedy_is_never_refused(repo, command):
+    """The deadlock, and it was not hypothetical for four minutes.
+
+    The first version of this hook refused every tool call with no exception, so it also
+    refused `git merge --no-edit main` -- the command its own refusal message instructs you to
+    run. On 2026-09-09 three agents hit that within minutes of each other, each tried the
+    prescribed merge four separate times, and each abandoned its ticket with work uncommitted.
+
+    A guard that blocks its own fix does not fail safe. It converts a one-command correction
+    into a lost session, and it teaches the next agent that the guard is an obstacle to route
+    around rather than a fact to act on -- which is how `tdd_gate.sh` lost its coverage.
+    """
+    stale = git(repo, "rev-parse", "HEAD")
+    advance(repo, "two\n")
+    wt = worktree_at(repo, "agent-remedy", stale)
+
+    done = fire(wt, {"tool_name": "Bash", "tool_input": {"command": command}})
+    assert done.returncode == 0, (
+        f"refused {command!r}, which an agent needs to stop being stale: {done.stderr}")
+
+
+@pytest.mark.parametrize("command", [
+    "sed -i 's/a/b/' src/hub/x.py",
+    "cat > src/hub/x.py <<EOF\nx = 1\nEOF",
+    "python -c \"open('src/hub/x.py','w').write('x')\"",
+    "echo 'digitally' > src/hub/x.py",
+], ids=["sed-i", "heredoc", "python-write", "redirect"])
+def test_the_escape_hatch_does_not_reopen_the_bash_hole(repo, command):
+    """The exemption is for `git`, and `git` cannot write source the way these can.
+
+    Widening this hook to Bash existed to close the evasion `tdd_gate.sh` documents -- agents
+    editing through heredocs that an `Edit|Write` hook never sees. An exemption broad enough to
+    let those back through would undo the reason the hook covers Bash at all.
+    """
+    stale = git(repo, "rev-parse", "HEAD")
+    advance(repo, "two\n")
+    wt = worktree_at(repo, "agent-hole", stale)
+
+    done = fire(wt, {"tool_name": "Bash", "tool_input": {"command": command}})
+    assert done.returncode == 2, (
+        f"a stale worktree accepted {command!r}; the edit could go through it")
+
+
+def test_a_word_that_merely_contains_git_is_not_an_exemption(repo):
+    """`digital`, `legitimate`, a path named `gitlab-ci` -- none of them run git."""
+    stale = git(repo, "rev-parse", "HEAD")
+    advance(repo, "two\n")
+    wt = worktree_at(repo, "agent-word", stale)
+
+    for command in ["echo legitimate > src/hub/x.py",
+                    "sed -i 's/x/y/' .gitlab/config.yml",
+                    "cat digital-merge-notes.txt > src/hub/x.py"]:
+        done = fire(wt, {"tool_name": "Bash", "tool_input": {"command": command}})
+        assert done.returncode == 2, f"{command!r} was exempted as if it ran git"
