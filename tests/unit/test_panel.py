@@ -10,15 +10,19 @@ is exercised on a hand-built frame: a window, a share, a two-scrape tie-break. B
 Panel a Panel is not in any leaf -- it is in how they are called. That half used to be a single
 `inspect.getsource` assertion that read the function's own text back.
 """
+import ast
 import datetime as dt
+import inspect
 import operator
 from functools import reduce
+from pathlib import Path
 
 import numpy as np
 import panelarchive as arc
 import polars as pl
 import pytest
 
+from hub import contracts
 from hub.contracts import ContractViolation
 from hub.models import components
 from hub.models import panel as pnl
@@ -1129,3 +1133,111 @@ def test_the_opt_in_specs_raw_columns_are_declared_though_the_archive_cannot_dri
             f"`{c}` is measured on week w's own plays and nothing says so"
         assert pnl.column_role(f"{c}_trend") == "derived", \
             f"`{c}_trend` is the feature built from it and must stay reachable"
+
+
+# --- which sources go through the validated, cached path, and which cannot yet (#35) -------
+#
+# The path is `hub.fetch.nflverse.load`. What it buys over reaching `nflreadpy` from this
+# module is the source's `Contract`, a cache entry keyed by `(source, seasons, columns,
+# as-of)`, and a `Pin` beside that entry -- which together are what makes "a panel built twice
+# at one as-of is frame-identical" a claim anything can check.
+#
+# The two tests below are a pair on purpose. The first says which sources still reach
+# `nflreadpy` from `hub.models.panel`; the second says *why each of them does*, by asserting
+# the obstacle is still there. A prose note about a blocked source outlives the block; an
+# assertion that the frozen capture is still missing contract-required columns goes red the
+# day the archive is re-taken, and its message says what to do about it.
+
+_NFLREADPY_TO_SOURCE = {
+    "load_pbp": "pbp", "load_player_stats": "player_stats",
+    "load_ff_opportunity": "ff_opportunity", "load_schedules": "schedules",
+    "load_participation": "participation", "load_ftn_charting": "ftn_charting",
+    "load_injuries": "injuries", "load_snap_counts": "snap_counts",
+    "load_ff_rankings": "ff_rankings",
+}
+
+
+def _sources_reaching_nflreadpy_directly() -> set[str]:
+    """Every nflverse source `hub.models.panel` still fetches without going through `load`.
+
+    An AST scan rather than a grep: `nfl.load_schedules(...)` inside a comment or a docstring
+    is not a call, and this module is full of prose naming these functions. Same technique as
+    `test_experiment.py`'s expanding-window scan, and for the same reason -- what is asserted
+    is a property of the code, and a string search asserts a property of the text.
+    """
+    tree = ast.parse(Path(inspect.getfile(pnl)).read_text())
+    found = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _NFLREADPY_TO_SOURCE
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "nfl"):
+            found.add(_NFLREADPY_TO_SOURCE[node.func.attr])
+    return found
+
+
+def test_only_the_three_archive_blocked_sources_still_reach_nflreadpy_directly():
+    """The routing #35 asks for, as far as the frozen archive lets it be proved.
+
+    Five of the six nflverse sources this module reads now go through `hub.fetch.nflverse`.
+    A *new* unrouted source -- a join added, a source grown, someone reaching for `nfl.` out
+    of habit -- lands in this set and fails here, rather than reaching the live Sunday path as
+    a frame no contract has seen.
+    """
+    direct = _sources_reaching_nflreadpy_directly()
+    assert direct == {"schedules", "snap_counts", "injuries"}, (
+        f"{sorted(direct)} are fetched from `nflreadpy` inside hub.models.panel. Three of "
+        f"them are blocked by the frozen archive and the test below says so; anything else "
+        f"is a source that should go through `hub.fetch.nflverse.load` -- validated, cached "
+        f"and pinned -- instead.")
+
+
+@pytest.mark.parametrize(("source", "contract"), [
+    ("schedules", "SCHEDULES"), ("snap_counts", "SNAP_COUNTS"), ("injuries", "INJURIES")])
+def test_the_three_unrouted_sources_are_blocked_by_the_archive_and_not_by_this_module(
+        source, contract):
+    """Each of the three is unrouted because its capture cannot satisfy its own contract.
+
+    This is the whole of what is left of #35, and it is asserted rather than written down:
+    the captures in `tests/golden/fixtures/panel_archive/` were trimmed to the columns the
+    Panel *selects*, which is narrower than the contract's required set, so routing them makes
+    `nflverse.load` refuse the archive. `tests/golden/fixtures/README.md` names that shape --
+    a capture cut past the path the production reader takes still reads as a capture while
+    proving less.
+
+    **This test is meant to go red.** `scripts/capture_panel_archive.py --write` re-takes the
+    archive with the contract's columns included; the day it is run, the assertion below stops
+    holding and the message says what the next step is. Weakening the contract to admit the
+    trimmed frame is the other way to make it pass, and is the one thing that must not happen:
+    it would blind the contract to a genuine upstream break, which `_clean_ff_opportunity`
+    already refuses in the same words.
+    """
+    declared = getattr(contracts, contract)
+    missing = sorted(set(declared.required) - set(arc.frame(source).columns))
+    assert missing, (
+        f"the frozen `{source}` capture now carries every column `{contract}` requires, so "
+        f"the reason hub.models.panel still fetches it from `nflreadpy` is gone. Route it "
+        f"through `hub.fetch.nflverse.load` and drop it from this parametrisation -- that is "
+        f"the rest of #35.")
+
+
+def test_the_routed_sources_really_go_through_the_loader_when_a_panel_is_built(monkeypatch,
+                                                                               tmp_path):
+    """The behavioural half. The scan above reads the source; this watches a build.
+
+    What it pins is that the loader is on the path a Panel is actually assembled by, and not
+    merely imported by the module. `ff_rankings` arrives here through `load_rankings`, which
+    is `load` under another name.
+    """
+    import hub.fetch.nflverse as nv
+    real, seen = nv.load, []
+
+    def watched(source, seasons, *a, **kw):
+        seen.append(source)
+        return real(source, seasons, *a, **kw)
+
+    arc.install(monkeypatch, tmp_path)
+    monkeypatch.setattr(nv, "load", watched)
+    pnl.build_panel(arc.SEASONS, pnl.PanelSpec(expected=True))
+    assert {"player_stats", "ff_opportunity", "ff_rankings"} <= set(seen), (
+        f"a Panel was assembled and the loader saw only {sorted(set(seen))}; a source that "
+        f"reaches nflreadpy round the side is unvalidated, uncached and unpinned")
