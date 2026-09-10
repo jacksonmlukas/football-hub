@@ -412,3 +412,119 @@ def test_the_positional_sd_is_per_position_and_falls_back():
     assert "__pooled__" in sig, "and an unseen position falls back rather than raising"
     assert W.standard_error(_rows(n=1, position="K", games_before=1.0), sig)[0] == \
         pytest.approx(sig["__pooled__"]), "an unseen position falls back to the pool"
+
+
+# --- the distribution, not just the centre (#177) ---------------------------
+#
+# MAE is what decides, and it is minimised by the median: it reads the centre and is blind
+# to the spread and the skew, which are two thirds of what `predict.moments` produces. These
+# check the wiring, not the mathematics -- the rule itself is proved against its own
+# definition and against a hand-computed closed form in `tests/unit/test_scoring_rules.py`.
+
+def test_the_walk_forward_scores_the_distribution_beside_the_error():
+    """One CRPS column, on the same rows and the same window as the three error columns."""
+    errs = W.walk_forward(_panel())
+    assert "crps_weekly" in errs.columns
+    assert errs["crps_weekly"].null_count() == 0
+    assert (errs["crps_weekly"] >= 0).all(), "a score that can go negative is not this one"
+
+
+def test_the_published_spread_earns_its_place_in_the_score():
+    """The distribution scores better than the same projection published as a point mass.
+
+    Not a tautology -- a distribution that is too wide or in the wrong place scores *worse*
+    than its own centre, which is the whole reason CRPS is worth reporting. This says the
+    shipped one is not that, on the walk-forward window.
+    """
+    errs = W.walk_forward(_panel())
+    assert errs["crps_weekly"].to_numpy().mean() < errs["err_weekly"].to_numpy().mean()
+
+
+def test_the_crps_column_reads_the_published_laws_rather_than_a_copy_of_them():
+    """`shipped_quantiles` must grade what `hub.models.predict` serves, not a second
+    implementation of `sd = K*sqrt(mu)` that can drift away from it.
+
+    Proved by making the published spread zero at its source: with every `WEEKLY_K` at zero
+    the served distribution *is* a point mass, and CRPS must then equal the absolute error
+    exactly -- the identity `test_a_point_mass_is_scored_as_the_absolute_error` states in
+    the other file. A copied law would not notice the patch and the two would disagree.
+    """
+    mu = np.array([12.0, 3.0, 21.5])
+    actual = np.array([4.0, 9.0, 21.5])
+    got = W.crps_from_quantiles(W.shipped_quantiles(mu, ["WR", "RB", "QB"]), actual)
+    assert (got > 0.0).all(), "a week scored at zero is a forecast with no spread at all"
+    # The third row is the outcome landing exactly on the projection, where a point mass
+    # scores zero and any honest distribution scores more. Per row the two are not ordered;
+    # the ordering is an expectation, and `test_the_published_spread_earns_its_place_in_the
+    # _score` is where it is asserted.
+    assert got[2] > abs(mu[2] - actual[2])
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(W.predict, "WEEKLY_K", dict.fromkeys(W.predict.WEEKLY_K, 0.0))
+        mp.setattr(W.predict, "WEEKLY_K_POOLED", 0.0)
+        flat_dist = W.crps_from_quantiles(W.shipped_quantiles(mu, ["WR", "RB", "QB"]), actual)
+    assert flat_dist == pytest.approx(np.abs(mu - actual), abs=1e-9)
+
+    # And the third moment, which the spread law says nothing about: weekly scoring is
+    # right-skewed -- the median week is about 0.90 of the mean, because the mean is carried
+    # by touchdown spikes -- so the quantiles being graded must sit below their own centre.
+    # A normal fitted to the same two moments would put the median exactly on it, and every
+    # assertion above would still hold.
+    wr = W.shipped_quantiles(np.array([12.0]), ["WR"])[0]
+    assert float(np.median(wr)) < 12.0 - 0.5, (
+        "the graded distribution is symmetric about its mean, so it is not the one "
+        "`predict.skewed` serves")
+
+
+def test_the_diagnostic_reports_crps_beside_mae_over_the_same_window():
+    """#177's third criterion. Both columns are means over the rows `expanding_seasons`
+    left, per season and pooled, with the ratio a point mass would score 1.000 on."""
+    errs = W.walk_forward(_panel())
+    text = "\n".join(W.diagnostic(errs))
+    assert "CRPS" in text and "crps/mae" in text
+    assert "pooled" in text
+    for season in errs["season"].unique().to_list():
+        assert str(season) in text
+    ratio = float(errs["crps_weekly"].to_numpy().mean() / errs["err_weekly"].to_numpy().mean())
+    assert f"{ratio:.3f}" in text, text
+    assert f"{W.CALIBRATED_RATIO:.3f}" in text, "the calibrated reference is not printed"
+
+
+def test_an_empty_walk_forward_still_reports_rather_than_dividing_by_zero():
+    """The degraded path: no held-out season means no rows to score, and the distribution
+    report must not be reached at all rather than meaning an empty column."""
+    assert "nothing measured" in "\n".join(W.diagnostic(pl.DataFrame()))
+
+
+def test_the_report_cites_the_coverage_measurement_rather_than_a_figure_typed_here():
+    """#177's fourth criterion, in the direction the ticket cares about.
+
+    The argument that deferred this ticket was that the moments MAE cannot see were "already
+    within a point of nominal". That is now a measurement rather than a sentence, and the
+    report reads its artifact -- so when the measurement is re-run this line moves with it,
+    which a number typed into a print statement would not.
+    """
+    from hub.models import coverage
+
+    published = {"centre": "prior", "lookahead": False, "n": 16061,
+                 "gate_subset": "strictly positive", "gate_n": 10536, "gate_cov80": 0.774,
+                 "band": 0.02, "verdict": "UNDER-COVERS", "generated_at": "2026-09-07"}
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(coverage, "published_summary", lambda *a, **k: published)
+        text = "\n".join(W.diagnostic(W.walk_forward(_panel())))
+    assert "UNDER-COVERS" in text
+    assert "77.4%" in text and "80%" in text and "10,536" in text
+    assert "2026-09-07" in text, "a measurement with no date is not one that can go stale"
+
+
+def test_a_tree_with_no_measurement_published_says_how_to_run_it():
+    """Graceful degradation, `CLAUDE.md`'s standing rule: a fresh clone has no
+    `data/processed/`, and a report that raised there would make the diagnostic unrunnable
+    for the case the suite is written around."""
+    from hub.models import coverage
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(coverage, "published_summary", lambda *a, **k: None)
+        text = "\n".join(W.diagnostic(W.walk_forward(_panel())))
+    assert "coverage --measure --write" in text
+    assert "crps/mae" in text, "the score itself still reports without the measurement"
