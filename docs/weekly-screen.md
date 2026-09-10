@@ -18,6 +18,13 @@ in that week's `weekly-op` consensus. **12,852 player-weeks, 844 players, 54 cel
 target trends are restricted to week ≥ 8, where [snap-trend-signal.md](snap-trend-signal.md)
 establishes the trend exists at all.
 
+> **Restated 2026-09-10 — that restriction is now a sweep, not a value.** Issue #178. Week 8
+> was the earliest of the anchors 4, 6, 8, 10, 12 that held when they were tested *against the
+> outcome*, so screening features on rows it selected screened them on a sample chosen by a
+> number fitted to the outcome on the same data. The screen is now run at all five anchors and
+> reports the sensitivity: see *The screen's minimum week*, below. **One status moves** — the
+> snap-share trend clears at 4, 6, 8 and 10 and is killed at 12.
+
 Every feature is measured strictly before its outcome week. Pre-kickoff facts published *for*
 week *w* — the line, the injury report, the opponent — count as week-*w* information; anything
 derived from play uses weeks < *w* only.
@@ -304,6 +311,108 @@ splitting the first of those into its touchdown and non-touchdown halves. It is 
 survive a direct control for prior yardage, and it was never claimed to be. Anything citing it
 should name that.
 
+## The screen's minimum week, and the one status that is conditional on it
+
+**Re-run 2026-09-10**, issue #178, under [method.md rule 13](method.md). The sweep range and
+step were fixed in the commit that ran them, before the run, which is what the disposition on
+#178 pre-registered.
+
+**The circularity, stated exactly.** `panel.TREND_MIN_WEEK = 8` did two jobs. It is a *model*
+threshold — `hub.models.weekly` fits on it and forces its multiplier to identity below it — and
+it was also the screen's `min_week` for `snap_trend`, `tgt_trend` and the optional trend
+features, which is what `cell_correlations` filters rows on and what `screen_joint` reads to
+decide which survivors may act as controls. Its value is 8 because 8 is the **earliest anchor
+that held when 4, 6, 8, 10 and 12 were tested against the outcome**
+([snap-trend-signal.md](snap-trend-signal.md)). So features were screened on rows selected by a
+value fitted to the outcome on the same data, and the page did not disclose the value.
+
+The threshold keeps its measured value; the model's behaviour does not move, and nothing here
+re-fits it. What changed is that the *screen* stopped borrowing it. `SCREEN_TREND_ANCHORS` is
+the screen's own constant, it is swept rather than chosen, and
+`test_the_screen_does_not_read_the_model_s_trend_threshold` is an AST guard that stops the two
+being re-coupled by an import.
+
+### The surviving feature set at each anchor
+
+Basis **`pooled`** — the pre-registration, and the basis every figure above rests on. Sample
+unchanged at **14,370 player-weeks, 847 players**; every figure above was reproduced exactly in
+the same run before the sweep was taken.
+
+| trend features from | cells | surviving feature set |
+|---|---|---|
+| week ≥ 4 | 45 | dvp, inj_sev, **snap_trend**, td_rate_prior |
+| week ≥ 6 | 45 | dvp, inj_sev, **snap_trend**, td_rate_prior |
+| week ≥ 8 *(published)* | 35 | dvp, inj_sev, **snap_trend**, td_rate_prior |
+| week ≥ 10 | 25 | dvp, inj_sev, **snap_trend**, td_rate_prior |
+| week ≥ 12 | 15 | dvp, inj_sev, td_rate_prior |
+
+**It is not stable, and the instability is one feature at one anchor.** Everything except the
+snap-share trend returns the identical verdict at every anchor, and the six week-1 features
+return the identical `r` to four decimals — which is structural rather than reassuring: the
+anchor is a floor on the *trend* features' weeks, and `screen_joint` admits a survivor as a
+control only where its own minimum week is no later, so a week-1 feature is never controlled
+for a trend feature at any anchor in this sweep.
+`test_the_anchor_moves_only_the_trend_features_numbers` pins that, so a week-1 verdict that
+ever did move would be a bug and not the anchor.
+
+**Anchors 4 and 6 are one measurement, not two.** `snap_trend` is null before week 6 — it needs
+six prior weeks to form both windows — so the week-4 filter and the week-6 filter select the
+same 45 cells. The sweep has **four** distinct samples across five anchors, and the shallow end
+of the declared range is not reachable. Reported because the range was fixed before the run and
+this is what fixing it in advance bought.
+
+### The snap-share trend, per season
+
+| trend from | cells | r | t | 2021 | 2022 | 2023 | 2024 | 2025 | verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| week ≥ 4 | 45 | +0.0302 | +2.38 | +0.0091 | +0.0271 | +0.0790 | +0.0122 | +0.0235 | clears |
+| week ≥ 6 | 45 | +0.0302 | +2.38 | +0.0091 | +0.0271 | +0.0790 | +0.0122 | +0.0235 | clears |
+| week ≥ 8 | 35 | **+0.0382** | **+3.39** | +0.0277 | +0.0244 | +0.0828 | +0.0234 | +0.0326 | **clears** |
+| week ≥ 10 | 25 | +0.0506 | +4.46 | +0.0428 | +0.0343 | +0.0771 | +0.0217 | +0.0773 | clears |
+| week ≥ 12 | 15 | +0.0356 | +2.03 | +0.0324 | +0.0853 | +0.0300 | **−0.0225** | +0.0529 | **killed** |
+
+Joint, controlled for the other survivors: +0.0347 (4 and 6), **+0.0425** (8, the published
+figure), +0.0550 (10). At week ≥ 12 it never reaches the joint screen, because it is killed
+alone.
+
+**It dies on the every-season half, not on significance, and it dies in 2024.** The point
+estimate at week ≥ 12 is +0.0356, which is not smaller than the published +0.0382 — what fails
+is that 2024 comes back negative. [method.md rule 4](method.md) put that half there exactly to
+catch a sign that flips between seasons, and it is the half no standard error can rescue.
+
+**And the honest caveat in the other direction, which does not rescue it.** At week ≥ 12 a
+season mean is built from **three cells** — weeks 12, 13 and 14 — against eleven at week ≥ 4.
+The every-season half is being asked of a much noisier estimate of each season, so a single
+season crossing zero is a likelier accident there than anywhere else in the sweep. That is a
+reason the week-12 result is weak evidence *against* the trend; it is **not** a reason to
+report the trend as clearing, and the sweep was not run to find a licence to keep the tidiest
+anchor. The rule is the rule at every anchor or it is a rule at none.
+
+### It is not an artefact of the control basis
+
+The same sweep on **`decomposed`** — #179's alternative set, `td_ppg_before`,
+`nontd_ppg_before`, `ecr`, on the same 14,370 rows — returns the same five verdicts and the
+same surviving sets: snap_trend +0.0286 (4 and 6), +0.0365 (8), +0.0502 (10), and at week ≥ 12
++0.0363 at +2.21 with 2024 at **−0.0188**, killed. So the sensitivity reported here is a
+property of the row filter and not of the basis.
+
+**This does not decide #229** — which basis a surviving claim is conditional on is that
+ticket's question, and running both here says only that #178's answer does not depend on how it
+is settled.
+
+### What this page now claims about the snap-share trend
+
+**The +0.038 alone and the +0.043 joint stand as published, and they are conditional on a
+minimum week of 8.** The finding holds at every anchor from 4 to 10 and fails at 12, so it is
+reported with that range rather than as a single verdict. Anything citing the snap-share trend
+as a screen result should name the range.
+
+**What does not move.** `dvp`, `inj_sev` and `td_rate_prior` are unconditional across the
+sweep; the three killed features stay killed at every anchor; `tgt_trend` is killed at every
+anchor, reaching 3/5 seasons at its best. And the **model** threshold is untouched: the Usage
+multiplier is still dark before week 8, for the reason
+[snap-trend-signal.md](snap-trend-signal.md) measured and not for this one.
+
 ## The staleness question, and why it is smaller than first reported
 
 The consensus control is FantasyPros' `weekly-op` page, and the first version of this document
@@ -406,6 +515,13 @@ pre-registered rule, having been measured at player-week grain at +0.170 MAE and
 The implied team total is **not** carried: it fails the joint screen on the every-season half,
 being the own-spread finding in another hat.
 
+> **Qualified 2026-09-10 — the snap-share trend's licence is conditional on the anchor.**
+> Issue #178. The screen result behind it holds at a minimum week of 4, 6, 8 and 10 and is
+> killed at 12; see *The screen's minimum week*, above. The licence itself is unchanged,
+> because the Usage multiplier's own threshold of week ≥ 8 is inside the range over which the
+> screen result holds — but it is a licence with a stated range now, not an unqualified one,
+> and a later re-run that moved the range would move this sentence with it.
+
 It licenses **nothing about lineups**. A partial correlation says a quantity adds to the board
 and never that it should be the board
 ([ADR-0013](adr/0013-the-snap-trend-is-shown-and-never-ranked-on.md)). Gate B decides that, and
@@ -421,14 +537,21 @@ snapshot we are measuring against.
 ## Reproduce
 
 ```bash
-uv run python -m hub.models.weekly_screen --run                     # the published basis
-uv run python -m hub.models.weekly_screen --run --basis decomposed  # #179
+uv run python -m hub.models.weekly_screen --run                        # the sweep -- #178
+uv run python -m hub.models.weekly_screen --run --trend-min-week 8     # the published tables
+uv run python -m hub.models.weekly_screen --run --basis decomposed     # #179
 ```
 
 `--basis` names the control set. `pooled` is the pre-registration and every figure above rests
 on it; `decomposed` holds the two halves of `ppg_before` apart. Either run drops nulls over the
 **union** of the two, so the two are taken on the same rows and a difference between them is
 attributable to the basis.
+
+`--trend-min-week` names the anchor the trend features are screened from. **There is no
+default**, which is #178: the screen used to borrow `panel.TREND_MIN_WEEK`, a value fitted to
+the outcome on these rows, and a plain `--run` now sweeps all five anchors and prints the
+sensitivity rather than picking one. Pass `8` to reproduce the tables above; the tables
+elsewhere on this page are unchanged by the sweep because only the trend features move with it.
 
 `src/hub/models/weekly_screen.py`, committed 2026-08-27 because these numbers steer Phase 2 and
 [ADR-0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md)'s trigger is

@@ -81,6 +81,15 @@ MIN_GAMES_BEFORE = 3
 # sign flipping between seasons: the trend needs about eight weeks of snaps before it says
 # anything. So before week 8 `hub.models.weekly`'s multiplier is exactly 1 and the projection is
 # the flat one -- that is not a fallback, it is the measurement.
+#
+# **This is the model's threshold and nothing else's** -- #178. It used to be the weekly
+# screen's `min_week` as well, and that was one constant doing two jobs: 8 is the earliest of
+# the anchors 4, 6, 8, 10, 12 that held when they were tested *against the outcome*
+# (snap-trend-signal.md), so using it to select the screen's rows screened features on rows
+# chosen by a value fitted to the outcome on the same data. The threshold keeps its measured
+# value because the measurement is what it is for; what moved is that
+# `hub.models.weekly_screen` no longer reads it. The screen sweeps its own anchors and
+# publishes the sensitivity -- `weekly_screen.SCREEN_TREND_ANCHORS`.
 TREND_MIN_WEEK = 8
 
 

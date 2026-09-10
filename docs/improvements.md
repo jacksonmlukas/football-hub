@@ -877,6 +877,13 @@ Two more restatements of the same literal fell out and are collapsed rather than
 
 * `TREND_MIN_WEEK = 8` was declared in `weekly.py` **and** in the screen. The Panel owns it now,
   since the trend it gates is computed there, and the better half of each comment was merged.
+  **Superseded 2026-09-10 (#178): the screen no longer reads it at all.** Collapsing the two
+  declarations was right about the literal and wrong about the concept — one of the two callers
+  wanted a *model threshold* and the other a *row filter for a screen*, and the value is 8
+  because 8 is the earliest anchor that held when the anchors were tested against the outcome.
+  That is a fine way to set the first and a circular way to set the second. The screen sweeps
+  `weekly_screen.SCREEN_TREND_ANCHORS` instead, and an AST guard stops the import coming back.
+  A shared literal is not always a shared decision, which is the lesson worth keeping.
 * `tuple(range(1, 15))` was written out in `weekly_screen`, `weekly_gate` **and**
   `draft/season.py` — a bare `15` in three files for a league length with one owner. It moved to
   `hub.config` rather than to `draft.season`, because `test_models_does_not_reach_into_draft`

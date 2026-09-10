@@ -3,6 +3,9 @@
 Everything here is offline. The network functions are `# pragma: no cover` by design -- what
 has to be right is the statistics and the leakage discipline, and neither needs nflverse.
 """
+import ast
+from pathlib import Path
+
 import numpy as np
 import polars as pl
 import pytest
@@ -425,11 +428,11 @@ def _panel_with_every_feature(seasons=(2023, 2024), weeks=tuple(range(1, 15)),
                               players=80, seed=11):
     """A panel carrying every column `FEATURES` screens, so a re-run covers all of them.
 
-    Weeks run past `TREND_MIN_WEEK` deliberately. At four weeks the two trend features
-    have no cell that qualifies, `summarise` returns NaN for each, and NaN compares
-    unequal to itself -- so the comparison below would have reported a difference for
-    exactly the two features it had failed to screen. Deep enough that all nine produce
-    a number, and the equality means what it says."""
+    Weeks run past the **last** anchor of `SCREEN_TREND_ANCHORS` deliberately. At four weeks
+    the two trend features have no cell that qualifies, `summarise` returns NaN for each, and
+    NaN compares unequal to itself -- so the comparison below would have reported a difference
+    for exactly the two features it had failed to screen. Deep enough that all nine produce a
+    number at every anchor, and the equality means what it says."""
     rng = np.random.default_rng(seed)
     rows = []
     for s in seasons:
@@ -462,16 +465,20 @@ def test_the_screen_returns_the_same_correlation_for_every_feature_when_rerun():
     of the same arithmetic on the same rows have no licence to differ in the last bit.
     """
     panel = _panel_with_every_feature()
+    # At the deepest anchor, so the trend features screen on the fewest weeks this sweep ever
+    # gives them. A run that reproduces there reproduces at every shallower anchor.
+    features = ws.at_anchor(ws.FEATURES, max(ws.SCREEN_TREND_ANCHORS))
     runs = []
     for _ in range(2):
         runs.append({f.name: ws.summarise(
-            ws.cell_correlations(panel, f.name, min_week=f.min_week)) for f in ws.FEATURES})
+            ws.cell_correlations(panel, f.name, min_week=f.min_week)) for f in features})
 
     assert set(runs[0]) == {f.name for f in ws.FEATURES}, "a feature went unscreened"
     empty = [n for n, v in runs[0].items() if v["cells"] == 0]
     assert not empty, (
         f"{empty} produced no cell, so this compares NaN with NaN and proves nothing. "
-        f"The panel has to run past `TREND_MIN_WEEK` for the trend features to screen.")
+        f"The panel has to run past the deepest of `SCREEN_TREND_ANCHORS` for the trend "
+        f"features to screen.")
     for name in runs[0]:
         assert runs[0][name] == runs[1][name], (
             f"{name} moved between two runs over one panel: {runs[0][name]} then "
@@ -590,3 +597,207 @@ def test_every_named_basis_is_one_the_panel_would_serve_as_features():
             assert pnl.column_role(c) in pnl.FEATURE_ROLES, (
                 f"basis {name!r} controls on `{c}`, which the Panel classifies as "
                 f"{pnl.column_role(c)!r}.")
+
+
+# --- #178: the screen's minimum week is swept, not borrowed from the model ------------------
+
+
+def test_the_screen_does_not_read_the_model_s_trend_threshold():
+    """The whole of #178, as a source-level guard.
+
+    `panel.TREND_MIN_WEEK` is 8 because 8 is the earliest of the anchors 4, 6, 8, 10, 12 that
+    held when they were tested **against the outcome** (`docs/snap-trend-signal.md`). That is
+    the right way to set a model threshold and the wrong way to choose which rows a screen
+    reads: rows selected by a value fitted to the outcome are not a neutral sample to screen
+    other features on, and `cell_correlations` filters on exactly that value.
+
+    A comment saying the two are separate is not a control -- the import is. This asserts the
+    screen cannot reach the constant at all, so re-coupling them means deleting this test
+    rather than editing a line and moving on.
+
+    Over the **AST**, not over the text, so that prose may still name the constant it is
+    explaining. The declaration of `SCREEN_TREND_ANCHORS` has to be able to say what it is not
+    doing and why, and a substring check would make that comment illegal.
+    """
+    tree = ast.parse(Path(ws.__file__).read_text())
+    used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    used |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    used |= {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+             for a in n.names}
+    assert "TREND_MIN_WEEK" not in used, (
+        "`hub.models.weekly_screen` reads `TREND_MIN_WEEK` again. The model threshold and the "
+        "screen's minimum week are two constants with two justifications (#178); the screen's "
+        "is `SCREEN_TREND_ANCHORS`, and it is swept rather than chosen.")
+    assert not hasattr(ws, "TREND_MIN_WEEK")
+    assert pnl.TREND_MIN_WEEK == 8, "the model threshold keeps its measured value"
+
+
+def test_the_sweep_range_and_step_are_the_five_anchors_that_were_measured():
+    """Fixed in the commit that runs the sweep, per the pre-registration on #178 -- not chosen
+    after seeing which range flatters the answer. These are the anchors
+    `docs/snap-trend-signal.md` measured the trend at."""
+    assert ws.SCREEN_TREND_ANCHORS == (4, 6, 8, 10, 12)
+    assert ws.PUBLISHED_ANCHOR in ws.SCREEN_TREND_ANCHORS
+
+
+def test_a_trend_feature_carries_no_anchor_until_one_is_given():
+    trends = [f for f in ws.FEATURES if f.name.endswith("_trend")]
+    assert {f.name for f in trends} == {"snap_trend", "tgt_trend"}
+    assert all(f.min_week == ws.TREND_ANCHOR_UNSET for f in trends), \
+        "a trend feature declares its sign, not its week -- the sweep supplies the week"
+    assert all(f.min_week == 1 for f in ws.FEATURES if not f.name.endswith("_trend")), \
+        "a pre-kickoff fact is the same quantity in week 2 as in week 12"
+    assert ws.ROUTE_TREND.min_week == ws.TREND_ANCHOR_UNSET
+    assert all(f.min_week == ws.TREND_ANCHOR_UNSET for f in ws.SCHEME_TRENDS)
+
+
+def test_at_anchor_moves_the_trend_features_and_nothing_else():
+    moved = ws.at_anchor(ws.FEATURES, 10)
+    by_name = {f.name: f for f in moved}
+    assert by_name["snap_trend"].min_week == 10
+    assert by_name["tgt_trend"].min_week == 10
+    assert by_name["implied_total"].min_week == 1
+    assert by_name["td_rate_prior"].min_week == 1
+    assert [f.sign for f in moved] == [f.sign for f in ws.FEATURES], \
+        "the pre-stated sign is pre-registered and the anchor does not touch it"
+
+
+@pytest.mark.parametrize("run", [
+    lambda p, fs: ws.screen(p, fs),
+    lambda p, fs: ws.screen_joint(p, fs),
+    lambda p, fs: ws.screen_usage(p, fs, ("targets",)),
+])
+def test_the_screen_refuses_a_feature_set_that_carries_no_anchor(run):
+    """`min_week=0` filters no rows, so a forgotten `at_anchor` would not crash -- it would
+    screen the trend features from week 1 and print a number, taken on rows the trend does not
+    exist over, in the same column as everything else. All three entry points ask."""
+    p = _usage_panel()
+    with pytest.raises(ValueError, match="carry no anchor"):
+        run(p, [ws.Feature("feat", "+", 1), ws.Feature("x_trend", "+", ws.TREND_ANCHOR_UNSET)])
+
+
+def test_an_anchored_feature_set_runs():
+    """The other half of the guard: it refuses the unset anchor and nothing else. Without
+    this, a `require_anchor` that raised unconditionally would pass every test above."""
+    p = _sweep_panel()
+    anchored = ws.screen(p, ws.at_anchor(
+        [ws.Feature("late_trend", "+", ws.TREND_ANCHOR_UNSET)], 8))
+    direct = ws.screen(p, [ws.Feature("late_trend", "+", 8)])
+    assert anchored["cells"].item() == direct["cells"].item()
+    assert anchored["r"].item() == direct["r"].item()
+    assert anchored["status"].item() in ws.FINDINGS, \
+        "and the anchored run reaches a verdict rather than merely not raising"
+
+
+def _sweep_panel(seasons=(2021, 2022, 2023, 2024, 2025), weeks=range(1, 15),
+                 players=60, seed=17, late_from=8, late=4.0, early=6.0):
+    """A panel whose `late_trend` carries the real effect only from week `late_from` on.
+
+    Which is the shape the sensitivity has to be able to see: a feature that is a finding at
+    the deep anchors and noise at the shallow ones, so the verdict genuinely depends on where
+    the row filter is put. `flat` is signal at every week and `dud` at none, so the two stable
+    cases are present in the same run.
+
+    Before `late_from` the effect is real within a season and its **sign alternates between
+    seasons**, which is how `docs/snap-trend-signal.md` describes anchors 4 and 6: not absent,
+    but flipping. That is the failure mode the every-season half of the rule exists to catch
+    (`docs/method.md` rule 4), so it is the one worth building the fixture out of -- a shallow
+    anchor mixes those weeks in and the season means stop agreeing.
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    for k, s in enumerate(seasons):
+        sign = 1.0 if k % 2 == 0 else -1.0
+        for w in weeks:
+            for i in range(players):
+                lt = float(rng.normal())
+                flat = float(rng.normal())
+                y = 12.0 + 3.0 * flat + rng.normal(0, 2)
+                y += late * lt if w >= late_from else sign * early * lt
+                rows.append({"season": s, "week": w, "player_id": f"p{i}",
+                             "ppg_before": 12.0, "ecr": float(i + 1),
+                             "late_trend": lt, "flat": flat,
+                             "dud": float(rng.normal()),
+                             "fantasy_points_ppr": y})
+    return pl.DataFrame(rows)
+
+
+_SWEEP_FEATURES = (ws.Feature("flat", "+", 1), ws.Feature("dud", "+", 1),
+                   ws.Feature("late_trend", "+", ws.TREND_ANCHOR_UNSET))
+
+
+def test_the_sweep_reports_every_feature_at_every_anchor():
+    swept = ws.sweep(_sweep_panel(), _SWEEP_FEATURES, (4, 6, 8, 10, 12))
+    assert swept.height == 3 * 5, "one row per (anchor, feature), and none missing"
+    assert sorted(swept["anchor"].unique().to_list()) == [4, 6, 8, 10, 12]
+    trend = swept.filter(pl.col("feature") == "late_trend").sort("anchor")
+    assert trend["min_week"].to_list() == [4, 6, 8, 10, 12], \
+        "the anchor is what the trend feature's row filter became"
+    assert swept.filter(pl.col("feature") == "flat")["min_week"].unique().to_list() == [1]
+
+
+def test_the_anchor_moves_only_the_trend_features_numbers():
+    """The structural fact worth pinning, because it bounds what the sweep can possibly find.
+
+    The anchor is a floor on the trend features' weeks. A week-1 feature keeps all its cells
+    at every anchor, and it is never controlled for a trend feature either -- `screen_joint`
+    admits a survivor as a control only where `g.min_week <= f.min_week`, and every anchor in
+    the sweep is above 1. So if any week-1 feature's verdict moved across the sweep, the cause
+    would be a bug and not the anchor.
+    """
+    swept = ws.sweep(_sweep_panel(), _SWEEP_FEATURES, (4, 6, 8, 10, 12))
+    for name in ("flat", "dud"):
+        d = swept.filter(pl.col("feature") == name)
+        assert d["alone_r"].n_unique() == 1, f"{name} moved with the anchor"
+        assert d["cells"].n_unique() == 1, f"{name} lost cells to the anchor"
+    trend = swept.filter(pl.col("feature") == "late_trend").sort("anchor")
+    assert trend["cells"].to_list() == sorted(trend["cells"].to_list(), reverse=True), \
+        "a deeper anchor has to leave the trend feature fewer cells, not more"
+
+
+def test_a_verdict_that_changes_across_the_sweep_is_named_as_conditional():
+    """The half of #178 that matters if the answer comes back unstable: the screen reports the
+    range over which the finding holds rather than a single verdict taken at one anchor."""
+    swept = ws.sweep(_sweep_panel(late_from=12), _SWEEP_FEATURES, (4, 6, 8, 10, 12))
+    sens = {r["feature"]: r for r in ws.sensitivity(swept).iter_rows(named=True)}
+
+    assert not sens["late_trend"]["stable"]
+    assert sens["late_trend"]["verdict"] == "DEPENDS ON THE ANCHOR"
+    assert sens["late_trend"]["finding_at"] == "10, 12", (
+        "the anchors where it is a finding, not a single verdict: the effect is consistent "
+        "only from week 12 on, so a shallower anchor mixes in the weeks where its sign "
+        "alternates between seasons and the every-season half fails")
+    assert sens["late_trend"]["by_anchor"].startswith("4:killed 6:killed 8:killed")
+    assert sens["flat"]["stable"], "the week-1 features cannot move with the anchor"
+    assert ws.surviving(swept, 4) == ["flat"]
+    assert ws.surviving(swept, 12) == ["flat", "late_trend"]
+
+    lines = "\n".join(ws.sweep_report(swept, ws.sensitivity(swept)))
+    assert "CONDITIONAL ON THE ANCHOR: late_trend" in lines
+    assert "changed nothing" not in lines
+
+
+def test_a_verdict_that_holds_everywhere_is_reported_as_it_stands():
+    swept = ws.sweep(_sweep_panel(late_from=1), _SWEEP_FEATURES, (4, 6, 8, 10, 12))
+    sens = {r["feature"]: r for r in ws.sensitivity(swept).iter_rows(named=True)}
+    assert sens["late_trend"]["stable"], "signal at every week cannot depend on the anchor"
+    assert sens["late_trend"]["verdict"] in ws.FINDINGS
+    assert sens["late_trend"]["finding_at"] == "4, 6, 8, 10, 12"
+    assert sens["dud"]["stable"] and sens["dud"]["verdict"] == ws.KILLED
+    lines = "\n".join(ws.sweep_report(swept, ws.sensitivity(swept)))
+    assert "changed nothing" in lines
+    assert "CONDITIONAL ON THE ANCHOR" not in lines
+
+
+def test_a_feature_killed_alone_is_reported_on_the_screen_it_actually_reached():
+    """`final` falls back to the alone verdict, because a feature killed alone never enters
+    the joint screen and printing a joint verdict for it would read as a stronger rejection
+    than the run performed."""
+    swept = ws.sweep(_sweep_panel(), _SWEEP_FEATURES, (8,))
+    dud = swept.filter(pl.col("feature") == "dud").to_dicts()[0]
+    assert dud["alone"] == ws.KILLED
+    assert dud["joint"] is None and dud["joint_r"] is None
+    assert dud["final"] == dud["alone"]
+    flat = swept.filter(pl.col("feature") == "flat").to_dicts()[0]
+    assert flat["joint"] is not None, "a survivor does reach the joint screen"
+    assert flat["final"] == flat["joint"]
