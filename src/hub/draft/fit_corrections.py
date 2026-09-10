@@ -6,9 +6,12 @@
 this module they had no committed fitting code at all: the tables in `docs/td-luck.md` and
 `docs/durability.md` are the output of a fit nobody can re-run.
 
-**This module fits. It does not ship.** The constants stay exactly where they are; changing
-them is issue #48's job and the disposition below is its input. A fit that disagrees with a
-shipped number is a finding, not a licence.
+**This module fits. It does not ship.** A fit that disagrees with a shipped number is a
+finding, not a licence, and moving a constant is a ticket of its own. #48 was that ticket:
+the two touchdown-luck coefficients are marked `withdrawn` on `COEFFICIENTS` below and the
+board applies nothing for them, while the three durability numbers still apply. They all stay
+on the list either way -- a withdrawn coefficient is precisely the one a later refit needs a
+baseline to disagree with.
 
 ## The axis, which is the whole point
 
@@ -75,6 +78,15 @@ through `_contributions` -- the estimator written as a mean over rows, exactly. 
 function for why this is the cluster-robust standard error rather than an approximation of
 one, and for the one place it differs from resampling clusters and refitting.
 
+## The shrink sweep, added by #186
+
+`walk_forward` scores two points of one line: the constant applied whole, and not applied at
+all. #186 asks a third thing of the same data -- whether a correction that loses at full
+strength wins at *part* of it -- and two points cannot answer that without assuming the shape
+between them. `shrink_curve` scores the line, on the same splits and the same held-out rows,
+so "keep it at a measured shrink" is an arm rather than an option nobody scored. Its ends
+reproduce `plain` and `shipped` exactly, which is what makes the middle readable.
+
     uv run python -m hub.draft.fit_corrections --fit
 """
 from __future__ import annotations
@@ -119,6 +131,14 @@ DEFAULT_SEASONS: tuple[int, ...] = (2018, 2019, 2020, 2021, 2022, 2023, 2024, 20
 BASELINES: tuple[str, ...] = ("base_xfp", "base_carry", "base_blend")
 HEADLINE_BASELINE = "base_blend"
 
+# The shrink factors `shrink_curve` scores the shipped constant at, held out. A setting, not
+# a measurement: the *output* is which of these wins, and widening the grid costs a run.
+#
+# Zero and one have to be on it, and are asserted to be. They are the two arms
+# `walk_forward` already reports -- no correction at all, and the constant applied whole --
+# so a sweep that omitted either would be scoring the middle of a line against nothing.
+SHRINKS: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0)
+
 # Designations `hub.draft.durability.INJURY_BETA` prices at -1.631. IR is not on this list and
 # cannot be: `INJURY_BETA` borrows the Out coefficient for it precisely because nobody on
 # injured reserve appears on a practice report, so a week-1 report has no IR rows to fit. The
@@ -144,13 +164,42 @@ class Coefficient(NamedTuple):
     position: str | None    # None means every position, which is what INJURY_BETA does
     shipped: float
     documented_in: str
+    withdrawn: str = ""     # why the board stopped applying it, empty while it still does
 
+    @property
+    def applies(self) -> bool:
+        """Whether the board multiplies anything by this today.
+
+        A withdrawn coefficient stays on this list rather than leaving it. The harness's job
+        is to fit the five signals the board has ever priced, and a signal whose price was
+        withdrawn is exactly the one a later ticket -- #225 is the open example -- reopens
+        with new evidence. Dropping it here would mean the next refit had no baseline to
+        disagree with, which is the arrangement `docs/fitted-corrections.md` exists because
+        this repo already had once.
+
+        `shipped` therefore keeps the value that *was* applied, so the `shipped` walk-forward
+        arm still scores the model the board used to run. What changes is that
+        `test_the_five_coefficients_are_the_five_the_board_applies` now requires the key to be
+        **absent** from the live table -- the claim is that nothing multiplies it, and that is
+        as checkable as the claim that something does.
+        """
+        return not self.withdrawn
+
+
+# The two touchdown-luck rows carry the same sentence because they were withdrawn by one
+# decision, not two: #186 asked whether the correction earns its place at all rather than
+# whether either coefficient does. The per-position evidence differs and is in the comments
+# on `hub.draft.regression.TD_LUCK_BETA`.
+_TD_LUCK_WITHDRAWN = (
+    "#186/#48, 2026-09-10: held out, applying it scores worse than applying nothing, and "
+    "the measured shrink is zero"
+)
 
 COEFFICIENTS: tuple[Coefficient, ...] = (
     Coefficient("td_luck.QB", "hub.draft.regression", "TD_LUCK_BETA", "QB",
-                "td_luck", "QB", -0.540, "docs/td-luck.md"),
+                "td_luck", "QB", -0.540, "docs/td-luck.md", _TD_LUCK_WITHDRAWN),
     Coefficient("td_luck.WR", "hub.draft.regression", "TD_LUCK_BETA", "WR",
-                "td_luck", "WR", -0.286, "docs/td-luck.md"),
+                "td_luck", "WR", -0.286, "docs/td-luck.md", _TD_LUCK_WITHDRAWN),
     Coefficient("missed.QB", "hub.draft.durability", "BETA", "QB",
                 "missed", "QB", -0.457, "docs/durability.md"),
     Coefficient("missed.WR", "hub.draft.durability", "BETA", "WR",
@@ -404,23 +453,32 @@ def refit_interval(panel: pl.DataFrame, coef: Coefficient, *,
 # --- walk-forward -------------------------------------------------------------
 
 
-def walk_forward(panel: pl.DataFrame, coef: Coefficient, *,
-                 baseline: str = HEADLINE_BASELINE) -> pl.DataFrame:
-    """Held-out error per season, fitting only on strictly earlier ones.
+class HeldOut(NamedTuple):
+    """One season scored by a fit that never saw it.
 
-    Three arms on the same held-out rows, which is what makes the comparison worth reading:
-
-      * `plain`   -- `target ~ baseline`, no correction term at all. The null.
-      * `fitted`  -- `target ~ baseline + signal`, both coefficients fitted on `past`.
-      * `shipped` -- `plain` plus the *shipped* constant times the signal. The arm that asks
-                     the question #48 will act on: does the number the board already applies
-                     help on a season it never saw?
-
-    `shipped` is scored on `plain`'s intercept and slope deliberately. The board applies its
-    constant to a projection that was not refitted around it, so an arm that re-estimated the
-    intercept to suit the constant would be scoring a model the board does not run.
+    Split out from `walk_forward` so that `shrink_curve` scores the *same* held-out rows
+    from the *same* splits rather than walking the panel a second time. Two walks would be
+    two chances to disagree about which season was held out, and the arms would then not be
+    paired -- `docs/method.md` rule 7, which is the whole reason the arms below share
+    `plain`.
     """
-    rows = []
+    season: int
+    n_past: int
+    plain: np.ndarray       # the no-correction prediction on this season's rows
+    fitted: np.ndarray      # target ~ baseline + signal, both fitted on strictly earlier rows
+    signal: np.ndarray
+    actual: np.ndarray
+
+    def mae(self, pred: np.ndarray) -> float:
+        return float(np.abs(pred - self.actual).mean())
+
+    def applied(self, beta: float) -> np.ndarray:
+        """`plain`, plus `beta` times the signal. What the board does, at any `beta`."""
+        return self.plain + beta * self.signal
+
+
+def _held_out(panel: pl.DataFrame, coef: Coefficient, baseline: str):
+    """Every season in turn, fitted only on strictly earlier ones."""
     df = _design(panel, coef, baseline)
     for yr, past, now in expanding_seasons(df, min_past=30):
         latest_fitted = _as_int(past["season"].max())
@@ -442,18 +500,89 @@ def walk_forward(panel: pl.DataFrame, coef: Coefficient, *,
                                 rcond=None)[0]
         full = np.linalg.lstsq(np.column_stack([np.ones(past.height), bp, sp]), yp,
                                rcond=None)[0]
-        yn = now["target"].to_numpy().astype(float)
         bn = now[baseline].to_numpy().astype(float)
         sn = now[coef.signal].to_numpy().astype(float)
-        pred_plain = plain[0] + plain[1] * bn
-        preds = {
-            "plain": pred_plain,
-            "fitted": full[0] + full[1] * bn + full[2] * sn,
-            "shipped": pred_plain + coef.shipped * sn,
-        }
-        rows.append({"season": yr, "n": now.height, "n_past": past.height,
-                     **{f"mae_{k}": float(np.abs(v - yn).mean()) for k, v in preds.items()}})
+        yield HeldOut(season=yr, n_past=past.height,
+                      plain=plain[0] + plain[1] * bn,
+                      fitted=full[0] + full[1] * bn + full[2] * sn,
+                      signal=sn, actual=now["target"].to_numpy().astype(float))
+
+
+def walk_forward(panel: pl.DataFrame, coef: Coefficient, *,
+                 baseline: str = HEADLINE_BASELINE) -> pl.DataFrame:
+    """Held-out error per season, fitting only on strictly earlier ones.
+
+    Three arms on the same held-out rows, which is what makes the comparison worth reading:
+
+      * `plain`   -- `target ~ baseline`, no correction term at all. The null.
+      * `fitted`  -- `target ~ baseline + signal`, both coefficients fitted on `past`.
+      * `shipped` -- `plain` plus the *shipped* constant times the signal. The arm that asks
+                     the question #48 will act on: does the number the board already applies
+                     help on a season it never saw?
+
+    `shipped` is scored on `plain`'s intercept and slope deliberately. The board applies its
+    constant to a projection that was not refitted around it, so an arm that re-estimated the
+    intercept to suit the constant would be scoring a model the board does not run.
+    """
+    rows = []
+    for h in _held_out(panel, coef, baseline):
+        preds = {"plain": h.plain, "fitted": h.fitted,
+                 "shipped": h.applied(coef.shipped)}
+        rows.append({"season": h.season, "n": h.actual.size, "n_past": h.n_past,
+                     **{f"mae_{k}": h.mae(v) for k, v in preds.items()}})
     return pl.DataFrame(rows)
+
+
+def shrink_curve(panel: pl.DataFrame, coef: Coefficient, *,
+                 baseline: str = HEADLINE_BASELINE,
+                 shrinks: Sequence[float] = SHRINKS) -> pl.DataFrame:
+    """Held-out MAE of the shipped constant applied at each shrink factor.
+
+    **This is the arm #186 needed and `walk_forward` did not have.** That function scores
+    two points of one line -- the constant applied whole (`shipped`) and not applied at all
+    (`plain`) -- and a ticket asking whether a correction should be *kept at a measured
+    shrink* cannot be answered from two points without assuming the shape between them.
+    `lambda = 0` reproduces `plain` exactly and `lambda = 1` reproduces `shipped` exactly, by
+    construction rather than by coincidence, and `tests/unit/test_fit_corrections.py` holds
+    both equalities.
+
+    The shrink is on the **shipped** constant, not on a refit, for `walk_forward`'s reason:
+    the question is what the board should apply, and the board applies a constant to a
+    projection that was not refitted around it. A negative shrink is deliberately not on the
+    sweep -- flipping a coefficient's sign is a refit, not a shrinkage, and #48's rule for a
+    sign-reversed coefficient is that it is zeroed rather than reversed.
+
+    Returns one row per shrink: the mean held-out MAE, the seasons it was averaged over, and
+    how many of them it beat `lambda = 0` on. Both are reported because either alone
+    misleads -- a mean can be carried by one season, and a season count says nothing about
+    size.
+    """
+    held = list(_held_out(panel, coef, baseline))
+    if not held:
+        return pl.DataFrame(schema={"shrink": pl.Float64, "mae": pl.Float64,
+                                    "seasons": pl.Int64, "beats_none": pl.Int64})
+    none = [h.mae(h.applied(0.0)) for h in held]
+    rows = []
+    for lam in shrinks:
+        per_season = [h.mae(h.applied(lam * coef.shipped)) for h in held]
+        rows.append({"shrink": float(lam),
+                     "mae": float(np.mean(per_season)),
+                     "seasons": len(per_season),
+                     "beats_none": int(sum(a < b for a, b in zip(per_season, none, strict=True)))})
+    return pl.DataFrame(rows)
+
+
+def best_shrink(curve: pl.DataFrame) -> float:
+    """The shrink factor with the lowest held-out MAE. NaN for an empty curve.
+
+    Ties go to the *smaller* shrink, which is the conservative direction: two shrinks that
+    score the same are two models the run cannot tell apart, and the one that applies less
+    of an unreproduced constant is the one that claims less.
+    """
+    if curve.is_empty():
+        return float("nan")
+    ordered = curve.sort(["mae", "shrink"])
+    return float(ordered["shrink"][0])
 
 
 # --- the panel ----------------------------------------------------------------
@@ -547,9 +676,12 @@ def report_lines(panel: pl.DataFrame, *, baselines: Sequence[str] = BASELINES,
     """The whole finding, as lines. Pure, so a test can read it without a CLI."""
     out: list[str] = []
     for coef in COEFFICIENTS:
-        out.append(f"\n  {coef.name} -- shipped {coef.shipped:+.3f} "
+        applied = "shipped" if coef.applies else "WITHDRAWN, was"
+        out.append(f"\n  {coef.name} -- {applied} {coef.shipped:+.3f} "
                    f"in {coef.declared_in}.{coef.constant}[{coef.key!r}], "
                    f"{coef.documented_in}")
+        if not coef.applies:
+            out.append(f"    {'':<11} the board applies nothing here: {coef.withdrawn}")
         for baseline in baselines:
             fit = fit_one(panel, coef, baseline=baseline, seed=seed)
             if fit is None:
@@ -581,6 +713,13 @@ def report_lines(panel: pl.DataFrame, *, baselines: Sequence[str] = BASELINES,
                        + ", ".join(f"{c} {means[c]:.4f}" for c in means)
                        + f"; best {best}; shipped beats no-correction in "
                          f"{wins}/{wf.height} seasons")
+        curve = shrink_curve(panel, coef)
+        if not curve.is_empty():
+            out.append("    shrink sweep  "
+                       + ", ".join(f"x{r['shrink']:.2f} {r['mae']:.4f} "
+                                   f"({r['beats_none']}/{r['seasons']})"
+                                   for r in curve.iter_rows(named=True))
+                       + f"; best x{best_shrink(curve):.2f}")
     return out
 
 

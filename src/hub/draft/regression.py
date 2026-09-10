@@ -21,6 +21,13 @@ This is not the board's existing `fp_over_expected`. That measures realised poin
 expected points from opportunity; this measures realised touchdowns against the yardage that
 produced them. On the live board they correlate at +0.16 -- and a genuine overlap would show
 as a strong *negative*, since the two are signed in opposite directions.
+
+**Shown, and since 2026-09-10 never ranked on.** The three facts above are unchanged and the
+column is still computed, attached and printed. What this module no longer has is a
+`correct_projection`: #186 asked whether the *price* it put on the signal earned its place,
+and held out it did not, so #48 emptied `TD_LUCK_BETA` and took touchdown luck out of the
+board's Corrections. The comment on that constant carries the evidence, and it is the same
+shape as ADR-0013 and ADR-0016 -- a real signal this repo cannot yet size.
 """
 from __future__ import annotations
 
@@ -68,7 +75,31 @@ MIN_GAMES = 6
 #
 # Held out, applying either constant scores worse than applying no correction at all.
 # See docs/fitted-corrections.md for the population, the bracket and what it does not say.
-TD_LUCK_BETA: dict[str, float] = {"QB": -0.540, "WR": -0.286}
+#
+# **WITHDRAWN 2026-09-10. #186 decided it, #48 applied it, and this is the empty dict.** The
+# ticket was re-scoped from "how should this correction be refined" to "does it earn its place
+# at all", which is docs/method.md rule 8 -- the ceiling is below zero, so a refinement is
+# chasing a gap that is not there. The three options were remove it, keep it at a measured
+# shrink, or keep it per position where the sign is defensible; held out, all three land on
+# removal:
+#
+#   * no position has a defensible sign. QB is positive at *both* ends of the bracket, and WR
+#     changes sign inside it.
+#   * the measured shrink is zero. `fit_corrections.shrink_curve` scores the shipped constant
+#     at every factor from nothing to whole on the same held-out rows, and nothing wins.
+#
+# Empty rather than deleted, and the dict rather than a flag, because `prior_signal.priced`
+# already gives an absent position the only honest reading there is: "a position absent from a
+# `BETA` is one the fit found nothing for, and inventing a coefficient for it would ship an
+# effect nobody measured". Every drafted position is now absent, which is the finding. The
+# name survives so `fitted_digest` keeps covering it -- a correction that stopped applying is
+# a model change, and ADR-0006 wants the version to move for it.
+#
+# **The signal is not withdrawn, only the price.** `td_luck` stays on the board, stays in the
+# report and stays a stage; what stops is `proj_blend` moving by it, so touchdown luck is no
+# longer a Correction in `hub.draft.board`'s sense and `correct_projection` is gone from this
+# module. docs/td-luck.md and docs/fitted-corrections.md carry the restatement.
+TD_LUCK_BETA: dict[str, float] = {}
 
 _PHASES = (("receiving_yards", "receiving_tds", "rec", 6.0),
            ("rushing_yards", "rushing_tds", "rush", 6.0),
@@ -127,49 +158,3 @@ def attach(board: pl.DataFrame, season: pl.DataFrame) -> pl.DataFrame:
     it was the same twelve lines in both files -- improvements.md #15.
     """
     return prior_signal.join_by_player(board, td_luck(season), "td_luck")
-
-
-def correct_projection(board: pl.DataFrame, column: str = "proj_blend") -> pl.DataFrame:
-    """Mark a projection down for touchdown luck, where the projection is known to carry it.
-
-    This is what connects the signal to the objective. `hub.draft.optimize` scores seasons
-    against `proj_blend`, so a bias left in that column is a bias in every P(win) it
-    reports -- and a signal that is only printed is decoration.
-
-    **Silent when `td_luck` is absent, on purpose, and that silence has a price.** It is paid
-    one caller away and caught there; the comment on the early return says by what.
-    """
-    # **This survives issue #199 because it is a producer, not a consumer.** It reads the
-    # frame rather than the report for the reason `durability.correct_projection` gives at
-    # length: it runs inside `board._stage`, which is what sets the flag a report would
-    # answer from, so no report describing this frame exists yet. Asking a column here is
-    # not a provenance guess competing with the report -- it is a stage checking its own
-    # input before it writes.
-    if column not in board.columns or "td_luck" not in board.columns:
-        # Two absences, one return, and they do not cost the same thing.
-        #
-        # `column` is `proj_blend`, which only the ADP stage leaves. Without it there is no
-        # Corrected ADP for this term to be missing *from*, and the build report says so by
-        # naming nothing at all when its `adp` flag is false.
-        #
-        # `td_luck` gone from a board that does carry `proj_blend` is the expensive one, and
-        # it is the whole of issue #121. `board.build` absorbs the touchdown-luck stage
-        # rather than refusing to build -- correctly; a board that will not build for one
-        # advisory column is the operator-dependence CLAUDE.md warns about -- and
-        # `_attach_market` then computes Corrected ADP from the terms that did apply and
-        # reports it as having run. What comes out is a different ranking rather than a
-        # thinner board: 346 of 457 players moved by up to 28.1 picks, 110 of the first 192
-        # changing rank by up to 19 places. Wider than the quarterbacks and receivers this
-        # term touches, because `optimize.corrected_adp` re-fits the curve every player is
-        # priced against, not only the ones corrected.
-        #
-        # Nothing is recorded from here and nothing should be: this runs inside `_stage`, and
-        # the report is what records a stage rather than what the stage writes to. The catch
-        # is `BuildReport.corrections_missing`, which derives the missing terms from flags the
-        # build already set. `hub.draft.report` prints them beside the ranking for an operator
-        # on the clock, and `hub.models.experiment.require_corrections` refuses the board
-        # outright for a Gate, where a season short a term is a second arm and not a thin one.
-        return board
-    adjustment = prior_signal.priced("td_luck", TD_LUCK_BETA)
-    return board.with_columns(
-        (pl.col(column) + adjustment).clip(0.0).alias(column))

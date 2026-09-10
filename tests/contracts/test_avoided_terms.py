@@ -548,7 +548,8 @@ OUTSTANDING: dict[tuple[str, str], tuple[int, str]] = {
         2, "championship equity, discussed by the standalone name the entry reserves for "
            "the `p_win` column alone"),
     ("src/hub/draft/optimize.py", "p(win) as a standalone term"): (1, "the same"),
-    ("src/hub/draft/regression.py", "p(win) as a standalone term"): (1, "the same"),
+    # `regression.py` was here for the same reason until #48. The sentence carrying it lived
+    # in `correct_projection`, and that function went with the correction #186 withdrew.
     ("src/hub/draft/season.py", "p(win) as a standalone term"): (1, "the same"),
     ("src/hub/models/experiment.py", "pick position"): (1, "the same spelling"),
     ("src/hub/models/experiment.py", "training data"): (1, "the Panel, named as the entry "

@@ -624,5 +624,12 @@ def test_the_poller_says_what_the_board_it_polls_against_carries(tmp_path, monke
     assert "board built 3.5h ago" in out, "the age is still shown, not replaced"
     assert "SERVED BOARD" in out, "nothing said this board was not built just now"
     assert "sos" in out and "durability" in out, "it does not say what the board carries"
-    # And because the renderer is shared, the poller inherits the correction note for free.
-    assert "CORRECTED ADP is missing touchdown luck" in out
+    # And because the renderer is shared, the poller inherits the corrections section for
+    # free. This board carries `missed`, so the durability correction applied -- and #48 says
+    # a correction whose coefficients are disputed is named beside the ranking it moved.
+    # (Before #48 the line here was `CORRECTED ADP is missing touchdown luck`, on the same
+    # frame: the absent `td_luck` column used to mean the ranking differed, and no longer
+    # does, because nothing multiplies that column.)
+    assert "CORRECTIONS APPLIED" in out and "UNREPRODUCED" in out
+    assert "CORRECTED ADP is missing" not in out, (
+        "every Correction this board declares did run; the absent td_luck is not one")

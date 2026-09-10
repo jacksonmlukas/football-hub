@@ -720,7 +720,41 @@ STAGE_COLUMN = {flag: cols[0] for flag, cols in STAGE_COLUMNS.items()}
 # `STAGE_COLUMN` above says which stage leaves each one. The two dicts overlap on purpose --
 # that overlap *is* the dependency ADR-0021 does not describe, because a Correction is a
 # shape rather than a module and no module writes the list of them down.
-CORRECTION_COLUMN = {"touchdown luck": "td_luck", "durability": "missed"}
+#
+# **Touchdown luck was the second entry here until #48 and is not one now.** A Correction is
+# a term whose absence changes what THE PICK ranks on, and since `TD_LUCK_BETA` was emptied
+# (#186) the touchdown-luck stage leaves a column that no arithmetic reads. Leaving it here
+# would make `corrections_missing` print a warning about a ranking that did not move, and
+# would make `experiment.require_corrections` refuse a Gate season over a term worth nothing
+# -- the report saying more than it knows, which is the defect `BuildReport` exists against.
+# The stage itself stays: `td_luck` is still computed, attached and printed.
+CORRECTION_COLUMN = {"durability": "missed"}
+
+# What each Correction's coefficients were found to be when they were refitted against the
+# column they correct (#47, docs/fitted-corrections.md), and what #48 decided about each.
+# Keyed by the term in `CORRECTION_COLUMN`, so a term that leaves the board takes its flag
+# with it and `hub.draft.report` cannot print a disposition for a correction that did not run.
+#
+# **Not beside the constants in `hub.draft.durability`, and that is not filing convenience.**
+# That module is in `FITTED_MODULES`, so every upper-case module-level name in it is swept
+# into `fitted_digest` -- a disposition *string* would identify a model version, which is the
+# spurious move `tests/unit/test_config.py` records twice (a cache bound, and a `typing`
+# import). The provenance comments beside the constants carry the same intervals in prose,
+# where nothing hashes them; this is the machine-readable half, and it lives where the board
+# output that prints it lives.
+#
+# Only flagged coefficients are listed. `BETA["QB"]` reproduces and needs no flag beside the
+# ranking -- its comment carries the caveat that the gap is under the MDE.
+CORRECTION_FLAG: dict[str, tuple[str, ...]] = {
+    "durability": (
+        "BETA['WR'] -0.151 applied: UNREPRODUCED and resolved -- refits to -0.327 "
+        "[-0.394, -0.261], about twice the shipped size, and it is the one correction of "
+        "the five that beats no-correction out of sample (7/7 seasons)",
+        "INJURY_BETA['OUT'] -1.631 applied: UNREPRODUCED, underpowered -- refits to -0.833 "
+        "[-1.475, -0.211] on 68 designated player-seasons against an MDE of 1.051, so the "
+        "run can say -1.631 is outside the interval and cannot pin the level",
+    ),
+}
 
 # Term -> the report flag whose stage leaves the column that term reads, so the Corrections
 # are declared once and every consumer of the report sees all of them.
@@ -794,11 +828,11 @@ class BuildReport:
     def corrections_missing(self) -> tuple[str, ...]:
         """Correction terms Corrected ADP was computed *without*, when it was computed at all.
 
-        Two of the five stages the ADR calls advisory leave a column that the sixth stage's
-        arithmetic then reads, and both `correct_projection` functions return the frame
-        untouched when their column is absent. So absorbing a touchdown-luck or durability
-        outage does not leave a thinner board -- it leaves a board whose Corrected ADP is a
-        different ranking, computed from a subset of the corrections, reported as having run.
+        One of the five stages the ADR calls advisory leaves a column that the sixth stage's
+        arithmetic then reads, and `correct_projection` returns the frame untouched when that
+        column is absent. So absorbing a durability outage does not leave a thinner board --
+        it leaves a board whose Corrected ADP is a different ranking, computed from a subset
+        of the corrections, reported as having run.
 
         Measured on the 457-player board of 2026-09-06, absorbing one stage each:
 
@@ -810,6 +844,13 @@ class BuildReport:
         Wider than the players the term applies to, because `optimize.corrected_adp` fits
         `market_curve` on the corrected `proj_blend` -- so dropping a term re-fits the curve
         every player is priced against, not only the ones it corrects.
+
+        **The td_luck row is now the size of a change that already happened, not of one an
+        outage could cause.** #48 emptied `TD_LUCK_BETA`, so that stage's column is read by no
+        arithmetic and touchdown luck is no longer in `CORRECTION_COLUMN`; the board this
+        function describes is the "absorbing td_luck" board above, permanently. It is left in
+        the table because that is the one measurement of what the withdrawal cost, and
+        deleting it would leave the removal's size published nowhere.
 
         Derived rather than recorded, and the *terms* are derived too -- `CORRECTION_STAGE`,
         so that adding a Correction is one declaration rather than three. The flags were
@@ -966,25 +1007,27 @@ def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
     # players on last season while the simulation scores them on this one -- the two
     # must share a basis or the "edge" is just the gap between the two signals.
     board = board.with_columns(blend())
-    # Mark quarterbacks down for last season's touchdown luck. ESPN's projection carries
-    # the same bias the draft room does, but only at QB (-0.540 points per point of
-    # luck, 99.5%; see docs/td-luck.md). This has to happen here rather than in the
-    # display, because `hub.draft.optimize` scores seasons against proj_blend -- a bias
-    # left in this column is a bias in every P(win) the optimiser reports.
-    #
     # The size of the correction is kept, not just its effect. `proj_correction` is what
     # our measurements say the market is wrong by, in points per game, and it is what
     # `optimize.corrected_adp` converts into a pick shift. Recovering it as a delta
     # rather than recomputing it means the number THE PICK ranks on and the number
     # printed beside it can never disagree.
     raw = board["proj_blend"]
-    # Each `correct_projection` below returns the frame untouched when its column is absent,
-    # and says nothing about having done so. Two of the five stages the ADR calls advisory
-    # leave those columns, so absorbing one of them lands here as a term that silently does
-    # not apply -- see `BuildReport.corrections_missing` (issue #121).
-    board = td_regression.correct_projection(board)
-    # And for his own availability history, where the market leaves a residual: QB and
-    # WR. Running backs are left alone -- the market already prices their durability.
+    # Mark a player down for his own availability history, where the market leaves a
+    # residual: QB and WR. Running backs are left alone -- the market already prices their
+    # durability. This has to happen here rather than in the display, because
+    # `hub.draft.optimize` scores seasons against proj_blend -- a bias left in this column is
+    # a bias in every P(win) the optimiser reports.
+    #
+    # `correct_projection` returns the frame untouched when its column is absent, and says
+    # nothing about having done so. Durability is an advisory stage, so absorbing it lands
+    # here as a term that silently does not apply -- see `BuildReport.corrections_missing`
+    # (issue #121).
+    #
+    # **Touchdown luck used to be corrected here too, and is not since #48.** Held out, both
+    # of its coefficients scored worse than applying nothing, and the measured shrink on them
+    # was zero (#186, docs/fitted-corrections.md). The stage still runs and `td_luck` is still
+    # on the board -- what stopped is this column moving by it.
     board = durability.correct_projection(board)
     board = board.with_columns(
         (pl.col("proj_blend") - raw).alias("proj_correction"))

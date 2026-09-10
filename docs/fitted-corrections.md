@@ -9,6 +9,34 @@ re-run.
 refit disagrees with the board, the disagreement is reported and the board keeps running on
 what it has.
 
+**#48 closed 2026-09-10, and this is what it did.** One of the five moved, and it moved to
+zero rather than to its refit:
+
+| coefficient | disposition | #48 |
+|---|---|---|
+| `TD_LUCK_BETA["QB"]` | sign-reversed, resolved | **withdrawn** — `TD_LUCK_BETA` is now `{}` |
+| `TD_LUCK_BETA["WR"]` | reproduced, underpowered | **withdrawn** with it, on #186's held-out evidence rather than on its own disposition |
+| `BETA["QB"]` (missed) | reproduced | unchanged, no flag |
+| `BETA["WR"]` (missed) | unreproduced, resolved | unchanged, **applied behind a flag** |
+| `INJURY_BETA["OUT"]` | unreproduced, underpowered | unchanged, **applied behind a flag** |
+
+The rule the ticket set, and what each part of it cost. A **reproduced** coefficient stands.
+An **unreproduced** one goes on applying, because withdrawing a correction mid-season is
+itself an unmeasured change to the board and neither refit is a licence to move a shipped
+number — but it no longer applies silently: `hub.draft.board.CORRECTION_FLAG` carries the
+disposition and `hub.draft.report` prints it beside the ranking, so an operator sees which of
+the numbers under THE PICK is disputed and how. A **sign-reversed** one is zeroed, because a
+sign flip is a bug rather than a finding.
+
+The touchdown-luck pair is the one place #48 went further than its own rule, and #186 is why:
+`td_luck.WR` is *reproduced* on this page and would have stood, but the question #186 asked
+was whether the correction earns its place at all, and held out neither coefficient does. The
+next section is that decision.
+
+`config_digest` moved `6bdcb663` → `9fc5b0af` and `fitted_digest` `8c248a6e` → `d9caf498`,
+restated in `tests/unit/test_config.py`. A correction that stopped applying is a model change
+and ADR-0006 wants the version to move for it.
+
 ## The result
 
 `target ~ baseline + signal`, per position, over 4,595 player-seasons and eight outcome
@@ -167,6 +195,63 @@ other two.
 hurts held-out error while the *refitted* version helps. That is the axis again — a
 coefficient of the right size added to the wrong column.
 
+## Does the touchdown-luck correction earn its place at all (#186)
+
+**Decided 2026-09-10: no. It is withdrawn, and #48 is where it stops applying.**
+
+#186 was written as a refinement — estimate the shrinkage by empirical Bayes on split-half
+reliability, and add a goal-line term to the expectation — and was re-scoped on 2026-09-09 to
+the prior question, which is `docs/method.md` rule 8: *compute the ceiling before chasing the
+gap.* The three options were remove it, keep it at a measured shrink, or keep it per position
+where the sign is defensible. Held out, all three resolve to the same answer.
+
+**The evidence, and it is the held-out table above rather than the shipped constants.**
+
+| | plain | shipped | shipped beats plain |
+|---|---|---|---|
+| `td_luck.QB` | 4.976 | **5.124** | 2/7 seasons |
+| `td_luck.WR` | 2.749 | **2.763** | 1/7 |
+
+Taking the three options in turn:
+
+- **Keep it per position where the sign is defensible.** There is no such position. QB is
+  sign-reversed at *both* ends of the `base_carry`/`base_xfp` bracket (+0.789 and +0.249), so
+  no projection sitting between them could produce the shipped −0.540 — that is the strongest
+  form the bracket can give. WR changes sign inside the bracket, so it is not resolvable from
+  this repo's data at all, and an unresolvable coefficient is not a defensible sign.
+- **Keep it at a measured shrink.** `shrink_curve` in `hub/draft/fit_corrections.py` scores
+  the shipped constant at each factor between nothing and whole, on the same splits and the
+  same held-out rows as the table above, so this option is an arm rather than an assertion.
+  Its two ends are `plain` and `shipped` by construction, and for both coefficients `plain`
+  wins — so the shrink that minimises held-out error is **zero**, which is removal. A
+  negative factor is deliberately not on the sweep: flipping a sign is a refit, not a
+  shrinkage, and #48's rule for a sign-reversed coefficient is that it is zeroed.
+- **Remove it.** What the other two reduce to.
+
+**The ticket's shrinkage premise was also the wrong way round, and this is worth separating
+from the decision.** #186 argued that regressing a noisy estimate at one hundred per cent
+assumes it is measured without error. [td-luck.md](td-luck.md) records the fitted optimal
+shrink on the touchdown rate as **1.0, not a partial one**. Those are two different shrinks —
+one on the player's own touchdown rate inside the signal, one on the price the board puts on
+the resulting residual — and conflating them is what made a refinement look available. They
+happen to point the same way here, but the decision above does not rest on either: it rests
+on the held-out table, where the price loses to charging nothing.
+
+**What this does not withdraw.** `td_luck` stays on the board as a column and stays in the
+report. Nothing measured about the *signal* changed: touchdown rate still has no
+year-over-year persistence, and the room still prices it. What is withdrawn is the claim that
+this repo knows the size of that mispricing well enough to move `proj_blend` by it. That is
+the same shape as [ADR-0013](adr/0013-the-snap-trend-is-shown-and-never-ranked-on.md) and
+[ADR-0016](adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md): shown, and never
+ranked on.
+
+**#225 is blocked on this and stays blocked.** The goal-line refinement would pay an
+OOM-hazard play-by-play pull — `yardline_100` is not among the ten columns
+[nflverse.py](../src/hub/fetch/nflverse.py) requests, and
+[panel.py](../src/hub/models/panel.py) records a narrowed four-season `load_pbp` killed by
+the OOM reaper — to sharpen a correction that loses to doing nothing. That is chasing a gap
+under a ceiling that is currently below zero.
+
 ## What this does not say
 
 It does not say the board is wrong today. Every number here is fitted against a stand-in for
@@ -206,3 +291,8 @@ uv run python -m hub.draft.fit_corrections --fit --seasons 2022,2023,2024,2025
 The four-season span the shipped constants were fitted over. Four clusters, where
 `minimum_detectable_effect`'s t quantile is 3.182 against the normal's 1.960 — the 1.44x #45
 corrected — so every MDE above roughly doubles and nothing is resolved.
+
+Either run prints the shrink sweep (#186) under each coefficient's walk-forward line, as
+`x0.00 <mae> (<seasons beaten>/<seasons>)` through `x1.00`, with the winning factor named at
+the end. `x0.00` is the `plain` column of the held-out table and `x1.00` is its `shipped`
+column, so the sweep can be read against that table directly.

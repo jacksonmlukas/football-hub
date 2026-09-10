@@ -217,13 +217,51 @@ def test_degraded_is_silent_when_nothing_degraded():
 
 # --- built or served, which is the same question asked once ------------------
 
-def test_a_built_board_reports_only_what_it_was_built_without():
-    """Unchanged for the normal night: the stages that did not make it, and nothing else."""
-    assert report.built_or_served(_rep(sos=True, td_luck=True, durability=True, adp=True,
-                                       scoring_checked=True, roster_checked=True),
-                                  None) == []
+def test_a_built_board_reports_what_it_was_built_without():
+    """The stages that did not make it, and nothing about the board being served."""
     out = report.built_or_served(_rep(sos=True), None)
-    assert len(out) == 1 and "built without" in out[0] and "SERVED" not in out[0]
+    assert "built without" in out[0] and "SERVED" not in out[0]
+    assert not any("CORRECTED ADP" in line for line in out), (
+        "no ADP means no corrected ranking to be short a term")
+
+
+def test_a_whole_board_still_names_the_disputed_coefficient_it_applied():
+    """#48's third criterion. A board with every stage was silent here until #48, and that
+    silence was the ticket: the durability correction applies two numbers the refit
+    disagrees with, and an operator ranking on them could not see which.
+
+    It is not a degradation note -- nothing failed, and `built without` stays empty.
+    """
+    whole = _rep(sos=True, td_luck=True, durability=True, adp=True,
+                 scoring_checked=True, roster_checked=True)
+    out = "\n".join(report.built_or_served(whole, None))
+    assert "built without" not in out and "CORRECTED ADP is missing" not in out
+    assert "CORRECTIONS APPLIED" in out and "durability" in out
+    assert "UNREPRODUCED" in out and "docs/fitted-corrections.md" in out
+
+
+def test_the_disposition_is_not_printed_for_a_correction_that_did_not_run():
+    """A flag beside a ranking the term is not in would be worse than no flag: it says the
+    board applied a disputed number when the board applied nothing."""
+    absorbed = _rep(sos=True, td_luck=True, durability=False, adp=True)
+    out = "\n".join(report.built_or_served(absorbed, None))
+    assert "CORRECTIONS APPLIED" not in out
+    assert "CORRECTED ADP is missing durability" in out
+
+
+def test_no_corrected_ranking_means_no_disposition_either():
+    """An ECR-only board ranks on raw consensus, so no correction reached it to be disputed
+    -- the same reason `corrections_missing` returns nothing there."""
+    out = "\n".join(report.built_or_served(_rep(durability=True, adp=False), None))
+    assert "CORRECTIONS APPLIED" not in out
+
+
+def test_touchdown_luck_is_never_named_as_a_disputed_correction_that_applied():
+    """#48 zeroed it rather than flagging it, which is the ticket's own split: a
+    sign-reversed coefficient is a bug and does not ship behind a flag."""
+    whole = _rep(sos=True, td_luck=True, durability=True, adp=True)
+    out = "\n".join(report.built_or_served(whole, None))
+    assert "touchdown luck" not in out
 
 
 def _served(**flags):

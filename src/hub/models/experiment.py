@@ -90,12 +90,17 @@ class CorrectionMissing(RuntimeError):
 def require_corrections(season: int, report: CorrectionReport) -> None:
     """Refuse a Board whose ranking was computed from a subset of the Corrections.
 
-    `hub.draft.board.build` degrades stage by stage on purpose, and two of those stages leave
-    a column a **Correction** reads. Absorbing one does not leave a thinner Board: both
-    `correct_projection` functions return the frame untouched when their column is absent, so
-    what comes out is a Corrected ADP computed from a subset of the terms and reported as
-    having run. Issue #121 measured it -- absorbing touchdown luck alone moves 346 of 457
-    players by up to 28.1 picks, and 110 of the first 192 change rank.
+    `hub.draft.board.build` degrades stage by stage on purpose, and one of those stages leaves
+    a column a **Correction** reads. Absorbing it does not leave a thinner Board:
+    `correct_projection` returns the frame untouched when its column is absent, so what comes
+    out is a Corrected ADP computed from a subset of the terms and reported as having run.
+    Issue #121 measured it -- absorbing durability alone moves 350 of 457 players by up to
+    36.8 picks, and 134 of the first 192 change rank.
+
+    Touchdown luck was the second such stage until #48 emptied its coefficients. It is no
+    longer in `CORRECTION_COLUMN`, so a Board built without it is a thinner Board and is not
+    refused here -- which is right, because with nothing multiplied its absence moves no
+    ranking at all.
 
     **Refuse rather than record, and the reason is what a Gate is.** CLAUDE.md's degradation
     rule is written for the live path: on draft night an hours-old ADP beats a stack trace,
@@ -116,7 +121,7 @@ def require_corrections(season: int, report: CorrectionReport) -> None:
     Nothing is refused for having no Corrected ADP at all. `board_as_of` builds every Board a
     Gate scores today and ESPN publishes ADP for the current season only, so those Boards rank
     on consensus and have no corrected ranking to be short a term -- `corrections_missing`
-    says so by returning nothing, and a rule that read "no ADP" as "no touchdown luck" would
+    says so by returning nothing, and a rule that read "no ADP" as "no durability" would
     refuse every backtest in the repo for a Correction none of them applies.
     """
     missing = report.corrections_missing()
@@ -125,8 +130,8 @@ def require_corrections(season: int, report: CorrectionReport) -> None:
     raise CorrectionMissing(
         f"the {season} board was built without {' and '.join(missing)}, and its Corrected "
         f"ADP was computed anyway -- so that season is a different ranking from the others' "
-        f"and not a thinner board. Issue #121: absorbing touchdown luck alone moves 346 of "
-        f"457 players by up to 28.1 picks. Rebuild {season} with every Correction, or run "
+        f"and not a thinner board. Issue #121: absorbing durability alone moves 350 of "
+        f"457 players by up to 36.8 picks. Rebuild {season} with every Correction, or run "
         f"the seasons that carry them and say which those were.")
 
 
