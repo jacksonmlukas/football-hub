@@ -96,7 +96,7 @@ FLOOR: dict[str, int] = {
     "src/hub/season/__init__.py": 0,
     "src/hub/season/journal.py": 0,
     "src/hub/season/lineup.py": 13,
-    "src/hub/season/lineup_gate.py": 31,
+    "src/hub/season/lineup_gate.py": 33,
     "src/hub/season/pool.py": 1,
     "src/hub/season/roster.py": 0,
     "src/hub/season/survivor.py": 10,
