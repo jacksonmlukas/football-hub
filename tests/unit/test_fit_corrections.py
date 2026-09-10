@@ -21,14 +21,17 @@ from hub.draft.fit_corrections import (
     COEFFICIENTS,
     DISPOSITIONS,
     HEADLINE_BASELINE,
+    SHRINKS,
     Fit,
     _cluster_key,
     _contributions,
     _design,
+    best_shrink,
     disposition,
     fit_one,
     refit_interval,
     report_lines,
+    shrink_curve,
     walk_forward,
 )
 from hub.models.experiment import SEASON_CLUSTER, summarise
@@ -452,3 +455,99 @@ def test_the_report_names_every_coefficient_and_its_disposition():
         assert coef.name in text
         assert coef.documented_in in text
     assert any(d in text for d in DISPOSITIONS)
+
+
+# --- the shrink sweep (#186) ---------------------------------------------------
+
+
+def test_the_sweep_has_both_ends_of_the_line_on_it():
+    """A sweep that omitted zero or one would be scoring the middle of a line against
+    nothing: those two are the arms `walk_forward` already reports."""
+    assert 0.0 in SHRINKS and 1.0 in SHRINKS
+    assert list(SHRINKS) == sorted(SHRINKS)
+
+
+def test_no_shrink_reproduces_the_no_correction_arm_exactly():
+    """The equality the docstring claims, held rather than trusted. `lambda = 0` is not
+    *approximately* the `plain` arm -- it is the same prediction on the same held-out rows
+    from the same split, and a sweep that re-walked the panel could differ."""
+    panel = planted(-0.6)
+    curve = shrink_curve(panel, QB)
+    at_zero = curve.filter(pl.col("shrink") == 0.0)["mae"][0]
+    assert at_zero == pytest.approx(mae(walk_forward(panel, QB), "plain"), rel=1e-12)
+
+
+def test_full_shrink_reproduces_the_shipped_arm_exactly():
+    panel = planted(-0.6)
+    curve = shrink_curve(panel, QB)
+    at_one = curve.filter(pl.col("shrink") == 1.0)["mae"][0]
+    assert at_one == pytest.approx(mae(walk_forward(panel, QB), "shipped"), rel=1e-12)
+
+
+def test_a_constant_of_the_right_sign_and_size_is_kept_whole():
+    """The sweep has to be able to say *keep it*, or its saying "remove it" means nothing.
+
+    Planted at the shipped value exactly, so applying the constant whole is applying the
+    truth and every shrink towards zero throws signal away.
+    """
+    curve = shrink_curve(planted(QB.shipped), QB)
+    assert best_shrink(curve) == 1.0, curve
+    assert (curve.sort("shrink")["mae"].to_list()
+            == sorted(curve["mae"].to_list(), reverse=True)), (
+        "MAE must fall monotonically towards the shrink that matches the truth")
+
+
+def test_a_sign_reversed_constant_is_shrunk_to_nothing():
+    """#186's case, on planted data where the answer is known before the run. The panel's
+    effect is +0.9 and the shipped constant is -0.540, so every part of it applied is a
+    markdown on players who should be marked up -- and no shrink between zero and one can
+    rescue that. This is the shape `docs/fitted-corrections.md` reports for `td_luck.QB`."""
+    curve = shrink_curve(planted(+0.9), QB)
+    assert best_shrink(curve) == 0.0, curve
+    worst = curve.sort("mae")["shrink"][-1]
+    assert worst == 1.0, "applying a reversed constant whole must be the worst arm"
+
+
+def test_a_constant_twice_the_size_of_the_truth_is_shrunk_by_half():
+    """The middle of the sweep is the part `walk_forward` could not reach. Planted at half
+    the shipped constant, so the measured answer is a *partial* shrink -- neither end."""
+    curve = shrink_curve(planted(QB.shipped / 2.0), QB)
+    assert best_shrink(curve) == 0.5, curve
+
+
+def test_a_tie_goes_to_the_smaller_shrink():
+    """Two shrinks the run cannot tell apart are two models it cannot tell apart, and the
+    one that applies less of an unreproduced constant is the one that claims less."""
+    tied = pl.DataFrame({"shrink": [1.0, 0.25, 0.5], "mae": [2.0, 2.0, 2.0],
+                         "seasons": [7, 7, 7], "beats_none": [0, 0, 0]})
+    assert best_shrink(tied) == 0.25
+
+
+def test_the_season_count_is_reported_beside_the_mean():
+    """Either alone misleads: a mean can be carried by one season, and a count says nothing
+    about size. Both are on every row."""
+    curve = shrink_curve(planted(-0.6), QB)
+    assert set(curve.columns) == {"shrink", "mae", "seasons", "beats_none"}
+    for row in curve.iter_rows(named=True):
+        assert row["seasons"] == len(SEASONS) - 1, "every season but the first is scored"
+        assert 0 <= row["beats_none"] <= row["seasons"]
+    assert curve.filter(pl.col("shrink") == 0.0)["beats_none"][0] == 0, (
+        "no correction cannot beat itself on any season")
+
+
+def test_an_unfittable_panel_returns_an_empty_curve_rather_than_a_number():
+    thin = planted(-0.6, per_season=1, seasons=(2020, 2021))
+    curve = shrink_curve(thin, QB)
+    assert curve.is_empty()
+    assert best_shrink(curve) != best_shrink(curve), "an empty curve has no best, so NaN"
+
+
+def test_the_report_prints_the_sweep_beside_the_walk_forward():
+    panel = pl.concat([
+        planted(-0.6, pos="QB").with_columns(pl.lit(0.0).alias("missed"),
+                                             pl.lit(0.0).alias("designation")),
+        planted(-0.2, pos="WR", seed=11).with_columns(pl.lit(0.0).alias("missed"),
+                                                      pl.lit(0.0).alias("designation"))])
+    text = "\n".join(report_lines(panel, baselines=(HEADLINE_BASELINE,)))
+    assert "shrink sweep" in text
+    assert "x0.00" in text and "x1.00" in text

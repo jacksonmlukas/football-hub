@@ -68,6 +68,20 @@ MIN_GAMES = 6
 #
 # Held out, applying either constant scores worse than applying no correction at all.
 # See docs/fitted-corrections.md for the population, the bracket and what it does not say.
+#
+# **WITHDRAWN 2026-09-10 by #186, and #48 is where these stop applying.** The ticket was
+# re-scoped from "how should this correction be refined" to "does it earn its place at all",
+# which is docs/method.md rule 8 -- the ceiling is below zero, so a refinement is chasing a
+# gap that is not there. The three options were remove it, keep it at a measured shrink, or
+# keep it per position where the sign is defensible; held out, all three land on removal:
+#
+#   * no position has a defensible sign. QB is positive at *both* ends of the bracket, and WR
+#     changes sign inside it.
+#   * the measured shrink is zero. `fit_corrections.shrink_curve` scores the shipped constant
+#     at every factor from nothing to whole on the same held-out rows, and nothing wins.
+#
+# The signal is not withdrawn -- only the price. `td_luck` stays on the board and in the
+# report; what stops is moving `proj_blend` by it. docs/td-luck.md carries the restatement.
 TD_LUCK_BETA: dict[str, float] = {"QB": -0.540, "WR": -0.286}
 
 _PHASES = (("receiving_yards", "receiving_tds", "rec", 6.0),

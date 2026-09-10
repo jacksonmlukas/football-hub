@@ -2,6 +2,23 @@
 
 **Built 2026-08-24**, `hub/draft/regression.py`, surfaced on `make draft`.
 
+> ## Withdrawn from the projection 2026-09-10 (#186, applied by #48)
+>
+> **The signal below is still measured, still on the board and still in the report. The two
+> coefficients that marked `proj_blend` down for it are not applied any more, and the
+> "Feeding it back into the objective" section below is a record of what was applied until
+> 2026-09-10 rather than a description of what runs.**
+>
+> Refitted against the column they actually correct, `−0.540` at QB comes back **positive at
+> both ends of the reconstructible bracket** and `−0.286` at WR **changes sign inside it**.
+> Held out on eight seasons, applying either scores worse than applying no correction at all,
+> and a sweep over every shrink factor between nothing and whole picks **nothing**. See
+> [fitted-corrections.md](fitted-corrections.md) for the table, the bracket and the sweep.
+>
+> Nothing in "The chain" or "On the live 2026 board" is withdrawn. What is withdrawn is the
+> claim that this repo knows the *size* of the mispricing well enough to move a projection by
+> it. Shown, and never ranked on.
+
 This is the "fit on previous years' actual stats, find value on the current board" cut. It
 is not a projection — it is one specific way the room misprices, tested directly.
 
@@ -13,7 +30,11 @@ Three things, each measured separately, in this order:
    **−0.030** rushing ([component-projection.md](component-projection.md)). Volume persists
    at 0.79–0.81; touchdown rate is indistinguishable from zero.
 2. **Fully regressing it beats carrying points forward**, and the fitted optimal shrink is
-   **1.0**, not a partial one ([volume-model.md](volume-model.md)).
+   **1.0**, not a partial one ([volume-model.md](volume-model.md)). *That shrink is on the
+   player's own touchdown rate inside the signal — how much of last year's rate to carry
+   forward when forming the expectation. It is not the same quantity as a shrink on the*
+   price *the board puts on the resulting residual, and #186 read it as though it were. The
+   second shrink was measured separately and came back at zero; see the note at the top.*
 3. **The market does not fully regress it.** That is the part that turns a modelling fact
    into an edge, and it is the part below.
 
@@ -87,7 +108,13 @@ their yardage supports:
 Jefferson appearing here *and* topping the xFP−FP list is the two independent instruments
 agreeing on him, which is worth more than either alone.
 
-## Feeding it back into the objective
+## Feeding it back into the objective — withdrawn 2026-09-10, kept as the record
+
+**Everything in this section describes what ran between 2026-08-24 and 2026-09-10.** It is
+kept rather than deleted because it is the measurement that steered a decision
+([ADR-0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md)), and because
+the refutation is only readable against what it refutes. The refutation is at the top of this
+page and in [fitted-corrections.md](fitted-corrections.md).
 
 A signal that is only printed is decoration. `hub.draft.optimize` scores seasons against
 `proj_blend`, so the correction has to land in that column or it never reaches a pick.
