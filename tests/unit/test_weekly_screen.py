@@ -476,3 +476,117 @@ def test_the_screen_returns_the_same_correlation_for_every_feature_when_rerun():
         assert runs[0][name] == runs[1][name], (
             f"{name} moved between two runs over one panel: {runs[0][name]} then "
             f"{runs[1][name]}. The screen has an input the as-of does not pin.")
+
+
+# --- The alternative control basis, #179 --------------------------------------------------
+#
+# `ppg_before` contains prior touchdowns and `td_rate_prior`'s numerator is prior touchdowns,
+# so the pre-registered control set contained the feature's own numerator. What these hold is
+# the *property* the decomposition was chosen for -- that the new set spans the old one, so a
+# coefficient that moves moved because of the constraint that was relaxed and not because
+# something else stopped being controlled for -- and that the basis a run is taken on actually
+# reaches the arithmetic.
+
+
+def _split_panel(n=80, seed=11):
+    """A panel whose `ppg_before` is genuinely two components that sum to it.
+
+    The outcome is driven by the touchdown half **alone**, which is what lets a test tell the
+    two bases apart: pooling the halves into one control leaves signal in that holding them
+    apart removes.
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    for s in (2023, 2024):
+        for w in range(1, 11):
+            for i in range(n):
+                td = float(abs(rng.normal(2.0, 1.0)))
+                nontd = float(abs(rng.normal(6.5, 2.0)))
+                rows.append({"season": s, "week": w, "player_id": f"p{i}",
+                             "td_ppg_before": td, "nontd_ppg_before": nontd,
+                             "ppg_before": td + nontd, "ecr": float(i + 1),
+                             "feat": float(rng.normal()),
+                             "fantasy_points_ppr": float(2.0 * td + rng.normal())})
+    return pl.DataFrame(rows)
+
+
+def test_the_decomposed_basis_spans_the_pooled_one():
+    """`ppg_before` residualised on the two halves is nothing, because it is their sum.
+
+    This is what makes #179 a re-run on a *basis* rather than on a different control set. If
+    the halves did not span the pooled control, a coefficient that moved between them could
+    have moved because the new set stopped controlling for something -- and the whole point
+    was to isolate one constraint, that a point of touchdown scoring and a point of everything
+    else carry the same slope.
+    """
+    p = _split_panel()
+    controls = np.column_stack([p[c].to_numpy() for c in ws.CONTROLS_DECOMPOSED])
+    left = ws.residual(p["ppg_before"].to_numpy(), controls)
+    assert np.allclose(left, 0.0, atol=1e-9), (
+        f"`ppg_before` left a residual of {np.abs(left).max():.3e} on the decomposed basis. "
+        f"The two sets are then not nested, and #179's comparison is not attributable to the "
+        f"one constraint it relaxed.")
+
+
+def test_the_pooled_control_does_not_span_the_decomposed_one():
+    """The premise of the test above: the nesting goes one way only.
+
+    Without this, "spans" is satisfied by the two bases being the *same* basis and the re-run
+    measures nothing -- a re-run that re-runs nothing being the failure `docs/method.md` rule
+    13 is a record of. A half of `ppg_before` is not recoverable from the total, which is
+    exactly why the pooled basis could not tell the two stories apart.
+
+    Asked over **every** column of the decomposed basis rather than over `td_ppg_before` by
+    name. The first draft of this named the column, which made it a fact about the fixture's
+    columns and not about the two bases: it passed unchanged with `CONTROLS_DECOMPOSED` set
+    to `CONTROLS`, the one mutation it exists to catch.
+    """
+    p = _split_panel()
+    pooled = np.column_stack([p[c].to_numpy() for c in ws.CONTROLS])
+    left = max(float(np.abs(ws.residual(p[c].to_numpy(), pooled)).max())
+               for c in ws.CONTROLS_DECOMPOSED)
+    assert left > 1e-3, (
+        "every column of the decomposed basis is recoverable from the pooled control, so the "
+        "two bases are one basis and #179 re-ran the published screen against itself.")
+
+
+def test_the_screen_takes_the_basis_it_is_given():
+    """`screen` and `screen_joint` route the basis through rather than accepting and ignoring.
+
+    A `controls` parameter that were accepted and dropped would return the same number twice,
+    and every figure reported under `--basis decomposed` would silently be the published one
+    -- a re-run that re-runs nothing, which `docs/method.md` rule 13 is the record of this
+    repo doing three times.
+    """
+    p = _split_panel()
+    feature = [ws.Feature("feat", "0", 1)]
+    pooled = ws.screen(p, feature, ws.CONTROLS).to_dicts()[0]
+    split = ws.screen(p, feature, ws.CONTROLS_DECOMPOSED).to_dicts()[0]
+    assert pooled["cells"] == split["cells"] == 20, "same rows, so only the basis differs"
+    assert pooled["r"] != split["r"], (
+        "the two bases returned an identical correlation on a panel built to separate them; "
+        "`controls` is not reaching `cell_correlations`.")
+
+    both = [*feature, ws.Feature("ppg_before", "?", 1)]
+    j_pooled = {d["feature"]: d for d in ws.screen_joint(p, both, ws.CONTROLS).to_dicts()}
+    j_split = {d["feature"]: d
+               for d in ws.screen_joint(p, both, ws.CONTROLS_DECOMPOSED).to_dicts()}
+    assert j_pooled["feat"]["r"] != j_split["feat"]["r"], \
+        "`screen_joint` is not routing the basis either"
+
+
+def test_every_named_basis_is_one_the_panel_would_serve_as_features():
+    """`--basis` chooses between named sets, and every column on one has to pass the rule.
+
+    A control is residualised out of **both** sides, so a week-w column in a control set leaks
+    into every feature at once -- and it is the one door `require_features` does not watch,
+    because it refuses a bad *feature* and a control arrives by the other parameter. Checked
+    here against `column_role` so a basis added later cannot introduce one quietly.
+    """
+    assert ws.BASES["pooled"] == ws.CONTROLS
+    assert ws.BASES["decomposed"] == ws.CONTROLS_DECOMPOSED
+    for name, controls in ws.BASES.items():
+        for c in controls:
+            assert pnl.column_role(c) in pnl.FEATURE_ROLES, (
+                f"basis {name!r} controls on `{c}`, which the Panel classifies as "
+                f"{pnl.column_role(c)!r}.")

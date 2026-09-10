@@ -11,6 +11,8 @@ Panel a Panel is not in any leaf -- it is in how they are called. That half used
 `inspect.getsource` assertion that read the function's own text back.
 """
 import datetime as dt
+import operator
+from functools import reduce
 
 import numpy as np
 import panelarchive as arc
@@ -18,6 +20,7 @@ import polars as pl
 import pytest
 
 from hub.contracts import ContractViolation
+from hub.models import components
 from hub.models import panel as pnl
 from hub.names import player_key
 
@@ -640,6 +643,84 @@ def test_a_total_on_the_panel_is_the_sum_of_the_columns_beside_it(monkeypatch, t
             f"is not {' + '.join(parts)} on the same row. The Panel is then measuring two "
             f"different things under one name, and whichever consumer reads the total is "
             f"reading a quantity the columns beside it contradict.")
+
+
+@pytest.mark.parametrize(("spec", "which"), _TOTALLED_SPECS,
+                         ids=[w for _, w in _TOTALLED_SPECS])
+def test_the_scoring_prior_splits_into_two_halves_that_sum_back_to_it(monkeypatch, tmp_path,
+                                                                      spec, which):
+    """`td_ppg_before + nontd_ppg_before == ppg_before`, exactly, on every row. #179.
+
+    An identity for the same reason the test above it is one: the pair exists so the screen
+    can hold prior touchdown scoring and prior everything-else apart *without* controlling for
+    anything the pooled `ppg_before` was not already controlling for. That property is the
+    identity. If the two stop summing to the total, the decomposed control set is no longer
+    nested inside the pooled one, and a coefficient that moves between the two bases has two
+    possible causes instead of one -- which is the whole thing #179 was run to distinguish.
+
+    It holds by construction, because the second half is the first subtracted from the total
+    rather than a second sum over the scored columns that are not touchdowns. Rebuilding it
+    from `SCORING` instead would leave the return and special-teams scores that `SCORING` does
+    not price in neither half, and the identity would fail on exactly the rows where it was
+    doing work. Asserted anyway: "holds by construction" is what the `yds`/`tds` totals above
+    were also said to do, on 342 of 344 rows.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS, spec).drop_nulls("ppg_before")
+    assert p.height > 0, "an empty Panel would satisfy this vacuously"
+    off = p.filter(
+        (pl.col("td_ppg_before") + pl.col("nontd_ppg_before") - pl.col("ppg_before")).abs()
+        > 1e-9)
+    assert off.height == 0, (
+        f"under the {which} spec, {off.height} of {p.height} rows carry halves that do not "
+        f"sum to `ppg_before`. The decomposed basis then controls for something the pooled "
+        f"one did not, and #179's comparison stops being attributable to one constraint.")
+
+
+def test_a_passing_touchdown_is_priced_at_four_and_not_at_six(monkeypatch, tmp_path):
+    """`td_ppg_before` prices the three touchdown columns from `SCORING`, separately.
+
+    The ticket that asked for this described `ppg_before` as containing prior touchdowns
+    "scored at six points each", which is true of two of the three. A passing touchdown is
+    **four**. Pricing all three at six would put an extra two points a passing score into the
+    touchdown half and take the same two out of the non-touchdown half beside it -- on
+    quarterbacks only, and silently, because the identity above would still hold: the
+    remainder is a subtraction and absorbs any mispricing of the thing subtracted.
+
+    So the identity cannot catch this and needs its own assertion. Rebuilt here from the
+    Panel's own per-type prior means rather than from a constant, so a weight that moves in
+    `SCORING` moves on both sides and this stays a test of the wiring.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS)
+    assert set(pnl.TD_COLUMNS) <= set(components.SCORING), \
+        "a touchdown column with no price; `td_ppg_before` would multiply by a KeyError"
+    assert components.SCORING["passing_tds"] != components.SCORING["rushing_tds"], (
+        "the three touchdown weights are equal, so this test cannot fail and the reason "
+        "`TD_COLUMNS` is split by type has gone away")
+
+    # The per-type priors are dropped from the Panel on purpose, so rebuild the halves from
+    # the frame the Panel takes them over and check the Panel's column against it.
+    counted = pnl.weekly_stats(arc.SEASONS).sort(["player_id", "season", "week"])
+    own = pnl.prior_means(counted, ["player_id"], list(pnl.TD_COLUMNS), within_season=True)
+    want = own.with_columns(
+        reduce(operator.add,
+               (pl.col(f"{c}_prior") * components.SCORING[c] for c in pnl.TD_COLUMNS))
+        .alias("want"))
+    j = p.join(want, on=["player_id", "season", "week"], how="inner").drop_nulls("want")
+    assert j.height > 0, "nothing joined, so the comparison below is vacuous"
+    off = j.filter((pl.col("td_ppg_before") - pl.col("want")).abs() > 1e-9)
+    assert off.height == 0, (
+        f"{off.height} of {j.height} rows price the touchdown half differently from "
+        f"`SCORING`. A flat six is the specific way this goes wrong, and it goes wrong only "
+        f"on players who throw.")
+
+    # And the premise: the archive has to contain a passing touchdown, or a flat six would
+    # pass everything above.
+    passers = j.filter(pl.col("passing_tds_prior") > 0)
+    assert passers.height > 0, (
+        "no row in this archive carries a prior passing touchdown, so pricing all three at "
+        "six would satisfy every assertion here")
 
 
 def test_the_touchdown_rate_prior_divides_one_measurement_by_itself(monkeypatch, tmp_path):
