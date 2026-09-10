@@ -526,3 +526,22 @@ def test_the_scoring_module_does_not_re_export_correlation():
     from hub.models import components as C
     assert not hasattr(C, "teammate_rho")
     assert not hasattr(C, "group_sd")
+
+
+def test_a_block_left_independent_is_still_named_after_repair_landed():
+    """The sentence that would appear if repair ever stopped working.
+
+    #171 made a silent factorisation skip loud, and #187 replaced the skip with a repair — so
+    on today's code every block factors and this branch does not fire. That is exactly why it
+    needs a test: it is the message that reports a regression to #171's original defect, and a
+    branch nothing reaches is a branch nothing would notice losing. Set the counter directly,
+    because reaching it through a draw would require breaking the repair this asserts against.
+    """
+    left = predict.CorrelationReport()
+    left.blocks, left.independent = 33, 4
+    said = left.note()
+    assert "4 of 33" in said, said
+    assert "would not" in said, "the unrepaired sentence stopped naming what happened"
+    assert "after repair" not in said, (
+        "a run that left blocks independent reported itself as having repaired them"
+    )
