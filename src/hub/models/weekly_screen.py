@@ -32,6 +32,12 @@ THE DESIGN, PRE-REGISTERED in `docs/weekly-projection-plan.md` before the first 
     precision the decision never had. Issue #169; `docs/method.md` rule 3, one level up
     from the pooling this screen was already built to avoid.
 
+THE CONTROL BASIS is itself a question, and #179 is where that was found out. `ppg_before` is
+PPR points and PPR points contain touchdowns, so the pre-registered control set contains
+`td_rate_prior`'s own numerator. `BASES` names the sets a run may be taken on and `--basis`
+chooses; the default is the pre-registration and every published figure rests on it. What the
+alternative did to the one feature it was run for is in `docs/weekly-screen.md`.
+
 THE CONFOUND, which the first run found and which no available data removes: `weekly-op` is
 FantasyPros' Monday ranking, scraped a median of six days before kickoff. Any feature carrying
 Tuesday-to-Sunday news beats it for that reason alone. `LEAD_DAYS` reports the distribution so
@@ -104,6 +110,35 @@ ROUTE_TREND = Feature("route_trend", "+", TREND_MIN_WEEK)
 
 
 CONTROLS: tuple[str, ...] = ("ppg_before", "ecr")
+
+
+# **The alternative control basis, pre-registered in #179 before it was run.** `ppg_before` is
+# season-to-date PPR points a game, and PPR points contain touchdowns -- so the control set for
+# `td_rate_prior` contains the feature's own numerator, and at a fixed points total a higher
+# touchdown rate is arithmetically fewer yards. The recorded result could therefore have been a
+# yardage effect wearing an efficiency label, and no amount of staring at the number says which.
+#
+# `td_ppg_before + nontd_ppg_before == ppg_before` on every row, so this set **spans** the one
+# above rather than replacing what it controlled for. That is what makes the comparison a clean
+# one: the only thing relaxed is the constraint that a point of touchdown scoring and a point of
+# everything else carry the same slope, which is exactly the constraint that made the two
+# stories indistinguishable.
+#
+# Not the default, deliberately. Every published figure on `docs/weekly-screen.md` was run on
+# the basis above, and quietly moving all nine features onto a new one would restate a page's
+# worth of numbers under cover of a ticket about one of them. `--basis decomposed` reports it
+# beside the default; which basis a surviving claim is conditional on is then something the
+# write-up can say, which is #179's third criterion.
+CONTROLS_DECOMPOSED: tuple[str, ...] = ("td_ppg_before", "nontd_ppg_before", "ecr")
+
+
+BASES: dict[str, tuple[str, ...]] = {"pooled": CONTROLS, "decomposed": CONTROLS_DECOMPOSED}
+"""The control bases a run may be taken on, by the name `--basis` takes.
+
+"pooled" names what `CONTROLS` does rather than describing it as the default, because the
+thing that distinguishes the two is that one holds prior scoring as a single number and the
+other holds its two halves apart.
+"""
 
 
 # A verdict is one of three, not two. A pre-stated null that comes back significant in every
@@ -285,11 +320,19 @@ SCHEME_TRENDS: tuple[Feature, ...] = tuple(
     for r in (*SCHEME, "pass_rate"))
 
 
-def screen(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES) -> pl.DataFrame:
-    """Every feature, screened, with its pre-stated sign and its verdict."""
+def screen(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES,
+           controls: Sequence[str] = CONTROLS) -> pl.DataFrame:
+    """Every feature, screened, with its pre-stated sign and its verdict.
+
+    `controls` is a parameter for the same reason `outcome` is one on `cell_correlations`:
+    which basis a partial correlation is taken on is a property of the question, and #179 is
+    the ticket that found out how much of an answer it can carry. The default is the
+    pre-registered set and every published figure rests on it.
+    """
     rows = []
     for f in features:
-        s = summarise(cell_correlations(panel, f.name, min_week=f.min_week))
+        s = summarise(cell_correlations(panel, f.name, min_week=f.min_week,
+                                        controls=controls))
         status, note = verdict(s, f.sign)
         rows.append({"feature": f.name, "sign": f.sign, "r": s["r"], "se": s["se"],
                      "t": s["t"], "cells": s["cells"], "seasons": s["seasons"],
@@ -298,7 +341,8 @@ def screen(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES) -> pl.Da
     return pl.DataFrame(rows).sort("r", descending=True)
 
 
-def screen_joint(panel: pl.DataFrame, survivors: Sequence[Feature]) -> pl.DataFrame:
+def screen_joint(panel: pl.DataFrame, survivors: Sequence[Feature],
+                 controls: Sequence[str] = CONTROLS) -> pl.DataFrame:
     """Re-screen each survivor with the other survivors added to the controls.
 
     Without this the screen reports collinear features as separate findings. The first run
@@ -317,7 +361,7 @@ def screen_joint(panel: pl.DataFrame, survivors: Sequence[Feature]) -> pl.DataFr
         others = [g.name for g in survivors
                   if g.name != f.name and g.min_week <= f.min_week]
         s = summarise(cell_correlations(panel, f.name, min_week=f.min_week,
-                                        controls=(*CONTROLS, *others)))
+                                        controls=(*controls, *others)))
         status, note = verdict(s, f.sign)
         rows.append({"feature": f.name, "sign": f.sign, "r": s["r"], "t": s["t"],
                      "cells": s["cells"], "seasons": s["seasons"], "status": status,
@@ -358,6 +402,10 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                     help="add route_trend -- reproduces the null against snap_trend")
     ap.add_argument("--usage", action="store_true",
                     help="screen the survivors against Usage counts, not points")
+    ap.add_argument("--basis", choices=sorted(BASES), default="pooled",
+                    help="the control basis: 'pooled' holds season-to-date PPG as one number "
+                         "(the pre-registration, and every published figure); 'decomposed' "
+                         "holds its touchdown and non-touchdown halves apart -- #179")
     ap.add_argument("--seasons", default=",".join(str(s) for s in SEASONS))
     ap.add_argument("--as-of", dest="as_of", default=None, metavar="YYYY-MM-DD",
                     help="bound the consensus archive at this date, inclusive of the day "
@@ -383,23 +431,30 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     print(f"  cfg {d['cfg']} | fitted {d['fitted']} | data {d['data']}"
           + ("" if a.as_of else "   (no --as-of: the digest names the bytes this run "
                                 "happened to read, not a date it can be re-read at)"))
+    controls = BASES[a.basis]
     sample = panel.filter(pl.col("week").is_in(list(FANTASY_WEEKS))
                           & (pl.col("games_before") >= MIN_GAMES_BEFORE))
-    sample = sample.drop_nulls([OUTCOME, *CONTROLS])
+    # The **union** of the default basis and the one being run, not just the one being run, so
+    # that a `--basis` run is on the same rows as the published one and the movement is
+    # attributable to the basis alone. Under `--basis pooled` that is `CONTROLS` listed twice
+    # and the sample is unchanged. `docs/method.md` rule 13 asks for a re-run rather than an
+    # argument, and a re-run on a different sample is an argument with a number attached.
+    sample = sample.drop_nulls([OUTCOME, *CONTROLS, *controls])
     print(f"  {sample.height} player-weeks, {sample['player_id'].n_unique()} players, "
           f"seasons {sorted(sample['season'].unique().to_list())}")
+    print(f"  controls: {', '.join(controls)}   (--basis {a.basis})")
     lead = panel["lead_days"]
     print(f"  consensus scraped a median {lead.median():.0f} days before kickoff "
           f"(the confound: see docs/weekly-screen.md)")
     extra = ((ROUTE_TREND,) if a.routes else ()) + (SCHEME_TRENDS if a.scheme else ())
-    out = screen(sample, (*FEATURES, *extra))
+    out = screen(sample, (*FEATURES, *extra), controls)
     print("\n".join(report(out.to_dicts())))
     found = out.filter(pl.col("status").is_in(list(FINDINGS)))["feature"].to_list()
     print(f"\n  a signal on its own: {', '.join(found) if found else 'nothing'}")
     if len(found) > 1:
         pool = (*FEATURES, *extra)
         survivors = [f for f in pool if f.name in found]
-        joint = screen_joint(sample, survivors)
+        joint = screen_joint(sample, survivors, controls)
         print("\n  each one, controlled for the others that exist over its weeks:")
         print("\n".join(report(joint.to_dicts())))
         left = joint.filter(pl.col("status").is_in(list(FINDINGS)))["feature"].to_list()
