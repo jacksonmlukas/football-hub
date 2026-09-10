@@ -397,16 +397,24 @@ def test_the_logged_cost_is_not_the_quantity_the_rule_fires_on(tmp_path):
     ADR-0014 adopts the contrarian threshold as "the win-probability cost is under ~8pp" and
     `docs/decisions.md` logs "the probability cost accepted". `survival_given_up` is a
     season-survival difference, and on this grid the two disagree in sign as well as scale --
-    the chalk is 2.0pp better on the week and 9.9pp worse over the season. That is the thesis
+    the chalk is 2.0pp better on the week and 27.8pp worse over the season. That is the thesis
     of the survivor plan working as intended, not a defect in either number, which is exactly
-    why writing one under the other's name would be the error."""
+    why writing one under the other's name would be the error.
+
+    **The season figure moved under #151** and this is the record of it: it was -9.9pp while
+    our own entry played out the rest of the season under the *field's* sampling rule, which
+    took a near-random team in week 2 whichever team it had spent in week 1. Playing the plan
+    instead, week 2 takes KC at 0.97 behind an SF pick and SF at 0.55 behind a KC one, so the
+    gap widens to the 0.70x0.55 - 0.68x0.97 = -0.275 the grid was built to produce, plus the
+    sampling error of 400 trials. The disagreement this test is about is unchanged in sign and
+    is now larger; what it cost to leave in place is the difference between the two numbers."""
     w = _weekly()
     chose = next(c for c in w.candidates if c.team == w.recommend)
     fb = next(c for c in w.candidates if c.is_fallback)
 
     week_cost = fb.win_prob - chose.win_prob                # what the ADR thresholds on
     assert week_cost == pytest.approx(0.02, abs=1e-9)       # 2.0pp, and under ~8pp
-    assert w.given_up == pytest.approx(-0.0985, abs=5e-4)   # -9.9pp, the other direction
+    assert w.given_up == pytest.approx(-0.2779, abs=5e-4)   # -27.8pp, the other direction
 
     journal.record_weekly(w, season=2026, at=AT, base=tmp_path)
     row = journal.read(2026, base=tmp_path).to_dicts()[0]

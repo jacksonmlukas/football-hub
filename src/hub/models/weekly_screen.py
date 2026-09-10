@@ -32,6 +32,14 @@ THE DESIGN, PRE-REGISTERED in `docs/weekly-projection-plan.md` before the first 
     precision the decision never had. Issue #169; `docs/method.md` rule 3, one level up
     from the pooling this screen was already built to avoid.
 
+THE SCREEN'S MINIMUM WEEK is swept, not chosen -- #178. It used to be `panel.TREND_MIN_WEEK`,
+which is 8 because 8 is the earliest of the anchors 4, 6, 8, 10, 12 that held when they were
+tested *against the outcome*; using it here screened features on rows selected by a value
+fitted to the outcome on the same data, and the write-up did not disclose the value. The model
+threshold keeps that value because a threshold is what the measurement was for. The screen has
+`SCREEN_TREND_ANCHORS` instead, runs at every one of them, and `sensitivity` names any verdict
+that is not the same at all five. One is not: see `docs/weekly-screen.md`.
+
 THE CONTROL BASIS is itself a question, and #179 is where that was found out. `ppg_before` is
 PPR points and PPR points contain touchdowns, so the pre-registered control set contains
 `td_rate_prior`'s own numerator. `BASES` names the sets a run may be taken on and `--basis`
@@ -61,7 +69,6 @@ from hub.models.panel import (
     OUTCOME,
     SCHEME,
     SEASONS,
-    TREND_MIN_WEEK,
     USAGE,
     PanelSpec,
     build_panel,
@@ -86,6 +93,34 @@ class Feature(NamedTuple):
     min_week: int
 
 
+# **Not a week.** A trend feature has no single minimum week here any more -- #178 -- so the
+# tuple below declares the sign, which is pre-registered, and leaves the row filter to be
+# supplied by `at_anchor` from the sweep. Zero rather than a plausible week so that a caller
+# who forgets is caught by `require_anchor` instead of quietly screening from week 0.
+TREND_ANCHOR_UNSET = 0
+
+
+# **The screen's minimum week, swept rather than chosen -- #178.** These are the five anchors
+# `docs/snap-trend-signal.md` measured the trend at, and the range and the step are fixed here,
+# in the commit that runs the sweep, rather than picked after seeing which range flatters the
+# answer. That is the pre-registration the disposition on #178 adopted.
+#
+# The justification is deliberately **not** `panel.TREND_MIN_WEEK`'s. That constant is 8
+# because 8 is the earliest anchor at which the trend held when the anchors were tested
+# against the outcome, which is the right way to set a *model* threshold and the wrong way to
+# select the rows a *screen* reads: it would screen features on rows chosen by a number fitted
+# to the outcome on the same data. A sweep does not choose at all. It converts a hidden
+# dependency into a published one, which is the honest answer when the constant was never
+# derived for this job in the first place.
+SCREEN_TREND_ANCHORS: tuple[int, ...] = (4, 6, 8, 10, 12)
+
+
+# The anchor the published tables on `docs/weekly-screen.md` were taken at. Named so a re-run
+# can reproduce the page, and it carries no claim of its own -- the sensitivity across
+# `SCREEN_TREND_ANCHORS` is what the page now rests on.
+PUBLISHED_ANCHOR = 8
+
+
 FEATURES: tuple[Feature, ...] = (
     Feature("implied_total", "+", 1),
     Feature("own_spread", "?", 1),
@@ -94,8 +129,8 @@ FEATURES: tuple[Feature, ...] = (
     Feature("rest", "?", 1),
     Feature("inj_sev", "-", 1),
     Feature("td_rate_prior", "0", 1),
-    Feature("snap_trend", "+", TREND_MIN_WEEK),
-    Feature("tgt_trend", "+", TREND_MIN_WEEK),
+    Feature("snap_trend", "+", TREND_ANCHOR_UNSET),
+    Feature("tgt_trend", "+", TREND_ANCHOR_UNSET),
 )
 
 
@@ -106,7 +141,36 @@ FEATURES: tuple[Feature, ...] = (
 # against +0.034), so the literature's access-beats-presence distinction does not survive
 # here. Kept in the tree with its harness per ADR-0007, out of the default screen because a
 # collinear twin in the control set destroys a real signal. `--routes` reproduces it.
-ROUTE_TREND = Feature("route_trend", "+", TREND_MIN_WEEK)
+ROUTE_TREND = Feature("route_trend", "+", TREND_ANCHOR_UNSET)
+
+
+def at_anchor(features: Sequence[Feature], anchor: int) -> tuple[Feature, ...]:
+    """`features` with every trend feature's minimum week set to `anchor`.
+
+    A trend feature is one whose name ends in `_trend`, which is every windowed feature the
+    Panel carries and nothing else -- `snap_trend`, `tgt_trend`, `route_trend` and the five
+    `SCHEME_TRENDS`. They are the features whose value is a change over a window, so they are
+    the ones with a week before which there is not enough season to form the window; the
+    pre-kickoff facts are the same quantity in week 2 as in week 12.
+    """
+    return tuple(f._replace(min_week=anchor) if f.name.endswith("_trend") else f
+                 for f in features)
+
+
+def require_anchor(features: Sequence[Feature]) -> None:
+    """Refuse a feature set that still carries `TREND_ANCHOR_UNSET`.
+
+    The failure this exists to catch is silent, which is the only reason it is a guard rather
+    than a convention: `min_week=0` filters nothing, so a forgotten `at_anchor` would screen
+    the trend features from week 1 and report a number rather than an error -- a number taken
+    on rows the trend does not exist over, printed in the same column as the others.
+    """
+    unset = [f.name for f in features if f.min_week == TREND_ANCHOR_UNSET]
+    if unset:
+        raise ValueError(
+            f"{', '.join(unset)} carry no anchor. The screen has no single minimum week for a "
+            f"trend feature (#178) -- pass the set through `at_anchor` with one of "
+            f"{SCREEN_TREND_ANCHORS}, or run the sweep.")
 
 
 CONTROLS: tuple[str, ...] = ("ppg_before", "ecr")
@@ -316,7 +380,7 @@ def report(rows: Sequence[dict]) -> list[str]:
 
 
 SCHEME_TRENDS: tuple[Feature, ...] = tuple(
-    Feature(f"{r}_trend", "?" if r != "nohuddle_rate" else "+", TREND_MIN_WEEK)
+    Feature(f"{r}_trend", "?" if r != "nohuddle_rate" else "+", TREND_ANCHOR_UNSET)
     for r in (*SCHEME, "pass_rate"))
 
 
@@ -329,6 +393,7 @@ def screen(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES,
     the ticket that found out how much of an answer it can carry. The default is the
     pre-registered set and every published figure rests on it.
     """
+    require_anchor(features)
     rows = []
     for f in features:
         s = summarise(cell_correlations(panel, f.name, min_week=f.min_week,
@@ -352,6 +417,7 @@ def screen_joint(panel: pl.DataFrame, survivors: Sequence[Feature],
 
     A feature that clears alone and dies here is not a signal; it is another signal's shadow.
     """
+    require_anchor(survivors)
     rows = []
     for f in survivors:
         # Each feature keeps its OWN week range and is controlled only for survivors that
@@ -369,6 +435,120 @@ def screen_joint(panel: pl.DataFrame, survivors: Sequence[Feature],
     return pl.DataFrame(rows).sort("r", descending=True)
 
 
+def sweep(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES,
+          anchors: Sequence[int] = SCREEN_TREND_ANCHORS,
+          controls: Sequence[str] = CONTROLS) -> pl.DataFrame:
+    """The whole screen, re-run at every anchor. One row per (anchor, feature) -- #178.
+
+    The screen's minimum week used to be `panel.TREND_MIN_WEEK`, a value chosen by testing
+    these same five anchors *against the outcome*. Rows selected by a number fitted to the
+    outcome are not a neutral sample to screen features on, and the screen was not disclosing
+    which number it had used. Sweeping does not choose: it reports the verdict at each anchor
+    and lets `sensitivity` say which verdicts depend on the choice.
+
+    Both halves are re-run at each anchor, not just the first. The anchor sets which rows the
+    trend features are measured on **and** which survivors may act as controls in
+    `screen_joint`, so a verdict that moves could move by either route.
+
+    `final` is the verdict the write-up reports: the joint one where the feature reached the
+    joint screen, and the alone one where it did not. A feature killed alone never enters the
+    joint screen, and calling that a joint result would read as a stronger rejection than the
+    run performed.
+    """
+    rows = []
+    for anchor in anchors:
+        pool = at_anchor(features, anchor)
+        alone = screen(panel, pool, controls)
+        found = alone.filter(pl.col("status").is_in(list(FINDINGS)))["feature"].to_list()
+        survivors = [f for f in pool if f.name in found]
+        # Mirrors `main`: one survivor has nothing to be controlled for, so there is no joint
+        # screen to run and its alone verdict is the one that stands.
+        joint = ({d["feature"]: d for d in screen_joint(panel, survivors, controls).to_dicts()}
+                 if len(survivors) > 1 else {})
+        for d in alone.to_dicts():
+            j = joint.get(d["feature"])
+            rows.append({
+                "anchor": anchor, "feature": d["feature"], "sign": d["sign"],
+                "min_week": next(f.min_week for f in pool if f.name == d["feature"]),
+                "alone_r": d["r"], "alone_t": d["t"], "cells": d["cells"],
+                "seasons": d["seasons"], "alone": d["status"], "alone_note": d["note"],
+                "joint_r": j["r"] if j else None, "joint_t": j["t"] if j else None,
+                "joint_cells": j["cells"] if j else None,
+                "joint": j["status"] if j else None,
+                "joint_note": j["note"] if j else None,
+                "joint_controls": j["controls"] if j else None,
+                "final": j["status"] if j else d["status"]})
+    return pl.DataFrame(rows, schema={
+        "anchor": pl.Int64, "feature": pl.Utf8, "sign": pl.Utf8, "min_week": pl.Int64,
+        "alone_r": pl.Float64, "alone_t": pl.Float64, "cells": pl.Int64,
+        "seasons": pl.Int64, "alone": pl.Utf8, "alone_note": pl.Utf8,
+        "joint_r": pl.Float64, "joint_t": pl.Float64, "joint_cells": pl.Int64,
+        "joint": pl.Utf8, "joint_note": pl.Utf8, "joint_controls": pl.Utf8,
+        "final": pl.Utf8}).sort(["feature", "anchor"])
+
+
+def surviving(swept: pl.DataFrame, anchor: int) -> list[str]:
+    """The feature names that come out of the screen as findings at one anchor."""
+    return sorted(swept.filter((pl.col("anchor") == anchor)
+                               & pl.col("final").is_in(list(FINDINGS)))["feature"].to_list())
+
+
+def sensitivity(swept: pl.DataFrame) -> pl.DataFrame:
+    """Per feature: whether its verdict is the same at every anchor, and where it holds.
+
+    This is the object #178 asks for. A feature whose verdict is identical across the sweep is
+    reported as it stands and the anchor never mattered to it; a feature whose verdict changes
+    anywhere is named as depending on the choice and reported with the anchors over which it is
+    a finding, rather than as a single verdict taken at whichever anchor is tidiest.
+
+    `stable` is over the *verdict*, not over `r`. Every `r` moves a little with the sample --
+    that is what changing the row filter does, and it is not what the pre-registration asked
+    about. What it asked is whether the screen's conclusions are conditional on a constant the
+    screen was not disclosing.
+    """
+    rows = []
+    for name in swept["feature"].unique(maintain_order=True).to_list():
+        d = swept.filter(pl.col("feature") == name).sort("anchor")
+        verdicts = d["final"].to_list()
+        anchors = d["anchor"].to_list()
+        holds = [a for a, v in zip(anchors, verdicts, strict=True) if v in FINDINGS]
+        rows.append({
+            "feature": name,
+            "stable": len(set(verdicts)) == 1,
+            "verdict": verdicts[0] if len(set(verdicts)) == 1 else "DEPENDS ON THE ANCHOR",
+            "finding_at": ", ".join(str(a) for a in holds) or "-",
+            "r_lo": float(min(d["alone_r"].to_list())),
+            "r_hi": float(max(d["alone_r"].to_list())),
+            "by_anchor": " ".join(f"{a}:{v}" for a, v in
+                                  zip(anchors, verdicts, strict=True))})
+    return pl.DataFrame(rows, schema={
+        "feature": pl.Utf8, "stable": pl.Boolean, "verdict": pl.Utf8, "finding_at": pl.Utf8,
+        "r_lo": pl.Float64, "r_hi": pl.Float64, "by_anchor": pl.Utf8})
+
+
+def sweep_report(swept: pl.DataFrame, sens: pl.DataFrame) -> list[str]:
+    """Lines: the surviving set at each anchor, then the features whose verdict moved."""
+    anchors = swept["anchor"].unique(maintain_order=False).sort().to_list()
+    out = ["", "  the surviving feature set at each anchor:"]
+    for a in anchors:
+        survived = surviving(swept, a)
+        cells = swept.filter((pl.col("anchor") == a)
+                             & (pl.col("min_week") == a))["cells"].to_list()
+        out.append(f"  week >= {a:<3} {', '.join(survived) if survived else 'nothing':60}"
+                   f"  ({min(cells) if cells else 0} trend cells)")
+    moved = sens.filter(~pl.col("stable"))
+    out += ["", f"  {'feature':16} {'r range':>18}  verdict across the sweep"]
+    for row in sens.iter_rows(named=True):
+        out.append(f"  {row['feature']:16} {row['r_lo']:+8.4f} {row['r_hi']:+8.4f}  "
+                   f"{row['verdict']}"
+                   + ("" if row["stable"] else f"  [{row['by_anchor']}]"))
+    out.append("")
+    out.append("  every verdict holds at all five anchors -- the screen's minimum week "
+               "changed nothing" if moved.is_empty() else
+               f"  CONDITIONAL ON THE ANCHOR: {', '.join(moved['feature'].to_list())}")
+    return out
+
+
 def screen_usage(panel: pl.DataFrame, features: Sequence[Feature],
                  components: Sequence[str] = USAGE) -> pl.DataFrame:
     """Each feature against each Usage count, controlled for that count's own recent level.
@@ -378,6 +558,7 @@ def screen_usage(panel: pl.DataFrame, features: Sequence[Feature],
     beyond his season-to-date *points* would let a change in role show up as a target signal.
     And not the season-to-date mean alone, which lags -- see `recent_mean`.
     """
+    require_anchor(features)
     rows = []
     for f in features:
         for c in components:
@@ -406,6 +587,11 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                     help="the control basis: 'pooled' holds season-to-date PPG as one number "
                          "(the pre-registration, and every published figure); 'decomposed' "
                          "holds its touchdown and non-touchdown halves apart -- #179")
+    ap.add_argument("--trend-min-week", dest="trend_min_week", type=int, default=None,
+                    metavar="N",
+                    help="run the screen at this one anchor instead of sweeping "
+                         f"{SCREEN_TREND_ANCHORS}. {PUBLISHED_ANCHOR} reproduces the tables "
+                         "on docs/weekly-screen.md -- #178")
     ap.add_argument("--seasons", default=",".join(str(s) for s in SEASONS))
     ap.add_argument("--as-of", dest="as_of", default=None, metavar="YYYY-MM-DD",
                     help="bound the consensus archive at this date, inclusive of the day "
@@ -447,24 +633,39 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     print(f"  consensus scraped a median {lead.median():.0f} days before kickoff "
           f"(the confound: see docs/weekly-screen.md)")
     extra = ((ROUTE_TREND,) if a.routes else ()) + (SCHEME_TRENDS if a.scheme else ())
-    out = screen(sample, (*FEATURES, *extra), controls)
-    print("\n".join(report(out.to_dicts())))
-    found = out.filter(pl.col("status").is_in(list(FINDINGS)))["feature"].to_list()
-    print(f"\n  a signal on its own: {', '.join(found) if found else 'nothing'}")
-    if len(found) > 1:
-        pool = (*FEATURES, *extra)
-        survivors = [f for f in pool if f.name in found]
-        joint = screen_joint(sample, survivors, controls)
-        print("\n  each one, controlled for the others that exist over its weeks:")
-        print("\n".join(report(joint.to_dicts())))
-        left = joint.filter(pl.col("status").is_in(list(FINDINGS)))["feature"].to_list()
+    pool = (*FEATURES, *extra)
+    # The sweep is the default, and one anchor is the special case -- #178. The screen has no
+    # single minimum week to fall back on: the value it used to fall back on was fitted to the
+    # outcome on these rows, which is what the sweep exists to stop it claiming silently.
+    anchors = [a.trend_min_week] if a.trend_min_week else list(SCREEN_TREND_ANCHORS)
+    print(f"  trend anchors: {', '.join(str(x) for x in anchors)}"
+          + ("   (the whole sweep -- #178)" if len(anchors) > 1 else
+             f"   (one anchor; the sweep is {SCREEN_TREND_ANCHORS})"))
+    swept = sweep(sample, pool, anchors, controls)
+    for anchor in anchors:
+        d = swept.filter(pl.col("anchor") == anchor)
+        print(f"\n  === trend features from week {anchor} ===")
+        print("\n".join(report([{**r, "r": r["alone_r"], "t": r["alone_t"],
+                                 "note": r["alone_note"]}
+                                for r in d.sort("alone_r", descending=True).to_dicts()])))
+        found = d.filter(pl.col("alone").is_in(list(FINDINGS)))["feature"].to_list()
+        print(f"\n  a signal on its own: {', '.join(found) if found else 'nothing'}")
+        j = d.filter(pl.col("joint").is_not_null()).sort("joint_r", descending=True)
+        if not j.is_empty():
+            print("\n  each one, controlled for the others that exist over its weeks:")
+            print("\n".join(report([{**r, "r": r["joint_r"], "t": r["joint_t"],
+                                    "cells": r["joint_cells"], "note": r["joint_note"]}
+                                   for r in j.to_dicts()])))
+        left = surviving(swept, anchor)
         print(f"\n  independent signals: {', '.join(left) if left else 'nothing'}")
         if a.usage and left:
             print("\n  and against Usage rather than points:")
-            u = screen_usage(sample, [f for f in pool if f.name in left])
+            u = screen_usage(sample, [f for f in at_anchor(pool, anchor) if f.name in left])
             for row in u.iter_rows(named=True):
                 print(f"  {row['feature']:16} {row['component']:11} {row['r']:+7.4f} "
                       f"{row['t']:+6.2f}  {row['status']}")
+    if len(anchors) > 1:
+        print("\n".join(sweep_report(swept, sensitivity(swept))))
     return 0
 
 
