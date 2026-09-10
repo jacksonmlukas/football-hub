@@ -10,15 +10,19 @@ is exercised on a hand-built frame: a window, a share, a two-scrape tie-break. B
 Panel a Panel is not in any leaf -- it is in how they are called. That half used to be a single
 `inspect.getsource` assertion that read the function's own text back.
 """
+import ast
 import datetime as dt
+import inspect
 import operator
 from functools import reduce
+from pathlib import Path
 
 import numpy as np
 import panelarchive as arc
 import polars as pl
 import pytest
 
+from hub import contracts
 from hub.contracts import ContractViolation
 from hub.models import components
 from hub.models import panel as pnl
@@ -926,9 +930,13 @@ def test_every_column_the_panel_hands_back_is_on_exactly_one_side_of_its_rule(mo
     p = pnl.build_panel(arc.SEASONS, spec)
     feats, outs = set(pnl.feature_columns(p)), set(pnl.outcome_columns(p))
     ident = {c for c in p.columns if pnl.column_role(c) == "identity"}
+    # The fifth side (#170): observed during week w, and neither a feature of it nor its
+    # outcome. Read off `column_role` rather than off `RECORDED`, so a column that acquires
+    # the role by any other route is still counted here.
+    rec = {c for c in p.columns if pnl.column_role(c) == "recorded"}
     assert p.height > 0 and len(p.columns) > 40, "an empty frame would satisfy this vacuously"
-    assert feats | outs | ident == set(p.columns), (
-        f"{sorted(set(p.columns) - (feats | outs | ident))} are on no side of the rule; "
+    assert feats | outs | ident | rec == set(p.columns), (
+        f"{sorted(set(p.columns) - (feats | outs | ident | rec))} are on no side of the rule; "
         f"`_served` should have refused the frame before it got here")
     assert not (feats & outs) and not (feats & ident) and not (outs & ident), \
         "a column on two sides is not a classification"
@@ -989,10 +997,14 @@ def test_the_three_named_pre_kickoff_exceptions_stay_usable_as_week_w_informatio
     `CONSENSUS_MAX_LEAD_DAYS` exist to keep a scrape on the near side of its kickoff, and
     `ecr` is half of `weekly_screen.CONTROLS`, so a Panel that refused it would refuse the
     screen's own control set.
+
+    **`wind` used to be in `line` here and is deliberately not**, since #170: it comes off the
+    same schedule frame and is the one column on it that is *observed at kickoff* rather than
+    published for it. The tests below this one are what say so.
     """
     arc.install(monkeypatch, tmp_path)
     p = pnl.build_panel(arc.SEASONS)
-    line = ("own_spread", "total_line", "implied_total", "rest", "roof", "wind", "is_home")
+    line = ("own_spread", "total_line", "implied_total", "rest", "roof", "is_home")
     report = ("inj_sev", "status", "practice")
     opponent = ("opp", "opponent_team")
     consensus = ("ecr", "lead_days")
@@ -1002,6 +1014,112 @@ def test_the_three_named_pre_kickoff_exceptions_stay_usable_as_week_w_informatio
         pnl.require_features(p, list(group))       # raises if any of them is refused
     assert set(pnl.INJURY_COLUMNS) == set(report), \
         "the report's three are named once in `INJURY_COLUMNS`; this must not drift from it"
+
+
+# --- wind is observed weather, and a missing reading is not calm (#170) --------------------
+#
+# It was read straight off the schedule into `PRE_KICKOFF` and screened as a week-w feature
+# with a pre-registered negative sign, which is `docs/method.md` rule 2 broken by the Panel
+# that exists to keep it: the reading is taken *at* kickoff, inside the outcome window. The
+# null-filling compounded it -- a dome or an absent reading became `0.0`, a substantive value
+# on a feature whose sign was pre-stated, so "no measurement" and "no wind" were one number.
+#
+# Three tests, one per acceptance criterion the ticket names. The fourth criterion -- the
+# family size -- lives next door in `test_weekly_screen.py`, because that is where the family
+# is.
+
+
+def test_wind_is_a_recorded_condition_and_cannot_be_screened_as_a_feature(monkeypatch,
+                                                                          tmp_path):
+    """Criterion one: the column's status says it is not available before kickoff.
+
+    Reclassified rather than removed. Wind is a real thing about a real football game and a
+    caller describing a week by the conditions it was played in should still be able to reach
+    it -- what it may not be is a *predictor* of the week it was measured on. `RECORDED` is the
+    side that says exactly that, and it is neither `feature_columns` nor `outcome_columns`:
+    filing it as an outcome would have satisfied the refusal while claiming wind is this
+    player's own realised play, which it is not.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS)
+    assert "wind" in p.columns, "still served: describable after the fact, just not screenable"
+    assert pnl.column_role("wind") == "recorded"
+    assert "wind" not in pnl.feature_columns(p), "a feature of the week it was measured on"
+    assert "wind" not in pnl.outcome_columns(p), (
+        "not this player's realised play either -- it is a property of the fixture, and "
+        "calling it an outcome makes `yds` and `wind` the same kind of thing")
+    with pytest.raises(pnl.PanelRuleViolation, match="observed during week w"):
+        pnl.require_features(p, ["wind"])
+
+
+def test_a_missing_wind_reading_reaches_the_panel_as_null_and_not_as_calm(monkeypatch,
+                                                                          tmp_path):
+    """Criterion two, first half: the fill is gone, and it was fabricating every zero it wrote.
+
+    `game_context` used to end `pl.col("wind").fill_null(0.0)`. The archive is what says how
+    much that cost: **175 of 416 captured game rows carry no reading** -- 132 indoors and 33
+    at open-air stadiums -- and **not one game has a measured wind of zero**. So before this
+    change every zero in the column was a non-measurement, on a feature whose sign was
+    pre-registered as negative, and the screen could not have told the two apart because there
+    was nothing to tell apart: the measured population contained no zeros at all.
+
+    The counts are asserted rather than quoted, so the sentence above cannot outlive the
+    capture it describes.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS)
+    indoors = p.filter(pl.col("roof").is_in(["dome", "closed", "open"]))
+    assert indoors.height > 0, "no indoor game reached the Panel; this asserts nothing"
+    assert indoors["wind"].null_count() == indoors.height, (
+        "an indoor game has no wind reading, and `0` is a measurement rather than the "
+        "absence of one")
+    assert p.filter(pl.col("wind") == 0).height == 0, (
+        "a player-week the Panel calls a measured calm. There are none in this capture, "
+        "which is why the fill was indistinguishable from data")
+
+
+def test_a_dome_a_missing_reading_and_a_measured_calm_are_three_different_things(monkeypatch,
+                                                                                 tmp_path):
+    """Criterion two, second half. The capture holds no measured calm, so one is introduced.
+
+    The archive cannot demonstrate the distinction on its own -- there is no game in it with a
+    measured zero -- so the schedule capture is edited to give one week's open-air games a
+    reading of exactly `0`. That is the case the old code was indistinguishable from, and the
+    only honest way to test it is to create one and watch it stay distinct.
+
+    Three states, and all three are reachable off the served Panel: a measured calm is `0.0`,
+    an unread outdoor game is null beside `roof == "outdoors"`, and a dome is null beside a
+    roof that is not. `roof` is what separates the second from the third, which is why this
+    change needed no new column.
+    """
+    season, week = 2023, 11
+
+    def measured_calm(df):
+        hit = ((pl.col("roof") == "outdoors") & (pl.col("season") == season)
+               & (pl.col("week") == week))
+        return df.with_columns(
+            pl.when(hit).then(pl.lit(0)).otherwise(pl.col("wind")).cast(pl.Int32).alias("wind"))
+
+    arc.install(monkeypatch, tmp_path, edits={"schedules": measured_calm})
+    p = pnl.build_panel(arc.SEASONS)
+
+    that_week = (pl.col("season") == season) & (pl.col("week") == week)
+    calm = p.filter(that_week & (pl.col("roof") == "outdoors"))
+    assert calm.height > 0, "the edit reached no Panel row, so this proves nothing"
+    assert calm["wind"].null_count() == 0 and calm["wind"].max() == 0.0, (
+        "a game that was measured and found calm must survive as a zero -- the point of "
+        "dropping the fill is that this is now the *only* thing a zero can mean")
+
+    unread = p.filter(~that_week & (pl.col("roof") == "outdoors") & pl.col("wind").is_null())
+    domed = p.filter(pl.col("roof").is_in(["dome", "closed"]))
+    assert unread.height > 0 and domed.height > 0, (
+        "the capture must hold an unread open-air game and an indoor one, or the three-way "
+        "distinction below is being asserted over two states")
+    assert domed["wind"].null_count() == domed.height, "a dome reads null, not calm"
+    assert set(unread["roof"].unique()) == {"outdoors"} and not set(
+        domed["roof"].unique()) & {"outdoors"}, (
+        "`roof` is what separates an unread outdoor game from an indoor one; without it the "
+        "two nulls would be the same row and criterion two would need a new column")
 
 
 def test_the_injected_preseason_board_is_pre_kickoff_and_not_unclassified(monkeypatch,
@@ -1129,3 +1247,111 @@ def test_the_opt_in_specs_raw_columns_are_declared_though_the_archive_cannot_dri
             f"`{c}` is measured on week w's own plays and nothing says so"
         assert pnl.column_role(f"{c}_trend") == "derived", \
             f"`{c}_trend` is the feature built from it and must stay reachable"
+
+
+# --- which sources go through the validated, cached path, and which cannot yet (#35) -------
+#
+# The path is `hub.fetch.nflverse.load`. What it buys over reaching `nflreadpy` from this
+# module is the source's `Contract`, a cache entry keyed by `(source, seasons, columns,
+# as-of)`, and a `Pin` beside that entry -- which together are what makes "a panel built twice
+# at one as-of is frame-identical" a claim anything can check.
+#
+# The two tests below are a pair on purpose. The first says which sources still reach
+# `nflreadpy` from `hub.models.panel`; the second says *why each of them does*, by asserting
+# the obstacle is still there. A prose note about a blocked source outlives the block; an
+# assertion that the frozen capture is still missing contract-required columns goes red the
+# day the archive is re-taken, and its message says what to do about it.
+
+_NFLREADPY_TO_SOURCE = {
+    "load_pbp": "pbp", "load_player_stats": "player_stats",
+    "load_ff_opportunity": "ff_opportunity", "load_schedules": "schedules",
+    "load_participation": "participation", "load_ftn_charting": "ftn_charting",
+    "load_injuries": "injuries", "load_snap_counts": "snap_counts",
+    "load_ff_rankings": "ff_rankings",
+}
+
+
+def _sources_reaching_nflreadpy_directly() -> set[str]:
+    """Every nflverse source `hub.models.panel` still fetches without going through `load`.
+
+    An AST scan rather than a grep: `nfl.load_schedules(...)` inside a comment or a docstring
+    is not a call, and this module is full of prose naming these functions. Same technique as
+    `test_experiment.py`'s expanding-window scan, and for the same reason -- what is asserted
+    is a property of the code, and a string search asserts a property of the text.
+    """
+    tree = ast.parse(Path(inspect.getfile(pnl)).read_text())
+    found = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _NFLREADPY_TO_SOURCE
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "nfl"):
+            found.add(_NFLREADPY_TO_SOURCE[node.func.attr])
+    return found
+
+
+def test_only_the_three_archive_blocked_sources_still_reach_nflreadpy_directly():
+    """The routing #35 asks for, as far as the frozen archive lets it be proved.
+
+    Five of the six nflverse sources this module reads now go through `hub.fetch.nflverse`.
+    A *new* unrouted source -- a join added, a source grown, someone reaching for `nfl.` out
+    of habit -- lands in this set and fails here, rather than reaching the live Sunday path as
+    a frame no contract has seen.
+    """
+    direct = _sources_reaching_nflreadpy_directly()
+    assert direct == {"schedules", "snap_counts", "injuries"}, (
+        f"{sorted(direct)} are fetched from `nflreadpy` inside hub.models.panel. Three of "
+        f"them are blocked by the frozen archive and the test below says so; anything else "
+        f"is a source that should go through `hub.fetch.nflverse.load` -- validated, cached "
+        f"and pinned -- instead.")
+
+
+@pytest.mark.parametrize(("source", "contract"), [
+    ("schedules", "SCHEDULES"), ("snap_counts", "SNAP_COUNTS"), ("injuries", "INJURIES")])
+def test_the_three_unrouted_sources_are_blocked_by_the_archive_and_not_by_this_module(
+        source, contract):
+    """Each of the three is unrouted because its capture cannot satisfy its own contract.
+
+    This is the whole of what is left of #35, and it is asserted rather than written down:
+    the captures in `tests/golden/fixtures/panel_archive/` were trimmed to the columns the
+    Panel *selects*, which is narrower than the contract's required set, so routing them makes
+    `nflverse.load` refuse the archive. `tests/golden/fixtures/README.md` names that shape --
+    a capture cut past the path the production reader takes still reads as a capture while
+    proving less.
+
+    **This test is meant to go red.** `scripts/capture_panel_archive.py --write` re-takes the
+    archive with the contract's columns included; the day it is run, the assertion below stops
+    holding and the message says what the next step is. Weakening the contract to admit the
+    trimmed frame is the other way to make it pass, and is the one thing that must not happen:
+    it would blind the contract to a genuine upstream break, which `_clean_ff_opportunity`
+    already refuses in the same words.
+    """
+    declared = getattr(contracts, contract)
+    missing = sorted(set(declared.required) - set(arc.frame(source).columns))
+    assert missing, (
+        f"the frozen `{source}` capture now carries every column `{contract}` requires, so "
+        f"the reason hub.models.panel still fetches it from `nflreadpy` is gone. Route it "
+        f"through `hub.fetch.nflverse.load` and drop it from this parametrisation -- that is "
+        f"the rest of #35.")
+
+
+def test_the_routed_sources_really_go_through_the_loader_when_a_panel_is_built(monkeypatch,
+                                                                               tmp_path):
+    """The behavioural half. The scan above reads the source; this watches a build.
+
+    What it pins is that the loader is on the path a Panel is actually assembled by, and not
+    merely imported by the module. `ff_rankings` arrives here through `load_rankings`, which
+    is `load` under another name.
+    """
+    import hub.fetch.nflverse as nv
+    real, seen = nv.load, []
+
+    def watched(source, seasons, *a, **kw):
+        seen.append(source)
+        return real(source, seasons, *a, **kw)
+
+    arc.install(monkeypatch, tmp_path)
+    monkeypatch.setattr(nv, "load", watched)
+    pnl.build_panel(arc.SEASONS, pnl.PanelSpec(expected=True))
+    assert {"player_stats", "ff_opportunity", "ff_rankings"} <= set(seen), (
+        f"a Panel was assembled and the loader saw only {sorted(set(seen))}; a source that "
+        f"reaches nflreadpy round the side is unvalidated, uncached and unpinned")

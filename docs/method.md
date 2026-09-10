@@ -67,6 +67,27 @@ measured *inside* the window it was predicting. Honestly measured, it is null at
 partial r = +0.008 beyond consensus. Obvious, embarrassing to restate, and it happened anyway in
 an analysis that bypassed the store layer built to prevent it.
 
+**The second incident, and it is the quieter kind.** `wind` reached the weekly screen as a
+week-*w* **pre-kickoff** feature with a pre-registered negative sign. It is read off the
+schedule as *recorded conditions* — the observation at the game — so the predictor was measured
+inside the outcome window, exactly as above, and this time nothing looked wrong: it came back
+**null**, and a null is the result nobody audits. It was found by a re-audit reading the
+classification rather than the number (#170, finding B12).
+
+**And the null-filling is the half worth remembering.** A dome or an absent reading was coded
+`0.0`, so "no measurement" and "no wind" were the same number on a feature whose sign was
+pre-registered. On the frozen archive, **175 of 416 game rows carry no reading and not one game
+has a measured wind of zero** — so every zero in that column was a non-measurement, and the
+screen could not have separated the two because the measured population contained no zeros to
+separate them from. A default that is also a legal value is not a default, it is a fabrication
+with a plausible face; `hub.models.panel.injury_columns` had already made the same call the
+other way, refusing to fill a missing injury report with `Healthy`.
+
+Wind is now `RECORDED` on the Panel — observed during week *w*, describable after the fact,
+refused as a predictor of it — the published figure is superseded and unestablished under rule
+13, and the screened family moved from nine features to eight
+([weekly-screen.md](weekly-screen.md)).
+
 **Where the rule lives in code.** `hub.models.experiment.expanding_seasons` — one generator
 yielding `(season, past, now)` where `past` is strictly earlier, and the only place in `src/`
 allowed to write a `<` against the season column. It was written out four times until

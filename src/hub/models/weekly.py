@@ -19,6 +19,15 @@ through `components.SCORING`, which is the premise of the whole approach end to 
 WHY THESE TWO TERMS AND NOTHING ELSE. Nine features were screened; two survived a joint screen,
 and screening them against the counts rather than the total showed they do not overlap:
 
+> **Restated 2026-09-10 -- the family is eight.** #170 removed `wind` from the screen: it is
+> game-time observed weather, read off the schedule as recorded conditions and screened as a
+> week-w feature with a pre-stated sign, which is `docs/method.md` rule 2. It was killed at
+> 4/5 seasons and never reached the joint screen, so **neither of the two terms below moves**
+> and no figure in this table is affected -- what moves is the count of features tried, which
+> is the size of the multiple-comparison family the two survivors came out of.
+> `docs/weekly-screen.md` carries the restatement.
+
+
                   targets  receptions  carries  attempts  touchdowns
     snap_trend     +0.094      +0.077   +0.062    +0.032   +0.018 killed
     td_rate_prior  +0.008      -0.000   -0.005    +0.005   -0.120

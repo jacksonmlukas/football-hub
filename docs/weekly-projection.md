@@ -20,6 +20,15 @@ adjusts. **The multiplier acts on counts, never on points.**
 Nine features were screened, two survived a joint screen, and screening those two against the
 counts rather than the total showed they do not overlap:
 
+> **Restated 2026-09-10 — the family is eight, under [method.md rule 13](method.md).** Issue
+> #170 removed `wind` from the screen: it is game-time observed weather, read off the schedule
+> as recorded conditions and screened as a week-*w* feature with a pre-stated sign, which is
+> [method.md rule 2](method.md). It was killed at 4/5 seasons and never reached the joint
+> screen, so **neither surviving term moves and no number in the table below is affected**.
+> What moves is the size of the family the two came out of. See
+> [weekly-screen.md](weekly-screen.md) for what the wind row itself published and why it
+> cannot be re-run.
+
 | | targets | receptions | carries | attempts | **touchdowns** |
 |---|---|---|---|---|---|
 | snap-share trend | +0.094 | +0.077 | +0.062 | +0.032 | **+0.018 killed** |
