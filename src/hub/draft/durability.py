@@ -27,12 +27,31 @@ signal is in the most recent season.
 """
 from __future__ import annotations
 
+import numpy as np
 import polars as pl
 
 from hub.config import drafted_positions
 from hub.draft import prior_signal
 
 TEAM_GAMES = 17
+
+# How strongly games missed persists year over year: Pearson r across 1,531 player-season
+# pairs with a real prior role (`docs/durability.md`). Spearman is +0.344; the linear form is
+# the one used, so the linear coefficient is the one carried.
+#
+# **This number was measured in August and used for one thing only: shifting a projected
+# mean through `BETA`.** Issue #183 is that the simulator had no concept of absence at all --
+# `season.simulate_weeks` drew every player every week and expressed a bust by shrinking his
+# mean and, through `sd_eff = sd * sqrt(ratio)`, his spread with it. That makes a player who
+# misses the season a low-mean *low-variance* player, which is the opposite of an injury. The
+# data and its provenance already existed and were wired to the wrong place.
+#
+# `next_season_absence` below is what wires them to the right one. It is not a new fit: given
+# r and the observed spread of `missed`, the conditional distribution of next season's missed
+# games is determined, which is why this ticket adds one constant rather than a mixture
+# weight nothing derives -- ADR-0006's line, and the reason the disposition took the
+# games-played draw over the other two options the ticket offered.
+MISSED_YOY_R = 0.407
 
 # Points per team game lost per prior-season game missed, beyond what the projection already
 # prices. From `ppg_next ~ proj_ppg + missed` on historical ESPN projections.
@@ -111,6 +130,53 @@ def games_missed(season: pl.DataFrame) -> pl.DataFrame:
     """
     return (season.filter(pl.col("ppg") > MIN_PPG)
                   .with_columns((pl.lit(TEAM_GAMES) - pl.col("g")).clip(0).alias("missed")))
+
+
+def next_season_absence(missed) -> tuple[np.ndarray, np.ndarray]:
+    """Mean and spread of *next* season's missed games, per player, from last season's.
+
+    `missed` is one entry per player on the prior-season scale (`TEAM_GAMES`), with a
+    non-finite entry -- `None`, a NaN from a null column -- for a player who had no prior
+    role. Returns two arrays of the same length: the conditional mean and the conditional
+    standard deviation of what he will miss this season.
+
+    **Nothing here is a new fit, and that is the whole reason this ticket takes a
+    games-played draw.** Treat (missed last season, missed this season) as one bivariate
+    quantity with correlation `MISSED_YOY_R` and a common marginal. Its conditional
+    distribution is then fixed by three numbers, two of which are properties of the vector
+    handed in:
+
+        E[next | prior] = mbar + r * (prior - mbar)
+        SD[next | prior] = s * sqrt(1 - r^2)
+
+    -- the textbook regression to the mean, with `mbar` and `s` estimated from `missed`
+    itself rather than carried as constants. That is deliberate twice over. It keeps the
+    fitted surface of this change to the single published correlation, where a mixture
+    component or a zero-inflated week model would each have needed a weight nothing in this
+    repo derives. And the population is right by construction: `games_missed` applies
+    `MIN_PPG`, which is the same "real prior role" filter the +0.407 was measured under.
+
+    A player with no prior role gets the marginal rather than the conditional -- mean `mbar`,
+    spread `s`, no shrinkage -- because knowing nothing about him is not the same as knowing
+    he is average, and the difference is exactly the variance a rookie should carry.
+
+    Degrades to "no absence" when nothing is known: an empty vector, or one with no finite
+    entry, returns zeros rather than raising. A simulator that refuses to run because an
+    advisory column is missing is the operator-dependence CLAUDE.md warns about, and the
+    caller has a `None` path for the case where the column is absent entirely.
+    """
+    m = np.asarray(missed, dtype=float)
+    known = np.isfinite(m)
+    if not known.any():
+        return np.zeros(m.shape), np.zeros(m.shape)
+    mbar = float(m[known].mean())
+    # ddof=1 because `missed` is a sample of players, not the population of them. With one
+    # known player there is no spread to estimate and `np.std` would return a NaN that
+    # propagated into every draw, so say zero and let the mean carry it.
+    s = float(m[known].std(ddof=1)) if int(known.sum()) > 1 else 0.0
+    mu = np.where(known, mbar + MISSED_YOY_R * (m - mbar), mbar)
+    sd = np.where(known, s * float(np.sqrt(1.0 - MISSED_YOY_R**2)), s)
+    return np.clip(mu, 0.0, float(TEAM_GAMES)), sd
 
 
 def prior_season(season: int, cache=None) -> pl.DataFrame:

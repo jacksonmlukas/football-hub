@@ -405,6 +405,28 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     # is -- see docs/correlation.md, where independence gives a nominal 80% interval that
     # covers 72.9%.
     nfl_team = (pool["team"].to_numpy() if "team" in pool.columns else None)
+    # Prior-season missed games, so the simulator can model absence as absence rather than as
+    # a shrunken mean -- issue #183 and `season._absence_factor`. Cast to float first: the
+    # column is integral and nullable, and `to_numpy()` on a null-carrying integer Series does
+    # not give a NaN to test for.
+    #
+    # **Whether the durability stage ran is a provenance question, so it goes to the report
+    # and not to the frame** -- #199, and this is a consumer, unlike the two producer sites in
+    # `durability.correct_projection`. `missed` is written inside `board._stage`, which
+    # `build` absorbs on failure, so a board reaching here may legitimately not carry it; a
+    # board read back off disk gets the same answer through `BuildReport.of_served`, which
+    # derives the flag once rather than letting every consumer sniff for it. `None` then means
+    # "not modelled", which is what `simulate_weeks` reads it as.
+    #
+    # The flag alone, with no membership test beside it. Adding one would be the
+    # belt-and-braces version of what #146 removed from `report.injuries`: a second answer to
+    # a question that has an owner, silently preferring the frame whenever the two disagree,
+    # which is the failure rather than the mitigation.
+    #
+    # Nothing is reported from here. `BuildReport.corrections_missing` already names the gap
+    # for an operator on the clock, and `experiment.require_corrections` refuses such a board
+    # outright for a Gate, where a season short a term is a second arm and not a thin one.
+    missed = pool["missed"].cast(pl.Float64).to_numpy() if report.durability else None
 
     # Common random numbers. Every candidate is evaluated against the SAME simulated
     # futures -- same draft rollouts, same talent draws, same weekly scores -- so the
@@ -427,7 +449,8 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
                                                report=report)
             p = champion_probability(rosters, mu, sd, pos, n_sims=n_season_sims,
                                      rng=stream(root, SEASON_SIM, k),
-                                     nfl_team=nfl_team, skew=skew, report=correlation)
+                                     nfl_team=nfl_team, skew=skew, missed=missed,
+                                     report=correlation)
             mat[i, k] = p[my_slot - 1]
 
     return _lift_frame(candidates, mat)

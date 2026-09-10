@@ -758,8 +758,21 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     That the two halves move in opposite directions and cancel is not something to rely on:
     they are hashed as one string, so the arithmetic is not additive and the pairing above is
     a record of what happened rather than a property.
+
+    **Moved again 2026-09-10 (#183): `eb32dd45` -> `6bdcb663`**, `fitted_digest` `0590176f`
+    -> `8c248a6e`. One constant, `durability.MISSED_YOY_R = 0.407`, in a module already in
+    `FITTED_MODULES`. It is not a new measurement -- the +0.407 has been in
+    `docs/durability.md` and in this module's docstring since 2026-08-24 -- but it had never
+    been a *name*, so nothing hashed it, and the simulator that now reads it had no concept
+    of absence at all. Every P(win) this repo computes moves, because a player with an injury
+    history now contributes zeros for the weeks he misses instead of a shrunken mean. The
+    digest is doing exactly its job: two runs on either side of that are not the same model.
+
+    `hub.season.pool`'s `field_concentration` (#152) landed between these two moves and does
+    not appear in either, which is `config_digest`'s `pool` exclusion working as designed --
+    a survivor rule no prediction can read must not issue a model version.
     """
-    assert config_digest(HubConfig()) == "eb32dd45"
+    assert config_digest(HubConfig()) == "6bdcb663"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

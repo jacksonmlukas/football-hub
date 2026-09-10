@@ -230,6 +230,49 @@ def test_the_draft_optimizer_prices_stacks():
     assert "nfl_team" in src, "champion_probability must receive NFL team identity"
 
 
+def test_the_room_hands_the_simulator_a_durability_history_when_the_stage_ran(monkeypatch):
+    """Issue #183's wiring, which is the half that would fail silently.
+
+    `season.simulate_weeks` reads `missed=None` as "absence not modelled" -- correctly, for a
+    board whose advisory durability stage was absorbed. So a `win_probability` that never
+    passed the column would leave the whole games-played draw as dead code, every P(win)
+    would be the pre-#183 one, and nothing in `test_season.py` would notice, because it
+    exercises the simulator directly.
+
+    Which of the two it does is a **provenance** question -- did the stage run -- so it is
+    read off the `BuildReport` rather than sniffed off the frame, per #199. Both directions
+    are asserted: the flag off must reach the simulator as `None`, or "not modelled" would
+    quietly become "everybody is healthy".
+    """
+    from hub.draft import optimize as _opt
+    from hub.draft.board import BuildReport
+
+    seen: list[object] = []
+    real = _opt.champion_probability
+
+    def spy(*a, **k):
+        seen.append(k.get("missed"))
+        return real(*a, **k)
+
+    monkeypatch.setattr(_opt, "champion_probability", spy)
+    board = _board().with_columns(
+        pl.Series("missed", [float(i % 9) for i in range(180)]))
+    kw = {"my_slot": 3, "rounds": 8, "n_draft_sims": 1, "n_season_sims": 20}
+
+    win_probability(board, DraftState(), ["P0"], report=BuildReport(adp=True,
+                                                                   durability=True), **kw)
+    assert seen and seen[0] is not None, (
+        "the durability stage ran and the simulator was still handed no history, so absence "
+        "is not modelled for any board this repo actually builds")
+    assert len(seen[0]) == board.height          # type: ignore[arg-type]
+
+    seen.clear()
+    win_probability(board, DraftState(), ["P0"], report=BuildReport(adp=True), **kw)
+    assert seen and seen[0] is None, (
+        "a board whose durability stage did not run was still given a history, so the "
+        "report is not what decides and the frame is")
+
+
 def test_the_run_can_be_told_how_much_of_it_was_actually_correlated():
     """Issue #171. A run makes candidates x draft-sims simulations, and a block that will
     not factor is silently independent in every one of them. The caller owns the report, so

@@ -153,12 +153,23 @@ def nominal_for(target: float, mu: np.ndarray, games: np.ndarray, picks: np.ndar
     and search for the nominal that returns `target`. Whatever the bias is made of, this
     inverts it.
     """
-    # Everyone plays a full season here even though the real players did not. That is not
-    # an oversight: `simulate_weeks` has no concept of absence -- every player is drawn
-    # every week and the lineup benches whoever scores least -- so availability has to be
-    # carried *by* this constant rather than alongside it. Feeding the real games
-    # distribution back in would let the simulation reproduce the observed dispersion using
-    # missed games the model does not have, and the constant would come out too low.
+    # Everyone plays a full season here even though the real players did not. That was not an
+    # oversight: `simulate_weeks` had no concept of absence -- every player was drawn every
+    # week and the lineup benched whoever scored least -- so availability had to be carried
+    # *by* this constant rather than alongside it. Feeding the real games distribution back in
+    # would have let the simulation reproduce the observed dispersion using missed games the
+    # model did not have, and the constant would have come out too low.
+    #
+    # **Half of that stopped being true on 2026-09-10, and `full` is now a known debt rather
+    # than a justified simplification (#183).** `simulate_weeks` draws games played from
+    # `durability.MISSED_YOY_R`, so the model *does* have missed games -- while `TALENT_CV`,
+    # fitted here on points per team game, still carries them too. Season spread is therefore
+    # overstated by the absence variance inside this constant. The repair is the inverse of
+    # the paragraph above: pass the real games distribution instead of `full` and let the
+    # search return a lower nominal, which is #183's fifth acceptance criterion taken as a
+    # refit rather than as a carry. It needs a fitting run against the archive, so this
+    # commit states the direction of the error and leaves the number where it is. `TALENT_CV`
+    # itself lives in `hub.models.predict`, which is the other reason it did not move here.
     full = np.full(mu.size, TEAM_GAMES)
 
     def fitted(cv):
