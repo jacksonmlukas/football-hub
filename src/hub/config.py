@@ -166,6 +166,14 @@ class PoolConfig:
     `double_pick_weeks` is a tuple and not a set. `config_digest` builds a structured config
     and OmegaConf rejects a `set` annotation outright -- which is a startup error, not a
     survivor-path error, so the wrong type here would take down the board.
+
+    **One field here is not a commissioner rule**, and it is called out rather than filed
+    quietly among the ones that are. `field_concentration` is an assumption about how the
+    *rivals* behave, which no commissioner states and nobody in this pool can observe: see
+    its comment below. It lives here because #152 settled that it must be a `PoolConfig`
+    field -- #160 requires `pool_digest` to cover it, which presupposes one -- and because
+    ADR-0006 sends only *fitted* constants out to live beside their provenance. A stated
+    assumption is a choice, and a choice belongs in a config.
     """
     entry_fee: float = 20.0
     buyback_fee: float = 20.0
@@ -178,6 +186,22 @@ class PoolConfig:
     max_entries_per_person: int = 5
     co_survivor_rule: str = "split"          # unconfirmed: split | rollover | tiebreak
     playoff_continuation: bool = False       # unconfirmed for this pool
+    # How hard the simulated field crowds onto the week's best team: an exponent applied to
+    # `win_prob` before `hub.season.pool._pick` samples a rival's team. 1.0 is sampling
+    # proportional to the raw probability, which is what this pool has always simulated and
+    # which puts about a sixteenth of the field on the chalk team; real survivor fields
+    # concentrate several times that, and concentration is what makes a field die *together*.
+    # 0.0 is a field picking uniformly among the teams it may still take.
+    #
+    # **Stated, never fitted, and 1.0 is not a measurement.** No pick-popularity data is
+    # fetched anywhere under `hub.fetch`, and under Hidden Picks nobody can observe this
+    # pool's rivals before a deadline -- so there is nothing to fit against and a number
+    # chosen here would be an invention wearing a measurement's clothes. 1.0 is the value
+    # that reproduces the behaviour already in the tree, so adopting the knob changes no
+    # published figure until somebody moves it. The deliverable is `pool.sensitivity`, a
+    # sweep that reports what the pool's lifetime and our share do across the axis, per
+    # ADR-0024: measure the alternatives side by side rather than pick one.
+    field_concentration: float = 1.0
 
 
 @dataclass
