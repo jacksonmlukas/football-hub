@@ -1,5 +1,11 @@
 """Proper scoring rules, and the reliability diagram that reads them.
 
+Three of the four rules here are **binary** -- `log_loss`, `brier` and the reliability
+diagram all grade a probability against an outcome that happened or did not. `crps` is the
+continuous one, and it exists because the Weekly projection does not emit a probability: it
+emits a mean, a spread and a skew, and every gate scored it with mean absolute error, which
+is minimised by the median and cannot see either of the other two (issue #177).
+
 These lived in `hub.publish` -- the module that writes `site/data/*.json` -- so
 `hub.models.eval` imported its metrics from the site writer, and could not be read or
 imported without dragging in `nflreadpy`, the survivor solver and the manifest machinery.
@@ -15,11 +21,25 @@ things (see `CONTEXT.md`).
 from __future__ import annotations
 
 import itertools
+import math
+import statistics
 from collections.abc import Sequence
 from typing import Any, cast
 
 import numpy as np
 import polars as pl
+
+# The standard normal, both ways, from the standard library rather than scipy -- the trade
+# `hub.models.coverage._z` and `hub.models.market.normal_cdf` already declined to make. The
+# vectorised wrapper is a Python loop over `math.erf`, which costs nothing beside the array
+# arithmetic around it at the tens of thousands of rows this grades.
+_erf = np.vectorize(math.erf, otypes=[float])
+
+
+def normal_quantile(p: Sequence[float] | np.ndarray) -> np.ndarray:
+    """The standard normal quantile, vectorised. The grid `crps_from_quantiles` reads."""
+    nd = statistics.NormalDist()
+    return np.array([nd.inv_cdf(float(x)) for x in np.asarray(p, dtype=float)])
 
 
 def log_loss(probs: Sequence[float] | np.ndarray,
@@ -46,6 +66,106 @@ def brier(probs: Sequence[float] | np.ndarray,
     if q.size == 0:
         return float("nan")
     return float(np.mean((q - np.asarray(outcomes, dtype=float)) ** 2))
+
+
+# --- the continuous rule --------------------------------------------------
+#
+# **What CRPS is.** For a predictive distribution `F` and an outcome `y`,
+#
+#     CRPS(F, y) = INTEGRAL (F(x) - 1{x >= y})^2 dx
+#
+# -- the squared area between the forecast's CDF and the step function the outcome turns out
+# to be. It is *proper*: in expectation it is minimised only by the distribution the outcome
+# is actually drawn from, so a forecast cannot score better by lying about its spread, which
+# is the whole reason for preferring it to a rule that reads one moment.
+#
+# **It is on the same scale as MAE, and that is not a coincidence.** A point forecast is a
+# point mass, whose CDF is itself a step function, and the integral above then collapses to
+# `|y - mu|`. So MAE *is* CRPS -- the score this rule gives the same projection published
+# without a distribution -- and the two can be printed in adjacent columns of the same table
+# and subtracted. The difference is what the published spread and skew earn or cost.
+
+# Levels for the quantile form below. The error is in the tails, where a midpoint grid stops
+# at `1 - 1/(2m)` and scores the mass beyond that level at that quantile; measured against
+# the closed form over five (mu, sd, y) cases, worst absolute error 1.0e-2 points at m=100,
+# 4.6e-3 at 200, **2.0e-3 at 400** and 5.0e-4 at 1000, and in every one of those the worst
+# case is an outcome four standard deviations out. On a weekly fantasy score reported to
+# three decimals, at 400 the quadrature is two orders of magnitude below the last digit
+# printed, and the cost is one array of `rows x 400` floats. Raise it if a caller ever quotes
+# a fifth decimal.
+CRPS_QUANTILES = 400
+
+
+def quantile_levels(m: int = CRPS_QUANTILES) -> np.ndarray:
+    """`m` equiprobable levels at the midpoint of each `1/m` slice.
+
+    Midpoints rather than `i/m` because the endpoints of a distribution with unbounded
+    support are infinite, and a grid that asks for them scores every observation as
+    infinitely bad.
+    """
+    return (np.arange(m, dtype=float) + 0.5) / m
+
+
+def crps_normal(mu: Sequence[float] | np.ndarray, sd: Sequence[float] | np.ndarray,
+                outcomes: Sequence[float] | np.ndarray) -> np.ndarray:
+    """CRPS of a normal predictive distribution, per observation. Exact.
+
+    The closed form (Gneiting & Raftery 2007), with `z = (y - mu)/sd`:
+
+        CRPS = sd * [ z * (2 Phi(z) - 1) + 2 phi(z) - 1/sqrt(pi) ]
+
+    Two consequences worth naming because the tests turn on them. At `y = mu` it is
+    `sd * (sqrt(2) - 1)/sqrt(pi)`, a constant times the spread and nothing else. And where
+    `y` is drawn from the same normal the expected score is `sd/sqrt(pi)`, against
+    `sd*sqrt(2/pi)` for the point mass at the same centre -- so a *calibrated* distribution
+    scores exactly `1/sqrt(2)` of what publishing only its centre scores. That ratio is the
+    payoff a distributional model is claiming, and it is why the two columns are worth
+    printing side by side.
+
+    **`sd = 0` returns `|y - mu|`.** Not a special case bolted on to avoid dividing by zero:
+    it is the point-mass limit, and it is what makes MAE a column of this same rule.
+
+    Per observation rather than meaned, unlike `log_loss` and `brier` above, because this has
+    the shape of an error column -- it is reported beside one, and grouped the same way.
+    """
+    m = np.asarray(mu, dtype=float)
+    s = np.asarray(sd, dtype=float)
+    y = np.asarray(outcomes, dtype=float)
+    safe = np.where(s > 0.0, s, 1.0)
+    z = (y - m) / safe
+    phi = np.exp(-0.5 * z * z) / math.sqrt(2.0 * math.pi)
+    cdf = 0.5 * (1.0 + _erf(z / math.sqrt(2.0)))
+    scored = safe * (z * (2.0 * cdf - 1.0) + 2.0 * phi - 1.0 / math.sqrt(math.pi))
+    return np.where(s > 0.0, scored, np.abs(y - m))
+
+
+def crps_from_quantiles(quantiles: np.ndarray, outcomes: Sequence[float] | np.ndarray,
+                        levels: np.ndarray | None = None) -> np.ndarray:
+    """CRPS of a distribution given by its quantiles, per observation.
+
+    For the distribution this repo actually publishes, which has no closed form: the weekly
+    moments are pushed through a Cornish-Fisher skew and clipped at zero
+    (`hub.models.predict.skewed`), and a normal CRPS would grade a distribution nobody
+    serves.
+
+    Uses the quantile identity rather than integrating the CDF numerically:
+
+        CRPS(F, y) = 2 * INTEGRAL_0^1 QL_tau(F^-1(tau), y) dtau
+
+    with the pinball loss `QL_tau(q, y) = (y - q)*tau` when `y >= q` and `(q - y)*(1 - tau)`
+    otherwise. The CDF integral has a step discontinuity at `y` that quadrature handles
+    badly; this one has a kink at the same place but the grid is in *probability*, where the
+    forecast's own quantiles put the points where the mass is.
+
+    `quantiles` is `(rows, m)`, ascending along the second axis, at `levels` -- which default
+    to `quantile_levels(m)`, the grid they should have been built on.
+    """
+    q = np.asarray(quantiles, dtype=float)
+    y = np.asarray(outcomes, dtype=float).reshape(-1, 1)
+    tau = (quantile_levels(q.shape[1]) if levels is None
+           else np.asarray(levels, dtype=float)).reshape(1, -1)
+    pinball = np.where(y >= q, (y - q) * tau, (q - y) * (1.0 - tau))
+    return 2.0 * pinball.mean(axis=1)
 
 
 def reliability_by(df: pl.DataFrame, edges: Sequence[float], *, on: str,
