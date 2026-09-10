@@ -712,6 +712,36 @@ class BuildReport:
         return tuple(k for k, v in vars(self).items() if isinstance(v, bool) and v)
 
 
+def report_for(board: pl.DataFrame, report: BuildReport | None = None) -> BuildReport:
+    """The report that describes `board`, for a consumer handed a frame and maybe a report.
+
+    **This is the seam issue #199 is about.** `build` returns a Board *and* a `BuildReport`,
+    but every function downstream took a bare `pl.DataFrame` -- `recommend(board, ...)`,
+    `simulate_remaining_draft(board, ...)`, `blended_adp(df, ...)` -- so the report could not
+    travel with the frame it describes. Eleven sites answered "what did that stage leave"
+    locally instead, by looking for a column, which is the arrangement `BuildReport`'s own
+    docstring says the report layer exists to end.
+
+    A consumer therefore takes `report` and passes it here. Two things come out of that, and
+    only the first is about plumbing:
+
+    * a caller **holding** a report hands over the recorded answer -- what the run that built
+      this frame actually did, including the all-null case no frame can show;
+    * a caller holding **only a frame** gets `BuildReport.of_served`, which is a derivation
+      and not a guess (read that classmethod's docstring for why the two differ), made in the
+      one place that owns it rather than restated at each site.
+
+    So the fallback is not the sniffing this replaces wearing a different hat. The sniffing
+    was eleven private answers that had already drifted apart; this is one, and a caller that
+    can do better than it says so by passing a report.
+
+    Deriving rather than requiring is also what keeps `hub.season`'s gates and every existing
+    test calling these functions unchanged -- the expand half of an expand-then-contract, and
+    the reason the tree stayed green while the eleven sites moved one at a time.
+    """
+    return BuildReport.of_served(board) if report is None else report
+
+
 def _check_scoring(board: pl.DataFrame) -> None:
     """Compare the league's own scoring weights against this repo's."""
     from hub.fetch import espn as espn_fetch
@@ -987,7 +1017,8 @@ def board_as_of(season: int) -> tuple[pl.DataFrame, BuildReport]:
 
 def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
               w: float = DEFAULT_ESPN_WEIGHT, top: int = 10,
-              state: DraftState | None = None) -> tuple[str, pl.DataFrame]:
+              state: DraftState | None = None,
+              report: BuildReport | None = None) -> tuple[str, pl.DataFrame]:
     """Rank the board for one specific pick, under the rule that pick's wait implies.
 
     Slot 3 of 12 alternates a 19-pick wait and a 5-pick wait, and that alternation should
@@ -1000,13 +1031,18 @@ def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
 
     Ranking by `edge` is deliberately not offered. The largest edges sit on players
     consensus does not rate, so an edge-sorted board drafts replacement level.
+
+    **`report` travels down to `blended_adp`, and deleting a column is what it bought.** This
+    used to fabricate an all-null `adp` column on an ECR-only board, for one reason: the
+    availability model read `adp` unconditionally and would raise without it, and degrading
+    to consensus-only must still produce a board. So a frame was edited to carry a claim
+    ("this board has a draft market, and it says nothing") in order to answer a question
+    ("did the draft-market stage run") that the report already answered. `blended_adp` asks
+    the report now, so the fabrication is gone rather than moved -- and with it the one place
+    in this package where a board handed to a consumer had a column the build never wrote.
     """
     if state is not None:
         board = remaining(board, state)
-    # ECR-only mode drops the column entirely rather than nulling it, and blended_adp
-    # reads it unconditionally. Degrading to consensus-only must still produce a board.
-    if "adp" not in board.columns:
-        board = board.with_columns(pl.lit(None, pl.Float64).alias("adp"))
     picks = my_picks(rounds)
     now, nxt = next_two(picks, current_pick - 1)
     if now != current_pick:
@@ -1015,7 +1051,7 @@ def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
     if mode == "value":
         ranked = board.filter(pl.col("vor").is_not_null()).sort("vor", descending=True)
     else:
-        ranked = pick_value(board, now, nxt, w=w)
+        ranked = pick_value(board, now, nxt, w=w, report=report_for(board, report))
     return mode, ranked.head(top)
 
 
@@ -1192,7 +1228,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # product, and a board that will not print because an archive write failed is
         # exactly the operator-dependence CLAUDE.md warns about.
         try:
-            if adp_history.snapshot(board) is not None:
+            if adp_history.snapshot(board, report=report) is not None:
                 print(f"  adp archived: {len(adp_history.days())} days on file")
         except Exception as exc:
             print(f"  adp archive skipped: {type(exc).__name__}: {exc}")
@@ -1209,7 +1245,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _emit(report_mod.unmatched(state_mod.unmatched(board, st)))
 
     if a.pick is not None:
-        mode, rec = recommend(board, a.pick, w=a.espn_weight, state=st)
+        mode, rec = recommend(board, a.pick, w=a.espn_weight, state=st, report=report)
         from hub.draft.optimize import the_pick
         _emit(report_mod.the_pick(the_pick(board, st, my_slot=MY_SLOT, teams=TEAMS)))
         _emit(report_mod.also_close(mode, rec))

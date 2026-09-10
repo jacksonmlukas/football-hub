@@ -25,6 +25,41 @@ def test_blend_rejects_weight_outside_unit_interval():
         blended_adp(_board(), w=1.4)
 
 
+# --- whether there is a draft market to blend, and who answers ------------
+#
+# A rule test, not a scenario test, and the distinction matters as much here as it did at
+# #164's site. On every board `build` can emit, the `adp` column and `report.adp` agree --
+# so a test built from a reachable board passes against the column-sniff this replaces and
+# proves nothing at all. Both boards below make the two disagree, in opposite directions,
+# and hold the report as the answer.
+
+def test_the_blend_asks_the_report_whether_a_draft_market_ran():
+    """Issue #199. The frame carries ADP and the report says the stage did not run."""
+    from hub.draft.board import BuildReport
+    df = _board().with_columns(pl.col("adp") + 10)
+    got = blended_adp(df, w=1.0, report=BuildReport(adp=False))
+    assert got["mu_pick"].to_list() == df["ecr"].to_list(), (
+        "the column is there and the report says the stage was not -- so there is no draft "
+        "market to blend in, whatever the frame is carrying")
+
+
+def test_the_blend_believes_a_report_that_claims_the_stage_over_a_thin_frame():
+    """The other direction. w=1.0 is pure draft market, so a blend that fell back to
+    consensus would be indistinguishable from `report.adp` being ignored."""
+    from hub.draft.board import BuildReport
+    df = _board().with_columns(pl.col("adp") + 10)
+    got = blended_adp(df, w=1.0, report=BuildReport(adp=True))
+    assert got["mu_pick"].to_list() == df["adp"].to_list()
+
+
+def test_with_no_report_the_frame_is_read_once_by_the_one_owner():
+    """`board.report_for` derives from the frame when a caller has only a frame, which is
+    `BuildReport.of_served` and not an eleventh private guess. A board with no ADP at all
+    still blends, which is the degradation this function has always had."""
+    df = _board().drop("adp")
+    assert blended_adp(df, w=1.0)["mu_pick"].to_list() == df["ecr"].to_list()
+
+
 def test_availability_decreases_as_your_pick_gets_later():
     av = availability(_board(), picks=[10, 40], n_sims=2000)
     early, late = av["avail_10"].to_numpy(), av["avail_40"].to_numpy()
