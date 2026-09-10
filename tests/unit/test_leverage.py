@@ -97,6 +97,178 @@ def test_calibrate_puts_the_mean_back():
     assert k < 1.0, "holding the mean fixed at higher spread must cost projected points"
 
 
+# --- calibrating at the settings the row is evaluated under (#173) ----------
+#
+# Against an analytic stand-in for `team_mean` rather than the simulator, because the claim
+# is about *which settings the solver is handed* and that has an exact answer. Driving it
+# through 60,000 Monte Carlo draws would replace a checkable equality with a tolerance, and
+# a tolerance is precisely what the bug hid inside: the uncalibrated row missed its target
+# by half a per cent, which reads as noise unless you know what to compare it to.
+
+K0 = 0.90                      # the roster strength the weak sweep rows hold the mean at
+_TARGET = 90.0                 # `_mean(K0, 1.0, 1.0)`, by construction below
+
+
+def _mean(k=1.0, vol=1.0, cv_mult=1.0, **_kw) -> float:
+    """A stand-in with `team_mean`'s two real properties and no simulator.
+
+    Rising in `k`, and rising in *both* variance knobs -- which is the whole reason
+    `calibrate` exists. The clip at zero inside `simulate_weeks` is what makes the real
+    function rise with `cv_mult`; the coefficients here are arbitrary, the dependence is not.
+    """
+    return 100.0 * k * (1.0 + 0.2 * (cv_mult - 1.0)) * (1.0 + 0.1 * (vol - 1.0))
+
+
+def test_the_stand_in_has_the_dependence_the_bug_turns_on():
+    """If `team_mean` did not move with `cv_mult`, calibrating at the wrong one would cost
+    nothing and this ticket would be about tidiness. It does, and so does the stand-in."""
+    assert _mean(K0) == pytest.approx(_TARGET)
+    assert _mean(0.9, 1.0, 1.2) > _mean(0.9, 1.0, 1.0)
+    assert leverage.team_mean(cv_mult=2.0) > leverage.team_mean(cv_mult=0.5)
+
+
+def test_the_volatility_row_is_calibrated_under_its_own_talent_multiplier(monkeypatch):
+    """#173's first criterion, on the row that had it wrong.
+
+    The weekly-spread row holds season-long spread fixed in absolute points, so its talent
+    multiplier is `k0 / k` -- a function of the multiplier being solved for. Solved that way,
+    `100k * (1 + 0.2(0.9/k - 1)) * 1.08 = 90` gives `k = 49/60`, and the row's achieved mean
+    is its target exactly rather than nearly.
+    """
+    monkeypatch.setattr(leverage, "team_mean", _mean)
+    k, at, got = leverage.calibrated(_TARGET, vol=1.8, cv_mult=lambda m: K0 / m)
+    assert k == pytest.approx(49 / 60, abs=1e-3)
+    assert at == pytest.approx(K0 / k, rel=1e-9)
+    assert got == pytest.approx(_TARGET, rel=1e-4)
+
+
+def test_a_sweep_row_simulates_at_the_settings_it_calibrated_under(monkeypatch):
+    """#173's first criterion asserted where it can actually fail: across both calls.
+
+    Reporting the miss is not enough on its own, and finding that out is what this test is.
+    A row that solved at `cv_mult = 1.0` and *also* measured its mean at 1.0 reports a
+    perfect calibration and still simulates at something else -- the mistake is invisible to
+    any check that only looks at the calibration half. So what is asserted here is the pair:
+    the settings handed to `simulate` are the settings `team_mean` was asked about, and the
+    mean at those settings is the target.
+
+    `sweep_row` is written so that they come from one variable rather than two spellings,
+    which is why this passes for a structural reason rather than a vigilant one.
+    """
+    seen = {}
+    monkeypatch.setattr(leverage, "team_mean", _mean)
+    monkeypatch.setattr(leverage, "simulate",
+                        lambda **kw: seen.update(kw) or {"playoff": 0.5, "bye": 0.1,
+                                                         "title": 0.1, "wins": 7.0})
+    _, err = leverage.sweep_row(_TARGET, vol=1.8, cv_mult=lambda m: K0 / m, n_sims=10)
+    assert seen["vol"] == 1.8
+    assert seen["cv_mult"] == pytest.approx(K0 / seen["k"], rel=1e-9)
+    assert _mean(seen["k"], seen["vol"], seen["cv_mult"]) == pytest.approx(_TARGET, rel=1e-4)
+    assert err < leverage.CALIBRATION_TOL
+
+
+def test_calibrating_at_the_default_multiplier_misses_the_target(monkeypatch):
+    """The defect itself, as the number it was worth. Solving at `cv_mult = 1.0` and then
+    simulating at `k0 / k` is what the loop did; the mean it reports as fixed is 1.6% away
+    from the one it was calibrated to, on a stand-in where the right answer is exact.
+
+    Larger than `CALIBRATION_TOL`, which is the point of having stated one.
+    """
+    monkeypatch.setattr(leverage, "team_mean", _mean)
+    k = leverage.calibrate(_TARGET, vol=1.8)            # the old call, cv_mult defaulted
+    got = _mean(k, 1.8, K0 / k)                         # the settings it was then run at
+    assert k == pytest.approx(5 / 6, abs=1e-3)
+    assert leverage.missed_target(got, _TARGET) > leverage.CALIBRATION_TOL
+
+
+def test_a_constant_multiplier_still_means_a_constant(monkeypatch):
+    """The callable is an addition, not a replacement. A float has to solve exactly as it
+    did, or the multiplier loop -- which #173 requires be left alone -- moves underneath."""
+    monkeypatch.setattr(leverage, "team_mean", _mean)
+    by_value = leverage.calibrate(_TARGET, vol=1.8, cv_mult=1.3)
+    by_function = leverage.calibrate(_TARGET, vol=1.8, cv_mult=lambda _k: 1.3)
+    assert by_value == pytest.approx(by_function, abs=1e-9)
+
+
+def test_the_multiplier_loop_calibration_is_unchanged(monkeypatch):
+    """#173's third criterion. `calibrated` adds a measurement beside `calibrate`; it must
+    not be a second calibration that could drift from it."""
+    monkeypatch.setattr(leverage, "team_mean", _mean)
+    for cvm in (0.5, 2.0):
+        k, at, _got = leverage.calibrated(_TARGET, cv_mult=cvm)
+        assert k == pytest.approx(leverage.calibrate(_TARGET, cv_mult=cvm), abs=1e-9)
+        assert at == cvm, "a constant multiplier resolves to itself, whatever k came back"
+
+
+def test_a_row_that_hit_its_target_is_not_marked_and_one_that_missed_is():
+    """The tolerance has to be visible in the output or it is a number nobody can check a
+    row against."""
+    assert leverage.missed_target(101.0, 100.0) == pytest.approx(0.01)
+    assert "OFF" not in leverage._miss(0.0)
+    assert "OFF" not in leverage._miss(leverage.CALIBRATION_TOL / 2)
+    assert "OFF" in leverage._miss(2 * leverage.CALIBRATION_TOL)
+
+
+def test_every_row_of_the_real_sweep_is_run_at_the_settings_it_was_solved_for(monkeypatch):
+    """#173's first two criteria over the CLI's own eight rows rather than over a call.
+
+    Two things are asserted per row, and they are different claims. **That the row is
+    self-consistent** -- the mean at the settings `simulate` was given is the row's target --
+    is #173. **That the weekly rows hold season-long spread fixed in absolute points** --
+    `cv_mult * k == k0` -- is the second confound `docs/six-of-twelve.md` records, and a row
+    that quietly dropped it would still be internally consistent and would no longer be the
+    comparison the table's label makes. Only asserting the first would let the second go.
+
+    `team_mean` is the analytic stand-in so the equality is exact and the run is quick;
+    `simulate` records rather than draws, since no outcome column is under test here.
+    """
+    seen = []
+
+    def recorded(**kw):
+        if "cv_mult" in kw:                 # a sweep row; the strength table passes neither
+            seen.append(kw)
+        k = kw.get("k", 1.0)
+        # Varying with `k` so the strength table's pp/win gradient has a denominator.
+        return {"playoff": 0.5 * k, "bye": 0.1 * k, "title": 0.1 * k, "wins": 7.0 * k}
+
+    monkeypatch.setattr(leverage, "team_mean", _mean)
+    monkeypatch.setattr(leverage, "simulate", recorded)
+    assert leverage.main(["--sims", "10"]) == 0
+
+    assert len(seen) == 8, seen
+    for k0, rows in ((0.90, seen[:4]), (1.10, seen[4:])):
+        target = _mean(k=k0)
+        weekly, season = rows[:2], rows[2:]
+        for row in rows:
+            assert _mean(row["k"], row["vol"], row["cv_mult"]) == pytest.approx(
+                target, rel=leverage.CALIBRATION_TOL), row
+        for row in weekly:
+            assert row["cv_mult"] * row["k"] == pytest.approx(k0, rel=1e-9), (
+                "the weekly row must hold absolute season-long spread fixed while it "
+                f"rescales the mean, so cv_mult is k0/k: {row}")
+        assert sorted(r["cv_mult"] for r in season) == [0.5, 2.0]
+        assert sorted(r["vol"] for r in season) == [1.0, 1.0], "the season rows sweep cv only"
+
+
+def test_every_sweep_row_reports_its_calibration_error_and_lands_inside_it(capsys):
+    """#173's second criterion, end to end. Eight rows, each carrying the miss between the
+    mean it was calibrated to and the mean it was simulated at -- and none of them OFF.
+
+    `--sims` is tiny because the sweep's *outcome* columns are not what is under test here;
+    `calibrate` and `team_mean` do not read it, so the calibration is the same one the full
+    run does.
+    """
+    assert leverage.main(["--sims", "300"]) == 0
+    out = capsys.readouterr().out
+    assert "mean err" in out
+    rows = [ln for ln in out.splitlines()
+            if ln.split()[:2] in (["weak", "weekly"], ["weak", "season"],
+                                  ["strong", "weekly"], ["strong", "season"])]
+    assert len(rows) == 8, rows
+    assert not [ln for ln in rows if "OFF" in ln], (
+        f"a sweep row is not the fixed-mean comparison it claims to be: {rows}")
+
+
 # --- the two variances point different ways --------------------------------
 
 def test_weekly_spread_does_not_buy_titles_for_a_strong_roster():

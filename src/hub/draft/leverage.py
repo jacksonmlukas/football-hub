@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
@@ -77,6 +77,18 @@ ROSTERS = [np.arange(t * N, (t + 1) * N) for t in range(TEAMS)]
 # bracket to escape it. season.py now gives the playoffs their own draws, and both live
 # there -- this is the same constant, no longer a workaround.
 SIM_WEEKS = REG_SEASON_WEEKS + PLAYOFF_ROUNDS
+
+# How far a sweep row's calibrated team mean may sit from its target and still be read as a
+# fixed-mean comparison. #173's second criterion is that this is *stated* -- an unstated
+# tolerance is one nobody can find a row outside.
+#
+# A setting rather than a measurement, and its size is set by the bisection rather than by
+# anything about football: `calibrate` stops at a bracket 1e-3 wide in the multiplier, and
+# the mean is very nearly proportional to it, so a converged row lands inside about 0.1%.
+# Half a per cent leaves room for the Monte Carlo wobble in `team_mean` without admitting the
+# 15% the uncalibrated sweep produced -- the confound this module exists to remove is two
+# orders of magnitude larger than this line.
+CALIBRATION_TOL = 0.005
 
 
 def _talent_cv(cv_mult: float) -> np.ndarray:
@@ -158,18 +170,90 @@ def team_mean(k: float = 1.0, vol: float = 1.0, cv_mult: float = 1.0,
     return float(pts[:, 0, 0].mean())
 
 
-def calibrate(target: float, vol: float = 1.0, cv_mult: float = 1.0,
+def calibrate(target: float, vol: float = 1.0,
+              cv_mult: float | Callable[[float], float] = 1.0,
               lo: float = 0.3, hi: float = 1.8) -> float:
-    """The projection multiplier that puts the team's mean weekly score back on `target`."""
+    """The projection multiplier that puts the team's mean weekly score back on `target`.
+
+    **`cv_mult` may be a function of the multiplier being solved for, and issue #173 is what
+    happens when it cannot be.** The weekly-spread sweep holds *season-long* spread fixed in
+    absolute points while it rescales the mean, so its talent multiplier is `k0 / k` -- a
+    function of the very `k` this bisection is looking for. With only a float accepted, the
+    loop below solved at `cv_mult = 1.0` and the row was then simulated at `k0 / k`, so the
+    mean the row reported as fixed was not the mean it had been calibrated to. Passing a
+    callable closes the loop: each probe is evaluated at the settings that probe implies.
+
+    Still one bisection and not a fixed-point iteration, because `team_mean(k, vol, k0/k)` is
+    monotone in `k` -- raising the multiplier raises the mean while the absolute talent
+    spread it is paired with stays put, so there is exactly one crossing and bracketing finds
+    it directly.
+    """
+    at: Callable[[float], float] = (
+        cv_mult if callable(cv_mult) else (lambda _k, c=float(cv_mult): c))
     for _ in range(40):
         mid = 0.5 * (lo + hi)
-        if team_mean(mid, vol, cv_mult) < target:
+        if team_mean(mid, vol, at(mid)) < target:
             lo = mid
         else:
             hi = mid
         if hi - lo < 1e-3:
             break
     return 0.5 * (lo + hi)
+
+
+def calibrated(target: float, vol: float = 1.0,
+               cv_mult: float | Callable[[float], float] = 1.0) -> tuple[float, float, float]:
+    """`(multiplier, the talent multiplier it resolves to, the team mean it achieves)`.
+
+    Three numbers rather than one, because the settings a row is *evaluated* at are what
+    #173 is about and a caller that re-derives them is a caller that can re-derive them
+    differently -- which is exactly what the volatility loop did. `sweep_row` is the only
+    caller and it feeds all three onward; nothing recomputes `k0 / k` a second time.
+
+    `calibrate` is unchanged and still returns the multiplier on its own: the multiplier loop
+    was already consistent, and this adds measurement beside it rather than a different
+    calibration. `test_the_multiplier_loop_calibration_is_unchanged` holds that.
+    """
+    k = calibrate(target, vol=vol, cv_mult=cv_mult)
+    at = cv_mult(k) if callable(cv_mult) else float(cv_mult)
+    return k, at, team_mean(k, vol, at)
+
+
+def sweep_row(target: float, *, vol: float = 1.0,
+              cv_mult: float | Callable[[float], float] = 1.0,
+              n_sims: int = 20000, seed: int = 0) -> tuple[dict, float]:
+    """One row of the variance sweep: `(outcomes, how far its mean missed `target`)`.
+
+    **This function is #173's fix, and the fix is that it exists.** The bug was not a wrong
+    constant -- it was that the loop calibrated in one statement and simulated in another,
+    with the talent multiplier written out twice and the two spellings disagreeing: solved at
+    the default 1.0, run at `k0 / k`. So the row's target team mean was not the mean it had
+    been calibrated to, while the row's own label said it was.
+
+    Here the resolved settings are computed once and every consumer is handed the same ones.
+    `team_mean` measures the mean at those settings and `simulate` runs at those settings,
+    from one `at`, so a row cannot be calibrated under settings it is not simulated under --
+    not because a caller remembered to match them, but because there is nothing to mismatch.
+    A checking loop that only *compared* two spellings would go on passing the moment
+    somebody wrote the third.
+
+    The miss comes back beside the outcomes rather than being raised on. A row outside
+    `CALIBRATION_TOL` is a finding about the sweep, and refusing to render the table would
+    take the other seven rows down with it.
+    """
+    k, at, got = calibrated(target, vol=vol, cv_mult=cv_mult)
+    outcomes = simulate(k=k, vol=vol, cv_mult=at, n_sims=n_sims, seed=seed)
+    return outcomes, missed_target(got, target)
+
+
+def missed_target(got: float, target: float) -> float:
+    """How far a calibrated row's mean sits from its target, as a fraction of the target."""
+    return abs(got - target) / target if target else float("inf")
+
+
+def _miss(err: float) -> str:
+    """The `mean err` cell, marked when the row is not the fixed-mean comparison it claims."""
+    return f"{err:.2%}" + ("" if err <= CALIBRATION_TOL else " OFF")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -196,19 +280,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"    seed {i}{' (bye)' if i <= 2 else '      '}: {p:>6.1%}")
 
     print("\n  variance at a fixed team mean -- weekly spread vs season-long spread")
-    print(f"  {'roster':>8} {'kind':>8} {'x':>5} {'playoff':>9} {'bye':>7} {'title':>7}")
+    print(f"  {'roster':>8} {'kind':>8} {'x':>5} {'playoff':>9} {'bye':>7} {'title':>7}"
+          f" {'mean err':>9}")
     for label, k0 in (("weak", 0.90), ("strong", 1.10)):
         tgt = team_mean(k=k0)
         for vol in (0.7, 1.8):
-            k = calibrate(tgt, vol=vol)
-            r = simulate(k=k, vol=vol, cv_mult=k0 / k, n_sims=n)
+            # `cv_mult` as a function of the multiplier being solved for, which is #173. The
+            # row holds season-long spread fixed in *absolute* points while the mean is
+            # rescaled, so its talent multiplier is `k0 / k` -- and this loop used to solve
+            # at the default 1.0 and then simulate at `k0 / k`, so the mean it reported as
+            # fixed was not the mean it had been calibrated to. `sweep_row` resolves the
+            # settings once and hands the same ones to both.
+            r, err = sweep_row(tgt, vol=vol, cv_mult=lambda m, b=k0: b / m, n_sims=n)
             print(f"  {label:>8} {'weekly':>8} {vol:>5.1f} {r['playoff']:>8.1%} "
-                  f"{r['bye']:>7.1%} {r['title']:>7.1%}")
+                  f"{r['bye']:>7.1%} {r['title']:>7.1%} {_miss(err):>9}")
         for cvm in (0.5, 2.0):
-            k = calibrate(tgt, cv_mult=cvm)
-            r = simulate(k=k, cv_mult=cvm, n_sims=n)
+            # Unchanged by #173: this loop already calibrated at the multiplier it evaluates,
+            # and it is the pattern the one above was brought onto.
+            r, err = sweep_row(tgt, cv_mult=cvm, n_sims=n)
             print(f"  {label:>8} {'season':>8} {cvm:>5.1f} {r['playoff']:>8.1%} "
-                  f"{r['bye']:>7.1%} {r['title']:>7.1%}")
+                  f"{r['bye']:>7.1%} {r['title']:>7.1%} {_miss(err):>9}")
+    print(f"\n  mean err is the calibrated team mean against its target; the sweep's claim "
+          f"is that\n  only one quantity moved per row, so anything over {CALIBRATION_TOL:.1%}"
+          f" is marked OFF and the row is not\n  a fixed-mean comparison. See #173.")
     print("\n  see docs/six-of-twelve.md; directions are the finding, not the decimals")
     return 0
 

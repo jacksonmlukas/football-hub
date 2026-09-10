@@ -70,16 +70,54 @@ quantities as one. They point in opposite directions.
 Both sweeps below hold the team's **mean weekly score fixed**, so each moves variance
 alone. See the trap section — this control is the whole measurement.
 
-| roster | variance kind | multiplier | P(playoff) | P(bye) | P(title) |
+| roster | variance kind | multiplier | P(playoff) | P(bye) | P(title) | mean err |
+|---|---|---|---|---|---|---|
+| weak | weekly | 0.7 | 26.2% | 5.9% | 2.6% | +0.02% |
+| weak | weekly | 1.8 | 28.5% | 5.4% | **2.8%** | +0.01% |
+| weak | season-long | 0.5 | 20.3% | 1.9% | 0.9% | +0.00% |
+| weak | season-long | 2.0 | 32.9% | 12.3% | **6.1%** | +0.03% |
+| strong | weekly | 0.7 | 72.7% | 38.7% | **20.7%** | +0.02% |
+| strong | weekly | 1.8 | 67.3% | 28.7% | 15.4% | +0.02% |
+| strong | season-long | 0.5 | 79.1% | 32.0% | 15.6% | +0.01% |
+| strong | season-long | 2.0 | 64.5% | 38.6% | **23.5%** | +0.01% |
+
+Re-measured 2026-09-10 under #173. `mean err` is the calibrated team mean against its
+target — the sweep's entire claim is that only one quantity moved per row, so it is now
+printed rather than assumed, and anything over 0.5% is marked OFF.
+
+**The four weekly rows above are not the four that were published, and the reason is a
+defect rather than noise.** The loop solved for its multiplier at the default season-long
+spread and then simulated at `k0 / k`, so the mean each row reported as fixed was not the
+mean it had been calibrated to. Isolated on one tree, with the sim count, the seed and
+everything else held identical:
+
+| roster | weekly x | old title | new title | old mean err | new mean err |
 |---|---|---|---|---|---|
-| weak | weekly | 0.7 | 25.0% | 5.4% | 2.5% |
-| weak | weekly | 1.8 | 29.3% | 5.6% | **3.1%** |
-| weak | season-long | 0.5 | 20.5% | 1.9% | 0.9% |
-| weak | season-long | 2.0 | 32.8% | 12.0% | **6.3%** |
-| strong | weekly | 0.7 | 71.5% | 37.0% | **19.8%** |
-| strong | weekly | 1.8 | 68.8% | 30.1% | 15.9% |
-| strong | season-long | 0.5 | 78.9% | 31.6% | 15.3% |
-| strong | season-long | 2.0 | 64.3% | 38.4% | **23.3%** |
+| weak | 0.7 | 2.4% | 2.6% | **−0.58%** | +0.02% |
+| weak | 1.8 | 2.9% | 2.8% | **+0.46%** | +0.01% |
+| strong | 0.7 | 19.8% | 20.7% | **−0.50%** | +0.02% |
+| strong | 1.8 | 16.4% | 15.4% | **+0.70%** | +0.02% |
+
+The error was **signed, and it ran in opposite directions across the very comparison each
+row makes**: the low-spread row was simulated below its target mean and the high-spread row
+above it. So the sweep was not comparing two spreads at one mean, it was comparing a
+slightly worse team against a slightly better one and reading the difference as variance.
+
+Both directions survive. Both magnitudes were wrong, and in opposite directions:
+
+* the weak roster's preference for weekly spread **shrinks by about 60%**, from +0.5pp
+  (2.4 → 2.9) to +0.2pp (2.6 → 2.8);
+* the strong roster's aversion to it **grows by about 56%**, from −3.4pp (19.8 → 16.4) to
+  −5.3pp (20.7 → 15.4).
+
+The bias was making the two rosters look more alike than they are. Correcting it separates
+them, which strengthens the state-dependence claim below rather than weakening it — while
+making the underdog half of it considerably thinner than the published number suggested.
+
+The two season-long rows are **byte-identical** old and new — that loop already calibrated
+at the multiplier it evaluated, and it is the pattern the weekly loop was brought onto.
+Their small movement against the published figures is tonight's simulator (#183's absence
+draw, #48 emptying the touchdown-luck price), not this fix.
 
 **Season-long outcome spread — how uncertain it is what a player *becomes* — is worth
 paying for, at every roster strength.** It is worth 7x to a weak roster (0.9% → 6.3%) and
@@ -88,9 +126,22 @@ still worth +52% to a strong one (15.3% → 23.3%), *even though it costs the st
 because the seeding payoff is convex: 37.9% at the top against 6.0% at the bottom.
 
 **Weekly boom-bust is not worth paying for unless you are behind.** At a fixed mean it is
-clearly negative for a strong roster (19.8% → 15.9%), and mildly *positive* for a weak one
-(2.5% → 3.1%). Head-to-head wastes surplus, so for a favourite a spikier week loses more
+clearly negative for a strong roster (20.7% → 15.4%), and *slightly* positive for a weak one
+(2.6% → 2.8%). Head-to-head wastes surplus, so for a favourite a spikier week loses more
 often than it wins; for a heavy underdog the upside is the only route to a win at all.
+
+Both halves moved under #173 and in opposite directions — the favourite's aversion is
+stronger than published and the underdog's appetite is weaker. **+0.2pp is a thin thing to
+act on.** At 20,000 sims a single 2.7% row carries a standard error near 0.11pp; the gap is
+a *difference*, and these two rows share a random stream by design, so its own error is
+smaller than two rows' combined and is **not measured here** — this sweep reports point
+estimates and no interval, which is a limit of the sweep rather than a fact about the
+number. What can be said without one: the gap is of the same order as a single row's error,
+where the strong roster's −5.3pp is about eighteen times its own row's (0.29pp at 20.7%).
+
+So read the underdog half as *"weekly spread does not hurt you when you are behind"*, which
+is what the measurement supports, rather than as a reason to chase it. If it ever needs to
+carry weight, it needs an interval first.
 
 That mild positive is a refinement from the 2026-08-24 rerun. It read as flat while the
 harness was drawing normals — once weekly scoring is drawn with its real right skew, the
