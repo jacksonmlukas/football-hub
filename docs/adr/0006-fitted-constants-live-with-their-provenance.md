@@ -64,4 +64,26 @@ So the rule is not relaxed, it is made true: coverage by the digest is what matt
   > file assigns to its own escape hatch. **Owned by #201**, whose criteria require that a
   > digest move when any of these move, or that their exclusion become a recorded decision
   > rather than a consequence of being written as `int`.
+  >
+  > **Settled 2026-09-10 (#201).** `config_digest` moved `6bdcb663` → `3f96c0c2` as a coverage
+  > correction — no constant was refitted and no prediction differs across it. Two things
+  > changed. Six of the shape constants above are now registered individually in
+  > `FITTED_EXTRA`, so moving any one of them moves the model version, asserted one constant at
+  > a time in `test_moving_a_simulation_extent_moves_the_model_version`. And the sweep inside a
+  > registered module stopped inferring coverage at all: it takes every name the module
+  > *assigns*, and a constant leaves the digest only by being named in `config.NOT_IN_DIGEST`
+  > with the argument for it. That closes the same hole from the other two directions it had
+  > also been open in — a name excluded for being capitalised (#187's `_FACTOR_CACHE_MAX`) or
+  > included for being a number (#199's `TYPE_CHECKING`).
+  >
+  > **One escape is left open and named**: `n_draft_sims` and `n_season_sims` are function
+  > signature defaults, so there is no module-level name to register. Covering them means
+  > giving them names in `hub.draft.optimize` and `hub.draft.backtest` first.
+  >
+  > The float scan this bullet describes still scans for floats, and that is now a narrower
+  > claim than it was: it answers "has a whole module fallen off the registry", not "is this
+  > constant covered", because a module that has never declared anything has no declaration to
+  > read. Widening it to `int` flags fifty names under `src/hub` — cache sizes, API tiers,
+  > filesystem roots, print widths — which is why the constants known to matter are registered
+  > rather than left to it.
 - Refitting anything now moves the model version, which is the point.

@@ -166,6 +166,96 @@ def test_a_fitted_constant_outside_a_registered_module_is_still_covered():
     assert "board.MIN_GAMES" in fitted_constants()
 
 
+# --- coverage is a recorded decision, not a property of how a name is typed (#201) ---
+#
+# Three unrelated spellings each decided, at some point, whether a value identified a model
+# version: whether it was capitalised (#187's `_FACTOR_CACHE_MAX`), whether it was a float
+# (#201's shape constants), and whether a re-export happened to be a number (#199's
+# `TYPE_CHECKING`, since `bool` subclasses `int`). None of the three is a fact about the
+# constant. What follows pins the replacement: covered by default, out only by name.
+
+SHAPE_CONSTANTS = [
+    ("hub.config", "REG_SEASON_WEEKS", 13),
+    ("hub.league", "PLAYOFF_TEAMS", 8),
+    ("hub.league", "PLAYOFF_ROUNDS", 2),
+    ("hub.draft.optimize", "DEFAULT_ROUNDS", 15),
+    ("hub.draft.cohort", "ROUNDS", 15),
+    ("hub.draft.cohort", "DRAFTS", 40),
+]
+
+
+@pytest.mark.parametrize(("module", "name", "moved_to"), SHAPE_CONSTANTS)
+def test_moving_a_simulation_extent_moves_the_model_version(monkeypatch, module, name,
+                                                            moved_to):
+    """#201's acceptance criterion, one constant at a time.
+
+    Each of these sets the extent of a random draw -- weeks played, playoff rounds simulated,
+    field size, draft rounds, drafts per cohort. By #196 the extent of a draw fixes the
+    seed-to-outcome map, so a run on either side of one of these prices every Gate interval
+    differently while computing from identical inputs. Before this ticket all six moved
+    nothing: the sweep that keeps modules honest looked for a `float` and every one of them
+    is an `int`, which ADR-0006 recorded as a stray-threshold limitation and which is nothing
+    of the kind.
+    """
+    import importlib
+    before = config_digest(HubConfig())
+    monkeypatch.setattr(importlib.import_module(module), name, moved_to)
+    assert config_digest(HubConfig()) != before, (
+        f"{module}.{name} sets the extent of a random draw and two runs across it are not "
+        f"the same model, but the digest cannot tell them apart")
+
+
+def test_a_cache_bound_does_not_identify_a_model_version(monkeypatch):
+    """#187's finding, closed. `_FACTOR_CACHE_MAX` bounds how many Cholesky factorisations
+    `hub.models.predict` keeps; every prediction is identical on either side of it.
+
+    The assertion that matters is the second one. It was already out of the digest -- but only
+    because someone spelled it with a leading underscore, and it would have been *in* the
+    digest spelled without one. Now it is out because `NOT_IN_DIGEST` says so and says why.
+    """
+    from hub.models import predict
+    before = config_digest(HubConfig())
+    monkeypatch.setattr(predict, "_FACTOR_CACHE_MAX", 8192)
+    assert config_digest(HubConfig()) == before
+    assert "predict._FACTOR_CACHE_MAX" in NOT_IN_DIGEST
+
+
+@pytest.mark.parametrize("key", ["predict._FACTORS", "predict._FACTOR_CACHE_MAX",
+                                 "predict._EIG_FLOOR", "predict._INDEPENDENT_FLOOR"])
+def test_each_exclusion_argues_for_itself(key):
+    """A skip-list entry with no argument is the same silence as no entry at all. Each of
+    these is a claim about what the constant does, and the claim is what a reader checks."""
+    assert len(NOT_IN_DIGEST[key].split()) >= 15, NOT_IN_DIGEST[key]
+
+
+def test_a_private_name_nobody_excluded_is_covered_anyway():
+    """The other half of dropping the spelling rule, and the one that would regress quietly.
+
+    `regression._PHASES` carries the four- and six-point scoring weights `td_luck` is computed
+    in -- as much a model input as `components.SCORING` beside it -- and `volume._UNITS` routes
+    which stat feeds which phase. Both were invisible to the sweep for no reason but an
+    underscore. Under the new rule the default is *covered*, so an underscore buys nothing and
+    a constant leaves the digest only by being argued out of it.
+    """
+    got = fitted_constants()
+    assert "regression._PHASES" in got
+    assert "volume._UNITS" in got
+
+
+def test_a_value_the_digest_cannot_hash_is_refused_rather_than_dropped(monkeypatch):
+    """The type test survives only as an assertion, and this is why it has to.
+
+    As a *filter* it silently dropped whatever it did not list, which is how a cache dict and
+    a `TYPE_CHECKING` re-export each got the answer wrong in opposite directions. A value the
+    digest cannot turn into stable text is now a loud failure naming the constant, so the
+    choice between hashing it and excluding it is made by a person on the record.
+    """
+    from hub.models import predict
+    monkeypatch.setattr(predict, "MIN_SKEW", object())
+    with pytest.raises(RuntimeError, match=r"predict\.MIN_SKEW"):
+        fitted_constants()
+
+
 def test_every_module_holding_a_fitted_constant_is_registered():
     """What stops the registry rotting. `FITTED_MODULES` is a list of modules rather than of
     constants so a new number is covered the day it lands -- but a whole new *module* still
@@ -174,8 +264,17 @@ def test_every_module_holding_a_fitted_constant_is_registered():
     Known limitation, stated rather than hidden: this scans for module-level names holding a
     *float*. An integer threshold in an unregistered module still slips through, which is
     exactly how `MIN_GAMES` did until `FITTED_EXTRA` picked it up by hand. Widening the scan
-    to ints would flag every structural count in the repo (`TEAMS`, `REG_SEASON_WEEKS`,
-    `BOOTSTRAP`), so the line is drawn at floats and the exceptions are named.
+    to ints flags fifty names under `src/hub` -- cache sizes, API tiers, filesystem roots,
+    print widths -- so the line is drawn at floats and the exceptions are named.
+
+    **What #201 changed, and what it did not.** Inside a module the digest already covers,
+    nothing turns on a literal's type any more: `fitted_constants` sweeps every name the
+    module assigns and an exclusion is a named entry in `NOT_IN_DIGEST`. This scan is the
+    other question -- whether a *module* has fallen off the registry entirely -- and it is
+    still a float scan, because there is no declaration to read in a module that has never
+    declared anything. The six shape constants #201 named are no longer relying on it: they
+    are registered individually in `FITTED_EXTRA`, so the ones known to matter are covered
+    rather than left to a scan that cannot see them.
     """
     import ast
     import pathlib
@@ -771,8 +870,37 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     `hub.season.pool`'s `field_concentration` (#152) landed between these two moves and does
     not appear in either, which is `config_digest`'s `pool` exclusion working as designed --
     a survivor rule no prediction can read must not issue a model version.
+
+    **Moved again 2026-09-10 (#201): `6bdcb663` -> `3f96c0c2`**, `fitted_digest` `8c248a6e`
+    -> `0e144a29`. **This one is a coverage correction and not a model change**, and the
+    distinction matters because both kinds moved this digest today. Not one value in this
+    repo is different on either side of it: no constant was refitted, no measurement was
+    republished, and every prediction a run makes across this commit is identical. What
+    changed is which constants the digest can see.
+
+    Eight names entered, and they had all been invisible for the same reason -- the sweep was
+    deciding coverage from how a line is *typed*:
+
+      * `config.REG_SEASON_WEEKS`, `league.PLAYOFF_TEAMS`, `league.PLAYOFF_ROUNDS`,
+        `optimize.DEFAULT_ROUNDS`, `cohort.ROUNDS`, `cohort.DRAFTS` -- the shape constants of
+        #201's original finding. Each sets the extent of a random draw, and by #196 the extent
+        of a draw fixes the seed-to-outcome map, so moving one re-prices every published Gate
+        interval. They were out because they are `int` and the scan looked for `float`.
+      * `volume._UNITS` and `regression._PHASES` -- out because of a leading underscore.
+        `_PHASES` carries the four- and six-point scoring weights that `td_luck` is computed
+        in, which is as much a model input as anything in `components.SCORING` beside it.
+
+    Four names are now excluded *by name and with a reason* rather than by spelling, and none
+    of them changes what the digest contains today -- they were already outside it, for the
+    wrong reason. `predict._FACTORS`, `_FACTOR_CACHE_MAX`, `_EIG_FLOOR` and
+    `_INDEPENDENT_FLOOR` are in `NOT_IN_DIGEST` with the argument for each. That closes the
+    finding recorded against #187's move above: a cache bound stayed out of the model version
+    because someone typed an underscore, and would have been in it otherwise.
+
+    The one escape that is not closed is stated in `FITTED_EXTRA`'s comment: `n_draft_sims`
+    and `n_season_sims` are function-signature defaults, so there is no name to register.
     """
-    assert config_digest(HubConfig()) == "6bdcb663"
+    assert config_digest(HubConfig()) == "3f96c0c2"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 
