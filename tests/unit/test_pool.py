@@ -6,6 +6,8 @@ game and eliminations become independent, the field thins smoothly, and the cont
 past anything real. Most of what follows is that one property, tested from angles that would
 each fail differently if it broke.
 """
+import math
+
 import numpy as np
 import polars as pl
 import pytest
@@ -401,3 +403,317 @@ def test_the_decision_reports_as_lines_with_the_breakeven_on_the_page():
     assert any("breakeven" in ln for ln in lines)
     assert any("$" in ln for ln in lines)
     assert any("already spent" in ln for ln in lines)
+
+
+# --- our own entry plays our plan, not the field's rule -----------------------
+#
+# Issue #151. Our entry is index 0 of the same arrays, and until this there was no branch for
+# `i == 0`: it sampled under the rival rule, so every published figure answered "what is an
+# entry worth to somebody who does not use this repo". The error runs one way and grows with
+# the horizon, which is why it decided the buyback verdict on its own.
+#
+# Every test below runs on a 32-team board over ten or more weeks, because the failure is only
+# visible where the no-repeat ledger binds. On a three-team toy an entry spends its options in
+# two weeks and the optimiser has nothing to be right about.
+
+
+_TEAMS = tuple(f"T{i:02d}" for i in range(32))
+# A strength ladder, T00 weakest to T31 strongest, priced through a logistic on the gap.
+#
+# The wobble on top of the ladder is load-bearing rather than realism. An evenly spaced ladder
+# gives many fixtures the identical strength gap and therefore the identical price, so the
+# season has many optima and which one comes back is the solver's tie-break. That is fine for
+# a survival figure and fatal for the test below, which asserts that solving the remainder
+# mid-trial reproduces the plan solved at the start *exactly* -- a claim about a unique
+# answer. With the wobble every gap is distinct, so the optimum is unique and the assertion
+# is about the code rather than about CBC.
+_STRENGTH = [-1.2 + 2.4 * i / 31 + 0.03 * math.sin(7.3 * i) for i in range(32)]
+
+
+def _board(weeks, *, flat=()):
+    """A 32-team board: sixteen fixtures a week, every team playing every week.
+
+    Matchups move by the circle rotation, so the biggest favourite is a different team most
+    weeks and a plan has something to solve. Ten weeks of it needs ten distinct teams and
+    eighteen needs twenty-four, which is the ledger binding rather than a toy running out.
+
+    A `flat` week is one where nothing is a favourite except the strongest team, at 0.97
+    against a board of coin flips. That is the hoarding case in `hub.season.survivor`'s
+    docstring made concrete on a real-sized grid: spending T31 in week 1 costs a coin flip in
+    the flat week, so the greedy rule and the optimiser give different answers and it is
+    possible to say which one our entry played. The coin flips are spread by a thousandth
+    apiece for the same reason the ladder wobbles.
+    """
+    order = list(range(32))
+    rows = []
+    for w in range(1, max(weeks) + 1):
+        pairs = [(order[i], order[31 - i]) for i in range(16)]
+        if w in weeks:
+            for i, (a, b) in enumerate(pairs):
+                if w in flat:
+                    p = 0.97 if a == 31 else 0.03 if b == 31 else 0.50 + 0.001 * i
+                else:
+                    p = 1.0 / (1.0 + math.exp(-(_STRENGTH[a] - _STRENGTH[b])))
+                rows += [(w, _TEAMS[a], p, f"{w}-{i}"), (w, _TEAMS[b], 1.0 - p, f"{w}-{i}")]
+        order = [order[0], order[-1], *order[1:-1]]
+    return pl.DataFrame({"week": [r[0] for r in rows], "team": [r[1] for r in rows],
+                         "win_prob": [r[2] for r in rows], "game_id": [r[3] for r in rows]},
+                        schema={"week": pl.Int64, "team": pl.Utf8, "win_prob": pl.Float64,
+                                "game_id": pl.Utf8})
+
+
+def _free_chain(grid, weeks):
+    """The free pick, taken every week and carrying what it spends: `auto_pick` as a plan.
+
+    The thing a plan has to beat, per `docs/method.md` rule 5, and also what
+    `pool._best_available` falls back to when no solver can run -- so it is both arms of two
+    different tests below.
+    """
+    led, out = set(), {}
+    for w in weeks:
+        got = pool.auto_pick(grid, w, sorted(led))
+        out[w] = (got,)
+        led.add(got)
+    return pool.Plan(out, "the free pick every week")
+
+
+TEN = list(range(1, 11))
+
+
+def test_our_entry_survives_materially_more_often_than_the_field_rule_gave_it():
+    """The headline of #151, asserted rather than eyeballed.
+
+    Two arms on the same board, the same field and the same seed: our entry playing the plan
+    it would actually follow, and our entry under the rival sampling rule this module valued
+    it with until now. `pool._entry_trials` with no plan is that old rule exactly -- it is the
+    same trial loop and the same `_play`, with the one branch on index 0 not taken.
+
+    The arms are **not** paired trial by trial, and that is stated because it matters which
+    way it cuts: replaying a plan consumes no draws from the generator while sampling consumes
+    one a week, so the two streams diverge after week 1 and the difference carries the
+    variance of two independent means rather than of one paired one. The bound below is the
+    conservative one -- four standard errors of an unpaired difference in proportions -- so
+    the pairing this cannot have only makes the test harder to pass. `docs/method.md` rule 3:
+    the trials are the unit here, and there are `trials` of them, not `trials` x `weeks`.
+    """
+    import math
+
+    g = _board(TEN, flat=(6,))
+    kw = {"entries": 12, "trials": 400}
+    mine = pool.entry_outcome(g, TEN, rng=np.random.default_rng(0), **kw)
+    wks = pool.weeks_from_grid(g, TEN)
+    field = pool._entry_trials(np.random.default_rng(0), wks, TEN, ledger=set(), ours=None,
+                               **kw)
+
+    se = math.sqrt(mine.survives * (1 - mine.survives) / mine.trials
+                   + field.survives * (1 - field.survives) / field.trials)
+    assert mine.survives - field.survives > 4 * se
+    # And it is a difference worth having in dollars, not merely a detectable one: the old
+    # rule left our entry among the also-rans for ten weeks of chalk-weighted noise.
+    assert mine.survives > 0.2 > field.survives
+    assert field.plan is None and mine.plan is not None
+
+
+def test_the_picks_our_entry_plays_are_the_optimisers_and_not_the_free_ones():
+    """Which rule produced them, pinned on a board where the two rules disagree.
+
+    Week 6 is flat: nothing is a favourite except T31. The free pick spends T31 in week 1,
+    where it is merely the best of sixteen real favourites, and arrives in week 6 holding a
+    3% dog. The optimiser hoards it. That is the whole argument for solving a season as one
+    assignment problem, and it is the argument our entry was not getting the benefit of.
+    """
+    g = _board(TEN, flat=(6,))
+    out = pool.entry_outcome(g, TEN, entries=12, trials=50, rng=np.random.default_rng(0))
+    plan, free = out.plan, _free_chain(g, TEN)
+    assert plan is not None
+    assert "optimiser" in plan.source
+    assert plan.picks != free.picks
+    assert plan.picks[6] == ("T31",) and free.picks[6] != ("T31",)
+    # A team a week, none of them twice: the no-repeat ledger, which is what makes this a
+    # season-long problem rather than ten weekly ones.
+    assert sorted(plan.picks) == TEN
+    assert len({t for ts in plan.picks.values() for t in ts}) == len(TEN)
+    # Nothing was invalidated, so the figure is about the picks it names.
+    assert out.replans == 0.0
+
+
+def test_two_candidate_plans_meet_the_same_season_and_the_better_one_wins():
+    """The seam #159 needs, and the reason a plan is solved outside the trial loop.
+
+    Both arms are handed a plan rather than solving one, both get the same seed, and our
+    entry consumes no draws either way -- so the field they meet is the identical field, the
+    games fall the identical way, and the only difference between the two figures is the
+    picks. `docs/method.md` rule 7. The optimiser's plan beats the free chain here by the
+    hoarded week, and the comparison says so on shared draws rather than on two seasons.
+    """
+    g = _board(TEN, flat=(6,))
+    best = pool.solve_plan(g, TEN)
+    free = _free_chain(g, TEN)
+    kw = {"entries": 12, "trials": 400}
+    a = pool.entry_outcome(g, TEN, plan=best, rng=np.random.default_rng(2), **kw)
+    b = pool.entry_outcome(g, TEN, plan=free, rng=np.random.default_rng(2), **kw)
+    # Played as given, both of them: a plan handed in is not quietly re-solved.
+    assert a.plan == best and b.plan == free
+    assert a.replans == 0.0 and b.replans == 0.0
+    assert a.survives > b.survives
+
+
+def test_a_plan_that_will_not_play_is_re_solved_into_the_one_we_would_have_solved():
+    """The invalidation rule, and the only thing that makes replaying a plan safe.
+
+    Both reasons a week can be invalid are in the plan handed in, because they are different
+    failures and either one alone would leave the other untested. Odd weeks name T31, which is
+    already spent -- the no-repeat ledger. Even weeks name a team that is not on this board at
+    all, which stands for a pick the week as drawn cannot offer: below `MIN_PROB`, or in a
+    fixture the grid priced on one side only and `weeks_from_grid` dropped. Without the second
+    check that team would be played, lose by default, and read out as an entry that picked
+    badly rather than one handed a pick that does not exist.
+
+    Every week is therefore solved again from the ledger the trial actually holds. Solving the
+    *remainder* rather than the week is what makes that answer identical to having solved once
+    at the start -- so the two figures are not merely close, they are the same figure, on the
+    same seed.
+
+    Both halves are asserted. Checking the survival alone would pass if invalidation silently
+    did nothing and both arms played one solved plan; checking `replans` alone would pass if
+    the re-solve returned something legal and bad.
+    """
+    spent = ("T31",)
+    g = _board(TEN, flat=(6,))
+    stale = pool.Plan({w: ("T31",) if w % 2 else ("NOT_ON_THIS_BOARD",) for w in TEN},
+                      "a team already spent, or one this week cannot offer")
+    kw = {"entries": 12, "ledger": spent, "trials": 300}
+    fresh = pool.entry_outcome(g, TEN, rng=np.random.default_rng(3), **kw)
+    again = pool.entry_outcome(g, TEN, plan=stale, rng=np.random.default_rng(3), **kw)
+    assert fresh.replans == 0.0 and again.replans >= 1.0
+    assert again.survives == fresh.survives
+    # What was handed in comes back unchanged, so a caller can still see what it asked for
+    # rather than what the trials made of it.
+    assert again.plan == stale
+
+
+def test_our_branch_does_not_reach_a_rival():
+    """Rivals are unaffected, asserted where a leak would be unmissable.
+
+    Two entries, ours and one rival, on the same board. If `_play`'s branch had been written
+    without the index test the rival would hold our teams every week, survive exactly when we
+    do, and this ratio would be 1.0. It is a rival sampling near-chalk over six weeks instead.
+
+    `test_the_entry_shares_outcomes_with_rivals_on_its_team` pins the same thing from the
+    other side and to a closed form: the rival there still takes the favourite nine times in
+    ten, which is the sampling rule and not a plan.
+    """
+    six = list(range(1, 7))
+    out = pool.entry_outcome(_board(six), six, entries=2, trials=400,
+                             rng=np.random.default_rng(1))
+    assert out.survives > 0.4
+    assert (out.survives - out.sole) / out.survives < 0.25
+
+
+def test_a_double_pick_week_is_planned_as_two_teams_from_two_fixtures():
+    """Weeks 13-18 take a pair and both have to win, so two sides of one game is fatal.
+
+    Run at the pool's real shape -- eighteen weeks, six of them double -- because that is
+    where the ledger binds hardest: twenty-four picks against thirty-two teams, which is the
+    constraint `hub.season.survivor.solve` is one assignment problem for.
+    """
+    weeks = list(range(1, 19))
+    g = _board(weeks)
+    plan = pool.solve_plan(g, weeks)
+    assert "optimiser" in plan.source
+    assert sorted(plan.picks) == weeks
+    for w in range(13, 19):
+        assert len(plan.picks[w]) == 2
+    assert len({t for ts in plan.picks.values() for t in ts}) == 24
+    # Two picks, two games: the sides of one fixture never appear together.
+    wk = pool.weeks_from_grid(g, weeks, PoolConfig())[12]
+    fx = pool._fixtures(wk)
+    assert len({fx[t] for t in plan.picks[13]}) == 2
+
+
+def test_a_ledger_with_nothing_left_ends_the_entry_rather_than_repeating_a_team():
+    """The no-repeat rule where it bites hardest, on our side of the branch.
+
+    Every one of the thirty-two teams is spent, so no assignment covers the weeks ahead. The
+    optimiser says so, the fallback finds nothing either, and the entry is eliminated for want
+    of a legal pick -- which is what `_pick` returning None does to a rival, reached by a
+    different road. A plan with no week in it is the honest answer here; filling the gap with
+    a repeat would be worth a great deal and is against the rules.
+    """
+    out = pool.entry_outcome(_board([1, 2]), [1, 2], entries=4, ledger=_TEAMS, trials=20,
+                             rng=np.random.default_rng(0))
+    assert out.survives == 0.0 and out.share == 0.0
+    assert out.plan is not None and out.plan.picks == {}
+    assert "no assignment covers these weeks" in out.plan.source
+
+
+def test_a_figure_computed_without_the_optimiser_says_so(monkeypatch):
+    """Graceful degradation, and the acceptance criterion that the docstring name which rule
+    ran: `CLAUDE.md` says a module with a failed dependency serves the best answer it has
+    rather than erroring, and `Plan.source` is where that answer admits what it is.
+
+    With no solver the fallback is the free pick taken every week -- the greedy rule
+    `hub.season.survivor` exists to beat -- so the figure is still a figure and is a weaker
+    claim than the same number off the optimiser. Asserting the source alone would not say
+    that; the picks are asserted against `_free_chain` so the fallback is pinned to a rule
+    somebody can name.
+    """
+    def _no_solver(*a, **k):
+        raise RuntimeError("no CBC on this machine")
+
+    monkeypatch.setattr(pool, "solve", _no_solver)
+    g = _board(TEN, flat=(6,))
+    out = pool.entry_outcome(g, TEN, entries=12, trials=300, rng=np.random.default_rng(0))
+    assert out.plan is not None
+    assert "the optimiser could not run" in out.plan.source
+    assert "no CBC on this machine" in out.plan.source
+    assert out.plan.picks == _free_chain(g, TEN).picks
+    assert out.survives > 0.0
+
+
+def test_a_plan_naming_one_team_in_a_double_pick_week_is_not_a_plan_for_that_week():
+    """Arity is part of what makes a plan playable, and a week that takes two is where it
+    shows. Handed one team for week 13, our entry does not field half a pick and does not
+    quietly take one -- the week is invalid, the remainder is solved again, and the answer is
+    the one solving from the start would have given, to the trial.
+
+    Reached by halving a real plan rather than by inventing one, so the teams named are legal
+    in every other respect and arity is the only thing wrong with them.
+    """
+    weeks = [13, 14]
+    g = _board(weeks)
+    best = pool.solve_plan(g, weeks)
+    half = pool.Plan({w: ts[:1] for w, ts in best.picks.items()}, "half of a double-pick plan")
+    kw = {"entries": 12, "trials": 200}
+    fresh = pool.entry_outcome(g, weeks, rng=np.random.default_rng(5), **kw)
+    given = pool.entry_outcome(g, weeks, plan=half, rng=np.random.default_rng(5), **kw)
+    assert all(len(ts) == 2 for ts in best.picks.values())
+    assert given.replans >= 1.0 and fresh.replans == 0.0
+    assert given.survives == fresh.survives
+    assert given.plan == half
+
+
+def test_a_double_week_with_one_fixture_left_eliminates_rather_than_taking_both_sides():
+    """The trade `hub.season.survivor.solve` calls guaranteed fatal and attractive, reached
+    from the ledger instead of from the grid.
+
+    Thirty of the thirty-two teams are spent, so the only legal pair left in this double-pick
+    week is the two sides of one fixture. One of them loses, so taking both is not a way to
+    cover the week -- it is a way to lose it while conserving two favourites, which is exactly
+    why the optimiser has a constraint against it and why the fallback must not undo that. The
+    optimiser refuses the week and says why; the fallback finds one team and no legal partner;
+    the entry is eliminated for want of a pair.
+
+    `test_a_double_pick_week_with_one_fixture_is_refused_rather_than_killing_the_field` is the
+    same rule where the *grid* is short a fixture, which is a refusal rather than a result. A
+    ledger this deep is a result: the week really is uncoverable, for this entry alone.
+    """
+    g = _board([13])
+    wk = pool.weeks_from_grid(g, [13], PoolConfig())[0]
+    intact = {wk.games[0][0], wk.games[0][1]}
+    out = pool.entry_outcome(g, [13], entries=6, ledger=tuple(t for t in _TEAMS
+                                                              if t not in intact),
+                             trials=20, rng=np.random.default_rng(0))
+    assert out.survives == 0.0
+    assert out.plan is not None and out.plan.picks == {}
+    assert "both sides of one fixture" in out.plan.source
