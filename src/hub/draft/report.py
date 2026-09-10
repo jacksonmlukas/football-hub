@@ -167,6 +167,17 @@ def injuries(board: pl.DataFrame, report: BuildReport) -> list[str]:
         return []
     out: list[str] = []
     pool = board.filter(pl.col("adp").is_not_null() & (pl.col("adp") <= 120))
+    # **The two column reads below are the only survivors of issue #199 that are not
+    # justified, and they are left here deliberately.** Neither is arithmetic and neither is
+    # a producer: this function already holds the `BuildReport` and gates on it four lines
+    # up, then re-derives two stages from the frame anyway. `injury_status` is
+    # `board.STAGE_COLUMNS["adp"]` -- the stage that guard already answered for -- and
+    # `missed` is `board.STAGE_COLUMN["durability"]`, so `report.durability` is the recorded
+    # answer to the second. That is not a question about provenance this file gets to keep;
+    # it is **issue #146**, which is a separate ticket with its own acceptance criteria
+    # (including a test holding the report against a frame that disagrees with it in both
+    # directions). #199 makes it easy and stops short of it on purpose, so the change lands
+    # with the test that proves it.
     if "injury_status" in pool.columns:
         hurt = pool.filter(
             pl.col("injury_status").map_elements(durability.is_flagworthy,

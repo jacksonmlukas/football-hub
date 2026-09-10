@@ -50,6 +50,22 @@ def test_a_board_whose_adp_is_entirely_null_is_not_recorded(tmp_path):
     assert H.snapshot(board, base=tmp_path) is None
 
 
+def test_whether_the_market_had_an_opinion_is_the_reports_answer(tmp_path):
+    """Issue #199, and this archive is where a wrong answer is permanent.
+
+    ESPN does not retain past ADP, so what this writes is the only record of a day's draft
+    market there will ever be. A frame carrying the column and a report saying the stage
+    never ran is a board on which the market said nothing, and archiving it would assert the
+    opposite for good. The report is what recorded that, so the report is what is asked --
+    both directions, because column and flag agree on every reachable board."""
+    from hub.draft.board import BuildReport
+    board = _board(["A", "B"], [1.5, 2.5])
+    assert H.snapshot(board, base=tmp_path, report=BuildReport(adp=False)) is None
+    assert H.days(tmp_path) == []
+    assert H.snapshot(board, on=date(2026, 8, 25), base=tmp_path,
+                      report=BuildReport(adp=True)) is not None
+
+
 def test_players_without_adp_are_dropped_but_the_day_is_kept(tmp_path):
     board = _board(["A", "B"], [1.5, None])
     H.snapshot(board, on=date(2026, 8, 25), base=tmp_path)

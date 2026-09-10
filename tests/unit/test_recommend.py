@@ -27,6 +27,16 @@ def _board(n=60):
     })
 
 
+def test_an_ecr_only_board_is_not_given_a_draft_market_it_does_not_have():
+    """Issue #199. This used to fabricate an all-null `adp` column on the way in, purely so
+    that `blended_adp` -- which read the column unconditionally -- would not raise. That put
+    a column on a frame handed back to a caller that no build stage ever wrote. The
+    availability model asks the report now, so the fabrication is gone rather than moved."""
+    _, out = recommend(_board().drop("adp"), current_pick=3, top=5)
+    assert "adp" not in out.columns
+    assert out.height > 0, "an ECR-only board must still produce a ranking"
+
+
 def test_first_pick_is_scarcity_mode():
     mode, _ = recommend(_board(), current_pick=3)
     assert mode == "scarcity"

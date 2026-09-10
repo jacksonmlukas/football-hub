@@ -156,6 +156,13 @@ def correct_projection(board: pl.DataFrame, column: str = "proj_blend") -> pl.Da
         # `hub.draft.board.BuildReport.corrections_missing` names nothing when `adp` is false.
         return board
     adjustment = pl.lit(0.0)
+    # **Both column reads below survive issue #199, and the reason is that this is a
+    # producer.** They look like provenance questions and are not askable as ones: this runs
+    # inside `board._stage`, which is what *sets* the flag a report would answer from, so at
+    # this moment no report describing this frame exists yet. The report is what records a
+    # stage; it is not something the stage reads. `#199` moved the eleven *consumer* sites
+    # onto the report and left the four producer sites where they are, annotated -- the same
+    # split #164 drew between reading a column for provenance and reading it to work on.
     if "missed" in board.columns:
         # The expensive absence is this condition being false, and it is the whole of issue
         # #121. `board.build` absorbs the durability stage rather than refusing to build --

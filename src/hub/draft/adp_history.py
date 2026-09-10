@@ -31,10 +31,14 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import polars as pl
 
 from hub.paths import ROOT
+
+if TYPE_CHECKING:                  # `board` imports this module, so runtime would cycle
+    from hub.draft.board import BuildReport
 
 ARCHIVE = ROOT / "data" / "processed" / "adp_history"
 
@@ -49,13 +53,24 @@ def _today() -> date:
 
 
 def snapshot(board: pl.DataFrame, *, on: date | None = None,
-             base: Path | None = None) -> Path | None:
+             base: Path | None = None,
+             report: BuildReport | None = None) -> Path | None:
     """Write today's ADP to the archive. Returns the path, or None if there was no ADP.
 
     A board built without ESPN ADP -- the documented degraded path -- must not be recorded
-    as though the market had no opinion that day. Absent and zero are different claims.
+    as though the market had no opinion that day. Absent and zero are different claims, and
+    which of the two this is, is `report.adp`: the run that built the board recorded it, so
+    this archive stops re-deriving it from the frame (issue #199). It matters more here than
+    at most sites, because what this writes is the *only* record of a day's draft market
+    there will ever be -- ESPN does not retain it -- so a day archived on a wrong answer is
+    not a thin output, it is a permanent one.
+
+    `keep` below stays a column read and is a different act: it narrows a projection to the
+    four columns worth archiving, so it is asking which of them this frame *has* rather than
+    which stage put them there.
     """
-    if "adp" not in board.columns:
+    from hub.draft.board import report_for
+    if not report_for(board, report).adp:
         return None
     keep = [c for c in KEEP if c in board.columns]
     rows = board.select(keep).filter(pl.col("adp").is_not_null())

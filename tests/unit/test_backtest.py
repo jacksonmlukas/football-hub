@@ -327,9 +327,12 @@ def test_the_named_gaps_between_harness_and_product_are_recorded():
     than argued away. It is not a gap against the product; it is a bound on which two runs of
     this harness may be compared at all.
     """
-    assert len(bt.LIMITATIONS) == 6
+    assert len(bt.LIMITATIONS) == 7
     joined = " ".join(bt.LIMITATIONS)
-    for expected in ("consensus", "xFP", "ties", "simulated", "POST-FIX", "board_digest"):
+    for expected in ("consensus", "xFP", "ties", "simulated", "POST-FIX", "board_digest",
+                     # #199: the room's currency follows the draft-market stage, so a
+                     # backtested room ranks on prior-season xFP and the live one does not.
+                     "vor_proj"):
         assert expected in joined
 
 
@@ -484,8 +487,14 @@ def test_diagnose_asks_the_report_which_market_it_advances_by(monkeypatch):
     assert set(seen) == {"ecr"}, "the column is there and the report says the stage was not"
 
     seen.clear()
-    bt.diagnose(_board(60), BuildReport(adp=True), picks=(), rounds=2)
-    assert set(seen) == {"adp"}, "the column is absent and the report is still what is asked"
+    # An *empty* draft market rather than an absent one, since #199. The report now travels
+    # into the room as well -- `blended_adp` blends the column the report names -- so this
+    # direction is stated as a column with nothing in it, which is the strongest form of the
+    # contradiction a frame `build` could actually hand over. What is held is unchanged: the
+    # `by` this advances on is what the report recorded, never what the column contains.
+    bt.diagnose(_board(60).with_columns(pl.lit(None, pl.Float64).alias("adp")),
+                BuildReport(adp=True), picks=(), rounds=2)
+    assert set(seen) == {"adp"}, "the report is what is asked, not the column's contents"
 
 
 def test_the_corrections_gate_says_when_it_could_not_run(monkeypatch, capsys):
@@ -591,6 +600,10 @@ def _full_board(n=80):
         "ecr": [float(i + 1) for i in range(n)],
         "adp": [float(i + 1) for i in range(n)],
         "vor": [float(n - i) for i in range(n)],
+        # `vor_proj` accompanies `adp`, not `vor`: both are `board.STAGE_COLUMNS["adp"]`, and
+        # since #199 the room asks the report which currency it ranks in. Equal to `vor` so
+        # the fixture stops contradicting its own report without moving any ordering here.
+        "vor_proj": [float(n - i) for i in range(n)],
         "proj_ppg": [float(max(20 - i * 0.2, 1.0)) for i in range(n)],
         "xfp_per_game": [float(max(20 - i * 0.2, 1.0)) for i in range(n)],
         "games": pl.Series([16] * n, dtype=pl.UInt32),
