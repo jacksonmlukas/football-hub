@@ -21,6 +21,24 @@ What that buys is divergence. What it costs is a modelling choice with no measur
 it: nobody has observed this pool's rivals, and under Hidden Picks nobody can before the
 deadline. The weighting is an assumption and is stated as one.
 
+**Our own entry plays our plan, not the field's rule.** It is index 0 of the same arrays, and
+for a while that was the whole of it: there was no branch for `i == 0`, so the entry every
+dollar figure here is about picked a near-chalk random team each week under the rival rule
+above. That answers "what is an entry worth to somebody who does not use this repo", the error
+runs one way, and it grows with the horizon -- which is why it decided the buyback verdict
+from a modelling choice rather than from the pool's economics. Index 0 now replays a plan
+solved *once*, outside the trial loop: `hub.season.survivor.solve` on the drawable grid
+carrying our ledger, or a stated best-available fallback when that cannot run. Rivals are
+untouched. The sampling rule is theirs and only theirs, and the paragraph defending it above
+is about them.
+
+**Our plan is an input, not a by-product**, and that is a shape rather than an optimisation.
+Re-solving an integer program inside the trial loop would multiply it by trials times weeks to
+answer the same question every time -- what our entry plays does not depend on a trial's
+outcomes until one of its teams is unavailable -- but the reason it is a parameter is that two
+candidate plans have to be able to meet the *same* season. That is the pairing #159 needs, and
+a plan computed inside the loop could not be handed to it.
+
 **Ledgers are reconstructed, not observed**, under the same sampling rule -- so the model is
 exactly degenerate in week 1, where every ledger is empty and it knows nothing about the field
 at all. That is where the season starts, so early figures carry more model risk than late ones.
@@ -43,7 +61,7 @@ import numpy as np
 import polars as pl
 
 from hub.config import PoolConfig
-from hub.season.survivor import MIN_PROB, week_fixtures
+from hub.season.survivor import MIN_PROB, Infeasible, solve, week_fixtures
 
 # Enough that the ending-week distribution is stable to about a percentage point, which is
 # finer than any decision downstream reads it at. Callers wanting a tighter tail pass more.
@@ -64,6 +82,29 @@ class PoolOutcome(NamedTuple):
     alive_by_week: dict[int, float]    # week -> mean entries still live after it
 
 
+class Plan(NamedTuple):
+    """What our own entry picks, week by week, before any trial is run.
+
+    Solved once and replayed, which is what makes it a *parameter* of the simulation rather
+    than something the simulation produces. Two candidate plans can therefore be scored on the
+    same trials and differ only by the picks -- `docs/method.md` rule 7, and the pairing #159
+    is for. A plan built inside the trial loop could not be handed to anything.
+
+    `source` says which rule produced it, because the two are not equally good and the gap
+    between them is the model's own uncertainty rather than a detail of the run. It is prose
+    and is meant to be printed: a figure computed off a best-available fallback is a weaker
+    claim than the same figure off the optimiser, and nothing else in `EntryOutcome` would say
+    so.
+
+    `picks` is missing a week wherever the rule that built it ran out of teams. That is not a
+    gap to be filled with a repeat -- it is the no-repeat ledger binding, and the entry is
+    eliminated there for want of a legal pick, exactly as `_pick` returning None eliminates a
+    rival.
+    """
+    picks: dict[int, tuple[str, ...]]   # week -> the teams taken in it, sorted
+    source: str
+
+
 class EntryOutcome(NamedTuple):
     """What one entry's own position is worth, from here.
 
@@ -71,6 +112,11 @@ class EntryOutcome(NamedTuple):
     split among co-survivors, finishing level with two others is worth a third, not nothing.
     Both come off the same trials because a second pass over this simulator is not cheap, and
     computing them apart would let them disagree about the same run.
+
+    `plan` is what our entry actually played, carried back out so a figure can be read beside
+    the picks that produced it -- and so a caller passing one in can see it was the one used.
+    `replans` counts, per trial, the weeks where it would not play and had to be solved again;
+    a figure with a high `replans` was mostly not a figure about the picks it names.
     """
     trials: int
     survives: float     # P(this entry outlasts the final week at all)
@@ -78,6 +124,8 @@ class EntryOutcome(NamedTuple):
     share: float        # expected fraction of the pot under an even split
     share_sd: float = 0.0   # spread of that fraction across trials, so a caller can say
                             # how finely two of these figures can be told apart
+    plan: Plan | None = None    # the picks our entry played; None when it sampled as a rival
+    replans: float = 0.0        # weeks per trial where that plan would not play
 
 
 def _plural(n: int, word: str) -> str:
@@ -288,24 +336,223 @@ def _pick(rng: np.random.Generator, week: _Week, ledger: set[str], k: int) -> li
     return [str(t) for t in rng.choice(avail, size=k, replace=False, p=w / w.sum())]
 
 
+def _fixtures(week: _Week) -> dict[str, int]:
+    """Which game each team is in, so two picks are never the two sides of one.
+
+    `_Week.games` is the only place that pairing survives -- `teams`, `prob` and `pickable`
+    have all flattened it -- and the constraint is the one `hub.season.survivor.solve` states
+    as `one_side_wk`: both sides of a fixture cannot win, so a double-pick week spending them
+    together is lost by construction. Rebuilt here rather than carried on `_Week` because it
+    is wanted once per week per run, not once per trial.
+    """
+    return {t: i for i, g in enumerate(week.games) for t in (g[0], g[1])}
+
+
+def _best_available(week: _Week, ledger: set[str], k: int,
+                    fixtures: dict[str, int]) -> tuple[str, ...] | None:
+    """The `k` likeliest teams this entry may still take, one per fixture. None if it cannot.
+
+    The stated fallback, and it is deliberately the greedy rule `hub.season.survivor`'s own
+    docstring calls reliably wrong: take the biggest favourite, which spends the team you
+    wanted in week 12. It is here because a figure produced by a rule nobody can name is worse
+    than a figure produced by a bad rule that is named -- and because `CLAUDE.md`'s degradation
+    rule says a module with no solver available must still answer.
+
+    Sorted on the name after the probability, so a tie is not broken by fixture order: this is
+    `auto_pick`'s tiebreak, applied where `auto_pick` cannot reach.
+    """
+    out: list[str] = []
+    taken: set[int] = set()
+    for t in sorted((t for t in week.teams if t in week.pickable and t not in ledger),
+                    key=lambda t: (-week.prob[t], t)):
+        if fixtures[t] in taken:
+            continue
+        out.append(t)
+        taken.add(fixtures[t])
+        if len(out) == k:
+            return tuple(sorted(out))
+    return None
+
+
+def _pickable_grid(wks: Sequence[_Week], weeks: Sequence[int]) -> pl.DataFrame:
+    """The weeks as a grid the optimiser can be handed, holding only what a trial can play.
+
+    Not `grid` itself, and the difference is the drawable/pickable split
+    `hub.season.survivor.week_fixtures` exists to name. `solve` reading the raw grid would
+    plan a week from a fixture priced on one side only -- legal to *pick* and impossible to
+    *draw*, so `weeks_from_grid` dropped it -- and hand back a team no trial could ever return
+    a result for. Our plan would then be invalidated in every trial and re-solved into the
+    same answer. Restricting the solver to `pickable` makes that unreachable instead of merely
+    handled.
+
+    `game_id` is synthesised per week from the fixture's position, because the fixture pairing
+    is all `solve` reads it for and that constraint never spans two weeks.
+    """
+    rows = [(w, t, week.prob[t], f"{w}-{i}")
+            for week, w in zip(wks, weeks, strict=True)
+            for i, g in enumerate(week.games)
+            for t in (g[0], g[1]) if t in week.pickable]
+    return pl.DataFrame({"week": [r[0] for r in rows], "team": [r[1] for r in rows],
+                         "win_prob": [r[2] for r in rows], "game_id": [r[3] for r in rows]},
+                        schema={"week": pl.Int64, "team": pl.Utf8,
+                                "win_prob": pl.Float64, "game_id": pl.Utf8})
+
+
+def _greedy(wks: Sequence[_Week], weeks: Sequence[int], ledger: set[str], why: str) -> Plan:
+    """A whole plan from `_best_available`, week by week, carrying what it spends."""
+    led = set(ledger)
+    out: dict[int, tuple[str, ...]] = {}
+    for week, w in zip(wks, weeks, strict=True):
+        got = _best_available(week, led, week.picks, _fixtures(week))
+        if got is None:
+            break       # nothing legal left: the entry is eliminated there, not given a repeat
+        out[w] = got
+        led.update(got)
+    return Plan(out, f"best available week by week, because {why}")
+
+
+def _solved(wks: Sequence[_Week], weeks: Sequence[int], ledger: set[str],
+            cfg: PoolConfig) -> Plan:
+    """`hub.season.survivor.solve` over these weeks with our ledger, or the stated fallback.
+
+    Both outcomes are plans and the caller is told which by `Plan.source`, because they are
+    not equally good: the optimiser maximises the probability of surviving every week at once,
+    and the fallback is the greedy rule that optimiser exists to beat. The gap between them is
+    the model's own uncertainty about what our entry is worth, and it is reported rather than
+    smoothed over.
+
+    Two failures, kept apart because they mean different things. `Infeasible` is an answer
+    about the weeks and the ledger -- no assignment covers them without a repeat -- and is
+    reachable from a ledger deep enough that no season remains. Anything else is the solver
+    itself failing, which under `CLAUDE.md`'s degradation rule must still produce a usable
+    figure rather than take the buyback decision down with it.
+    """
+    frame = _pickable_grid(wks, weeks)
+    try:
+        picks = solve(frame, weeks=list(weeks), spent=sorted(ledger), pool=cfg)
+    except Infeasible as e:
+        return _greedy(wks, weeks, ledger, f"no assignment covers these weeks: {e}")
+    except Exception as e:      # broad on purpose: the solver is optional, see the docstring
+        return _greedy(wks, weeks, ledger, f"the optimiser could not run: {e}")
+    out: dict[int, list[str]] = {}
+    for r in picks.iter_rows(named=True):
+        out.setdefault(int(r["week"]), []).append(str(r["team"]))
+    return Plan({w: tuple(sorted(t)) for w, t in out.items()},
+                "the optimiser on the weeks ahead, carrying our ledger")
+
+
+def solve_plan(grid: pl.DataFrame, weeks: Sequence[int], *, ledger: Sequence[str] = (),
+               pool: PoolConfig | None = None) -> Plan:
+    """What our entry would pick in each of these weeks, before any trial is run.
+
+    The seam. `entry_outcome` calls this when it is handed no plan, and a caller that wants to
+    compare two of them -- #159's pairing -- builds them here and passes each in, so the only
+    difference between the two figures is the picks and not the season they met.
+
+    Solved against the same weeks the simulator will play, which is why it takes a grid and
+    reshapes it rather than taking `hub.season.survivor.plan_remaining`'s answer: a plan over
+    weeks this simulator cannot draw is not a plan this simulator can score.
+    """
+    cfg = pool or PoolConfig()
+    return _solved(weeks_from_grid(grid, weeks, cfg), weeks, set(ledger), cfg)
+
+
+class _Ours:
+    """Our entry's side of a trial: replay a plan, and re-solve only where it will not play.
+
+    The invalidation rule, which is the whole of what makes replaying safe. A week's picks are
+    taken from our plan unless one of them is **already spent** in this trial's ledger or is
+    **not available to take** in the week as drawn -- below `MIN_PROB`, absent from the week
+    entirely, or paired against our plan's other pick in one fixture. Then, and only then, the
+    remaining weeks are solved again from the ledger the trial actually has.
+
+    Nothing else can invalidate it, and that is why solving once is not an approximation: our
+    entry's picks do not depend on which games were won, only on which teams are left, and
+    what is left changes only when we ourselves have spent something. A trial that our entry
+    is still alive in has spent exactly the picks it made.
+
+    Re-solves are memoised on `(week, ledger)`. They are deterministic in both, so a
+    trajectory that invalidates in one trial invalidates identically in all of them, and the
+    integer program runs once for the run rather than once per trial. `replans` counts the
+    invalidations rather than the solves, because the reader's question is how much of the
+    figure was about the picks they were shown.
+
+    A class and not a `NamedTuple`, unlike everything else named in this module: the memo and
+    the tally are state that accumulates across trials, and a tuple that has to carry a
+    one-element list to be written to is a value object pretending.
+    """
+
+    def __init__(self, wks: Sequence[_Week], weeks: Sequence[int], cfg: PoolConfig,
+                 plan: Plan | None, ledger: set[str]) -> None:
+        self.wks = tuple(wks)
+        self.weeks = tuple(weeks)
+        self.cfg = cfg
+        self.plan = plan if plan is not None else _solved(wks, weeks, ledger, cfg)
+        self.fixtures = tuple(_fixtures(w) for w in wks)
+        self.memo: dict[tuple[int, frozenset[str]], tuple[str, ...] | None] = {}
+        self.replans = 0
+
+    def plays(self, at: int, teams: Sequence[str], ledger: set[str]) -> bool:
+        """Whether these picks are legal in this week for an entry holding this ledger."""
+        week = self.wks[at]
+        if len(teams) != week.picks:
+            return False
+        if any(t in ledger or t not in week.pickable for t in teams):
+            return False
+        return len({self.fixtures[at][t] for t in teams}) == len(teams)
+
+    def picks(self, at: int, ledger: set[str]) -> list[str] | None:
+        """This week's picks: our plan's, or a fresh solve where our plan will not play."""
+        want = self.plan.picks.get(self.weeks[at])
+        if want is not None and self.plays(at, want, ledger):
+            return list(want)
+        self.replans += 1
+        key = (self.weeks[at], frozenset(ledger))
+        if key not in self.memo:
+            self.memo[key] = self._again(at, ledger)
+        got = self.memo[key]
+        return list(got) if got is not None else None
+
+    def _again(self, at: int, ledger: set[str]) -> tuple[str, ...] | None:
+        """Solve the rest of the season from here, and take this week out of it.
+
+        The whole remainder rather than this week alone, for the reason `solve` exists at all:
+        the team that covers this week cheapest may be the one week 15 has no substitute for.
+        Only this week's picks are kept -- the next week checks our plan again,
+        and invalidates again if that is still wrong, which costs one memoised solve per week
+        rather than replacing a plan the caller passed in and can still read back.
+        """
+        rest, wks = self.weeks[at:], self.wks[at:]
+        got = _solved(wks, rest, ledger, self.cfg).picks.get(self.weeks[at])
+        return got if got is not None and self.plays(at, got, ledger) else None
+
+
 def _play(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int],
-          led: list[set[str]], alive: list[bool]) -> tuple[int | None, list[int]]:
+          led: list[set[str]], alive: list[bool],
+          ours: _Ours | None = None) -> tuple[int | None, list[int]]:
     """Play one trial out. Returns the week everyone died -- None if somebody lasted -- and
     the live count after each week.
 
     Every game is drawn once here and the result shared by each entry holding either side.
     Extracted rather than written twice: `simulate` and `entry_outcome` ask different
     questions of the same trial, and a second copy of this loop is a second answer about it.
+
+    `ours` is the one branch on entry index in this module, and it is the difference between
+    the two questions. Given, entry 0 is *our* entry and replays our plan;
+    left out, entry 0 is another member of the field and samples like one -- which is what
+    `simulate` wants, because a field statistic has no us in it. Every other index samples
+    either way, so a change to how we pick cannot reach a rival.
     """
     counts = []
-    for wk, w in zip(wks, weeks, strict=True):
+    for at, (wk, w) in enumerate(zip(wks, weeks, strict=True)):
         won: set[str] = set()
         for a, b, p_a in wk.games:
             won.add(a if rng.random() < p_a else b)
         for i in range(len(alive)):
             if not alive[i]:
                 continue
-            picks = _pick(rng, wk, led[i], wk.picks)
+            picks = (ours.picks(at, led[i]) if ours is not None and i == 0
+                     else _pick(rng, wk, led[i], wk.picks))
             if picks is None or not all(t in won for t in picks):
                 alive[i] = False
                 continue
@@ -316,9 +563,45 @@ def _play(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int],
     return None, counts
 
 
+def _entry_trials(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int], *,
+                  entries: int, ledger: set[str], ours: _Ours | None,
+                  trials: int) -> EntryOutcome:
+    """The trial loop `entry_outcome` reports, over an already-reshaped season.
+
+    Split out because `ours=None` is a quantity worth being able to ask for: it is entry 0
+    played under the *field's* sampling rule, which is what this module valued our own entry
+    with until #151. Keeping it reachable is what lets the gap between the two be measured
+    rather than asserted from memory -- and the gap is the whole finding, since it is what
+    reverses #161's leverage claim. `entry_outcome` itself never passes None: from outside
+    this module our entry plays our plan.
+    """
+    survived = sole = 0
+    share = 0.0
+    # Kept per trial, not just summed: two candidate picks are compared by their means, and a
+    # difference smaller than the spread of what was averaged is not a difference.
+    each: list[float] = []
+    for _ in range(trials):
+        led = [set(ledger)] + [set() for _ in range(entries - 1)]
+        alive = [True] * entries
+        _play(rng, wks, weeks, led, alive, ours)
+        if not alive[0]:
+            each.append(0.0)
+            continue
+        n = sum(alive)
+        survived += 1
+        sole += int(n == 1)
+        share += 1.0 / n
+        each.append(1.0 / n)
+    return EntryOutcome(trials=trials, survives=survived / trials,
+                        sole=sole / trials, share=share / trials,
+                        share_sd=float(np.std(each)) if each else 0.0,
+                        plan=ours.plan if ours is not None else None,
+                        replans=(ours.replans / trials) if ours is not None else 0.0)
+
+
 def entry_outcome(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
                   ledger: Sequence[str] = (), pool: PoolConfig | None = None,
-                  trials: int = DEFAULT_TRIALS,
+                  plan: Plan | None = None, trials: int = DEFAULT_TRIALS,
                   rng: np.random.Generator | None = None) -> EntryOutcome:
     """What our own entry is worth from here, carrying the teams it has already spent.
 
@@ -330,30 +613,26 @@ def entry_outcome(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
     Our entry runs in the same trials as the field, so it shares game outcomes with every
     rival holding the same team -- which is why it cannot be computed on its own and then
     combined with a field number afterwards.
+
+    **It picks like us and not like them**, which is the correction #151 was. Its picks come
+    from `solve_plan` -- `hub.season.survivor.solve` over these weeks with this ledger -- or,
+    where that cannot run, from the best-available fallback `_best_available` states. Which of
+    the two produced them is on `EntryOutcome.plan.source`, because they are not equally good
+    and the difference between them is the model's own uncertainty about this figure. It was
+    the rival sampler, and every published number was therefore about an entry that picks a
+    near-chalk random team every week for the rest of the season.
+
+    `plan` is that plan as an *argument*. Left out, one is solved here from `ledger`; passed
+    in, it is played as given and re-solved only where it will not play, so two candidates can
+    be scored against the same trials and differ by the picks alone. Either way it comes back
+    on the result.
     """
+    cfg = pool or PoolConfig()
     rng = rng or np.random.default_rng(0)
-    wks = weeks_from_grid(grid, weeks, pool)
-    ours = set(ledger)
-    survived = sole = 0
-    share = 0.0
-    # Kept per trial, not just summed: two candidate picks are compared by their means, and a
-    # difference smaller than the spread of what was averaged is not a difference.
-    each: list[float] = []
-    for _ in range(trials):
-        led = [set(ours)] + [set() for _ in range(entries - 1)]
-        alive = [True] * entries
-        _play(rng, wks, weeks, led, alive)
-        if not alive[0]:
-            each.append(0.0)
-            continue
-        n = sum(alive)
-        survived += 1
-        sole += int(n == 1)
-        share += 1.0 / n
-        each.append(1.0 / n)
-    return EntryOutcome(trials=trials, survives=survived / trials,
-                        sole=sole / trials, share=share / trials,
-                        share_sd=float(np.std(each)) if each else 0.0)
+    wks = weeks_from_grid(grid, weeks, cfg)
+    spent = set(ledger)
+    return _entry_trials(rng, wks, weeks, entries=entries, ledger=spent,
+                         ours=_Ours(wks, weeks, cfg, plan, spent), trials=trials)
 
 
 def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
@@ -372,6 +651,12 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     commissioner confirmed, so the same $20 buys less in week 6 than in week 2. That is why
     the equity comes from `entry_outcome` on the real ledger rather than from one over the
     field, which is ledger-blind and identical in both.
+
+    **The equity is what the re-entry is worth to somebody who plays it well**, since
+    `entry_outcome` values it on our plan, solved from that inherited ledger. It used to be
+    what the re-entry was worth to somebody picking near-chalk at random, which is nobody, and
+    the direction of that error is why this verdict was essentially fixed before the pool's
+    economics were consulted. It is still a floor and the reasons below are unchanged.
 
     `rival_buybacks` is an argument, not a model. Nobody has observed this pool's rivals and
     Hidden Picks means nobody can before a deadline, so a propensity fitted here would be an
