@@ -1,15 +1,29 @@
-"""The Odds API: one market, one region, one pull.
+"""The Odds API: two declared markets, one region, one pull.
 
 The billing model is the whole design constraint. A request costs **markets x regions**,
 so asking for spreads and totals across us and uk is four credits for one call.
 `docs/decisions.md` records that this multiplier is why props are roadmap-only: a single
 props pull would cost more than a month of the free tier.
 
-"Cannot silently burn quota" therefore means two separate things, and this module does
-both. The multiplier cannot be triggered by accident -- more than one market or region is
-refused before a request is formed. And the balance is never a mystery: every pull reads
-`x-requests-remaining` from the response, prints it, and stores it, and a stored balance
-below the floor refuses the *next* pull before spending anything.
+**Two markets, and the guard that lets them through is stricter than the one that did not.**
+It was one market until #211, and the reason for the second is structural rather than
+incremental. A spread is a *difference* of two team scores and a total is a *sum*, so an
+effect that is symmetric between the sides cancels in one and adds in the other: a defensive
+downgrade raises the opponent's expected scoring, which subtracts from the margin and adds
+to the total. Storing only spreads makes the repo blind to half the betting market, and the
+half it cannot see is where the one untested non-QB hypothesis lives. The price of seeing it
+is that one call returns the whole season, so a second market is one extra credit *per poll*
+rather than per week -- of the order of twenty-five credits for the rest of the season.
+
+"Cannot silently burn quota" therefore means three things, and this module does all three.
+The multiplier cannot be triggered by accident -- a market or region this module has not
+declared, or one asked for twice, is refused before a request is formed, which refuses every
+props market by name rather than by counting commas. The balance is never a mystery: every
+pull reads `x-requests-remaining` from the response, prints it, and stores it, and a stored
+balance below the floor refuses the *next* pull before spending anything. And what a poll
+actually cost is *measured* rather than asserted -- the balance before minus the balance
+after, recorded beside the balance and compared against markets x regions, so the day the
+billing model stops being what the guard assumes, the guard says so instead of the invoice.
 
 What the snapshot is for matters as much as what it costs. `hub.store.AS_OF_LINES` joins
 lines to predictions on nflverse `game_id`, and this is the only thing that will ever
@@ -52,9 +66,25 @@ STATE = STATE_DIR / "odds.json"
 BASE = "https://api.the-odds-api.com/v4"
 SPORT = "americanfootball_nfl"
 
-# Exactly one of each. These are singular by intent -- see the multiplier note above.
+# What this module is allowed to ask for, and the whole of it. Cost is markets x regions,
+# so this pair of tuples *is* the budget: two markets in one region is two credits a poll,
+# and nothing outside them can be requested without editing these lines. Declared as
+# allowlists rather than counted as commas because the expensive mistake is not "how many"
+# but "which" -- `player_pass_tds` is a single market and runs about four credits an event,
+# which a comma count waves through and a name check refuses.
 MARKET = "spreads"
+TOTALS_MARKET = "totals"
+MARKETS = (MARKET, TOTALS_MARKET)
+
 REGION = "us"
+REGIONS = (REGION,)
+
+# The sides the stored number belongs to. A price is meaningless without one: -110 on the
+# home spread and -110 on the away spread are different facts about the same game, and a
+# total priced from the Under is the mirror of one priced from the Over. Home for spreads
+# because `close_spread` is the home line; Over for totals because that is the side the
+# point is quoted from.
+OVER = "Over"
 
 # Refuse the next pull below this. Sized to leave room for a full week of Sunday-morning
 # snapshots after the balance is noticed, rather than stopping dead at zero.
@@ -62,7 +92,14 @@ CREDIT_FLOOR = 50
 
 
 class MultiplierRefused(Exception):
-    """More than one market or region: the request would cost a multiple of one credit."""
+    """A market or region outside the declared budget: the request would cost more than it may.
+
+    It caught "more than one" until #211, by counting commas. That is the wrong quantity --
+    the second market this repo now wants costs one extra credit a poll and is affordable,
+    while `player_pass_tds` is a single market with no comma in it and costs roughly four
+    credits an *event*. So the refusal is on the name rather than the count, and the budget
+    is `MARKETS` x `REGIONS` by construction rather than by arithmetic nobody re-derives.
+    """
 
 
 class QuotaFloor(Exception):
@@ -103,11 +140,67 @@ def credits_remaining(path: Path | None = None) -> int | None:
     return int(v) if v is not None else None
 
 
-def _write_state(path: Path | None, remaining: int | None, when: datetime) -> None:
+def _write_state(path: Path | None, remaining: int | None, when: datetime, *,
+                 cost: int | None = None, declared: int | None = None,
+                 asked: str | None = None) -> None:
+    """The balance, and what the poll that reported it actually cost.
+
+    `cost` is a measurement rather than a restatement of `declared`: the balance before the
+    call minus the balance after it, both read off `x-requests-remaining`. The two are
+    written side by side on purpose. `declared` is what markets x regions says the poll
+    should have cost and is the number the guard budgets on; `cost` is what the account was
+    charged. Recording only the first would make the budget unfalsifiable, which is the
+    state #211 found this module in -- the multiplier was documented in three places and
+    measured in none.
+
+    `cost` is None on the first ever poll and after a monthly reset, and None is written
+    rather than a guess. There is no prior balance to subtract from in the first case and
+    the difference is meaningless in the second, and a plausible wrong number here would be
+    read as evidence that the billing model is what we think it is.
+    """
     p = Path(path or STATE)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"remaining": remaining, "checked_at": when.isoformat()},
-                            indent=2))
+    p.write_text(json.dumps({"remaining": remaining, "checked_at": when.isoformat(),
+                             "last_cost": cost, "declared_cost": declared,
+                             "asked_for": asked}, indent=2))
+
+
+def _budgeted(value: str, allowed: tuple[str, ...], kind: str) -> tuple[str, ...]:
+    """The parameter as this module is allowed to send it, or a refusal naming the cost.
+
+    Two refusals, and both of them are about credits rather than tidiness.
+
+    **Undeclared.** Cost is markets x regions, so anything not in `allowed` is a credit
+    nobody budgeted for, on every poll for the rest of the season. Refusing by name rather
+    than by counting separators is what makes this cover the case that actually matters:
+    `docs/decisions.md` records a full week of props at roughly 64 credits, and every one of
+    those market keys is a single token that a comma count is happy with.
+
+    **Repeated.** `spreads,spreads` is two markets to a biller that counts what was asked
+    for, and one to a reader skimming this file. Refusing it means the cost of a request is
+    always `len(markets) * len(regions)` over *distinct* names, which is the arithmetic the
+    measurement below is checked against.
+
+    Whitespace is refused rather than stripped for the same reason a repeat is: a value this
+    module rewrites before sending is a value whose cost is computed from something other
+    than what was asked for.
+    """
+    asked = tuple(value.split(","))
+    if not value or any(p != p.strip() or not p for p in asked):
+        raise MultiplierRefused(
+            f"{kind}={value!r}: empty or padded. Cost is markets x regions and is counted "
+            f"off what is sent, so this module sends exactly what it was handed.")
+    unknown = sorted({p for p in asked if p not in allowed})
+    if unknown:
+        raise MultiplierRefused(
+            f"{kind}={value!r}: {unknown} outside the declared {kind} {list(allowed)}. "
+            f"Cost is markets x regions, so an undeclared {kind} is an unbudgeted credit on "
+            f"every poll -- a single props market runs about four credits an event.")
+    if len(set(asked)) != len(asked):
+        raise MultiplierRefused(
+            f"{kind}={value!r} names one twice. Cost is markets x regions counted off what "
+            f"was asked for, so a repeat is a second credit for a column already paid for.")
+    return asked
 
 
 def _http_get(params: Mapping[str, Any], key: str) -> tuple[Any, Mapping[str, str]]:
@@ -181,11 +274,92 @@ def _schedule(season: int) -> pl.DataFrame:
     return nfl.load_schedules().filter(pl.col("season") == season)
 
 
-def _median_home_spread(event: Mapping[str, Any], home: str) -> float | None:
-    """Median home-side line across books, in nflverse's sign convention.
+def _american(price: Any) -> float | None:
+    """One outcome's price as American odds, or None if it cannot be American odds.
 
-    Median rather than mean or first: one book hanging an outlier should not become the
-    line of record, and books disagree by half points routinely.
+    American odds have a hole in them: a price is at most -100 or at least +100, and nothing
+    lies between, because the two ways of quoting even money are the two edges of that gap.
+    A number inside it is therefore not an American price -- decimal odds (1.91) and implied
+    probabilities (0.52) both land there -- and neither is a missing or unparseable one.
+
+    The request asks for `oddsFormat=american` and this is what notices the day that stops
+    being honoured. It degrades rather than refuses: the point beside it is unaffected by
+    how the price was quoted, so an unreadable price becomes a null in a nullable column and
+    a line on the terminal. Refusing the frame instead would throw away a snapshot whose
+    credit has already been spent, over the half of it that still parsed.
+    """
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return None
+    return p if abs(p) >= 100.0 else None
+
+
+def _median_price(prices: list[float]) -> float | None:
+    """Median American price, taken in decimal space, which is not a detail.
+
+    American odds are not a number line. They run ... -120, -110, -100 / +100, +110, +120
+    ... with nothing between the two hundreds, so the ordinary median of an even number of
+    quotes can land somewhere no book can quote: -110 and +110 median to **0**, which is not
+    a price at all, and would sit unremarked inside any plausibility bound a contract could
+    put on the column.
+
+    Decimal odds are continuous and increase monotonically with the American price, so the
+    median there is the median quote, and the conversion back cannot produce the hole it
+    avoided -- a decimal below 2 returns at most -100 and one at or above 2 at least +100.
+    The same pair comes back at +100.45, which is even money and a hair, which is what two
+    books at -110 and +110 actually are.
+
+    -100 round-trips to +100. They are the same price quoted from the two sides of even
+    money, and +100 is the form this module stores.
+    """
+    if not prices:
+        return None
+    d = statistics.median([1.0 + p / 100.0 if p > 0 else 1.0 + 100.0 / -p for p in prices])
+    return (d - 1.0) * 100.0 if d >= 2.0 else -100.0 / (d - 1.0)
+
+
+def _median_quote(event: Mapping[str, Any], market: str,
+                  side: str) -> tuple[float | None, float | None]:
+    """The betting market's point and price for one side of one game, across books.
+
+    Median rather than mean or first: one book hanging an outlier should not become the line
+    of record, and books disagree by half points routinely.
+
+    **The point and the price are medianed over the same books but not over the same list.**
+    A book contributes a point when it posts one; it contributes a price as well when that
+    price can be American odds. So a book quoting a point and nothing readable beside it
+    still moves the point, exactly as it did before there was a price to read -- which is
+    what keeps `close_spread` the number it has always been for any payload, rather than one
+    that quietly shifts because a price was malformed somewhere.
+
+    The side is matched case-insensitively because it is a display string. Team names come
+    back the way `_team_abbrs` was built to read them, but "Over" is a word The Odds API
+    chose the casing of, and this module has never seen a live totals response.
+    """
+    points: list[float] = []
+    prices: list[float] = []
+    for book in event.get("bookmakers") or []:
+        for m in book.get("markets") or []:
+            if m.get("key") != market:
+                continue
+            for outcome in m.get("outcomes") or []:
+                if str(outcome.get("name") or "").lower() != side.lower():
+                    continue
+                if outcome.get("point") is None:
+                    continue
+                points.append(float(outcome["point"]))
+                price = _american(outcome.get("price"))
+                if price is not None:
+                    prices.append(price)
+    if not points:
+        return None, None
+    return statistics.median(points), _median_price(prices)
+
+
+def _median_home_spread(event: Mapping[str, Any],
+                        home: str) -> tuple[float | None, float | None]:
+    """Median home-side line across books in nflverse's sign convention, and its price.
 
     The negation is the part to be careful about. The Odds API reports a *handicap*, so a
     home favourite is -8.5 -- they must win by more than 8.5. nflverse `spread_line` is the
@@ -193,30 +367,44 @@ def _median_home_spread(event: Mapping[str, Any], home: str) -> float | None:
     +8.5, and PHI won). `store.AS_OF_LINES` and `store.verify` both already speak nflverse,
     so this converts once, here, rather than leaving two conventions loose in one table.
     Get it wrong and every backtest is confidently backwards while still looking calibrated.
+
+    **The price is not negated with it, and that is the trap this pair creates.** The sign of
+    a point is a convention two providers disagree about; the sign of an American price is
+    part of the price -- -120 means risk 120 to win 100 and +120 means the reverse, and they
+    are different numbers rather than one number seen from two sides. Negating the price
+    alongside the point would turn every home favourite's juice into a plus number and read
+    as a market offering value on the side it is charging most for.
     """
-    points = []
-    for book in event.get("bookmakers") or []:
-        for market in book.get("markets") or []:
-            if market.get("key") != MARKET:
-                continue
-            for outcome in market.get("outcomes") or []:
-                if outcome.get("name") == home and outcome.get("point") is not None:
-                    points.append(float(outcome["point"]))
-    return -statistics.median(points) if points else None
+    point, price = _median_quote(event, MARKET, home)
+    return (None if point is None else -point), price
 
 
-def snapshot(season: int = SEASON_AHEAD, *, markets: str = MARKET, regions: str = REGION,
+def _median_game_total(event: Mapping[str, Any]) -> tuple[float | None, float | None]:
+    """Median game total across books, and the Over's price.
+
+    A total is a **sum** of the two team scores where a spread is a difference, which is the
+    whole reason it is worth a second credit: an effect symmetric between the sides cancels
+    in the difference and adds in the sum. It is also why nothing is negated here. There is
+    no home-and-away convention to reconcile in a sum -- 47.5 is 47.5 to every provider --
+    so the point comes back as it arrived, and a negation copied from the spread above would
+    put every total outside any bound a contract could sanely declare.
+    """
+    return _median_quote(event, TOTALS_MARKET, OVER)
+
+
+def snapshot(season: int = SEASON_AHEAD, *, markets: str = ",".join(MARKETS),
+             regions: str = ",".join(REGIONS),
              state_path: Path | None = None, base: Path | None = None,
              floor: int = CREDIT_FLOOR, now: datetime | None = None) -> pl.DataFrame:
-    """One pull, one market, one region. Appends a dated line per matched game."""
-    if "," in markets or markets.strip() != markets or not markets:
-        raise MultiplierRefused(
-            f"markets={markets!r}: cost is markets x regions, so this is "
-            f"{len(markets.split(','))} credits per call instead of one.")
-    if "," in regions or regions.strip() != regions or not regions:
-        raise MultiplierRefused(
-            f"regions={regions!r}: cost is markets x regions, so this is "
-            f"{len(regions.split(','))} credits per call instead of one.")
+    """One pull, the declared markets, one region. Appends a dated line per matched game."""
+    # GUARD only-budgeted-markets [unit/test_fetch_odds.py]: a market or region outside the
+    # declared budget is refused before a request is formed, and so before a credit is spent
+    asked_markets = _budgeted(markets, MARKETS, "markets")
+    asked_regions = _budgeted(regions, REGIONS, "regions")
+    # /GUARD
+    # What markets x regions says this call costs. Carried down so the balance the response
+    # reports can be checked against it, rather than the two being asserted to agree.
+    declared_cost = len(asked_markets) * len(asked_regions)
 
     when = now or datetime.now(UTC).replace(tzinfo=None)
     have = credits_remaining(state_path)
@@ -236,7 +424,8 @@ def snapshot(season: int = SEASON_AHEAD, *, markets: str = MARKET, regions: str 
         {"markets": markets, "regions": regions, "oddsFormat": "american"}, key)
 
     try:
-        return _record(payload, headers, season, when, state_path, base, floor)
+        return _record(payload, headers, season, when, state_path, base, floor,
+                       before=have, declared_cost=declared_cost, asked=markets)
     except Exception as exc:
         raise SnapshotIncomplete(
             f"the betting market answered and a credit was spent, then "
@@ -247,7 +436,9 @@ def snapshot(season: int = SEASON_AHEAD, *, markets: str = MARKET, regions: str 
 
 
 def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetime,
-            state_path: Path | None, base: Path | None, floor: int) -> pl.DataFrame:
+            state_path: Path | None, base: Path | None, floor: int, *,
+            before: int | None = None, declared_cost: int | None = None,
+            asked: str | None = None) -> pl.DataFrame:
     """Everything after the betting market has answered: the credit, join, check and write.
 
     Split out so the guard above spans the reach for the source and nothing else. It is one
@@ -256,9 +447,25 @@ def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetim
     """
     remaining_hdr = headers.get("x-requests-remaining")
     remaining = int(float(remaining_hdr)) if remaining_hdr is not None else None
-    _write_state(state_path, remaining, when)
+    # What this poll cost, measured off the account rather than read off `declared_cost`.
+    # A monthly reset makes the balance go *up*, and the difference is then not a cost, so
+    # that case records nothing rather than a negative number.
+    cost = (before - remaining
+            if before is not None and remaining is not None and before >= remaining
+            else None)
+    _write_state(state_path, remaining, when, cost=cost, declared=declared_cost,
+                 asked=asked)
     print(f"  odds snapshot: {len(payload or [])} events, "
-          f"{remaining if remaining is not None else '?'} credits remaining")
+          f"{remaining if remaining is not None else '?'} credits remaining, "
+          f"this poll cost {cost if cost is not None else '?'} "
+          f"(markets x regions says {declared_cost if declared_cost is not None else '?'})")
+    # GUARD measured-cost-checked-against-declared [unit/test_fetch_odds.py]: the budget the
+    # market guard rests on is compared with the account rather than assumed
+    if cost is not None and declared_cost is not None and cost != declared_cost:
+        print(f"  WARNING: the account was charged {cost} for a call markets x regions "
+              f"budgets at {declared_cost}. The cost model `_budgeted` rests on is not the "
+              f"one being billed -- check the account's pricing before the next poll.")
+    # /GUARD
     if remaining is not None and remaining < floor:
         print(f"  WARNING: below the floor of {floor}; the next pull will refuse")
 
@@ -271,20 +478,40 @@ def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetim
         for r in sched.iter_rows(named=True)
     }
 
-    rows, no_game, no_line = [], 0, 0
+    rows, no_game, no_line, no_total, no_price = [], 0, 0, 0, 0
     for ev in payload or []:
-        home = abbrs.get(ev.get("home_team", ""))
+        home_name = ev.get("home_team", "")
+        home = abbrs.get(home_name)
         away = abbrs.get(ev.get("away_team", ""))
         hit = lookup.get((home, away, _game_date(ev.get("commence_time", ""))))
-        spread = _median_home_spread(ev, ev.get("home_team", ""))
+        spread, spread_price = _median_home_spread(ev, home_name)
+        total, total_price = _median_game_total(ev)
         if not hit:
             no_game += 1
             continue
+        # The spread still decides whether there is a row at all, and a game priced only in
+        # the totals market is therefore still dropped and still counted below. That is the
+        # pre-#211 boundary left where it was rather than widened by the side door: the
+        # `lines` table is non-null on `close_spread` and every consumer in the repo reads
+        # it, so a row with a total and no spread is a new shape for six modules to answer
+        # for. Measured cost of keeping it: the events the count below reports, which for
+        # the main markets of one book-covered slate is expected to be none, since a book
+        # posting a total and no spread on an NFL game is not a thing books do.
         if spread is None:
             no_line += 1
             continue
+        # Absent, never fabricated. A game with a spread and no posted total keeps a null
+        # total rather than one derived from anything, because the two markets are separate
+        # facts and a total inferred from a spread is the one number a totals hypothesis
+        # must never be fitted on.
+        if total is None:
+            no_total += 1
+        if spread_price is None or (total is not None and total_price is None):
+            no_price += 1
         game_id, week = hit
         rows.append({"game_id": game_id, "close_spread": spread,
+                     "spread_price": spread_price, "close_total": total,
+                     "total_price": total_price,
                      "captured_at": when, "week": int(week)})
 
     # Counted apart. These used to share one tally reported as "no nflverse game for the
@@ -295,8 +522,19 @@ def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetim
         print(f"  {no_game} events with no nflverse game for the team/date pair")
     if no_line:
         print(f"  {no_line} events matched a game but had no posted spread")
+    # Reported for the same reason as the two above, and it is the one a reader of a totals
+    # result has to see: a column of nulls from a market nobody posted and one from a market
+    # this module asked for wrongly are the same column, and only this line separates them.
+    if no_total:
+        print(f"  {no_total} games stored with a spread and no posted total")
+    if no_price:
+        print(f"  {no_price} games stored with a point and no American price beside it "
+              f"-- prices outside [-100, +100] are what American odds are, so check that "
+              f"oddsFormat=american is still being honoured")
 
     df = pl.DataFrame(rows, schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                                    "spread_price": pl.Float64, "close_total": pl.Float64,
+                                    "total_price": pl.Float64,
                                     "captured_at": pl.Datetime, "week": pl.Int64})
     # Every partition is checked before any is written. Interleaved, a contract failure on
     # week 3 left weeks 1 and 2 on disk carrying a fresh timestamp while the CLI reported
@@ -335,7 +573,8 @@ def credits_report(path: Path | None = None) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.fetch.odds",
-        description="One market, one region, one pull. Cost is markets x regions.")
+        description=f"Markets {','.join(MARKETS)} in region {','.join(REGIONS)}, one pull. "
+                    f"Cost is markets x regions, so {len(MARKETS) * len(REGIONS)} credits.")
     ap.add_argument("--snapshot", action="store_true", help="take one dated line snapshot")
     ap.add_argument("--credits", action="store_true", help="report the stored balance")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD)

@@ -586,14 +586,41 @@ CFBD_LINES = Contract(
     verified_against_live=False,
 )
 
+# Two markets and their prices, since #211. The four number columns are two pairs and the
+# pairing is the declaration: a point without the price beside it says -7 at -120 and -7 at
+# -105 are the same fact, and they are not the same price.
+#
+# **`close_spread` is the only priced column that may not be null, and the asymmetry is
+# deliberate.** A row exists because the betting market posted a spread -- that is the rule
+# `hub.fetch.odds` has always applied and every consumer of `lines` reads. The other three
+# are nullable because each is separately absent in the wild: a book posts a spread and no
+# total on a game it has not hung yet, and a price can be unreadable while the point beside
+# it is fine. A null there is the honest answer, and it is the answer a snapshot written
+# before this contract gained the columns gives too -- the store reads its partitions with
+# `union_by_name`, so a three-column parquet comes back with nulls in the three it never
+# had rather than refusing the glob. Absent, never fabricated: nothing derives a total from
+# a spread, which is the one number a totals hypothesis must not be fitted on.
+#
+# Ranges are plausibility bounds and are wider than the observed market on purpose, because
+# a refusal here fires *after* the credit is spent and takes the whole snapshot with it
+# (`SnapshotIncomplete`). Totals: NFL games are hung between about 30 and 63, so [20, 100]
+# catches a units change or a spread written into the total column -- 8.25 is below 20 --
+# without refusing a slate on a cold December weather line. Prices: main-market spread and
+# total juice lives inside [-130, +110] and [-2000, 2000] leaves room for an extreme honest
+# quote while still refusing a moneyline price that reached the wrong column. The one units
+# change the bound cannot catch is decimal odds, whose values are far inside it, so that is
+# refused upstream where it can be recognised: `hub.fetch.odds._american` drops anything
+# between -100 and +100 because American odds have a hole there and decimal odds do not.
 ODDS_SNAPSHOT = Contract(
     name="odds_snapshot",
     required={"game_id": pl.Utf8, "close_spread": pl.Float64,
-              "captured_at": pl.Datetime},
+              "spread_price": pl.Float64, "close_total": pl.Float64,
+              "total_price": pl.Float64, "captured_at": pl.Datetime},
     non_null=("game_id", "close_spread", "captured_at"),
     # Deliberately NOT unique on game_id: several snapshots per game is the entire point,
     # and it is what makes AS_OF_LINES more than a normal join.
-    ranges={"close_spread": (-40, 40)},
+    ranges={"close_spread": (-40, 40), "close_total": (20, 100),
+            "spread_price": (-2000, 2000), "total_price": (-2000, 2000)},
     min_rows=1,
 )
 

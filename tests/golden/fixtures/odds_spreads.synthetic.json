@@ -26,6 +26,22 @@
                 "point": 8.5
               }
             ]
+          },
+          {
+            "key": "totals",
+            "last_update": "2025-09-04T18:00:00Z",
+            "outcomes": [
+              {
+                "name": "Over",
+                "price": -110,
+                "point": 47.5
+              },
+              {
+                "name": "Under",
+                "price": -110,
+                "point": 47.5
+              }
+            ]
           }
         ]
       },
@@ -47,6 +63,22 @@
                 "name": "Dallas Cowboys",
                 "price": -112,
                 "point": 8.0
+              }
+            ]
+          },
+          {
+            "key": "totals",
+            "last_update": "2025-09-04T18:01:00Z",
+            "outcomes": [
+              {
+                "name": "Over",
+                "price": -105,
+                "point": 47.0
+              },
+              {
+                "name": "Under",
+                "price": -115,
+                "point": 47.0
               }
             ]
           }

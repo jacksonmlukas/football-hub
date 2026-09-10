@@ -318,20 +318,40 @@ def test_cfbd_lines_contract_holds_on_the_documented_shape():
 
 
 def test_odds_fixture_parses_to_the_lines_table_shape():
-    """The parser, not just the contract: the snapshot has to land in `lines`."""
+    """The parser, not just the contract: the snapshot has to land in `lines`.
+
+    Both markets the poller asks for, because both come back in the one response it pays
+    for. The price columns are why the two markets are not the whole of #211: -8.25 at -109
+    and -8.25 at -105 are the same point and different prices, and before it the table could
+    not tell them apart.
+    """
     import datetime as dt
 
-    from hub.fetch.odds import _median_home_spread
+    from hub.fetch.odds import _median_game_total, _median_home_spread
 
     events = load("odds_spreads.synthetic.json")
-    rows = [{"game_id": "2025_01_DAL_PHI",
-             "close_spread": _median_home_spread(e, e["home_team"]),
-             "captured_at": dt.datetime(2025, 9, 4, 18)} for e in events]
+    rows = []
+    for e in events:
+        spread, spread_price = _median_home_spread(e, e["home_team"])
+        total, total_price = _median_game_total(e)
+        rows.append({"game_id": "2025_01_DAL_PHI", "close_spread": spread,
+                     "spread_price": spread_price, "close_total": total,
+                     "total_price": total_price,
+                     "captured_at": dt.datetime(2025, 9, 4, 18)})
     df = pl.DataFrame(rows, schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                                    "spread_price": pl.Float64, "close_total": pl.Float64,
+                                    "total_price": pl.Float64,
                                     "captured_at": pl.Datetime})
     assert ODDS_SNAPSHOT.validate(df).height == 1
     # books at -8.5 and -8.0; median -8.25, stored positive because home is favoured
     assert df["close_spread"][0] == pytest.approx(8.25)
+    # books at 47.5 and 47.0. A total is a sum, so it is not negated the way a spread is.
+    assert df["close_total"][0] == pytest.approx(47.25)
+    # -110 and -108 on the home side, -110 and -105 on the Over. Both medians are taken in
+    # decimal space, so each lands between its two quotes rather than in the hole American
+    # odds have between -100 and +100.
+    assert df["spread_price"][0] == pytest.approx(-108.99, abs=0.01)
+    assert df["total_price"][0] == pytest.approx(-107.44, abs=0.01)
 
 
 # --- the contracts have teeth --------------------------------------------
@@ -369,12 +389,53 @@ def test_duplicate_games_fail():
         CFBD_GAMES.validate(df.head(1).vstack(df.head(1)))
 
 
+ODDS_COLUMNS = {"game_id": pl.Utf8, "close_spread": pl.Float64,
+                "spread_price": pl.Float64, "close_total": pl.Float64,
+                "total_price": pl.Float64, "captured_at": pl.Datetime}
+
+
 def test_odds_allows_repeated_games_by_design():
     """Several snapshots per game is the point, so uniqueness here would be wrong."""
     import datetime as dt
     df = pl.DataFrame(
         {"game_id": ["g1", "g1"], "close_spread": [-3.0, -4.5],
+         "spread_price": [-110.0, -105.0], "close_total": [44.5, 45.0],
+         "total_price": [-110.0, -110.0],
          "captured_at": [dt.datetime(2025, 9, 1), dt.datetime(2025, 9, 3)]},
+        schema=ODDS_COLUMNS)
+    assert ODDS_SNAPSHOT.validate(df).height == 2
+
+
+def test_a_snapshot_of_the_pre_totals_shape_reports_an_absent_total(tmp_path):
+    """#211's compatibility clause, held on the store rather than on the contract.
+
+    A partition written before the totals columns existed has three columns where a new one
+    has six. `hub.store.connect` reads a table with `union_by_name`, so the old rows come
+    back with the three they never had set to null -- absent, which is true, rather than a
+    number derived from the spread beside them, which would be invented. Without it DuckDB
+    refuses the whole glob and every snapshot ever taken becomes unreadable the day a column
+    is added, which is the opposite of what an append-only dated store is for.
+    """
+    import datetime as dt
+
+    from hub import store
+
+    old = pl.DataFrame(
+        {"game_id": ["2025_01_DAL_PHI"], "close_spread": [8.25],
+         "captured_at": [dt.datetime(2025, 9, 3, 9)]},
         schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
                 "captured_at": pl.Datetime})
-    assert ODDS_SNAPSHOT.validate(df).height == 2
+    new = pl.DataFrame(
+        {"game_id": ["2025_01_DAL_PHI"], "close_spread": [8.5],
+         "spread_price": [-110.0], "close_total": [47.25], "total_price": [-107.44],
+         "captured_at": [dt.datetime(2025, 9, 3, 12)]},
+        schema=ODDS_COLUMNS)
+    store.write(old, "lines", "nfl", 2025, 1, base=tmp_path, name="snap-old")
+    store.write(ODDS_SNAPSHOT.validate(new), "lines", "nfl", 2025, 1, base=tmp_path,
+                name="snap-new")
+
+    got = store.sql("SELECT close_spread, close_total, total_price FROM lines "
+                    "ORDER BY captured_at", base=tmp_path)
+    assert got.height == 2, "the older partition has to still be readable, not skipped"
+    assert got["close_total"].to_list() == [None, 47.25]
+    assert got["total_price"][0] is None, "an unpriced snapshot is null, never zero"
