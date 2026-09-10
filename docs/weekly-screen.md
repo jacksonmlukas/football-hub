@@ -210,6 +210,100 @@ intervals. Selecting between two units by which gives the answer you prefer is t
 this repo's whole method exists to prevent; the season is the unit because the verdict reads
 seasons, and the narrowing is a fact reported, not a result banked.
 
+## The control basis, and what the prior TD rate is conditional on
+
+**Re-run 2026-09-10**, issue #179, under [method.md rule 13](method.md). The basis below was
+written into the ticket before it was run. Nothing above this section moves; what follows adds
+the condition the surviving claim carries.
+
+**The circularity, stated exactly.** The controls are `ppg_before` and `ecr`. `ppg_before` is
+season-to-date **PPR points** a game — and PPR points *contain touchdowns*. The feature is
+`tds_prior / yds_prior`. So the control set contains the feature's own numerator, and holding
+the points total fixed, a higher touchdown rate is arithmetically **fewer yards**. The recorded
+−0.040 could therefore have been a yardage effect wearing an efficiency label, and the number
+alone cannot say which. That matters because two modules cite it for the *efficiency* reading.
+
+**The alternative basis.** `ppg_before` is split into a touchdown component and a
+non-touchdown component and both are controlled on. The touchdown half prices the three
+touchdown columns from `components.SCORING` — a passing touchdown is **four** points, not six —
+and the non-touchdown half is the remainder by subtraction, so the two sum to `ppg_before`
+exactly on every row. That identity is the point: the new set **spans** the old one, so the only
+thing relaxed is the constraint that a point of touchdown scoring and a point of everything else
+carry the same slope. A coefficient that moves has one cause, not two.
+
+Sample unchanged: **14,370 player-weeks, 847 players, 55 cells**, the same rows under both
+bases. Every other figure on this page was reproduced under the pooled basis in the same run.
+
+### What moved
+
+| | r | t | seasons | verdict |
+|---|---|---|---|---|
+| **alone**, pooled *(published −0.038, −7.6)* | −0.0375 | −7.58 | 5/5 | null broken |
+| **alone**, decomposed | **−0.0426** | **−6.16** | **5/5** | **null broken** |
+| **joint**, pooled *(published −0.040, −7.18)* | −0.0403 | −7.18 | 5/5 | null broken |
+| **joint**, decomposed | **−0.0434** | **−5.64** | **5/5** | **null broken** |
+
+**The pre-stated null stays broken, and the coefficient gets slightly larger rather than
+smaller.** The sign does not move, the season count does not move, and the `t` falls only
+because a redundant control costs precision — the se widens 0.0056 → 0.0077, and −5.64 clears
+`MIN_SE` by a wide margin. The placebo is clean under the new basis too: **−0.0007, t −0.15**,
+permuted within cell, against −0.0008 under the old one.
+
+Per season, joint: 2021 −0.0497, 2022 −0.0425, 2023 −0.0210, 2024 −0.0676, 2025 −0.0362.
+
+**Why the coefficient barely moves.** The constraint that was relaxed turns out not to bind.
+Regressing week-*w* points on the two halves and ECR within each cell, the touchdown half
+carries **+0.328** and the non-touchdown half **+0.289** — a difference of +0.039 at **t +1.75**,
+with two of five seasons on the other side. The halves do not demonstrably want different
+slopes, so the added degree of freedom is nearly unused, and what the decomposition mostly buys
+is a wider interval.
+
+### What the decomposition does not settle, and this is the part that matters
+
+**It does not remove the yardage confound. It concentrates it.** Measure the coupling the
+ticket names — the partial correlation between `td_rate_prior` and `yds_prior` inside a cell:
+
+| controlling for | partial r |
+|---|---|
+| `ecr` only | −0.036 |
+| `ppg_before`, `ecr` *(published basis)* | −0.114 |
+| `td_ppg_before`, `nontd_ppg_before`, `ecr` *(this basis)* | **−0.401** |
+
+Holding the touchdown half fixed pins the feature's **numerator**, so what is left varying in
+`tds_prior / yds_prior` is very nearly the denominator alone. The decomposed basis therefore
+makes the surviving −0.043 *more* yardage-loaded than the −0.040 it was run to check, not less.
+It answers the question it was pre-registered to answer — "efficiency regresses" against "high
+scorers regress" — and it answers it in the feature's favour. It does not answer "efficiency"
+against "yardage".
+
+**Controlled for prior yardage directly, the finding does not survive.** `yds_prior` is on the
+Panel and is a legitimate control — it is a `_prior`, measured strictly before week *w*:
+
+| basis | r | t | seasons | verdict |
+|---|---|---|---|---|
+| `yds_prior`, `ecr` | −0.0122 | −2.49 | **4/5** | **not broken** — noisy, not a signal |
+| decomposed + `yds_prior` | −0.0238 | −2.46 | **4/5** | **not broken** |
+| joint, decomposed + `yds_prior` | −0.0218 | −2.21 | **4/5** | **not broken** |
+
+**2023 is the season that turns positive** (+0.0059 on the joint row) once prior yardage is
+held directly, and the every-season half is what fails — which no standard error can rescue,
+and which [method.md rule 4](method.md) put there precisely to catch.
+
+The first of those three rows is not an improvisation: **controls of consensus rank and prior
+yardage only** is the basis this ticket's own issue body pre-registered and the maintainer
+adopted on 2026-09-07, before a later disposition replaced it with the decomposition. Two
+pre-registered bases, run on one panel, give opposite verdicts. Which of them the published
+claim should rest on is a decision, not a measurement, and it is not settled here.
+
+### What this page now claims
+
+**The −0.040 stands as published, and is conditional on its controls.** It is a partial
+correlation beyond **season-to-date PPR points a game and weekly consensus ECR** — jointly,
+beyond the implied total, own spread, defence-vs-position and injury severity — and it survives
+splitting the first of those into its touchdown and non-touchdown halves. It is **not** shown to
+survive a direct control for prior yardage, and it was never claimed to be. Anything citing it
+should name that.
+
 ## The staleness question, and why it is smaller than first reported
 
 The consensus control is FantasyPros' `weekly-op` page, and the first version of this document
@@ -327,8 +421,14 @@ snapshot we are measuring against.
 ## Reproduce
 
 ```bash
-uv run python -m hub.models.weekly_screen --run
+uv run python -m hub.models.weekly_screen --run                     # the published basis
+uv run python -m hub.models.weekly_screen --run --basis decomposed  # #179
 ```
+
+`--basis` names the control set. `pooled` is the pre-registration and every figure above rests
+on it; `decomposed` holds the two halves of `ppg_before` apart. Either run drops nulls over the
+**union** of the two, so the two are taken on the same rows and a difference between them is
+attributable to the basis.
 
 `src/hub/models/weekly_screen.py`, committed 2026-08-27 because these numbers steer Phase 2 and
 [ADR-0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md)'s trigger is
