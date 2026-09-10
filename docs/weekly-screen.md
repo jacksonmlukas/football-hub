@@ -31,6 +31,14 @@ derived from play uses weeks < *w* only.
 
 ## Result
 
+> **Wind is withdrawn from this page, 2026-09-10 — it was never eligible to be screened.**
+> Issue #170, under [method.md rule 13](method.md). Both wind figures below — **−0.024** in the
+> first table and **−0.020 at −1.2** in the restatement under *The unit of the standard error*
+> — are **superseded and unestablished**. See *Wind was observed weather*, below, for the two
+> defects, why the replacement cannot be a corrected number, and what does and does not move
+> with it. **No other row on this page changes**, and the sample does not: wind was killed
+> alone, never entered the joint screen and was never a control.
+
 > **Every `t` on this page restated 2026-09-07 — the standard error was over the cells, and
 > the verdict is over the seasons.** Issue #169, under [method.md rule 13](method.md). The
 > tables below keep their original text; the `t` column in each is superseded by the re-run
@@ -216,6 +224,75 @@ it is the open question this correction leaves behind.
 intervals. Selecting between two units by which gives the answer you prefer is the failure
 this repo's whole method exists to prevent; the season is the unit because the verdict reads
 seasons, and the narrowing is a fact reported, not a result banked.
+
+## Wind was observed weather, and a missing reading was not calm
+
+**Withdrawn 2026-09-10**, issue #170, finding B12 of the 2026-09-07 re-audit, under
+[method.md rule 13](method.md). This is not a re-run and cannot be one; what follows says why,
+and what the rule says to do in that case.
+
+**Two defects, and the second is the one that makes the first unfixable here.**
+
+*It was measured inside the outcome window.* `wind` came off `nflverse` schedules as **recorded
+conditions** — the observation at the game — and entered the Panel in `PRE_KICKOFF`, beside the
+line, the injury report and the opponent. Those three are genuinely published *for* week *w*
+before it is played, which is the exception [method.md rule 2](method.md) names. A wind reading
+is not: it is taken at kickoff. So the screen was correlating week *w*'s points against a
+week-*w* measurement and reading the result as a predictor, with a pre-registered sign. That is
+rule 2 broken by the module built to enforce it, the same shape as rule 3's second incident.
+
+*Every missing reading was coded as a substantive zero.* `panel.game_context` ended
+`pl.col("wind").fill_null(0.0)`, so a dome, a closed retractable roof and an absent observation
+at an open-air stadium all arrived as the number **0**, on a feature whose sign was
+pre-registered as negative. Measured on the frozen archive the Panel is driven against:
+
+| | game rows | no reading | measured zeros |
+|---|---|---|---|
+| indoors (dome, closed, open) | 142 | **142** | 0 |
+| outdoors | 274 | **33** | **0** |
+| all | 416 | **175 (42%)** | **0** |
+
+**Not one game in the capture has a measured wind of zero.** So every zero the column ever held
+was a non-measurement wearing a measurement's value, and the screen had no way to tell the two
+apart because there was nothing to tell apart — the measured population contained no zeros at
+all. 42% of game rows were coded calm and none of them were.
+
+### What the number becomes
+
+**Superseded and unestablished.** Not a corrected figure, and emphatically not the old figure
+with a note that the fill probably did not matter much.
+
+A corrected figure would need a re-run, and there is nothing to re-run *to*. Dropping the fill
+changes which rows enter the correlation, so the −0.020 does not survive as an estimate of the
+same quantity; and the feature is now ineligible for the screen at all, because the reading it
+uses does not exist before the week it is meant to predict. Screening wind honestly needs a
+**forecast published before kickoff**, which no source in this repo carries — the panel's six
+nflverse sources have none, and obtaining one is a live call this ticket did not make.
+
+That is the case [method.md rule 13](method.md) added on 2026-09-10 for its fourth instance:
+where no re-run is possible, "moved" means moved to superseded and unestablished. The
+originals keep their text in the tables above, as this page's convention requires.
+
+### What moves with it, and what does not
+
+**The family size moves: nine features screened becomes eight.** That is the ticket's third
+criterion and it is the part that is easy to skip. A screen reporting eight verdicts while nine
+features were tried is a multiple-comparison family that understates its own size, and the
+count is quoted in `hub.models.weekly`'s docstring and on
+[weekly-projection.md](weekly-projection.md). Both are restated.
+
+**Nothing else on this page moves, and that is checkable rather than asserted.** Wind was
+`killed` on the every-season half at 4/5 seasons, so it never entered the joint screen; it was
+never a control in any basis; and `cell_correlations` drops nulls per feature, so the rows wind
+was missing on were never in another feature's sample. The headline sample —
+**14,370 player-weeks, 847 players, 55 cells** — is unchanged, because `main` drops nulls on
+the outcome and the controls only, and wind is neither.
+
+**What is *not* claimed is that wind does not affect football.** It plainly does. The claim
+withdrawn is that this repo has measured it as a signal beyond consensus. It is now `RECORDED`
+on the Panel — a condition observed during week *w*, reachable for describing a week after the
+fact and refused by `require_features` as a predictor of it — and a dome, an unread game and a
+measured calm are three distinguishable states rather than one number.
 
 ## The control basis, and what the prior TD rate is conditional on
 

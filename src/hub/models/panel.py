@@ -25,6 +25,12 @@ convention alone which of sixty columns were safe, and the one caller that got i
 right by being careful. `feature_columns` and `outcome_columns` answer it instead,
 `require_features` refuses a raw one where a feature was meant, and `_served` refuses to hand
 back a column that is on neither side. #203.
+
+**And one column was on the wrong side.** `wind` is read off the schedule as *recorded*
+conditions -- the reading is taken at kickoff, inside the outcome window -- and it sat with the
+line and the injury report as a pre-kickoff fact, screened with a pre-registered negative sign.
+It is now `RECORDED`, a side that is neither a feature nor an outcome, and a game with no
+reading is no longer coded as calm. #170.
 """
 from __future__ import annotations
 
@@ -38,6 +44,7 @@ import polars as pl
 
 from hub.config import DRAFTED_POSITIONS, SEASON_COMPLETED
 from hub.contracts import INJURIES, SNAP_COUNTS, ContractViolation
+from hub.fetch import nflverse
 from hub.fetch.nflverse import RANKINGS_COLS, Pin, data_pin, load_rankings
 from hub.models import components
 from hub.models.experiment import expanding_weeks
@@ -137,13 +144,65 @@ TURNOVERS: tuple[str, ...] = ("passing_interceptions", "fumbles_lost_total")
 TD_COLUMNS: tuple[str, ...] = ("receiving_tds", "rushing_tds", "passing_tds")
 
 
+# --- which of the sources below go through the validated, cached path (#35) --------------
+#
+# The path is `hub.fetch.nflverse.load`: narrowed at the boundary, checked against the source's
+# `Contract` on the way out, written to a cache entry keyed by `(source, seasons, columns,
+# as-of)`, with a `Pin` beside it that a run can print. Reaching `nflreadpy` from here instead
+# means the frame no contract has ever seen, refetched live on every build, and a digest that
+# cannot name what it read.
+#
+# Six nflverse sources reach this module. Five now route:
+#
+#   ff_rankings    `weekly_consensus`, through `load_rankings` -- #33, and the only one an
+#                  as-of can filter rather than label
+#   ff_opportunity `expected_weekly`
+#   player_stats   `weekly_stats`
+#   participation  `route_share` and `scheme_rates`
+#   ftn_charting   `scheme_rates`
+#
+# **Three do not, and the obstacle is the frozen archive rather than this module.**
+# `schedules`, `snap_counts` and `injuries` are the three captures in
+# `tests/golden/fixtures/panel_archive/` that were trimmed to the columns the Panel *selects*,
+# which is narrower than what their contracts require -- so routing them makes `load` refuse
+# the archive, and eleven Panel tests fail on a frame that is not the Panel's fault.
+# `scripts/capture_panel_archive.py` states the trim rule in code and re-takes the archive from
+# a live nflverse; adopting what it produces is the rest of #35 and it needs a network run.
+# `tests/unit/test_panel.py::test_the_three_unrouted_sources_are_blocked_by_the_archive_and_
+# not_by_this_module` names the missing columns and goes red the day they arrive, so this
+# paragraph cannot quietly outlive the block it describes.
+#
+# The two that route without being exercised offline -- `participation` and `ftn_charting` --
+# are the two the archive deliberately refuses (they are play-level; see that directory's
+# README), so nothing about them was ever driven by a test either way. Routing them costs the
+# archive nothing and buys the live path the same contract every other source now gets.
+
+
 def game_context(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
     """One row per (team, season, week): the facts published before kickoff.
+
+    **Not routed through `hub.fetch.nflverse.load`** -- see the note above this function.
+    `SCHEDULES` requires `game_id` and the frozen capture does not carry it.
 
     `spread_line` is home-relative and positive means the home team is favoured, so the away
     row negates it. The implied team total is `total/2 + own_spread/2` -- the market's own
     forecast of how many points this offence scores, which is the quantity a fantasy week is
     a share of.
+
+    **`wind` is carried null where there is no reading, and that is half of #170.** It used to
+    leave here as `pl.col("wind").fill_null(0.0)`, which made a dome, a retractable roof and a
+    missing observation at an open-air stadium into the same number as a still afternoon.
+    Measured on the frozen archive: of 416 game rows, **175 carry no reading** -- 132 indoors
+    and 33 outdoors -- and **not one game has a measured wind of zero**. Every zero that column
+    ever held was a non-measurement wearing a measurement's value, on a feature whose sign was
+    pre-registered as negative.
+
+    A dome and a game with no reading stay distinguishable from each other because `roof` rides
+    beside this, and both stay distinguishable from a measured calm because null is not a
+    number. Where the reading is absent the row now drops out of a correlation rather than
+    pulling it toward zero, which is what `cell_correlations` already does with every other
+    column. The other half of #170 is `RECORDED` below: what this column is is a *condition
+    observed during* week w, so it cannot be a feature of week w either way.
     """
     import nflreadpy as nfl
     s = (nfl.load_schedules()
@@ -160,8 +219,7 @@ def game_context(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - 
             pl.col(rest).alias("rest"), pl.col("roof"), pl.col("wind"),
             pl.lit(int(home)).alias("is_home")))
     return pl.concat(sides).with_columns(
-        (pl.col("total_line") / 2 + pl.col("own_spread") / 2).alias("implied_total"),
-        pl.col("wind").fill_null(0.0))
+        (pl.col("total_line") / 2 + pl.col("own_spread") / 2).alias("implied_total"))
 
 
 # The expected counterpart of each realised quantity, from `ff_opportunity`. Opportunity
@@ -196,7 +254,6 @@ def expected_weekly(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover
     same number. The store has had this table the whole time and the weekly model never opened
     it.
     """
-    from hub.fetch import nflverse
     cols = ["season", "week", "player_id", "full_name", "position", XFP_WEEK,
             *EXPECTED.values()]
     d = nflverse.load("ff_opportunity", list(seasons), cols=cols)
@@ -222,12 +279,22 @@ WEEK_STATS_COLS: tuple[str, ...] = (
 
 
 def weekly_stats(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
-    import nflreadpy as nfl
-    ps = nfl.load_player_stats(seasons=list(seasons), summary_level="week")
-    ps = ps.select([c for c in WEEK_STATS_COLS if c in ps.columns])
-    if "season_type" in ps.columns:
-        ps = ps.filter(pl.col("season_type") == "REG").drop("season_type")
-    return (ps.filter(pl.col("position").is_in(DRAFTED_POSITIONS))
+    """Week *w*'s realised play, through the validated cached loader -- #35.
+
+    `player_stats` is 150 columns wide, so `load` refuses it unnarrowed and `WEEK_STATS_COLS`
+    is the narrowing: the same tuple `column_role` classifies, asked for once.
+
+    **A column that stopped arriving is now named rather than dropped.** This used to select
+    `[c for c in WEEK_STATS_COLS if c in ps.columns]` and filter on `season_type` only if it
+    was there, so a rename upstream cost the Panel a feature silently -- the exact shape
+    `injury_severity` below refuses three times over, and the shape `load`'s
+    `column-vanished-upstream` guard exists to convert into a refusal that says which column.
+    Everything narrowed here is also everything `PLAYER_STATS` requires, so the contract runs
+    on the frame this function actually reads.
+    """
+    ps = nflverse.load("player_stats", list(seasons), cols=WEEK_STATS_COLS)
+    return (ps.filter(pl.col("season_type") == "REG").drop("season_type")
+              .filter(pl.col("position").is_in(DRAFTED_POSITIONS))
               .with_columns(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64)))
 
 
@@ -386,12 +453,17 @@ def scheme_rates(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - 
     for yr in seasons:
         if yr < FTN_FIRST_SEASON:
             continue
-        c = nfl.load_ftn_charting(seasons=[yr]).select(
+        # Both play-level sources go through the validated cached path (#35). Neither is
+        # `WIDE` -- 29 and 26 columns -- so neither needs `cols`, and asking for one would
+        # anyway have to be a superset of the contract's required set rather than the four
+        # booleans read below. `schedules` is the one call in this function still reaching
+        # nflreadpy, for the reason stated above `game_context`.
+        c = nflverse.load("ftn_charting", [yr]).select(
             "nflverse_game_id", "nflverse_play_id", *SCHEME.values())
         wk = (nfl.load_schedules().filter(pl.col("season") == yr)
                 .select(pl.col("game_id").alias("nflverse_game_id"),
                         pl.col("week").cast(pl.Int64)))
-        pa = (nfl.load_participation(seasons=[yr])
+        pa = (nflverse.load("participation", [yr])
                 .select("nflverse_game_id", "play_id", "possession_team",
                         (pl.col("route").is_not_null()
                          & (pl.col("route") != "")).alias("is_pass"))
@@ -445,7 +517,9 @@ def route_share(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - n
     import nflreadpy as nfl
     frames = []
     for yr in seasons:
-        p = (nfl.load_participation(seasons=[yr])
+        # Through the validated cached path (#35), as in `scheme_rates`. `schedules` below is
+        # the one call left reaching nflreadpy here -- see the note above `game_context`.
+        p = (nflverse.load("participation", [yr])
                .filter(pl.col("route").is_not_null() & (pl.col("route") != "")
                        & pl.col("offense_players").is_not_null()
                        & (pl.col("offense_players") != "")))
@@ -473,6 +547,11 @@ def snap_share(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - ne
     never had the private repair `hub.models.spread.snap_usage` had either -- a whole-percent
     refresh would have multiplied `snap_trend` by a hundred here while the same refresh came
     out right over there. One variation, one declaration, one answer.
+
+    **`conform` and not `nflverse.load`, and that is the half of #35 still open.** `conform`
+    checks the five columns this function reads; `load` would additionally cache the frame,
+    pin it and check the other eight `SNAP_COUNTS` declares -- and the frozen capture carries
+    none of those eight. See the note above `game_context`.
     """
     import nflreadpy as nfl
     s = SNAP_COUNTS.conform(nfl.load_snap_counts(seasons=list(seasons)),
@@ -507,6 +586,10 @@ def injury_severity(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover
     `build_panel` degrades around it rather than propagating it, and what it degrades to is
     null rather than healthy. Refusing here and coping there is what keeps one statement of
     what this source may return.
+
+    **`conform` and not `nflverse.load`**, for the reason `snap_share` gives above: the frozen
+    capture carries five of the nine columns `INJURIES` declares, so the cached path refuses
+    it. See the note above `game_context`.
     """
     import nflreadpy as nfl
     inj = INJURIES.conform(nfl.load_injuries(seasons=list(seasons)),
@@ -571,7 +654,11 @@ def injury_columns(p: pl.DataFrame, seasons: Sequence[int]) -> pl.DataFrame:
 
 
 def week_windows(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
-    """First and **last** kickoff per (season, week). The last one is what the join uses."""
+    """First and **last** kickoff per (season, week). The last one is what the join uses.
+
+    Reads `schedules`, so it is unrouted for the same reason `game_context` is -- the note
+    above that function.
+    """
     import nflreadpy as nfl
     s = (nfl.load_schedules()
            .filter(pl.col("season").is_in(list(seasons)) & (pl.col("game_type") == "REG")))
@@ -687,9 +774,15 @@ def best_per_week(joined: pl.DataFrame) -> pl.DataFrame:
 # species costs when nobody catches it: a coverage measurement centred on each player's own
 # realised mean, published, and worth 3.7 points of headline once corrected.
 #
-# So the Panel names four sides, puts every column it serves on exactly one of them, and
+# So the Panel names five sides, puts every column it serves on exactly one of them, and
 # **refuses to hand back a column that is on none** -- the default for a column nobody has
 # classified is unsafe, which is the direction a leakage guard has to fail in.
+#
+# Four sides when this was written. `RECORDED` is the fifth and #170 is what found it: `wind`
+# sat in `PRE_KICKOFF` and was screened with a pre-stated sign, and the reading is taken at
+# kickoff. The default-deny at `_served` is what turned that into an edit that could not be
+# made quietly -- moving the column out of `PRE_KICKOFF` and nowhere else made every Panel test
+# refuse the frame until the new side existed.
 
 
 IDENTITY: tuple[str, ...] = ("player_id", "player_display_name", "key", "season", "week",
@@ -700,8 +793,10 @@ IDENTITY: tuple[str, ...] = ("player_id", "player_display_name", "key", "season"
 PRE_KICKOFF: tuple[str, ...] = (
     # **The line.** `game_context` is one row per (team, season, week) of what the betting
     # market and the schedule publish before the game -- the spread, the total, the derived
-    # team total, and the fixture facts around it.
-    "opp", "own_spread", "total_line", "implied_total", "rest", "roof", "wind", "is_home",
+    # team total, and the fixture facts around it. `wind` came off the same frame and is
+    # **not** here: it is the one column on it that is observed at kickoff rather than
+    # published for it. See `RECORDED`.
+    "opp", "own_spread", "total_line", "implied_total", "rest", "roof", "is_home",
     # **The opponent**, under the name `player_stats` gives it. `opp` above is the same fact
     # off the schedule; the fixture is known months out either way.
     "opponent_team",
@@ -721,6 +816,34 @@ PRE_KICKOFF: tuple[str, ...] = (
 The exceptions the rule names, and a Panel that made them unreachable would have been broken
 rather than tightened -- a screen with no line, no injury report and no opponent measures
 nothing this repo asks about.
+"""
+
+
+RECORDED: tuple[str, ...] = ("wind",)
+"""Conditions **observed during** week w. Not the row's outcome, and not a feature of it.
+
+The fourth side used to be three, and `wind` sat in `PRE_KICKOFF` above -- read straight off
+the schedule as recorded conditions and screened as a week-w pre-kickoff feature with a
+pre-registered negative sign. That is `docs/method.md` rule #2 broken by the Panel that exists
+to keep it: the reading is taken *at* kickoff, which is inside the outcome window, not before
+it. Issue #170, finding B12 of the 2026-09-07 re-audit.
+
+**Why a fourth side rather than putting it in `OUTCOMES`.** `require_features` refuses both, so
+either would have satisfied the ticket's first two criteria. But `OUTCOMES` means *this row's
+own realised play* -- the thing `hub.models.weekly` fits against and Gate B scores -- and wind
+is not that. It is a property of the fixture that this player's row shares with fifty others,
+legitimately describable as an explanatory variable after the fact and never usable as a
+predictor of the week it was measured on. Filing it as an outcome would have made `yds` and
+`wind` the same kind of thing, which is how a classification stops carrying information.
+
+So the two roles say two different sentences and one refusal reads both: `NON_FEATURE_ROLES`.
+A column here stays reachable -- a caller may still describe a week by the conditions it was
+played in -- and cannot enter `cell_correlations` as a feature or as a control.
+
+Nothing else on the Panel belongs here yet. `roof` is next door in `PRE_KICKOFF` and stays
+there: a fixed dome is known months out, and while a retractable roof's open/closed state is a
+game-day call it is made and announced before kickoff. It is also a `Utf8` column, so it is not
+screenable in the first place and never carried a pre-stated sign.
 """
 
 
@@ -778,7 +901,7 @@ class PanelRuleViolation(ValueError):
     """A column was about to be used on the wrong side of the before-its-outcome rule.
 
     Two cases, one name, because they are one mistake at two depths. `_served` raises it for a
-    column that reached the return on none of the four sides -- nobody has said whether it is
+    column that reached the return on none of the five sides -- nobody has said whether it is
     measured before week w or on it. `require_features` raises it for a column that *is*
     classified, as week w's own outcome, and was handed over where a feature was meant.
 
@@ -802,6 +925,8 @@ def column_role(name: str) -> str | None:
         return "pre-kickoff"
     if name in DERIVED or name.endswith(DERIVED_SUFFIXES):
         return "derived"
+    if name in RECORDED:
+        return "recorded"
     if name in OUTCOMES:
         return "outcome"
     return None
@@ -809,6 +934,16 @@ def column_role(name: str) -> str | None:
 
 FEATURE_ROLES: tuple[str, ...] = ("pre-kickoff", "derived")
 """The two roles the rule permits as a feature for week w."""
+
+
+NON_FEATURE_ROLES: tuple[str, ...] = ("recorded", "outcome")
+"""The two `require_features` refuses: measured *on* week w, either as a condition or an outcome.
+
+Not `set(everything) - set(FEATURE_ROLES)`, which would also sweep in `identity` and, worse,
+the unclassified. `require_features` is deliberately asked of hand-built frames that are not
+Panels -- see its docstring -- so what it refuses has to be a *positive* list of roles this
+module has classified and ruled out, not everything it has not classified.
+"""
 
 
 def feature_columns(p: pl.DataFrame) -> tuple[str, ...]:
@@ -826,27 +961,39 @@ def outcome_columns(p: pl.DataFrame) -> tuple[str, ...]:
 
 
 def require_features(p: pl.DataFrame, names: Sequence[str]) -> None:
-    """Raise if any name is week w's own outcome, or is not on `p` at all.
+    """Raise if any name is measured on week w, or is not on `p` at all.
 
     The refusal criterion 2 of #203 asks for, at the seam where a column becomes a feature.
     A caller that means a realised column as an **outcome** says so by another route --
     `weekly_screen.cell_correlations` takes it as `outcome=`, `hub.models.weekly` puts it on
     the left-hand side of a fit -- and neither goes through here.
 
-    **Refuses the named outcomes, not the unrecognised.** Default-deny belongs at
+    **Both non-feature roles, not only the outcome.** `NON_FEATURE_ROLES` is what is refused,
+    which since #170 means a `recorded` condition as well as an `outcome`: `wind` is observed
+    at kickoff, so it is no more a feature of the week it was measured on than `targets` is.
+    The two are refused by one check and the message says which kind each name was, because
+    the remedy differs -- an outcome usually has a `_prior` beside it and a recorded condition
+    has nothing, which is the honest answer rather than a substitute.
+
+    **Refuses the named roles, not the unrecognised.** Default-deny belongs at
     `build_panel`'s own boundary, where the frame really is a Panel and an unclassified
     column is this module having grown one; here it would only refuse the hand-built frames
     the screen's own unit tests are written on, which are not Panels and do not claim to be.
     The two compose: nothing unclassified can reach a served Panel in the first place, so on
     a Panel this check is total.
     """
-    bad = [c for c in names if c not in p.columns or column_role(c) == "outcome"]
+    bad = [c for c in names
+           if c not in p.columns or column_role(c) in NON_FEATURE_ROLES]
     if not bad:
         return
     lines = []
     for c in sorted(set(bad)):
         if c not in p.columns:
             lines.append(f"  `{c}` is not on this frame at all")
+            continue
+        if column_role(c) == "recorded":
+            lines.append(f"  `{c}` is a condition observed during week w, not published for "
+                         f"it; there is no before-the-week measurement of it on this frame")
             continue
         kin = [k for k in (f"{c}_prior", f"{c}_recent", f"{c}_trend") if k in p.columns]
         beside = f"; measured before its week it is {' or '.join(kin)}" if kin else ""
@@ -876,10 +1023,11 @@ def _served(p: pl.DataFrame) -> pl.DataFrame:
         return p
     raise PanelRuleViolation(
         f"the Panel was about to hand back {unknown}, and nothing says whether they are "
-        f"measured before week w or on it. Add each to `IDENTITY`, `PRE_KICKOFF`, `DERIVED` "
-        f"or `OUTCOMES` in hub.models.panel. If it is week w's own play it belongs in "
-        f"`OUTCOMES`, where `require_features` will refuse it as a feature and callers that "
-        f"want it as an outcome still reach it -- which is the whole point of naming it.")
+        f"measured before week w or on it. Add each to `IDENTITY`, `PRE_KICKOFF`, `DERIVED`, "
+        f"`RECORDED` or `OUTCOMES` in hub.models.panel. If it is week w's own play it belongs "
+        f"in `OUTCOMES`; if it is a condition observed during the game rather than published "
+        f"for it, `RECORDED`. Both are refused as features by `require_features` and both stay "
+        f"reachable by name -- which is the whole point of naming them.")
 
 
 def build_panel(seasons: Sequence[int] = SEASONS,
@@ -922,7 +1070,7 @@ def build_panel(seasons: Sequence[int] = SEASONS,
     Panel is served without them rather than not served at all -- `injury_columns` and ADR-0023.
 
     **What comes back, and how a caller tells one half from the other.** Both returns go
-    through `_served`, which puts every column on one of the four sides named above it and
+    through `_served`, which puts every column on one of the five sides named above it and
     refuses one that is on none. So the frame carries week w's own realised play *and* the
     features measured before it, as it always did, and `feature_columns` now says which are
     which -- `outcome_columns` says the rest, and `require_features` is what refuses a caller
