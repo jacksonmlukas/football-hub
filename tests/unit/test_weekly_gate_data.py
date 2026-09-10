@@ -8,12 +8,15 @@ all. That is the shape issue #108 was filed about: pure functions extracted for 
 while the defect lives in how they are called.
 
 The specific thing that only running can show is the **join failure**. `VOID_FLOOR` voids a
-run when too many roster-weeks are a player the consensus page did not list who scored anyway,
-because an unmatched player is ranked last and that benches the incumbent's arm rather than
-adding noise -- a directional error, biased toward us. `coverage` and `verdict` are tested on
-hand-built inputs next door in `test_weekly_gate.py`; what was missing is that a real assembly
-can produce such a cell at all. Two of the archive's sixteen players carry one, observed:
-Michael Pittman in 2024 week 6 and Gus Edwards in 2024 week 10.
+run when too many roster-weeks are a player the consensus page did not list who scored anyway.
+It was written when that error was *directional* -- an unmatched player was ranked last, which
+benched the incumbent's arm rather than adding noise, biased toward us. Since #206 neither arm
+scores a player consensus cannot price, so the same cell is a hole in the covered share
+instead: a weaker fault, the same floor, and the reason the floor is still worth having is
+that a run answering for one slate while naming another is the failure either way. `coverage`
+and `verdict` are tested on hand-built inputs next door in `test_weekly_gate.py`; what was
+missing is that a real assembly can produce such a cell at all. Two of the archive's sixteen
+players carry one, observed: Michael Pittman in 2024 week 6 and Gus Edwards in 2024 week 10.
 
 `tests/panelarchive.py` says what the archive holds and what it is a capture of.
 """
@@ -131,10 +134,17 @@ def test_the_join_failure_the_floor_guards_against_is_reachable_from_the_assembl
 
 
 def test_the_arm_under_test_falls_back_to_the_incumbent_where_it_has_no_projection(universe):
-    """A player the Weekly projection cannot price is not scored as a zero -- he is scored at
-    the incumbent's own number, so neither arm is handed information the other lacks. That is
-    the defect that made the first `lineup_gate` unable to fail, and it lives in one `np.where`
-    inside this assembly rather than anywhere in the gate.
+    """A player the Weekly projection cannot price is scored at the points its own week's
+    paired observations carry at his rank, and never as a zero, a NaN or a negated rank.
+
+    **What this column is for changed with #206 and what it contains did not.** It was the
+    arm under test, and the argument for filling those cells at all was that benching them
+    would hand the incumbent information the arm lacks. Both arms now decline to score them
+    together -- `weekly_gate.priced_by_both` -- so nothing below is on a path the verdict is
+    read off. It is kept, and kept under test, because two of the three treatments the gate
+    still scores as a check are rebuilt from this column, and because the published -1.004
+    was measured on it: a column that had already collapsed the fallback to `UNRANKED` would
+    leave that figure re-derivable from nothing but the page that carries it.
 
     Which cells those are is re-derived from the Panel the assembly itself built, rather than
     read off `addable` -- that mask is the *other* half of the same `np.isnan`, so reading it
@@ -152,16 +162,17 @@ def test_the_arm_under_test_falls_back_to_the_incumbent_where_it_has_no_projecti
     weekly, cons, se = universe.weekly[2024], universe.consensus[2024], universe.se[2024]
     assert fallback.any() and (~fallback).any(), "both halves have to exist to compare them"
 
-    # The fallback is still a fallback -- a player the model cannot price is scored, not
-    # benched, or the arm under test would be handed a smaller universe than the incumbent
-    # and the gate could not fail. What changed with #44 is its *units*: it used to be the
+    # The fallback is still a fallback in this column -- a player the model cannot price
+    # carries a number rather than a bench. It stopped being a lineup rule with #206, where
+    # both arms decline those cells together; what it still is, is the thing the other two
+    # treatments are rebuilt from. What changed with #44 is its *units*: it used to be the
     # incumbent's own number, negated ECR, sitting in a column of fantasy points, so every
     # projected player outranked every unprojected one whatever either was worth.
     ranked_fallback = fallback & (cons > G.UNRANKED)
     assert ranked_fallback.any(), "no ranked-but-unprojected cell, so nothing to check"
     assert (weekly[ranked_fallback] > G.UNRANKED).all(), (
-        "a player the model cannot price was benched rather than scored, so the two arms no "
-        "longer see the same universe")
+        "the interpolation is gone from the column, and with it the only reconstruction of "
+        "the treatment the published -1.004 was measured under")
     # One scale: the fallback lands inside the range of the projections it sits beside.
     priced = weekly[~fallback]
     assert weekly[ranked_fallback].min() >= priced.min() - 1e-9
@@ -339,3 +350,46 @@ def test_the_three_treatments_are_reachable_from_a_real_assembly(universe):
     assert (mixed[fallback] == universe.consensus[2024][fallback]).all()
     assert np.array_equal(stripped[~fallback], weekly[~fallback])
     assert np.array_equal(mixed[~fallback], weekly[~fallback])
+
+
+def test_the_fallback_reaches_no_result_on_a_real_assembly(universe):
+    """#206 driven end to end offline, and **this capture is the case the guard is for.**
+
+    The unit tests next door prove the restriction on fixtures whose arithmetic is on paper.
+    What running it here found is the failure mode restricting the rows creates, arriving
+    unprompted on real inputs: the archive's consensus page carries 16 of the board's 200
+    players, so only **10.1%** of roster-week cells are priced by both arms, every roster's
+    fieldable side fits inside the starting slots, and the two arms field the identical team
+    in **every** scored roster-week. The effect is +0.000 -- not measured, forced.
+
+    That is `lineup_gate`'s structural zero (ADR-0012) arriving down a different road, and it
+    is exactly what a run must not report as a result. So the shares are asserted, and so is
+    the loud line: a capture this thin is the right place to require the gate to say it could
+    not have failed, because a production run would not fire it and nothing else would.
+
+    The unrestricted arm still separates here (+0.075), which is what makes the zero above a
+    property of the restriction rather than of a capture where nothing separates at all.
+    Every figure is a property of this trim and none is comparable with production -- the same
+    artefact the join-failure test records.
+    """
+    pop = G.priced_share(universe)
+    assert pop["cells"] == coverage(universe)["cells"], "one universe, every block"
+    assert pop["share"] == pytest.approx(0.101, abs=5e-4), "10.1% of cells, both arms"
+    assert pop["no_projection"] > 0.0 and pop["no_rank"] > 0.0
+
+    means = [e.summary["mean"] for e in G.treatment_effects(universe, seed=0)]
+    assert len(means) == 3 and not any(np.isnan(m) for m in means)
+    assert max(means) - min(means) == 0.0, (
+        "a treatment reached a scored cell: the restriction missed an arm, a week or the "
+        "waiver rule, and the effect is once again partly the fallback")
+
+    assert pop["forced"] == 1.0, "no scored roster-week here leaves either arm a choice"
+    said = " ".join(" ".join(G.priced_report(pop)).split())
+    assert "THE ARMS NEVER DISAGREE" in said
+    assert "zero by construction and this run could not have failed" in said
+    assert means == [pytest.approx(0.0)] * 3, "which is the number it is warning about"
+
+    loose = [e.summary["mean"] for e in G.treatment_effects(universe, seed=0, restrict=False)]
+    assert loose == [pytest.approx(0.075)] * 3, (
+        "the pre-#206 universe separates the arms on this capture, so the forced zero above "
+        "is the restriction and not a trim where nothing could ever separate")

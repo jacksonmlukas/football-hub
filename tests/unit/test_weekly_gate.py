@@ -8,6 +8,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from hub.league import STARTERS
 from hub.season import weekly_gate as G
 
 
@@ -226,15 +227,25 @@ def test_compare_takes_one_argument_and_a_named_set_of_options():
     purpose. `ceiling` was added for #43 and is the shape this test should allow: opt-in,
     defaulting off, and adding a column rather than changing what the gate measures. A
     parameter that moved the effect would deserve to fail here.
+
+    **`restrict` is one that moved the effect, and it failed here first.** #206 changes what
+    the gate measures on purpose -- both arms score only the roster-weeks both can price --
+    so it is the one parameter in this set that defaults *on*, and unlike `ceiling` it is not
+    opt-in. Both defaults are asserted below, in opposite directions, because both of them
+    are the decision and not the convenience.
     """
     import inspect
     sig = inspect.signature(G.compare)
     positional = [p for p in sig.parameters.values()
                   if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD]
     assert len(positional) == 1 and positional[0].name == "g"
-    assert set(sig.parameters) - {"g"} == {"weeks", "churn", "z", "mask_pool", "ceiling"}
+    assert set(sig.parameters) - {"g"} == {"weeks", "churn", "z", "mask_pool", "ceiling",
+                                           "restrict"}
     assert sig.parameters["ceiling"].default is False, (
         "the ceiling must be opt-in; on by default it would change every existing run")
+    assert sig.parameters["restrict"].default is True, (
+        "#206 is the gate, not a sensitivity: a run that has to ask for it is a run that "
+        "reports the fallback by default")
 
 
 # --- the waiver rule, and the artifact it was written with ------------------
@@ -639,11 +650,11 @@ def test_the_mixed_scale_treatment_is_the_column_44_removed():
     assert (got[priced] == col[priced]).all()
 
 
-def test_the_primary_treatment_is_the_column_the_assembly_already_built():
+def test_the_column_treatment_is_the_one_the_assembly_already_built():
     """It hands back the same object rather than a copy that happens to agree, so no run can
-    score the primary row against a column the verdict was not read off."""
+    score that row against a column the verdict was not read off."""
     g = _fallback_column()
-    assert G.under_treatment(g, G.PRIMARY_TREATMENT) is g
+    assert G.under_treatment(g, G.COLUMN_TREATMENT) is g
     with pytest.raises(ValueError, match="no such treatment"):
         G.under_treatment(g, "whatever-sounds-better")
 
@@ -668,27 +679,33 @@ def test_the_same_rows_score_to_three_different_numbers():
     cannot price tie at `UNRANKED` and the lineup takes them in order (7); and 4, 9, 8 and 7
     under the mixed scale, where ranks decide among the unprojected (28). One set of rows,
     three treatments, three effects.
+
+    **`restrict=False` is the pre-#206 universe, and this test is why it stays reachable.**
+    The spread it holds is the published finding; under the gate's own scored rows the same
+    three treatments reach no scored cell and the three effects collapse to one, which is
+    asserted directly below rather than by deleting this.
     """
     got = {e.treatment.name: e.summary["mean"]
-           for e in G.treatment_effects(_fallback_column(), weeks=[5])}
+           for e in G.treatment_effects(_fallback_column(), weeks=[5], restrict=False)}
     assert got == {"rank-interpolated": pytest.approx(19.0 - 30.0),
                    "unscoreable": pytest.approx(7.0 - 30.0),
                    "mixed scale": pytest.approx(28.0 - 30.0)}
 
 
-def test_the_primary_row_is_the_frame_the_verdict_was_read_off():
+def test_the_carried_row_is_the_frame_the_verdict_was_read_off():
     """Handed back rather than re-scored, so a run plays three arms and not four -- and so the
-    primary line in the table cannot disagree with the effect printed above it."""
+    assembled column's line in the table cannot disagree with the effect printed above it."""
     g = _fallback_column()
-    paired = G.compare(g, weeks=[5])
-    effects = G.treatment_effects(g, weeks=[5], primary=paired)
+    paired = G.compare(g, weeks=[5], restrict=False)
+    effects = G.treatment_effects(g, weeks=[5], primary=paired, restrict=False)
     mean = float(np.asarray(paired["diff"].to_numpy()).mean())
-    assert effects[0].treatment.role == "primary"
+    assert effects[0].treatment.name == G.COLUMN_TREATMENT
     assert effects[0].summary["mean"] == pytest.approx(mean)
     assert effects[0].seasons["gain"].to_list() == [pytest.approx(mean)]
-    # And it is handed to the primary *only*. A frame reused across the table would print
-    # three copies of one effect under three names, which is the single-treatment report
-    # wearing the shape of the fix for it.
+    # And it is handed to that row *only*. A frame reused across the table would print three
+    # copies of one effect under three names, which is the single-treatment report wearing
+    # the shape of the fix for it -- and, since #206, would also fake the check that the
+    # treatments agree by handing all three the same answer.
     assert [e.summary["mean"] for e in effects[1:]] == [
         pytest.approx(7.0 - 30.0), pytest.approx(28.0 - 30.0)]
 
@@ -709,17 +726,25 @@ def _published():
 
 
 def test_the_three_published_effects_print_side_by_side_with_their_spread():
-    """What a reader of the output gets, at the numbers the document carried by hand. The
-    spread is 1.541 -- larger than any of the three is from zero, which is the finding -- and
-    it is subtracted from the numbers in front of it rather than quoted."""
-    said = _flat(G.treatment_report(_published()))
+    """What a reader of the pre-#206 output got, at the numbers the document carried by hand.
+    The spread is 1.541 -- larger than any of the three is from zero, which is the finding --
+    and it is subtracted from the numbers in front of it rather than quoted.
+
+    `restricted=False`, because that is the universe these three were measured on. The block
+    says which universe it is printing, so the same three rows cannot be read as the check
+    #206 turned them into.
+    """
+    said = _flat(G.treatment_report(_published(), restricted=False))
     assert "-1.004 95% CI [-1.347, -0.640]" in said
     assert "+0.537 95% CI [+0.133, +0.939]" in said
     assert "+0.215 95% CI [-0.242, +0.684]" in said
     assert "spread across treatments 1.541 " + G.UNIT in said
     assert "larger than any effect any of them reports (1.004)" in said
     assert "rank-interpolated (primary)" in said and "mixed scale (superseded)" in said
-    assert "#206" in said, "the block says where the primary was chosen and does not choose"
+    assert "pre-#206 universe" in said, \
+        "and it says that this is the universe where the choice was still live"
+    assert "STILL REACHES THE RESULT" not in said, \
+        "a live spread here is the finding, not an alarm"
 
 
 def test_a_spread_smaller_than_the_effects_says_smaller():
@@ -727,7 +752,7 @@ def test_a_spread_smaller_than_the_effects_says_smaller():
     print a line that reads correctly rather than one restating 2026-09-07."""
     tight = [_effect("rank-interpolated", "primary", -1.004, -1.1, -0.9),
              _effect("unscoreable", "comparison", -0.900, -1.0, -0.8)]
-    said = _flat(G.treatment_report(tight))
+    said = _flat(G.treatment_report(tight, restricted=False))
     assert "spread across treatments 0.104" in said
     assert "smaller than any effect any of them reports (1.004)" in said
 
@@ -736,9 +761,269 @@ def test_one_treatment_is_not_a_comparison_and_prints_nothing():
     """A number beside itself is the single-treatment report this replaces, and a spread of
     zero printed across it would read as a finding. An unscored treatment is listed rather
     than dropped, because a missing row reads as one nobody ran."""
-    assert G.treatment_report(_published()[:1]) == []
+    assert G.treatment_report(_published()[:1], restricted=False) == []
     empty = G.TreatmentEffect(G.Treatment("empty", "comparison", "no rows"),
                               G.summarise(pl.DataFrame()), _seasons([]))
-    said = _flat(G.treatment_report([*_published(), empty]))
+    said = _flat(G.treatment_report([*_published(), empty], restricted=False))
     assert "empty (comparison)" in said and "nothing scored" in said
     assert "spread across treatments 1.541" in said, "and it does not enter the spread"
+
+
+# --- and #206: the fallback is not chosen, it is removed --------------------
+#
+# The three treatments above are 1.5 points apart, which is further than any of them is from
+# zero, so the gate was reporting a modelling choice nobody had justified. #206's disposition
+# is not a fourth choice: both arms score only the roster-weeks both can price, `method.md`
+# rule 6 holds by construction rather than by two arms applying a fallback symmetrically, and
+# the cells the treatments disagreed about are the cells nothing scores.
+#
+# What it costs is that the result speaks for that share of the slate and no more, which the
+# gate prints, and that the same question about the rest is unanswered, which the gate also
+# prints. These hold both halves.
+
+def _priced_universe():
+    """Twelve players, nine of them priceable, and a week whose arithmetic is on paper.
+
+    One QB, two RBs and a TE fill their slots however they are scored. Eight receivers
+    compete for three WR slots and the flex, and the last three of them are the cells the
+    model cannot price -- carrying a huge *fallback* number and a top consensus rank, so that
+    the pre-#206 universe starts them in both arms and the restriction can start them in
+    neither. Their realised points are 1,000 each, so any arm that fields one says so loudly.
+
+      restricted   consensus starts 8, 4, 5 and flexes 6 -> 0+1+2+3  =    6
+                   weekly    starts 4, 5, 6 and flexes 7 -> 1+2+3+10 =   16, diff +10
+      unrestricted consensus starts 9, 10, 11 and flexes 8          = 3000
+                   weekly    starts 9, 10, 11 and flexes 4          = 3001, diff  +1
+    """
+    pos = ["QB", "RB", "RB", "TE"] + ["WR"] * 8
+    n = len(pos)
+    projected = np.zeros((n, 18), dtype=bool)
+    projected[:9, 4] = True                     # the four forced slots and receivers 4-8
+
+    cons = np.zeros((n, 18))
+    cons[:, 4] = [-1.0, -2.0, -3.0, -4.0,
+                  -50.0, -51.0, -52.0, -53.0, -49.0,      # the priceable receivers
+                  -10.0, -11.0, -12.0]                    # and the three ranked best
+
+    weekly = np.full((n, 18), G.UNRANKED)
+    weekly[:, 4] = [10.0, 9.0, 8.0, 7.0,
+                    30.0, 29.0, 28.0, 27.0, 1.0,
+                    100.0, 90.0, 80.0]          # what the fallback put where no projection is
+
+    realised = np.zeros((n, 18))
+    realised[4:, 4] = [1.0, 2.0, 3.0, 10.0, 0.0, 1000.0, 1000.0, 1000.0]
+
+    # The mask exactly as `assemble_universe` builds it: both arms can price him.
+    addable = projected & (cons > G.UNRANKED)
+    return _inputs(rosters={2024: [list(range(n))]}, pos={2024: pos},
+                   realised={2024: realised}, consensus={2024: cons},
+                   weekly={2024: weekly}, projected={2024: projected},
+                   addable={2024: addable}, se={2024: np.zeros((n, 18))}, pool={2024: [[]]})
+
+
+def test_neither_arm_starts_a_player_the_other_cannot_price():
+    """The whole disposition in one frame. Both arms are restricted to the same nine cells,
+    so the three the model cannot price -- worth a thousand points each, and ranked first by
+    consensus -- are started by neither. Restricting one arm and not the other is the defect
+    `_one_scale` names; restricting both is a smaller slate, which is what #206 chose."""
+    got = G.compare(_priced_universe(), weeks=[5])
+    assert got["consensus"].to_list() == [pytest.approx(6.0)]
+    assert got["weekly"].to_list() == [pytest.approx(16.0)]
+    assert got["diff"].to_list() == [pytest.approx(10.0)]
+
+
+def test_the_pre_206_universe_started_them_in_both_arms():
+    """The same rows unrestricted, which is what every published figure was measured on: the
+    three unpriceable receivers are the top of the consensus page and carry the fallback's
+    largest numbers, so both arms field all three and the gate compares two lineups chosen
+    mostly by a guess. 3,000 against 3,001 for a difference of one point."""
+    got = G.compare(_priced_universe(), weeks=[5], restrict=False)
+    assert got["consensus"].to_list() == [pytest.approx(3000.0)]
+    assert got["weekly"].to_list() == [pytest.approx(3001.0)]
+
+
+def test_the_restriction_is_the_mask_the_gate_already_carried():
+    """One definition, not two. `priced_by_both` is `addable` -- `(cons > UNRANKED) &
+    projected`, built once in the assembly -- rather than a second `np.isnan` in this module
+    deciding again what "both arms can price him" means. Two spellings of one idea is how the
+    share a run prints comes to describe a different set of cells from the one it scored."""
+    g = _priced_universe()
+    assert G.priced_by_both(g, 2024) is g.addable[2024]
+
+
+def test_the_fallback_cannot_move_the_restricted_result():
+    """#206's claim, checked rather than asserted: the three treatments differ only in cells
+    the restriction leaves out, so on the scored rows they are one number. Unrestricted, the
+    same three rows and the same fixture give a spread of 2,985 points -- +1 where the
+    fallback's guesses are fielded against -2,984 where they are not, which is the shape of
+    the finding a real run put at 1.5 points."""
+    g = _priced_universe()
+    restricted = {e.treatment.name: e.summary["mean"]
+                  for e in G.treatment_effects(g, weeks=[5])}
+    assert set(restricted) == {"rank-interpolated", "unscoreable", "mixed scale"}
+    assert list(restricted.values()) == [pytest.approx(10.0)] * 3, \
+        "one number three times is the point: no treatment reaches a scored cell"
+
+    loose = {e.treatment.name: e.summary["mean"]
+             for e in G.treatment_effects(g, weeks=[5], restrict=False)}
+    assert loose[G.COLUMN_TREATMENT] == pytest.approx(1.0)
+    assert max(loose.values()) - min(loose.values()) == pytest.approx(2985.0), \
+        "and the same fixture without the restriction is where the choice was worth points"
+
+
+def test_a_spread_that_survives_the_restriction_is_an_alarm_and_not_a_finding():
+    """A treatment reaching a scored cell means the restriction missed an arm, a week or the
+    waiver rule -- and the effect above it is once again partly the fallback. Loud, in the
+    register the VOID line and the ceiling use, because a spread printed quietly under a
+    heading that says it should be zero reads as a rounding artifact."""
+    said = _flat(G.treatment_report(_published()))
+    assert "THE FALLBACK STILL REACHES THE RESULT" in said
+    assert "disagree by 1.541" in said
+    clean = [_effect("rank-interpolated", "was primary", -1.004, -1.347, -0.640),
+             _effect("unscoreable", "was a comparison", -1.004, -1.347, -0.640)]
+    quiet = _flat(G.treatment_report(clean))
+    assert "spread across treatments 0.000" in quiet
+    assert "STILL REACHES THE RESULT" not in quiet, "zero is the expected reading"
+    assert "check on the restriction and not a choice between them" in quiet
+
+
+def test_the_foresight_arm_is_restricted_with_the_other_two():
+    """A ceiling that could start what the gate does not score would bound a different
+    question, and would bound it about three hundred times too high on this fixture."""
+    got = G.compare(_priced_universe(), weeks=[5], ceiling=True)
+    assert got["foresight"].to_list() == [pytest.approx(16.0)]
+    assert got["ceiling_diff"].to_list() == [pytest.approx(10.0)]
+    loose = G.compare(_priced_universe(), weeks=[5], ceiling=True, restrict=False)
+    assert loose["foresight"].to_list() == [pytest.approx(3010.0)]
+
+
+def test_the_open_pool_sensitivity_does_not_carry_the_restriction_with_it():
+    """`mask_pool` decides who may be *added* and the restriction decides who may be
+    *started*. They were one mask read for one purpose until #206 and are now one mask read
+    for two, so the sensitivity that opens the pool must not quietly open the lineup as
+    well -- that would make `--open-pool` a different gate rather than a wider one."""
+    got = G.compare(_priced_universe(), weeks=[5], mask_pool=False)
+    assert got["weekly"].to_list() == [pytest.approx(16.0)]
+    assert got["consensus"].to_list() == [pytest.approx(6.0)]
+
+
+def _streamable():
+    """A roster whose quarterback the model cannot price this week, and a free agent one.
+
+    Nine held players -- one QB, two RBs, a TE and five receivers -- plus a free-agent QB.
+    The held quarterback is the highest-scoring player on the roster and is outside the
+    scored cells, so the *fieldable* lineup has an empty QB slot that a 3.0 free agent fills.
+    Read on the whole roster, no swap improves anything and the answer is None.
+    """
+    pos = ["QB", "RB", "RB", "TE"] + ["WR"] * 5 + ["QB"]
+    score = np.array([10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 3.0])
+    only = np.ones(len(pos), dtype=bool)
+    only[0] = False
+    return pos, score, only
+
+
+def test_the_waiver_decision_reads_the_lineup_the_week_will_field():
+    """A swap chosen against a lineup the restriction will not field is a swap chosen against
+    a projection nothing scores. Both arms are handed the same `only`, so this is the
+    restriction reaching the churn rule and not a rule either arm has to itself."""
+    pos, score, only = _streamable()
+    roster, pool, need = list(range(9)), [9], sum(STARTERS.values())
+    assert G.waiver_swap(roster, pool, pos, score, need) is None, \
+        "read on the whole roster the quarterback slot is already filled by the best player"
+    assert G.waiver_swap(roster, pool, pos, score, need, only=only) == (9, 8), \
+        "read on what the week can field it is empty, and streaming one is worth 3 points"
+
+
+def test_a_player_outside_the_scored_cells_is_still_held_and_still_droppable():
+    """The restriction is on the lineup arithmetic, not on the roster. A player nothing can
+    price this week is not released -- he is unpriceable *this* week, and a rule that dropped
+    him would be a roster rule invented by a measurement harness."""
+    _, _, only = _streamable()
+    kept = G.fieldable(range(9), only)
+    assert 0 not in kept and kept == list(range(1, 9))
+    assert G.fieldable(range(9), None) == list(range(9)), "and no mask is the whole roster"
+
+
+def test_the_covered_share_is_counted_off_the_mask_the_gate_scored():
+    """Criterion four: reported with the result rather than discovered by probing. Nine of
+    twelve cells are priced by both arms, and the three that are not are three the model
+    cannot project -- counted off `priced_by_both` itself, so the share printed beside a
+    number is the share that number was measured over."""
+    pop = G.priced_share(_priced_universe(), weeks=[5])
+    assert pop["cells"] == 12.0
+    assert pop["share"] == pytest.approx(0.75)
+    assert pop["no_projection"] == pytest.approx(0.25)
+    assert pop["no_rank"] == pytest.approx(0.0)
+    off = G.priced_share(_priced_universe()._replace(covered=set()), weeks=[5])
+    assert off["cells"] == 0.0
+    assert G.priced_report(off) == [], "no cells is not a share of zero, it is no share"
+
+
+def test_a_player_the_page_does_not_rank_leaves_the_scored_cells_too():
+    """Both directions, and this one supersedes half a pre-registered rule. An unlisted
+    player was *ranked last* on the argument that the absence is the incumbent's answer --
+    which makes a refusal to price into a free lineup rule, the same thing that disqualified
+    `unscoreable` in the other direction. `coverage` still counts him; nothing scores him."""
+    g = _priced_universe()
+    cons = g.consensus[2024].copy()
+    cons[4, 4] = G.UNRANKED                      # receiver 4: projected, and now unlisted
+    g = g._replace(consensus={2024: cons},
+                   addable={2024: g.projected[2024] & (cons > G.UNRANKED)})
+    pop = G.priced_share(g, weeks=[5])
+    assert pop["share"] == pytest.approx(8 / 12)
+    assert pop["no_rank"] == pytest.approx(1 / 12)
+    assert G.coverage(g, weeks=[5])["unranked"] == pytest.approx(1 / 12) \
+        == pytest.approx(pop["no_rank"]), \
+        "still counted over every roster-week, including the ones nothing scores"
+    # He was worth a point to the weekly arm and is now out of both arms' universe.
+    assert G.compare(g, weeks=[5])["weekly"].to_list() == [pytest.approx(15.0)]
+
+
+def test_a_roster_week_with_no_lineup_choice_left_is_counted_and_named():
+    """The failure mode restricting the rows creates, and the reason it is printed.
+
+    Shrink the priceable side until it fits inside the starting slots and every player either
+    arm can price starts: the two arms field the identical team, the difference is zero by
+    construction, and a gate that cannot disagree with itself is ADR-0012's structural zero
+    arriving by a different road. It fired unprompted on the offline archive the first time
+    #206 was run end to end, which is why it is a counted quantity rather than a caveat.
+    """
+    free = G.priced_share(_priced_universe(), weeks=[5])
+    assert free["roster_weeks"] == 1.0
+    assert free["forced"] == 0.0, "nine priceable against eight slots is a choice"
+
+    g = _priced_universe()
+    priced = g.projected[2024].copy()
+    priced[8, 4] = False                         # eight priceable, and eight slots
+    g = g._replace(projected={2024: priced},
+                   addable={2024: priced & (g.consensus[2024] > G.UNRANKED)})
+    pop = G.priced_share(g, weeks=[5])
+    assert pop["forced"] == 1.0
+    got = G.compare(g, weeks=[5])
+    assert got["diff"].to_list() == [pytest.approx(0.0)], \
+        "and the zero it warns about is a zero no arm chose"
+
+    said = _flat(G.priced_report(pop))
+    assert "no lineup choice in 100.0% of 1 scored roster-weeks" in said
+    assert "THE ARMS NEVER DISAGREE" in said
+    assert "could not have failed" in said
+    assert "THE ARMS NEVER DISAGREE" not in _flat(G.priced_report(free)), \
+        "the loud line is the 100% reading and not a threshold somebody picked"
+    assert "no lineup choice in 0.0% of" in _flat(G.priced_report(free)), \
+        "but the share is printed either way, because the in-between is the reader's call"
+
+
+def test_the_result_says_what_it_covers_and_what_it_leaves_unanswered():
+    """Criterion five, in the words the ticket asks for. A number that speaks for three
+    quarters of a slate while reading as though it speaks for all of it is the failure this
+    ticket is about, so the block says the share, says what is out and why, and says that the
+    question about the rest is **unanswered** rather than absent, negative or implied."""
+    said = _flat(G.priced_report(G.priced_share(_priced_universe(), weeks=[5])))
+    assert "scored on the 75.0% of 12 roster-week cells both arms can price" in said
+    assert "there is no fallback" in said.lower()
+    assert "left out: 25.0% the model cannot project, 0.0% the consensus page does not rank"\
+        in said
+    assert "UNANSWERED: whether the weekly projection beats consensus on the 25.0% it "\
+           "cannot price" in said
+    assert "in either direction" in said, "unanswered is not a negative result"
+    assert "What would answer it is a projection for those players" in said

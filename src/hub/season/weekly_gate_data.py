@@ -64,10 +64,15 @@ def _one_scale(cons: np.ndarray, mu: np.ndarray) -> np.ndarray:
     scrub sorted above a rank-1 star. The fallback was meant to stop the arm being handicapped
     and instead handed it a preference unrelated to either estimate (#44).
 
-    **Why a fallback at all, rather than a sentinel.** Benching everyone the model cannot price
-    would hand consensus information the arm under test lacks, and a gate whose arms see
-    different universes is the defect that made the first `lineup_gate` unable to fail. The
-    fallback's intent was right; only its units were wrong.
+    **Why a fallback at all, rather than a sentinel -- and why the question stopped being the
+    right one.** Benching everyone the model cannot price would hand consensus information the
+    arm under test lacks, and a gate whose arms see different universes is the defect that
+    made the first `lineup_gate` unable to fail. That argument is correct and it is an argument
+    against *one arm* benching him. Both arms declining to score him is not a sentinel, it is
+    a smaller slate, and that is what the gate does now: `weekly_gate.priced_by_both` keeps
+    every cell below out of every arm's lineup, so the guess this function makes reaches no
+    result. #206, and the reason the units question was never the whole of it -- a fallback
+    with the right units is still an estimator whose error the arm under test carries.
 
     **What replaces it, and what it assumes.** Per week, among players carrying both a rank and
     a projection, consensus rank and points are paired observations of the same players. An
@@ -80,14 +85,21 @@ def _one_scale(cons: np.ndarray, mu: np.ndarray) -> np.ndarray:
     A week with no paired player has nothing to calibrate against, so its unprojected players
     keep `UNRANKED` -- unscoreable rather than guessed at.
 
-    **This is one of three treatments, and it is the one the gate reports under.** The other
-    two are derivable from what this returns beside `~np.isnan(mu)`, and
-    `hub.season.weekly_gate.TREATMENTS` holds all three with the role of each: the column
-    below is the primary, an unprojected player scored `UNRANKED` throughout is the
-    *unscoreable* comparison, and the superseded mixed scale is `cons` in those cells. Which
-    one is primary was decided in #206 and is not a property of this function; that the gate
-    reports the spread across all three rather than one number is #207, and it is why the
-    `projected` mask leaves here at all.
+    **This is one of three treatments and the gate reports under none of them.** The other two
+    are derivable from what this returns beside `~np.isnan(mu)`, and
+    `hub.season.weekly_gate.TREATMENTS` holds all three with the standing of each: the column
+    below is the one the assembly carries (`COLUMN_TREATMENT`), an unprojected player scored
+    `UNRANKED` throughout is the *unscoreable* comparison, and the superseded mixed scale is
+    `cons` in those cells. #207 made a run report the spread across all three, which is why
+    the `projected` mask leaves here at all; #206 then removed the choice by removing the
+    cells from what is scored.
+
+    **So why interpolate at all now.** Because a run still scores all three, as a check that
+    they cannot differ, and two of the three are rebuilt from this column -- so a column that
+    had already collapsed them to `UNRANKED` could only check `mixed scale` against itself.
+    The arithmetic below is what makes the -1.004 in `docs/weekly-blend-gate.md` reachable
+    from the code that produced it rather than transcribable only from the page. It is not on
+    any path the verdict is read off.
     """
     out = np.where(np.isnan(mu), UNRANKED, mu)
     for w in range(cons.shape[1]):
@@ -215,6 +227,12 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         # Addable only where BOTH arms can score him. See the pre-registration in
         # docs/weekly-projection-plan.md: consensus ranks 35.8% of the pool, so an unmasked
         # pool would hand the arm under test six hundred players the incumbent cannot see.
+        #
+        # Since #206 this mask is read twice and the second reading is the load-bearing one:
+        # `weekly_gate.priced_by_both` is this, and it is now what either arm may *start* as
+        # well as what it may add. It is left as one array rather than split, because the two
+        # readings are one quantity -- "both arms can price him this week" -- and two arrays
+        # spelling it would be two things to keep in agreement.
         addable[yr] = (cons > UNRANKED) & ~np.isnan(mu)
         # A player with no projection has no standard error either; zero means the lower
         # confidence bound leaves the consensus fallback exactly where it was.
