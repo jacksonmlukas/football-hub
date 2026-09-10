@@ -86,8 +86,10 @@ NOT_FITTED_BECAUSE = (
     "traded against runtime; DEFAULT_CONCENTRATIONS is the axis `sensitivity` sweeps and not "
     "a value any figure is computed at -- the concentration a run actually uses is "
     "PoolConfig.field_concentration, which is a stated assumption covered by `pool_digest`. "
-    "Moving any of the three changes how finely, or over what range, this module reports; "
-    "none of them changes a prediction, and none has a measurement behind it to move. "
+    "DECISIVE_SIGMA is the evidential bar the rest of the repo's gates are stated at, which "
+    "is a convention rather than a quantity anybody measured. Moving any of the four changes "
+    "how finely, over what range, or at what confidence this module reports; none of them "
+    "changes a prediction, and none has a measurement behind it to move. "
 )
 
 # Enough that the ending-week distribution is stable to about a percentage point, which is
@@ -114,6 +116,16 @@ DEFAULT_CONCENTRATIONS = (1.0, 2.0, 4.0, 8.0, 16.0)
 # DEFAULT_TRIALS run. The resolution it publishes falls as 1/sqrt(trials), so a caller who
 # needs a finer verdict than a week returns can raise this and watch the figure move.
 WEEKLY_TRIALS = 400
+
+# How many standard errors of the paired difference a week has to clear before `weekly` calls
+# its recommendation distinguishable from the free pick. It was one, which is a two-sided
+# false positive rate of about one in three -- so roughly a third of the weeks where the two
+# picks are genuinely alike would have been reported as a departure worth taking, in a repo
+# whose gates elsewhere ask for a bootstrap interval excluding zero and a consistent sign
+# across held-out seasons. Two is the bar those gates are stated at; a stricter one would
+# start refusing weeks the trials really can separate, and the alternative when a week is
+# refused is free rather than costly, so the error is cheap in one direction and not the other.
+DECISIVE_SIGMA = 2.0
 
 
 class PoolOutcome(NamedTuple):
@@ -159,6 +171,14 @@ class EntryOutcome(NamedTuple):
     the picks that produced it -- and so a caller passing one in can see it was the one used.
     `replans` counts, per trial, the weeks where it would not play and had to be solved again;
     a figure with a high `replans` was mostly not a figure about the picks it names.
+
+    `share_each` is the trial-by-trial figure the three means above are means *of*, carried
+    out rather than reduced here because a difference between two of these outcomes has to be
+    taken **paired** to be worth anything. Two candidate plans on the same seed meet the same
+    season trial for trial (`_play`), so the spread of `a - b` is far tighter than the spread
+    of either arm -- and computing it from `share_sd` alone would throw that away and report
+    an interval several times too wide. It is positive in exactly the trials the entry
+    survived, which is why no second vector is needed for survival.
     """
     trials: int
     survives: float     # P(this entry outlasts the final week at all)
@@ -168,6 +188,18 @@ class EntryOutcome(NamedTuple):
                             # how finely two of these figures can be told apart
     plan: Plan | None = None    # the picks our entry played; None when it sampled as a rival
     replans: float = 0.0        # weeks per trial where that plan would not play
+    share_each: tuple[float, ...] = ()   # per trial; > 0 exactly where the entry survived
+
+    @property
+    def shared(self) -> float:
+        """P(this entry survives and somebody else does too).
+
+        The trials `PoolConfig.co_survivor_rule` decides, which is the one pool rule nobody
+        has confirmed and the reason it is worth a name of its own. How often it is reachable
+        is not a property of the pool -- it is a property of the field-concentration
+        assumption, and `sensitivity` is where the two are reported against each other.
+        """
+        return self.survives - self.sole
 
 
 def _plural(n: int, word: str) -> str:
@@ -197,12 +229,25 @@ class Buyback(NamedTuple):
 
 
 class Candidate(NamedTuple):
-    """One legal pick for a week, and what taking it is worth."""
+    """One legal pick for a week, and what taking it is worth.
+
+    The two standard errors ride alongside the two simulated figures rather than being
+    recoverable from them, because both are needed to print the figures honestly: a run that
+    reports `survives 30.4%` off 400 trials is claiming a tenth of a point it cannot see, and
+    `weekly_report` reads these to decide how many digits it is entitled to. They are the
+    error on *this candidate alone*; the difference between two candidates is paired and
+    tighter, which is `Weekly.resolution`.
+
+    Zero means "no Monte Carlo error", not "unknown". A week with nothing ahead of it is
+    priced in closed form and its figures are exact.
+    """
     team: str
     win_prob: float
     survives: float             # P(the season is survived, having taken this now)
     expected_dollars: float     # net of what the entry has already paid in
     is_fallback: bool           # the team auto-pick would assign for nothing
+    survives_se: float = 0.0        # standard error of `survives` at the trial count used
+    dollars_se: float = 0.0         # standard error of `expected_dollars`, likewise
 
 
 class Weekly(NamedTuple):
@@ -225,6 +270,17 @@ class Weekly(NamedTuple):
     up nothing and gained something, and clamping that to zero would file it as "the two plans
     survive alike" -- which is a different claim, and a false one. Zero is reserved for the case
     where they really do survive alike.
+
+    **Which comparison the interval is for, said once.** `resolution` and `given_up_se` are
+    both about *the recommended plan against the auto-pick plan*: two candidate plans, both
+    replayed by our own entry, against one season drawn once and shared between them. They are
+    **not** intervals on our arm against the field's sampling rule. That comparison cannot be
+    paired at all -- replaying a plan consumes no draws where sampling consumes one a week, so
+    the two arms walk the generator at different rates and their difference carries the
+    variance of two independent means (#151, and the docstring of
+    `test_our_entry_survives_materially_more_often_than_the_field_rule_gave_it` says so from
+    the test side). Two plans against each other is the comparison this simulator can make
+    honestly, and it is the one every figure here reports.
     """
     week: int
     recommend: str
@@ -234,6 +290,27 @@ class Weekly(NamedTuple):
     pot: float
     resolution: float           # the dollar difference this many trials can actually resolve
     candidates: list[Candidate]
+    given_up_se: float = 0.0    # standard error of `given_up`, paired across the same trials
+    trials: int = 0             # trials each candidate was run for; 0 when none were needed
+    cashed: int = 0             # of those, the ones where either arm took a share of the pot
+
+    @property
+    def unresolved(self) -> bool:
+        """Whether these trials carry any information about the comparison at all.
+
+        The degenerate regime, reported rather than folded into a tie. With our share often on
+        the order of a thousandth, a few hundred trials can return zero for *every* candidate:
+        both arms then have the identical figure, the spread of their difference is zero, and
+        a comparison at any bar reads "not decisive". That lands the week on the auto-pick for
+        a structural reason rather than because the auto-pick is right, and it is a different
+        statement from two plans that were measured and found alike -- which is what
+        `given_up == 0.0` off a set that did cash means.
+
+        `docs/method.md` rule 12: a gate that cannot run is an absence of evidence, not
+        evidence against. A week priced in closed form ran no trials and is not this -- there
+        is no Monte Carlo error for it to be about.
+        """
+        return self.trials > 0 and self.cashed == 0
 
     @property
     def decisive(self) -> bool:
@@ -244,9 +321,17 @@ class Weekly(NamedTuple):
         evidence rather than evidence against
         rather than refuted. A week that lands here should take the free pick, because it is
         free -- and should say that is why.
+
+        The bar is `resolution`, and since #159 that is `DECISIVE_SIGMA` standard errors of
+        the **paired** difference rather than one standard error of an unpaired one. One
+        standard error is a roughly one-in-three two-sided false positive rate, in a repo
+        whose gates ask for a bootstrap interval excluding zero and a positive sign in every
+        held-out season; two is the bar the rest of the repo calls a finding.
         """
         if self.matched:
             return True
+        if self.unresolved:
+            return False
         fb = next((c for c in self.candidates if c.is_fallback), None)
         return fb is None or abs(self.candidates[0].expected_dollars
                                  - fb.expected_dollars) > self.resolution
@@ -680,12 +765,30 @@ def _play(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int],
     left out, entry 0 is another member of the field and samples like one -- which is what
     `simulate` wants, because a field statistic has no us in it. Every other index samples
     either way, so a change to how we pick cannot reach a rival.
+
+    **The whole season is drawn before anybody picks, and that is what makes two candidates
+    comparable.** It reads like an ordering detail and is the pairing #159 is about. Drawn
+    week by week inside the loop, the number of games this trial consumed from the generator
+    depended on how far the trial got -- and the trial stops when the *last* entry dies, ours
+    included. So the moment our entry outlived the field in one candidate and not in the
+    other, that trial consumed a different number of draws, the stream offset, and every
+    later trial met a different season. Pairing survived only up to the first week our fate
+    differed, which is exactly the trials carrying the signal.
+
+    Drawn up front, the count is `sum(len(wk.games))` whatever happens afterwards. Rivals then
+    consume from the same stream, but only ever as a function of the results and their own
+    ledgers -- our entry replays a plan and consumes nothing (#151) -- so two candidate plans
+    handed the same seed meet the identical field, game for game and rival pick for rival
+    pick. `weekly` relies on that and `test_two_candidates_meet_the_identical_field` is what
+    holds it.
     """
     counts = []
+    # One draw per game per trial, and the same result read by every entry holding either
+    # side: the correlation this module exists for, unchanged. What is new is *when*.
+    results = [frozenset(a if rng.random() < p_a else b for a, b, p_a in wk.games)
+               for wk in wks]
     for at, (wk, w) in enumerate(zip(wks, weeks, strict=True)):
-        won: set[str] = set()
-        for a, b, p_a in wk.games:
-            won.add(a if rng.random() < p_a else b)
+        won = results[at]
         for i in range(len(alive)):
             if not alive[i]:
                 continue
@@ -734,7 +837,8 @@ def _entry_trials(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequenc
                         sole=sole / trials, share=share / trials,
                         share_sd=float(np.std(each)) if each else 0.0,
                         plan=ours.plan if ours is not None else None,
-                        replans=(ours.replans / trials) if ours is not None else 0.0)
+                        replans=(ours.replans / trials) if ours is not None else 0.0,
+                        share_each=tuple(each))
 
 
 def entry_outcome(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
@@ -891,6 +995,22 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     over an edge of one survival point that was entirely sampling noise. Paired trials cost
     nothing and remove it.
 
+    **Reseeding was not enough on its own, which is #159.** One seed and one stream is only a
+    shared season while both candidates consume it at the same rate, and they did not: the
+    trial stopped when the last live entry died, ours included, so the first trial our entry
+    outlasted the field in one candidate and not the other consumed a different number of
+    game draws and offset everything after it. The pairing held up to the first week our fate
+    differed, which is precisely the trials the comparison is about. `_play` now draws the
+    whole season before anybody picks, so the count is fixed and the field two candidates meet
+    is the same field, rival pick for rival pick.
+
+    **And the difference is taken paired, at two standard errors.** `resolution` is
+    `DECISIVE_SIGMA` standard errors of the trial-by-trial difference between the recommended
+    plan and the free one -- not the root-sum-square of two independent arms, which is a
+    different and much wider interval, and not one standard error, which called a difference
+    real about a third of the time when there was none. What the interval is a comparison
+    *of* is stated on `Weekly`: two candidate plans, not our arm against the field's rule.
+
     **The figures are net of `outlay`** -- the entry fee, plus any buyback already paid. That
     money is spent whichever team is picked, so subtracting it shifts every candidate by the
     same amount and cannot reorder them. It is subtracted anyway, because the question "which
@@ -915,38 +1035,75 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
 
     seed = int(rng.integers(2 ** 32))
     cands: list[Candidate] = []
-    sd: dict[str, float] = {}
+    # The per-trial figure behind each candidate's mean, kept so the comparison at the bottom
+    # can be made trial by trial. A candidate's own standard error goes on the candidate; the
+    # difference between two of them is a different and much tighter quantity and is computed
+    # from these rather than from those.
+    each: dict[str, np.ndarray] = {}
+    root = np.sqrt(trials)
     for r in ranked.iter_rows(named=True):
         team, p = str(r["team"]), float(r["win_prob"])
         if ahead:
             rest = entry_outcome(grid, ahead, entries=entries, ledger=[*spent, team],
                                  pool=cfg, trials=trials, rng=np.random.default_rng(seed))
             survives, share = rest.survives, rest.share
-            sd[team] = rest.share_sd
+            each[team] = xs = np.asarray(rest.share_each, dtype=float)
+            s_se = float(np.std(xs > 0.0)) / root * p
+            d_se = float(np.std(xs)) / root * p * pot
         else:
             # Nothing left to play: surviving this week is surviving, and the pot is split
             # with whoever else is still standing -- which the field statistics cannot say
-            # from here, so it is claimed as an outright win rather than guessed at.
+            # from here, so it is claimed as an outright win rather than guessed at. No trial
+            # was run, so both errors are zero because the figures are exact.
             survives, share = 1.0, 1.0
-        cands.append(Candidate(team, p, p * survives, p * share * pot - outlay, team == free))
+            s_se = d_se = 0.0
+        cands.append(Candidate(team, p, p * survives, p * share * pot - outlay, team == free,
+                               s_se, d_se))
 
     cands.sort(key=lambda c: (-c.expected_dollars, c.team))
     best = cands[0]
     fb = next((c for c in cands if c.is_fallback), None)
-    # Two independent means differ by at best the root-sum-square of their standard errors.
-    # This overstates that figure twice over, and both are deliberate. The trials are paired,
-    # so the two candidates are correlated and the true spread of the difference is smaller.
-    # And the standard error here is on `share * pot`, while the figures being compared are
-    # `win_prob * share * pot`: the win probability is left out, which inflates the threshold
-    # by roughly 1/win_prob. Both err toward calling a week undecided, which is the safe
-    # direction when the alternative is free.
-    res = (float(np.hypot(sd.get(best.team, 0.0), sd.get(fb.team if fb else "", 0.0)))
-           / np.sqrt(trials) * pot)
+    # The interval on the *difference*, taken paired. Both arms met the same season trial for
+    # trial (`_play`), so `d` is a per-trial difference and not two independent means being
+    # subtracted -- the correlation is what makes this tight enough to decide a week with.
+    # `win_prob` is inside it rather than left out: the figures being compared are
+    # `win_prob * share * pot`, and dropping the factor inflated the bar by roughly 1/p and
+    # called that conservatism. It is not conservatism when it is also the bar that decides
+    # whether an unresolved week is reported as one.
+    res = gse = 0.0
+    cashed = 0
+    if ahead and fb is not None and fb.team != best.team:
+        a, b = each[best.team], each[fb.team]
+        d = pot * (best.win_prob * a - fb.win_prob * b)
+        res = DECISIVE_SIGMA * float(np.std(d)) / root
+        gse = float(np.std((b > 0.0).astype(float) - (a > 0.0).astype(float))) / root
+        cashed = int(np.count_nonzero((a > 0.0) | (b > 0.0)))
+    elif ahead:
+        cashed = int(np.count_nonzero(each[best.team] > 0.0))
     return Weekly(
         week=week, recommend=best.team, fallback=free,
         matched=best.team == free,
         given_up=(fb.survives - best.survives) if fb else 0.0,
-        pot=pot, resolution=res, candidates=cands)
+        pot=pot, resolution=res, candidates=cands,
+        given_up_se=gse, trials=trials if ahead else 0, cashed=cashed)
+
+
+def _places(se: float, *, cap: int) -> int:
+    """How many decimals a figure carrying this standard error may honestly be printed to.
+
+    The largest `d` at or under `cap` for which `10 ** -d` is still at or above the error, so
+    the last digit shown is one the run can actually see. A figure printed to a precision its
+    Monte Carlo error does not support is a claim about the trial count, not about the pool:
+    `$21.39` off 400 trials that resolve $2.53 is four digits of which two are noise, and a
+    reader comparing two such figures is comparing the seed.
+
+    `cap` is the caller's own ceiling -- dollars are not worth more than two decimals however
+    many trials were run -- and zero or a non-finite error means there is nothing to round
+    for, which is the closed-form week rather than an unknown.
+    """
+    if not np.isfinite(se) or se <= 0.0:
+        return cap
+    return max(0, min(cap, int(np.floor(-np.log10(se)))))
 
 
 def weekly_report(w: Weekly, *, places: int = 2) -> list[str]:
@@ -956,6 +1113,18 @@ def weekly_report(w: Weekly, *, places: int = 2) -> list[str]:
     and was the string `"none available"`, which every reader of the field had to know to
     compare against -- including `hub.season.journal`, which would have recorded a survival
     cost against a free pick that did not exist.
+
+    **`places` is a ceiling and not a setting**, which is #159's last acceptance criterion.
+    Every figure here is rounded to what its own standard error supports, so a run at 400
+    trials prints fewer digits than the same run at 4000 and the difference is visible on the
+    page rather than buried in a footnote. Each candidate carries its own error, because they
+    are not alike: a 3% team's dollar figure is a hundredth the size of the chalk team's and
+    is resolved to a hundredth of the precision.
+
+    **A week that could not resolve says so instead of reporting a tie.** With our share often
+    on the order of a thousandth, a few hundred trials can return zero for every candidate;
+    the difference is then zero because nothing was measured, not because two plans were
+    measured alike. Both land on the free pick and only one of them is evidence.
     """
     if w.fallback is None:
         against = " -- auto-pick had no team left to assign, so there is nothing free to " \
@@ -965,8 +1134,9 @@ def weekly_report(w: Weekly, *, places: int = 2) -> list[str]:
     else:
         against = f", over auto-pick's {w.fallback}"
     head = f"\n  week {w.week}: {w.recommend}{against}"
-    body = [f"  ${c.expected_dollars:.{places}f}  {c.team:<4} "
-            f"win {c.win_prob * 100:.0f}%  survives {c.survives * 100:.1f}%"
+    body = [f"  ${c.expected_dollars:.{_places(c.dollars_se, cap=places)}f}  {c.team:<4} "
+            f"win {c.win_prob * 100:.0f}%  "
+            f"survives {c.survives * 100:.{_places(c.survives_se * 100, cap=1)}f}%"
             + ("   <- free" if c.is_fallback else "")
             for c in w.candidates]
     # A departure can be free: gaining survival over the free pick is the case worth having,
@@ -979,12 +1149,23 @@ def weekly_report(w: Weekly, *, places: int = 2) -> list[str]:
         said = f"  survives exactly as well as the free pick {w.fallback}"
     else:
         verb = "costs" if w.given_up > 0 else "gains"
-        said = (f"  {verb} {abs(w.given_up) * 100:.2f} points of survival "
-                f"against the free pick {w.fallback}")
+        said = (f"  {verb} {abs(w.given_up) * 100:.{_places(w.given_up_se * 100, cap=2)}f} "
+                f"points of survival against the free pick {w.fallback}")
     cost = [] if w.matched or w.fallback is None else [said]
-    undecided = ([] if w.decisive else
-                 [f"  but that is inside the ${w.resolution:.{places}f} these trials can "
-                  f"resolve, so take {w.fallback} -- it is free and no worse"])
+    if w.unresolved:
+        # Named apart from the line below, because the two send a reader to the same pick for
+        # opposite reasons. This one is not a measurement of zero, it is the absence of one.
+        undecided = [f"  but no trial of {w.trials} cashed for either pick, so this week is "
+                     "unresolved rather than a measured tie -- these trials found no "
+                     "difference because they found nothing at all"
+                     + (f". Take {w.fallback}, which is free" if w.fallback else "")]
+    elif not w.decisive:
+        res = f"{w.resolution:.{_places(w.resolution, cap=places)}f}"
+        undecided = [f"  but that is inside the ${res} these trials can resolve at "
+                     f"{DECISIVE_SIGMA:.0f} standard errors, so take {w.fallback} -- it is "
+                     "free and no worse"]
+    else:
+        undecided = []
     return [head, *body, *cost, *undecided]
 
 

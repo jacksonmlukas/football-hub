@@ -587,6 +587,83 @@ def test_two_candidate_plans_meet_the_same_season_and_the_better_one_wins():
     assert a.survives > b.survives
 
 
+def test_two_candidate_plans_meet_the_identical_field(monkeypatch):
+    """The pairing itself, asserted on the field rather than on the two figures (#159).
+
+    One seed was not one season. `_play` drew each week's games as it reached it and stopped
+    when the last live entry died, ours included -- so the first trial our entry outlasted the
+    field under one plan and not the other consumed a different number of draws, the stream
+    offset, and every later trial met a different season. That is not a subtle loss: the
+    trials it corrupts are exactly the ones where the two plans differ, which are the only
+    trials carrying the comparison.
+
+    Recorded on the rivals' picks because that sequence is downstream of everything the two
+    arms are supposed to share -- a rival appears in it only while it is alive, and it is
+    alive only because of games it won. A different draw anywhere shows up here.
+    """
+    g = _board(TEN, flat=(6,))
+    best, free = pool.solve_plan(g, TEN), _free_chain(g, TEN)
+    kw = {"entries": 12, "trials": 300}
+
+    def _rivals(plan):
+        seen = []
+        real = pool._pick
+        monkeypatch.setattr(
+            pool, "_pick",
+            lambda rng, week, ledger, k: seen.append(
+                (tuple(sorted(ledger)), tuple(got := real(rng, week, ledger, k) or ()))) or got)
+        out = pool.entry_outcome(g, TEN, plan=plan, rng=np.random.default_rng(2), **kw)
+        monkeypatch.undo()
+        return out, seen
+
+    a, mine = _rivals(best)
+    b, theirs = _rivals(free)
+    assert a.survives != b.survives, "the two plans have to differ, or this proves nothing"
+    assert mine == theirs
+    assert len(mine) > 1000
+
+
+def test_two_plans_that_name_the_same_picks_give_exactly_the_same_figure():
+    """The pairing's sharpest form: identical picks, identical seed, identical figure.
+
+    Not `approx`. Two candidates that are the same pick differ by zero in every trial, so
+    every figure the comparison rests on -- the means and the per-trial vector they are means
+    of -- has to agree to the bit. A difference here would be the simulator reading something
+    other than the picks, which is the failure the pairing exists to rule out.
+
+    The plans are distinct objects carrying different `source` prose, so what is shared is the
+    picks and nothing else.
+    """
+    g = _board(TEN, flat=(6,))
+    best = pool.solve_plan(g, TEN)
+    twin = pool.Plan(dict(best.picks), "the same picks, arrived at by another road")
+    kw = {"entries": 12, "trials": 300}
+    a = pool.entry_outcome(g, TEN, plan=best, rng=np.random.default_rng(2), **kw)
+    b = pool.entry_outcome(g, TEN, plan=twin, rng=np.random.default_rng(2), **kw)
+    assert a.plan is not None and b.plan is not None
+    assert a.plan != b.plan and a.plan.picks == b.plan.picks
+    assert (a.survives, a.sole, a.share, a.share_sd) == (b.survives, b.sole, b.share,
+                                                         b.share_sd)
+    assert a.share_each == b.share_each
+
+
+def test_the_per_trial_share_is_positive_exactly_where_the_entry_survived():
+    """What `share_each` is, pinned so a paired difference taken from it means what it says.
+
+    The three means are means of this vector, and survival is its support rather than a second
+    vector -- so a caller taking a paired difference of survival and a paired difference of
+    money is reading one record of one set of trials, not two records that could disagree.
+    """
+    g = _board(TEN, flat=(6,))
+    out = pool.entry_outcome(g, TEN, entries=12, trials=200, rng=np.random.default_rng(0))
+    xs = out.share_each
+    assert len(xs) == out.trials == 200
+    assert sum(x > 0 for x in xs) / len(xs) == out.survives
+    assert sum(xs) / len(xs) == pytest.approx(out.share)
+    assert sum(x == 1.0 for x in xs) / len(xs) == out.sole
+    assert out.shared == pytest.approx(out.survives - out.sole)
+
+
 def test_a_plan_that_will_not_play_is_re_solved_into_the_one_we_would_have_solved():
     """The invalidation rule, and the only thing that makes replaying a plan safe.
 

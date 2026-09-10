@@ -34,6 +34,20 @@ FLAT = _grid({w: [("KC", "LV", 0.85), ("SF", "SEA", 0.80), ("BUF", "NYJ", 0.75)]
 HOARD = _grid({1: [("KC", "LV", 0.70), ("SF", "SEA", 0.68), ("BUF", "NYJ", 0.66)],
                2: [("KC", "LV", 0.97), ("SF", "SEA", 0.55), ("BUF", "NYJ", 0.54)]})
 
+# The same shape with the hoard worth almost nothing: KC is a hair better this week and a
+# hair better next week, so departing from it buys an edge inside what a few hundred trials
+# can see. This is the board the *bar* is testable on -- on `HOARD` the gap is twenty-odd
+# standard errors and every threshold agrees about it.
+NEAR = _grid({1: [("KC", "LV", 0.70), ("SF", "SEA", 0.695), ("BUF", "NYJ", 0.66)],
+              2: [("KC", "LV", 0.74), ("SF", "SEA", 0.72), ("BUF", "NYJ", 0.70)]})
+
+# Week 2's only fixture is a game whose two teams are already spent, so an entry reaching it
+# cannot field a legal pick and dies there whatever it took in week 1. Every candidate is
+# then worth exactly nothing and no trial ever cashes -- the degenerate regime #159 asks to
+# be reported rather than folded into a tie.
+NEVER = _grid({1: [("SF", "SEA", 0.80), ("BUF", "NYJ", 0.75), ("DAL", "NYG", 0.70)],
+               2: [("KC", "LV", 0.85)]})
+
 
 def _team(w: pool.Weekly, team: str) -> pool.Candidate:
     return next(c for c in w.candidates if c.team == team)
@@ -98,11 +112,20 @@ def test_taking_the_free_pick_is_never_undecided():
 
 
 def test_the_resolution_tightens_as_the_trials_grow():
-    """Reported, not hidden. Four times the trials halves what the run can tell apart."""
-    coarse = _weekly(FLAT, [1, 2, 3], week=1, trials=200, rng=np.random.default_rng(5))
-    fine = _weekly(FLAT, [1, 2, 3], week=1, trials=800, rng=np.random.default_rng(5))
+    """Reported, not hidden. Four times the trials halves what the run can tell apart.
+
+    Asked on a board where the recommendation departs from the free pick, because since #159
+    the resolution is the interval on *that* comparison and nothing else. Where the two are
+    the same pick there is no difference to resolve: the arms are one arm, they differ by
+    exactly zero in every trial, and the interval on that is zero rather than small.
+    """
+    coarse = _weekly(HOARD, [1, 2], week=1, trials=200, rng=np.random.default_rng(5))
+    fine = _weekly(HOARD, [1, 2], week=1, trials=800, rng=np.random.default_rng(5))
+    assert not coarse.matched and not fine.matched
     assert coarse.resolution > 0
     assert fine.resolution == pytest.approx(coarse.resolution / 2, rel=0.35)
+    same = _weekly(FLAT, [1, 2, 3], week=1, trials=200, rng=np.random.default_rng(5))
+    assert same.matched and same.resolution == 0.0
 
 
 def test_a_departure_from_the_free_pick_reports_what_it_did_to_survival():
@@ -252,3 +275,127 @@ def test_a_week_with_no_free_pick_says_so_rather_than_naming_one():
     lines = "\n".join(pool.weekly_report(w))
     assert "none available" not in lines and "None" not in lines
     assert "no team left to assign" in lines
+
+
+# --- the trials are paired, and decisive is a two-sigma bar (#159) --------------------------
+#
+# Reseeding every candidate to one value is a shared season only while both consume the stream
+# at the same rate, and they did not: the trial stopped when the last live entry died, ours
+# included, so the first trial our entry outlasted the field in one candidate and not in the
+# other offset everything after it. The pairing held up to the first week our fate differed --
+# which is exactly the trials the comparison carries its signal in. `_play` now draws the whole
+# season before anybody picks, so the count is fixed whatever becomes of us.
+#
+# Which comparison the interval is for: the recommended plan against the auto-pick plan, both
+# replayed by our own entry against one shared season. Not our arm against the field's sampling
+# rule, which cannot be paired at all -- see `test_pool.py`'s #151 section.
+
+
+def _gap(w: pool.Weekly) -> float:
+    """What the week's verdict is about: the recommendation less the free pick, in dollars."""
+    fb = next(c for c in w.candidates if c.is_fallback)
+    return abs(w.candidates[0].expected_dollars - fb.expected_dollars)
+
+
+def test_the_bar_a_difference_is_called_real_at_is_two_standard_errors():
+    """One standard error is a two-sided false positive rate of about one in three.
+
+    The bar is a stated constant and the resolution is that constant times the paired standard
+    error, so the two are wired together rather than a threshold that happens to sit near a
+    spread. Asked on `NEAR`, because on `HOARD` the gap is twenty standard errors and every
+    threshold agrees about it -- a bar can only be tested where it decides something.
+    """
+    assert pool.DECISIVE_SIGMA == 2.0
+    w = _weekly(NEAR, [1, 2], week=1, trials=400, rng=np.random.default_rng(3))
+    assert not w.matched and w.cashed > 0
+    assert w.resolution / 2.0 < _gap(w) < w.resolution
+    assert not w.decisive
+
+
+def test_the_one_sigma_bar_this_replaces_would_have_called_that_week_a_departure(monkeypatch):
+    """The same week at the old threshold, so the change is shown rather than asserted.
+
+    Read from the module at call time, which is what makes this test possible and what makes
+    the bar a number a reader can find. The ranking does not move: what moves is whether the
+    week claims the gap is real, and the alternative when it does not is free.
+    """
+    strict = _weekly(NEAR, [1, 2], week=1, trials=400, rng=np.random.default_rng(3))
+    monkeypatch.setattr(pool, "DECISIVE_SIGMA", 1.0)
+    loose = _weekly(NEAR, [1, 2], week=1, trials=400, rng=np.random.default_rng(3))
+    assert loose.resolution == pytest.approx(strict.resolution / 2.0)
+    assert loose.decisive and not strict.decisive
+    assert loose.recommend == strict.recommend
+
+
+def test_a_trial_set_where_nothing_cashed_says_so_rather_than_reporting_a_tie():
+    """The degenerate regime, distinguishable from a measured tie.
+
+    Every candidate is worth exactly zero here because nothing survives week 2, so the
+    difference between the recommendation and the free pick is zero -- and it is zero because
+    nothing was measured, not because two plans were measured alike. Both send a reader to the
+    free pick and only one of them is evidence. `docs/method.md` rule 12.
+    """
+    w = _weekly(NEVER, [1, 2], week=1, ledger=["KC", "LV"], trials=400,
+                rng=np.random.default_rng(0))
+    assert w.trials == 400 and w.cashed == 0
+    assert w.unresolved and not w.decisive
+    assert all(c.expected_dollars == 0.0 and c.survives == 0.0 for c in w.candidates)
+    lines = "\n".join(pool.weekly_report(w))
+    assert "unresolved rather than a measured tie" in lines
+    assert "these trials can resolve" not in lines
+
+
+def test_a_measured_tie_is_not_reported_as_an_unresolved_week():
+    """The other side of it, on a set that did cash: a week where the two plans really do
+    survive alike is a finding of no difference, not an absence of findings."""
+    w = _weekly(FLAT, [1, 2, 3], week=1, trials=400, rng=np.random.default_rng(0))
+    assert w.cashed > 0 and not w.unresolved
+    assert w.matched and w.given_up == 0.0 and w.decisive
+    assert "unresolved" not in "\n".join(pool.weekly_report(w))
+
+
+def test_a_week_priced_in_closed_form_is_not_an_unresolved_one():
+    """No trial ran, so there is no Monte Carlo error for anything to be inside of. A zero
+    trial count is not zero cashes, and reading it as one would report the last week of a
+    season -- the one week this simulator does not need -- as the week it could not answer."""
+    w = _weekly(FLAT, [3], week=3)
+    assert w.trials == 0 and not w.unresolved and w.decisive
+    assert all(c.survives_se == 0.0 and c.dollars_se == 0.0 for c in w.candidates)
+
+
+def test_no_figure_is_printed_finer_than_its_own_error():
+    """Every printed figure, and each to its own error rather than to one `places` for the
+    block. The candidates are not alike: a 30% dog's dollar figure is a fraction of the chalk
+    team's and is resolved to a fraction of the precision. `$21.39` off 400 trials that
+    resolve $2.53 is four digits of which two are the seed.
+    """
+    assert pool._places(2.53, cap=2) == 0
+    assert pool._places(0.03, cap=2) == 1
+    assert pool._places(0.004, cap=2) == 2
+    assert pool._places(0.0, cap=2) == 2, "an exact figure is not an unknown one"
+    w = _weekly(HOARD, [1, 2], week=1, trials=400, rng=np.random.default_rng(5))
+    lines = pool.weekly_report(w)
+    for c in w.candidates:
+        row = next(ln for ln in lines if f" {c.team:<4} " in ln)
+        shown = row.split()[0].lstrip("$")
+        places = len(shown.split(".")[1]) if "." in shown else 0
+        assert places == pool._places(c.dollars_se, cap=2)
+        assert places == 0 or 10.0 ** -places >= c.dollars_se
+    # And the survival cost is rounded to the error on the *difference*, which is the paired
+    # one and the figure it is printed beside.
+    assert w.given_up_se > 0
+    said = next(ln for ln in lines if "points of survival" in ln).split()[1]
+    shown = len(said.split(".")[1]) if "." in said else 0
+    assert shown == pool._places(w.given_up_se * 100, cap=2)
+
+
+def test_more_trials_buy_more_digits():
+    """The visible half of the same rule: precision is a property of the run rather than of
+    the format string, so a reader can see what a longer run bought."""
+    kw = {"week": 1, "entries": 12, "pot": 420.0}
+    coarse = pool.weekly(HOARD, [1, 2], trials=200, rng=np.random.default_rng(5), **kw)
+    fine = pool.weekly(HOARD, [1, 2], trials=3200, rng=np.random.default_rng(5), **kw)
+    dug = {c.team: pool._places(c.dollars_se, cap=2) for c in coarse.candidates}
+    fig = {c.team: pool._places(c.dollars_se, cap=2) for c in fine.candidates}
+    assert all(fig[t] >= dug[t] for t in dug)
+    assert any(fig[t] > dug[t] for t in dug)
