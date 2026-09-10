@@ -195,7 +195,8 @@ moves.** Measuring is the cheap half. The published figure is what anyone reads,
 that stops at the working note leaves a number standing that its own author already knows is
 wrong, and the reader of the artifact has no way to see the correction.
 
-**The incidents.** Three, all of them landing on 2026-09-06.
+**The incidents.** Three when this rule was written, all of them landing on 2026-09-06. A
+fourth, of a shape this rule did not cover, is restated after them.
 
 *A season-clustered interval, measured and reverted.* ADR-0009 publishes championship equity at
 −19.66 pts/team-game, 95% CI **[−23.16, −16.20]**, bootstrapped over 80 rows. Re-run on the same
@@ -244,6 +245,36 @@ from it. Issue #150 is open.
 > `cost_of_waiting` rises, pushing the board toward scarcity rather than away from it. A board
 > built either side of the change, naming the players whose availability moved, is in
 > [pick-noise.md](pick-noise.md). Issue #150 is closed; #44 and #45 are still open.
+
+> **Restated 2026-09-10 — a fourth instance, and it is the case this rule did not cover.**
+> Issue #167 corrected what `rank_tiers` divides a tier gap by: two `lift_se` values combined
+> in quadrature — the formula for a difference between *unrelated* estimates — became
+> `lead_gap_se`, the standard error of the paired difference across the same simulated
+> seasons. On correlated lifts the two differ by a factor of two; on uncorrelated ones they
+> agree to five significant figures. Three published claims had been measured under the
+> superseded expression: the Nacua/McCaffrey tie and its 5-of-5 seed count in
+> [decisions.md](decisions.md), the co-leader counts in [next.md](next.md), and the
+> `rank_tiers` docstring's own illustration. All three are restated beside their originals
+> under #189.
+>
+> **None of the three could be re-run, and that is the new part.** The boards they were
+> measured on were built 2026-08-24 off live ESPN ADP, which nobody retains
+> ([ADR-0010](adr/0010-edge-is-displayed-but-never-ranked-on.md)) and which this repo began
+> archiving on 2026-08-25; `lead_gap_se` is the spread of a per-future difference and nothing
+> persists the futures; and the constants the simulator draws opponents' noise from have moved
+> since (#150), so a re-run would produce a new claim rather than a restatement.
+>
+> **What the rule says in that case.** It says the replacement must come from a re-run and
+> never from an argument about which way the old figure would have gone — so where no re-run
+> is possible, the number moves to **superseded and unestablished**, and that is the whole of
+> what "moved" can mean. Not to a corrected value, and emphatically not to the old value with
+> a note that it is probably fine. The docstring's illustration was not re-measured either; it
+> was **replaced** by one that can be, and is — it now cites the committed fixture the suite
+> re-derives on every run, so it can never again be a number nobody is able to check.
+>
+> **The lesson is upstream of the restatement.** A measurement whose inputs are not pinned can
+> be contradicted and never corrected, which is ADR-0007 one level down, and the same gap
+> [next.md](next.md) already records against `--diagnose`.
 
 **What "moved" means.** Not an edit over the top of the old figure: a superseded number keeps
 its original text here, the same convention [architecture.md](architecture.md) states for a

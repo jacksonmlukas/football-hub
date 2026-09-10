@@ -535,6 +535,56 @@ everything within two pooled standard errors of the leader as tied for the lead,
 board says so and suggests breaking the tie on something the simulation does not model. The
 TAKE tier contains both in 5 of 5 seeds; the strict top pick does not.
 
+> **Restated 2026-09-10 — *pooled* names the superseded formula, and the tie is not
+> re-derivable.** Issue #167 (`37a795a`) changed what `rank_tiers` divides a gap by: from the
+> two candidates' `lift_se` values combined in quadrature — the standard error of a difference
+> between two *unrelated* estimates, and the variable in the code was literally called
+> `pooled` — to `lead_gap_se`, the standard error of the paired difference taken across the
+> same simulated seasons that produced both lifts. `docs/method.md` rule 13: a dated
+> restatement beside the original, not an edit over the top of it.
+>
+> **What does not move.** **+2.72** and **+2.58**, and the standard errors near **0.4**. Those
+> are `lift` and `lift_se`, and #167 changed neither line that computes them — it added a
+> column and changed the denominator `rank_tiers` reads. The alternation between the two
+> across runs does not move either: that is a fact about re-running, not about the tier rule.
+>
+> **What is superseded.** Three things. The word *pooled*, which now names the wrong formula.
+> The tie verdict, which came from 0.14 ÷ √(0.4² + 0.4²) ≈ **0.25 standard errors** — the
+> published errors are stated as *near* 0.4, so that ratio is approximate in the same way, and
+> it is restated here as what the superseded formula computed rather than as a new
+> measurement. It is well inside the two-standard-error line. And **the 5-of-5 seed count**,
+> which counts how often `rank_tiers` put both in the TAKE tier, and so was computed with that
+> same denominator.
+>
+> **Why this is the claim most exposed.** A tie between two *correlated* lifts is exactly the
+> case the paired expression tightens. On the repo's own correlated fixture the paired error
+> is 53% of the quadrature one and a gap of 1.24 standard errors becomes 2.32 — a candidate
+> leaving the tier. The direction is not guaranteed, though: quadrature is too wide where two
+> lifts rise and fall together and too narrow where they trade off, and which of those applies
+> here cannot be known without the futures.
+>
+> **It is not re-derivable, and not for want of effort.** Three reasons, each checkable:
+>
+> 1. **The board cannot be rebuilt.** Both figures came off a board built 2026-08-24 from live
+>    ESPN ADP. ESPN publishes ADP for the current season only and retains no history
+>    ([ADR-0010](adr/0010-edge-is-displayed-but-never-ranked-on.md)); this repo's own dated ADP
+>    archive begins **2026-08-25** and its board snapshots begin **2026-08-30**. Both start
+>    after the run.
+> 2. **`lead_gap_se` cannot be recovered from what was published.** It is the spread of the
+>    per-future difference. `win_probability` builds that matrix in memory and `_lift_frame`
+>    returns five summary columns; nothing persists the futures. `rank_tiers` refuses a frame
+>    without the column for precisely this reason.
+> 3. **A re-run today would be a different measurement, not a restatement.**
+>    `simulate_remaining_draft` draws its opponents' noise from `pick_noise`, whose constants
+>    have since moved — `PICK_NOISE_SLOPE` 0.253 → 0.169 and `PICK_NOISE_INTERCEPT` 1.00 →
+>    1.31 under #150 — and the corrections the board carries were refitted under #47. The
+>    futures are not the futures these numbers came off.
+>
+> **So no new figure is stated.** Rule 13 requires the replacement to come from a re-run and
+> never from an argument about which way the old one would have gone, and no re-run is
+> available. Read the Nacua/McCaffrey tie as **unestablished** under the shipped expression —
+> neither confirmed nor broken — and read the 5-of-5 count the same way. Issue #189.
+
 **Touchdown luck now reaches the objective, at QB and WR.** ESPN's *projection* carries the
 same touchdown bias the draft room does, but only for quarterbacks: `ppg_next ~ proj_ppg +
 td_luck` gives -0.540 [-1.057, -0.125], 99.5%. WR is -0.286 [-0.797,
