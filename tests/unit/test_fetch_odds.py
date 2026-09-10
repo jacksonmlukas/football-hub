@@ -47,17 +47,29 @@ def schedule(monkeypatch):
     }))
 
 
-def _event(home, away, day, points, books=2):
+def _markets(home, away, points, i, total, price, total_price):
+    """One book's markets. `total=None` is a book that has posted a spread and no total."""
+    out = [{"key": "spreads", "outcomes": [
+        {"name": home, "price": price, "point": points + i * 0.5},
+        {"name": away, "price": price, "point": -(points + i * 0.5)},
+    ]}]
+    if total is not None:
+        out.append({"key": "totals", "outcomes": [
+            {"name": "Over", "price": total_price, "point": total + i * 0.5},
+            {"name": "Under", "price": total_price, "point": total + i * 0.5},
+        ]})
+    return out
+
+
+def _event(home, away, day, points, books=2, total=44.5, price=-110, total_price=-110):
     return {
         "id": f"{away}@{home}",
         "commence_time": f"{day}T20:00:00Z",
         "home_team": home,
         "away_team": away,
         "bookmakers": [
-            {"key": f"book{i}", "markets": [{"key": "spreads", "outcomes": [
-                {"name": home, "point": points + i * 0.5},
-                {"name": away, "point": -(points + i * 0.5)},
-            ]}]}
+            {"key": f"book{i}",
+             "markets": _markets(home, away, points, i, total, price, total_price)}
             for i in range(books)
         ],
     }
@@ -82,28 +94,52 @@ def transport(monkeypatch):
 
 # --- the multiplier -------------------------------------------------------
 
-def test_exactly_one_market_and_one_region(transport, teams, schedule, paths):
-    """Cost is markets x regions. Two of either doubles the bill for the same game."""
+def test_both_declared_markets_ride_on_one_request(transport, teams, schedule, paths):
+    """Cost is markets x regions, and the second market is the point of #211.
+
+    One request, two markets, one region: two credits for a call that returns the whole
+    season. Two *requests* would be the same two credits and twice the latency, and would
+    also be the shape that grows -- so the thing pinned here is that the number of calls
+    does not track the number of markets.
+    """
     calls = transport()
     odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
-    assert len(calls) == 1
-    assert calls[0]["markets"] == odds.MARKET
+    assert len(calls) == 1, "a market is a parameter of one call, never a second call"
+    assert calls[0]["markets"] == "spreads,totals"
     assert calls[0]["regions"] == odds.REGION
-    assert "," not in calls[0]["markets"] and "," not in calls[0]["regions"]
+    assert calls[0]["oddsFormat"] == "american", "the price columns are on this staying true"
 
 
-def test_asking_for_a_second_market_is_refused(transport, teams, schedule, paths):
-    transport()
+def test_a_market_outside_the_declared_pair_is_refused(transport, teams, schedule, paths):
+    """The refusal that matters, and the one a comma count could never make.
+
+    `player_pass_tds` has no comma in it and runs about four credits an *event* --
+    `docs/decisions.md` puts a full week of props at 64. Counting separators waves it
+    through; checking the name does not.
+    """
+    for market in ("h2h", "player_pass_tds", "spreads,h2h", "alternate_spreads"):
+        calls = transport()
+        with pytest.raises(odds.MultiplierRefused):
+            odds.snapshot(season=2025, markets=market,
+                          state_path=paths["state"], base=paths["store"])
+        assert not calls, f"{market} was refused only after the credit was spent"
+
+
+def test_a_market_named_twice_is_refused(transport, teams, schedule, paths):
+    """Two markets to a biller counting what was asked for, one to a reader skimming it."""
+    calls = transport()
     with pytest.raises(odds.MultiplierRefused):
-        odds.snapshot(season=2025, markets="spreads,totals",
+        odds.snapshot(season=2025, markets="spreads,spreads",
                       state_path=paths["state"], base=paths["store"])
+    assert not calls
 
 
 def test_asking_for_a_second_region_is_refused(transport, teams, schedule, paths):
-    transport()
+    calls = transport()
     with pytest.raises(odds.MultiplierRefused):
         odds.snapshot(season=2025, regions="us,uk",
                       state_path=paths["state"], base=paths["store"])
+    assert not calls
 
 
 def test_the_refusal_explains_the_cost(transport, teams, schedule, paths):
@@ -112,6 +148,20 @@ def test_the_refusal_explains_the_cost(transport, teams, schedule, paths):
         odds.snapshot(season=2025, markets="spreads,totals,h2h",
                       state_path=paths["state"], base=paths["store"])
     assert "credit" in str(e.value).lower()
+
+
+def test_the_declared_budget_is_what_the_guard_allows(transport, teams, schedule, paths):
+    """The guard's premise. It permits exactly `MARKETS` x `REGIONS` and no other set, so
+    widening the budget is editing those tuples rather than finding a spelling that slips
+    past -- which is what "the refusal on a comma exists for a reason" has to mean once the
+    refusal is no longer on a comma."""
+    assert odds.MARKETS == ("spreads", "totals")
+    assert odds.REGIONS == ("us",)
+    for good in ("spreads", "totals", "spreads,totals", "totals,spreads"):
+        assert odds._budgeted(good, odds.MARKETS, "markets")
+    for bad in ("", " spreads", "spreads,", ",spreads", "spreads, totals"):
+        with pytest.raises(odds.MultiplierRefused):
+            odds._budgeted(bad, odds.MARKETS, "markets")
 
 
 # --- the credit floor -----------------------------------------------------
