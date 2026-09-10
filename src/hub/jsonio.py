@@ -70,6 +70,25 @@ def file_stamp(path: Path) -> str:
         microsecond=0).isoformat()
 
 
+# The two shapes a published artifact can be, and the vocabulary `shape` is written in.
+#
+# A **rows** artifact carries `rows` and the `n` that counts them. A **summary** carries
+# neither and reports in fields of its own -- `n_scored` and a calibration curve for the track
+# record, `rows_by_endpoint` and `quota` for the CFBD envelope, whose whole point is to say
+# what was fetched without carrying it.
+#
+# The key exists because until #227 that difference lived in `NOT_ROW_SHAPED`, a set of
+# filenames in `tests/contracts/test_published_envelopes.py`, while the writers that decide it
+# live here and in `hub.fetch.cfbd`. Nothing connected the two, so they could only agree by
+# someone remembering -- and on 2026-09-09 nobody did: the scheduled slate published
+# `site/data/cfbd.json` for the first time and the contract failed on the next human push, ten
+# commits later, for a file that was correct. An artifact that says what it is can be checked
+# for saying it; a list of names elsewhere can only be checked for being current, by hand.
+ROWS = "rows"
+SUMMARY = "summary"
+SHAPES = (ROWS, SUMMARY)
+
+
 def artifact(name: str, source: str, rows: list[Any],
              as_of: str | None = None, **extra: Any) -> dict[str, Any]:
     """The shape every published artifact has, so two writers of one file cannot disagree.
@@ -94,10 +113,42 @@ def artifact(name: str, source: str, rows: list[Any],
     bind to the parameter and never reach the check. The existing envelope test caught this.
     """
     # GUARD envelope-cannot-be-overridden: extra never displaces the shape every reader depends on
-    clash = {"name", "source", "generated_at", "n", "rows"} & set(extra)
+    clash = {"name", "source", "generated_at", "shape", "n", "rows"} & set(extra)
     if clash:
         raise ValueError(f"{sorted(clash)} belong to the envelope and cannot be overridden")
     # /GUARD
     return {"name": name, "source": source,
             "generated_at": as_of if as_of is not None else stamp(),
-            "n": len(rows), "rows": rows, **extra}
+            "shape": ROWS, "n": len(rows), "rows": rows, **extra}
+
+
+def summary(name: str, source: str, as_of: str | None = None,
+            **extra: Any) -> dict[str, Any]:
+    """The envelope for an artifact that reports rather than carries -- the second shape.
+
+    Same `name`, `source` and `generated_at` as `artifact`, and `shape: "summary"` in place of
+    `n`/`rows`. Everything the artifact actually says goes in `extra`, because what a summary
+    says is the part that differs between one summary and the next: the track record's
+    `n_scored` and calibration curve, the CFBD envelope's `rows_by_endpoint` and `quota`.
+
+    **Why this exists rather than a flag on `artifact`.** Both writers already built these
+    envelopes by hand -- three literal `"name"`/`"source"`/`"generated_at"` keys each -- which
+    is what let one of them be published without any contract having read it. Passing through
+    a constructor is what makes the declaration something the writer emits rather than
+    something a person remembers to add.
+
+    `rows` and `n` are refused here for the same reason `extra` cannot displace the envelope
+    in `artifact`: an artifact carrying rows is row-shaped, and one that carries them while
+    declaring `summary` would put the declaration and the document in exactly the
+    disagreement the envelope exists to prevent.
+    """
+    # GUARD summary-carries-no-rows: a summary restates no envelope key and carries no rows
+    clash = {"name", "source", "generated_at", "shape", "n", "rows"} & set(extra)
+    if clash:
+        raise ValueError(
+            f"{sorted(clash)} belong to the envelope and cannot be overridden; `n` and `rows` "
+            f"belong to a row-shaped artifact, which this is not")
+    # /GUARD
+    return {"name": name, "source": source,
+            "generated_at": as_of if as_of is not None else stamp(),
+            "shape": SUMMARY, **extra}

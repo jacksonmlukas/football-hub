@@ -669,14 +669,19 @@ def record_run(season: int, week_no: int | None, *,
         stale, reason = True, (f"week {week_no} of {season} was read and came back empty")
     else:
         stale, reason = False, None
-    got: dict[str, Any] = {
-        "name": "cfbd", "source": "hub.fetch.cfbd", "generated_at": jsonio.stamp(),
-        "season": season, "week": week_no, "fetched": fetched,
-        "stale": stale, "reason": reason,
-        "rows_by_endpoint": counts,
-        "quota": {"month": _month_key(), "used": quota_used(quota_path),
-                  "limit": FREE_TIER_MONTHLY},
-    }
+    # Through `jsonio.summary`, which stamps `shape: "summary"`. This envelope reports what
+    # was fetched without carrying it -- `rows_by_endpoint` is counts, not rows -- and saying
+    # so here is what #227 replaced `NOT_ROW_SHAPED` with. The first publish of this file, by
+    # the scheduled slate on 2026-09-09, failed the row-count contract on the next human push
+    # ten commits later, for an artifact that was correct and simply not on a list.
+    got: dict[str, Any] = jsonio.summary(
+        "cfbd", "hub.fetch.cfbd",
+        season=season, week=week_no, fetched=fetched,
+        stale=stale, reason=reason,
+        rows_by_endpoint=counts,
+        quota={"month": _month_key(), "used": quota_used(quota_path),
+               "limit": FREE_TIER_MONTHLY},
+    )
     p = Path(path or STATUS)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(jsonio.dumps(got, indent=2))

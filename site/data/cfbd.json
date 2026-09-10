@@ -2,6 +2,7 @@
   "name": "cfbd",
   "source": "hub.fetch.cfbd",
   "generated_at": "2026-09-09T15:00:44+00:00",
+  "shape": "summary",
   "season": 2026,
   "week": null,
   "fetched": false,

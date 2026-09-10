@@ -2,6 +2,7 @@
   "name": "preds_2026_wk01",
   "source": "preds",
   "generated_at": "2026-09-09T15:00:49+00:00",
+  "shape": "rows",
   "n": 16,
   "rows": [
     {

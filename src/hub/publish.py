@@ -483,17 +483,20 @@ def track_record(base: Path | None = None, out: Path | None = None,
     # An empty record still carries the trio, as nulls: `site/index.html` reads them off the
     # top level unconditionally, and a missing key and a null one render differently.
     newest = seasons[0] if seasons else {"bins": [], "log_loss": None, "brier": None}
-    payload: dict[str, Any] = {
-        "name": "track_record", "source": "preds+results", "generated_at": jsonio.stamp(),
-        "n_scored": df.height,
+    # Through `jsonio.summary` rather than three literal envelope keys, so `shape: "summary"`
+    # is written by the writer that knows this record has no rows. Until #227 that fact lived
+    # in `NOT_ROW_SHAPED` in the contract instead, where nothing connected it to here.
+    payload: dict[str, Any] = jsonio.summary(
+        "track_record", "preds+results",
+        n_scored=df.height,
         # Nothing is pre-registered until a prediction is committed before kickoff, which
         # the Sunday Actions job does. Counting it here would be marking my own homework.
-        "n_preregistered": 0,
-        "is_backtest": df.height > 0,
-        "note": ("No pre-registered predictions yet. A prediction counts only once its "
-                 "commit predates kickoff -- see docs/track-record.md."),
-        "seasons": seasons,
-        "bins": newest["bins"], "log_loss": newest["log_loss"], "brier": newest["brier"],
+        n_preregistered=0,
+        is_backtest=df.height > 0,
+        note=("No pre-registered predictions yet. A prediction counts only once its "
+              "commit predates kickoff -- see docs/track-record.md."),
+        seasons=seasons,
+        bins=newest["bins"], log_loss=newest["log_loss"], brier=newest["brier"],
         # The other half of the record, and the half that was never on the page. Log loss
         # and Brier score the *game* probability; `interval_coverage` is whether the weekly
         # player interval covers, from `hub.models.coverage`. It reads the last committed
@@ -501,8 +504,8 @@ def track_record(base: Path | None = None, out: Path | None = None,
         # of player-weeks -- and it is None when none has been made, which is the graceful
         # degradation `CLAUDE.md` requires: a missing research artifact drops a field, it
         # does not take the page down.
-        "interval_coverage": coverage.published_summary(),
-    }
+        interval_coverage=coverage.published_summary(),
+    )
     return _publish(out, "track_record", payload, count_key="n_scored")
 
 

@@ -111,3 +111,67 @@ def test_an_extra_field_the_envelope_does_not_own_is_fine():
     got = jsonio.artifact("survivor", "hub.season.survivor", [], season=2026, survival=0.007)
     assert got["season"] == 2026 and got["survival"] == 0.007
     assert got["n"] == 0 and got["name"] == "survivor"
+
+
+# --- an artifact declares which shape it is (#227) --------------------------
+
+
+def test_a_row_shaped_artifact_declares_itself_row_shaped():
+    """The declaration `tests/contracts/test_published_envelopes.py` reads.
+
+    Before #227 the difference between a row-shaped artifact and a summary lived in
+    `NOT_ROW_SHAPED`, a set of filenames in that contract, while the decision was made here.
+    Nothing connected the two, so `site/data/cfbd.json` -- correct, and simply not on the
+    list -- broke CI on a push ten commits after the one that published it.
+    """
+    got = jsonio.artifact("preds_2026_wk01", "preds", [{"a": 1}])
+    assert got["shape"] == jsonio.ROWS
+    assert got["n"] == 1 and got["rows"] == [{"a": 1}]
+
+
+def test_a_summary_declares_itself_a_summary_and_carries_no_rows():
+    """The other shape: an artifact that reports rather than carries."""
+    got = jsonio.summary("cfbd", "hub.fetch.cfbd", rows_by_endpoint={"games": 12})
+    assert got["shape"] == jsonio.SUMMARY
+    assert "rows" not in got and "n" not in got
+    assert got["name"] == "cfbd" and got["generated_at"]
+    assert got["rows_by_endpoint"] == {"games": 12}
+
+
+def test_the_two_shapes_are_the_only_ones_and_they_differ():
+    """`SHAPES` is what the contract reads its vocabulary from, so an empty or duplicated
+    tuple here would make "the shapes are these" say nothing."""
+    assert set(jsonio.SHAPES) == {jsonio.ROWS, jsonio.SUMMARY}
+    assert jsonio.ROWS != jsonio.SUMMARY
+    assert len(jsonio.SHAPES) == 2
+
+
+@pytest.mark.parametrize("field", ["generated_at", "shape", "n", "rows"])
+def test_a_summary_cannot_restate_the_envelope_or_claim_rows(field):
+    """`shape` is the envelope's now, so a caller cannot set it -- an artifact that could
+    name its own shape from the outside is back to two writers disagreeing.
+
+    `n` and `rows` are refused for the stronger reason: a document carrying rows *is*
+    row-shaped, and one carrying them under `shape: "summary"` would be a declaration that
+    contradicts its own document, which is worse than the allowlist this replaced.
+    """
+    with pytest.raises(ValueError, match=field):
+        jsonio.summary("x", "src", **{field: "hijacked"})
+
+
+def test_shape_cannot_be_displaced_on_a_row_shaped_artifact_either():
+    """The same refusal on `artifact`, which is where the guard already lived; `shape`
+    joined the set it protects."""
+    with pytest.raises(ValueError, match="shape"):
+        jsonio.artifact("x", "src", [], shape="summary")
+
+
+def test_a_summary_stamps_the_file_it_read_when_it_is_given_one(tmp_path):
+    """`as_of` works the same on both writers. A summary derived from a file is as fresh as
+    the file, not as the run -- the issue #122 rule, and the reason it is not spelled
+    `generated_at`."""
+    src = tmp_path / "x.parquet"
+    src.write_text("")
+    got = jsonio.summary("track_record", "preds+results", jsonio.file_stamp(src), n_scored=0)
+    assert got["generated_at"] == jsonio.file_stamp(src)
+    assert got["shape"] == jsonio.SUMMARY
