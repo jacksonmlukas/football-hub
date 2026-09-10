@@ -52,6 +52,54 @@ def test_those_reports_still_run_when_adp_is_present():
     assert report.injuries(df, _rep(adp=True)), "the designation report should have content"
 
 
+# --- issue #146: both halves of the injury section ask the report ----------
+
+def _disagreeing_board(**cols):
+    """A board inside ADP 120 carrying whichever stage columns the caller names."""
+    return _board(adp=[10.0, 20.0], **cols)
+
+
+def test_the_injury_section_holds_the_report_against_a_frame_that_disagrees():
+    """Issue #146, on frames whose columns and the report disagree in both directions.
+
+    A rule test rather than one built from a reachable board, for #164's reason: on every
+    board `build` can emit, `injury_status` and `missed` are present exactly when their
+    stage's flag is set, so a reachable fixture passes against the sniff this replaces and
+    proves nothing. Only a frame that contradicts its own report can tell the two apart.
+
+    **Direction one -- the frame says yes, the report says no.** `missed` is on the board
+    with values that would print, and `report.durability` is false. The durability stage did
+    not run, so last season's missed time is not shown: a column of numbers surviving from
+    somewhere else is not evidence that the stage that owns it happened. The designation
+    half still renders, so this is the report being read rather than the section being off.
+
+    **Direction two -- the frame says no, the report says yes.** The report says the
+    draft-market stage ran and `injury_status` is not there. `injury_status` is one of
+    `board.STAGE_COLUMNS["adp"]`, so the report has already answered for it, and the read
+    goes ahead and raises. Skipping the half silently is exactly what the sniff did, and it
+    is indistinguishable from the stage having run and found nobody hurt.
+    """
+    import polars as _pl
+    import pytest as _pytest
+
+    frame_says_yes = _disagreeing_board(injury_status=["QUESTIONABLE", None],
+                                        missed=[8, 9])
+    without = "\n".join(report.injuries(frame_says_yes, _rep(adp=True, durability=False)))
+    assert "Carrying a designation today" in without, (
+        "the designation half is gated on `report.adp`, which is set here")
+    assert "Missed time last season" not in without, (
+        "`missed` is on the frame but its stage did not run -- the report is the answer")
+
+    with_it = "\n".join(report.injuries(frame_says_yes, _rep(adp=True, durability=True)))
+    assert "Missed time last season" in with_it, (
+        "and the half is not simply off: the same frame renders it when the report says the "
+        "durability stage ran")
+
+    frame_says_no = _disagreeing_board(missed=[8, 9])
+    with _pytest.raises(_pl.exceptions.ColumnNotFoundError, match="injury_status"):
+        report.injuries(frame_says_no, _rep(adp=True, durability=True))
+
+
 # --- corrections depend on the route that chose the pick --------------------
 
 def _tp(via, notes=("missed 1 last season",), rank=1.5, label="ECR"):

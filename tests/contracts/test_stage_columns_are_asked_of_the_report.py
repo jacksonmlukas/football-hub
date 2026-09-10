@@ -53,10 +53,11 @@ COLLECTION = (ast.Set, ast.List, ast.Tuple, ast.Dict)
 
 # The census. `(module, function)` -> why that site reads the frame instead of the report.
 #
-# Six of the eight are answered and two are not, which is the honest state and is recorded
-# as such: `report.injuries` holds a `BuildReport` and re-derives two stages from the frame
-# anyway, and that is issue #146 -- a ticket of its own, with its own acceptance criteria.
-# #199 made it easy and stopped there rather than landing it without them.
+# All six are answered. The two that were not were `report.injuries`, which held a
+# `BuildReport`, gated on it, and re-derived two stages from the frame anyway; issue #146
+# closed them by reading `report.adp` and `report.durability` instead, and the count below
+# fell from eight to six because it did. #199 left them here on purpose rather than landing
+# them without the rule test #146's acceptance criteria asked for.
 SURVIVORS: dict[tuple[str, str], str] = {
     ("backtest.py", "correction_report"):
         "arithmetic: selects five columns and subtracts two, and `correction_tripwire` "
@@ -69,14 +70,12 @@ SURVIVORS: dict[tuple[str, str], str] = {
         "describing this frame exists yet",
     ("regression.py", "correct_projection"):
         "producer, same as durability's",
-    ("report.py", "injuries"):
-        "NOT justified -- open as issue #146, which lands it with the rule test that "
-        "proves it",
 }
 
-# Two sites per function at three of them, one at the others. Stated as a number because
+# Two sites per function at two of them, one at the other two. Stated as a number because
 # that is the acceptance criterion: a new sniff has to move a figure a person wrote down.
-EXPECTED_SITES = 8
+# Eight until #146; `report.injuries` was two of them and is now none.
+EXPECTED_SITES = 6
 
 
 def _stage_literals(node: ast.AST) -> set[str]:
