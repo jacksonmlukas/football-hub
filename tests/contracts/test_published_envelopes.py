@@ -113,7 +113,12 @@ def test_every_envelope_declares_a_shape_the_writer_can_write(path):
     declared = _shape(path)
     assert declared in KNOWN_SHAPES, (
         f"{path.name} declares shape {declared!r}; the shapes are "
-        f"{sorted(KNOWN_SHAPES)}. {DECLARE}")
+        f"{sorted(KNOWN_SHAPES)}. {DECLARE}\n"
+        f"If this file is gitignored -- `site/data/live.json` is, under ADR-0018 -- then CI "
+        f"has never seen it and you are looking at a stale local build artifact from before "
+        f"the writer stamped shapes. Regenerate it, or delete it and let the deploy job "
+        f"write it again. Do not add it to an exemption list: it goes through "
+        f"`jsonio.artifact` like everything else, so a fresh one already declares.")
 
 
 def test_both_declared_shapes_are_actually_published():
