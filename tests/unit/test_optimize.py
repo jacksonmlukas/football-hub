@@ -149,6 +149,11 @@ def _two_currency_board(n=60):
 def test_the_room_ranks_in_the_currency_the_report_names():
     """Issue #199, and the site with a live consequence rather than only an owner.
 
+    It is also **issue #147's third criterion** -- "whichever way it lands, a test holds it,
+    proven by mutation". The way it landed is the report, so this is the test that holds it:
+    restoring `"vor_proj" in pool.columns` in `_greedy_currency` makes the second assertion
+    below fail, because the frame carries both columns and the sniff cannot see the report.
+
     A rule test on one frame and two reports, for #164's reason: on every board `build` can
     emit, `vor_proj` is present exactly when `report.adp` is true, so a test built from a
     reachable board would pass against `"vor_proj" in pool.columns` and prove nothing. The
