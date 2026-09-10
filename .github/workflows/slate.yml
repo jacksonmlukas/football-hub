@@ -104,6 +104,42 @@ jobs:
           test "$(jq '[.artifacts[] | select(.stale | not)] | length' site/data/manifest.json)" -gt 0 \
             || { echo "::error::every artifact is stale; nothing was refreshed"; exit 1; }
 
+      # The contracts that read published artifacts, run on the artifacts this job just
+      # wrote and before it commits them (#228).
+      #
+      # **Why here and not in `ci.yml`.** A push made with `GITHUB_TOKEN` cannot trigger
+      # another workflow -- GitHub's guard against a job that commits and re-triggers itself
+      # forever, and the same guard `pages.yml` crosses with `workflow_run`. So `ci.yml` never
+      # saw a slate commit, and the first process to read `site/data/cfbd.json` after the slate
+      # published it on 2026-09-09 was the contract suite on the next *human* push: `f6510f2`,
+      # ten commits and eleven hours later. The failure was correct and the attribution was
+      # not. This repo has paid that cost before -- a CI red that had been red for four hours
+      # before the push it was blamed on.
+      #
+      # **The cost, which is the reason this is not `workflow_run: [slate]` on `ci.yml`.**
+      # `ci.yml`'s test job is `tests/unit tests/contracts` under coverage plus the per-module
+      # ratchet: 288s and 151s respectively when measured locally on 2026-09-10, so upwards of
+      # seven minutes, on a second runner that would also have to check out and `uv sync`
+      # first -- twice a week, forever, to read seven JSON files. The two modules below are
+      # the ones that read the committed `site/data/`, they take **0.52s for 44 tests** on the
+      # same machine, and the venv this job already built is the one they run in. That is the
+      # contract subset the ticket asks for rather than the whole suite.
+      #
+      # **Before the commit, so a malformed artifact is not published at all.** The job goes
+      # red on its own run, nothing is committed, `pages.yml` sees a failed slate and deploys
+      # nothing, and the page keeps serving last-good -- which is `CLAUDE.md`'s degradation
+      # rule, not a departure from it. A run with zero attention that can emit an artifact no
+      # contract has read is exactly the unattended failure the design exists to prevent.
+      #
+      # `tests/contracts/test_published_envelopes.py` derives this list from the test tree and
+      # fails if the two disagree: a contract module that starts reading the published site
+      # and is not named here would otherwise be exactly the check-that-cannot-see-its-context
+      # this step was added about.
+      - name: Check the artifacts against the contracts that read them
+        run: |
+          uv run pytest tests/contracts/test_page_reads.py \
+                        tests/contracts/test_published_envelopes.py -q
+
       # Only when something moved. `generated_at` changes on every run by construction, so a
       # naive `git commit -am` would produce a commit a week that says nothing -- and the git
       # history is the pre-registration, so filling it with noise is not free.
