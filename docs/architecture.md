@@ -7,7 +7,7 @@ They were a single document until 2026-08-24. Splitting them made each one addre
 architecture review had cited "ADR-004 in `docs/architecture.md`" for want of a path — and let
 a superseded decision keep its original text instead of being edited in place.
 
-**There are twenty-three decision records in [`docs/adr/`](adr/).** That count is the
+**There are twenty-four decision records in [`docs/adr/`](adr/).** That count is the
 directory's, and it is the only one that can be right; see
 [How many there are](#how-many-there-are) at the foot of this file for the three numbers this
 repo was carrying instead, and why they drifted.
@@ -45,6 +45,7 @@ in this index re-decides anything*.
 | [0021](adr/0021-a-correction-is-a-shape-not-a-module.md) | A Correction is a shape, not a module | accepted | two `correct_projection` bodies that differ in kind, and `fitted_digest` keying every constant by its module |
 | [0022](adr/0022-the-boards-xfp-stays-the-published-total.md) | The Board's xFP stays the published total, with the rebuild beside it | accepted | the rebuild reproducing the total to 0.017 points a player-week, which makes a gate on it vacuous |
 | [0023](adr/0023-a-refused-injury-report-nulls-three-columns.md) | A refused injury report nulls three columns, not the Panel | accepted | `"None"` being a legal designation, so a filled column is indistinguishable from a real week |
+| [0024](adr/0024-a-modelling-decision-becomes-agent-work-when-its-alternatives-can-be-measured.md) | A modelling decision becomes agent work when its alternatives can be measured side by side | accepted | nine issues labelled `ready-for-agent` over bodies saying they were not |
 
 ## Re-scored 2026-09-07
 
@@ -89,7 +90,7 @@ Three places in this repo gave three different answers, and none of them was twe
 | `README.md` | *"index of twelve decision records"* | No. It has never matched this file, which listed fourteen when the line was written |
 | `docs/method.md` | *"Fourteen decisions"*, linking `docs/adr/` | Right until ADR-0015 landed on 2026-08-27, then never re-derived |
 | This index | listed 0001–0014 | Right until 2026-08-27; nine ADRs have landed since |
-| `docs/adr/` | 23 files | The only count that cannot drift, because it is not written down anywhere |
+| `docs/adr/` | 24 files | Guarded by `test_no_document_states_a_count_that_contradicts_the_directory`, which is what caught this line drifting |
 
 **The fourteen is a coincidence worth naming, because it is what made the drift invisible.**
 `docs/method.md` separately reports that *"Fourteen things have been measured properly"* — a
