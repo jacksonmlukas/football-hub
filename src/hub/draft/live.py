@@ -97,9 +97,17 @@ def _live_replacement(available: pl.DataFrame, teams: int) -> dict[str, float]:
     have one home, so this names its three inputs rather than duplicating the logic. It used
     to have to rename `pos` into `position` first, because the function's real interface was
     a set of column names rather than its signature.
+
+    `population="in_draft"` is the declaration #184 asked for, and this is the site that was
+    always right: `available` is what the room has left, so this is the only one of the three
+    levels that answers "the best option available in the week being valued" rather than
+    naming a fixed preseason player. The module docstring above has said so since the poller
+    was written; what it could not do was stop the other two from looking like the same
+    number under a different name.
     """
     return replacement_levels(available["pos"], available["xfp_per_game"],
-                              available["games"], teams=teams, min_games=MIN_GAMES)
+                              available["games"], teams=teams, min_games=MIN_GAMES,
+                              population="in_draft")
 
 
 def refresh(board: pl.DataFrame, state: DraftState, *, my_slot: int = MY_SLOT,

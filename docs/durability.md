@@ -32,6 +32,38 @@ the common claim that injury proneness is hindsight.
 alone, and the second year's coefficient is −0.040 against −0.159. Almost all of the signal is
 in the most recent season, so the model uses that and nothing older.
 
+### The +0.407 now drives the simulator too (2026-09-10, issue #183)
+
+Until this date the persistence figure above was measured and then used for one thing: shifting
+a projected mean through `BETA`. It never touched variance, and `hub.draft.season` had no
+concept of absence at all — a bust was a talent draw landing near zero, and because weekly
+spread follows realised talent, a player who missed the season came out low-mean and
+**low-variance**, which is the opposite of an injury.
+
+`durability.MISSED_YOY_R = 0.407` is that number given a name so `config_digest` can hash it,
+and `next_season_absence` is what reads it. Treating (missed last season, missed this season)
+as one bivariate quantity with correlation *r*, the conditional distribution is fixed by *r*
+and the observed marginal:
+
+|  |  |
+|---|---|
+| E[next \| prior] | mbar + r · (prior − mbar) |
+| SD[next \| prior] | s · √(1 − r²) |
+
+`mbar` and `s` are estimated from the `missed` column in hand rather than carried as
+constants, and the population is right by construction: `games_missed` applies `MIN_PPG`,
+the same "real prior role" filter the 1,531 pairs were drawn under. A player with no prior
+role gets the marginal instead of the conditional.
+
+**Nothing here is a new fit, and that was the deciding argument.** A mixture component or a
+zero-inflated week model would each have introduced a weight nothing in this repo derives,
+which is ADR-0006's line; the games-played draw is the only one of the three whose parameter
+was already measured. `season._absence_factor` records what the draw does not model — the
+weeks missed are scattered rather than run in a block, and byes are #226 — and names
+`TALENT_CV` as now carrying absence a second time, since it was fitted on points per *team*
+game. That overstates season spread until `hub.draft.calibrate` is re-run against the real
+games-played distribution, which is the direction the error is known to lie in.
+
 ## The projection does not fully price it
 
 `ppg_next ~ proj_ppg + prior games missed`. A projection that already discounted durability

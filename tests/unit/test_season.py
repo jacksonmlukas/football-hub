@@ -524,3 +524,157 @@ def test_both_gates_use_the_one_rule():
         names = {a.name for n in ast.walk(ast.parse((root / rel).read_text()))
                  if isinstance(n, ast.ImportFrom) for a in n.names}
         assert "starting_lineup" in names, f"{rel} still carries its own copy"
+
+
+# --- absence is absence, not a low-variance player (#183) ------------------
+#
+# The defect: talent was drawn per season, the mean clipped at zero, and weekly spread scaled
+# by sqrt(realised/projected) -- so a player whose draw collapsed came out low-mean AND
+# low-variance, which is a bust and is the opposite of an injury. Games played are now drawn
+# from the player's own history through `durability.MISSED_YOY_R`, and the weeks he misses
+# are zeros. Every assertion below is one of the ticket's two falsifiable directions or the
+# guarantee that the `missed=None` path is untouched.
+
+# A spread of prior-season histories, so `next_season_absence` has a population mean and
+# spread to shrink toward -- the sample `games_missed` would hand it. The last two are the
+# pair the ticket's second criterion is about: identical players, opposite histories.
+ABSENCE_HIST = [float(i % 9) for i in range(22)] + [0.0, 16.0]
+DURABLE, FRAGILE = -2, -1
+
+
+def _one_team_per_player(hist):
+    """A league of one-man teams, so a team's points ARE that player's points.
+
+    `simulate_weeks` returns `lineup_points`, and over a shared roster that takes the best
+    few of many identical players -- which hides the per-player effect these tests are about,
+    and breaks mean-preservation at the team level even where it holds per player. One player
+    per roster takes the lineup out of the question.
+    """
+    n = len(hist)
+    return ([np.array([i]) for i in range(n)], np.full(n, 12.0), np.full(n, 3.0),
+            np.array(["RB"] * n), np.asarray(hist, dtype=float))
+
+
+def _season_totals(*, absence: bool, weeks=14, n_sims=4000, seed=5):
+    """Season totals per player, shaped (sims, players)."""
+    rosters, mu, sd, pos, hist = _one_team_per_player(ABSENCE_HIST)
+    got = simulate_weeks(rosters, mu, sd, pos, n_sims=n_sims, weeks=weeks,
+                         rng=np.random.default_rng(seed), talent_cv=0.0,
+                         missed=(hist if absence else None))
+    return got.sum(axis=1)
+
+
+def test_a_player_who_misses_time_contributes_zeros_for_those_weeks():
+    """The first acceptance criterion, and the one a shrunken mean cannot satisfy.
+
+    A single player with a large mean and a tiny spread cannot score zero by drawing badly --
+    the weekly distribution is nowhere near the clip -- so a zero week is absence or nothing.
+    Without the draw there are none; with it there are.
+    """
+    hist = np.array([14.0])
+    kw = {"n_sims": 400, "weeks": 14, "talent_cv": 0.0}
+    args = ([np.array([0])], np.array([25.0]), np.array([0.5]), np.array(["RB"]))
+    without = simulate_weeks(*args, rng=np.random.default_rng(3), missed=None, **kw)
+    with_ = simulate_weeks(*args, rng=np.random.default_rng(3), missed=hist, **kw)
+    assert not (without == 0.0).any(), (
+        "the fixture can reach zero on its own, so a zero proves nothing about absence")
+    assert (with_ == 0.0).any(), (
+        "no week is a zero, so the player who misses the season is still being expressed as "
+        "a shrunken mean rather than as games he did not play")
+
+
+def test_injury_history_raises_season_variance():
+    """The second acceptance criterion, and the pre-registered falsifiable direction: if the
+    games-played draw left variance unchanged or lower, the implementation is wrong and
+    nothing ships until that is explained."""
+    with_, without = _season_totals(absence=True), _season_totals(absence=False)
+    assert with_[:, FRAGILE].var() > without[:, FRAGILE].var() * 1.05, (
+        "drawing absence did not raise season variance, which is the direction #183 "
+        "pre-registered and the one that says whether absence is modelled at all")
+    # Not only for the fragile player: absence is a population fact, so every player with any
+    # expected absence is more variable than he was, which the old model could not express
+    # without also making him worse.
+    assert (with_.var(axis=0) > without.var(axis=0)).all()
+
+
+def test_a_fragile_player_is_more_variable_than_an_identical_durable_one():
+    """The same claim between two players rather than between two models, which is how the
+    ticket words it: the two are identical in `mu`, `sd` and position, and `missed` is the
+    only thing that differs."""
+    got = _season_totals(absence=True)
+    assert got[:, FRAGILE].var() > got[:, DURABLE].var() * 1.05
+
+
+def test_absence_is_mean_preserving():
+    """`mu` is points per *team* game and `durability.correct_projection` has already marked
+    QB and WR down for expected absence, so a zero-one mask would price absence twice and
+    re-level every downstream constant. The played weeks are scaled by the inverse of the
+    expected played fraction, which is the definitional conversion to points per game
+    *played* -- so a season total keeps its mean and only its spread moves.
+
+    Across the pool rather than per player: the count of missed weeks is rounded to a whole
+    week, so an individual is preserved only up to that rounding, and the claim being made is
+    about the level of the board rather than about one man's projection.
+    """
+    with_, without = _season_totals(absence=True), _season_totals(absence=False)
+    assert abs(with_.mean() - without.mean()) < 0.03 * without.mean()
+
+
+def test_no_history_means_not_modelled_and_never_reaches_the_absence_path(monkeypatch):
+    """Graceful degradation, and the reason no seeded result in this suite was re-baselined.
+
+    `missed=None` is the honest answer for a caller with no durability history -- a board
+    whose advisory durability stage was absorbed, or `leverage`'s synthetic pool. The
+    assertion that matters is not "the two agree" (a default value agrees with itself); it is
+    that the absence code is not *entered*, which is what leaves the generator where the
+    pre-#183 simulator left it and every seeded expectation in this file intact.
+    """
+    rosters, mu, sd, pos, _ = _one_team_per_player(ABSENCE_HIST)
+    kw = {"n_sims": 50, "weeks": 14, "talent_cv": 0.3}
+
+    def refuse(*a, **k):
+        raise AssertionError("the absence path ran for a caller that has no history, so it "
+                             "has taken draws the old simulator did not and every seeded "
+                             "result in this suite now means something else")
+
+    monkeypatch.setattr(season, "_absence_factor", refuse)
+    a = simulate_weeks(rosters, mu, sd, pos, rng=np.random.default_rng(11), **kw)
+    b = simulate_weeks(rosters, mu, sd, pos, rng=np.random.default_rng(11), missed=None, **kw)
+    assert np.array_equal(a, b)
+
+
+def test_a_player_with_no_prior_role_draws_the_marginal_not_the_average():
+    """A null `missed` is "nothing is known", which is not the same as "he is average". The
+    conditional spread of a known player is narrowed by sqrt(1 - r^2); an unknown one keeps
+    the full marginal, and that difference is the variance a rookie should carry."""
+    from hub.draft.durability import next_season_absence
+    hist = np.array([0.0, 1.0, 2.0, 6.0, 9.0, 12.0])
+    _, sd_k = next_season_absence(hist)
+    mu_u, sd_u = next_season_absence(np.append(hist, np.nan))
+    assert sd_u[-1] > sd_k[0]
+    assert abs(mu_u[-1] - hist.mean()) < 1e-9
+
+
+def test_the_persistence_is_the_published_one_and_shrinks_toward_the_mean():
+    """The whole fitted surface of #183 is one number that was already measured. If the
+    shrinkage stopped being `mbar + r * (prior - mbar)`, absence would have acquired a
+    parameter nothing in this repo derives -- ADR-0006's line, and the reason the disposition
+    took the games-played draw over a mixture component."""
+    from hub.draft.durability import MISSED_YOY_R, next_season_absence
+    assert MISSED_YOY_R == 0.407
+    hist = np.array([0.0, 4.0, 8.0, 12.0])
+    mu, _ = next_season_absence(hist)
+    mbar = hist.mean()
+    assert np.allclose(mu, mbar + MISSED_YOY_R * (hist - mbar))
+
+
+def test_absence_degrades_rather_than_raising_when_nothing_is_known():
+    """A simulator that refuses to run because an advisory column is all-null is the
+    operator-dependence CLAUDE.md warns about."""
+    from hub.draft.durability import next_season_absence
+    mu, sd = next_season_absence(np.array([np.nan, np.nan]))
+    assert not mu.any() and not sd.any()
+    got = simulate_weeks([np.array([0])], np.array([12.0]), np.array([3.0]),
+                         np.array(["RB"]), n_sims=20, weeks=3,
+                         rng=np.random.default_rng(0), missed=np.array([np.nan]))
+    assert np.isfinite(got).all()

@@ -23,7 +23,6 @@ from hub.config import (
     fitted_digest,
     flex_capacity,
     flex_positions,
-    flex_share,
     pool_digest,
     required_starters,
     roster_mismatch,
@@ -241,8 +240,36 @@ def test_roster_reflects_three_wr_league():
     assert starters(RosterConfig())["WR"] == 3
 
 
-def test_flex_shares_sum_to_one():
-    assert abs(sum(flex_share(RosterConfig()).values()) - 1.0) < 1e-9
+# `test_flex_shares_sum_to_one` moved to `test_replacement_level.py` with the constant it
+# checks. What stays here is the config-level half of #184: the claim is not about the three
+# values, it is about where they may live and what may reach them.
+
+def test_the_flex_shares_are_not_a_config_field():
+    """ADR-0006, on a quantity nobody derived.
+
+    `flex_rb`, `flex_wr` and `flex_te` were `RosterConfig` fields, so `roster.flex_rb=0.9` on
+    a Hydra command line would have moved the replacement index at RB, WR and TE and every
+    VOR on the board with it. Losing the knob is #184's point, and the assertion is written
+    against the *resolved* config rather than the dataclass so a `conf/` file cannot put one
+    back either.
+    """
+    resolved = config.resolved_config()
+    for gone in ("flex_rb", "flex_wr", "flex_te"):
+        assert not hasattr(RosterConfig(), gone), (
+            f"{gone} is a Hydra-overridable field again. The flex shares set replacement "
+            f"level at three positions; they live in `hub.draft.board.FLEX_SHARES`.")
+        assert not hasattr(resolved.roster, gone)
+    # Eligibility is the other half and genuinely is a league rule, so it stays.
+    assert resolved.roster.flex_from == ["RB", "WR", "TE"]
+
+
+def test_the_flex_shares_are_covered_by_the_digest():
+    """Out of the config is not enough -- out of the config and out of the digest would be a
+    number that changes every VOR on the board while the model version says nothing, which is
+    the exact failure ADR-0006 was written after. `hub.draft.board` is CLI-excluded from the
+    wholesale sweep, so this rides `FITTED_EXTRA` beside `MIN_GAMES`."""
+    assert "hub.draft.board:FLEX_SHARES" in FITTED_EXTRA
+    assert fitted_constants()["board.FLEX_SHARES"] == {"RB": 0.45, "WR": 0.50, "TE": 0.05}
 
 
 def test_slot_is_three():
@@ -710,8 +737,42 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     The digest was checked to be stable at runtime despite `_FACTORS` being mutable and
     populated during a draw -- it is not hashed by content, so the model version does not
     move as a process runs.
+
+    **Moved again 2026-09-10 (#184): `0c6fab17` -> `eb32dd45`**, `fitted_digest` `df2c1948`
+    -> `0590176f`. Both halves moved at once, which is unusual and is the whole shape of the
+    change: the flex shares left `RosterConfig` -- so three float fields dropped out of the
+    hashed schema -- and arrived in `hub.draft.board` as `FLEX_SHARES`, registered by hand in
+    `FITTED_EXTRA`, so the same three numbers entered the fitted half.
+
+    **This one is earned, and it is worth saying why against the two spurious moves earlier
+    today.** #187's `_FACTOR_CACHE_MAX` and #199's `TYPE_CHECKING` moved the digest without
+    any measurement changing: a cache bound and a standard-library import came to identify a
+    model version because the sweep's rule is a naming convention. Nothing about a prediction
+    was different afterwards. Here the *values* are also unchanged -- 0.45, 0.50, 0.05, byte
+    for byte -- and the move is still real, because what changed is what can reach them.
+    Before this commit `roster.flex_rb=0.9` on a Hydra command line moved the replacement
+    index at RB, WR and TE and every VOR on the board, and produced a digest identical to a
+    run that had not; after it, there is no such command line. A digest that did not move
+    here would be claiming those two runs were the same model, which they never were.
+
+    That the two halves move in opposite directions and cancel is not something to rely on:
+    they are hashed as one string, so the arithmetic is not additive and the pairing above is
+    a record of what happened rather than a property.
+
+    **Moved again 2026-09-10 (#183): `eb32dd45` -> `6bdcb663`**, `fitted_digest` `0590176f`
+    -> `8c248a6e`. One constant, `durability.MISSED_YOY_R = 0.407`, in a module already in
+    `FITTED_MODULES`. It is not a new measurement -- the +0.407 has been in
+    `docs/durability.md` and in this module's docstring since 2026-08-24 -- but it had never
+    been a *name*, so nothing hashed it, and the simulator that now reads it had no concept
+    of absence at all. Every P(win) this repo computes moves, because a player with an injury
+    history now contributes zeros for the weeks he misses instead of a shrunken mean. The
+    digest is doing exactly its job: two runs on either side of that are not the same model.
+
+    `hub.season.pool`'s `field_concentration` (#152) landed between these two moves and does
+    not appear in either, which is `config_digest`'s `pool` exclusion working as designed --
+    a survivor rule no prediction can read must not issue a model version.
     """
-    assert config_digest(HubConfig()) == "0c6fab17"
+    assert config_digest(HubConfig()) == "6bdcb663"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

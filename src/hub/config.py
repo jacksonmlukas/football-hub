@@ -54,14 +54,16 @@ class RosterConfig:
     wr: int = 3                         # three-WR league, not the ESPN default
     te: int = 1
     flex: int = 1
-    # Who may fill the flex. Separate from the shares below: eligibility is a league rule,
-    # the shares are a projection of how the flex tends to get used.
+    # Who may fill the flex. **Eligibility is a league rule and stays here**; how the flex
+    # actually gets *used* is not, and left this class on 2026-09-10 for
+    # `hub.draft.board.FLEX_SHARES` (#184). The two used to sit adjacent as
+    # `flex_from` and `flex_rb/wr/te`, separated by a comment saying they were different
+    # kinds of thing -- which is the arrangement that let three replacement levels coexist:
+    # a quantity nobody derived, wearing a Hydra override knob, next to one the commissioner
+    # owns. ADR-0006 puts a number that changes a prediction beside its provenance and out of
+    # reach of the command line, and the shares change every VOR at every flex-eligible
+    # position. Eligibility genuinely is a choice, so it genuinely belongs here.
     flex_from: list[str] = field(default_factory=lambda: ["RB", "WR", "TE"])
-    # Flex allocation. With three required WR slots the top of the WR pool is already
-    # consumed by starters, so the flex tilts back toward RB relative to a 2WR league.
-    flex_rb: float = 0.45
-    flex_wr: float = 0.50
-    flex_te: float = 0.05
 
 
 # The season being drafted for. One owner, because it was five: `board.SEASON_AHEAD`,
@@ -229,7 +231,7 @@ def resolved_config() -> HubConfig:
     The one thing `HubConfig()` is not. ADR-0004 says the digest folded into every model
     version is over the *resolved* config, and a bare `HubConfig()` is the resolved config
     only for as long as `conf/config.yaml` overrides nothing that diverges from a default --
-    which is true today (both digests are `ab32cf62`, re-measured 2026-09-07) and is a
+    which is true today (both digests are `eb32dd45`, re-measured 2026-09-10) and is a
     coincidence rather than a property. The first divergent override would have a gate print
     a model version for a model nobody ran: provenance present in the schema and absent in
     the data, which is the defect `models/ratings.py` records from when `cfg_digest`
@@ -288,6 +290,18 @@ FITTED_MODULES: tuple[str, ...] = (
 # digest depend on where the repo is checked out. But `MIN_GAMES` is a real fitted threshold
 # -- it decides who is eligible to set replacement level, so it moves every VOR on the board
 # -- and it was chosen from data ("the sign is stable from 8 games up").
+#
+# `FLEX_SHARES` arrives the same way and for a sharper reason (#184). It is **not** a
+# measurement -- there is no interval and no fit -- and naming it here does not pretend
+# otherwise: this tuple's job is *digest coverage*, and coverage is owed by anything that
+# changes a prediction, measured or not. The shares set how much of the flex slot each
+# position is assumed to absorb, which sets the replacement index at RB, WR and TE, which
+# moves every VOR on the board. They spent their life as `RosterConfig.flex_rb/_wr/_te`,
+# where `roster.flex_rb=0.9` on a command line could have moved every one of those numbers
+# without moving a digest -- ADR-0006's first objection, on a quantity nobody derived. The
+# override knob is gone on purpose; the provenance that replaces it is a published
+# sensitivity, and it lives beside the constant in `hub.draft.board`.
+#
 # `hub.models.components` is deliberately NOT registered wholesale. Half of it --
 # `sample_weeks`, `moments`, `project` and the four dispersions they read -- has no
 # production caller: component-derived spread was measured worse than the fitted square-root
@@ -297,6 +311,7 @@ FITTED_MODULES: tuple[str, ...] = (
 # reachable are named individually below.
 FITTED_EXTRA: tuple[str, ...] = (
     "hub.draft.board:MIN_GAMES",
+    "hub.draft.board:FLEX_SHARES",
     "hub.models.components:SCORING",
     "hub.models.components:TD_RATE",
     "hub.models.components:FALLBACK_TD_RATE",
@@ -759,9 +774,11 @@ def flex_capacity(cfg: RosterConfig) -> int:
                if p in flex_positions(cfg)) + cfg.flex
 
 
-def flex_share(cfg: RosterConfig) -> dict[str, float]:
-    """Expected split of the flex slot across eligible positions."""
-    return {"RB": cfg.flex_rb, "WR": cfg.flex_wr, "TE": cfg.flex_te}
+# `flex_share(cfg)` used to sit here, reading `cfg.flex_rb/_wr/_te`. It is now
+# `hub.draft.board.FLEX_SHARES`, a plain dict beside the sensitivity that justifies it, and
+# it is hashed through `FITTED_EXTRA` rather than through the config schema. There is no
+# forwarding shim: a function here that read a constant in `hub.draft` would be a second
+# address for the same number and an import cycle besides, since `board` imports this file.
 
 
 # ESPN's own names for the slots this league starts, so a league read over the wire can be
