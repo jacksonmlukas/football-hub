@@ -166,6 +166,23 @@ def _greedy_currency(pool: pl.DataFrame, report: BuildReport) -> np.ndarray:
     **It refuses rather than falling back to `vor`.** Falling back is what the sniff did, and
     quietly ranking on a different currency than the caller believes is the defect, not the
     mitigation. So the answer is the same refusal with an explanation attached.
+
+    **This is issue #147's decision, and it is the first of the two that ticket offered.**
+    #147 asked for the choice on the record rather than for a particular one: thread the
+    report through the simulator, or leave the fallback and annotate what ranking on `vor`
+    instead of `vor_proj` costs every arm, cohort and gate built on it. #199 threaded it, so
+    the annotation branch is moot -- what a reader wants instead is the gap that survives
+    threading, and that is named where it bites, in `backtest.LIMITATIONS`: no historical
+    ESPN projection exists to give a past room, so the live room and every backtested room
+    rank in different currencies whatever this function does. Read off the report, that is a
+    stated limitation; read off a column, it was an accident nothing recorded.
+
+    One seam is still open and is a season-side change rather than this one: `cohort.cohort`
+    takes no report, so the two gates that call it -- `season.lineup_gate` and
+    `season.weekly_gate_data`, both holding one from `board_as_of` -- have it re-derived by
+    `report_for`. Nothing ranks differently for it today (the cohort supplies its own
+    `my_pick`, so this function never runs there, and a historical board's derived report
+    matches the one it was built with), which is why it is recorded rather than fixed here.
     """
     column = "vor_proj" if report.adp else "vor"
     try:

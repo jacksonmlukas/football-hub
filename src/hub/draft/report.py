@@ -162,39 +162,50 @@ def injuries(board: pl.DataFrame, report: BuildReport) -> list[str]:
 
     Gated on `report.adp` alone: both halves are scoped to "inside ADP 120" and both print
     an ADP, so without that column there is nothing here to show.
+
+    **Each half renders on the report's answer for the stage that leaves its column, and
+    neither asks the frame** (issue #146). The two sniffs that stood here were the last
+    unjustified survivors of #199, and each was re-asking a question already answered:
+
+    * `injury_status` arrives in ESPN's ADP payload -- it is one of
+      `board.STAGE_COLUMNS["adp"]` -- so the draft-market stage is what leaves it, and the
+      `report.adp` guard four lines up is that question, asked once;
+    * `missed` is `board.STAGE_COLUMN["durability"]`, so `report.durability` is the recorded
+      answer for the second half.
+
+    Neither read was arithmetic: nothing here subtracts the column, it decides whether to
+    render a section. A stage that ran and returned an all-null column is indistinguishable
+    from one that never ran, and which of those happened is what a missing section should
+    mean -- so the section's absence has to be the report's answer, not the schema's.
+
+    **A frame that contradicts its own report is not papered over.** Told the stage ran,
+    this reads the column, and if it is not there the read raises rather than quietly
+    rendering the board as though the stage had been absorbed. That is `td_luck` above and
+    `optimize._greedy_currency` in one more place: `build` cannot emit such a frame -- the
+    market stage runs under `_stage(..., absorbs=())` -- so one is a fixture, or a board off
+    disk predating a column, and silently showing it thin is how the two stopped being told
+    apart in the first place.
     """
     if not report.adp:
         return []
     out: list[str] = []
     pool = board.filter(pl.col("adp").is_not_null() & (pl.col("adp") <= 120))
-    # **The two column reads below are the only survivors of issue #199 that are not
-    # justified, and they are left here deliberately.** Neither is arithmetic and neither is
-    # a producer: this function already holds the `BuildReport` and gates on it four lines
-    # up, then re-derives two stages from the frame anyway. `injury_status` is
-    # `board.STAGE_COLUMNS["adp"]` -- the stage that guard already answered for -- and
-    # `missed` is `board.STAGE_COLUMN["durability"]`, so `report.durability` is the recorded
-    # answer to the second. That is not a question about provenance this file gets to keep;
-    # it is **issue #146**, which is a separate ticket with its own acceptance criteria
-    # (including a test holding the report against a frame that disagrees with it in both
-    # directions). #199 makes it easy and stops short of it on purpose, so the change lands
-    # with the test that proves it.
-    if "injury_status" in pool.columns:
-        hurt = pool.filter(
-            pl.col("injury_status").map_elements(durability.is_flagworthy,
-                                                 return_dtype=pl.Boolean)
-        ).sort("adp")
-        if hurt.height:
-            out += [f"\n  Carrying a designation today -- {hurt.height} inside ADP 120",
-                    "  Out/Doubtful/IR are priced (-1.63 ppg, fitted on week-1 reports).",
-                    "  QUESTIONABLE is not: 12.6% of the August board carries it against",
-                    "  2.9% at week 1, so the fitted number is from a much sicker group."]
-            for r in hurt.head(8).iter_rows(named=True):
-                st = str(r["injury_status"]).upper()
-                beta = durability.INJURY_BETA.get(st)
-                note = f"{beta:+.2f} ppg" if beta else "not priced"
-                out.append(f"    {r['player']:<24} {r['pos'] or '':<4} "
-                           f"ADP {r['adp']:>5.1f}  {st:<15} {note}")
-    if "missed" in pool.columns:
+    hurt = pool.filter(
+        pl.col("injury_status").map_elements(durability.is_flagworthy,
+                                             return_dtype=pl.Boolean)
+    ).sort("adp")
+    if hurt.height:
+        out += [f"\n  Carrying a designation today -- {hurt.height} inside ADP 120",
+                "  Out/Doubtful/IR are priced (-1.63 ppg, fitted on week-1 reports).",
+                "  QUESTIONABLE is not: 12.6% of the August board carries it against",
+                "  2.9% at week 1, so the fitted number is from a much sicker group."]
+        for r in hurt.head(8).iter_rows(named=True):
+            st = str(r["injury_status"]).upper()
+            beta = durability.INJURY_BETA.get(st)
+            note = f"{beta:+.2f} ppg" if beta else "not priced"
+            out.append(f"    {r['player']:<24} {r['pos'] or '':<4} "
+                       f"ADP {r['adp']:>5.1f}  {st:<15} {note}")
+    if report.durability:
         frail = pool.filter(pl.col("missed").is_not_null()
                             & (pl.col("missed") >= 4)).sort("missed", descending=True)
         if frail.height:

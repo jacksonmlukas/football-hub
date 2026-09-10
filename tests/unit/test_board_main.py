@@ -233,6 +233,20 @@ def test_persisting_is_safe_to_repeat(tmp_path):
 # archive and the report composition, none of which need a network once `build` is stubbed.
 
 def _full_board(n=320):
+    """A board the `cli` fixture hands to `main` under `BuildReport(adp=True)`.
+
+    `injury_status` is here because that report says the draft-market stage ran, and a board
+    where it ran carries it: `espn._parse_market` types the column into every frame it
+    returns, and `_attach_market` runs under `_stage(..., absorbs=())`, so `build` cannot
+    emit an `adp` board without one. Issue #146 made that reachable -- `report.injuries`
+    stopped sniffing for the column and reads `report.adp` -- and this fixture was claiming
+    a build that cannot have happened.
+
+    All-null rather than populated, which is the honest reading and not a workaround: the
+    stage ran and nobody inside ADP 120 carries a designation. That case -- ran and returned
+    nothing, against never ran -- is the one `BuildReport` exists to keep apart, and it is
+    what every assertion below was already written against.
+    """
     pos = ["QB", "RB", "WR", "WR", "TE", "RB", "WR"]
     return pl.DataFrame({
         "player": [f"Player {i:03d}" for i in range(n)],
@@ -246,6 +260,7 @@ def _full_board(n=320):
         "proj_blend": [18.0 - i * 0.04 for i in range(n)],
         "consensus_rank": [float(i + 1) for i in range(n)],
         "games": pl.Series([14] * n, dtype=pl.UInt32),
+        "injury_status": pl.Series([None] * n, dtype=pl.Utf8),
     })
 
 
