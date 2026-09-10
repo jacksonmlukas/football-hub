@@ -195,7 +195,8 @@ moves.** Measuring is the cheap half. The published figure is what anyone reads,
 that stops at the working note leaves a number standing that its own author already knows is
 wrong, and the reader of the artifact has no way to see the correction.
 
-**The incidents.** Three, all of them landing on 2026-09-06.
+**The incidents.** Three when this rule was written, all of them landing on 2026-09-06. A
+fourth, of a shape this rule did not cover, is restated after them.
 
 *A season-clustered interval, measured and reverted.* ADR-0009 publishes championship equity at
 −19.66 pts/team-game, 95% CI **[−23.16, −16.20]**, bootstrapped over 80 rows. Re-run on the same
@@ -245,6 +246,36 @@ from it. Issue #150 is open.
 > built either side of the change, naming the players whose availability moved, is in
 > [pick-noise.md](pick-noise.md). Issue #150 is closed; #44 and #45 are still open.
 
+> **Restated 2026-09-10 — a fourth instance, and it is the case this rule did not cover.**
+> Issue #167 corrected what `rank_tiers` divides a tier gap by: two `lift_se` values combined
+> in quadrature — the formula for a difference between *unrelated* estimates — became
+> `lead_gap_se`, the standard error of the paired difference across the same simulated
+> seasons. On correlated lifts the two differ by a factor of two; on uncorrelated ones they
+> agree to five significant figures. Three published claims had been measured under the
+> superseded expression: the Nacua/McCaffrey tie and its 5-of-5 seed count in
+> [decisions.md](decisions.md), the co-leader counts in [next.md](next.md), and the
+> `rank_tiers` docstring's own illustration. All three are restated beside their originals
+> under #189.
+>
+> **None of the three could be re-run, and that is the new part.** The boards they were
+> measured on were built 2026-08-24 off live ESPN ADP, which nobody retains
+> ([ADR-0010](adr/0010-edge-is-displayed-but-never-ranked-on.md)) and which this repo began
+> archiving on 2026-08-25; `lead_gap_se` is the spread of a per-future difference and nothing
+> persists the futures; and the constants the simulator draws opponents' noise from have moved
+> since (#150), so a re-run would produce a new claim rather than a restatement.
+>
+> **What the rule says in that case.** It says the replacement must come from a re-run and
+> never from an argument about which way the old figure would have gone — so where no re-run
+> is possible, the number moves to **superseded and unestablished**, and that is the whole of
+> what "moved" can mean. Not to a corrected value, and emphatically not to the old value with
+> a note that it is probably fine. The docstring's illustration was not re-measured either; it
+> was **replaced** by one that can be, and is — it now cites the committed fixture the suite
+> re-derives on every run, so it can never again be a number nobody is able to check.
+>
+> **The lesson is upstream of the restatement.** A measurement whose inputs are not pinned can
+> be contradicted and never corrected, which is ADR-0007 one level down, and the same gap
+> [next.md](next.md) already records against `--diagnose`.
+
 **What "moved" means.** Not an edit over the top of the old figure: a superseded number keeps
 its original text here, the same convention [architecture.md](architecture.md) states for a
 superseded decision. It means a **dated restatement beside the original** — the superseded
@@ -266,7 +297,7 @@ the removals in its commit messages.
 Fourteen things have been measured properly. **Two came back positive** — and one of those two
 produced a decision that then failed its own gate.
 
-This fourteen counts **measurements**, not decision records. There are twenty-four of those,
+This fourteen counts **measurements**, not decision records. There are twenty-five of those,
 in [`docs/adr/`](adr/). The two numbers were equal for eleven days in August and this file
 carried both, which is how the Primary sources table below came to describe the ADRs with the
 count belonging to the table beneath this line — corrected 2026-09-07 under #51.
@@ -320,5 +351,5 @@ The most useful artifact in this repo is the record of what was measured and the
 | The one positive screen | [snap-trend-signal.md](snap-trend-signal.md) |
 | The one adopted model | [weekly-injury.md](weekly-injury.md) |
 | Why the ceiling closed a question | [player-spread.md](player-spread.md) |
-| Twenty-four decisions, with their trade-offs | [`docs/adr/`](adr/), indexed in [architecture.md](architecture.md) |
+| Twenty-five decisions, with their trade-offs | [`docs/adr/`](adr/), indexed in [architecture.md](architecture.md) |
 | Objectives, and how objective 1 is judged | [decisions.md](decisions.md) |

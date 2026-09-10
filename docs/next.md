@@ -122,6 +122,11 @@ The two candidates disagree at **8 of 8** of my picks, and the market's choice f
 the P(win) TAKE tier only once. This is not a question about the third decimal place -- it
 changes the pick every time.
 
+*The "only once" is a count of TAKE-tier membership, measured under the tier expression #167
+replaced. It is superseded; the restatement of 2026-09-10 under "The gate was amended after
+seeing its output" below says why it cannot be re-derived. The 8-of-8 disagreement is not
+affected — it compares two arms' leaders and reads no tier.*
+
 ### Design
 
 **Arms**, both using the same room and the same seed so the comparison is paired:
@@ -341,6 +346,45 @@ startable back *outright*, no co-leader filled a need, and arm B finished with f
 quarterbacks.
 
 Re-run under the amended gate: **clear at all six picks.**
+
+> **Restated 2026-09-10 — every co-leader count on this page was measured under the superseded
+> expression.** Issue #167 (`37a795a`) moved `rank_tiers` from the two candidates' `lift_se`
+> values combined in quadrature to `lead_gap_se`, the standard error of the paired difference
+> across the same simulated seasons. Membership of the TAKE tier — which is what *co-leader*
+> means — is decided by that denominator and nothing else, so every co-leader figure here is a
+> figure of the superseded expression. `docs/method.md` rule 13: a dated restatement beside the
+> original, not an edit over the top of it.
+>
+> **Which figures.** Four, and every one of them reads tier membership: the CO-LED listings at
+> picks 46 and 70 above; the sentence that at both tripped picks the need-filling alternative is
+> a co-leader; the amended clause's own premise, *"and no co-leader fills an unfilled one"*; and
+> — found while doing this, and not one of the three claims #189 names — *"the market's choice
+> falls inside the P(win) TAKE tier only once"* near the top of P0. The lifts and error bars in
+> those blocks (`+2.03% +/-1.10` and the rest) are `lift` and `lift_se` and do **not** move:
+> #167 changed neither line that computes them.
+>
+> **The direction is not determined.** Quadrature was wrong in both directions and by no fixed
+> factor — too wide where two lifts rise and fall together, too narrow where they trade off
+> against each other. So these tiers may shrink or widen, and which cannot be known without the
+> per-future differences. No count here is adjusted by argument.
+>
+> **Not re-derivable.** The same three reasons `docs/decisions.md` records for the
+> Nacua/McCaffrey tie, plus one this page already carried. The board is unrebuildable: ESPN
+> retains no historical ADP ([ADR-0010](adr/0010-edge-is-displayed-but-never-ranked-on.md)),
+> the dated ADP archive begins 2026-08-25 and the board snapshots 2026-08-30, all after these
+> 2026-08-24 runs. `lead_gap_se` is the spread of the per-future difference and nothing
+> persists the futures. And the constants the simulator draws opponents' noise from have since
+> moved (`PICK_NOISE_SLOPE` 0.253 → 0.169, `PICK_NOISE_INTERCEPT` 1.00 → 1.31, #150), so a
+> re-run would be a new measurement rather than a restatement. The page's own caveat below
+> adds the fourth: `--diagnose` refetched live ADP on every call, so even these two runs were
+> not against one board.
+>
+> **No live verdict rests on them, and that is why this closes here.** The clause those counts
+> licensed is already reverted in code — `hub.draft.backtest.tripwire` carries no co-leader
+> exemption, and its docstring says why — and the section below already records the amendment
+> as a mistake, on grounds that have nothing to do with #167. They are marked superseded so
+> that nobody reads them as measured under the shipped expression, not because a conclusion is
+> waiting on them. Issue #189.
 
 **A caveat on the before/after, found while re-running.** `--diagnose` called `build()`, which
 refetches live ESPN ADP every time, so the two runs above compared boards fetched minutes
@@ -579,3 +623,10 @@ had been fitted.
   More moving parts than anything in the repo, ten days out, with `--taken` already tested
   end to end against 192 real picks.
 - **Season-long player props.** Settled: The Odds API does not carry them.
+- **Seven angles from the research thread of 2026-09-07**, declined with their evidence and
+  their reopen conditions in
+  [ADR-0025](adr/0025-systematic-bias-bounds-the-bottom-up-plan-and-seven-angles-are-declined.md).
+  Two of them — aggregating a betting-market-conditioned player model into a game prediction,
+  and beating totals by aggregation — are declined by the arithmetic recorded there rather
+  than by taste: a 3% bias in projected **Usage** is about 0.75 points a team and 1.5 on the
+  total, against a band of about one point.

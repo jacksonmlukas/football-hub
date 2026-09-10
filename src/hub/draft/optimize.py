@@ -618,9 +618,8 @@ def rank_tiers(wp: pl.DataFrame) -> pl.DataFrame:
     """Mark which candidates the simulation cannot separate from the best one.
 
     The objective is the player with the highest chance of winning the league, and sometimes
-    that is two players. At pick 3 the top two differ by 0.17 points of championship equity
-    with standard errors near 0.5 -- printing a strict order there asserts a distinction the
-    simulation cannot make, and re-running names a different one.
+    that is two players. Printing a strict order where the simulation cannot support one
+    asserts a distinction it cannot make, and re-running names a different leader.
 
     Gaps are in standard errors of the *difference*, taken across the same simulated seasons
     that produced both lifts: `lead_gap_se`, which `win_probability` measures from the
@@ -633,6 +632,22 @@ def rank_tiers(wp: pl.DataFrame) -> pl.DataFrame:
     directions and by no fixed factor: too wide where two lifts rise and fall together --
     which is the case a tie tier exists for, and there it held players in a tier the
     simulation can in fact separate -- and too narrow where they trade off against each other.
+
+    **The illustration is a fixture, on purpose.** `CORRELATED_FUTURES` in
+    `tests/unit/test_optimize.py` is re-measured on every run of the suite, where a board is
+    not: A and B's lifts rise and fall together (+0.80 across ten futures) and their gap is
+    0.008 of championship equity. Paired, the error on that gap is 0.0034421 and the gap is
+    2.32 of them; in quadrature it was 0.0064602 and 1.24, so B leaves the tier. On
+    `UNCORRELATED_FUTURES` (+0.00004) the two agree to five figures -- 0.0099086 against
+    0.0099087, 1.008 either way -- and B stays in it, which is what makes this a correction
+    rather than a rescale.
+
+    This docstring used to illustrate the tie with a pick-3 board instead: *"the top two
+    differ by 0.17 points of championship equity with standard errors near 0.5"*. The 0.5 is a
+    `lift_se` and `_lift_frame` still computes it the same way, but the *tie* it illustrated
+    was decided by the quadrature expression above, and the board it was read off cannot be
+    rebuilt -- so the illustration is superseded rather than wrong at the time. Issue #189,
+    and `docs/decisions.md` carries the restatement.
     """
     if "lead_gap_se" not in wp.columns:
         raise ValueError(

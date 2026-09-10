@@ -306,17 +306,26 @@ def _quadrature_gap_se(frame, player):
 
 
 def test_candidates_the_simulation_cannot_separate_are_marked_as_tied():
-    """At pick 3 the top two differ by 0.17 points of championship equity with standard
-    errors around 0.5. Printing a strict order there implies a distinction the simulation
-    cannot make, and the objective is to pick the best player -- which is sometimes two
-    players."""
+    """Two candidates 0.002 of championship equity apart, with the paired error on that gap
+    at 0.007, are 0.29 standard errors apart and not a distinction. Printing a strict order
+    there implies one the simulation cannot make, and the objective is to pick the best
+    player -- which is sometimes two players.
+
+    The frame is written out rather than simulated, so what is asserted is the tiering rule
+    and not a board. This docstring used to describe a pick-3 board instead -- *"the top two
+    differ by 0.17 points of championship equity with standard errors around 0.5"* -- which
+    was never this fixture's numbers, and was in any case a tie decided by the quadrature
+    expression #167 replaced. Superseded under issue #189; `docs/decisions.md` restates it."""
     df = pl.DataFrame({"player": ["A", "B", "C"], "p_win": [0.48, 0.479, 0.40],
                        "lift": [0.035, 0.033, -0.050],
                        "lift_se": [0.005, 0.005, 0.006],
                        "lead_gap_se": [0.0, 0.007, 0.008]})
     got = rank_tiers(df)
     lead = dict(zip(got["player"].to_list(), got["co_leader"].to_list(), strict=True))
-    assert lead["A"] and lead["B"], "0.002 apart with se 0.005 is not a distinction"
+    # The 0.007 is `lead_gap_se`, which is the only error bar the tier reads. The message
+    # used to name `lift_se` 0.005, which is the quadrature-era confusion this test's own
+    # docstring is restated for.
+    assert lead["A"] and lead["B"], "0.002 apart with a paired se of 0.007 is not a distinction"
     assert not lead["C"]
 
 
