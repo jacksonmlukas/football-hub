@@ -57,6 +57,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS
+from hub.models import predict
 from hub.models.components import SCORING, td_rate
 from hub.models.experiment import expanding_seasons
 from hub.models.panel import (
@@ -66,6 +67,7 @@ from hub.models.panel import (
     PanelSpec,
     build_panel,
 )
+from hub.models.scoring_rules import crps_from_quantiles, normal_quantile, quantile_levels
 
 NOT_FITTED_BECAUSE = (
     "the Weekly projection. MULTIPLIER_LO/HI bound a fitted multiplier, MIN_UNITS is a volume "
@@ -415,6 +417,29 @@ def flat(now: pl.DataFrame) -> np.ndarray:
     return np.nan_to_num(now["ppg_before"].to_numpy().astype(float), nan=0.0)
 
 
+def shipped_quantiles(mu: np.ndarray, position: Sequence[str]) -> np.ndarray:
+    """The distribution this repo *publishes* around a projected mean, as its quantiles.
+
+    `predict.moments` and `predict.skewed` rather than the two laws written out again:
+    `sd = K[position] * sqrt(mu)` and the fitted Cornish-Fisher skew are one implementation
+    each, and a second copy here is how the thing being graded stops being the thing being
+    served. `moments` reads a mean off `proj_ppg`, so that is the column the arm's mean is
+    handed to it under.
+
+    **Including the zero clip**, which is part of the published forecast rather than an
+    artefact of grading it: `skewed` clips at zero because nobody scores negative points
+    often enough to matter, so a week projected at or below zero is served as a point mass
+    at zero and is scored as one. A grader that unclipped it would be scoring a distribution
+    this repo does not serve, which is the defect `docs/weekly-coverage.md` found in its own
+    first measurement from the other side.
+    """
+    m = predict.moments(pl.DataFrame({"proj_ppg": np.asarray(mu, dtype=float),
+                                      "position": list(position)}))
+    z = normal_quantile(quantile_levels())[None, :]
+    return predict.skewed(m["mu"].to_numpy()[:, None], m["sd"].to_numpy()[:, None],
+                          m["skew"].to_numpy()[:, None], z)
+
+
 def walk_forward(panel: pl.DataFrame) -> pl.DataFrame:
     """One row per held-out player-week, carrying **three** arms' absolute error.
 
@@ -433,6 +458,17 @@ def walk_forward(panel: pl.DataFrame) -> pl.DataFrame:
     `weekly` against `component` isolates the week. `component` against `flat` is a separate
     question about the rebuild, and conflating them is how a null gets attributed to the wrong
     half. Fitting is on strictly earlier seasons only, through `expanding_seasons`.
+
+    **And one column that is not an absolute error** (#177). `crps_weekly` is the continuous
+    ranked probability score of the *distribution* the deployed arm publishes -- mean, spread
+    and skew -- against the same outcome, on the same rows. `err_weekly` is what that same
+    rule returns for the same projection published as a point mass, so the two are on one
+    scale and their difference is what the spread and the skew earn.
+
+    Only the deployed arm carries one, deliberately. Scoring all three under CRPS would be
+    re-running the contrasts under a second rule, which is a decision about what the gate is
+    (ADR-0015) and not what this ticket asks for; `flat` and `component` are alternative
+    *means* and the repo publishes a distribution for neither.
     """
     frames = []
     for season, past, now in expanding_seasons(panel):
@@ -440,11 +476,14 @@ def walk_forward(panel: pl.DataFrame) -> pl.DataFrame:
         fitted = project(now, coefs)
         base = project(now, dict.fromkeys(VOLUME, 0.0))
         actual = fitted["fantasy_points_ppr"].to_numpy().astype(float)
+        mu = fitted["mu"].to_numpy().astype(float)
         frames.append(pl.DataFrame({
             "season": [season] * fitted.height, "week": fitted["week"],
-            "err_weekly": np.abs(fitted["mu"].to_numpy().astype(float) - actual),
+            "err_weekly": np.abs(mu - actual),
             "err_component": np.abs(base["mu"].to_numpy().astype(float) - actual),
             "err_flat": np.abs(flat(fitted) - actual),
+            "crps_weekly": crps_from_quantiles(
+                shipped_quantiles(mu, fitted["position"].to_list()), actual),
             **{f"coef_{c}": [coefs[c]] * fitted.height for c in VOLUME}}))
     return pl.concat(frames) if frames else pl.DataFrame()
 
@@ -459,6 +498,88 @@ def _contrast(errs: pl.DataFrame, base: str, arm: str, label: str) -> list[str]:
                     base_mae=per["b"].to_numpy(), arm_mae=per["a"].to_numpy())
     return [f"  {label:34} {g.mean:+.4f} MAE at {g.t:+5.1f} se, "
             f"wins {g.wins}/{g.seasons} seasons"]
+
+
+# What `crps_weekly / err_weekly` would be if the published distribution were exactly right.
+# `hub.models.scoring_rules.crps_normal` derives it: over outcomes drawn from the forecast
+# itself the expected CRPS is `sd/sqrt(pi)` and the expected absolute error is
+# `sd*sqrt(2/pi)`, so a calibrated forecast scores `1/sqrt(2)` of what publishing only its
+# centre scores. It is a *reference*, not a bar: it holds for a normal, and the shipped
+# distribution is skewed and clipped, so the figure printed beside it says how much of the
+# available gain the published spread is collecting rather than whether it passed anything.
+CALIBRATED_RATIO = 1.0 / np.sqrt(2.0)
+
+
+def distribution_report(errs: pl.DataFrame) -> list[str]:
+    """CRPS beside MAE for the deployed arm, on the rows the table above was built from.
+
+    #177. MAE is what decides today and it is minimised by the median: it reads the centre
+    and is blind to the spread and the skew, which are two thirds of what `predict.moments`
+    produces and what `season/lineup.py` chooses a lineup with. CRPS reads the whole
+    distribution and is proper, so a forecast cannot score better by misstating its spread.
+
+    The two columns are comparable because MAE *is* CRPS -- the score the same rule gives the
+    same projection published as a point mass -- so `crps/mae` is a pure number: 1.000 is a
+    distribution that has added nothing over its own centre, and above 1.000 is one that has
+    made the forecast worse.
+
+    **The same window, and the same rows.** Both columns are means over the held-out
+    player-weeks in `errs`, which is what `expanding_seasons` left. This is not the weekly
+    *gate* -- that one scores lineups, restricts both arms to what both can price (#206), and
+    has no points-error to take (ADR-0015). CRPS could not be reported "beside MAE" there
+    because there is no MAE there to report it beside.
+    """
+    per = (errs.group_by("season")
+               .agg(pl.len().alias("n"),
+                    pl.col("err_weekly").mean().alias("mae"),
+                    pl.col("crps_weekly").mean().alias("crps"))
+               .sort("season"))
+    lines = ["", "  The distribution, not just the centre (#177). CRPS of the published "
+                 "(mu, sd, skew)",
+             "  against MAE, which is the same rule applied to the same projection as a "
+             "point mass:", "",
+             f"  {'season':>7} {'n':>6} {'MAE':>8} {'CRPS':>8} {'crps/mae':>9}"]
+    for r in per.iter_rows(named=True):
+        ratio = r["crps"] / r["mae"] if r["mae"] else float("nan")
+        lines.append(f"  {r['season']:>7} {r['n']:>6} {r['mae']:>8.3f} "
+                     f"{r['crps']:>8.3f} {ratio:>9.3f}")
+    mae = float(cast(float, errs["err_weekly"].mean()))
+    crps = float(cast(float, errs["crps_weekly"].mean()))
+    lines.append(f"  {'pooled':>7} {errs.height:>6} {mae:>8.3f} {crps:>8.3f} "
+                 f"{(crps / mae if mae else float('nan')):>9.3f}")
+    lines.append(f"\n  A point mass scores 1.000 by construction; a perfectly calibrated "
+                 f"forecast would score {CALIBRATED_RATIO:.3f}.")
+    lines += _what_the_coverage_measurement_says()
+    return lines
+
+
+def _what_the_coverage_measurement_says() -> list[str]:
+    """Why the ratio above is worth reading, from the measurement rather than the document.
+
+    The re-prioritisation that deferred this ticket argued the expected payoff was low
+    because "the moments MAE cannot see are already within a point of nominal". That premise
+    is now committed code and it did not survive being run on a centre that cannot see the
+    week it scores -- which is the sequence ADR-0007 exists to produce, and the reason this
+    reads `hub.models.coverage`'s own artifact instead of quoting a figure a person wrote
+    down. A figure restated here would go stale the next time the measurement is re-run, and
+    would say so to nobody.
+
+    Degrades to the command that produces it, per `CLAUDE.md`: a tree with no
+    `data/processed/` is a fresh clone, not a defect.
+    """
+    from hub.models.coverage import published_summary
+
+    got = published_summary()
+    if got is None:
+        return ["  Whether that gap is worth closing is what the interval measurement says: "
+                "run `uv run python -m\n  hub.models.coverage --measure --write` for it. "
+                "Nothing is published in this tree yet."]
+    nominal = 0.80
+    return [f"  The published interval, measured on a centre that cannot see the week it "
+            f"scores: {got['verdict']}\n  at {got['gate_cov80']:.1%} against a nominal "
+            f"{nominal:.0%} over {got['gate_n']:,} {got['gate_subset']} weeks "
+            f"(+/- {got['band']:.0%}), measured\n  {got['generated_at']}. That is what the "
+            f"gap between this ratio and {CALIBRATED_RATIO:.3f} is made of."]
 
 
 def diagnostic(errs: pl.DataFrame) -> list[str]:
@@ -490,7 +611,7 @@ def diagnostic(errs: pl.DataFrame) -> list[str]:
     lines.append("\n  DIAGNOSTIC ONLY -- none of these is the gate. The flat projection has no "
                  "week-level term, so beating it is nearly free; the gate is the "
                  "lineup (ADR-0015).")
-    return lines
+    return lines + distribution_report(errs)
 
 
 def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - network
