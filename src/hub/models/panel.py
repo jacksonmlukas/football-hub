@@ -28,8 +28,10 @@ back a column that is on neither side. #203.
 """
 from __future__ import annotations
 
+import operator
 import sys
 from collections.abc import Sequence
+from functools import reduce
 from typing import NamedTuple
 
 import polars as pl
@@ -115,6 +117,17 @@ YARDS: tuple[str, ...] = ("receiving_yards", "rushing_yards", "passing_yards")
 TURNOVERS: tuple[str, ...] = ("passing_interceptions", "fumbles_lost_total")
 
 
+# The three scored touchdown columns, kept apart rather than summed, because `ppg_before` is
+# split along them and a touchdown is not one price. `USAGE` carries `tds`, the count, which
+# is what `td_rate_prior`'s numerator wants; this tuple is what `td_ppg_before` wants, and the
+# two differ by exactly the thing that matters here -- a passing touchdown is **four** points
+# and the other two are six. Pricing all three at six would put an extra two points a passing
+# score into the touchdown component and take the same two out of the non-touchdown remainder
+# beside it, on quarterbacks only. Each name is a `SCORING` key, which `test_panel` asserts,
+# so a weight that moves there moves here.
+TD_COLUMNS: tuple[str, ...] = ("receiving_tds", "rushing_tds", "passing_tds")
+
+
 def game_context(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
     """One row per (team, season, week): the facts published before kickoff.
 
@@ -146,7 +159,13 @@ def game_context(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - 
 # counts have no expected version and should not: a target is not an estimate, he was thrown at
 # or he was not. Everything below the opportunity is an efficiency, and efficiency is what
 # regresses -- which this repo measured from the other side as `td_rate_prior` at -0.040 across
-# five of five seasons. See docs/what-the-field-knows.md.
+# five of five seasons, **beyond season-to-date PPR points a game and weekly consensus ECR**.
+# Re-run under #179 with that first control split into its touchdown and non-touchdown halves,
+# it is -0.043 across five of five and the reading above is the one that survives; controlled
+# for prior *yardage* directly it is -0.022 across four of five and does not. So this comment
+# names the basis rather than the number alone -- which is the whole content of the difference
+# between "efficiency regresses" and "high scorers regress", and this line depends on the
+# former. See docs/weekly-screen.md and docs/what-the-field-knows.md.
 # The four the screen wants, named as a subset of `components.EXPECTED` rather than restated.
 # The vocabulary -- which upstream column means "expected receiving yards" -- is one thing and
 # lives beside the scoring weights; *which* of them a consumer uses is that consumer's business,
@@ -708,12 +727,18 @@ over exactly the set `feature_columns` returns.
 """
 
 
-DERIVED: tuple[str, ...] = ("ppg_before", "games_before", "dvp")
-"""The three derived columns that carry no suffix, because they were renamed or reshaped.
+DERIVED: tuple[str, ...] = ("ppg_before", "games_before", "dvp",
+                            "td_ppg_before", "nontd_ppg_before")
+"""The five derived columns that carry no suffix, because they were renamed or reshaped.
 
 `ppg_before` and `games_before` are `prior_means`' `fantasy_points_ppr_prior` and `prior_n`
 renamed at the join; `dvp` is `allowed_prior` over its positional league mean. `td_rate_prior`
 needs no entry: it is one prior over another and the suffix already says so.
+
+`td_ppg_before` and `nontd_ppg_before` are `ppg_before` split in two and sum back to it
+exactly (#179). They take the same name shape as the column they partition, so they are
+listed here for the same reason it is -- every ingredient is a `_prior`, and the reshape is
+what loses the suffix.
 """
 
 
@@ -939,11 +964,43 @@ def build_panel(seasons: Sequence[int] = SEASONS,
     p = p.join(counted.select("player_id", "season", "week", "tds", "yds"),
                on=["player_id", "season", "week"], how="left")
     own = prior_means(counted.sort(["player_id", "season", "week"]), ["player_id"],
-                      [OUTCOME, "yds", *USAGE, *YARDS, *TURNOVERS], within_season=True)
+                      [OUTCOME, "yds", *USAGE, *YARDS, *TURNOVERS, *TD_COLUMNS],
+                      within_season=True)
     p = p.join(own, on=["player_id", "season", "week"], how="left").rename(
         {f"{OUTCOME}_prior": "ppg_before", "prior_n": "games_before"})
     p = p.with_columns(
         (pl.col("tds_prior") / (pl.col("yds_prior") + 1e-9)).alias("td_rate_prior"))
+
+    # **`ppg_before`, split along the seam the feature above is built across.** The screen's
+    # player control is season-to-date PPR points a game, and PPR points *contain* touchdowns
+    # -- so controlling on the total holds prior scoring fixed with the feature's own numerator
+    # inside it, and at a fixed total a higher touchdown rate is arithmetically fewer yards.
+    # A screen run on that basis cannot tell "efficiency regresses" from "high scorers
+    # regress", which is the claim two modules lean on. Issue #179.
+    #
+    # Priced, not counted: `TD_COLUMNS` says why the three are weighted separately. Written as
+    # a chain of `+` rather than `pl.sum_horizontal`, which ignores nulls by default and would
+    # turn a player with no prior of one kind into a zero contribution rather than a null row
+    # the screen drops.
+    #
+    # The remainder is subtraction, not a second sum over the scored columns that are not
+    # touchdowns. That is the property that makes the pair a *basis* for the old control
+    # rather than a different one: `td_ppg_before + nontd_ppg_before == ppg_before` exactly,
+    # on every row, so the two-column control set spans the one-column set and any movement in
+    # a screened coefficient comes from relaxing the constraint that the two components carry
+    # one shared slope -- not from having controlled for some other quantity. Reconstructing
+    # the remainder from `SCORING` instead would leave the 0.6% of player-weeks whose points
+    # are return and special-teams scores in neither component, and the identity would fail on
+    # exactly the rows where it was doing work.
+    p = p.with_columns(
+        reduce(operator.add,
+               (pl.col(f"{c}_prior") * components.SCORING[c] for c in TD_COLUMNS)
+               ).alias("td_ppg_before"))
+    p = p.with_columns(
+        (pl.col("ppg_before") - pl.col("td_ppg_before")).alias("nontd_ppg_before"))
+    # The three per-type priors were the ingredients and are not features anyone asked for.
+    # Dropped so the Panel grows by the two columns the decomposition is, and not by five.
+    p = p.drop([f"{c}_prior" for c in TD_COLUMNS])
 
     # Sorted before it feeds `prior_means`, which takes a mean over these rows. A group_by
     # emits rows in a hash-dependent order that varies between calls, and floating-point

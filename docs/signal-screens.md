@@ -17,7 +17,7 @@ thing, and because two of these produced errors worth not repeating.
 | **Snap-share trend** | next 3 weeks, in season | **POSITIVE** — partial r **+0.24** beyond PPG *and* ECR, 12/12 season-anchor cells, placebo-clean | [snap-trend-signal.md](snap-trend-signal.md) |
 | Snap-share trend | next 3 weeks, before week 8 | **null** — sign flips between seasons | [snap-trend-signal.md](snap-trend-signal.md) |
 | **Snap-share trend** | **next week**, week ≥ 8 | **POSITIVE** — partial r **+0.043** beyond PPG *and* weekly ECR, joint-screened, 5/5 seasons | [weekly-screen.md](weekly-screen.md) |
-| **Prior TD rate per yard** | next week | **POSITIVE, negative sign** — **−0.040**, 5/5 seasons. TD-carried scoring predicts *less* next week | [weekly-screen.md](weekly-screen.md) |
+| **Prior TD rate per yard** | next week | **POSITIVE, negative sign** — **−0.040**, 5/5 seasons, beyond season-to-date PPG and ECR. TD-carried scoring predicts *less* next week. Survives splitting PPG into its TD and non-TD halves (−0.043, 5/5); **not** shown to survive a direct control for prior yardage (−0.022, 4/5) — #179 | [weekly-screen.md](weekly-screen.md) |
 | **Defence vs position** | next week | **POSITIVE** — **+0.028** joint, 5/5 seasons. Clears against points, not against Usage | [weekly-screen.md](weekly-screen.md) |
 | **Injury severity** | next week | **POSITIVE, negative sign** — **−0.023** joint, 5/5 seasons | [weekly-screen.md](weekly-screen.md) |
 | Implied team total | next week | **null on the joint screen** — +0.048 alone, 4/5 once own spread is controlled for | [weekly-screen.md](weekly-screen.md) |
