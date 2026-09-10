@@ -121,11 +121,32 @@ SCREEN_TREND_ANCHORS: tuple[int, ...] = (4, 6, 8, 10, 12)
 PUBLISHED_ANCHOR = 8
 
 
+# **Eight, not nine -- `wind` is gone and the family size moved with it (#170).** It was
+# screened as a week-w pre-kickoff feature with a pre-stated negative sign, and the reading is
+# taken *at* kickoff: game-time observed weather, read off the schedule as recorded conditions.
+# That is `docs/method.md` rule 2 -- measure the predictor strictly before the outcome window --
+# broken by the screen that exists to enforce it, which is the same shape as rule 3's second
+# incident one paragraph up in that file.
+#
+# The null-filling compounded it. `panel.game_context` coded a dome or an absent reading as
+# `0.0`, so "no measurement" and "no wind" were one number on a feature whose sign was
+# pre-registered; on the frozen archive **175 of 416 game rows carry no reading and not one
+# game has a measured zero**, so every zero in that column was a non-measurement. Both halves
+# are fixed in `hub.models.panel`: the fill is gone and `wind` is `RECORDED` rather than
+# `PRE_KICKOFF`, so `require_features` now refuses it here as it would refuse `targets`.
+#
+# **Removed from the family rather than quietly retained**, which is the ticket's third
+# criterion: a screen that reports eight verdicts while nine features were tried is a multiple
+# -comparison count that understates itself. `docs/weekly-screen.md` carries the restatement of
+# what the wind row published, under rule 13.
+#
+# What is *not* claimed is that wind does not matter. It is an explanatory variable this panel
+# can describe a week with and cannot screen; screening it needs a forecast published before
+# kickoff, which no source in this repo carries.
 FEATURES: tuple[Feature, ...] = (
     Feature("implied_total", "+", 1),
     Feature("own_spread", "?", 1),
     Feature("dvp", "+", 1),
-    Feature("wind", "-", 1),
     Feature("rest", "?", 1),
     Feature("inj_sev", "-", 1),
     Feature("td_rate_prior", "0", 1),
@@ -189,7 +210,7 @@ CONTROLS: tuple[str, ...] = ("ppg_before", "ecr")
 # stories indistinguishable.
 #
 # Not the default, deliberately. Every published figure on `docs/weekly-screen.md` was run on
-# the basis above, and quietly moving all nine features onto a new one would restate a page's
+# the basis above, and quietly moving all eight features onto a new one would restate a page's
 # worth of numbers under cover of a ticket about one of them. `--basis decomposed` reports it
 # beside the default; which basis a surviving claim is conditional on is then something the
 # write-up can say, which is #179's third criterion.

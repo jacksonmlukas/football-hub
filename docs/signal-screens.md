@@ -27,7 +27,7 @@ thing, and because two of these produced errors worth not repeating.
 | Team scheme trends (play action, motion, no-huddle, screen, pass rate) | next week | **null** — nothing clears either half; 1 of 15 Usage cells crosses 2 se, which is what the null predicts | [improvements.md](improvements.md) |
 | Waiver adds by a lower confidence bound | next week | **null** — recovers 0.14 of a 2.0-point deficit; the curse is real and is not the mechanism | [parameter-uncertainty.md](parameter-uncertainty.md) |
 | Expected points in the priors | next week | **null, slightly negative** — the rebuild loses 0.005 MAE and the frozen gate falls +0.711 → +0.082 | [expected-and-routes.md](expected-and-routes.md) |
-| Wind | next week | **null** — 4/5 seasons | [weekly-screen.md](weekly-screen.md) |
+| Wind | next week | ~~**null** — 4/5 seasons~~ **withdrawn 2026-09-10 (#170)** — not a screenable predictor: game-time observed weather, and the column screened had every missing reading coded as calm. **Superseded and unestablished**; see [weekly-screen.md](weekly-screen.md) | [weekly-screen.md](weekly-screen.md) |
 | Rest days | next week | **null** — −0.014, 3/5 seasons | [weekly-screen.md](weekly-screen.md) |
 
 ## Where the weekly work landed

@@ -930,9 +930,13 @@ def test_every_column_the_panel_hands_back_is_on_exactly_one_side_of_its_rule(mo
     p = pnl.build_panel(arc.SEASONS, spec)
     feats, outs = set(pnl.feature_columns(p)), set(pnl.outcome_columns(p))
     ident = {c for c in p.columns if pnl.column_role(c) == "identity"}
+    # The fifth side (#170): observed during week w, and neither a feature of it nor its
+    # outcome. Read off `column_role` rather than off `RECORDED`, so a column that acquires
+    # the role by any other route is still counted here.
+    rec = {c for c in p.columns if pnl.column_role(c) == "recorded"}
     assert p.height > 0 and len(p.columns) > 40, "an empty frame would satisfy this vacuously"
-    assert feats | outs | ident == set(p.columns), (
-        f"{sorted(set(p.columns) - (feats | outs | ident))} are on no side of the rule; "
+    assert feats | outs | ident | rec == set(p.columns), (
+        f"{sorted(set(p.columns) - (feats | outs | ident | rec))} are on no side of the rule; "
         f"`_served` should have refused the frame before it got here")
     assert not (feats & outs) and not (feats & ident) and not (outs & ident), \
         "a column on two sides is not a classification"
@@ -993,10 +997,14 @@ def test_the_three_named_pre_kickoff_exceptions_stay_usable_as_week_w_informatio
     `CONSENSUS_MAX_LEAD_DAYS` exist to keep a scrape on the near side of its kickoff, and
     `ecr` is half of `weekly_screen.CONTROLS`, so a Panel that refused it would refuse the
     screen's own control set.
+
+    **`wind` used to be in `line` here and is deliberately not**, since #170: it comes off the
+    same schedule frame and is the one column on it that is *observed at kickoff* rather than
+    published for it. The tests below this one are what say so.
     """
     arc.install(monkeypatch, tmp_path)
     p = pnl.build_panel(arc.SEASONS)
-    line = ("own_spread", "total_line", "implied_total", "rest", "roof", "wind", "is_home")
+    line = ("own_spread", "total_line", "implied_total", "rest", "roof", "is_home")
     report = ("inj_sev", "status", "practice")
     opponent = ("opp", "opponent_team")
     consensus = ("ecr", "lead_days")
@@ -1006,6 +1014,112 @@ def test_the_three_named_pre_kickoff_exceptions_stay_usable_as_week_w_informatio
         pnl.require_features(p, list(group))       # raises if any of them is refused
     assert set(pnl.INJURY_COLUMNS) == set(report), \
         "the report's three are named once in `INJURY_COLUMNS`; this must not drift from it"
+
+
+# --- wind is observed weather, and a missing reading is not calm (#170) --------------------
+#
+# It was read straight off the schedule into `PRE_KICKOFF` and screened as a week-w feature
+# with a pre-registered negative sign, which is `docs/method.md` rule 2 broken by the Panel
+# that exists to keep it: the reading is taken *at* kickoff, inside the outcome window. The
+# null-filling compounded it -- a dome or an absent reading became `0.0`, a substantive value
+# on a feature whose sign was pre-stated, so "no measurement" and "no wind" were one number.
+#
+# Three tests, one per acceptance criterion the ticket names. The fourth criterion -- the
+# family size -- lives next door in `test_weekly_screen.py`, because that is where the family
+# is.
+
+
+def test_wind_is_a_recorded_condition_and_cannot_be_screened_as_a_feature(monkeypatch,
+                                                                          tmp_path):
+    """Criterion one: the column's status says it is not available before kickoff.
+
+    Reclassified rather than removed. Wind is a real thing about a real football game and a
+    caller describing a week by the conditions it was played in should still be able to reach
+    it -- what it may not be is a *predictor* of the week it was measured on. `RECORDED` is the
+    side that says exactly that, and it is neither `feature_columns` nor `outcome_columns`:
+    filing it as an outcome would have satisfied the refusal while claiming wind is this
+    player's own realised play, which it is not.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS)
+    assert "wind" in p.columns, "still served: describable after the fact, just not screenable"
+    assert pnl.column_role("wind") == "recorded"
+    assert "wind" not in pnl.feature_columns(p), "a feature of the week it was measured on"
+    assert "wind" not in pnl.outcome_columns(p), (
+        "not this player's realised play either -- it is a property of the fixture, and "
+        "calling it an outcome makes `yds` and `wind` the same kind of thing")
+    with pytest.raises(pnl.PanelRuleViolation, match="observed during week w"):
+        pnl.require_features(p, ["wind"])
+
+
+def test_a_missing_wind_reading_reaches_the_panel_as_null_and_not_as_calm(monkeypatch,
+                                                                          tmp_path):
+    """Criterion two, first half: the fill is gone, and it was fabricating every zero it wrote.
+
+    `game_context` used to end `pl.col("wind").fill_null(0.0)`. The archive is what says how
+    much that cost: **175 of 416 captured game rows carry no reading** -- 132 indoors and 33
+    at open-air stadiums -- and **not one game has a measured wind of zero**. So before this
+    change every zero in the column was a non-measurement, on a feature whose sign was
+    pre-registered as negative, and the screen could not have told the two apart because there
+    was nothing to tell apart: the measured population contained no zeros at all.
+
+    The counts are asserted rather than quoted, so the sentence above cannot outlive the
+    capture it describes.
+    """
+    arc.install(monkeypatch, tmp_path)
+    p = pnl.build_panel(arc.SEASONS)
+    indoors = p.filter(pl.col("roof").is_in(["dome", "closed", "open"]))
+    assert indoors.height > 0, "no indoor game reached the Panel; this asserts nothing"
+    assert indoors["wind"].null_count() == indoors.height, (
+        "an indoor game has no wind reading, and `0` is a measurement rather than the "
+        "absence of one")
+    assert p.filter(pl.col("wind") == 0).height == 0, (
+        "a player-week the Panel calls a measured calm. There are none in this capture, "
+        "which is why the fill was indistinguishable from data")
+
+
+def test_a_dome_a_missing_reading_and_a_measured_calm_are_three_different_things(monkeypatch,
+                                                                                 tmp_path):
+    """Criterion two, second half. The capture holds no measured calm, so one is introduced.
+
+    The archive cannot demonstrate the distinction on its own -- there is no game in it with a
+    measured zero -- so the schedule capture is edited to give one week's open-air games a
+    reading of exactly `0`. That is the case the old code was indistinguishable from, and the
+    only honest way to test it is to create one and watch it stay distinct.
+
+    Three states, and all three are reachable off the served Panel: a measured calm is `0.0`,
+    an unread outdoor game is null beside `roof == "outdoors"`, and a dome is null beside a
+    roof that is not. `roof` is what separates the second from the third, which is why this
+    change needed no new column.
+    """
+    season, week = 2023, 11
+
+    def measured_calm(df):
+        hit = ((pl.col("roof") == "outdoors") & (pl.col("season") == season)
+               & (pl.col("week") == week))
+        return df.with_columns(
+            pl.when(hit).then(pl.lit(0)).otherwise(pl.col("wind")).cast(pl.Int32).alias("wind"))
+
+    arc.install(monkeypatch, tmp_path, edits={"schedules": measured_calm})
+    p = pnl.build_panel(arc.SEASONS)
+
+    that_week = (pl.col("season") == season) & (pl.col("week") == week)
+    calm = p.filter(that_week & (pl.col("roof") == "outdoors"))
+    assert calm.height > 0, "the edit reached no Panel row, so this proves nothing"
+    assert calm["wind"].null_count() == 0 and calm["wind"].max() == 0.0, (
+        "a game that was measured and found calm must survive as a zero -- the point of "
+        "dropping the fill is that this is now the *only* thing a zero can mean")
+
+    unread = p.filter(~that_week & (pl.col("roof") == "outdoors") & pl.col("wind").is_null())
+    domed = p.filter(pl.col("roof").is_in(["dome", "closed"]))
+    assert unread.height > 0 and domed.height > 0, (
+        "the capture must hold an unread open-air game and an indoor one, or the three-way "
+        "distinction below is being asserted over two states")
+    assert domed["wind"].null_count() == domed.height, "a dome reads null, not calm"
+    assert set(unread["roof"].unique()) == {"outdoors"} and not set(
+        domed["roof"].unique()) & {"outdoors"}, (
+        "`roof` is what separates an unread outdoor game from an indoor one; without it the "
+        "two nulls would be the same row and criterion two would need a new column")
 
 
 def test_the_injected_preseason_board_is_pre_kickoff_and_not_unclassified(monkeypatch,

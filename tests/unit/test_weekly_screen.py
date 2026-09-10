@@ -215,11 +215,16 @@ def test_r_is_the_mean_of_the_season_means_when_the_seasons_are_unbalanced():
     """`r` is the season vector's mean, not the cell vector's, and the two differ exactly
     when a season contributes fewer cells than the others.
 
-    This is not a fixture detail. `wind` is real and unbalanced -- 7 cells in 2022 against
-    11 in every other season, because a cell under `MIN_CELL` is dropped -- and its `r` is
-    the one figure on `docs/weekly-screen.md` that the #169 correction moves, from -0.024 to
+    This is not a fixture detail. `wind` was real and unbalanced -- 7 cells in 2022 against
+    11 in every other season, because a cell under `MIN_CELL` is dropped -- and its `r` was
+    the one figure on `docs/weekly-screen.md` that the #169 correction moved, from -0.024 to
     -0.020. Every balanced fixture in this file agrees under both definitions and so pins
     nothing here; a mutation putting the cell mean back survived all of them.
+
+    **Wind itself left the screen under #170** and both those figures are superseded and
+    unestablished -- the feature was screened with a null-filled column and cannot be re-run.
+    What it demonstrated about unbalanced cells did not go with it, which is why this test is
+    still here and this fixture is still the thing that pins it.
 
     A t whose numerator comes from the cells and whose denominator comes from the seasons is
     the same defect the se half fixed, wearing the other hat.
@@ -372,6 +377,44 @@ def test_route_trend_is_not_in_the_default_screen():
     assert "snap_trend" in [f.name for f in ws.FEATURES]
 
 
+def test_wind_left_the_family_rather_than_being_quietly_retained():
+    """#170's third criterion, and the refusal that backs it, where the family is.
+
+    Wind was screened as a week-w pre-kickoff feature with a pre-stated negative sign, and the
+    reading is taken *at* kickoff -- `docs/method.md` rule 2, broken by the screen that exists
+    to enforce it. Reclassifying it in `hub.models.panel` is what makes it unscreenable; this
+    is the other half, and the half a ticket criterion had to ask for: **the count of features
+    tried moves with it.** A screen reporting eight verdicts while nine features were run is a
+    multiple-comparison family that understates its own size, and the number is quoted in
+    `hub.models.weekly` and on two pages.
+
+    Both halves are asserted, because either alone is satisfiable without the other. Dropping
+    the tuple entry while the Panel still called wind a feature would leave it screenable by
+    anyone who typed the name; reclassifying it while it stayed in `FEATURES` would make every
+    run raise instead of reporting a shorter family.
+    """
+    assert "wind" not in [f.name for f in ws.FEATURES], (
+        "wind is back in the default screen; it is observed at kickoff and cannot be a "
+        "predictor of the week it was measured on")
+    assert len(ws.FEATURES) == 8, (
+        f"the screened family is {len(ws.FEATURES)}. If that is deliberate, the count moves "
+        f"in `hub.models.weekly`'s docstring and on docs/weekly-projection.md with it -- "
+        f"which is what #170's third criterion is about")
+
+    # Offline, like everything else here: `require_features` refuses a *classified* non-feature
+    # role on any frame, so a hand-built one carrying a `wind` column is refused exactly as a
+    # Panel would be. That is the property under test -- the refusal follows the column's name
+    # and role, not the provenance of the frame it arrived on.
+    p = _panel().with_columns(pl.lit(7.0).alias("wind"))
+    assert pnl.column_role("wind") == "recorded"
+    with pytest.raises(pnl.PanelRuleViolation, match="observed during week w"):
+        ws.cell_correlations(p, "wind")
+    with pytest.raises(pnl.PanelRuleViolation, match="observed during week w"):
+        ws.screen(p, [ws.Feature("wind", "-", 1)])
+    with pytest.raises(pnl.PanelRuleViolation, match="observed during week w"):
+        ws.cell_correlations(p, "feat", controls=("ppg_before", "wind"))
+
+
 def test_the_scheme_trends_are_not_in_the_default_screen():
     assert all(f not in ws.FEATURES for f in ws.SCHEME_TRENDS)
     assert {f.name for f in ws.SCHEME_TRENDS} == {
@@ -431,7 +474,7 @@ def _panel_with_every_feature(seasons=(2023, 2024), weeks=tuple(range(1, 15)),
     Weeks run past the **last** anchor of `SCREEN_TREND_ANCHORS` deliberately. At four weeks
     the two trend features have no cell that qualifies, `summarise` returns NaN for each, and
     NaN compares unequal to itself -- so the comparison below would have reported a difference
-    for exactly the two features it had failed to screen. Deep enough that all nine produce a
+    for exactly the two features it had failed to screen. Deep enough that all eight produce a
     number at every anchor, and the equality means what it says."""
     rng = np.random.default_rng(seed)
     rows = []
