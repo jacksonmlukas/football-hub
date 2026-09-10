@@ -63,7 +63,7 @@ def test_the_pool_config_is_reachable_and_carries_every_rule():
     for rule in ("entry_fee", "buyback_fee", "buyback_cap", "buyback_cutoff_week",
                  "buyback_restores_ledger", "double_pick_weeks", "tie_eliminates",
                  "field_size", "max_entries_per_person", "co_survivor_rule",
-                 "playoff_continuation"):
+                 "playoff_continuation", "field_concentration"):
         assert hasattr(pool, rule), rule
 
 
