@@ -240,7 +240,13 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
 
         # One recipe, one home. This was written out here and again inside
         # `lineup_gate.main`, with the seed formula copied by hand into both.
-        made = cohort(board, yr, drafts=drafts, seed=seed)
+        #
+        # The report goes with the board (#231). It is the one unpacked above and already read
+        # by `require_corrections`; before this it stopped here, and `simulate_remaining_draft`
+        # derived a fresh one from the frame's columns instead. The two agree on a historical
+        # board, which is why nothing ranked differently -- and why passing the recorded answer
+        # rather than relying on the re-derivation agreeing is worth doing while they do.
+        made = cohort(board, yr, drafts=drafts, seed=seed, report=report)
         # Positions come from the Cohort too, rather than being read off the board a second
         # time -- two readings of one frame is how they come to disagree.
         rosters[yr], pool[yr], pos[yr] = made.rosters, made.pool, made.pos

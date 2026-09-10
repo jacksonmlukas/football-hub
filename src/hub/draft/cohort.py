@@ -29,6 +29,7 @@ import polars as pl
 
 from hub.config import RosterConfig
 from hub.draft.backtest import market_strategy
+from hub.draft.board import BuildReport
 from hub.draft.optimize import simulate_remaining_draft
 from hub.draft.state import DraftState
 
@@ -67,11 +68,30 @@ class Cohort(NamedTuple):
 
 
 def cohort(board: pl.DataFrame, season: int, *, drafts: int = DRAFTS, seed: int = 0,
-           my_slot: int = SLOT, teams: int = TEAMS, rounds: int = ROUNDS) -> Cohort:
+           my_slot: int = SLOT, teams: int = TEAMS, rounds: int = ROUNDS,
+           report: BuildReport | None = None) -> Cohort:
     """Draft `drafts` rosters from `board`, and say who was left.
 
     Every seat plays, not only the scored one: the pool a waiver arm adds from has to exclude
     the eleven other rosters, or a gate would offer a player another team already holds.
+
+    **`report` is the recorded answer to "what did the run that built this frame do", and it
+    travels rather than being re-derived.** #199 gave the Board a report that rides with the
+    frame and #146 moved the consumer sites inside `hub.draft` onto it; this was the last seam
+    where a caller *held* one and dropped it. Both season-side gates unpack
+    `board, report = board_as_of(yr)` -- they have to, `require_corrections` reads it -- and
+    then handed the frame on alone, so `optimize.simulate_remaining_draft` sent it through
+    `board.report_for`, which derives a fresh one by looking at the frame's columns.
+
+    Nothing ranks differently for it today, and that is the reason to fix it rather than a
+    reason not to. `BuildReport`'s own docstring says the report layer exists because consumers
+    "used to infer what had happened by sniffing for columns"; a caller holding the answer and
+    letting it be inferred again is that same act one level up, and the two agreeing today is
+    exactly the condition that stops holding without anything saying so. A derivation cannot
+    see an all-null stage at all, which is the case where the two part company.
+
+    Optional, and it stays optional -- the expand half of expand-then-contract, so every caller
+    and fixture that has only a frame keeps working and gets the derivation it already got.
     """
     pos = [str(p) if p else "NA" for p in board["pos"].to_list()]
     n = board.height
@@ -80,7 +100,7 @@ def cohort(board: pl.DataFrame, season: int, *, drafts: int = DRAFTS, seed: int 
         room = simulate_remaining_draft(
             board, DraftState(taken=[]), my_slot=my_slot, teams=teams, rounds=rounds,
             rng=np.random.default_rng(seed_for(seed, season, k)),
-            my_pick=market_strategy())
+            my_pick=market_strategy(), report=report)
         taken = {int(i) for seat in room for i in seat}
         rosters.append([int(i) for i in room[my_slot - 1]])
         pool.append([i for i in range(n) if i not in taken])
