@@ -441,3 +441,147 @@ def test_a_contract_failure_leaves_no_half_written_snapshot(
     with pytest.raises(odds.SnapshotIncomplete):
         odds.snapshot(2025, state_path=paths["state"], base=paths["store"])
     assert wrote == [], "a partition was written before every partition had been checked"
+
+
+# --- the cost model is checked against the account, not assumed -------------
+
+def test_a_poll_charged_more_than_declared_says_so(transport, teams, schedule, paths, capsys):
+    """`_budgeted` refuses a market on a budget of markets x regions. Nothing checked it.
+
+    The allowlist's whole safety argument is that one call costs exactly `len(MARKETS) *
+    len(REGIONS)` credits. That is a claim about the vendor's pricing, not about this code, and
+    this repo cannot verify it without spending the quota it is protecting. What it *can* do is
+    notice when the account disagrees -- and then say so, before the next poll rather than after
+    the balance is gone.
+
+    Reached through the balance rather than by calling `_record`: the guard's value is that it
+    fires on a real poll, and a test that hand-built the arguments would pass with the guard
+    wired to nothing.
+    """
+    paths["state"].write_text(json.dumps({"remaining": 400,
+                                          "checked_at": "2026-09-09T12:00:00"}))
+    transport(remaining=397)          # charged 3; markets x regions declares 2
+    odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
+
+    said = capsys.readouterr().out
+    assert "WARNING" in said, f"a poll charged 3 against a declared 2 said nothing: {said}"
+    assert "3" in said and "2" in said, f"the warning names neither figure: {said}"
+
+
+def test_a_poll_charged_what_it_declared_stays_quiet(transport, teams, schedule, paths, capsys):
+    """The other half. A guard that warned on every poll would be noise, and noise is how the
+    warning stops being read -- which this repo has already paid for once in `preflight_public`.
+    """
+    paths["state"].write_text(json.dumps({"remaining": 400,
+                                          "checked_at": "2026-09-09T12:00:00"}))
+    transport(remaining=398)          # charged 2, exactly what markets x regions declares
+    odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
+
+    said = capsys.readouterr().out
+    assert "WARNING: the account was charged" not in said, (
+        f"warned about a cost that matched the declaration: {said}")
+
+
+def test_a_monthly_reset_is_not_reported_as_a_cost(transport, teams, schedule, paths, capsys):
+    """The balance going *up* is a reset, not a negative charge, and must not trip the guard.
+
+    The prior balance has to clear the floor, or the poll refuses before it can be charged at
+    all and the test passes on the refusal rather than on the guard.
+    """
+    paths["state"].write_text(json.dumps({"remaining": 60,
+                                          "checked_at": "2026-09-09T12:00:00"}))
+    transport(remaining=500)
+    odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
+
+    said = capsys.readouterr().out
+    assert "WARNING: the account was charged" not in said, (
+        f"a monthly reset was reported as a mismatched charge: {said}")
+
+
+# --- a book with no posted total, and a price that is not American ---------
+
+def test_a_game_with_a_spread_and_no_total_keeps_the_spread(transport, teams, schedule,
+                                                            paths, capsys):
+    """Storing totals must not cost a spread that was already being stored.
+
+    Books post a total later than a spread and sometimes not at all. `close_spread` is the
+    only non-null priced column in the contract precisely so this case has somewhere to land:
+    the row keeps its spread and carries a null total, and the count is said out loud rather
+    than left for a reader to notice a shorter frame.
+    """
+    events = [_event("Philadelphia Eagles", "Dallas Cowboys", "2025-09-04", -8.5, total=None)]
+    transport(events=events)
+    got = odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
+
+    assert got.height == 1, "the game was dropped for having no total"
+    row = got.row(0, named=True)
+    assert row["close_spread"] is not None, "the spread was lost with the total"
+    assert row["close_total"] is None and row["total_price"] is None
+    said = capsys.readouterr().out
+    assert "no posted total" in said, f"the missing total was not reported: {said}"
+
+
+@pytest.mark.parametrize("price", [0, 50, -99, 99.9, "even", None])
+def test_a_price_that_is_not_american_becomes_null_not_a_number(price):
+    """American odds have a hole between -100 and +100; decimal odds do not.
+
+    So a price inside the hole is the shape of a quote on some *other* scale, and storing it
+    as if it were American would put a plausible-looking number in a priced column. It becomes
+    null instead, which the contract allows and a reader can see.
+    """
+    assert odds._american(price) is None, f"{price!r} was accepted as an American price"
+
+
+@pytest.mark.parametrize(("price", "expected"), [(-110, -110.0), (110, 110.0), (100, 100.0),
+                                                 (-100, -100.0), ("-115", -115.0)])
+def test_a_real_american_price_survives(price, expected):
+    """The other half: a guard that nulled everything would pass the test above."""
+    assert odds._american(price) == pytest.approx(expected)
+
+
+def test_two_books_at_minus_110_and_plus_110_do_not_median_to_zero():
+    """The reason the median is taken in decimal space, asserted on the pair that shows it.
+
+    In American space these median to **0**, which is not a price any book can quote and would
+    sit unremarked inside any plausibility bound a contract could put on the column.
+    """
+    assert odds._median_price([-110.0, 110.0]) == pytest.approx(100.45, abs=0.01)
+    assert odds._median_price([]) is None
+
+
+def test_an_outcome_with_no_point_is_skipped_rather_than_stored_as_zero(transport, teams,
+                                                                        schedule, paths):
+    """A book that lists the side and posts no number yet.
+
+    `point` is the whole content of the row; `float(None)` would raise and `or 0.0` would
+    store a pick'em that nobody quoted. It is skipped, and if that leaves no quotes at all the
+    game is counted as having no line rather than stored at zero.
+    """
+    event = _event("Philadelphia Eagles", "Dallas Cowboys", "2025-09-04", -8.5, books=1)
+    for m in event["bookmakers"][0]["markets"]:
+        for outcome in m["outcomes"]:
+            outcome["point"] = None
+    transport(events=[event])
+    got = odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
+    assert got.height == 0, f"a book with no posted number produced a row: {got}"
+
+
+def test_a_point_with_no_readable_price_keeps_the_point(transport, teams, schedule,
+                                                        paths, capsys):
+    """The degradation the price column exists to allow.
+
+    The point is unaffected by how the price was quoted, so an unreadable price nulls the
+    price and no more -- refusing the frame would throw away a snapshot whose credit is
+    already spent, over the half of it that parsed.
+    """
+    events = [_event("Philadelphia Eagles", "Dallas Cowboys", "2025-09-04", -8.5,
+                     books=1, price=0, total_price=0)]      # 0 is inside the American hole
+    transport(events=events)
+    got = odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
+
+    assert got.height == 1, "the game was dropped for an unreadable price"
+    row = got.row(0, named=True)
+    assert row["close_spread"] is not None, "the point was lost with the price"
+    assert row["spread_price"] is None
+    said = capsys.readouterr().out
+    assert "no American price" in said, f"the null price was not reported: {said}"
