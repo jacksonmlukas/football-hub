@@ -717,3 +717,160 @@ def test_a_double_week_with_one_fixture_left_eliminates_rather_than_taking_both_
     assert out.survives == 0.0
     assert out.plan is not None and out.plan.picks == {}
     assert "both sides of one fixture" in out.plan.source
+
+
+# --- Field concentration (#152) -------------------------------------------------------------
+#
+# The knob is stated and not fitted, so what these pin is the *mechanism*: that it reaches the
+# rival sampler, that it moves ownership in the direction it claims to, that it reaches nothing
+# else, and that its default changes nothing. What value it should hold is not a question a
+# test can answer -- `pool.sensitivity` reports the range instead, and the last test here is
+# that the range is reported rather than a point.
+
+
+def test_the_default_concentration_samples_exactly_on_win_probability():
+    """The no-op claim, at the one place it has to hold.
+
+    A knob defaulting to "today's behaviour" is worth nothing if the default is only *close*
+    to today's behaviour: every figure in the repo would move by a hair the day it landed, and
+    nobody could tell that drift from a real change afterwards. `prob ** 1.0` is exactly
+    `prob` for a finite positive float, so the weight the sampler reads is the identical
+    object-valued float and not a rounding of it. Asserted with `==` on purpose.
+    """
+    wk = pool.weeks_from_grid(_board([1]), [1], PoolConfig())[0]
+    assert wk.weight == {t: wk.prob[t] for t in sorted(wk.pickable)}
+    assert all(wk.weight[t] == wk.prob[t] for t in wk.pickable)
+
+
+def test_raising_the_concentration_raises_the_best_teams_ownership():
+    """The acceptance criterion, on a full-sized grid: sixteen fixtures, thirty-two teams.
+
+    On a toy week of two fixtures almost any weighting concentrates, so the claim has to be
+    made where it is actually in doubt -- a real slate has fifteen other favourites and the
+    exponent lifts all of them too. The share still rises at every step, and it rises *slowly*:
+    a sixteenth of the field at 1.0 is about a quarter of it at 16.0, not at 2.0. That is why
+    `DEFAULT_CONCENTRATIONS` is geometric and runs as far as it does.
+
+    **And the knob changes only the weights, never the legal set.** `pickable` is `MIN_PROB`
+    against the *price*, and applying the exponent before that test instead would let a high
+    concentration quietly delete the week's underdogs from what anybody -- rivals and our own
+    optimiser alike -- is allowed to take. That is a different rule wearing this one's name,
+    it passes every other assertion in this file, and the set is pinned here because this is
+    the test already holding a week at each point on the axis.
+    """
+    g = _board([1])
+    shares, legal = [], []
+    for k in pool.DEFAULT_CONCENTRATIONS:
+        wk = pool.weeks_from_grid(g, [1], PoolConfig(field_concentration=k))[0]
+        chalk, own = pool._chalk_share(wk)
+        assert chalk == "T31", "the strongest team on the ladder is the week's chalk"
+        shares.append(own)
+        legal.append(wk.pickable)
+    assert shares == sorted(shares) and len(set(shares)) == len(shares)
+    assert shares[0] == pytest.approx(1 / 16, abs=0.01), "1.0 is the sixteenth #152 names"
+    assert shares[-1] > 4 * (shares[0] - 1 / 32), "and the axis reaches a real field's crowding"
+    assert len(set(legal)) == 1 and legal[0] == frozenset(_TEAMS)
+
+
+def test_the_concentration_reaches_the_sampler_and_not_just_the_weight():
+    """That the knob is wired to `_pick` rather than only to the arithmetic beside it.
+
+    `_chalk_share` reads `_Week.weight` too, so the test above would go on passing if `_pick`
+    quietly went back to reading `_Week.prob` -- the ownership it reported would be a number
+    nobody drew with. This counts real draws instead, which is the only assertion here that
+    can tell the sampler's weight from a weight computed near it.
+    """
+    g = _board([1])
+    drawn = {}
+    for k in (1.0, 16.0):
+        wk = pool.weeks_from_grid(g, [1], PoolConfig(field_concentration=k))[0]
+        rng = np.random.default_rng(0)
+        drawn[k] = sum(pool._pick(rng, wk, set(), 1) == ["T31"] for _ in range(3000)) / 3000
+    assert drawn[1.0] == pytest.approx(0.057, abs=0.02)
+    assert drawn[16.0] == pytest.approx(0.270, abs=0.03)
+    assert drawn[16.0] > 3 * drawn[1.0]
+
+
+def test_a_concentration_that_inverts_the_rule_is_refused():
+    """Negative is not "less concentrated", it is a field chasing the worst team on the board.
+
+    Refused rather than clamped, because clamping would put a point on the sweep's axis that
+    reads as a concentration and is not one. A NaN is refused in the same breath: it would
+    propagate through the weights into `rng.choice`'s probability vector and raise several
+    frames from the setting that caused it.
+    """
+    g = _board([1])
+    for bad in (-1.0, -0.001, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="field_concentration"):
+            pool.weeks_from_grid(g, [1], PoolConfig(field_concentration=bad))
+    # Zero is the axis's floor and a legal point on it: a field picking uniformly.
+    wk = pool.weeks_from_grid(g, [1], PoolConfig(field_concentration=0.0))[0]
+    assert pool._chalk_share(wk)[1] == pytest.approx(1 / len(wk.pickable))
+
+
+def test_the_concentration_changes_the_field_our_plan_meets_and_not_our_picks():
+    """What #151 bought, held: the knob is the rivals' rule, so it must reach the field our
+    entry is scored against and not the picks it plays.
+
+    **The two halves are not equally hard to break, and saying which is which is the point.**
+    That our own figures *move* is the falsifiable half: it fails the moment the exponent stops
+    reaching `_pick`, which is how a sweep would come to report a knob that does nothing.
+
+    That the *plan* does not move is a weaker claim than it looks, and it was worth finding out
+    by trying to break it. An exponent is a monotone transform of every price, so feeding
+    `_Week.weight` to the optimiser instead of `_Week.prob` rescales its objective and leaves
+    the argmax alone -- the plan comes back identical. So this half does not catch a misrouted
+    weight; it is a guard against the knob acquiring a *shape* that could reach our picks at
+    all, and it is cheap enough to be worth keeping on those terms rather than on stronger ones
+    it does not meet.
+    """
+    weeks = [1, 2, 3, 4]
+    g = _board(weeks)
+    lo, hi = (pool.entry_outcome(g, weeks, entries=21, trials=150,
+                                 pool=PoolConfig(field_concentration=k),
+                                 rng=np.random.default_rng(3))
+              for k in (1.0, 16.0))
+    assert lo.plan is not None and hi.plan is not None
+    assert lo.plan.picks == hi.plan.picks and lo.plan.source == hi.plan.source
+    assert lo.share != hi.share and lo.survives != hi.survives
+
+
+def test_the_sweep_reports_a_range_over_the_knob_rather_than_a_point():
+    """The deliverable: a row per concentration, and a dollar figure that is an interval.
+
+    Every field in the row has to move with the axis or the sweep is reporting a knob that
+    does nothing -- so ownership, the pool's lifetime and our own equity are each checked for
+    a spread. The report's final line is the range itself, which is the form ADR-0024 asks a
+    stated parameter's figures to be published in.
+    """
+    g = _board([1, 2, 3, 4])
+    rows = pool.sensitivity(g, [1, 2, 3, 4], entries=21, at=(1.0, 4.0, 16.0), pot=420.0,
+                            trials=150, rng=np.random.default_rng(5))
+    assert [r.concentration for r in rows] == [1.0, 4.0, 16.0]
+    own = [r.chalk_share for r in rows]
+    assert own == sorted(own) and own[0] < own[-1]
+    assert len({r.wiped_out for r in rows}) > 1, "the pool's lifetime moves with the knob"
+    assert len({round(r.equity, 6) for r in rows}) > 1, "so does the dollar figure"
+    assert all(r.pot == 420.0 and r.equity == pytest.approx(r.entry.share * 420.0)
+               for r in rows)
+    lines = pool.sensitivity_report(rows)
+    assert "stated, never fitted" in lines[0]
+    assert lines[-1].startswith("  equity $") and " to $" in lines[-1]
+    assert pool.sensitivity_report([]) == ["\n  no concentrations swept"]
+
+
+def test_the_sweep_anchors_on_the_behaviour_already_in_the_tree():
+    """The row at 1.0 is not a new number, it is `simulate` at the default reseeded.
+
+    This is what makes the table readable as a *sensitivity* rather than as five unrelated
+    runs: one of the rows is the figure the module publishes today, and the reader can see
+    which. Reseeding per row is what buys it, so this fails the moment the sweep starts
+    sharing one generator across the axis.
+    """
+    g = _board([1, 2, 3])
+    rows = pool.sensitivity(g, [1, 2, 3], entries=21, at=(1.0,), trials=120,
+                            rng=np.random.default_rng(5))
+    seed = int(np.random.default_rng(5).integers(2 ** 32))
+    direct = pool.simulate(g, [1, 2, 3], entries=21, trials=120,
+                           rng=np.random.default_rng(seed))
+    assert rows[0].field == direct

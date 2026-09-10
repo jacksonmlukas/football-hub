@@ -17,9 +17,20 @@ the ending week is a point mass, and the partially-thinned field a buyback is pr
 never occurs. So each rival samples among the teams absent from its own ledger, weighted by win
 probability -- concentrated on chalk, but not identical to it.
 
+**How hard they crowd is a stated number, not a by-product of that rule.** Weighting by raw
+`win_prob` is one point on an axis, and it is the flat end of it: it puts roughly a sixteenth
+of the field on the week's best team, where real survivor fields concentrate several times
+that. Since concentration is exactly what makes a field die together, the sampling rule was
+quietly deciding whether the pool reaches week 13 -- the question this module exists to answer.
+`PoolConfig.field_concentration` is the exponent `_pick` raises `win_prob` to, and 1.0 is the
+old behaviour reproduced rather than a measurement.
+
 What that buys is divergence. What it costs is a modelling choice with no measurement behind
 it: nobody has observed this pool's rivals, and under Hidden Picks nobody can before the
-deadline. The weighting is an assumption and is stated as one.
+deadline. The weighting is an assumption and is stated as one -- so nothing here reports a
+figure at one concentration and calls it the answer. `sensitivity` runs the axis and reports
+the range, which is what ADR-0024 asks of a parameter whose alternatives can be laid side by
+side but not chosen between.
 
 **Our own entry plays our plan, not the field's rule.** It is index 0 of the same arrays, and
 for a while that was the whole of it: there was no branch for `i == 0`, so the entry every
@@ -55,6 +66,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import NamedTuple
 
 import numpy as np
@@ -63,9 +75,33 @@ import polars as pl
 from hub.config import PoolConfig
 from hub.season.survivor import MIN_PROB, Infeasible, solve, week_fixtures
 
+NOT_FITTED_BECAUSE = (
+    "nothing here is measured. DEFAULT_TRIALS and WEEKLY_TRIALS buy resolution and are "
+    "traded against runtime; DEFAULT_CONCENTRATIONS is the axis `sensitivity` sweeps and not "
+    "a value any figure is computed at -- the concentration a run actually uses is "
+    "PoolConfig.field_concentration, which is a stated assumption covered by `pool_digest`. "
+    "Moving any of the three changes how finely, or over what range, this module reports; "
+    "none of them changes a prediction, and none has a measurement behind it to move. "
+)
+
 # Enough that the ending-week distribution is stable to about a percentage point, which is
 # finer than any decision downstream reads it at. Callers wanting a tighter tail pass more.
 DEFAULT_TRIALS = 2000
+
+# The axis `sensitivity` sweeps when the caller names none. Not candidate values to be chosen
+# between, and none of them is favoured: 1.0 is the behaviour already in the tree, and it is
+# the anchor rather than the centre.
+#
+# **Geometric, and it runs to 16 rather than to 4, because the lever is weaker than it looks.**
+# The exponent is applied to every team's price and then renormalised, so raising it lifts the
+# other fifteen favourites on a full slate almost as much as the chalk team -- the response in
+# ownership is far flatter than the response in weight. Measured on the 32-team board in
+# `tests/unit/test_pool.py`, the best team's share of a clean-ledger field goes 5.7% at 1.0,
+# 8.0% at 2.0, 11.6% at 4.0, 17.3% at 8.0, 27.0% at 16.0. The several-times-a-sixteenth
+# concentration real survivor fields show therefore lives near 12-16 on this axis and nowhere
+# near 2, so an axis stopping at 4 would have swept only the region where the answer does not
+# move and reported that the knob does not matter. A caller with a view passes its own.
+DEFAULT_CONCENTRATIONS = (1.0, 2.0, 4.0, 8.0, 16.0)
 
 # `weekly` runs one simulation per candidate rather than one per call, so its real cost is
 # `top` times this -- 2400 trials at the default six, which is the same work as a single
@@ -233,11 +269,19 @@ class _Week(NamedTuple):
     applied in `auto_pick` and `weekly`. They are not the same set and the difference is the
     point: a hopeless side still has to be drawn, because its opponent's win depends on it,
     and it still must never be handed to an entry as a pick.
+
+    `weight` is `prob` raised to `PoolConfig.field_concentration`, and it is the *rivals'*
+    sampling weight and nothing else. `prob` is what a game is drawn at and what the optimiser
+    and `_best_available` rank on; the two must not be confused, which is why the exponent is
+    applied here, once per week per run, rather than inside `_pick` where a reader would have
+    to check it had not leaked into a price. Only the teams in `pickable` have one, because
+    they are the only teams the sampler can reach.
     """
     games: tuple[tuple[str, str, float], ...]   # (team_a, team_b, P(team_a wins))
     teams: tuple[str, ...]                      # sorted, so iteration order is not a set's
     prob: dict[str, float]
     pickable: frozenset[str]                    # teams above MIN_PROB: what a pick may take
+    weight: dict[str, float]                    # rival sampling weight; see above
     picks: int                                  # 1, or 2 in a double-pick week
     dropped: int = 0                            # fixtures in the week priced on one side only
 
@@ -272,12 +316,32 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
     of that test and is applied to `_Week.pickable` instead: a hopeless side is undrawable
     only in the sense that nobody may pick it, and dropping its fixture would refuse to
     simulate a week the board has fully priced.
+
+    **`PoolConfig.field_concentration` is applied here and only here.** Raising `prob` to it
+    once per week per run costs nothing next to doing it inside `_pick`, which runs once per
+    live entry per week per trial -- but the reason it lives here is that this is the seam
+    where a price stops being a price. `_Week.weight` is a sampling weight for rivals;
+    `_Week.prob` stays the drawn probability, and every other reader of the week --
+    `_best_available`, the optimiser's grid, the draw in `_play` -- goes on reading `prob`.
     """
     if "game_id" not in grid.columns:
         raise ValueError(
             "the grid must carry `game_id`; without it a game cannot be drawn once and a "
             "team and its opponent can both win in the same trial")
     cfg = pool or PoolConfig()
+    k = float(cfg.field_concentration)
+    # Refused rather than clamped, and negative is the case worth naming: it does not make the
+    # field less concentrated, it inverts the knob into a field preferring the *worst* team
+    # available, which is not a point on this axis and would read out of a sweep as one. Zero
+    # is allowed and is the axis's floor -- a field picking uniformly among what it may still
+    # take. A NaN would reach `rng.choice` as a probability vector several frames from here.
+    if not np.isfinite(k) or k < 0.0:
+        raise ValueError(
+            f"`PoolConfig.field_concentration` is {cfg.field_concentration!r}: it is an "
+            "exponent on `win_prob` and has to be finite and at or above zero. 1.0 samples "
+            "the field proportional to win probability, 0.0 samples it uniformly among the "
+            "teams it may still take, and above 1.0 crowds it onto the week's favourites. A "
+            "negative value inverts the rule rather than relaxing it.")
     out = []
     for f in week_fixtures(grid, weeks, cfg):
         wk = grid.filter(pl.col("week") == f.week)
@@ -304,8 +368,9 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
         priced = set(teams)
         prob = {str(r["team"]): float(r["win_prob"]) for r in wk.iter_rows(named=True)
                 if str(r["team"]) in priced}
-        out.append(_Week(tuple(games), teams, prob,
-                         frozenset(t for t in teams if prob[t] > MIN_PROB),
+        pickable = frozenset(t for t in teams if prob[t] > MIN_PROB)
+        out.append(_Week(tuple(games), teams, prob, pickable,
+                         {t: prob[t] ** k for t in sorted(pickable)},
                          f.needs, len(f.half)))
     return out
 
@@ -315,6 +380,16 @@ def _pick(rng: np.random.Generator, week: _Week, ledger: set[str], k: int) -> li
 
     None when the entry cannot field a legal pick -- it has spent too many teams to cover the
     week, which is elimination by the no-repeat rule rather than by losing.
+
+    **This is the whole of the field's sampling rule, and since #151 it is theirs alone**: our
+    own entry replays a plan and reaches this function through no path. So how hard the field
+    crowds onto the week's best team is a property of this one draw, and
+    `PoolConfig.field_concentration` is where it is stated -- carried in as `_Week.weight`,
+    which is `prob` raised to it. At 1.0 the weight *is* the probability and this samples
+    exactly as it always has; above 1.0 the field concentrates, which is what makes it die
+    together. Nobody has observed this pool's rivals and under Hidden Picks nobody can before
+    a deadline, so the knob is stated rather than fitted and `sensitivity` reports what the
+    answer does across it instead of asserting a value.
 
     **Drawn from `pickable`, not from `teams`.** A team below `MIN_PROB` is one `auto_pick`
     and `weekly` both refuse to hand us, and it was still reachable here -- so our own entry
@@ -327,13 +402,39 @@ def _pick(rng: np.random.Generator, week: _Week, ledger: set[str], k: int) -> li
     zero-priced team could reach the sampler at all. Every member of `pickable` is above
     `MIN_PROB` by construction, so a non-empty `avail` cannot sum to zero and the branch was
     unreachable rather than merely untaken. Deleted, because a guard that cannot fire still
-    reads as a case someone has thought about.
+    reads as a case someone has thought about. That argument survives the exponent: a positive
+    weight raised to a finite non-negative power is positive, and `weeks_from_grid` refuses
+    every other power.
     """
     avail = [t for t in week.teams if t in week.pickable and t not in ledger]
     if len(avail) < k:
         return None
-    w = np.array([week.prob[t] for t in avail], dtype=float)
+    w = np.array([week.weight[t] for t in avail], dtype=float)
     return [str(t) for t in rng.choice(avail, size=k, replace=False, p=w / w.sum())]
+
+
+def _chalk_share(week: _Week) -> tuple[str, float]:
+    """The week's best team, and the share of a clean-ledger field that draws it.
+
+    The quantity the concentration knob is *about*, so it is reported rather than left to be
+    inferred from a lifetime. Computed and not counted: with every ledger empty, `_pick`'s
+    normalised weight on a team **is** its expected ownership, so estimating it by simulation
+    would put Monte Carlo noise on a number already known exactly.
+
+    Exact only while the ledgers are empty, which is the first week. The module's docstring
+    already names week 1 as the week this model knows least about; this is the same fact from
+    the other side -- after it, rivals have diverged and what they own has to be simulated.
+
+    It is the share of one *draw*. A double-pick week takes two, so a rival's chance of
+    holding the best team there is higher than this figure; in this pool the double weeks are
+    13 through 18 and a sweep reported from week 1 is not one of them.
+
+    Ties on `win_prob` break on the team name, which is `auto_pick`'s tiebreak and
+    `_best_available`'s -- so "the best team" means the same team in all three.
+    """
+    best = min(sorted(week.pickable), key=lambda t: (-week.prob[t], t))
+    total = sum(week.weight[t] for t in sorted(week.pickable))
+    return best, week.weight[best] / total
 
 
 def _fixtures(week: _Week) -> dict[str, int]:
@@ -667,6 +768,12 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     again while the rule still allows it, and that option has value this ignores -- so the
     figure is a floor rather than a point.
 
+    **And it is one point on the field-concentration axis**, the one `cfg.field_concentration`
+    names, which is a stated assumption about the rivals rather than anything measured. The
+    net here is the net *at that concentration*; `sensitivity` is where the range across the
+    axis is reported, and a verdict whose sign flips inside that range is a verdict about the
+    assumption rather than about the pool's economics.
+
     **The equity assumes the pot splits evenly among co-survivors**, which is what
     `entry_outcome.share` measures. `PoolConfig.co_survivor_rule` carries that as its default
     and it is the one rule nobody has confirmed; under a rollover or a tiebreak the same share
@@ -900,3 +1007,141 @@ def simulate(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
         co_survivors={n: c / trials for n, c in sorted(co.items())},
         alive_by_week={w: alive_tot[w] / trials for w in weeks},
     )
+
+
+class Sensitivity(NamedTuple):
+    """One point on the field-concentration axis, and everything that moved with it.
+
+    Both halves on one row on purpose. `chalk_share` is what the knob *sets* and the field
+    and entry figures are what it *costs*, and a reader deciding whether the knob matters has
+    to see the two together -- a table of lifetimes with no ownership beside them says the
+    answer moved without saying what moved it.
+
+    `resolution` is the dollar difference `trials` can actually resolve on this row, so an
+    equity range across the axis can be compared against the noise inside it rather than read
+    as a finding by width alone.
+    """
+    concentration: float
+    chalk: str                  # the best team in the sweep's first week
+    chalk_share: float          # the share of a clean-ledger field that draws it
+    field: PoolOutcome          # ending week, co-survivors, entries alive by week
+    entry: EntryOutcome         # our own entry, playing our plan against that field
+    pot: float
+    resolution: float           # the dollar difference these trials can resolve
+
+    @property
+    def equity(self) -> float:
+        """What our position is worth in dollars at this concentration."""
+        return self.entry.share * self.pot
+
+    @property
+    def wiped_out(self) -> float:
+        """P(the whole field is gone before the last week ends) -- the knob's headline cost."""
+        return sum(self.field.ending_week.values())
+
+
+def sensitivity(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
+                at: Sequence[float] = DEFAULT_CONCENTRATIONS,
+                ledger: Sequence[str] = (), pot: float | None = None,
+                pool: PoolConfig | None = None, trials: int = DEFAULT_TRIALS,
+                rng: np.random.Generator | None = None) -> list[Sensitivity]:
+    """The pool and our position, re-answered at each field concentration in `at`.
+
+    **The deliverable of #152, and the reason the knob defaults to a no-op.** Nobody has
+    observed this pool's rivals, no pick-popularity data is fetched anywhere under
+    `hub.fetch`, and under Hidden Picks nobody can observe them before a deadline -- so
+    `PoolConfig.field_concentration` cannot be fitted, only stated. ADR-0024's disposition for
+    a parameter in exactly that position is to measure the alternatives side by side and
+    report the sensitivity rather than pick one, and this is that table. A figure quoted from
+    a single concentration is a figure quoting an assumption; the range is the honest form.
+
+    Two simulations per point -- the field's, and ours against it -- so the real cost is twice
+    `trials` times `len(at)`, which at the defaults is ten `DEFAULT_TRIALS` runs. A caller
+    scanning the shape of the axis should lower `trials` before it drops points from `at`:
+    every point dropped is a stretch of the axis nobody looked at, and the axis is the answer.
+
+    **The rows are separate runs and not paired trials**, which is the opposite of `weekly`
+    and is stated because the difference matters to how the table reads. Each row is reseeded
+    to the same value, so every row starts from the same stream and a row at 1.0 reproduces
+    `simulate` at the default exactly. But the concentration changes what the *sampler*
+    consumes from that stream, so the draws diverge at the first pick and no two rows share a
+    season. A difference between two rows therefore carries both rows' noise, and `resolution`
+    is what it has to clear -- `docs/method.md` rule 3, in its general form: the rows are not
+    repeated measures of one thing that may be pooled into a tighter interval.
+
+    `pot` defaults to the field's entry fees, `entry_fee * field_size`, because that is the
+    pot the configured pool starts with and a sweep run for its shape should not need one
+    named. A caller pricing a real week passes the pot it actually has.
+
+    **What the first run of it found**, on the synthetic 32-team board in
+    `tests/unit/test_pool.py` over weeks 1-14 with 21 entries and 1600 trials, 2026-09-10.
+    Quoted as the shape of the response and not as figures about the real board, which this
+    was not run against:
+
+      * The ticket's premise holds and is larger than it reads. At 1.0 the field is wiped out
+        before week 14 in **99.4%** of trials and only **3.3%** of endings fall in weeks 13-14
+        -- so the double-pick machinery is priced into essentially nothing. At 16.0 those are
+        70.4% and 43.2%. Concentration is what lets this pool reach its own back half.
+      * **Our survival barely moves** across the whole axis (5.1% to 6.6%, inside the noise),
+        but our *share* falls hard at the top of it (5.1% to 2.9%). The knob does not decide
+        whether we survive; it decides how many rivals survive **with** us, and a split pot is
+        what that costs. Reading survival alone would have reported the knob as inert.
+      * `co_survivor_rule` is the rule nobody has confirmed, and at 1.0 it is unreachable --
+        a co-survivor occurs in 0.6% of trials. At 16.0 it decides 29.5% of them. An
+        unconfirmed rule looking harmless can be an artefact of an unmeasured assumption.
+      * Equity ran $21.39, $25.99, $24.28, $21.97, $12.37 against a resolution of $2.53. Only
+        the fall at 16.0 clears it: **1.0 through 8.0 are one flat region**, and the peak near
+        2.0 is not a peak this many trials can see. It is a range straddling a $20 buyback
+        fee, which is the sense in which that verdict is currently about the assumption.
+    """
+    cfg = pool or PoolConfig()
+    rng = rng or np.random.default_rng(0)
+    seed = int(rng.integers(2 ** 32))
+    stake = cfg.entry_fee * cfg.field_size if pot is None else pot
+    rows: list[Sensitivity] = []
+    for k in at:
+        # A whole config per point, not a loose float threaded past one: everything that reads
+        # a pool rule on this path -- `week_fixtures`, `solve`, `buyback`'s caller -- takes a
+        # `PoolConfig`, and a second way to say what the concentration is would be a second
+        # thing to keep in step with `pool_digest`.
+        this = replace(cfg, field_concentration=float(k))
+        chalk, own = _chalk_share(weeks_from_grid(grid, weeks, this)[0])
+        field = simulate(grid, weeks, entries=entries, pool=this, trials=trials,
+                         rng=np.random.default_rng(seed))
+        entry = entry_outcome(grid, weeks, entries=entries, ledger=ledger, pool=this,
+                              trials=trials, rng=np.random.default_rng(seed))
+        rows.append(Sensitivity(
+            concentration=float(k), chalk=chalk, chalk_share=own, field=field, entry=entry,
+            pot=stake, resolution=entry.share_sd / np.sqrt(trials) * stake))
+    return rows
+
+
+def sensitivity_report(rows: Sequence[Sensitivity], *, places: int = 2) -> list[str]:
+    """The sweep as lines rather than prints, so it can be composed and asserted on.
+
+    The final line is the point of the whole table: the dollar figure as a **range over the
+    knob**, beside the resolution the widest row can actually resolve. A range narrower than
+    that is the sweep reporting that the concentration did not matter here, which is a result
+    and is worth being able to read off directly.
+    """
+    if not rows:
+        return ["\n  no concentrations swept"]
+    weeks = sorted(rows[0].field.alive_by_week)
+    last = weeks[-1]
+    out = [f"\n  field concentration: {_plural(len(rows), 'point')} on the axis, "
+           f"{rows[0].field.trials} trials each. 1.0 is sampling proportional to win "
+           "probability -- stated, never fitted",
+           f"  {'k':>5}  {'own':>7}  {'wiped':>7}  {'alive':>7}  {'survives':>9}  "
+           f"{'share':>7}  {'equity':>10}",
+           f"  {'':>5}  {rows[0].chalk:>7}  {'by ' + str(last):>7}  {'wk ' + str(last):>7}"]
+    for r in rows:
+        out.append(
+            f"  {r.concentration:>5.2f}  {r.chalk_share * 100:>6.1f}%  "
+            f"{r.wiped_out * 100:>6.1f}%  {r.field.alive_by_week[last]:>7.2f}  "
+            f"{r.entry.survives * 100:>8.1f}%  {r.entry.share * 100:>6.1f}%  "
+            f"${r.equity:>9.{places}f}")
+    lo, hi = min(r.equity for r in rows), max(r.equity for r in rows)
+    res = max(r.resolution for r in rows)
+    out.append(f"  equity ${lo:.{places}f} to ${hi:.{places}f} across the axis, against "
+               f"${res:.{places}f} these trials resolve")
+    return out
