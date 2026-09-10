@@ -53,7 +53,7 @@ FLOOR: dict[str, int] = {
     "src/hub/draft/live.py": 10,
     "src/hub/draft/optimize.py": 3,
     "src/hub/draft/picks.py": 1,
-    "src/hub/draft/playoff_sos.py": 6,
+    "src/hub/draft/playoff_sos.py": 0,
     "src/hub/draft/prior_signal.py": 0,
     "src/hub/draft/projection.py": 0,
     "src/hub/draft/regression.py": 4,

@@ -281,11 +281,38 @@ because a defence soft against WRs need not be soft against RBs. Built from two 
 2025 PPR points allowed per defence per position, and the published 2026 weeks 15-17
 schedule. 435 of 452 players placed; the 17 without a team get null, not a default 1.0.
 
+**Adjusted for the offences each defence faced, since 2026-09-10 (#180).** The figures
+above were unadjusted points allowed: a defence that drew strong offences looked porous and
+one that drew weak ones looked stout, which is the error the metric exists to avoid making
+about the *schedule*, made instead about the defences on it. Each position is now fitted as
+a two-way additive model -- defence effect plus offence effect -- with a ridge penalty on
+both, and the board reads the defence's allowance against an *average* offence.
+
+The penalty is a reported range rather than a fitted constant (ADR-0006: a range needs no
+provenance, a value would). Measured on the real 2025 defences and the real 2026 slate:
+
+| | QB | RB | TE | WR |
+|---|---|---|---|---|
+| rank spread across the penalty range 0.25–8 (mean / max places) | 0.7 / 3 | 1.6 / 7 | 0.4 / 2 | 1.6 / 8 |
+| share of teams within 2 places across the range | 94% | 81% | 100% | 81% |
+| rank change, unadjusted → adjusted (mean / max places) | 1.5 / 4 | 3.4 / 10 | 0.9 / 4 | **3.7 / 13** |
+| correlation, unadjusted vs adjusted metric | 0.973 | 0.902 | 0.986 | 0.910 |
+
+So **the penalty is a detail and the adjustment is not**: across the whole range four in five
+teams stay within two places, while the unadjusted-to-adjusted step moves a WR slate by up to
+thirteen. The largest single change is Baltimore's WR schedule, 25th softest unadjusted and
+13th adjusted -- its playoff opponents' pass defences had faced weak passing offences and were
+being credited for it. Carolina's RB slate goes the other way, 14th to 24th. The default is
+one game of shrinkage, chosen as the smallest penalty that keeps an early-season system
+determined; the table above is what licenses it as a default rather than a decision.
+
 Caveats, since this is a tiebreaker and not a ranking:
 
 - last season's defence is a noisy guide to this one, and rosters move
 - the spread is widest at TE and QB, where the pool is small, so the extremes are
-  partly small-sample rather than real schedule strength
+  partly small-sample rather than real schedule strength -- and that is where the
+  adjustment moves least, which is consistent with those extremes being sample rather
+  than schedule
 - it moves players *inside* a tier. Taking a worse player for a softer week 16 is not
   what this column is for.
 

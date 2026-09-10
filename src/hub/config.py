@@ -118,6 +118,14 @@ class DraftConfig:
     # ADR-0006's distinction. Fixed at 0.20 before anything was fitted: about one round at
     # ADP 60, and 0.6 picks at ADP 3 where consensus is tightest. See ADR-0011.
     correction_clamp_frac: float = 0.20
+    # Ridge penalty on the weeks 15-17 strength-of-schedule adjustment (#180), in games: one
+    # game of shrinkage is the smallest that keeps an early-season system determined without
+    # asserting a prior stronger than the evidence. A *choice*, so it lives here and is
+    # covered by `config_digest`; `playoff_sos.RIDGE_PENALTIES` is the range the sensitivity
+    # sweeps, and the measured stability across it is what licenses this as a default rather
+    # than a decision -- see docs/decisions.md. `None` is the unadjusted metric the published
+    # ranking was measured on.
+    sos_ridge: float | None = 1.0
 
 
 @dataclass
