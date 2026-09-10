@@ -545,3 +545,70 @@ def test_a_block_left_independent_is_still_named_after_repair_landed():
     assert "after repair" not in said, (
         "a run that left blocks independent reported itself as having repaired them"
     )
+
+
+def test_a_non_finite_block_is_refused_without_asking_lapack(monkeypatch):
+    """The refusal cannot be left to `cholesky`, because `cholesky` disagrees across machines.
+
+    On a block carrying NaN, every pivot comparison inside `dpotrf` is false, so a build that
+    checks only for a non-positive leading minor reports success and returns a NaN-filled
+    factor. This repo hit that split directly: `test_a_block_that_cannot_be_repaired_...`
+    passed on macOS Accelerate and failed on Linux OpenBLAS in CI, and what shipped on Linux
+    was not a louder failure but a silent one -- NaN draws in place of the documented void.
+
+    **The permissive LAPACK is stood in for, rather than waited for.** Asserting on a NaN
+    block directly cannot fail on a machine whose `cholesky` raises: the `except LinAlgError`
+    path reaches the same answer and the guard is unfalsifiable here. Proved by mutation --
+    replacing the guard with `if False` left such a test green on macOS. So `cholesky` is
+    patched to behave the way the Linux build does, which makes the contract -- *a non-finite
+    block is refused before any BLAS is consulted* -- testable on either machine.
+    """
+    def permissive(a):
+        return np.full_like(a, np.nan)
+
+    monkeypatch.setattr(predict.np.linalg, "cholesky", permissive)
+
+    r = np.eye(3)
+    r[0, 1] = r[1, 0] = float("nan")
+    chol, facts = predict._measure(r)
+    assert chol is None, "a NaN block produced a factor; the draw would be silently NaN"
+    assert facts is None, "a NaN block reported a repair it cannot have performed"
+
+    inf = np.eye(3)
+    inf[0, 2] = inf[2, 0] = float("inf")
+    assert predict._measure(inf) == (None, None), "only NaN is refused, not every non-finite"
+
+
+def test_the_finiteness_guard_does_not_refuse_a_block_that_factors():
+    """The other half: a guard that refused everything would also pass the test above."""
+    chol, facts = predict._measure(np.eye(3))
+    assert chol is not None, "the guard refuses a block it should have factored"
+    assert facts is None, "an already-PSD block reported a repair"
+
+
+def test_a_repair_that_itself_refuses_leaves_the_run_standing(monkeypatch):
+    """The second refusal path: repair attempted, repair failed, run continues.
+
+    `_measure` has two ways to give up. The finiteness guard above is the first and it now
+    takes every NaN block, which is what moved this branch out of that test's reach -- before
+    the guard, a NaN reached `nearest_correlation` and came back as a `LinAlgError` here. The
+    branch is not dead, it is defensive: any repair that refuses on a finite block lands on
+    it, and what it promises is that the block is drawn independently rather than taking the
+    whole simulation down. That promise is worth a test of its own.
+    """
+    def refuses(_r):
+        raise np.linalg.LinAlgError("eigendecomposition did not converge")
+
+    monkeypatch.setattr(predict, "nearest_correlation", refuses)
+
+    r = _bipartite(quarterbacks=2, catchers=10)
+    assert np.linalg.eigvalsh(r).min() < 0.0, "the fixture has to need repair to reach repair"
+    assert np.isfinite(r).all(), "a finite block, or the guard above answers first"
+
+    chol, facts = predict._measure(r)
+    assert chol is None, "a refused repair returned a factor"
+    assert facts is None, "a refused repair reported the repair it did not perform"
+
+    named, repair = predict._factor(r, "KC")
+    assert named is None and repair is None, (
+        "the per-team wrapper invented a result the measurement refused to give")

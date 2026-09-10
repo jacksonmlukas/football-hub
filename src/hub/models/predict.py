@@ -375,6 +375,18 @@ def _factor(r: np.ndarray, team: str) -> tuple[np.ndarray | None, BlockRepair | 
 
 def _measure(r: np.ndarray):
     """Factor one block, repairing if needed. The team-independent half of `_factor`."""
+    if not np.isfinite(r).all():
+        # **LAPACK is not a finiteness check, and on a NaN block it is not reliably a
+        # positive-definiteness check either.** Every pivot comparison against NaN is false, so
+        # `dpotrf` never finds the non-positive leading minor it refuses on: some builds report
+        # success and hand back a NaN-filled factor. This repo hit exactly that split -- the
+        # void fired on macOS Accelerate and did not on Linux OpenBLAS, so the same NaN in
+        # `TEAMMATE_RHO` refused on one machine and produced silent NaN draws on the other.
+        # Refuse here, where the answer does not depend on which BLAS the machine was built
+        # against. A non-finite block is unrepairable by construction: `nearest_correlation`
+        # eigendecomposes, and there is no nearest correlation matrix to a matrix with no
+        # finite entries to be near.
+        return None, None
     try:
         return np.linalg.cholesky(r), None
     except np.linalg.LinAlgError:

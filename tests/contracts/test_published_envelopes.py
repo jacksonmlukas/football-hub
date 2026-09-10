@@ -33,7 +33,17 @@ NOT_ENVELOPES = {"manifest.json"}
 # `rows` at all -- so `publish.track_record` builds it by hand and passes that count key
 # explicitly where the shared writer expects `n`. Named here rather than silently skipped,
 # because the difference is a real one about what the artifact *is*.
-NOT_ROW_SHAPED = {"track_record.json"}
+# `cfbd.json` joined the set on 2026-09-09, published for the first time by the scheduled
+# slate at 4520276 -- a run that emits no CI, so the first thing to read it was this contract
+# on the next human push. It is a quota and freshness envelope: `rows_by_endpoint` and
+# `quota`, deliberately no `rows`, because the whole point of it is to report what was fetched
+# without carrying what was fetched. Counting rows it does not have would be an `n` nobody
+# could reconcile against a `rows` that is not there.
+#
+# **This allowlist is hand-maintained and cannot see the writer.** A new artifact type breaks
+# the suite on whichever push follows the publish, which is late and looks like the pusher's
+# fault. Issue #227 proposes the envelope declare its own shape instead.
+NOT_ROW_SHAPED = {"track_record.json", "cfbd.json"}
 
 
 def _published() -> list[Path]:
