@@ -29,6 +29,7 @@ def _levels(df, **kw):
     The columns these fixtures happen to use are `position`/`xfp_per_game`/`games`, which
     used to be a hard requirement of the function rather than a choice of the caller.
     """
+    kw.setdefault("population", "prior_season_pool")
     return replacement_levels(df["position"], df["xfp_per_game"], df["games"], **kw)
 
 

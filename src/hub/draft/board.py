@@ -32,7 +32,6 @@ from hub.config import (
     SEASON_COMPLETED,
     RosterConfig,
     flex_positions,
-    flex_share,
     starters,
 )
 from hub.contracts import DRAFT_BOARD, ContractViolation
@@ -237,10 +236,114 @@ def consensus(as_of: str | None = None) -> pl.DataFrame:
 # is stable from 8 games up, so it is not fitted to the threshold.
 MIN_GAMES = 10
 
+# How much of the flex slot each eligible position is assumed to absorb. With three required
+# WR slots the top of the WR pool is already consumed by starters, so the flex tilts back
+# toward RB relative to a 2WR league.
+#
+# **A declared assumption, not a measurement, and it says so (#184).** Nothing derives these
+# three numbers from observed lineup usage; there is no interval and no write-up in `docs/`,
+# so calling them fitted would be a claim this file cannot support. What changed on
+# 2026-09-10 is not their value but their *kind* and their address. They were
+# `RosterConfig.flex_rb/_wr/_te` -- Hydra-overridable fields carrying a rationale comment and
+# no provenance -- and ADR-0006's objection to that arrangement does not depend on whether a
+# number was fitted: `roster.flex_rb=0.9` on a command line would have moved the replacement
+# index at RB, WR and TE, and with it every VOR on the board, while leaving `config_digest`
+# free to be identical only because the digest hashed the schema these lived in. They are
+# registered by hand in `config.FITTED_EXTRA`, the same way `MIN_GAMES` above is, because
+# this module is CLI-excluded from the wholesale sweep. **Losing the three override knobs is
+# the point**: a knob on a quantity nobody derived is what let three replacement levels
+# coexist unnoticed, which is the rest of #184.
+#
+# **The sensitivity, published, in the one form that can be computed without a lineup
+# archive.** These shares reach the board through exactly one expression, in
+# `replacement_levels` below:
+#
+#     round(teams * SLOTS["FLEX"] * share[pos])
+#
+# -- so a share is not a continuous dial. In this league (12 teams, one flex) it enters only
+# as `round(12 * share)`, which is a step function, and each share today sits inside a window
+# of width 1/12 over which the board does not move **at all**:
+#
+#   pos   share   12*share   slots added   may move by       before the count changes
+#   RB     0.45      5.4          +5       -0.074 / +0.008          4 or 6 RB slots
+#   WR     0.50      6.0          +6       -0.041 / +0.041          5 or 7 WR slots
+#   TE     0.05      0.6          +1       -0.008 / +0.074          0 or 2 TE slots
+#
+# The exact endpoints are the half-integers of `12 * share`, and which side of one of those
+# lands where is decided by Python rounding a half to *even* -- so 0.375 gives 4 RB slots and
+# 0.458333 gives 5. That is an implementation quirk of `round` and not a fact about a flex
+# slot, so the column above is quoted a thousandth inside the step on both sides and
+# `test_each_flex_share_is_inert_over_the_published_window` checks the flip a thousandth
+# outside it too. The width is 1/12 either way.
+#
+# Two things follow, and the second is the one worth knowing. Any restatement of these
+# shares inside those windows -- including most of what a usage study would plausibly
+# return -- changes no number anywhere in this repo. And **RB is 0.008 from a boundary**:
+# a share of 0.46 adds a sixth RB flex slot and moves RB replacement by exactly one player,
+# where WR would need to move 0.042 in either direction to do the same. So the hand-setting
+# error that matters is not the size of the RB share, it is which side of 0.4583 it is on.
+# `test_replacement_level.py` holds both halves of that.
+#
+# The measurement itself is still owed. It is #184's first acceptance criterion and it needs
+# an archive of realised weekly lineups that `hub/draft` does not have; when it lands, the
+# thing to check first is the RB boundary above.
+FLEX_SHARES: dict[str, float] = {"RB": 0.45, "WR": 0.50, "TE": 0.05}
+
+# Which population a replacement level is taken over, and the question each one answers.
+#
+# **Nothing declared this, and that is how three of them coexisted unnoticed (#184).** Three
+# call sites reached `replacement_levels` over three populations and two value columns, and
+# because the function took whatever Series it was handed, no site had to say which question
+# it was asking -- so no reader could tell whether the differences were deliberate. They are,
+# and the entries below are that statement. `population` is a required argument rather than a
+# comment: a fourth site cannot be added without naming itself here first, which is the
+# mechanism this repo keeps discovering it needs behind an invariant asserted in prose.
+#
+# What is NOT declared here is any claim that these three agree. They do not, they should
+# not, and the board prints two of them side by side under different column names.
+REPLACEMENT_POPULATIONS: dict[str, str] = {
+    # `live._live_replacement`, on `xfp_per_game`, writing `vor_live`. The value of the best
+    # option actually available **at this moment in this room**: undrafted players only, so
+    # a run on running backs lowers RB replacement while it happens. This is the definition
+    # #184's third acceptance criterion asks for, and it already existed -- in the one module
+    # that could not have used any other, because the whole point of the poller is that a
+    # preseason baseline is wrong immediately after a run.
+    "in_draft": "undrafted players, xfp_per_game -- what you would otherwise start now",
+    # `_attach_market`, on `proj_blend`, writing `vor_proj`. The published board's own
+    # currency: the draft market's forward projection for the season being drafted, over
+    # the players this preseason's consensus ranks. Population and column are both forced -- a
+    # forward projection exists only for a player somebody projected -- and this is what
+    # `optimize` scores seasons against, so it is the level a pick is actually made on.
+    "published_board": "the preseason consensus board, proj_blend -- what you would "
+                       "otherwise start this season on the draft market's projection",
+    # `build`, on `xfp_per_game`, writing `vor`. **Justified rather than retired, and the
+    # justification is market-independence.** This level is taken over everyone with a real
+    # prior season in `ff_opportunity`, not over the ranked board, and that is deliberate:
+    # restricting it to the board would make replacement depend on FantasyPros' decision to
+    # publish a name, so the level would move when a ranker added one. Keeping it over the
+    # full prior-season pool is what makes `vor` a check on `vor_proj` rather than a
+    # restatement of it -- `main --value` ranks the early rounds on `vor` for that reason,
+    # and in historical `as_of` mode it is the only level that forms at all, because ESPN
+    # publishes ADP and projections for the current season only.
+    #
+    # **Its known cost, stated rather than hidden.** The pool includes players who had a
+    # top-24 season and are not on this year's board -- retired, cut, unranked -- and a
+    # player who cannot be started should not be setting the quality that is freely
+    # available. `MIN_GAMES` bounds the noise version of this and not this version. Retiring
+    # it in favour of the board population raises every `vor` by a different amount per
+    # position, which reorders the early rounds, so it is a gated change and not a tidy-up:
+    # #184's fourth criterion ("the board movement named once, per position") is what it
+    # needs and what this worktree, with no `data/`, cannot produce.
+    "prior_season_pool": "every player with a real prior season, xfp_per_game -- what last "
+                         "season says is freely available, independent of the draft "
+                         "market",
+}
+
 
 def replacement_levels(position: pl.Series, points: pl.Series, games: pl.Series,
                        teams: int = 12,
-                       min_games: int = MIN_GAMES) -> dict[str, float]:
+                       min_games: int = MIN_GAMES,
+                       *, population: str) -> dict[str, float]:
     """Replacement = the points of the last startable player at each position.
 
     In full PPR with a 12-team flex, the flex is almost always a WR, which pushes WR
@@ -257,13 +360,33 @@ def replacement_levels(position: pl.Series, points: pl.Series, games: pl.Series,
     `xfp_per_game`" -- so `build()` renamed `pos` to `position_` and `proj_blend` to
     `xfp_per_game_`, then aliased both back, to satisfy a function forty lines above it in
     the same file. Naming the three inputs is the whole job.
+
+    **`population` is required, and it is the point of #184.** Naming the three inputs left
+    one thing still unnamed: *whose* points these are. The same three Series can carry the
+    room's undrafted players, the preseason consensus board or the whole prior season, and
+    the answers differ by design -- so a caller that does not say which it is handing over is
+    making a modelling claim it has not written down. That is how three levels coexisted, and
+    the check below is what a comment could not do: every legitimate population has an entry
+    in `REPLACEMENT_POPULATIONS` saying what question it answers, and there is no default,
+    because a default is what a fourth site would have quietly taken.
+
+    The argument steers nothing, and cannot: the three populations differ only in which rows
+    were filtered out before the call, and the caller has already done that. It is a
+    declaration, and declaring is the whole of its job.
     """
-    share = flex_share(ROSTER)
+    if population not in REPLACEMENT_POPULATIONS:
+        raise ValueError(
+            f"replacement level over an undeclared population {population!r}. Replacement "
+            f"means 'the best option otherwise available', and which players count as "
+            f"available is the modelling decision -- so add an entry to "
+            f"`REPLACEMENT_POPULATIONS` saying what question this one answers before using "
+            f"it. Declared today: {', '.join(sorted(REPLACEMENT_POPULATIONS))}.")
     df = pl.DataFrame({"position": position, "points": points, "games": games})
     levels = {}
     for pos in DRAFTED_POSITIONS:
         n = teams * SLOTS.get(pos, 0)
-        n += round(teams * SLOTS.get("FLEX", 0) * share.get(pos, 0)) if pos in FLEX_ELIGIBLE else 0
+        n += (round(teams * SLOTS.get("FLEX", 0) * FLEX_SHARES.get(pos, 0.0))
+              if pos in FLEX_ELIGIBLE else 0)
         pool = (df.filter((pl.col("position") == pos) & (pl.col("games") >= min_games))
                   .sort("points", descending=True))
         levels[pos] = float(pool["points"][min(n, pool.height) - 1]) if pool.height else 0.0
@@ -872,7 +995,7 @@ def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
     # Replacement on the projection scale rather than the xFP one, so `vor_proj` and
     # `proj_blend` are the same currency.
     pb = replacement_levels(board["pos"], board["proj_blend"], board["games"],
-                            league_size)
+                            league_size, population="published_board")
     board = board.with_columns(
         (pl.col("proj_blend")
          - pl.col("pos").replace_strict(pb, default=0.0)).alias("vor_proj"))
@@ -901,7 +1024,7 @@ def build(league_size: int = 12, season: int = SEASON_COMPLETED, *,
     print(f"  loading consensus rankings{'' if live else f' as of {as_of}'} ...")
     ecr = consensus(as_of)
     levels = replacement_levels(xp["position"], xp["xfp_per_game"], xp["games"],
-                                league_size)
+                                league_size, population="prior_season_pool")
     print("  replacement (xFP/gm): " + ", ".join(f"{k}={v:.1f}" for k, v in levels.items()))
 
     # Impute before VOR, not after: a rookie with no prior-season xFP still has a
