@@ -807,3 +807,59 @@ def test_a_module_holding_an_unregistered_float_is_still_caught(tmp_path):
     assert floats == ["SOME_COEFFICIENT"], "the scan no longer sees a module-level float"
     assert holder.stem not in {m.rsplit(".", 1)[-1] for m in not_fitted_modules()}, (
         "an undeclared module counts as registered, so the check cannot fail for it")
+
+
+def test_an_imported_upper_case_name_is_not_a_fitted_constant():
+    """A `typing` import identified the model version for the length of one merge.
+
+    #199 added `from typing import TYPE_CHECKING` to `hub.draft.availability`, which is in
+    `FITTED_MODULES`. `TYPE_CHECKING` is upper case, module level, public -- and `False`, which
+    `isinstance(v, int)` accepts because `bool` subclasses `int`. So the sweep took it, the
+    digest moved from `0c6fab17` to `e88c41d9`, and every prediction stamped in between claimed
+    a model change that had not happened. ADR-0006 exists to stop exactly that.
+
+    The old sweep's docstring already said "a re-export is not a number". It could not act on
+    it, because the only question it asked was about type. This asks the source what the module
+    assigns, so it also covers imports nobody has made yet.
+    """
+    from hub import config
+
+    got = config.fitted_constants()
+    assert not [k for k in got if k.endswith(".TYPE_CHECKING")], (
+        f"a typing import is in the model version: {sorted(got)}")
+
+    # The general property, not just the one name that got in. Every swept key must be a name
+    # its own module assigns -- checked against the source rather than against a denylist,
+    # because a denylist would need the next import added to it by hand.
+    import importlib
+    for key in got:
+        short, attr = key.rsplit(".", 1)
+        full = next((m for m in config.FITTED_MODULES if m.endswith(f".{short}")), None)
+        if full is None:
+            continue          # FITTED_EXTRA names its constants one at a time and by hand
+        assigned = config._assigned_at_module_level(importlib.import_module(full))
+        assert attr in assigned, (
+            f"{key} is swept into the digest but {full} imports it rather than assigning it")
+
+
+def test_a_module_whose_source_cannot_be_read_stops_the_digest():
+    """The sweep must not answer "no constants" when it means "I could not look".
+
+    An empty set here would drop that module's constants from `fitted_constants`, move
+    `config_digest`, and say nothing -- the model version would change because a file became
+    unreadable. Every module in `FITTED_MODULES` is a file in this repo, so the branch should
+    be unreachable in practice; it is tested because an unreachable branch that fails open is
+    how the other three defects in this file's history got in.
+    """
+    import sys
+    import types
+
+    from hub import config
+
+    synthetic = types.ModuleType("hub.models.notondisk")   # a module with no source file
+    sys.modules["hub.models.notondisk"] = synthetic
+    try:
+        with pytest.raises(RuntimeError, match="cannot read the source"):
+            config._assigned_at_module_level(synthetic)
+    finally:
+        del sys.modules["hub.models.notondisk"]

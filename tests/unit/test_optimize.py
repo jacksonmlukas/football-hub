@@ -844,3 +844,43 @@ def test_a_player_near_the_smoothing_window_boundary_is_covered():
     want = adp + _closed_form(adp, raw, corr)
     assert np.allclose(got, want, atol=1e-9)
     assert got[30] > adp[30], "a downgraded player should be taken later, not earlier"
+
+
+def test_a_frame_whose_report_claims_a_stage_it_lacks_says_so(_board_min=None):
+    """Review of #199 found this raising `ColumnNotFoundError` four frames deep.
+
+    A frame carrying `adp` but not `vor_proj` is incoherent: it says the draft-market stage
+    ran while missing one of that stage's columns. `build` cannot emit one -- the stage runs
+    under `_stage(..., absorbs=())`, so a failure inside it aborts the build -- but these are
+    public functions taking a bare `pl.DataFrame`, and a fixture or a board off disk from
+    before the column existed can be one.
+
+    Before #199 this degraded: `optimize` sniffed `"vor_proj" in pool.columns` and fell back to
+    `vor`. That is not the behaviour to restore. Quietly ranking on a currency the caller does
+    not believe it is ranking on is what let the live room use `proj_blend` while every
+    backtested room used prior-season xFP, with nothing recording that the two differ -- the
+    defect #199 exists to close. So it still refuses; it just explains itself now.
+    """
+    import polars as pl
+    import pytest as _pytest
+
+    from hub.draft import optimize as O
+    from hub.draft.board import BuildReport
+
+    incoherent = pl.DataFrame({
+        "player": ["A", "B"], "pos": ["RB", "WR"],
+        "adp": [1.0, 2.0], "vor": [10.0, 9.0],      # `adp` present, `vor_proj` absent
+    })
+    claims_the_stage_ran = BuildReport.of_served(incoherent)
+    assert claims_the_stage_ran.adp, "premise: the sentinel column makes the report say it ran"
+
+    with _pytest.raises(ValueError, match="vor_proj") as caught:
+        O._greedy_currency(incoherent, claims_the_stage_ran)
+    assert "report" in str(caught.value), (
+        "the refusal does not tell the caller the report and the frame disagree")
+
+    # And it is not refusing everything: the same frame with a report that does not claim the
+    # stage ranks on `vor` without complaint.
+    honest = BuildReport()
+    assert not honest.adp
+    assert O._greedy_currency(incoherent, honest).tolist() == [10.0, 9.0]

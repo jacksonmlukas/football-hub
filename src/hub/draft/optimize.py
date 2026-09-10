@@ -150,6 +150,36 @@ def _need_score(counts: dict[str, int], pos: str) -> int:
     return 0
 
 
+def _greedy_currency(pool: pl.DataFrame, report: BuildReport) -> np.ndarray:
+    """What the greedy fallback ranks on, and a comprehensible failure when it is not there.
+
+    The report decides the currency -- that is #199, and asking the frame instead is what let
+    the live room rank on `proj_blend` while every backtested room ranked on prior-season xFP
+    with nothing recording the difference. This does not ask the frame what stage ran.
+
+    What it does handle is an incoherent pair: a frame whose report says the draft-market stage
+    ran, carrying `adp` but not `vor_proj`. `build` cannot emit one -- the stage runs under
+    `_stage(..., absorbs=())`, so a failure inside it aborts the build rather than returning a
+    half-written Board -- but these are public functions taking a bare frame, and review found
+    a hand-built one raising `ColumnNotFoundError` from four frames deep.
+
+    **It refuses rather than falling back to `vor`.** Falling back is what the sniff did, and
+    quietly ranking on a different currency than the caller believes is the defect, not the
+    mitigation. So the answer is the same refusal with an explanation attached.
+    """
+    column = "vor_proj" if report.adp else "vor"
+    try:
+        return pool[column].fill_null(-99.0).to_numpy()
+    except pl.exceptions.ColumnNotFoundError:
+        raise ValueError(
+            f"the greedy fallback ranks on {column!r} because this frame's report says the "
+            f"draft-market stage {'ran' if report.adp else 'did not run'}, and the column is "
+            f"not here. A Board from `build` always carries it; a frame that does not is "
+            f"either a fixture describing a build that cannot have happened, or a board off "
+            f"disk predating the column. Pass the report that belongs to this frame, or give "
+            f"the fixture the column its report claims.") from None
+
+
 def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot: int,
                              teams: int = 12, rounds: int = DEFAULT_ROUNDS,
                              forced: str | None = None,
@@ -218,8 +248,7 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
     # else. Every caller that supplies a strategy -- `backtest.play`, `cohort`, both arms of
     # the backtest -- replaces the greedy outright, so eagerly resolving a currency none of
     # them ranks in made the room's ranking a precondition on runs that never ranked.
-    vor = (pool["vor_proj" if report.adp else "vor"].fill_null(-99.0).to_numpy()
-           if my_pick is None else None)
+    vor = _greedy_currency(pool, report) if my_pick is None else None
     pos = pool["pos"].fill_null("NA").to_numpy()
     names = pool["player"].to_list()
 
