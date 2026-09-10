@@ -45,6 +45,7 @@ from __future__ import annotations
 import collections
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import polars as pl
@@ -58,6 +59,9 @@ from hub.draft.state import DraftState, remaining, roster_for
 from hub.league import FLEX_CAPACITY, FLEX_FROM, STARTERS
 from hub.models.predict import WEEKLY_SKEW_POOLED, CorrelationReport, moments
 from hub.names import player_key
+
+if TYPE_CHECKING:                  # `board` reaches this module function-locally, both ways
+    from hub.draft.board import BuildReport
 
 # Bench depth beyond the 8 starting slots. Deep enough that saturation is punished,
 # shallow enough that the simulated draft stays cheap.
@@ -151,7 +155,8 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
                              forced: str | None = None,
                              w: float = DEFAULT_ESPN_WEIGHT, opp_noise: float = 1.0,
                              rng: np.random.Generator | None = None,
-                             my_pick: MyPick | None = None) -> list[np.ndarray]:
+                             my_pick: MyPick | None = None,
+                             report: BuildReport | None = None) -> list[np.ndarray]:
     """Play out the draft. Returns one array of `board` row indices per team.
 
     Two separable things live here: the **room** -- eleven opponents following a noisy board
@@ -169,9 +174,14 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
     read from that same frame. Indexing the board removes the class of error rather than
     warning about it, and it is what lets every seat start from the roster it already holds
     -- see below, which is the bug this shape exists to fix.
+
+    **`report` says which currency this room ranks in**, and it is the whole of the sharp
+    half of issue #199 -- see the `key` line below for what it decides and what that costs.
     """
     rng = rng or np.random.default_rng(0)
-    pool = blended_adp(board, w)
+    from hub.draft.board import report_for
+    report = report_for(board, report)
+    pool = blended_adp(board, w, report=report)
 
     mu_pick = pool["mu_pick"].fill_null(999.0).to_numpy()
     # How loosely opponents follow their own board. The fitted sigma in availability.py
@@ -188,8 +198,28 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
 
     # Rank on the same forecast the season is scored against. Using a different signal
     # here would measure the gap between two projections, not the value of the pick.
-    key = "vor_proj" if "vor_proj" in pool.columns else "vor"
-    vor = pool[key].fill_null(-99.0).to_numpy()
+    #
+    # **Which forecast that is, is the report's answer and not this frame's schema.** Both
+    # halves of the coupling are the draft-market stage's: `vor_proj` is the last of
+    # `board.STAGE_COLUMNS["adp"]`, and `moments` -- what scores the season below -- reads
+    # `proj_blend` and `proj_ppg` from that same list, falling through to `xfp_per_game`,
+    # which is the scale `vor` is on. So one flag keys both sides, and asking it here is how
+    # they are kept in step rather than kept in step by accident.
+    #
+    # It used to be `"vor_proj" in pool.columns`, and that had a live consequence rather
+    # than only an owner: `vor_proj` exists only where ESPN ADP does, so the live room ranked
+    # on the blended projection while every backtested room ranked on prior-season xFP, with
+    # nothing anywhere recording that the two differ. Closing it is not available -- there is
+    # no historical ESPN projection to give a past room, which is the same wall
+    # `LIMITATIONS` hits twice already -- so it is named there instead. The gap is now
+    # decided and stated; before, it was inherited from a column.
+    #
+    # Read only where it is used, which is the `my_pick is None` branch below and nowhere
+    # else. Every caller that supplies a strategy -- `backtest.play`, `cohort`, both arms of
+    # the backtest -- replaces the greedy outright, so eagerly resolving a currency none of
+    # them ranks in made the room's ranking a precondition on runs that never ranked.
+    vor = (pool["vor_proj" if report.adp else "vor"].fill_null(-99.0).to_numpy()
+           if my_pick is None else None)
     pos = pool["pos"].fill_null("NA").to_numpy()
     names = pool["player"].to_list()
 
@@ -252,6 +282,7 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
                 break
             if my_pick is None:
                 # Greedy on lineup value: an empty starting slot outranks raw VOR.
+                assert vor is not None       # resolved above for exactly this branch
                 pick = max(live, key=lambda i: (_need_score(counts, pos[i]), vor[i]))
             else:
                 pick = int(my_pick(pool, live, dict(counts), list(order_taken)))
@@ -281,7 +312,8 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
                     n_draft_sims: int = 24, n_season_sims: int = 300,
                     w: float = DEFAULT_ESPN_WEIGHT,
                     seed: int | np.random.SeedSequence = 0,
-                    report: CorrelationReport | None = None) -> pl.DataFrame:
+                    report: BuildReport | None = None,
+                    correlation: CorrelationReport | None = None) -> pl.DataFrame:
     """P(you win the league) for each candidate, averaged over simulated drafts.
 
     Scored over the *whole board*, and rosters include the players each seat already holds.
@@ -289,11 +321,18 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     blind to your own roster: holding a quarterback, it ranked a second one above a
     startable back.
 
-    `report` is a `CorrelationReport` the caller owns, and every one of the candidates x
-    draft-sims simulations below writes into it. Passing one is how a run learns that some
-    team's players were simulated independently -- a correlation block that will not factor
-    falls back to the model the structure exists to replace, and the count is the only
-    evidence of it, since the draw it produces has exactly the shape a correlated one has.
+    **Two reports, about two different runs, which is why they are two parameters** -- the
+    naming `backtest.diagnose` already uses, and which this function was the last holdout
+    from. `report` is the `BuildReport` describing the board handed in: which stages built
+    this frame, and therefore which currency the room below ranks in (issue #199). It is
+    resolved once here and handed down, rather than re-derived inside every one of the
+    candidates x draft-sims rollouts.
+
+    `correlation` is a `CorrelationReport` the caller owns, and every one of those
+    simulations writes into it. Passing one is how a run learns that some team's players were
+    simulated independently -- a correlation block that will not factor falls back to the
+    model the structure exists to replace, and the count is the only evidence of it, since
+    the draw it produces has exactly the shape a correlated one has.
 
     **`seed` may be a `SeedSequence`, and a caller that is itself a level of a larger
     experiment should pass one.** An integer is a root of its own, which is right for the
@@ -303,7 +342,9 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     that happen to differ. Handing down the root is what makes them so; handing down an
     integer is how rollout 0 came to be the room itself (issue #195).
     """
-    pool = blended_adp(board, w)
+    from hub.draft.board import report_for
+    report = report_for(board, report)
+    pool = blended_adp(board, w, report=report)
     pred = moments(pool)
     mu = pred["mu"].fill_null(0.0).to_numpy()
     sd = pred["sd"].fill_null(2.0).to_numpy()
@@ -336,10 +377,11 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
         for k in range(n_draft_sims):
             rosters = simulate_remaining_draft(board, state, my_slot=my_slot, teams=teams,
                                                rounds=rounds, forced=c, w=w,
-                                               rng=stream(root, ROLLOUT, k))
+                                               rng=stream(root, ROLLOUT, k),
+                                               report=report)
             p = champion_probability(rosters, mu, sd, pos, n_sims=n_season_sims,
                                      rng=stream(root, SEASON_SIM, k),
-                                     nfl_team=nfl_team, skew=skew, report=report)
+                                     nfl_team=nfl_team, skew=skew, report=correlation)
             mat[i, k] = p[my_slot - 1]
 
     return _lift_frame(candidates, mat)
@@ -448,6 +490,17 @@ def corrected_adp(board: pl.DataFrame, clamp_frac: float | None = None) -> pl.Se
     """
     if clamp_frac is None:
         clamp_frac = DraftConfig().correction_clamp_frac
+    # Columns read for arithmetic rather than for provenance, which is why these two survive
+    # issue #199 rather than becoming a `report.adp` -- the same guard, on three of the same
+    # columns, that `backtest.correction_report` keeps and #164 wrote the reason for. What
+    # follows reads all three and subtracts two, so their presence is a precondition on the
+    # operation rather than a second guess at what `build` did.
+    #
+    # It also could not ask a report if it wanted to. `board._attach_market` calls this
+    # *during* the build, before the stage that would set the flag has been marked -- so the
+    # only report in existence at this moment is one that does not yet describe this frame.
+    # A producer is not a consumer of the report; see `regression.correct_projection` and
+    # `durability.correct_projection`, which are inside `_stage` for the same reason.
     if not {"adp", "proj_blend", "proj_correction"} <= set(board.columns):
         return board["adp"] if "adp" in board.columns else pl.Series("adp", [], pl.Float64)
 

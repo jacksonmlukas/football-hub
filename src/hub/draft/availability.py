@@ -13,12 +13,16 @@ question that actually drives a pick: will he still be there at my next turn?
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
 import polars as pl
 
 from hub.league import preseason_start
 from hub.names import player_key
+
+if TYPE_CHECKING:                  # `board` imports this module, so runtime would cycle
+    from hub.draft.board import BuildReport
 
 # Fraction of the room drafting off ESPN's default board. Estimate it from your own
 # league's history with fit_espn_weight(); 0.5 is the "mixed room" prior.
@@ -29,23 +33,28 @@ DEFAULT_ESPN_WEIGHT = 0.5
 MIN_SIGMA = 1.0
 
 
-def blended_adp(df: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT) -> pl.DataFrame:
+def blended_adp(df: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT, *,
+                report: BuildReport | None = None) -> pl.DataFrame:
     """Expected pick number under a mixed room.
 
     w=1.0 collapses to pure ESPN ADP (everyone uses the app's board).
     w=0.0 collapses to pure consensus (everyone is sharp).
+
+    **Whether there is a draft market to blend in is the report's answer.** ECR-only mode
+    drops `adp` entirely rather than nulling it, and a historical board never has it at all
+    -- ESPN publishes ADP for the current season only -- so this function has to know which
+    of those it is holding. It used to ask `df.columns`, which is one of the eleven private
+    answers issue #199 collected; `report.adp` is the recorded one, and `board.report_for`
+    derives it when a caller has only the frame.
+
+    Note that a board with no draft market makes `w` a no-op: espn falls back to ecr, so
+    `w*ecr + (1-w)*ecr` is ecr for every weight. That is the correct reading of "half the
+    room drafts off ESPN" when there is no ESPN board to draft off.
     """
     if not 0.0 <= w <= 1.0:
         raise ValueError(f"espn weight must be in [0, 1], got {w}")
-    # A *missing* adp column, not merely a null one. ECR-only mode drops it entirely rather
-    # than nulling it, and a historical board never has it at all -- ESPN publishes ADP for
-    # the current season only. `fill_null` needs the column to exist, so without this the
-    # board that degrades most gracefully everywhere else raises here.
-    #
-    # Note this makes `w` a no-op on such a board: espn falls back to ecr, so
-    # `w*ecr + (1-w)*ecr` is ecr for every weight. That is the correct reading of "half the
-    # room drafts off ESPN" when there is no ESPN board to draft off.
-    espn = (pl.col("adp").fill_null(pl.col("ecr")) if "adp" in df.columns
+    from hub.draft.board import report_for
+    espn = (pl.col("adp").fill_null(pl.col("ecr")) if report_for(df, report).adp
             else pl.col("ecr"))
     return df.with_columns((w * espn + (1 - w) * pl.col("ecr")).alias("mu_pick"))
 
@@ -132,16 +141,20 @@ def _sigma(df: pl.DataFrame) -> np.ndarray:
 
 
 def availability(df: pl.DataFrame, picks: list[int], n_sims: int = 5000,
-                 w: float = DEFAULT_ESPN_WEIGHT, seed: int = 0) -> pl.DataFrame:
+                 w: float = DEFAULT_ESPN_WEIGHT, seed: int = 0, *,
+                 report: BuildReport | None = None) -> pl.DataFrame:
     """P(player is still on the board) at each of your upcoming pick numbers.
 
     Simulates draft orders by drawing a noisy pick number per player and ranking them,
     which preserves the constraint that exactly one player goes at each slot.
+
+    `report` is carried rather than used: `blended_adp` below is what needs it, and a
+    caller holding one should not have to reach past this function to hand it over.
     """
     if df.height == 0:
         return df.with_columns([pl.lit(None, pl.Float64).alias(f"avail_{k}") for k in picks])
 
-    df = blended_adp(df, w)
+    df = blended_adp(df, w, report=report)
     rng = np.random.default_rng(seed)
     mu, sd = df["mu_pick"].to_numpy(), _sigma(df)
 
