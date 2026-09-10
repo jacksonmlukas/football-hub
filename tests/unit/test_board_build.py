@@ -747,24 +747,38 @@ def test_a_served_published_board_is_not_written_to_the_parquet(tmp_path, offlin
 # --- the two advisory stages that feed the one that is not (issue #121) ----
 
 def test_absorbing_a_correction_stage_says_so_beside_the_ranking():
-    """Issue #121. `built without: td_luck` was read as "the board is thinner". For these
-    two it means something else: the correction never applied, so Corrected ADP -- what THE
-    PICK ranks on -- is a different order. The flags were already right; nothing connected
-    them to the ranking that consumed their absence.
+    """Issue #121. `built without: durability` was read as "the board is thinner". For a
+    Correction it means something else: the correction never applied, so Corrected ADP --
+    what THE PICK ranks on -- is a different order. The flags were already right; nothing
+    connected them to the ranking that consumed their absence.
     """
     from hub.draft import report as report_mod
     ran = board.BuildReport(adp=True, td_luck=True, durability=True)
     assert ran.corrections_missing() == ()
     assert "CORRECTED ADP" not in "\n".join(report_mod.built_or_served(ran, None))
 
-    without_luck = board.BuildReport(adp=True, td_luck=False, durability=True)
-    assert without_luck.corrections_missing() == ("touchdown luck",)
-    said = "\n".join(report_mod.built_or_served(without_luck, None))
-    assert "CORRECTED ADP is missing touchdown luck" in said
+    without = board.BuildReport(adp=True, td_luck=True, durability=False)
+    assert without.corrections_missing() == ("durability",)
+    said = "\n".join(report_mod.built_or_served(without, None))
+    assert "CORRECTED ADP is missing durability" in said
     assert "different order" in said and "not a thinner board" in said
 
-    both = board.BuildReport(adp=True, td_luck=False, durability=False)
-    assert both.corrections_missing() == ("touchdown luck", "durability")
+
+def test_absorbing_the_touchdown_luck_stage_no_longer_claims_the_ranking_moved():
+    """The report's half of #48, and the reason the term had to leave `CORRECTION_COLUMN`
+    rather than merely stop being multiplied.
+
+    A term left declared would print "CORRECTED ADP is missing touchdown luck" over a
+    ranking that is identical either way, which is the report saying more than it knows --
+    `BuildReport`'s own defect. The stage still ran and is still reported as degraded when
+    it fails; what it no longer does is warn about a ranking.
+    """
+    from hub.draft import report as report_mod
+    absorbed = board.BuildReport(adp=True, td_luck=False, durability=True)
+    assert absorbed.corrections_missing() == ()
+    said = "\n".join(report_mod.built_or_served(absorbed, None))
+    assert "CORRECTED ADP" not in said
+    assert "td_luck" in said, "it is still named as a stage that did not run"
 
 
 def test_a_board_with_no_adp_claims_no_missing_corrections():
@@ -806,20 +820,21 @@ def test_a_third_correction_needs_no_second_declaration_to_reach_a_gate(monkeypa
     assert ran.corrections_missing() == ()
 
 
-def test_a_missing_correction_actually_moves_the_corrected_ranking():
-    """The demonstration the ticket asks for, as numbers rather than as an argument.
-
-    Both `correct_projection` functions return the frame untouched when their column is
-    absent, so this is the arithmetic an absorbed stage produces. If this ever stops moving
-    the ranking, the two stages really are advisory and the note above should go.
-    """
+def _corrected_ranking(frame: pl.DataFrame) -> list[str]:
+    """The board's own arithmetic from `proj_blend` to the order THE PICK reads."""
     from hub.draft import durability
-    from hub.draft import regression as td
     from hub.draft.optimize import corrected_adp
 
+    raw = frame["proj_blend"]
+    f = durability.correct_projection(frame)
+    f = f.with_columns((pl.col("proj_blend") - raw).alias("proj_correction"))
+    return (f.with_columns(corrected_adp(f).alias("adp_corrected"))
+             .sort("adp_corrected")["player"].to_list())
+
+
+def _synthetic_board(n: int = 120) -> pl.DataFrame:
     rng = np.random.default_rng(0)
-    n = 120
-    b = pl.DataFrame({
+    return pl.DataFrame({
         "player": [f"p{i}" for i in range(n)],
         "pos": ["QB", "WR", "RB", "TE"] * (n // 4),
         "adp": np.sort(rng.uniform(1, 180, n)),
@@ -829,20 +844,30 @@ def test_a_missing_correction_actually_moves_the_corrected_ranking():
         "missed": rng.integers(0, 6, n).astype(float),
     })
 
-    def rank(frame: pl.DataFrame) -> list[str]:
-        raw = frame["proj_blend"]
-        f = td.correct_projection(frame)
-        f = durability.correct_projection(f)
-        f = f.with_columns((pl.col("proj_blend") - raw).alias("proj_correction"))
-        f = f.with_columns(corrected_adp(f).alias("adp_corrected"))
-        return f.sort("adp_corrected")["player"].to_list()
 
-    with_both = rank(b)
-    without_luck = rank(b.drop("td_luck"))
-    assert with_both != without_luck, (
-        "absorbing the touchdown-luck stage left the corrected ranking identical, which "
-        "would make it advisory after all -- and would make the printed note wrong")
-    assert rank(b.drop("missed")) != with_both, "same for durability"
+def test_a_missing_correction_actually_moves_the_corrected_ranking():
+    """The demonstration the ticket asks for, as numbers rather than as an argument.
+
+    `correct_projection` returns the frame untouched when its column is absent, so this is
+    the arithmetic an absorbed stage produces. If this ever stops moving the ranking,
+    durability really is advisory and the note above should go.
+    """
+    b = _synthetic_board()
+    assert _corrected_ranking(b.drop("missed")) != _corrected_ranking(b)
+
+
+def test_the_touchdown_luck_stage_no_longer_moves_the_corrected_ranking():
+    """The other half of the same claim, and the one #48 created.
+
+    This is the test the removal is measurable by: the same frame with and without the
+    `td_luck` column must now produce the *same* order, because nothing multiplies it. Until
+    #48 these two rankings differed -- 346 of 457 players moved on the live board of
+    2026-09-06 -- and `corrections_missing` printed a warning about the difference. Both
+    facts had to stop being true together, or the report would be describing a board that no
+    longer exists.
+    """
+    b = _synthetic_board()
+    assert _corrected_ranking(b.drop("td_luck")) == _corrected_ranking(b)
 
 
 def test_a_routed_board_reads_one_archive_entry_twice_and_gets_the_same_frame(

@@ -374,7 +374,13 @@ def test_the_shipped_arm_is_the_shipped_number_and_not_a_refit():
 def test_the_five_coefficients_are_the_five_the_board_applies():
     """The registry against the modules. A coefficient renamed or re-keyed in
     `regression`/`durability` with this list left behind would refit a number nothing
-    applies, and report a disposition about it."""
+    applies, and report a disposition about it.
+
+    **Both directions, since #48.** A live coefficient must be in its table at the value
+    recorded here; a withdrawn one must be *absent* from it. The second half is what makes
+    "the board stopped applying this" a checkable claim rather than a comment: leaving
+    `TD_LUCK_BETA["QB"]` in place while this file said it was withdrawn would fail here.
+    """
     from hub.draft import durability, regression
     live = {("hub.draft.regression", "TD_LUCK_BETA"): regression.TD_LUCK_BETA,
             ("hub.draft.durability", "BETA"): durability.BETA,
@@ -382,11 +388,39 @@ def test_the_five_coefficients_are_the_five_the_board_applies():
     assert len(COEFFICIENTS) == 5
     for coef in COEFFICIENTS:
         table = live[(coef.declared_in, coef.constant)]
+        if not coef.applies:
+            assert coef.key not in table, (
+                f"{coef.name} is recorded here as withdrawn -- {coef.withdrawn} -- and "
+                f"{coef.constant} still keys it at {table.get(coef.key)}. One of the two is "
+                f"wrong and neither should change without a ticket.")
+            continue
         assert coef.key in table, f"{coef.name} keys {coef.constant} on a key it does not have"
         assert table[coef.key] == pytest.approx(coef.shipped), (
             f"{coef.name} is recorded here as {coef.shipped} and shipped as "
             f"{table[coef.key]}. The disposition is a claim about a specific number; update "
             f"it deliberately, which is issue #48's job and not a refit's.")
+
+
+def test_the_withdrawn_coefficients_are_the_touchdown_luck_pair_and_say_why():
+    """#48, from the harness's side. Three of the five still apply and two do not, and a
+    withdrawal that did not say why would be indistinguishable from a typo."""
+    withdrawn = {c.name for c in COEFFICIENTS if not c.applies}
+    assert withdrawn == {"td_luck.QB", "td_luck.WR"}
+    for coef in COEFFICIENTS:
+        assert coef.applies != bool(coef.withdrawn)
+        if not coef.applies:
+            assert "#186" in coef.withdrawn and len(coef.withdrawn.split()) >= 8
+
+
+def test_a_withdrawn_coefficient_is_still_fitted_and_still_reported():
+    """It stays on the list, and the list is what a later refit disagrees with. #225 is the
+    open example: a ticket reopening touchdown luck needs the arm the board used to run to
+    compare against, and a coefficient dropped from here would leave it none."""
+    panel = planted(-0.6)
+    fit = fitted(panel, QB)
+    assert fit.beta == pytest.approx(-0.6, abs=0.08)
+    assert QB.shipped == -0.540, "the withdrawn value is kept, so the shipped arm still scores"
+    assert not shrink_curve(panel, QB).is_empty()
 
 
 def test_the_designation_reports_both_of_its_sample_counts():

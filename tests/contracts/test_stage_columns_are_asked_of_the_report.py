@@ -68,14 +68,18 @@ SURVIVORS: dict[tuple[str, str], str] = {
     ("durability.py", "correct_projection"):
         "producer: runs inside `board._stage`, which is what sets the flag, so no report "
         "describing this frame exists yet",
-    ("regression.py", "correct_projection"):
-        "producer, same as durability's",
+    # `("regression.py", "correct_projection")` was the fourth survivor -- "producer, same as
+    # durability's" -- until #48 deleted the function. Its site did not move to the report; it
+    # stopped existing, because #186 found the correction it guarded did not earn its place.
+    # Recorded here rather than dropped silently, since the count below is the criterion and a
+    # number that fell needs a reason as much as one that rose.
 }
 
-# Two sites per function at two of them, one at the other two. Stated as a number because
-# that is the acceptance criterion: a new sniff has to move a figure a person wrote down.
-# Eight until #146; `report.injuries` was two of them and is now none.
-EXPECTED_SITES = 6
+# Two sites per function at two of them, one at the third. Stated as a number because that is
+# the acceptance criterion: a new sniff has to move a figure a person wrote down. Eight until
+# #146, when `report.injuries` stopped being two of them; six until #48 removed
+# `regression.correct_projection`, which was the fifth.
+EXPECTED_SITES = 5
 
 
 def _stage_literals(node: ast.AST) -> set[str]:

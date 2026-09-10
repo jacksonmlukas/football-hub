@@ -6,9 +6,12 @@
 this module they had no committed fitting code at all: the tables in `docs/td-luck.md` and
 `docs/durability.md` are the output of a fit nobody can re-run.
 
-**This module fits. It does not ship.** The constants stay exactly where they are; changing
-them is issue #48's job and the disposition below is its input. A fit that disagrees with a
-shipped number is a finding, not a licence.
+**This module fits. It does not ship.** A fit that disagrees with a shipped number is a
+finding, not a licence, and moving a constant is a ticket of its own. #48 was that ticket:
+the two touchdown-luck coefficients are marked `withdrawn` on `COEFFICIENTS` below and the
+board applies nothing for them, while the three durability numbers still apply. They all stay
+on the list either way -- a withdrawn coefficient is precisely the one a later refit needs a
+baseline to disagree with.
 
 ## The axis, which is the whole point
 
@@ -161,13 +164,42 @@ class Coefficient(NamedTuple):
     position: str | None    # None means every position, which is what INJURY_BETA does
     shipped: float
     documented_in: str
+    withdrawn: str = ""     # why the board stopped applying it, empty while it still does
 
+    @property
+    def applies(self) -> bool:
+        """Whether the board multiplies anything by this today.
+
+        A withdrawn coefficient stays on this list rather than leaving it. The harness's job
+        is to fit the five signals the board has ever priced, and a signal whose price was
+        withdrawn is exactly the one a later ticket -- #225 is the open example -- reopens
+        with new evidence. Dropping it here would mean the next refit had no baseline to
+        disagree with, which is the arrangement `docs/fitted-corrections.md` exists because
+        this repo already had once.
+
+        `shipped` therefore keeps the value that *was* applied, so the `shipped` walk-forward
+        arm still scores the model the board used to run. What changes is that
+        `test_the_five_coefficients_are_the_five_the_board_applies` now requires the key to be
+        **absent** from the live table -- the claim is that nothing multiplies it, and that is
+        as checkable as the claim that something does.
+        """
+        return not self.withdrawn
+
+
+# The two touchdown-luck rows carry the same sentence because they were withdrawn by one
+# decision, not two: #186 asked whether the correction earns its place at all rather than
+# whether either coefficient does. The per-position evidence differs and is in the comments
+# on `hub.draft.regression.TD_LUCK_BETA`.
+_TD_LUCK_WITHDRAWN = (
+    "#186/#48, 2026-09-10: held out, applying it scores worse than applying nothing, and "
+    "the measured shrink is zero"
+)
 
 COEFFICIENTS: tuple[Coefficient, ...] = (
     Coefficient("td_luck.QB", "hub.draft.regression", "TD_LUCK_BETA", "QB",
-                "td_luck", "QB", -0.540, "docs/td-luck.md"),
+                "td_luck", "QB", -0.540, "docs/td-luck.md", _TD_LUCK_WITHDRAWN),
     Coefficient("td_luck.WR", "hub.draft.regression", "TD_LUCK_BETA", "WR",
-                "td_luck", "WR", -0.286, "docs/td-luck.md"),
+                "td_luck", "WR", -0.286, "docs/td-luck.md", _TD_LUCK_WITHDRAWN),
     Coefficient("missed.QB", "hub.draft.durability", "BETA", "QB",
                 "missed", "QB", -0.457, "docs/durability.md"),
     Coefficient("missed.WR", "hub.draft.durability", "BETA", "WR",
@@ -644,9 +676,12 @@ def report_lines(panel: pl.DataFrame, *, baselines: Sequence[str] = BASELINES,
     """The whole finding, as lines. Pure, so a test can read it without a CLI."""
     out: list[str] = []
     for coef in COEFFICIENTS:
-        out.append(f"\n  {coef.name} -- shipped {coef.shipped:+.3f} "
+        applied = "shipped" if coef.applies else "WITHDRAWN, was"
+        out.append(f"\n  {coef.name} -- {applied} {coef.shipped:+.3f} "
                    f"in {coef.declared_in}.{coef.constant}[{coef.key!r}], "
                    f"{coef.documented_in}")
+        if not coef.applies:
+            out.append(f"    {'':<11} the board applies nothing here: {coef.withdrawn}")
         for baseline in baselines:
             fit = fit_one(panel, coef, baseline=baseline, seed=seed)
             if fit is None:

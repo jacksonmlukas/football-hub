@@ -9,6 +9,34 @@ re-run.
 refit disagrees with the board, the disagreement is reported and the board keeps running on
 what it has.
 
+**#48 closed 2026-09-10, and this is what it did.** One of the five moved, and it moved to
+zero rather than to its refit:
+
+| coefficient | disposition | #48 |
+|---|---|---|
+| `TD_LUCK_BETA["QB"]` | sign-reversed, resolved | **withdrawn** — `TD_LUCK_BETA` is now `{}` |
+| `TD_LUCK_BETA["WR"]` | reproduced, underpowered | **withdrawn** with it, on #186's held-out evidence rather than on its own disposition |
+| `BETA["QB"]` (missed) | reproduced | unchanged, no flag |
+| `BETA["WR"]` (missed) | unreproduced, resolved | unchanged, **applied behind a flag** |
+| `INJURY_BETA["OUT"]` | unreproduced, underpowered | unchanged, **applied behind a flag** |
+
+The rule the ticket set, and what each part of it cost. A **reproduced** coefficient stands.
+An **unreproduced** one goes on applying, because withdrawing a correction mid-season is
+itself an unmeasured change to the board and neither refit is a licence to move a shipped
+number — but it no longer applies silently: `hub.draft.board.CORRECTION_FLAG` carries the
+disposition and `hub.draft.report` prints it beside the ranking, so an operator sees which of
+the numbers under THE PICK is disputed and how. A **sign-reversed** one is zeroed, because a
+sign flip is a bug rather than a finding.
+
+The touchdown-luck pair is the one place #48 went further than its own rule, and #186 is why:
+`td_luck.WR` is *reproduced* on this page and would have stood, but the question #186 asked
+was whether the correction earns its place at all, and held out neither coefficient does. The
+next section is that decision.
+
+`config_digest` moved `6bdcb663` → `9fc5b0af` and `fitted_digest` `8c248a6e` → `d9caf498`,
+restated in `tests/unit/test_config.py`. A correction that stopped applying is a model change
+and ADR-0006 wants the version to move for it.
+
 ## The result
 
 `target ~ baseline + signal`, per position, over 4,595 player-seasons and eight outcome

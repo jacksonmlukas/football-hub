@@ -102,105 +102,81 @@ def test_names_are_matched_on_a_normalised_form():
     assert got["td_luck"][0] is not None
 
 
-# --- correcting the projection the win-probability sim runs on ------------
-
-def test_a_lucky_quarterback_is_marked_down():
-    """The point of the whole exercise: the signal has to reach the objective. ESPN's
-    projection carries the same touchdown bias the draft room does, but only for
-    quarterbacks -- ppg_next ~ proj + td_luck gives a td_luck coefficient of -0.540,
-    95% CI [-1.057, -0.125], 99.5%. So the projection the simulator scores on is too high
-    for a quarterback who got lucky, by about half a point per point of luck."""
-    board = pl.DataFrame({"player": ["A"], "pos": ["QB"], "proj_blend": [22.0],
-                          "td_luck": [4.0]})
-    got = R.correct_projection(board)
-    assert got["proj_blend"][0] == pytest.approx(22.0 + R.TD_LUCK_BETA["QB"] * 4.0)
-    assert got["proj_blend"][0] < 22.0
+# --- the price on the signal, withdrawn (#186, applied by #48) --------------
+#
+# Everything below used to assert the multiplication: a quarterback at 22.0 with 4.0 points of
+# luck came out at `22.0 + (-0.540) * 4.0`, and a receiver likewise. Those tests passed for as
+# long as the constants sat in the dict, and would have gone on passing whatever the fit said
+# -- which is the shape #48's fourth criterion is about. What is asserted now is the *fit*:
+# the coefficients were refitted against `proj_blend`, the column they were applied to, and
+# held out they lost to applying nothing. So the claim under test is that nothing is applied,
+# and it is checked against the harness's record of why rather than against a bare `{}`.
 
 
-def test_an_unlucky_quarterback_is_marked_up():
-    board = pl.DataFrame({"player": ["A"], "pos": ["QB"], "proj_blend": [18.0],
-                          "td_luck": [-2.0]})
-    assert R.correct_projection(board)["proj_blend"][0] > 18.0
+def test_no_position_carries_a_touchdown_luck_coefficient():
+    """The withdrawal itself. Empty rather than deleted, because `prior_signal.priced` reads
+    an absent position as "the fit found nothing for it", which is now true of all of them."""
+    assert R.TD_LUCK_BETA == {}
 
 
-def test_receivers_are_corrected_too():
-    """Applied at Jackson's direction, and it is a judgment call rather than a 95% result:
-    WR comes back at -0.286 with a 95% interval of [-0.797, +0.170], so 89% of the
-    bootstrap is on the right side but the interval still contains zero.
-
-    What makes it defensible rather than fishing is that the mechanism was measured first
-    and independently -- touchdown rate has no year-over-year persistence -- and predicts
-    this sign for every position before any of this was fitted."""
-    board = pl.DataFrame({"player": ["A"], "pos": ["WR"], "proj_blend": [14.0],
-                          "td_luck": [3.0]})
-    got = R.correct_projection(board)
-    assert got["proj_blend"][0] == pytest.approx(14.0 + R.TD_LUCK_BETA["WR"] * 3.0)
-    assert got["proj_blend"][0] < 14.0
-
-
-def test_running_backs_are_left_alone():
-    """Not a threshold call -- the sign is wrong. RB comes back at +0.253, meaning ESPN is
-    if anything conservative about running back touchdowns. Correcting it would move the
-    projection the wrong way."""
-    board = pl.DataFrame({"player": ["B"], "pos": ["RB"], "proj_blend": [14.0],
-                          "td_luck": [3.0]})
-    assert R.correct_projection(board)["proj_blend"][0] == 14.0
-
-
-def test_the_quarterback_correction_is_the_larger_one():
-    """QB -0.540 against WR -0.286. If these ever invert, something upstream has changed."""
-    assert abs(R.TD_LUCK_BETA["QB"]) > abs(R.TD_LUCK_BETA["WR"])
-
-
-def test_a_player_without_a_prior_season_is_untouched():
-    board = pl.DataFrame({"player": ["Rookie"], "pos": ["QB"], "proj_blend": [19.0],
-                          "td_luck": [None]})
-    assert R.correct_projection(board)["proj_blend"][0] == 19.0
-
-
-def test_the_correction_cannot_drive_a_projection_negative():
-    board = pl.DataFrame({"player": ["A"], "pos": ["QB"], "proj_blend": [1.0],
-                          "td_luck": [40.0]})
-    assert R.correct_projection(board)["proj_blend"][0] >= 0.0
-
-
-def test_a_board_without_the_signal_passes_through():
+def test_the_signal_is_still_computed_and_attached():
+    """Only the price was withdrawn. A board that lost the column too would lose the report
+    section and the `--fade` cut with it, which is not what #186 decided."""
     board = pl.DataFrame({"player": ["A"], "pos": ["QB"], "proj_blend": [22.0]})
-    assert R.correct_projection(board)["proj_blend"][0] == 22.0
+    got = R.attach(board, _season([("A", "QB", 16, 0.0, 0.0, 0.0, 0.0, 4000.0, 40.0)]))
+    assert got["td_luck"][0] is not None and got["td_luck"][0] > 0
+    assert got["proj_blend"][0] == 22.0, "attaching the signal must not move the projection"
 
 
-def test_the_silent_no_op_names_where_it_is_caught():
-    """The pass-through above is deliberate and it is not free -- issue #121 -- and this
-    function is where a reader lands to find that out.
+def test_the_module_no_longer_offers_a_way_to_price_it():
+    """The removal is of the function, not just of the numbers.
 
-    A reader who arrives here sees an early return with no consequence attached, which is
-    exactly how the no-op survived long enough to need measuring. So the site names its
-    catchers, and this holds the naming to catchers that exist and still catch: the names
-    are resolved as live symbols rather than matched as prose, and the behaviour they
-    describe is exercised beside them. Rename either one and leave the comment behind, and
-    this fails rather than leaving a reader pointed at nothing.
-
-    Nothing here reads a `BuildReport`. This is a producer -- it runs inside `_stage`, and
-    the report records the stage rather than being read by it.
+    A `correct_projection` left behind with an empty `BETA` would be arithmetic that adds
+    exactly zero -- dead code shaped like a correction, which is what a later reader would
+    re-populate without re-reading the evidence. `hub.draft.durability` keeps its own; that
+    is the one that still applies.
     """
-    import inspect
+    from hub.draft import durability
+    assert not hasattr(R, "correct_projection")
+    assert hasattr(durability, "correct_projection")
 
+
+def test_touchdown_luck_is_no_longer_a_correction_the_board_declares():
+    """The consequence that matters to a reader on the clock, and to a Gate.
+
+    A Correction is a term whose *absence* changes what THE PICK ranks on. With nothing
+    multiplied, absorbing this stage changes no ranking -- so a report that still warned
+    about it would be saying more than it knows, and `require_corrections` would refuse a
+    Gate season over a term worth nothing.
+    """
     from hub.draft import board as board_mod
     from hub.models import experiment
 
-    source = inspect.getsource(R.correct_projection)
-    assert getattr(board_mod.BuildReport, "corrections_missing", None) is not None
-    assert getattr(experiment, "require_corrections", None) is not None
-    assert "corrections_missing" in source, (
-        "the silence is not free and this is where a reader finds out what catches it")
-    assert "require_corrections" in source, "and what refuses it for a Gate"
-
-    # Named, and true. The board is returned untouched...
-    board = pl.DataFrame({"player": ["A"], "pos": ["QB"], "proj_blend": [22.0]})
-    assert R.correct_projection(board).equals(board)
-    # ...the report derives the term from the flags the build already set...
+    assert "touchdown luck" not in board_mod.CORRECTION_COLUMN
     absorbed = board_mod.BuildReport(adp=True, td_luck=False, durability=True)
-    assert "touchdown luck" in absorbed.corrections_missing()
-    # ...and a Gate refuses the season rather than pooling it with whole ones.
-    with pytest.raises(experiment.CorrectionMissing):
-        experiment.require_corrections(2025, absorbed)
+    assert absorbed.corrections_missing() == ()
+    experiment.require_corrections(2025, absorbed)   # no longer refuses
+
+
+def test_the_withdrawal_is_recorded_against_the_fit_that_caused_it():
+    """#48's fourth criterion, and the reason this is not just `assert R.TD_LUCK_BETA == {}`.
+
+    An empty dict says nothing about why. The harness that refitted the five carries the
+    disposition, the value that *was* applied and the sentence naming the ticket, and holding
+    the module against that record is what stops the constant being quietly restored -- or
+    the record being quietly edited to match a restored constant. Either half moving alone
+    fails here.
+    """
+    from hub.draft.fit_corrections import COEFFICIENTS
+
+    td = [c for c in COEFFICIENTS if c.constant == "TD_LUCK_BETA"]
+    assert {c.key for c in td} == {"QB", "WR"}
+    for coef in td:
+        assert not coef.applies, f"{coef.name} is recorded as applying and the dict is empty"
+        assert coef.key not in R.TD_LUCK_BETA
+        assert "#186" in coef.withdrawn
+    assert {c.shipped for c in td} == {-0.540, -0.286}, (
+        "the withdrawn values are kept so the held-out `shipped` arm still scores the model "
+        "the board used to run")
+
+

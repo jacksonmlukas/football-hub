@@ -73,6 +73,22 @@ MISSED_YOY_R = 0.407
 #               and the only one of the five corrections that beats no-correction out of
 #               sample -- 7/7 held-out seasons
 #
+# **#48 CLOSED 2026-09-10. Both keep their shipped values, and WR ships behind a flag.** The
+# ticket's rule for an unreproduced coefficient is that it goes on applying: withdrawing a
+# correction mid-season is itself an unmeasured change to the board, and the run's finding is
+# that -0.151 is too *small*, so applying it is the conservative half of the disagreement
+# rather than the reckless one. Neither is moved to the refit -- a refit against a stand-in
+# for half of `proj_blend` is a finding and not a licence, which is what the harness's own
+# docstring says of itself.
+#
+# What #48 does add is that the disagreement is visible on the night. `hub.draft.board`'s
+# `CORRECTION_FLAG` carries the WR line and `hub.draft.report` prints it beside the ranking,
+# so an operator reading a corrected board is told which of its numbers is disputed and how.
+# The flag lives there rather than here because this module is in `FITTED_MODULES`, where an
+# upper-case name would put a disposition string into `fitted_digest`.
+#
+# QB is reproduced and carries no flag. Its caveat is the one above -- agreement by width.
+#
 # See docs/fitted-corrections.md.
 BETA: dict[str, float] = {"QB": -0.457, "WR": -0.151}
 
@@ -113,6 +129,14 @@ FLAG_STATUS = frozenset({"OUT", "DOUBTFUL", "QUESTIONABLE", "INJURY_RESERVE"})
 # The refit cannot speak to INJURY_RESERVE at all, for the same reason the original could not:
 # a week-1 practice report has no IR rows. One number serving three keys is the part of this
 # that no amount of refitting fixes. See docs/fitted-corrections.md.
+#
+# **#48 CLOSED 2026-09-10: unchanged, and shipping behind a flag.** Unreproduced and
+# *underpowered* -- the MDE of 1.051 is larger than the refit's own point estimate, so the
+# run can say -1.631 sits outside the interval and cannot say where the level is. Moving a
+# constant onto an estimate the same run declines to pin would be trading a number with
+# provenance for one without. It applies, and `hub.draft.board.CORRECTION_FLAG` carries the
+# disposition so `hub.draft.report` prints it beside the ranking rather than leaving an
+# operator to find it here.
 INJURY_BETA: dict[str, float] = {
     "OUT": -1.631, "DOUBTFUL": -1.631, "INJURY_RESERVE": -1.631,
 }

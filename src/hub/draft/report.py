@@ -54,7 +54,8 @@ def built_or_served(report: BuildReport, age_h: float | None) -> list[str]:
     board whose signals genuinely had nothing to say.
     """
     if not report.served:
-        return degraded(report.degraded()) + _corrections_note(report)
+        return (degraded(report.degraded()) + _corrections_note(report)
+                + _flagged_corrections(report))
     age = f"built {age_h:.1f}h ago" if age_h is not None else "age unknown"
     carried = ", ".join(report.carried()) or "no optional signal at all"
     missing = report.degraded()
@@ -63,22 +64,26 @@ def built_or_served(report: BuildReport, age_h: float | None) -> list[str]:
             f"  it carries, read off the board itself: {carried}",
             f"  not on it, or not recorded on it: {', '.join(missing)}" if missing
             else "  it carries every optional signal.",
-            *_corrections_note(report)]
+            *_corrections_note(report), *_flagged_corrections(report)]
 
 
 def _corrections_note(report: BuildReport) -> list[str]:
     """Which corrections reached Corrected ADP, said where the ranking is.
 
     `degraded` already names the stages that did not run, and that line was read as meaning
-    the board is thinner. For two of them it means something else: touchdown luck and
-    durability leave columns the ADP stage's arithmetic reads, and both corrections return
-    the frame untouched when their column is absent -- so the board is not thinner, its
-    Corrected ADP is a different ranking. On the 457-player board of 2026-09-06, absorbing
-    either moved more than 340 players and reordered over a hundred of the first 192 picks.
+    the board is thinner. For a **Correction** it means something else: durability leaves a
+    column the ADP stage's arithmetic reads, and `correct_projection` returns the frame
+    untouched when that column is absent -- so the board is not thinner, its Corrected ADP is
+    a different ranking. On the 457-player board of 2026-09-06 that moved 350 players and
+    reordered 134 of the first 192 picks.
 
     Printed rather than refused. Refusing would turn a ten-minute outage into no board on the
     night the board exists for, which is the operator-dependence CLAUDE.md warns about. What
     an operator cannot do is act on a ranking whose inputs they cannot see (issue #121).
+
+    Touchdown luck was the second term here until #48. It is not one now: with `TD_LUCK_BETA`
+    empty the stage leaves a column nothing reads, and warning about a ranking that did not
+    move would be this note saying more than it knows.
     """
     if not report.adp:
         return []
@@ -88,6 +93,42 @@ def _corrections_note(report: BuildReport) -> list[str]:
     return [f"\n  CORRECTED ADP is missing {' and '.join(missing)}.",
             "  THE PICK ranks on it, so this is a different order -- not a thinner board.",
             "  the stages above did not fail silently; this is what their absence did."]
+
+
+def _flagged_corrections(report: BuildReport) -> list[str]:
+    """Corrections that *did* apply and whose coefficients are disputed, with the disposition.
+
+    #48's third criterion, and the half of it `_corrections_note` cannot cover. That function
+    names what did **not** apply. This names what did, where the number it applied is one the
+    refit disagrees with -- `BETA["WR"]`, about half the size the same data supports, and
+    `INJURY_BETA["OUT"]`, about twice it on 68 observations.
+
+    They still apply, and that is #48's first criterion rather than an oversight: removing a
+    correction mid-season is itself an unmeasured change to the board, and an *unreproduced*
+    coefficient is one the run could not tell from the shipped value with enough confidence
+    to move it. What the ticket asks instead is that the board not apply a disputed number
+    silently. A sign-reversed one is a different case and was zeroed -- touchdown luck, which
+    is why no line here mentions it.
+
+    Read off `board.CORRECTION_FLAG` and gated on the same flags `corrections_missing` reads,
+    so a stage that did not run cannot have its disposition printed beside a ranking it is
+    not in.
+    """
+    from hub.draft.board import CORRECTION_FLAG, CORRECTION_STAGE
+    if not report.adp:
+        return []
+    applied = [term for term, flag in CORRECTION_STAGE.items()
+               if getattr(report, flag, False) and term in CORRECTION_FLAG]
+    if not applied:
+        return []
+    out = ["\n  CORRECTIONS APPLIED whose coefficients are disputed (#48):"]
+    for term in applied:
+        for line in CORRECTION_FLAG[term]:
+            out.append(f"    {term}: {line}")
+    out.append("  they still apply: an unreproduced coefficient withdrawn mid-season is "
+               "itself an")
+    out.append("  unmeasured change. see docs/fitted-corrections.md for the intervals.")
+    return out
 
 
 def mistyped(suggestions: dict[str, str | None]) -> list[str]:

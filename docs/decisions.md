@@ -585,7 +585,16 @@ TAKE tier contains both in 5 of 5 seeds; the strict top pick does not.
 > available. Read the Nacua/McCaffrey tie as **unestablished** under the shipped expression —
 > neither confirmed nor broken — and read the 5-of-5 count the same way. Issue #189.
 
-**Touchdown luck now reaches the objective, at QB and WR.** ESPN's *projection* carries the
+> **Withdrawn 2026-09-10 (#186, applied by #48).** Refitted against `proj_blend` — the column
+> these constants are actually added to, rather than the `proj_ppg` the paragraph below names
+> — QB comes back **positive at both ends** of the reconstructible bracket and WR changes sign
+> inside it. Held out over eight seasons, applying either scores worse than applying no
+> correction at all, and a sweep over every shrink factor between nothing and whole picks
+> nothing. `TD_LUCK_BETA` is now `{}`; touchdown luck is shown on the board and never ranked
+> on. The paragraph below is the record of what ran until then. See
+> [fitted-corrections.md](fitted-corrections.md).
+
+**Touchdown luck reached the objective, at QB and WR, until 2026-09-10.** ESPN's *projection* carries the
 same touchdown bias the draft room does, but only for quarterbacks: `ppg_next ~ proj_ppg +
 td_luck` gives -0.540 [-1.057, -0.125], 99.5%. WR is -0.286 [-0.797,
 +0.170], 89% -- applied at Jackson's direction, and recorded as a judgment call rather than a
@@ -703,9 +712,11 @@ A backtest whose hypothesis is "our code does what we think" is worth running ev
 correction the market's projection demonstrably omits or something the market never priced at
 all:
 
-- Corrections measured *against* the market rather than replacing it: touchdown luck at QB and
-  WR ([td-luck.md](td-luck.md)), durability at QB and WR, being ruled out today
-  ([durability.md](durability.md)).
+- Corrections measured *against* the market rather than replacing it: durability at QB and WR,
+  being ruled out today ([durability.md](durability.md)). Both are applied behind a flag since
+  #48 — a 2026-09-07 refit puts one at about twice the shipped size and the other at about
+  half, and the board now names the disposition beside the ranking. Touchdown luck was on this
+  list until 2026-09-10 and is not an edge this repo can size ([td-luck.md](td-luck.md)).
 - Things that are not about the player: your slot, who survives to your next pick, weeks 15-17
   schedule under a 6-of-12 bracket ([six-of-twelve.md](six-of-twelve.md)).
 

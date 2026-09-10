@@ -771,8 +771,30 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     `hub.season.pool`'s `field_concentration` (#152) landed between these two moves and does
     not appear in either, which is `config_digest`'s `pool` exclusion working as designed --
     a survivor rule no prediction can read must not issue a model version.
+
+    **Moved again 2026-09-10 (#48): `6bdcb663` -> `9fc5b0af`**, `fitted_digest` `8c248a6e`
+    -> `d9caf498`. One constant again, and this time it emptied: `regression.TD_LUCK_BETA`
+    went from `{"QB": -0.540, "WR": -0.286}` to `{}`, so the touchdown-luck correction
+    multiplies nothing and `hub.draft.board` no longer counts it among the Corrections.
+
+    **Earned, and of the same kind as #183 rather than of the two spurious moves.** #187's
+    `_FACTOR_CACHE_MAX` and #199's `TYPE_CHECKING` moved this digest with no measurement
+    behind them -- a cache bound and a standard-library import came to identify a model
+    version because the sweep's rule is a naming convention, and nothing about a prediction
+    was different afterwards. Here every corrected quarterback and receiver on the board
+    changes projection, and through `optimize.corrected_adp` -- which refits the curve every
+    player is priced against -- the ranking moves for players the term never touched: 346 of
+    457 on the board of 2026-09-06, 110 of the first 192 changing rank by up to 19 places.
+    Two runs on either side of that are not the same model, which is exactly what ADR-0006
+    wants the version to say.
+
+    What earned it is #186's measurement, not a preference: refitted against `proj_blend`,
+    the column the constants were applied to, QB comes back positive at both ends of the
+    reconstructible bracket and WR changes sign inside it; held out over eight seasons both
+    score worse than applying no correction, and the shrink sweep over every factor between
+    nothing and whole picks nothing. docs/fitted-corrections.md carries the tables.
     """
-    assert config_digest(HubConfig()) == "6bdcb663"
+    assert config_digest(HubConfig()) == "9fc5b0af"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 
