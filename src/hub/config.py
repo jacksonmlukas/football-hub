@@ -14,8 +14,16 @@ Covered is not the same as living here, and the difference is deliberate:
     and `config_digest` hashes them from there. Making them Hydra-overridable would let a
     command-line flag quietly replace a measurement with a preference.
 
-So: if you find yourself typing a float into a module, ask which kind it is. A choice belongs
+So: if you find yourself typing a number into a module, ask which kind it is. A choice belongs
 in this file. A measurement belongs beside the evidence for it, in a module this file hashes.
+
+That question is the one thing no scan can answer for you, and issue #201 is what happens when
+one tries. Three times the digest's coverage was settled by a property of *how a line is
+written* rather than of what it means -- whether the name was capitalised, whether the value
+was a float, whether a re-export happened to be a number -- and each time a constant either
+identified a model version it had nothing to do with, or failed to identify one it decided.
+`fitted_constants` no longer guesses: everything a registered module assigns is covered, and
+anything that should not be says so by name in `NOT_IN_DIGEST`, with the argument attached.
 
 There is a third kind, and it is deliberately *not* covered. The bytes a run was scored
 against are not part of the model that scored them, and they move on their own -- so
@@ -309,12 +317,38 @@ FITTED_MODULES: tuple[str, ...] = (
 # kept per ADR-0007. Keeping it is right; letting it move the digest that identifies a
 # *prediction* is not, because no prediction can reach it. The three constants that are
 # reachable are named individually below.
+#
+# **The six after those are shapes, and they are here because of #201's original finding.**
+# Each sets the *extent of a random draw* -- how many weeks are played, how many playoff
+# rounds are simulated, how large the playoff field is, how many rounds a draft runs, how
+# many drafts a cohort is. By #196, the extent of a draw determines the seed-to-outcome map,
+# so moving any one of them re-prices every published Gate interval. None of them was covered
+# before, and the reason none of them was is that each is written as an `int`: the scan that
+# keeps modules honest looked for a `float`, and ADR-0006 recorded that as a stray-threshold
+# limitation. It is not one. A shape's blast radius is every random draw in the repo, which
+# is a larger claim than the one that ADR weighed, and it is reopened here deliberately.
+#
+# They are registered by name rather than by module for the same reason `MIN_GAMES` is: they
+# live in files full of paths, CLI defaults and re-exports (`hub.league` re-exports two of
+# `config`'s own names) that must not be hashed.
+#
+# **One escape survives and is stated rather than hidden**: `n_draft_sims` and `n_season_sims`
+# are *function-signature defaults* in `hub.draft.optimize` and `hub.draft.backtest`, not
+# module-level names, so nothing here can address them -- there is no name to register. They
+# set the extent of a draw exactly as the six below do. Covering them means giving them a name
+# first, which is a change to those two modules and not to this file.
 FITTED_EXTRA: tuple[str, ...] = (
     "hub.draft.board:MIN_GAMES",
     "hub.draft.board:FLEX_SHARES",
     "hub.models.components:SCORING",
     "hub.models.components:TD_RATE",
     "hub.models.components:FALLBACK_TD_RATE",
+    "hub.config:REG_SEASON_WEEKS",
+    "hub.league:PLAYOFF_TEAMS",
+    "hub.league:PLAYOFF_ROUNDS",
+    "hub.draft.optimize:DEFAULT_ROUNDS",
+    "hub.draft.cohort:ROUNDS",
+    "hub.draft.cohort:DRAFTS",
 )
 
 # Modules that hold measured floats which nonetheless must NOT move a model version, and why.
@@ -327,13 +361,49 @@ FITTED_EXTRA: tuple[str, ...] = (
 # Constants that sit in a module the digest otherwise touches and that deliberately do NOT
 # move it, each with its reason. Named one by one on purpose: an exclusion should be a
 # decision on the record, not a module quietly falling off FITTED_MODULES.
+#
+# **This is now the only way out of the sweep, and that is the point of #201.** It used to be
+# one of four, and the other three were properties of how a line is *typed* rather than of
+# what it means: a name left the digest by being lower case, by starting with an underscore,
+# or by holding a value the sweep's `isinstance` test did not list. Three separate escapes
+# reached production through those -- `_FACTOR_CACHE_MAX` (a cache bound, #187),
+# `TYPE_CHECKING` (`bool` subclasses `int`, #199, fixed in `468f368`), and the shape constants
+# above (`int` rather than `float`). `fitted_constants` no longer reads any of the three.
+#
+# So the default is **covered**, and an exclusion has to be argued here by name. That is the
+# right way round: a constant wrongly covered costs one restated digest, and a constant
+# wrongly missing costs a model version that claims two different models are the same one.
 NOT_IN_DIGEST: dict[str, str] = {
     "components.PER_UNIT_CV": "read only by components.sample_weeks",
     "components.YARDS_PER_UNIT": "read only by components.sample_weeks",
     "components.COUNT_DISPERSION": "read only by components.sample_weeks",
     "components.TD_DISPERSION": "read only by components.sample_weeks",
+    # The four in `hub.models.predict` that #187 and #201 argued about. Each was out of the
+    # digest before only because someone spelled it with a leading underscore; each is out of
+    # it now because of what it is, and the claim is here to be checked.
+    "predict._FACTORS":
+        "the Cholesky cache itself, keyed on the matrix. It is not a value at all -- it is "
+        "empty at import and fills during a draw, so hashing it by content would move the "
+        "model version *as a process runs*, which is the one version of this bug that would "
+        "have been serious (#187)",
+    "predict._FACTOR_CACHE_MAX":
+        "a bound on how many factorisations that cache keeps. It buys memory against "
+        "recomputation and every prediction is identical on either side of it. This is the "
+        "constant #187 found identifying a model version, and the reason it did was that it "
+        "was written in capitals",
+    "predict._EIG_FLOOR":
+        "a conditioning tolerance, 1e-8, lifting a repaired block off the boundary of the "
+        "PSD cone so its Cholesky does not fail at random. It is three orders below the last "
+        "decimal any correlation here is quoted to, so no published figure can distinguish "
+        "two runs across it. Raising it to somewhere a correlation could notice would make it "
+        "a modelling choice, and it would belong in the digest that day",
+    "predict._INDEPENDENT_FLOOR":
+        "a pre-registered guard, not an input: above this share of blocks failing to factor "
+        "the draw *refuses* rather than returning a different number. Its opposite number is "
+        "`weekly_gate.VOID_FLOOR`, in a module that excludes itself wholesale for the same "
+        "reason. Moving it changes which runs are published, never what a published run says",
 }
-# ... and why those four: component-derived spread lost its gate to the fitted square-root
+# ... and why the first four: component-derived spread lost its gate to the fitted square-root
 # law (1.365 against 1.140, P(better) 0.0% -- see hub/models/predict.py). ADR-0007 says a
 # measurement that steered a decision stays in the tree, so the code is kept. But a
 # prediction cannot reach these numbers, so they must not identify one.
@@ -400,29 +470,75 @@ def _assigned_at_module_level(mod: Any) -> set[str]:
     return assigned
 
 
+def _canonicalisable(v: Any) -> bool:
+    """Whether `_canonical` can turn this value into text that means the same thing twice.
+
+    The types `_canonical` handles, all the way down. A `numpy` array or an open file handle
+    is not one of them: `repr` of the first is truncated and `repr` of the second carries a
+    memory address, so either would make a model version depend on where an object happened
+    to be allocated.
+    """
+    if isinstance(v, (bool, int, float, str, bytes, type(None))):
+        return True
+    if isinstance(v, dict):
+        return all(_canonicalisable(k) and _canonicalisable(x) for k, x in v.items())
+    if isinstance(v, (set, frozenset, list, tuple)):
+        return all(_canonicalisable(x) for x in v)
+    return False
+
+
 def fitted_constants() -> dict[str, Any]:
     """Every fitted constant in the prediction modules, as {"module.NAME": value}.
 
-    Public module-level names in upper case, which is the repo's own convention for a
-    constant, and **assigned by the module rather than imported into it** -- see
-    `_assigned_at_module_level` for the import that got in. Callables and modules are skipped
-    besides.
+    **Every module-level name these modules assign, unless `NOT_IN_DIGEST` says otherwise.**
+    That is issue #201's correction, and what it replaces is worth stating because three
+    separate escapes came through it:
+
+      * upper-case-ness. #187 added `_FACTOR_CACHE_MAX`, `_FACTORS` and `_EIG_FLOOR` to
+        `hub.models.predict`; a cache bound stayed out of the model version by being spelled
+        with an underscore, and would have been in it if spelled without one. The convention
+        was standing in for the question of whether something is a measurement.
+      * being a `float`. The shape constants -- weeks per season, playoff rounds, draft rounds,
+        drafts per cohort -- set the extent of a random draw and so re-price every published
+        interval, and every one of them is an `int`. ADR-0006 called this a stray *threshold*
+        problem; it is not.
+      * the `isinstance` list. `TYPE_CHECKING = False` passed it because `bool` subclasses
+        `int` (#199), which `_assigned_at_module_level` fixed from the import side in
+        `468f368` -- but the type test was still the thing deciding.
+
+    None of the three is a fact about the constant. `config.py`'s own docstring says what the
+    real distinction is -- a setting is a choice, a fitted constant is a measurement with an
+    interval and a write-up -- and no scan can read that off a line of source. So the sweep
+    stops trying to infer it and asks instead: **is this name's exclusion on the record?** The
+    default is covered, exclusion is a named entry with a reason in `NOT_IN_DIGEST`, and the
+    trade is deliberate -- over-covering costs one restated digest, under-covering costs a
+    model version that says two different models are the same one.
+
+    What is still mechanical is *imports* (`_assigned_at_module_level`, which is about
+    ownership, not spelling) and *callability* (`def` and `class` are not `ast.Assign`, so
+    they never reach here). The type test survives only as an assertion: a value the digest
+    cannot canonicalise raises rather than dropping out quietly, because dropping out quietly
+    is how all three escapes above happened.
     """
     from importlib import import_module
 
     out: dict[str, Any] = {}
-    for name in FITTED_MODULES:
-        mod = import_module(name)
-        assigned = _assigned_at_module_level(mod)
-        for attr in dir(mod):
-            if attr.startswith("_") or not attr.isupper() or attr not in assigned:
-                continue
-            v = getattr(mod, attr)
-            if isinstance(v, (int, float, str, dict, set, frozenset, list, tuple)):
-                out[f"{name.rsplit('.', 1)[-1]}.{attr}"] = v
-    for spec in FITTED_EXTRA:
+    for spec in [f"{m}:{a}" for m in FITTED_MODULES
+                 for a in sorted(_assigned_at_module_level(import_module(m)))] + list(
+                     FITTED_EXTRA):
         mod_name, attr = spec.split(":")
-        out[f"{mod_name.rsplit('.', 1)[-1]}.{attr}"] = getattr(import_module(mod_name), attr)
+        key = f"{mod_name.rsplit('.', 1)[-1]}.{attr}"
+        if key in NOT_IN_DIGEST:
+            continue
+        v = getattr(import_module(mod_name), attr)
+        if not _canonicalisable(v):
+            raise RuntimeError(
+                f"{key} is assigned at module level in a registered module, so it identifies "
+                f"a model version, but a {type(v).__name__} has no text `_canonical` can hash "
+                f"stably. Either give it a shape the digest can read, or name it in "
+                f"`NOT_IN_DIGEST` with why a prediction cannot reach it. Skipping it silently "
+                f"is what #187, #199 and #201 each were.")
+        out[key] = v
     return out
 
 
@@ -758,8 +874,11 @@ def drafted_positions(cfg: RosterConfig | None = None) -> tuple[str, ...]:
 
 
 # The league's own answer, for the modules that want a constant rather than a call. Callers
-# inside `FITTED_MODULES` must use the function instead: an upper-case module-level name in
-# one of those files is swept into `config_digest`, and the roster shape is a setting.
+# inside `FITTED_MODULES` must use the function instead: any module-level name *assigned* in
+# one of those files is swept into `config_digest`, and the roster shape is a setting. (It
+# used to read "an upper-case module-level name", which was true and was the bug -- #201:
+# spelling decided coverage, so binding this to `drafted_positions` under a lower-case or
+# underscored name would have been a silent way out of the digest. It is not one now.)
 DRAFTED_POSITIONS: tuple[str, ...] = drafted_positions()
 
 
