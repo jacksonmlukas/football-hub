@@ -56,9 +56,18 @@ SCORING: dict[str, float] = {
 # 0.017 points a player-week, so they are small and not nothing.
 #
 # **Consumers take subsets, and should.** The Panel deliberately uses four of these: counts
-# have no expected version and should not, and touchdown *rate* screened null as a feature
-# (`td_rate_prior`, -0.040 across five of five seasons). The Board needs the touchdowns
-# because six points is a heavy weight on a small error. Same vocabulary, different questions.
+# have no expected version and should not, and touchdown *rate* came back as a **broken
+# pre-stated null** (`td_rate_prior`, -0.040 across five of five seasons, beyond season-to-date
+# PPR points a game and weekly consensus ECR). The Board needs the touchdowns because six
+# points is a heavy weight on a small error. Same vocabulary, different questions.
+#
+# This comment said "screened null" until #179 went looking at the basis and read it. It did
+# not screen null -- a null is the screen's *first* verdict and this is its third, which is a
+# finding against the pre-registration and the reason the prediction was written down. Either
+# reading happens to leave the touchdowns out of the Panel's subset, so nothing here moves;
+# the sentence was wrong about why. Which controls the -0.040 is conditional on is now named
+# for the same reason, and `docs/weekly-screen.md` carries what it survives and what it does
+# not.
 EXPECTED: dict[str, tuple[str, ...]] = {
     "receptions": ("receptions_exp",),
     "receiving_yards": ("rec_yards_gained_exp",),
