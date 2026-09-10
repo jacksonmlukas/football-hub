@@ -241,11 +241,34 @@ def test_the_preseason_ranks_refuse_the_same_board(monkeypatch, tmp_path):
     same board, so the question is not whether this column is affected but whether the run
     should start. Failing at the first board that is short a term costs an operator one build
     rather than four and a discarded interval.
+
+    Written against `td_luck` until #48 emptied its coefficients. It asks `durability` now,
+    which is what a Correction still means -- see the test below for the other half.
+    """
+    arc.install(monkeypatch, tmp_path, board=True)
+    _short_board(monkeypatch, "durability")
+    with pytest.raises(experiment.CorrectionMissing, match="durability"):
+        wgd.preseason_ranks([2024])
+
+
+def test_a_board_without_touchdown_luck_is_no_longer_refused(monkeypatch, tmp_path):
+    """The other half of #48, and the reason the test above had to move.
+
+    `require_corrections` refuses a Board whose *ranking* was computed from a subset of the
+    Corrections, because a season drafted from a different ranking is a different arm rather
+    than a thinner one. #186 found the touchdown-luck price loses to charging nothing held
+    out, and #48 emptied `TD_LUCK_BETA` -- so the term multiplies nothing, its absence moves
+    no ranking, and refusing on it would stop a run over a column that cannot change the
+    answer.
+
+    The signal itself is not withdrawn: `td_luck` stays on the board and in the report, shown
+    and not priced, which is ADR-0013's shape. This asserts the refusal followed the price
+    rather than the column.
     """
     arc.install(monkeypatch, tmp_path, board=True)
     _short_board(monkeypatch, "td_luck")
-    with pytest.raises(experiment.CorrectionMissing, match="touchdown luck"):
-        wgd.preseason_ranks([2024])
+    got = wgd.preseason_ranks([2024])
+    assert got.height > 0, "a board short only touchdown luck produced no preseason ranks"
 
 
 # --- the treatment arm scores on one scale (issue #44) ---------------------

@@ -900,7 +900,7 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     The one escape that is not closed is stated in `FITTED_EXTRA`'s comment: `n_draft_sims`
     and `n_season_sims` are function-signature defaults, so there is no name to register.
     """
-    assert config_digest(HubConfig()) == "3f96c0c2"
+    assert config_digest(HubConfig()) == "29f47554"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

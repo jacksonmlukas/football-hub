@@ -91,8 +91,11 @@ SURVIVORS: dict[tuple[str, str], str] = {
     ("draft/durability.py", "correct_projection"):
         "producer: runs inside `board._stage`, which is what sets the flag, so no report "
         "describing this frame exists yet",
-    ("draft/regression.py", "correct_projection"):
-        "producer, same as durability's",
+    # `draft/regression.py:correct_projection` was here as "producer, same as durability's"
+    # until #48 emptied `TD_LUCK_BETA`. With nothing to multiply, the function no longer reads
+    # `td_luck` off the frame at all, so it is not a survivor -- it is not a site. Removed
+    # rather than left with a note, because the count above is the thing that has to keep
+    # meaning something, and this contract's own message says so when a site goes.
     # Found by widening the scan past `hub.draft` (#148). Never entered by #131, #143-#147,
     # #164 or #199, and not because anyone judged it -- because no scan any of them ran
     # reached `hub.season`. It is on #148's own leftover list all the same.
@@ -107,7 +110,7 @@ SURVIVORS: dict[tuple[str, str], str] = {
 # that is the acceptance criterion: a new sniff has to move a figure a person wrote down.
 # Eight until #146; `report.injuries` was two of them and is now none. Six until #148 widened
 # the scan past `hub.draft` and `season.roster.market` came into view.
-EXPECTED_SITES = 7
+EXPECTED_SITES = 6
 
 
 def _stage_literals(node: ast.AST) -> set[str]:
