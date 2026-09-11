@@ -633,6 +633,15 @@ def test_play_returns_my_roster_and_positions():
     assert set(names) <= set(board["player"].to_list())
 
 
+def test_arm_a_takes_the_first_live_player_when_its_market_has_nothing_to_say():
+    """`market_pick` answers `None` to a pool whose ranking column is missing or all null,
+    and the arm still has to make a pick: the first live index, rather than a crash in the
+    middle of a simulated room."""
+    pool = _board(6).drop("ecr")
+    pick = bt.market_strategy()
+    assert pick(pool, np.array([4, 2, 5]), {}, []) == 4
+
+
 def test_the_draft_market_arm_fills_its_starting_slots_before_taking_depth():
     board = _full_board()
     _, pos = bt.play(board, bt.market_strategy(), my_slot=3, teams=12, rounds=8,
@@ -1232,3 +1241,129 @@ def test_the_sentinels_are_not_mistakable_for_digests():
         assert len(sentinel) == 8
         with pytest.raises(ValueError):
             int(sentinel, 16)
+
+
+# --- a join failure voids the run (issue #46) -----------------------------------------------
+#
+# `score_roster` scores a drafted player with no realised row as zero, which is right for a
+# player who was hurt, cut or never played and wrong for one whose name a source spelled
+# differently. The two arms draft different players, so a differential failure rate is a
+# differential bias in the headline number, and the run refuses to report above a floor fixed
+# before any run was made under it. Voiding is a property of `experiment.run_gate` since #135;
+# what is this gate's own is how it counts, and the sentence it hands the run.
+
+
+def _two_word_board(n=80):
+    """`_full_board` with names a source could abbreviate -- `P0` has no initial to take.
+    Eighty, so twelve teams over four rounds do not run the board dry before slot 3's
+    fourth turn."""
+    board = _full_board(n)
+    return board.with_columns(pl.Series("player", [f"First{i} Last{i}" for i in range(n)]))
+
+
+def test_a_roster_where_every_name_matches_reports_zero_failures():
+    real = _realised([("Justin Jefferson", 1, 20.0), ("Ja'Marr Chase", 1, 18.0)])
+    known = bt.realised_names(real)
+    assert bt.join_failures(["Justin Jefferson", "JaMarr Chase"], known) == 0
+
+
+def test_a_name_absent_but_matching_relaxed_is_a_join_failure():
+    """The source abbreviated him: no player key matches, the relaxed key does. He played,
+    the harness scored him zero, and that is the defect being counted."""
+    real = _realised([("J. Jefferson", 1, 20.0), ("Ja'Marr Chase", 1, 18.0)])
+    known = bt.realised_names(real)
+    assert bt.join_failures(["Justin Jefferson", "Ja'Marr Chase"], known) == 1
+
+
+def test_a_name_with_no_relaxed_match_is_never_played_not_a_failure():
+    """A drafted rookie who never took a snap has no row under any spelling. Scoring him zero
+    is the harness being right, and counting him would void a run for its own accuracy."""
+    real = _realised([("Justin Jefferson", 1, 20.0)])
+    known = bt.realised_names(real)
+    assert bt.join_failures(["Bijan Robinson", "Justin Jefferson"], known) == 0
+    assert bt.join_failures([], known) == 0
+
+
+def test_compare_carries_both_arms_failure_counts_and_the_rates_read_off_them(monkeypatch):
+    """Both arms' counts ride on the paired frame, so the rates are computed from what was
+    actually drafted rather than re-drafted afterwards. Corrupting the realised spelling of
+    the first five players -- the consensus arm's first picks -- gives arm A a failure rate,
+    and arm B is pinned to the bottom of the pool so it cannot share one: the two counts
+    have to be the two arms' own, not one arm's twice."""
+    board = _two_word_board()
+    real = _flat_realised(board)
+    bad = {player_key(f"First{i} Last{i}"): player_key(f"F. Last{i}") for i in range(5)}
+    corrupt = real.with_columns(pl.col("player").replace(bad))
+    monkeypatch.setattr(bt, "optimizer_strategy",
+                        lambda *a, **k: (lambda pool, live, counts, taken: int(live[-1])))
+    kw = {"n_drafts": 2, "rounds": 4, "seed": 0, "n_draft_sims": 2, "n_season_sims": 10}
+    clean = bt.compare({2024: board}, {2024: real}, **kw)
+    dirty = bt.compare({2024: board}, {2024: corrupt}, **kw)
+    for frame in (clean, dirty):
+        assert {"market_failed", "optimizer_failed", "picks"} <= set(frame.columns)
+        assert frame["picks"].to_list() == [4] * frame.height
+    assert clean["market_failed"].sum() == 0 and clean["optimizer_failed"].sum() == 0
+    assert dirty["market_failed"].sum() > 0
+    assert dirty["optimizer_failed"].sum() == 0, "arm B drafted from the bottom; its names join"
+    rates = bt.join_failure_rates(dirty)
+    assert rates["picks"] == 8.0
+    assert rates["market"] == pytest.approx(int(dirty["market_failed"].sum()) / 8.0)
+    assert rates["optimizer"] == pytest.approx(int(dirty["optimizer_failed"].sum()) / 8.0)
+    assert 0.0 < rates["market"] <= 1.0
+    # And the columns the verdict reads are the ones they were: the counts are beside the
+    # scores, not inside them.
+    assert clean.select("season", "draft", "market", "optimizer", "diff").columns == \
+        ["season", "draft", "market", "optimizer", "diff"]
+
+
+def test_the_verdict_voids_above_the_floor_and_names_it():
+    rates = {"picks": 320.0, "market": 0.05, "optimizer": 0.0}
+    said = bt.void_condition(rates)
+    assert said is not None and said.startswith("VOID")
+    assert "5.0%" in said and "0.0%" in said and f"{bt.VOID_FLOOR:.0%}" in said
+    # Either arm over the floor voids: the bias is differential, and it does not matter
+    # which arm carries it.
+    assert (bt.void_condition({"picks": 320.0, "market": 0.0, "optimizer": 0.03}) or "") \
+        .startswith("VOID")
+
+
+def test_the_floor_itself_and_an_empty_run_are_not_a_void():
+    at = {"picks": 100.0, "market": bt.VOID_FLOOR, "optimizer": bt.VOID_FLOOR}
+    assert bt.void_condition(at) is None
+    assert bt.void_condition({"picks": 0.0, "market": float("nan"),
+                              "optimizer": float("nan")}) is None
+    empty = pl.DataFrame({"picks": pl.Series([], dtype=pl.Int64),
+                          "market_failed": pl.Series([], dtype=pl.Int64),
+                          "optimizer_failed": pl.Series([], dtype=pl.Int64)})
+    assert bt.join_failure_rates(empty)["picks"] == 0.0
+
+
+def test_below_the_floor_the_verdict_is_unchanged_from_today_for_the_same_inputs():
+    """The acceptance criterion: a clean join hands the run no void, and the run with no void
+    is the run there was. Asserted on the summary, the season table and the verdict."""
+    from hub.models.experiment import SEASON_CLUSTER, run_gate
+
+    paired = pl.DataFrame({"season": [2022, 2022, 2023, 2023, 2024, 2024, 2025, 2025],
+                           "draft": [0, 1] * 4,
+                           "diff": [-19.66 + 0.4 * i for i in range(8)]})
+    rates = {"picks": 128.0, "market": 0.01, "optimizer": 0.005}
+    assert bt.void_condition(rates) is None
+    kw = {"cluster": SEASON_CLUSTER, "actions": bt.ACTIONS, "name": "draft",
+          "arm_a": "optimizer", "arm_b": "market", "bootstrap": 200, "record_width": False}
+    with_void = run_gate(paired, void=bt.void_condition(rates), **kw)
+    before = run_gate(paired, **kw)
+    assert with_void.summary == before.summary
+    assert with_void.seasons.equals(before.seasons)
+    assert with_void.verdict == before.verdict == ("REMOVE", before.verdict[1])
+
+
+def test_both_arms_rates_are_reported_and_a_difference_is_said():
+    same = bt.join_report({"picks": 320.0, "market": 0.01, "optimizer": 0.01})
+    assert len(same) == 1
+    assert "market 1.0%" in same[0] and "optimizer 1.0%" in same[0]
+    assert "320 drafted names" in same[0] and f"floor {bt.VOID_FLOOR:.0%}" in same[0]
+    differ = bt.join_report({"picks": 320.0, "market": 0.01, "optimizer": 0.0})
+    assert len(differ) == 2
+    assert "differ" in differ[1] and "differential" in differ[1]
+    assert bt.join_report({"picks": 0.0, "market": float("nan"), "optimizer": float("nan")}) \
+        == []

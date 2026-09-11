@@ -44,6 +44,29 @@ def player_key(name: str) -> str:
     return " ".join(s.split())
 
 
+def relaxed_key(name: str) -> str:
+    """The first initial and the surname of a `player_key` -- `j jefferson` for both
+    `Justin Jefferson` and `J. Jefferson`.
+
+    Looser than `player_key` on purpose, and used for exactly one thing: telling a name that
+    *failed to join* from a player who never played. The draft gate scores a drafted player
+    with no realised row as zero (`backtest.score_roster`), which is right for a player who
+    was hurt, cut or never played and wrong for one whose name a source spelled differently
+    -- and a differential rate of the second between two arms is a bias in the headline
+    number (issue #46). A drafted name absent from the realised set that matches a realised
+    name here is counted as a join failure; one matching nothing is never-played. Nothing
+    joins on this key. It cannot be used to *repair* a join without inventing players, and
+    `state.suggest_unmatched` already answers the "did you mean" question at the console.
+
+    A one-word name relaxes to itself: there is no initial to take, so the comparison is the
+    exact one, which is the honest reading of a name that cannot be matched more loosely.
+    """
+    parts = player_key(name).split()
+    if len(parts) < 2:
+        return " ".join(parts)
+    return f"{parts[0][0]} {parts[-1]}"
+
+
 # Practice status arrives as the club's own prose -- "Did Not Participate In Practice",
 # "Limited Participation In Practice", "Full Participation In Practice" -- and the first seven
 # characters separate the three cases with nothing else colliding.

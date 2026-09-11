@@ -41,6 +41,7 @@ import argparse
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import polars as pl
@@ -72,7 +73,14 @@ from hub.models.experiment import (
     summarise,  # noqa: F401 -- same
     walk_forward_inputs,
 )
-from hub.names import player_key
+from hub.names import player_key, relaxed_key
+
+NOT_FITTED_BECAUSE = (
+    "the draft gate's harness. VOID_FLOOR is the share of drafted names lost to a join failure "
+    "above which a run is not reported at all -- a pre-registered guard, not a fitted quantity, "
+    "and the same shape as weekly_gate.VOID_FLOOR. Nothing here predicts; the arms and the "
+    "constants they draw on live in hub.draft.optimize and hub.models.predict. "
+)
 
 # Gaps between this harness and the tool it audits. Written here rather than in the result,
 # because a limitation discovered after the numbers is a rationalisation.
@@ -142,6 +150,41 @@ def score_roster(names: Sequence[str], pos: Sequence[str], realised: pl.DataFram
     # (sims=1, weeks, roster) -- the same rule the season simulator uses.
     total = lineup_points(grid.T[None, :, :], np.asarray(pos, dtype=object))
     return float(total.sum() / weeks)
+
+
+class RealisedNames(NamedTuple):
+    """The names one season's realised frame carries, under both comparisons."""
+    exact: frozenset[str]      # every `player_key` with a realised row
+    relaxed: frozenset[str]    # the `relaxed_key` of each
+
+
+def realised_names(realised: pl.DataFrame) -> RealisedNames:
+    """Both key sets, built once per season rather than once per roster."""
+    keys = [str(k) for k in realised["player"].unique().to_list() if k is not None]
+    return RealisedNames(frozenset(keys), frozenset(relaxed_key(k) for k in keys))
+
+
+def join_failures(names: Sequence[str], known: RealisedNames) -> int:
+    """How many drafted names failed to join the season they were scored against.
+
+    `score_roster` scores a name with no realised row as zero, which is right for a player
+    who was hurt, cut or never played and wrong for one whose name the stats source spelled
+    differently -- and nothing in the score tells the two apart. The weekly gate separates
+    them by position in a matrix; here the only key *is* the name, so the discriminator is a
+    crosswalk: a drafted name absent from the realised set that matches a realised name under
+    `relaxed_key` (first initial and surname) is a join failure, and one matching nothing is
+    never-played. That reads a genuine rookie who never took a snap as the harness being
+    right, and an abbreviated spelling as the harness being wrong, which is the distinction
+    issue #46 exists to draw.
+    """
+    failed = 0
+    for name in names:
+        key = player_key(name)
+        if key in known.exact:
+            continue
+        if relaxed_key(key) in known.relaxed:
+            failed += 1
+    return failed
 
 
 def _pool_index(pool: pl.DataFrame, name: str) -> int:
@@ -291,6 +334,7 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     rows = []
     for season in sorted(boards):
         board, real = boards[season], realised[season]
+        known = realised_names(real)
         arm_a = market_strategy()
         for k in range(n_drafts):
             # Common random numbers: the same room, twice. The only thing that differs
@@ -321,6 +365,12 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
                 "season": season, "draft": k,
                 "market": score_roster(a_names, a_pos, real),
                 "optimizer": score_roster(b_names, b_pos, real),
+                # Beside the scores, never inside them (#46): how many of each arm's drafted
+                # names were scored zero for a spelling rather than for a season. Both arms
+                # draft `rounds` players, so one `picks` serves both rates.
+                "market_failed": join_failures(a_names, known),
+                "optimizer_failed": join_failures(b_names, known),
+                "picks": len(a_names),
             })
     out = pl.DataFrame(rows)
     return out.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
@@ -613,6 +663,76 @@ ACTIONS = Actions(
     show="NO CHANGE: the market leads and equity stays a tiebreaker.")
 
 
+# Above this share of either arm's drafted names lost to a join failure, the run is VOID
+# rather than reported. **Pre-registered here on 2026-09-11, before any run was made under
+# it** (issue #46): the value is the weekly gate's `VOID_FLOOR`, adopted for the same reason
+# that one was set tight -- the error is directional. A name that fails to join scores zero
+# for the season, the two arms draft different players, and so a differential failure rate is
+# a differential bias in the headline number rather than noise around it. Each gate's floor is
+# its own pre-registration about its own join, not one shared bar declared twice: `MIN_SE` is
+# one claim about significance, and this is a claim about what a drafted name is worth when
+# the stats source cannot find him.
+VOID_FLOOR = 0.02
+
+
+def join_failure_rates(paired: pl.DataFrame) -> dict[str, float]:
+    """Both arms' share of drafted names that failed to join, over every row of the run.
+
+    Computed from the counts `compare` carries beside the scores, so the rates describe what
+    was actually drafted and scored rather than a second draft that happened to agree. A run
+    with no rows has no rate: NaN, and `picks` of zero, which `void_condition` reads as
+    nothing to void.
+    """
+    picks = float(paired["picks"].sum()) if paired.height else 0.0
+    if not picks:
+        return {"picks": 0.0, "market": float("nan"), "optimizer": float("nan")}
+    return {"picks": picks,
+            "market": float(paired["market_failed"].sum()) / picks,
+            "optimizer": float(paired["optimizer_failed"].sum()) / picks}
+
+
+def void_condition(rates: dict[str, float]) -> str | None:
+    """The precondition this gate hands `experiment.run_gate`, already phrased.
+
+    Either arm above the floor voids. The bias is differential, and which arm carries it
+    does not matter: a failure on arm A alone understates the incumbent, on arm B alone
+    understates the arm under test, and a verdict read over either is a verdict about the
+    spelling. Below the floor the run is exactly the run there was -- `run_gate` with no void
+    -- which `tests/unit/test_backtest.py` holds on the summary, the seasons and the verdict.
+    """
+    if not rates["picks"]:
+        return None
+    if max(rates["market"], rates["optimizer"]) <= VOID_FLOOR:
+        return None
+    return (f"VOID: {rates['market']:.1%} of arm A's drafted names and "
+            f"{rates['optimizer']:.1%} of arm B's are a join failure -- the player has a "
+            f"realised row under another spelling and was scored zero for the season -- "
+            f"against a pre-registered floor of {VOID_FLOOR:.0%}.\n  The two arms draft "
+            f"different players, so this is a differential bias in the headline number "
+            f"rather than noise around it. Fix the join before reading any number below.")
+
+
+def join_report(rates: dict[str, float]) -> list[str]:
+    """Both arms' rates beside the floor, and a second line when the arms differ.
+
+    Said on every run and not only a void one, because a rate under the floor is still a
+    fact about what the interval below was measured on -- and because "the two rates
+    differ" is the sentence that says the bias is differential, which is the whole reason
+    the floor exists. Nothing when the run drafted nothing.
+    """
+    if not rates["picks"]:
+        return []
+    lines = [f"  join failures: market {rates['market']:.1%}, optimizer "
+             f"{rates['optimizer']:.1%} of {int(rates['picks'])} drafted names "
+             f"(floor {VOID_FLOOR:.0%})"]
+    if rates["market"] != rates["optimizer"]:
+        lines.append(f"  the arms' failure rates differ by "
+                     f"{abs(rates['market'] - rates['optimizer']):.1%}: a differential "
+                     f"failure rate is a differential bias in the effect above, not noise "
+                     f"around it")
+    return lines
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.draft.backtest",
@@ -788,10 +908,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     # between the rows, and left unchanged: see `compare`'s docstring for why the surviving
     # reason is sufficient on its own. Stated here, at this gate's own call site, because the
     # run has no default for it (#135).
+    # The join, reported on every run and voided above the floor (#46). Voiding is the run's;
+    # what a join failure is, and what share of one this gate tolerates, is this gate's.
+    rates = join_failure_rates(paired)
     run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="draft",
-                   arm_a="optimizer", arm_b="market", ceiling=bound, seed=a.seed,
-                   boards=boards)
-    for line in run.lines:
+                   arm_a="optimizer", arm_b="market", void=void_condition(rates),
+                   ceiling=bound, seed=a.seed, boards=boards)
+    for line in [*join_report(rates), *run.lines]:
         print(line)
     print(f"\n  {run.verdict[1]}")
     print("\n  Limitations, fixed before the run:")

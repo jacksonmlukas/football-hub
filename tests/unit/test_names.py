@@ -161,3 +161,31 @@ def test_adp_history_imports_on_its_own_without_cycling():
     done = subprocess.run([sys.executable, "-c", "import hub.draft.adp_history"],
                           capture_output=True, text=True)
     assert done.returncode == 0, f"importing adp_history alone failed:\n{done.stderr}"
+
+
+# --- the relaxed comparison a join failure is counted under (issue #46) --------------------
+
+def test_the_relaxed_key_is_the_first_initial_and_the_surname():
+    """`Justin Jefferson` and `J. Jefferson` share no player key -- one source abbreviates --
+    and a drafted name absent from the realised set that matches a realised name here is a
+    join failure rather than a player who never played."""
+    from hub.names import relaxed_key
+    assert relaxed_key("Justin Jefferson") == "j jefferson"
+    assert relaxed_key("J. Jefferson") == "j jefferson"
+    assert relaxed_key("Marvin Harrison Jr.") == "m harrison"
+    assert relaxed_key("Ja'Marr Chase") == "j chase"
+
+
+def test_the_relaxed_key_does_not_collide_where_the_player_key_does_not():
+    from hub.names import relaxed_key
+    assert relaxed_key("Justin Jefferson") != relaxed_key("Justin Herbert")
+    assert relaxed_key("Michael Pittman") != relaxed_key("Michael Thomas")
+
+
+def test_a_one_word_or_empty_name_relaxes_to_itself():
+    """No initial to take: the key is the whole comparison, so it cannot match more loosely
+    than exactly. `P0` on a synthetic board must not relax to `p p0`."""
+    from hub.names import relaxed_key
+    assert relaxed_key("P0") == "p0"
+    assert relaxed_key("") == ""
+    assert relaxed_key(None) == ""            # type: ignore[arg-type]
