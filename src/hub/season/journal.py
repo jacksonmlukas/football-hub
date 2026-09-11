@@ -246,7 +246,7 @@ def _check_adr_0014(*, week: int, kind: str, chose: str, fallback: str | None,
                     # A price is a probability only once a week cost is being stated in it;
                     # a row with no fallback price may carry the betting market's number --
                     # `test_journal` writes a moneyline there. One column, two units, which
-                    # is issue #236 and not this check's to settle.
+                    # is issue #239 and not this check's to settle.
                     ("market_price", market_price if fallback_price is not None else None)):
         if p is not None and not 0.0 <= p <= 1.0:
             raise ValueError(f"{name}={p} is not a probability")
