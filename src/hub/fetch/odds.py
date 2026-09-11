@@ -42,10 +42,21 @@ every week from 2 out had at most two games move. So each row carries `polls_unm
 a consumer ranking a snapshot above the schedule's own field has the number it needs to stop
 doing that for a quote nothing has touched in a fortnight.
 
+**Player props are recorded here and never pulled here (#217).** The Odds API prices props
+per *event* -- there is no season-level props endpoint the way there is for spreads -- so a
+full slate is one request per game, which is the loop `docs/cfbd-quota.md` forbids for the
+other metered source, and it costs markets x regions on every one of them. `record_props`
+takes a payload someone has already paid for, maps its events to nflverse games the way the
+spread recorder does, and writes one quote per (game, player, market) to `prop_lines` with
+the same two staleness columns, so `hub.models.props` has an archive to score closing line
+value from. `PROP_MARKETS` names what such a payload may carry; `_budgeted` refuses every one
+of those names, and `MARKETS` is unchanged.
+
     uv run python -m hub.fetch.odds --credits
     uv run python -m hub.fetch.odds --snapshot
     uv run python -m hub.fetch.odds --staleness
     uv run python -m hub.fetch.odds --noise-floor
+    uv run python -m hub.fetch.odds --record-props payload.json
 """
 from __future__ import annotations
 
