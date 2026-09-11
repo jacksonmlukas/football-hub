@@ -640,6 +640,79 @@ ODDS_SNAPSHOT = Contract(
     min_rows=1,
 )
 
+# A player prop quote, one row per (game, player, market) per poll. The props side of the
+# same archive `ODDS_SNAPSHOT` describes, written by `hub.fetch.odds.record_props` from a
+# payload someone has already paid for -- there is no props pull in this repo, because a
+# props market runs about four credits an *event* and `docs/decisions.md` puts a week at 64
+# against a monthly quota of 500. What #217 needs from the archive is two polls of one prop:
+# the one live at the moment a decision would have been made and the last before kickoff.
+#
+# `point` is nullable and `over_price` is not, which is the shape of the one market with no
+# point: `player_anytime_td` is quoted as a Yes price and sometimes a No price, and the Yes
+# rides in `over_price` because "at least one" is the over of a count. A yardage or count
+# market with no point is a quote this module cannot read, and `hub.fetch.odds.prop_quotes`
+# skips it rather than storing a price on nothing.
+#
+# Bounds are wide the way `ODDS_SNAPSHOT`'s are, for the same reason: a refusal here fires
+# after the credit is spent. A point of 500 is a passing-yards quote from a game nobody has
+# played; 0 is a legal receptions point on an alternate line. Prices go to +/-5000 because
+# a longshot anytime-touchdown Yes is honestly quoted past +2000 for a lineman.
+#
+# The two staleness columns are the same two as the spread's, derived by the same
+# `hub.fetch.odds.staleness` over the (game, player, market) key, and `docs/method.md` rule 2
+# is why they are required here: the moment we would have decided is a timestamp, and
+# whether the quote at that timestamp was live or a posted lookahead nobody had touched is
+# the difference between a decision and a re-reading of last week.
+PROP_SNAPSHOT = Contract(
+    name="prop_snapshot",
+    required={"game_id": pl.Utf8, "player_key": pl.Utf8, "player": pl.Utf8,
+              "market": pl.Utf8, "point": pl.Float64, "over_price": pl.Float64,
+              "under_price": pl.Float64, "captured_at": pl.Datetime,
+              "polls_unmoved": pl.Int64, "unmoved_since": pl.Datetime},
+    non_null=("game_id", "player_key", "market", "over_price", "captured_at",
+              "polls_unmoved", "unmoved_since"),
+    # Not unique on (game, player, market): several polls of one prop is the entire point.
+    ranges={"point": (0, 600), "over_price": (-5000, 5000), "under_price": (-5000, 5000),
+            "polls_unmoved": (1, 10000)},
+    min_rows=1,
+)
+
+# The scorecard row #217 exists to write: one prop, our number, the quote at the decision
+# and the quote at the close, side by side. `hub.models.props` builds it and is the only
+# writer; the `prop_log` table it lands in is what `--report` reads closing line value from.
+#
+# `status` is why nothing is nullable that a reader would want to filter on. Three states
+# and every prop gets one: `priced` (our number and a posted quote), `no_line` (our number
+# and nothing posted -- kept, because a prop the betting market does not hang is a fact
+# about coverage that dropping the row would hide), `no_number` (a posted quote on a player
+# the statline cannot price). The acceptance criterion is that the second is recorded, so
+# `game_id` and every quote column are nullable and the key is (player, market, decided_at).
+#
+# `decided_at` is the timestamp `docs/method.md` rule 2 asks for, and it is non-null and
+# carried on every row, including the ones with nothing to decide. `decision_captured_at`
+# beside it is when the quote we decided against was actually polled -- at or before
+# `decided_at`, by the as-of join -- so the gap between the two is visible per row rather
+# than assumed to be small.
+PROP_LOG = Contract(
+    name="prop_log",
+    required={"game_id": pl.Utf8, "player_key": pl.Utf8, "player": pl.Utf8,
+              "position": pl.Utf8, "market": pl.Utf8, "stat": pl.Utf8,
+              "status": pl.Utf8, "decided_at": pl.Datetime,
+              "our_mean": pl.Float64, "our_sd": pl.Float64, "our_p50": pl.Float64,
+              "our_p_over": pl.Float64, "side": pl.Utf8, "edge": pl.Float64,
+              "decision_point": pl.Float64, "decision_over_price": pl.Float64,
+              "decision_under_price": pl.Float64, "decision_captured_at": pl.Datetime,
+              "decision_polls_unmoved": pl.Int64, "decision_unmoved_since": pl.Datetime,
+              "close_point": pl.Float64, "close_over_price": pl.Float64,
+              "close_under_price": pl.Float64, "close_captured_at": pl.Datetime,
+              "clv_points": pl.Float64, "clv_prob": pl.Float64,
+              "model": pl.Utf8, "version": pl.Utf8},
+    non_null=("player_key", "market", "stat", "status", "decided_at", "model", "version"),
+    ranges={"our_p_over": (0, 1), "edge": (-1, 1), "clv_prob": (-1, 1),
+            "decision_point": (0, 600), "close_point": (0, 600)},
+    min_rows=1,
+)
+
 ESPN_SCOREBOARD = Contract(
     name="espn_scoreboard",
     required={"id": pl.Utf8, "state": pl.Utf8, "home": pl.Utf8, "away": pl.Utf8},

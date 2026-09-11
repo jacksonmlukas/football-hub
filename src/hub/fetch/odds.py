@@ -65,7 +65,8 @@ import polars as pl
 from hub import store
 from hub.cli import unavailable
 from hub.config import SEASON_AHEAD
-from hub.contracts import ODDS_SNAPSHOT
+from hub.contracts import ODDS_SNAPSHOT, PROP_SNAPSHOT
+from hub.names import player_key
 from hub.paths import STATE_DIR
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -417,7 +418,8 @@ STALENESS_COLUMNS: dict[str, Any] = {"polls_unmoved": pl.Int64, "unmoved_since":
 _QUOTE = ("game_id", "close_spread", "spread_price", "captured_at")
 
 
-def _quote_moved() -> pl.Expr:
+def _quote_moved(key: Sequence[str] = ("game_id",), point: str = "close_spread",
+                 price: str = "spread_price") -> pl.Expr:
     """Whether this poll's spread quote differs from the previous poll of the same game.
 
     A quote is the pair -- the point and the price on it -- and the pair moved if either did.
@@ -437,17 +439,34 @@ def _quote_moved() -> pl.Expr:
     the betting market changing shape, which is honestly a move.
 
     The first poll of a game starts a run. There is no earlier quote to stand still against.
+
+    **A prop's point can be null and a spread's cannot, and the rule reads the same either
+    way.** `player_anytime_td` has no point at all -- it is a Yes price on "at least one" --
+    so two polls that both carry a null point are compared on the price alone, and a null
+    against a number is a move, since the shape of the quote changed. `ne_missing` is what
+    makes null-against-null "not moved" rather than "unknown", which the plain `!=` would
+    say, and it decides the spread case identically because a spread point is never null.
     """
-    prev_point = pl.col("close_spread").shift(1).over("game_id")
-    prev_price = pl.col("spread_price").shift(1).over("game_id")
-    point_moved = pl.col("close_spread") != prev_point
-    price_moved = (pl.col("spread_price").is_not_null() & prev_price.is_not_null()
-                   & (pl.col("spread_price") != prev_price))
-    return (prev_point.is_null() | point_moved | price_moved).alias("_moved")
+    prev_point = pl.col(point).shift(1).over(*key)
+    prev_price = pl.col(price).shift(1).over(*key)
+    point_moved = pl.col(point).ne_missing(prev_point)
+    price_moved = (pl.col(price).is_not_null() & prev_price.is_not_null()
+                   & (pl.col(price) != prev_price))
+    # The first poll: no previous *row*, which is not the same as a previous null point.
+    first = pl.col("captured_at").shift(1).over(*key).is_null()
+    return (first | point_moved | price_moved).alias("_moved")
 
 
-def staleness(lines: pl.DataFrame) -> pl.DataFrame:
+def staleness(lines: pl.DataFrame, *, key: Sequence[str] = ("game_id",),
+              point: str = "close_spread", price: str = "spread_price") -> pl.DataFrame:
     """Every poll, with how long its spread quote had stood still by then.
+
+    `key`, `point` and `price` default to the spread's columns and are what the props archive
+    passes differently: a prop is one quote per (game, player, market), its point is
+    `point` and its price is the Over's. Same derivation, second caller -- #217 needs
+    `polls_unmoved` and `unmoved_since` on a prop row for the reason #210 needed them on a
+    spread row, and a second copy of this rule is how the two would come to disagree about
+    what "unmoved" means.
 
     Two columns, and both are needed because they answer different questions. `polls_unmoved`
     is the count of consecutive polls, this one included, that returned the quote this row
@@ -471,20 +490,20 @@ def staleness(lines: pl.DataFrame) -> pl.DataFrame:
     Rows are returned sorted by game and time, the two columns appended, and any column the
     caller passed beyond `_QUOTE` carried through untouched.
     """
-    frame = lines if "spread_price" in lines.columns else lines.with_columns(
-        pl.lit(None, dtype=pl.Float64).alias("spread_price"))
-    ordered = frame.sort("game_id", "captured_at")
-    run = pl.col("_moved").cast(pl.Int64).cum_sum().over("game_id").alias("_run")
-    return (ordered.with_columns(_quote_moved())
+    key = tuple(key)
+    frame = lines if price in lines.columns else lines.with_columns(
+        pl.lit(None, dtype=pl.Float64).alias(price))
+    ordered = frame.sort(*key, "captured_at")
+    run = pl.col("_moved").cast(pl.Int64).cum_sum().over(*key).alias("_run")
+    return (ordered.with_columns(_quote_moved(key, point, price))
                    .with_columns(run)
                    .with_columns(
-                       pl.col("captured_at").cum_count().over("game_id", "_run")
+                       pl.col("captured_at").cum_count().over(*key, "_run")
                          .cast(pl.Int64).alias("polls_unmoved"),
-                       pl.col("captured_at").min().over("game_id", "_run")
+                       pl.col("captured_at").min().over(*key, "_run")
                          .alias("unmoved_since"))
                    .drop("_moved", "_run")
-                   .pipe(lambda d: d if "spread_price" in lines.columns
-                         else d.drop("spread_price")))
+                   .pipe(lambda d: d if price in lines.columns else d.drop(price)))
 
 
 _QUOTE_SCHEMA: dict[str, Any] = {"game_id": pl.Utf8, "close_spread": pl.Float64,
@@ -919,21 +938,12 @@ def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetim
     if remaining is not None and remaining < floor:
         print(f"  WARNING: below the floor of {floor}; the next pull will refuse")
 
-    sched = _schedule(season)
-    # The season's own abbreviations resolve a team that nflverse lists under two of them.
-    in_play = set(sched["home_team"].to_list()) | set(sched["away_team"].to_list())
-    abbrs = _team_abbrs(in_play)
-    lookup = {
-        (r["home_team"], r["away_team"], str(r["gameday"])): (r["game_id"], r["week"])
-        for r in sched.iter_rows(named=True)
-    }
+    index = _game_index(season)
 
     rows, no_game, no_line, no_total, no_price = [], 0, 0, 0, 0
     for ev in payload or []:
         home_name = ev.get("home_team", "")
-        home = abbrs.get(home_name)
-        away = abbrs.get(ev.get("away_team", ""))
-        hit = lookup.get((home, away, _game_date(ev.get("commence_time", ""))))
+        hit = _match_game(ev, index)
         spread, spread_price = _median_home_spread(ev, home_name)
         total, total_price = _median_game_total(ev)
         if not hit:
@@ -1011,6 +1021,175 @@ def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetim
     return df.drop("week")
 
 
+_GameIndex = tuple[dict[str, str], dict[tuple[str | None, str | None, str], tuple[str, int]]]
+
+
+def _game_index(season: int) -> _GameIndex:
+    """The season's team abbreviations and its (home, away, date) -> (game_id, week) map.
+
+    One reach for the schedule, shared by the spread recorder and the props recorder, so an
+    event is mapped to a nflverse game the same way whichever market it carries.
+    """
+    sched = _schedule(season)
+    # The season's own abbreviations resolve a team that nflverse lists under two of them.
+    in_play = set(sched["home_team"].to_list()) | set(sched["away_team"].to_list())
+    abbrs = _team_abbrs(in_play)
+    lookup = {
+        (r["home_team"], r["away_team"], str(r["gameday"])): (r["game_id"], int(r["week"]))
+        for r in sched.iter_rows(named=True)
+    }
+    return abbrs, lookup
+
+
+def _match_game(ev: Mapping[str, Any], index: _GameIndex) -> tuple[str, int] | None:
+    abbrs, lookup = index
+    home = abbrs.get(ev.get("home_team", ""))
+    away = abbrs.get(ev.get("away_team", ""))
+    return lookup.get((home, away, _game_date(ev.get("commence_time", ""))))
+
+
+# --- player props (#217): the recording half, with no pull behind it -------------
+#
+# The markets a props payload may carry, by The Odds API's names, and the whole of what
+# `prop_quotes` reads. **None of these is in `MARKETS` and none may be added there.** A
+# props market is priced per *event* rather than per season -- `docs/decisions.md` measured
+# about four credits an event and 64 a week for a full slate -- so `_budgeted` refuses every
+# name below and this module holds no request that asks for one. What it holds is the half
+# after the betting market has answered: a payload someone has already paid for, parsed to
+# one quote per (game, player, market) and written to `prop_lines` with its staleness, so the
+# scorecard in `hub.models.props` has an archive to read the day a pull is authorised.
+#
+# Two sides per quote. A yardage or count prop is an Over and an Under on one point; the
+# anytime-touchdown market is a Yes and sometimes a No on no point. `over_price` carries the
+# Over or the Yes, `under_price` the Under or the No, and `point` is null for the latter.
+PROP_MARKETS = ("player_pass_yds", "player_rush_yds", "player_reception_yds",
+                "player_receptions", "player_rush_attempts", "player_pass_tds",
+                "player_anytime_td")
+_OVER_SIDES = {"over", "yes"}
+_UNDER_SIDES = {"under", "no"}
+_POINTLESS = ("player_anytime_td",)
+
+_PROP_KEY = ("game_id", "player_key", "market")
+_PROP_SCHEMA: dict[str, Any] = {
+    "game_id": pl.Utf8, "player_key": pl.Utf8, "player": pl.Utf8, "market": pl.Utf8,
+    "point": pl.Float64, "over_price": pl.Float64, "under_price": pl.Float64,
+    "captured_at": pl.Datetime, "week": pl.Int64,
+}
+
+
+def prop_quotes(event: Mapping[str, Any], game_id: str, week: int,
+                when: datetime) -> list[dict[str, Any]]:
+    """Every player prop in one event's payload, one row per (player, market), across books.
+
+    The shape is the one The Odds API documents for its per-event endpoint: each outcome
+    carries the side in `name` ("Over"/"Under", or "Yes"/"No"), the player in `description`,
+    the point in `point` and the price in `price`. Written from the documentation and never
+    run against a live response, which `PROP_SNAPSHOT.verified_against_live` says.
+
+    Books are combined the way the spread is -- the median point, and the median price on
+    each side in decimal space -- and for the same reason: one book hanging an outlier must
+    not become the quote of record. A book that posts a point and no readable price still
+    moves the point. A market that needs a point and has none from any book is skipped
+    rather than stored, since a price on nothing is not a quote; the anytime market is the
+    one that legitimately has none and is stored with a null point.
+    """
+    points: dict[tuple[str, str], list[float]] = {}
+    overs: dict[tuple[str, str], list[float]] = {}
+    unders: dict[tuple[str, str], list[float]] = {}
+    names: dict[str, str] = {}
+    for book in event.get("bookmakers") or []:
+        for m in book.get("markets") or []:
+            market = str(m.get("key") or "")
+            if market not in PROP_MARKETS:
+                continue
+            for outcome in m.get("outcomes") or []:
+                name = str(outcome.get("description") or "")
+                if not name:
+                    continue
+                key = (player_key(name), market)
+                names.setdefault(key[0], name)
+                side = str(outcome.get("name") or "").lower()
+                if side not in _OVER_SIDES and side not in _UNDER_SIDES:
+                    continue
+                if outcome.get("point") is not None:
+                    points.setdefault(key, []).append(float(outcome["point"]))
+                price = _american(outcome.get("price"))
+                if price is not None:
+                    (overs if side in _OVER_SIDES else unders).setdefault(key, []).append(price)
+    rows = []
+    for key in sorted(set(points) | set(overs) | set(unders)):
+        pk, market = key
+        point = statistics.median(points[key]) if key in points else None
+        if point is None and market not in _POINTLESS:
+            continue
+        over = _median_price(overs.get(key, []))
+        if over is None:
+            continue
+        rows.append({"game_id": game_id, "player_key": pk, "player": names[pk],
+                     "market": market, "point": point, "over_price": over,
+                     "under_price": _median_price(unders.get(key, [])),
+                     "captured_at": when, "week": week})
+    return rows
+
+
+def _prop_archive(season: int, base: Path | None) -> pl.DataFrame:
+    """Every prop poll already stored for the season, in `_PROP_SCHEMA`. Empty on a fresh clone."""
+    if "prop_lines" not in store.tables(base):
+        return pl.DataFrame(schema=_PROP_SCHEMA)
+    got = store.sql("SELECT * FROM prop_lines WHERE league = 'nfl' AND season = ?",
+                    params=[season], base=base)
+    return got.select(*[pl.col(c).cast(t) for c, t in _PROP_SCHEMA.items()])
+
+
+def record_props(payload: Sequence[Mapping[str, Any]], season: int, when: datetime, *,
+                 base: Path | None = None) -> pl.DataFrame:
+    """Write the props in a payload already paid for to `prop_lines`, with staleness.
+
+    `payload` is a list of per-event responses -- the shape the per-event endpoint returns,
+    one object per game -- and this function is deliberately the whole of what this module
+    does with props. There is no reach for the source in front of it: the only way a prop
+    quote enters the archive is a payload handed in, which is what keeps the quota decision
+    a person's rather than a poll's.
+
+    Everything else is the spread recorder's discipline. Events are matched to nflverse games
+    by the same index, staleness is stamped against every poll already stored by the same
+    `staleness`, every partition is checked before any is written, and the write appends
+    under a dated name so two polls of one prop are two rows.
+    """
+    index = _game_index(season)
+    rows: list[dict[str, Any]] = []
+    no_game = 0
+    for ev in payload or []:
+        hit = _match_game(ev, index)
+        if not hit:
+            no_game += 1
+            continue
+        game_id, week = hit
+        rows += prop_quotes(ev, game_id, week, when)
+    if no_game:
+        print(f"  {no_game} events with no nflverse game for the team/date pair")
+    new = pl.DataFrame(rows, schema=_PROP_SCHEMA)
+    print(f"  props recorded: {new.height} quotes on "
+          f"{new.select('game_id', 'player_key').n_unique() if new.height else 0} players")
+    if new.is_empty():
+        return new.drop("week")
+    # GUARD prop-staleness-stamped-against-the-archive: a prop row says how long its quote
+    # has stood still, measured against every poll of that prop already stored
+    prior = _prop_archive(season, base).drop("week")
+    both = pl.concat([prior, new.drop("week")], how="vertical_relaxed")
+    stamped = (staleness(both, key=_PROP_KEY, point="point", price="over_price")
+               .select(*_PROP_KEY, "captured_at", *STALENESS_COLUMNS))
+    df = new.join(stamped, on=[*_PROP_KEY, "captured_at"], how="left")
+    # /GUARD
+    parts = [(wk, df.filter(pl.col("week") == wk).drop("week"))
+             for wk in sorted(set(df["week"].to_list()))]
+    parts = [(wk, PROP_SNAPSHOT.validate(part)) for wk, part in parts]
+    for wk, part in parts:
+        store.write(part, "prop_lines", "nfl", season, wk, base=base,
+                    name=f"snap-{when:%Y%m%dT%H%M%S}")
+    return df.drop("week")
+
+
 def credits_report(path: Path | None = None) -> int:
     have = credits_remaining(path)
     state = _read_state(path)
@@ -1038,6 +1217,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="how much a spread moves between polls for no reason, by day of "
                          "week, on same-quarterback games; the ceiling every line-movement "
                          "claim is measured against. Reads the store and spends nothing")
+    ap.add_argument("--record-props", metavar="PAYLOAD", default=None,
+                    help="write a player-props payload already paid for (a JSON list of "
+                         "per-event responses) to the prop_lines archive with its "
+                         f"staleness. Reads a file and spends nothing; markets "
+                         f"{','.join(PROP_MARKETS)}")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD)
     ap.add_argument("--state-path", default=None, help=argparse.SUPPRESS)
     ap.add_argument("--base", default=None, help=argparse.SUPPRESS)
@@ -1045,6 +1229,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     spath = Path(a.state_path) if a.state_path else None
     base = Path(a.base) if a.base else None
 
+    if a.record_props:
+        try:
+            payload = json.loads(Path(a.record_props).read_text())
+            record_props(payload, a.season, datetime.now(UTC).replace(tzinfo=None), base=base)
+        except Exception as e:
+            return unavailable("hub.fetch.odds", f"the props payload {a.record_props}", e)
+        return 0
     if a.staleness:
         return staleness_report(a.season, base=base)
     if a.noise_floor:
