@@ -905,6 +905,16 @@ the outcome on these rows, and a plain `--run` now sweeps all five anchors and p
 sensitivity rather than picking one. Pass `8` to reproduce the tables above; the tables
 elsewhere on this page are unchanged by the sweep because only the trend features move with it.
 
+**The `data` digest the run prints covers every source the Panel loaded, since 2026-09-11
+(#192).** Until then it was the digest of one cache entry — the rankings archive, named by its
+key and looked up on disk — while the Panel also loads `ff_opportunity` and `player_stats`
+through the same fetch layer, so the line compared equal to a run that had read only the
+rankings. It now says what the run itself recorded reading, whether the screen ran as a process
+or was called from inside another run, and it says `unpinned` whenever any of those entries
+cannot be named. No figure on this page carries the superseded form, so nothing here is
+restated by it; a digest printed by a run before that date is not comparable with one printed
+after, and the real screen has not been re-run under the new form.
+
 `src/hub/models/weekly_screen.py`, committed 2026-08-27 because these numbers steer Phase 2 and
 [ADR-0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md)'s trigger is
 citation. The statistics, the cell structure, the pre-registered verdict — every branch,

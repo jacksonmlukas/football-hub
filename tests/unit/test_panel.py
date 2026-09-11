@@ -353,10 +353,12 @@ def test_a_scrape_after_the_as_of_does_not_reach_the_panel(monkeypatch, tmp_path
 
 
 def test_two_as_ofs_are_two_pins_and_one_as_of_reproduces(monkeypatch, tmp_path):
-    """What the screen prints as its data digest, at the seam that produces it.
+    """The rankings entry's pin, at the seam that produces it.
 
     `consensus_pin` names the same cache entry `weekly_consensus` read -- source, page,
-    columns and as-of -- so a run's provenance describes the load it claims to describe.
+    columns and as-of -- so a lookup by key describes the load it claims to describe. Since
+    #192 the screen prints the run's own read set rather than this one entry; what this holds
+    is that an as-of pins the entry and reads back the same pin.
     """
     _routed(monkeypatch, tmp_path, _rankings(("Ja'Marr Chase", 3.0, "2024-10-04"),
                                              ("Ja'Marr Chase", 1.0, "2024-10-11")))

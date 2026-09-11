@@ -1016,3 +1016,65 @@ def test_a_pre_stated_null_is_refused_and_a_thin_cell_is_skipped():
         ws.every_season_null(p, ws.Feature("dud", "0", 1), draws=50, seed=6)
     n = ws.every_season_null(p, ws.Feature("dud", "+", 1), draws=50, seed=6, min_cell=10_000)
     assert n["cells"] == 0, "thin cells were scored rather than skipped"
+
+
+# --- the screen names its own reads, however it is invoked (issue #192) -----------------
+#
+# `main` is network-bound and `# pragma: no cover` for it; what is driven here is the whole of
+# it with the Panel build replaced by a synthetic Panel that records the one read it made. The
+# seam under test is what the `data` line names, and that it is the screen's own reads rather
+# than a run's around it -- or, as it was until #192, one named cache entry standing in for
+# everything the Panel loaded.
+
+def _screenable_panel(seasons=(2023, 2024), weeks=range(1, 15), players=60, seed=11):
+    """A Panel with every column `main` reads, so the real sweep runs on it."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for s in seasons:
+        for w in weeks:
+            for i in range(players):
+                td, non = float(rng.normal(3, 1)), float(rng.normal(9, 3))
+                rows.append({
+                    "season": s, "week": w, "player_id": f"p{i}", "games_before": 5,
+                    "lead_days": 3.0, "ecr": float(i + 1),
+                    "fantasy_points_ppr": float(rng.normal(12, 6)),
+                    "yds_prior": float(rng.normal(60, 20)), "ppg_before": td + non,
+                    "td_ppg_before": td, "nontd_ppg_before": non,
+                    "implied_total": float(rng.normal(23, 3)),
+                    "own_spread": float(rng.normal(0, 5)), "dvp": float(rng.normal(1, .2)),
+                    "rest": 7.0, "inj_sev": float(rng.integers(0, 3)),
+                    "td_rate_prior": float(rng.normal(0.05, 0.02)),
+                    "snap_trend": float(rng.normal()), "tgt_trend": float(rng.normal()),
+                })
+    return pl.DataFrame(rows)
+
+
+def test_the_screen_called_in_process_names_only_its_own_reads(monkeypatch, capsys, tmp_path):
+    """Called from inside a run that has already read something, the `data` line the screen
+    prints covers the screen's reads and not the enclosing run's -- and the enclosing run
+    still ends up holding both, because the scope narrows what a component reports and is
+    not a way for a run to lose a read."""
+    from hub.config import data_digest
+    from hub.fetch import nflverse as nv
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    outer = nv.Pin(source="player_stats", as_of=None, digest="0ut51de0", rows=1,
+                   pinned_at=None)
+    inner = nv.Pin(source="ff_rankings", as_of="2024-09-01", digest="1n51de01", rows=1,
+                   pinned_at=None)
+    nv._remember(tmp_path / "the-enclosing-runs-entry.parquet", outer)
+
+    def builds(seasons, spec, as_of=None):
+        nv._remember(tmp_path / "the-screens-own-entry.parquet", inner)
+        return _screenable_panel(seasons)
+
+    monkeypatch.setattr(ws, "build_panel", builds)
+    assert ws.main(["--run", "--seasons", "2023,2024", "--trend-min-week", "8"]) == 0
+    said = capsys.readouterr().out
+    line = next(ln for ln in said.splitlines() if ln.lstrip().startswith("cfg "))
+    assert f"data {data_digest([inner])}" in line, (
+        "the screen's data line is not a digest over the screen's own read")
+    assert data_digest([outer, inner]) not in line, (
+        "the screen printed a digest over the enclosing run's reads as well as its own")
+    assert sorted(p.source for p in nv.pins_this_run()) == ["ff_rankings", "player_stats"], (
+        "the screen's read did not reach the run around it: scoping lost a read")

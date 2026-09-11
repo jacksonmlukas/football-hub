@@ -1482,3 +1482,72 @@ def test_compare_plays_the_pinned_draft():
     assert row["optimizer"] == pytest.approx(bt.score_roster(FROZEN_ARM_B, b_pos, real)), (
         "compare's optimizer column is not the score of the pinned arm-B roster: compare is "
         "playing a different arm B from the one the pin was taken in")
+
+
+# --- the gate names its own reads, however it is invoked (issue #192) ---------------------
+#
+# #165 scoped the process-global read set with `reads_of_one_run` and left this gate unwired,
+# because a process that does one thing has nothing else to fold in. That is true only by
+# accident of how it is invoked: called in-process by a harness running two gates, or by a
+# notebook, it inherited the enclosing run's reads and published a digest over bytes it never
+# touched -- a failure that looks exactly like a clean digest.
+
+def _in_process_gate(monkeypatch, tmp_path, *, inner, argv=()):
+    """Drive `main`'s gate path with the network replaced.
+
+    The walk-forward loader records `inner` as the one read it made and hands back a
+    synthetic season; `compare` returns a small paired frame, since the room is exercised
+    above and the seam here is what the stamp names. The width history is pointed nowhere.
+    """
+    from functools import partial
+
+    from hub.fetch import nflverse as nv
+    from hub.models.experiment import run_gate
+
+    board = _full_board(24)
+    real = _flat_realised(board)
+
+    def loads(seasons, load, *, on_season=None):
+        nv._remember(tmp_path / "the-gates-own-entry.parquet", inner)
+        return {2024: board}, {2024: real}
+
+    paired = pl.DataFrame({"season": [2024] * 4, "draft": [0, 1, 2, 3],
+                           "market": [10.0, 11.0, 9.0, 10.5],
+                           "optimizer": [9.0, 10.0, 8.5, 9.0],
+                           "market_failed": [0] * 4, "optimizer_failed": [0] * 4,
+                           "picks": [4] * 4})
+    paired = paired.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
+    monkeypatch.setattr(bt, "walk_forward_inputs", loads)
+    monkeypatch.setattr(bt, "compare", lambda *a, **k: paired)
+    monkeypatch.setattr(bt, "run_gate", partial(run_gate, record_width=False, bootstrap=100))
+    out = tmp_path / "paired.parquet"
+    assert bt.main(["--seasons", "2024", "--drafts", "4", "--out", str(out), *argv]) == 0
+    return pl.read_parquet(out)
+
+
+def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_path, capsys):
+    """Called from inside a run that has already read something, the gate's published digest
+    covers the gate's reads and not the enclosing run's -- and the enclosing run still ends
+    up holding both, because a scope narrows what a component reports and must never be a
+    way for a run to lose a read."""
+    from hub.config import data_digest
+    from hub.fetch import nflverse as nv
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    outer = nv.Pin(source="player_stats", as_of=None, digest="0ut51de0", rows=1,
+                   pinned_at=None)
+    inner = nv.Pin(source="ff_opportunity", as_of="2024-09-01", digest="1n51de01", rows=1,
+                   pinned_at=None)
+    # The enclosing run: something else in this process has read a source already.
+    nv._remember(tmp_path / "the-enclosing-runs-entry.parquet", outer)
+
+    stamped = _in_process_gate(monkeypatch, tmp_path, inner=inner)
+
+    assert stamped["data_digest"].unique().to_list() == [data_digest([inner])], (
+        "the gate's digest is not a digest over the gate's own read")
+    assert stamped["data_digest"][0] != data_digest([outer, inner]), (
+        "the gate published a digest over the enclosing run's reads as well as its own")
+    assert "over 1 pinned source(s)" in capsys.readouterr().out
+    assert sorted(p.source for p in nv.pins_this_run()) == ["ff_opportunity",
+                                                            "player_stats"], (
+        "the gate's read did not reach the run around it: scoping lost a read")

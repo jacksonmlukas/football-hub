@@ -65,6 +65,7 @@ from hub.draft.state import DraftState
 # reopening it means re-running this file -- and
 # `tests/contracts/test_the_exhibit_is_not_a_dependency.py` holds it to being the only one.
 from hub.exhibits.championship_equity import rank_tiers, win_probability
+from hub.fetch.nflverse import reads_of_one_run
 from hub.league import REG_SEASON_WEEKS
 from hub.models.experiment import (
     BOOTSTRAP,  # noqa: F401 -- re-exported: tests reach it as `bt.BOOTSTRAP`
@@ -886,64 +887,79 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"  wrote {got.height} rows to {a.out}")
         return 0
 
-    seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
-    try:
-        boards, realised = walk_forward_inputs(
-            seasons, board_as_of,
-            on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
-    except Exception as e:
-        return unavailable("hub.draft.backtest", "the boards these seasons are drafted from", e)
+    # The gate's reads are the gate's own, whichever way it was invoked (#192). Run as a
+    # process this changes nothing: the scope opens on an empty set, exactly as the
+    # process-global one was. Called in-process -- a harness running two gates, a notebook --
+    # it is what stops the stamp below naming bytes the enclosing run read and this gate
+    # never touched, which is a false digest that looks exactly like a clean one. The reads
+    # still reach the enclosing run on the way out, so nothing outside loses a read either.
+    # It encloses the loads and the stamp both: `walk_forward_inputs` is where this gate
+    # reads, `run_gate` is where it says what it read, and a scope around one of the two
+    # would be the defect it exists to fix wearing a different hat. The two `--diagnose`
+    # paths above read the live board and stamp nothing, so they have no digest to protect.
+    with reads_of_one_run():
+        seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
+        try:
+            boards, realised = walk_forward_inputs(
+                seasons, board_as_of,
+                on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
+        except Exception as e:
+            return unavailable("hub.draft.backtest",
+                               "the boards these seasons are drafted from", e)
 
-    print(f"  playing {a.drafts} drafts x {len(seasons)} seasons, "
-          f"{a.draft_sims} x {a.season_sims} sims per optimizer call ...")
-    def _tick(label: str):
-        """One line per draft, flushed. A long run that says nothing is a run someone kills."""
-        def say(season: int, k: int, of: int) -> None:
-            print(f"    {label} {season}: draft {k}/{of}", flush=True)
-        return say
+        print(f"  playing {a.drafts} drafts x {len(seasons)} seasons, "
+              f"{a.draft_sims} x {a.season_sims} sims per optimizer call ...")
+        def _tick(label: str):
+            """One line per draft, flushed. A run that says nothing is a run someone kills."""
+            def say(season: int, k: int, of: int) -> None:
+                print(f"    {label} {season}: draft {k}/{of}", flush=True)
+            return say
 
-    # Owned here for the same reason `diagnose`'s is: every simulated season inside `compare`
-    # writes into it, and a count that lives inside the call dies with its stack frame.
-    correlation = CorrelationReport()
-    paired = compare(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
-                     n_draft_sims=a.draft_sims, n_season_sims=a.season_sims,
-                     on_draft=_tick("paired") if a.progress else None,
-                     correlation=correlation)
-    print(f"\n  {correlation.note()}")
-    for line in correlation.repair_lines():
-        print(line)
-    bound = None
-    if a.ceiling:
-        print("  measuring the ceiling: the same arm, given the season in advance ...")
-        top = ceiling(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
-                      on_draft=_tick("ceiling") if a.progress else None)
-        bound = Ceiling(CEILING_ARM, top["diff"])
+        # Owned here for the same reason `diagnose`'s is: every simulated season inside
+        # `compare` writes into it, and a count that lives inside the call dies with its
+        # stack frame.
+        correlation = CorrelationReport()
+        paired = compare(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
+                         n_draft_sims=a.draft_sims, n_season_sims=a.season_sims,
+                         on_draft=_tick("paired") if a.progress else None,
+                         correlation=correlation)
+        print(f"\n  {correlation.note()}")
+        for line in correlation.repair_lines():
+            print(line)
+        bound = None
+        if a.ceiling:
+            print("  measuring the ceiling: the same arm, given the season in advance ...")
+            top = ceiling(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
+                          on_draft=_tick("ceiling") if a.progress else None)
+            bound = Ceiling(CEILING_ARM, top["diff"])
 
-    # `SEASON_CLUSTER`, not the row this gate used to take: the eighty (season, draft) rows
-    # are twenty rooms drawn against four boards, and what varies independently between them
-    # is the season. Issue #45; the effect is unmoved and the interval widens.
-    #
-    # Re-examined under #195, which removed a second and undeclared source of dependence
-    # between the rows, and left unchanged: see `compare`'s docstring for why the surviving
-    # reason is sufficient on its own. Stated here, at this gate's own call site, because the
-    # run has no default for it (#135).
-    # The join, reported on every run and voided above the floor (#46). Voiding is the run's;
-    # what a join failure is, and what share of one this gate tolerates, is this gate's.
-    rates = join_failure_rates(paired)
-    run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="draft",
-                   arm_a="optimizer", arm_b="market", void=void_condition(rates),
-                   ceiling=bound, seed=a.seed, boards=boards)
-    for line in [*join_report(rates), *run.lines]:
-        print(line)
-    print(f"\n  {run.verdict[1]}")
-    print("\n  Limitations, fixed before the run:")
-    for line in LIMITATIONS:
-        print(f"    - {line}")
+        # `SEASON_CLUSTER`, not the row this gate used to take: the eighty (season, draft)
+        # rows are twenty rooms drawn against four boards, and what varies independently
+        # between them is the season. Issue #45; the effect is unmoved and the interval
+        # widens.
+        #
+        # Re-examined under #195, which removed a second and undeclared source of dependence
+        # between the rows, and left unchanged: see `compare`'s docstring for why the
+        # surviving reason is sufficient on its own. Stated here, at this gate's own call
+        # site, because the run has no default for it (#135).
+        # The join, reported on every run and voided above the floor (#46). Voiding is the
+        # run's; what a join failure is, and what share of one this gate tolerates, is this
+        # gate's.
+        rates = join_failure_rates(paired)
+        run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="draft",
+                       arm_a="optimizer", arm_b="market", void=void_condition(rates),
+                       ceiling=bound, seed=a.seed, boards=boards)
+        for line in [*join_report(rates), *run.lines]:
+            print(line)
+        print(f"\n  {run.verdict[1]}")
+        print("\n  Limitations, fixed before the run:")
+        for line in LIMITATIONS:
+            print(f"    - {line}")
 
-    if a.out:
-        run.stamped.write_parquet(a.out)
-        print(f"\n  wrote {run.stamped.height} paired rows to {a.out}")
-    return 0
+        if a.out:
+            run.stamped.write_parquet(a.out)
+            print(f"\n  wrote {run.stamped.height} paired rows to {a.out}")
+        return 0
 
 
 if __name__ == "__main__":

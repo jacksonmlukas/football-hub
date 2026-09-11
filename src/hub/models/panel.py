@@ -702,9 +702,14 @@ def assign_weeks(scrapes: pl.DataFrame, windows: pl.DataFrame,
 def consensus_pin(as_of: str | None = None) -> Pin | None:
     """The pin beside the rankings entry `weekly_consensus` reads, or None if it is cold.
 
-    The screen prints a data digest and has to name the same cache entry the panel read; the
-    key is `(source, page, columns, as-of)` and stating it twice is how the printed provenance
-    stops describing the load it claims to describe. So it is stated once, here.
+    The key is `(source, page, columns, as-of)`, and stating it twice is how a provenance
+    lookup stops describing the load it claims to describe. So it is stated once, here.
+
+    **Not what the screen prints any more (#192).** `weekly_screen.main` used to print this
+    one entry as its data digest, while the Panel loads two more sources through the same
+    layer; it now prints `nflverse.pins_this_run()` inside a `reads_of_one_run` scope, which is
+    the run's own record of what it read. This stays as the lookup for one entry a caller can
+    name -- the seam `tests/unit/test_panel.py` holds the as-of pinning at.
     """
     return data_pin("ff_rankings", ["all"], cols=RANKINGS_COLS, as_of=as_of)
 

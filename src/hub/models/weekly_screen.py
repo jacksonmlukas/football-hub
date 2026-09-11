@@ -70,6 +70,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS, digests, resolved_config
+from hub.fetch.nflverse import pins_this_run, reads_of_one_run
 from hub.models.experiment import MIN_SE
 from hub.models.panel import (
     MIN_GAMES_BEFORE,
@@ -79,7 +80,6 @@ from hub.models.panel import (
     USAGE,
     PanelSpec,
     build_panel,
-    consensus_pin,
     require_features,
 )
 
@@ -767,81 +767,101 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     if not a.run:
         ap.print_help()
         return 0
-    seasons = [int(x) for x in a.seasons.split(",") if x]
-    try:
-        panel = build_panel(seasons, PanelSpec(routes=a.routes, scheme=a.scheme), as_of=a.as_of)
-    except Exception as e:
-        return unavailable("hub.models.weekly_screen", "the sources the Panel is built from", e)
-    # What the run read, printed where the run is read. Until the archive was routed through
-    # the fetch layer there was nothing to print: two screens a week apart disagreed and
-    # nothing said whether the code or the rankings had moved -- which is the correction
-    # `docs/weekly-screen.md` already records having to make once.
-    pins = [p for p in (consensus_pin(a.as_of),) if p is not None]
-    # `resolved_config()`, not `HubConfig()`: this line exists to say what the run read,
-    # and a bare dataclass prints the defaults whatever `conf/` says -- a model version
-    # for a model nobody ran, which is what #74 removed from the other three stamps.
-    d = digests(resolved_config(), pins)
-    print(f"  cfg {d['cfg']} | fitted {d['fitted']} | data {d['data']}"
-          + ("" if a.as_of else "   (no --as-of: the digest names the bytes this run "
-                                "happened to read, not a date it can be re-read at)"))
-    controls = BASES[a.basis]
-    sample = panel.filter(pl.col("week").is_in(list(FANTASY_WEEKS))
-                          & (pl.col("games_before") >= MIN_GAMES_BEFORE))
-    # The **union** of every basis, not just the one being run, so that a `--basis` run is on
-    # the same rows as any other and the movement between two of them is attributable to the
-    # basis alone. `docs/method.md` rule 13 asks for a re-run rather than an argument, and a
-    # re-run on a different sample is an argument with a number attached. Sorted so the drop
-    # is the same list in the same order whichever basis was asked for.
-    sample = sample.drop_nulls([OUTCOME, *sorted({c for b in BASES.values() for c in b})])
-    print(f"  {sample.height} player-weeks, {sample['player_id'].n_unique()} players, "
-          f"seasons {sorted(sample['season'].unique().to_list())}")
-    print(f"  controls: {', '.join(controls)}   (--basis {a.basis})")
-    lead = panel["lead_days"]
-    print(f"  consensus scraped a median {lead.median():.0f} days before kickoff "
-          f"(the confound: see docs/weekly-screen.md)")
-    extra = ((ROUTE_TREND,) if a.routes else ()) + (SCHEME_TRENDS if a.scheme else ())
-    pool = (*FEATURES, *extra)
-    # The sweep is the default, and one anchor is the special case -- #178. The screen has no
-    # single minimum week to fall back on: the value it used to fall back on was fitted to the
-    # outcome on these rows, which is what the sweep exists to stop it claiming silently.
-    anchors = [a.trend_min_week] if a.trend_min_week else list(SCREEN_TREND_ANCHORS)
-    print(f"  trend anchors: {', '.join(str(x) for x in anchors)}"
-          + ("   (the whole sweep -- #178)" if len(anchors) > 1 else
-             f"   (one anchor; the sweep is {SCREEN_TREND_ANCHORS})"))
-    swept = sweep(sample, pool, anchors, controls)
-    for anchor in anchors:
-        d = swept.filter(pl.col("anchor") == anchor)
-        print(f"\n  === trend features from week {anchor} ===")
-        print("\n".join(report([{**r, "r": r["alone_r"], "t": r["alone_t"],
-                                 "note": r["alone_note"]}
-                                for r in d.sort("alone_r", descending=True).to_dicts()])))
-        found = signals(d, "alone")
-        print(f"\n  a signal on its own: {', '.join(found) if found else 'nothing'}")
-        j = d.filter(pl.col("joint").is_not_null()).sort("joint_r", descending=True)
-        if not j.is_empty():
-            print("\n  each one, controlled for the others that exist over its weeks:")
-            print("\n".join(report([{**r, "r": r["joint_r"], "t": r["joint_t"],
-                                    "cells": r["joint_cells"], "note": r["joint_note"]}
-                                   for r in j.to_dicts()])))
-        left = surviving(swept, anchor)
-        print(f"\n  independent signals: {', '.join(left) if left else 'nothing'}")
-        if a.usage and left:
-            print("\n  and against Usage rather than points:")
-            u = screen_usage(sample, [f for f in at_anchor(pool, anchor) if f.name in left])
-            for row in u.iter_rows(named=True):
-                print(f"  {row['feature']:16} {row['component']:11} {row['r']:+7.4f} "
-                      f"{row['t']:+6.2f}  {row['status']}")
-        for name in a.permute:
-            f = next(g for g in at_anchor(pool, anchor) if g.name == name)
-            # The alternatives are the sizes the feature has been published at, so the
-            # power figure is about the claim on the page and not about a round number.
-            alt = (0.0382, 0.0356) if name == "snap_trend" else ()
-            n = every_season_null(sample, f, controls, effects=alt)
-            print("\n  the every-season half under the null -- #238:")
-            print("\n".join(null_report(name, anchor, n)))
-    if len(anchors) > 1:
-        print("\n".join(sweep_report(swept, sensitivity(swept))))
-    return 0
+    # The screen's reads are the screen's own, whichever way it was invoked (#192). Run
+    # as a process this changes nothing: the scope opens on an empty set, exactly as the
+    # process-global one was. Called in-process -- a harness, a notebook -- it is what
+    # stops the line below naming bytes the enclosing run read and this screen never
+    # touched. The reads still reach the enclosing run on the way out. It encloses the
+    # Panel build and the line both, because a scope around one of the two is the defect
+    # wearing a different hat.
+    with reads_of_one_run():
+        seasons = [int(x) for x in a.seasons.split(",") if x]
+        try:
+            panel = build_panel(seasons, PanelSpec(routes=a.routes, scheme=a.scheme), as_of=a.as_of)
+        except Exception as e:
+            return unavailable("hub.models.weekly_screen", "the sources the Panel is built from", e)
+        # What the run read, printed where the run is read. Until the archive was routed through
+        # the fetch layer there was nothing to print: two screens a week apart disagreed and
+        # nothing said whether the code or the rankings had moved -- which is the correction
+        # `docs/weekly-screen.md` already records having to make once.
+        #
+        # **Every source the Panel loaded, and not the rankings entry alone (#192).** Until
+        # then this line read `panel.consensus_pin(a.as_of)` -- one cache entry, named by its
+        # key and looked up on disk -- while the Panel also loads `ff_opportunity` and
+        # `player_stats` through the same layer, and `participation` and `ftn_charting` under
+        # `--scheme`. A digest over one of three sources is the false one #165 argues against:
+        # it compares equal to a run that read only that one. So the line now says what this
+        # run read, from the run's own record, and says `unpinned` when any of it cannot be
+        # named -- which is what a Panel built on an entry written before pinning existed will
+        # print, and is the truth about it. No published figure carries the superseded form:
+        # `docs/weekly-screen.md` prints no data digest.
+        pins = pins_this_run()
+        # `resolved_config()`, not `HubConfig()`: this line exists to say what the run read,
+        # and a bare dataclass prints the defaults whatever `conf/` says -- a model version
+        # for a model nobody ran, which is what #74 removed from the other three stamps.
+        d = digests(resolved_config(), pins)
+        print(f"  cfg {d['cfg']} | fitted {d['fitted']} | data {d['data']} over {len(pins)} "
+              f"pinned source(s)"
+              + ("" if a.as_of else "   (no --as-of: the digest names the bytes this run "
+                                    "happened to read, not a date it can be re-read at)"))
+        controls = BASES[a.basis]
+        sample = panel.filter(pl.col("week").is_in(list(FANTASY_WEEKS))
+                              & (pl.col("games_before") >= MIN_GAMES_BEFORE))
+        # The **union** of every basis, not just the one being run, so that a `--basis` run is on
+        # the same rows as any other and the movement between two of them is attributable to the
+        # basis alone. `docs/method.md` rule 13 asks for a re-run rather than an argument, and a
+        # re-run on a different sample is an argument with a number attached. Sorted so the drop
+        # is the same list in the same order whichever basis was asked for.
+        sample = sample.drop_nulls([OUTCOME, *sorted({c for b in BASES.values() for c in b})])
+        print(f"  {sample.height} player-weeks, {sample['player_id'].n_unique()} players, "
+              f"seasons {sorted(sample['season'].unique().to_list())}")
+        print(f"  controls: {', '.join(controls)}   (--basis {a.basis})")
+        lead = panel["lead_days"]
+        print(f"  consensus scraped a median {lead.median():.0f} days before kickoff "
+              f"(the confound: see docs/weekly-screen.md)")
+        extra = ((ROUTE_TREND,) if a.routes else ()) + (SCHEME_TRENDS if a.scheme else ())
+        pool = (*FEATURES, *extra)
+        # The sweep is the default, and one anchor is the special case -- #178. The screen has no
+        # single minimum week to fall back on: the value it used to fall back on was fitted to the
+        # outcome on these rows, which is what the sweep exists to stop it claiming silently.
+        anchors = [a.trend_min_week] if a.trend_min_week else list(SCREEN_TREND_ANCHORS)
+        print(f"  trend anchors: {', '.join(str(x) for x in anchors)}"
+              + ("   (the whole sweep -- #178)" if len(anchors) > 1 else
+                 f"   (one anchor; the sweep is {SCREEN_TREND_ANCHORS})"))
+        swept = sweep(sample, pool, anchors, controls)
+        for anchor in anchors:
+            d = swept.filter(pl.col("anchor") == anchor)
+            print(f"\n  === trend features from week {anchor} ===")
+            print("\n".join(report([{**r, "r": r["alone_r"], "t": r["alone_t"],
+                                     "note": r["alone_note"]}
+                                    for r in d.sort("alone_r", descending=True).to_dicts()])))
+            found = signals(d, "alone")
+            print(f"\n  a signal on its own: {', '.join(found) if found else 'nothing'}")
+            j = d.filter(pl.col("joint").is_not_null()).sort("joint_r", descending=True)
+            if not j.is_empty():
+                print("\n  each one, controlled for the others that exist over its weeks:")
+                print("\n".join(report([{**r, "r": r["joint_r"], "t": r["joint_t"],
+                                        "cells": r["joint_cells"], "note": r["joint_note"]}
+                                       for r in j.to_dicts()])))
+            left = surviving(swept, anchor)
+            print(f"\n  independent signals: {', '.join(left) if left else 'nothing'}")
+            if a.usage and left:
+                print("\n  and against Usage rather than points:")
+                u = screen_usage(sample, [f for f in at_anchor(pool, anchor) if f.name in left])
+                for row in u.iter_rows(named=True):
+                    print(f"  {row['feature']:16} {row['component']:11} {row['r']:+7.4f} "
+                          f"{row['t']:+6.2f}  {row['status']}")
+            for name in a.permute:
+                f = next(g for g in at_anchor(pool, anchor) if g.name == name)
+                # The alternatives are the sizes the feature has been published at, so the
+                # power figure is about the claim on the page and not about a round number.
+                alt = (0.0382, 0.0356) if name == "snap_trend" else ()
+                n = every_season_null(sample, f, controls, effects=alt)
+                print("\n  the every-season half under the null -- #238:")
+                print("\n".join(null_report(name, anchor, n)))
+        if len(anchors) > 1:
+            print("\n".join(sweep_report(swept, sensitivity(swept))))
+        return 0
 
 
 if __name__ == "__main__":                                # pragma: no cover
