@@ -586,6 +586,41 @@ CFBD_LINES = Contract(
     verified_against_live=False,
 )
 
+# The Big Ten availability archive's index, since #215: one row per document per capture.
+# This is a contract on what `hub.fetch.bigten` *stores*, not on what the conference
+# publishes -- the reports are archived as the bytes the conference served, and nothing here
+# parses them yet, so there is no designation column to declare. What the index has to hold
+# is the provenance a later study needs: which deadline (`slot`) a row was captured for,
+# when the conference last updated the report (`report_updated_at`, the source's own stamp
+# and not the fetch time), and the hash that says whether the bytes moved between two
+# captures (`new_content`). `kind` is `article` for the page's own content record, `file`
+# for a linked document, `page` for the raw page kept when parsing failed, and `lines` for
+# the odds snapshot taken in the same run.
+#
+# `label` and `report_updated_at` are required and NOT non_null: a `lines` row has neither,
+# and a linked document whose anchor carries no text has no label. Nothing is unique --
+# the same document is legitimately captured at every deadline, unchanged, and a row saying
+# so is how a missed deadline is told apart from an unchanged report.
+BIGTEN_CAPTURES = Contract(
+    name="bigten_captures",
+    required={"slot": pl.Utf8, "slot_name": pl.Utf8, "captured_at": pl.Utf8,
+              "season": pl.Int64, "kind": pl.Utf8, "url": pl.Utf8, "label": pl.Utf8,
+              "report_updated_at": pl.Utf8, "sha256": pl.Utf8, "bytes": pl.Int64,
+              "path": pl.Utf8, "new_content": pl.Boolean},
+    non_null=("slot", "slot_name", "captured_at", "season", "kind", "url", "sha256",
+              "bytes", "path", "new_content"),
+    # The regime began in 2026; a season before it is a row nothing here wrote. An empty
+    # document is a real capture (a 404 body is not stored, but a zero-byte file is a fact
+    # about the source), so bytes has a floor of zero; the ceiling is far above the 1.4MB
+    # the 2024 weekly PDF measured at on 2026-09-11.
+    ranges={"season": (2026, 2100), "bytes": (0, 100_000_000)},
+    min_rows=1,
+    # Checked against `bigten_captures.synthetic.json`, a hand-built index: the 2026 page
+    # held no report on the day this was written, so no capture exists to freeze. See
+    # `verified_against_live`.
+    verified_against_live=False,
+)
+
 # Two markets and their prices, since #211. The four number columns are two pairs and the
 # pairing is the declaration: a point without the price beside it says -7 at -120 and -7 at
 # -105 are the same fact, and they are not the same price.

@@ -1,0 +1,663 @@
+"""The Big Ten availability archive, captured on the conference's own deadlines (#215).
+
+**What this is.** From 19 September 2026 every Big Ten conference game gets four availability
+reports: three days, two days and one day before kickoff, each by 8pm ET, and a gameday
+report two hours before kickoff. No archive of them exists anywhere, no model is trained on
+one, and a report the conference has replaced cannot be fetched afterwards. So this module
+is an archive first and a fetcher second: it keeps the bytes the conference served, says
+which deadline it kept them for, and pairs each capture with an odds snapshot taken in the
+same run, so that the pairing is a fact about the run rather than something reconstructed
+later from two clocks.
+
+**Where the reports come from, and what is metered.** `bigten.org/fb/availability-reports/`
+is a Next.js page whose content is a CMS article record in its `__NEXT_DATA__` blob: a title,
+an `updatedAt`, and a body of links to documents under `/api/media/file/`. In 2024 that was
+one PDF per week; the 2026 page existed and held nothing on the day this was written, so
+what the four-a-week regime does to that shape is unknown until it starts. That is the
+reason for the shape of the capture below -- every linked document is archived by content
+hash, and the article record itself is archived too, so a report published as a table in the
+body rather than as a linked file is still kept. None of that costs quota: the conference's
+page is public and unmetered.
+
+The odds snapshot is the metered half. CFBD has no availability endpoint (checked against
+its OpenAPI spec on 2026-09-11, not from memory), and `/lines?year&week` is the one bulk
+call that prices every Big Ten game at once -- **one call per deadline**, and never one per
+team; `hub.fetch.cfbd` is where that is impossible rather than merely discouraged. The
+per-week cost is stated in `docs/cfbd-quota.md`, which the disposition requires before the
+first live run.
+
+**Deadlines are slots, and a slot is what a capture is *for*.** The workflow's crons fire
+after each deadline; GitHub delivers a scheduled run anywhere up to two hours late; and a
+capture that names the wall-clock it happened at cannot be compared to the one before it.
+So every capture is attributed to the most recent slot at or before the moment it ran, and
+the set of slots between the regime's first day and now, minus the slots the index holds a
+row for, is the list of deadlines that were **missed** -- recorded in the stamp rather than
+left as a gap someone has to notice.
+
+**Degradation, which is the whole design.** Every failure leaves a record and never a
+traceback: the page unreachable, the page's shape changed (the raw page is archived so the
+bytes are not lost while the parser is fixed), the odds call refused or failed (the reports
+are still archived and the stamp says the pairing is missing), no key, no anchor. The stamp
+at `site/data/bigten.json` carries `generated_at` like every other envelope, so the
+watchdog can read a silent stall as a stall.
+
+    uv run python -m hub.fetch.bigten --capture
+    uv run python -m hub.fetch.bigten --capture --skip-lines      # archive only, spend nothing
+    uv run python -m hub.fetch.bigten --status
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import html
+import json
+import os
+import re
+import sys
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+from typing import Any
+from urllib.parse import urljoin
+
+import polars as pl
+
+from hub import jsonio
+from hub.config import SEASON_AHEAD
+from hub.contracts import BIGTEN_CAPTURES, CFBD_LINES
+from hub.fetch import cfbd
+from hub.paths import ROOT, SITE
+
+ORIGIN = "https://bigten.org"
+PAGE = f"{ORIGIN}/fb/availability-reports/"
+
+# Committed, deliberately, and the one archive in this repo that is. `data/raw/` is
+# gitignored because CFBD and nflverse payloads cannot be redistributed; the conference's
+# availability reports are published for exactly that purpose, and a runner that fetched them
+# into a gitignored tree would lose them when the job ended -- which is the whole failure
+# this ticket exists to prevent.
+ARCHIVE = ROOT / "archive" / "bigten"
+INDEX = ARCHIVE / "availability" / "captures.json"
+
+# The odds snapshots are CFBD payloads and stay under the gitignored tree, per
+# `docs/cfbd-quota.md`. The workflow encrypts and commits them under `archive/bigten/lines/`
+# when it has a key to do so with; locally they are simply here.
+LINES = ROOT / "data" / "raw" / "bigten" / "lines"
+
+STATUS = SITE / "bigten.json"
+
+# The first day a report is due: the regime's first games are 19 September 2026 and the
+# three-day report for them is due on the 16th. A date in the past suppresses nothing, so a
+# stale value next August costs a few empty captures of a page before the season and never
+# silence inside one. The *end* is not a second constant: captures stop when
+# `cfbd.configured_week` says the regular season is over, which is the same anchor the
+# college week is counted from and is bumped once a year for that reason.
+REPORTS_BEGIN = date(2026, 9, 16)
+
+# The pytest node running right now, or nothing outside a test. Same guard as
+# `hub.fetch.cfbd._http_get`, for the same reason: the transport refuses under the default
+# suite so that the test nobody remembered to patch cannot reach the network.
+PYTEST_NODE_ENV = "PYTEST_CURRENT_TEST"
+LIVE_TEST_SUITE = "tests/golden/"
+
+USER_AGENT = "football-hub/0.1 (+https://github.com/jacksonmlukas/football-hub)"
+
+# How many missed slots the stamp lists in full. The count is always exact; the list is
+# capped so the stamp stays a stamp.
+MISSED_LISTED = 20
+
+
+@dataclass(frozen=True)
+class Slot:
+    """One scheduled capture: a name, and when it fires each week, in UTC.
+
+    `weekday` is cron's numbering -- Sunday 0 -- because the workflow's crons are what this
+    is compared against, and the comparison should not have to translate.
+    """
+    name: str
+    weekday: int
+    hour: int
+    minute: int
+
+    def cron(self) -> str:
+        return f"{self.minute} {self.hour} * * {self.weekday}"
+
+
+# The schedule, and the argument for each line. `tests/contracts/test_bigten_schedule.py`
+# holds the workflow's crons to exactly these.
+#
+# *Evening, 01:30 UTC Wednesday through Sunday.* The midweek reports are due 8pm ET, three,
+# two and one day before kickoff. For a Saturday game that is Wednesday, Thursday and Friday
+# evening; for a Friday game, Tuesday through Thursday. 01:30 UTC is 9:30pm EDT and 8:30pm
+# EST -- after the deadline in both daylight-saving states, so one cron serves the whole
+# season without the two-state widening `live.yml` has to do. Sunday's 01:30 UTC is Saturday
+# night ET and catches the gameday reports for the late kickoffs, and Friday night's
+# gameday report for a Friday game.
+#
+# *Gameday, 15:00 and 21:00 UTC Saturday.* Gameday reports are due two hours before kickoff:
+# 10am ET for a noon game, 1:30pm for 3:30, 5-6pm for the evening windows. 15:00 UTC (11am
+# EDT) is after the noon-kickoff reports; 21:00 UTC (5pm EDT) is after the afternoon ones;
+# the Sunday-01:30 evening slot above takes the rest. Three gameday captures rather than one
+# per kickoff, because every capture is one CFBD call and the kickoff times are not known
+# to this module without another one.
+SLOTS: tuple[Slot, ...] = (
+    Slot("evening", 3, 1, 30),
+    Slot("evening", 4, 1, 30),
+    Slot("evening", 5, 1, 30),
+    Slot("evening", 6, 1, 30),
+    Slot("evening", 0, 1, 30),
+    Slot("gameday-early", 6, 15, 0),
+    Slot("gameday-late", 6, 21, 0),
+)
+
+# The index's declared column order, so a frame built from a fresh file and a frame built
+# from an old one have the same dtypes whatever the rows happen to hold. An all-null column
+# infers as `Null`, which the contract rightly refuses.
+INDEX_SCHEMA: dict[str, type[pl.DataType]] = {
+    "slot": pl.Utf8, "slot_name": pl.Utf8, "captured_at": pl.Utf8, "season": pl.Int64,
+    "kind": pl.Utf8, "url": pl.Utf8, "label": pl.Utf8, "report_updated_at": pl.Utf8,
+    "sha256": pl.Utf8, "bytes": pl.Int64, "path": pl.Utf8, "new_content": pl.Boolean,
+}
+
+
+class LiveCallRefused(Exception):
+    """A test reached the transport. Refused before anything left the process."""
+
+
+class PageShapeChanged(Exception):
+    """The page no longer carries the CMS record this module reads. The raw page is kept."""
+
+
+def _now() -> datetime:
+    """One clock, so a test can set it. Everything here that asks the time asks this."""
+    return datetime.now(UTC)
+
+
+def _get(url: str) -> bytes:
+    """The one door to the network in this module."""
+    # GUARD no-live-call-from-the-suite [unit/test_fetch_bigten.py]: a test cannot reach
+    # the conference
+    node = os.environ.get(PYTEST_NODE_ENV, "")
+    if node and not node.startswith(LIVE_TEST_SUITE):
+        raise LiveCallRefused(
+            f"{node.split(' ')[0]} would fetch {url}. No test reaches the network: patch "
+            f"`_get`, the way tests/unit/test_fetch_bigten.py does.")
+    # /GUARD
+    import requests
+    r = requests.get(url, timeout=30, headers={"User-Agent": USER_AGENT})
+    r.raise_for_status()
+    return r.content
+
+
+# --- slots ----------------------------------------------------------------------
+
+def _cron_weekday(day: date) -> int:
+    """Python's Monday-0 weekday as cron's Sunday-0."""
+    return (day.weekday() + 1) % 7
+
+
+def slot_at(now: datetime) -> tuple[Slot, datetime]:
+    """The most recent slot at or before `now`, and the instant it fired.
+
+    A run delivered two hours late belongs to the deadline it was scheduled after, not to
+    the wall-clock it happened at. Walked back day by day rather than computed, because a
+    week has seven of these and the arithmetic for "the previous Saturday 21:00" is where
+    an off-by-one hides.
+    """
+    for back in range(8):
+        day = (now - timedelta(days=back)).date()
+        candidates = [
+            (s, datetime(day.year, day.month, day.day, s.hour, s.minute, tzinfo=UTC))
+            for s in SLOTS if s.weekday == _cron_weekday(day)
+        ]
+        fired = [(s, at) for s, at in candidates if at <= now]
+        if fired:
+            return max(fired, key=lambda p: p[1])
+    raise AssertionError("SLOTS covers a week; something fired in the last seven days")
+
+
+def slot_id(at: datetime) -> str:
+    return at.strftime("%Y-%m-%dT%H%MZ")
+
+
+def expected_slots(since: date, until: datetime) -> list[tuple[Slot, datetime]]:
+    """Every slot that should have been captured between `since` and `until`."""
+    out: list[tuple[Slot, datetime]] = []
+    day = since
+    while day <= until.date():
+        wd = _cron_weekday(day)
+        for s in SLOTS:
+            if s.weekday != wd:
+                continue
+            at = datetime(day.year, day.month, day.day, s.hour, s.minute, tzinfo=UTC)
+            if at <= until:
+                out.append((s, at))
+        day += timedelta(days=1)
+    return sorted(out, key=lambda p: p[1])
+
+
+# --- the page -------------------------------------------------------------------
+
+_NEXT_DATA = re.compile(
+    r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.S)
+_HREF = re.compile(r'<a\b[^>]*\bhref="([^"]+)"[^>]*>(.*?)</a>', re.S | re.I)
+_TAGS = re.compile(r"<[^>]+>")
+
+
+@dataclass(frozen=True)
+class Article:
+    """The CMS record behind the page: what the conference last said, and when."""
+    title: str
+    updated_at: str
+    body: str
+    record: dict[str, Any]
+
+    def links(self) -> list[tuple[str, str]]:
+        """(absolute url, label) for every anchor in the body, in page order."""
+        out = []
+        for href, inner in _HREF.findall(self.body):
+            label = html.unescape(_TAGS.sub(" ", inner))
+            label = " ".join(label.split())
+            out.append((urljoin(ORIGIN, html.unescape(href)), label))
+        return out
+
+
+def parse_article(page: bytes) -> Article:
+    """The article record out of the page, or `PageShapeChanged` naming what was missing.
+
+    Deliberately narrow. The page is 1.6MB of navigation around a few hundred bytes of
+    content, and the content is a single CMS record with a stable shape -- `title`,
+    `updatedAt`, `body` -- that also carries the conference's own timestamp, which an HTML
+    scrape would not. A rename of any of those raises, and the caller archives the raw page
+    so the bytes survive the parser being wrong.
+    """
+    m = _NEXT_DATA.search(page.decode("utf-8", errors="replace"))
+    if not m:
+        raise PageShapeChanged("no __NEXT_DATA__ script on the page")
+    try:
+        data = json.loads(m.group(1))
+    except ValueError as e:
+        raise PageShapeChanged("__NEXT_DATA__ is not JSON") from e
+    props = data.get("props", {}).get("pageProps", {})
+    fallback = props.get("fallback")
+    if not isinstance(fallback, dict):
+        raise PageShapeChanged("pageProps.fallback is not a record map")
+    articles = [v for v in fallback.values()
+                if isinstance(v, dict) and v.get("_content_type_uid") == "article"]
+    if not articles:
+        raise PageShapeChanged("no article record in pageProps.fallback")
+    rec = articles[0]
+    missing = [k for k in ("title", "updatedAt", "body") if not isinstance(rec.get(k), str)]
+    if missing:
+        raise PageShapeChanged(f"article record lacks {missing}")
+    return Article(title=rec["title"], updated_at=rec["updatedAt"], body=rec["body"],
+                   record=rec)
+
+
+# --- the archive ----------------------------------------------------------------
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _ext(url: str, default: str) -> str:
+    tail = url.rsplit("/", 1)[-1].split("?", 1)[0]
+    return tail.rsplit(".", 1)[-1].lower() if "." in tail else default
+
+
+def read_index(path: Path | None = None) -> pl.DataFrame:
+    """The capture index as a frame, checked. Absent, empty; corrupt, a refusal."""
+    p = Path(path or INDEX)
+    rows: list[dict[str, Any]] = []
+    if p.exists():
+        rows = json.loads(p.read_text())
+    df = pl.DataFrame(rows, schema=INDEX_SCHEMA)
+    # GUARD index-is-checked [unit/test_fetch_bigten.py]: the index is validated on every
+    # read and every write, with the row floor relaxed only for an archive that is empty
+    contract = replace(BIGTEN_CAPTURES, min_rows=0) if not df.height else BIGTEN_CAPTURES
+    return contract.validate(df)
+    # /GUARD
+
+
+def _write_index(df: pl.DataFrame, path: Path) -> None:
+    df = BIGTEN_CAPTURES.validate(df)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(jsonio.dumps(df.to_dicts(), indent=1) + "\n")
+
+
+@dataclass
+class Capture:
+    """What one run kept, and what it could not."""
+    slot: Slot
+    at: datetime
+    season: int
+    week: int | None
+    rows: list[dict[str, Any]]
+    fetched: bool = False
+    parsed: bool = False
+    error: BaseException | None = None
+    lines_rows: int | None = None
+    lines_captured_at: str | None = None
+    lines_why: str | None = None
+
+    @property
+    def documents(self) -> int:
+        return sum(1 for r in self.rows if r["kind"] != "lines")
+
+    @property
+    def new_documents(self) -> int:
+        return sum(1 for r in self.rows if r["kind"] != "lines" and r["new_content"])
+
+
+def _keep(cap: Capture, *, kind: str, url: str, label: str | None,
+          updated_at: str | None, data: bytes, ext: str, archive: Path,
+          seen: set[str], captured_at: str) -> None:
+    """Archive one document by content hash and index it, new or not."""
+    digest = _sha(data)
+    rel = Path("availability") / str(cap.season) / kind / f"{digest[:16]}.{ext}"
+    target = archive / rel
+    new = digest not in seen
+    if new:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        seen.add(digest)
+    cap.rows.append({
+        "slot": slot_id(cap.at), "slot_name": cap.slot.name, "captured_at": captured_at,
+        "season": cap.season, "kind": kind, "url": url, "label": label,
+        "report_updated_at": updated_at, "sha256": digest, "bytes": len(data),
+        "path": rel.as_posix(), "new_content": new,
+    })
+
+
+def capture(*, now: datetime | None = None, season: int = SEASON_AHEAD,
+            archive: Path | None = None, index: Path | None = None,
+            lines_dir: Path | None = None, skip_lines: bool = False,
+            quota_path: Path | None = None) -> Capture:
+    """One capture: the page, every document it links, and the odds snapshot beside them.
+
+    Nothing here raises for a failed fetch. The page unreachable is a `Capture` with
+    `fetched=False` and the error; the page's shape changed is one with the raw page archived
+    and `parsed=False`; the odds call refused or failed leaves `lines_why` and the report rows
+    intact. `record_run` turns each into the stamp, and `main` into an exit code.
+    """
+    at_now = now or _now()
+    slot, at = slot_at(at_now)
+    archive = Path(archive or ARCHIVE)
+    index = Path(index or INDEX)
+    held = read_index(index)
+    seen = set(held["sha256"].to_list()) if held.height else set()
+    week = cfbd.configured_week(at_now).week
+    cap = Capture(slot=slot, at=at, season=season, week=week, rows=[])
+    stamp = jsonio.stamp()
+
+    try:
+        page = _get(PAGE)
+    except Exception as e:
+        cap.error = e
+        return cap
+    cap.fetched = True
+
+    try:
+        article = parse_article(page)
+    except PageShapeChanged as e:
+        # GUARD shape-change-keeps-the-bytes [unit/test_fetch_bigten.py]: a page the parser
+        # cannot read is archived whole rather than dropped
+        cap.error = e
+        _keep(cap, kind="page", url=PAGE, label=None, updated_at=None, data=page,
+              ext="html", archive=archive, seen=seen, captured_at=stamp)
+        # /GUARD
+    else:
+        cap.parsed = True
+        record = jsonio.dumps(article.record, indent=1).encode()
+        _keep(cap, kind="article", url=PAGE, label=article.title,
+              updated_at=article.updated_at, data=record, ext="json",
+              archive=archive, seen=seen, captured_at=stamp)
+        for url, label in article.links():
+            try:
+                data = _get(url)
+            except Exception as e:
+                # One document unreachable is not the capture failing: the rest are kept
+                # and the stamp names the kind of failure.
+                cap.error = cap.error or e
+                print(f"  bigten: {url} was not fetched: {type(e).__name__}",
+                      file=sys.stderr)
+                continue
+            _keep(cap, kind="file", url=url, label=label or None,
+                  updated_at=article.updated_at, data=data, ext=_ext(url, "bin"),
+                  archive=archive, seen=seen, captured_at=stamp)
+
+    if skip_lines:
+        cap.lines_why = "skipped: --skip-lines"
+    elif week is None:
+        cap.lines_why = "no college week to price: " + cfbd.configured_week(at_now).why
+    else:
+        _snapshot_lines(cap, lines_dir=Path(lines_dir or LINES), quota_path=quota_path,
+                        seen=seen, captured_at=stamp, run_started=at_now)
+
+    if cap.rows:
+        merged = pl.concat([held, pl.DataFrame(cap.rows, schema=INDEX_SCHEMA)])
+        _write_index(merged, index)
+    return cap
+
+
+def _snapshot_lines(cap: Capture, *, lines_dir: Path, quota_path: Path | None,
+                    seen: set[str], captured_at: str, run_started: datetime) -> None:
+    """The odds snapshot for this capture's week: one `/lines` call, kept beside the reports.
+
+    `refresh=True`, because the whole point is the price *at this deadline* and a cached
+    week is the price at some earlier one. `bulk` refuses to spend where it cannot -- the
+    run ceiling, the month, no key -- and serves the cache when it holds one, so the
+    capture time it reports is what says whether this snapshot is the one asked for.
+    """
+    assert cap.week is not None
+    try:
+        df = cfbd.bulk("lines", cap.season, cap.week, quota_path=quota_path, refresh=True)
+        if not df.height:
+            df = replace(CFBD_LINES, min_rows=0).validate(df) if df.width else df
+        else:
+            df = CFBD_LINES.validate(df)
+    except Exception as e:
+        cap.lines_why = f"not captured: {type(e).__name__}"
+        return
+    when = cfbd.captured_at("lines", cap.season, cap.week)
+    cap.lines_rows = df.height
+    cap.lines_captured_at = when.isoformat() if when else None
+    if when is None or when < run_started:
+        cap.lines_why = ("served from an earlier capture: the call was refused and the "
+                         "cached week was served instead")
+    target = lines_dir / str(cap.season) / f"w{cap.week:02d}" / f"{slot_id(cap.at)}.parquet"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    df.write_parquet(target)
+    data = target.read_bytes()
+    digest = _sha(data)
+    cap.rows.append({
+        "slot": slot_id(cap.at), "slot_name": cap.slot.name, "captured_at": captured_at,
+        "season": cap.season, "kind": "lines",
+        "url": f"cfbd:/lines?year={cap.season}&week={cap.week}", "label": None,
+        "report_updated_at": None, "sha256": digest, "bytes": len(data),
+        "path": target.relative_to(lines_dir).as_posix(), "new_content": digest not in seen,
+    })
+
+
+# --- the stamp ------------------------------------------------------------------
+
+def missed_slots(index: pl.DataFrame, *, now: datetime, since: date = REPORTS_BEGIN,
+                 opens: date | None = None) -> list[str]:
+    """Every deadline between the regime's first day and now with no capture behind it.
+
+    Bounded below by the season's own opening where that is later than `since`, so a stale
+    `REPORTS_BEGIN` next August does not report a summer of missed deadlines for a season
+    that had not started. Today's slot counts as missed only once its capture has had a
+    chance to run: a run that *is* the capture for the current slot writes its row before
+    this is asked.
+    """
+    start = max(since, opens) if opens else since
+    have = set(index["slot"].to_list()) if index.height else set()
+    return [slot_id(at) for _, at in expected_slots(start, now) if slot_id(at) not in have]
+
+
+def record_run(cap: Capture | None, *, why: str | None = None, season: int = SEASON_AHEAD,
+               index: Path | None = None, path: Path | None = None,
+               quota_path: Path | None = None, now: datetime | None = None) -> dict[str, Any]:
+    """What this run did, in the three states `hub.fetch.cfbd.record_run` writes.
+
+    * **captured** -- `fetched: true`, `stale: false`. The page was read and parsed and the
+      odds snapshot is the one this deadline asked for (or was deliberately skipped).
+    * **captured, degraded** -- `fetched: true`, `stale: true`, with the reason: the page's
+      shape changed and only the raw bytes were kept, a linked document could not be
+      fetched, or the odds snapshot is an earlier one or missing.
+    * **not captured** -- `fetched: false`, `stale: true`, and the sentence from whatever
+      declined: before the first report, no season, the page unreachable.
+
+    **Counts, hashes and slot ids, never payload text.** The one exception is the
+    conference's own `updatedAt`, which is a timestamp and the fact this archive is built
+    around. A failure arrives here as the exception and only its type is recorded, for the
+    reason `cfbd.record_run` gives: a message is an open channel from a third party into a
+    committed file.
+    """
+    at_now = now or _now()
+    _first, opens, _why = cfbd.week_one_opens()
+    # The index refusing is one of the things this may be recording, so it is read for the
+    # count and the missed list and read as empty when it cannot be.
+    try:
+        held = read_index(index)
+    except Exception:
+        held = pl.DataFrame(schema=INDEX_SCHEMA)
+    missed = missed_slots(held, now=at_now, opens=opens)
+    if cap is None:
+        fetched, stale, reason = False, True, (why or "nothing was captured")
+        slot: dict[str, Any] = {"id": None, "name": None}
+        week: int | None = None
+        documents = {"seen": 0, "new": 0}
+        lines: dict[str, Any] = {"rows": None, "captured_at": None, "why": reason}
+    else:
+        slot = {"id": slot_id(cap.at), "name": cap.slot.name}
+        week = cap.week
+        documents = {"seen": cap.documents, "new": cap.new_documents}
+        lines = {"rows": cap.lines_rows, "captured_at": cap.lines_captured_at,
+                 "why": cap.lines_why}
+        kind = type(cap.error).__name__ if cap.error is not None else None
+        if not cap.fetched:
+            fetched, stale = False, True
+            reason = (f"nothing was captured: the page could not be fetched ({kind}). Its "
+                      f"message is on stderr and deliberately not here")
+        elif not cap.parsed:
+            fetched, stale = True, True
+            reason = (f"the page's shape changed ({kind}); the raw page is archived and "
+                      f"nothing was parsed out of it")
+        elif cap.error is not None:
+            fetched, stale = True, True
+            reason = f"a linked document could not be fetched ({kind}); the rest were kept"
+        elif cap.lines_why and not cap.lines_why.startswith("skipped"):
+            fetched, stale = True, True
+            reason = f"reports captured; odds snapshot {cap.lines_why}"
+        else:
+            fetched, stale, reason = True, False, None
+    got: dict[str, Any] = jsonio.summary(
+        "bigten", "hub.fetch.bigten",
+        season=season, week=week, slot=slot, fetched=fetched, stale=stale, reason=reason,
+        documents=documents, lines=lines,
+        missed={"count": len(missed), "slots": missed[-MISSED_LISTED:]},
+        archive_rows=held.height,
+        quota={"month": cfbd._month_key(), "used": cfbd.quota_used(quota_path),
+               "limit": cfbd.FREE_TIER_MONTHLY},
+    )
+    p = Path(path or STATUS)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(jsonio.dumps(got, indent=2))
+    said = reason or (f"slot {slot['id']} captured: {documents['seen']} documents, "
+                      f"{documents['new']} new; lines {lines['rows']} rows")
+    print(f"  bigten: {said}; {len(missed)} deadlines missed so far; recorded in {p}")
+    return got
+
+
+def not_yet(now: datetime | None = None) -> str | None:
+    """Why no capture should be attempted now, or None if one should.
+
+    Before the first report there is nothing to keep and a snapshot would spend a call on a
+    page that says nothing. After the regular season the same, and that end is the season
+    anchor's rather than a second date here.
+    """
+    at_now = now or _now()
+    if at_now.date() < REPORTS_BEGIN:
+        return (f"nothing was captured: the first availability report is due "
+                f"{REPORTS_BEGIN.isoformat()}, and this is {at_now.date().isoformat()}")
+    choice = cfbd.configured_week(at_now)
+    if choice.week is None:
+        return "nothing was captured: " + choice.why.removeprefix("nothing was fetched: ")
+    return None
+
+
+def status_report(index: Path | None = None, now: datetime | None = None) -> int:
+    at_now = now or _now()
+    held = read_index(index)
+    _first, opens, _why = cfbd.week_one_opens()
+    missed = missed_slots(held, now=at_now, opens=opens)
+    slots = sorted(set(held["slot"].to_list())) if held.height else []
+    print(f"  bigten archive: {held.height:,} rows over {len(slots)} captured slots")
+    if slots:
+        print(f"  first {slots[0]}, latest {slots[-1]}")
+    print(f"  missed deadlines since {REPORTS_BEGIN.isoformat()}: {len(missed)}")
+    for s in missed[-MISSED_LISTED:]:
+        print(f"    {s}")
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="hub.fetch.bigten",
+        description="Archive the Big Ten availability reports for the current deadline, "
+                    "with an odds snapshot beside them. One CFBD call per capture.")
+    ap.add_argument("--capture", action="store_true",
+                    help="fetch the page, archive every document it links, snapshot lines")
+    ap.add_argument("--status", action="store_true",
+                    help="what the archive holds and which deadlines were missed")
+    ap.add_argument("--skip-lines", action="store_true",
+                    help="archive the reports and spend no CFBD call")
+    ap.add_argument("--season", type=int, default=SEASON_AHEAD)
+    ap.add_argument("--archive", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--index", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--lines-dir", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--status-path", default=None,
+                    help="where to record what this run did (default site/data/bigten.json)")
+    ap.add_argument("--quota-path", default=None, help=argparse.SUPPRESS)
+    a = ap.parse_args(argv)
+    cfbd.reset_run_budget()
+    index = Path(a.index) if a.index else None
+    spath = Path(a.status_path) if a.status_path else None
+    qpath = Path(a.quota_path) if a.quota_path else None
+
+    if a.status or not a.capture:
+        return status_report(index)
+
+    # GUARD nothing-to-capture-is-recorded [unit/test_fetch_bigten.py]: before the first
+    # report, or with no season, the run leaves a record and spends nothing
+    if (why := not_yet()) is not None:
+        record_run(None, why=why, season=a.season, index=index, path=spath, quota_path=qpath)
+        print(f"hub.fetch.bigten: {why}", file=sys.stderr)
+        return 1
+    # /GUARD
+
+    try:
+        cap = capture(season=a.season, archive=Path(a.archive) if a.archive else None,
+                      index=index, lines_dir=Path(a.lines_dir) if a.lines_dir else None,
+                      skip_lines=a.skip_lines, quota_path=qpath)
+    except Exception as e:
+        # The index refusing, or a disk that will not take a write. Caught for the reason
+        # `cfbd.main` catches: the exit code of a scheduled job reaches nobody, and the
+        # record has to be written by whatever survived.
+        record_run(None, why=f"nothing was captured: {type(e).__name__}", season=a.season,
+                   index=index, path=spath, quota_path=qpath)
+        print(f"hub.fetch.bigten: nothing was captured: {type(e).__name__}: {e}",
+              file=sys.stderr)
+        return 1
+
+    record_run(cap, season=a.season, index=index, path=spath, quota_path=qpath)
+    if cap.error is not None:
+        print(f"hub.fetch.bigten: {type(cap.error).__name__}: {cap.error}", file=sys.stderr)
+    return 0 if cap.fetched else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
