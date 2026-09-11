@@ -60,7 +60,8 @@ CLI_MODULES = (
     "hub.models.coverage",
     "hub.models.correlate", "hub.models.eval", "hub.models.injury", "hub.models.margin",
     "hub.models.ratings", "hub.models.spread",
-    "hub.models.component_error", "hub.models.weekly", "hub.models.weekly_screen", "hub.publish", "hub.season.lineup",
+    "hub.models.component_error", "hub.models.props", "hub.models.weekly",
+    "hub.models.weekly_screen", "hub.publish", "hub.season.lineup",
     "hub.season.lineup_gate", "hub.season.roster", "hub.season.weekly_gate",
     "hub.season.survivor", "hub.season.pool", "hub.season.journal", "hub.store",
 )
@@ -245,6 +246,7 @@ ABSENT_INPUT = [
     ("hub.models.eval", ["--compare", "a,b", "--store", "{tmp}"]),
     ("hub.models.injury", ["--fit"]),
     ("hub.models.margin", ["--fit"]),
+    ("hub.models.props", ["--report", "--base", "{tmp}"]),
     ("hub.models.ratings", ["--fit"]),
     ("hub.models.spread", ["--fit"]),
     ("hub.models.weekly", ["--fit"]),

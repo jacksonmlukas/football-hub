@@ -305,7 +305,7 @@ def record(*, season: int, week: int, kind: str, chose: str,
     reproducible to a query on any one column, so either every one of them is present or
     none is. `record_weekly` supplies all of them off `pool.Weekly`.
     """
-    # `plan_source` is a label on the plan, not an input to the re-run, and a buyback has no
+    # `plan_source` labels the survivor plan and is no input to the re-run, and a buyback has no
     # plan; the seven that follow are what `pool.weekly` has to be handed to land on the row's
     # figure again.
     rerun = {"pool_digest": pool_digest, "grid_digest": grid_digest, "seed": seed,

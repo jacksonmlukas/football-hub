@@ -405,10 +405,14 @@ FITTED_EXTRA: tuple[str, ...] = (
 # right way round: a constant wrongly covered costs one restated digest, and a constant
 # wrongly missing costs a model version that claims two different models are the same one.
 NOT_IN_DIGEST: dict[str, str] = {
-    "components.PER_UNIT_CV": "read only by components.sample_weeks",
-    "components.YARDS_PER_UNIT": "read only by components.sample_weeks",
-    "components.COUNT_DISPERSION": "read only by components.sample_weeks",
-    "components.TD_DISPERSION": "read only by components.sample_weeks",
+    # Read by `components.sample_weeks`, which no prediction reaches (above), and since #217
+    # by `models.props`, which prices a prop and is a published prediction -- so it carries
+    # the four in its own `props.version()` rather than through this digest, which
+    # identifies the *points* model that never reads them.
+    "components.PER_UNIT_CV": "no points prediction reads it; props.version() carries it",
+    "components.YARDS_PER_UNIT": "no points prediction reads it; props.version() carries it",
+    "components.COUNT_DISPERSION": "no points prediction reads it; props.version() carries it",
+    "components.TD_DISPERSION": "no points prediction reads it; props.version() carries it",
     # The four in `hub.models.predict` that #187 and #201 argued about. Each was out of the
     # digest before only because someone spelled it with a leading underscore; each is out of
     # it now because of what it is, and the claim is here to be checked.

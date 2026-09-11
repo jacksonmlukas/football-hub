@@ -21,6 +21,8 @@ import statistics
 import polars as pl
 import pytest
 
+from hub import store
+from hub.contracts import ContractViolation
 from hub.fetch import odds
 
 
@@ -938,3 +940,175 @@ def test_both_reports_name_a_season_the_archive_does_not_hold(paths, capsys):
     for flag in ("--staleness", "--noise-floor"):
         assert odds.main([flag, "--season", "2027", "--base", str(paths["store"])]) == 0
         assert "no 2027 snapshots in the archive" in capsys.readouterr().out, flag
+
+
+# --- player props (#217): the recording half, with no pull behind it ------------------
+
+def _prop_event(home="Philadelphia Eagles", away="Dallas Cowboys", day="2025-09-04", *,
+                books=(("Jalen Hurts", "player_pass_yds", 250.5, -115, -105),
+                       ("Jalen Hurts", "player_pass_yds", 251.5, -110, -110))):
+    """One per-event props response in the documented shape: the side in `name`, the player in
+    `description`. Each book carries one (player, market) quote from `books`."""
+    return {
+        "id": f"{away}@{home}", "commence_time": f"{day}T20:00:00Z",
+        "home_team": home, "away_team": away,
+        "bookmakers": [
+            {"key": f"book{i}", "markets": [{"key": market, "outcomes": [
+                {"name": "Over", "description": player, "price": over, "point": point},
+                {"name": "Under", "description": player, "price": under, "point": point},
+            ]}]}
+            for i, (player, market, point, over, under) in enumerate(books)
+        ],
+    }
+
+
+NOON = dt.datetime(2025, 9, 3, 12)
+_PKEY = ("game_id", "player_key", "market")
+
+
+def test_prop_quotes_read_the_documented_shape_and_combine_books_by_median():
+    rows = odds.prop_quotes(_prop_event(), "2025_01_DAL_PHI", 1, NOON)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["player_key"] == "jalen hurts" and r["player"] == "Jalen Hurts"
+    assert r["market"] == "player_pass_yds" and r["point"] == 251.0
+    assert r["over_price"] == pytest.approx(-112.44, abs=0.01), "the median in decimal space"
+    assert r["under_price"] == pytest.approx(-107.44, abs=0.01)
+    assert r["game_id"] == "2025_01_DAL_PHI" and r["week"] == 1 and r["captured_at"] == NOON
+
+
+def test_the_anytime_market_has_no_point_and_its_yes_is_the_over():
+    ev = _prop_event(books=())
+    ev["bookmakers"] = [{"key": "b", "markets": [{"key": "player_anytime_td", "outcomes": [
+        {"name": "Yes", "description": "Saquon Barkley", "price": -150},
+        {"name": "No", "description": "Saquon Barkley", "price": +120},
+        {"name": "Yes", "description": "A Lineman", "price": +2500},
+    ]}]}]
+    rows = {r["player_key"]: r for r in odds.prop_quotes(ev, "g", 1, NOON)}
+    assert rows["saquon barkley"]["point"] is None
+    assert rows["saquon barkley"]["over_price"] == pytest.approx(-150.0)
+    assert rows["saquon barkley"]["under_price"] == pytest.approx(120.0)
+    assert rows["a lineman"]["under_price"] is None, "a one-sided quote keeps its one side"
+
+
+def test_a_point_market_with_no_point_or_no_over_is_skipped_not_stored():
+    ev = _prop_event(books=())
+    ev["bookmakers"] = [{"key": "b", "markets": [
+        {"key": "player_receptions", "outcomes": [
+            {"name": "Over", "description": "No Point", "price": -110},
+            {"name": "Under", "description": "No Point", "price": -110}]},
+        {"key": "player_receptions", "outcomes": [
+            {"name": "Under", "description": "Under Only", "price": -110, "point": 4.5}]},
+        {"key": "player_receptions", "outcomes": [
+            {"name": "Over", "description": "Priced", "price": -110, "point": 4.5},
+            {"name": "Under", "description": "Priced", "price": "even", "point": 4.5}]},
+        {"key": "h2h", "outcomes": [{"name": "Over", "description": "Wrong Market",
+                                     "price": -110, "point": 1.5}]},
+    ]}]
+    rows = odds.prop_quotes(ev, "g", 1, NOON)
+    assert [r["player_key"] for r in rows] == ["priced"]
+    assert rows[0]["under_price"] is None, "an unreadable price is a null beside the point"
+
+
+def test_an_outcome_with_no_player_or_an_unknown_side_is_skipped():
+    ev = _prop_event(books=())
+    ev["bookmakers"] = [{"key": "b", "markets": [{"key": "player_receptions", "outcomes": [
+        {"name": "Over", "price": -110, "point": 4.5},
+        {"name": "Exactly", "description": "Odd Side", "price": +500, "point": 4.5},
+        {"name": "Over", "description": "Kept", "price": -110, "point": 4.5},
+    ]}]}]
+    assert [r["player_key"] for r in odds.prop_quotes(ev, "g", 1, NOON)] == ["kept"]
+
+
+def test_no_props_market_is_budgeted_and_every_one_is_refused_by_name(transport, teams,
+                                                                       schedule, paths):
+    """The line this ticket must not cross. A props market runs about four credits an event,
+    and the guard refuses each of them before a request is formed."""
+    assert not set(odds.PROP_MARKETS) & set(odds.MARKETS)
+    for market in odds.PROP_MARKETS:
+        calls = transport()
+        with pytest.raises(odds.MultiplierRefused, match="four credits an event"):
+            odds.snapshot(season=2025, markets=f"spreads,{market}",
+                          state_path=paths["state"], base=paths["store"])
+        assert not calls
+
+
+def test_record_props_writes_prop_lines_and_stamps_staleness_against_the_archive(
+        teams, schedule, paths):
+    first = odds.record_props([_prop_event()], 2025, NOON, base=paths["store"])
+    assert first["polls_unmoved"].to_list() == [1]
+    assert "prop_lines" in store.tables(paths["store"])
+    # The same quote two hours on is the second poll of a run; a moved quote starts one.
+    same = odds.record_props([_prop_event()], 2025, NOON + dt.timedelta(hours=2),
+                             base=paths["store"])
+    assert same["polls_unmoved"].to_list() == [2]
+    assert same["unmoved_since"].to_list() == [NOON]
+    moved = odds.record_props(
+        [_prop_event(books=(("Jalen Hurts", "player_pass_yds", 255.5, -110, -110),))],
+        2025, NOON + dt.timedelta(hours=4), base=paths["store"])
+    assert moved["polls_unmoved"].to_list() == [1]
+    archive = store.sql("SELECT * FROM prop_lines", base=paths["store"])
+    assert archive.height == 3, "snapshots append"
+    assert set(archive["week"].cast(pl.Int64)) == {1}
+
+
+def test_record_props_counts_an_unmatched_event_and_writes_nothing_for_it(teams, schedule,
+                                                                           paths, capsys):
+    got = odds.record_props([_prop_event(home="Nobody FC")], 2025, NOON, base=paths["store"])
+    assert got.is_empty()
+    assert "1 events with no nflverse game" in capsys.readouterr().out
+    assert "prop_lines" not in store.tables(paths["store"])
+
+
+def test_the_props_archive_is_refused_under_its_contract(teams, schedule, paths):
+    ev = _prop_event(books=(("Jalen Hurts", "player_pass_yds", 900.5, -110, -110),))
+    with pytest.raises(ContractViolation, match="point"):
+        odds.record_props([ev], 2025, NOON, base=paths["store"])
+
+
+def test_a_null_point_against_a_null_point_is_not_a_move():
+    """The anytime market has no point. Two polls at a null point and one price are one run;
+    a plain `!=` on nulls would call every one of them a move and every run a run of one."""
+    polls = pl.DataFrame(
+        {"game_id": ["g"] * 3, "player_key": ["p"] * 3, "market": ["player_anytime_td"] * 3,
+         "point": [None, None, None], "over_price": [-150.0, -150.0, -140.0],
+         "captured_at": [dt.datetime(2026, 9, 1), dt.datetime(2026, 9, 2),
+                         dt.datetime(2026, 9, 3)]},
+        schema={"game_id": pl.Utf8, "player_key": pl.Utf8, "market": pl.Utf8,
+                "point": pl.Float64, "over_price": pl.Float64, "captured_at": pl.Datetime})
+    got = odds.staleness(polls, key=_PKEY, point="point", price="over_price")
+    assert got["polls_unmoved"].to_list() == [1, 2, 1]
+
+
+def test_prop_staleness_is_measured_per_player_and_market_not_per_game():
+    polls = pl.DataFrame(
+        {"game_id": ["g"] * 4, "player_key": ["a", "b", "a", "b"],
+         "market": ["player_receptions"] * 4, "point": [4.5, 5.5, 4.5, 6.5],
+         "over_price": [-110.0] * 4,
+         "captured_at": [dt.datetime(2026, 9, 1)] * 2 + [dt.datetime(2026, 9, 2)] * 2},
+        schema={"game_id": pl.Utf8, "player_key": pl.Utf8, "market": pl.Utf8,
+                "point": pl.Float64, "over_price": pl.Float64, "captured_at": pl.Datetime})
+    got = odds.staleness(polls, key=_PKEY, point="point", price="over_price")
+    assert got.sort("player_key", "captured_at")["polls_unmoved"].to_list() == [1, 2, 1, 1]
+
+
+def test_the_record_props_command_reads_a_payload_file_and_spends_nothing(teams, schedule,
+                                                                           paths, tmp_path,
+                                                                           monkeypatch):
+    def _no_http(*a, **k):
+        raise AssertionError("a props payload on disk must not reach the betting market")
+    monkeypatch.setattr(odds, "_http_get", _no_http)
+    payload = tmp_path / "props.json"
+    payload.write_text(json.dumps([_prop_event()]))
+    assert odds.main(["--record-props", str(payload), "--season", "2025",
+                      "--base", str(paths["store"])]) == 0
+    assert "prop_lines" in store.tables(paths["store"])
+    assert odds.credits_remaining(paths["state"]) is None, "no balance was touched"
+
+
+def test_a_missing_payload_file_is_a_sentence(paths, tmp_path, capsys):
+    code = odds.main(["--record-props", str(tmp_path / "nope.json"),
+                      "--base", str(paths["store"])])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "props payload" in err and "Traceback" not in err
