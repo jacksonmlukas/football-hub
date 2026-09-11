@@ -359,8 +359,9 @@ class Weekly(NamedTuple):
     **It is not the quantity ADR-0014's threshold is stated in.** The rule fires on a
     win-probability cost of under ~8pp; this is a season-survival difference, and the two
     routinely disagree in sign, because buying survival later with a lower win probability now
-    is the entire thesis of a survivor plan. Named in `journal.record_weekly`, which is where
-    the column is written and where the choice between them has to be made.
+    is the entire thesis of a survivor plan. #209 settled it: `journal.record_weekly` logs
+    both, and `week_cost` -- the fallback's `win_prob` minus the taken candidate's, off the
+    same `candidates` -- is the threshold quantity. This stays as the thesis.
 
     It is **signed on purpose**. A departure that survives better than the free pick has given
     up nothing and gained something, and clamping that to zero would file it as "the two plans

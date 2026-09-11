@@ -41,8 +41,11 @@ the cost is checked against them.
 Those checks name `pool.Weekly`'s fields and nothing supplied one, so a units or
 sign-convention disagreement between the two shapes could not have shown up. `record_weekly`
 is the adapter that closes that, and the disagreement it found -- the column ADR-0014's rule
-would be judged by is not the quantity ADR-0014's rule fires on -- is written down there
-rather than quietly reconciled.
+would be judged by was not the quantity ADR-0014's rule fires on -- is settled by #209: a
+departure logs **both** costs under distinct names. `week_cost`, the free pick's win
+probability minus ours, is the threshold quantity and the column that discharges the duty;
+`survival_given_up` is the season figure and the thesis of our plan, and on the pinned grid
+the two disagree in sign.
 
 **A row carries what it takes to reproduce its own figure** (#162). The schema carried the
 dollar figure and the survival given up and none of what produced them -- no pool digest, no
@@ -106,7 +109,12 @@ SCHEMA: dict[str, Any] = {
     "expected_dollars": pl.Float64,
     "chose_survives": pl.Float64,      # P(the season is survived, having taken what we took)
     "fallback_survives": pl.Float64,   # the same, for the free pick
-    "survival_given_up": pl.Float64,   # their difference, per ADR-0014's logging duty
+    "survival_given_up": pl.Float64,   # their difference: the thesis of our plan, not the
+                                       # threshold quantity (#209)
+    "fallback_price": pl.Float64,      # the free pick's own win probability this week
+    "week_cost": pl.Float64,           # fallback_price - market_price: the win-probability
+                                       # cost ADR-0014's threshold is stated in, and the
+                                       # column that discharges its logging duty (#209)
     "cost_credits": pl.Float64,        # a before-and-after difference, not a meter
     "cost_note": pl.Utf8,
     # What it takes to run the figure again (#162): the rules, the board, the trials and
@@ -171,8 +179,9 @@ def parse_key(k: str) -> tuple[int, int, str]:
 
 def _check_adr_0014(*, week: int, kind: str, chose: str, fallback: str | None,
                     fallback_note: str | None, chose_survives: float | None,
-                    fallback_survives: float | None,
-                    survival_given_up: float | None) -> None:
+                    fallback_survives: float | None, survival_given_up: float | None,
+                    market_price: float | None = None, fallback_price: float | None = None,
+                    week_cost: float | None = None) -> None:
     """ADR-0014's logging duty, as an invariant rather than a column that may be filled.
 
     `docs/decisions.md` registers the survivor contrarian threshold under ADR-0014, and the
@@ -190,6 +199,15 @@ def _check_adr_0014(*, week: int, kind: str, chose: str, fallback: str | None,
 
     **Using a kind nothing validates.** `kind` was free text, so a row could be filed under a
     name no rule had heard of. It is a closed set, checked before anything else here.
+
+    **And the cost in the wrong quantity** (#209). ADR-0014's threshold is a *week*
+    win-probability cost -- "under ~8pp" -- and the column that discharged its logging duty
+    was a season-survival difference, which disagrees with it in sign on the pinned grid.
+    A departure now carries both, under distinct names: `week_cost` is the free pick's win
+    probability minus ours and is the threshold quantity; `survival_given_up` stays as the
+    thesis of our plan working. The same shape as the survival trio -- both prices on the
+    row and the cost checked against them -- so a week cost nobody computed cannot be
+    written either.
     """
     if kind not in KINDS:
         raise ValueError(
@@ -214,10 +232,30 @@ def _check_adr_0014(*, week: int, kind: str, chose: str, fallback: str | None,
             "fallback_survives and survival_given_up. Zero is an answer -- the two plans "
             "survive alike -- and it is an answer that has to be computed to be written.")
 
+    if given and (market_price is None or fallback_price is None or week_cost is None):
+        raise ValueError(
+            f"week {week}: {chose!r} departs from the free pick {fallback!r} without "
+            "recording the week's cost. ADR-0014's threshold is stated in win probability "
+            "on the week -- under ~8pp -- and `survival_given_up` is not that quantity "
+            "(#209). Pass market_price (ours), fallback_price (the free pick's) and "
+            "week_cost, their difference, so the cost the rule fires on is on the row.")
+
     for name, p in (("chose_survives", chose_survives),
-                    ("fallback_survives", fallback_survives)):
+                    ("fallback_survives", fallback_survives),
+                    ("fallback_price", fallback_price),
+                    # A price is a probability only once a week cost is being stated in it;
+                    # a row with no fallback price may carry the betting market's number.
+                    ("market_price", market_price if fallback_price is not None else None)):
         if p is not None and not 0.0 <= p <= 1.0:
             raise ValueError(f"{name}={p} is not a probability")
+    if (market_price is not None and fallback_price is not None and week_cost is not None
+            and abs((fallback_price - market_price) - week_cost) > _SAME):
+        raise ValueError(
+            f"week {week}: week_cost={week_cost} is not what the two prices say. The free "
+            f"pick wins at {fallback_price} and ours at {market_price}, a cost of "
+            f"{fallback_price - market_price} on the week. ADR-0014's threshold is stated "
+            "in this quantity, so a cost that was not computed from the prices is not "
+            "the cost the rule fires on.")
     if (chose_survives is not None and fallback_survives is not None
             and survival_given_up is not None
             and abs((fallback_survives - chose_survives) - survival_given_up) > _SAME):
@@ -231,7 +269,8 @@ def _check_adr_0014(*, week: int, kind: str, chose: str, fallback: str | None,
 
 def record(*, season: int, week: int, kind: str, chose: str,
            fallback: str | None = None, fallback_note: str | None = None,
-           market_price: float | None = None,
+           market_price: float | None = None, fallback_price: float | None = None,
+           week_cost: float | None = None,
            price_note: str | None = None, expected_dollars: float | None = None,
            chose_survives: float | None = None, fallback_survives: float | None = None,
            survival_given_up: float | None = None,
@@ -273,7 +312,8 @@ def record(*, season: int, week: int, kind: str, chose: str,
     _check_adr_0014(week=week, kind=kind, chose=chose, fallback=fallback,
                     fallback_note=fallback_note, chose_survives=chose_survives,
                     fallback_survives=fallback_survives,
-                    survival_given_up=survival_given_up)
+                    survival_given_up=survival_given_up, market_price=market_price,
+                    fallback_price=fallback_price, week_cost=week_cost)
     cost = (credits_before - credits_after
             if credits_before is not None and credits_after is not None else None)
     if cost is not None and cost < 0:
@@ -294,6 +334,7 @@ def record(*, season: int, week: int, kind: str, chose: str,
         "expected_dollars": [expected_dollars],
         "chose_survives": [chose_survives], "fallback_survives": [fallback_survives],
         "survival_given_up": [survival_given_up],
+        "fallback_price": [fallback_price], "week_cost": [week_cost],
         "cost_credits": [cost],
         "cost_note": [None if cost is not None
                       else "credit balance unknown on at least one side"],
@@ -331,12 +372,14 @@ def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
     not incidental -- the whole thesis of the survivor plan is that a lower win probability
     now can buy a higher survival later, so the two routinely disagree.
 
-    Neither is relabelled as the other. `market_price` carries the taken team's own win
-    probability, so the week's price is on the row; the chalk's price is not, so the
-    win-probability cost the ADR's threshold is stated in is **not recoverable from the
-    journal today**. Recording it would mean adding columns to what a provisional rule logs,
-    which is ADR-0014's decision and not this function's -- so it is surfaced here rather than
-    settled here.
+    Neither is relabelled as the other, and both are logged (#209). `market_price` carries
+    the taken team's own win probability, `fallback_price` the free pick's, and `week_cost`
+    their difference -- the quantity the ADR's threshold is stated in, and the column that
+    discharges its logging duty. `survival_given_up` stays beside it as the thesis of the
+    plan working: on the grid in `tests/unit/test_journal.py` they disagree in sign, 2.0pp
+    better on the week and 27.8pp worse over the season, and dropping the season figure
+    would lose the argument for our plan where logging it under the threshold's name was
+    the error. ADR-0014 names which column is its threshold quantity, dated.
 
     **Who calls this.** An operator, at the point the week's pick is entered: `pool.weekly`
     prices the week and this writes down what was done about it. There is no scheduled job
@@ -360,6 +403,8 @@ def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
         fallback_note=(None if w.fallback is not None else
                        "auto-pick had no team left to assign, so there was nothing free"),
         market_price=by_team[took].win_prob,
+        fallback_price=fb.win_prob if fb is not None else None,
+        week_cost=(fb.win_prob - by_team[took].win_prob) if fb is not None else None,
         price_note="win probability off the board's grid at the moment of the decision",
         expected_dollars=by_team[took].expected_dollars,
         chose_survives=by_team[took].survives,
@@ -494,9 +539,12 @@ def report(rows: pl.DataFrame) -> list[str]:
     if rows.is_empty():
         return ["\n  no decisions recorded"]
     out = [f"\n  {'week':>4}  {'kind':<7}  {'chose':<10}  {'free':<5}  {'$':>8}  "
-           f"{'given up':>9}  {'settled':<8}  rules"]
+           f"{'week cost':>9}  {'given up':>9}  {'settled':<8}  rules"]
     for r in rows.sort("at").iter_rows(named=True):
         dollars = "" if r["expected_dollars"] is None else f"{r['expected_dollars']:+.2f}"
+        # Both costs, under their own names (#209): the week's is the threshold quantity,
+        # the season's is the thesis, and on a real grid they disagree in sign.
+        week = "" if r["week_cost"] is None else f"{r['week_cost'] * 100:+.1f}pp"
         cost = ("" if r["survival_given_up"] is None else
                 f"{r['survival_given_up'] * 100:+.1f}pp")
         settled = ("" if r.get("survived") is None else
@@ -504,8 +552,8 @@ def report(rows: pl.DataFrame) -> list[str]:
         rules = (f"{r['pool_digest']} seed {r['seed']} x{r['trials']}"
                  if r.get("pool_digest") is not None else "not re-derivable")
         out.append(f"  {r['week']:>4}  {r['kind']:<7}  {r['chose']:<10}  "
-                   f"{(r['fallback'] or '-'):<5}  {dollars:>8}  {cost:>9}  {settled:<8}  "
-                   f"{rules}")
+                   f"{(r['fallback'] or '-'):<5}  {dollars:>8}  {week:>9}  {cost:>9}  "
+                   f"{settled:<8}  {rules}")
     return out
 
 
