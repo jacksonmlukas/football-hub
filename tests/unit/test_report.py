@@ -232,7 +232,7 @@ def test_a_whole_board_still_names_the_disputed_coefficient_it_applied():
 
     It is not a degradation note -- nothing failed, and `built without` stays empty.
     """
-    whole = _rep(sos=True, td_luck=True, durability=True, adp=True,
+    whole = _rep(sos=True, td_luck=True, durability=True, bye=True, adp=True,
                  scoring_checked=True, roster_checked=True)
     out = "\n".join(report.built_or_served(whole, None))
     assert "built without" not in out and "CORRECTED ADP is missing" not in out
@@ -259,7 +259,7 @@ def test_no_corrected_ranking_means_no_disposition_either():
 def test_touchdown_luck_is_never_named_as_a_disputed_correction_that_applied():
     """#48 zeroed it rather than flagging it, which is the ticket's own split: a
     sign-reversed coefficient is a bug and does not ship behind a flag."""
-    whole = _rep(sos=True, td_luck=True, durability=True, adp=True)
+    whole = _rep(sos=True, td_luck=True, durability=True, bye=True, adp=True)
     out = "\n".join(report.built_or_served(whole, None))
     assert "touchdown luck" not in out
 
@@ -287,7 +287,7 @@ def test_a_served_board_that_carries_nothing_says_that_rather_than_nothing():
 def test_a_served_board_carrying_everything_still_says_it_is_served():
     """The distinguishing line cannot be a side effect of something being missing."""
     out = "\n".join(report.built_or_served(
-        _served(sos=True, td_luck=True, durability=True, adp=True,
+        _served(sos=True, td_luck=True, durability=True, bye=True, adp=True,
                 scoring_checked=True, roster_checked=True), 2.0))
     assert "SERVED BOARD" in out and "every optional signal" in out
 

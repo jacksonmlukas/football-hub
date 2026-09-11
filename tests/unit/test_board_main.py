@@ -52,7 +52,7 @@ def test_main_returns_an_exit_code():
 
 def test_a_fresh_report_has_nothing_and_says_so():
     r = board.BuildReport()
-    assert set(r.degraded()) == {"sos", "td_luck", "durability", "adp",
+    assert set(r.degraded()) == {"sos", "td_luck", "durability", "bye", "adp",
                                  "scoring_checked", "roster_checked"}
 
 
@@ -104,7 +104,8 @@ def _rich_board(tmp_path):
     """A last-good board carrying every optional column a real one carries."""
     p = tmp_path / "draft_board.parquet"
     pl.DataFrame({"player": ["A"], "pos": ["RB"], "vor": [1.0], "adp": [3.0],
-                  "td_luck": [0.5], "missed": [4], "wk15_17_sos": [1.1]}).write_parquet(p)
+                  "td_luck": [0.5], "missed": [4], "wk15_17_sos": [1.1],
+                  "bye_week": [10]}).write_parquet(p)
     return p
 
 
@@ -136,7 +137,7 @@ def test_the_served_report_describes_the_board_that_was_served(monkeypatch, tmp_
     _got, report, age = board.build_or_last_good(path=_rich_board(tmp_path))
     assert age is not None, "this is the served path"
     assert report.served is True
-    assert set(report.carried()) == {"sos", "td_luck", "durability", "adp"}
+    assert set(report.carried()) == {"sos", "td_luck", "durability", "bye", "adp"}
     # The two checks compare the league's settings against this repo's and write no column,
     # so a board off disk cannot claim them -- and does not.
     assert set(report.degraded()) == {"scoring_checked", "roster_checked"}
