@@ -284,3 +284,214 @@ def test_the_fit_path_keeps_the_incumbent_when_it_is_right(monkeypatch, capsys):
 
     assert margin.main(["--fit"]) == 0
     assert "KEEP" in capsys.readouterr().out
+
+
+# --- the shape: mass on the key numbers (#185) -----------------------------
+#
+# Written before the walk-forward was run, as the tests above were. The recorded outcome
+# (`FITTED_KEY_EXCESS`, `FITTED_SHAPE_GAIN`) was filled in afterwards and the last two tests
+# guard the live shape against it.
+
+def _lumpy_synthetic(seasons=range(2000, 2011), per=200, sd=11.0, seed=1, at=3, share=0.15,
+                     symmetric=True):
+    """Gaussian margins with `share` of games moved onto a margin of exactly +/-`at`.
+
+    `symmetric=True` gives the sign a coin flip -- the lump sits on both sides of the spread,
+    which is the shape the bump model is built for. `symmetric=False` puts it on the
+    favourite's side only, which is a lump the bump model cannot see the sign of.
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    for yr in seasons:
+        spreads = rng.uniform(-10, 10, per)
+        margins = np.rint(spreads + rng.normal(0, sd, per))
+        lump = rng.uniform(size=per) < share
+        sign = rng.choice([-1.0, 1.0], size=per) if symmetric else np.sign(spreads)
+        margins[lump] = at * sign[lump]
+        margins[margins == 0] = 1
+        rows += [(yr, float(s), int(m)) for s, m in zip(spreads, margins, strict=True)]
+    return _sched(rows)
+
+
+def test_key_number_mass_reads_the_histogram_off_the_sample():
+    """Every game ending on exactly 3 puts all the empirical mass there and none at 7."""
+    resid = margin.residuals(_sched([(2023, 2.0, 3), (2023, -4.0, -3), (2023, 6.0, 3)]))
+    t = margin.key_number_mass(resid)
+    at = dict(zip(t["key"].to_list(), t["empirical"].to_list(), strict=True))
+    assert at[3] == pytest.approx(1.0)
+    assert at[7] == pytest.approx(0.0)
+    ex = dict(zip(t["key"].to_list(), t["excess"].to_list(), strict=True))
+    assert ex[3] > 0 and ex[7] == pytest.approx(-1.0)
+
+
+def test_the_spine_share_is_the_gaussian_cell_around_the_key_number():
+    """A pick'em with sd 12.741 puts about 3.1% of its mass in (2.5, 3.5], and the same in
+    (-3.5, -2.5]; the pooled spine share is their sum. At a 10-point spread the two cells
+    differ, and the share is exactly the Gaussian's mass in (k - 1/2, k + 1/2] at +k and -k
+    -- a pooled pick'em alone would not notice a cell shifted by a whole point."""
+    from math import erf, sqrt
+
+    def cdf(x):
+        return 0.5 * (1.0 + erf(x / (MARGIN_SD * sqrt(2.0))))
+
+    pick = margin.key_number_mass(margin.residuals(_sched([(2023, 0.0, 10)])), sd=MARGIN_SD)
+    spine = dict(zip(pick["key"].to_list(), pick["spine"].to_list(), strict=True))
+    assert spine[3] == pytest.approx(2 * 0.0305, abs=5e-4)
+
+    ten = margin.key_number_mass(margin.residuals(_sched([(2023, 10.0, 10)])), sd=MARGIN_SD)
+    spine = dict(zip(ten["key"].to_list(), ten["spine"].to_list(), strict=True))
+    for k in (3, 7, 14):
+        expect = (cdf(k + 0.5 - 10) - cdf(k - 0.5 - 10)) + (cdf(-k + 0.5 - 10) - cdf(-k - 0.5 - 10))
+        assert spine[k] == pytest.approx(expect, rel=1e-9)
+
+
+def test_no_bumps_is_the_plain_gaussian():
+    """The spine is unchanged: with every excess at zero the lumpy price is `home_win_prob`."""
+    s = np.array([-7.0, -3.0, 0.0, 3.0, 7.0, 14.0])
+    got = margin.lumpy_home_win_prob(s, MARGIN_SD, dict.fromkeys(margin.KEY_NUMBERS, 0.0))
+    assert got == pytest.approx(margin.home_win_prob(s, MARGIN_SD))
+
+
+def test_the_lumpy_price_is_a_probability_and_sign_symmetric():
+    s = np.linspace(-20, 20, 81)
+    p = margin.lumpy_home_win_prob(s, MARGIN_SD, margin.FITTED_KEY_EXCESS)
+    assert np.all((p > 0) & (p < 1))
+    assert p + p[::-1] == pytest.approx(np.ones_like(p))
+    assert margin.lumpy_home_win_prob(np.array([0.0]), MARGIN_SD, margin.FITTED_KEY_EXCESS)[0] \
+        == pytest.approx(0.5)
+
+
+def test_a_symmetric_bump_pulls_a_favourite_toward_one_half():
+    """The mechanism behind the recorded null, stated as a test so it cannot be forgotten: a
+    bump at +/-3 adds mass on both sides of zero, and for a 7-point favourite the losing side
+    gains proportionally more than the winning side already holds."""
+    s = np.array([7.0])
+    plain = margin.home_win_prob(s, MARGIN_SD)[0]
+    bumped = margin.lumpy_home_win_prob(s, MARGIN_SD, {3: 2.0})[0]
+    assert 0.5 < bumped < plain
+
+
+def test_the_bump_s_mass_is_credited_to_the_side_it_sits_on():
+    """The one case a symmetric bump *helps* a favourite: a key number far enough out that
+    its mirror cell is empty. A 14-point favourite with a bump at 14 gains mass at +14 and
+    almost none at -14, so it wins more often -- and crediting the bump to the wrong side
+    would price it well below the plain spine instead."""
+    s = np.array([14.0])
+    plain = margin.home_win_prob(s, MARGIN_SD)[0]
+    bumped = margin.lumpy_home_win_prob(s, MARGIN_SD, {14: 5.0})[0]
+    assert bumped > plain
+
+
+def test_the_ceiling_is_never_negative_and_is_zero_for_a_perfect_gaussian_sample():
+    """An in-sample oracle by bucket cannot score worse than the model it bounds, and a
+    sample the Gaussian prices exactly leaves it nothing to gain."""
+    resid = margin.residuals(_synthetic(sd=MARGIN_SD, per=400))
+    top = margin.ceiling(resid)
+    assert top["gain"] >= 0
+    # three games at one spread, all won: the oracle says 1.0 there and the Gaussian cannot
+    sure = margin.residuals(_sched([(2023, 3.0, 7), (2023, 3.0, 10), (2023, 3.0, 1)]))
+    assert margin.ceiling(sure)["gain"] > 0.3
+
+
+def test_the_shape_walk_forward_fits_bumps_only_on_earlier_seasons():
+    """The leak that would make any fitted shape look good, in the same form as the width
+    test above: the 2005 lumpy price must not have seen 2005."""
+    resid = margin.residuals(_lumpy_synthetic())
+    wf = margin.walk_forward_shape(resid)
+    assert wf["season"].min() == 2001 and wf.height == 10
+    row = wf.filter(pl.col("season") == 2005).row(0, named=True)
+    past = resid.filter((pl.col("season") < 2005) & (pl.col("season") >= 2005 - margin.TRAILING))
+    now = resid.filter(pl.col("season") == 2005)
+    bumps = margin.key_excess(past)
+    expect = margin.log_loss(
+        margin.lumpy_home_win_prob(now["spread_line"].to_numpy(), MARGIN_SD, bumps),
+        now["home_won"].to_numpy().astype(float))
+    assert row["ll_lumpy"] == pytest.approx(expect)
+
+
+def test_a_lump_symmetric_about_the_spread_is_adopted():
+    """When the extra mass at 3 sits on both sides of the spread, the bump model reproduces
+    the flattening it causes and prices P(win) better than the spine: the rule must say
+    ADOPT -- the branch the real data did not take, held so the rule is known to fire."""
+    resid = margin.residuals(_lumpy_synthetic(share=0.4, symmetric=True))
+    shape, sentence = margin.shape_verdict(margin.walk_forward_shape(resid))
+    assert shape == "lumpy" and "ADOPT" in sentence
+
+
+def test_a_lump_on_the_favourite_s_side_keeps_the_gaussian():
+    """The real data's mechanism, as a synthetic: the excess at 3 is pooled over both signs,
+    so a lump that lives on the favourite's side is fitted as a symmetric one and pulls the
+    favourite the wrong way. The rule keeps the Gaussian and says so."""
+    resid = margin.residuals(_lumpy_synthetic(share=0.4, symmetric=False))
+    shape, sentence = margin.shape_verdict(margin.walk_forward_shape(resid))
+    assert shape == "gaussian" and "KEEP" in sentence
+
+
+def test_the_verdict_selects_on_the_mean_and_reports_the_rest():
+    wf = pl.DataFrame({"season": [1, 2, 3], "n": [1, 1, 1],
+                       "ll_gaussian": [0.6, 0.6, 0.6], "ll_lumpy": [0.61, 0.61, 0.5],
+                       "gain": [-0.01, -0.01, 0.1]})
+    shape, sentence = margin.shape_verdict(wf)
+    assert shape == "lumpy" and "1/3 seasons" in sentence
+    assert margin.shape_verdict(pl.DataFrame({"gain": []}))[0] == "gaussian"
+
+
+def test_the_calibration_table_grades_the_favourite_side_of_every_held_out_game():
+    """Both sides go in and the buckets span [0, 30), so they partition the favourite sides:
+    one per held-out game. The favourites row is a subset of them, not a further bucket."""
+    resid = margin.residuals(_lumpy_synthetic())
+    cal = margin.calibration_by_spread(resid)
+    assert cal["bucket"].to_list()[-1] == "favourites"
+    buckets = cal.filter(pl.col("bucket") != "favourites")
+    assert buckets["n"].sum() == resid.filter(pl.col("season") > 2000).height
+    fav = cal.filter(pl.col("bucket") == "favourites")["n"][0]
+    assert 0 < fav < buckets["n"].sum()
+    for col in ("gaussian", "lumpy", "actual"):
+        assert cal.filter(pl.col("n") > 0)[col].is_between(0.0, 1.0).all()
+
+
+def test_survival_is_the_favourites_price_to_the_power_of_the_season():
+    cal = pl.DataFrame({"bucket": ["[0, 3)", "favourites"], "n": [10, 10],
+                        "gaussian": [0.55, 0.8], "lumpy": [0.55, 0.75], "actual": [0.5, 0.9]})
+    got = margin.survival_beside(cal, picks=3)
+    assert got["gaussian"] == pytest.approx(0.8 ** 3)
+    assert got["lumpy"] == pytest.approx(0.75 ** 3)
+    assert got["actual"] == pytest.approx(0.9 ** 3)
+    assert margin.survival_beside(cal)["picks"] == 18
+
+
+def test_the_recorded_excess_is_largest_at_three_and_prices_a_favourite_below_the_spine():
+    """The record of 2026-09-11, guarded. A margin of 3 carries the largest excess, and the
+    recorded shape moves a survivor-range favourite *down* -- the direction that made the
+    Gaussian win. A refit that flips either updates these numbers and this test together."""
+    assert max(margin.FITTED_KEY_EXCESS.items(), key=lambda kv: kv[1])[0] == 3
+    assert margin.FITTED_KEY_EXCESS[3] > 1.5
+    s = np.array([7.0, 10.0])
+    lumpy = margin.lumpy_home_win_prob(s, MARGIN_SD, margin.FITTED_KEY_EXCESS)
+    assert np.all(lumpy < margin.home_win_prob(s, MARGIN_SD))
+
+
+def test_the_live_shape_is_the_one_the_record_supports():
+    """The recorded held-out gain is negative beyond two standard errors, so the number the
+    repo prices with must still be the plain Gaussian: `survivor` and `MarketBaseline` read
+    `normal_cdf(spread / MARGIN_SD)` and nothing reads `lumpy_home_win_prob`."""
+    import inspect
+
+    from hub.models import market
+    from hub.season import survivor
+    assert margin.FITTED_SHAPE_GAIN + 2 * margin.FITTED_SHAPE_SE < 0
+    assert margin.FITTED_SHAPE_CEILING > 0
+    for mod in (market, survivor):
+        assert "lumpy" not in inspect.getsource(mod)
+
+
+def test_the_shape_path_reports_the_ceiling_first_and_keeps_the_gaussian(monkeypatch, capsys):
+    """Rule 8 in the printed order: the ceiling before the histogram before the verdict. On
+    the favourite-side lump, the verdict is the one the real data gave."""
+    import nflreadpy as nfl
+    sched = _lumpy_synthetic(seasons=range(2010, 2021), share=0.4, symmetric=False)
+    monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: sched)
+    assert margin.main(["--shape"]) == 0
+    text = capsys.readouterr().out
+    assert text.index("Ceiling") < text.index("Mass on the key numbers") < text.index("KEEP")
+    assert "Survival over 18" in text
