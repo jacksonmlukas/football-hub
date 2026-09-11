@@ -392,7 +392,10 @@ def capture(*, now: datetime | None = None, season: int = SEASON_AHEAD,
     index = Path(index or INDEX)
     held = read_index(index)
     seen = set(held["sha256"].to_list()) if held.height else set()
-    week = cfbd.configured_week(at_now).week
+    # The deadline's week, not the wall-clock's: a run delivered across the Tuesday boundary
+    # is attributed to the deadline before it, and its snapshot has to be priced and filed
+    # under that deadline's week or the file names one week and prices another.
+    week = cfbd.configured_week(at).week
     cap = Capture(deadline=deadline, at=at, season=season, week=week, rows=[])
     stamp = jsonio.stamp()
 

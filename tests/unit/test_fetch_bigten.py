@@ -137,6 +137,24 @@ def test_a_moment_before_the_deadline_belongs_to_the_previous_one():
     assert deadline.name == "evening"
 
 
+def test_a_run_at_the_deadline_instant_is_that_deadline_not_the_previous_one():
+    """Review finding: the boundary was inclusive and nothing held it there. A run that
+    fires at exactly 01:30:00 is the deadline it was scheduled for."""
+    deadline, at = bigten.deadline_at(datetime(2026, 9, 17, 1, 30, tzinfo=UTC))
+    assert (deadline.name, bigten.deadline_id(at)) == ("evening", "2026-09-17T0130Z")
+
+
+def test_the_week_is_the_deadlines_week_not_the_wall_clocks(web, season):
+    """Review finding: a run delivered after the Tuesday week boundary was attributed to
+    the deadline before it -- correctly -- and then filed and priced under the week the
+    clock said. The lines snapshot is the deadline's week, like the reports it sits beside."""
+    # Week 1 opens Saturday 5 September, so the boundary into week 3 is Tuesday the 15th.
+    # A run at noon that Tuesday belongs to Sunday's evening deadline, which is week 2.
+    cap = bigten.capture(now=datetime(2026, 9, 15, 12, tzinfo=UTC), skip_lines=True)
+    assert bigten.deadline_id(cap.at) == "2026-09-13T0130Z"
+    assert cap.week == 2, "the capture is filed under the week the clock said, not its own"
+
+
 def test_a_week_holds_seven_deadlines():
     got = bigten.expected_deadlines(bigten.REPORTS_BEGIN, bigten.REPORTS_BEGIN + timedelta(days=7))
     assert len(got) == 7
