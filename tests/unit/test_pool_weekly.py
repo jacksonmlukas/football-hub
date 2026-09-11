@@ -45,8 +45,16 @@ NEAR = _grid({1: [("KC", "LV", 0.70), ("SF", "SEA", 0.695), ("BUF", "NYJ", 0.66)
 # cannot field a legal pick and dies there whatever it took in week 1. Every candidate is
 # then worth exactly nothing and no trial ever cashes -- the degenerate regime #159 asks to
 # be reported rather than folded into a tie.
+#
+# KC is priced at 1.0 and not 0.85, and that is load-bearing since #157. At 0.85 the whole
+# field went out with us in week 2 whenever every rival was on KC and LV won -- about one
+# trial in forty -- and the week the field empties now pays under `co_elimination_rule`, so
+# nine trials in four hundred cashed and the regime was no longer the degenerate one. At 1.0
+# the rivals cannot lose week 2 (LV is below `MIN_PROB` and nobody may take it), so our entry
+# goes out strictly before the last survivor in every trial, which is the one terminal state
+# that is still worth nothing.
 NEVER = _grid({1: [("SF", "SEA", 0.80), ("BUF", "NYJ", 0.75), ("DAL", "NYG", 0.70)],
-               2: [("KC", "LV", 0.85)]})
+               2: [("KC", "LV", 1.0)]})
 
 
 def _team(w: pool.Weekly, team: str) -> pool.Candidate:

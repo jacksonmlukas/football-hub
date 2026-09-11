@@ -158,8 +158,10 @@ class PollConfig:
 # thing it is a caveat about -- a hand-written list in the publisher would be a second copy
 # free to go stale the moment one of these is settled.
 #
-# `co_survivor_rule` is the one that matters: it decides how a shared pot splits, so every
-# dollar figure on that panel is conditional on it.
+# `co_survivor_rule` and `co_elimination_rule` are the ones that matter: between them they
+# decide what the pot pays at either end a pool can reach -- entries outlasting the final
+# week, or the last entries standing going out together -- so every dollar figure on that
+# panel is conditional on both.
 #
 # `playoff_continuation` left this tuple with the field it named (#160). It was an unconfirmed
 # rule that reached no figure -- nothing read it, and nothing could: the grid this pool is
@@ -167,7 +169,8 @@ class PollConfig:
 # past week 18 has no week 19 to be planned over. A caveat naming a rule that decides nothing
 # is not a caveat, it is noise inside one, and it made the two that do decide something
 # cheaper to read past.
-UNCONFIRMED_POOL_RULES: tuple[str, ...] = ("co_survivor_rule", "buyback_cap")
+UNCONFIRMED_POOL_RULES: tuple[str, ...] = ("co_survivor_rule", "co_elimination_rule",
+                                           "buyback_cap")
 
 
 @dataclass
@@ -183,9 +186,10 @@ class PoolConfig:
     and a buyback that restores the entry's used-team ledger rather than clearing it -- so
     re-entering late is worth less than re-entering early, because the teams are already
     spent. **Provisional**: the cap of four, and whether it counts per entry or per person.
-    **Unconfirmed**: what happens when more than one entry survives, and whether the pool
-    plays on past week 18. Both of those move every dollar figure, because every dollar
-    figure divides a pot among survivors.
+    **Unconfirmed**: what happens when more than one entry survives, what happens when the
+    last entries standing all go out in the same week, and whether the pool plays on past
+    week 18. Each of those moves every dollar figure, because every dollar figure divides a
+    pot among whoever the rule says it belongs to.
 
     `double_pick_weeks` is a tuple and not a set. `config_digest` builds a structured config
     and OmegaConf rejects a `set` annotation outright -- which is a startup error, not a
@@ -207,6 +211,14 @@ class PoolConfig:
     double_pick_weeks: tuple[int, ...] = (13, 14, 15, 16, 17, 18)
     field_size: int = 21
     co_survivor_rule: str = "split"          # unconfirmed: split | rollover | tiebreak
+    # What the pot pays when the last entries standing all go out in the same week -- the
+    # other way a survivor pool ends, and under a field that crowds onto chalk the *usual*
+    # way. Same closed set as `co_survivor_rule`, read by `hub.season.pool.trial_share`:
+    # `split` divides the pot among the entries eliminated last, `rollover` pays nobody
+    # unless exactly one entry outlasted the rest. Until #157 this state was priced at zero
+    # by omission, which is not a rule any pool has. An entry that outlives the whole field
+    # and then loses is alone in this state and takes the pot under every spelling.
+    co_elimination_rule: str = "split"       # unconfirmed: split | rollover | tiebreak
     # Three fields left this class on 2026-09-10 (#160), each because nothing read it and
     # nothing could: `tie_eliminates` names an outcome the simulation never draws -- a game is
     # a win or a loss off `win_prob`, with no tie state -- `max_entries_per_person` caps a
