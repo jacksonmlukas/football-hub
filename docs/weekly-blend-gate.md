@@ -300,6 +300,68 @@ established: the weekly model's own merit, in either direction.
 [ADR-0016](adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md) is not re-derived
 from any of this, and its own note already says why.
 
+## Measured 2026-09-11 — the restricted gate on the production archive, and it is not degenerate
+
+Issue #237, the measurement half of #232. Every figure in the section above was *not
+measured*: the restriction's covered share and forced share were known only on the offline
+archive — the 16-player capture `tests/panelarchive.py` holds — where **9.4%** of cells are
+priced by both arms (10.1% before #155 refit pick noise) and **100%** of scored roster-weeks
+are forced. This is the first run of the restricted gate against the network, at commit
+`ae8818a`, under the published configuration and checked against it before any number was
+read:
+
+```text
+  2000 roster-weeks over 4 seasons, on the 79 weeks consensus covers   [frozen rosters, shrink=mae-market]
+  configuration: seasons=2021,2022,2023,2024,2025 drafts=40 seed=0 shrink=mae-market churn=False
+    lcb=0.0 expected=False ceiling=False restricted=True mask_pool=True
+  unranked 15.3%, of which a join failure 0.0% (floor 2%)
+```
+
+The 2,000 / 4 / 79 match the *Reproduce* command's published shape. The run prints its own
+configuration line now, because a gate once run with bare defaults was nearly reported as a
+re-run of a published figure and was caught only by the season count.
+
+| | offline archive (#206, #155) | **production archive, 2026-09-11** |
+|---|---|---|
+| roster-week cells | — | 28,000 |
+| priced by both arms | 9.4% | **75.9%** |
+| left out: no projection / no rank | — | 24.1% / 15.3% (a cell can be both) |
+| scored roster-weeks | — | 2,000 |
+| **forced** — priceable side fits the slots | **100%** | **4.7%** |
+| spread across the three treatments | 0.000 | 0.000 |
+
+**Forced is 4.7%, not 100%.** In 95.3% of scored roster-weeks the two arms had a lineup to
+choose, so the effect below is measured rather than zero by construction, and the
+`THE ARMS NEVER DISAGREE` line did not fire. The degeneracy #232 was filed on is a property
+of the 16-player capture, not of the gate. The treatment spread is 0.000, which is the check
+holding: no treatment reached a scored cell.
+
+**The covered share depends on the simulator, not only on the slate.** The Cohort the gate
+scores is drafted with pick noise, and #155 moved the offline figure from 10.1% to 9.4% by
+changing nothing but that. The 75.9% above is therefore a property of `ae8818a` as well as of
+the archive; the run's own mixture line reads 75.9 / 8.8 / 15.3 where the 2026-09-07 run
+printed 76.9 / 8.7 / 14.5, and the rosters in between were drafted under a different
+pick-noise law. Both are right about what they counted.
+
+**What the same run printed for the effect, and its standing.** Restricted to the 75.9%,
+rank-interpolated and unscoreable and mixed scale all give **−0.843**, percentile 95% CI
+[−1.131, −0.556], t on 3 df [−1.296, −0.390], 0 of 4 seasons (2022 −0.558, 2023 −1.114,
+2024 −0.553, 2025 −1.148), MDE at 80% power 0.573, and the pre-registered rule prints REMOVE.
+This is the first restricted effect ever printed and it is recorded here because the run
+produced it beside the shares, not because #237 asked for it. **Nothing is adopted or
+disposed by it**: #237's brief was the two shares, the REMOVE disposition remains pending
+exactly as the sections above record it, and the −1.004 stands as published over the
+pre-#206 universe. Whether the weekly projection beats consensus on the 24.1% it cannot
+price is still UNANSWERED, in the run's own words.
+
+**What this run could not establish.** The rankings archive was loaded unpinned — the CLI
+has no `--as-of`, so `weekly_consensus` read the whole archive as of the run date — and a
+later scrape landing in the archive could move a covered week's ECR under the same command.
+And "this week's slate" (2026 week 1) is not scoreable by this gate: it pairs against
+realised points, and the held-out seasons are 2022–2025. *Production* here means the live
+network archive over those four seasons rather than the trimmed capture, which is the
+distinction #232 turns on.
+
 ## The result
 
 | gate | weekly − consensus | 95% CI | seasons won | verdict |

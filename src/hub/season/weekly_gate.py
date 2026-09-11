@@ -912,6 +912,13 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         mode += f", waiver LCB z={a.lcb}"
     print(f"\n  {int(s['n'])} roster-weeks over {int(s['clusters'])} seasons, "
           f"on the {len(inputs.covered)} weeks consensus covers   [{mode}]")
+    # The arguments this run was given, printed by the run rather than recalled by whoever
+    # pastes it. A gate once run with bare defaults was nearly reported as a re-run of a
+    # published figure, caught only because the season count did not match the table (#237);
+    # `docs/weekly-blend-gate.md` records what the published figures were measured under.
+    print(f"  configuration: seasons={a.seasons} drafts={a.drafts} seed={a.seed} "
+          f"shrink={a.shrink} churn={a.churn} lcb={a.lcb} expected={a.expected} "
+          f"ceiling={a.ceiling} restricted={restrict} mask_pool={not a.open_pool}")
     print(f"  unranked {cover['unranked']:.1%}, of which a join failure "
           f"{cover['join_failure']:.1%} (floor {VOID_FLOOR:.0%})")
     print(seasons_tbl)
