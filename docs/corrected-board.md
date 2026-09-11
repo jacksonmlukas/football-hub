@@ -84,8 +84,9 @@ For the record, the same comparison against the served board of 2026-09-11 — t
 ADP, today's data — is 142 of 168 ranks changed, mean absolute move 4.8, and 13 by a round
 or more. The extra movement is the market's: Josh Jacobs 31 → 67 and MarShawn Lloyd
 145 → 100 are injury news priced by ESPN's ADP in the nine days since, not corrections.
-Two players (Denzel Boston, Tre Tucker) carry `NaN` rather than null in `adp_corrected`
-on the served board, which sorts them to the tail; filed separately.
+Boston and Tucker have left ESPN's draftable pool since, and on the served board a player
+with no ADP carries `NaN` rather than null in `adp_corrected` -- 293 rows -- which sorts
+them to the tail; filed as #243.
 
 ## The lambda sweep, re-run
 
