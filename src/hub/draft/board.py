@@ -1308,7 +1308,10 @@ def _persist(board: pl.DataFrame, *, out: Path | None = None,
     path.parent.mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True, exist_ok=True)
     board.write_parquet(path)
-    _archive(board)
+    # Beside the board, not at the store's default: a caller that redirected the board has
+    # redirected its archive, or a test's synthetic frames pile up in the real one -- 906
+    # of them did (#244). In production `path.parent` is `data/processed`, the store.
+    _archive(board, base=path.parent)
     # Through `hub.jsonio`, not `json`, because a bare `NaN` is not JSON and the page that
     # reads this file is the draft-night fallback -- see that module's docstring.
     #
