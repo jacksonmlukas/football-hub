@@ -273,6 +273,36 @@ def test_the_room_hands_the_simulator_a_durability_history_when_the_stage_ran(mo
         "report is not what decides and the frame is")
 
 
+def test_the_room_hands_the_simulator_each_players_bye_when_the_stage_ran(monkeypatch):
+    """#226's wiring, the same shape as #183's above. The stage decides, not the frame; a
+    board whose bye stage was absorbed reaches the simulator as `None`, and one whose stage
+    ran reaches it as one week per player with the unplaced at 0, which zeroes nothing."""
+    from hub.draft import optimize as _opt
+    from hub.draft.board import BuildReport
+
+    seen: list[object] = []
+    real = _opt.champion_probability
+
+    def spy(*a, **k):
+        seen.append(k.get("bye_week"))
+        return real(*a, **k)
+
+    monkeypatch.setattr(_opt, "champion_probability", spy)
+    board = _board().with_columns(
+        pl.Series("bye_week", [(i % 10) + 5 if i % 7 else None for i in range(180)],
+                  dtype=pl.Int64))
+    kw = {"my_slot": 3, "rounds": 8, "n_draft_sims": 1, "n_season_sims": 20}
+
+    win_probability(board, DraftState(), ["P0"], report=BuildReport(adp=True, bye=True), **kw)
+    assert seen and seen[0] is not None, "the bye stage ran and the simulator got no byes"
+    got = np.asarray(seen[0])
+    assert got.shape == (board.height,) and (got[::7] == 0).all() and (got[1::7] > 0).all()
+
+    seen.clear()
+    win_probability(board, DraftState(), ["P0"], report=BuildReport(adp=True), **kw)
+    assert seen and seen[0] is None, "the report is not what decides and the frame is"
+
+
 def test_the_run_can_be_told_how_much_of_it_was_actually_correlated():
     """Issue #171. A run makes candidates x draft-sims simulations, and a block that will
     not factor is silently independent in every one of them. The caller owns the report, so

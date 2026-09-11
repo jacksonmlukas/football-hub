@@ -8,11 +8,11 @@ import pytest
 
 from hub.draft.playoff_sos import (
     PLAYOFF_WEEKS,
-    _canon_team,
     _dvp_from_stats,
     _opponents_from_schedule,
     _sos_from,
     attach_sos,
+    canon_team,
 )
 
 
@@ -30,12 +30,12 @@ def _sched(rows):
 
 @pytest.mark.parametrize("board,nflverse", [("JAC", "JAX"), ("LAR", "LA"), ("KC", "KC")])
 def test_team_aliases(board, nflverse):
-    assert _canon_team(board) == nflverse
+    assert canon_team(board) == nflverse
 
 
 def test_free_agents_have_no_team():
-    assert _canon_team("FA") is None
-    assert _canon_team(None) is None
+    assert canon_team("FA") is None
+    assert canon_team(None) is None
 
 
 # --- defence vs position --------------------------------------------------

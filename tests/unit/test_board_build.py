@@ -64,6 +64,7 @@ def offline(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("stage unavailable")
     monkeypatch.setattr(board, "playoff_sos", _boom)
+    monkeypatch.setattr(board, "bye_weeks", _boom)
     from hub.draft import durability
     from hub.draft import regression as td
     monkeypatch.setattr(td, "prior_season", _boom)
@@ -82,7 +83,7 @@ def test_a_board_builds_with_every_optional_stage_failing(offline, capsys):
     b, report = board.build(league_size=12, season=2025)
     assert b.height > 0
     assert {"player", "pos", "ecr", "xfp_per_game", "vor", "consensus_rank"} <= set(b.columns)
-    assert set(report.degraded()) >= {"sos", "td_luck", "durability", "adp"}
+    assert set(report.degraded()) >= {"sos", "td_luck", "durability", "adp", "bye"}
 
 
 def test_vor_is_points_over_the_position_replacement(offline):
@@ -204,10 +205,11 @@ def test_a_served_report_names_the_columns_build_actually_leaves(offline):
     offline.setattr(board, "espn_adp", lambda *a, **k: pl.DataFrame(
         {"player": [NAMES[0], NAMES[1]], "adp": [1.5, 2.5], "proj_ppg": [18.0, 16.0],
          "injury_status": ["ACTIVE", "QUESTIONABLE"]}))
+    offline.setattr(board, "bye_weeks", lambda season: {"KC": 10})
 
     b, built = board.build()
     assert set(built.carried()) == set(board.STAGE_COLUMN), (
-        "the four column-leaving stages all ran; the two checks write nothing and are "
+        "the five column-leaving stages all ran; the two checks write nothing and are "
         "correctly absent from STAGE_COLUMN")
     assert set(board.BuildReport.of_served(b).carried()) == set(built.carried())
 
@@ -270,10 +272,13 @@ def _build_with_every_stage(offline, absorb: str | None = None):
     # path by which this stage is legitimately absent, and the one `build` is written for.
     offline.setattr(board, "espn_adp",
                     (lambda *a, **k: None) if absorb == "adp" else lambda *a, **k: _live_adp())
+    # Byes come off the schedule, and the real `attach_bye` does the join (#226).
+    offline.setattr(board, "bye_weeks",
+                    _source_is_down if absorb == "bye" else lambda season: {"KC": 10})
     return board.build()
 
 
-@pytest.mark.parametrize("stage", ["sos", "td_luck", "durability", "adp"])
+@pytest.mark.parametrize("stage", ["sos", "td_luck", "durability", "adp", "bye"])
 def test_a_stage_leaves_exactly_the_columns_declared_for_it(offline, stage):
     """Absorb one stage and diff the board against the whole one. What went missing is what
     that stage leaves, measured rather than asserted, and `STAGE_COLUMNS` has to name it.
@@ -543,7 +548,7 @@ def test_every_optional_stage_goes_through_the_helper():
               if isinstance(n, ast.FunctionDef) and n.name == "build")
     calls = [n for n in ast.walk(fn)
              if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_stage"]
-    assert len(calls) == 6, f"expected six staged stages, found {len(calls)}"
+    assert len(calls) == 7, f"expected seven staged stages, found {len(calls)}"
 
     # The AST, not the prose: `_attach_market`'s docstring quotes `report.adp = True` while
     # explaining why it no longer exists, and a string search matches the explanation.
@@ -901,3 +906,13 @@ def test_a_routed_board_reads_one_archive_entry_twice_and_gets_the_same_frame(
     assert len(calls) == 1, "the second read went to the wire, so the as-of is not pinned"
     # And the run can say what it read, which is the point of routing it at all.
     assert any(p.source == "ff_rankings" for p in nv.pins_this_run())
+
+
+def test_the_bye_stage_places_every_player_by_his_team(offline):
+    """#226. The schedule says when each team sits; the board carries it per player, and a
+    schedule outage leaves the board without the column rather than without a board."""
+    offline.setattr(board, "bye_weeks", lambda season: {"KC": 10})
+    b, report = board.build()
+    assert report.bye is True
+    placed = b.filter(pl.col("team") == "KC")
+    assert placed.height > 0 and (placed["bye_week"] == 10).all()

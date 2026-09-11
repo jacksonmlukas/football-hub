@@ -465,7 +465,7 @@ def correlated_normal(rng, size, pos, nfl_team, *,
 # factor and fell back to independence, which is the right answer for a free agent and was
 # reached by accident. Repair would have turned an accidentally-correct independent draw into
 # a confidently-wrong correlated one -- so the repair made this worse until the exclusion
-# landed beside it. `playoff_sos._canon_team` has held the same rule since it was written.
+# landed beside it. `playoff_sos.canon_team` has held the same rule since it was written.
 NOT_A_TEAM = frozenset({"FA", ""})
 
 

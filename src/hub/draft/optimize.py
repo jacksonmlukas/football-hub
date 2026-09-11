@@ -427,6 +427,10 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     # for an operator on the clock, and `experiment.require_corrections` refuses such a board
     # outright for a Gate, where a season short a term is a second arm and not a thin one.
     missed = pool["missed"].cast(pl.Float64).to_numpy() if report.durability else None
+    # The same provenance rule for byes (#226): the stage decides. A null is a player the
+    # schedule could not place, and 0 is what the simulator reads as "no week".
+    bye_week = (pool["bye_week"].fill_null(0).cast(pl.Int64).to_numpy()
+                if report.bye else None)
 
     # Common random numbers. Every candidate is evaluated against the SAME simulated
     # futures -- same draft rollouts, same talent draws, same weekly scores -- so the
@@ -450,7 +454,7 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
             p = champion_probability(rosters, mu, sd, pos, n_sims=n_season_sims,
                                      rng=stream(root, SEASON_SIM, k),
                                      nfl_team=nfl_team, skew=skew, missed=missed,
-                                     report=correlation)
+                                     report=correlation, bye_week=bye_week)
             mat[i, k] = p[my_slot - 1]
 
     return _lift_frame(candidates, mat)
