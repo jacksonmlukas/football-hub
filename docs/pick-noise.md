@@ -14,11 +14,72 @@ on the same four drafts, finally asked what it says.
 
 | | intercept `a` | slope `b` | slope 95% CI | population fitted |
 |---|---|---|---|---|
-| **shipped now** | **1.31** | **0.169** | **[0.159, 0.179]** | 672 picks inside a 204-pick pool, 4 drafts |
-| superseded | 1.00 | 0.253 | *none published* | stated as "734 picks", over the whole consensus list |
+| **shipped now** (2026-09-11, #155) | **2.51** | **0.150** | **[0.143, 0.156]** | 612 picks with `ecr <= 168`, 4 drafts |
+| superseded 2026-09-11 | 1.31 | 0.169 | [0.159, 0.179] | 672 picks inside a 204-pick pool, 4 drafts |
+| superseded 2026-09-07 | 1.00 | 0.253 | *none published* | stated as "734 picks", over the whole consensus list |
 
-Unrounded, the re-run returns `a = 1.3127`, `b = 0.16860`. The constants ship rounded to the
-precision `noise_from_picks` prints, which is the precision the superseded pair used too.
+Unrounded, the current fit returns `a = 2.5135`, `b = 0.14950`. The constants ship rounded to
+the precision `noise_from_picks` prints.
+
+## Restated 2026-09-11: the drafted sample is one-sided past rank 168 (#155)
+
+The 2026-09-07 fit ran on every matched pick inside the draftable pool. That sample is
+conditioned on being *drafted*, and near the back of the pool the conditioning is one-sided: a
+player ranked 190 who went undrafted has no pick number and is absent, so the ones who remain
+at that rank are exactly the ones who beat it. Measured on the 672 picks as the mean **signed**
+deviation `pick − ecr` by rank bin — zero under no censoring, negative where only early-goers
+survive the pool boundary:
+
+| ecr bin | n | mean signed `pick − ecr` | mean absolute |
+|---|---|---|---|
+| 1 – 145 | 545 | within ±3 at every bin | — |
+| 145 – 169 | 71 | −5.1 | 20.7 |
+| 170 – 192 | 37 | **−22.8** | **26.6** |
+| 193 – 204 | 19 | **−36.2** | **36.2** |
+
+In the last two bins the signed mean *equals* the absolute mean: every observed player went
+earlier than his rank, which is what a sample containing one tail looks like. Those rows were
+fitting the slope to a one-sided residual and inflating it. The fit is now restricted to
+`ecr <= 168`, the last bin before the signature appears, and the ceiling swept so the choice is
+visible:
+
+| fit ceiling | n | `a` | `b` | 95% CI | sigma at pick 100 |
+|---|---|---|---|---|---|
+| 204 (superseded) | 672 | 1.31 | 0.169 | [0.159, 0.179] | 18.2 |
+| **168** | **612** | **2.51** | **0.150** | **[0.143, 0.156]** | **17.5** |
+| 145 | 545 | 2.83 | 0.143 | [0.116, 0.170] | 17.1 |
+| 120 | 460 | 2.33 | 0.156 | [0.138, 0.174] | 17.9 |
+
+The superseded interval and the restated one do not overlap, so the censored tail's effect on
+the slope is resolvable at two standard errors clustered on the draft. Below 168 the slope is
+stable across cuts and the intervals overlap; the cut is where the data stops being two-sided,
+not where the slope is prettiest.
+
+**The axis, stated correctly.** The fit reads `ecr`; `_sigma` applies it to `mu_pick`. For the
+historical drafts these are the *same number* — no draft market exists for a past preseason
+(ADR-0010), so `blended_adp`'s `w · adp + (1 − w) · ecr` is the identity — and the fitted and
+applied axes coincide on the population the fit uses. On the live board, where ADP exists, they
+differ, and that is a limitation this fit carries rather than one it can remove. The docstring
+that said "fitted on a pick number" was describing the intent and not the code. Modelling the
+censoring instead (a Tobit) was declined: it needs a counterfactual pick number for players
+never picked, which the data does not contain.
+
+**The board either side of it, and it barely moves.** Same served board of 457 rows, 20,000
+sims, seed 0, `w = 0.5`, the four scarcity turns from slot 3. Not one player moves by more than
+3.6 points of survival probability at any turn — against the 2026-09-07 refit, which moved
+forty-nine by more than five at turn 75 → 94. The direction is split, and the split is the
+crossover: the restated law has a higher intercept and a shallower slope, so it crosses the
+old one at pick 17 — half a pick *wider* at the top, tighter from the second round on.
+
+| turn | max mover | before | after |
+|---|---|---|---|
+| 3 → 22 | Drake London | 0.093 | 0.129 |
+| 27 → 46 | Javonte Williams | 0.150 | 0.161 |
+| 51 → 70 | Christian Watson | 0.491 | 0.481 |
+| 75 → 94 | Trevor Lawrence | 0.309 | 0.294 |
+
+So the 2026-09-07 refit was the correction that mattered, and this is the refinement that
+says what population it was measured on. The scarcity ordering does not change at any turn.
 
 The interval is bootstrapped over **drafts**, n = 4 — not over the 672 picks. One manager
 reaching in round two moves every later pick in that room, so a pick-level interval would be
