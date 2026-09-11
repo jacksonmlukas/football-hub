@@ -318,3 +318,171 @@ jobs:
             echo "window, so outside one the published heartbeat is expected to age and its"
             echo "age (${{ steps.check.outputs.age }}s) is not evidence of anything."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The Big Ten capture, watched the same way (#240). `bigten.yml` writes
+  # `site/data/bigten.json` on the conference's deadlines with `generated_at` in the same
+  # envelope shape `live.json` carries, and a capture that silently stops -- the cron
+  # disabled, the page's shape changed at every deadline, the job failing before it commits
+  # -- is a stall this workflow exists to report. The job above cannot see it: its window
+  # logic is the live overlay's, and a deadline is not a game window.
+  #
+  # **The crons are the live job's, on purpose.** `tests/contracts/test_game_windows.py`
+  # holds every cron in this file to `live.yml`'s windows, so a Big Ten cron here would be
+  # reported as a monitor watching an hour nothing refreshes. A run on the live schedule
+  # asks `hub.fetch.bigten --watch` whether *this moment* is inside a Big Ten window --
+  # from `WATCH_DELAY` after a deadline until the next one fires -- and measures only if it
+  # is. The two midweek deadlines no live cron sits after are still covered: a capture
+  # stalled since Wednesday has not written past Friday's deadline either, and the Thursday
+  # night run measures against that.
+  #
+  # **Read off the checkout, not the page.** `bigten.yml` commits the stamp and the commit is
+  # the record; a push made with `GITHUB_TOKEN` triggers no deploy, so the published copy
+  # lags the commit until something else deploys. `actions/checkout` has the commit.
+  bigten:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+
+      # One line from the module that owns the deadlines, so the window is stated once. The
+      # `${{ }}`-free shape is deliberate: `hub.fetch.bigten.watch` reads its own clock and
+      # the committed file, and the workflow only carries the word it said.
+      - name: Which Big Ten window this run is in, and what the stamp says
+        id: watch
+        run: |
+          set +e
+          LINE=$(uv run python -m hub.fetch.bigten --watch --status-path site/data/bigten.json)
+          echo "line=$LINE" >> "$GITHUB_OUTPUT"
+          echo "at=$(date -u +%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "bigten watch: $LINE"
+
+      # The same three-way reading as the live job's verdict, on the module's line rather
+      # than on two steps' outputs:
+      #
+      #   * `outside` -- the deadline fired less than the delay ago, so a late start may
+      #     still be queued and a stale stamp is not yet evidence. Files nothing, closes
+      #     nothing; the next run inside the window is what catches a real stall.
+      #   * `preseason` -- nothing captures yet, so a standing incident is unfounded
+      #     whoever filed it, and it closes.
+      #   * everything else measures. `inside ... stale`, `unreachable`, `unreadable` and a
+      #     line this step cannot read all file: the fall-throughs point at monitoring.
+      - name: What this run can conclude about the capture
+        id: capture
+        run: |
+          AT="${{ steps.watch.outputs.at }}"
+          read -r WORD DEADLINE STATE REST <<<"${{ steps.watch.outputs.line }}"
+          case "$WORD" in
+            preseason)
+              echo "verdict=no-window" >> "$GITHUB_OUTPUT"
+              echo "reason=preseason"  >> "$GITHUB_OUTPUT"
+              echo "closes=true"       >> "$GITHUB_OUTPUT"
+              echo "close_reason=not planned" >> "$GITHUB_OUTPUT"
+              {
+                echo "close_note<<NOTE"
+                echo "Closed without a healthy check, because no capture is due yet:"
+                echo "$DEADLINE $STATE $REST. Nothing writes bigten.json before the first"
+                echo "report, so its age growing is the correct state rather than a failure."
+                echo "NOTE"
+              } >> "$GITHUB_OUTPUT" ;;
+            outside)
+              echo "verdict=no-window" >> "$GITHUB_OUTPUT"
+              echo "reason=delayed"    >> "$GITHUB_OUTPUT"
+              echo "closes=false"      >> "$GITHUB_OUTPUT"
+              echo "detail=deadline $DEADLINE fired less than the delay ago; its window opens in ${STATE}s" >> "$GITHUB_OUTPUT" ;;
+            inside)
+              if [ "$STATE" = "ok" ]; then
+                echo "verdict=healthy" >> "$GITHUB_OUTPUT"
+                echo "closes=true"     >> "$GITHUB_OUTPUT"
+                echo "close_reason=completed" >> "$GITHUB_OUTPUT"
+                {
+                  echo "close_note<<NOTE"
+                  echo "Capture healthy again: bigten.json was written ${REST}s ago, since the"
+                  echo "$DEADLINE deadline, measured at $AT inside that deadline's window."
+                  echo "NOTE"
+                } >> "$GITHUB_OUTPUT"
+              else
+                echo "verdict=stale" >> "$GITHUB_OUTPUT"
+                echo "closes=false"  >> "$GITHUB_OUTPUT"
+                echo "why=the committed bigten.json predates the $DEADLINE deadline; it was last written ${REST}s ago and nothing has captured since" >> "$GITHUB_OUTPUT"
+              fi ;;
+            unreachable)
+              echo "verdict=stale" >> "$GITHUB_OUTPUT"
+              echo "closes=false"  >> "$GITHUB_OUTPUT"
+              echo "why=there is no site/data/bigten.json in the checkout at all, so the capture has never left a record" >> "$GITHUB_OUTPUT" ;;
+            unreadable)
+              echo "verdict=stale" >> "$GITHUB_OUTPUT"
+              echo "closes=false"  >> "$GITHUB_OUTPUT"
+              echo "why=bigten.json carries no readable generated_at, so its writer and this check disagree about the schema" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "verdict=stale" >> "$GITHUB_OUTPUT"
+              echo "closes=false"  >> "$GITHUB_OUTPUT"
+              echo "why=the line hub.fetch.bigten --watch printed could not be read ('$WORD $DEADLINE $STATE $REST'), so this check could not establish anything and is reporting rather than staying quiet" >> "$GITHUB_OUTPUT" ;;
+          esac
+          echo "capture verdict: $WORD $DEADLINE $STATE"
+
+      # `set +e` and the `||` fallback, for the reason the live job gives: filing is the
+      # job, the label is decoration, and decoration must not silence the alarm.
+      - name: File or update the capture incident issue
+        if: steps.capture.outputs.verdict == 'stale'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          # Its own marker. The live branch closes only the heartbeat's and this branch
+          # closes only this, so a healthy overlay never closes a stalled capture.
+          MARKER="<!-- watchdog-bigten -->"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" \
+            --label incident --state open --json number,body \
+            --jq "([.[] | select(.body | contains(\"$MARKER\"))][0].number) // empty" 2>/dev/null)
+          BODY="$MARKER
+          Cause: ${{ steps.capture.outputs.why }}.
+
+          \`site/data/bigten.json\` is committed by the \`bigten\` workflow at each of the
+          conference's report deadlines (\`hub.fetch.bigten.DEADLINES\`). A stamp older than
+          the most recent deadline, measured more than the delay a late start is allowed
+          (\`hub.fetch.bigten.WATCH_DELAY\`) after it, means no capture ran for that deadline:
+          the cron is off, the job failed before it committed, or the secret it commits with
+          is gone. The archive is the record and a missed deadline is not recoverable later.
+
+          Measured at ${{ steps.watch.outputs.at }} inside a Big Ten deadline window, on the
+          live watchdog's schedule. A run inside the delay after a deadline reports that it is
+          outside a window and files nothing, so this is a stall rather than a late start.
+          This issue closes on the next healthy check inside a window, or on the first check
+          before the season's first report."
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "$BODY"
+          else
+            gh issue create --repo "${{ github.repository }}" \
+              --title "Big Ten capture stalled" --label incident --body "$BODY" \
+              || gh issue create --repo "${{ github.repository }}" \
+                   --title "Big Ten capture stalled" --body "$BODY"
+          fi
+          if [ $? -ne 0 ]; then
+            echo "::error::the Big Ten capture is stalled AND the incident could not be filed"
+            exit 1
+          fi
+
+      - name: Close the capture incident on recovery, or when no capture is due yet
+        if: steps.capture.outputs.closes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MARKER="<!-- watchdog-bigten -->"
+          for n in $(gh issue list --repo "${{ github.repository }}" \
+                      --label incident --state open --json number,body \
+                      --jq ".[] | select(.body | contains(\"$MARKER\")) | .number"); do
+            gh issue close "$n" --repo "${{ github.repository }}" \
+              --reason "${{ steps.capture.outputs.close_reason }}" \
+              --comment "${{ steps.capture.outputs.close_note }}"
+          done
+
+      - name: Say that this run landed outside every Big Ten window
+        if: steps.capture.outputs.reason == 'delayed'
+        run: |
+          {
+            echo "### Outside every Big Ten window, so the capture was not measured"
+            echo
+            echo "${{ steps.capture.outputs.detail }}. A capture scheduled at the deadline"
+            echo "may still be queued, so the stamp's age is not evidence of anything yet."
+          } >> "$GITHUB_STEP_SUMMARY"

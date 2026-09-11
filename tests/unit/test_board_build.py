@@ -509,6 +509,20 @@ def test_an_advisory_stage_whose_source_is_down_still_degrades(offline, capsys):
         in capsys.readouterr().out
 
 
+def test_a_built_board_carries_null_and_never_nan_where_a_player_is_undrafted(offline):
+    """Two players priced, three hundred not (#243). On the served board of 2026-09-11 the
+    unpriced ones carried NaN in `adp_corrected` -- a null turned NaN on a numpy round trip
+    -- and `DRAFT_BOARD` now refuses that at the end of `build`, so this board building at
+    all is half the claim; the other half is that the null lands exactly where `adp` is."""
+    offline.setattr(board, "espn_adp", lambda *a, **k: _live_adp())
+    b, report = board.build()
+    assert report.adp
+    assert b["adp"].null_count() == b.height - 2
+    assert b["adp_corrected"].is_null().to_list() == b["adp"].is_null().to_list()
+    for col in ("adp_corrected", "proj_correction", "edge", "vor_proj"):
+        assert not b[col].is_nan().fill_null(False).any(), col
+
+
 def test_a_defect_in_the_stage_the_pick_ranks_on_is_not_absorbed(offline, capsys):
     """The other half. The same policy, a failure it was never proved against: nothing in
     `_attach_market` reaches a source -- the outage is `espn_adp`'s, one layer up -- so a

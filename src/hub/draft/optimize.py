@@ -607,7 +607,14 @@ def corrected_adp(board: pl.DataFrame, clamp_frac: float | None = None) -> pl.Se
     bound = clamp_frac * np.abs(np.nan_to_num(adp, nan=0.0))
     shift = np.clip(shift, -bound, bound)
     out = adp + np.where(np.isfinite(adp), shift, 0.0)
-    return pl.Series("adp_corrected", out)
+    # Null where `adp` is null, not NaN (#243). `to_numpy` turned every null into a NaN
+    # and the NaN rode back into the frame as a float: on the served board of 2026-09-11
+    # that was 293 of 457 rows passing `is_not_null()`, uncounted by `hub.inspect
+    # --nulls`, and -- because `market_pick`'s `min` never replaces a key it cannot compare
+    # against -- picked ahead of every drafted player whenever the undrafted one came
+    # first in the pool. The corrected column takes the shape of the column it corrects.
+    return pl.Series("adp_corrected", out).zip_with(
+        board["adp"].is_not_null(), pl.Series([None] * len(out), dtype=pl.Float64))
 
 
 @dataclass(frozen=True)

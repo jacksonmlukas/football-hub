@@ -70,6 +70,35 @@ def test_contract_catches_nulls_in_a_column_declared_non_null():
         Contract("t", required={"player": pl.Utf8}, non_null=("player",)).validate(df)
 
 
+def test_contract_catches_a_nan_in_a_column_declared_no_nan():
+    """A NaN is not a null (#243). It passes `is_not_null()`, sorts wherever the comparison
+    leaves it and is counted by nothing that counts nulls -- and it is exactly what a numpy
+    round trip turns a null into. A column declared `no_nan` refuses it by name, and only
+    where the column is present: the board's corrected columns are optional, so an absent
+    one is a degraded build and not a broken one."""
+    with pytest.raises(ContractViolation, match=r"x has 1 NaN"):
+        Contract("t", required={"x": pl.Float64}, no_nan=("x",)).validate(
+            pl.DataFrame({"x": [1.0, float("nan"), None]}))
+    ok = Contract("t", required={"x": pl.Float64}, no_nan=("x", "absent"))
+    assert ok.validate(pl.DataFrame({"x": [1.0, None]})).height == 2
+
+
+def test_the_board_contract_refuses_a_nan_in_every_corrected_column():
+    """The four columns the ADP stage derives (#243): on the served board of 2026-09-11,
+    `adp_corrected` was NaN on 293 of 457 rows and the diff read it as players moving
+    fourteen places. Refused at build time, by the column's name, and a null there --
+    the shape an undrafted player should have -- still passes."""
+    assert set(DRAFT_BOARD.no_nan) == {"adp_corrected", "proj_correction", "edge",
+                                       "vor_proj"}
+    for col in DRAFT_BOARD.no_nan:
+        bad = _board().with_columns(
+            pl.Series(col, [float("nan")] + [None] * 299, dtype=pl.Float64))
+        with pytest.raises(ContractViolation, match=rf"{col} has 1 NaN"):
+            DRAFT_BOARD.validate(bad)
+        fine = _board().with_columns(pl.Series(col, [None] * 300, dtype=pl.Float64))
+        assert DRAFT_BOARD.validate(fine).height == 300
+
+
 def test_contract_catches_missing_column():
     df = pl.DataFrame({"player": ["A"], "ecr": [1.0]})
     with pytest.raises(ContractViolation, match="missing columns"):

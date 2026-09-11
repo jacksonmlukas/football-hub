@@ -46,6 +46,15 @@ watchdog can read a silent stall as a stall.
     uv run python -m hub.fetch.bigten --capture
     uv run python -m hub.fetch.bigten --capture --skip-lines      # archive only, spend nothing
     uv run python -m hub.fetch.bigten --status
+    uv run python -m hub.fetch.bigten --watch                     # the watchdog's one line
+
+**And the watchdog reads it here** (#240). `watchdog.yml` is what files an incident when the
+capture silently stops -- the cron disabled, the page's shape changed at every deadline, the
+job failing before it commits -- and its window logic was the live overlay's, which has no
+notion of a deadline. `watch` is the Big Ten half: the stamp measured against the deadline
+it should have been written for, inside a window that opens `WATCH_DELAY` after each
+deadline and closes when the next one fires. Outside every window it says so rather than
+measuring, which is the rule `.github/scripts/window_state.sh` learned from issue #193.
 """
 from __future__ import annotations
 
@@ -612,6 +621,71 @@ def not_yet(now: datetime | None = None) -> str | None:
     return None
 
 
+# How long after a deadline the watchdog waits before it will call the capture stalled
+# (#240). A cron is a request for a start: `live.yml` records GitHub delivering scheduled
+# starts 97-126 minutes late, and the capture itself takes under a minute once it runs. Three
+# hours clears the worst delivery observed by half again, so a check inside the window is
+# looking at a capture that has had every chance to run -- and the cost of the margin is that
+# a stall goes unreported for three hours, against a page that serves last-good throughout.
+WATCH_DELAY = timedelta(hours=3)
+
+
+def watch(path: Path | None = None, *, now: datetime | None = None) -> str:
+    """One line for the watchdog: what the stamp says about the deadline it should follow.
+
+    Prints one of:
+
+      preseason <reason>              nothing captures yet -- before the first report, or no
+                                      season anchor -- so there is nothing to measure
+      outside <deadline> <seconds>    the deadline fired less than `WATCH_DELAY` ago; a late
+                                      start may still be queued, so a stale stamp is not yet
+                                      evidence. The window opens in <seconds>
+      inside <deadline> ok <age>      the stamp was written since the deadline; <age> is how
+                                      long ago
+      inside <deadline> stale <age>   the deadline fired, the delay has passed, and the stamp
+                                      predates it by <age> seconds of now -- the stall
+      unreachable                     no stamp at all
+      unreadable                      a stamp with no `generated_at` this can read
+
+    The window is the span from `WATCH_DELAY` after a deadline until the next deadline fires,
+    because the stall is the same fact for the whole of it: nothing has written since the
+    deadline. A capture stalled across the two midweek deadlines no watchdog cron sits after
+    is still stale at the next one it does, since the stamp has not moved past that either.
+
+    Read off the committed file rather than the published one, which is the opposite of the
+    live overlay's check: `bigten.yml` commits the stamp and the commit is the record, while a
+    push made with `GITHUB_TOKEN` triggers no deploy, so the published copy lags the commit
+    until something else deploys. The watchdog's checkout has the commit.
+
+    The three failures that are not a stall are named apart, for `heartbeat.sh`'s reason:
+    the fix for each is different and one sentinel standing for all three is how the live
+    check reported 56.7 years of staleness on every run.
+    """
+    at_now = now or _now()
+    if (why := not_yet(at_now)) is not None:
+        return f"preseason {why.removeprefix('nothing was captured: ')}"
+    _deadline, at = deadline_at(at_now)
+    if at < REPORTS_BEGIN:
+        return (f"preseason the first availability report is due {REPORTS_BEGIN.isoformat()}, "
+                f"and no deadline has fired since")
+    ident = deadline_id(at)
+    opens = at + WATCH_DELAY
+    if at_now < opens:
+        return f"outside {ident} {int((opens - at_now).total_seconds())}"
+    p = Path(path or STATUS)
+    if not p.exists():
+        return "unreachable"
+    try:
+        stamp = json.loads(p.read_text())
+        written = datetime.fromisoformat(stamp["generated_at"])
+    except (ValueError, KeyError, TypeError, OSError):
+        return "unreadable"
+    if written.tzinfo is None:
+        written = written.replace(tzinfo=UTC)
+    age = int((at_now - written).total_seconds())
+    return f"inside {ident} {'ok' if written >= at else 'stale'} {age}"
+
+
 def status_report(index: Path | None = None, now: datetime | None = None) -> int:
     at_now = now or _now()
     held = read_index(index)
@@ -636,6 +710,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="fetch the page, archive every document it links, snapshot lines")
     ap.add_argument("--status", action="store_true",
                     help="what the archive holds and which deadlines were missed")
+    ap.add_argument("--watch", action="store_true",
+                    help="one line for the watchdog: the stamp against the deadline it "
+                         "should follow, or that this moment is outside every window")
     ap.add_argument("--skip-lines", action="store_true",
                     help="archive the reports and spend no CFBD call")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD)
@@ -651,6 +728,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     spath = Path(a.status_path) if a.status_path else None
     qpath = Path(a.quota_path) if a.quota_path else None
 
+    if a.watch:
+        # Exit 0 whatever the line says: the watchdog reads the word, and a non-zero here
+        # would fail the step before the verdict that turns the word into an incident.
+        print(watch(spath))
+        return 0
     if a.status or not a.capture:
         return status_report(index)
 
