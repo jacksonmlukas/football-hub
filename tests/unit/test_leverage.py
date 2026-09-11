@@ -20,7 +20,7 @@ keeps the confound visible so nobody re-runs the uncalibrated version.
 import numpy as np
 import pytest
 
-from hub.draft import leverage
+from hub.exhibits import leverage
 
 FAST = 4000
 

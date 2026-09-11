@@ -347,8 +347,8 @@ def test_equity_sees_the_roster_you_already_hold():
     it named a third and fourth running back at three of your first six turns while QB, WR
     and TE sat empty.
     """
-    from hub.draft.optimize import win_probability
     from hub.draft.state import DraftState, roster_for
+    from hub.exhibits.championship_equity import win_probability
 
     n = 48
     board = pl.DataFrame({
@@ -853,13 +853,13 @@ def _stream_spy(monkeypatch):
     room being played never does.
 
     Both namespaces are patched because both hold a reference: `backtest.play` imported the
-    function, and `optimize.win_probability` calls it where it is defined.
+    function for the room, and the exhibit's `win_probability` imported it for the rollouts.
     """
-    from hub.draft import optimize as opt
+    from hub.exhibits import championship_equity as ce
 
     seen: dict[str, list] = {"room": [], "rollout": [], "season": [], "log": []}
-    real_draft = opt.simulate_remaining_draft
-    real_season = opt.champion_probability
+    real_draft = ce.simulate_remaining_draft
+    real_season = ce.champion_probability
 
     def _key(rng):
         return repr(rng.bit_generator.state)
@@ -876,9 +876,9 @@ def _stream_spy(monkeypatch):
         _note("season", rng)
         return real_season(rosters, mu, sd, pos, rng=rng, **kw)
 
-    monkeypatch.setattr(opt, "simulate_remaining_draft", draft_spy)
+    monkeypatch.setattr(ce, "simulate_remaining_draft", draft_spy)
     monkeypatch.setattr(bt, "simulate_remaining_draft", draft_spy)
-    monkeypatch.setattr(opt, "champion_probability", season_spy)
+    monkeypatch.setattr(ce, "champion_probability", season_spy)
     return seen
 
 

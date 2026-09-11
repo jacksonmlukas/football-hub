@@ -62,14 +62,18 @@ from hub.draft.optimize import (
     DEFAULT_ROUNDS,
     ROOM,
     market_pick,
-    rank_tiers,
     root_seed,
     simulate_remaining_draft,
     stream,
-    win_probability,
 )
 from hub.draft.season import CorrelationReport, lineup_points
 from hub.draft.state import DraftState
+
+# The arm under test, from the exhibit. This harness is the one production reader
+# `hub.exhibits` has -- ADR-0007 keeps the measurement re-runnable and ADR-0009 says
+# reopening it means re-running this file -- and
+# `tests/contracts/test_the_exhibit_is_not_a_dependency.py` holds it to being the only one.
+from hub.exhibits.championship_equity import rank_tiers, win_probability
 from hub.fetch.nflverse import pins_this_run
 from hub.league import REG_SEASON_WEEKS
 from hub.models.experiment import (
@@ -292,10 +296,12 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     statistics testable, and a backtest whose statistics can only be exercised by hitting
     ESPN is one nobody re-runs.
 
-    `n_draft_sims` and `n_season_sims` are pinned at the shipped 12 x 250. The first P0 run
-    used 6 x 120 -- a quarter of the live budget -- and produced -5.79 [-9.17, -2.45], an
-    artifact that vanished at adequate power. Lower them and you are measuring a different
-    optimizer.
+    `n_draft_sims` and `n_season_sims` default to 12 x 250, the budget every published figure
+    in ADR-0009 was measured at. It used to read "pinned at the shipped 12 x 250", and there
+    is no shipped path: equity left the draft-night output under that ADR, so the budget is
+    the measurement's own and not a product setting it mirrors (#198). The first P0 run used
+    6 x 120 -- a quarter of it -- and produced -5.79 [-9.17, -2.45], an artifact that
+    vanished at adequate power. Lower them and you are measuring a different optimizer.
 
     **The season stays the cluster, and #195 is why the question was asked.** Before it, the
     rows were dependent for two separate reasons: they share a board, a player pool and one

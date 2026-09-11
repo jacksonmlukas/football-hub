@@ -63,3 +63,16 @@ measurement that drove it.
 > **Nothing here is withdrawn.** The requirement is unchanged and the code should stay. What is
 > missing is a place that says *this is an exhibit, not a dependency*, so the distinction does
 > not have to be re-derived by census. **Owned by #198.**
+
+> **Restated 2026-09-11 (#198): the place exists.** It is `hub.exhibits`, one module per
+> removed measurement: `championship_equity` holds `win_probability`, `_lift_frame`,
+> `rank_tiers` and `champion_probability`, moved verbatim out of `hub.draft.optimize` and
+> `hub.draft.season`; `leverage` is the six-of-twelve harness, moved whole. The census above
+> is the record of where they were found and is not edited. What the census said about
+> `cost_of_waiting` was wrong in a way worth stating: it is a column `availability.pick_value`
+> computes, read by `recommend()`'s scarcity mode and rendered by `hub.draft.report` -- product
+> code, never a function, and it stays. `tag_for` labelled the equity column the board no
+> longer prints, had no caller and no measurement behind it, and was deleted. The requirement
+> here is met the way it asks: `hub.draft.backtest` is the one production importer of the
+> exhibit, and `tests/contracts/test_the_exhibit_is_not_a_dependency.py` holds it to being the
+> only one, so the distinction is a rule rather than a census.

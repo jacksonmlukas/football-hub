@@ -11,10 +11,15 @@ from hub.draft import season
 from hub.draft.season import (
     REG_SEASON_WEEKS,
     _round_robin,
-    champion_probability,
     lineup_points,
     simulate_weeks,
 )
+
+# `champion_probability` is the simulator's top -- `simulate_weeks`, then `seed_table`, then
+# `champion`, read off as P(each team wins) -- and the end-to-end tests below exercise the
+# simulator through it. It lives in the exhibit since #198 because its only caller is the
+# removed arm; the tests stay here because what they assert is the season, not the arm.
+from hub.exhibits.championship_equity import champion_probability
 
 
 def _roster(spec):
@@ -450,8 +455,7 @@ def test_champion_probability_simulates_the_playoff_weeks():
     mu = np.full(36, 12.0)
     sd = np.full(36, 5.0)
     pos = np.array(["RB"] * 36)
-    p = season.champion_probability(rosters, mu, sd, pos, n_sims=200,
-                                    rng=np.random.default_rng(0))
+    p = champion_probability(rosters, mu, sd, pos, n_sims=200, rng=np.random.default_rng(0))
     assert p.shape == (12,)
     assert p.sum() == pytest.approx(1.0)
     assert (p > 0).sum() >= 6, "twelve identical teams should spread the title around"
@@ -462,7 +466,7 @@ def test_leverage_and_season_share_one_bracket():
     A copy that drifts is how this file's own docstring says the weekly model went stale."""
     import inspect
 
-    from hub.draft import leverage
+    from hub.exhibits import leverage
     src = inspect.getsource(leverage)
     assert "_champion" not in src, "leverage must not carry its own bracket"
     assert "seed_table" in src and "champion(" in src
