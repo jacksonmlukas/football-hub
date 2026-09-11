@@ -32,13 +32,26 @@ island, so events are mapped back to nflverse games via team abbreviations and k
 date. Every snapshot appends, because a single closing line makes the as-of join
 degenerate -- line *movement* is the thing it exists to resolve.
 
+**A dated line is not the same as a live one, and since #210 the row says which.** A number
+polled eight times over twelve days and identical at every poll is not a noisy estimate of
+the close; it is a posted lookahead that does not respond to news, and the archive measured
+on 2026-09-11 is mostly that -- 260 of 272 games never moved across the whole of it, and
+every week from 2 out had at most two games move. So each row carries `polls_unmoved` and
+`unmoved_since`: how many consecutive polls have returned this quote and when the run began.
+`staleness` derives both from the archive, `_record` stamps them on the rows it writes, and
+a consumer ranking a snapshot above the schedule's own field has the number it needs to stop
+doing that for a quote nothing has touched in a fortnight.
+
     uv run python -m hub.fetch.odds --credits
     uv run python -m hub.fetch.odds --snapshot
+    uv run python -m hub.fetch.odds --staleness
+    uv run python -m hub.fetch.odds --noise-floor
 """
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import statistics
 import sys
@@ -392,6 +405,443 @@ def _median_game_total(event: Mapping[str, Any]) -> tuple[float | None, float | 
     return _median_quote(event, TOTALS_MARKET, OVER)
 
 
+# --- staleness (#210) ---------------------------------------------------------
+
+# The two columns a row carries about how long its spread quote has stood still. Declared
+# here and read by `ODDS_SNAPSHOT`, so the writer and the contract cannot spell them apart.
+STALENESS_COLUMNS: dict[str, Any] = {"polls_unmoved": pl.Int64, "unmoved_since": pl.Datetime}
+
+# What `staleness` reads and the order it reads it in. `spread_price` is optional on the
+# way in -- a partition written before #211 has no such column and the store hands it back
+# as null -- and the derivation treats a null there as no evidence rather than as a move.
+_QUOTE = ("game_id", "close_spread", "spread_price", "captured_at")
+
+
+def _quote_moved() -> pl.Expr:
+    """Whether this poll's spread quote differs from the previous poll of the same game.
+
+    A quote is the pair -- the point and the price on it -- and the pair moved if either did.
+    The point is the obvious half. The price is the half #211 made storable and the one this
+    rule has to say something about, because a book that has a reason to move a line moves
+    the juice first: -7 at -110 becoming -7 at -120 is the betting market leaning without crossing
+    the key number, and a run of polls that is "unmoved" on the point alone would count that
+    as nothing happening. A frozen lookahead is a number nobody has touched, and a shaded
+    price is a touch.
+
+    A price that is null on either side contributes nothing. Every snapshot before #211 has
+    no price at all, and the poll that first records one is the archive gaining a column,
+    not the betting market moving -- so the comparison is made only where both polls priced the
+    point, and the point decides otherwise. Floats compare exactly because the medians on
+    both sides are the same arithmetic over the same books' quotes: two polls at which no
+    book changed anything produce identical bits, and a book joining or leaving the set is
+    the betting market changing shape, which is honestly a move.
+
+    The first poll of a game starts a run. There is no earlier quote to stand still against.
+    """
+    prev_point = pl.col("close_spread").shift(1).over("game_id")
+    prev_price = pl.col("spread_price").shift(1).over("game_id")
+    point_moved = pl.col("close_spread") != prev_point
+    price_moved = (pl.col("spread_price").is_not_null() & prev_price.is_not_null()
+                   & (pl.col("spread_price") != prev_price))
+    return (prev_point.is_null() | point_moved | price_moved).alias("_moved")
+
+
+def staleness(lines: pl.DataFrame) -> pl.DataFrame:
+    """Every poll, with how long its spread quote had stood still by then.
+
+    Two columns, and both are needed because they answer different questions. `polls_unmoved`
+    is the count of consecutive polls, this one included, that returned the quote this row
+    holds -- so a game polled once and a game polled eight times at one number read 1 and 8,
+    which is the distinction #210 asks for. `unmoved_since` is `captured_at` of the first
+    poll in that run: the *moment*, not the elapsed time, because how long ago that was
+    depends on when the question is asked and a stored duration would be stale the moment it
+    was written. A consumer subtracts it from its own `at`.
+
+    Neither is a verdict. "Stale" is a threshold on these two numbers, and the threshold is
+    the consumer's to declare -- `hub.schedule.priced_games` ranks a snapshot above the
+    schedule field and is the one that has to say at what age it stops. This module measures.
+
+    Derived from the archive rather than kept as running state, so it is the same function
+    on the way in and on the way out: `_record` runs it over the prior polls plus the new
+    rows and stamps the new rows, and a reader of the whole archive -- `hub.models.market`'s
+    noise floor, `--staleness` below -- runs it over every partition and gets the same answer
+    for the rows written before the columns existed. One derivation, two callers, nothing to
+    drift.
+
+    Rows are returned sorted by game and time, the two columns appended, and any column the
+    caller passed beyond `_QUOTE` carried through untouched.
+    """
+    frame = lines if "spread_price" in lines.columns else lines.with_columns(
+        pl.lit(None, dtype=pl.Float64).alias("spread_price"))
+    ordered = frame.sort("game_id", "captured_at")
+    run = pl.col("_moved").cast(pl.Int64).cum_sum().over("game_id").alias("_run")
+    return (ordered.with_columns(_quote_moved())
+                   .with_columns(run)
+                   .with_columns(
+                       pl.col("captured_at").cum_count().over("game_id", "_run")
+                         .cast(pl.Int64).alias("polls_unmoved"),
+                       pl.col("captured_at").min().over("game_id", "_run")
+                         .alias("unmoved_since"))
+                   .drop("_moved", "_run")
+                   .pipe(lambda d: d if "spread_price" in lines.columns
+                         else d.drop("spread_price")))
+
+
+_QUOTE_SCHEMA: dict[str, Any] = {"game_id": pl.Utf8, "close_spread": pl.Float64,
+                                 "spread_price": pl.Float64, "captured_at": pl.Datetime}
+
+
+def _archive(season: int, base: Path | None) -> pl.DataFrame:
+    """Every poll already in the store for the season, in `_QUOTE` shape plus `week`.
+
+    Empty on a fresh clone. Read with `SELECT *` rather than by naming the columns, because
+    an archive written entirely before #211 -- which is the live one on 2026-09-11 -- has no
+    `spread_price` column in any partition, and `union_by_name` unions what exists rather
+    than what a contract now declares. A column the archive has never had is added here as
+    nulls, which `_quote_moved` reads as no evidence.
+    """
+    if "lines" not in store.tables(base):
+        return pl.DataFrame(schema={**_QUOTE_SCHEMA, "week": pl.Int64})
+    got = store.sql("SELECT * FROM lines WHERE league = 'nfl' AND season = ?",
+                    params=[season], base=base)
+    absent = [pl.lit(None, dtype=t).alias(c) for c, t in _QUOTE_SCHEMA.items()
+              if c not in got.columns]
+    return got.with_columns(absent).select(*_QUOTE, pl.col("week").cast(pl.Int64))
+
+
+def _with_staleness(new: pl.DataFrame, season: int, base: Path | None) -> pl.DataFrame:
+    """The new rows, stamped with their staleness against everything already stored.
+
+    The prior polls are read and never rewritten. Immutability of what is on disk is the
+    whole as-of guarantee, so the archive's older rows keep the columns they were written
+    with and get these two on read, from the same `staleness`, rather than by a backfill.
+    """
+    prior = _archive(season, base).select(_QUOTE)
+    both = pl.concat([prior, new.select(_QUOTE)], how="vertical_relaxed")
+    stamped = staleness(both).select("game_id", "captured_at", *STALENESS_COLUMNS)
+    return new.join(stamped, on=["game_id", "captured_at"], how="left")
+
+
+def staleness_report(season: int = SEASON_AHEAD, base: Path | None = None) -> int:
+    """Per week: how much of the archive is a number that has never moved.
+
+    Printed rather than returned because the reader is a person deciding whether the
+    snapshot for a distant week is worth ranking above the schedule field. "Frozen" here is
+    the whole-archive fact -- `polls_unmoved` equal to the game's poll count -- which is
+    the one a consumer cannot see from a single row.
+    """
+    if "lines" not in store.tables(base):
+        print("  odds staleness: no snapshot archive here")
+        return 0
+    got = _archive(season, base)
+    if got.is_empty():
+        print(f"  odds staleness: no {season} snapshots in the archive")
+        return 0
+    stale = staleness(got)
+    latest = stale["captured_at"].max()
+    per_game = (stale.group_by("game_id", "week")
+                     .agg(polls=pl.len(),
+                          unmoved=pl.col("polls_unmoved").last(),
+                          since=pl.col("unmoved_since").last())
+                     .with_columns((pl.col("polls") == pl.col("unmoved")).alias("frozen"),
+                                   ((pl.lit(latest) - pl.col("since")).dt.total_hours()
+                                    / 24.0).alias("days")))
+    print(f"  odds staleness: {per_game.height} games, "
+          f"{stale['captured_at'].n_unique()} polls, as of {latest}")
+    print("  week  games  polls  frozen  median_days_unmoved")
+    for r in (per_game.group_by("week")
+                      .agg(games=pl.len(), polls=pl.col("polls").max(),
+                           frozen=pl.col("frozen").sum(), days=pl.col("days").median())
+                      .sort("week").iter_rows(named=True)):
+        print(f"  {int(r['week']):>4}  {r['games']:>5}  {r['polls']:>5}  "
+              f"{r['frozen']:>6}  {r['days']:>19.1f}")
+    return 0
+
+
+# --- the noise floor for line movement (#214) ----------------------------------
+#
+# How much a spread moves for no reason. **This is the ceiling computation for every
+# line-movement question** (`docs/method.md` rule 8): #221 and whatever follows it claim
+# that a line moved *on* something, and a move is only a move if it clears what the same
+# line does between two polls with nothing to move on. So this is measured first, on the
+# archive, on games whose starting quarterbacks did not change between the polls, and every
+# later claim is compared against it rather than against zero.
+#
+# The cluster unit is the **game** (`docs/method.md` rule 3). Every interval between two
+# polls of one game shares that game's teams, its week, its number and whatever the books
+# think of it, so the intervals are not independent and the archive's eight polls of 272
+# games are 272 observations of a process, not 1,900. Every standard error below is taken
+# over games -- the per-day means by a cluster-robust sandwich, the floor's own interval by
+# resampling games -- and the count of games is printed beside the count of intervals so a
+# reader sees which one the precision came from.
+#
+# Polls on one Eastern date are one poll. The archive holds three polls within thirty-five
+# minutes of each other on 2026-09-04 and two within an hour on 2026-08-27, all from fixes
+# to the matcher rather than from any wish to sample the betting market at that cadence, and every
+# one of those intervals is zero by construction. Counting them would report a floor near
+# zero that is a fact about the polling and not about the line. So the last poll of each
+# Eastern date stands for the date, and an interval is between consecutive poll *days*.
+
+DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+# What one line-movement observation carries, in the order `line_moves` returns it.
+MOVE_COLUMNS: dict[str, Any] = {
+    "game_id": pl.Utf8, "week": pl.Int64, "from": pl.Datetime, "to": pl.Datetime,
+    "days": pl.Float64, "day": pl.Utf8, "delta": pl.Float64, "frozen": pl.Boolean,
+    "same_qb": pl.Boolean,
+}
+
+# How many game-resamples the floor's interval is drawn from.
+NOISE_BOOTSTRAP = 2000
+
+
+def _eastern(col: str) -> pl.Expr:
+    """A naive-UTC moment as an Eastern one, which is the calendar the slate runs on."""
+    return pl.col(col).dt.replace_time_zone("UTC").dt.convert_time_zone("America/New_York")
+
+
+def poll_days(polls: pl.DataFrame) -> pl.DataFrame:
+    """One row per game per Eastern date: the last poll of that date, every column kept."""
+    return (polls.sort("game_id", "captured_at")
+                 .with_columns(_eastern("captured_at").dt.date().alias("poll_day"))
+                 .group_by("game_id", "poll_day", maintain_order=True).last()
+                 .drop("poll_day"))
+
+
+def _starter_at(polls: pl.DataFrame, starters: pl.DataFrame, side: str) -> pl.DataFrame:
+    """The quarterback listed first on `side`'s depth chart as of each poll, by as-of join."""
+    chart = (starters.select(pl.col("dt"), pl.col("team").alias(side),
+                             pl.col("qb").alias(f"{side}_qb"))
+                     .sort("dt"))
+    # Both sides are sorted on the line above and the one before it; the check polars
+    # cannot run with `by` groups would only warn about what is already done.
+    return (polls.sort("captured_at")
+                 .join_asof(chart, left_on="captured_at", right_on="dt", by=side,
+                            strategy="backward", check_sortedness=False)
+                 .drop("dt"))
+
+
+def line_moves(polls: pl.DataFrame, starters: pl.DataFrame | None = None) -> pl.DataFrame:
+    """One row per consecutive pair of poll days of one game: what the spread did between.
+
+    `polls` is the archive as `staleness` returns it -- `game_id`, `close_spread`,
+    `captured_at`, `week`, `polls_unmoved` -- and `starters`, when given, is a depth chart
+    reduced to `dt`, `team`, `qb`: who was listed first at quarterback for each team from
+    each moment on. The teams are read off the nflverse game id, whose last two fields are
+    the away and home abbreviations, so no schedule is fetched to measure the archive.
+
+    Three columns are the study's and the rest are bookkeeping. `delta` is the change in
+    the home spread from the earlier poll day to the later. `day` names the Eastern day of
+    the week the later poll fell on, which is what "by day of week" means here: the move
+    is observed at the later poll and attributed to it. `same_qb` is whether both teams'
+    first-listed quarterback was the same at both polls -- null when no chart precedes a
+    poll, which is not the same as a change and is reported apart -- and is null throughout
+    when no chart was given.
+
+    `frozen` is #210's whole-archive fact: the game's last poll had stood unmoved for every
+    poll there was. It is a property of the game and rides on every one of its intervals,
+    so a caller can exclude a frozen lookahead from the sample or report it separately
+    without reading the staleness columns itself.
+    """
+    if polls.is_empty():
+        return pl.DataFrame(schema=MOVE_COLUMNS)
+    frozen = (polls.group_by("game_id")
+                   .agg((pl.col("polls_unmoved").last() == pl.len()).alias("frozen")))
+    days = (poll_days(polls)
+            .with_columns(pl.col("game_id").str.split("_").list.get(2).alias("away"),
+                          pl.col("game_id").str.split("_").list.get(3).alias("home")))
+    if starters is not None:
+        days = _starter_at(_starter_at(days, starters, "home"), starters, "away")
+    else:
+        days = days.with_columns(pl.lit(None, dtype=pl.Utf8).alias("home_qb"),
+                                 pl.lit(None, dtype=pl.Utf8).alias("away_qb"))
+    prev = {c: pl.col(c).shift(1).over("game_id") for c in
+            ("captured_at", "close_spread", "home_qb", "away_qb")}
+    same = ((pl.col("home_qb") == prev["home_qb"]) & (pl.col("away_qb") == prev["away_qb"]))
+    # Every shifted column in one pass, *before* the first poll day of each game is dropped.
+    # Shifting after the drop reads the second interval's earlier end as the first's, which
+    # nulls the first interval of every game and misaligns the rest -- and it did, silently,
+    # until the report's own "no chart before the poll" count named twelve intervals in an
+    # archive every chart predates.
+    return (days.sort("game_id", "captured_at")
+                .with_columns(prev["captured_at"].alias("from"),
+                              (pl.col("close_spread") - prev["close_spread"]).alias("delta"),
+                              same.alias("same_qb"))
+                .filter(pl.col("from").is_not_null())
+                .with_columns(
+                    pl.col("captured_at").alias("to"),
+                    ((pl.col("captured_at") - pl.col("from")).dt.total_seconds()
+                     / 86400.0).alias("days"),
+                    _eastern("captured_at").dt.weekday().map_elements(
+                        lambda d: DAYS[int(d) - 1], return_dtype=pl.Utf8).alias("day"))
+                .join(frozen, on="game_id", how="left")
+                .select(*(pl.col(c).cast(t) for c, t in MOVE_COLUMNS.items())))
+
+
+def _num(v: Any) -> float:
+    """A polars aggregate as a float; None -- an empty series -- as NaN rather than a crash."""
+    return float(v) if v is not None else float("nan")
+
+
+def _clustered_sd(delta: Any, game: Any, *, bootstrap: int,
+                  seed: int) -> tuple[float, float, float]:
+    """The pooled sd of `delta` and a percentile interval from resampling games.
+
+    Per-game sufficient statistics rather than per-game arrays: a resample's sd is a
+    function of the resampled count, sum and sum of squares, so two thousand draws over a
+    few hundred games are a matrix product rather than a loop of concatenations.
+    """
+    import numpy as np
+    frame = pl.DataFrame({"delta": delta, "game": game})
+    per = (frame.group_by("game").agg(n=pl.len(), s1=pl.col("delta").sum(),
+                                      s2=(pl.col("delta") ** 2).sum())
+                .sort("game"))
+    n, s1, s2 = (per[c].to_numpy().astype(float) for c in ("n", "s1", "s2"))
+    total = n.sum()
+    if total < 2:
+        return float("nan"), float("nan"), float("nan")
+    sd = math.sqrt(max((s2.sum() - s1.sum() ** 2 / total) / (total - 1.0), 0.0))
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(n), size=(bootstrap, len(n)))
+    bn, b1, b2 = n[idx].sum(axis=1), s1[idx].sum(axis=1), s2[idx].sum(axis=1)
+    var = np.where(bn > 1, (b2 - b1 ** 2 / np.maximum(bn, 1)) / np.maximum(bn - 1, 1), 0.0)
+    draws = np.sqrt(np.maximum(var, 0.0))
+    return sd, float(np.percentile(draws, 2.5)), float(np.percentile(draws, 97.5))
+
+
+def noise_floor(moves: pl.DataFrame, *, bootstrap: int = NOISE_BOOTSTRAP,
+                seed: int = 0) -> dict[str, Any]:
+    """The floor over the intervals given, pooled and by day of week, clustered by game.
+
+    The caller decides which intervals are in -- `noise_floor_report` drops frozen games
+    and quarterback changes before calling this -- so that the same function measures the
+    excluded sample too, and the two can be printed side by side.
+
+    "By day of week" is the regression #214 asks for, written as what it is: the change in
+    spread on a full set of day-of-week indicators and no intercept is the per-day mean,
+    and its standard error under clustering by game is the cluster-robust sandwich for a
+    means model -- the root of the summed squares of each game's summed residuals, over the
+    day's interval count. Stated so nobody reaches for a regression package to reproduce
+    seven averages.
+
+    The pooled sd is the floor. Its interval resamples games, because the intervals of one
+    game are not exchangeable with each other and are with another game's.
+    """
+    if moves.is_empty():
+        return {"intervals": 0, "games": 0, "sd": float("nan"), "sd_lo": float("nan"),
+                "sd_hi": float("nan"), "mean_abs": float("nan"), "moved": float("nan"),
+                "sd_per_root_day": float("nan"), "by_day": []}
+    sd, lo, hi = _clustered_sd(moves["delta"], moves["game_id"], bootstrap=bootstrap,
+                               seed=seed)
+    per_root_day, _, _ = _clustered_sd(moves["delta"] / moves["days"].sqrt(),
+                                       moves["game_id"], bootstrap=1, seed=seed)
+    by_day = []
+    for name in DAYS:
+        part = moves.filter(pl.col("day") == name)
+        if part.is_empty():
+            continue
+        mean = _num(part["delta"].mean())
+        summed = (part.with_columns((pl.col("delta") - mean).alias("r"))
+                      .group_by("game_id").agg(pl.col("r").sum()))
+        se = math.sqrt(_num((summed["r"] ** 2).sum())) / part.height
+        by_day.append({"day": name, "intervals": part.height,
+                       "games": part["game_id"].n_unique(),
+                       "days_spanned": _num(part["days"].mean()),
+                       "mean": mean, "se": se,
+                       "sd": _num(part["delta"].std()) if part.height > 1 else float("nan"),
+                       "moved": _num((part["delta"] != 0).mean()),
+                       "max_abs": _num(part["delta"].abs().max())})
+    return {"intervals": moves.height, "games": moves["game_id"].n_unique(),
+            "sd": sd, "sd_lo": lo, "sd_hi": hi,
+            "mean_abs": _num(moves["delta"].abs().mean()),
+            "moved": _num((moves["delta"] != 0).mean()),
+            "sd_per_root_day": per_root_day, "by_day": by_day}
+
+
+def _qb_starters(season: int) -> pl.DataFrame:                  # pragma: no cover - network
+    """Who is listed first at quarterback for each team, from each chart's moment on.
+
+    nflverse's depth charts, reduced to the one position this study conditions on. `dt`
+    is the chart's own timestamp, ISO 8601 in UTC, and comes back naive UTC to match
+    `captured_at`. A team that changes its starter publishes a new chart, so the as-of join
+    in `_starter_at` reads the change from the first chart that carries it.
+    """
+    import nflreadpy as nfl
+    chart = nfl.load_depth_charts([season])
+    return (chart.filter((pl.col("pos_abb") == "QB") & (pl.col("pos_rank") == 1))
+                 .select(pl.col("dt").str.to_datetime("%Y-%m-%dT%H:%M:%SZ").alias("dt"),
+                         pl.col("team"), pl.col("gsis_id").alias("qb"))
+                 .sort("dt"))
+
+
+def _print_floor(label: str, f: dict[str, Any]) -> None:
+    print(f"  {label}: sd {f['sd']:.3f} [{f['sd_lo']:.3f}, {f['sd_hi']:.3f}] points "
+          f"over {f['intervals']} intervals of {f['games']} games (cluster = game); "
+          f"mean |move| {f['mean_abs']:.3f}, moved on {f['moved']:.1%} of intervals; "
+          f"sd per root-day {f['sd_per_root_day']:.3f}")
+
+
+def noise_floor_report(season: int = SEASON_AHEAD, base: Path | None = None, *,
+                       starters: pl.DataFrame | None = None,
+                       bootstrap: int = NOISE_BOOTSTRAP) -> int:
+    """The numbers #214 asks for, printed: coverage, exclusions, floor, and by day of week.
+
+    `starters` is injected by tests and fetched from nflverse otherwise. A chart that cannot
+    be fetched does not take the floor down with it: the report says the same-quarterback
+    condition could not be applied and measures the unconditioned sample under that label,
+    which is the honest number a reader with no network can still get.
+    """
+    if "lines" not in store.tables(base):
+        print("  line noise: no snapshot archive here")
+        return 0
+    polls = staleness(_archive(season, base))
+    if polls.is_empty():
+        print(f"  line noise: no {season} snapshots in the archive")
+        return 0
+    qb_note = ""
+    if starters is None:
+        try:
+            starters = _qb_starters(season)
+        except Exception as exc:                            # pragma: no cover - network
+            qb_note = f" (same-quarterback condition NOT applied: {type(exc).__name__}: {exc})"
+    moves = line_moves(polls, starters)
+    days = poll_days(polls)
+    print(f"  line noise: {polls['game_id'].n_unique()} games, "
+          f"{polls['captured_at'].n_unique()} polls on {days['captured_at'].n_unique()} "
+          f"days, weeks {polls['week'].min()}-{polls['week'].max()}, "
+          f"{polls['captured_at'].min():%Y-%m-%d} to {polls['captured_at'].max():%Y-%m-%d}; "
+          f"{moves.height} intervals between poll days{qb_note}")
+    print("  This is the ceiling for every line-movement question (method rule 8): a move "
+          "inside it is not a move.")
+
+    frozen = moves.filter(pl.col("frozen"))
+    live = moves.filter(~pl.col("frozen"))
+    n_frozen = frozen["game_id"].n_unique()
+    print(f"  frozen lookaheads excluded: {n_frozen} games whose number never moved across "
+          f"the archive ({frozen.height} intervals); {live['game_id'].n_unique()} games kept. "
+          f"Excluding a game for never moving conditions on the outcome, so the all-games "
+          f"floor is printed beside it.")
+    if starters is not None:
+        changed = live.filter(pl.col("same_qb").fill_null(True).not_())
+        unknown = live.filter(pl.col("same_qb").is_null())
+        print(f"  quarterback changes excluded: {changed.height} intervals; "
+              f"no chart before the poll: {unknown.height} intervals")
+        live = live.filter(pl.col("same_qb"))
+    _print_floor("floor", noise_floor(live, bootstrap=bootstrap))
+    _print_floor("all games, frozen included", noise_floor(moves, bootstrap=bootstrap))
+    print("  by day of week of the later poll (mean move +/- cluster-robust se by game):")
+    print("  day  intervals  games  days_spanned     mean      se     sd   moved  max|move|")
+    for d in noise_floor(live, bootstrap=1)["by_day"]:
+        print(f"  {d['day']}  {d['intervals']:>9}  {d['games']:>5}  {d['days_spanned']:>12.1f}  "
+              f"{d['mean']:>+7.3f}  {d['se']:>6.3f}  {d['sd']:>5.3f}  {d['moved']:>5.1%}  "
+              f"{d['max_abs']:>9.1f}")
+    absent = [n for n in DAYS if n not in set(live["day"].to_list())]
+    if absent:
+        print(f"  no poll closed on: {', '.join(absent)} -- the archive cannot speak to "
+              f"those days yet")
+    return 0
+
+
 def snapshot(season: int = SEASON_AHEAD, *, markets: str = ",".join(MARKETS),
              regions: str = ",".join(REGIONS),
              state_path: Path | None = None, base: Path | None = None,
@@ -536,6 +986,10 @@ def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetim
                                     "spread_price": pl.Float64, "close_total": pl.Float64,
                                     "total_price": pl.Float64,
                                     "captured_at": pl.Datetime, "week": pl.Int64})
+    # GUARD staleness-stamped-against-the-archive: a row says how long its quote has stood
+    # still, measured against every poll already stored rather than asserted as new
+    df = _with_staleness(df, season, base)
+    # /GUARD
     # Every partition is checked before any is written. Interleaved, a contract failure on
     # week 3 left weeks 1 and 2 on disk carrying a fresh timestamp while the CLI reported
     # that nothing had been fetched -- a half-written snapshot the as-of join would read as
@@ -577,11 +1031,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"Cost is markets x regions, so {len(MARKETS) * len(REGIONS)} credits.")
     ap.add_argument("--snapshot", action="store_true", help="take one dated line snapshot")
     ap.add_argument("--credits", action="store_true", help="report the stored balance")
+    ap.add_argument("--staleness", action="store_true",
+                    help="per week, how much of the archive is a number that never moved; "
+                         "reads the store and spends nothing")
+    ap.add_argument("--noise-floor", action="store_true",
+                    help="how much a spread moves between polls for no reason, by day of "
+                         "week, on same-quarterback games; the ceiling every line-movement "
+                         "claim is measured against. Reads the store and spends nothing")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD)
     ap.add_argument("--state-path", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--base", default=None, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     spath = Path(a.state_path) if a.state_path else None
+    base = Path(a.base) if a.base else None
 
+    if a.staleness:
+        return staleness_report(a.season, base=base)
+    if a.noise_floor:
+        return noise_floor_report(a.season, base=base)
     if a.credits or not a.snapshot:
         return credits_report(spath)
 

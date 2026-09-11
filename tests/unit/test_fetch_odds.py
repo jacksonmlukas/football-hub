@@ -15,6 +15,8 @@ proven in 1.6 has nothing to join to, so the mapping is not a nicety.
 """
 import datetime as dt
 import json
+import math
+import statistics
 
 import polars as pl
 import pytest
@@ -585,3 +587,354 @@ def test_a_point_with_no_readable_price_keeps_the_point(transport, teams, schedu
     assert row["spread_price"] is None
     said = capsys.readouterr().out
     assert "no American price" in said, f"the null price was not reported: {said}"
+
+
+# --- staleness (#210) -------------------------------------------------------
+
+def _quotes(*polls, game="g1"):
+    """One game's polls as (day, spread, price) triples, in the order given."""
+    return pl.DataFrame(
+        {"game_id": [game] * len(polls),
+         "close_spread": [p[1] for p in polls],
+         "spread_price": [p[2] for p in polls],
+         "captured_at": [dt.datetime(2026, 8, 25) + dt.timedelta(days=p[0]) for p in polls]},
+        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                "spread_price": pl.Float64, "captured_at": pl.Datetime})
+
+
+def test_a_first_poll_is_a_run_of_one():
+    got = odds.staleness(_quotes((0, -3.0, -110.0)))
+    assert got["polls_unmoved"].to_list() == [1]
+    assert got["unmoved_since"].to_list() == [dt.datetime(2026, 8, 25)]
+
+
+def test_polls_at_one_number_count_up_and_a_move_starts_the_count_again():
+    """The measure #210 asks for: consecutive polls at this quote, and since when."""
+    got = odds.staleness(_quotes((0, -3.0, -110.0), (1, -3.0, -110.0), (2, -3.0, -110.0),
+                                 (5, -3.5, -110.0), (6, -3.5, -110.0)))
+    assert got["polls_unmoved"].to_list() == [1, 2, 3, 1, 2]
+    assert got["unmoved_since"].to_list() == [dt.datetime(2026, 8, 25)] * 3 + [
+        dt.datetime(2026, 8, 30)] * 2
+
+
+def test_never_moved_is_distinguishable_from_polled_once():
+    """A game polled eight times at one number and a game polled once both have an
+    `unmoved_since` equal to their first capture. Only the count tells them apart, which is
+    why there are two columns and not one."""
+    eight = _quotes(*[(d, 7.0, -110.0) for d in range(8)], game="frozen")
+    once = _quotes((0, 7.0, -110.0), game="fresh")
+    got = odds.staleness(pl.concat([eight, once]))
+    last = got.group_by("game_id").agg(pl.col("polls_unmoved").last()).sort("game_id")
+    assert last["polls_unmoved"].to_list() == [1, 8]
+
+
+def test_a_price_moving_on_a_fixed_point_is_a_move():
+    """-7 at -110 becoming -7 at -120 is the betting market leaning without crossing the
+    number. A frozen lookahead is a quote nobody has touched; a shaded price is a touch."""
+    got = odds.staleness(_quotes((0, -7.0, -110.0), (1, -7.0, -120.0), (2, -7.0, -120.0)))
+    assert got["polls_unmoved"].to_list() == [1, 1, 2]
+
+
+def test_a_missing_price_is_no_evidence_either_way():
+    """Every snapshot before #211 has no price. The poll that first records one is the
+    archive gaining a column, not the quote moving, so the point decides alone there."""
+    got = odds.staleness(_quotes((0, -7.0, None), (1, -7.0, None), (2, -7.0, -110.0),
+                                 (3, -7.0, None), (4, -7.5, None)))
+    assert got["polls_unmoved"].to_list() == [1, 2, 3, 4, 1]
+
+
+def test_a_frame_with_no_price_column_at_all_is_measured_on_the_point():
+    """What the archive looks like read back through the store before #211's first poll."""
+    got = odds.staleness(_quotes((0, -7.0, None), (1, -7.0, None)).drop("spread_price"))
+    assert got["polls_unmoved"].to_list() == [1, 2]
+    assert "spread_price" not in got.columns, "a column the caller did not pass was invented"
+
+
+def test_games_are_measured_apart():
+    a = _quotes((0, -3.0, -110.0), (1, -3.0, -110.0), game="a")
+    b = _quotes((0, 2.5, -110.0), (1, 3.0, -110.0), game="b")
+    got = odds.staleness(pl.concat([b, a]))
+    assert got.sort("game_id", "captured_at")["polls_unmoved"].to_list() == [1, 2, 1, 1]
+
+
+def test_a_snapshot_is_stamped_against_the_polls_already_stored(transport, teams, schedule,
+                                                                paths):
+    """The guard: the third poll of an unmoved number is written as the third, not as a
+    first. `_record` sees only the rows it is about to write, so the count has to come from
+    reading the archive back -- and a row that says 1 when the archive says 3 is exactly the
+    labelling error #210 names."""
+    transport()
+    for day in (1, 2, 3):
+        odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
+                      now=dt.datetime(2025, 9, day, 12))
+    from hub import store
+    got = store.sql("SELECT polls_unmoved, unmoved_since FROM lines ORDER BY captured_at",
+                    base=paths["store"])
+    assert got["polls_unmoved"].to_list() == [1, 2, 3]
+    assert got["unmoved_since"].to_list() == [dt.datetime(2025, 9, 1, 12)] * 3
+
+
+def test_a_moved_number_is_written_as_a_fresh_run(transport, teams, schedule, paths):
+    transport(events=[_event("Philadelphia Eagles", "Dallas Cowboys", "2025-09-04", -8.5)])
+    odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
+                  now=dt.datetime(2025, 9, 1, 12))
+    transport(events=[_event("Philadelphia Eagles", "Dallas Cowboys", "2025-09-04", -9.5)])
+    got = odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
+                        now=dt.datetime(2025, 9, 2, 12))
+    assert got["polls_unmoved"].to_list() == [1]
+    assert got["unmoved_since"].to_list() == [dt.datetime(2025, 9, 2, 12)]
+
+
+def test_the_archive_on_disk_is_not_rewritten_to_carry_the_columns(transport, teams,
+                                                                   schedule, paths):
+    """Immutability is the as-of guarantee. Older rows get the columns on read, from the
+    same derivation, never from a backfill."""
+    from hub import store
+    old = pl.DataFrame({"game_id": ["2025_01_DAL_PHI"], "close_spread": [8.0],
+                        "captured_at": [dt.datetime(2025, 8, 30, 12)]})
+    p = store.write(old, "lines", "nfl", 2025, 1, base=paths["store"], name="snap-old")
+    before = p.read_bytes()
+    transport()
+    odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
+                  now=dt.datetime(2025, 9, 1, 12))
+    assert p.read_bytes() == before
+    got = store.sql("SELECT polls_unmoved FROM lines ORDER BY captured_at", base=paths["store"])
+    assert got["polls_unmoved"].to_list() == [None, 1], (
+        "the old partition must read back with a null, and the new row a run of one -- "
+        "8.0 is not the 8.25 the two fixture books median to")
+
+
+def test_the_staleness_report_names_the_frozen_games_per_week(transport, teams, schedule,
+                                                              paths, capsys):
+    transport()
+    for day in (1, 2):
+        odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
+                      now=dt.datetime(2025, 9, day, 12))
+    assert odds.main(["--staleness", "--season", "2025", "--base", str(paths["store"])]) == 0
+    said = capsys.readouterr().out
+    assert "1 games, 2 polls" in said, said
+    assert "     1      1      2       1" in said, said
+
+
+def test_the_staleness_report_on_a_fresh_clone_says_so(paths, capsys):
+    assert odds.main(["--staleness", "--base", str(paths["store"])]) == 0
+    assert "no snapshot archive" in capsys.readouterr().out
+
+
+# --- the noise floor for line movement (#214) --------------------------------
+
+def _polls(*rows, week=1):
+    """Archive rows as (game_id, spread, captured_at) already stamped by `staleness`."""
+    df = pl.DataFrame(
+        {"game_id": [r[0] for r in rows], "close_spread": [float(r[1]) for r in rows],
+         "captured_at": [r[2] for r in rows], "week": [week] * len(rows)},
+        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                "captured_at": pl.Datetime, "week": pl.Int64})
+    return odds.staleness(df)
+
+
+def _starters(*rows):
+    return pl.DataFrame({"dt": [r[0] for r in rows], "team": [r[1] for r in rows],
+                         "qb": [r[2] for r in rows]},
+                        schema={"dt": pl.Datetime, "team": pl.Utf8, "qb": pl.Utf8})
+
+
+# Tuesday 2026-08-25 00:58 ET, Thursday 2026-08-27 16:27 and 22:01 ET (the second is past
+# midnight UTC), Friday 2026-09-04 11:17 ET, Sunday 2026-09-06 07:44 ET.
+TUE = dt.datetime(2026, 8, 25, 4, 58)
+THU_A = dt.datetime(2026, 8, 27, 20, 27)
+THU_B = dt.datetime(2026, 8, 28, 2, 1)
+FRI = dt.datetime(2026, 9, 4, 15, 17)
+SUN = dt.datetime(2026, 9, 6, 11, 44)
+G = "2026_01_DAL_PHI"
+
+
+def test_polls_on_one_eastern_date_are_one_poll():
+    """Two polls an hour apart on a Thursday evening, one of them past midnight UTC, are one
+    Thursday poll -- the later one. Counting the interval between them would report a floor
+    that is a fact about the polling, not the line."""
+    got = odds.poll_days(_polls((G, -3.0, TUE), (G, -3.0, THU_A), (G, -3.5, THU_B)))
+    assert got["captured_at"].to_list() == [TUE, THU_B]
+    assert got["close_spread"].to_list() == [-3.0, -3.5], "the last poll of the day stands"
+
+
+def test_the_first_interval_of_a_game_carries_its_own_change():
+    """The bug the report's own sanity count found: shifting after the first poll day is
+    dropped nulls every game's first interval and misaligns the rest."""
+    got = odds.line_moves(_polls((G, -3.0, TUE), (G, -3.5, THU_B), (G, -2.0, FRI)))
+    assert got["delta"].to_list() == [-0.5, 1.5]
+    assert got["from"].to_list() == [TUE, THU_B]
+    assert got["to"].to_list() == [THU_B, FRI]
+
+
+def test_an_interval_is_named_by_the_eastern_day_the_later_poll_fell_on():
+    got = odds.line_moves(_polls((G, -3.0, TUE), (G, -3.0, THU_B), (G, -3.0, FRI),
+                                 (G, -3.0, SUN)))
+    assert got["day"].to_list() == ["Thu", "Fri", "Sun"]
+    assert got["days"].to_list() == pytest.approx([2.877, 7.553, 1.852], abs=0.001)
+
+
+def test_a_game_that_never_moved_is_flagged_on_every_interval():
+    got = odds.line_moves(pl.concat([
+        _polls((G, -3.0, TUE), (G, -3.0, THU_B), (G, -3.0, FRI)),
+        _polls(("2026_01_KC_LAC", 2.5, TUE), ("2026_01_KC_LAC", 3.0, THU_B),
+               ("2026_01_KC_LAC", 3.0, FRI))]))
+    assert got.filter(pl.col("game_id") == G)["frozen"].to_list() == [True, True]
+    assert got.filter(pl.col("game_id") != G)["frozen"].to_list() == [False, False]
+
+
+def test_a_quarterback_change_between_polls_marks_the_interval():
+    """Dallas lists a new starter on the Wednesday. The Tuesday-to-Thursday interval spans
+    it; Thursday-to-Friday does not."""
+    charts = _starters((dt.datetime(2026, 8, 1), "PHI", "qb-phi"),
+                       (dt.datetime(2026, 8, 1), "DAL", "qb-dal-1"),
+                       (dt.datetime(2026, 8, 26), "DAL", "qb-dal-2"))
+    got = odds.line_moves(_polls((G, -3.0, TUE), (G, -3.0, THU_B), (G, -3.0, FRI)), charts)
+    assert got["same_qb"].to_list() == [False, True]
+
+
+def test_a_poll_before_any_chart_is_unknown_not_a_change():
+    charts = _starters((dt.datetime(2026, 8, 26), "PHI", "qb-phi"),
+                       (dt.datetime(2026, 8, 26), "DAL", "qb-dal"))
+    got = odds.line_moves(_polls((G, -3.0, TUE), (G, -3.0, THU_B), (G, -3.0, FRI)), charts)
+    assert got["same_qb"].to_list() == [None, True]
+
+
+def test_without_a_chart_the_condition_is_unknown_throughout():
+    got = odds.line_moves(_polls((G, -3.0, TUE), (G, -3.0, THU_B)))
+    assert got["same_qb"].to_list() == [None]
+
+
+def test_an_empty_archive_has_no_intervals():
+    assert odds.line_moves(pl.DataFrame(schema={**odds._QUOTE_SCHEMA, "week": pl.Int64,
+                                                "polls_unmoved": pl.Int64})).is_empty()
+    assert odds.noise_floor(pl.DataFrame(schema=odds.MOVE_COLUMNS))["intervals"] == 0
+
+
+def _moves(*rows):
+    """(game_id, day, delta) as `line_moves` would return them, everything else fixed."""
+    return pl.DataFrame(
+        {"game_id": [r[0] for r in rows], "week": [1] * len(rows),
+         "from": [TUE] * len(rows), "to": [THU_B] * len(rows), "days": [2.0] * len(rows),
+         "day": [r[1] for r in rows], "delta": [float(r[2]) for r in rows],
+         "frozen": [False] * len(rows), "same_qb": [True] * len(rows)},
+        schema=odds.MOVE_COLUMNS)
+
+
+def test_the_per_day_error_is_clustered_by_game():
+    """Two games, two intervals each, all closing on a Thursday. Game A moved +1 twice and
+    game B -1 twice: the day's mean is 0, and the two intervals of one game are not two
+    readings. Row-wise the se would be sd/sqrt(4) = 0.577; over games each game's residuals
+    sum to +/-2, so the sandwich gives sqrt(4 + 4) / 4 = 0.707. The rule cuts both ways,
+    but this is the way it cuts here."""
+    f = odds.noise_floor(_moves(("a", "Thu", 1), ("a", "Thu", 1),
+                                ("b", "Thu", -1), ("b", "Thu", -1)), bootstrap=10)
+    (thu,) = f["by_day"]
+    assert thu["day"] == "Thu"
+    assert thu["intervals"] == 4 and thu["games"] == 2
+    assert thu["mean"] == pytest.approx(0.0)
+    assert thu["se"] == pytest.approx(math.sqrt(8) / 4)
+    assert thu["moved"] == 1.0 and thu["max_abs"] == 1.0
+
+
+def test_the_floor_is_the_pooled_sd_with_games_resampled():
+    f = odds.noise_floor(_moves(("a", "Thu", 1), ("a", "Fri", 0),
+                                ("b", "Thu", -1), ("b", "Fri", 0.5),
+                                ("c", "Sun", 0), ("c", "Fri", 0)), bootstrap=500)
+    deltas = [1, 0, -1, 0.5, 0, 0]
+    assert f["sd"] == pytest.approx(statistics.stdev(deltas))
+    assert f["games"] == 3 and f["intervals"] == 6
+    assert f["sd_lo"] <= f["sd"] <= f["sd_hi"]
+    assert f["mean_abs"] == pytest.approx(2.5 / 6)
+    assert f["moved"] == pytest.approx(3 / 6)
+    assert [d["day"] for d in f["by_day"]] == ["Thu", "Fri", "Sun"], "calendar order"
+
+
+def test_a_floor_that_never_moved_is_zero_with_a_zero_interval():
+    f = odds.noise_floor(_moves(("a", "Thu", 0), ("b", "Thu", 0)), bootstrap=50)
+    assert f["sd"] == 0.0 and f["sd_lo"] == 0.0 and f["sd_hi"] == 0.0
+
+
+def _archive_of(store_dir, *snaps):
+    """Write snapshots (captured_at, {game_id: spread}) as the poller would, weeks by id."""
+    from hub import store
+    for when, spreads in snaps:
+        rows = pl.DataFrame({"game_id": list(spreads), "close_spread": list(spreads.values()),
+                             "captured_at": [when] * len(spreads)},
+                            schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                                    "captured_at": pl.Datetime})
+        for gid in spreads:
+            store.write(rows.filter(pl.col("game_id") == gid), "lines", "nfl", 2026,
+                        int(gid.split("_")[1]), base=store_dir, name=f"snap-{when:%Y%m%dT%H%M%S}")
+
+
+def test_the_noise_floor_report_excludes_frozen_games_and_says_how_many(paths, capsys):
+    """Three games. Two never move -- frozen lookaheads, out of the sample and counted --
+    and one moves, which is the floor. The cluster unit is named on the line that carries
+    the number, and the rule-8 sentence is printed."""
+    frozen_a, frozen_b, live = "2026_09_DAL_PHI", "2026_12_KC_LAC", "2026_01_KC_LAC"
+    _archive_of(paths["store"],
+                (TUE, {frozen_a: -3.0, frozen_b: 7.0, live: 2.5}),
+                (THU_A, {frozen_a: -3.0, frozen_b: 7.0, live: 2.5}),
+                (THU_B, {frozen_a: -3.0, frozen_b: 7.0, live: 3.0}),
+                (FRI, {frozen_a: -3.0, frozen_b: 7.0, live: 2.5}))
+    charts = _starters((dt.datetime(2026, 8, 1), "KC", "qb-kc"),
+                       (dt.datetime(2026, 8, 1), "LAC", "qb-lac"))
+    assert odds.noise_floor_report(2026, base=paths["store"], starters=charts,
+                                   bootstrap=20) == 0
+    said = capsys.readouterr().out
+    assert "3 games, 4 polls on 3 days, weeks 1-12" in said, said
+    assert "frozen lookaheads excluded: 2 games" in said, said
+    assert "1 games kept" in said, said
+    assert "quarterback changes excluded: 0 intervals" in said, said
+    assert "over 2 intervals of 1 games (cluster = game)" in said, said
+    assert "ceiling for every line-movement question" in said, said
+    assert "no poll closed on: Mon, Tue, Wed, Sat, Sun" in said, said
+
+
+def test_the_noise_floor_report_drops_the_interval_a_quarterback_changed_in(paths, capsys):
+    """Two live games, two intervals each. Dallas changes its starter on the Wednesday, so
+    the Tuesday-to-Thursday interval of its game is not noise -- it is the study #221 will
+    run -- and leaves the sample, counted. Three intervals of two games remain."""
+    kc, dal = "2026_01_KC_LAC", "2026_02_DAL_PHI"
+    _archive_of(paths["store"],
+                (TUE, {kc: 2.5, dal: -3.0}), (THU_B, {kc: 3.0, dal: -6.0}),
+                (FRI, {kc: 2.5, dal: -6.5}))
+    charts = _starters((dt.datetime(2026, 8, 1), "KC", "qb-kc"),
+                       (dt.datetime(2026, 8, 1), "LAC", "qb-lac"),
+                       (dt.datetime(2026, 8, 1), "PHI", "qb-phi"),
+                       (dt.datetime(2026, 8, 1), "DAL", "qb-dal-1"),
+                       (dt.datetime(2026, 8, 26), "DAL", "qb-dal-2"))
+    assert odds.noise_floor_report(2026, base=paths["store"], starters=charts,
+                                   bootstrap=20) == 0
+    said = capsys.readouterr().out
+    assert "quarterback changes excluded: 1 intervals" in said, said
+    assert "floor: sd 0.577 [" in said, "the +0.5, -0.5, -0.5 that remain; the -3.0 is out"
+    assert "over 3 intervals of 2 games (cluster = game)" in said, said
+
+
+def test_the_noise_floor_report_without_a_chart_measures_and_says_so(paths, capsys,
+                                                                     monkeypatch):
+    def _no_chart(season):
+        raise ConnectionError("no network")
+    monkeypatch.setattr(odds, "_qb_starters", _no_chart)
+    _archive_of(paths["store"], (TUE, {G: -3.0}), (THU_B, {G: -3.5}))
+    assert odds.main(["--noise-floor", "--base", str(paths["store"])]) == 0
+    said = capsys.readouterr().out
+    assert "same-quarterback condition NOT applied: ConnectionError" in said, said
+    assert "quarterback changes excluded" not in said, "a condition not applied is not counted"
+    assert "floor: sd" in said, said
+
+
+def test_the_noise_floor_report_on_a_fresh_clone_says_so(paths, capsys):
+    assert odds.main(["--noise-floor", "--base", str(paths["store"])]) == 0
+    assert "no snapshot archive" in capsys.readouterr().out
+
+
+def test_both_reports_name_a_season_the_archive_does_not_hold(paths, capsys):
+    """An archive of last season answers a question about this one by saying so, not with
+    a table of nothing and not with last season's numbers under this season's label."""
+    _archive_of(paths["store"], (TUE, {G: -3.0}))          # written under season 2026
+    for flag in ("--staleness", "--noise-floor"):
+        assert odds.main([flag, "--season", "2027", "--base", str(paths["store"])]) == 0
+        assert "no 2027 snapshots in the archive" in capsys.readouterr().out, flag
