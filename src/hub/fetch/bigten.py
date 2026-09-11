@@ -87,13 +87,15 @@ LINES = ROOT / "data" / "raw" / "bigten" / "lines"
 
 STATUS = SITE / "bigten.json"
 
-# The first day a report is due: the regime's first games are 19 September 2026 and the
-# three-day report for them is due on the 16th. A date in the past suppresses nothing, so a
-# stale value next August costs a few empty captures of a page before the season and never
-# silence inside one. The *end* is not a second constant: captures stop when
+# The first deadline, as an instant: the regime's first games are Saturday 19 September 2026
+# and the three-day report for them is due 8pm ET on Wednesday the 16th, which is 00:00 UTC
+# on the 17th. An instant rather than a date because every slot is one, and a date would
+# have to say which clock it was on. A value in the past suppresses nothing, so a stale one
+# next August costs a few empty captures of a page before the season and never silence
+# inside one. The *end* is not a second constant: captures stop when
 # `cfbd.configured_week` says the regular season is over, which is the same anchor the
 # college week is counted from and is bumped once a year for that reason.
-REPORTS_BEGIN = date(2026, 9, 16)
+REPORTS_BEGIN = datetime(2026, 9, 17, 0, 0, tzinfo=UTC)
 
 # The pytest node running right now, or nothing outside a test. Same guard as
 # `hub.fetch.cfbd._http_get`, for the same reason: the transport refuses under the default
@@ -221,17 +223,17 @@ def slot_id(at: datetime) -> str:
     return at.strftime("%Y-%m-%dT%H%MZ")
 
 
-def expected_slots(since: date, until: datetime) -> list[tuple[Slot, datetime]]:
+def expected_slots(since: datetime, until: datetime) -> list[tuple[Slot, datetime]]:
     """Every slot that should have been captured between `since` and `until`."""
     out: list[tuple[Slot, datetime]] = []
-    day = since
+    day = since.date()
     while day <= until.date():
         wd = _cron_weekday(day)
         for s in SLOTS:
             if s.weekday != wd:
                 continue
             at = datetime(day.year, day.month, day.day, s.hour, s.minute, tzinfo=UTC)
-            if at <= until:
+            if since <= at <= until:
                 out.append((s, at))
         day += timedelta(days=1)
     return sorted(out, key=lambda p: p[1])
@@ -433,7 +435,7 @@ def capture(*, now: datetime | None = None, season: int = SEASON_AHEAD,
         cap.lines_why = "no college week to price: " + cfbd.configured_week(at_now).why
     else:
         _snapshot_lines(cap, lines_dir=Path(lines_dir or LINES), quota_path=quota_path,
-                        seen=seen, captured_at=stamp, run_started=at_now)
+                        seen=seen, captured_at=stamp)
 
     if cap.rows:
         merged = pl.concat([held, pl.DataFrame(cap.rows, schema=INDEX_SCHEMA)])
@@ -442,15 +444,19 @@ def capture(*, now: datetime | None = None, season: int = SEASON_AHEAD,
 
 
 def _snapshot_lines(cap: Capture, *, lines_dir: Path, quota_path: Path | None,
-                    seen: set[str], captured_at: str, run_started: datetime) -> None:
+                    seen: set[str], captured_at: str) -> None:
     """The odds snapshot for this capture's week: one `/lines` call, kept beside the reports.
 
     `refresh=True`, because the whole point is the price *at this deadline* and a cached
     week is the price at some earlier one. `bulk` refuses to spend where it cannot -- the
-    run ceiling, the month, no key -- and serves the cache when it holds one, so the
-    capture time it reports is what says whether this snapshot is the one asked for.
+    run ceiling, the month, no key -- and serves the cache when it holds one. Whether that
+    happened is read off the call counter, before and after: a counter that did not move is
+    a week that was served rather than fetched. Not off a clock -- the cache stamp is to
+    the second and the run's "now" is whatever the caller said it was -- and the counter is
+    the one thing that moves on every request, answered or not.
     """
     assert cap.week is not None
+    before = cfbd.quota_used(quota_path)
     try:
         df = cfbd.bulk("lines", cap.season, cap.week, quota_path=quota_path, refresh=True)
         if not df.height:
@@ -463,9 +469,12 @@ def _snapshot_lines(cap: Capture, *, lines_dir: Path, quota_path: Path | None,
     when = cfbd.captured_at("lines", cap.season, cap.week)
     cap.lines_rows = df.height
     cap.lines_captured_at = when.isoformat() if when else None
-    if when is None or when < run_started:
+    # GUARD a-served-week-is-not-a-snapshot [unit/test_fetch_bigten.py]: a refused refresh
+    # that served the cached week is recorded as an earlier price, never as this deadline's
+    if cfbd.quota_used(quota_path) == before:
         cap.lines_why = ("served from an earlier capture: the call was refused and the "
                          "cached week was served instead")
+    # /GUARD
     target = lines_dir / str(cap.season) / f"w{cap.week:02d}" / f"{slot_id(cap.at)}.parquet"
     target.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(target)
@@ -482,7 +491,7 @@ def _snapshot_lines(cap: Capture, *, lines_dir: Path, quota_path: Path | None,
 
 # --- the stamp ------------------------------------------------------------------
 
-def missed_slots(index: pl.DataFrame, *, now: datetime, since: date = REPORTS_BEGIN,
+def missed_slots(index: pl.DataFrame, *, now: datetime, since: datetime = REPORTS_BEGIN,
                  opens: date | None = None) -> list[str]:
     """Every deadline between the regime's first day and now with no capture behind it.
 
@@ -492,7 +501,9 @@ def missed_slots(index: pl.DataFrame, *, now: datetime, since: date = REPORTS_BE
     chance to run: a run that *is* the capture for the current slot writes its row before
     this is asked.
     """
-    start = max(since, opens) if opens else since
+    start = since
+    if opens is not None:
+        start = max(since, datetime(opens.year, opens.month, opens.day, tzinfo=UTC))
     have = set(index["slot"].to_list()) if index.height else set()
     return [slot_id(at) for _, at in expected_slots(start, now) if slot_id(at) not in have]
 
@@ -580,9 +591,9 @@ def not_yet(now: datetime | None = None) -> str | None:
     anchor's rather than a second date here.
     """
     at_now = now or _now()
-    if at_now.date() < REPORTS_BEGIN:
+    if at_now < REPORTS_BEGIN:
         return (f"nothing was captured: the first availability report is due "
-                f"{REPORTS_BEGIN.isoformat()}, and this is {at_now.date().isoformat()}")
+                f"{REPORTS_BEGIN.isoformat()}, and this is {at_now.isoformat()}")
     choice = cfbd.configured_week(at_now)
     if choice.week is None:
         return "nothing was captured: " + choice.why.removeprefix("nothing was fetched: ")
@@ -598,7 +609,7 @@ def status_report(index: Path | None = None, now: datetime | None = None) -> int
     print(f"  bigten archive: {held.height:,} rows over {len(slots)} captured slots")
     if slots:
         print(f"  first {slots[0]}, latest {slots[-1]}")
-    print(f"  missed deadlines since {REPORTS_BEGIN.isoformat()}: {len(missed)}")
+    print(f"  missed deadlines since {REPORTS_BEGIN.date().isoformat()}: {len(missed)}")
     for s in missed[-MISSED_LISTED:]:
         print(f"    {s}")
     return 0
