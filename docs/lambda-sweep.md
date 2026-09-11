@@ -6,6 +6,13 @@ because they are the point.
 
 **Result: `projection_lambda = 0.0`.**
 
+> **Re-run 2026-09-11 under the unified pick-noise model (#50).** The simulated-draft
+> evaluation below was taken on an opponent model #41 has since replaced. Re-run on the
+> same six holdouts, 144 drafts per cell: best lambda per season **0.00, 0.00, 0.00, 0.00,
+> 0.02, 0.00** (was 0.00, 0.06, 0.00, 0.00, 0.00, 0.08), pooled at 0.08 **−42.7, t −1.43**
+> (was −45.3, t −1.20). The answer stands. The table is in
+> [corrected-board.md](corrected-board.md); the one below keeps its original text.
+
 > **Metric corrected and the sweep re-run, 2026-09-04. The result did not move.** The Spearman
 > in `tune.score` was computed with `actual.argsort().argsort()`, which gives tied values
 > distinct sequential ranks instead of the mean rank Spearman requires. `actual_points` is
