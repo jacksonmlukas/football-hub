@@ -59,6 +59,22 @@ def test_it_recovers_a_cv_it_was_given(cv_true):
     assert got["nominal"] == pytest.approx(cv_true, abs=0.035)
 
 
+def test_it_recovers_a_cv_it_was_given_when_the_players_missed_games():
+    """#235. The rows carry games played, and since #183 the simulator draws absence for
+    itself -- so the nominal has to be the talent spread *net* of absence, not one that
+    carries it a second time. Generated at a known CV with a quarter of the players missing
+    six to fourteen games: the full-season inversion returned 0.464 for a true 0.30, which is
+    the double count in one number; inverting through the real games distribution gets the
+    truth back. `abs=0.04` rather than the healthy fixture's 0.035 because a quarter of the
+    rows are short seasons and carry more sampling noise."""
+    rng = np.random.default_rng(1)
+    n = 900
+    games = np.where(rng.random(n) < 0.25, rng.integers(3, 12, n), rng.integers(14, 18, n))
+    got = calibrate.fit_talent_cv(_synthetic(0.30, n=n, games=games), bootstrap=30,
+                                  debias=True)
+    assert got["nominal"] == pytest.approx(0.30, abs=0.04)
+
+
 def test_the_raw_fit_sits_below_the_nominal_because_the_model_clips_at_zero():
     """Pinning the direction of the correction. If these ever come out equal the debias step
     has silently become a no-op."""
@@ -143,8 +159,11 @@ def test_the_current_constant_is_inside_the_fitted_interval():
     """The guard. `TALENT_CV` was 0.35 on a guess and the fit put it 4.6 se too low; if
     somebody reverts it without re-fitting, this fails."""
     from hub.draft.season import TALENT_CV
-    lo, hi = calibrate.FITTED_CI95
+    # The nominal's interval, not the dispersion's: net of absence the two differ (#235),
+    # and the constant in use is the nominal.
+    lo, hi = calibrate.FITTED_NOMINAL_CI95
     assert lo <= TALENT_CV <= hi
+    assert TALENT_CV == pytest.approx(calibrate.FITTED_NOMINAL, abs=0.01)
 
 
 # --- pulling the outcomes --------------------------------------------------

@@ -44,7 +44,19 @@ import polars as pl
 # a low-talent player the same way you bench an injured one.
 #
 # A single scalar is a compromise. RB fits above it and TE below; see the doc.
-TALENT_CV = 0.42
+#
+# **REFITTED 2026-09-11 net of absence, issue #235: 0.42 -> 0.32.** The dispersion the
+# fit measures did not move -- 0.408, CI [0.370, 0.453], on the same 460 player-seasons.
+# What moved is the inversion behind `nominal`: since #183 the simulator draws missed games
+# for itself (`season._absence_factor`), and `calibrate.nominal_for` was still inverting
+# through a full season for every player, so the constant carried the absence variance a
+# second time. Inverted through the real games-played distribution (sd 2.9-4.3 games by
+# position) the nominal is 0.322, with the dispersion interval's ends inverting to
+# [0.267, 0.385]. The double count, measured through the simulator at a mean-14 projection
+# with two missed games prior: season-total spread was overstated 18% (RB) to 46% (QB).
+# Restated in docs/talent-cv.md. Availability is no longer "inside the number on purpose":
+# it is drawn, and the number is talent net of it.
+TALENT_CV = 0.32
 
 # Per position, from the same fit, shrunk toward the pool in proportion to each position's
 # own standard error rather than taken raw -- four positions holding 51 to 200 player-seasons
@@ -64,7 +76,14 @@ TALENT_CV = 0.42
 # his projection suggests" is now a direction the fit leans rather than a difference it
 # establishes. The number is still the best estimate available and is still shrunk toward the
 # pool; what it is not any more is significant. See docs/talent-cv.md.
-TALENT_CV_BY_POS = {"QB": 0.42, "RB": 0.48, "WR": 0.42, "TE": 0.33}
+#
+# REFITTED 2026-09-11 net of absence (#235), each position inverted through its own games
+# distribution: QB 0.42 -> 0.20, RB 0.48 -> 0.38, WR 0.42 -> 0.31, TE 0.33 -> 0.18. The
+# shrunk raw values are unchanged (QB 0.408, RB 0.451, WR 0.390, TE 0.315); quarterbacks
+# and tight ends move most because their seasons vary most in games played (sd 4.3 and
+# 2.9 of ~14) relative to their spread. Which positions differ from the pool is a statement
+# about the raw values and is unchanged.
+TALENT_CV_BY_POS = {"QB": 0.20, "RB": 0.38, "WR": 0.31, "TE": 0.18}
 
 
 def talent_cv_for(pos: np.ndarray) -> np.ndarray:

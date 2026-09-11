@@ -11,10 +11,13 @@ E[realized points | pick, position] is the market's projection, fitted per posit
 power law in pick number with season intercepts, and rescaled so the market is unbiased by
 construction. The spread of realized/projected around that is TALENT_CV.
 
-Realized scoring is measured as **points per team game (total / 17)**, not per game played.
-A player who misses ten weeks really did deliver close to nothing, and the simulator's
-best-lineup rule benches a low-talent player the same way you bench an injured one, so
-availability belongs inside the number rather than outside it.
+Realized scoring is measured as **points per team game (total / 17)**, not per game played:
+a player who misses ten weeks really did deliver close to nothing, and the dispersion that
+comes out carries that. **What the model needs is that dispersion net of absence** (#235,
+2026-09-11): since #183 the simulator draws missed games for itself, so `nominal_for`
+inverts through each player's real games played and the nominal is the talent spread the
+simulator has to add *on top of* the absence it draws. Until then it inverted through a
+full season and the constant carried absence twice.
 
 Two corrections, both of which move the answer:
 
@@ -27,7 +30,8 @@ Two corrections, both of which move the answer:
 Result on 2023-25, 460 drafted player-seasons over 235 players inside pick 168: **0.408,
 95% CI [0.370, 0.453]**, which still puts the old 0.35 well outside the interval. Only the
 second moment was fitted, and the quantiles came out right on their own -- observed p10/p90
-of 0.43/1.55 against 0.44/1.56 for the normal the model assumes, with skew 0.07.
+of 0.43/1.55 against 0.44/1.56 for the normal the model assumes, with skew 0.07. The
+nominal net of absence is **0.322**, the interval's ends inverting to [0.267, 0.385].
 
 **The interval is over the player, and the curve is refitted inside it** (issue #172). It
 used to be over the player-*season*, around a curve fitted once outside the resample, with
@@ -75,6 +79,12 @@ MIN_PER_POSITION = 20
 # known, and refitting it inside each resample is almost the whole of the movement. Restated
 # in docs/talent-cv.md rather than edited over the top of the old figure.
 FITTED_CI95 = (0.370, 0.453)
+# The nominal -- what goes into the model -- and the dispersion interval's ends inverted
+# through the same machinery, so the guard on `TALENT_CV` is on the quantity it is. Until
+# #235 the nominal sat inside `FITTED_CI95` and the two could be confused; net of absence it
+# does not, and a guard reading the dispersion interval would have refused the refit.
+FITTED_NOMINAL = 0.322
+FITTED_NOMINAL_CI95 = (0.267, 0.385)
 # Shrunk, debiased per-position values behind `season.TALENT_CV_BY_POS`.
 #
 # These moved in the same re-run, and not because any raw estimate did -- all four are
@@ -83,7 +93,11 @@ FITTED_CI95 = (0.370, 0.453)
 # RB 0.501 -> 0.482 and TE 0.321 -> 0.332, with QB and WR inside a thousandth. Leaving these
 # pinned to a standard error the estimator no longer produces is the "estimator repaired, its
 # estimate left pinned" failure docs/method.md rule 13 names.
-FITTED_BY_POS = {"QB": 0.419, "RB": 0.482, "WR": 0.419, "TE": 0.332}
+#
+# REFITTED 2026-09-11 net of absence (#235): {QB 0.419, RB 0.482, WR 0.419, TE 0.332} ->
+# this. Again no raw or shrunk estimate moved; each position is inverted through its own
+# games-played distribution, and the ones whose seasons vary most in length move most.
+FITTED_BY_POS = {"QB": 0.198, "RB": 0.380, "WR": 0.314, "TE": 0.181}
 
 
 def _curve_of(real: np.ndarray, logpick: np.ndarray, season: np.ndarray) -> np.ndarray:
@@ -153,30 +167,22 @@ def nominal_for(target: float, mu: np.ndarray, games: np.ndarray, picks: np.ndar
     and search for the nominal that returns `target`. Whatever the bias is made of, this
     inverts it.
     """
-    # Everyone plays a full season here even though the real players did not. That was not an
-    # oversight: `simulate_weeks` had no concept of absence -- every player was drawn every
-    # week and the lineup benched whoever scored least -- so availability had to be carried
-    # *by* this constant rather than alongside it. Feeding the real games distribution back in
-    # would have let the simulation reproduce the observed dispersion using missed games the
-    # model did not have, and the constant would have come out too low.
-    #
-    # **Half of that stopped being true on 2026-09-10, and `full` is now a known debt rather
-    # than a justified simplification (#183).** `simulate_weeks` draws games played from
-    # `durability.MISSED_YOY_R`, so the model *does* have missed games -- while `TALENT_CV`,
-    # fitted here on points per team game, still carries them too. Season spread is therefore
-    # overstated by the absence variance inside this constant. The repair is the inverse of
-    # the paragraph above: pass the real games distribution instead of `full` and let the
-    # search return a lower nominal, which is #183's fifth acceptance criterion taken as a
-    # refit rather than as a carry. It needs a fitting run against the archive, so this
-    # commit states the direction of the error and leaves the number where it is. `TALENT_CV`
-    # itself lives in `hub.models.predict`, which is the other reason it did not move here.
-    full = np.full(mu.size, TEAM_GAMES)
+    # The real games distribution goes in, so the search returns the talent spread *net* of
+    # absence (#235). Until 2026-09-10 everyone was fed a full season here, and that was not
+    # an oversight: `simulate_weeks` had no concept of absence -- every player was drawn every
+    # week -- so availability had to be carried *by* this constant, and feeding the real
+    # games in would have let the simulation reproduce the observed dispersion using missed
+    # games the model did not have. #183 gave the model missed games (`_absence_factor`),
+    # and from then until this refit the constant carried them a second time: on synthetic
+    # rows with a quarter of the players missing six to fourteen games, the full-season
+    # inversion returned 0.464 for a true 0.30 (`test_calibrate`). `games` is what the
+    # simulator now draws for itself, so it is what the inversion assumes.
 
     def fitted(cv):
         rng = np.random.default_rng(seed)
-        total = simulate_seasons(mu, cv, full, rng, k=_k_of(positions))
+        total = simulate_seasons(mu, cv, games, rng, k=_k_of(positions))
         df = pl.DataFrame({"season": np.full(mu.size, 2024), "pick": picks,
-                           "pos": positions, "total": total, "games": full})
+                           "pos": positions, "total": total, "games": games})
         return fit_talent_cv(df, bootstrap=1, debias=False)["talent_cv"]
 
     lo, hi = 0.4 * target, min(2.2 * target + 0.05, 1.5)

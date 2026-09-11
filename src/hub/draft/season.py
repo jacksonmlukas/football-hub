@@ -23,7 +23,7 @@ better one. Until 2026-09-10 there was no absence at all: a bust was a talent dr
 near zero, which -- because weekly spread follows realised talent -- made a player who missed
 the season a low-mean **low-variance** player. That is the opposite of an injury, and it is
 the one place where being shallow was not honest. `_absence_factor` below says what replaced
-it, what it deliberately does not model, and which constant is now carrying absence twice.
+it, what it deliberately does not model, and that `TALENT_CV` is fitted net of it (#235).
 """
 from __future__ import annotations
 
@@ -139,17 +139,12 @@ def _absence_factor(missed, n_sims: int, weeks: int, rng: np.random.Generator) -
     a different reason: they are known in advance rather than drawn, `hub/draft` has no
     schedule source, and they are #226.
 
-    **The constant that is now carrying absence twice, stated rather than hidden.**
-    `TALENT_CV` was fitted on points per team game, so missed time already sits inside it as
-    a population average -- `durability`'s own docstring says so, and `calibrate.nominal_for`
-    feeds a full season to every player *because* of it. Drawing absence explicitly here does
-    not remove it from there, so season-level spread is now overstated by the absence
-    variance inside `TALENT_CV`. #183's fifth criterion allows a constant to be refitted or
-    explicitly carried with the choice stated: this is the carry. The refit is
-    `hub.draft.calibrate` run against the real games-played distribution instead of `full`,
-    which needs an archive this change does not touch, and it will move `TALENT_CV` **down**.
-    The direction of the error is therefore known: too much season variance, not too little,
-    which is the safe side for a decision that already prefers certainty.
+    **`TALENT_CV` is net of this draw** (#235, 2026-09-11). It was fitted on points per team
+    game, so missed time sat inside it as a population average, and for a day after #183 the
+    constant carried absence a second time -- season spread overstated 18% (RB) to 46% (QB)
+    at a mean-14 projection. `hub.draft.calibrate.nominal_for` now inverts through the real
+    games-played distribution, so the constant is the talent spread this simulator has to
+    add on top of what it draws here. The two are complementary, not overlapping.
     """
     from hub.draft.durability import TEAM_GAMES, next_season_absence
 

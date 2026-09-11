@@ -59,10 +59,15 @@ role gets the marginal instead of the conditional.
 zero-inflated week model would each have introduced a weight nothing in this repo derives,
 which is ADR-0006's line; the games-played draw is the only one of the three whose parameter
 was already measured. `season._absence_factor` records what the draw does not model — the
-weeks missed are scattered rather than run in a block, and byes are #226 — and names
-`TALENT_CV` as now carrying absence a second time, since it was fitted on points per *team*
-game. That overstates season spread until `hub.draft.calibrate` is re-run against the real
-games-played distribution, which is the direction the error is known to lie in.
+weeks missed are scattered rather than run in a block, and byes were #226 until they landed.
+
+> **Restated 2026-09-11 (#235).** For a day this page said `TALENT_CV` now carried absence a
+> second time, since it was fitted on points per *team* game, and that season spread was
+> overstated until `hub.draft.calibrate` was re-run against the real games-played
+> distribution. It has been: the nominal is 0.42 → **0.32** (QB 0.20, RB 0.38, WR 0.31,
+> TE 0.18), and the overstatement, measured through the simulator at a mean-14 projection
+> with two missed games prior, was 18% (RB) to 46% (QB) of season-total spread. See
+> [talent-cv.md](talent-cv.md).
 
 ## The projection does not fully price it
 
