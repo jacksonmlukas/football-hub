@@ -80,6 +80,7 @@ same class of bug, and a reproducible simulator cannot afford it.
 """
 from __future__ import annotations
 
+import hashlib
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import replace
@@ -88,7 +89,7 @@ from typing import NamedTuple
 import numpy as np
 import polars as pl
 
-from hub.config import PoolConfig
+from hub.config import PoolConfig, pool_digest
 from hub.season.survivor import MIN_PROB, Infeasible, solve, week_fixtures
 
 NOT_FITTED_BECAUSE = (
@@ -329,6 +330,8 @@ class Candidate(NamedTuple):
     is_fallback: bool           # the team auto-pick would assign for nothing
     survives_se: float = 0.0        # standard error of `survives` at the trial count used
     dollars_se: float = 0.0         # standard error of `expected_dollars`, likewise
+    plan_source: str = ""           # `Plan.source` of what our entry played after this
+                                    # pick; "" for a week priced in closed form
 
 
 class Weekly(NamedTuple):
@@ -362,6 +365,16 @@ class Weekly(NamedTuple):
     `test_our_entry_survives_materially_more_often_than_the_field_rule_gave_it` says so from
     the test side). Two plans against each other is the comparison this simulator can make
     honestly, and it is the one every figure here reports.
+
+    **The last five fields are what it takes to run this week again** (#162). A figure with
+    no provenance cannot be told from the same figure produced under different rules, and
+    `hub.season.journal` records this shape -- so what a row needs to be re-derived has to
+    be on the shape first. `seed` is the value every candidate was reseeded to, `entries`
+    and `outlay` are the two inputs the caller stated that nothing else here carries,
+    `pool_digest` names the rules and `grid_digest` the board. With `trials` and `pot`,
+    which were already here, `weekly(..., trials=w.trials, seed=w.seed)` on the same grid
+    reproduces every candidate exactly; `test_journal` holds that from the journal's side.
+    The ledger is not carried: it is what the earlier picks in the same journal spent.
     """
     week: int
     recommend: str
@@ -374,6 +387,11 @@ class Weekly(NamedTuple):
     given_up_se: float = 0.0    # standard error of `given_up`, paired across the same trials
     trials: int = 0             # trials each candidate was run for; 0 when none were needed
     cashed: int = 0             # of those, the ones where either arm took a share of the pot
+    seed: int = 0               # what every candidate's generator was reseeded to
+    entries: int = 0            # the field each candidate was priced against, ours included
+    outlay: float = 0.0         # what every candidate's dollars are net of
+    pool_digest: str = ""       # `hub.config.pool_digest` of the rules this was priced under
+    grid_digest: str = ""       # `grid_digest` of the board it was priced on
 
     @property
     def unresolved(self) -> bool:
@@ -465,6 +483,29 @@ class _Week(NamedTuple):
     fixture: dict[str, int]                     # team -> which game in `games` it plays in
     picks: int                                  # 1, or 2 in a double-pick week
     dropped: int = 0                            # fixtures in the week priced on one side only
+
+
+def grid_digest(grid: pl.DataFrame) -> str:
+    """Stable 8-char hash of what the board prices: week, team, win probability, fixture.
+
+    The grid's vintage, for a row that has to say which board its figure came from (#162).
+    Only the four columns the simulator reads are hashed, so a grid carrying `kickoff` or
+    `moving_field` beside them digests the same as one that does not -- those move nothing
+    here, and a digest that moved with them would report drift in a figure that had not
+    drifted. Rows are put in a declared order first, because the bytes are order-sensitive
+    and the order a source hands rows over in is the source's whim; ties through all four
+    columns are identical rows and write identical bytes either way.
+
+    Text rather than Arrow bytes, for the reason `hub.fetch.nflverse.content_digest` gives:
+    a frame and the same frame read back from parquet serialise to different IPC bytes.
+    Not that function itself, because it lives in a fetch layer and this module imports
+    none -- the simulator has to be answerable from a frame alone.
+    """
+    cols = [c for c in ("week", "team", "win_prob", "game_id") if c in grid.columns]
+    canon = grid.select(cols).sort(cols)
+    head = ",".join(f"{c}:{canon.schema[c]}" for c in cols)
+    return hashlib.sha256((head + "\n").encode()
+                          + canon.write_csv().encode()).hexdigest()[:8]
 
 
 def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
@@ -1204,7 +1245,8 @@ def auto_pick(grid: pl.DataFrame, week: int, ledger: Sequence[str] = ()) -> str 
 def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
            ledger: Sequence[str] = (), entries: int, pot: float, outlay: float = 0.0,
            pool: PoolConfig | None = None, top: int = 6,
-           trials: int = WEEKLY_TRIALS, rng: np.random.Generator | None = None) -> Weekly:
+           trials: int = WEEKLY_TRIALS, rng: np.random.Generator | None = None,
+           seed: int | None = None) -> Weekly:
     """This week's pick, what it is worth, and what it cost against the free one.
 
     A candidate is worth `P(it wins this week)` times what the rest of the season is worth
@@ -1253,6 +1295,12 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     Only the `top` most likely teams are valued. Each one costs a simulation, and a team the
     betting market prices below the sixth-best is not a candidate for a pick whose whole
     purpose is surviving the week.
+
+    **`seed` is the reseed value itself, for a re-run** (#162). Left out, one is drawn from
+    `rng` as it always was and every candidate is reseeded to it; given, it is used as-is.
+    The value is carried out on `Weekly.seed` either way, so a journal row that names it can
+    hand it back here and meet the identical trials -- which is what makes a recorded figure
+    reproducible rather than merely recorded.
     """
     cfg = pool or PoolConfig()
     rng = rng or np.random.default_rng(0)
@@ -1266,7 +1314,7 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     free = auto_pick(grid, week, ledger)
     ranked = wk.sort(["win_prob", "team"], descending=[True, False]).head(top)
 
-    seed = int(rng.integers(2 ** 32))
+    seed = int(rng.integers(2 ** 32)) if seed is None else int(seed)
     cands: list[Candidate] = []
     # The per-trial figure behind each candidate's mean, kept so the comparison at the bottom
     # can be made trial by trial. A candidate's own standard error goes on the candidate; the
@@ -1293,6 +1341,7 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
                 dtype=float)
             s_se = float(np.std(live[team])) / root * p
             d_se = float(np.std(xs)) / root * p * pot
+            source = rest.plan.source if rest.plan is not None else ""
         else:
             # Nothing left to play: surviving this week is surviving, and the pot is split
             # with whoever else is still standing -- which the field statistics cannot say
@@ -1300,8 +1349,9 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
             # was run, so both errors are zero because the figures are exact.
             survives, share = 1.0, 1.0
             s_se = d_se = 0.0
+            source = ""
         cands.append(Candidate(team, p, p * survives, p * share * pot - outlay, team == free,
-                               s_se, d_se))
+                               s_se, d_se, source))
 
     cands.sort(key=lambda c: (-c.expected_dollars, c.team))
     best = cands[0]
@@ -1333,7 +1383,9 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
         matched=best.team == free,
         given_up=(fb.survives - best.survives) if fb else 0.0,
         pot=pot, resolution=res, candidates=cands,
-        given_up_se=gse, trials=trials if ahead else 0, cashed=cashed)
+        given_up_se=gse, trials=trials if ahead else 0, cashed=cashed,
+        seed=seed, entries=entries, outlay=outlay,
+        pool_digest=pool_digest(cfg), grid_digest=grid_digest(grid))
 
 
 def _places(se: float, *, cap: int) -> int:

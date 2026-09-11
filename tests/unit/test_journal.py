@@ -40,6 +40,14 @@ class _Decision(TypedDict, total=False):
     survival_given_up: float | None
     credits_before: float | None
     credits_after: float | None
+    pool_digest: str | None
+    grid_digest: str | None
+    seed: int | None
+    trials: int | None
+    entries: int | None
+    pot: float | None
+    outlay: float | None
+    plan_source: str | None
     at: dt.datetime | None
     base: Path
 
@@ -443,3 +451,85 @@ def test_a_team_the_week_never_priced_is_refused_rather_than_costed(tmp_path):
     ADR-0014 check and mean nothing -- the fourth way past a duty that is about content."""
     with pytest.raises(ValueError, match="not one of the teams this week priced"):
         journal.record_weekly(_weekly(), season=2026, chose="MIA", base=tmp_path)
+
+
+# --- a row carries what it takes to reproduce its own figure (#162) ------------
+#
+# The schema carried the dollar figure and the survival given up and none of the provenance,
+# so a row could not be re-derived or told apart from one produced under different rules.
+# After #160 the pool digest exists and our plan is an input, so a row can name its rules,
+# its board, its seed and its trials -- and a re-run from those has to land on the figure.
+
+
+def test_a_row_carries_what_it_takes_to_run_its_figure_again(tmp_path):
+    """The first two criteria at once: the provenance is on the row, and re-running from it
+    reproduces the figure *exactly* -- `==`, not approximately, because the seed and the
+    trial count are what make two runs the same run."""
+    from hub.config import PoolConfig, pool_digest
+    w = _weekly()
+    k = journal.record_weekly(w, season=2026, at=AT, base=tmp_path)
+    row = journal.read(2026, base=tmp_path).filter(pl.col("key") == k).to_dicts()[0]
+
+    assert row["pool_digest"] == pool_digest(PoolConfig())
+    assert row["grid_digest"] == pool.grid_digest(_hoard())
+    assert row["seed"] == w.seed and row["trials"] == 400
+    assert row["entries"] == 12 and row["pot"] == 420.0 and row["outlay"] == 0.0
+    assert row["plan_source"] and "optimiser" in row["plan_source"]
+    assert all(row[c] is not None for c in journal.RERUN_COLUMNS)
+
+    # A different generator on purpose: `_weekly` drew its seed from `default_rng(0)`, and a
+    # re-run that happened to draw the same one would reproduce the figure with `seed`
+    # ignored. Only the row's own seed may carry the trials across.
+    again = pool.weekly(_hoard(), [1, 2], week=row["week"], entries=row["entries"],
+                        pot=row["pot"], outlay=row["outlay"], trials=row["trials"],
+                        rng=np.random.default_rng(999), seed=row["seed"])
+    got = next(c for c in again.candidates if c.team == row["chose"])
+    assert got.expected_dollars == row["expected_dollars"]
+    assert got.survives == row["chose_survives"]
+    assert again.seed == row["seed"] and again.pool_digest == row["pool_digest"]
+
+
+def test_two_rows_under_different_pool_rules_are_told_apart_by_the_journal_alone(tmp_path):
+    """Nothing outside the journal is read. The two rows carry the same week, the same pick
+    and the same trials, and differ only in the digest of the rules they were priced under."""
+    from hub.config import PoolConfig
+    split = pool.weekly(_hoard(), [1, 2], week=1, entries=12, pot=420.0, trials=50,
+                        pool=PoolConfig(co_survivor_rule="split"), seed=7)
+    roll = pool.weekly(_hoard(), [1, 2], week=1, entries=12, pot=420.0, trials=50,
+                       pool=PoolConfig(co_survivor_rule="rollover"), seed=7)
+    journal.record_weekly(split, season=2026, at=AT, base=tmp_path)
+    journal.record_weekly(roll, season=2026, at=AT + dt.timedelta(hours=1), base=tmp_path)
+    got = journal.read(2026, base=tmp_path)
+    assert got.height == 2
+    assert got["pool_digest"].n_unique() == 2
+    assert got["grid_digest"].n_unique() == 1 and got["seed"].n_unique() == 1
+
+
+def test_a_row_written_before_provenance_existed_reads_as_one_that_cannot_be_rerun(tmp_path):
+    """The fourth criterion. A partition written under the old schema has none of the
+    provenance columns; it still reads, and every one of them is null on it -- not a
+    default, not a value nobody measured. A store holding *only* such rows has no column to
+    union, which is the case `read` fills rather than fails."""
+    from hub import store
+    old = {c: t for c, t in journal.SCHEMA.items() if c not in journal.RERUN_COLUMNS}
+    k = journal.key(2026, 1, "pick", AT)
+    row = pl.DataFrame({c: [None] for c in old}, schema=old).with_columns(
+        pl.lit(k).alias("key"), pl.lit("pick").alias("kind"), pl.lit(2026).alias("season"),
+        pl.lit(1).alias("week"), pl.lit(AT).alias("at"), pl.lit("LAC").alias("chose"),
+        pl.lit("LAC").alias("fallback"), pl.lit(True).alias("matched_fallback"))
+    store.write(row, journal.TABLE, journal.LEAGUE, 2026, 1, name=k, base=tmp_path)
+
+    got = journal.read(2026, base=tmp_path)
+    assert got.height == 1 and got["chose"][0] == "LAC"
+    assert list(got.columns[:len(journal.SCHEMA)]) == list(journal.SCHEMA)
+    assert all(got[c][0] is None for c in journal.RERUN_COLUMNS)
+
+
+def test_provenance_comes_whole_or_not_at_all(tmp_path):
+    """A row naming the rules and not the seed reads as reproducible to a query on
+    `pool_digest` and is not. Either both are present or the row says it cannot be
+    re-derived."""
+    with pytest.raises(ValueError, match="provenance has to come whole"):
+        _decide(tmp_path, pool_digest="deadbeef", seed=None)
+    with pytest.raises(ValueError, match="provenance has to come whole"):
+        _decide(tmp_path, pool_digest=None, seed=3)

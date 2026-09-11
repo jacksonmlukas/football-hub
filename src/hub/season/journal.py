@@ -43,6 +43,15 @@ sign-convention disagreement between the two shapes could not have shown up. `re
 is the adapter that closes that, and the disagreement it found -- the column ADR-0014's rule
 would be judged by is not the quantity ADR-0014's rule fires on -- is written down there
 rather than quietly reconciled.
+
+**A row carries what it takes to reproduce its own figure** (#162). The schema carried the
+dollar figure and the survival given up and none of what produced them -- no pool digest, no
+trial count, no seed, no board -- so a row could not be re-derived, and two rows written
+under different pool rules were indistinguishable without reading something outside the
+journal. `RERUN_COLUMNS` is what a re-run needs, and `test_journal` shows a re-run from a
+row's own columns landing on its `expected_dollars` exactly. Rows written before those
+columns existed read back with nulls in them and are never migrated to a value nobody
+measured: a null there is the row saying it cannot be re-derived, which is true of it.
 """
 from __future__ import annotations
 
@@ -98,7 +107,26 @@ SCHEMA: dict[str, Any] = {
     "survival_given_up": pl.Float64,   # their difference, per ADR-0014's logging duty
     "cost_credits": pl.Float64,        # a before-and-after difference, not a meter
     "cost_note": pl.Utf8,
+    # What it takes to run the figure again (#162): the rules, the board, the trials and
+    # the seed they were reseeded to, and the two inputs the caller stated. Null on every
+    # row written before these existed, and never filled in -- a null here says the row
+    # cannot be re-derived, which is true of it, where a value nobody measured would say
+    # it can. `RERUN_COLUMNS` names them so a reader can ask which rows carry it.
+    "pool_digest": pl.Utf8,            # `hub.config.pool_digest` of the rules
+    "grid_digest": pl.Utf8,            # `hub.season.pool.grid_digest` of the board
+    "seed": pl.Int64,                  # what every candidate was reseeded to
+    "trials": pl.Int64,                # trials each candidate ran; 0 for closed form
+    "entries": pl.Int64,               # the field priced against, ours included
+    "pot": pl.Float64,
+    "outlay": pl.Float64,              # what `expected_dollars` is net of
+    "plan_source": pl.Utf8,            # `Plan.source`: the optimiser, or the fallback
 }
+
+# The columns a row needs to be re-derived, in one place. `read` fills them with nulls on a
+# store written before they existed rather than failing to select them, and a row whose
+# `pool_digest` is null is one no re-run can be checked against.
+RERUN_COLUMNS = ("pool_digest", "grid_digest", "seed", "trials", "entries", "pot", "outlay",
+              "plan_source")
 
 OUTCOME_SCHEMA: dict[str, Any] = {
     "key": pl.Utf8,
@@ -206,6 +234,10 @@ def record(*, season: int, week: int, kind: str, chose: str,
            chose_survives: float | None = None, fallback_survives: float | None = None,
            survival_given_up: float | None = None,
            credits_before: float | None = None, credits_after: float | None = None,
+           pool_digest: str | None = None, grid_digest: str | None = None,
+           seed: int | None = None, trials: int | None = None, entries: int | None = None,
+           pot: float | None = None, outlay: float | None = None,
+           plan_source: str | None = None,
            at: datetime | None = None, base: Path | None = None) -> str:
     """Append one decision. Returns its key, which is how the outcome finds it later.
 
@@ -222,7 +254,20 @@ def record(*, season: int, week: int, kind: str, chose: str,
     or what was odd about it, could not be written at all.
 
     The ADR-0014 duty is `_check_adr_0014`, which is where its three escapes are named.
+
+    The `RERUN_COLUMNS` columns are what a re-run needs, and they are optional here because a
+    decision is a decision whether or not its figure can be reproduced -- a row that says
+    "this was chosen" and cannot say under what is still the record of a choice. What is
+    refused is *pretending*: a row carrying some of them and not others would read as
+    reproducible to a query on any one column, so either the digest and the seed are both
+    present or neither is. `record_weekly` supplies all of them off `pool.Weekly`.
     """
+    if (pool_digest is None) != (seed is None):
+        raise ValueError(
+            f"week {week}: provenance has to come whole. pool_digest={pool_digest!r} and "
+            f"seed={seed!r} -- a row naming the rules but not the seed, or the seed but not "
+            "the rules, reads as reproducible to whichever column is queried and is not. "
+            "Pass both, or neither and let the row say it cannot be re-derived.")
     _check_adr_0014(week=week, kind=kind, chose=chose, fallback=fallback,
                     fallback_note=fallback_note, chose_survives=chose_survives,
                     fallback_survives=fallback_survives,
@@ -250,6 +295,9 @@ def record(*, season: int, week: int, kind: str, chose: str,
         "cost_credits": [cost],
         "cost_note": [None if cost is not None
                       else "credit balance unknown on at least one side"],
+        "pool_digest": [pool_digest], "grid_digest": [grid_digest],
+        "seed": [seed], "trials": [trials], "entries": [entries],
+        "pot": [pot], "outlay": [outlay], "plan_source": [plan_source],
     }, schema=SCHEMA)
     store.write(row, TABLE, LEAGUE, season, week, name=k, base=base)
     return k
@@ -315,7 +363,13 @@ def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
         chose_survives=by_team[took].survives,
         fallback_survives=fb.survives if fb is not None else None,
         survival_given_up=(fb.survives - by_team[took].survives) if fb is not None else None,
-        credits_before=credits_before, credits_after=credits_after, at=at, base=base)
+        credits_before=credits_before, credits_after=credits_after,
+        # Everything a re-run needs, off the shape that ran (#162). `plan_source` is the
+        # taken candidate's, because the figure on this row is that candidate's figure.
+        pool_digest=w.pool_digest, grid_digest=w.grid_digest, seed=w.seed,
+        trials=w.trials, entries=w.entries, pot=w.pot, outlay=w.outlay,
+        plan_source=by_team[took].plan_source or None,
+        at=at, base=base)
 
 
 def settle(k: str, *, survived: bool, season: int | None = None, week: int | None = None,
@@ -378,8 +432,17 @@ def read(season: int, week: int | None = None,
     # `season` and `week` arrive twice: once as written and once as the Hive partition the
     # store lays out, and the partition's string wins the name. Cast back, so a caller
     # filtering on week does not compare an int to "02".
+    #
+    # A column the schema has and the store does not is one every row predates: the store
+    # unions partitions by name, so a mix of old and new rows already reads with nulls in
+    # the old ones, and a store holding *only* old rows has no such column to union. Added
+    # as null rather than failing the select, because those rows are readable decisions
+    # that cannot be re-derived, and a null in `RERUN_COLUMNS` is exactly that claim (#162).
+    absent = [pl.lit(None, dtype=t).alias(c) for c, t in SCHEMA.items()
+              if c not in decisions.columns]
     decisions = decisions.with_columns(
-        pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64)).select(list(SCHEMA))
+        pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64), *absent
+    ).select(list(SCHEMA))
     if OUTCOME_TABLE not in have:
         outcomes = pl.DataFrame(schema=OUTCOME_SCHEMA)
     else:
