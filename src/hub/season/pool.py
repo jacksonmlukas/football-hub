@@ -60,6 +60,16 @@ a plan computed inside the loop could not be handed to it.
 exactly degenerate in week 1, where every ledger is empty and it knows nothing about the field
 at all. That is where the season starts, so early figures carry more model risk than late ones.
 
+**A pool ends two ways, and both are priced.** Somebody outlasts the final week, and the pot
+is divided by `PoolConfig.co_survivor_rule`; or the last entries standing all go out in the
+same week, and it is divided by `PoolConfig.co_elimination_rule` among the entries eliminated
+last. The second is the ending a field playing chalk usually reaches -- it dies *together*,
+which is the correlation the first paragraph is about -- and until #157 it was the ending
+this module measured as `PoolOutcome.ending_week` and then valued our stake in at zero. An
+entry that outlives the whole field and then loses is that state with a count of one, and
+takes the pot: this simulator keeps a lone survivor playing, and the pool would not have.
+`trial_share` is the one place either rule meets a trial.
+
 **Ties are not modelled** because the grid cannot express one: `win_prob` comes from a
 continuous margin model, which prices a tie at zero. The pool's rule that a tie eliminates is
 therefore satisfied vacuously here rather than enforced.
@@ -185,17 +195,40 @@ class EntryOutcome(NamedTuple):
     unconfirmed, and under `rollover` pays nothing at all for a two-way finish. A vector of
     shares could not answer "did we survive" under that rule, so it would have needed a second
     vector beside it and the two could disagree about one set of trials.
+
+    **`last_out_each` is the other way a trial pays, and until #157 it paid nothing.** A
+    survivor pool ends one of two ways: somebody outlasts the final week, or the last entries
+    standing all go out in the same week. The second is not a tail case -- a field crowding
+    onto chalk dies *together*, and on the synthetic board `sensitivity` was first run on the
+    field is gone before the last week in 99% of trials at the default concentration. This
+    module measured that event as `PoolOutcome.ending_week` and then valued our stake in it
+    at zero, which is not a rule any pool has: the entries eliminated last split the pot, or
+    it rolls over, and `PoolConfig.co_elimination_rule` says which. The record here is how
+    many entries went into the week the field emptied, ours among them, and 0 where the
+    trial did not end that way or ours had already gone. `trial_share` reads the two records
+    together, and it is the one place either rule is applied to a trial.
+
+    An entry that outlives the whole field and then loses is in this state alone: the count
+    is one and it takes the pot under every spelling of the rule. That is what the pool
+    would have paid it the week the last rival went out, so `survives` and `sole` -- which
+    are about the *final week* and unchanged -- can both be zero on a trial that paid in
+    full. `share` is the money and the two above it are the season.
     """
     trials: int
     survives: float     # P(this entry outlasts the final week at all)
     sole: float         # P(it is the only one that does)
     share: float        # expected fraction of the pot under `PoolConfig.co_survivor_rule`
+                        # and `PoolConfig.co_elimination_rule`, whichever the trial reached
     share_sd: float = 0.0   # spread of that fraction across trials, so a caller can say
                             # how finely two of these figures can be told apart
     plan: Plan | None = None    # the picks our entry played; None when it sampled as a rival
     replans: float = 0.0        # weeks per trial where that plan would not play
     survivors_each: tuple[int, ...] = ()    # entries left at the end of each trial, ours
                                             # included; 0 where ours was not one of them
+    last_out: float = 0.0       # P(ours went out in the week the field emptied -- it was
+                                # among the last standing, or was the last)
+    last_out_each: tuple[int, ...] = ()     # entries that went into that week, ours
+                                            # included; 0 where the trial did not end so
 
     @property
     def shared(self) -> float:
@@ -207,6 +240,19 @@ class EntryOutcome(NamedTuple):
         assumption, and `sensitivity` is where the two are reported against each other.
         """
         return self.survives - self.sole
+
+    @property
+    def co_eliminated(self) -> float:
+        """P(this entry went out in the week the field emptied, and was not alone in it).
+
+        The trials `PoolConfig.co_elimination_rule` decides, the counterpart of `shared` for
+        the other way a pool ends. Read off the record rather than off two means, because
+        the "alone" case is one it must exclude: an entry that outlasted everybody and then
+        lost takes the pot under every spelling, so the rule decides nothing there.
+        """
+        if not self.last_out_each:
+            return 0.0
+        return sum(m > 1 for m in self.last_out_each) / len(self.last_out_each)
 
 
 def _plural(n: int, word: str) -> str:
@@ -759,9 +805,15 @@ class _Ours:
 
 def _play(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int],
           led: list[set[str]], alive: list[bool],
-          ours: _Ours | None = None) -> tuple[int | None, list[int]]:
-    """Play one trial out. Returns the week everyone died -- None if somebody lasted -- and
-    the live count after each week.
+          ours: _Ours | None = None) -> tuple[int | None, list[int], int | None]:
+    """Play one trial out. Returns the week everyone died -- None if somebody lasted -- the
+    live count after each week, and the position in `weeks` at which entry 0 went out, or
+    None if it lasted.
+
+    The third is what `_entry_trials` needs to price the week the field empties (#157): once
+    every entry is dead the `alive` list cannot say whether ours went out in that week or
+    three weeks earlier, and the two are worth the whole pot and nothing respectively.
+    `simulate` gets it too and reads it for nothing, because entry 0 is a rival there.
 
     Every game is drawn once here and the result shared by each entry holding either side.
     Extracted rather than written twice: `simulate` and `entry_outcome` ask different
@@ -790,6 +842,7 @@ def _play(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int],
     holds it.
     """
     counts = []
+    out_at: int | None = None
     # One draw per game per trial, and the same result read by every entry holding either
     # side: the correlation this module exists for, unchanged. What is new is *when*.
     results = [frozenset(a if rng.random() < p_a else b for a, b, p_a in wk.games)
@@ -803,12 +856,14 @@ def _play(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int],
                      else _pick(rng, wk, led[i], wk.picks))
             if picks is None or not all(t in won for t in picks):
                 alive[i] = False
+                if i == 0:
+                    out_at = at
                 continue
             led[i].update(picks)
         counts.append(sum(alive))
         if counts[-1] == 0:
-            return w, counts
-    return None, counts
+            return w, counts, out_at
+    return None, counts, out_at
 
 
 def share_of_pot(rule: str, survivors: int) -> float:
@@ -844,11 +899,34 @@ def share_of_pot(rule: str, survivors: int) -> float:
     if rule == "rollover":
         return 1.0 if survivors == 1 else 0.0
     raise ValueError(
-        f"`PoolConfig.co_survivor_rule` is {rule!r}: it decides what a shared finish pays and "
-        "has to be one of 'split' (an even division), 'rollover' (nobody collects, the pot "
-        "carries forward) or 'tiebreak' (one survivor takes it, priced at its expectation). "
-        "The rule is unconfirmed for this pool, which is why it is a setting; an unmodelled "
-        "spelling of it is not a fourth option.")
+        f"a pool rule is {rule!r}: `PoolConfig.co_survivor_rule` decides what a shared "
+        "finish pays and `PoolConfig.co_elimination_rule` what the week the field empties "
+        "pays, and each has to be one of 'split' (an even division), 'rollover' (nobody "
+        "collects, the pot carries forward) or 'tiebreak' (one entry takes it, priced at its "
+        "expectation). Both rules are unconfirmed for this pool, which is why they are "
+        "settings; an unmodelled spelling of one is not a fourth option.")
+
+
+def trial_share(cfg: PoolConfig, survivors: int, last_out: int) -> float:
+    """What one trial paid our entry, as a fraction of the pot, from its two-count record.
+
+    `survivors` is `EntryOutcome.survivors_each` for the trial and `last_out` is
+    `EntryOutcome.last_out_each`; at most one of them is non-zero, because a trial ends
+    either with entries outlasting the final week or with the field empty, never both. The
+    first is priced by `PoolConfig.co_survivor_rule` and the second by
+    `PoolConfig.co_elimination_rule`, each through `share_of_pot`, and zero is what a trial
+    pays when ours went out strictly before the last entry did -- the one terminal state
+    that really is worth nothing.
+
+    The one place either rule meets a trial. `_entry_trials` builds the means from it and
+    `weekly` rebuilds the per-trial vector from it, so the two cannot read the record
+    differently -- which is what stored shares would have let them do.
+    """
+    if survivors:
+        return share_of_pot(cfg.co_survivor_rule, survivors)
+    if last_out:
+        return share_of_pot(cfg.co_elimination_rule, last_out)
+    return 0.0
 
 
 def _entry_trials(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int], *,
@@ -862,29 +940,44 @@ def _entry_trials(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequenc
     rather than asserted from memory -- and the gap is the whole finding, since it is what
     reverses #161's leverage claim. `entry_outcome` itself never passes None: from outside
     this module our entry plays our plan.
+
+    Two counts per trial, and which one is set says how the trial ended. `n` is the entries
+    left after the final week when ours is one of them; `m` is the entries that went *into*
+    the week the field emptied when ours went out in it -- the live count after the week
+    before, or the whole field if it was the first. `_play` says which week ours went out in
+    because the `alive` list cannot: once the field is empty every entry reads the same, and
+    an entry eliminated in the last week and one eliminated three weeks earlier are worth
+    the pot and nothing.
     """
     cfg = pool or PoolConfig()
-    survived = sole = 0
+    survived = sole = last = 0
     # Kept per trial, not just summed: two candidate picks are compared by their means, and a
-    # difference smaller than the spread of what was averaged is not a difference. The count
-    # rather than the share, so the record does not have the co-survivor rule baked into it.
+    # difference smaller than the spread of what was averaged is not a difference. Counts
+    # rather than shares, so the record does not have either pool rule baked into it.
     each: list[int] = []
+    out: list[int] = []
     share: list[float] = []
     for _ in range(trials):
         led = [set(ledger)] + [set() for _ in range(entries - 1)]
         alive = [True] * entries
-        _play(rng, wks, weeks, led, alive, ours)
+        died, counts, out_at = _play(rng, wks, weeks, led, alive, ours)
         n = sum(alive) if alive[0] else 0
+        m = 0
+        if died is not None and out_at == len(counts) - 1:
+            m = counts[-2] if len(counts) > 1 else entries
         each.append(n)
-        share.append(share_of_pot(cfg.co_survivor_rule, n) if n else 0.0)
+        out.append(m)
+        share.append(trial_share(cfg, n, m))
         survived += int(n > 0)
         sole += int(n == 1)
+        last += int(m > 0)
     return EntryOutcome(trials=trials, survives=survived / trials,
                         sole=sole / trials, share=sum(share) / trials,
                         share_sd=float(np.std(share)) if share else 0.0,
                         plan=ours.plan if ours is not None else None,
                         replans=(ours.replans / trials) if ours is not None else 0.0,
-                        survivors_each=tuple(each))
+                        survivors_each=tuple(each), last_out=last / trials,
+                        last_out_each=tuple(out))
 
 
 def entry_outcome(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
@@ -971,10 +1064,16 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
 
     **What the pot pays a co-survivor is `PoolConfig.co_survivor_rule`**, applied in
     `share_of_pot` and reaching this figure through `entry_outcome.share`. It defaults to an
-    even split and is the one rule nobody has confirmed, so this equity is conditional on it
-    -- and how *much* it is conditional on it is not fixed: a shared finish is nearly
-    unreachable at a flat field and common at a concentrated one, which is `sensitivity`'s
-    `shared` column and an assumption rather than a fact about the pool.
+    even split and is a rule nobody has confirmed, so this equity is conditional on it -- and
+    how *much* it is conditional on it is not fixed: a shared finish is nearly unreachable at
+    a flat field and common at a concentrated one, which is `sensitivity`'s `shared` column
+    and an assumption rather than a fact about the pool.
+
+    **And what it pays the week the field empties is `PoolConfig.co_elimination_rule`**,
+    the other unconfirmed rule and since #157 the larger term: a re-entry priced against a
+    field that dies together is mostly priced on the week it dies, and that week paid
+    nothing before. `EntryOutcome.last_out` is how much of this equity is that week, and
+    `co_eliminated` how much of it the rule can move.
     """
     cfg = pool or PoolConfig()
     if cfg.buyback_cap <= 0:
@@ -1111,12 +1210,16 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
             rest = entry_outcome(grid, ahead, entries=entries, ledger=[*spent, team],
                                  pool=cfg, trials=trials, rng=np.random.default_rng(seed))
             survives, share = rest.survives, rest.share
-            # The co-survivor rule applied here rather than read off a stored share: what a
-            # trial paid is a *rule* about a count, and the count is what the trial recorded.
+            # The pool rules applied here rather than read off a stored share: what a trial
+            # paid is a *rule* about a count, and the counts are what the trial recorded.
+            # `live` is survival and only survival; a trial the field emptied with us in it
+            # paid under `co_elimination_rule` and is not a survival, which is why the money
+            # and the season are read off different records.
             live[team] = np.asarray(rest.survivors_each, dtype=int) > 0
             each[team] = xs = np.array(
-                [share_of_pot(cfg.co_survivor_rule, n) if n else 0.0
-                 for n in rest.survivors_each], dtype=float)
+                [trial_share(cfg, n, m)
+                 for n, m in zip(rest.survivors_each, rest.last_out_each, strict=True)],
+                dtype=float)
             s_se = float(np.std(live[team])) / root * p
             d_se = float(np.std(xs)) / root * p * pot
         else:
@@ -1285,7 +1388,7 @@ def simulate(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
     for _ in range(trials):
         led = [set(ledgers[i]) if ledgers is not None else set() for i in range(entries)]
         alive = [True] * entries
-        died, counts = _play(rng, wks, weeks, led, alive)
+        died, counts, _ = _play(rng, wks, weeks, led, alive)
         for w, n in zip(weeks, counts, strict=False):
             alive_tot[w] += n
         if died is not None:
@@ -1385,6 +1488,24 @@ def sensitivity(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
         the fall at 16.0 clears it: **1.0 through 8.0 are one flat region**, and the peak near
         2.0 is not a peak this many trials can see. It is a range straddling a $20 buyback
         fee, which is the sense in which that verdict is currently about the assumption.
+
+    **Re-run with #157 in, 2026-09-11**, same board over weeks 1-14, 21 entries, 1600 trials,
+    seed 0, both rules at `split`. The week the field empties was priced at zero above and
+    is priced by `co_elimination_rule` now, and it is the larger term at every point:
+
+      * `last_out` -- ours went out in the week the field emptied -- runs 33.5%, 24.4%,
+        15.2%, 10.2%, 7.5% across the axis against a `survives` that stays 5-7%. At 1.0
+        most of that is ours **alone**: 26.6% of trials our plan outlives the whole field
+        and then loses, which is the pot in full. Share therefore runs 35.7%, 26.9%, 17.3%,
+        11.6%, 6.6% and equity $149.96, $112.86, $72.63, $48.90, $27.81 against $4.85.
+      * **The flat region above is gone.** Every step down the axis clears the resolution,
+        because concentration is what decides whether the field outlasts our plan or dies
+        underneath it, and that was the term worth nothing. The knob was never inert; it
+        was priced into a state the model refused to pay.
+      * `co_elimination_rule` decides 5-7% of trials at every concentration -- flat, where
+        `co_survivor_rule` runs 0% to 3.3%. Under `rollover` for both, equity is $137.29,
+        $98.96, $60.90, $35.70, $14.70: $12-13 lower at every point, and the verdict at 16.0
+        moves from above a $20 fee to below it.
     """
     cfg = pool or PoolConfig()
     rng = rng or np.random.default_rng(0)
@@ -1424,14 +1545,18 @@ def sensitivity_report(rows: Sequence[Sensitivity], *, places: int = 2) -> list[
            f"{rows[0].field.trials} trials each. 1.0 is sampling proportional to win "
            "probability -- stated, never fitted",
            f"  {'k':>5}  {'own':>7}  {'wiped':>7}  {'alive':>7}  {'survives':>9}  "
-           f"{'share':>7}  {'equity':>10}",
-           f"  {'':>5}  {rows[0].chalk:>7}  {'by ' + str(last):>7}  {'wk ' + str(last):>7}"]
+           f"{'last':>7}  {'share':>7}  {'equity':>10}",
+           f"  {'':>5}  {rows[0].chalk:>7}  {'by ' + str(last):>7}  {'wk ' + str(last):>7}"
+           f"  {'':>9}  {'out':>7}"]
     for r in rows:
+        # `last` is the other way a trial pays (#157): ours went out in the week the field
+        # emptied. Beside `survives` because the share is built from both and a reader
+        # comparing two rows has to see which of the two moved.
         out.append(
             f"  {r.concentration:>5.2f}  {r.chalk_share * 100:>6.1f}%  "
             f"{r.wiped_out * 100:>6.1f}%  {r.field.alive_by_week[last]:>7.2f}  "
-            f"{r.entry.survives * 100:>8.1f}%  {r.entry.share * 100:>6.1f}%  "
-            f"${r.equity:>9.{places}f}")
+            f"{r.entry.survives * 100:>8.1f}%  {r.entry.last_out * 100:>6.1f}%  "
+            f"{r.entry.share * 100:>6.1f}%  ${r.equity:>9.{places}f}")
     lo, hi = min(r.equity for r in rows), max(r.equity for r in rows)
     res = max(r.resolution for r in rows)
     out.append(f"  equity ${lo:.{places}f} to ${hi:.{places}f} across the axis, against "

@@ -62,7 +62,7 @@ def test_the_pool_config_is_reachable_and_carries_every_rule():
     pool = HubConfig().pool
     for rule in ("entry_fee", "buyback_fee", "buyback_cap", "buyback_cutoff_week",
                  "buyback_restores_ledger", "double_pick_weeks", "field_size",
-                 "co_survivor_rule", "field_concentration"):
+                 "co_survivor_rule", "co_elimination_rule", "field_concentration"):
         assert hasattr(pool, rule), rule
     # The other half, since #160: a rule that *is* here has to be read by the simulation, or
     # it is a knob a reader takes for a lever. `tie_eliminates`, `max_entries_per_person` and

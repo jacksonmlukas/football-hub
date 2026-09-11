@@ -298,30 +298,54 @@ def test_the_entry_shares_outcomes_with_rivals_on_its_team():
     One fixture, KC at 0.9. Our ledger holds KC so we must take LV; the rival samples by win
     probability and takes KC nine times in ten. Exactly one side wins, so we survive when LV
     wins (0.1) and are alone when the rival was on KC (0.9): 0.09. Drawn per entry instead,
-    the rival could lose while on the winning side and sole would be nearer 0.018."""
+    the rival could lose while on the winning side and sole would be nearer 0.018.
+
+    The share has two terms since #157. Surviving: 0.1 * (0.9 * 1 + 0.1 * 1/2) = 0.095. And
+    the week the field empties: KC wins (0.9) and the rival was on LV with us (0.1), so the
+    whole field is out in one week and the two eliminated last split it -- 0.9 * 0.1 * 1/2 =
+    0.045, which the module priced at zero before. 0.14 in all."""
     g = _grid([(1, "KC", "LV", 0.9)])
     out = pool.entry_outcome(g, [1], entries=2, ledger=("KC",), trials=4000,
                              rng=np.random.default_rng(5))
     assert out.survives == pytest.approx(0.10, abs=0.02)
     assert out.sole == pytest.approx(0.09, abs=0.02)
-    # And the pot splits when the rival came along: 0.1 * (0.9 * 1 + 0.1 * 1/2).
-    assert out.share == pytest.approx(0.095, abs=0.02)
+    assert out.last_out == pytest.approx(0.09, abs=0.02)
+    assert out.share == pytest.approx(0.14, abs=0.02)
 
 
 def test_share_sits_between_sole_and_survival():
-    """Finishing level with two others is worth a third, not nothing and not everything."""
+    """Finishing level with two others is worth a third, not nothing and not everything.
+
+    The ceiling is survival *plus* the week the field empties, since #157: a trial pays
+    either because ours outlasted the final week or because it went out in the week the
+    last entry did, and never both, so the share can exceed survival alone and cannot
+    exceed the two together."""
     g = _grid([(w, a, b, p) for w in (1, 2)
                for a, b, p in (("KC", "LV", 0.9), ("SF", "SEA", 0.85), ("BUF", "NYJ", 0.8))])
     out = pool.entry_outcome(g, [1, 2], entries=9, trials=600, rng=np.random.default_rng(6))
-    assert 0 < out.sole <= out.share <= out.survives <= 1
+    assert 0 < out.sole <= out.share <= out.survives + out.last_out <= 1
+    assert out.survives < 1 and out.last_out > 0
 
 
-def test_an_entry_that_cannot_cover_the_week_is_worth_nothing():
-    """Elimination by the no-repeat ledger rather than by losing -- the 24-team constraint."""
+def test_an_entry_that_cannot_cover_the_week_does_not_survive_it():
+    """Elimination by the no-repeat ledger rather than by losing -- the 24-team constraint.
+
+    It used to assert the entry was worth nothing, and that was the implicit zero #157
+    names: two rivals on one fixture both go out in this same week whenever they share the
+    losing side, 0.9 * 0.1^2 + 0.1 * 0.9^2 = 0.09 of the time, and the three eliminated
+    last then split the pot. Not surviving and being worth nothing are different claims,
+    and only the first holds."""
     g = _grid([(1, "KC", "LV", 0.9)])
-    out = pool.entry_outcome(g, [1], entries=3, ledger=("KC", "LV"), trials=100,
+    out = pool.entry_outcome(g, [1], entries=3, ledger=("KC", "LV"), trials=1000,
                              rng=np.random.default_rng(0))
-    assert out.survives == 0.0 and out.sole == 0.0 and out.share == 0.0
+    assert out.survives == 0.0 and out.sole == 0.0
+    assert out.last_out == pytest.approx(0.09, abs=0.02)
+    assert out.share == pytest.approx(0.03, abs=0.01)
+    # Under a rollover, three going out together pays nobody, and the figure is exactly zero.
+    roll = pool.entry_outcome(g, [1], entries=3, ledger=("KC", "LV"), trials=1000,
+                              pool=PoolConfig(co_elimination_rule="rollover"),
+                              rng=np.random.default_rng(0))
+    assert roll.last_out == out.last_out and roll.share == 0.0
 
 
 def test_the_same_seed_and_ledger_reproduce_the_same_figure():
@@ -655,16 +679,147 @@ def test_every_reported_figure_derives_from_the_one_per_trial_record():
     pays for a shared finish. A caller taking a paired difference of survival and a paired
     difference of money is then reading one record of one set of trials rather than two
     records that could disagree about it.
+
+    Two records since #157, one per way a trial can end, and never both set on one trial:
+    `last_out_each` is the entries that went into the week the field emptied, ours among
+    them. The money is `trial_share` over the pair, and `share` is its mean exactly.
     """
     g = _board(TEN, flat=(6,))
     out = pool.entry_outcome(g, TEN, entries=12, trials=200, rng=np.random.default_rng(0))
-    ns = out.survivors_each
-    assert len(ns) == out.trials == 200
+    ns, ms = out.survivors_each, out.last_out_each
+    assert len(ns) == len(ms) == out.trials == 200
     assert sum(n > 0 for n in ns) / len(ns) == out.survives
     assert sum(n == 1 for n in ns) / len(ns) == out.sole
-    assert sum(1 / n for n in ns if n) / len(ns) == pytest.approx(out.share)
+    assert sum(m > 0 for m in ms) / len(ms) == out.last_out
+    assert not any(n and m for n, m in zip(ns, ms, strict=True)), \
+        "a trial ends with survivors or with the field empty, never both"
+    cfg = PoolConfig()
+    assert sum(pool.trial_share(cfg, n, m) for n, m in zip(ns, ms, strict=True)) / len(ns) \
+        == pytest.approx(out.share)
+    assert sum(1 / n for n in ns if n) / len(ns) < out.share, \
+        "the week the field empties has to pay something here, or #157 changed nothing"
     assert out.shared == pytest.approx(out.survives - out.sole)
     assert out.shared > 0, "a shared finish has to happen, or the rule below decides nothing"
+    assert out.co_eliminated == sum(m > 1 for m in ms) / len(ms)
+    assert 0 < out.co_eliminated < out.last_out, \
+        "both alone-last and together-last have to occur for the rule to be testable here"
+
+
+# --- the week the whole field goes out has a price (#157) --------------------
+#
+# A survivor pool ends one of two ways: somebody outlasts the final week, or the last entries
+# standing all go out in the same week. The module measured the second as
+# `PoolOutcome.ending_week`, and under a field playing chalk it is the usual ending -- and
+# then priced our stake in it at zero. `PoolConfig.co_elimination_rule` is what it pays now.
+
+
+def test_the_week_the_field_empties_pays_under_the_stated_rule_and_not_zero():
+    """The first two criteria on one closed form. One fixture, two rivals, and our ledger
+    holding both sides, so ours goes out in week 1 in every trial for want of a pick. The
+    rivals go out with us whenever they share the losing side -- 0.9 * 0.1^2 + 0.1 * 0.9^2 =
+    0.09 -- and that is the whole field out in one week. Three went in, so a split pays a
+    third of the pot there, a tiebreak the same in expectation, and a rollover nothing."""
+    g = _grid([(1, "KC", "LV", 0.9)])
+    kw = {"entries": 3, "ledger": ("KC", "LV"), "trials": 1000}
+    by = {rule: pool.entry_outcome(g, [1], pool=PoolConfig(co_elimination_rule=rule),
+                                   rng=np.random.default_rng(0), **kw)
+          for rule in ("split", "tiebreak", "rollover")}
+    assert by["split"].last_out == by["rollover"].last_out == pytest.approx(0.09, abs=0.02)
+    assert by["split"].share == pytest.approx(by["split"].last_out / 3)
+    assert by["tiebreak"].share == by["split"].share
+    assert by["rollover"].share == 0.0
+    assert by["split"].co_eliminated == by["split"].last_out, "never alone here"
+
+
+def test_going_out_strictly_before_the_last_survivor_still_pays_nothing():
+    """The third criterion. A side at 1.0 cannot lose and its opponent cannot be taken, so
+    every entry is on SF in week 1 and every rival on KC in week 2; ours, holding KC and LV,
+    goes out in week 2 for want of a pick while the field plays on. Week 3 is a coin flip
+    the three rivals all lose one trial in eight -- so the field does empty, a week after
+    ours was gone. That is elimination *strictly before* the last survivor, and no spelling
+    of either rule pays it. Week 1 is at 1.0 as well because at 0.8 ours could lose there
+    beside every rival on the same side, and that is the field emptying with us in it."""
+    g = _grid([(1, "SF", "SEA", 1.0), (2, "KC", "LV", 1.0), (3, "DAL", "NYG", 0.5)])
+    field = pool.simulate(g, [1, 2, 3], entries=3, trials=800, rng=np.random.default_rng(1))
+    assert field.ending_week.get(3, 0.0) == pytest.approx(0.125, abs=0.04), \
+        "the field has to empty after ours is gone, or the test is about nothing"
+    for rule in ("split", "rollover"):
+        out = pool.entry_outcome(g, [1, 2, 3], entries=4, ledger=("KC", "LV"), trials=300,
+                                 pool=PoolConfig(co_elimination_rule=rule,
+                                                 co_survivor_rule=rule),
+                                 rng=np.random.default_rng(1))
+        assert out.survives == 0.0 and out.last_out == 0.0 and out.share == 0.0
+        assert not any(out.last_out_each)
+
+
+def test_outlasting_the_whole_field_and_then_losing_takes_the_pot():
+    """The entry that stands alone after the last rival goes out has won the pool, whatever
+    week the season says it is -- and this simulator keeps it playing, so it can lose later.
+    Ours here holds KC and must take LV in a week-1 coin flip; the two rivals are on KC or
+    LV and are both gone whenever they shared the losing side, which leaves ours alone one
+    trial in eight. Week 2 is a coin flip ours loses half the time. Alone in the week the
+    field emptied, ours takes the pot under every rule."""
+    g = _grid([(1, "KC", "LV", 0.5), (2, "SF", "SEA", 0.5)])
+    for rule in ("split", "rollover"):
+        out = pool.entry_outcome(g, [1, 2], entries=3, ledger=("KC",), trials=1000,
+                                 pool=PoolConfig(co_elimination_rule=rule),
+                                 rng=np.random.default_rng(2))
+        alone = sum(m == 1 for m in out.last_out_each) / out.trials
+        assert alone > 0.03, "the case has to occur for the claim to be about anything"
+        # Every trial alone-last paid the whole pot, whatever the rule spells.
+        paid = [pool.trial_share(PoolConfig(co_elimination_rule=rule), n, m)
+                for n, m in zip(out.survivors_each, out.last_out_each, strict=True)]
+        assert all(p == 1.0 for p, m in zip(paid, out.last_out_each, strict=True) if m == 1)
+
+
+def test_the_published_share_moves_the_way_the_rule_implies():
+    """The fourth criterion, asserted on the board the sweep runs on rather than on a toy.
+    Same seed and same field: the only difference between the two figures is what the week
+    the field empties pays, so a rollover cannot pay more than a split, and it pays strictly
+    less wherever ours goes out with company -- which `co_eliminated` says happens in about
+    one trial in twenty at the default concentration, and more at a crowded one."""
+    g = _board(TEN, flat=(6,))
+    kw = {"entries": 12, "trials": 300}
+    split = pool.entry_outcome(g, TEN, pool=PoolConfig(co_elimination_rule="split"),
+                               rng=np.random.default_rng(0), **kw)
+    roll = pool.entry_outcome(g, TEN, pool=PoolConfig(co_elimination_rule="rollover"),
+                              rng=np.random.default_rng(0), **kw)
+    # The rule reads the record and does not write it: the trials are identical.
+    assert split.survivors_each == roll.survivors_each
+    assert split.last_out_each == roll.last_out_each
+    assert split.co_eliminated > 0.02
+    assert roll.share < split.share
+    # And the gap is exactly the together-last trials' split shares, no more and no less.
+    gap = sum(1 / m for m in split.last_out_each if m > 1) / split.trials
+    assert split.share - roll.share == pytest.approx(gap)
+
+
+def test_the_co_elimination_rule_reaches_the_weekly_figure():
+    """`weekly` rebuilds the per-trial money from the record rather than reading a stored
+    share, so the rule has to reach it there too or a candidate's dollars and the entry's
+    share would disagree about one set of trials."""
+    g = _board(TEN[:4], flat=(3,))
+    kw = {"week": 1, "entries": 12, "pot": 420.0, "trials": 200}
+    split = pool.weekly(g, TEN[:4], pool=PoolConfig(co_elimination_rule="split"),
+                        rng=np.random.default_rng(0), **kw)
+    roll = pool.weekly(g, TEN[:4], pool=PoolConfig(co_elimination_rule="rollover"),
+                       rng=np.random.default_rng(0), **kw)
+    a = {c.team: c for c in split.candidates}
+    b = {c.team: c for c in roll.candidates}
+    assert a.keys() == b.keys()
+    assert all(b[t].expected_dollars <= a[t].expected_dollars for t in a)
+    assert any(b[t].expected_dollars < a[t].expected_dollars for t in a)
+    assert all(b[t].survives == a[t].survives for t in a), "survival is not the rule's"
+
+
+def test_an_unrecognised_co_elimination_rule_is_refused_not_defaulted():
+    """The same closed set as `co_survivor_rule`, refused the same way, and only where the
+    trial reaches it: a survivor trial never reads the co-elimination rule."""
+    bad = PoolConfig(co_elimination_rule="winner-takes-all")
+    assert pool.trial_share(bad, 2, 0) == 0.5
+    with pytest.raises(ValueError, match=r"co_elimination_rule.*split.*rollover.*tiebreak"):
+        pool.trial_share(bad, 0, 2)
+    assert pool.trial_share(PoolConfig(), 0, 0) == 0.0
 
 
 def test_a_plan_that_will_not_play_is_re_solved_into_the_one_we_would_have_solved():
