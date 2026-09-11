@@ -622,6 +622,93 @@ def sweep_report(swept: pl.DataFrame, sens: pl.DataFrame) -> list[str]:
     return out
 
 
+def every_season_null(panel: pl.DataFrame, feature: Feature, controls: Sequence[str] = CONTROLS,
+                      *, draws: int = 2000, seed: int = 0, effects: Sequence[float] = (),
+                      min_cell: int = MIN_CELL, outcome: str = OUTCOME) -> dict:
+    """How often the every-season half fails under the null of no effect -- #238.
+
+    The feature is permuted **within each (season, week) cell** and re-residualised on the
+    controls, so the null keeps everything about the outcome and the controls and breaks only
+    the feature's link to the outcome. That is the placebo `docs/weekly-screen.md` reports, run
+    `draws` times, and read through the rule rather than through the `t`: the fraction of draws
+    in which at least one season mean has the wrong sign is the every-season half's answer on
+    pure noise, with the observed number of cells per season. It has to be about **1 - 2^-k**
+    for k seasons at every anchor, and it is -- so one season crossing zero says nothing about
+    the anchor on its own, and the anchor question is about power, not size.
+
+    `effects` asks that: each is a true partial correlation assumed in every cell, added to the
+    null noise, and the result is how often a real effect of that size would fail the
+    every-season half at this anchor's cell counts. That is the calculation the ticket names as
+    the alternative to a permutation, taken from the permutation's own noise rather than a
+    normal approximation.
+
+    A pre-stated null has no sign to hold, so `feature.sign` must be `+`, `-` or `?`; for `?`
+    the sign held is the observed one, as `verdict` reads it.
+    """
+    if feature.sign == "0":
+        raise ValueError(f"{feature.name} is a pre-stated null; the every-season half reads a "
+                         f"sign it has to hold and a null has none.")
+    require_features(panel, [feature.name, *controls])
+    rng = np.random.default_rng(seed)
+    d = (panel.filter(pl.col("week") >= feature.min_week)
+              .drop_nulls([outcome, feature.name, *controls])
+              .sort(["season", "week", "player_id"]))
+    cells: list[tuple[int, np.ndarray, np.ndarray, np.ndarray]] = []
+    for (season, _), cell in d.group_by(["season", "week"], maintain_order=True):
+        if cell.height < min_cell:
+            continue
+        y = cell[outcome].to_numpy().astype(float)
+        x = cell[feature.name].to_numpy().astype(float)
+        c = np.column_stack([np.ones(len(y)),
+                             *[cell[k].to_numpy().astype(float) for k in controls]])
+        h = c @ np.linalg.pinv(c)                 # projection onto the controls, intercept in
+        ry = y - h @ y
+        cells.append((int(season), x, h, ry / np.linalg.norm(ry)))
+    seasons = sorted({s for s, *_ in cells})
+    if not seasons:
+        return {"cells": 0, "seasons": 0, "per_season_cells": {}, "r": float("nan"),
+                "p_any_wrong_sign": float("nan"), "p_every_season": float("nan"),
+                "p_value": float("nan"), "cell_sd": float("nan"), "alternatives": {}}
+    idx = {s: [i for i, (cs, *_) in enumerate(cells) if cs == s] for s in seasons}
+    observed = np.array([float(ry @ (x - h @ x) / np.linalg.norm(x - h @ x))
+                         for _, x, h, ry in cells])
+    obs_means = np.array([observed[idx[s]].mean() for s in seasons])
+    r = float(obs_means.mean())
+    want = {"+": 1.0, "-": -1.0}.get(feature.sign, float(np.sign(r)) or 1.0)
+    null = np.empty((draws, len(cells)))
+    for j, (_, x, h, ry) in enumerate(cells):
+        xp = np.stack([rng.permutation(x) for _ in range(draws)])
+        rx = xp - xp @ h.T
+        null[:, j] = (rx @ ry) / np.linalg.norm(rx, axis=1)
+    means = np.column_stack([null[:, idx[s]].mean(axis=1) for s in seasons])
+    r_null = means.mean(axis=1)
+    return {
+        "cells": len(cells), "seasons": len(seasons),
+        "per_season_cells": {s: len(idx[s]) for s in seasons},
+        "r": r, "per_season": {s: float(m) for s, m in zip(seasons, obs_means, strict=True)},
+        "p_any_wrong_sign": float((np.sign(means) != want).any(axis=1).mean()),
+        "p_every_season": float((np.sign(means) == want).all(axis=1).mean()),
+        "p_value": float((np.abs(r_null) >= abs(r)).mean()),
+        "cell_sd": float(null.std(axis=0).mean()),
+        "alternatives": {float(e): float((np.sign(means + want * e) != want).any(axis=1).mean())
+                         for e in effects},
+    }
+
+
+def null_report(name: str, anchor: int, n: dict) -> list[str]:
+    """Lines for one `every_season_null` result."""
+    out = [f"  {name} from week {anchor}: {n['cells']} cells, per season "
+           f"{n['per_season_cells']}; observed r {n['r']:+.4f}, two-sided permutation "
+           f"p {n['p_value']:.3f}",
+           f"    under the null, P(at least one season has the wrong sign) = "
+           f"{n['p_any_wrong_sign']:.3f}; P(every season holds) = {n['p_every_season']:.3f}",
+           f"    sd of one cell's r under the null {n['cell_sd']:.4f}"]
+    for e, p in n["alternatives"].items():
+        out.append(f"    if the true effect were {e:+.4f} in every cell: P(at least one "
+                   f"season crosses zero) = {p:.3f}")
+    return out
+
+
 def screen_usage(panel: pl.DataFrame, features: Sequence[Feature],
                  components: Sequence[str] = USAGE) -> pl.DataFrame:
     """Each feature against each Usage count, controlled for that count's own recent level.
@@ -656,6 +743,10 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                     help="add route_trend -- reproduces the null against snap_trend")
     ap.add_argument("--usage", action="store_true",
                     help="screen the survivors against Usage counts, not points")
+    ap.add_argument("--permute", action="append", default=[], metavar="FEATURE",
+                    help="permute this feature within its cells at each anchor and report "
+                         "how often the every-season half fails under the null, and under a "
+                         "true effect of the size it was published at -- #238")
     ap.add_argument("--basis", choices=sorted(BASES), default=DEFAULT_BASIS,
                     help="the control basis: 'yardage' holds season-to-date yards a game "
                          "(the default -- #229, and what every surviving claim is conditional "
@@ -740,6 +831,14 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
             for row in u.iter_rows(named=True):
                 print(f"  {row['feature']:16} {row['component']:11} {row['r']:+7.4f} "
                       f"{row['t']:+6.2f}  {row['status']}")
+        for name in a.permute:
+            f = next(g for g in at_anchor(pool, anchor) if g.name == name)
+            # The alternatives are the sizes the feature has been published at, so the
+            # power figure is about the claim on the page and not about a round number.
+            alt = (0.0382, 0.0356) if name == "snap_trend" else ()
+            n = every_season_null(sample, f, controls, effects=alt)
+            print("\n  the every-season half under the null -- #238:")
+            print("\n".join(null_report(name, anchor, n)))
     if len(anchors) > 1:
         print("\n".join(sweep_report(swept, sensitivity(swept))))
     return 0

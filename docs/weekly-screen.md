@@ -682,6 +682,72 @@ that do not hold on the settled basis at the published anchor. The licence is qu
 under its own heading, and is not withdrawn by this run: what a screen result licenses is the
 maintainer's decision, and #233 is where the snap-share half of it is open.
 
+## The every-season half under the null, at three cells a season and at seven
+
+**Measured 2026-09-11**, issue #238 — the measurement half of #233. Nothing is adopted here.
+The question: when the snap-share trend fails the every-season half at week ≥ 12 because one
+season comes back negative, is that a season of three cells doing what three cells of noise
+do, or is the effect absent late in the season? Settled by a calculation rather than by the
+paragraph under *The snap-share trend, per season* that argued it both ways.
+
+**The calculation.** The feature is permuted within each (season, week) cell and
+re-residualised on the controls — the placebo this page already reports, run 2,000 times and
+read through the rule instead of through the `t`. Two figures come out at each anchor: under
+the null of no effect, how often at least one of five seasons has the wrong sign; and under
+the alternative that the true partial correlation is the published **+0.0382** in every cell,
+with the null's own cell-level noise added, how often at least one season still crosses zero.
+`every_season_null` in `hub.models.weekly_screen`, `--permute snap_trend` on the command
+line, and three tests hold it. **Run on the yardage basis #229 settled**, and on the pooled
+basis the #178 result was taken on, so the two can be compared.
+
+| anchor | cells a season | null: P(≥1 season wrong sign) | true +0.0382: P(≥1 season crosses zero) | observed r (yardage) | permutation p |
+|---|---|---|---|---|---|
+| week ≥ 4, 6 | 9 | 0.978 | **0.244** | +0.0076 | 0.46 |
+| week ≥ 8 *(published)* | 7 | 0.967 | **0.328** | +0.0142 | 0.24 |
+| week ≥ 10 | 5 | 0.969 | 0.463 | +0.0246 | 0.10 |
+| week ≥ 12 | 3 | 0.967 | **0.624** | +0.0081 | 0.66 |
+
+On the pooled basis the null and alternative columns are the same to the second decimal
+(anchor 8: 0.967 and 0.334; anchor 12: 0.966 and 0.625), because they are properties of the
+cell noise and the cell counts and not of the observed coefficient. What the basis moves is
+the observed row: +0.0382 at *p* 0.001 and +0.0356 at *p* 0.056 on pooled, against +0.0142 at
+*p* 0.24 and +0.0081 at *p* 0.66 on yardage. The sd of one cell's *r* under the null is
+**0.071** at every anchor on both bases.
+
+**What it supports.** Three things, and they pull in different directions.
+
+*The every-season half's false-positive rate is 3% at every anchor.* Under the null, at least
+one of five seasons has the wrong sign 97% of the time whether a season is nine cells or
+three — it is 1 − 2⁻⁵, arithmetic and not data. So "one season crossed zero" carries no
+information about the anchor on its own, and the week-12 kill is not a stricter test than the
+week-8 clear. The rule is the rule at every anchor, as the paragraph above said; the
+permutation confirms it is the *same* rule at every anchor.
+
+*A real effect of the published size fails the every-season half at week ≥ 12 about five
+times in eight.* 0.624 against 0.328 at week ≥ 8 and 0.244 at week ≥ 4. So the caveat the
+#178 write-up gave and declined to use is quantitatively right: three cells a season is a
+noisy enough estimate that a genuine +0.038 would come back with one negative season more
+often than not. The week-12 kill on the pooled basis is weak evidence against the trend
+existing late in the season — it is roughly what a real trend would do there.
+
+*And a real effect of the published size fails the every-season half at the published anchor
+one time in three.* That is the figure the licence decision has to hold beside the first two.
+Seven cells a season is not enough for the every-season half to reliably pass a true +0.038
+either; the rule's power at this effect size is 0.67 at anchor 8 and 0.76 at anchor 4. The
+every-season half is a sign-flip detector with a ~3% false-positive rate and, at these effect
+sizes and cell counts, a 25–60% false-negative rate depending on the anchor. It was put there
+to catch sign flips, [method.md rule 4](method.md), and it does; what this measurement adds is
+the price, which had not been stated.
+
+**What it does not support.** It does not rescue the trend at week ≥ 12, and it does not
+rescue it at week ≥ 8 on the settled basis. On the yardage basis the observed coefficient at
+the published anchor is +0.0142 at a permutation *p* of 0.24 — the every-season half is not
+what kills it there, the size is — and at week ≥ 12 it is +0.0081 at *p* 0.66. The power
+figures say what a true +0.038 would look like; they do not say the trend is +0.038, and on the
+settled basis the point estimate is well short of it at every anchor but 10. Whether a Usage
+multiplier keeps a licence that rests on a pooled-basis screen result is #233's decision, and
+this is the measurement it asked for and not the decision.
+
 ## The staleness question, and why it is smaller than first reported
 
 The consensus control is FantasyPros' `weekly-op` page, and the first version of this document
@@ -823,6 +889,7 @@ uv run python -m hub.models.weekly_screen --run                        # the swe
 uv run python -m hub.models.weekly_screen --run --trend-min-week 8     # *The basis, decided*, yardage column
 uv run python -m hub.models.weekly_screen --run --trend-min-week 8 --basis pooled   # every table above it
 uv run python -m hub.models.weekly_screen --run --basis decomposed     # #179
+uv run python -m hub.models.weekly_screen --run --permute snap_trend   # the every-season half under the null -- #238
 ```
 
 `--basis` names the control set, and defaults to **`yardage`**, `(yds_prior, ecr)`, the basis

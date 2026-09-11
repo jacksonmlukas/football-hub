@@ -920,3 +920,59 @@ def test_a_null_that_clears_by_being_null_is_not_a_survivor():
                               ).split("verdict across the sweep")[0]
     assert "dud" not in surviving_set, \
         "the surviving set the report prints does not carry it either"
+
+
+# --- #238: the every-season half under the null ---------------------------------------------
+
+
+def test_under_the_null_one_season_crosses_zero_almost_always():
+    """Five seasons of noise: at least one has the wrong sign in about 1 - 2^-5 of draws.
+
+    That is the fact the anchor question turns on. If the figure were anchor-dependent, one
+    season crossing zero at week 12 would carry information about week 12; it is not, so the
+    every-season half's false-positive rate is the same ~3% at every anchor and the question
+    is about power. Held at two cell counts per season so the independence from the count is
+    a thing the suite checks rather than a sentence.
+    """
+    p = _sweep_panel()
+    dud = ws.Feature("dud", "+", 1)
+    wide = ws.every_season_null(p, dud, draws=600, seed=1)
+    narrow = ws.every_season_null(p, dud._replace(min_week=12), draws=600, seed=1)
+    assert wide["per_season_cells"] == dict.fromkeys(range(2021, 2026), 14)
+    assert narrow["per_season_cells"] == dict.fromkeys(range(2021, 2026), 3)
+    for n in (wide, narrow):
+        assert abs(n["p_any_wrong_sign"] - (1 - 2 ** -5)) < 0.03, n
+        assert abs(n["p_every_season"] + n["p_any_wrong_sign"] - 1.0) < 1e-12
+        assert 0.0 <= n["p_value"] <= 1.0
+
+
+def test_a_real_effect_crosses_zero_more_often_on_fewer_cells():
+    """The other half: the same true effect fails the every-season half more often when each
+    season mean is three cells than when it is fourteen, because the mean is noisier. This is
+    what "weak evidence against the trend" means, made a number."""
+    p = _sweep_panel()
+    dud = ws.Feature("dud", "+", 1)
+    wide = ws.every_season_null(p, dud, draws=600, seed=2, effects=(0.04,))
+    narrow = ws.every_season_null(p, dud._replace(min_week=12), draws=600, seed=2,
+                                  effects=(0.04,))
+    assert narrow["alternatives"][0.04] > wide["alternatives"][0.04] + 0.1, (narrow, wide)
+    assert wide["alternatives"][0.04] < wide["p_any_wrong_sign"], \
+        "a true effect crosses zero less often than no effect does"
+
+
+def test_the_null_permutes_within_the_cell_and_not_across_it():
+    """`flat` is a real signal at every week. Permuted within its cell it has to look like
+    nothing -- that is the placebo the page reports -- so the permutation p on the observed r
+    is small and the null r's sit near zero. A permutation that reached across cells would
+    also break the link and pass this; what would not pass is no permutation at all, which
+    is the failure a placebo can have silently."""
+    p = _sweep_panel()
+    n = ws.every_season_null(p, ws.Feature("flat", "+", 1), draws=300, seed=3)
+    assert n["r"] > 0.3, "the fixture's signal is large"
+    assert n["p_value"] == 0.0, "and no permutation draw reaches it"
+    assert n["cell_sd"] < 0.2
+
+
+def test_a_pre_stated_null_has_no_every_season_half():
+    with pytest.raises(ValueError, match="pre-stated null"):
+        ws.every_season_null(_sweep_panel(), ws.Feature("dud", "0", 1), draws=5)
