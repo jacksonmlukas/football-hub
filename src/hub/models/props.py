@@ -30,7 +30,7 @@ quote on a player the statline cannot price is recorded as `no_number`.
 **Closing line value rather than profit.** CLV converges in weeks where P&L takes years,
 and it does not need the game to be played: if the betting market's close moved toward the
 side our number implied, our number carried information the quote at decision time did
-not. Two forms per prop -- in the market's own units (yards, receptions) and in vig-free
+not. Two forms per prop -- in the quote's own units (yards, receptions) and in vig-free
 implied probability, which is the only form the anytime-touchdown market has.
 
 **The ceiling is computed before the gap is chased** (`docs/method.md` rule 8). The most
@@ -100,6 +100,13 @@ BASELINE_MAE_YARDS = 8.8
 # line and the same point give the same number on every machine.
 DRAWS = 20000
 SEED = 0
+
+# An unposted market is recorded as a prop of the player's when at least this share of his
+# weeks would clear zero on it. A receiver's rushing yards clear zero one week in eight and
+# no book hangs the prop; his anytime touchdown clears it two weeks in five and every book
+# does. A share of weeks rather than a threshold in yards, because the seven markets are in
+# four units and one rule has to read across them. A posted quote is priced regardless.
+MIN_WEEKS_NONZERO = 0.25
 
 MODEL = "statline_props"
 
@@ -244,6 +251,8 @@ class PropPrice:
     p_over: float | None
     p_under: float | None
     p_push: float | None
+    # The share of weeks that clear zero: what says whether an unposted market is a prop.
+    p_nonzero: float = 1.0
 
     @property
     def fair_over(self) -> float | None:
@@ -262,17 +271,18 @@ def price(line: Mapping[str, float], market: str, point: float | None, *,
     draws = stat_draws(line, stat, n=n, seed=seed)
     sd = float(draws.std())
     p10, p50, p90 = (float(x) for x in np.percentile(draws, (10, 50, 90)))
+    nonzero = float((draws > 0).mean())
     if stat == "anytime_td":
         over = float((draws >= 1).mean())
         return PropPrice(market, stat, float(draws.mean()), sd, p10, p50, p90,
-                         None, over, 1.0 - over, 0.0)
+                         None, over, 1.0 - over, 0.0, nonzero)
     if point is None:
         return PropPrice(market, stat, float(draws.mean()), sd, p10, p50, p90,
-                         None, None, None, None)
+                         None, None, None, None, nonzero)
     over = float((draws > point).mean())
     push = float((draws == point).mean())
     return PropPrice(market, stat, float(draws.mean()), sd, p10, p50, p90,
-                     float(point), over, 1.0 - over - push, push)
+                     float(point), over, 1.0 - over - push, push, nonzero)
 
 
 # --- the card ---------------------------------------------------------------------
@@ -334,13 +344,11 @@ def card(players: pl.DataFrame, quotes: pl.DataFrame, *, decided_at: datetime,
     """Every prop the statline can price, and every prop the betting market posted, priced.
 
     One row per (player, market). A player with a line is priced on every market posted on
-    him (`priced`), and on every unposted market where his top decile of weeks is non-zero
-    (`no_line`) -- a receiver's rushing yards prop has a p90 of nothing and no book hangs
-    it, while his anytime touchdown at a 40% weekly chance is a prop and is recorded as one
-    whether or not it was posted. The decile rather than a threshold in yards, because the
-    seven markets are in four units and one rule has to read across them. A posted quote on
-    a player with no line is kept as `no_number`. Nothing is dropped, which is what lets the
-    report say how much of the slate each side of the comparison covers.
+    him (`priced`), and on every unposted market that `MIN_WEEKS_NONZERO` says is a prop of
+    his (`no_line`) -- a receiver's anytime touchdown is recorded whether or not it was
+    posted, his rushing yards are not. A posted quote on a player with no line is kept as
+    `no_number`. Nothing is dropped, which is what lets the report say how much of the slate
+    each side of the comparison covers.
 
     `quotes` is what `quotes_as_of` returns for `decided_at`; the caller passes the moment
     and this stamps it on every row, so the decision point is a timestamp and not a week.
@@ -354,7 +362,7 @@ def card(players: pl.DataFrame, quotes: pl.DataFrame, *, decided_at: datetime,
         for market, stat in MARKET_STATS.items():
             q = posted.get((pk, market))
             p = price(line, market, None if q is None else q.get("point"), n=n, seed=seed)
-            if q is None and p.p90 <= 0:
+            if q is None and p.p_nonzero < MIN_WEEKS_NONZERO:
                 continue
             seen.add((pk, market))
             rows.append({**_blank(pk, name, pos, market, stat, decided_at),
