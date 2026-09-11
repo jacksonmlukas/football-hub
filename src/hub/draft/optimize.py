@@ -54,7 +54,7 @@ from hub.config import DraftConfig
 from hub.draft import durability
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, blended_adp
 from hub.draft.picks import MY_SLOT, TEAMS, snake_picks
-from hub.draft.season import champion_probability
+from hub.draft.season import champion_probability, talent_cv_for
 from hub.draft.state import DraftState, remaining, roster_for
 from hub.league import FLEX_CAPACITY, FLEX_FROM, STARTERS
 from hub.models.predict import WEEKLY_SKEW_POOLED, CorrelationReport, moments
@@ -431,6 +431,10 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     # schedule could not place, and 0 is what the simulator reads as "no week".
     bye_week = (pool["bye_week"].fill_null(0).cast(pl.Int64).to_numpy()
                 if report.bye else None)
+    # An invented projection is less certain than a measured one (#87). Not a stage and not
+    # provenance: `_impute_xfp` is part of every build, and the flag is the column itself.
+    talent_cv = (talent_cv_for(pos, pool["xfp_imputed"].fill_null(False).to_numpy())
+                 if "xfp_imputed" in pool.columns else None)
 
     # Common random numbers. Every candidate is evaluated against the SAME simulated
     # futures -- same draft rollouts, same talent draws, same weekly scores -- so the
@@ -454,7 +458,8 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
             p = champion_probability(rosters, mu, sd, pos, n_sims=n_season_sims,
                                      rng=stream(root, SEASON_SIM, k),
                                      nfl_team=nfl_team, skew=skew, missed=missed,
-                                     report=correlation, bye_week=bye_week)
+                                     report=correlation, bye_week=bye_week,
+                                     talent_cv=talent_cv)
             mat[i, k] = p[my_slot - 1]
 
     return _lift_frame(candidates, mat)

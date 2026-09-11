@@ -817,3 +817,20 @@ def test_the_schedule_comes_through_the_validated_loader(monkeypatch):
     assert S._schedule_for(2026) == "frame"
     assert seen["name"] == "schedules" and seen["seasons"] == [2026]
     assert {"week", "home_team", "away_team", "game_type"} <= set(seen["cols"])
+
+
+def test_an_imputed_player_carries_a_wider_talent_spread_than_an_observed_one():
+    """#87. Two players at the same rank, one with an observed prior season and one whose
+    projection was interpolated from rank: the guess is less certain by the imputation's
+    own measured error, added in quadrature; the observed one is unchanged."""
+    from hub.draft.season import talent_cv_for
+    from hub.models.predict import IMPUTE_CV_BY_POS, TALENT_CV_BY_POS
+    pos = np.array(["RB", "RB", "WR", "K"])
+    plain = talent_cv_for(pos)
+    got = talent_cv_for(pos, imputed=np.array([False, True, True, True]))
+    assert got[0] == plain[0] == TALENT_CV_BY_POS["RB"]
+    assert got[1] > plain[1]
+    assert got[1] == pytest.approx(np.hypot(TALENT_CV_BY_POS["RB"], IMPUTE_CV_BY_POS["RB"]))
+    assert got[2] == pytest.approx(np.hypot(TALENT_CV_BY_POS["WR"], IMPUTE_CV_BY_POS["WR"]))
+    assert got[3] > plain[3], "an unfitted position still widens, by the pooled error"
+    assert talent_cv_for(pos, imputed=None).tolist() == plain.tolist()

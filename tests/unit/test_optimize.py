@@ -303,6 +303,33 @@ def test_the_room_hands_the_simulator_each_players_bye_when_the_stage_ran(monkey
     assert seen and seen[0] is None, "the report is not what decides and the frame is"
 
 
+def test_the_room_widens_the_talent_spread_of_imputed_players(monkeypatch):
+    """#87's wiring: the flag on the frame reaches the simulator as a per-player talent
+    spread, wider for the imputed, and a board without the flag is unchanged."""
+    from hub.draft import optimize as _opt
+    from hub.draft.board import BuildReport
+    from hub.draft.season import talent_cv_for
+
+    seen: list[object] = []
+    real = _opt.champion_probability
+
+    def spy(*a, **k):
+        seen.append(k.get("talent_cv"))
+        return real(*a, **k)
+
+    monkeypatch.setattr(_opt, "champion_probability", spy)
+    board = _board().with_columns(pl.Series("xfp_imputed", [i % 5 == 0 for i in range(180)]))
+    kw = {"my_slot": 3, "rounds": 8, "n_draft_sims": 1, "n_season_sims": 20}
+    win_probability(board, DraftState(), ["P0"], report=BuildReport(adp=True), **kw)
+    got = np.asarray(seen[0])
+    plain = talent_cv_for(board["pos"].to_numpy())
+    assert got.shape == plain.shape and (got[::5] > plain[::5]).all() and (got[1::5] == plain[1::5]).all()
+
+    seen.clear()
+    win_probability(_board(), DraftState(), ["P0"], report=BuildReport(adp=True), **kw)
+    assert seen[0] is None, "no flag on the frame: the simulator's own default"
+
+
 def test_the_run_can_be_told_how_much_of_it_was_actually_correlated():
     """Issue #171. A run makes candidates x draft-sims simulations, and a block that will
     not factor is silently independent in every one of them. The caller owns the report, so

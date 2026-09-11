@@ -105,6 +105,17 @@ def test_a_player_with_no_prior_season_is_imputed_not_dropped(offline):
     rookie = b.filter(pl.col("player") == "Rookie")
     assert rookie.height == 1
     assert rookie["xfp_per_game"][0] is not None
+    # And he is identifiable as imputed (#87); the observed are not.
+    assert rookie["xfp_imputed"][0] is True
+    assert not b.filter(pl.col("player") != "Rookie")["xfp_imputed"].any()
+
+
+def test_a_board_with_nothing_to_impute_carries_the_flag_all_false(offline):
+    """#87's fourth criterion: the values are identical to a board without the flag, and
+    the flag says so for every player."""
+    offline.setattr(board, "consensus", lambda as_of=None: _ecr(rookie=None))
+    b, _ = board.build()
+    assert b["xfp_imputed"].dtype == pl.Boolean and not b["xfp_imputed"].any()
 
 
 def test_the_report_names_what_ran_rather_than_sniffing_columns(offline):
