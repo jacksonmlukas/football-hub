@@ -125,8 +125,15 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
                     w: float = DEFAULT_ESPN_WEIGHT,
                     seed: int | np.random.SeedSequence = 0,
                     report: BuildReport | None = None,
-                    correlation: CorrelationReport | None = None) -> pl.DataFrame:
+                    correlation: CorrelationReport | None = None,
+                    opp_noise: float = 1.0) -> pl.DataFrame:
     """P(you win the league) for each candidate, averaged over simulated drafts.
+
+    `opp_noise` is the room's noise scale, handed down to every rollout unchanged (#49). The
+    rollouts are the room *as this objective imagines it*, and `backtest.compare` plays the
+    same objective inside a room at the same scale -- so a sweep over the scale moves the
+    knob and not the gap between what arm B believes about the room and what the room is.
+    1.0 is the fitted law itself, the default `simulate_remaining_draft` carries.
 
     Scored over the *whole board*, and rosters include the players each seat already holds.
     They used to include only picks made during the simulation, which made the objective
@@ -220,7 +227,7 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
             rosters = simulate_remaining_draft(board, state, my_slot=my_slot, teams=teams,
                                                rounds=rounds, forced=c, w=w,
                                                rng=stream(root, ROLLOUT, k),
-                                               report=report)
+                                               report=report, opp_noise=opp_noise)
             p = champion_probability(rosters, mu, sd, pos, n_sims=n_season_sims,
                                      rng=stream(root, SEASON_SIM, k),
                                      nfl_team=nfl_team, skew=skew, missed=missed,

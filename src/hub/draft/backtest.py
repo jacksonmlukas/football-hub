@@ -68,7 +68,7 @@ from hub.exhibits.championship_equity import rank_tiers, win_probability
 from hub.fetch.nflverse import reads_of_one_run
 from hub.league import REG_SEASON_WEEKS
 from hub.models.experiment import (
-    BOOTSTRAP,  # noqa: F401 -- re-exported: tests reach it as `bt.BOOTSTRAP`
+    BOOTSTRAP,  # used by `noise_sensitivity`, and tests reach it as `bt.BOOTSTRAP`
     SEASON_CLUSTER,
     Actions,
     Ceiling,
@@ -266,7 +266,8 @@ def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds:
                        seed: int | np.random.SeedSequence,
                        tiebreak: str = "ecr",
                        report: BuildReport | None = None,
-                       correlation: CorrelationReport | None = None):
+                       correlation: CorrelationReport | None = None,
+                       opp_noise: float = 1.0):
     """Arm B. Top of `win_probability` over `recommend()`'s shortlist, ties broken by `by`.
 
     The tie-break is not a tidy default: `rank_tiers` exists because the top two candidates
@@ -275,6 +276,9 @@ def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds:
     has no human, so it needs a rule the product does not have -- and taking the consensus
     among co-leaders makes arm B exactly "equity leads, market breaks ties", the mirror of
     arm A. The lead is then the only difference between the two arms, which is the question.
+
+    `opp_noise` reaches the objective's rollouts, so the room arm B imagines is the room it
+    is played in -- see `NOISE_SCALES`.
     """
     from hub.draft.board import recommend
 
@@ -294,7 +298,7 @@ def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds:
         wp = win_probability(board, state, names, my_slot=my_slot, teams=teams,
                              rounds=rounds, n_draft_sims=n_draft_sims,
                              n_season_sims=n_season_sims, seed=seed,
-                             report=report, correlation=correlation)
+                             report=report, correlation=correlation, opp_noise=opp_noise)
         leaders = rank_tiers(wp).filter(pl.col("co_leader"))["player"].to_list()
         ranked = (board.filter(pl.col("player").is_in(leaders))
                        .sort(tiebreak, nulls_last=True))
@@ -304,11 +308,16 @@ def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds:
 
 def play(board: pl.DataFrame, strategy, *, my_slot: int, teams: int, rounds: int,
          rng: np.random.Generator,
-         report: BuildReport | None = None) -> tuple[list[str], list[str]]:
-    """Play one draft with `strategy` in my seat. Returns (my player names, my positions)."""
+         report: BuildReport | None = None,
+         opp_noise: float = 1.0) -> tuple[list[str], list[str]]:
+    """Play one draft with `strategy` in my seat. Returns (my player names, my positions).
+
+    `opp_noise` is the room's scale over the fitted pick noise; 1.0 is the fitted law itself
+    and the only value any published figure was played at. See `NOISE_SCALES`.
+    """
     rosters = simulate_remaining_draft(board, DraftState(taken=[]), my_slot=my_slot,
                                        teams=teams, rounds=rounds, rng=rng,
-                                       my_pick=strategy, report=report)
+                                       my_pick=strategy, report=report, opp_noise=opp_noise)
     mine = rosters[my_slot - 1]
     names = [board["player"][int(i)] for i in mine]
     pos = [board["pos"][int(i)] or "NA" for i in mine]
@@ -320,8 +329,13 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
             teams: int | None = None, rounds: int = DEFAULT_ROUNDS,
             n_draft_sims: int = 12, n_season_sims: int = 250,
             on_draft: Callable[[int, int, int], None] | None = None,
-            correlation: CorrelationReport | None = None) -> pl.DataFrame:
+            correlation: CorrelationReport | None = None,
+            opp_noise: float = 1.0) -> pl.DataFrame:
     """Paired arm A against arm B, one row per (season, draft).
+
+    `opp_noise` scales the room both arms are played in *and* the rollouts arm B evaluates
+    inside it, from one argument, so a sweep over it (`noise_sensitivity`) varies the knob
+    the room's own comment calls a sensitivity and nothing else. 1.0 is the fitted law.
 
     Pure: takes frames, returns a frame, touches no network. That is what makes the
     statistics testable, and a backtest whose statistics can only be exercised by hitting
@@ -364,13 +378,13 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
             # drafts no longer share futures.
             root = draft_root(seed, season, k)
             a_names, a_pos = play(board, arm_a, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=stream(root, ROOM))
+                                  rounds=rounds, rng=stream(root, ROOM), opp_noise=opp_noise)
             arm_b = optimizer_strategy(board, my_slot=my_slot, teams=teams, rounds=rounds,
                                        n_draft_sims=n_draft_sims,
                                        n_season_sims=n_season_sims, seed=root,
-                                       correlation=correlation)
+                                       correlation=correlation, opp_noise=opp_noise)
             b_names, b_pos = play(board, arm_b, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=stream(root, ROOM))
+                                  rounds=rounds, rng=stream(root, ROOM), opp_noise=opp_noise)
             # A callback, not a print, so `compare` stays pure and the tests stay quiet. This
             # run takes long enough that a caller needs to know it is alive: the first attempt
             # was killed at 49 minutes having emitted nothing at all, because the only output
@@ -406,8 +420,13 @@ CEILING_ARM = "perfect foresight -- the season known in advance"
 def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], *,
             n_drafts: int = 20, seed: int = 0, my_slot: int | None = None,
             teams: int | None = None, rounds: int = DEFAULT_ROUNDS,
-            on_draft: Callable[[int, int, int], None] | None = None) -> pl.DataFrame:
+            on_draft: Callable[[int, int, int], None] | None = None,
+            opp_noise: float = 1.0) -> pl.DataFrame:
     """What a drafter who already knew the season achieves against the incumbent arm.
+
+    `opp_noise` has to be `compare`'s, for the reason the last paragraph gives: the
+    incumbent column here is that same column there only if both were drawn against the
+    same room, and the room's scale is part of what a room is.
 
     This bounds what *any* board could deliver, which is the number the underpowered-gate rule
     in `docs/gate-power.md` compares an effect against. A gate whose MDE exceeds this cannot
@@ -442,9 +461,9 @@ def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
         for k in range(n_drafts):
             root = draft_root(seed, season, k)
             a_names, a_pos = play(board, arm_a, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=stream(root, ROOM))
+                                  rounds=rounds, rng=stream(root, ROOM), opp_noise=opp_noise)
             c_names, c_pos = play(seeing, arm_c, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=stream(root, ROOM))
+                                  rounds=rounds, rng=stream(root, ROOM), opp_noise=opp_noise)
             if on_draft is not None:
                 on_draft(season, k + 1, n_drafts)
             rows.append({
@@ -454,6 +473,96 @@ def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
             })
     out = pl.DataFrame(rows)
     return out.with_columns((pl.col("foresight") - pl.col("market")).alias("diff"))
+
+
+# --- the room's noise scale, as a sensitivity (issue #49) --------------------------------
+#
+# The room draws every opponent's perceived pick as `mu_pick + N(0, opp_noise * sigma)`, where
+# `sigma = availability.pick_noise(mu_pick)` is the fitted law `PICK_NOISE_INTERCEPT +
+# PICK_NOISE_SLOPE * pick` -- 2.51 + 0.150 * pick since #155, fitted on the 612 picks where the
+# drafted sample is two-sided (`docs/pick-noise.md`). The scale is a **multiplier on that
+# fitted sigma**, never an absolute number of picks: 0.5 is a room that follows consensus
+# twice as closely as the fitted law says a room does, 1.5 one that follows it half again as
+# loosely, and 1.0 is the law itself, which is the only value any published figure was
+# played at. `optimize.simulate_remaining_draft`'s own comment says the ECR-fitted spread
+# credits an ESPN room with more error than the premise allows, that every point of it
+# becomes edge for the greedy, and that the result should be read as a sensitivity rather
+# than a measurement. It had never been varied. ADR-0024 says a knob whose alternatives sit
+# on one axis is measured side by side and reported in one table; this is that table.
+#
+# Three scales, and the fitted law in the middle, so the published figure is one of the
+# rows and the other two say how much of it is the knob.
+NOISE_SCALES: tuple[float, ...] = (0.5, 1.0, 1.5)
+
+# What a sensitivity row carries from its gate's stamp. The same four names
+# `stamped_for_publication` writes, so a row can be compared with a paired frame.
+STAMPS: tuple[str, ...] = ("cfg_digest", "data_digest", "board_digest", "commit")
+
+
+def noise_sensitivity(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], *,
+                      scales: Sequence[float] = NOISE_SCALES, n_drafts: int = 20,
+                      seed: int = 0, rounds: int = DEFAULT_ROUNDS, n_draft_sims: int = 12,
+                      n_season_sims: int = 250, bootstrap: int = BOOTSTRAP,
+                      with_ceiling: bool = False,
+                      on_draft: Callable[[int, int, int], None] | None = None,
+                      on_scale: Callable[[float], None] | None = None,
+                      correlation: CorrelationReport | None = None) -> pl.DataFrame:
+    """One gate per scale, and one row per gate: the scale beside its interval.
+
+    **Built through `run_gate`, so each row is the summary of one gate run** and not a
+    re-derivation of it -- the paired mean, the season-clustered interval, the MDE and the
+    verdict are the ones the rule read, and the four stamps are the ones the gate would have
+    written. What differs between rows is `opp_noise` and nothing else: the same boards, the
+    same realised seasons, the same `draft_root` per (season, draft), the same bootstrap
+    seed. Two rows therefore pair the way the two arms inside one row do.
+
+    `record_width=False`, deliberately. The width history under `name="draft"` is the draft
+    gate's own run-to-run record, and a sweep writing three widths into it would overwrite
+    that record with the last scale's. A sensitivity is not a run of the gate it varies.
+
+    The ceiling is measured per scale only when asked, because it is a second pass over
+    every room; with it, NOT-RUNNABLE can fire on a row, and without it a row decides on the
+    two halves ADR-0019 fixed. Either way the row says which by carrying `ceiling` or not.
+    """
+    rows = []
+    for scale in scales:
+        if on_scale is not None:
+            on_scale(scale)
+        paired = compare(boards, realised, n_drafts=n_drafts, seed=seed, rounds=rounds,
+                         n_draft_sims=n_draft_sims, n_season_sims=n_season_sims,
+                         on_draft=on_draft, correlation=correlation, opp_noise=scale)
+        bound = None
+        if with_ceiling:
+            top = ceiling(boards, realised, n_drafts=n_drafts, seed=seed, rounds=rounds,
+                          on_draft=on_draft, opp_noise=scale)
+            bound = Ceiling(CEILING_ARM, top["diff"])
+        rates = join_failure_rates(paired)
+        run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS,
+                       name=f"draft noise x{scale:g}", arm_a="optimizer", arm_b="market",
+                       void=void_condition(rates), ceiling=bound, seed=seed,
+                       bootstrap=bootstrap, boards=boards, record_width=False)
+        stamps = (run.stamped.select(STAMPS).row(0, named=True) if run.stamped.height
+                  else dict.fromkeys(STAMPS))
+        rows.append({"noise_scale": float(scale),
+                     **{k: run.summary.get(k, float("nan"))
+                        for k in ("n", "clusters", "mean", "lo", "hi", "mde")},
+                     **({"ceiling": run.summary["ceiling"]} if bound is not None else {}),
+                     "verdict": run.verdict[0], **stamps})
+    return pl.DataFrame(rows)
+
+
+def sensitivity_report(table: pl.DataFrame, *, unit: str = "points per team game") -> list[str]:
+    """The table, one line per scale, with what the scale multiplies said once above it."""
+    lines = ["", "  Opponent noise, as a sensitivity: the room's sigma is scale x the fitted "
+                 "law (2.51 + 0.150 x pick, docs/pick-noise.md); 1.0 is the law itself.",
+             f"  {'scale':>6}  {'optimizer - market':>19}  {'95% CI':>18}  {'MDE':>7}  "
+             f"{'seasons':>7}  verdict"]
+    for r in table.iter_rows(named=True):
+        lines.append(f"  {r['noise_scale']:>6g}  {r['mean']:>+19.2f}  "
+                     f"[{r['lo']:+.2f}, {r['hi']:+.2f}]  {r['mde']:>+7.2f}  "
+                     f"{int(r['clusters']):>7}  {r['verdict']}")
+    lines.append(f"  in {unit}; the interval is clustered on the season.")
+    return lines
 
 
 # Your first six turns from slot 3 of 12. Fixed rather than read from the live draft state,
@@ -767,6 +876,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="one line per draft, so a long run can be watched rather than trusted")
     ap.add_argument("--ceiling", action="store_true",
                     help="also play a foresight arm and report what any board could deliver")
+    ap.add_argument("--noise-scales", dest="noise_scales", default=None, metavar="S,S,...",
+                    help="run one gate per scale of the room's fitted pick noise and report "
+                         "the sensitivity as a table, one row per scale (#49); e.g. "
+                         f"{','.join(str(s) for s in NOISE_SCALES)}. 1.0 is the fitted law. "
+                         "With --out the table is written instead of the paired rows")
     ap.add_argument("--out", default=None, help="write the paired rows to this parquet path")
     ap.add_argument("--board", default=None,
                     help="parquet snapshot of the board. Written if absent, reused if "
@@ -919,6 +1033,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         # `compare` writes into it, and a count that lives inside the call dies with its
         # stack frame.
         correlation = CorrelationReport()
+
+        if a.noise_scales:
+            # The sensitivity (#49): one gate per scale, the table as the deliverable. Not
+            # the gate -- its width history is left alone and its verdict is not restated
+            # here -- so the single-gate path below is untouched by this branch existing.
+            scales = [float(s) for s in a.noise_scales.split(",") if s.strip()]
+            table = noise_sensitivity(
+                boards, realised, scales=scales, n_drafts=a.drafts, seed=a.seed,
+                rounds=a.rounds, n_draft_sims=a.draft_sims, n_season_sims=a.season_sims,
+                with_ceiling=a.ceiling, correlation=correlation,
+                on_draft=_tick("paired") if a.progress else None,
+                on_scale=lambda s: print(f"  scale x{s:g}: playing the room ...", flush=True))
+            print(f"\n  {correlation.note()}")
+            for line in sensitivity_report(table):
+                print(line)
+            stamp = table.select(STAMPS).row(0, named=True) if table.height else {}
+            for k, v in stamp.items():
+                print(f"  {k}: {v}")
+            if a.out:
+                table.write_parquet(a.out)
+                print(f"\n  wrote {table.height} sensitivity rows to {a.out}")
+            return 0
+
         paired = compare(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
                          n_draft_sims=a.draft_sims, n_season_sims=a.season_sims,
                          on_draft=_tick("paired") if a.progress else None,

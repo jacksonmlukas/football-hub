@@ -1551,3 +1551,153 @@ def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_pa
     assert sorted(p.source for p in nv.pins_this_run()) == ["ff_opportunity",
                                                             "player_stats"], (
         "the gate's read did not reach the run around it: scoping lost a read")
+
+
+# --- the room's noise scale, as a sensitivity (issue #49) --------------------------------
+#
+# `optimize.simulate_remaining_draft` says of its own room that scaling the fitted pick noise
+# is a sensitivity and not a measurement, and that every point of opponent error becomes edge
+# for the greedy. The scale had never been varied. The sweep below runs one gate per scale,
+# and each row is that gate's summary with its scale beside it.
+
+def _varied_realised(board, seed=1):
+    """Realised points that differ by player, so two different rosters score differently.
+    A flat realisation scores every roster the same and would hide a connected knob."""
+    names = board["player"].to_list()
+    rng = np.random.default_rng(seed)
+    pts = [float(max(20 - i * 0.2, 1.0) + rng.normal(0, 5)) for i in range(len(names))]
+    return pl.DataFrame({"player": [player_key(n) for n in names for _ in range(14)],
+                         "week": [w for _ in names for w in range(1, 15)],
+                         "points": [p for p in pts for _ in range(14)]},
+                        schema={"player": pl.Utf8, "week": pl.Int64, "points": pl.Float64})
+
+
+_TINY = {"n_drafts": 2, "rounds": 4, "n_draft_sims": 2, "n_season_sims": 10, "bootstrap": 100}
+
+
+def test_at_scale_zero_the_room_follows_consensus_exactly():
+    """What the scale multiplies: the fitted sigma, `availability.pick_noise`. At zero there
+    is no noise to draw, so two rooms opened on two different streams draft identically --
+    which is the property that makes 0.5 and 1.5 halves and half-again of the fitted law
+    rather than absolute numbers of picks."""
+    board = _full_board()
+    a, _ = bt.play(board, bt.market_strategy(), my_slot=3, teams=12, rounds=4,
+                   rng=np.random.default_rng(0), opp_noise=0.0)
+    b, _ = bt.play(board, bt.market_strategy(), my_slot=3, teams=12, rounds=4,
+                   rng=np.random.default_rng(1), opp_noise=0.0)
+    c, _ = bt.play(board, bt.market_strategy(), my_slot=3, teams=12, rounds=4,
+                   rng=np.random.default_rng(1), opp_noise=1.0)
+    assert a == b, "at scale zero the room still drew noise: the scale is not the multiplier"
+    assert c != a, "at the fitted scale the room drew nothing: the fixture cannot tell"
+
+
+def test_the_sweep_runs_one_gate_per_scale_and_each_row_names_its_scale(monkeypatch):
+    """The runner invokes the comparison once per scale and returns one row each, carrying
+    the paired mean, the season-clustered interval and the MDE beside the scale -- so no row
+    can be read without knowing which knob setting produced it."""
+    seen = []
+
+    def fake_compare(boards, realised, *, opp_noise=1.0, **kw):
+        seen.append(opp_noise)
+        rows = [{"season": s, "draft": k, "market": 10.0, "optimizer": 10.0 - opp_noise * k,
+                 "market_failed": 0, "optimizer_failed": 0, "picks": 4}
+                for s in (2022, 2023, 2024) for k in range(3)]
+        out = pl.DataFrame(rows)
+        return out.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
+
+    monkeypatch.setattr(bt, "compare", fake_compare)
+    board = _full_board(24)
+    got = bt.noise_sensitivity({2024: board}, {2024: _flat_realised(board)},
+                               scales=(0.5, 1.0, 1.5), bootstrap=100)
+    assert seen == [0.5, 1.0, 1.5], "the comparison did not run once per scale, in order"
+    assert got["noise_scale"].to_list() == [0.5, 1.0, 1.5]
+    assert set(got.columns) >= {"noise_scale", "mean", "lo", "hi", "mde", "clusters",
+                                "verdict"}
+    assert (got["lo"] <= got["mean"]).all() and (got["mean"] <= got["hi"]).all()
+    assert got["clusters"].to_list() == [3, 3, 3], "the interval is not season-clustered"
+    assert np.isfinite(got["mde"].to_numpy()).all(), "a row without an MDE cannot be read"
+    # The mean is the paired mean of that scale's own gate, not a number shared across rows.
+    assert got["mean"].to_list() == pytest.approx([-0.5, -1.0, -1.5])
+
+
+def test_the_sweep_measures_the_ceiling_in_each_scales_own_room(monkeypatch):
+    """With the ceiling asked for, each row carries one measured in the room at its own
+    scale -- the foresight arm against the incumbent drawn against the same field -- and the
+    row's verdict can then be NOT-RUNNABLE, which without a ceiling it cannot."""
+    seen = []
+
+    def fake_compare(boards, realised, *, opp_noise=1.0, **kw):
+        rows = [{"season": s, "draft": k, "market": 10.0, "optimizer": 9.0,
+                 "market_failed": 0, "optimizer_failed": 0, "picks": 4}
+                for s in (2022, 2023) for k in range(2)]
+        out = pl.DataFrame(rows)
+        return out.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
+
+    def fake_ceiling(boards, realised, *, opp_noise=1.0, **kw):
+        seen.append(opp_noise)
+        return pl.DataFrame({"season": [2022, 2022, 2023, 2023], "draft": [0, 1, 0, 1],
+                             "diff": [3.0 * opp_noise] * 4})
+
+    monkeypatch.setattr(bt, "compare", fake_compare)
+    monkeypatch.setattr(bt, "ceiling", fake_ceiling)
+    board = _full_board(24)
+    got = bt.noise_sensitivity({2024: board}, {2024: _flat_realised(board)},
+                               scales=(0.5, 1.5), bootstrap=100, with_ceiling=True)
+    assert seen == [0.5, 1.5], "the ceiling was not measured once per scale, in its room"
+    assert got["ceiling"].to_list() == pytest.approx([1.5, 4.5])
+
+
+def test_two_scales_give_different_paired_means_on_one_seed():
+    """The knob is connected: through the real room, at one seed, half the fitted sigma and
+    half again produce different paired means."""
+    board = _full_board()
+    real = _varied_realised(board)
+    got = bt.noise_sensitivity({2024: board}, {2024: real}, scales=(0.5, 1.5), seed=0,
+                               **_TINY)
+    lo, hi = got["mean"].to_list()
+    assert lo != hi, "two scales on one seed gave one paired mean: the scale reaches nothing"
+
+
+def test_the_same_scale_on_the_same_seed_reproduces_exactly():
+    board = _full_board()
+    real = _varied_realised(board)
+    once = bt.noise_sensitivity({2024: board}, {2024: real}, scales=(1.5,), seed=0, **_TINY)
+    again = bt.noise_sensitivity({2024: board}, {2024: real}, scales=(1.5,), seed=0, **_TINY)
+    assert once.drop("commit").equals(again.drop("commit")), (
+        "the same scale on the same seed did not reproduce")
+
+
+def test_the_sweep_is_reachable_from_the_command_line(monkeypatch, tmp_path):
+    """`--noise-scales` runs the sweep instead of the single gate and writes the table."""
+    from hub.fetch import nflverse as nv
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    inner = nv.Pin(source="ff_opportunity", as_of="2024-09-01", digest="1n51de01", rows=1,
+                   pinned_at=None)
+    board = _full_board(24)
+    real = _flat_realised(board)
+    monkeypatch.setattr(bt, "walk_forward_inputs",
+                        lambda seasons, load, *, on_season=None: ({2024: board}, {2024: real}))
+
+    def fake_compare(boards, realised, *, opp_noise=1.0, **kw):
+        nv._remember(tmp_path / "entry.parquet", inner)
+        rows = [{"season": 2024, "draft": k, "market": 10.0, "optimizer": 10.0 - opp_noise,
+                 "market_failed": 0, "optimizer_failed": 0, "picks": 4} for k in range(3)]
+        out = pl.DataFrame(rows)
+        return out.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
+
+    monkeypatch.setattr(bt, "compare", fake_compare)
+    # The sweep writes no width history of its own; this keeps a regression that fell
+    # through to the single gate from writing `state/gate-width.json` into the tree.
+    from functools import partial
+
+    from hub.models.experiment import run_gate
+    monkeypatch.setattr(bt, "run_gate", partial(run_gate, record_width=False))
+    out = tmp_path / "sweep.parquet"
+    assert bt.main(["--seasons", "2024", "--noise-scales", "0.5,1.5", "--out", str(out)]) == 0
+    table = pl.read_parquet(out)
+    assert table["noise_scale"].to_list() == [0.5, 1.5]
+    assert table["mean"].to_list() == pytest.approx([-0.5, -1.5])
+    from hub.config import data_digest
+    assert table["data_digest"].unique().to_list() == [data_digest([inner])], (
+        "a sensitivity row does not say which bytes its gate was scored against")

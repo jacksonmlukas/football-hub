@@ -187,6 +187,31 @@ docstring gives. `MIN_SIGMA` is unchanged at 1.0 — what changed is that the sh
 no longer sitting on it. `evaluate.OPP_NOISE` stays 1.0, a scale over this base rather than an
 absolute sigma, so the three readers still resolve to one dispersion.
 
+## The room's scale, as a sensitivity (#49) — built, not yet run
+
+The simulated room draws each opponent's perceived pick as `mu_pick + N(0, scale × sigma)`,
+with `sigma` the fitted law above. `scale` is a **multiplier on that fitted sigma**, never an
+absolute number of picks: 0.5 is a room following consensus twice as closely as the law says
+a room does, 1.5 one following it half again as loosely, and 1.0 is the law itself — the only
+value any published draft-gate figure was played at. `optimize.simulate_remaining_draft`'s own
+comment says the ECR-fitted spread credits an ESPN room with more error than the premise
+allows, that every point of it becomes edge for the greedy, and that the result should be read
+as a sensitivity rather than a measurement. It had never been varied.
+
+`hub.draft.backtest --noise-scales 0.5,1.0,1.5` now runs one gate per scale through
+`experiment.run_gate` and prints one row each: the scale, the paired mean, the season-clustered
+interval, the MDE and the verdict, with the four stamps a paired frame carries. The scale
+reaches both the room the two arms are played in and the rollouts arm B evaluates inside it,
+from one argument, so a row varies the knob and not the gap between what arm B believes about
+the room and what the room is. `--ceiling` adds the foresight arm per scale.
+
+**The real sweep has not been run.** It needs the four boards and roughly three times the
+hours one gate run takes; what is committed is the runner, the option, and a synthetic test
+that two scales give different paired means on one seed and the same scale reproduces
+exactly. No table is published here until a run produces one, and the published draft-gate
+figures in [gate-power.md](gate-power.md) are the `scale = 1.0` row of a table whose other
+two rows do not yet exist.
+
 `config_digest` moves from `281b7b7a` to `ab32cf62` and `fitted_digest` from `d5598b96` to
 `3d6fc111`. That is [ADR-0006](adr/0006-fitted-constants-live-with-their-provenance.md) working:
 a refit is supposed to move the model version. The prediction artifacts already committed under
