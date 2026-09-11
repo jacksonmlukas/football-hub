@@ -86,9 +86,34 @@ TALENT_CV = 0.32
 TALENT_CV_BY_POS = {"QB": 0.20, "RB": 0.38, "WR": 0.31, "TE": 0.18}
 
 
-def talent_cv_for(pos: np.ndarray) -> np.ndarray:
-    """Per-player talent dispersion. Anything unfitted (K, DST) falls back to the pool."""
-    return np.array([TALENT_CV_BY_POS.get(str(p), TALENT_CV) for p in pos], dtype=float)
+# How wrong the rank-based imputation is, as a share of the projection it invents (#87).
+# `board._impute_xfp` fills a missing prior-season xFP by interpolating on consensus rank
+# within position, and a player priced that way is a guess where his neighbour at the same
+# rank is a measurement. Measured 2026-09-11 leave-one-out on the served board: each of the
+# 165 observed skill players inside rank 200 was blanked and re-imputed from the rest, with
+# the 15 players who are themselves imputed excluded as anchors. Standard deviation of
+# `imputed / actual - 1`, by position (n): QB 0.217 (27), RB 0.334 (51), WR 0.223 (66),
+# TE 0.220 (21); pooled 0.260, median -0.03 (the smoothed curve sits a little low). Added
+# in quadrature to the talent spread, since the error of the mean and the spread around it
+# are independent by construction. ADR-0006: fitted, so it lives here beside its number
+# and moves the digest when it moves; the script is `scratchpad/impute_err.py` of that day
+# and the procedure is the paragraph above.
+IMPUTE_CV = 0.260
+IMPUTE_CV_BY_POS = {"QB": 0.217, "RB": 0.334, "WR": 0.223, "TE": 0.220}
+
+
+def talent_cv_for(pos: np.ndarray, imputed: np.ndarray | None = None) -> np.ndarray:
+    """Per-player talent dispersion. Anything unfitted (K, DST) falls back to the pool.
+
+    `imputed`, when given, marks the players whose projection was invented from rank
+    (`board._impute_xfp`); they carry the imputation's measured error on top, in
+    quadrature (#87). Absent, every player is treated as observed -- the pre-#87 answer.
+    """
+    cv = np.array([TALENT_CV_BY_POS.get(str(p), TALENT_CV) for p in pos], dtype=float)
+    if imputed is None:
+        return cv
+    extra = np.array([IMPUTE_CV_BY_POS.get(str(p), IMPUTE_CV) for p in pos], dtype=float)
+    return np.where(np.asarray(imputed, dtype=bool), np.hypot(cv, extra), cv)
 
 
 # Weekly spread follows sqrt(mean), not the mean. `sd = 0.55 * mu` assumed proportional;

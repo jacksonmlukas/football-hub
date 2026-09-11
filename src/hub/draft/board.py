@@ -505,7 +505,12 @@ def _impute_xfp(board: pl.DataFrame) -> pl.DataFrame:
     within position, because a TE and a WR at the same rank are not the same asset, and
     smooth first so a single outlier does not set a rookie's projection.
     """
-    if board["xfp_per_game"].is_null().sum() == 0:
+    # Which rows were invented, so a consumer can tell a guess from a measurement (#87):
+    # `season.talent_cv_for` widens the talent spread of the imputed by the imputation's own
+    # measured error. All false when nothing was imputed, so the values are what they were.
+    was_null = board["xfp_per_game"].is_null()
+    board = board.with_columns(was_null.alias("xfp_imputed"))
+    if was_null.sum() == 0:
         return board
     filled = board["xfp_per_game"].to_list()
     ecr_all = board["ecr"].to_list()

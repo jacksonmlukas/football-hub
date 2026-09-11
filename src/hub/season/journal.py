@@ -104,7 +104,12 @@ SCHEMA: dict[str, Any] = {
     "fallback": pl.Utf8,        # what auto-pick would have done for free
     "fallback_note": pl.Utf8,   # why there is none, when there is none
     "matched_fallback": pl.Boolean,
-    "market_price": pl.Float64,  # the betting market's number when we decided; null if unposted
+    "market_price": pl.Float64,  # the taken team's win probability when we decided, in
+                                 # [0, 1]; null if unposted. One unit (#239): a caller
+                                 # holding a moneyline converts it through
+                                 # `hub.models.props.implied` before writing and says so
+                                 # in `price_note`. Rows written before #239 carry
+                                 # whichever unit their caller used and are not migrated.
     "price_note": pl.Utf8,      # which source it came from, or why it is null
     "expected_dollars": pl.Float64,
     "chose_survives": pl.Float64,      # P(the season is survived, having taken what we took)
@@ -200,6 +205,13 @@ def _check_adr_0014(*, week: int, kind: str, chose: str, fallback: str | None,
     **Using a kind nothing validates.** `kind` was free text, so a row could be filed under a
     name no rule had heard of. It is a closed set, checked before anything else here.
 
+    **And the price in the wrong unit** (#239). `market_price` is the taken team's win
+    probability -- `week_cost` is `fallback_price - market_price` and is a cost only when
+    both are one -- and it was range-checked as one only beside a `fallback_price`, so a
+    matched pick could carry an American price there and nothing said so. It is checked
+    on every row; a caller with a moneyline converts through `hub.models.props.implied`
+    first and names the source in `price_note`.
+
     **And the cost in the wrong quantity** (#209). ADR-0014's threshold is a *week*
     win-probability cost -- "under ~8pp" -- and the column that discharged its logging duty
     was a season-survival difference, which disagrees with it in sign on the pinned grid.
@@ -240,14 +252,13 @@ def _check_adr_0014(*, week: int, kind: str, chose: str, fallback: str | None,
             "(#209). Pass market_price (ours), fallback_price (the free pick's) and "
             "week_cost, their difference, so the cost the rule fires on is on the row.")
 
+    # `market_price` is a probability on every row, not only where a week cost is stated
+    # in it (#239): checked only beside a `fallback_price`, a matched pick could carry 5.0
+    # there and a moneyline row and a probability row were indistinguishable in a query.
     for name, p in (("chose_survives", chose_survives),
                     ("fallback_survives", fallback_survives),
                     ("fallback_price", fallback_price),
-                    # A price is a probability only once a week cost is being stated in it;
-                    # a row with no fallback price may carry the betting market's number --
-                    # `test_journal` writes a moneyline there. One column, two units, which
-                    # is issue #239 and not this check's to settle.
-                    ("market_price", market_price if fallback_price is not None else None)):
+                    ("market_price", market_price)):
         if p is not None and not 0.0 <= p <= 1.0:
             raise ValueError(f"{name}={p} is not a probability")
     if (market_price is not None and fallback_price is not None and week_cost is not None

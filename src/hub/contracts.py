@@ -205,6 +205,12 @@ class Contract:
     non_null: tuple[str, ...] = ()
     unique: tuple[str, ...] = ()
     ranges: dict[str, tuple[float, float]] = field(default_factory=dict)
+    # Columns that may be null and may not be NaN, checked only where present (#243). A
+    # NaN is not a null: it passes `is_not_null()`, sorts wherever a comparison leaves it,
+    # is counted by nothing that counts nulls -- and it is what a numpy round trip turns a
+    # null into, which is how `adp_corrected` carried one on 293 of 457 served rows. The
+    # range check cannot see it either: polars' `min` and `max` skip NaN.
+    no_nan: tuple[str, ...] = ()
     # The repairs this declaration owns, applied before any bound is checked. Empty for
     # thirteen of the fourteen contracts, because a source that has never varied has nothing
     # to declare here and an unexercised repair is worse than none.
@@ -237,7 +243,7 @@ class Contract:
     def validate(self, df: pl.DataFrame) -> pl.DataFrame:
         """Every check here is a refusal, and every one of them is declared.
 
-        Six checks append to one list and one `raise` turns the list into a
+        Seven checks append to one list (six until #243) and one `raise` turns the list into a
         `ContractViolation`. Only the dtype check carried a `# GUARD` until #62, so five
         refusals applied to fourteen contracts at every fetch boundary in the repo were
         proved by nothing -- and the unmarked five sat either side of the marked one, in the
@@ -291,6 +297,14 @@ class Contract:
             if c in df.columns and df[c].null_count():
                 problems.append(f"{c} has {df[c].null_count()} nulls")
         # /GUARD
+        # GUARD nan-in-a-declared-column-refused: a NaN that a null became on a numpy round
+        # trip is caught by name, where `is_not_null` and the range bound both let it by
+        for c in self.no_nan:
+            if c in df.columns and df.schema[c].is_float():
+                nans = int(df[c].is_nan().fill_null(False).sum())
+                if nans:
+                    problems.append(f"{c} has {nans} NaN")
+        # /GUARD
         # GUARD duplicate-keys-refused: a doubled row is caught before it doubles a join
         for c in self.unique:
             if c in df.columns and df[c].n_unique() != df.height:
@@ -312,7 +326,7 @@ class Contract:
                     tail = f" after rescaling: {rescaled[c]}" if c in rescaled else ""
                     problems.append(f"{c} range [{mn}, {mx}] outside [{lo}, {hi}]{tail}")
         # /GUARD
-        # The one exit, marked for the same reason as the six checks above it: a seventh
+        # The one exit, marked for the same reason as the checks above it: an eighth
         # check that raised here directly rather than appending would be a refusal the
         # `problems.append(` scan cannot see, so the scan reads this shape too and this block
         # is what covers it. Excising it makes `validate` return every frame it is given.
@@ -442,6 +456,7 @@ class Contract:
             non_null=tuple(c for c in self.non_null if c in keep),
             unique=tuple(c for c in self.unique if c in keep),
             ranges={c: r for c, r in self.ranges.items() if c in keep},
+            no_nan=tuple(c for c in self.no_nan if c in keep),
             # Narrowed to the columns named -- except the repairs, which are not narrowed.
             # A `Normalisation` is a fact about the response and is decided across all the
             # columns it names; splitting it per caller puts back the half-repaired frame
@@ -470,6 +485,11 @@ DRAFT_BOARD = Contract(
     non_null=("player", "ecr", "pos"),
     unique=("player",),
     ranges={"ecr": (1, 1000)},
+    # The ADP stage's derived columns, optional because the stage is, and NaN-free where
+    # they are present (#243). An undrafted player is a null in each -- the shape `edge`
+    # and `consensus_pick` already had -- and a NaN is a build defect, caught here rather
+    # than in a diff of the served board that reads it as a player moving fourteen places.
+    no_nan=("adp_corrected", "proj_correction", "edge", "vor_proj"),
     min_rows=300,
 )
 
