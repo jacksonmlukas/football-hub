@@ -40,11 +40,18 @@ threshold keeps that value because a threshold is what the measurement was for. 
 `SCREEN_TREND_ANCHORS` instead, runs at every one of them, and `sensitivity` names any verdict
 that is not the same at all five. One is not: see `docs/weekly-screen.md`.
 
-THE CONTROL BASIS is itself a question, and #179 is where that was found out. `ppg_before` is
-PPR points and PPR points contain touchdowns, so the pre-registered control set contains
-`td_rate_prior`'s own numerator. `BASES` names the sets a run may be taken on and `--basis`
-chooses; the default is the pre-registration and every published figure rests on it. What the
-alternative did to the one feature it was run for is in `docs/weekly-screen.md`.
+THE CONTROL BASIS is `(yds_prior, ecr)` -- #229, deciding what #179 found. The screen was
+pre-registered on `(ppg_before, ecr)`, and `ppg_before` is PPR points, which contain touchdowns:
+the control set held `td_rate_prior`'s own numerator, so at a fixed points total a higher
+touchdown rate was arithmetically fewer yards. Splitting the control into its touchdown and
+non-touchdown halves was tried first and made it worse -- it pinned the numerator, and the
+partial correlation between the feature and prior yardage went from -0.114 to -0.401. Prior
+yardage and consensus rank is the one basis that neither contains the numerator nor pins it,
+and it is the basis #179's own issue body pre-registered. Under it `td_rate_prior` is -0.012
+at -2.49 se with 2023 positive: 4/5 seasons, and `docs/method.md` rule 4 fires. **It is not a
+finding.** `BASES` keeps `pooled` and `decomposed` reachable through `--basis` as the record
+of what was tried; every figure taken on them is restated on this basis in
+`docs/weekly-screen.md` under rule 13, all eight features and not the one the ticket was about.
 
 THE CONFOUND, which the first run found and which no available data removes: `weekly-op` is
 FantasyPros' Monday ranking, scraped a median of six days before kickoff. Any feature carrying
@@ -162,6 +169,11 @@ FEATURES: tuple[Feature, ...] = (
 # against +0.034), so the literature's access-beats-presence distinction does not survive
 # here. Kept in the tree with its harness per ADR-0007, out of the default screen because a
 # collinear twin in the control set destroys a real signal. `--routes` reproduces it.
+#
+# Every figure in this comment is a pooled-basis figure, taken before #229 moved the default,
+# and `--routes` now runs on the settled basis. The collinearity between the two shares is a
+# property of the columns and does not depend on the controls; the two coefficients do, and
+# have not been re-run here.
 ROUTE_TREND = Feature("route_trend", "+", TREND_ANCHOR_UNSET)
 
 
@@ -194,36 +206,56 @@ def require_anchor(features: Sequence[Feature]) -> None:
             f"{SCREEN_TREND_ANCHORS}, or run the sweep.")
 
 
-CONTROLS: tuple[str, ...] = ("ppg_before", "ecr")
+# **The control basis every surviving claim is conditional on -- #229.** Season-to-date
+# *yardage* a game, strictly before week w, and that week's consensus rank. Not the
+# pre-registration: that was `CONTROLS_POOLED` below, and it contains `td_rate_prior`'s own
+# numerator. This is the set #179's issue body pre-registered and the maintainer adopted on
+# 2026-09-07, before the decomposition replaced it; the decomposition was then measured and
+# found to concentrate the confound rather than remove it, and the decision on #229 came back
+# to this. It is the only basis of the three that neither contains the touchdown count nor
+# pins it.
+#
+# What it costs is stated rather than hidden. `yds_prior` is a weaker player control than
+# `ppg_before` -- it is the yardage half of prior scoring, not the whole of it -- so the
+# eight features are being asked a slightly different question than they were asked on the
+# published basis, and `docs/weekly-screen.md` reports all eight on it rather than the one the
+# ticket was about. Moving the basis for one feature and not the rest would itself be a choice.
+CONTROLS: tuple[str, ...] = ("yds_prior", "ecr")
 
 
-# **The alternative control basis, pre-registered in #179 before it was run.** `ppg_before` is
-# season-to-date PPR points a game, and PPR points contain touchdowns -- so the control set for
-# `td_rate_prior` contains the feature's own numerator, and at a fixed points total a higher
-# touchdown rate is arithmetically fewer yards. The recorded result could therefore have been a
-# yardage effect wearing an efficiency label, and no amount of staring at the number says which.
-#
-# `td_ppg_before + nontd_ppg_before == ppg_before` on every row, so this set **spans** the one
-# above rather than replacing what it controlled for. That is what makes the comparison a clean
-# one: the only thing relaxed is the constraint that a point of touchdown scoring and a point of
-# everything else carry the same slope, which is exactly the constraint that made the two
-# stories indistinguishable.
-#
-# Not the default, deliberately. Every published figure on `docs/weekly-screen.md` was run on
-# the basis above, and quietly moving all eight features onto a new one would restate a page's
-# worth of numbers under cover of a ticket about one of them. `--basis decomposed` reports it
-# beside the default; which basis a surviving claim is conditional on is then something the
-# write-up can say, which is #179's third criterion.
+# **The pre-registration, and the basis every figure published before #229 rests on.** Kept
+# reachable through `--basis pooled` because those figures are the record and a re-run has to
+# be able to reproduce them; not the default, because `ppg_before` is PPR points, PPR points
+# contain touchdowns, and `td_rate_prior` is `tds_prior / yds_prior` -- so at a fixed points
+# total a higher touchdown rate is arithmetically fewer yards, and the -0.040 this basis
+# returned could not say whether it was efficiency or yardage.
+CONTROLS_POOLED: tuple[str, ...] = ("ppg_before", "ecr")
+
+
+# **The alternative #179 pre-registered and ran, kept as the record of what it showed.**
+# `td_ppg_before + nontd_ppg_before == ppg_before` on every row, so this set **spans** the
+# pooled one and the only constraint relaxed is that a point of touchdown scoring and a point
+# of everything else carry the same slope. That constraint turned out not to bind (the halves
+# want +0.328 and +0.289, a difference at t +1.75), and holding the touchdown half fixed pins
+# the feature's numerator, so what varies in `tds_prior / yds_prior` is very nearly the
+# denominator alone: the partial correlation between the feature and `yds_prior` goes from
+# -0.114 on the pooled basis to -0.401 here. The instrument built to remove the yardage
+# confound concentrated it, which is why #229 did not adopt it.
 CONTROLS_DECOMPOSED: tuple[str, ...] = ("td_ppg_before", "nontd_ppg_before", "ecr")
 
 
-BASES: dict[str, tuple[str, ...]] = {"pooled": CONTROLS, "decomposed": CONTROLS_DECOMPOSED}
+BASES: dict[str, tuple[str, ...]] = {"yardage": CONTROLS, "pooled": CONTROLS_POOLED,
+                                     "decomposed": CONTROLS_DECOMPOSED}
 """The control bases a run may be taken on, by the name `--basis` takes.
 
-"pooled" names what `CONTROLS` does rather than describing it as the default, because the
-thing that distinguishes the two is that one holds prior scoring as a single number and the
-other holds its two halves apart.
+Each name says what the basis *does* with prior scoring rather than which one is current:
+`yardage` holds the yards and leaves the touchdowns free, `pooled` holds the PPR total as one
+number, `decomposed` holds its two halves apart. `DEFAULT_BASIS` names the one `CONTROLS` is.
 """
+
+
+DEFAULT_BASIS = "yardage"
+"""The name `--basis` defaults to, and the entry of `BASES` that is `CONTROLS` -- #229."""
 
 
 # A verdict is one of three, not two. A pre-stated null that comes back significant in every
@@ -232,7 +264,26 @@ other holds its two halves apart.
 CLEARS, KILLED, NULL_BROKEN = "clears", "killed", "null-broken"
 
 
-FINDINGS = (CLEARS, NULL_BROKEN)
+def is_signal(status: str, sign: str) -> bool:
+    """Whether a verdict is a finding the joint screen should carry forward.
+
+    `CLEARS` means the pre-registration held. For a signed feature that is a signal. For a
+    pre-stated null it is the **absence** of one -- the null behaved as a null -- and carrying
+    it into the joint screen as a survivor would print "noisy, not a signal" under the heading
+    "independent signals" and control every other survivor for a quantity the screen had just
+    said carries nothing. `NULL_BROKEN` is the null feature's finding, and the only one it has.
+
+    Latent until #229. `td_rate_prior` is the only pre-stated null in `FEATURES`, and it was
+    `NULL_BROKEN` on every basis until the yardage one, so a null that cleared had never
+    reached the survivor filter and `(CLEARS, NULL_BROKEN)` was the whole test.
+    """
+    return status == NULL_BROKEN or (status == CLEARS and sign != "0")
+
+
+def signals(rows: pl.DataFrame, status: str) -> list[str]:
+    """The feature names in `rows` whose verdict in column `status` is a signal."""
+    return [d["feature"] for d in rows.select("feature", "sign", status).to_dicts()
+            if is_signal(d[status], d["sign"])]
 
 
 def residual(y: np.ndarray, controls: np.ndarray) -> np.ndarray:
@@ -411,8 +462,9 @@ def screen(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES,
 
     `controls` is a parameter for the same reason `outcome` is one on `cell_correlations`:
     which basis a partial correlation is taken on is a property of the question, and #179 is
-    the ticket that found out how much of an answer it can carry. The default is the
-    pre-registered set and every published figure rests on it.
+    the ticket that found out how much of an answer it can carry. The default is the basis
+    #229 decided, `CONTROLS`; the pre-registered set is `CONTROLS_POOLED` and is what every
+    figure published before that decision rests on.
     """
     require_anchor(features)
     rows = []
@@ -480,7 +532,7 @@ def sweep(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES,
     for anchor in anchors:
         pool = at_anchor(features, anchor)
         alone = screen(panel, pool, controls)
-        found = alone.filter(pl.col("status").is_in(list(FINDINGS)))["feature"].to_list()
+        found = signals(alone, "status")
         survivors = [f for f in pool if f.name in found]
         # Mirrors `main`: one survivor has nothing to be controlled for, so there is no joint
         # screen to run and its alone verdict is the one that stands.
@@ -510,8 +562,7 @@ def sweep(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES,
 
 def surviving(swept: pl.DataFrame, anchor: int) -> list[str]:
     """The feature names that come out of the screen as findings at one anchor."""
-    return sorted(swept.filter((pl.col("anchor") == anchor)
-                               & pl.col("final").is_in(list(FINDINGS)))["feature"].to_list())
+    return sorted(signals(swept.filter(pl.col("anchor") == anchor), "final"))
 
 
 def sensitivity(swept: pl.DataFrame) -> pl.DataFrame:
@@ -532,7 +583,8 @@ def sensitivity(swept: pl.DataFrame) -> pl.DataFrame:
         d = swept.filter(pl.col("feature") == name).sort("anchor")
         verdicts = d["final"].to_list()
         anchors = d["anchor"].to_list()
-        holds = [a for a, v in zip(anchors, verdicts, strict=True) if v in FINDINGS]
+        sign = d["sign"][0]
+        holds = [a for a, v in zip(anchors, verdicts, strict=True) if is_signal(v, sign)]
         rows.append({
             "feature": name,
             "stable": len(set(verdicts)) == 1,
@@ -570,6 +622,93 @@ def sweep_report(swept: pl.DataFrame, sens: pl.DataFrame) -> list[str]:
     return out
 
 
+def every_season_null(panel: pl.DataFrame, feature: Feature, controls: Sequence[str] = CONTROLS,
+                      *, draws: int = 2000, seed: int = 0, effects: Sequence[float] = (),
+                      min_cell: int = MIN_CELL, outcome: str = OUTCOME) -> dict:
+    """How often the every-season half fails under the null of no effect -- #238.
+
+    The feature is permuted **within each (season, week) cell** and re-residualised on the
+    controls, so the null keeps everything about the outcome and the controls and breaks only
+    the feature's link to the outcome. That is the placebo `docs/weekly-screen.md` reports, run
+    `draws` times, and read through the rule rather than through the `t`: the fraction of draws
+    in which at least one season mean has the wrong sign is the every-season half's answer on
+    pure noise, with the observed number of cells per season. It has to be about **1 - 2^-k**
+    for k seasons at every anchor, and it is -- so one season crossing zero says nothing about
+    the anchor on its own, and the anchor question is about power, not size.
+
+    `effects` asks that: each is a true partial correlation assumed in every cell, added to the
+    null noise, and the result is how often a real effect of that size would fail the
+    every-season half at this anchor's cell counts. That is the calculation the ticket names as
+    the alternative to a permutation, taken from the permutation's own noise rather than a
+    normal approximation.
+
+    A pre-stated null has no sign to hold, so `feature.sign` must be `+`, `-` or `?`; for `?`
+    the sign held is the observed one, as `verdict` reads it.
+    """
+    if feature.sign == "0":
+        raise ValueError(f"{feature.name} is a pre-stated null; the every-season half reads a "
+                         f"sign it has to hold and a null has none.")
+    require_features(panel, [feature.name, *controls])
+    rng = np.random.default_rng(seed)
+    d = (panel.filter(pl.col("week") >= feature.min_week)
+              .drop_nulls([outcome, feature.name, *controls])
+              .sort(["season", "week", "player_id"]))
+    cells: list[tuple[int, np.ndarray, np.ndarray, np.ndarray]] = []
+    for (season, _), cell in d.group_by(["season", "week"], maintain_order=True):
+        if cell.height < min_cell:
+            continue
+        y = cell[outcome].to_numpy().astype(float)
+        x = cell[feature.name].to_numpy().astype(float)
+        c = np.column_stack([np.ones(len(y)),
+                             *[cell[k].to_numpy().astype(float) for k in controls]])
+        h = c @ np.linalg.pinv(c)                 # projection onto the controls, intercept in
+        ry = y - h @ y
+        cells.append((int(season), x, h, ry / np.linalg.norm(ry)))
+    seasons = sorted({s for s, *_ in cells})
+    if not seasons:
+        return {"cells": 0, "seasons": 0, "per_season_cells": {}, "r": float("nan"),
+                "p_any_wrong_sign": float("nan"), "p_every_season": float("nan"),
+                "p_value": float("nan"), "cell_sd": float("nan"), "alternatives": {}}
+    idx = {s: [i for i, (cs, *_) in enumerate(cells) if cs == s] for s in seasons}
+    observed = np.array([float(ry @ (x - h @ x) / np.linalg.norm(x - h @ x))
+                         for _, x, h, ry in cells])
+    obs_means = np.array([observed[idx[s]].mean() for s in seasons])
+    r = float(obs_means.mean())
+    want = {"+": 1.0, "-": -1.0}.get(feature.sign, float(np.sign(r)) or 1.0)
+    null = np.empty((draws, len(cells)))
+    for j, (_, x, h, ry) in enumerate(cells):
+        xp = np.stack([rng.permutation(x) for _ in range(draws)])
+        rx = xp - xp @ h.T
+        null[:, j] = (rx @ ry) / np.linalg.norm(rx, axis=1)
+    means = np.column_stack([null[:, idx[s]].mean(axis=1) for s in seasons])
+    r_null = means.mean(axis=1)
+    return {
+        "cells": len(cells), "seasons": len(seasons),
+        "per_season_cells": {s: len(idx[s]) for s in seasons},
+        "r": r, "per_season": {s: float(m) for s, m in zip(seasons, obs_means, strict=True)},
+        "p_any_wrong_sign": float((np.sign(means) != want).any(axis=1).mean()),
+        "p_every_season": float((np.sign(means) == want).all(axis=1).mean()),
+        "p_value": float((np.abs(r_null) >= abs(r)).mean()),
+        "cell_sd": float(null.std(axis=0).mean()),
+        "alternatives": {float(e): float((np.sign(means + want * e) != want).any(axis=1).mean())
+                         for e in effects},
+    }
+
+
+def null_report(name: str, anchor: int, n: dict) -> list[str]:
+    """Lines for one `every_season_null` result."""
+    out = [f"  {name} from week {anchor}: {n['cells']} cells, per season "
+           f"{n['per_season_cells']}; observed r {n['r']:+.4f}, two-sided permutation "
+           f"p {n['p_value']:.3f}",
+           f"    under the null, P(at least one season has the wrong sign) = "
+           f"{n['p_any_wrong_sign']:.3f}; P(every season holds) = {n['p_every_season']:.3f}",
+           f"    sd of one cell's r under the null {n['cell_sd']:.4f}"]
+    for e, p in n["alternatives"].items():
+        out.append(f"    if the true effect were {e:+.4f} in every cell: P(at least one "
+                   f"season crosses zero) = {p:.3f}")
+    return out
+
+
 def screen_usage(panel: pl.DataFrame, features: Sequence[Feature],
                  components: Sequence[str] = USAGE) -> pl.DataFrame:
     """Each feature against each Usage count, controlled for that count's own recent level.
@@ -604,10 +743,17 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                     help="add route_trend -- reproduces the null against snap_trend")
     ap.add_argument("--usage", action="store_true",
                     help="screen the survivors against Usage counts, not points")
-    ap.add_argument("--basis", choices=sorted(BASES), default="pooled",
-                    help="the control basis: 'pooled' holds season-to-date PPG as one number "
-                         "(the pre-registration, and every published figure); 'decomposed' "
-                         "holds its touchdown and non-touchdown halves apart -- #179")
+    ap.add_argument("--permute", action="append", default=[], metavar="FEATURE",
+                    help="permute this feature within its cells at each anchor and report "
+                         "how often the every-season half fails under the null, and under a "
+                         "true effect of the size it was published at -- #238")
+    ap.add_argument("--basis", choices=sorted(BASES), default=DEFAULT_BASIS,
+                    help="the control basis: 'yardage' holds season-to-date yards a game "
+                         "(the default -- #229, and what every surviving claim is conditional "
+                         "on); 'pooled' holds season-to-date PPG as one number (the "
+                         "pre-registration, and every figure published before #229); "
+                         "'decomposed' holds its touchdown and non-touchdown halves apart "
+                         "(#179)")
     ap.add_argument("--trend-min-week", dest="trend_min_week", type=int, default=None,
                     metavar="N",
                     help="run the screen at this one anchor instead of sweeping "
@@ -641,12 +787,12 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     controls = BASES[a.basis]
     sample = panel.filter(pl.col("week").is_in(list(FANTASY_WEEKS))
                           & (pl.col("games_before") >= MIN_GAMES_BEFORE))
-    # The **union** of the default basis and the one being run, not just the one being run, so
-    # that a `--basis` run is on the same rows as the published one and the movement is
-    # attributable to the basis alone. Under `--basis pooled` that is `CONTROLS` listed twice
-    # and the sample is unchanged. `docs/method.md` rule 13 asks for a re-run rather than an
-    # argument, and a re-run on a different sample is an argument with a number attached.
-    sample = sample.drop_nulls([OUTCOME, *CONTROLS, *controls])
+    # The **union** of every basis, not just the one being run, so that a `--basis` run is on
+    # the same rows as any other and the movement between two of them is attributable to the
+    # basis alone. `docs/method.md` rule 13 asks for a re-run rather than an argument, and a
+    # re-run on a different sample is an argument with a number attached. Sorted so the drop
+    # is the same list in the same order whichever basis was asked for.
+    sample = sample.drop_nulls([OUTCOME, *sorted({c for b in BASES.values() for c in b})])
     print(f"  {sample.height} player-weeks, {sample['player_id'].n_unique()} players, "
           f"seasons {sorted(sample['season'].unique().to_list())}")
     print(f"  controls: {', '.join(controls)}   (--basis {a.basis})")
@@ -669,7 +815,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         print("\n".join(report([{**r, "r": r["alone_r"], "t": r["alone_t"],
                                  "note": r["alone_note"]}
                                 for r in d.sort("alone_r", descending=True).to_dicts()])))
-        found = d.filter(pl.col("alone").is_in(list(FINDINGS)))["feature"].to_list()
+        found = signals(d, "alone")
         print(f"\n  a signal on its own: {', '.join(found) if found else 'nothing'}")
         j = d.filter(pl.col("joint").is_not_null()).sort("joint_r", descending=True)
         if not j.is_empty():
@@ -685,6 +831,14 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
             for row in u.iter_rows(named=True):
                 print(f"  {row['feature']:16} {row['component']:11} {row['r']:+7.4f} "
                       f"{row['t']:+6.2f}  {row['status']}")
+        for name in a.permute:
+            f = next(g for g in at_anchor(pool, anchor) if g.name == name)
+            # The alternatives are the sizes the feature has been published at, so the
+            # power figure is about the claim on the page and not about a round number.
+            alt = (0.0382, 0.0356) if name == "snap_trend" else ()
+            n = every_season_null(sample, f, controls, effects=alt)
+            print("\n  the every-season half under the null -- #238:")
+            print("\n".join(null_report(name, anchor, n)))
     if len(anchors) > 1:
         print("\n".join(sweep_report(swept, sensitivity(swept))))
     return 0
