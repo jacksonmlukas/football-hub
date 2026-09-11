@@ -45,6 +45,14 @@ sentence stop agreeing.
 | `cfbd_games.synthetic.json` | **Hand-built** from CFBD's documented response shape |
 | `cfbd_lines.synthetic.json` | **Hand-built** from CFBD's documented response shape |
 | `odds_spreads.synthetic.json` | **Hand-built** from The Odds API's documented response shape |
+| `bigten_captures.synthetic.json` | **Hand-built** index of `hub.fetch.bigten`'s own archive: the 2026 page held no report on 2026-09-11, so nothing existed to capture — see below |
+
+**The Big Ten index is hand-built for a different reason.** `bigten_captures.synthetic.json`
+describes a shape this repo writes rather than one a third party returns, so a "real capture"
+of it would be a run of `hub.fetch.bigten --capture` on a day the page carries a report. The 2026
+page existed and held nothing on 2026-09-11, five days before the first report was due. The
+first real capture replaces it: copy `archive/bigten/availability/captures.json` here under a
+name without `.synthetic` and flip the flag.
 
 The `.synthetic` suffix is not decoration. Those three were written by hand because no
 `CFBD_API_KEY` or `ODDS_API_KEY` exists on this machine, so **they prove our parser handles

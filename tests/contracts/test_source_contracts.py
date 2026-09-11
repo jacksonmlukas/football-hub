@@ -35,6 +35,7 @@ import pytest
 from polars.testing import assert_frame_equal
 
 from hub.contracts import (
+    BIGTEN_CAPTURES,
     CFBD_GAMES,
     CFBD_LINES,
     ESPN_SCOREBOARD,
@@ -315,6 +316,19 @@ def test_cfbd_games_contract_holds_on_the_documented_shape():
 
 def test_cfbd_lines_contract_holds_on_the_documented_shape():
     assert CFBD_LINES.validate(frame("cfbd_lines.synthetic.json")).height == 1
+
+
+def test_bigten_captures_contract_holds_on_the_hand_built_index():
+    """Hand-built for a different reason than the two above: the shape is this repo's own,
+    and the 2026 page held no report on the day it was written, so no capture existed to
+    freeze. Four rows over two deadlines, one of each kind, and a lines row with the two
+    nullable columns null -- which is the case an inferred schema turns into `Null` and the
+    contract has to be shown to accept when the writer declares the dtypes."""
+    df = frame("bigten_captures.synthetic.json")
+    got = BIGTEN_CAPTURES.validate(df)
+    assert got.height == 4
+    assert set(got["kind"].to_list()) == {"article", "file", "lines"}
+    assert got.filter(pl.col("kind") == "lines")["label"].null_count() == 1
 
 
 def test_odds_fixture_parses_to_the_lines_table_shape():

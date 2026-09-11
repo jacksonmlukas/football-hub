@@ -1,0 +1,58 @@
+[
+  {
+    "slot": "2026-09-17T0130Z",
+    "slot_name": "evening",
+    "captured_at": "2026-09-17T01:41:07+00:00",
+    "season": 2026,
+    "kind": "article",
+    "url": "https://bigten.org/fb/availability-reports/",
+    "label": "2026 FB Availability Reports",
+    "report_updated_at": "2026-09-17T00:12:44.000Z",
+    "sha256": "3b1f0c9e7a5d4e2f8c6b1a0d9e8f7c6b5a4d3c2b1a0f9e8d7c6b5a4d3c2b1a0f",
+    "bytes": 4210,
+    "path": "availability/2026/article/3b1f0c9e7a5d4e2f.json",
+    "new_content": true
+  },
+  {
+    "slot": "2026-09-17T0130Z",
+    "slot_name": "evening",
+    "captured_at": "2026-09-17T01:41:07+00:00",
+    "season": 2026,
+    "kind": "file",
+    "url": "https://bigten.org/api/media/file/9c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f-Availability_Reports_Week_4.pdf",
+    "label": "Week #4 (Sept. 18-19)",
+    "report_updated_at": "2026-09-17T00:12:44.000Z",
+    "sha256": "8d7c6b5a4d3c2b1a0f9e8d7c6b5a4d3c2b1a0f9e8d7c6b5a4d3c2b1a0f9e8d7c",
+    "bytes": 1439049,
+    "path": "availability/2026/file/8d7c6b5a4d3c2b1a.pdf",
+    "new_content": true
+  },
+  {
+    "slot": "2026-09-17T0130Z",
+    "slot_name": "evening",
+    "captured_at": "2026-09-17T01:41:09+00:00",
+    "season": 2026,
+    "kind": "lines",
+    "url": "cfbd:/lines?year=2026&week=3",
+    "label": null,
+    "report_updated_at": null,
+    "sha256": "5a4d3c2b1a0f9e8d7c6b5a4d3c2b1a0f9e8d7c6b5a4d3c2b1a0f9e8d7c6b5a4d",
+    "bytes": 20480,
+    "path": "2026/w03/2026-09-17T0130Z.parquet",
+    "new_content": true
+  },
+  {
+    "slot": "2026-09-18T0130Z",
+    "slot_name": "evening",
+    "captured_at": "2026-09-18T01:36:52+00:00",
+    "season": 2026,
+    "kind": "article",
+    "url": "https://bigten.org/fb/availability-reports/",
+    "label": "2026 FB Availability Reports",
+    "report_updated_at": "2026-09-17T00:12:44.000Z",
+    "sha256": "3b1f0c9e7a5d4e2f8c6b1a0d9e8f7c6b5a4d3c2b1a0f9e8d7c6b5a4d3c2b1a0f",
+    "bytes": 4210,
+    "path": "availability/2026/article/3b1f0c9e7a5d4e2f.json",
+    "new_content": false
+  }
+]
