@@ -218,3 +218,19 @@ def test_a_journal_that_cannot_be_read_is_a_sentence_on_both_entry_points(tmp_pa
     assert journal.main(["--season", "2026", "--store", str(tmp_path)]) == 1
     out = capsys.readouterr()
     assert "catalog is corrupt" in out.err and "Traceback" not in out.err
+
+
+def test_the_published_figure_says_what_it_omits_or_measures_it(board, tmp_path, capsys):
+    """#161's third criterion: the statement is in the published figure, not only in a
+    docstring. By default the standing statement rides beside the digest; `--leverage`
+    replaces it with the measurement on the week in front of the operator."""
+    assert pool.main(_run(tmp_path)) == 0
+    out = capsys.readouterr().out
+    assert "rival attrition is not priced into these figures (#161)" in out
+    assert "RESULT" not in out, "the statement carries the finding, not a placeholder"
+
+    assert pool.main(_run(tmp_path, "--leverage")) == 0
+    out = capsys.readouterr().out
+    assert "this week's rival attrition, priced: each candidate against the free pick KC" in out
+    assert "resolvable at 2 standard errors" in out
+    assert "not priced into these figures" not in out

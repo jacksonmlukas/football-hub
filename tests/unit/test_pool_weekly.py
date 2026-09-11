@@ -407,3 +407,103 @@ def test_more_trials_buy_more_digits():
     fig = {c.team: pool._places(c.dollars_se, cap=2) for c in fine.candidates}
     assert all(fig[t] >= dug[t] for t in dug)
     assert any(fig[t] > dug[t] for t in dug)
+
+
+# --- the current week's rival attrition, measured rather than declared (#161) --------------
+#
+# `weekly` values a candidate against a field that is never played through the week being
+# decided, so the rivals that go out on this week's pick are credited to nobody. Whether
+# that term is worth anything is a measurement, and these hold the instrument: two arms
+# per candidate, each paired against the free pick, and a verdict that says "unresolved"
+# rather than "zero" when the trials cannot see it.
+
+# The field can only be on KC in week 1 at a high concentration, so a contrarian winner
+# while KC loses is alone with the whole pot: the attrition term at its largest.
+CROWD = _grid({1: [("KC", "LV", 0.70), ("SF", "SEA", 0.65), ("BUF", "NYJ", 0.60)],
+               2: [("KC", "LV", 0.90), ("SF", "SEA", 0.85), ("BUF", "NYJ", 0.80)]})
+
+
+def test_the_leverage_term_is_the_advanced_difference_less_the_unadvanced_one():
+    """The shape of the instrument. One row per candidate per concentration, against the
+    free pick; the unadvanced arm is exactly what `weekly` prices on the same seed, so the
+    two cannot disagree about the figure the term is measured *from*; and the interval on
+    the term carries both arms' errors, because the arms draw different seasons."""
+    rows = pool.leverage(HOARD, [1, 2], week=1, entries=12, pot=420.0, at=(1.0, 4.0),
+                         top=3, trials=80, rng=np.random.default_rng(3))
+    assert [(r.concentration, r.team) for r in rows] == [
+        (1.0, "SF"), (1.0, "BUF"), (4.0, "SF"), (4.0, "BUF")]
+    assert all(r.fallback == "KC" and r.trials == 80 for r in rows)
+    for r in rows:
+        assert r.term == pytest.approx(r.advanced - r.unadvanced)
+        assert r.term_se == pytest.approx(np.hypot(r.advanced_se, r.unadvanced_se))
+        assert r.resolvable == (abs(r.term) > pool.DECISIVE_SIGMA * r.term_se)
+
+    seed = int(np.random.default_rng(3).integers(2 ** 32))
+    w = pool.weekly(HOARD, [1, 2], week=1, entries=12, pot=420.0, trials=80, seed=seed)
+    fb = _team(w, "KC")
+    for r in rows:
+        if r.concentration == 1.0:
+            assert r.unadvanced == pytest.approx(
+                _team(w, r.team).expected_dollars - fb.expected_dollars)
+    assert _gap(w) == pytest.approx(next(r for r in rows if r.team == w.recommend
+                                         and r.concentration == 1.0).unadvanced)
+
+
+def test_advancing_the_field_through_the_week_prices_what_a_chalk_pick_cannot_earn():
+    """The correlation #161 named. At a concentration that puts the field on KC, a
+    contrarian winner while KC loses outlives the whole field and takes the pot, and only
+    the advanced arm can see it: the unadvanced arm hands every candidate the same
+    untouched field. So the term is positive for the departure, and these trials resolve
+    it -- which is the instrument finding the effect where the grid was built to have one,
+    not a claim about any real board."""
+    rows = pool.leverage(CROWD, [1, 2], week=1, entries=12, pot=420.0, at=(0.0, 16.0),
+                         trials=300, rng=np.random.default_rng(0))
+    crowded = next(r for r in rows if r.concentration == 16.0 and r.team == "SF")
+    flat = next(r for r in rows if r.concentration == 0.0 and r.team == "SF")
+    assert crowded.term > 0 and crowded.resolvable
+    assert crowded.term > flat.term, "a field that is not on KC has less to lose on it"
+    assert crowded.advanced > crowded.unadvanced
+
+
+def test_a_week_with_nothing_ahead_has_no_term_to_measure():
+    with pytest.raises(ValueError, match="nothing priced after it"):
+        pool.leverage(HOARD, [1, 2], week=2, entries=12, pot=420.0, trials=10)
+
+
+def test_the_leverage_report_states_the_absence_rather_than_a_zero():
+    """The verdict line is the whole point. A term inside its own interval is *unresolved*,
+    and the report must say that and must not say the term is zero -- they land the reader
+    on the same pick for opposite reasons, exactly as `weekly_report`'s unresolved week."""
+    def row(k: float, team: str, term: float, se: float) -> pool.Leverage:
+        return pool.Leverage(k, team, "KC", 1.0, se / 2, 1.0 + term, se / 2, 100)
+    quiet = pool.leverage_report([row(1.0, "SF", 0.4, 1.0), row(4.0, "SF", -0.2, 1.0)])
+    assert "not resolvable at 2 standard errors on the axis: none of 2" in quiet[-1]
+    assert "unresolved" in quiet[-1] and "not the term measured at zero" in quiet[-1]
+    assert all("  no" in ln for ln in quiet[2:-1])
+
+    loud = pool.leverage_report([row(1.0, "SF", 0.4, 1.0), row(4.0, "SF", 9.0, 1.0)])
+    assert loud[-1].startswith("  resolvable at 2 standard errors: SF at 4")
+    assert "omit this term" in loud[-1]
+    assert pool.leverage_report([]) == ["\n  no leverage measured"]
+
+
+def test_the_axis_verdict_holds_the_count_of_hits_to_the_same_bar():
+    """Twenty-five comparisons at two standard errors clear it about once with nothing
+    there. The first run cleared it twice, and a verdict read off any one row would have
+    called that resolvable; the sweep holds the *count* to the bar instead, and says what
+    chance would have given. Two rows with one hit are the other side of the line."""
+    def row(k: float, team: str, term: float) -> pool.Leverage:
+        return pool.Leverage(k, team, "T31", 0.0, 0.5, term, 0.5, 1600)
+    many = [row(k, f"T{30 - i}", 3.0 if (k, i) in ((8.0, 0), (16.0, 2)) else 0.4)
+            for k in (1.0, 2.0, 4.0, 8.0, 16.0) for i in range(5)]
+    assert sum(r.resolvable for r in many) == 2
+    assert pool.expected_by_chance(25) == pytest.approx(1.1375)
+    assert not pool.resolvable_on_the_axis(many)
+    line = pool.leverage_report(many)[-1]
+    assert line.startswith("  not resolvable at 2 standard errors on the axis: 2 of 25")
+    assert "T30 at 8, T28 at 16" in line and "about 1.1 times" in line
+    assert "25 of 25 terms are positive" in line and "share their draws" in line
+    assert "unresolved" in line
+
+    assert pool.resolvable_on_the_axis([row(1.0, "SF", 3.0), row(4.0, "SF", 0.4)])
+    assert not pool.resolvable_on_the_axis([])

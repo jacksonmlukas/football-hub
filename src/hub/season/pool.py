@@ -70,6 +70,15 @@ entry that outlives the whole field and then loses is that state with a count of
 takes the pot: this simulator keeps a lone survivor playing, and the pool would not have.
 `trial_share` is the one place either rule meets a trial.
 
+**The week being decided is not played by `weekly`, and what that omits is measured.**
+`weekly` values a candidate on the weeks after this one against a field nobody has thinned,
+so this week's rival attrition -- which is correlated with our own pick, and is the whole
+case for a departure -- is credited to no candidate. `leverage` prices it by playing the
+same season from this week with the candidate in front, and the first run (on `leverage`)
+found it unresolved at two standard errors on the default axis, positive in direction.
+`LEVERAGE` is that finding as one sentence, and the entry point prints it beside every
+figure so a reader is told what the figure leaves out (#161).
+
 **Ties are not modelled** because the grid cannot express one: `win_prob` comes from a
 continuous margin model, which prices a tie at zero. The pool's rule that a tie eliminates is
 therefore satisfied vacuously here rather than enforced.
@@ -1260,10 +1269,14 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     reservation was made for; and a double-pick week nobody survives to contributes nothing,
     for the same reason and without a special case.
 
-    **The approximation, stated.** The field is not advanced through this week before the rest
-    is valued, so rival attrition in the current week is not credited to any candidate. That
-    understates every figure by close to the same factor, which leaves the ranking -- the part
-    a recommendation is -- intact.
+    **The approximation, stated -- and measured.** The field is not advanced through this
+    week before the rest is valued, so rival attrition in the current week is not credited
+    to any candidate. This paragraph used to argue that understates every figure by close
+    to the same factor and leaves the ranking intact, which #161 refuted in principle: the
+    attrition is correlated with our own pick, so it is a term in the *comparison*. What
+    it is worth is `leverage`'s question, and the first run's answer -- unresolved at two
+    standard errors on the default axis, positive in direction -- is on `LEVERAGE`, which
+    the entry point prints beside every figure this returns.
 
     **Every candidate plays the same season.** Each one gets a generator reseeded to the same
     value, so the field draws the identical results and the only difference between two figures
@@ -1699,6 +1712,269 @@ def sensitivity_report(rows: Sequence[Sensitivity], *, places: int = 2) -> list[
     return out
 
 
+# --- the current week's rival attrition, measured (#161) --------------------------------
+#
+# `weekly` prices a candidate as `P(it wins this week)` times what the rest of the season is
+# worth with it spent, and the rest of the season is simulated against a field that has
+# *not* been played through the week being decided. So the week's rival attrition -- the
+# rivals that go out on the pick they made this week -- is credited to no candidate. #161's
+# original text argued that this understates every candidate by about the same factor and
+# leaves the ranking intact, and then argued against itself: the attrition is correlated
+# with our own pick. Taking the chalk everybody holds means the field does not thin when it
+# wins; taking a contrarian winner while the chalk loses thins it enormously. That
+# correlation *is* the leverage term, and it is the economic case for departing from the
+# free pick at all.
+#
+# It was to be declared absent. #151 made it measurable instead: our entry replays a plan and
+# rival attrition is a property of the field sampler alone, with a stated concentration
+# exponent, so "advance the field through the week" is one more week handed to the same
+# simulator with our pick as the first week of our plan. `leverage` runs both arms and
+# reports their difference across the concentration axis, paired per #159 within each arm.
+
+class Leverage(NamedTuple):
+    """One candidate against the free pick, priced with and without this week's attrition.
+
+    `unadvanced` is the dollar difference `weekly` reports: the candidate's figure minus the
+    fallback's, each `P(wins) * share(rest of season) * pot`, on trials where both plans met
+    the identical field over the weeks *after* this one. `advanced` is the same difference on
+    trials that started from this week -- our entry playing the candidate here and our plan
+    after it, every rival sampling this week's pick under `PoolConfig.field_concentration`
+    and going out on it or not -- so the field the rest of the season is priced against is
+    the field this week left standing.
+
+    **Each arm is paired and the two arms are not**, and the interval says so. Within an arm
+    the two candidates meet the same season trial for trial (`_play` draws the whole season
+    before anybody picks), so `unadvanced_se` and `advanced_se` are standard errors of a
+    per-trial difference and tight. Between the arms the seasons differ -- one draws this
+    week's games and one does not, so the same seed produces offset streams -- and the
+    difference of the two differences carries both errors: `term_se` is their root sum of
+    squares. `docs/method.md` rule 3, in its general form: two runs are not repeated
+    measures of one thing unless they share the draws, and these cannot.
+
+    `term` is the leverage term: what advancing the field through this week does to the
+    case for this candidate over the free one. Positive means the attrition favours the
+    departure; `resolvable` is whether the trials can see it at `DECISIVE_SIGMA` at all,
+    and where they cannot the honest report is that the term is unresolved -- not that it
+    is zero.
+    """
+    concentration: float
+    team: str
+    fallback: str
+    unadvanced: float
+    unadvanced_se: float
+    advanced: float
+    advanced_se: float
+    trials: int
+
+    @property
+    def term(self) -> float:
+        """What this week's rival attrition is worth to the departure, in dollars."""
+        return self.advanced - self.unadvanced
+
+    @property
+    def term_se(self) -> float:
+        """The two arms are independent runs, so their errors add in quadrature."""
+        return float(np.hypot(self.advanced_se, self.unadvanced_se))
+
+    @property
+    def resolvable(self) -> bool:
+        """Whether these trials can tell the term from zero at the repo's bar."""
+        return abs(self.term) > DECISIVE_SIGMA * self.term_se
+
+
+def _shares(cfg: PoolConfig, out: EntryOutcome) -> np.ndarray:
+    """What each trial paid, off the two-count record, under the rules given."""
+    return np.array([trial_share(cfg, n, m)
+                     for n, m in zip(out.survivors_each, out.last_out_each, strict=True)],
+                    dtype=float)
+
+
+def leverage(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
+             ledger: Sequence[str] = (), entries: int, pot: float,
+             pool: PoolConfig | None = None, at: Sequence[float] = DEFAULT_CONCENTRATIONS,
+             top: int = 6, trials: int = WEEKLY_TRIALS,
+             rng: np.random.Generator | None = None) -> list[Leverage]:
+    """The leverage term for every candidate this week, at every concentration in `at`.
+
+    The measurement #161 was re-scoped to. Two arms per candidate per concentration, on one
+    seed: the rest of the season with the candidate spent and the field untouched -- exactly
+    what `weekly` prices -- and the whole season from this week with the candidate as its
+    first pick, so the field is played through the week and thinned by it before the rest is
+    valued. Both arms meet the free pick on the identical field within the arm, which is the
+    pairing #159 built and the reason the difference within an arm is tight.
+
+    Every candidate is run rather than the recommendation alone, because the question is
+    whether the term is resolvable *anywhere* -- and on a board where the recommendation is
+    the free pick there would otherwise be nothing to measure.
+
+    **What the first run found**, 2026-09-11, on the synthetic 32-team board in
+    `tests/unit/test_pool.py` over weeks 1-14, week 1 decided, 21 entries, pot $420, 1600
+    trials, seed 0, both pool rules at `split` -- the board and seed `sensitivity`'s two
+    sweeps used. Five candidates against the free pick T31 at each of the five default
+    concentrations, twenty-five comparisons, 415 seconds:
+
+      * **Not resolvable at two standard errors on the axis.** Two of twenty-five clear the
+        bar -- T30 at 8.0, +$3.77 against +/-$3.23 (z 2.3), and T28 at 16.0, +$6.60 against
+        +/-$5.29 (z 2.5) -- and twenty-five null comparisons clear it about 1.1 times, with
+        a spread of one; two hits is inside that. So the term is *unresolved* at these
+        trials, which is the absence #161 asks to be stated and is not a zero.
+      * **The direction is consistent and grows with concentration.** Twenty-four of the
+        twenty-five terms are positive -- the attrition favours the departure, as #161's
+        argument says it should -- and at 16.0 the five run +$1.20, +$2.73, +$6.60, +$2.24,
+        +$4.26 (z 0.8 to 2.5) where at 1.0 they run -$2.20 to +$5.48 (z -0.8 to 0.8). But
+        the twenty-five rows are one seed: the arms meet the same game results at every
+        concentration and the five candidates at one concentration share the free pick's
+        arm, so that is not twenty-four readings and it is not pooled into one
+        (`docs/method.md` rule 3).
+      * **The resolution is the advanced arm's.** Its standard error runs $1.3 to $5.4
+        against $0.08 to $4.5 for the unadvanced arm, because our own week-1 result is drawn
+        there and multiplied in here. Resolving a +$3 term at 16.0 needs roughly 4,000
+        trials per arm; nobody has run that, and until somebody does the published figure
+        carries `LEVERAGE` below beside `pool_digest`.
+
+    Costs twice what `weekly` costs: `top` candidates, two simulations each, per point on
+    the axis. It is a measurement and not the weekly path, and `hub.season.pool --leverage`
+    is how an operator asks for it on a real week.
+    """
+    cfg = pool or PoolConfig()
+    rng = rng or np.random.default_rng(0)
+    seed = int(rng.integers(2 ** 32))
+    ahead = _ahead(weeks, week)
+    if not ahead:
+        raise ValueError(
+            f"week {week} has nothing priced after it: the rest of the season is what the "
+            "field's attrition this week is worth something *in*, so with no weeks ahead "
+            "there is no term to measure. `weekly` prices such a week in closed form.")
+    spent = set(ledger)
+    free = auto_pick(grid, week, ledger)
+    if free is None:
+        raise ValueError(f"week {week} has no legal pick left: {len(spent)} teams are spent")
+    wk = grid.filter((pl.col("week") == week) & (pl.col("win_prob") > MIN_PROB))
+    wk = wk.filter(~pl.col("team").is_in(list(spent))) if spent else wk
+    ranked = wk.sort(["win_prob", "team"], descending=[True, False]).head(top)
+    teams = [(str(r["team"]), float(r["win_prob"])) for r in ranked.iter_rows(named=True)]
+    if free not in {t for t, _ in teams}:
+        teams.append((free, float(wk.filter(pl.col("team") == free)["win_prob"][0])))
+    root = np.sqrt(trials)
+    rows: list[Leverage] = []
+    for k in at:
+        this = replace(cfg, field_concentration=float(k))
+        unadvanced: dict[str, np.ndarray] = {}
+        advanced: dict[str, np.ndarray] = {}
+        for team, p in teams:
+            rest = entry_outcome(grid, ahead, entries=entries, ledger=[*sorted(spent), team],
+                                 pool=this, trials=trials, rng=np.random.default_rng(seed))
+            unadvanced[team] = p * _shares(this, rest)
+            # The same plan with this week's pick in front of it, replayed from this week:
+            # `entry_outcome` solved `rest.plan` over `ahead` with the candidate spent, so
+            # putting the candidate at `week` and that plan after it is the season our entry
+            # would play. Rivals sample this week like any other, and go out on it.
+            after = rest.plan if rest.plan is not None else Plan({}, "none")
+            whole = Plan({week: (team,), **after.picks}, after.source)
+            full = entry_outcome(grid, [week, *ahead], entries=entries, ledger=sorted(spent),
+                                 pool=this, plan=whole, trials=trials,
+                                 rng=np.random.default_rng(seed))
+            advanced[team] = _shares(this, full)
+        for team, _ in teams:
+            if team == free:
+                continue
+            du = pot * (unadvanced[team] - unadvanced[free])
+            da = pot * (advanced[team] - advanced[free])
+            rows.append(Leverage(
+                concentration=float(k), team=team, fallback=free,
+                unadvanced=float(du.mean()), unadvanced_se=float(np.std(du)) / root,
+                advanced=float(da.mean()), advanced_se=float(np.std(da)) / root,
+                trials=trials))
+    return rows
+
+
+def leverage_report(rows: Sequence[Leverage], *, places: int = 2) -> list[str]:
+    """The measurement as lines, ending with the one sentence a reader needs.
+
+    A row per candidate per concentration: the difference `weekly` prices, the same
+    difference with the field advanced through the week, and the term between them beside
+    the interval it has to clear. The last line is the verdict for the axis -- resolvable
+    somewhere, or not anywhere -- and where it is not, it says the term is *unresolved*,
+    which is a different claim from zero and the one #161 asks to be stated.
+    """
+    if not rows:
+        return ["\n  no leverage measured"]
+    out = [f"\n  this week's rival attrition, priced: each candidate against the free pick "
+           f"{rows[0].fallback}, {rows[0].trials} trials per arm",
+           f"  {'k':>5}  {'pick':<4}  {'unadvanced':>11}  {'advanced':>11}  {'term':>9}  "
+           f"{'+/- ' + str(int(DECISIVE_SIGMA)) + 'se':>9}  resolvable"]
+    for r in rows:
+        out.append(f"  {r.concentration:>5.2f}  {r.team:<4}  ${r.unadvanced:>+10.{places}f}"
+                   f"  ${r.advanced:>+10.{places}f}  ${r.term:>+8.{places}f}  "
+                   f"${DECISIVE_SIGMA * r.term_se:>8.{places}f}  "
+                   f"{'yes' if r.resolvable else 'no'}")
+    hit = [r for r in rows if r.resolvable]
+    chance = expected_by_chance(len(rows))
+    positive = sum(r.term > 0 for r in rows)
+    where = ", ".join(f"{r.team} at {r.concentration:g}" for r in hit)
+    if resolvable_on_the_axis(rows):
+        out.append(f"  resolvable at {DECISIVE_SIGMA:.0f} standard errors: {where} -- "
+                   f"{len(hit)} of {len(rows)} comparisons, where chance would give about "
+                   f"{chance:.1f}. The figures `weekly` reports omit this term, and a reader "
+                   "should carry it.")
+    else:
+        out.append(f"  not resolvable at {DECISIVE_SIGMA:.0f} standard errors on the axis: "
+                   + (f"{len(hit)} of {len(rows)} comparisons clear it ({where}), and "
+                      f"{len(rows)} null comparisons would clear it about {chance:.1f} "
+                      "times. " if hit else
+                      f"none of {len(rows)} comparisons clears it. ")
+                   + f"{positive} of {len(rows)} terms are positive, but the rows share "
+                   "their draws and are not that many readings. That is the term "
+                   "unresolved at these trials, not the term measured at zero: `weekly`'s "
+                   "figures omit it, and nothing here says what it is.")
+    return out
+
+
+# The two-sided tail beyond DECISIVE_SIGMA standard errors under the null: what fraction of
+# comparisons with no effect clear the bar anyway. 4.55% at two, and stated once.
+_NULL_TAIL = 0.0455
+
+
+def expected_by_chance(comparisons: int) -> float:
+    """How many of this many null comparisons clear `DECISIVE_SIGMA` by chance."""
+    return comparisons * _NULL_TAIL
+
+
+def resolvable_on_the_axis(rows: Sequence[Leverage]) -> bool:
+    """Whether the comparisons that clear the bar are more than the bar itself produces.
+
+    Twenty-five comparisons at two standard errors clear it about once with nothing there,
+    so "resolvable somewhere on the axis" cannot be read off any one row: a sweep that asks
+    the question twenty-five times has to hold the *count* to the same bar. The count of
+    hits is compared against its own expectation under the null plus `DECISIVE_SIGMA` of its
+    binomial spread. That treats the rows as independent, and they are less than that --
+    one seed means the arms meet the same game results across the axis, and the candidates
+    at one concentration share the free pick's arm -- so the real bar is higher still, and
+    a sweep that fails this one has certainly not resolved the term.
+    """
+    n = len(rows)
+    if n == 0:
+        return False
+    hits = sum(r.resolvable for r in rows)
+    mean = expected_by_chance(n)
+    spread = float(np.sqrt(n * _NULL_TAIL * (1.0 - _NULL_TAIL)))
+    return hits > mean + DECISIVE_SIGMA * spread
+
+
+# The statement the published figure carries beside `pool_digest` (#161): what the first
+# run of `leverage` found, so a reader of a weekly figure is told whether the term it omits
+# has been seen. Re-measured, this line moves with it (`docs/method.md` rule 13).
+LEVERAGE = (
+    "this week's rival attrition is not priced into these figures (#161). Measured "
+    "2026-09-11 on the synthetic 32-team board over weeks 1-14, week 1 decided, 21 entries, "
+    "1600 trials, seed 0, across concentrations 1 to 16: not resolvable at 2 standard "
+    "errors on the axis (2 of 25 comparisons clear it, where chance gives about 1), so the "
+    "term is unresolved rather than zero; 24 of the 25 terms are positive and grow with "
+    "concentration, on rows that share their draws. `hub.season.pool --leverage` "
+    "re-measures it on the week in front of you."
+)
+
+
 # --- the entry point (#163) ---------------------------------------------------------------
 #
 # The money layer had no `main`, no importer and no target, which also exempted it from
@@ -1814,6 +2090,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--used", type=int, default=0, help="buybacks this entry has taken")
     ap.add_argument("--rival-buybacks", type=int, default=0,
                     help="rivals assumed to re-enter alongside us")
+    ap.add_argument("--leverage", action="store_true",
+                    help="also measure this week's rival attrition term across the axis "
+                         "(twice the cost of the figure)")
     ap.add_argument("--record", action="store_true",
                     help="write the decision to the journal, at the configured concentration")
     ap.add_argument("--chose", default=None,
@@ -1891,6 +2170,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(line)
     for line in axis_report(by_k):
         print(line)
+    # What the figure above omits, said beside it (#161). The standing statement is what
+    # the first run found; `--leverage` measures it on this week instead of quoting it.
+    if a.leverage:
+        for line in leverage_report(leverage(
+                grid, weeks, week=week, ledger=ledger, entries=entries, pot=pot, pool=cfg,
+                at=axis, trials=a.trials, rng=np.random.default_rng(seed))):
+            print(line)
+    else:
+        print(f"  {LEVERAGE}")
     if a.record:
         k = journal.record_weekly(here, season=a.season, chose=a.chose, base=a.store)
         print(f"  recorded {k}")
