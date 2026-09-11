@@ -1354,3 +1354,17 @@ def test_an_unrecognised_co_survivor_rule_is_refused_not_defaulted():
     the rule came to be unread, so it raises and names the three."""
     with pytest.raises(ValueError, match=r"split.*rollover.*tiebreak"):
         pool.share_of_pot("winner-takes-all", 3)
+
+
+def test_co_eliminated_reads_the_record_and_is_zero_without_one():
+    """`co_eliminated` counts trials the field emptied with us *and others* in it -- the
+    ones `co_elimination_rule` decides. An entry alone in the terminal state takes the pot
+    under every spelling, so it is excluded; and an outcome carrying no per-trial record
+    (the shape a summary built by hand has) reports zero rather than dividing by nothing."""
+    empty = pool.EntryOutcome(trials=0, survives=0.0, sole=0.0, share=0.0)
+    assert empty.co_eliminated == 0.0
+    # Five trials: alone-last (1), co-eliminated with two others (3), not last out (0),
+    # co-eliminated with one other (2), alone-last again (1). Two of five are co-eliminated.
+    got = pool.EntryOutcome(trials=5, survives=0.0, sole=0.0, share=0.0,
+                            last_out_each=(1, 3, 0, 2, 1))
+    assert got.co_eliminated == pytest.approx(0.4)
