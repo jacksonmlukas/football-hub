@@ -21,9 +21,9 @@ from hub.fetch import bigten, cfbd
 
 # --- the world ------------------------------------------------------------------
 
-# Thursday 17 September 2026, 01:41 UTC: eleven minutes after the evening slot that follows
-# the regime's first deadline (8pm ET Wednesday), which is the shape of a run GitHub
-# delivered on time.
+# Thursday 17 September 2026, 01:41 UTC: eleven minutes after the evening capture instant that
+# follows the regime's first report deadline (8pm ET Wednesday), which is the shape of a run
+# GitHub delivered on time.
 FIRST_RUN = datetime(2026, 9, 17, 1, 41, tzinfo=UTC)
 
 PDF = b"%PDF-1.4 fake week four"
@@ -110,42 +110,42 @@ def cfbd_lines(monkeypatch):
     return calls
 
 
-# --- slots ------------------------------------------------------------------------
+# --- deadlines ------------------------------------------------------------------------
 
-def test_a_run_delivered_late_belongs_to_the_slot_it_was_scheduled_after():
+def test_a_run_delivered_late_belongs_to_the_deadline_it_was_scheduled_after():
     """GitHub delivers a scheduled run anywhere up to two hours late. The capture is for
     the deadline, not for the wall-clock."""
-    slot, at = bigten.slot_at(FIRST_RUN + timedelta(hours=2))
-    assert (slot.name, bigten.slot_id(at)) == ("evening", "2026-09-17T0130Z")
+    deadline, at = bigten.deadline_at(FIRST_RUN + timedelta(hours=2))
+    assert (deadline.name, bigten.deadline_id(at)) == ("evening", "2026-09-17T0130Z")
 
 
-def test_the_gameday_slots_are_saturday_and_the_evening_one_runs_into_sunday():
+def test_the_gameday_deadlines_are_saturday_and_the_evening_one_runs_into_sunday():
     sat = datetime(2026, 9, 19, tzinfo=UTC)
-    early = bigten.slot_at(sat.replace(hour=15, minute=30))
-    late = bigten.slot_at(sat.replace(hour=23))
-    night = bigten.slot_at(sat + timedelta(days=1, hours=2))
+    early = bigten.deadline_at(sat.replace(hour=15, minute=30))
+    late = bigten.deadline_at(sat.replace(hour=23))
+    night = bigten.deadline_at(sat + timedelta(days=1, hours=2))
     assert [s.name for s, _ in (early, late, night)] == ["gameday-early", "gameday-late",
                                                          "evening"]
-    assert bigten.slot_id(night[1]) == "2026-09-20T0130Z"
+    assert bigten.deadline_id(night[1]) == "2026-09-20T0130Z"
 
 
-def test_a_moment_before_the_slot_belongs_to_the_previous_one():
-    slot, at = bigten.slot_at(datetime(2026, 9, 17, 1, 29, tzinfo=UTC))
-    assert bigten.slot_id(at) == "2026-09-16T0130Z", "Wednesday's evening slot, a day back"
-    slot, at = bigten.slot_at(datetime(2026, 9, 15, 12, tzinfo=UTC))
-    assert bigten.slot_id(at) == "2026-09-13T0130Z", "Monday: Sunday's evening slot, two back"
-    assert slot.name == "evening"
+def test_a_moment_before_the_deadline_belongs_to_the_previous_one():
+    deadline, at = bigten.deadline_at(datetime(2026, 9, 17, 1, 29, tzinfo=UTC))
+    assert bigten.deadline_id(at) == "2026-09-16T0130Z", "Wednesday's evening deadline, a day back"
+    deadline, at = bigten.deadline_at(datetime(2026, 9, 15, 12, tzinfo=UTC))
+    assert bigten.deadline_id(at) == "2026-09-13T0130Z", "Monday: Sunday's evening deadline, two back"
+    assert deadline.name == "evening"
 
 
 def test_a_week_holds_seven_deadlines():
-    got = bigten.expected_slots(bigten.REPORTS_BEGIN, bigten.REPORTS_BEGIN + timedelta(days=7))
+    got = bigten.expected_deadlines(bigten.REPORTS_BEGIN, bigten.REPORTS_BEGIN + timedelta(days=7))
     assert len(got) == 7
-    assert bigten.slot_id(got[0][1]) == "2026-09-17T0130Z", "the first capture follows the first deadline"
+    assert bigten.deadline_id(got[0][1]) == "2026-09-17T0130Z", "the first capture follows the first deadline"
     assert [s.name for s, _ in got].count("evening") == 5
 
 
-def test_every_slot_has_a_cron_and_no_two_collide():
-    crons = [s.cron() for s in bigten.SLOTS]
+def test_every_deadline_has_a_cron_and_no_two_collide():
+    crons = [s.cron() for s in bigten.DEADLINES]
     assert len(set(crons)) == len(crons)
     assert all(len(c.split()) == 5 for c in crons)
 
@@ -194,7 +194,7 @@ def test_a_capture_keeps_the_article_and_every_linked_document(web, season, tmp_
     assert kept.read_bytes() == PDF
     assert cap.rows[1]["label"] == "Week #4 (Sept. 18-19)"
     assert cap.rows[1]["report_updated_at"] == "2026-09-17T00:12:44.000Z"
-    assert all(r["slot"] == "2026-09-17T0130Z" for r in cap.rows)
+    assert all(r["deadline"] == "2026-09-17T0130Z" for r in cap.rows)
 
 
 def test_an_unchanged_document_is_indexed_again_and_not_stored_again(web, season, tmp_path):
@@ -206,7 +206,7 @@ def test_an_unchanged_document_is_indexed_again_and_not_stored_again(web, season
     assert [r["new_content"] for r in second.rows] == [False, False]
     index = bigten.read_index()
     assert index.height == 4
-    assert index["slot"].n_unique() == 2
+    assert index["deadline"].n_unique() == 2
     stored = list((tmp_path / "archive" / "availability").rglob("*.*"))
     assert len(stored) == 2, f"one article record and one PDF, not {stored}"
 
@@ -245,7 +245,7 @@ def test_one_unreachable_document_does_not_lose_the_others(web, season, capsys):
 
 
 def test_the_index_is_refused_when_a_row_breaks_the_contract(tmp_path):
-    bad = [{"slot": "2026-09-17T0130Z", "slot_name": "evening", "captured_at": "x",
+    bad = [{"deadline": "2026-09-17T0130Z", "deadline_name": "evening", "captured_at": "x",
             "season": 2019, "kind": "file", "url": "u", "label": None,
             "report_updated_at": None, "sha256": "s", "bytes": 1, "path": "p",
             "new_content": True}]
@@ -336,10 +336,10 @@ def test_a_full_capture_is_recorded_fresh(web, season, cfbd_lines):
     got = bigten.record_run(cap, now=FIRST_RUN)
     assert got["shape"] == "summary" and got["name"] == "bigten"
     assert (got["fetched"], got["stale"], got["reason"]) == (True, False, None)
-    assert got["slot"] == {"id": "2026-09-17T0130Z", "name": "evening"}
+    assert got["deadline"] == {"id": "2026-09-17T0130Z", "name": "evening"}
     assert got["documents"] == {"seen": 2, "new": 2}
     assert got["lines"]["rows"] == 1 and got["lines"]["why"] is None
-    assert got["missed"] == {"count": 0, "slots": []}
+    assert got["missed"] == {"count": 0, "deadlines": []}
     assert got["archive_rows"] == 3
     assert json.loads(bigten.STATUS.read_text()) == got
 
@@ -386,15 +386,15 @@ def test_the_stamp_never_carries_a_message_from_the_source(web, season):
     assert "no __NEXT_DATA__" not in text
 
 
-def test_missed_deadlines_are_the_slots_with_no_row_behind_them(web, season):
+def test_missed_deadlines_are_the_deadlines_with_no_row_behind_them(web, season):
     web[bigten.PAGE] = page_with(ONE_LINK)
     web["https://bigten.org/api/media/file/abc-Week_4.pdf"] = PDF
     bigten.capture(now=FIRST_RUN, skip_lines=True)
-    # The Thursday and Friday evening slots pass with no run; Saturday morning's runs.
+    # The Thursday and Friday evening deadlines pass with no run; Saturday morning's runs.
     saturday = datetime(2026, 9, 19, 15, 20, tzinfo=UTC)
     cap = bigten.capture(now=saturday, skip_lines=True)
     got = bigten.record_run(cap, now=saturday)
-    assert got["missed"] == {"count": 2, "slots": ["2026-09-18T0130Z", "2026-09-19T0130Z"]}
+    assert got["missed"] == {"count": 2, "deadlines": ["2026-09-18T0130Z", "2026-09-19T0130Z"]}
 
 
 def test_missed_deadlines_start_at_the_season_where_that_is_later(monkeypatch):
@@ -402,7 +402,7 @@ def test_missed_deadlines_start_at_the_season_where_that_is_later(monkeypatch):
     monkeypatch.setattr(cfbd, "_env", lambda: {"CFB_WEEK_ONE": "2027-09-04"})
     empty = pl.DataFrame(schema=bigten.INDEX_SCHEMA)
     now = datetime(2027, 9, 8, 12, tzinfo=UTC)
-    got = bigten.missed_slots(empty, now=now, opens=bigten.cfbd.week_one_opens()[1])
+    got = bigten.missed_deadlines(empty, now=now, opens=bigten.cfbd.week_one_opens()[1])
     assert got == ["2027-09-01T0130Z", "2027-09-02T0130Z", "2027-09-03T0130Z",
                    "2027-09-04T0130Z", "2027-09-04T1500Z", "2027-09-04T2100Z",
                    "2027-09-05T0130Z", "2027-09-08T0130Z"]
@@ -468,7 +468,7 @@ def test_status_reports_the_archive_and_the_missed_deadlines(web, season, clock,
     clock(datetime(2026, 9, 19, 15, 20, tzinfo=UTC))
     assert bigten.main(["--status"]) == 0
     out = capsys.readouterr().out
-    assert "2 rows over 1 captured slots" in out and "missed deadlines" in out
+    assert "2 rows over 1 captured deadlines" in out and "missed deadlines" in out
     assert "2026-09-18T0130Z" in out
 
 

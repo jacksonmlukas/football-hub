@@ -21,7 +21,7 @@ name: bigten
 # committed encrypted with a repository secret, which is what makes it retrievable later
 # without being redistributed now.
 on:
-  # One cron per slot in `hub.fetch.bigten.SLOTS`, and `tests/contracts/test_bigten_schedule.py`
+  # One cron per deadline in `hub.fetch.bigten.DEADLINES`, and `tests/contracts/test_bigten_schedule.py`
   # holds the two lists to each other. The argument for each line is on that constant; the
   # short form is that the midweek reports are due 8pm ET and 01:30 UTC is after that in both
   # daylight-saving states, and the gameday reports are due two hours before kickoff so
@@ -84,7 +84,7 @@ jobs:
 
       # The snapshot this run took, encrypted into the tracked tree. A runner starts with an
       # empty `data/raw/`, so what is under it is exactly this run's; the archive path
-      # mirrors the cache path, so a later reader can pair a snapshot with its slot by name.
+      # mirrors the cache path, so a later reader can pair a snapshot with its deadline by name.
       # AES-256-CBC with a PBKDF2-derived key from the secret: `openssl enc -d` with the same
       # arguments and `-pass env:BIGTEN_ARCHIVE_KEY` reads one back.
       - name: Keep the odds snapshot where it can be committed
@@ -117,11 +117,11 @@ jobs:
           elif [ "$(jq -r '.stale' "$B")" = "true" ]; then
             echo "::warning::captured, degraded. $(jq -r '.reason' "$B")"
           else
-            echo "::notice::slot $(jq -r '.slot.id' "$B") captured: $(jq -r '.documents | "\(.seen) documents, \(.new) new"' "$B"); lines $(jq -r '.lines.rows' "$B") rows"
+            echo "::notice::deadline $(jq -r '.deadline.id' "$B") captured: $(jq -r '.documents | "\(.seen) documents, \(.new) new"' "$B"); lines $(jq -r '.lines.rows' "$B") rows"
           fi
           MISSED=$(jq -r '.missed.count' "$B")
           if [ "$MISSED" != "0" ]; then
-            echo "::warning::$MISSED deadlines have no capture: $(jq -r '.missed.slots | join(" ")' "$B")"
+            echo "::warning::$MISSED deadlines have no capture: $(jq -r '.missed.deadlines | join(" ")' "$B")"
           fi
           echo "quota: $(jq -r '.quota | "\(.used) of \(.limit) this month"' "$B")"
 
@@ -129,7 +129,7 @@ jobs:
       # slate's step (#228), and for the same reason: a push made with `GITHUB_TOKEN`
       # triggers no other workflow, so `ci.yml` never sees a commit this job makes, and the
       # first process to read a malformed stamp would otherwise be the next human push.
-      # The schedule contract is here too, so a cron edited without the module's slots is
+      # The schedule contract is here too, so a cron edited without the module's deadlines is
       # caught by the job that would have run on it.
       - name: Check the artifacts against the contracts that read them
         run: |
@@ -160,8 +160,8 @@ jobs:
               exit 0
             fi
           fi
-          SLOT=$(jq -r '.slot.id // "no slot"' site/data/bigten.json)
-          git commit -m "bigten: ${SLOT} capture
+          DEADLINE=$(jq -r '.deadline.id // "no deadline"' site/data/bigten.json)
+          git commit -m "bigten: ${DEADLINE} capture
 
           Captured by the scheduled availability-report job. The commit is the
           timestamp -- see docs/track-record.md rule 1."

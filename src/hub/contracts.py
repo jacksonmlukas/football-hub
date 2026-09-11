@@ -590,7 +590,7 @@ CFBD_LINES = Contract(
 # This is a contract on what `hub.fetch.bigten` *stores*, not on what the conference
 # publishes -- the reports are archived as the bytes the conference served, and nothing here
 # parses them yet, so there is no designation column to declare. What the index has to hold
-# is the provenance a later study needs: which deadline (`slot`) a row was captured for,
+# is the provenance a later study needs: which deadline (`deadline`) a row was captured for,
 # when the conference last updated the report (`report_updated_at`, the source's own stamp
 # and not the fetch time), and the hash that says whether the bytes moved between two
 # captures (`new_content`). `kind` is `article` for the page's own content record, `file`
@@ -603,11 +603,11 @@ CFBD_LINES = Contract(
 # so is how a missed deadline is told apart from an unchanged report.
 BIGTEN_CAPTURES = Contract(
     name="bigten_captures",
-    required={"slot": pl.Utf8, "slot_name": pl.Utf8, "captured_at": pl.Utf8,
+    required={"deadline": pl.Utf8, "deadline_name": pl.Utf8, "captured_at": pl.Utf8,
               "season": pl.Int64, "kind": pl.Utf8, "url": pl.Utf8, "label": pl.Utf8,
               "report_updated_at": pl.Utf8, "sha256": pl.Utf8, "bytes": pl.Int64,
               "path": pl.Utf8, "new_content": pl.Boolean},
-    non_null=("slot", "slot_name", "captured_at", "season", "kind", "url", "sha256",
+    non_null=("deadline", "deadline_name", "captured_at", "season", "kind", "url", "sha256",
               "bytes", "path", "new_content"),
     # The regime began in 2026; a season before it is a row nothing here wrote. An empty
     # document is a real capture (a 404 body is not stored, but a zero-byte file is a fact

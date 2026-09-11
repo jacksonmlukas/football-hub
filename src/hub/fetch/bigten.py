@@ -26,13 +26,15 @@ team; `hub.fetch.cfbd` is where that is impossible rather than merely discourage
 per-week cost is stated in `docs/cfbd-quota.md`, which the disposition requires before the
 first live run.
 
-**Deadlines are slots, and a slot is what a capture is *for*.** The workflow's crons fire
-after each deadline; GitHub delivers a scheduled run anywhere up to two hours late; and a
-capture that names the wall-clock it happened at cannot be compared to the one before it.
-So every capture is attributed to the most recent slot at or before the moment it ran, and
-the set of slots between the regime's first day and now, minus the slots the index holds a
-row for, is the list of deadlines that were **missed** -- recorded in the stamp rather than
-left as a gap someone has to notice.
+**A capture is *for* a deadline, and a deadline is a scheduled instant.** The conference's
+deadlines are 8pm ET and two hours before kickoff; this module's `DEADLINES` are the fixed
+UTC instants after them that a capture is attributed to. The workflow's crons fire on those;
+GitHub delivers a scheduled run anywhere up to two hours late; and a capture that names the
+wall-clock it happened at cannot be compared to the one before it.
+So every capture is attributed to the most recent deadline at or before the moment it ran, and
+the set of deadlines between the regime's first day and now, minus those the index holds a row
+for, is the list of deadlines that were **missed** -- recorded in the stamp rather than left as a
+gap someone has to notice.
 
 **Degradation, which is the whole design.** Every failure leaves a record and never a
 traceback: the page unreachable, the page's shape changed (the raw page is archived so the
@@ -89,7 +91,7 @@ STATUS = SITE / "bigten.json"
 
 # The first deadline, as an instant: the regime's first games are Saturday 19 September 2026
 # and the three-day report for them is due 8pm ET on Wednesday the 16th, which is 00:00 UTC
-# on the 17th. An instant rather than a date because every slot is one, and a date would
+# on the 17th. An instant rather than a date because every deadline is one, and a date would
 # have to say which clock it was on. A value in the past suppresses nothing, so a stale one
 # next August costs a few empty captures of a page before the season and never silence
 # inside one. The *end* is not a second constant: captures stop when
@@ -105,13 +107,13 @@ LIVE_TEST_SUITE = "tests/golden/"
 
 USER_AGENT = "football-hub/0.1 (+https://github.com/jacksonmlukas/football-hub)"
 
-# How many missed slots the stamp lists in full. The count is always exact; the list is
+# How many missed deadlines the stamp lists in full. The count is always exact; the list is
 # capped so the stamp stays a stamp.
 MISSED_LISTED = 20
 
 
 @dataclass(frozen=True)
-class Slot:
+class Deadline:
     """One scheduled capture: a name, and when it fires each week, in UTC.
 
     `weekday` is cron's numbering -- Sunday 0 -- because the workflow's crons are what this
@@ -140,24 +142,24 @@ class Slot:
 # *Gameday, 15:00 and 21:00 UTC Saturday.* Gameday reports are due two hours before kickoff:
 # 10am ET for a noon game, 1:30pm for 3:30, 5-6pm for the evening windows. 15:00 UTC (11am
 # EDT) is after the noon-kickoff reports; 21:00 UTC (5pm EDT) is after the afternoon ones;
-# the Sunday-01:30 evening slot above takes the rest. Three gameday captures rather than one
+# the Sunday-01:30 evening deadline above takes the rest. Three gameday captures rather than one
 # per kickoff, because every capture is one CFBD call and the kickoff times are not known
 # to this module without another one.
-SLOTS: tuple[Slot, ...] = (
-    Slot("evening", 3, 1, 30),
-    Slot("evening", 4, 1, 30),
-    Slot("evening", 5, 1, 30),
-    Slot("evening", 6, 1, 30),
-    Slot("evening", 0, 1, 30),
-    Slot("gameday-early", 6, 15, 0),
-    Slot("gameday-late", 6, 21, 0),
+DEADLINES: tuple[Deadline, ...] = (
+    Deadline("evening", 3, 1, 30),
+    Deadline("evening", 4, 1, 30),
+    Deadline("evening", 5, 1, 30),
+    Deadline("evening", 6, 1, 30),
+    Deadline("evening", 0, 1, 30),
+    Deadline("gameday-early", 6, 15, 0),
+    Deadline("gameday-late", 6, 21, 0),
 )
 
 # The index's declared column order, so a frame built from a fresh file and a frame built
 # from an old one have the same dtypes whatever the rows happen to hold. An all-null column
 # infers as `Null`, which the contract rightly refuses.
 INDEX_SCHEMA: dict[str, type[pl.DataType]] = {
-    "slot": pl.Utf8, "slot_name": pl.Utf8, "captured_at": pl.Utf8, "season": pl.Int64,
+    "deadline": pl.Utf8, "deadline_name": pl.Utf8, "captured_at": pl.Utf8, "season": pl.Int64,
     "kind": pl.Utf8, "url": pl.Utf8, "label": pl.Utf8, "report_updated_at": pl.Utf8,
     "sha256": pl.Utf8, "bytes": pl.Int64, "path": pl.Utf8, "new_content": pl.Boolean,
 }
@@ -192,15 +194,15 @@ def _get(url: str) -> bytes:
     return r.content
 
 
-# --- slots ----------------------------------------------------------------------
+# --- deadlines ----------------------------------------------------------------------
 
 def _cron_weekday(day: date) -> int:
     """Python's Monday-0 weekday as cron's Sunday-0."""
     return (day.weekday() + 1) % 7
 
 
-def slot_at(now: datetime) -> tuple[Slot, datetime]:
-    """The most recent slot at or before `now`, and the instant it fired.
+def deadline_at(now: datetime) -> tuple[Deadline, datetime]:
+    """The most recent deadline at or before `now`, and the instant it fired.
 
     A run delivered two hours late belongs to the deadline it was scheduled after, not to
     the wall-clock it happened at. Walked back day by day rather than computed, because a
@@ -211,25 +213,25 @@ def slot_at(now: datetime) -> tuple[Slot, datetime]:
         day = (now - timedelta(days=back)).date()
         candidates = [
             (s, datetime(day.year, day.month, day.day, s.hour, s.minute, tzinfo=UTC))
-            for s in SLOTS if s.weekday == _cron_weekday(day)
+            for s in DEADLINES if s.weekday == _cron_weekday(day)
         ]
         fired = [(s, at) for s, at in candidates if at <= now]
         if fired:
             return max(fired, key=lambda p: p[1])
-    raise AssertionError("SLOTS covers a week; something fired in the last seven days")
+    raise AssertionError("DEADLINES covers a week; something fired in the last seven days")
 
 
-def slot_id(at: datetime) -> str:
+def deadline_id(at: datetime) -> str:
     return at.strftime("%Y-%m-%dT%H%MZ")
 
 
-def expected_slots(since: datetime, until: datetime) -> list[tuple[Slot, datetime]]:
-    """Every slot that should have been captured between `since` and `until`."""
-    out: list[tuple[Slot, datetime]] = []
+def expected_deadlines(since: datetime, until: datetime) -> list[tuple[Deadline, datetime]]:
+    """Every deadline that should have been captured between `since` and `until`."""
+    out: list[tuple[Deadline, datetime]] = []
     day = since.date()
     while day <= until.date():
         wd = _cron_weekday(day)
-        for s in SLOTS:
+        for s in DEADLINES:
             if s.weekday != wd:
                 continue
             at = datetime(day.year, day.month, day.day, s.hour, s.minute, tzinfo=UTC)
@@ -331,7 +333,7 @@ def _write_index(df: pl.DataFrame, path: Path) -> None:
 @dataclass
 class Capture:
     """What one run kept, and what it could not."""
-    slot: Slot
+    deadline: Deadline
     at: datetime
     season: int
     week: int | None
@@ -365,7 +367,8 @@ def _keep(cap: Capture, *, kind: str, url: str, label: str | None,
         target.write_bytes(data)
         seen.add(digest)
     cap.rows.append({
-        "slot": slot_id(cap.at), "slot_name": cap.slot.name, "captured_at": captured_at,
+        "deadline": deadline_id(cap.at), "deadline_name": cap.deadline.name,
+        "captured_at": captured_at,
         "season": cap.season, "kind": kind, "url": url, "label": label,
         "report_updated_at": updated_at, "sha256": digest, "bytes": len(data),
         "path": rel.as_posix(), "new_content": new,
@@ -384,13 +387,13 @@ def capture(*, now: datetime | None = None, season: int = SEASON_AHEAD,
     intact. `record_run` turns each into the stamp, and `main` into an exit code.
     """
     at_now = now or _now()
-    slot, at = slot_at(at_now)
+    deadline, at = deadline_at(at_now)
     archive = Path(archive or ARCHIVE)
     index = Path(index or INDEX)
     held = read_index(index)
     seen = set(held["sha256"].to_list()) if held.height else set()
     week = cfbd.configured_week(at_now).week
-    cap = Capture(slot=slot, at=at, season=season, week=week, rows=[])
+    cap = Capture(deadline=deadline, at=at, season=season, week=week, rows=[])
     stamp = jsonio.stamp()
 
     try:
@@ -477,13 +480,14 @@ def _snapshot_lines(cap: Capture, *, lines_dir: Path, quota_path: Path | None,
         cap.lines_why = ("served from an earlier capture: the call was refused and the "
                          "cached week was served instead")
     # /GUARD
-    target = lines_dir / str(cap.season) / f"w{cap.week:02d}" / f"{slot_id(cap.at)}.parquet"
+    target = lines_dir / str(cap.season) / f"w{cap.week:02d}" / f"{deadline_id(cap.at)}.parquet"
     target.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(target)
     data = target.read_bytes()
     digest = _sha(data)
     cap.rows.append({
-        "slot": slot_id(cap.at), "slot_name": cap.slot.name, "captured_at": captured_at,
+        "deadline": deadline_id(cap.at), "deadline_name": cap.deadline.name,
+        "captured_at": captured_at,
         "season": cap.season, "kind": "lines",
         "url": f"cfbd:/lines?year={cap.season}&week={cap.week}", "label": None,
         "report_updated_at": None, "sha256": digest, "bytes": len(data),
@@ -493,21 +497,22 @@ def _snapshot_lines(cap: Capture, *, lines_dir: Path, quota_path: Path | None,
 
 # --- the stamp ------------------------------------------------------------------
 
-def missed_slots(index: pl.DataFrame, *, now: datetime, since: datetime = REPORTS_BEGIN,
+def missed_deadlines(index: pl.DataFrame, *, now: datetime, since: datetime = REPORTS_BEGIN,
                  opens: date | None = None) -> list[str]:
     """Every deadline between the regime's first day and now with no capture behind it.
 
     Bounded below by the season's own opening where that is later than `since`, so a stale
     `REPORTS_BEGIN` next August does not report a summer of missed deadlines for a season
-    that had not started. Today's slot counts as missed only once its capture has had a
-    chance to run: a run that *is* the capture for the current slot writes its row before
+    that had not started. Today's deadline counts as missed only once its capture has had a
+    chance to run: a run that *is* the capture for the current deadline writes its row before
     this is asked.
     """
     start = since
     if opens is not None:
         start = max(since, datetime(opens.year, opens.month, opens.day, tzinfo=UTC))
-    have = set(index["slot"].to_list()) if index.height else set()
-    return [slot_id(at) for _, at in expected_slots(start, now) if slot_id(at) not in have]
+    have = set(index["deadline"].to_list()) if index.height else set()
+    return [deadline_id(at) for _, at in expected_deadlines(start, now)
+            if deadline_id(at) not in have]
 
 
 def record_run(cap: Capture | None, *, why: str | None = None, season: int = SEASON_AHEAD,
@@ -523,7 +528,7 @@ def record_run(cap: Capture | None, *, why: str | None = None, season: int = SEA
     * **not captured** -- `fetched: false`, `stale: true`, and the sentence from whatever
       declined: before the first report, no season, the page unreachable.
 
-    **Counts, hashes and slot ids, never payload text.** The one exception is the
+    **Counts, hashes and deadline ids, never payload text.** The one exception is the
     conference's own `updatedAt`, which is a timestamp and the fact this archive is built
     around. A failure arrives here as the exception and only its type is recorded, for the
     reason `cfbd.record_run` gives: a message is an open channel from a third party into a
@@ -537,15 +542,15 @@ def record_run(cap: Capture | None, *, why: str | None = None, season: int = SEA
         held = read_index(index)
     except Exception:
         held = pl.DataFrame(schema=INDEX_SCHEMA)
-    missed = missed_slots(held, now=at_now, opens=opens)
+    missed = missed_deadlines(held, now=at_now, opens=opens)
     if cap is None:
         fetched, stale, reason = False, True, (why or "nothing was captured")
-        slot: dict[str, Any] = {"id": None, "name": None}
+        deadline: dict[str, Any] = {"id": None, "name": None}
         week: int | None = None
         documents = {"seen": 0, "new": 0}
         lines: dict[str, Any] = {"rows": None, "captured_at": None, "why": reason}
     else:
-        slot = {"id": slot_id(cap.at), "name": cap.slot.name}
+        deadline = {"id": deadline_id(cap.at), "name": cap.deadline.name}
         week = cap.week
         documents = {"seen": cap.documents, "new": cap.new_documents}
         lines = {"rows": cap.lines_rows, "captured_at": cap.lines_captured_at,
@@ -569,9 +574,9 @@ def record_run(cap: Capture | None, *, why: str | None = None, season: int = SEA
             fetched, stale, reason = True, False, None
     got: dict[str, Any] = jsonio.summary(
         "bigten", "hub.fetch.bigten",
-        season=season, week=week, slot=slot, fetched=fetched, stale=stale, reason=reason,
+        season=season, week=week, deadline=deadline, fetched=fetched, stale=stale, reason=reason,
         documents=documents, lines=lines,
-        missed={"count": len(missed), "slots": missed[-MISSED_LISTED:]},
+        missed={"count": len(missed), "deadlines": missed[-MISSED_LISTED:]},
         archive_rows=held.height,
         quota={"month": cfbd._month_key(), "used": cfbd.quota_used(quota_path),
                "limit": cfbd.FREE_TIER_MONTHLY},
@@ -579,7 +584,7 @@ def record_run(cap: Capture | None, *, why: str | None = None, season: int = SEA
     p = Path(path or STATUS)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(jsonio.dumps(got, indent=2))
-    said = reason or (f"slot {slot['id']} captured: {documents['seen']} documents, "
+    said = reason or (f"deadline {deadline['id']} captured: {documents['seen']} documents, "
                       f"{documents['new']} new; lines {lines['rows']} rows")
     print(f"  bigten: {said}; {len(missed)} deadlines missed so far; recorded in {p}")
     return got
@@ -608,11 +613,11 @@ def status_report(index: Path | None = None, now: datetime | None = None) -> int
     at_now = now or _now()
     held = read_index(index)
     _first, opens, _why = cfbd.week_one_opens()
-    missed = missed_slots(held, now=at_now, opens=opens)
-    slots = sorted(set(held["slot"].to_list())) if held.height else []
-    print(f"  bigten archive: {held.height:,} rows over {len(slots)} captured slots")
-    if slots:
-        print(f"  first {slots[0]}, latest {slots[-1]}")
+    missed = missed_deadlines(held, now=at_now, opens=opens)
+    deadlines = sorted(set(held["deadline"].to_list())) if held.height else []
+    print(f"  bigten archive: {held.height:,} rows over {len(deadlines)} captured deadlines")
+    if deadlines:
+        print(f"  first {deadlines[0]}, latest {deadlines[-1]}")
     print(f"  missed deadlines since {REPORTS_BEGIN.date().isoformat()}: {len(missed)}")
     for s in missed[-MISSED_LISTED:]:
         print(f"    {s}")

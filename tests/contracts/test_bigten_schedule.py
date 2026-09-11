@@ -1,6 +1,6 @@
-"""`bigten.yml` fires on exactly the slots `hub.fetch.bigten` attributes captures to (#215).
+"""`bigten.yml` fires on exactly the deadlines `hub.fetch.bigten` attributes captures to (#215).
 
-The module decides which deadline a run was *for* by the most recent slot before it; the
+The module decides which deadline a run was *for* by the most recent deadline before it; the
 workflow decides when a run *starts*. Those are two statements of one schedule, and a cron
 edited without the constant -- or the constant without the cron -- leaves the CLI recording a
 deadline nobody scheduled a run for as missed, or a run that fires and is attributed to a
@@ -30,10 +30,10 @@ def _crons() -> list[str]:
     return [" ".join(c.split()) for c in _CRON.findall(WORKFLOW.read_text())]
 
 
-def test_the_workflow_fires_on_exactly_the_modules_slots():
-    assert sorted(_crons()) == sorted(s.cron() for s in bigten.SLOTS), (
-        f"the workflow's crons {_crons()} and hub.fetch.bigten.SLOTS "
-        f"{[s.cron() for s in bigten.SLOTS]} disagree; a run would be attributed to a "
+def test_the_workflow_fires_on_exactly_the_modules_deadlines():
+    assert sorted(_crons()) == sorted(s.cron() for s in bigten.DEADLINES), (
+        f"the workflow's crons {_crons()} and hub.fetch.bigten.DEADLINES "
+        f"{[s.cron() for s in bigten.DEADLINES]} disagree; a run would be attributed to a "
         f"deadline it was not scheduled for, or a deadline would be reported missed by "
         f"a run nobody scheduled")
 
@@ -44,18 +44,18 @@ def test_the_scan_sees_the_crons():
     assert len(_crons()) >= 5
 
 
-def test_the_evening_slot_follows_the_deadline_in_both_daylight_saving_states():
+def test_the_evening_deadline_follows_the_deadline_in_both_daylight_saving_states():
     """8pm ET is 00:00 UTC in summer and 01:00 UTC in winter. A capture before 01:00 UTC
     runs before the deadline for half the season and archives the previous day's report
-    under the wrong slot; one after 05:00 UTC is the next morning ET, which is after the
+    under the wrong deadline; one after 05:00 UTC is the next morning ET, which is after the
     kickoff for nobody but is the wrong side of the night's news."""
-    for s in bigten.SLOTS:
+    for s in bigten.DEADLINES:
         if s.name == "evening":
             assert (1, 0) <= (s.hour, s.minute) < (5, 0), f"{s} is not after 8pm ET"
 
 
-def test_the_gameday_slots_are_saturday():
-    for s in bigten.SLOTS:
+def test_the_gameday_deadlines_are_saturday():
+    for s in bigten.DEADLINES:
         if s.name.startswith("gameday"):
             assert s.weekday == 6, f"{s} fires on a day no Big Ten slate is played"
 

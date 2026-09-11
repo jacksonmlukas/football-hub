@@ -1,7 +1,7 @@
 [
   {
-    "slot": "2026-09-17T0130Z",
-    "slot_name": "evening",
+    "deadline": "2026-09-17T0130Z",
+    "deadline_name": "evening",
     "captured_at": "2026-09-17T01:41:07+00:00",
     "season": 2026,
     "kind": "article",
@@ -14,8 +14,8 @@
     "new_content": true
   },
   {
-    "slot": "2026-09-17T0130Z",
-    "slot_name": "evening",
+    "deadline": "2026-09-17T0130Z",
+    "deadline_name": "evening",
     "captured_at": "2026-09-17T01:41:07+00:00",
     "season": 2026,
     "kind": "file",
@@ -28,8 +28,8 @@
     "new_content": true
   },
   {
-    "slot": "2026-09-17T0130Z",
-    "slot_name": "evening",
+    "deadline": "2026-09-17T0130Z",
+    "deadline_name": "evening",
     "captured_at": "2026-09-17T01:41:09+00:00",
     "season": 2026,
     "kind": "lines",
@@ -42,8 +42,8 @@
     "new_content": true
   },
   {
-    "slot": "2026-09-18T0130Z",
-    "slot_name": "evening",
+    "deadline": "2026-09-18T0130Z",
+    "deadline_name": "evening",
     "captured_at": "2026-09-18T01:36:52+00:00",
     "season": 2026,
     "kind": "article",

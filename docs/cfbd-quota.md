@@ -104,7 +104,7 @@ some earlier one. `bulk` still refuses to spend past the run ceiling or the mont
 cached week when it holds one — the capture then records the snapshot as an earlier price rather
 than as this deadline's, read off the call counter rather than a clock.
 
-**Per week: 7 calls.** Seven slots (`hub.fetch.bigten.SLOTS`): the evening slot Tuesday
+**Per week: 7 calls.** Seven deadlines (`hub.fetch.bigten.DEADLINES`): the evening deadline Tuesday
 through Saturday night ET (01:30 UTC Wednesday through Sunday), and two gameday captures on
 Saturday (15:00 and 21:00 UTC). Each is one `/lines` call. **Per month: about 30**, on top of the
 slate's ~26 above, so roughly **56 a month** against 1,000 — and against the 488 that remained
@@ -131,7 +131,7 @@ can reverse by moving `hub.fetch.bigten.ARCHIVE` under `data/`; nothing else dep
 
 **What the first live run has to show, and nothing here can show before it.** Nothing in this
 repo executes GitHub Actions and the 2026 page held no report on the day this was written. So
-the first evening slot after 16 September is the test, and these are the things to check on it:
+the first evening deadline after 16 September is the test, and these are the things to check on it:
 
 1. `site/data/bigten.json` says `fetched: true`. If `stale: true` with `PageShapeChanged` in the
    reason, the conference's page moved and the raw page is under `archive/bigten/availability/
@@ -144,7 +144,7 @@ the first evening slot after 16 September is the test, and these are the things 
 4. `missed.count` is 0. A nonzero count on the first run means a cron fired and the run did not,
    which is the GitHub delay `live.yml` records — the next run attributes itself correctly.
 5. A commit landed on `main` from the job, with `archive/` in it. The one on the Wednesday
-   slot before the first deadline may be a stamp only; that is the empty page, not a failure.
+   deadline before the first deadline may be a stamp only; that is the empty page, not a failure.
 
 **What is deliberately not built.** Nothing parses a report into player rows. The 2024 PDFs have
 a clean text layer (one page per team-game, designation headings over jersey-and-name lines,

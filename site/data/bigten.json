@@ -1,11 +1,11 @@
 {
   "name": "bigten",
   "source": "hub.fetch.bigten",
-  "generated_at": "2026-09-11T19:13:46+00:00",
+  "generated_at": "2026-09-11T19:23:43+00:00",
   "shape": "summary",
   "season": 2026,
   "week": null,
-  "slot": {
+  "deadline": {
     "id": null,
     "name": null
   },
@@ -23,7 +23,7 @@
   },
   "missed": {
     "count": 0,
-    "slots": []
+    "deadlines": []
   },
   "archive_rows": 0,
   "quota": {
