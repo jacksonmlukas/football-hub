@@ -267,6 +267,19 @@ class Buyback(NamedTuple):
     exceeds the fee paid. `breakeven` is the fee at which that flips, so the margin is visible
     instead of implied -- a net of +$0.40 and a net of +$40 are the same verdict and very
     different bets.
+
+    **`breakeven` is a fixed point, not the equity** (#158). The pot is a function of the fee
+    -- our re-entry and every rival's pay it in -- so the fee at which `net` is zero is the
+    `f` solving `share * (pot + (1 + rivals) * f) = f`, which is `share * pot` over
+    `1 - share * (1 + rivals)`. The equity is that answer holding the pot fixed at the
+    configured fee, and it is low by exactly the pot's own growth: a tenth or so on the
+    inputs this pool has. When `share * (1 + rivals)` reaches one, every dollar of fee adds
+    at least a dollar of pot to our side and no fee flips the verdict; that is `inf`, and
+    `report` says so in words rather than printing it.
+
+    `ahead` is the weeks the re-entry was priced over: those after `week`, since an entry
+    eliminated in a week re-enters for the next one. Carried so the figure is read beside
+    its horizon, and so a caller can see it was not the whole season.
     """
     available: bool
     reason: str
@@ -277,8 +290,23 @@ class Buyback(NamedTuple):
     equity: float       # share * pot, in dollars
     fee: float
     net: float          # equity - fee. Positive means buy back
-    breakeven: float    # the fee at which net is zero, which is the equity
+    breakeven: float    # the fee at which net is zero once the pot has grown by that fee
     recommend: bool
+    ahead: tuple[int, ...] = ()     # the weeks priced: those after the elimination week
+    rivals: int = 0                 # rival re-entries priced, exactly as the caller stated
+
+
+def _ahead(weeks: Sequence[int], week: int) -> list[int]:
+    """The weeks still to be played after `week`, in the order given.
+
+    One definition for the two paths that need it. `weekly` prices a candidate on the weeks
+    after the one being picked, and `buyback` prices a re-entry on the weeks after the one
+    it was eliminated in; the second used to take the caller's list whole, so a caller
+    handing it the season while eliminating in week 3 had the re-entry replay weeks 1 to 3
+    against a ledger that had already spent them (#158). The two now cannot disagree about
+    what "ahead" means.
+    """
+    return [w for w in weeks if w > week]
 
 
 class Candidate(NamedTuple):
@@ -1018,10 +1046,17 @@ def entry_outcome(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
 
 def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
             ledger: Sequence[str], live_entries: int, pot: float,
-            rival_buybacks: int = 0, pool: PoolConfig | None = None,
+            rival_buybacks: int = 0, used: int = 0, pool: PoolConfig | None = None,
             trials: int = DEFAULT_TRIALS,
             rng: np.random.Generator | None = None) -> Buyback:
     """Whether paying the fee to re-enter is worth it, and the fee at which that changes.
+
+    `week` is the week our entry was eliminated in, and the re-entry is priced over the
+    weeks of `weeks` **after** it -- `_ahead`, the same slice `weekly` takes. It used to be
+    priced over the whole list, so a caller handing in the season while eliminating in week
+    3 had the re-entry replay weeks 1 to 3 against a ledger that had already spent them
+    (#158). A week with nothing priced after it is reported as unavailable rather than
+    valued as a tie with everybody still standing, which is what an empty season prices to.
 
     Not a survival question. Re-entering buys a share of a pot that the buybacks themselves
     enlarge, against a field those same buybacks refill -- so a rival re-entry moves the
@@ -1052,6 +1087,17 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     invention wearing a number's clothes. The caller states an assumption and the figure moves
     with it.
 
+    **And it is not clamped to the cap** (#158). `PoolConfig.buyback_cap` is a cap *per
+    entry* -- how many times one entry may re-enter across the season, provisionally four --
+    and it was applied here as a ceiling on the field's total, so a caller stating six rival
+    re-entries was silently priced at four and the docstring's promise that the figure moves
+    with the assumption was false above the cap. The figure could not honour the cap as
+    written without knowing how many rivals are out and how many re-entries each has used,
+    neither of which is an input, and inventing them is the propensity the paragraph above
+    refuses. So the caller's count stands, a negative one is refused, and the per-entry cap
+    is applied where it is per-entry: to *ours*, through `used`, the re-entries this entry
+    has already taken. An entry at the cap cannot buy back whatever the equity says.
+
     Future re-entries are not priced. A buyback that is itself later lost could be bought back
     again while the rule still allows it, and that option has value this ignores -- so the
     figure is a floor rather than a point.
@@ -1079,16 +1125,34 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     if cfg.buyback_cap <= 0:
         return Buyback(False, "no buybacks: the cap is zero", pot, live_entries,
                        len(set(ledger)), 0.0, 0.0, cfg.buyback_fee, 0.0, 0.0, False)
+    if used >= cfg.buyback_cap:
+        return Buyback(False,
+                       f"no buyback: this entry has used {_plural(used, 'buyback')} of "
+                       f"the {cfg.buyback_cap} the cap allows each entry",
+                       pot, live_entries, len(set(ledger)), 0.0, 0.0, cfg.buyback_fee,
+                       0.0, 0.0, False)
     if week > cfg.buyback_cutoff_week:
         return Buyback(False,
                        f"no buyback: week {week} is past week "
                        f"{cfg.buyback_cutoff_week}, the last one that allows it",
                        pot, live_entries, len(set(ledger)), 0.0, 0.0, cfg.buyback_fee,
                        0.0, 0.0, False)
+    if rival_buybacks < 0:
+        raise ValueError(
+            f"`rival_buybacks` is {rival_buybacks!r}: it is how many rivals the caller "
+            "assumes re-enter alongside us, and a negative count is not an assumption "
+            "about the field. State zero or more; there is no cap applied here, because "
+            "`PoolConfig.buyback_cap` is per entry and this is the field's total.")
+    ahead = _ahead(weeks, week)
+    if not ahead:
+        return Buyback(False,
+                       f"no buyback: nothing is priced after week {week} to re-enter for",
+                       pot, live_entries, len(set(ledger)), 0.0, 0.0, cfg.buyback_fee,
+                       0.0, 0.0, False)
 
-    # Ours plus theirs, bounded by the cap. Both sides of the ledger move: the fees enlarge
-    # the pot and the entries refill the field.
-    rivals = max(0, min(int(rival_buybacks), cfg.buyback_cap))
+    # Ours plus theirs, as the caller states them. Both sides of the ledger move: the fees
+    # enlarge the pot and the entries refill the field.
+    rivals = int(rival_buybacks)
     field = live_entries + 1 + rivals
     grown = pot + (1 + rivals) * cfg.buyback_fee
     # The rule, not the argument: what the re-entry inherits is what the pool says it
@@ -1096,11 +1160,17 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     # has to be able to say what was cleared.
     inherits = sorted(set(ledger)) if cfg.buyback_restores_ledger else []
 
-    out = entry_outcome(grid, weeks, entries=field, ledger=inherits, pool=cfg,
+    out = entry_outcome(grid, ahead, entries=field, ledger=inherits, pool=cfg,
                         trials=trials, rng=rng)
     equity = out.share * grown
     net = equity - cfg.buyback_fee
     yes = net > 0
+    # The fee at which net is zero once the pot has grown by that fee and the rivals' -- the
+    # fixed point, not the equity. `share` does not move with the fee, so `net(f)` is linear
+    # in it with slope `share * (1 + rivals) - 1`; a slope at or above zero means no fee
+    # flips the verdict and the breakeven is unbounded.
+    slope = out.share * (1 + rivals)
+    breakeven = out.share * pot / (1.0 - slope) if slope < 1.0 else float("inf")
     return Buyback(
         available=True,
         reason=(f"{'BUY BACK' if yes else 'DO NOT BUY BACK'}: "
@@ -1110,7 +1180,8 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
                    "re-entering with a clean ledger, which is what this pool's rules say a "
                    "buyback restores")),
         pot=grown, field=field, spent=len(inherits), share=out.share,
-        equity=equity, fee=cfg.buyback_fee, net=net, breakeven=equity, recommend=yes)
+        equity=equity, fee=cfg.buyback_fee, net=net, breakeven=breakeven, recommend=yes,
+        ahead=tuple(ahead), rivals=rivals)
 
 
 def auto_pick(grid: pl.DataFrame, week: int, ledger: Sequence[str] = ()) -> str | None:
@@ -1191,7 +1262,7 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     if wk.is_empty():
         raise ValueError(f"week {week} has no legal pick left: {len(spent)} teams are spent")
 
-    ahead = [w for w in weeks if w > week]
+    ahead = _ahead(weeks, week)
     free = auto_pick(grid, week, ledger)
     ranked = wk.sort(["win_prob", "team"], descending=[True, False]).head(top)
 
@@ -1354,11 +1425,20 @@ def report(b: Buyback, *, places: int = 2) -> list[str]:
     """
     if not b.available:
         return [f"\n  {b.reason}"]
+    span = (f"week {b.ahead[0]}" if len(b.ahead) == 1 else
+            f"weeks {b.ahead[0]}-{b.ahead[-1]}") if b.ahead else "no weeks"
+    # An unbounded breakeven is a sentence and not a number: `inf` on the page reads as a
+    # formatting fault, and the claim it stands for is that every dollar of fee brings at
+    # least a dollar of pot to our side, so no fee flips the verdict.
+    flip = (f"  breakeven fee ${b.breakeven:.{places}f}" if np.isfinite(b.breakeven) else
+            f"  no breakeven: a {b.share * 100:.1f}% share of a pot "
+            f"{_plural(1 + b.rivals, 'buyback')} pay into gains at least a dollar per "
+            "dollar of fee, so no fee flips this verdict")
     return [
         f"\n  {b.reason}",
-        f"  pot ${b.pot:.{places}f} across {b.field} entries   "
+        f"  pot ${b.pot:.{places}f} across {b.field} entries over {span}   "
         f"share {b.share * 100:.1f}%   net ${b.net:+.{places}f}",
-        f"  breakeven fee ${b.breakeven:.{places}f}",
+        flip,
     ]
 
 

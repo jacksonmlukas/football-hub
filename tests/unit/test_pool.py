@@ -386,7 +386,7 @@ def test_equity_above_the_fee_recommends_buying_back():
                      trials=400, rng=np.random.default_rng(8))
     assert b.available and b.recommend
     assert b.net > 0 and b.equity > b.fee
-    assert b.breakeven == pytest.approx(b.equity)
+    assert b.breakeven > b.fee, "net is positive, so the fee that flips it is above this one"
 
 
 def test_equity_below_the_fee_recommends_against():
@@ -395,7 +395,7 @@ def test_equity_below_the_fee_recommends_against():
     b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=("KC", "SF"), live_entries=60,
                      pot=40.0, trials=400, rng=np.random.default_rng(8))
     assert b.available and not b.recommend
-    assert b.net < 0 and b.breakeven == pytest.approx(b.equity)
+    assert b.net < 0 and b.breakeven < b.fee
 
 
 def test_the_sign_of_net_is_the_recommendation():
@@ -440,11 +440,112 @@ def test_a_cap_of_zero_means_no_buyback_and_no_growth():
     assert "cap is zero" in b.reason
 
 
-def test_rival_buybacks_cannot_exceed_the_cap():
+def test_a_caller_stating_more_rival_re_entries_than_the_cap_is_priced_as_stated():
+    """The clamp this test used to bless, removed (#158). `buyback_cap` is per entry, and
+    it was applied to the field's total: a caller stating six rival re-entries against a
+    cap of four was priced at four, silently, while the docstring promised the figure moved
+    with the assumption. The count now stands, and is carried back out so it can be read."""
     b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=(), live_entries=8, pot=420.0,
                      rival_buybacks=99, pool=PoolConfig(buyback_cap=2), trials=50,
                      rng=np.random.default_rng(0))
-    assert b.field == 8 + 1 + 2
+    assert b.field == 8 + 1 + 99 and b.rivals == 99
+    assert b.pot == pytest.approx(420.0 + 100 * b.fee)
+
+
+def test_a_negative_rival_count_is_refused_rather_than_floored():
+    """Zero was what a negative count silently became. It is not an assumption about the
+    field, and a caller who typed it should be told rather than priced at nothing."""
+    with pytest.raises(ValueError, match="negative count is not an assumption"):
+        pool.buyback(_season(), [1, 2, 3], week=1, ledger=(), live_entries=8, pot=420.0,
+                     rival_buybacks=-1, trials=50, rng=np.random.default_rng(0))
+
+
+def test_the_cap_applies_to_our_own_entry_as_documented():
+    """Where a per-entry cap is per-entry: the re-entries *this* entry has taken. At the
+    cap the buyback is unavailable whatever the equity says, and one below it is priced."""
+    kw = {"ledger": (), "live_entries": 2, "pot": 420.0, "trials": 50,
+          "pool": PoolConfig(buyback_cap=2)}
+    spent = pool.buyback(_season(), [1, 2, 3], week=1, used=2, rng=np.random.default_rng(0),
+                         **kw)
+    assert not spent.available and not spent.recommend
+    assert "2 buybacks of the 2 the cap allows each entry" in spent.reason
+    one = pool.buyback(_season(), [1, 2, 3], week=1, used=1, rng=np.random.default_rng(0),
+                       **kw)
+    assert one.available
+
+
+def test_the_breakeven_is_the_fee_at_which_net_is_zero_once_the_pot_has_grown_by_it():
+    """The first criterion, verified against the worked case rather than the formula.
+
+    Net at a fee `f` is `share * (pot + (1 + rivals) * f) - f`, because our re-entry and the
+    rivals' all pay in. Setting it to zero gives `share * pot / (1 - share * (1 + rivals))`,
+    and that is checked two ways: the closed form, and by re-pricing the same seed with the
+    pool's fee set to the reported breakeven, where the net has to come out zero. `share`
+    is a property of the field and the ledger, so the same seed gives the same share and
+    the only thing that moved is the fee. The equity is the same answer holding the pot at
+    the configured fee, and it is not the flip point: here it is low by the pot's growth."""
+    kw = {"ledger": ("KC",), "live_entries": 8, "pot": 420.0, "rival_buybacks": 3,
+          "trials": 300}
+    b = pool.buyback(_season(), [1, 2, 3], week=1, rng=np.random.default_rng(12), **kw)
+    assert b.available and b.net > 0
+    closed = b.share * 420.0 / (1.0 - b.share * (1 + 3))
+    assert b.breakeven == pytest.approx(closed)
+    assert b.breakeven != pytest.approx(b.equity)
+    assert b.breakeven > b.equity, "a positive net has its flip point above the equity"
+    at = pool.buyback(_season(), [1, 2, 3], week=1, pool=PoolConfig(buyback_fee=b.breakeven),
+                      rng=np.random.default_rng(12), **kw)
+    assert at.share == b.share, "same seed, same field: the fee cannot move the share"
+    assert at.net == pytest.approx(0.0, abs=1e-9)
+    assert at.pot == pytest.approx(420.0 + 4 * b.breakeven)
+
+
+def test_a_share_that_outgrows_the_fee_has_no_breakeven_and_the_report_says_so():
+    """When `share * (1 + rivals)` reaches one, every dollar of fee brings at least a dollar
+    of pot to our side and the net rises with the fee: there is no fee that flips it. That
+    is `inf` on the tuple and a sentence on the page, because `$inf` reads as a fault."""
+    b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=(), live_entries=2, pot=420.0,
+                     rival_buybacks=20, trials=200, rng=np.random.default_rng(3))
+    assert b.available and b.share * 21 >= 1.0, "the case has to be reached to be tested"
+    assert b.breakeven == float("inf")
+    lines = "\n".join(pool.report(b))
+    assert "no fee flips this verdict" in lines and "inf" not in lines
+    assert "21 buybacks" in lines
+    # And a finite one prints as a fee, over the weeks it was priced on.
+    fin = pool.buyback(_season(), [1, 2, 3], week=1, ledger=("KC", "SF"), live_entries=60,
+                       pot=40.0, trials=100, rng=np.random.default_rng(3))
+    fine = "\n".join(pool.report(fin))
+    assert "breakeven fee $" in fine and "over weeks 2-3" in fine
+
+
+def test_the_buyback_prices_only_the_weeks_still_ahead():
+    """The third criterion. Eliminated in week 3, the re-entry plays from week 4; it used to
+    replay weeks 1 to 3 against the ledger that had already spent them. The whole season
+    and the weeks after the cut price identically on one seed, and both agree with
+    `entry_outcome` over the same slice -- which is the weekly path's own definition of
+    what is ahead, through the one `_ahead`."""
+    g = _season(weeks=(1, 2, 3, 4, 5))
+    kw = {"ledger": ("KC", "SF", "BUF"), "live_entries": 8, "pot": 420.0, "trials": 200}
+    whole = pool.buyback(g, [1, 2, 3, 4, 5], week=3, rng=np.random.default_rng(6), **kw)
+    cut = pool.buyback(g, [4, 5], week=3, rng=np.random.default_rng(6), **kw)
+    assert whole.ahead == cut.ahead == (4, 5)
+    assert whole == cut
+    direct = pool.entry_outcome(g, [4, 5], entries=9, ledger=("KC", "SF", "BUF"), trials=200,
+                                rng=np.random.default_rng(6))
+    assert whole.share == direct.share
+    assert pool._ahead([1, 2, 3, 4, 5], 3) == [4, 5]
+    # And replaying the spent weeks is a different, lower figure: the ledger binds there.
+    stale = pool.entry_outcome(g, [1, 2, 3, 4, 5], entries=9, ledger=("KC", "SF", "BUF"),
+                               trials=200, rng=np.random.default_rng(6))
+    assert stale.share < whole.share
+
+
+def test_a_week_with_nothing_priced_after_it_is_unavailable_not_a_tie():
+    """An empty season prices to a share of one over the field -- a tie with everybody
+    still standing -- which is not a re-entry anybody can buy. Reported as unavailable."""
+    b = pool.buyback(_season(), [1, 2, 3], week=3, ledger=(), live_entries=8, pot=420.0,
+                     pool=PoolConfig(buyback_cutoff_week=6), trials=50,
+                     rng=np.random.default_rng(0))
+    assert not b.available and "nothing is priced after week 3" in b.reason
 
 
 def test_the_decision_reports_as_lines_with_the_breakeven_on_the_page():
