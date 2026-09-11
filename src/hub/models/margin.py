@@ -22,12 +22,24 @@ none does, 13.5 stays — and an asserted number that survives a fit is no longe
 is a result worth having.
 
     uv run python -m hub.models.margin --fit
+
+**The shape, measured 2026-09-11 (issue #185).** Football margins are lumpy -- 15.0% of games
+over the trailing ten seasons end on exactly 3, 2.75 times what a normal puts there -- and a
+smooth bell has no notion of that. This module also asks
+whether that lumpiness moves the number the repo actually consumes, which is `P(margin > 0)`:
+it computes the ceiling first (rule 8), reproduces the histogram from our own sample, layers
+fitted bumps at the key numbers onto the unchanged spine, and walks the result forward against
+the plain Gaussian on held-out log-loss. **The Gaussian stays**; the section beginning
+`KEY_NUMBERS` records why, and `docs/margin-sd.md` carries the tables.
+
+    uv run python -m hub.models.margin --shape
 """
 from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from itertools import pairwise
 from math import erf, sqrt
 
 import numpy as np
@@ -133,6 +145,235 @@ def home_win_prob(spread: np.ndarray, sd: float) -> np.ndarray:
     return 0.5 * (1.0 + np.array([erf(v) for v in z]))
 
 
+# --- the shape: mass on the key numbers (#185) ----------------------------------------------
+#
+# The numbers football margins land on. 3 and 7 are a field goal and a touchdown; 6, 10 and 14
+# are the combinations a one-score and two-score game resolve to. Named before the histogram
+# was drawn, as issue #185's amendment of 2026-09-07 named them.
+KEY_NUMBERS: tuple[int, ...] = (3, 6, 7, 10, 14)
+
+# What the 2026-09-11 measurement found, kept so a test can guard the live shape against it
+# -- the pattern `FITTED_SD` uses two screens up. Every number here is an *output* of a fit
+# used by a test, not an input to a prediction: the prediction is still `home_win_prob`
+# with the plain Gaussian, and that is the finding.
+#
+# `FITTED_KEY_EXCESS[k]` is (share of games whose |margin| is exactly k) / (the share the
+# Gaussian spine puts in (k - 1/2, k + 1/2]) - 1, over the spine's own window. The excess is
+# real: a margin of 3 happens 2.75 times as often as the spine says. It is also nearly
+# symmetric about the spread -- a favourite wins by 3 at 2.9x the spine and loses by 3 at
+# 2.5x -- and every key number sits within 14 points of the centre, so the mass a bump adds
+# lands on *both* sides of zero and pulls every favourite toward one half. The data pull the
+# other way: 7-point-or-better favourites win 80.3% against a 77.1% price (#176). Lumpiness
+# therefore prices `P(margin > 0)` worse than the smooth spine does, held out, in 20 of 27
+# seasons, and the ceiling says what the calibration miss is instead: a *location* that moves
+# with the spread, which no shape symmetric about the spread can reach.
+FITTED_KEY_EXCESS: dict[int, float] = {3: 1.751, 6: 0.296, 7: 0.671, 10: 0.121, 14: 0.499}
+FITTED_SHAPE_GAIN = -0.00094       # mean held-out log-loss, lumpy over gaussian, 27 seasons
+FITTED_SHAPE_SE = 0.00032          # se of that mean across seasons; negative at -2.9 se
+FITTED_SHAPE_SEASONS_BETTER = 7    # of 27, one of them 2026 at two games
+FITTED_SHAPE_CEILING = 0.0056      # in-sample gain of a perfect P(win | spread), per game
+FITTED_SHAPE_WINDOW = "trailing 10 seasons as of 2026-09-11 (2017-2026), spine at MARGIN_SD"
+
+
+def _phi(x: np.ndarray) -> np.ndarray:
+    """Standard normal CDF, vectorised the way `home_win_prob` is (no scipy in the tree)."""
+    z = np.asarray(x, dtype=float) / sqrt(2.0)
+    return 0.5 * (1.0 + np.array([erf(v) for v in np.atleast_1d(z)]))
+
+
+def _spine_cell(spread: np.ndarray, k: float, sd: float) -> np.ndarray:
+    """The spine's mass in (k - 1/2, k + 1/2] for a margin centred on `spread` -- the share a
+    Gaussian puts on the integer k, which is what an empirical share is compared against."""
+    s = np.asarray(spread, dtype=float)
+    return _phi((k + 0.5 - s) / sd) - _phi((k - 0.5 - s) / sd)
+
+
+def key_number_mass(resid: pl.DataFrame, sd: float = MARGIN_SD,
+                    keys: Sequence[int] = KEY_NUMBERS) -> pl.DataFrame:
+    """The histogram at the key numbers, from our own sample rather than a published figure.
+
+    One row per key number: the share of games whose |margin| is exactly `key`, the share the
+    spine centred on each game's spread would put there, and `excess = empirical / spine - 1`.
+    Pooled over both signs on purpose -- the bump model below is symmetric about the spread,
+    and the comment on `FITTED_KEY_EXCESS` says what that symmetry costs.
+    """
+    m = np.abs(resid["result"].to_numpy().astype(float))
+    s = resid["spread_line"].to_numpy().astype(float)
+    rows = []
+    for k in keys:
+        emp = float(np.mean(m == k)) if m.size else float("nan")
+        spine = (float(np.mean(_spine_cell(s, k, sd) + _spine_cell(s, -k, sd)))
+                 if s.size else float("nan"))
+        rows.append({"key": int(k), "empirical": emp, "spine": spine,
+                     "excess": (emp / spine - 1.0) if spine else float("nan")})
+    return pl.DataFrame(rows)
+
+
+def key_excess(resid: pl.DataFrame, sd: float = MARGIN_SD,
+               keys: Sequence[int] = KEY_NUMBERS) -> dict[int, float]:
+    """`key_number_mass` as the mapping `lumpy_home_win_prob` takes: the fitted bump weights."""
+    t = key_number_mass(resid, sd, keys)
+    return {int(k): float(e) for k, e in zip(t["key"].to_list(), t["excess"].to_list(),
+                                            strict=True)}
+
+
+def lumpy_home_win_prob(spread: np.ndarray, sd: float,
+                        excess: Mapping[int, float]) -> np.ndarray:
+    """P(home wins) under the spine with a multiplicative bump of `1 + excess[k]` on the
+    spine's mass at +k and at -k, renormalised. The spine is unchanged; with no bumps this is
+    `home_win_prob` exactly.
+
+    Closed form, because every term is a Gaussian cell: the win side is the spine's mass above
+    zero plus the bumped cells at the positive key numbers, over the total mass after bumping
+    both signs. A margin of exactly zero is a tie and is outside both `home_won` and this.
+    """
+    s = np.asarray(spread, dtype=float)
+    win = 1.0 - _phi(-s / sd)
+    total = np.ones_like(win)
+    for k, b in excess.items():
+        up, down = _spine_cell(s, k, sd), _spine_cell(s, -k, sd)
+        win = win + b * up
+        total = total + b * (up + down)
+    return win / total
+
+
+def ceiling(resid: pl.DataFrame, sd: float = MARGIN_SD) -> dict[str, float]:
+    """Rule 8: how much *any* margin distribution could gain on the number the repo consumes.
+
+    `P(margin > 0 | spread)` is all that `survivor` and `MarketBaseline` read, so a perfect
+    margin distribution is worth exactly what a perfect `P(win | spread)` is worth and no
+    more. The oracle is the favourite's realised win rate in one-point buckets of |spread|,
+    scored **in sample** -- an upper bound, flattered by construction, which is what a ceiling
+    should be. A shape that closes a small fraction of this is chasing the gap below it.
+    """
+    s = resid["spread_line"].to_numpy().astype(float)
+    won = resid["home_won"].to_numpy().astype(float)
+    if s.size == 0:
+        return {"n": 0.0, "ll_gaussian": float("nan"), "ll_oracle": float("nan"),
+                "gain": float("nan")}
+    fav = np.where(s > 0, won, 1.0 - won)
+    bucket = np.rint(np.abs(s))
+    rate = {float(b): float(fav[bucket == b].mean()) for b in np.unique(bucket)}
+    oracle = np.array([0.5 if v == 0 else rate[float(b)] if v > 0 else 1.0 - rate[float(b)]
+                       for v, b in zip(s, bucket, strict=True)])
+    ll_g = log_loss(home_win_prob(s, sd), won)
+    ll_o = log_loss(np.clip(oracle, 1e-6, 1.0 - 1e-6), won)
+    return {"n": float(s.size), "ll_gaussian": ll_g, "ll_oracle": ll_o, "gain": ll_g - ll_o}
+
+
+def walk_forward_shape(resid: pl.DataFrame, *, sd: float = MARGIN_SD,
+                       trailing: int = TRAILING) -> pl.DataFrame:
+    """Held-out log-loss per season, plain Gaussian against the spine with fitted bumps.
+
+    The spine is held at `sd` in both arms -- the question is the shape, not the width, and
+    `walk_forward` above already settled the width. The bumps are refitted each season on the
+    trailing window of strictly earlier seasons, never the one being scored. `min_past=2`
+    for `expanding_seasons`'s stated reason.
+    """
+    rows = []
+    for yr, past, now in expanding_seasons(resid, min_past=2):
+        bumps = key_excess(past.filter(pl.col("season") >= yr - trailing), sd)
+        spread = now["spread_line"].to_numpy().astype(float)
+        won = now["home_won"].to_numpy().astype(float)
+        ll_g = log_loss(home_win_prob(spread, sd), won)
+        ll_l = log_loss(lumpy_home_win_prob(spread, sd, bumps), won)
+        rows.append({"season": yr, "n": now.height, "ll_gaussian": ll_g, "ll_lumpy": ll_l,
+                     "gain": ll_g - ll_l})
+    return pl.DataFrame(rows)
+
+
+def shape_verdict(wf: pl.DataFrame) -> tuple[str, str]:
+    """The pre-registered rule, fixed before the walk-forward ran. Returns (shape, sentence).
+
+    The lumpy distribution must beat the Gaussian on **mean held-out log-loss**. A tie or a
+    loss keeps the Gaussian: `docs/margin-sd.md` recorded that the width gate fired on a sign
+    alone and said a future gate of this shape should ask for more, so the sentence carries
+    the mean, its standard error across seasons and the season count either way -- and the
+    rule still selects on the mean, because changing the rule after the number is in is the
+    failure this repo has caught twice.
+    """
+    if wf.is_empty():
+        return "gaussian", "no held-out seasons; the Gaussian stands by default."
+    g = wf["gain"].to_numpy().astype(float)
+    mean = float(g.mean())
+    se = float(g.std(ddof=1) / sqrt(g.size)) if g.size > 1 else float("nan")
+    better = int((g > 0).sum())
+    detail = (f"mean held-out log-loss gain {mean:+.5f} (se {se:.5f}), lumpy better in "
+              f"{better}/{g.size} seasons")
+    if mean > 0:
+        return "lumpy", f"ADOPT the key-number shape: {detail}."
+    return "gaussian", (f"KEEP the Gaussian: {detail}. Mass on the key numbers is real and "
+                        f"does not price P(margin > 0) better than the spine alone.")
+
+
+def calibration_by_spread(resid: pl.DataFrame, *, sd: float = MARGIN_SD,
+                          trailing: int = TRAILING,
+                          since: int | None = None) -> pl.DataFrame:
+    """Win probability by spread bucket, both models beside the realised rate, **held out**.
+
+    Both sides of every game go in, as `coverage.survivor_price` grades and as
+    `survivor.grid_from_schedule` builds. The lumpy price for each season is fitted on the
+    trailing window of earlier seasons only, so this is the calibration a pick rule would
+    actually have walked into, not the in-sample one. The buckets and the survivor threshold
+    are read from `hub.models.coverage`, the module that owns that grading -- imported inside
+    the function because the grader imports this module the same way, and a third spelling of
+    those edges is how the two tables would disagree.
+
+    One row per bucket plus a `favourites` row at the survivor threshold. Columns: `bucket`,
+    `n`, `gaussian`, `lumpy`, `actual`.
+    """
+    from hub.models.coverage import SPREAD_EDGES, SURVIVOR_SPREAD
+
+    parts = []
+    for yr, past, now in expanding_seasons(resid, min_past=2):
+        if since is not None and yr < since:
+            continue
+        bumps = key_excess(past.filter(pl.col("season") >= yr - trailing), sd)
+        s = now["spread_line"].to_numpy().astype(float)
+        won = now["home_won"].to_numpy().astype(float)
+        pg, pli = home_win_prob(s, sd), lumpy_home_win_prob(s, sd, bumps)
+        parts.append(pl.DataFrame({"spread": np.concatenate([s, -s]),
+                                   "gaussian": np.concatenate([pg, 1.0 - pg]),
+                                   "lumpy": np.concatenate([pli, 1.0 - pli]),
+                                   "won": np.concatenate([won, 1.0 - won])}))
+    if not parts:
+        return pl.DataFrame(schema={"bucket": pl.Utf8, "n": pl.Int64, "gaussian": pl.Float64,
+                                    "lumpy": pl.Float64, "actual": pl.Float64})
+    sides = pl.concat(parts)
+    rows = []
+    for lo, hi in pairwise(SPREAD_EDGES):
+        q = sides.filter((pl.col("spread") >= lo) & (pl.col("spread") < hi))
+        rows.append((f"[{lo:g}, {hi:g})", q))
+    rows.append(("favourites", sides.filter(pl.col("spread") >= SURVIVOR_SPREAD)))
+    return pl.DataFrame({
+        "bucket": [b for b, _ in rows],
+        "n": [q.height for _, q in rows],
+        "gaussian": [_mean(q, "gaussian") for _, q in rows],
+        "lumpy": [_mean(q, "lumpy") for _, q in rows],
+        "actual": [_mean(q, "won") for _, q in rows],
+    })
+
+
+def survival_beside(calibration: pl.DataFrame, *, picks: int | None = None) -> dict[str, float]:
+    """Season-long survival for a plan of favourites, under each model and as realised.
+
+    The product `survivor` prints is a chain of these probabilities, one a week, so the
+    honest side-by-side is the favourites row raised to the season's length: what a plan of
+    `picks` such favourites survives at under the Gaussian, under the lumpy price, and at
+    the realised rate. `picks` defaults to `hub.season.survivor.NFL_WEEKS`, read from the
+    module that owns the season's length rather than restated; imported inside because the
+    product's module is downstream of this one.
+    """
+    if picks is None:
+        from hub.season.survivor import NFL_WEEKS
+        picks = NFL_WEEKS
+    fav = calibration.filter(pl.col("bucket") == "favourites")
+    if fav.is_empty():
+        return {"picks": float(picks), "gaussian": float("nan"), "lumpy": float("nan"),
+                "actual": float("nan")}
+    return {"picks": float(picks), **{c: float(fav[c][0]) ** picks
+                                      for c in ("gaussian", "lumpy", "actual")}}
+
 
 
 
@@ -190,15 +431,54 @@ def verdict(wf: pl.DataFrame) -> tuple[str, str]:
                          f"An asserted number that survives a fit is no longer asserted.")
 
 
+def _report_shape(resid: pl.DataFrame, *, trailing: int = TRAILING) -> None:
+    """Print the shape measurement in the order rule 8 requires: the ceiling first."""
+    latest = int(resid["season"].to_numpy().max()) if resid.height else 0
+    window = resid.filter(pl.col("season") > latest - trailing)
+    top = ceiling(window)
+    print(f"\n  Ceiling, in sample over {int(top['n'])} games from the trailing {trailing} "
+          f"seasons: a perfect P(win | spread) scores {top['ll_oracle']:.5f} against "
+          f"{top['ll_gaussian']:.5f} for the Gaussian, a gain of {top['gain']:.5f} a game.")
+
+    print(f"\n  Mass on the key numbers, same window, spine at MARGIN_SD={MARGIN_SD}:")
+    print(f"  {'|margin|':>8} {'empirical':>10} {'spine':>8} {'excess':>8}")
+    for r in key_number_mass(window).iter_rows(named=True):
+        print(f"  {r['key']:>8} {r['empirical']:>10.4f} {r['spine']:>8.4f} {r['excess']:>+8.3f}")
+
+    wf = walk_forward_shape(resid, trailing=trailing)
+    print(f"\n  Walk-forward, {wf.height} held-out seasons, bumps fitted only on earlier ones, "
+          f"spine unchanged.")
+    print(f"  {'season':>6} {'n':>4} {'ll_gaussian':>12} {'ll_lumpy':>10} {'gain':>10}")
+    for r in wf.tail(10).iter_rows(named=True):
+        print(f"  {r['season']:>6} {r['n']:>4} {r['ll_gaussian']:>12.5f} "
+              f"{r['ll_lumpy']:>10.5f} {r['gain']:>+10.5f}")
+
+    cal = calibration_by_spread(resid, trailing=trailing, since=latest - trailing + 1)
+    print(f"\n  Calibration by spread bucket, held out, both sides, seasons "
+          f"{latest - trailing + 1}-{latest}:")
+    print(f"  {'bucket':>12} {'n':>6} {'gaussian':>9} {'lumpy':>8} {'actual':>8}")
+    for r in cal.iter_rows(named=True):
+        print(f"  {r['bucket']:>12} {r['n']:>6} {r['gaussian']:>9.3f} {r['lumpy']:>8.3f} "
+              f"{r['actual']:>8.3f}")
+    surv = survival_beside(cal)
+    print(f"\n  Survival over {int(surv['picks'])} such favourites: gaussian "
+          f"{surv['gaussian']:.4f}  lumpy {surv['lumpy']:.4f}  realised {surv['actual']:.4f}")
+
+    _, sentence = shape_verdict(wf)
+    print(f"\n  {sentence}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.models.margin",
         description="Fit the margin dispersion around the closing spread, and gate it.")
     ap.add_argument("--fit", action="store_true", help="run the walk-forward and report")
+    ap.add_argument("--shape", action="store_true",
+                    help="the key-number shape: ceiling, histogram, walk-forward, calibration")
     ap.add_argument("--trailing", type=int, default=TRAILING)
     ap.add_argument("--out", default=None, help="write the per-season frame to this parquet")
     a = ap.parse_args(argv)
-    if not a.fit:
+    if not (a.fit or a.shape):
         ap.print_help()
         return 0
 
@@ -209,6 +489,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         resid = residuals(nfl.load_schedules())
     except Exception as e:
         return unavailable("hub.models.margin", "nflverse schedules", e)
+    if a.shape:
+        _report_shape(resid, trailing=a.trailing)
+    if not a.fit:
+        return 0
     whole = fit(resid)
     print(f"\n  full sample: n={int(whole['n'])}  sd={whole['sd']:.3f} +/-{whole['se']:.3f}  "
           f"mean residual {whole['mean']:+.3f}")
