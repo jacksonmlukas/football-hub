@@ -495,3 +495,56 @@ def test_the_shape_path_reports_the_ceiling_first_and_keeps_the_gaussian(monkeyp
     text = capsys.readouterr().out
     assert text.index("Ceiling") < text.index("Mass on the key numbers") < text.index("KEEP")
     assert "Survival over 18" in text
+
+
+# --- empty inputs answer with NaN, not an exception (#185 coverage) ---------
+
+def test_the_ceiling_on_no_games_is_nan_and_says_so():
+    """A ceiling over zero games is not zero -- it is unmeasured. NaN with the count."""
+    empty = margin.residuals(_synthetic()).head(0)
+    got = margin.ceiling(empty)
+    assert got["n"] == 0.0
+    assert got["ll_gaussian"] != got["ll_gaussian"], "an empty ceiling reported a number"
+
+
+def test_calibration_on_no_games_is_an_empty_typed_frame():
+    """The bucket table with nothing in it keeps its schema, so a consumer joining on it
+    gets zero rows rather than a column-not-found."""
+    empty = margin.residuals(_synthetic()).head(0)
+    got = margin.calibration_by_spread(empty)
+    assert got.height == 0
+    assert {"bucket", "n", "gaussian"} <= set(got.columns)
+
+
+def test_survival_beside_an_empty_calibration_is_nan():
+    """A season-long product over no buckets is undefined, and the picks count is still
+    reported so a reader can see what was asked for."""
+    empty = margin.calibration_by_spread(margin.residuals(_synthetic()).head(0))
+    got = margin.survival_beside(empty, picks=18)
+    assert got["picks"] == 18.0
+    assert got["gaussian"] != got["gaussian"] and got["lumpy"] != got["lumpy"]
+
+
+def test_since_skips_the_seasons_before_it_in_the_walk_forward():
+    """`since` is how a caller reads the verdict from one season on without refitting the
+    bumps -- earlier seasons are skipped, not included with zero weight."""
+    resid = margin.residuals(_synthetic(per=120))
+    seasons = sorted(resid["season"].unique().to_list())
+    late = margin.calibration_by_spread(resid, since=seasons[-1])
+    full = margin.calibration_by_spread(resid)
+    assert late["n"].sum() < full["n"].sum(), "since= did not skip anything"
+
+
+def test_main_degrades_when_the_schedule_pull_fails(monkeypatch, capsys):
+    """CLAUDE.md's rule: a failing source is reported, not raised. `main` returns
+    `unavailable`'s code and says which source, rather than a stack trace."""
+    import types
+
+    fake = types.SimpleNamespace(load_schedules=lambda: (_ for _ in ()).throw(
+        RuntimeError("nflverse down")))
+    monkeypatch.setitem(__import__("sys").modules, "nflreadpy", fake)
+    code = margin.main(["--shape"])
+    captured = capsys.readouterr()
+    said = captured.out + captured.err
+    assert code != 0
+    assert "nflverse schedules" in said or "unavailable" in said.lower()
