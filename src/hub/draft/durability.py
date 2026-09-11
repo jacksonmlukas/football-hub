@@ -32,6 +32,7 @@ import polars as pl
 
 from hub.config import drafted_positions
 from hub.draft import prior_signal
+from hub.names import player_key
 
 TEAM_GAMES = 17
 
@@ -217,13 +218,56 @@ def prior_season(season: int, cache=None) -> pl.DataFrame:
              .rename({"player_display_name": "player", "position": "pos"}))
 
 
-def attach(board: pl.DataFrame, season: pl.DataFrame) -> pl.DataFrame:
-    """Add a `missed` column. Players with no prior role keep a null rather than a zero.
+def appearances(season: int, cache=None) -> pl.DataFrame:
+    """Everyone with a regular-season stats row last season, at any position.
+
+    Presence, not scoring: `prior_season` filters to the drafted positions because it needs
+    a scoring rate, and that filter is wrong for this question -- a receiver nflverse lists
+    as a cornerback, a back it lists as a fullback, played (#86).
+    """
+    from hub.fetch import nflverse
+    # The contract's required set, and the name; presence needs nothing else.
+    cols = ("player_id", "player_display_name", "position", "season", "week", "season_type",
+            "fantasy_points_ppr")
+    w = nflverse.load("player_stats", seasons=[season], cols=cols, cache=cache)
+    return (w.filter(pl.col("season_type") == "REG")
+             .select(pl.col("player_display_name").alias("player")).unique())
+
+
+def sat_out(prior: pl.DataFrame, appeared: pl.DataFrame) -> pl.DataFrame:
+    """The players who were in the league last season and played nothing (#86).
+
+    In last season's preseason consensus and in no stats row of any position. A rookie is in
+    neither, and the two used to be indistinguishable because the stats source gives no row
+    to a player who recorded nothing. Returns one row per such player with `sat_out` true;
+    matched on the player key like every other prior signal.
+    """
+    key = pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("_k")
+    seen = appeared.with_columns(key).select("_k").unique() if appeared.height else \
+        pl.DataFrame({"_k": []}, schema={"_k": pl.Utf8})
+    return (prior.with_columns(key).join(seen, on="_k", how="anti")
+                 .select("player", pl.lit(True).alias("sat_out")))
+
+
+def attach(board: pl.DataFrame, season: pl.DataFrame,
+           sat_out: pl.DataFrame | None = None) -> pl.DataFrame:
+    """Add `missed`, and `sat_out`. Players with no prior role keep a null, never a zero.
+
+    **`missed` stays the measured column.** A player who sat the whole season out gets the
+    flag and not `missed = 17`: `next_season_absence` estimates its population moments from
+    `missed` itself, and the +0.407 persistence was measured on players with a real prior
+    role, which a whole season on the shelf is not. So the price carries the full-season
+    markdown (`correct_projection`) and the simulator draws him as unknown -- the marginal,
+    like a rookie -- rather than extrapolating a linear persistence to seventeen (#86).
 
     The join itself is `prior_signal.join_by_player`, which `hub.draft.regression` also uses:
     it was the same twelve lines in both files -- improvements.md #15.
     """
-    return prior_signal.join_by_player(board, games_missed(season), "missed")
+    out = prior_signal.join_by_player(board, games_missed(season), "missed")
+    if sat_out is None or sat_out.is_empty():
+        return out.with_columns(pl.lit(False).alias("sat_out"))
+    flagged = prior_signal.join_by_player(out, sat_out, "sat_out")
+    return flagged.with_columns(pl.col("sat_out").fill_null(False))
 
 
 def correct_projection(board: pl.DataFrame, column: str = "proj_blend") -> pl.DataFrame:
@@ -270,7 +314,13 @@ def correct_projection(board: pl.DataFrame, column: str = "proj_blend") -> pl.Da
         # build already set. `hub.draft.report` prints them beside the ranking for an operator
         # on the clock, and `hub.models.experiment.require_corrections` refuses the board
         # outright for a Gate, where a season short a term is a second arm and not a thin one.
-        adjustment = adjustment + prior_signal.priced("missed", BETA)
+        # A whole season sat out is priced as the full seventeen (#86) -- the flag rather
+        # than the column, for the reason `attach` gives. Only ever a linear coefficient
+        # extrapolated to seventeen; `BETA` was fitted on players who missed fewer.
+        missed = (pl.when(pl.col("sat_out")).then(pl.lit(float(TEAM_GAMES)))
+                    .otherwise(pl.col("missed")) if "sat_out" in board.columns
+                  else pl.col("missed"))
+        adjustment = adjustment + prior_signal.priced(missed, BETA)
     if "injury_status" in board.columns:
         # Applied at every position, unlike the durability trait: being ruled out is news,
         # not a trait the market has had years to discount.

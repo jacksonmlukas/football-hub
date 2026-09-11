@@ -703,7 +703,7 @@ BUILT, SERVED = "built", "served"
 STAGE_COLUMNS: dict[str, tuple[str, ...]] = {
     "sos": ("wk15_17_sos", "sos_games"),
     "td_luck": ("td_luck",),
-    "durability": ("missed",),
+    "durability": ("missed", "sat_out"),
     "bye": ("bye_week",),
     "adp": ("adp", "proj_ppg", "injury_status", "consensus_pick", "edge",
             "proj_blend", "proj_correction", "adp_corrected", "vor_proj"),
@@ -1115,9 +1115,15 @@ def build(league_size: int = 12, season: int = SEASON_COMPLETED, *,
                    live=live, skip_note="ESPN publishes slots for the current season only.",
                    on_fail=f"assuming {SLOTS}.")
 
-    # Availability as a per-player trait.
+    # Availability as a per-player trait. A player in last season's preseason consensus with
+    # no stats row at any position sat the season out, and is priced as such rather than as
+    # a rookie (#86); the consensus is read as of that season's start, the same archive
+    # `board_as_of` replays a past draft from.
     board = _stage(board, report, "durability", "durability",
-                   lambda b: durability.attach(b, durability.prior_season(season)))
+                   lambda b: durability.attach(
+                       b, durability.prior_season(season),
+                       sat_out=durability.sat_out(consensus(f"{season}-09-01"),
+                                                  durability.appearances(season))))
 
     # The week each player's team sits, off the season's schedule (#226). Reaches nflverse,
     # so it can fail on its own; the simulator then reads "no bye" for everyone, which is
