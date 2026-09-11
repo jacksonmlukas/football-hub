@@ -372,6 +372,22 @@ def test_the_ceiling_is_the_absolute_move_and_the_share_is_against_it():
     assert r["unmoved"] == 1 and r["hit"] == pytest.approx(2 / 3)
 
 
+def test_the_share_is_a_ratio_of_two_per_player_means():
+    """Review finding: the captured mean was per player (rule 3) and the ceiling was per
+    prop, so a player with many flat props diluted the denominator under a numerator he
+    barely touched -- one prop at +0.9 beside nine at zero read as a 500% share. Both are
+    taken over players now, so the share is bounded by what a side-picker could log."""
+    rows = [_log_row("A", "player_receptions", 9.0, 0.9, our=5, close=14)]
+    rows += [_log_row("B", "player_receptions", 0.0, 0.0, our=5, close=5) for _ in range(9)]
+    r = (props.clv_by_market(_log(*rows)).filter(pl.col("market") == "player_receptions")
+              .row(0, named=True))
+    assert r["clv_prob"] == pytest.approx(0.45)
+    assert r["ceiling_prob"] == pytest.approx(0.45)
+    assert r["ceiling_points"] == pytest.approx(4.5)
+    assert r["share"] == pytest.approx(1.0)
+    assert r["props"] == 10 and r["players"] == 2
+
+
 def test_the_anytime_market_has_no_points_column():
     r = (props.clv_by_market(_log(_log_row("A", "player_anytime_td", None, 0.03)))
               .filter(pl.col("market") == "player_anytime_td").row(0, named=True))

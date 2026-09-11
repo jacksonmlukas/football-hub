@@ -514,9 +514,13 @@ def _mean_se(values: pl.Series) -> tuple[float | None, float | None]:
     return mean, float(v.std(ddof=1)) / math.sqrt(v.size)
 
 
-def _mean_abs(values: pl.Series) -> float | None:
-    v = values.drop_nulls().to_numpy().astype(float)
-    return float(np.abs(v).mean()) if v.size else None
+def _ceiling(log: pl.DataFrame, col: str) -> float | None:
+    """The mean absolute move, per player and then over players -- the same unit as the
+    captured mean it is the denominator of. Taken over props it was a different average,
+    and a player with many flat props diluted it under a numerator he barely touched."""
+    per_player = _by_player(log.with_columns(pl.col(col).abs()), col)
+    v = per_player[col].to_numpy().astype(float)
+    return float(v.mean()) if v.size else None
 
 
 def clv_by_market(log: pl.DataFrame) -> pl.DataFrame:
@@ -524,8 +528,10 @@ def clv_by_market(log: pl.DataFrame) -> pl.DataFrame:
 
     `ceiling_points` and `ceiling_prob` are the mean absolute move between decision and
     close -- what a side-picker who was always right would have logged -- and `share` is
-    the captured mean over that. `hit` is the share of moved quotes that moved toward us;
-    a quote that did not move is neither a hit nor a miss and is counted in `unmoved`.
+    the captured mean over that. Both means are over players, so the ratio is of one
+    unit; a per-prop ceiling under a per-player numerator read 500% on ten props. `hit`
+    is the share of moved quotes that moved toward us; a quote that did not move is
+    neither a hit nor a miss and is counted in `unmoved`.
     Standard errors are over players, and `players` is printed beside `props` so the reader
     sees which count the precision came from.
     """
@@ -545,10 +551,10 @@ def clv_by_market(log: pl.DataFrame) -> pl.DataFrame:
             "unmoved": got.height - moved.height,
             "hit": float(hits.mean()) if hits.size else None,
             "clv_prob": mean_prob, "se_prob": se_prob,
-            "ceiling_prob": _mean_abs(got["clv_prob"]),
+            "ceiling_prob": _ceiling(got, "clv_prob"),
             "clv_points": mean_pts if with_point else None,
             "se_points": se_pts if with_point else None,
-            "ceiling_points": _mean_abs(got["clv_points"]) if with_point else None,
+            "ceiling_points": _ceiling(got, "clv_points") if with_point else None,
         })
     out = pl.DataFrame(rows)
     share = pl.when(pl.col("ceiling_prob") > 0).then(
