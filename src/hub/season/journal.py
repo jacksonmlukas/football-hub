@@ -244,7 +244,9 @@ def _check_adr_0014(*, week: int, kind: str, chose: str, fallback: str | None,
                     ("fallback_survives", fallback_survives),
                     ("fallback_price", fallback_price),
                     # A price is a probability only once a week cost is being stated in it;
-                    # a row with no fallback price may carry the betting market's number.
+                    # a row with no fallback price may carry the betting market's number --
+                    # `test_journal` writes a moneyline there. One column, two units, which
+                    # is issue #236 and not this check's to settle.
                     ("market_price", market_price if fallback_price is not None else None)):
         if p is not None and not 0.0 <= p <= 1.0:
             raise ValueError(f"{name}={p} is not a probability")
@@ -300,15 +302,22 @@ def record(*, season: int, week: int, kind: str, chose: str,
     decision is a decision whether or not its figure can be reproduced -- a row that says
     "this was chosen" and cannot say under what is still the record of a choice. What is
     refused is *pretending*: a row carrying some of them and not others would read as
-    reproducible to a query on any one column, so either the digest and the seed are both
-    present or neither is. `record_weekly` supplies all of them off `pool.Weekly`.
+    reproducible to a query on any one column, so either every one of them is present or
+    none is. `record_weekly` supplies all of them off `pool.Weekly`.
     """
-    if (pool_digest is None) != (seed is None):
+    # `plan_source` is a label on the plan, not an input to the re-run, and a buyback has no
+    # plan; the seven that follow are what `pool.weekly` has to be handed to land on the row's
+    # figure again.
+    rerun = {"pool_digest": pool_digest, "grid_digest": grid_digest, "seed": seed,
+             "trials": trials, "entries": entries, "pot": pot, "outlay": outlay}
+    absent = tuple(k for k, v in rerun.items() if v is None)
+    if absent and len(absent) != len(rerun):
         raise ValueError(
-            f"week {week}: provenance has to come whole. pool_digest={pool_digest!r} and "
-            f"seed={seed!r} -- a row naming the rules but not the seed, or the seed but not "
-            "the rules, reads as reproducible to whichever column is queried and is not. "
-            "Pass both, or neither and let the row say it cannot be re-derived.")
+            f"week {week}: provenance has to come whole. Missing {absent} beside "
+            f"{tuple(k for k in rerun if k not in absent)} -- a row naming the rules but "
+            "not the seed, or the seed but not the board or the stakes, reads as "
+            "reproducible to whichever column is queried and is not. Pass all of "
+            f"{tuple(rerun)}, or none and let the row say it cannot be re-derived.")
     _check_adr_0014(week=week, kind=kind, chose=chose, fallback=fallback,
                     fallback_note=fallback_note, chose_survives=chose_survives,
                     fallback_survives=fallback_survives,

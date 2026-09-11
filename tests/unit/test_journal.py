@@ -545,6 +545,25 @@ def test_provenance_comes_whole_or_not_at_all(tmp_path):
         _decide(tmp_path, pool_digest=None, seed=3)
 
 
+def test_provenance_means_every_rerun_column_not_just_the_two(tmp_path):
+    """Review finding on #162: the digest and the seed were the only pair checked, so a row
+    carrying both and none of `grid_digest`, `trials`, `entries`, `pot` or `outlay` was
+    written, and `report` then printed it as re-derivable. It cannot be re-run without the
+    board, the trial count or the stakes, so it is refused like any other partial row."""
+    def whole(**over):
+        kw: dict = {"pool_digest": "deadbeef", "grid_digest": "cafe", "seed": 3,
+                    "trials": 100, "entries": 21, "pot": 420.0, "outlay": 20.0}
+        kw.update(over)
+        return kw
+    _decide(tmp_path, **whole())
+    for missing in whole():
+        with pytest.raises(ValueError, match="provenance has to come whole"):
+            _decide(tmp_path, **whole(**{missing: None}))
+    # A buyback has no plan, so `plan_source` is the one rerun column that may be absent
+    # beside the other seven.
+    _decide(tmp_path, week=2, **whole(plan_source=None))
+
+
 # --- ADR-0014's threshold quantity, logged under its own name (#209) -----------------------
 
 
