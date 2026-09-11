@@ -971,3 +971,53 @@ def test_a_frame_whose_report_claims_a_stage_it_lacks_says_so(_board_min=None):
     honest = BuildReport()
     assert not honest.adp
     assert O._greedy_currency(incoherent, honest).tolist() == [10.0, 9.0]
+
+
+# --- an undrafted player's corrected ADP is null, not NaN (issue #243) --------------------
+
+def _board_with_undrafted(undrafted_first: bool) -> pl.DataFrame:
+    """A small board carrying an undrafted player -- one with no `adp` -- either at the top
+    of the consensus order or behind a drafted one, since `market_pick` reads the pool in
+    board order and its `min` treats a NaN as neither less nor greater than anything."""
+    b = _corr_board(n=20).with_columns(
+        pl.Series("ecr", [float(i + 1) for i in range(20)]),
+        pl.Series("pos", ["WR"] * 20))
+    return b.with_columns(
+        pl.when(pl.col("player") == ("P0" if undrafted_first else "P1"))
+          .then(None).otherwise(pl.col("adp")).alias("adp"))
+
+
+def test_corrected_adp_is_null_exactly_where_adp_is_null_and_finite_elsewhere():
+    """On the served board of 2026-09-11, 293 of 457 rows carried NaN in `adp_corrected` --
+    every player with a null `adp`. A NaN is not a null: it passes `is_not_null()`, sorts
+    where the comparison happens to leave it, and `hub.inspect --nulls` does not count
+    it. The corrected column takes the same shape as the column it corrects."""
+    b = _corr_board(n=30, corrections={"P3": -4.0}).with_columns(
+        pl.when(pl.col("player").is_in(["P2", "P17", "P29"]))
+          .then(None).otherwise(pl.col("adp")).alias("adp"))
+    got = optimize.corrected_adp(b)
+    assert got.is_null().to_list() == b["adp"].is_null().to_list()
+    assert got.null_count() == 3
+    assert not got.is_nan().fill_null(False).any(), "no NaN anywhere in the column"
+    assert got.drop_nulls().is_finite().all()
+
+
+@pytest.mark.parametrize("undrafted_first", [True, False])
+def test_the_pick_leaves_an_undrafted_player_at_the_tail_wherever_he_sits(undrafted_first):
+    """The readers that rank on `adp_corrected` -- `the_pick` through `market_pick` -- put a
+    player with no draft-market price behind every player with one, whatever his consensus
+    rank. That is `market_pick`'s `fill_null(999.0)` doing its job, and it needs a null to
+    fill: measured 2026-09-11 (#243), a NaN there was picked when the undrafted player was
+    first in the pool and in the top need tier, because `min` never replaces a key it cannot
+    compare against. The report (`hub.draft.report`) reads `adp`, never `adp_corrected`, so
+    it has no behaviour to move."""
+    b = _board_with_undrafted(undrafted_first)
+    b = b.with_columns(optimize.corrected_adp(b).alias("adp_corrected"))
+    tp = optimize.the_pick(b, DraftState(taken=[]), my_slot=1, teams=1)
+    assert tp is not None and tp.via == "draft market, corrected"
+    undrafted = "P0" if undrafted_first else "P1"
+    assert tp.player != undrafted
+    assert tp.player == b.drop_nulls("adp").sort("adp_corrected")["player"][0]
+    # And market_pick agrees on its own, pool order and all.
+    pool = b.select("player", "pos", "adp_corrected")
+    assert optimize.market_pick(pool, {}, by="adp_corrected") == tp.player
