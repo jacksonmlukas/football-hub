@@ -477,9 +477,9 @@ def scorecard(card_rows: pl.DataFrame, close: pl.DataFrame) -> pl.DataFrame:
 def version() -> str:
     """What identifies a prop price: the fitted constants, plus the four dispersions.
 
-    The dispersions are named in `hub.config.NOT_IN_DIGEST` as read only by the points draw,
-    which stopped being true the day this module read them, so they are folded in here
-    rather than left to a claim that no longer holds.
+    The dispersions are out of `hub.config.NOT_IN_DIGEST`'s digest because no points
+    prediction reads them; this module does, and is a published prediction of its own, so
+    they are folded in here -- which is what the entry there now says.
     """
     tables = (C.PER_UNIT_CV, C.YARDS_PER_UNIT, C.COUNT_DISPERSION, C.TD_DISPERSION)
     text = "|".join(repr(sorted(t.items())) for t in tables)
