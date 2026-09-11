@@ -169,6 +169,11 @@ FEATURES: tuple[Feature, ...] = (
 # against +0.034), so the literature's access-beats-presence distinction does not survive
 # here. Kept in the tree with its harness per ADR-0007, out of the default screen because a
 # collinear twin in the control set destroys a real signal. `--routes` reproduces it.
+#
+# Every figure in this comment is a pooled-basis figure, taken before #229 moved the default,
+# and `--routes` now runs on the settled basis. The collinearity between the two shares is a
+# property of the columns and does not depend on the controls; the two coefficients do, and
+# have not been re-run here.
 ROUTE_TREND = Feature("route_trend", "+", TREND_ANCHOR_UNSET)
 
 

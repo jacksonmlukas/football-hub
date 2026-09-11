@@ -56,18 +56,20 @@ SCORING: dict[str, float] = {
 # 0.017 points a player-week, so they are small and not nothing.
 #
 # **Consumers take subsets, and should.** The Panel deliberately uses four of these: counts
-# have no expected version and should not, and touchdown *rate* came back as a **broken
-# pre-stated null** (`td_rate_prior`, -0.040 across five of five seasons, beyond season-to-date
-# PPR points a game and weekly consensus ECR). The Board needs the touchdowns because six
-# points is a heavy weight on a small error. Same vocabulary, different questions.
+# have no expected version and should not, and the touchdowns are left out for a reason that
+# has moved twice and is now this: the Panel wants the priors `hub.models.weekly` divides by a
+# count to hold an efficiency, and touchdown *rate* is the one efficiency this repo has
+# specifically declined to project. The Board needs the touchdowns because six points is a
+# heavy weight on a small error. Same vocabulary, different questions.
 #
-# This comment said "screened null" until #179 went looking at the basis and read it. It did
-# not screen null -- a null is the screen's *first* verdict and this is its third, which is a
-# finding against the pre-registration and the reason the prediction was written down. Either
-# reading happens to leave the touchdowns out of the Panel's subset, so nothing here moves;
-# the sentence was wrong about why. Which controls the -0.040 is conditional on is now named
-# for the same reason, and `docs/weekly-screen.md` carries what it survives and what it does
-# not.
+# This comment used to say the touchdown rate had been *measured* to regress -- `td_rate_prior`
+# at -0.040 across five of five seasons, a broken pre-stated null. That was true on the control
+# basis it was taken on, `(ppg_before, ecr)`, and `ppg_before` is PPR points, which contain
+# the feature's own numerator. On the basis #229 settled, `(yds_prior, ecr)`, it is **-0.012
+# across four of five seasons with 2023 positive**, which `docs/method.md` rule 4 reads as a
+# bug and not a finding. So it is not cited here as a finding. The subset does not move --
+# #179 checked that either reading leaves the touchdowns out -- and `docs/weekly-screen.md`
+# carries the figure on every basis it was run on.
 EXPECTED: dict[str, tuple[str, ...]] = {
     "receptions": ("receptions_exp",),
     "receiving_yards": ("rec_yards_gained_exp",),

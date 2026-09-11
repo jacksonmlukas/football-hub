@@ -29,6 +29,19 @@ Every feature is measured strictly before its outcome week. Pre-kickoff facts pu
 week *w* — the line, the injury report, the opponent — count as week-*w* information; anything
 derived from play uses weeks < *w* only.
 
+> **Restated 2026-09-11 — the control basis moved, and every figure on this page taken on
+> `(ppg_before, ecr)` is scoped to that basis.** Issue #229, under [method.md rule 13](method.md).
+> The player control is now **season-to-date yardage a game**, `yds_prior`, not season-to-date
+> PPR points: PPR points contain touchdowns, so the pre-registered control held
+> `td_rate_prior`'s own numerator, and the decomposition run to fix that made the confound
+> worse. Every table above *The basis, decided* keeps its text and rests on the pooled basis,
+> which `--basis pooled` still reproduces exactly. All eight features were re-run on the new
+> basis in one run and are reported there. **Three statuses move**: the prior TD rate is
+> **not a finding** (−0.012, 4/5 seasons — rule 4 fires); the snap-share trend is **killed at
+> the published anchor** and clears at anchor 10 alone; and the implied team total **survives
+> the joint screen** where own spread dies. The defence-vs-position and injury-severity
+> verdicts do not move.
+
 ## Result
 
 > **Wind is withdrawn from this page, 2026-09-10 — it was never eligible to be screened.**
@@ -388,6 +401,12 @@ splitting the first of those into its touchdown and non-touchdown halves. It is 
 survive a direct control for prior yardage, and it was never claimed to be. Anything citing it
 should name that.
 
+> **Decided 2026-09-11 — the yardage basis is the one surviving claims are conditional on,
+> and the −0.040 is not a finding.** Issue #229. The paragraph above was written when the
+> choice was open; it is closed now, and the row it should be read against is the first of the
+> three in the table above it: **−0.0122 at −2.49 se, 4/5 seasons, 2023 positive**. See *The
+> basis, decided*, below, for the reason, and for the other seven features on the same basis.
+
 ## The screen's minimum week, and the one status that is conditional on it
 
 **Re-run 2026-09-10**, issue #178, under [method.md rule 13](method.md). The sweep range and
@@ -477,6 +496,14 @@ property of the row filter and not of the basis.
 ticket's question, and running both here says only that #178's answer does not depend on how it
 is settled.
 
+> **Restated 2026-09-11 — it *is* an artefact of the basis, once the third basis is run.**
+> Issue #229. The paragraph above compared the pooled and decomposed bases and was right about
+> those two. On the yardage basis #229 settled on, the sweep returns a **different** answer:
+> the snap-share trend is killed at 4, 6, 8 **and** 12 and clears at 10 alone, so its
+> sensitivity is no longer "one feature at one anchor" and the #178 headline — clears at 4
+> through 10, killed at 12 — is a pooled-basis statement. The sweep on the new basis is in
+> *The basis, decided*, below.
+
 ### What this page now claims about the snap-share trend
 
 **The +0.038 alone and the +0.043 joint stand as published, and they are conditional on a
@@ -489,6 +516,171 @@ sweep; the three killed features stay killed at every anchor; `tgt_trend` is kil
 anchor, reaching 3/5 seasons at its best. And the **model** threshold is untouched: the Usage
 multiplier is still dark before week 8, for the reason
 [snap-trend-signal.md](snap-trend-signal.md) measured and not for this one.
+
+## The basis, decided — and every figure re-run on it
+
+**Re-run 2026-09-11**, issue #229, under [method.md rule 13](method.md). The two sections above
+each left a question open: #179 measured two pre-registered bases and found they gave opposite
+verdicts on one feature; #178 swept the anchor on both and found they agreed. This section
+records the decision, and re-runs **every** feature on the basis decided, because moving the
+basis for one feature and not the other seven would itself be a choice — and it is not the one
+taken.
+
+### The decision, and the reason
+
+**The control basis is prior yardage and consensus rank: `(yds_prior, ecr)`.** Of the three
+bases run on this panel it is the only one that neither contains `td_rate_prior`'s numerator
+nor pins it. The pooled control, `ppg_before`, is PPR points and PPR points contain
+touchdowns. The decomposed control holds the touchdown half of those points fixed, which pins
+the count outright — that is what the partial-correlation table under *What the decomposition
+does not settle* measured: the feature's coupling to prior yardage went from **−0.114 to
+−0.401** under the instrument built to remove it. It concentrated the confound rather than
+removing it, and the reasoning that produced it was wrong in a way only the measurement could
+show. Prior yardage and consensus rank is the basis #179's own issue body pre-registered and
+the maintainer adopted on 2026-09-07, before the decomposition replaced it. The decision returns
+to it.
+
+**What it costs, stated.** `yds_prior` is a weaker player control than `ppg_before`. Within a
+cell its raw correlation with same-week points is **+0.495** against ppg_before's **+0.612**
+(ECR is **−0.637** on this sample; the −0.603 under *The controls are real* was the first
+run's, on 12,852 rows), and the two controls correlate at **+0.748** inside a cell. So the eight
+features are being asked a slightly different question — "beyond prior yardage and consensus"
+rather than "beyond prior scoring and consensus" — and the `r` column moves for every one of
+them. The verdicts are what the pre-registration reads, and three of them move.
+
+**Consequence: `td_rate_prior` is not a finding.** Under this basis it is **−0.0122 at −2.49
+se, 4/5 seasons**, and the season on the other side is 2023 at **+0.0045** — 2021 −0.0127,
+2022 −0.0120, 2024 −0.0262, 2025 −0.0145. [method.md rule 4](method.md): a significant result
+whose sign flips between seasons is a bug, not a finding. The pre-stated null is **not broken**;
+the screen's own note reads *noisy, not a signal*. The −0.040 across five of five seasons that
+two modules cited stands as a fact about the pooled basis and as nothing else, and
+`hub.models.components` and `hub.models.panel` now say so where they cite it.
+
+### The eight features at the published anchor, both bases, one run
+
+Sample unchanged: **14,370 player-weeks, 847 players, 55 cells**, the same rows under every
+basis — `main` drops nulls over the union of all three control sets. The pooled column was
+reproduced in the same run and matches the tables above to four decimals. Anchor 8, alone:
+
+| feature | pre | pooled *(published)* | | yardage | | |
+|---|---|---|---|---|---|---|
+| | | r, t | seasons | **r, t** | **seasons** | **verdict** |
+| implied team total | + | +0.0479, +11.4 | 5/5 | **+0.0627, +12.9** | 5/5 | clears |
+| own spread | ? | +0.0368, +5.0 | 5/5 | **+0.0475, +5.8** | 5/5 | clears |
+| defence vs position | + | +0.0327, +3.9 | 5/5 | **+0.0300, +3.8** | 5/5 | clears |
+| **snap-share trend** | + | +0.0382, +3.4 | 5/5 | **+0.0142, +1.5** | **4/5** | **killed** |
+| target-share trend | + | +0.0061, +0.5 | 1/5 | −0.0033, −0.3 | 1/5 | killed |
+| rest days | ? | −0.0142, −1.6 | 3/5 | −0.0097, −1.1 | 3/5 | killed |
+| injury severity | − | −0.0245, −4.4 | 5/5 | **−0.0133, −3.2** | 5/5 | clears |
+| **prior TD rate per yard** | *null* | −0.0375, −7.6 | 5/5, **null broken** | **−0.0122, −2.5** | **4/5** | **null as pre-stated — not a finding** |
+
+And the joint screen, each survivor controlled for the others that exist over its weeks:
+
+| feature | pooled *(published)* | | yardage | | |
+|---|---|---|---|---|---|
+| implied team total | +0.0281, +2.7 | 4/5, dies | **+0.0381, +4.3** | **5/5** | **survives** |
+| defence vs position | +0.0279, +3.9 | 5/5 | **+0.0233, +3.3** | 5/5 | survives |
+| own spread | −0.0055, −0.4 | 4/5, dies | −0.0086, −0.8 | 4/5 | dies |
+| injury severity | −0.0229, −4.5 | 5/5 | **−0.0114, −2.8** | 5/5 | survives |
+| snap-share trend | +0.0425, +3.7 | 5/5 | *killed alone; never reaches the joint screen* | | |
+| prior TD rate | −0.0403, −7.2 | 5/5 | *null held; not a survivor* | | |
+
+**Independent signals on the settled basis: defence vs position, the implied team total, and
+the injury designation.** Three, where the pooled basis had four, and not the same three.
+
+**The implied total and own spread resolve the other way.** Under the pooled basis the two
+were *one finding wearing two hats* and neither residual cleared; on this basis the total
+clears the joint screen at **+0.0381, 5/5** — per season 2021 +0.0070, 2022 +0.0470, 2023
++0.0454, 2024 +0.0326, 2025 +0.0585 — and the spread leaves nothing, −0.0086 at 4/5. The
+season that killed the total under the pooled basis was 2021 at −0.0092; it is +0.0070 here.
+That is a verdict at the edge of the rule moving with the control, which is the honest
+description of it, and it is reported rather than banked: the total was *not carried* on the
+pooled basis and nothing here carries it.
+
+### The sweep, on the settled basis
+
+The same five anchors as #178, on the same rows. **The six week-1 features return the identical
+verdict at every anchor**, as the structural argument under *The surviving feature set at each
+anchor* says they must; the trend features are the ones that move.
+
+| trend features from | cells | surviving feature set |
+|---|---|---|
+| week ≥ 4 | 45 | dvp, implied_total, inj_sev |
+| week ≥ 6 | 45 | dvp, implied_total, inj_sev |
+| week ≥ 8 *(published)* | 35 | dvp, implied_total, inj_sev |
+| week ≥ 10 | 25 | dvp, implied_total, inj_sev, **snap_trend** |
+| week ≥ 12 | 15 | dvp, implied_total, inj_sev |
+
+The snap-share trend, per season, yardage basis:
+
+| trend from | cells | r | t | 2021 | 2022 | 2023 | 2024 | 2025 | verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| week ≥ 4 | 45 | +0.0076 | +0.65 | **−0.0197** | +0.0047 | +0.0506 | +0.0002 | +0.0020 | killed |
+| week ≥ 6 | 45 | +0.0076 | +0.65 | **−0.0197** | +0.0047 | +0.0506 | +0.0002 | +0.0020 | killed |
+| week ≥ 8 | 35 | +0.0142 | +1.50 | +0.0025 | **−0.0050** | +0.0501 | +0.0115 | +0.0122 | **killed** |
+| week ≥ 10 | 25 | **+0.0246** | **+2.73** | +0.0101 | +0.0090 | +0.0381 | +0.0122 | +0.0534 | **clears** |
+| week ≥ 12 | 15 | +0.0081 | +0.48 | −0.0065 | +0.0570 | −0.0152 | **−0.0326** | +0.0376 | killed |
+
+Joint at week ≥ 10, controlled for the three other survivors: **+0.0274 at +3.03, 5/5**.
+
+**It is killed at the published anchor, and on both halves.** At week ≥ 8 the trend is +0.0142
+with 2022 at −0.0050, and the `t` is +1.5 — so it would fail on significance even if 2022
+were on the right side. This is not the #178 finding in a different place: #178 found a result
+that held at every anchor from 4 to 10 and died at 12; this basis finds one that holds at 10
+alone. The snap-share trend's screen result is **conditional on the pooled basis** at anchors
+4, 6 and 8, and that is the whole of what this page can now say about it. Whether the Usage
+multiplier's licence survives that is a decision this run does not take — it is #233's
+question, and the permutation half of it is #238.
+
+### The placebos are clean on this basis too
+
+Each feature permuted within its own cell, yardage basis, anchor 8, one draw:
+
+    implied_total   +0.0034   t +0.47   2/5 seasons
+    dvp             +0.0006   t +0.11   3/5
+    inj_sev         +0.0044   t +0.34   3/5
+    td_rate_prior   +0.0058   t +0.81   3/5
+    snap_trend      -0.0061   t -0.52   2/5
+
+**One defect this run found in the screen itself.** A pre-stated null that clears *by being
+null* was being carried into the joint screen as a survivor — the survivor filter was `status
+in (CLEARS, NULL_BROKEN)`, and for a null feature `CLEARS` means the null held. The first run
+on this basis listed `td_rate_prior` under *independent signals* beside its own note reading
+*noisy, not a signal*, and controlled the other three survivors for it. Latent until now,
+because the feature was `NULL_BROKEN` on every earlier basis and a held null had never reached
+the filter. Fixed before the joint figures above were taken; `is_signal` is the predicate and
+`test_a_null_that_clears_by_being_null_is_not_a_survivor` holds it. The pooled column is
+unaffected — on that basis the null was broken and the feature was a survivor either way.
+
+### What moves with it, and what does not
+
+**Moves.** Three verdicts: the prior TD rate (null broken → null as pre-stated), the snap-share
+trend at anchors 4, 6 and 8 (clears → killed), and the implied team total in the joint screen
+(dies → survives, with own spread dying in its place). The `r` of every feature. The
+independent-signal set: {dvp, inj_sev, snap_trend, td_rate_prior} → {dvp, implied_total,
+inj_sev}. The claim at `components.EXPECTED` and `panel.EXPECTED` that touchdown efficiency was
+measured to regress at −0.040 across five of five seasons — restated in both modules as a
+pooled-basis fact that does not survive the settled basis. The Panel's `EXPECTED` column
+subset is **not** affected, which #179 checked: either reading leaves the touchdowns out.
+
+**Does not move.** The Usage screen, under *Against Usage, not points*: its controls are the
+count's own season-to-date mean, its last three weeks, and ECR — never `ppg_before` — so no
+figure in that table was taken on the pooled basis and none is restated. The `--usage` run
+on this basis prints the prior TD rate's five cells unchanged — touchdowns **−0.118 at
+−11.7**, attempts **+0.005 at +2.7** (null broken), the other three null — which is the check
+that the basis does not reach that screen. It does not print the snap-share trend's, because
+`--usage` screens the survivors and the trend is killed alone at anchor 8 here; those five
+cells stand as published under their own controls, not re-run.
+The unit-of-the-standard-error correction under #169 and the wind withdrawal under #170 are
+about the estimator and the family respectively and are not conditional on the basis. The
+sample. The model threshold `panel.TREND_MIN_WEEK`, for the reason #178 gives.
+
+**Not decided here.** *What this does and does not license*, below, licensed Phase 2 on two
+screen results — the snap-share trend as a Usage multiplier from week ≥ 8, and the prior TD
+rate as a touchdown regression — and both of those screen results are pooled-basis results
+that do not hold on the settled basis at the published anchor. The licence is qualified below,
+under its own heading, and is not withdrawn by this run: what a screen result licenses is the
+maintainer's decision, and #233 is where the snap-share half of it is open.
 
 ## The staleness question, and why it is smaller than first reported
 
@@ -599,6 +791,19 @@ being the own-spread finding in another hat.
 > screen result holds — but it is a licence with a stated range now, not an unqualified one,
 > and a later re-run that moved the range would move this sentence with it.
 
+> **Qualified again 2026-09-11 — both screen results this licence rests on are pooled-basis
+> results.** Issue #229. On the settled basis, `(yds_prior, ecr)`, the snap-share trend is
+> **killed at week ≥ 8** (+0.0142 at +1.5 se, 4/5 seasons) and clears at week ≥ 10 alone, so
+> the range the note above names is a pooled-basis range and the multiplier's threshold is
+> **not** inside the range the settled basis supports. And the prior TD rate is **not a
+> finding** on the settled basis (−0.012, 4/5 seasons, rule 4), so the second sentence of
+> this section — *the prior TD rate as a touchdown regression* — cites a screen result that
+> no longer stands. See *The basis, decided*, above. **This run withdraws neither licence**:
+> what a screen result licenses is a decision and not a measurement, the Usage screen the
+> two-features-two-places argument also leans on is unaffected by the basis, and #233 is where
+> the snap-share half is open. What this note does is stop the sentences above being read as
+> unconditional.
+
 It licenses **nothing about lineups**. A partial correlation says a quantity adds to the board
 and never that it should be the board
 ([ADR-0013](adr/0013-the-snap-trend-is-shown-and-never-ranked-on.md)). Gate B decides that, and
@@ -614,15 +819,18 @@ snapshot we are measuring against.
 ## Reproduce
 
 ```bash
-uv run python -m hub.models.weekly_screen --run                        # the sweep -- #178
-uv run python -m hub.models.weekly_screen --run --trend-min-week 8     # the published tables
+uv run python -m hub.models.weekly_screen --run                        # the sweep, settled basis -- #229
+uv run python -m hub.models.weekly_screen --run --trend-min-week 8     # *The basis, decided*, yardage column
+uv run python -m hub.models.weekly_screen --run --trend-min-week 8 --basis pooled   # every table above it
 uv run python -m hub.models.weekly_screen --run --basis decomposed     # #179
 ```
 
-`--basis` names the control set. `pooled` is the pre-registration and every figure above rests
-on it; `decomposed` holds the two halves of `ppg_before` apart. Either run drops nulls over the
-**union** of the two, so the two are taken on the same rows and a difference between them is
-attributable to the basis.
+`--basis` names the control set, and defaults to **`yardage`**, `(yds_prior, ecr)`, the basis
+#229 decided every surviving claim is conditional on. `pooled` is the pre-registration,
+`(ppg_before, ecr)`, and every table above *The basis, decided* rests on it; `decomposed` holds
+the two halves of `ppg_before` apart. Every run drops nulls over the **union** of all three
+sets, so any two are taken on the same rows and a difference between them is attributable to
+the basis.
 
 `--trend-min-week` names the anchor the trend features are screened from. **There is no
 default**, which is #178: the screen used to borrow `panel.TREND_MIN_WEEK`, a value fitted to
