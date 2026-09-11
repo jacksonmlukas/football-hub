@@ -341,11 +341,13 @@ def verdict(summary: dict[str, float], seasons: pl.DataFrame) -> tuple[str, str]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    from hub.draft.cohort import DRAFTS
+
     ap = argparse.ArgumentParser(
         prog="hub.season.lineup_gate",
         description="Does the lineup optimiser beat starting your highest projections?")
     ap.add_argument("--seasons", default="2022,2023,2024,2025")
-    ap.add_argument("--drafts", type=int, default=20,
+    ap.add_argument("--drafts", type=int, default=DRAFTS,
                     help="rosters per season, drafted by the market arm")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default=None)

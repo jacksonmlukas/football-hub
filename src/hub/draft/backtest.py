@@ -213,6 +213,15 @@ def draft_root(seed: int, season: int, k: int) -> np.random.SeedSequence:
 
     What descends from it is `optimize.ROOM`, `optimize.ROLLOUT` and `optimize.SEASON_SIM`;
     the tree is documented there.
+
+    **Not `cohort.seed_for`, and #200 is where the difference is stated rather than left to
+    look like a drift.** The Cohort the other two Gates score still opens
+    `default_rng(seed + 1000 * season + k)`, the integer draw this harness used before #195.
+    This harness left it because arm B evaluates draft futures inside the room it is scored
+    in, and on the integer line rollout 0 *was* that room; a Cohort has no arm B under it,
+    so the leak cannot occur there, and both season-side gates' published figures were
+    measured on the integer draw. Two recipes, each declared once, each with its reason --
+    `tests/unit/test_cohort.py` guards that neither is written anywhere else.
     """
     return root_seed(seed, season, k)
 
@@ -724,11 +733,15 @@ def stamped_for_publication(paired: pl.DataFrame,
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # Function-local for the same reason `build` is below: `hub.draft.cohort` imports
+    # `market_strategy` from this module, so a module-level import here would be a cycle.
+    from hub.draft.cohort import DRAFTS
+
     ap = argparse.ArgumentParser(
         prog="hub.draft.backtest",
         description="Championship equity against the market, on realised outcomes.")
     ap.add_argument("--seasons", default="2022,2023,2024,2025")
-    ap.add_argument("--drafts", type=int, default=20, help="drafts per season")
+    ap.add_argument("--drafts", type=int, default=DRAFTS, help="drafts per season")
     ap.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS)
     ap.add_argument("--draft-sims", type=int, default=12)
     ap.add_argument("--season-sims", type=int, default=250)
