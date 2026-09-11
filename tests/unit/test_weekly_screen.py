@@ -320,7 +320,7 @@ def test_a_broken_null_is_a_finding_not_a_rejection():
     status, note = ws.verdict(_summary(per, -6.0), "0")
     assert status == ws.NULL_BROKEN
     assert "PRE-STATED NULL BROKEN" in note
-    assert status in ws.FINDINGS, "so it goes on to the joint screen"
+    assert ws.is_signal(status, "0"), "so it goes on to the joint screen"
 
 
 def test_a_null_that_is_merely_noisy_is_still_a_null():
@@ -775,7 +775,7 @@ def test_an_anchored_feature_set_runs():
     direct = ws.screen(p, [ws.Feature("late_trend", "+", 8)])
     assert anchored["cells"].item() == direct["cells"].item()
     assert anchored["r"].item() == direct["r"].item()
-    assert anchored["status"].item() in ws.FINDINGS, \
+    assert ws.is_signal(anchored["status"].item(), "+"), \
         "and the anchored run reaches a verdict rather than merely not raising"
 
 
@@ -871,7 +871,7 @@ def test_a_verdict_that_holds_everywhere_is_reported_as_it_stands():
     swept = ws.sweep(_sweep_panel(late_from=1), _SWEEP_FEATURES, (4, 6, 8, 10, 12))
     sens = {r["feature"]: r for r in ws.sensitivity(swept).iter_rows(named=True)}
     assert sens["late_trend"]["stable"], "signal at every week cannot depend on the anchor"
-    assert sens["late_trend"]["verdict"] in ws.FINDINGS
+    assert ws.is_signal(sens["late_trend"]["verdict"], "+")
     assert sens["late_trend"]["finding_at"] == "4, 6, 8, 10, 12"
     assert sens["dud"]["stable"] and sens["dud"]["verdict"] == ws.KILLED
     lines = "\n".join(ws.sweep_report(swept, ws.sensitivity(swept)))
@@ -891,3 +891,32 @@ def test_a_feature_killed_alone_is_reported_on_the_screen_it_actually_reached():
     flat = swept.filter(pl.col("feature") == "flat").to_dicts()[0]
     assert flat["joint"] is not None, "a survivor does reach the joint screen"
     assert flat["final"] == flat["joint"]
+
+
+def test_a_null_that_clears_by_being_null_is_not_a_survivor():
+    """A pre-stated null that behaves as a null has not found anything -- #229.
+
+    `dud` is noise with a pre-registered null. It clears, as it should: the prediction held.
+    But a null that held is the *absence* of a signal, and before this the survivor filter
+    was `status in (CLEARS, NULL_BROKEN)`, which carried it into the joint screen as a
+    finding, printed it under "independent signals" beside a note reading "noisy, not a
+    signal", and controlled every real survivor for it. Latent while `td_rate_prior` was
+    `NULL_BROKEN` on every basis; the yardage basis is the first on which a null cleared.
+    """
+    features = (ws.Feature("flat", "+", 1), ws.Feature("dud", "0", 1),
+                ws.Feature("late_trend", "+", ws.TREND_ANCHOR_UNSET))
+    swept = ws.sweep(_sweep_panel(), features, (8,))
+    dud = swept.filter(pl.col("feature") == "dud").to_dicts()[0]
+    assert dud["alone"] == ws.CLEARS, "the null held -- that is the premise"
+    assert not ws.is_signal(dud["alone"], "0")
+    assert dud["joint"] is None, "and a held null does not enter the joint screen"
+    assert "dud" not in ws.surviving(swept, 8)
+    flat = swept.filter(pl.col("feature") == "flat").to_dicts()[0]
+    assert "dud" not in flat["joint_controls"], \
+        "nor is a real survivor controlled for a quantity the screen said carries nothing"
+    sens = {r["feature"]: r for r in ws.sensitivity(swept).to_dicts()}
+    assert sens["dud"]["finding_at"] == "-"
+    surviving_set = "\n".join(ws.sweep_report(swept, ws.sensitivity(swept))
+                              ).split("verdict across the sweep")[0]
+    assert "dud" not in surviving_set, \
+        "the surviving set the report prints does not carry it either"

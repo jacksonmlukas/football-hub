@@ -259,7 +259,26 @@ DEFAULT_BASIS = "yardage"
 CLEARS, KILLED, NULL_BROKEN = "clears", "killed", "null-broken"
 
 
-FINDINGS = (CLEARS, NULL_BROKEN)
+def is_signal(status: str, sign: str) -> bool:
+    """Whether a verdict is a finding the joint screen should carry forward.
+
+    `CLEARS` means the pre-registration held. For a signed feature that is a signal. For a
+    pre-stated null it is the **absence** of one -- the null behaved as a null -- and carrying
+    it into the joint screen as a survivor would print "noisy, not a signal" under the heading
+    "independent signals" and control every other survivor for a quantity the screen had just
+    said carries nothing. `NULL_BROKEN` is the null feature's finding, and the only one it has.
+
+    Latent until #229. `td_rate_prior` is the only pre-stated null in `FEATURES`, and it was
+    `NULL_BROKEN` on every basis until the yardage one, so a null that cleared had never
+    reached the survivor filter and `(CLEARS, NULL_BROKEN)` was the whole test.
+    """
+    return status == NULL_BROKEN or (status == CLEARS and sign != "0")
+
+
+def signals(rows: pl.DataFrame, status: str) -> list[str]:
+    """The feature names in `rows` whose verdict in column `status` is a signal."""
+    return [d["feature"] for d in rows.select("feature", "sign", status).to_dicts()
+            if is_signal(d[status], d["sign"])]
 
 
 def residual(y: np.ndarray, controls: np.ndarray) -> np.ndarray:
@@ -508,7 +527,7 @@ def sweep(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES,
     for anchor in anchors:
         pool = at_anchor(features, anchor)
         alone = screen(panel, pool, controls)
-        found = alone.filter(pl.col("status").is_in(list(FINDINGS)))["feature"].to_list()
+        found = signals(alone, "status")
         survivors = [f for f in pool if f.name in found]
         # Mirrors `main`: one survivor has nothing to be controlled for, so there is no joint
         # screen to run and its alone verdict is the one that stands.
@@ -538,8 +557,7 @@ def sweep(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES,
 
 def surviving(swept: pl.DataFrame, anchor: int) -> list[str]:
     """The feature names that come out of the screen as findings at one anchor."""
-    return sorted(swept.filter((pl.col("anchor") == anchor)
-                               & pl.col("final").is_in(list(FINDINGS)))["feature"].to_list())
+    return sorted(signals(swept.filter(pl.col("anchor") == anchor), "final"))
 
 
 def sensitivity(swept: pl.DataFrame) -> pl.DataFrame:
@@ -560,7 +578,8 @@ def sensitivity(swept: pl.DataFrame) -> pl.DataFrame:
         d = swept.filter(pl.col("feature") == name).sort("anchor")
         verdicts = d["final"].to_list()
         anchors = d["anchor"].to_list()
-        holds = [a for a, v in zip(anchors, verdicts, strict=True) if v in FINDINGS]
+        sign = d["sign"][0]
+        holds = [a for a, v in zip(anchors, verdicts, strict=True) if is_signal(v, sign)]
         rows.append({
             "feature": name,
             "stable": len(set(verdicts)) == 1,
@@ -700,7 +719,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         print("\n".join(report([{**r, "r": r["alone_r"], "t": r["alone_t"],
                                  "note": r["alone_note"]}
                                 for r in d.sort("alone_r", descending=True).to_dicts()])))
-        found = d.filter(pl.col("alone").is_in(list(FINDINGS)))["feature"].to_list()
+        found = signals(d, "alone")
         print(f"\n  a signal on its own: {', '.join(found) if found else 'nothing'}")
         j = d.filter(pl.col("joint").is_not_null()).sort("joint_r", descending=True)
         if not j.is_empty():
