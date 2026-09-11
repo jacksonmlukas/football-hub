@@ -470,6 +470,12 @@ def test_a_week_with_nothing_ahead_has_no_term_to_measure():
         pool.leverage(HOARD, [1, 2], week=2, entries=12, pot=420.0, trials=10)
 
 
+def test_a_week_with_no_legal_pick_has_no_candidate_to_measure():
+    with pytest.raises(ValueError, match="no legal pick left: 6 teams are spent"):
+        pool.leverage(HOARD, [1, 2], week=1, entries=12, pot=420.0, trials=10,
+                      ledger=["KC", "LV", "SF", "SEA", "BUF", "NYJ"])
+
+
 def test_the_leverage_report_states_the_absence_rather_than_a_zero():
     """The verdict line is the whole point. A term inside its own interval is *unresolved*,
     and the report must say that and must not say the term is zero -- they land the reader

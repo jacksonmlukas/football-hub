@@ -1853,9 +1853,9 @@ def leverage(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     wk = grid.filter((pl.col("week") == week) & (pl.col("win_prob") > MIN_PROB))
     wk = wk.filter(~pl.col("team").is_in(list(spent))) if spent else wk
     ranked = wk.sort(["win_prob", "team"], descending=[True, False]).head(top)
+    # The free pick is always the first of these: `auto_pick` is the same filter and the
+    # same sort, so a guard appending it when absent would be a guard that cannot fire.
     teams = [(str(r["team"]), float(r["win_prob"])) for r in ranked.iter_rows(named=True)]
-    if free not in {t for t, _ in teams}:
-        teams.append((free, float(wk.filter(pl.col("team") == free)["win_prob"][0])))
     root = np.sqrt(trials)
     rows: list[Leverage] = []
     for k in at:
