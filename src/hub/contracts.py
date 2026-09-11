@@ -611,16 +611,32 @@ CFBD_LINES = Contract(
 # change the bound cannot catch is decimal odds, whose values are far inside it, so that is
 # refused upstream where it can be recognised: `hub.fetch.odds._american` drops anything
 # between -100 and +100 because American odds have a hole there and decimal odds do not.
+#
+# **Two columns say how long the spread quote has stood still, since #210.** `polls_unmoved`
+# is the count of consecutive polls, this one included, that returned this quote, and
+# `unmoved_since` is when that run began. Both are non-null: `hub.fetch.odds.staleness`
+# derives them from the archive for every row it writes, and a first poll is a run of one
+# rather than an unknown. They are required because a snapshot without them is exactly the
+# labelling error #210 names -- a dated capture that ranks above the schedule's own field on
+# provenance while carrying nothing that says whether the number has moved in a fortnight.
+# The range on `polls_unmoved` is a floor of one, since a row is its own first poll, and a
+# ceiling no honest archive reaches: at a poll an hour, a season is under ten thousand.
+#
+# Partitions written before #210 have neither column and stay readable for the reason the
+# pre-#211 ones do: the store unions by name and the reader derives the two on the way out.
+# Nothing rewrites a dated partition to add them.
 ODDS_SNAPSHOT = Contract(
     name="odds_snapshot",
     required={"game_id": pl.Utf8, "close_spread": pl.Float64,
               "spread_price": pl.Float64, "close_total": pl.Float64,
-              "total_price": pl.Float64, "captured_at": pl.Datetime},
-    non_null=("game_id", "close_spread", "captured_at"),
+              "total_price": pl.Float64, "captured_at": pl.Datetime,
+              "polls_unmoved": pl.Int64, "unmoved_since": pl.Datetime},
+    non_null=("game_id", "close_spread", "captured_at", "polls_unmoved", "unmoved_since"),
     # Deliberately NOT unique on game_id: several snapshots per game is the entire point,
     # and it is what makes AS_OF_LINES more than a normal join.
     ranges={"close_spread": (-40, 40), "close_total": (20, 100),
-            "spread_price": (-2000, 2000), "total_price": (-2000, 2000)},
+            "spread_price": (-2000, 2000), "total_price": (-2000, 2000),
+            "polls_unmoved": (1, 10000)},
     min_rows=1,
 )
 

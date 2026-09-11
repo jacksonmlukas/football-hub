@@ -976,3 +976,43 @@ def test_the_null_permutes_within_the_cell_and_not_across_it():
 def test_a_pre_stated_null_has_no_every_season_half():
     with pytest.raises(ValueError, match="pre-stated null"):
         ws.every_season_null(_sweep_panel(), ws.Feature("dud", "0", 1), draws=5)
+
+
+# --- the null's own report, and its two degenerate inputs (#238 coverage) ------
+
+def test_the_null_report_carries_every_figure_including_the_alternatives():
+    """`null_report` is what a reader sees; a figure computed and not rendered is a claim
+    nobody can check (#57's rule). Held on a result with an alternative effect, so the
+    power line renders too."""
+    p = _sweep_panel()
+    dud = ws.Feature("dud", "+", 1)
+    n = ws.every_season_null(p, dud, draws=200, seed=4, effects=(0.04,))
+    lines = ws.null_report("dud", dud.min_week, n)
+    text = "\n".join(lines)
+    for needle in ("cells, per season", "permutation", "P(at least one season has the wrong",
+                   "P(every season holds)", "sd of one cell", "if the true effect were +0.0400"):
+        assert needle in text, f"the report does not carry {needle!r}:\n{text}"
+
+
+def test_a_feature_with_no_qualifying_cells_reports_zero_rather_than_raising():
+    """An anchor past every week in the panel leaves nothing to permute. The answer is a
+    result that says so -- zero cells, NaN r -- not an exception, because the sweep calls
+    this for every anchor and one empty anchor must not take the others down."""
+    p = _sweep_panel()
+    late = ws.Feature("dud", "+", 1)._replace(min_week=99)
+    n = ws.every_season_null(p, late, draws=50, seed=5)
+    assert n["cells"] == 0 and n["seasons"] == 0
+    assert n["r"] != n["r"], "an empty result should carry NaN, not a number"
+    assert ws.null_report("dud", 99, n)          # renders without raising
+
+
+def test_a_pre_stated_null_is_refused_and_a_thin_cell_is_skipped():
+    """Two branches on the way in, and they are different acts. A `"0"`-signed feature has
+    no sign for the every-season half to hold, so asking is a category error and it raises.
+    A cell under `min_cell` rows is skipped rather than contributing a noisy r, so a panel
+    made entirely of thin cells comes back as an empty result rather than an error."""
+    p = _sweep_panel()
+    with pytest.raises(ValueError, match="pre-stated null"):
+        ws.every_season_null(p, ws.Feature("dud", "0", 1), draws=50, seed=6)
+    n = ws.every_season_null(p, ws.Feature("dud", "+", 1), draws=50, seed=6, min_cell=10_000)
+    assert n["cells"] == 0, "thin cells were scored rather than skipped"
