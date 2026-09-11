@@ -38,6 +38,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.draft.board import BuildReport, board_as_of
+from hub.fetch.nflverse import reads_of_one_run
 from hub.league import REG_SEASON_WEEKS, starting_lineup
 from hub.models.experiment import (
     SEASON_CLUSTER,
@@ -334,61 +335,73 @@ def main(argv: Sequence[str] | None = None) -> int:
         reports[yr] = report
         return board, report
 
-    try:
-        boards, realised = walk_forward_inputs(
-            seasons, _as_of_keeping_the_report,
-            on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
-    except Exception as e:
-        return unavailable("hub.season.lineup_gate", "the boards the rosters are drafted from", e)
-    for yr in seasons:
-        board = boards[yr]
-        # mu and sd from the same object the simulator uses, so the optimiser is fed exactly
-        # what it is fed live -- the fitted square-root spread law, per position.
-        from hub.models.predict import moments
-        pred = moments(board)
-        if a.parameter_uncertainty:
-            # ADR-0012 closed this gate because sd = k*sqrt(mu) is a deterministic increasing
-            # function of the mean, so the optimiser was handed no variance to read. It then
-            # withdrew its re-run clause because per-player *volatility* beyond the positional
-            # constant is +/-9.3% and not estimable. How well we know a player's mean is a
-            # different quantity: it is sigma_pos/sqrt(games), it is +36% at one game against
-            # twelve, and it is not a function of mu. This is that clause, tested rather than
-            # assumed.
-            sig = {"QB": 7.10, "RB": 5.21, "WR": 5.11, "TE": 3.76}
-            games = pred["games"].fill_null(1).cast(pl.Float64).to_numpy()
-            se = np.array([sig.get(str(p), 5.06) for p in pred["pos"].to_list()]) \
-                / np.sqrt(np.clip(games, 1.0, None))
-            pred = pred.with_columns(
-                (pl.col("sd") ** 2 + pl.Series("se2", se ** 2)).sqrt().alias("sd"))
-        who = pred["player"].to_list()
-        proj_of = dict(zip(who, pred["mu"].fill_null(0.0).to_list(), strict=True))
-        sd_of = dict(zip(who, pred["sd"].fill_null(0.0).to_list(), strict=True))
-        # The same Cohort the weekly gate scores, from the same seeded recipe. Both used to
-        # write it out, and a formula copied by hand into two places is one that eventually
-        # differs in one.
-        drafted = cohort(board, yr, drafts=a.drafts, seed=a.seed, report=reports[yr])
-        who_at = board["player"].to_list()
-        made = [[(who_at[i], drafted.pos[i], proj_of.get(who_at[i], 0.0),
-                  sd_of.get(who_at[i], 0.0)) for i in roster]
-                for roster in drafted.rosters]
-        rosters[yr] = made
+    # The gate's reads are the gate's own, whichever way it was invoked (#247, the same
+    # change #192 made to the draft gate and the screen). Run as a process this changes
+    # nothing: the scope opens on an empty set, exactly as the process-global one was. Called
+    # in-process -- the one gate run of #135, a harness running two gates, a notebook -- it is
+    # what stops the stamp below naming bytes the enclosing run read and this gate never
+    # touched, which is a false digest that looks exactly like a clean one. The reads still
+    # reach the enclosing run on the way out, so nothing outside loses a read either. It
+    # encloses the loads and the stamp both: `walk_forward_inputs` is where this gate reads,
+    # `run_gate` is where it says what it read, and a scope around one of the two would be
+    # the defect it exists to fix wearing a different hat.
+    with reads_of_one_run():
+        try:
+            boards, realised = walk_forward_inputs(
+                seasons, _as_of_keeping_the_report,
+                on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
+        except Exception as e:
+            return unavailable("hub.season.lineup_gate",
+                               "the boards the rosters are drafted from", e)
+        for yr in seasons:
+            board = boards[yr]
+            # mu and sd from the same object the simulator uses, so the optimiser is fed exactly
+            # what it is fed live -- the fitted square-root spread law, per position.
+            from hub.models.predict import moments
+            pred = moments(board)
+            if a.parameter_uncertainty:
+                # ADR-0012 closed this gate because sd = k*sqrt(mu) is a deterministic increasing
+                # function of the mean, so the optimiser was handed no variance to read. It then
+                # withdrew its re-run clause because per-player *volatility* beyond the positional
+                # constant is +/-9.3% and not estimable. How well we know a player's mean is a
+                # different quantity: it is sigma_pos/sqrt(games), it is +36% at one game against
+                # twelve, and it is not a function of mu. This is that clause, tested rather than
+                # assumed.
+                sig = {"QB": 7.10, "RB": 5.21, "WR": 5.11, "TE": 3.76}
+                games = pred["games"].fill_null(1).cast(pl.Float64).to_numpy()
+                se = np.array([sig.get(str(p), 5.06) for p in pred["pos"].to_list()]) \
+                    / np.sqrt(np.clip(games, 1.0, None))
+                pred = pred.with_columns(
+                    (pl.col("sd") ** 2 + pl.Series("se2", se ** 2)).sqrt().alias("sd"))
+            who = pred["player"].to_list()
+            proj_of = dict(zip(who, pred["mu"].fill_null(0.0).to_list(), strict=True))
+            sd_of = dict(zip(who, pred["sd"].fill_null(0.0).to_list(), strict=True))
+            # The same Cohort the weekly gate scores, from the same seeded recipe. Both used to
+            # write it out, and a formula copied by hand into two places is one that eventually
+            # differs in one.
+            drafted = cohort(board, yr, drafts=a.drafts, seed=a.seed, report=reports[yr])
+            who_at = board["player"].to_list()
+            made = [[(who_at[i], drafted.pos[i], proj_of.get(who_at[i], 0.0),
+                      sd_of.get(who_at[i], 0.0)) for i in roster]
+                    for roster in drafted.rosters]
+            rosters[yr] = made
 
-    paired = compare(rosters, realised, ceiling=a.ceiling, ceiling_arm=a.ceiling_arm)
-    run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="lineup",
-                   arm_a="optimiser", arm_b="projections", unit=UNIT,
-                   ceiling=declared_ceiling(paired, ceiling_arm=a.ceiling_arm), seed=a.seed,
-                   boards=boards)
-    for line in run.lines:
-        print(line)
-    print(f"\n  {run.verdict[1]}")
-    print("\n  Both arms see only projections. The optimiser's sole advantage is that it")
-    print("  reads `sd` as well as `mu`, so it can start upside when the matchup wants it.")
-    print("  Limitation: projections are static across the season, because weekly historical")
-    print("  projections do not exist. This measures variance-awareness, not in-season news.")
-    if a.out:
-        run.stamped.write_parquet(a.out)
-        print(f"\n  wrote {run.stamped.height} paired rows to {a.out}")
-    return 0
+        paired = compare(rosters, realised, ceiling=a.ceiling, ceiling_arm=a.ceiling_arm)
+        run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="lineup",
+                       arm_a="optimiser", arm_b="projections", unit=UNIT,
+                       ceiling=declared_ceiling(paired, ceiling_arm=a.ceiling_arm), seed=a.seed,
+                       boards=boards)
+        for line in run.lines:
+            print(line)
+        print(f"\n  {run.verdict[1]}")
+        print("\n  Both arms see only projections. The optimiser's sole advantage is that it")
+        print("  reads `sd` as well as `mu`, so it can start upside when the matchup wants it.")
+        print("  Limitation: projections are static across the season, because weekly historical")
+        print("  projections do not exist. This measures variance-awareness, not in-season news.")
+        if a.out:
+            run.stamped.write_parquet(a.out)
+            print(f"\n  wrote {run.stamped.height} paired rows to {a.out}")
+        return 0
 
 
 if __name__ == "__main__":

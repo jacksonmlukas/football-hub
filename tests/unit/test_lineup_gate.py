@@ -549,3 +549,82 @@ def test_this_gate_stamps_by_the_one_rule_rather_than_by_a_second_copy_of_it():
     assert "stamped_for_publication" not in src
     assert "cfg_digest" not in src and "data_digest" not in src
     assert "run_gate(" in src
+
+
+# --- the gate names its own reads, however it is invoked (issue #247) ---------------------
+#
+# #192 scoped `backtest.main` and `weekly_screen.main` with `reads_of_one_run` and left the two
+# season-side gates unwired. Called in-process by anything that has already read something --
+# the one gate run of #135, a notebook -- this gate inherited the enclosing run's reads and
+# published a digest over bytes it never touched, a failure that looks exactly like a clean
+# digest.
+
+def _in_process_gate(monkeypatch, tmp_path, *, inner):
+    """Drive `main` with the network replaced.
+
+    The walk-forward loader records `inner` as the one read it made and hands back a board;
+    the moments, the Cohort and `compare` are replaced with the smallest thing `main` will
+    accept, since each is exercised above and the seam here is what the stamp names. The
+    width history is pointed nowhere.
+    """
+    from functools import partial
+
+    from hub.draft import cohort as cohort_mod
+    from hub.fetch import nflverse as nv
+    from hub.models import predict
+    from hub.models.experiment import run_gate
+
+    board = pl.DataFrame({"player": ["A", "B"], "pos": ["QB", "RB"],
+                          "proj_ppg": [20.0, 15.0], "games": [16, 16]})
+
+    def loads(seasons, load, *, on_season=None):
+        nv._remember(tmp_path / "the-gates-own-entry.parquet", inner)
+        # `load` is `main`'s own `_as_of_keeping_the_report`; calling it is what fills the
+        # report dict the Cohort is drafted with.
+        return ({yr: load(yr)[0] for yr in seasons},
+                {yr: _flat([("A", "QB", 20.0, 2.0), ("B", "RB", 15.0, 2.0)]) for yr in seasons})
+
+    moments = pl.DataFrame({"player": ["A", "B"], "pos": ["QB", "RB"], "mu": [20.0, 15.0],
+                            "sd": [2.0, 2.0], "games": [16, 16]})
+    paired = pl.DataFrame({"season": [2024] * 4, "roster": [0, 1, 2, 3],
+                           "projections": [10.0, 11.0, 9.0, 10.5],
+                           "optimiser": [9.0, 10.0, 8.5, 9.0]})
+    paired = paired.with_columns((pl.col("optimiser") - pl.col("projections")).alias("diff"))
+    monkeypatch.setattr(lg, "board_as_of", lambda yr: (board, None))
+    monkeypatch.setattr(lg, "walk_forward_inputs", loads)
+    monkeypatch.setattr(predict, "moments", lambda board: moments)
+    monkeypatch.setattr(cohort_mod, "cohort",
+                        lambda *a, **k: cohort_mod.Cohort([[0, 1]], [[]], ["QB", "RB"]))
+    monkeypatch.setattr(lg, "compare", lambda *a, **k: paired)
+    monkeypatch.setattr(lg, "run_gate", partial(run_gate, record_width=False, bootstrap=100))
+    out = tmp_path / "paired.parquet"
+    assert lg.main(["--seasons", "2024", "--drafts", "1", "--out", str(out)]) == 0
+    return pl.read_parquet(out)
+
+
+def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_path, capsys):
+    """Called from inside a run that has already read something, the gate's published digest
+    covers the gate's reads and not the enclosing run's -- and the enclosing run still ends
+    up holding both, because a scope narrows what a component reports and must never be a
+    way for a run to lose a read."""
+    from hub.config import data_digest
+    from hub.fetch import nflverse as nv
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    outer = nv.Pin(source="player_stats", as_of=None, digest="0ut51de0", rows=1,
+                   pinned_at=None)
+    inner = nv.Pin(source="ff_opportunity", as_of="2024-09-01", digest="1n51de01", rows=1,
+                   pinned_at=None)
+    # The enclosing run: something else in this process has read a source already.
+    nv._remember(tmp_path / "the-enclosing-runs-entry.parquet", outer)
+
+    stamped = _in_process_gate(monkeypatch, tmp_path, inner=inner)
+
+    assert stamped["data_digest"].unique().to_list() == [data_digest([inner])], (
+        "the gate's digest is not a digest over the gate's own read")
+    assert stamped["data_digest"][0] != data_digest([outer, inner]), (
+        "the gate published a digest over the enclosing run's reads as well as its own")
+    assert "over 1 pinned source(s)" in capsys.readouterr().out
+    assert sorted(p.source for p in nv.pins_this_run()) == ["ff_opportunity",
+                                                            "player_stats"], (
+        "the gate's read did not reach the run around it: scoping lost a read")

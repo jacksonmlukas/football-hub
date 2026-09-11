@@ -74,6 +74,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS
+from hub.fetch.nflverse import reads_of_one_run
 from hub.league import STARTERS, starting_lineup
 from hub.models.experiment import (
     SEASON_CLUSTER,
@@ -862,61 +863,72 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         ap.print_help()
         return 0
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
-    from hub.season.weekly_gate_data import assemble_universe
-    try:
-        inputs = assemble_universe(seasons, drafts=a.drafts, seed=a.seed, shrink=a.shrink,
-                                   expected=a.expected)
-    except Exception as e:
-        return unavailable("hub.season.weekly_gate", "the gate's inputs", e)
-    cover = coverage(inputs)
-    mix = mixture(inputs)
-    pop = priced_share(inputs)
-    restrict = not a.unrestricted
-    paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
-                     ceiling=a.ceiling, restrict=restrict)
-    # `SEASON_CLUSTER`, stated at this gate's own call site: the run has no default for it.
-    run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="weekly",
-                   arm_a="weekly", arm_b="consensus", unit=UNIT, places=PLACES, show_n=False,
-                   void=void_condition(cover), ceiling=declared_ceiling(paired), seed=a.seed)
-    s, seasons_tbl = run.summary, run.seasons
-    # The assembled column's frame is handed back rather than rebuilt, so this is two extra
-    # scorings and not three, and the row it fills is the one the verdict is read off. No
-    # `--ceiling` on the other two: the ceiling is a property of the harness rather than of
-    # the fallback, and scoring a foresight arm three times would say the same thing thrice.
-    effects = treatment_effects(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
-                                seed=a.seed, primary=paired, restrict=restrict)
-    mode = ("one add/drop a week, pool both arms can score" if a.churn and not a.open_pool
-            else "one add/drop a week, OPEN POOL -- not the gate" if a.churn
-            else "frozen rosters")
-    if not restrict:
-        mode += ", UNRESTRICTED -- the pre-#206 universe, not the gate"
-    if a.shrink:
-        mode += f", shrink={a.shrink}"
-    if a.expected:
-        mode += ", expected priors"
-    if a.lcb:
-        mode += f", waiver LCB z={a.lcb}"
-    print(f"\n  {int(s['n'])} roster-weeks over {int(s['clusters'])} seasons, "
-          f"on the {len(inputs.covered)} weeks consensus covers   [{mode}]")
-    # The arguments this run was given, printed by the run rather than recalled by whoever
-    # pastes it. A gate once run with bare defaults was nearly reported as a re-run of a
-    # published figure, caught only because the season count did not match the table (#237);
-    # `docs/weekly-blend-gate.md` records what the published figures were measured under.
-    print(f"  configuration: seasons={a.seasons} drafts={a.drafts} seed={a.seed} "
-          f"shrink={a.shrink} churn={a.churn} lcb={a.lcb} expected={a.expected} "
-          f"ceiling={a.ceiling} restricted={restrict} mask_pool={not a.open_pool}")
-    print(f"  unranked {cover['unranked']:.1%}, of which a join failure "
-          f"{cover['join_failure']:.1%} (floor {VOID_FLOOR:.0%})")
-    print(seasons_tbl)
-    print("\n".join([*run.lines,
-                      *mixture_report(mix),
-                      *(priced_report(pop) if restrict else []),
-                      *treatment_report(effects, restricted=restrict)]))
-    print(f"\n  {run.verdict[1]}")
-    if a.out:
-        run.stamped.write_parquet(a.out)
-        print(f"\n  wrote {run.stamped.height} paired rows to {a.out}")
-    return 0
+    # The gate's reads are the gate's own, whichever way it was invoked (#247, the same
+    # change #192 made to the draft gate and the screen). Run as a process this changes
+    # nothing: the scope opens on an empty set, exactly as the process-global one was. Called
+    # in-process -- the one gate run of #135, a harness running two gates, a notebook -- it is
+    # what stops the stamp below naming bytes the enclosing run read and this gate never
+    # touched, which is a false digest that looks exactly like a clean one. The reads still
+    # reach the enclosing run on the way out, so nothing outside loses a read either. It
+    # encloses the loads and the stamp both: `assemble_universe` is where this gate reads,
+    # `run_gate` is where it says what it read, and a scope around one of the two would be
+    # the defect it exists to fix wearing a different hat.
+    with reads_of_one_run():
+        from hub.season.weekly_gate_data import assemble_universe
+        try:
+            inputs = assemble_universe(seasons, drafts=a.drafts, seed=a.seed, shrink=a.shrink,
+                                       expected=a.expected)
+        except Exception as e:
+            return unavailable("hub.season.weekly_gate", "the gate's inputs", e)
+        cover = coverage(inputs)
+        mix = mixture(inputs)
+        pop = priced_share(inputs)
+        restrict = not a.unrestricted
+        paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
+                         ceiling=a.ceiling, restrict=restrict)
+        # `SEASON_CLUSTER`, stated at this gate's own call site: the run has no default for it.
+        run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="weekly",
+                       arm_a="weekly", arm_b="consensus", unit=UNIT, places=PLACES, show_n=False,
+                       void=void_condition(cover), ceiling=declared_ceiling(paired), seed=a.seed)
+        s, seasons_tbl = run.summary, run.seasons
+        # The assembled column's frame is handed back rather than rebuilt, so this is two extra
+        # scorings and not three, and the row it fills is the one the verdict is read off. No
+        # `--ceiling` on the other two: the ceiling is a property of the harness rather than of
+        # the fallback, and scoring a foresight arm three times would say the same thing thrice.
+        effects = treatment_effects(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
+                                    seed=a.seed, primary=paired, restrict=restrict)
+        mode = ("one add/drop a week, pool both arms can score" if a.churn and not a.open_pool
+                else "one add/drop a week, OPEN POOL -- not the gate" if a.churn
+                else "frozen rosters")
+        if not restrict:
+            mode += ", UNRESTRICTED -- the pre-#206 universe, not the gate"
+        if a.shrink:
+            mode += f", shrink={a.shrink}"
+        if a.expected:
+            mode += ", expected priors"
+        if a.lcb:
+            mode += f", waiver LCB z={a.lcb}"
+        print(f"\n  {int(s['n'])} roster-weeks over {int(s['clusters'])} seasons, "
+              f"on the {len(inputs.covered)} weeks consensus covers   [{mode}]")
+        # The arguments this run was given, printed by the run rather than recalled by whoever
+        # pastes it. A gate once run with bare defaults was nearly reported as a re-run of a
+        # published figure, caught only because the season count did not match the table (#237);
+        # `docs/weekly-blend-gate.md` records what the published figures were measured under.
+        print(f"  configuration: seasons={a.seasons} drafts={a.drafts} seed={a.seed} "
+              f"shrink={a.shrink} churn={a.churn} lcb={a.lcb} expected={a.expected} "
+              f"ceiling={a.ceiling} restricted={restrict} mask_pool={not a.open_pool}")
+        print(f"  unranked {cover['unranked']:.1%}, of which a join failure "
+              f"{cover['join_failure']:.1%} (floor {VOID_FLOOR:.0%})")
+        print(seasons_tbl)
+        print("\n".join([*run.lines,
+                          *mixture_report(mix),
+                          *(priced_report(pop) if restrict else []),
+                          *treatment_report(effects, restricted=restrict)]))
+        print(f"\n  {run.verdict[1]}")
+        if a.out:
+            run.stamped.write_parquet(a.out)
+            print(f"\n  wrote {run.stamped.height} paired rows to {a.out}")
+        return 0
 
 
 if __name__ == "__main__":                                # pragma: no cover
