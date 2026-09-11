@@ -11,6 +11,33 @@ refined, noted below. This replaces the draft-time argument in
 [championship-leverage.md](championship-leverage.md), which was derived from a playoff
 structure this league does not have.
 
+> **Re-run 2026-09-11 at the refit `TALENT_CV` (#242, after #235).** The season-long base
+> every table below sweeps around was 0.42 with absence carried inside the constant; it is
+> 0.32 net of the absence the simulator now draws (QB 0.20, RB 0.38, WR 0.31, TE 0.18).
+> Re-run at 20,000 sims through `hub.exhibits.leverage`, calibrated per #173, every row
+> within 0.03% of its target mean. Old and new side by side, P(title):
+>
+> | roster | kind | x | published | re-run | | roster strength (mu x) | published | re-run |
+> |---|---|---|---|---|---|---|---|---|
+> | weak | weekly | 0.7 | 2.6% | **1.8%** | | 0.85 | 1.3% | **0.8%** |
+> | weak | weekly | 1.8 | 2.8% | **2.4%** | | 0.95 | 4.8% | **4.3%** |
+> | weak | season | 0.5 | 0.9% | **0.9%** | | 1.00 | 8.3% | **8.3%** |
+> | weak | season | 2.0 | 6.1% | **5.4%** | | 1.05 | 12.9% | **13.8%** |
+> | strong | weekly | 0.7 | 20.7% | **23.4%** | | 1.15 | 25.6% | **29.0%** |
+> | strong | weekly | 1.8 | 15.4% | **16.4%** | | seed 1 (bye) | 38.7% | **34.2%** |
+> | strong | season | 0.5 | 15.6% | **18.9%** | | seed 6 | 5.9% | **7.3%** |
+> | strong | season | 2.0 | 23.5% | **24.6%** | | | | |
+>
+> **Every direction stands and the advice is reaffirmed.** Season-long spread is still worth
+> paying for at every strength (weak 0.9% → 5.4%, 6x; strong 18.9% → 24.6%, +30%, at a cost
+> of 14 points of playoff probability, 82.1% → 67.8%). Weekly boom-bust is still negative
+> for a favourite (23.4% → 16.4%, −7.0pp, wider than the published −5.3pp) and still thinly
+> positive for an underdog (1.8% → 2.4%, +0.6pp, wider than the published +0.2pp but at a
+> lower level). What moved is level, not sign: a narrower talent distribution makes strength
+> count for more — the strong roster's title odds rise across the board and the seeding
+> payoff flattens (seed 1 34.2% against 38.7%) because rosters bunch and top seeds are less
+> often the best team. The rest of this page keeps its original text and figures.
+
 ## What was wrong
 
 That doc reasons from *"12 teams, 8 make playoffs, 3 weeks (15-17), no byes"*. The live
