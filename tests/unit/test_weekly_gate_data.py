@@ -381,9 +381,17 @@ def test_the_fallback_reaches_no_result_on_a_real_assembly(universe):
     The unit tests next door prove the restriction on fixtures whose arithmetic is on paper.
     What running it here found is the failure mode restricting the rows creates, arriving
     unprompted on real inputs: the archive's consensus page carries 16 of the board's 200
-    players, so only **10.1%** of roster-week cells are priced by both arms, every roster's
+    players, so only **9.4%** of roster-week cells are priced by both arms, every roster's
     fieldable side fits inside the starting slots, and the two arms field the identical team
     in **every** scored roster-week. The effect is +0.000 -- not measured, forced.
+
+    The share was 10.1% when this was written on 2026-09-10 and is 9.4% since #155 restated
+    the pick-noise law on 2026-09-11. It moves because the Cohort this gate scores is drafted
+    with pick noise, so a different sigma drafts different rosters and a different fraction of
+    them is priceable -- the figure is a property of the archive *and* the draft simulator,
+    not of the archive alone. Pinned to the current value so the next simulator change is
+    noticed here rather than absorbed; the claim the test holds is the one below it, that the
+    arms never disagree, and that has not moved.
 
     That is `lineup_gate`'s structural zero (ADR-0012) arriving down a different road, and it
     is exactly what a run must not report as a result. So the shares are asserted, and so is
@@ -397,7 +405,7 @@ def test_the_fallback_reaches_no_result_on_a_real_assembly(universe):
     """
     pop = G.priced_share(universe)
     assert pop["cells"] == coverage(universe)["cells"], "one universe, every block"
-    assert pop["share"] == pytest.approx(0.101, abs=5e-4), "10.1% of cells, both arms"
+    assert pop["share"] == pytest.approx(0.0945, abs=5e-4), "9.4% of cells, both arms"
     assert pop["no_projection"] > 0.0 and pop["no_rank"] > 0.0
 
     means = [e.summary["mean"] for e in G.treatment_effects(universe, seed=0)]
