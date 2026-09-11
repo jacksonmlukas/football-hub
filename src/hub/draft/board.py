@@ -42,6 +42,7 @@ from hub.draft import state as state_mod
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, pick_value
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.playoff_sos import attach_sos, playoff_sos
+from hub.draft.season import attach_bye, bye_weeks
 from hub.draft.state import DraftState, remaining
 from hub.fetch import nflverse
 from hub.fetch.nflverse import RANKINGS_COLS, load_rankings
@@ -703,6 +704,7 @@ STAGE_COLUMNS: dict[str, tuple[str, ...]] = {
     "sos": ("wk15_17_sos", "sos_games"),
     "td_luck": ("td_luck",),
     "durability": ("missed",),
+    "bye": ("bye_week",),
     "adp": ("adp", "proj_ppg", "injury_status", "consensus_pick", "edge",
             "proj_blend", "proj_correction", "adp_corrected", "vor_proj"),
 }
@@ -796,6 +798,7 @@ class BuildReport:
     sos: bool = False
     td_luck: bool = False
     durability: bool = False
+    bye: bool = False
     adp: bool = False
     scoring_checked: bool = False
     roster_checked: bool = False
@@ -1115,6 +1118,13 @@ def build(league_size: int = 12, season: int = SEASON_COMPLETED, *,
     # Availability as a per-player trait.
     board = _stage(board, report, "durability", "durability",
                    lambda b: durability.attach(b, durability.prior_season(season)))
+
+    # The week each player's team sits, off the season's schedule (#226). Reaches nflverse,
+    # so it can fail on its own; the simulator then reads "no bye" for everyone, which is
+    # the pre-#226 season and is reported as such. Not a Correction: it moves the simulated
+    # season, not Corrected ADP.
+    board = _stage(board, report, "bye", "bye weeks",
+                   lambda b: attach_bye(b, bye_weeks(season_ahead)))
 
     # The one stage that is not advisory, and so the one stage whose guard absorbs nothing.
     # Its *outage* is handled by the `espn_adp` call below, outside `_stage`: that catches

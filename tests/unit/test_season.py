@@ -678,3 +678,142 @@ def test_absence_degrades_rather_than_raising_when_nothing_is_known():
                          np.array(["RB"]), n_sims=20, weeks=3,
                          rng=np.random.default_rng(0), missed=np.array([np.nan]))
     assert np.isfinite(got).all()
+
+
+# --- byes (issue #226) ------------------------------------------------------
+
+def test_a_player_scores_nothing_in_his_teams_bye_week_and_normally_elsewhere():
+    """The second criterion. A bye is a scheduled zero, deterministic across sims -- not a
+    draw -- so every sim has the zero in the same week and no other week is touched. The
+    fixture cannot reach zero on its own (mean 25, spread 0.5), so a zero is the bye or
+    nothing."""
+    kw = {"n_sims": 200, "weeks": 14, "talent_cv": 0.0}
+    args = ([np.array([0])], np.array([25.0]), np.array([0.5]), np.array(["RB"]))
+    without = simulate_weeks(*args, rng=np.random.default_rng(3), **kw)
+    with_ = simulate_weeks(*args, rng=np.random.default_rng(3), bye_week=np.array([7]), **kw)
+    assert not (without == 0.0).any(), "the fixture reaches zero on its own"
+    assert (with_[:, 6, 0] == 0.0).all(), "week 7 (index 6) was not zeroed in every sim"
+    other = [w for w in range(14) if w != 6]
+    assert not (with_[:, other, 0] == 0.0).any(), "a week other than the bye was zeroed"
+
+
+def test_a_bye_is_not_mean_preserving_because_it_is_a_real_missed_game():
+    """Unlike #183's injury absence, which rescales played weeks because `mu` is already per
+    team game, a bye is a week the team does not play at all. Fourteen fantasy weeks with one
+    bye is thirteen games, and the season total is thirteen times the mean, not fourteen."""
+    kw = {"n_sims": 2000, "weeks": 14, "talent_cv": 0.0}
+    args = ([np.array([0])], np.array([20.0]), np.array([1.0]), np.array(["RB"]))
+    without = simulate_weeks(*args, rng=np.random.default_rng(4), **kw).sum(axis=1).mean()
+    with_ = simulate_weeks(*args, rng=np.random.default_rng(4), bye_week=np.array([9]),
+                           **kw).sum(axis=1).mean()
+    assert with_ == pytest.approx(without * 13 / 14, rel=0.02)
+
+
+def test_a_player_with_no_bye_is_untouched():
+    """Free agents and unmatched teams carry 0, which is no week, so nothing is zeroed."""
+    kw = {"n_sims": 100, "weeks": 14, "talent_cv": 0.0}
+    # One player per roster, so the per-team output is the per-player one.
+    args = ([np.array([0]), np.array([1])], np.array([25.0, 25.0]), np.array([0.5, 0.5]),
+            np.array(["RB", "WR"]))
+    got = simulate_weeks(*args, rng=np.random.default_rng(5), bye_week=np.array([0, 7]), **kw)
+    assert not (got[:, :, 0] == 0.0).any(), "a player with no bye was zeroed somewhere"
+    assert (got[:, 6, 1] == 0.0).all()
+    assert not (got[:, [w for w in range(14) if w != 6], 1] == 0.0).any()
+
+
+def test_a_bye_outside_the_fantasy_season_is_refused():
+    """#226's fourth criterion: `REG_SEASON_WEEKS` and the bye placement agree, and a bye
+    the fantasy season cannot see is a schedule shape nobody has modelled -- refused rather
+    than silently a no-op, because a no-op here would read as 'no bye'."""
+    kw = {"n_sims": 10, "weeks": 14, "talent_cv": 0.0}
+    args = ([np.array([0])], np.array([25.0]), np.array([0.5]), np.array(["RB"]))
+    with pytest.raises(ValueError, match="bye"):
+        simulate_weeks(*args, rng=np.random.default_rng(6), bye_week=np.array([15]), **kw)
+
+
+def test_bye_weeks_are_derived_from_the_schedule_one_per_team(monkeypatch):
+    """The first criterion: a team-week schedule source through the validated loader, and a
+    bye is the regular-season week a team has no game. One per team, or the shape changed."""
+    import polars as pl
+
+    from hub.draft import season as S
+
+    # Five weeks, four teams. AAA-BBB sit in week 2, CCC-DDD in week 4; every other week
+    # both pairs play. A postseason row is present and must be ignored.
+    rows = []
+    for w in range(1, 6):
+        if w != 2:
+            rows.append({"game_id": f"{w}_ab", "season": 2026, "week": w, "home_team": "AAA",
+                         "away_team": "BBB", "game_type": "REG"})
+        if w != 4:
+            rows.append({"game_id": f"{w}_cd", "season": 2026, "week": w, "home_team": "CCC",
+                         "away_team": "DDD", "game_type": "REG"})
+    rows.append({"game_id": "wc", "season": 2026, "week": 6, "home_team": "AAA",
+                 "away_team": "CCC", "game_type": "WC"})
+    sched = pl.DataFrame(rows)
+    monkeypatch.setattr(S, "_schedule_for", lambda season: sched)
+    got = S.bye_weeks(2026)
+    assert got == {"AAA": 2, "BBB": 2, "CCC": 4, "DDD": 4}, got
+
+
+def test_bye_weeks_refuse_a_team_with_two_byes_or_none(monkeypatch):
+    """A schedule where a team sits twice is not this league's shape, and the derivation
+    must not quietly pick one of the two."""
+    import polars as pl
+
+    from hub.draft import season as S
+
+    # Four regular-season weeks. AAA and BBB play each other in weeks 1 and 3 only, so both
+    # sit in weeks 2 and 4 -- two byes each.
+    sched = pl.DataFrame([{"game_id": "1", "season": 2026, "week": 1, "home_team": "AAA",
+                           "away_team": "BBB", "game_type": "REG"},
+                          {"game_id": "3", "season": 2026, "week": 3, "home_team": "BBB",
+                           "away_team": "AAA", "game_type": "REG"},
+                          {"game_id": "2c", "season": 2026, "week": 2, "home_team": "CCC",
+                           "away_team": "DDD", "game_type": "REG"},
+                          {"game_id": "4c", "season": 2026, "week": 4, "home_team": "DDD",
+                           "away_team": "CCC", "game_type": "REG"}])
+    monkeypatch.setattr(S, "_schedule_for", lambda season: sched)
+    with pytest.raises(ValueError, match="AAA"):
+        S.bye_weeks(2026)
+
+
+def test_attach_bye_joins_by_canonical_team_and_leaves_the_unplaced_null():
+    """The board column. A player whose team cannot be placed keeps a null, not a zero: 0 is
+    what the simulator reads as 'no bye', and a placement failure is not that."""
+    import polars as pl
+
+    from hub.draft.season import attach_bye
+
+    board = pl.DataFrame({"player": ["a", "b", "c", "d"],
+                          "team": ["KC", "JAC", "FA", None]})
+    got = attach_bye(board, {"KC": 10, "JAX": 12})
+    assert got["bye_week"].to_list() == [10, 12, None, None]
+    assert got["bye_week"].dtype == pl.Int64
+    assert got.columns == ["player", "team", "bye_week"], "no helper column left behind"
+
+
+def test_a_bye_array_of_the_wrong_length_is_refused():
+    """One week per player or nothing: a shorter array would broadcast onto the wrong men."""
+    kw = {"n_sims": 10, "weeks": 14, "talent_cv": 0.0}
+    args = ([np.array([0]), np.array([1])], np.array([25.0, 25.0]), np.array([0.5, 0.5]),
+            np.array(["RB", "WR"]))
+    with pytest.raises(ValueError, match="shape"):
+        simulate_weeks(*args, rng=np.random.default_rng(6), bye_week=np.array([7]), **kw)
+
+
+def test_the_schedule_comes_through_the_validated_loader(monkeypatch):
+    """The seam the derivation reads through, and the columns it asks for -- not a second
+    reader of the schedule beside `playoff_sos`."""
+    from hub.draft import season as S
+    from hub.fetch import nflverse
+
+    seen = {}
+
+    def fake(name, **kw):
+        seen.update(name=name, **kw)
+        return "frame"
+    monkeypatch.setattr(nflverse, "load", fake)
+    assert S._schedule_for(2026) == "frame"
+    assert seen["name"] == "schedules" and seen["seasons"] == [2026]
+    assert {"week", "home_team", "away_team", "game_type"} <= set(seen["cols"])

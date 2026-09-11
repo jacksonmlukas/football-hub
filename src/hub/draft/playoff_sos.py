@@ -49,7 +49,7 @@ NOT_FITTED_BECAUSE = (
 TEAM_ALIASES = {"JAC": "JAX", "LAR": "LA", "LV": "LV", "WSH": "WAS", "ARZ": "ARI"}
 
 
-def _canon_team(team: str | None) -> str | None:
+def canon_team(team: str | None) -> str | None:
     if not team or team in ("FA", ""):
         return None
     return TEAM_ALIASES.get(team, team)
@@ -227,7 +227,7 @@ def attach_sos(board: pl.DataFrame, sos: pl.DataFrame) -> pl.DataFrame:
     not place, which is the kind of quiet wrong answer this repo keeps finding.
     """
     keyed = board.with_columns(
-        pl.col("team").map_elements(_canon_team, return_dtype=pl.Utf8).alias("_team"))
+        pl.col("team").map_elements(canon_team, return_dtype=pl.Utf8).alias("_team"))
     return (keyed.join(sos, left_on=["_team", "pos"], right_on=["team", "pos"], how="left")
                  .drop("_team"))
 

@@ -33,6 +33,8 @@ class _Decision(TypedDict, total=False):
     fallback: str | None
     fallback_note: str | None
     market_price: float | None
+    fallback_price: float | None
+    week_cost: float | None
     price_note: str | None
     expected_dollars: float | None
     chose_survives: float | None
@@ -40,6 +42,14 @@ class _Decision(TypedDict, total=False):
     survival_given_up: float | None
     credits_before: float | None
     credits_after: float | None
+    pool_digest: str | None
+    grid_digest: str | None
+    seed: int | None
+    trials: int | None
+    entries: int | None
+    pot: float | None
+    outlay: float | None
+    plan_source: str | None
     at: dt.datetime | None
     base: Path
 
@@ -56,10 +66,14 @@ def _decide(tmp_path: Path, **kw: Unpack[_Decision]) -> str:
 
 
 def _departure(tmp_path: Path, *, ours: float = 0.40, free: float = 0.42,
+               price: float = 0.68, free_price: float = 0.70,
                **kw: Unpack[_Decision]) -> str:
-    """A pick that left the free one, with the two survival figures its cost is made of."""
+    """A pick that left the free one, with the two survival figures its season cost is made
+    of and the two prices its week cost is made of (#209)."""
     call: _Decision = {"chose": "SF", "fallback": "KC", "chose_survives": ours,
-                       "fallback_survives": free, "survival_given_up": free - ours}
+                       "fallback_survives": free, "survival_given_up": free - ours,
+                       "market_price": price, "fallback_price": free_price,
+                       "week_cost": free_price - price}
     call.update(kw)
     return _decide(tmp_path, **call)
 
@@ -260,8 +274,7 @@ def test_a_cost_that_disagrees_with_its_two_figures_is_refused(tmp_path):
     """Consistency, not presence. A cost that does not follow from the figures it is the
     difference of was not computed from them, whatever it is."""
     with pytest.raises(ValueError, match="not what the two survival figures say"):
-        _decide(tmp_path, chose="SF", fallback="KC", chose_survives=0.40,
-                fallback_survives=0.42, survival_given_up=0.31)
+        _departure(tmp_path, ours=0.40, free=0.42, survival_given_up=0.31)
 
 
 def test_a_pick_that_names_no_free_alternative_at_all_is_refused(tmp_path):
@@ -282,8 +295,7 @@ def test_a_kind_no_rule_has_heard_of_is_refused(tmp_path):
 
 def test_a_survival_figure_outside_zero_and_one_is_refused(tmp_path):
     with pytest.raises(ValueError, match="not a probability"):
-        _decide(tmp_path, chose="SF", fallback="KC", chose_survives=1.4,
-                fallback_survives=0.42, survival_given_up=-0.98)
+        _departure(tmp_path, ours=1.4, free=0.42)
 
 
 # --- settling against the key, which already says season and week -------------
@@ -391,15 +403,17 @@ def test_the_duty_is_discharged_against_a_real_weekly_and_the_signs_agree(tmp_pa
     assert journal.unmatched_weeks(2026, base=tmp_path) == [1]
 
 
-def test_the_logged_cost_is_not_the_quantity_the_rule_fires_on(tmp_path):
-    """The finding of #204, pinned so it cannot be quietly reconciled later.
+def test_both_costs_are_logged_and_the_threshold_quantity_is_the_weeks(tmp_path):
+    """The finding of #204, settled by #209: the journal logs both quantities under distinct
+    names, and the ADR's threshold is on the week.
 
-    ADR-0014 adopts the contrarian threshold as "the win-probability cost is under ~8pp" and
-    `docs/decisions.md` logs "the probability cost accepted". `survival_given_up` is a
-    season-survival difference, and on this grid the two disagree in sign as well as scale --
-    the chalk is 2.0pp better on the week and 27.8pp worse over the season. That is the thesis
-    of the survivor plan working as intended, not a defect in either number, which is exactly
-    why writing one under the other's name would be the error.
+    ADR-0014 adopts the contrarian threshold as "the win-probability cost is under ~8pp".
+    `survival_given_up` is a season-survival difference, and on this grid the two disagree
+    in sign as well as scale -- the chalk is 2.0pp better on the week and 27.8pp worse over
+    the season. That is the thesis of the survivor plan working as intended, not a defect in
+    either number, which is exactly why writing one under the other's name was the error:
+    `week_cost` is now the column the rule's duty is discharged by, and the season figure
+    stays beside it as the argument for the plan.
 
     **The season figure moved under #151** and this is the record of it: it was -9.9pp while
     our own entry played out the rest of the season under the *field's* sampling rule, which
@@ -418,10 +432,14 @@ def test_the_logged_cost_is_not_the_quantity_the_rule_fires_on(tmp_path):
 
     journal.record_weekly(w, season=2026, at=AT, base=tmp_path)
     row = journal.read(2026, base=tmp_path).to_dicts()[0]
-    # The taken team's own price is on the row; the chalk's is not, so the cost the rule is
-    # stated in cannot be reconstructed from the journal.
+    # Both prices are on the row and the week cost is their difference, so the ~8pp the
+    # ADR conditions adoption on is recoverable from the journal alone.
     assert row["market_price"] == pytest.approx(chose.win_prob)
-    assert "fallback_price" not in row and "win_prob_given_up" not in row
+    assert row["fallback_price"] == pytest.approx(fb.win_prob)
+    assert row["week_cost"] == pytest.approx(week_cost, abs=1e-9)
+    assert row["week_cost"] == pytest.approx(row["fallback_price"] - row["market_price"])
+    # And the two disagree in sign on this row, which is the plan's thesis, kept.
+    assert row["week_cost"] > 0 > row["survival_given_up"]
 
 
 def test_an_overridden_pick_is_costed_against_what_was_entered(tmp_path):
@@ -443,3 +461,160 @@ def test_a_team_the_week_never_priced_is_refused_rather_than_costed(tmp_path):
     ADR-0014 check and mean nothing -- the fourth way past a duty that is about content."""
     with pytest.raises(ValueError, match="not one of the teams this week priced"):
         journal.record_weekly(_weekly(), season=2026, chose="MIA", base=tmp_path)
+
+
+# --- a row carries what it takes to reproduce its own figure (#162) ------------
+#
+# The schema carried the dollar figure and the survival given up and none of the provenance,
+# so a row could not be re-derived or told apart from one produced under different rules.
+# After #160 the pool digest exists and our plan is an input, so a row can name its rules,
+# its board, its seed and its trials -- and a re-run from those has to land on the figure.
+
+
+def test_a_row_carries_what_it_takes_to_run_its_figure_again(tmp_path):
+    """The first two criteria at once: the provenance is on the row, and re-running from it
+    reproduces the figure *exactly* -- `==`, not approximately, because the seed and the
+    trial count are what make two runs the same run."""
+    from hub.config import PoolConfig, pool_digest
+    w = _weekly()
+    k = journal.record_weekly(w, season=2026, at=AT, base=tmp_path)
+    row = journal.read(2026, base=tmp_path).filter(pl.col("key") == k).to_dicts()[0]
+
+    assert row["pool_digest"] == pool_digest(PoolConfig())
+    assert row["grid_digest"] == pool.grid_digest(_hoard())
+    assert row["seed"] == w.seed and row["trials"] == 400
+    assert row["entries"] == 12 and row["pot"] == 420.0 and row["outlay"] == 0.0
+    assert row["plan_source"] and "optimiser" in row["plan_source"]
+    assert all(row[c] is not None for c in journal.RERUN_COLUMNS)
+
+    # A different generator on purpose: `_weekly` drew its seed from `default_rng(0)`, and a
+    # re-run that happened to draw the same one would reproduce the figure with `seed`
+    # ignored. Only the row's own seed may carry the trials across.
+    again = pool.weekly(_hoard(), [1, 2], week=row["week"], entries=row["entries"],
+                        pot=row["pot"], outlay=row["outlay"], trials=row["trials"],
+                        rng=np.random.default_rng(999), seed=row["seed"])
+    got = next(c for c in again.candidates if c.team == row["chose"])
+    assert got.expected_dollars == row["expected_dollars"]
+    assert got.survives == row["chose_survives"]
+    assert again.seed == row["seed"] and again.pool_digest == row["pool_digest"]
+
+
+def test_two_rows_under_different_pool_rules_are_told_apart_by_the_journal_alone(tmp_path):
+    """Nothing outside the journal is read. The two rows carry the same week, the same pick
+    and the same trials, and differ only in the digest of the rules they were priced under."""
+    from hub.config import PoolConfig
+    split = pool.weekly(_hoard(), [1, 2], week=1, entries=12, pot=420.0, trials=50,
+                        pool=PoolConfig(co_survivor_rule="split"), seed=7)
+    roll = pool.weekly(_hoard(), [1, 2], week=1, entries=12, pot=420.0, trials=50,
+                       pool=PoolConfig(co_survivor_rule="rollover"), seed=7)
+    journal.record_weekly(split, season=2026, at=AT, base=tmp_path)
+    journal.record_weekly(roll, season=2026, at=AT + dt.timedelta(hours=1), base=tmp_path)
+    got = journal.read(2026, base=tmp_path)
+    assert got.height == 2
+    assert got["pool_digest"].n_unique() == 2
+    assert got["grid_digest"].n_unique() == 1 and got["seed"].n_unique() == 1
+
+
+def test_a_row_written_before_provenance_existed_reads_as_one_that_cannot_be_rerun(tmp_path):
+    """The fourth criterion. A partition written under the old schema has none of the
+    provenance columns; it still reads, and every one of them is null on it -- not a
+    default, not a value nobody measured. A store holding *only* such rows has no column to
+    union, which is the case `read` fills rather than fails."""
+    from hub import store
+    old = {c: t for c, t in journal.SCHEMA.items() if c not in journal.RERUN_COLUMNS}
+    k = journal.key(2026, 1, "pick", AT)
+    row = pl.DataFrame({c: [None] for c in old}, schema=old).with_columns(
+        pl.lit(k).alias("key"), pl.lit("pick").alias("kind"), pl.lit(2026).alias("season"),
+        pl.lit(1).alias("week"), pl.lit(AT).alias("at"), pl.lit("LAC").alias("chose"),
+        pl.lit("LAC").alias("fallback"), pl.lit(True).alias("matched_fallback"))
+    store.write(row, journal.TABLE, journal.LEAGUE, 2026, 1, name=k, base=tmp_path)
+
+    got = journal.read(2026, base=tmp_path)
+    assert got.height == 1 and got["chose"][0] == "LAC"
+    assert list(got.columns[:len(journal.SCHEMA)]) == list(journal.SCHEMA)
+    assert all(got[c][0] is None for c in journal.RERUN_COLUMNS)
+
+
+def test_provenance_comes_whole_or_not_at_all(tmp_path):
+    """A row naming the rules and not the seed reads as reproducible to a query on
+    `pool_digest` and is not. Either both are present or the row says it cannot be
+    re-derived."""
+    with pytest.raises(ValueError, match="provenance has to come whole"):
+        _decide(tmp_path, pool_digest="deadbeef", seed=None)
+    with pytest.raises(ValueError, match="provenance has to come whole"):
+        _decide(tmp_path, pool_digest=None, seed=3)
+
+
+def test_provenance_means_every_rerun_column_not_just_the_two(tmp_path):
+    """Review finding on #162: the digest and the seed were the only pair checked, so a row
+    carrying both and none of `grid_digest`, `trials`, `entries`, `pot` or `outlay` was
+    written, and `report` then printed it as re-derivable. It cannot be re-run without the
+    board, the trial count or the stakes, so it is refused like any other partial row."""
+    def whole(**over):
+        kw: dict = {"pool_digest": "deadbeef", "grid_digest": "cafe", "seed": 3,
+                    "trials": 100, "entries": 21, "pot": 420.0, "outlay": 20.0}
+        kw.update(over)
+        return kw
+    _decide(tmp_path, **whole())
+    for missing in whole():
+        with pytest.raises(ValueError, match="provenance has to come whole"):
+            _decide(tmp_path, **whole(**{missing: None}))
+    # A buyback has no plan, so `plan_source` is the one rerun column that may be absent
+    # beside the other seven.
+    _decide(tmp_path, week=2, **whole(plan_source=None))
+
+
+# --- ADR-0014's threshold quantity, logged under its own name (#209) -----------------------
+
+
+def test_a_departure_without_the_weeks_cost_is_refused(tmp_path):
+    """The threshold is stated in win probability on the week, so a departure that records
+    only the season figure has not discharged the duty -- however consistent that figure is
+    with its own two survival numbers."""
+    with pytest.raises(ValueError, match="without recording the week's cost"):
+        _decide(tmp_path, chose="SF", fallback="KC", chose_survives=0.40,
+                fallback_survives=0.42, survival_given_up=0.02)
+
+
+def test_a_week_cost_that_disagrees_with_its_two_prices_is_refused(tmp_path):
+    """The same shape as the survival trio: a cost is a difference, both prices are on the
+    row, and the cost is checked against them."""
+    with pytest.raises(ValueError, match="not what the two prices say"):
+        _departure(tmp_path, price=0.68, free_price=0.70, week_cost=0.08)
+    with pytest.raises(ValueError, match=r"fallback_price=1\.7 is not a probability"):
+        _departure(tmp_path, price=0.68, free_price=1.7, week_cost=1.02)
+
+
+def test_the_column_the_adr_names_as_its_threshold_is_the_one_the_journal_writes(tmp_path):
+    """The drift test the ticket asks for. ADR-0014's dated line names the column its
+    threshold is stated in; that column has to exist in the schema, be the difference of
+    the two prices `record_weekly` writes, and not be the season figure. If the ADR is
+    re-pointed at another column, or the column is renamed, or its arithmetic changes,
+    this fails -- and the two quantities cannot silently drift back into one name."""
+    import pathlib
+    import re
+    adr = next((pathlib.Path(__file__).resolve().parents[2] / "docs" / "adr").glob(
+        "0014-*.md")).read_text()
+    # Prose wraps, and the amendment is a blockquote, so the phrase may straddle a `> `.
+    adr = re.sub(r"\s*\n>?\s*", " ", adr)
+    named = re.search(r"threshold quantity is `journal\.(\w+)`", adr)
+    assert named, "ADR-0014 names no journal column as its threshold quantity"
+    column = named.group(1)
+    assert column == "week_cost" and column in journal.SCHEMA
+    assert column != "survival_given_up"
+    assert "the fallback's win probability minus the chosen team's" in adr
+
+    w = _weekly()
+    journal.record_weekly(w, season=2026, at=AT, base=tmp_path)
+    row = journal.read(2026, base=tmp_path).to_dicts()[0]
+    chose = next(c for c in w.candidates if c.team == w.recommend)
+    fb = next(c for c in w.candidates if c.is_fallback)
+    assert row[column] == pytest.approx(fb.win_prob - chose.win_prob, abs=1e-9)
+    assert row[column] != pytest.approx(row["survival_given_up"])
+
+
+def test_the_journal_report_prints_both_costs_under_their_own_names(tmp_path):
+    journal.record_weekly(_weekly(), season=2026, at=AT, base=tmp_path)
+    lines = journal.report(journal.read(2026, base=tmp_path))
+    assert "week cost" in lines[0] and "given up" in lines[0]
+    assert "+2.0pp" in lines[1] and "-27.8pp" in lines[1]

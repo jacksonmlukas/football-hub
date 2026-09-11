@@ -70,6 +70,15 @@ entry that outlives the whole field and then loses is that state with a count of
 takes the pot: this simulator keeps a lone survivor playing, and the pool would not have.
 `trial_share` is the one place either rule meets a trial.
 
+**The week being decided is not played by `weekly`, and what that omits is measured.**
+`weekly` values a candidate on the weeks after this one against a field nobody has thinned,
+so this week's rival attrition -- which is correlated with our own pick, and is the whole
+case for a departure -- is credited to no candidate. `leverage` prices it by playing the
+same season from this week with the candidate in front, and the first run (on `leverage`)
+found it unresolved at two standard errors on the default axis, positive in direction.
+`LEVERAGE` is that finding as one sentence, and the entry point prints it beside every
+figure so a reader is told what the figure leaves out (#161).
+
 **Ties are not modelled** because the grid cannot express one: `win_prob` comes from a
 continuous margin model, which prices a tie at zero. The pool's rule that a tie eliminates is
 therefore satisfied vacuously here rather than enforced.
@@ -80,15 +89,19 @@ same class of bug, and a reproducible simulator cannot afford it.
 """
 from __future__ import annotations
 
+import argparse
+import hashlib
+import sys
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
 import polars as pl
 
-from hub.config import PoolConfig
+from hub.config import PoolConfig, pool_digest
 from hub.season.survivor import MIN_PROB, Infeasible, solve, week_fixtures
 
 NOT_FITTED_BECAUSE = (
@@ -255,7 +268,7 @@ class EntryOutcome(NamedTuple):
         return sum(m > 1 for m in self.last_out_each) / len(self.last_out_each)
 
 
-def _plural(n: int, word: str) -> str:
+def plural(n: int, word: str) -> str:
     """`1 team`, `2 teams`. A count printed beside a decision is read by a person."""
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
@@ -329,6 +342,8 @@ class Candidate(NamedTuple):
     is_fallback: bool           # the team auto-pick would assign for nothing
     survives_se: float = 0.0        # standard error of `survives` at the trial count used
     dollars_se: float = 0.0         # standard error of `expected_dollars`, likewise
+    plan_source: str = ""           # `Plan.source` of what our entry played after this
+                                    # pick; "" for a week priced in closed form
 
 
 class Weekly(NamedTuple):
@@ -344,8 +359,9 @@ class Weekly(NamedTuple):
     **It is not the quantity ADR-0014's threshold is stated in.** The rule fires on a
     win-probability cost of under ~8pp; this is a season-survival difference, and the two
     routinely disagree in sign, because buying survival later with a lower win probability now
-    is the entire thesis of a survivor plan. Named in `journal.record_weekly`, which is where
-    the column is written and where the choice between them has to be made.
+    is the entire thesis of a survivor plan. #209 settled it: `journal.record_weekly` logs
+    both, and `week_cost` -- the fallback's `win_prob` minus the taken candidate's, off the
+    same `candidates` -- is the threshold quantity. This stays as the thesis.
 
     It is **signed on purpose**. A departure that survives better than the free pick has given
     up nothing and gained something, and clamping that to zero would file it as "the two plans
@@ -362,6 +378,16 @@ class Weekly(NamedTuple):
     `test_our_entry_survives_materially_more_often_than_the_field_rule_gave_it` says so from
     the test side). Two plans against each other is the comparison this simulator can make
     honestly, and it is the one every figure here reports.
+
+    **The last five fields are what it takes to run this week again** (#162). A figure with
+    no provenance cannot be told from the same figure produced under different rules, and
+    `hub.season.journal` records this shape -- so what a row needs to be re-derived has to
+    be on the shape first. `seed` is the value every candidate was reseeded to, `entries`
+    and `outlay` are the two inputs the caller stated that nothing else here carries,
+    `pool_digest` names the rules and `grid_digest` the board. With `trials` and `pot`,
+    which were already here, `weekly(..., trials=w.trials, seed=w.seed)` on the same grid
+    reproduces every candidate exactly; `test_journal` holds that from the journal's side.
+    The ledger is not carried: it is what the earlier picks in the same journal spent.
     """
     week: int
     recommend: str
@@ -374,6 +400,11 @@ class Weekly(NamedTuple):
     given_up_se: float = 0.0    # standard error of `given_up`, paired across the same trials
     trials: int = 0             # trials each candidate was run for; 0 when none were needed
     cashed: int = 0             # of those, the ones where either arm took a share of the pot
+    seed: int = 0               # what every candidate's generator was reseeded to
+    entries: int = 0            # the field each candidate was priced against, ours included
+    outlay: float = 0.0         # what every candidate's dollars are net of
+    pool_digest: str = ""       # `hub.config.pool_digest` of the rules this was priced under
+    grid_digest: str = ""       # `grid_digest` of the board it was priced on
 
     @property
     def unresolved(self) -> bool:
@@ -467,6 +498,29 @@ class _Week(NamedTuple):
     dropped: int = 0                            # fixtures in the week priced on one side only
 
 
+def grid_digest(grid: pl.DataFrame) -> str:
+    """Stable 8-char hash of what the board prices: week, team, win probability, fixture.
+
+    The grid's vintage, for a row that has to say which board its figure came from (#162).
+    Only the four columns the simulator reads are hashed, so a grid carrying `kickoff` or
+    `moving_field` beside them digests the same as one that does not -- those move nothing
+    here, and a digest that moved with them would report drift in a figure that had not
+    drifted. Rows are put in a declared order first, because the bytes are order-sensitive
+    and the order a source hands rows over in is the source's whim; ties through all four
+    columns are identical rows and write identical bytes either way.
+
+    Text rather than Arrow bytes, for the reason `hub.fetch.nflverse.content_digest` gives:
+    a frame and the same frame read back from parquet serialise to different IPC bytes.
+    Not that function itself, because it lives in a fetch layer and this module imports
+    none -- the simulator has to be answerable from a frame alone.
+    """
+    cols = [c for c in ("week", "team", "win_prob", "game_id") if c in grid.columns]
+    canon = grid.select(cols).sort(cols)
+    head = ",".join(f"{c}:{canon.schema[c]}" for c in cols)
+    return hashlib.sha256((head + "\n").encode()
+                          + canon.write_csv().encode()).hexdigest()[:8]
+
+
 def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
                     pool: PoolConfig | None = None) -> list[_Week]:
     """Reshape the win-probability grid into one entry per week.
@@ -541,10 +595,10 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
         if len(games) < f.needs:
             raise UnpricedWeek(
                 (f"week {f.week} has no completely priced fixture: " if not games else
-                 f"week {f.week} takes {_plural(f.needs, 'pick')} and has only "
-                 f"{_plural(len(games), 'completely priced fixture')} to take them from: ")
-                + f"{_plural(len(games) + len(f.half), 'fixture')} in the grid, "
-                f"{_plural(len(f.half), 'fixture')} priced on one side only. Refused rather "
+                 f"week {f.week} takes {plural(f.needs, 'pick')} and has only "
+                 f"{plural(len(games), 'completely priced fixture')} to take them from: ")
+                + f"{plural(len(games) + len(f.half), 'fixture')} in the grid, "
+                f"{plural(len(f.half), 'fixture')} priced on one side only. Refused rather "
                 "than simulated -- with no legal pick to field, every entry is eliminated at "
                 "once and the ending week would report the contest ending in a week the grid "
                 "never covered. Two picks cannot come from both sides of one fixture, because "
@@ -1127,7 +1181,7 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
                        len(set(ledger)), 0.0, 0.0, cfg.buyback_fee, 0.0, 0.0, False)
     if used >= cfg.buyback_cap:
         return Buyback(False,
-                       f"no buyback: this entry has used {_plural(used, 'buyback')} of "
+                       f"no buyback: this entry has used {plural(used, 'buyback')} of "
                        f"the {cfg.buyback_cap} the cap allows each entry",
                        pot, live_entries, len(set(ledger)), 0.0, 0.0, cfg.buyback_fee,
                        0.0, 0.0, False)
@@ -1175,7 +1229,7 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
         available=True,
         reason=(f"{'BUY BACK' if yes else 'DO NOT BUY BACK'}: "
                 f"${equity:.2f} of equity against a ${cfg.buyback_fee:.2f} fee, "
-                + (f"re-entering with {_plural(len(inherits), 'team')} already spent"
+                + (f"re-entering with {plural(len(inherits), 'team')} already spent"
                    if cfg.buyback_restores_ledger else
                    "re-entering with a clean ledger, which is what this pool's rules say a "
                    "buyback restores")),
@@ -1204,7 +1258,8 @@ def auto_pick(grid: pl.DataFrame, week: int, ledger: Sequence[str] = ()) -> str 
 def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
            ledger: Sequence[str] = (), entries: int, pot: float, outlay: float = 0.0,
            pool: PoolConfig | None = None, top: int = 6,
-           trials: int = WEEKLY_TRIALS, rng: np.random.Generator | None = None) -> Weekly:
+           trials: int = WEEKLY_TRIALS, rng: np.random.Generator | None = None,
+           seed: int | None = None) -> Weekly:
     """This week's pick, what it is worth, and what it cost against the free one.
 
     A candidate is worth `P(it wins this week)` times what the rest of the season is worth
@@ -1215,10 +1270,14 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     reservation was made for; and a double-pick week nobody survives to contributes nothing,
     for the same reason and without a special case.
 
-    **The approximation, stated.** The field is not advanced through this week before the rest
-    is valued, so rival attrition in the current week is not credited to any candidate. That
-    understates every figure by close to the same factor, which leaves the ranking -- the part
-    a recommendation is -- intact.
+    **The approximation, stated -- and measured.** The field is not advanced through this
+    week before the rest is valued, so rival attrition in the current week is not credited
+    to any candidate. This paragraph used to argue that understates every figure by close
+    to the same factor and leaves the ranking intact, which #161 refuted in principle: the
+    attrition is correlated with our own pick, so it is a term in the *comparison*. What
+    it is worth is `leverage`'s question, and the first run's answer -- unresolved at two
+    standard errors on the default axis, positive in direction -- is on `LEVERAGE`, which
+    the entry point prints beside every figure this returns.
 
     **Every candidate plays the same season.** Each one gets a generator reseeded to the same
     value, so the field draws the identical results and the only difference between two figures
@@ -1253,6 +1312,12 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     Only the `top` most likely teams are valued. Each one costs a simulation, and a team the
     betting market prices below the sixth-best is not a candidate for a pick whose whole
     purpose is surviving the week.
+
+    **`seed` is the reseed value itself, for a re-run** (#162). Left out, one is drawn from
+    `rng` as it always was and every candidate is reseeded to it; given, it is used as-is.
+    The value is carried out on `Weekly.seed` either way, so a journal row that names it can
+    hand it back here and meet the identical trials -- which is what makes a recorded figure
+    reproducible rather than merely recorded.
     """
     cfg = pool or PoolConfig()
     rng = rng or np.random.default_rng(0)
@@ -1266,7 +1331,7 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     free = auto_pick(grid, week, ledger)
     ranked = wk.sort(["win_prob", "team"], descending=[True, False]).head(top)
 
-    seed = int(rng.integers(2 ** 32))
+    seed = int(rng.integers(2 ** 32)) if seed is None else int(seed)
     cands: list[Candidate] = []
     # The per-trial figure behind each candidate's mean, kept so the comparison at the bottom
     # can be made trial by trial. A candidate's own standard error goes on the candidate; the
@@ -1293,6 +1358,7 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
                 dtype=float)
             s_se = float(np.std(live[team])) / root * p
             d_se = float(np.std(xs)) / root * p * pot
+            source = rest.plan.source if rest.plan is not None else ""
         else:
             # Nothing left to play: surviving this week is surviving, and the pot is split
             # with whoever else is still standing -- which the field statistics cannot say
@@ -1300,8 +1366,9 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
             # was run, so both errors are zero because the figures are exact.
             survives, share = 1.0, 1.0
             s_se = d_se = 0.0
+            source = ""
         cands.append(Candidate(team, p, p * survives, p * share * pot - outlay, team == free,
-                               s_se, d_se))
+                               s_se, d_se, source))
 
     cands.sort(key=lambda c: (-c.expected_dollars, c.team))
     best = cands[0]
@@ -1333,7 +1400,9 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
         matched=best.team == free,
         given_up=(fb.survives - best.survives) if fb else 0.0,
         pot=pot, resolution=res, candidates=cands,
-        given_up_se=gse, trials=trials if ahead else 0, cashed=cashed)
+        given_up_se=gse, trials=trials if ahead else 0, cashed=cashed,
+        seed=seed, entries=entries, outlay=outlay,
+        pool_digest=pool_digest(cfg), grid_digest=grid_digest(grid))
 
 
 def _places(se: float, *, cap: int) -> int:
@@ -1432,7 +1501,7 @@ def report(b: Buyback, *, places: int = 2) -> list[str]:
     # least a dollar of pot to our side, so no fee flips the verdict.
     flip = (f"  breakeven fee ${b.breakeven:.{places}f}" if np.isfinite(b.breakeven) else
             f"  no breakeven: a {b.share * 100:.1f}% share of a pot "
-            f"{_plural(1 + b.rivals, 'buyback')} pay into gains at least a dollar per "
+            f"{plural(1 + b.rivals, 'buyback')} pay into gains at least a dollar per "
             "dollar of fee, so no fee flips this verdict")
     return [
         f"\n  {b.reason}",
@@ -1456,7 +1525,7 @@ def simulate(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
     """
     if ledgers is not None and len(ledgers) != entries:
         raise ValueError(
-            f"{_plural(len(ledgers), 'starting ledger')} for {entries} entries: `ledgers` is "
+            f"{plural(len(ledgers), 'starting ledger')} for {entries} entries: `ledgers` is "
             "matched to entries by position, so it has to name every one of them. Pass a "
             "ledger per entry -- an empty set for an entry that has spent nothing.")
     rng = rng or np.random.default_rng(0)
@@ -1621,7 +1690,7 @@ def sensitivity_report(rows: Sequence[Sensitivity], *, places: int = 2) -> list[
         return ["\n  no concentrations swept"]
     weeks = sorted(rows[0].field.alive_by_week)
     last = weeks[-1]
-    out = [f"\n  field concentration: {_plural(len(rows), 'point')} on the axis, "
+    out = [f"\n  field concentration: {plural(len(rows), 'point')} on the axis, "
            f"{rows[0].field.trials} trials each. 1.0 is sampling proportional to win "
            "probability -- stated, never fitted",
            f"  {'k':>5}  {'own':>7}  {'wiped':>7}  {'alive':>7}  {'survives':>9}  "
@@ -1642,3 +1711,480 @@ def sensitivity_report(rows: Sequence[Sensitivity], *, places: int = 2) -> list[
     out.append(f"  equity ${lo:.{places}f} to ${hi:.{places}f} across the axis, against "
                f"${res:.{places}f} these trials resolve")
     return out
+
+
+# --- the current week's rival attrition, measured (#161) --------------------------------
+#
+# `weekly` prices a candidate as `P(it wins this week)` times what the rest of the season is
+# worth with it spent, and the rest of the season is simulated against a field that has
+# *not* been played through the week being decided. So the week's rival attrition -- the
+# rivals that go out on the pick they made this week -- is credited to no candidate. #161's
+# original text argued that this understates every candidate by about the same factor and
+# leaves the ranking intact, and then argued against itself: the attrition is correlated
+# with our own pick. Taking the chalk everybody holds means the field does not thin when it
+# wins; taking a contrarian winner while the chalk loses thins it enormously. That
+# correlation *is* the leverage term, and it is the economic case for departing from the
+# free pick at all.
+#
+# It was to be declared absent. #151 made it measurable instead: our entry replays a plan and
+# rival attrition is a property of the field sampler alone, with a stated concentration
+# exponent, so "advance the field through the week" is one more week handed to the same
+# simulator with our pick as the first week of our plan. `leverage` runs both arms and
+# reports their difference across the concentration axis, paired per #159 within each arm.
+
+class Leverage(NamedTuple):
+    """One candidate against the free pick, priced with and without this week's attrition.
+
+    `unadvanced` is the dollar difference `weekly` reports: the candidate's figure minus the
+    fallback's, each `P(wins) * share(rest of season) * pot`, on trials where both plans met
+    the identical field over the weeks *after* this one. `advanced` is the same difference on
+    trials that started from this week -- our entry playing the candidate here and our plan
+    after it, every rival sampling this week's pick under `PoolConfig.field_concentration`
+    and going out on it or not -- so the field the rest of the season is priced against is
+    the field this week left standing.
+
+    **Each arm is paired and the two arms are not**, and the interval says so. Within an arm
+    the two candidates meet the same season trial for trial (`_play` draws the whole season
+    before anybody picks), so `unadvanced_se` and `advanced_se` are standard errors of a
+    per-trial difference and tight. Between the arms the seasons differ -- one draws this
+    week's games and one does not, so the same seed produces offset streams -- and the
+    difference of the two differences carries both errors: `term_se` is their root sum of
+    squares. `docs/method.md` rule 3, in its general form: two runs are not repeated
+    measures of one thing unless they share the draws, and these cannot.
+
+    `term` is the leverage term: what advancing the field through this week does to the
+    case for this candidate over the free one. Positive means the attrition favours the
+    departure; `resolvable` is whether the trials can see it at `DECISIVE_SIGMA` at all,
+    and where they cannot the honest report is that the term is unresolved -- not that it
+    is zero.
+    """
+    concentration: float
+    team: str
+    fallback: str
+    unadvanced: float
+    unadvanced_se: float
+    advanced: float
+    advanced_se: float
+    trials: int
+
+    @property
+    def term(self) -> float:
+        """What this week's rival attrition is worth to the departure, in dollars."""
+        return self.advanced - self.unadvanced
+
+    @property
+    def term_se(self) -> float:
+        """The two arms are independent runs, so their errors add in quadrature."""
+        return float(np.hypot(self.advanced_se, self.unadvanced_se))
+
+    @property
+    def resolvable(self) -> bool:
+        """Whether these trials can tell the term from zero at the repo's bar."""
+        return abs(self.term) > DECISIVE_SIGMA * self.term_se
+
+
+def _shares(cfg: PoolConfig, out: EntryOutcome) -> np.ndarray:
+    """What each trial paid, off the two-count record, under the rules given."""
+    return np.array([trial_share(cfg, n, m)
+                     for n, m in zip(out.survivors_each, out.last_out_each, strict=True)],
+                    dtype=float)
+
+
+def leverage(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
+             ledger: Sequence[str] = (), entries: int, pot: float,
+             pool: PoolConfig | None = None, at: Sequence[float] = DEFAULT_CONCENTRATIONS,
+             top: int = 6, trials: int = WEEKLY_TRIALS,
+             rng: np.random.Generator | None = None) -> list[Leverage]:
+    """The leverage term for every candidate this week, at every concentration in `at`.
+
+    The measurement #161 was re-scoped to. Two arms per candidate per concentration, on one
+    seed: the rest of the season with the candidate spent and the field untouched -- exactly
+    what `weekly` prices -- and the whole season from this week with the candidate as its
+    first pick, so the field is played through the week and thinned by it before the rest is
+    valued. Both arms meet the free pick on the identical field within the arm, which is the
+    pairing #159 built and the reason the difference within an arm is tight.
+
+    Every candidate is run rather than the recommendation alone, because the question is
+    whether the term is resolvable *anywhere* -- and on a board where the recommendation is
+    the free pick there would otherwise be nothing to measure.
+
+    **What the first run found**, 2026-09-11, on the synthetic 32-team board in
+    `tests/unit/test_pool.py` over weeks 1-14, week 1 decided, 21 entries, pot $420, 1600
+    trials, seed 0, both pool rules at `split` -- the board and seed `sensitivity`'s two
+    sweeps used. Five candidates against the free pick T31 at each of the five default
+    concentrations, twenty-five comparisons, 415 seconds:
+
+      * **Not resolvable at two standard errors on the axis.** Two of twenty-five clear the
+        bar -- T30 at 8.0, +$3.77 against +/-$3.23 (z 2.3), and T28 at 16.0, +$6.60 against
+        +/-$5.29 (z 2.5) -- and twenty-five null comparisons clear it about 1.1 times, with
+        a spread of one; two hits is inside that. So the term is *unresolved* at these
+        trials, which is the absence #161 asks to be stated and is not a zero.
+      * **The direction is consistent and grows with concentration.** Twenty-four of the
+        twenty-five terms are positive -- the attrition favours the departure, as #161's
+        argument says it should -- and at 16.0 the five run +$1.20, +$2.73, +$6.60, +$2.24,
+        +$4.26 (z 0.8 to 2.5) where at 1.0 they run -$2.20 to +$5.48 (z -0.8 to 0.8). But
+        the twenty-five rows are one seed: the arms meet the same game results at every
+        concentration and the five candidates at one concentration share the free pick's
+        arm, so that is not twenty-four readings and it is not pooled into one
+        (`docs/method.md` rule 3).
+      * **The resolution is the advanced arm's.** Its standard error runs $1.3 to $5.4
+        against $0.08 to $4.5 for the unadvanced arm, because our own week-1 result is drawn
+        there and multiplied in here. Resolving a +$3 term at 16.0 needs roughly 4,000
+        trials per arm; nobody has run that, and until somebody does the published figure
+        carries `LEVERAGE` below beside `pool_digest`.
+
+    Costs twice what `weekly` costs: `top` candidates, two simulations each, per point on
+    the axis. It is a measurement and not the weekly path, and `hub.season.pool --leverage`
+    is how an operator asks for it on a real week.
+    """
+    cfg = pool or PoolConfig()
+    rng = rng or np.random.default_rng(0)
+    seed = int(rng.integers(2 ** 32))
+    ahead = _ahead(weeks, week)
+    if not ahead:
+        raise ValueError(
+            f"week {week} has nothing priced after it: the rest of the season is what the "
+            "field's attrition this week is worth something *in*, so with no weeks ahead "
+            "there is no term to measure. `weekly` prices such a week in closed form.")
+    spent = set(ledger)
+    free = auto_pick(grid, week, ledger)
+    if free is None:
+        raise ValueError(f"week {week} has no legal pick left: {len(spent)} teams are spent")
+    wk = grid.filter((pl.col("week") == week) & (pl.col("win_prob") > MIN_PROB))
+    wk = wk.filter(~pl.col("team").is_in(list(spent))) if spent else wk
+    ranked = wk.sort(["win_prob", "team"], descending=[True, False]).head(top)
+    # The free pick is always the first of these: `auto_pick` is the same filter and the
+    # same sort, so a guard appending it when absent would be a guard that cannot fire.
+    teams = [(str(r["team"]), float(r["win_prob"])) for r in ranked.iter_rows(named=True)]
+    root = np.sqrt(trials)
+    rows: list[Leverage] = []
+    for k in at:
+        this = replace(cfg, field_concentration=float(k))
+        unadvanced: dict[str, np.ndarray] = {}
+        advanced: dict[str, np.ndarray] = {}
+        for team, p in teams:
+            rest = entry_outcome(grid, ahead, entries=entries, ledger=[*sorted(spent), team],
+                                 pool=this, trials=trials, rng=np.random.default_rng(seed))
+            unadvanced[team] = p * _shares(this, rest)
+            # The same plan with this week's pick in front of it, replayed from this week:
+            # `entry_outcome` solved `rest.plan` over `ahead` with the candidate spent, so
+            # putting the candidate at `week` and that plan after it is the season our entry
+            # would play. Rivals sample this week like any other, and go out on it.
+            after = rest.plan if rest.plan is not None else Plan({}, "none")
+            whole = Plan({week: (team,), **after.picks}, after.source)
+            full = entry_outcome(grid, [week, *ahead], entries=entries, ledger=sorted(spent),
+                                 pool=this, plan=whole, trials=trials,
+                                 rng=np.random.default_rng(seed))
+            advanced[team] = _shares(this, full)
+        for team, _ in teams:
+            if team == free:
+                continue
+            du = pot * (unadvanced[team] - unadvanced[free])
+            da = pot * (advanced[team] - advanced[free])
+            rows.append(Leverage(
+                concentration=float(k), team=team, fallback=free,
+                unadvanced=float(du.mean()), unadvanced_se=float(np.std(du)) / root,
+                advanced=float(da.mean()), advanced_se=float(np.std(da)) / root,
+                trials=trials))
+    return rows
+
+
+def leverage_report(rows: Sequence[Leverage], *, places: int = 2) -> list[str]:
+    """The measurement as lines, ending with the one sentence a reader needs.
+
+    A row per candidate per concentration: the difference `weekly` prices, the same
+    difference with the field advanced through the week, and the term between them beside
+    the interval it has to clear. The last line is the verdict for the axis -- resolvable
+    somewhere, or not anywhere -- and where it is not, it says the term is *unresolved*,
+    which is a different claim from zero and the one #161 asks to be stated.
+    """
+    if not rows:
+        return ["\n  no leverage measured"]
+    out = [f"\n  this week's rival attrition, priced: each candidate against the free pick "
+           f"{rows[0].fallback}, {rows[0].trials} trials per arm",
+           f"  {'k':>5}  {'pick':<4}  {'unadvanced':>11}  {'advanced':>11}  {'term':>9}  "
+           f"{'+/- ' + str(int(DECISIVE_SIGMA)) + 'se':>9}  resolvable"]
+    for r in rows:
+        out.append(f"  {r.concentration:>5.2f}  {r.team:<4}  ${r.unadvanced:>+10.{places}f}"
+                   f"  ${r.advanced:>+10.{places}f}  ${r.term:>+8.{places}f}  "
+                   f"${DECISIVE_SIGMA * r.term_se:>8.{places}f}  "
+                   f"{'yes' if r.resolvable else 'no'}")
+    hit = [r for r in rows if r.resolvable]
+    chance = expected_by_chance(len(rows))
+    positive = sum(r.term > 0 for r in rows)
+    where = ", ".join(f"{r.team} at {r.concentration:g}" for r in hit)
+    if resolvable_on_the_axis(rows):
+        out.append(f"  resolvable at {DECISIVE_SIGMA:.0f} standard errors: {where} -- "
+                   f"{len(hit)} of {len(rows)} comparisons, where chance would give about "
+                   f"{chance:.1f}. The figures `weekly` reports omit this term, and a reader "
+                   "should carry it.")
+    else:
+        out.append(f"  not resolvable at {DECISIVE_SIGMA:.0f} standard errors on the axis: "
+                   + (f"{len(hit)} of {len(rows)} comparisons clear it ({where}), and "
+                      f"{len(rows)} null comparisons would clear it about {chance:.1f} "
+                      "times. " if hit else
+                      f"none of {len(rows)} comparisons clears it. ")
+                   + f"{positive} of {len(rows)} terms are positive, but the rows share "
+                   "their draws and are not that many readings. That is the term "
+                   "unresolved at these trials, not the term measured at zero: `weekly`'s "
+                   "figures omit it, and nothing here says what it is.")
+    return out
+
+
+# The two-sided tail beyond DECISIVE_SIGMA standard errors under the null: what fraction of
+# comparisons with no effect clear the bar anyway. 4.55% at two, and stated once.
+_NULL_TAIL = 0.0455
+
+
+def expected_by_chance(comparisons: int) -> float:
+    """How many of this many null comparisons clear `DECISIVE_SIGMA` by chance."""
+    return comparisons * _NULL_TAIL
+
+
+def resolvable_on_the_axis(rows: Sequence[Leverage]) -> bool:
+    """Whether the comparisons that clear the bar are more than the bar itself produces.
+
+    Twenty-five comparisons at two standard errors clear it about once with nothing there,
+    so "resolvable somewhere on the axis" cannot be read off any one row: a sweep that asks
+    the question twenty-five times has to hold the *count* to the same bar. The count of
+    hits is compared against its own expectation under the null plus `DECISIVE_SIGMA` of its
+    binomial spread. That treats the rows as independent, and they are less than that --
+    one seed means the arms meet the same game results across the axis, and the candidates
+    at one concentration share the free pick's arm -- so the real bar is higher still, and
+    a sweep that fails this one has certainly not resolved the term.
+    """
+    n = len(rows)
+    if n == 0:
+        return False
+    hits = sum(r.resolvable for r in rows)
+    mean = expected_by_chance(n)
+    spread = float(np.sqrt(n * _NULL_TAIL * (1.0 - _NULL_TAIL)))
+    return hits > mean + DECISIVE_SIGMA * spread
+
+
+# The statement the published figure carries beside `pool_digest` (#161): what the first
+# run of `leverage` found, so a reader of a weekly figure is told whether the term it omits
+# has been seen. Re-measured, this line moves with it (`docs/method.md` rule 13).
+LEVERAGE = (
+    "this week's rival attrition is not priced into these figures (#161). Measured "
+    "2026-09-11 on the synthetic 32-team board over weeks 1-14, week 1 decided, 21 entries, "
+    "1600 trials, seed 0, across concentrations 1 to 16: not resolvable at 2 standard "
+    "errors on the axis (2 of 25 comparisons clear it, where chance gives about 1), so the "
+    "term is unresolved rather than zero; 24 of the 25 terms are positive and grow with "
+    "concentration, on rows that share their draws. `hub.season.pool --leverage` "
+    "re-measures it on the week in front of you."
+)
+
+
+# --- the entry point (#163) ---------------------------------------------------------------
+#
+# The money layer had no `main`, no importer and no target, which also exempted it from
+# `tests/contracts/test_cli_surface.py` -- the contract asserting that every module in the
+# tree with an entry point answers absent input with a sentence, and serves last-good state
+# where it has any. So the most operationally consequential code in the repo was the only
+# code not held to the rule that a module must produce a usable answer with a failed fetch.
+# `buyback` in particular had no production caller at all: a slot with no producer reads to
+# a future maintainer as a capability.
+
+def drawable_weeks(grid: pl.DataFrame, cfg: PoolConfig, through: int) -> list[int]:
+    """The weeks the simulator can play: enough completely priced fixtures to take the picks.
+
+    `weeks_from_grid` refuses a week with fewer drawable fixtures than picks, and refusing is
+    right for a caller that named the week; a caller pricing "the season from here" wants the
+    weeks the board *can* price, which is this list. The rule is `survivor.week_fixtures`'s
+    drawable half, read here rather than restated.
+    """
+    return [f.week for f in week_fixtures(grid, list(range(1, through + 1)), cfg)
+            if len(f.drawable) >= f.needs]
+
+
+def _axis(text: str) -> tuple[float, ...]:
+    """`--at 1,2,4` as floats, in the order given."""
+    return tuple(float(x) for x in text.split(",") if x.strip())
+
+
+def _last_good(season: int, week: int | None, base: Path | None, why: Exception) -> int:
+    """The decision already recorded for this week, served in place of a figure.
+
+    `CLAUDE.md`'s degradation rule: a failed fetch serves last-good state from the store
+    rather than erroring. What this module's last-good state *is* is the journal -- the
+    figure it recorded the last time it could run, under the columns that let a reader tell
+    what it was conditional on -- so a schedule that cannot be read hands back the last row
+    for the week rather than a traceback. No row is the fresh-clone case, and that is
+    reported the way every other entry point reports it: `hub.cli.unavailable`.
+    """
+    from hub.cli import unavailable
+    from hub.season import journal
+    try:
+        rows = journal.read(season, week, base=base)
+    except Exception:
+        rows = pl.DataFrame()
+    if rows.is_empty():
+        return unavailable("hub.season.pool", f"the {season} schedule and its prices", why)
+    last = rows.sort("at").tail(1)
+    print(f"hub.season.pool: the {season} schedule is unavailable ({type(why).__name__}: "
+          f"{why}); serving the last decision recorded for week {last['week'][0]}",
+          file=sys.stderr)
+    for line in journal.report(last):
+        print(line)
+    return 0
+
+
+def axis_report(by_k: dict[float, Weekly], *, places: int = 2) -> list[str]:
+    """The week's figure as a range over the concentration knob, which is the published form.
+
+    `weekly` answers at one concentration and `sensitivity` sweeps the season; this is the
+    week swept, because #152 established that a dollar figure quoted at one concentration is
+    quoting an assumption, and a recommendation is the figure a reader acts on. A pick that
+    holds at every point on the axis is a pick about the pool; one that moves is a pick
+    about the assumption, and the line says which.
+    """
+    if not by_k:
+        return ["\n  no concentrations swept"]
+    out = [f"\n  across the field-concentration axis, {plural(len(by_k), 'point')}:",
+           f"  {'k':>5}  {'pick':<4}  {'free':<4}  {'pick $':>9}  {'free $':>9}  decisive"]
+    for k, w in by_k.items():
+        best = w.candidates[0]
+        fb = next((c for c in w.candidates if c.is_fallback), None)
+        out.append(f"  {k:>5.2f}  {w.recommend:<4}  {w.fallback or '-':<4}  "
+                   f"${best.expected_dollars:>8.{places}f}  "
+                   + (f"${fb.expected_dollars:>8.{places}f}" if fb else f"{'-':>9}")
+                   + f"  {'yes' if w.decisive else 'no'}")
+    picks = {w.recommend for w in by_k.values()}
+    lo = min(w.candidates[0].expected_dollars for w in by_k.values())
+    hi = max(w.candidates[0].expected_dollars for w in by_k.values())
+    res = max(w.resolution for w in by_k.values())
+    out.append(f"  ${lo:.{places}f} to ${hi:.{places}f} across the axis against "
+               f"${res:.{places}f} these trials resolve -- "
+               + (f"{next(iter(picks))} at every point" if len(picks) == 1 else
+                  f"the pick moves with the assumption: {', '.join(sorted(picks))}"))
+    return out
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    from hub.cli import unavailable
+    from hub.config import SEASON_AHEAD, resolved_config
+    from hub.season import journal
+    from hub.season import survivor as sv
+
+    ap = argparse.ArgumentParser(
+        prog="hub.season.pool",
+        description="Price this week's survivor pick against the field, as a range over the "
+                    "field-concentration axis; or, with --eliminated, price the buyback.")
+    ap.add_argument("--season", type=int, default=SEASON_AHEAD)
+    ap.add_argument("--week", type=int, default=None,
+                    help="the week being decided; defaults to the first week still ahead")
+    ap.add_argument("--entries", type=int, default=None,
+                    help="live entries, ours included; defaults to the pool's field size")
+    ap.add_argument("--pot", type=float, default=None,
+                    help="the pot as it stands; defaults to entry fee times field size")
+    ap.add_argument("--outlay", type=float, default=None,
+                    help="what this entry has paid in; defaults to the entry fee")
+    ap.add_argument("--ledger", default=None,
+                    help="teams already spent, comma-separated; defaults to what the "
+                         "published plan spent in the weeks already played")
+    ap.add_argument("--trials", type=int, default=WEEKLY_TRIALS)
+    ap.add_argument("--at", default=",".join(str(k) for k in DEFAULT_CONCENTRATIONS),
+                    help="the field-concentration axis to report across")
+    ap.add_argument("--eliminated", action="store_true",
+                    help="price re-entering after going out in --week, instead of a pick")
+    ap.add_argument("--used", type=int, default=0, help="buybacks this entry has taken")
+    ap.add_argument("--rival-buybacks", type=int, default=0,
+                    help="rivals assumed to re-enter alongside us")
+    ap.add_argument("--leverage", action="store_true",
+                    help="also measure this week's rival attrition term across the axis "
+                         "(twice the cost of the figure)")
+    ap.add_argument("--record", action="store_true",
+                    help="write the decision to the journal, at the configured concentration")
+    ap.add_argument("--chose", default=None,
+                    help="what was actually entered, if not the recommendation (--record)")
+    ap.add_argument("--store", type=Path, default=None,
+                    help="the processed store the journal is read from and written to")
+    a = ap.parse_args(argv)
+
+    cfg = resolved_config().pool
+    try:
+        grid = sv.grid_from_schedule(a.season)
+    except Exception as e:
+        return _last_good(a.season, a.week, a.store, e)
+
+    behind = sv.played(grid)
+    weeks = [w for w in drawable_weeks(grid, cfg, sv.NFL_WEEKS) if w not in behind]
+    week = a.week if a.week is not None else (weeks[0] if weeks else None)
+    if week is None or (week not in weeks and not a.eliminated):
+        return unavailable(
+            "hub.season.pool", f"a priced week to decide in the {a.season} schedule",
+            UnpricedWeek(f"week {week} is not among the weeks the board can play: "
+                         f"{weeks or 'none'}"))
+    entries = a.entries if a.entries is not None else cfg.field_size
+    pot = a.pot if a.pot is not None else cfg.entry_fee * cfg.field_size
+    outlay = a.outlay if a.outlay is not None else cfg.entry_fee
+    ledger = ([t.strip() for t in a.ledger.split(",") if t.strip()] if a.ledger is not None
+              else sv.spent_teams(sv.published_plan(), behind, season=a.season))
+    axis = _axis(a.at)
+    # One seed for every point on the axis and both kinds of decision, so a row recorded
+    # from here can be run again from its own columns (#162) and two points on the axis
+    # start from the same stream, as `sensitivity` has them start.
+    seed = int(np.random.default_rng(0).integers(2 ** 32))
+
+    print(f"  survivor pool, {a.season} week {week}: {entries} entries, pot ${pot:.2f}, "
+          f"{plural(len(ledger), 'team')} spent"
+          + (f" ({', '.join(ledger)})" if ledger else ""))
+    print(f"  rules {pool_digest(cfg)}  board {grid_digest(grid)}  seed {seed}  "
+          f"{a.trials} trials per candidate; field concentration {cfg.field_concentration} "
+          f"is the configured point, reported across {', '.join(str(k) for k in axis)}")
+
+    if a.eliminated:
+        def price(k: float) -> Buyback:
+            return buyback(grid, weeks, week=week, ledger=ledger, live_entries=entries,
+                           pot=pot, rival_buybacks=a.rival_buybacks, used=a.used,
+                           pool=replace(cfg, field_concentration=k), trials=a.trials,
+                           rng=np.random.default_rng(seed))
+        by_k = {k: price(k) for k in axis}
+        here = by_k.get(cfg.field_concentration) or price(cfg.field_concentration)
+        for line in report(here):
+            print(line)
+        nets = [b.net for b in by_k.values() if b.available]
+        if nets:
+            verdicts = {b.recommend for b in by_k.values() if b.available}
+            print(f"  net ${min(nets):+.2f} to ${max(nets):+.2f} across the axis -- "
+                  + ("the verdict holds at every point" if len(verdicts) == 1 else
+                     "the verdict flips inside that range, so it is about the "
+                     "concentration assumption and not the pool"))
+        if a.record:
+            took = a.chose or ("buy back" if here.recommend else "stay out")
+            k = journal.record(season=a.season, week=week, kind="buyback", chose=took,
+                               expected_dollars=here.net if here.available else None,
+                               pool_digest=pool_digest(cfg), grid_digest=grid_digest(grid),
+                               seed=seed, trials=a.trials, entries=entries, pot=pot,
+                               outlay=outlay, base=a.store)
+            print(f"  recorded {k}")
+        return 0
+
+    def value(k: float) -> Weekly:
+        return weekly(grid, weeks, week=week, ledger=ledger, entries=entries, pot=pot,
+                      outlay=outlay, pool=replace(cfg, field_concentration=k),
+                      trials=a.trials, seed=seed)
+    by_k = {k: value(k) for k in axis}
+    here = by_k.get(cfg.field_concentration) or value(cfg.field_concentration)
+    for line in weekly_report(here):
+        print(line)
+    for line in axis_report(by_k):
+        print(line)
+    # What the figure above omits, said beside it (#161). The standing statement is what
+    # the first run found; `--leverage` measures it on this week instead of quoting it.
+    if a.leverage:
+        for line in leverage_report(leverage(
+                grid, weeks, week=week, ledger=ledger, entries=entries, pot=pot, pool=cfg,
+                at=axis, trials=a.trials, rng=np.random.default_rng(seed))):
+            print(line)
+    else:
+        print(f"  {LEVERAGE}")
+    if a.record:
+        k = journal.record_weekly(here, season=a.season, chose=a.chose, base=a.store)
+        print(f"  recorded {k}")
+    return 0
+
+
+if __name__ == "__main__":                       # pragma: no cover - entry point
+    sys.exit(main())

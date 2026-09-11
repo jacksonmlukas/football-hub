@@ -179,6 +179,83 @@ def _absence_factor(missed, n_sims: int, weeks: int, rng: np.random.Generator) -
     return played / play_frac[None, None, :]
 
 
+def _schedule_for(season: int):
+    """The season's regular-season schedule through the validated loader -- one seam, so a
+    test can stand a frame in without reaching the network."""
+    from hub.fetch.nflverse import load
+    return load("schedules", seasons=[season],
+                cols=["game_id", "season", "week", "home_team", "away_team", "game_type"])
+
+
+def bye_weeks(season: int) -> dict[str, int]:
+    """Each team's bye: the one regular-season week it has no game -- issue #226.
+
+    Derived rather than listed, from the same nflverse schedule `playoff_sos` reads for
+    weeks 15-17, through the validated loader rather than inline. A bye is the week a team
+    is absent from every fixture; it is not a column anywhere, and the derivation is what
+    keeps the placement in step with the schedule the season is actually played on.
+
+    **One per team, or refuse.** The NFL plays 17 games in 18 weeks, so every team sits
+    exactly once. A team that sits twice or never is a schedule this league has not modelled
+    -- a shortened season, a cancelled game, a partial pull -- and silently taking the first
+    bye, or none, would read as a normal season with one week wrong. Raising names the team.
+
+    **Every bye has to fall inside the fantasy season.** `REG_SEASON_WEEKS` is 14 and byes
+    run weeks 5-14, so today they all do; a bye in week 15 would be one the simulated season
+    cannot see, which is `simulate_weeks`' refusal below and the ticket's fourth criterion --
+    the two constants agreeing is a fact the test holds rather than an assumption.
+
+    **What it moves, measured 2026-09-11 on the served 457-player board** (435 placed, 22
+    free agents null; byes weeks 5-14, 27 to 79 players a week). `win_probability` over
+    `recommend`'s shortlist at picks 3, 22, 27, 46, 51 and 70 from slot 3, common random
+    numbers, bye on against bye off, 12 rollouts x 250 seasons: the mean |change in lift|
+    is 0.002-0.004 and the largest 0.009, against a per-candidate `lift_se` of 0.0035. The
+    leader's name changed at three of the six picks -- and at every one of them, under two
+    seeds, each arm's leader sits inside the other arm's co-leader tier (`rank_tiers`), with
+    the tiers sharing 3-8 of 7-8 members. So the bye reorders inside ties and not across
+    them: it does not move the board ordering at the resolution the board has, which is
+    recorded here rather than read as a reason to leave the week unmodelled. It is kept
+    because it is the season's shape, not because it changes a pick.
+    """
+    import polars as pl
+
+    sched = _schedule_for(season)
+    reg = sched.filter(pl.col("game_type") == "REG") if "game_type" in sched.columns else sched
+    played = pl.concat([reg.select("week", pl.col("home_team").alias("team")),
+                        reg.select("week", pl.col("away_team").alias("team"))])
+    weeks = sorted(int(w) for w in reg["week"].unique().to_list())
+    out: dict[str, int] = {}
+    bad: dict[str, list[int]] = {}
+    for team in sorted(played["team"].unique().to_list()):
+        seen = set(played.filter(pl.col("team") == team)["week"].to_list())
+        byes = [w for w in weeks if w not in seen]
+        if len(byes) == 1:
+            out[str(team)] = byes[0]
+        else:
+            bad[str(team)] = byes
+    if bad:
+        raise ValueError(
+            f"a team should sit exactly once in a regular season; these do not: {bad}. A "
+            f"shortened season, a cancelled game or a partial schedule pull -- refused rather "
+            f"than read as a normal season with one week wrong.")
+    return out
+
+
+def attach_bye(board, byes: dict[str, int]):
+    """Add `bye_week` to the board: the week each player's team sits, null where the team
+    cannot be placed -- a free agent, a team the canon does not know. Never a default: the
+    simulator reads 0 as "no bye", and a placement failure is not that. Same shape as
+    `playoff_sos.attach_sos`, and the same reason."""
+    import polars as pl
+
+    from hub.draft.playoff_sos import canon_team
+    lookup = pl.DataFrame({"_team": list(byes), "bye_week": list(byes.values())},
+                          schema={"_team": pl.Utf8, "bye_week": pl.Int64})
+    keyed = board.with_columns(
+        pl.col("team").map_elements(canon_team, return_dtype=pl.Utf8).alias("_team"))
+    return keyed.join(lookup, on="_team", how="left").drop("_team")
+
+
 def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
                    pos: np.ndarray, n_sims: int, weeks: int = REG_SEASON_WEEKS,
                    rng: np.random.Generator | None = None,
@@ -186,7 +263,8 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
                    nfl_team: np.ndarray | None = None,
                    skew: np.ndarray | None = None,
                    missed: np.ndarray | None = None,
-                   report: CorrelationReport | None = None) -> np.ndarray:
+                   report: CorrelationReport | None = None,
+                   bye_week: np.ndarray | None = None) -> np.ndarray:
     """Weekly points for every team. Returns (sims, weeks, teams).
 
     Realised talent is drawn once per season, then weekly points are drawn around it.
@@ -248,6 +326,27 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
     # `missed is None` path consumes no random numbers at all -- see the docstring.
     if missed is not None:
         draws = draws * _absence_factor(missed, n_sims, weeks, rng)
+    # A bye is a scheduled zero, not a draw: the same week in every sim, and no other week
+    # touched (#226). It is deliberately *not* mean-preserving, unlike the absence factor
+    # above -- `mu` is points per team game and a bye is a week the team does not play, so
+    # fourteen fantasy weeks with one bye is thirteen games. And it is orthogonal to that
+    # factor: `missed` counts games missed out of the seventeen a team plays, which never
+    # includes the bye. Applied after every draw so it consumes no random numbers.
+    if bye_week is not None:
+        bye = np.asarray(bye_week, dtype=int)
+        if bye.shape != (mu.size,):
+            raise ValueError(f"bye_week has shape {bye.shape}; expected ({mu.size},)")
+        beyond = bye[(bye < 0) | (bye > weeks)]
+        if beyond.size:
+            raise ValueError(
+                f"bye week(s) {sorted(set(beyond.tolist()))} fall outside the {weeks}-week "
+                f"simulated season. REG_SEASON_WEEKS and the schedule's bye placement have "
+                f"drifted apart -- a bye the fantasy season cannot see is not 'no bye'.")
+        on_bye = bye > 0
+        if on_bye.any():
+            # Row = week index, column = player; True where that player's team sits.
+            mask = (np.arange(1, weeks + 1)[:, None] == bye[None, :]) & on_bye[None, :]
+            draws = draws * (~mask)[None, :, :]
     out = np.empty((n_sims, weeks, len(rosters)))
     for t, r in enumerate(rosters):
         out[:, :, t] = lineup_points(draws[:, :, r], pos[r]) if r.size else 0.0
@@ -312,22 +411,23 @@ def champion_probability(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarr
                          nfl_team: np.ndarray | None = None,
                          skew: np.ndarray | None = None,
                          missed: np.ndarray | None = None,
-                         report: CorrelationReport | None = None) -> np.ndarray:
+                         report: CorrelationReport | None = None,
+                         bye_week: np.ndarray | None = None) -> np.ndarray:
     """P(each team wins the league). Returns (teams,) summing to 1.
 
     14-week H2H regular season, top 6 seeds, two byes, then single elimination on one-week
     matchups -- read off the live league, not assumed. Three further weeks are simulated so
     the bracket has draws of its own.
 
-    The two byes here are playoff seeding and are unrelated to the NFL bye weeks #226 is
-    about; `leverage.py` uses the word in the same seeding sense. `missed` is handed straight
-    to `simulate_weeks` and is the absence model -- see `_absence_factor`.
+    The two byes here are playoff seeding; `bye_week` is the NFL bye #226 is about, one
+    per player, handed straight to `simulate_weeks` like `missed`, which is the absence
+    model -- see `_absence_factor`. `leverage.py` uses the word in the seeding sense.
     """
     rng = rng or np.random.default_rng(0)
     teams = len(rosters)
     pts = simulate_weeks(rosters, mu, sd, pos, n_sims,
                          REG_SEASON_WEEKS + PLAYOFF_ROUNDS, rng, talent_cv, nfl_team, skew,
-                         missed, report)
+                         missed, report, bye_week=bye_week)
     _, seeds = seed_table(pts)
     champs = np.array([champion(pts, seeds, s) for s in range(n_sims)])
     return np.bincount(champs, minlength=teams) / n_sims

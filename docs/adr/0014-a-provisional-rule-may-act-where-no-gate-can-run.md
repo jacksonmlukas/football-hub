@@ -2,7 +2,8 @@
 
 **Status:** accepted 2026-08-27. **Amended 2026-09-07** (issue #51) — criterion 2 is closed
 against a reclassification; the five requirements are otherwise unchanged. **Re-scored
-2026-09-07**: requirement 4 is currently discharged by no code, see below.
+2026-09-07**: requirement 4 is currently discharged by no code, see below. **Amended
+2026-09-11** (issue #209): the survivor threshold's logged quantity is named, see below.
 
 **Decision.** A decision rule may be adopted without passing a gate **only** when all five hold:
 
@@ -177,12 +178,31 @@ beats one that is definitely mis-specified. But it is the weaker of the two prov
 some distance, and if this mechanism is ever questioned it should be the first thing
 reconsidered.
 
+> **Amended 2026-09-11 (issue #209): which column is the threshold quantity.** The rule is
+> stated in win probability on the *week* — "under ~8pp" — and the journal that discharged its
+> logging duty recorded `survival_given_up`, a **season-survival** difference. On the pinned grid
+> the two disagree in sign: the chalk is 2.0pp better on the week and 27.8pp worse over the
+> season. That is the survivor thesis working — a worse pick this week for a better season — and
+> it is exactly why logging one under the other's name was the error, and why the cost the rule
+> fires on was not recoverable from its own log.
+>
+> A survivor pick is a week decision, so the threshold stays on the week. **The threshold
+> quantity is `journal.week_cost`, the fallback's win probability minus the chosen team's**, and
+> that column is what discharges requirement 4 for this rule; `journal.fallback_price` and
+> `journal.market_price` are the two prices it is the difference of, and a row that carries one
+> without the other is refused. `survival_given_up` stays beside it under its own name as the
+> thesis of our plan working — not the threshold quantity, and not dropped, because dropping it
+> loses the argument for the plan. The threshold itself has not moved, so nothing is re-derived.
+> `tests/unit/test_journal.py` holds this line against the schema: if this ADR is re-pointed at
+> another column, or the column's arithmetic changes, that test fails.
+
 ## Consequences
 
 * The waiver tiebreaker — ECR chooses the candidate set, snap delta chooses within it — becomes
   a provisional rule, logged per claim.
 * The survivor contrarian threshold (take a differentiation week when the win-probability cost
-  is under ~8pp) becomes a provisional rule on the same terms.
+  is under ~8pp) becomes a provisional rule on the same terms. Its logged cost is
+  `journal.week_cost`, on the week, since 2026-09-11 (#209).
 * Logging is not bookkeeping. It is the only mechanism by which a provisional rule can ever stop
   being provisional, and it is the same move the ADP archive made on 2026-08-25: data not kept
   on the day is not recoverable later.
