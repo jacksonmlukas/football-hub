@@ -101,3 +101,135 @@ uv run python -m hub.models.margin --fit
 
 Everything in `hub/models/margin.py` except `main()` is pure and offline; 23 tests in
 `tests/unit/test_margin.py` were written before the walk-forward was run.
+
+---
+
+# The shape: mass on the key numbers, measured 2026-09-11
+
+Issue #185. The width above was settled on 2026-08-24; this is the other half of the same
+constant — not how wide the margin distribution is, but whether it is smooth. Football margins
+are not: games end on 3 and 7 far more often than any bell curve puts them there, and the
+single Gaussian is the only measured input to the survivor and pool pipeline, which multiplies
+two dozen of these probabilities together. **The Gaussian stays**, and this section says why in
+the order `docs/method.md` rule 8 requires — the ceiling first.
+
+## The ceiling, before anything was built
+
+Every consumer of this distribution reads one number from it: `P(margin > 0 | spread)`.
+`season/survivor.py` and `MarketBaseline` both price as `normal_cdf(spread / MARGIN_SD)` and
+neither reads a cover probability, a push, or any quantile but the median. So a *perfect*
+margin distribution is worth exactly what a perfect `P(win | spread)` is worth, and that can be
+bounded without building anything: replace the Gaussian's price with the favourite's realised
+win rate in one-point buckets of |spread|, in sample, and score both.
+
+| trailing 10 seasons (2017–2026), 2,488 games | log-loss | gain per game |
+|---|---|---|
+| Gaussian, `Phi(spread / 12.741)` | 0.60774 | — |
+| perfect `P(win \| spread)` by one-point bucket, in sample | 0.60214 | **0.00560** |
+
+**0.0056 a game, 1.6 nats a season, in sample.** That is 28 times the gain the width refit
+above delivered, and it is an upper bound flattered by construction. It is also where survivor
+lives: 7-point-or-better favourites are priced at 0.774 and win 0.806, and a plan of eighteen
+such picks survives at 0.0099 under the price and 0.0206 at the realised rate — a factor of
+two, in the safe direction. There was headroom worth measuring against.
+
+## The histogram, from our own sample
+
+Reproduced rather than cited, over the spine's own window, with the spine centred on each
+game's closing spread:
+
+| \|margin\| | empirical share | spine's share | excess |
+|---|---|---|---|
+| 3 | **0.1503** | 0.0546 | **+1.751** |
+| 6 | 0.0663 | 0.0512 | +0.296 |
+| 7 | 0.0828 | 0.0496 | +0.671 |
+| 10 | 0.0490 | 0.0437 | +0.121 |
+| 14 | 0.0518 | 0.0346 | +0.499 |
+
+**15.0% of games end on exactly 3**, 2.75 times what the Gaussian says, which reproduces the
+~14.9% the ticket asked for. The lumpiness is real and it is large. The values are
+`FITTED_KEY_EXCESS` in `hub/models/margin.py`.
+
+## The model, and the pre-registered rule
+
+The shape #185's amendment named: keep `Phi(spread / 12.741)` as the spine, multiply the
+spine's mass in `(k − ½, k + ½]` by `1 + excess[k]` at each key number `k` and at `−k`,
+renormalise. `lumpy_home_win_prob` is that in closed form — every term is a Gaussian cell —
+and with every excess at zero it is the plain price exactly, which a test holds.
+
+The rule, fixed before the walk-forward ran: the lumpy price must beat the Gaussian on **mean
+held-out log-loss**, bumps refitted each season on the trailing ten seasons of strictly
+earlier data, spine unchanged in both arms. A tie or a loss keeps the Gaussian.
+
+## What it found
+
+27 held-out seasons, 2000–2026:
+
+| arm | mean held-out log-loss gain | se across seasons | seasons better |
+|---|---|---|---|
+| lumpy over Gaussian | **−0.00094** | 0.00032 | 7 of 27 |
+
+**KEEP the Gaussian.** The lumpy price is worse, at −2.9 standard errors, in 20 of 27 seasons.
+One of the seven it wins is 2026 at two games; without it the mean is −0.0011 and 6 of 26. It
+closes none of the ceiling — it moves away from it.
+
+Calibration by spread bucket, **held out** (the lumpy price for each season fitted on earlier
+seasons only), both sides of every game, seasons 2017–2026:
+
+| home spread | sides | Gaussian | lumpy | actual |
+|---|---|---|---|---|
+| 0 to 3 | 572 | 0.557 | 0.553 | 0.526 |
+| 3 to 6 | 955 | 0.617 | 0.609 | 0.617 |
+| 6 to 9 | 583 | 0.708 | 0.695 | **0.750** |
+| 9 to 14 | 289 | 0.803 | 0.788 | **0.858** |
+| 14+ | 92 | 0.884 | 0.870 | 0.891 |
+| **favourites of 7+** | **732** | **0.774** | **0.760** | **0.806** |
+
+Season-long survival for a plan of eighteen such favourites, beside the current model as the
+ticket asked: **Gaussian 0.0099, lumpy 0.0071, realised 0.0206.** The corrected model is lower,
+as #185 pre-registered — and it is lower because it is *further from the truth*, not closer.
+
+## Why, and this is the finding
+
+A game whose line sits on 3 or 7 does price differently under the lumpy distribution: a
+3-point favourite moves from 0.593 to 0.586, a 7-point favourite from 0.709 to 0.695. That is
+the direction the histogram forces and the **opposite** of the direction the data show.
+
+The mechanism is arithmetic. The excess at 3 is nearly **symmetric about the spread**: a
+favourite wins by exactly 3 at 2.9 times the spine's rate and loses by exactly 3 at 2.5 times
+it. Every key number sits within 14 points of the centre, so the mass a symmetric bump adds
+lands on *both* sides of zero, and for any favourite the losing side gains proportionally more
+than the winning side already holds. Every bump pulls every favourite toward one half. Signed
+bumps — fitted separately for a favourite winning by `k` and losing by `k` — do no better
+(−0.00084, better in 4 of 27), because the asymmetry is small.
+
+Where the miss in the calibration table actually lives is the **location**, not the shape: on
+the same window the favourite-relative residual averages −1.56 points on pick'ems (n=569,
+se 0.53) and +0.78 at 6 to 9 (n=583, se 0.54) and +0.91 at 9 to 14 (n=289, se 0.72), with the
+dispersion flat across buckets at 12.3–13.1. Small favourites trail the number and mid-range
+favourites beat it — the pick'em figure is the only one past two standard errors on its own,
+and the pattern is the same one #176 graded in win probability. No distribution symmetric
+about the spread can price that, and a key-number shape is symmetric about the spread by
+construction. That is a different ticket — a spread-dependent centre is a claim about the
+market, not about football scoring — and it is not decided here.
+
+Key numbers matter for `P(margin > line)` — covers and pushes — which nothing in this repo
+prices. If something ever does, the histogram above is where it starts.
+
+## What moved
+
+Nothing that prices a game. `MARGIN_SD` is unchanged, `hub.models.market` is unchanged, and
+`config_digest` is unchanged at `2c7620f9`: `hub.models.margin` is not in `FITTED_MODULES`,
+and the numbers added to it are outputs of a fit that tests guard, not inputs to a prediction.
+`test_the_live_shape_is_the_one_the_record_supports` holds that `survivor` and `market` read
+no lumpy price while the recorded gain is negative beyond two standard errors.
+
+## Reproduce
+
+```bash
+uv run python -m hub.models.margin --shape
+```
+
+Ceiling, histogram, walk-forward, calibration table, survival and verdict, in that order. The
+eleven mutations that prove the tests are listed in the message of the commit that landed
+this section.
