@@ -1233,6 +1233,12 @@ FROZEN_BUDGET = {"rounds": 6, "n_draft_sims": 2, "n_season_sims": 10}
 # commit 9732519 (2026-09-11). A commit that changes either list must say so, because the
 # arm's published verdict (ADR-0009) was measured on the arm that produced these.
 #
+# Moved once already, the same day: `e9360c7` (#235) refitted `TALENT_CV` net of the absence
+# the season simulator now draws, and arm B -- whose objective is that simulator -- took
+# CeeDee Lamb over Christian McCaffrey at pick 1 and Austin Ekeler over David Njoku at pick
+# 6, with the room unchanged. That commit did not say the arm moved because this pin was
+# not yet on `main` to say it; ADR-0009's -17.30 was measured on the arm before it.
+#
 # What the pin sees is the roster, not every constant behind it. Mutation-proved against the
 # tie-break direction, the lift ordering, the seeding root and `compare`'s own stream; it
 # did *not* move when the co-leader bar was widened from 2 to 200 se, because at this budget
@@ -1240,9 +1246,9 @@ FROZEN_BUDGET = {"rounds": 6, "n_draft_sims": 2, "n_season_sims": 10}
 # is `test_optimize.py`'s to catch; this catches a change to what the arm drafts.
 FROZEN_ARM_A = ["Christian McCaffrey", "Drake London", "Travis Etienne Jr.",
                 "Patrick Mahomes II", "D.K. Metcalf", "Terry McLaurin"]
-# Three running backs and no receiver in six picks is the preference ADR-0009 describes.
-FROZEN_ARM_B = ["Christian McCaffrey", "Jalen Hurts", "Kyren Williams", "Josh Jacobs",
-                "Ken Walker III", "David Njoku"]
+# Three running backs in six picks is the preference ADR-0009 describes.
+FROZEN_ARM_B = ["CeeDee Lamb", "Jalen Hurts", "Kyren Williams", "Josh Jacobs",
+                "Ken Walker III", "Austin Ekeler"]
 
 
 def _frozen_board():
