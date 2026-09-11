@@ -22,7 +22,7 @@ def _panel(seasons=(2023, 2024), weeks=(1, 2), players=60, seed=0):
             for i in range(players):
                 rows.append({"season": s, "week": w, "player_id": f"p{i}",
                              "fantasy_points_ppr": float(rng.normal(12, 6)),
-                             "ppg_before": float(rng.normal(12, 4)),
+                             "yds_prior": float(rng.normal(12, 4)),
                              "ecr": float(i + 1), "feat": float(rng.normal())})
     return pl.DataFrame(rows)
 
@@ -43,7 +43,7 @@ def _collinear_panel(n=80, seed=3):
                 # outcome. Symmetric on purpose: neither is the truth and the other a copy,
                 # so neither *residual* carries signal once the other is controlled for.
                 rows.append({"season": s, "week": w, "player_id": f"p{i}",
-                             "ppg_before": 12.0, "ecr": float(i + 1),
+                             "yds_prior": 12.0, "ecr": float(i + 1),
                              "a": float(common[i] + 0.4 * rng.normal()),
                              "b": float(common[i] + 0.4 * rng.normal()),
                              "late": float(rng.normal()),
@@ -59,7 +59,7 @@ def _usage_panel(seasons=(2023, 2024), weeks=range(1, 13), players=60, seed=5):
         for w in weeks:
             for i in range(players):
                 rows.append({"season": s, "week": w, "player_id": f"p{i}",
-                             "ecr": float(i + 1), "ppg_before": 12.0,
+                             "ecr": float(i + 1), "yds_prior": 12.0,
                              "targets": float(rng.poisson(5)),
                              "fantasy_points_ppr": float(rng.normal(12, 6)),
                              "feat": float(rng.normal())})
@@ -130,7 +130,7 @@ def test_the_screen_refuses_a_raw_outcome_column_as_a_feature_or_as_a_control():
     with pytest.raises(pnl.PanelRuleViolation, match="targets"):
         ws.cell_correlations(p, "targets")
     with pytest.raises(pnl.PanelRuleViolation, match="targets"):
-        ws.cell_correlations(p, "feat", controls=("ppg_before", "targets"))
+        ws.cell_correlations(p, "feat", controls=("yds_prior", "targets"))
     with pytest.raises(pnl.PanelRuleViolation, match="targets"):
         ws.screen(p, [ws.Feature("targets", "+", 1)])
 
@@ -320,7 +320,7 @@ def test_a_broken_null_is_a_finding_not_a_rejection():
     status, note = ws.verdict(_summary(per, -6.0), "0")
     assert status == ws.NULL_BROKEN
     assert "PRE-STATED NULL BROKEN" in note
-    assert status in ws.FINDINGS, "so it goes on to the joint screen"
+    assert ws.is_signal(status, "0"), "so it goes on to the joint screen"
 
 
 def test_a_null_that_is_merely_noisy_is_still_a_null():
@@ -412,7 +412,7 @@ def test_wind_left_the_family_rather_than_being_quietly_retained():
     with pytest.raises(pnl.PanelRuleViolation, match="observed during week w"):
         ws.screen(p, [ws.Feature("wind", "-", 1)])
     with pytest.raises(pnl.PanelRuleViolation, match="observed during week w"):
-        ws.cell_correlations(p, "feat", controls=("ppg_before", "wind"))
+        ws.cell_correlations(p, "feat", controls=("yds_prior", "wind"))
 
 
 def test_the_scheme_trends_are_not_in_the_default_screen():
@@ -483,7 +483,7 @@ def _panel_with_every_feature(seasons=(2023, 2024), weeks=tuple(range(1, 15)),
             for i in range(players):
                 row = {"season": s, "week": w, "player_id": f"p{i}",
                        "fantasy_points_ppr": float(rng.normal(12, 6)),
-                       "ppg_before": float(rng.normal(12, 4)),
+                       "yds_prior": float(rng.normal(12, 4)),
                        "ecr": float(i + 1)}
                 for f in ws.FEATURES:
                     row[f.name] = float(rng.normal())
@@ -528,14 +528,15 @@ def test_the_screen_returns_the_same_correlation_for_every_feature_when_rerun():
             f"{runs[1][name]}. The screen has an input the as-of does not pin.")
 
 
-# --- The alternative control basis, #179 --------------------------------------------------
+# --- The control bases: #179's alternative, and #229's decision ---------------------------
 #
 # `ppg_before` contains prior touchdowns and `td_rate_prior`'s numerator is prior touchdowns,
 # so the pre-registered control set contained the feature's own numerator. What these hold is
 # the *property* the decomposition was chosen for -- that the new set spans the old one, so a
 # coefficient that moves moved because of the constraint that was relaxed and not because
-# something else stopped being controlled for -- and that the basis a run is taken on actually
-# reaches the arithmetic.
+# something else stopped being controlled for -- that the basis a run is taken on actually
+# reaches the arithmetic, and that the basis the screen *defaults* to is the one #229 decided
+# on and not the pre-registration it replaced.
 
 
 def _split_panel(n=80, seed=11):
@@ -543,7 +544,8 @@ def _split_panel(n=80, seed=11):
 
     The outcome is driven by the touchdown half **alone**, which is what lets a test tell the
     two bases apart: pooling the halves into one control leaves signal in that holding them
-    apart removes.
+    apart removes. `yds_prior` is carried beside them, unrelated to either, so the yardage
+    basis is a third distinguishable set on the same frame.
     """
     rng = np.random.default_rng(seed)
     rows = []
@@ -555,9 +557,53 @@ def _split_panel(n=80, seed=11):
                 rows.append({"season": s, "week": w, "player_id": f"p{i}",
                              "td_ppg_before": td, "nontd_ppg_before": nontd,
                              "ppg_before": td + nontd, "ecr": float(i + 1),
+                             "yds_prior": float(abs(rng.normal(60.0, 20.0))),
                              "feat": float(rng.normal()),
                              "fantasy_points_ppr": float(2.0 * td + rng.normal())})
     return pl.DataFrame(rows)
+
+
+def test_the_default_basis_is_prior_yardage_and_consensus_rank():
+    """#229, as a fact the suite holds rather than a sentence in a docstring.
+
+    Three bases were run on one panel and two of them contained or pinned `td_rate_prior`'s
+    numerator: `ppg_before` is PPR points and PPR points contain touchdowns, and holding the
+    touchdown half of it fixed pins the count outright. `(yds_prior, ecr)` is the one that
+    does neither, it is the set #179's issue body pre-registered, and the decision on #229
+    made it what every surviving claim is conditional on. A default that drifted back to the
+    pre-registration would restate every figure on `docs/weekly-screen.md` silently.
+    """
+    assert ws.CONTROLS == ("yds_prior", "ecr")
+    assert ws.BASES[ws.DEFAULT_BASIS] is ws.CONTROLS
+    for c in ws.CONTROLS:
+        assert "ppg" not in c and "td" not in c, (
+            f"the default basis controls on `{c}`, which carries prior touchdowns -- the "
+            f"feature's own numerator, which is the confound #229 moved the basis to escape.")
+
+
+def test_the_screen_defaults_to_the_decided_basis_not_the_pre_registration():
+    """`screen` and `screen_joint` called without `controls` run on `CONTROLS`, and `CONTROLS`
+    is not the pooled set. The two halves are asked separately: a default that still bound to
+    `CONTROLS_POOLED` would pass the first test above on the constant and fail here on the
+    arithmetic, which is where a run actually reads it.
+    """
+    p = _split_panel()
+    feature = [ws.Feature("feat", "0", 1)]
+    default = ws.screen(p, feature).to_dicts()[0]
+    yardage = ws.screen(p, feature, ws.CONTROLS).to_dicts()[0]
+    pooled = ws.screen(p, feature, ws.CONTROLS_POOLED).to_dicts()[0]
+    assert default["r"] == yardage["r"]
+    assert default["r"] != pooled["r"], \
+        "`screen` with no basis named is still running on the pre-registration"
+
+    both = [*feature, ws.Feature("ppg_before", "?", 1)]
+    j_default = {d["feature"]: d for d in ws.screen_joint(p, both).to_dicts()}
+    j_yardage = {d["feature"]: d for d in ws.screen_joint(p, both, ws.CONTROLS).to_dicts()}
+    j_pooled = {d["feature"]: d
+                for d in ws.screen_joint(p, both, ws.CONTROLS_POOLED).to_dicts()}
+    assert j_default["feat"]["r"] == j_yardage["feat"]["r"]
+    assert j_default["feat"]["r"] != j_pooled["feat"]["r"], \
+        "`screen_joint` with no basis named is still running on the pre-registration"
 
 
 def test_the_decomposed_basis_spans_the_pooled_one():
@@ -589,10 +635,10 @@ def test_the_pooled_control_does_not_span_the_decomposed_one():
     Asked over **every** column of the decomposed basis rather than over `td_ppg_before` by
     name. The first draft of this named the column, which made it a fact about the fixture's
     columns and not about the two bases: it passed unchanged with `CONTROLS_DECOMPOSED` set
-    to `CONTROLS`, the one mutation it exists to catch.
+    to `CONTROLS_POOLED`, the one mutation it exists to catch.
     """
     p = _split_panel()
-    pooled = np.column_stack([p[c].to_numpy() for c in ws.CONTROLS])
+    pooled = np.column_stack([p[c].to_numpy() for c in ws.CONTROLS_POOLED])
     left = max(float(np.abs(ws.residual(p[c].to_numpy(), pooled)).max())
                for c in ws.CONTROLS_DECOMPOSED)
     assert left > 1e-3, (
@@ -610,7 +656,7 @@ def test_the_screen_takes_the_basis_it_is_given():
     """
     p = _split_panel()
     feature = [ws.Feature("feat", "0", 1)]
-    pooled = ws.screen(p, feature, ws.CONTROLS).to_dicts()[0]
+    pooled = ws.screen(p, feature, ws.CONTROLS_POOLED).to_dicts()[0]
     split = ws.screen(p, feature, ws.CONTROLS_DECOMPOSED).to_dicts()[0]
     assert pooled["cells"] == split["cells"] == 20, "same rows, so only the basis differs"
     assert pooled["r"] != split["r"], (
@@ -618,7 +664,7 @@ def test_the_screen_takes_the_basis_it_is_given():
         "`controls` is not reaching `cell_correlations`.")
 
     both = [*feature, ws.Feature("ppg_before", "?", 1)]
-    j_pooled = {d["feature"]: d for d in ws.screen_joint(p, both, ws.CONTROLS).to_dicts()}
+    j_pooled = {d["feature"]: d for d in ws.screen_joint(p, both, ws.CONTROLS_POOLED).to_dicts()}
     j_split = {d["feature"]: d
                for d in ws.screen_joint(p, both, ws.CONTROLS_DECOMPOSED).to_dicts()}
     assert j_pooled["feat"]["r"] != j_split["feat"]["r"], \
@@ -633,7 +679,8 @@ def test_every_named_basis_is_one_the_panel_would_serve_as_features():
     because it refuses a bad *feature* and a control arrives by the other parameter. Checked
     here against `column_role` so a basis added later cannot introduce one quietly.
     """
-    assert ws.BASES["pooled"] == ws.CONTROLS
+    assert ws.BASES["yardage"] == ws.CONTROLS
+    assert ws.BASES["pooled"] == ws.CONTROLS_POOLED
     assert ws.BASES["decomposed"] == ws.CONTROLS_DECOMPOSED
     for name, controls in ws.BASES.items():
         for c in controls:
@@ -728,7 +775,7 @@ def test_an_anchored_feature_set_runs():
     direct = ws.screen(p, [ws.Feature("late_trend", "+", 8)])
     assert anchored["cells"].item() == direct["cells"].item()
     assert anchored["r"].item() == direct["r"].item()
-    assert anchored["status"].item() in ws.FINDINGS, \
+    assert ws.is_signal(anchored["status"].item(), "+"), \
         "and the anchored run reaches a verdict rather than merely not raising"
 
 
@@ -758,7 +805,7 @@ def _sweep_panel(seasons=(2021, 2022, 2023, 2024, 2025), weeks=range(1, 15),
                 y = 12.0 + 3.0 * flat + rng.normal(0, 2)
                 y += late * lt if w >= late_from else sign * early * lt
                 rows.append({"season": s, "week": w, "player_id": f"p{i}",
-                             "ppg_before": 12.0, "ecr": float(i + 1),
+                             "yds_prior": 12.0, "ecr": float(i + 1),
                              "late_trend": lt, "flat": flat,
                              "dud": float(rng.normal()),
                              "fantasy_points_ppr": y})
@@ -824,7 +871,7 @@ def test_a_verdict_that_holds_everywhere_is_reported_as_it_stands():
     swept = ws.sweep(_sweep_panel(late_from=1), _SWEEP_FEATURES, (4, 6, 8, 10, 12))
     sens = {r["feature"]: r for r in ws.sensitivity(swept).iter_rows(named=True)}
     assert sens["late_trend"]["stable"], "signal at every week cannot depend on the anchor"
-    assert sens["late_trend"]["verdict"] in ws.FINDINGS
+    assert ws.is_signal(sens["late_trend"]["verdict"], "+")
     assert sens["late_trend"]["finding_at"] == "4, 6, 8, 10, 12"
     assert sens["dud"]["stable"] and sens["dud"]["verdict"] == ws.KILLED
     lines = "\n".join(ws.sweep_report(swept, ws.sensitivity(swept)))
@@ -844,3 +891,88 @@ def test_a_feature_killed_alone_is_reported_on_the_screen_it_actually_reached():
     flat = swept.filter(pl.col("feature") == "flat").to_dicts()[0]
     assert flat["joint"] is not None, "a survivor does reach the joint screen"
     assert flat["final"] == flat["joint"]
+
+
+def test_a_null_that_clears_by_being_null_is_not_a_survivor():
+    """A pre-stated null that behaves as a null has not found anything -- #229.
+
+    `dud` is noise with a pre-registered null. It clears, as it should: the prediction held.
+    But a null that held is the *absence* of a signal, and before this the survivor filter
+    was `status in (CLEARS, NULL_BROKEN)`, which carried it into the joint screen as a
+    finding, printed it under "independent signals" beside a note reading "noisy, not a
+    signal", and controlled every real survivor for it. Latent while `td_rate_prior` was
+    `NULL_BROKEN` on every basis; the yardage basis is the first on which a null cleared.
+    """
+    features = (ws.Feature("flat", "+", 1), ws.Feature("dud", "0", 1),
+                ws.Feature("late_trend", "+", ws.TREND_ANCHOR_UNSET))
+    swept = ws.sweep(_sweep_panel(), features, (8,))
+    dud = swept.filter(pl.col("feature") == "dud").to_dicts()[0]
+    assert dud["alone"] == ws.CLEARS, "the null held -- that is the premise"
+    assert not ws.is_signal(dud["alone"], "0")
+    assert dud["joint"] is None, "and a held null does not enter the joint screen"
+    assert "dud" not in ws.surviving(swept, 8)
+    flat = swept.filter(pl.col("feature") == "flat").to_dicts()[0]
+    assert "dud" not in flat["joint_controls"], \
+        "nor is a real survivor controlled for a quantity the screen said carries nothing"
+    sens = {r["feature"]: r for r in ws.sensitivity(swept).to_dicts()}
+    assert sens["dud"]["finding_at"] == "-"
+    surviving_set = "\n".join(ws.sweep_report(swept, ws.sensitivity(swept))
+                              ).split("verdict across the sweep")[0]
+    assert "dud" not in surviving_set, \
+        "the surviving set the report prints does not carry it either"
+
+
+# --- #238: the every-season half under the null ---------------------------------------------
+
+
+def test_under_the_null_one_season_crosses_zero_almost_always():
+    """Five seasons of noise: at least one has the wrong sign in about 1 - 2^-5 of draws.
+
+    That is the fact the anchor question turns on. If the figure were anchor-dependent, one
+    season crossing zero at week 12 would carry information about week 12; it is not, so the
+    every-season half's false-positive rate is the same ~3% at every anchor and the question
+    is about power. Held at two cell counts per season so the independence from the count is
+    a thing the suite checks rather than a sentence.
+    """
+    p = _sweep_panel()
+    dud = ws.Feature("dud", "+", 1)
+    wide = ws.every_season_null(p, dud, draws=600, seed=1)
+    narrow = ws.every_season_null(p, dud._replace(min_week=12), draws=600, seed=1)
+    assert wide["per_season_cells"] == dict.fromkeys(range(2021, 2026), 14)
+    assert narrow["per_season_cells"] == dict.fromkeys(range(2021, 2026), 3)
+    for n in (wide, narrow):
+        assert abs(n["p_any_wrong_sign"] - (1 - 2 ** -5)) < 0.03, n
+        assert abs(n["p_every_season"] + n["p_any_wrong_sign"] - 1.0) < 1e-12
+        assert 0.0 <= n["p_value"] <= 1.0
+
+
+def test_a_real_effect_crosses_zero_more_often_on_fewer_cells():
+    """The other half: the same true effect fails the every-season half more often when each
+    season mean is three cells than when it is fourteen, because the mean is noisier. This is
+    what "weak evidence against the trend" means, made a number."""
+    p = _sweep_panel()
+    dud = ws.Feature("dud", "+", 1)
+    wide = ws.every_season_null(p, dud, draws=600, seed=2, effects=(0.04,))
+    narrow = ws.every_season_null(p, dud._replace(min_week=12), draws=600, seed=2,
+                                  effects=(0.04,))
+    assert narrow["alternatives"][0.04] > wide["alternatives"][0.04] + 0.1, (narrow, wide)
+    assert wide["alternatives"][0.04] < wide["p_any_wrong_sign"], \
+        "a true effect crosses zero less often than no effect does"
+
+
+def test_the_null_permutes_within_the_cell_and_not_across_it():
+    """`flat` is a real signal at every week. Permuted within its cell it has to look like
+    nothing -- that is the placebo the page reports -- so the permutation p on the observed r
+    is small and the null r's sit near zero. A permutation that reached across cells would
+    also break the link and pass this; what would not pass is no permutation at all, which
+    is the failure a placebo can have silently."""
+    p = _sweep_panel()
+    n = ws.every_season_null(p, ws.Feature("flat", "+", 1), draws=300, seed=3)
+    assert n["r"] > 0.3, "the fixture's signal is large"
+    assert n["p_value"] == 0.0, "and no permutation draw reaches it"
+    assert n["cell_sd"] < 0.2
+
+
+def test_a_pre_stated_null_has_no_every_season_half():
+    with pytest.raises(ValueError, match="pre-stated null"):
+        ws.every_season_null(_sweep_panel(), ws.Feature("dud", "0", 1), draws=5)

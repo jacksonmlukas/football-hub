@@ -107,13 +107,51 @@ def test_the_shipped_law_is_the_one_the_current_fitter_produced():
     estimator and the shipped estimate being reconciled: they disagreed, and the disagreement
     could not be resolved without failing a test (#150, `docs/method.md` rule 13).
 
-    The figures below are a re-run of the fitter *in this tree*, on the same four drafts,
-    2026-09-07: 672 picks inside a 204-pick pool, a = 1.3127, b = 0.16860. Rounded to the
-    precision `noise_from_picks` prints, which is the precision the superseded pair used too.
+    Restated 2026-09-11 under #155. The 2026-09-07 re-run gave a = 1.3127, b = 0.16860 on
+    672 picks inside a 204-pick pool. That sample is conditioned on being *drafted*, and past
+    rank 168 it is one-sided -- only the players who beat their rank are observed -- which was
+    fitting the slope to a single tail and inflating it. Restricted to `ecr <= 168`, the same
+    four drafts give a = 2.5135, b = 0.14950 on 612 picks, and the two slope intervals do not
+    overlap. Rounded to the precision `noise_from_picks` prints.
     """
     from hub.draft.availability import PICK_NOISE_INTERCEPT, PICK_NOISE_SLOPE
-    assert PICK_NOISE_INTERCEPT == pytest.approx(1.31, abs=0.005)
-    assert PICK_NOISE_SLOPE == pytest.approx(0.169, abs=0.0005)
+    assert PICK_NOISE_INTERCEPT == pytest.approx(2.51, abs=0.005)
+    assert PICK_NOISE_SLOPE == pytest.approx(0.150, abs=0.0005)
+
+
+def test_the_fit_ceiling_is_where_the_drafted_sample_stops_being_two_sided():
+    """#155's second criterion: the treatment of undrafted players, stated and measured.
+
+    A player ranked past the last pick anyone made has no pick number and is not in the
+    sample; near that boundary, the ones who *are* in it are exactly the ones who went early.
+    The signature is a mean signed deviation `pick - ecr` that turns negative and, at the
+    very back, equals the absolute deviation -- a sample containing one tail. Synthesised
+    here: two-sided noise through the ceiling, one-sided past it, and the fitter must read
+    only the two-sided part.
+    """
+    import numpy as np
+    import polars as pl
+
+    from hub.draft.availability import PICK_NOISE_FIT_CEILING, noise_from_picks
+
+    rng = np.random.default_rng(3)
+    rows = []
+    for yr in (2022, 2023, 2024, 2025):
+        ecr = np.arange(1, 205, dtype=float)
+        noise = rng.normal(0, 2.0 + 0.10 * ecr)
+        pick = ecr + noise
+        # Past the ceiling, drop everyone whose pick would fall outside the pool: one-sided.
+        keep = (ecr <= PICK_NOISE_FIT_CEILING) | (pick <= 204)
+        for e, pk in zip(ecr[keep], np.clip(pick[keep], 1, 204), strict=True):
+            rows.append({"year": yr, "pick": float(pk), "ecr": float(e)})
+    df = pl.DataFrame(rows)
+
+    (_, b), said = noise_from_picks(df, default=(9.0, 9.0))
+    assert f"ecr <= {PICK_NOISE_FIT_CEILING}" in said, said
+    assert "one-sided" in said, said
+    # Fitted on the two-sided part alone, the slope recovers the true 0.10 to within the
+    # draft-clustered interval it prints; fitted on everything it would not.
+    assert 0.07 < b < 0.13, f"slope {b:.3f} does not recover the true 0.10"
 
 
 def test_the_slope_ships_with_its_draft_clustered_interval():
@@ -149,15 +187,27 @@ def test_the_refitted_law_is_tighter_than_the_prior_it_replaced():
     just inverted what stood here.
 
     The superseded pin claimed the fit was narrower than 2.0 + 0.18*mu early and *wider* late,
-    making that prior over-confident about who survives deep on the board. Repaired, the fit is
-    narrower than the prior at every pick in the draftable pool, which moves every availability
-    the other way: fewer survivors, higher cost_of_waiting.
+    making that prior over-confident about who survives deep on the board. Repaired, the fit
+    was narrower than the prior at every pick in the draftable pool.
+
+    **And this test caught #155 inverting that at the very top**, which is what it is for. The
+    censoring-restricted fit has a higher intercept (2.51 against 1.31) and a shallower slope
+    (0.150 against 0.169), so it crosses the prior at pick 17: half a pick *wider* at picks 1
+    to 3, tighter from the second round on and increasingly so. The top-three widening is real
+    and immaterial -- those picks are near-deterministic in any room and a half-pick sigma
+    moves no availability -- and the claim that matters, that the prior was over-confident
+    deep on the board, holds by a wider margin than before: 33.1 against 38.7 at pick 204.
     """
     from hub.draft.availability import PICK_NOISE_INTERCEPT as A
     from hub.draft.availability import PICK_NOISE_SLOPE as B
 
-    for pick in (1, 3, 24, 100, 204):
+    crossover = (A - 2.0) / (0.18 - B)
+    assert 10 < crossover < 25, f"the crossover moved to pick {crossover:.0f}; re-read this"
+    for pick in (24, 100, 204):
         assert A + B * pick < 2.0 + 0.18 * pick, pick
+    # The widening at the top is bounded, and it is stated rather than hidden.
+    for pick in (1, 3):
+        assert 0 < (A + B * pick) - (2.0 + 0.18 * pick) < 1.0, pick
 
 
 def test_sigma_uses_the_fitted_law_when_there_is_no_consensus_spread():
@@ -371,7 +421,7 @@ def test_enough_picks_but_too_few_inside_the_pool_falls_back_too():
                          "ecr": [float(400 + i) for i in range(80)]})
     got, said = noise_from_picks(pl.concat([inside, tail]), default=(2.0, 0.18))
     assert got == (2.0, 0.18)
-    assert "inside the draftable pool" in said and "keeping the" in said
+    assert "inside the fit ceiling" in said and "keeping the" in said
 
 
 # --- one base dispersion, three readers (issue #41) ------------------------

@@ -97,14 +97,66 @@ def blended_adp(df: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT, *,
 # pushes the board toward scarcity rather than away from it -- the opposite of what it said.
 # A board built either side of it is in `docs/pick-noise.md`, with the players who moved.
 # ------------------------------------------------------------------------------------------
-PICK_NOISE_INTERCEPT = 1.31
-PICK_NOISE_SLOPE = 0.169
+# ------------------------------------------------------------------------------------------
+# **Restated 2026-09-11 (#155).** The 1.31 / 0.169 above stand as the record of the fit over
+# the whole 204-pick pool. They are superseded because the sample is conditioned on being
+# *drafted*, and at the back of the pool that conditioning is one-sided: a player ranked 190
+# who went undrafted has no pick number and is absent, so the players who remain at that rank
+# are exactly the ones who beat it. Measured on the 672 picks, as the mean **signed** deviation
+# `pick - ecr` by rank bin -- which is zero under no censoring, and turns negative where only
+# early-goers survive the pool boundary:
+#
+#     ecr    1-145   within +/-3 at every bin      (n = 545)
+#     ecr  145-169   -5.1                          (n =  71)
+#     ecr  170-192  -22.8   = the absolute mean    (n =  37)
+#     ecr  193-204  -36.2   = the absolute mean    (n =  19)
+#
+# In the last two bins every observed player went earlier than his rank -- the signed mean
+# *equals* the absolute mean, which is what a sample containing only one tail looks like.
+# Those rows were fitting the slope to a one-sided residual and inflating it.
+#
+# So the fit is restricted to `ecr <= PICK_NOISE_FIT_CEILING`, the last bin before the
+# signature appears, and stated rather than silently applied. Refit on the same 732 matched
+# picks, clustered on the draft, with the ceiling swept so the choice is visible:
+#
+#     ceiling   n     a      slope   95% CI            sigma @ pick 100
+#       204    672   1.31   0.169   [0.159, 0.179]     18.2   (superseded)
+#       168    612   2.51   0.150   [0.143, 0.156]     17.5   <- this
+#       145    545   2.83   0.143   [0.116, 0.170]     17.1
+#       120    460   2.33   0.156   [0.138, 0.174]     17.9
+#
+# The published interval and the restricted one do not overlap, so the censored tail's effect
+# on the slope is resolvable at two standard errors clustered on the draft -- measured rather
+# than assumed, per the ticket. Below 168 the slope is stable across cuts and the intervals
+# overlap; the cut is where the data stops being one-sided, not where the slope is prettiest.
+#
+# **The axis, stated correctly this time.** The fit reads `ecr`. `_sigma` applies it to
+# `mu_pick`, and for the historical drafts the two are the *same number*: no draft market
+# exists for a past preseason (ADR-0010), so `blended_adp`'s `w * adp + (1 - w) * ecr` falls
+# back to `ecr` on both sides and the blend is the identity. The fitted axis and the applied
+# axis coincide on the population the fit uses. They differ on the *live* board, where ADP
+# exists -- and that is a limitation this fit carries, not one it can remove, because no
+# historical ADP exists to fit on. The docstring that said "fitted on a pick number" was
+# describing the intent and not the code.
+#
+# Modelling the censoring instead (a Tobit on the pick axis) was declined: it needs a
+# counterfactual pick number for players never picked, which the data does not contain, so
+# the model would be identified by its functional form rather than by evidence -- a fitted
+# constant with no provenance, which ADR-0006 exists to prevent.
+# ------------------------------------------------------------------------------------------
+PICK_NOISE_INTERCEPT = 2.51
+PICK_NOISE_SLOPE = 0.150
 
 # Beside the point estimate, never behind it. Bootstrapped over **drafts**, n = 4, not over
 # picks: one manager reaching in round two moves every later pick in that room, so a
 # pick-level interval would be several times too tight -- the same error `docs/gate-power.md`
 # is about one layer up. `noise_from_picks` prints this pair on every fit.
-PICK_NOISE_SLOPE_CI = (0.159, 0.179)
+PICK_NOISE_SLOPE_CI = (0.143, 0.156)
+
+# The rank past which the drafted sample is one-sided -- see the table above. A fitted
+# constant in the ADR-0006 sense: it was chosen from the data, it decides the slope, and this
+# module is in `FITTED_MODULES`, so it moves the digest when it moves.
+PICK_NOISE_FIT_CEILING = 168
 
 
 def pick_noise(mu):
@@ -292,11 +344,20 @@ def noise_from_picks(df: pl.DataFrame, default: tuple[float, float] = (2.0, 0.18
                      draws: int = 2000, seed: int = 0) -> tuple[tuple[float, float], str]:
     """`sigma(pick)` fitted from where this room's picks actually landed, and what to say.
 
-    **Fitted on a pick number over the draftable pool, not a rank over the whole board.**
-    `_sigma` applies this to `mu_pick` -- an expected *pick number* -- while the fit read
-    `ecr`, a rank over a 300-plus-player consensus board of which about 192 are ever taken.
-    Fitting on one axis and predicting on another stretched the x-range by half again and
-    flattened the slope to cover ranks that are not picks at all (#40).
+    **Fitted on `ecr`, which is `mu_pick` for every draft this fits on.** `_sigma` applies the
+    result to `mu_pick`, an expected pick number blending ADP and consensus -- and for a past
+    preseason no ADP exists, so the blend is the identity and the two axes coincide on the
+    fitting population. On the *live* board they differ, and that is a limitation the fit
+    carries rather than one it can remove (#155). An earlier version of this docstring said
+    "fitted on a pick number", which described the intent and not the code.
+
+    **Restricted to `ecr <= PICK_NOISE_FIT_CEILING`**, not to the whole draftable pool. The
+    sample is conditioned on being drafted, and past that rank it is one-sided -- only the
+    players who beat their rank are observed -- which was fitting the slope to a single tail.
+    The table above the constants shows where the signature appears and what it cost.
+
+    The pool restriction #40 introduced stands beneath this one: a consensus rank past the
+    last pick anyone ever made is not a pick number at all.
 
     The interval is bootstrapped over **drafts**, not picks. Four drafts supply every
     observation, and picks inside one draft are anything but independent -- one manager
@@ -311,10 +372,14 @@ def noise_from_picks(df: pl.DataFrame, default: tuple[float, float] = (2.0, 0.18
         return default, (f"  only {df.height} matched historical picks; keeping the "
                          f"{default} prior.")
     pool = float(df["pick"].to_numpy().max())
-    inside = df.filter(pl.col("ecr") <= pool)
+    # Two boundaries, and they are different claims. The pool is where picks stop existing;
+    # the ceiling is where the drafted sample stops being two-sided. The second is inside the
+    # first, and it is the one the fit needs.
+    ceiling = min(pool, float(PICK_NOISE_FIT_CEILING))
+    inside = df.filter(pl.col("ecr") <= ceiling)
     if inside.height < 50:
-        return default, (f"  only {inside.height} picks inside the draftable pool of "
-                         f"{pool:.0f}; keeping the {default} prior.")
+        return default, (f"  only {inside.height} picks inside the fit ceiling of "
+                         f"{ceiling:.0f} (pool {pool:.0f}); keeping the {default} prior.")
 
     x = inside["ecr"].to_numpy().astype(float)
     # Absolute deviation of a normal is sigma*sqrt(2/pi); rescale to a real sigma.
@@ -335,8 +400,9 @@ def noise_from_picks(df: pl.DataFrame, default: tuple[float, float] = (2.0, 0.18
         slopes.append(_constrained(xs, ys)[1])
     lo, hi = (float(v) for v in np.percentile(slopes, [2.5, 97.5]))
     return (a, b), (
-        f"  fitted pick noise from {inside.height} picks inside a {pool:.0f}-pick pool over "
-        f"{len(drafts)} drafts: sigma = {a:.2f} + {b:.3f} * pick "
+        f"  fitted pick noise from {inside.height} picks with ecr <= {ceiling:.0f} (pool "
+        f"{pool:.0f}; past the ceiling the drafted sample is one-sided) over {len(drafts)} "
+        f"drafts: sigma = {a:.2f} + {b:.3f} * pick "
         f"(slope 95% CI [{lo:.3f}, {hi:.3f}], clustered on the draft)")
 
 

@@ -225,14 +225,18 @@ def game_context(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - 
 # The expected counterpart of each realised quantity, from `ff_opportunity`. Opportunity
 # counts have no expected version and should not: a target is not an estimate, he was thrown at
 # or he was not. Everything below the opportunity is an efficiency, and efficiency is what
-# regresses -- which this repo measured from the other side as `td_rate_prior` at -0.040 across
-# five of five seasons, **beyond season-to-date PPR points a game and weekly consensus ECR**.
-# Re-run under #179 with that first control split into its touchdown and non-touchdown halves,
-# it is -0.043 across five of five and the reading above is the one that survives; controlled
-# for prior *yardage* directly it is -0.022 across four of five and does not. So this comment
-# names the basis rather than the number alone -- which is the whole content of the difference
-# between "efficiency regresses" and "high scorers regress", and this line depends on the
-# former. See docs/weekly-screen.md and docs/what-the-field-knows.md.
+# regresses -- the year-over-year table in `docs/component-projection.md` is where that is
+# measured, and it is the reason the touchdowns are left out of this subset.
+#
+# This comment used to cite a second measurement of the same thing from the weekly side:
+# `td_rate_prior` at -0.040 across five of five seasons, beyond season-to-date PPR points a
+# game and weekly consensus ECR. **It no longer does.** That figure was conditional on a control
+# that contains the feature's own numerator; on the basis #229 settled, prior yardage and
+# consensus rank, it is -0.012 across four of five seasons with 2023 positive, and
+# `docs/method.md` rule 4 reads a sign that flips between seasons as a bug rather than a
+# finding. The subset here does not depend on it either way -- #179 checked -- so nothing
+# about which columns are taken moves. `docs/weekly-screen.md` carries the figure on all three
+# bases it was run on.
 # The four the screen wants, named as a subset of `components.EXPECTED` rather than restated.
 # The vocabulary -- which upstream column means "expected receiving yards" -- is one thing and
 # lives beside the scoring weights; *which* of them a consumer uses is that consumer's business,
