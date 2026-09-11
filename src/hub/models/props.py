@@ -460,15 +460,15 @@ def scorecard(card_rows: pl.DataFrame, close: pl.DataFrame) -> pl.DataFrame:
     the column is a mean over decisions and nothing else.
     """
     joined = card_rows.join(close, on=list(_KEY), how="left")
+    # `side` is null exactly where there was no decision, so the sign carries the null and
+    # both CLVs are null on a `no_line` or `no_number` row without a second condition.
     sign = (pl.when(pl.col("side") == OVER).then(1.0)
               .when(pl.col("side") == UNDER).then(-1.0).otherwise(None))
     q_dec = _novig_col("decision_over_price", "decision_under_price")
     q_close = _novig_col("close_over_price", "close_under_price")
-    decided = pl.col("status") == PRICED
     return joined.with_columns(
-        pl.when(decided).then(sign * (pl.col("close_point") - pl.col("decision_point")))
-          .otherwise(None).alias("clv_points"),
-        pl.when(decided).then(sign * (q_close - q_dec)).otherwise(None).alias("clv_prob"),
+        (sign * (pl.col("close_point") - pl.col("decision_point"))).alias("clv_points"),
+        (sign * (q_close - q_dec)).alias("clv_prob"),
         pl.lit(MODEL).alias("model"),
         pl.lit(version()).alias("version"),
     )

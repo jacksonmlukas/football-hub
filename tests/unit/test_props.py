@@ -202,9 +202,35 @@ def test_the_edge_is_against_the_vig_free_price_not_the_charged_one():
     against the charged 52.4% instead, every coin flip would look like an Under."""
     p = props.price(WR, "player_reception_yds", None)
     median = round(p.p50 * 2) / 2 + 0.5
-    quotes = _polls(_poll("Justin Jefferson", "player_reception_yds", median, -110, -110))
-    row = _rec_yds(props.card(_players(), quotes, decided_at=T0))
-    assert row["edge"] < 0.03
+    rows = [_rec_yds(props.card(_players(), _polls(
+                _poll("Justin Jefferson", "player_reception_yds", median, over, under)),
+                decided_at=T0))
+            for over, under in ((-110, -110), (-105, -105), (100, 100), (-120, -120))]
+    assert rows[0]["edge"] < 0.03
+    assert len({r["side"] for r in rows}) == 1
+    assert len({round(r["edge"], 9) for r in rows}) == 1, \
+        "four quotes at the same vig-free 50% are one quote; only the charge differs"
+    shaded = _rec_yds(props.card(_players(), _polls(
+        _poll("Justin Jefferson", "player_reception_yds", median, -130, 110)), decided_at=T0))
+    assert shaded["edge"] != rows[0]["edge"]
+
+
+def test_a_push_is_refunded_before_the_sides_are_compared():
+    """A count quoted at a whole number pushes on the point. The sides are compared on the
+    mass that is not refunded, so a prop that is 51% over, 33% under and 16% push is a
+    60% Over -- read on the raw 51% against a quote shaded to 53% it would be an Under."""
+    p = props.price(WR, "player_receptions", 5.0)
+    assert p.p_over is not None and p.p_push is not None and p.p_push > 0.05
+    q_over = props.novig_over(-125, +105)
+    assert q_over is not None
+    quotes = _polls(_poll("Justin Jefferson", "player_receptions", 5.0, -125, +105))
+    row = (props.card(_players(), quotes, decided_at=T0)
+                .filter(pl.col("market") == "player_receptions").row(0, named=True))
+    conditional = p.p_over / (1 - p.p_push)
+    assert row["side"] == props.OVER and conditional > q_over
+    assert row["edge"] == pytest.approx(conditional - q_over, abs=1e-6)
+    assert p.p_over < q_over, \
+        "the fixture must be one where the refund flips the side, or it proves nothing"
 
 
 def test_the_decision_quote_is_the_one_live_at_the_moment():
@@ -256,13 +282,13 @@ def test_clv_is_signed_toward_our_side():
 
 
 def test_clv_in_probability_is_the_vig_free_move_on_our_side():
-    q_close = props.novig_over(-130, 110)
-    assert q_close is not None
-    over = _priced(40.5, 40.5, close_over=-130, close_under=+110)
+    q_dec, q_close = props.novig_over(-120, 100), props.novig_over(-130, 110)
+    assert q_dec is not None and q_close is not None and q_dec != 0.5
+    over = _priced(40.5, 40.5, over=-120, under=100, close_over=-130, close_under=+110)
     assert over["clv_points"] == 0.0
-    assert over["clv_prob"] == pytest.approx(q_close - 0.5, abs=1e-6)
-    under = _priced(120.5, 120.5, close_over=-130, close_under=+110)
-    assert under["clv_prob"] == pytest.approx(0.5 - q_close, abs=1e-6)
+    assert over["clv_prob"] == pytest.approx(q_close - q_dec, abs=1e-6)
+    under = _priced(120.5, 120.5, over=-120, under=100, close_over=-130, close_under=+110)
+    assert under["clv_prob"] == pytest.approx(q_dec - q_close, abs=1e-6)
 
 
 def test_the_close_can_be_read_as_of_kickoff():
