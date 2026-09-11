@@ -172,23 +172,30 @@ class EntryOutcome(NamedTuple):
     `replans` counts, per trial, the weeks where it would not play and had to be solved again;
     a figure with a high `replans` was mostly not a figure about the picks it names.
 
-    `share_each` is the trial-by-trial figure the three means above are means *of*, carried
-    out rather than reduced here because a difference between two of these outcomes has to be
-    taken **paired** to be worth anything. Two candidate plans on the same seed meet the same
-    season trial for trial (`_play`), so the spread of `a - b` is far tighter than the spread
-    of either arm -- and computing it from `share_sd` alone would throw that away and report
-    an interval several times too wide. It is positive in exactly the trials the entry
-    survived, which is why no second vector is needed for survival.
+    `survivors_each` is the trial-by-trial record the three means above are means *of*,
+    carried out rather than reduced here because a difference between two of these outcomes
+    has to be taken **paired** to be worth anything. Two candidate plans on the same seed meet
+    the same season trial for trial (`_play`), so the spread of `a - b` is far tighter than
+    the spread of either arm -- and computing it from `share_sd` alone would throw that away
+    and report an interval several times too wide.
+
+    It is a *count* and not a share, which is what makes it the record rather than one reading
+    of it. Every figure derives: the entry survived where it is non-zero, was alone where it
+    is one, and what the trial paid depends on `PoolConfig.co_survivor_rule` -- which is
+    unconfirmed, and under `rollover` pays nothing at all for a two-way finish. A vector of
+    shares could not answer "did we survive" under that rule, so it would have needed a second
+    vector beside it and the two could disagree about one set of trials.
     """
     trials: int
     survives: float     # P(this entry outlasts the final week at all)
     sole: float         # P(it is the only one that does)
-    share: float        # expected fraction of the pot under an even split
+    share: float        # expected fraction of the pot under `PoolConfig.co_survivor_rule`
     share_sd: float = 0.0   # spread of that fraction across trials, so a caller can say
                             # how finely two of these figures can be told apart
     plan: Plan | None = None    # the picks our entry played; None when it sampled as a rival
     replans: float = 0.0        # weeks per trial where that plan would not play
-    share_each: tuple[float, ...] = ()   # per trial; > 0 exactly where the entry survived
+    survivors_each: tuple[int, ...] = ()    # entries left at the end of each trial, ours
+                                            # included; 0 where ours was not one of them
 
     @property
     def shared(self) -> float:
@@ -804,9 +811,49 @@ def _play(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int],
     return None, counts
 
 
+def share_of_pot(rule: str, survivors: int) -> float:
+    """What finishing level with `survivors - 1` others is worth, as a fraction of the pot.
+
+    `PoolConfig.co_survivor_rule` applied, and until #160 it was applied nowhere: `share` was
+    `1 / n` and the rule was named only in the prose beside it. A rule stated in a docstring
+    and absent from the arithmetic is not a setting, it is a comment -- and correcting it
+    would have been a code change rather than the re-run `PoolConfig` exists to make it.
+
+    **split** divides the pot evenly, which is what every dollar figure in this module assumed.
+
+    **rollover** pays nobody when more than one entry is standing; the pot carries forward, so
+    only an outright win collects. That is not a smaller figure by a constant -- it is worth
+    nothing exactly where a split is worth a half, which is why the rule being unconfirmed
+    matters more the more often a shared finish happens.
+
+    **tiebreak** hands the whole pot to one survivor by a rule nobody has stated. With no rule
+    to model it is priced at its expectation under an unbiased draw, which is `1 / n` and so
+    identical to a split *in the mean*. It is not identical in spread: the realised payout is
+    all or nothing, so `EntryOutcome.share_sd` understates it and any interval built from that
+    understates it too. Named rather than smoothed over, because a figure right in the mean
+    and wrong in the tail is exactly what a decision at the margin gets taken on. Simulating
+    the draw instead was rejected: it would consume from the generator conditionally on our
+    own survival, which is precisely what #159 removed to make two candidates comparable.
+
+    An unrecognised rule raises. It is a closed set of three and a fourth spelling is a
+    configuration nobody has modelled, which must not silently fall through to the default --
+    that is how `co_survivor_rule` came to be unread in the first place.
+    """
+    if rule in ("split", "tiebreak"):
+        return 1.0 / survivors
+    if rule == "rollover":
+        return 1.0 if survivors == 1 else 0.0
+    raise ValueError(
+        f"`PoolConfig.co_survivor_rule` is {rule!r}: it decides what a shared finish pays and "
+        "has to be one of 'split' (an even division), 'rollover' (nobody collects, the pot "
+        "carries forward) or 'tiebreak' (one survivor takes it, priced at its expectation). "
+        "The rule is unconfirmed for this pool, which is why it is a setting; an unmodelled "
+        "spelling of it is not a fourth option.")
+
+
 def _entry_trials(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int], *,
-                  entries: int, ledger: set[str], ours: _Ours | None,
-                  trials: int) -> EntryOutcome:
+                  entries: int, ledger: set[str], ours: _Ours | None, trials: int,
+                  pool: PoolConfig | None = None) -> EntryOutcome:
     """The trial loop `entry_outcome` reports, over an already-reshaped season.
 
     Split out because `ours=None` is a quantity worth being able to ask for: it is entry 0
@@ -816,29 +863,28 @@ def _entry_trials(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequenc
     reverses #161's leverage claim. `entry_outcome` itself never passes None: from outside
     this module our entry plays our plan.
     """
+    cfg = pool or PoolConfig()
     survived = sole = 0
-    share = 0.0
     # Kept per trial, not just summed: two candidate picks are compared by their means, and a
-    # difference smaller than the spread of what was averaged is not a difference.
-    each: list[float] = []
+    # difference smaller than the spread of what was averaged is not a difference. The count
+    # rather than the share, so the record does not have the co-survivor rule baked into it.
+    each: list[int] = []
+    share: list[float] = []
     for _ in range(trials):
         led = [set(ledger)] + [set() for _ in range(entries - 1)]
         alive = [True] * entries
         _play(rng, wks, weeks, led, alive, ours)
-        if not alive[0]:
-            each.append(0.0)
-            continue
-        n = sum(alive)
-        survived += 1
+        n = sum(alive) if alive[0] else 0
+        each.append(n)
+        share.append(share_of_pot(cfg.co_survivor_rule, n) if n else 0.0)
+        survived += int(n > 0)
         sole += int(n == 1)
-        share += 1.0 / n
-        each.append(1.0 / n)
     return EntryOutcome(trials=trials, survives=survived / trials,
-                        sole=sole / trials, share=share / trials,
-                        share_sd=float(np.std(each)) if each else 0.0,
+                        sole=sole / trials, share=sum(share) / trials,
+                        share_sd=float(np.std(share)) if share else 0.0,
                         plan=ours.plan if ours is not None else None,
                         replans=(ours.replans / trials) if ours is not None else 0.0,
-                        share_each=tuple(each))
+                        survivors_each=tuple(each))
 
 
 def entry_outcome(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
@@ -874,7 +920,7 @@ def entry_outcome(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
     wks = weeks_from_grid(grid, weeks, cfg)
     spent = set(ledger)
     return _entry_trials(rng, wks, weeks, entries=entries, ledger=spent,
-                         ours=_Ours(wks, weeks, cfg, plan, spent), trials=trials)
+                         ours=_Ours(wks, weeks, cfg, plan, spent), trials=trials, pool=cfg)
 
 
 def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
@@ -893,6 +939,14 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     commissioner confirmed, so the same $20 buys less in week 6 than in week 2. That is why
     the equity comes from `entry_outcome` on the real ledger rather than from one over the
     field, which is ledger-blind and identical in both.
+
+    That confirmation is `PoolConfig.buyback_restores_ledger`, and until #160 it was read by
+    nothing -- the ledger was carried in unconditionally and the field was a fact about the
+    pool recorded where nothing could act on it. It is read here now, so a commissioner who
+    corrects it is a re-run: `False` means the re-entry starts clean, every team is available
+    to it again, and the same $20 is worth the same in week 6 as in week 2. `Buyback.spent`
+    moves with it, because a figure that says three teams are gone while pricing a fresh
+    entry is worse than either answer on its own.
 
     **The equity is what the re-entry is worth to somebody who plays it well**, since
     `entry_outcome` values it on our plan, solved from that inherited ledger. It used to be
@@ -915,10 +969,12 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     axis is reported, and a verdict whose sign flips inside that range is a verdict about the
     assumption rather than about the pool's economics.
 
-    **The equity assumes the pot splits evenly among co-survivors**, which is what
-    `entry_outcome.share` measures. `PoolConfig.co_survivor_rule` carries that as its default
-    and it is the one rule nobody has confirmed; under a rollover or a tiebreak the same share
-    is worth something else, and this figure would need the rule applied rather than assumed.
+    **What the pot pays a co-survivor is `PoolConfig.co_survivor_rule`**, applied in
+    `share_of_pot` and reaching this figure through `entry_outcome.share`. It defaults to an
+    even split and is the one rule nobody has confirmed, so this equity is conditional on it
+    -- and how *much* it is conditional on it is not fixed: a shared finish is nearly
+    unreachable at a flat field and common at a concentrated one, which is `sensitivity`'s
+    `shared` column and an assumption rather than a fact about the pool.
     """
     cfg = pool or PoolConfig()
     if cfg.buyback_cap <= 0:
@@ -936,8 +992,12 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     rivals = max(0, min(int(rival_buybacks), cfg.buyback_cap))
     field = live_entries + 1 + rivals
     grown = pot + (1 + rivals) * cfg.buyback_fee
+    # The rule, not the argument: what the re-entry inherits is what the pool says it
+    # inherits. The caller still passes the ledger, because a run under a pool that clears it
+    # has to be able to say what was cleared.
+    inherits = sorted(set(ledger)) if cfg.buyback_restores_ledger else []
 
-    out = entry_outcome(grid, weeks, entries=field, ledger=ledger, pool=cfg,
+    out = entry_outcome(grid, weeks, entries=field, ledger=inherits, pool=cfg,
                         trials=trials, rng=rng)
     equity = out.share * grown
     net = equity - cfg.buyback_fee
@@ -946,8 +1006,11 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
         available=True,
         reason=(f"{'BUY BACK' if yes else 'DO NOT BUY BACK'}: "
                 f"${equity:.2f} of equity against a ${cfg.buyback_fee:.2f} fee, "
-                f"re-entering with {_plural(len(set(ledger)), 'team')} already spent"),
-        pot=grown, field=field, spent=len(set(ledger)), share=out.share,
+                + (f"re-entering with {_plural(len(inherits), 'team')} already spent"
+                   if cfg.buyback_restores_ledger else
+                   "re-entering with a clean ledger, which is what this pool's rules say a "
+                   "buyback restores")),
+        pot=grown, field=field, spent=len(inherits), share=out.share,
         equity=equity, fee=cfg.buyback_fee, net=net, breakeven=equity, recommend=yes)
 
 
@@ -1040,6 +1103,7 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     # difference between two of them is a different and much tighter quantity and is computed
     # from these rather than from those.
     each: dict[str, np.ndarray] = {}
+    live: dict[str, np.ndarray] = {}
     root = np.sqrt(trials)
     for r in ranked.iter_rows(named=True):
         team, p = str(r["team"]), float(r["win_prob"])
@@ -1047,8 +1111,13 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
             rest = entry_outcome(grid, ahead, entries=entries, ledger=[*spent, team],
                                  pool=cfg, trials=trials, rng=np.random.default_rng(seed))
             survives, share = rest.survives, rest.share
-            each[team] = xs = np.asarray(rest.share_each, dtype=float)
-            s_se = float(np.std(xs > 0.0)) / root * p
+            # The co-survivor rule applied here rather than read off a stored share: what a
+            # trial paid is a *rule* about a count, and the count is what the trial recorded.
+            live[team] = np.asarray(rest.survivors_each, dtype=int) > 0
+            each[team] = xs = np.array(
+                [share_of_pot(cfg.co_survivor_rule, n) if n else 0.0
+                 for n in rest.survivors_each], dtype=float)
+            s_se = float(np.std(live[team])) / root * p
             d_se = float(np.std(xs)) / root * p * pot
         else:
             # Nothing left to play: surviving this week is surviving, and the pot is split
@@ -1076,7 +1145,12 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
         a, b = each[best.team], each[fb.team]
         d = pot * (best.win_prob * a - fb.win_prob * b)
         res = DECISIVE_SIGMA * float(np.std(d)) / root
-        gse = float(np.std((b > 0.0).astype(float) - (a > 0.0).astype(float))) / root
+        gse = float(np.std(live[fb.team].astype(float)
+                          - live[best.team].astype(float))) / root
+        # Took a share of the pot, which is not the same as survived: under a rollover rule a
+        # shared finish pays nothing, and a trial set where every finish was shared carries no
+        # information about the money however much it says about survival. The week's verdict
+        # is a dollar comparison, so this counts dollars.
         cashed = int(np.count_nonzero((a > 0.0) | (b > 0.0)))
     elif ahead:
         cashed = int(np.count_nonzero(each[best.team] > 0.0))

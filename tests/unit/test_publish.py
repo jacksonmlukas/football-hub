@@ -1615,3 +1615,94 @@ def test_a_producer_that_derives_its_rows_still_stamps_its_own_run(site, tmp_pat
     before = jsonio.stamp()
     got = jsonio.artifact("anything", "somewhere", [{"a": 1}])
     assert got["generated_at"] >= before
+
+
+# --- the pool rules reach the published plan (issue #160) -------------------
+
+def _double_pick_grid():
+    """Two teams a week over weeks 12-13, so a double-pick week is distinguishable from a
+    single-pick one by how many teams the plan names for it."""
+    return pl.DataFrame({"week": [12, 12, 13, 13, 13, 13],
+                         "team": ["KC", "LV", "SF", "SEA", "DAL", "NYG"],
+                         "win_prob": [0.8, 0.2, 0.7, 0.3, 0.65, 0.35],
+                         # #156: a double-pick week refuses a grid without game identity,
+                         # since the two picks cannot otherwise be kept off one fixture.
+                         "game_id": ["12-a", "12-a", "13-a", "13-a", "13-b", "13-b"]})
+
+
+def test_an_override_of_a_pool_rule_changes_the_published_plan(site, base, monkeypatch):
+    """#160's first criterion, and the defect it was filed about.
+
+    The publisher used to build `PoolConfig()` by hand, so a `conf/` override of the
+    double-pick weeks reached four other call sites and never the one that publishes. It now
+    resolves the pool the way a run does. Proved by resolving two different rule sets and
+    asserting the plan named a different number of teams for the same week.
+    """
+    import hub.season.survivor as sv
+    from hub.config import HubConfig, PoolConfig
+
+    monkeypatch.setattr(sv, "grid_from_schedule", lambda season, cache=None: _double_pick_grid())
+
+    def resolved_with(pool):
+        cfg = HubConfig()
+        cfg.pool = pool
+        return cfg
+
+    monkeypatch.setattr(publish, "resolved_config",
+                        lambda: resolved_with(PoolConfig(double_pick_weeks=(13,))))
+    publish.publish_all(2026, 1, base=base, out=site)
+    two_in_13 = json.loads((site / "survivor.json").read_text())
+    picks_13 = [r["team"] for r in two_in_13["rows"] if r["week"] == 13]
+
+    monkeypatch.setattr(publish, "resolved_config",
+                        lambda: resolved_with(PoolConfig(double_pick_weeks=())))
+    publish.publish_all(2026, 1, base=base, out=site)
+    one_in_13 = json.loads((site / "survivor.json").read_text())
+    picks_13_single = [r["team"] for r in one_in_13["rows"] if r["week"] == 13]
+
+    assert len(picks_13) == 2 and len(picks_13_single) == 1, (
+        f"the override did not reach the published plan: {picks_13} vs {picks_13_single}")
+
+
+def test_the_artifact_carries_the_pool_digest_and_it_moves_with_the_rules(site, base,
+                                                                          monkeypatch):
+    """#160's second criterion. `pool_digest` was built for this and had no production caller,
+    so two runs under different rules produced identical artifacts *and* identical provenance."""
+    import hub.season.survivor as sv
+    from hub.config import HubConfig, PoolConfig, pool_digest
+
+    monkeypatch.setattr(sv, "grid_from_schedule", lambda season, cache=None: _double_pick_grid())
+
+    def resolved_with(pool):
+        cfg = HubConfig()
+        cfg.pool = pool
+        return cfg
+
+    digests = {}
+    for label, pool in (("a", PoolConfig(buyback_cutoff_week=6)),
+                        ("b", PoolConfig(buyback_cutoff_week=8))):
+        monkeypatch.setattr(publish, "resolved_config", lambda p=pool: resolved_with(p))
+        publish.publish_all(2026, 1, base=base, out=site)
+        got = json.loads((site / "survivor.json").read_text())
+        assert got.get("pool_digest") == pool_digest(pool), (
+            "the artifact's digest is not the digest of the rules it was published under")
+        digests[label] = got["pool_digest"]
+    assert digests["a"] != digests["b"], "two rule sets published the same provenance"
+
+
+def test_every_pool_field_is_read_by_the_simulation():
+    """#160's third criterion, held rather than reviewed: a field on `PoolConfig` that nothing
+    reads is a knob a reader takes for a lever. Three left on 2026-09-10 for exactly that."""
+    import dataclasses
+    import pathlib
+    import re
+
+    from hub.config import PoolConfig
+
+    src = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
+    corpus = "\n".join(p.read_text() for p in src.rglob("*.py") if p.name != "config.py")
+    unread = [f.name for f in dataclasses.fields(PoolConfig)
+              if not re.search(rf"\.{re.escape(f.name)}\b", corpus)]
+    assert not unread, (
+        f"PoolConfig fields nothing outside config.py reads: {unread}. Wire each to the "
+        f"behaviour it names, or remove it and say why where it was.")

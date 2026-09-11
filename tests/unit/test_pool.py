@@ -644,24 +644,27 @@ def test_two_plans_that_name_the_same_picks_give_exactly_the_same_figure():
     assert a.plan != b.plan and a.plan.picks == b.plan.picks
     assert (a.survives, a.sole, a.share, a.share_sd) == (b.survives, b.sole, b.share,
                                                          b.share_sd)
-    assert a.share_each == b.share_each
+    assert a.survivors_each == b.survivors_each
 
 
-def test_the_per_trial_share_is_positive_exactly_where_the_entry_survived():
-    """What `share_each` is, pinned so a paired difference taken from it means what it says.
+def test_every_reported_figure_derives_from_the_one_per_trial_record():
+    """What `survivors_each` is, pinned so a paired difference taken from it means what it says.
 
-    The three means are means of this vector, and survival is its support rather than a second
-    vector -- so a caller taking a paired difference of survival and a paired difference of
-    money is reading one record of one set of trials, not two records that could disagree.
+    A count and not a share, so the record does not have the co-survivor rule baked into it:
+    the entry survived where it is non-zero and was alone where it is one, whatever the pool
+    pays for a shared finish. A caller taking a paired difference of survival and a paired
+    difference of money is then reading one record of one set of trials rather than two
+    records that could disagree about it.
     """
     g = _board(TEN, flat=(6,))
     out = pool.entry_outcome(g, TEN, entries=12, trials=200, rng=np.random.default_rng(0))
-    xs = out.share_each
-    assert len(xs) == out.trials == 200
-    assert sum(x > 0 for x in xs) / len(xs) == out.survives
-    assert sum(xs) / len(xs) == pytest.approx(out.share)
-    assert sum(x == 1.0 for x in xs) / len(xs) == out.sole
+    ns = out.survivors_each
+    assert len(ns) == out.trials == 200
+    assert sum(n > 0 for n in ns) / len(ns) == out.survives
+    assert sum(n == 1 for n in ns) / len(ns) == out.sole
+    assert sum(1 / n for n in ns if n) / len(ns) == pytest.approx(out.share)
     assert out.shared == pytest.approx(out.survives - out.sole)
+    assert out.shared > 0, "a shared finish has to happen, or the rule below decides nothing"
 
 
 def test_a_plan_that_will_not_play_is_re_solved_into_the_one_we_would_have_solved():
@@ -1069,3 +1072,29 @@ def test_the_sweep_anchors_on_the_behaviour_already_in_the_tree():
     direct = pool.simulate(g, [1, 2, 3], entries=21, trials=120,
                            rng=np.random.default_rng(seed))
     assert rows[0].field == direct
+
+
+# --- co_survivor_rule is wired, and a fourth spelling is refused (#160) ------
+
+@pytest.mark.parametrize(("rule", "survivors", "expected"), [
+    ("split", 1, 1.0), ("split", 4, 0.25),
+    ("tiebreak", 4, 0.25),          # priced at its expectation, identical to a split in the mean
+    ("rollover", 1, 1.0),
+    ("rollover", 2, 0.0),           # nobody collects; the pot carries forward
+    ("rollover", 5, 0.0),
+])
+def test_each_co_survivor_rule_pays_what_it_says(rule, survivors, expected):
+    """The rule `co_survivor_rule` names, read rather than assumed.
+
+    `rollover` is the one that matters: it is not a smaller figure by a constant, it is worth
+    nothing exactly where a split is worth a half. Before #160 every dollar figure assumed a
+    split whatever the field said, which is how an unconfirmed rule came to decide nothing.
+    """
+    assert pool.share_of_pot(rule, survivors) == pytest.approx(expected)
+
+
+def test_an_unrecognised_co_survivor_rule_is_refused_not_defaulted():
+    """A closed set of three. A fourth spelling falling through to `split` is precisely how
+    the rule came to be unread, so it raises and names the three."""
+    with pytest.raises(ValueError, match=r"split.*rollover.*tiebreak"):
+        pool.share_of_pot("winner-takes-all", 3)

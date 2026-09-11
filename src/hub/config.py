@@ -160,8 +160,14 @@ class PollConfig:
 #
 # `co_survivor_rule` is the one that matters: it decides how a shared pot splits, so every
 # dollar figure on that panel is conditional on it.
-UNCONFIRMED_POOL_RULES: tuple[str, ...] = (
-    "co_survivor_rule", "playoff_continuation", "buyback_cap")
+#
+# `playoff_continuation` left this tuple with the field it named (#160). It was an unconfirmed
+# rule that reached no figure -- nothing read it, and nothing could: the grid this pool is
+# simulated on is `schedule.priced_games`, which is the regular season, so a pool playing on
+# past week 18 has no week 19 to be planned over. A caveat naming a rule that decides nothing
+# is not a caveat, it is noise inside one, and it made the two that do decide something
+# cheaper to read past.
+UNCONFIRMED_POOL_RULES: tuple[str, ...] = ("co_survivor_rule", "buyback_cap")
 
 
 @dataclass
@@ -199,11 +205,16 @@ class PoolConfig:
     buyback_cutoff_week: int = 6             # inclusive -- buybacks run *through* this week
     buyback_restores_ledger: bool = True     # confirmed: used teams survive a re-entry
     double_pick_weeks: tuple[int, ...] = (13, 14, 15, 16, 17, 18)
-    tie_eliminates: bool = True
     field_size: int = 21
-    max_entries_per_person: int = 5
     co_survivor_rule: str = "split"          # unconfirmed: split | rollover | tiebreak
-    playoff_continuation: bool = False       # unconfirmed for this pool
+    # Three fields left this class on 2026-09-10 (#160), each because nothing read it and
+    # nothing could: `tie_eliminates` names an outcome the simulation never draws -- a game is
+    # a win or a loss off `win_prob`, with no tie state -- `max_entries_per_person` caps a
+    # quantity the field model does not carry, since it simulates `field_size` entries and
+    # not the people behind them, and `playoff_continuation` planned over weeks the priced
+    # grid does not contain. A knob that changes nothing is worse than no knob: a reader takes
+    # it for a lever, and a caveat naming it makes the caveats that do decide something cheaper
+    # to read past. Each returns the day the simulation can honour it.
     # How hard the simulated field crowds onto the week's best team: an exponent applied to
     # `win_prob` before `hub.season.pool._pick` samples a rival's team. 1.0 is sampling
     # proportional to the raw probability, which is what this pool has always simulated and

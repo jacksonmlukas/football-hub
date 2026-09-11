@@ -61,10 +61,15 @@ def test_the_pool_config_is_reachable_and_carries_every_rule():
     hardcoded, which is the thing this dataclass exists to prevent."""
     pool = HubConfig().pool
     for rule in ("entry_fee", "buyback_fee", "buyback_cap", "buyback_cutoff_week",
-                 "buyback_restores_ledger", "double_pick_weeks", "tie_eliminates",
-                 "field_size", "max_entries_per_person", "co_survivor_rule",
-                 "playoff_continuation", "field_concentration"):
+                 "buyback_restores_ledger", "double_pick_weeks", "field_size",
+                 "co_survivor_rule", "field_concentration"):
         assert hasattr(pool, rule), rule
+    # The other half, since #160: a rule that *is* here has to be read by the simulation, or
+    # it is a knob a reader takes for a lever. `tie_eliminates`, `max_entries_per_person` and
+    # `playoff_continuation` were here and read by nothing; each left with its reason written
+    # where it was. `test_every_pool_field_is_read_by_the_simulation` in test_publish holds it.
+    for gone in ("tie_eliminates", "max_entries_per_person", "playoff_continuation"):
+        assert not hasattr(pool, gone), f"{gone} is back, and nothing reads it"
 
 
 def test_a_pool_rule_does_not_move_the_model_digest():

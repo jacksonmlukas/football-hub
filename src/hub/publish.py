@@ -26,7 +26,7 @@ from typing import Any, NamedTuple, cast
 import polars as pl
 
 from hub import jsonio, schedule, store
-from hub.config import SEASON_AHEAD, UNCONFIRMED_POOL_RULES, PoolConfig
+from hub.config import SEASON_AHEAD, UNCONFIRMED_POOL_RULES, pool_digest, resolved_config
 from hub.models import coverage
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
@@ -794,6 +794,13 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | Kept | No
     """
     from hub.season import survivor as sv
     out = out or SITE
+    # The pool's rules as a run actually resolves them -- `conf/` applied -- and not a bare
+    # `PoolConfig()`. This was the one consumer that publishes and the one that built the
+    # defaults by hand, so an override of the double-pick weeks or of the week buybacks run
+    # through reached four other call sites and never the published Remaining plan (#160).
+    # That falsified the survivor plan's own commitment that pool rules are configuration: a
+    # rule correction was a re-run everywhere except the place a reader sees.
+    pool = resolved_config().pool
     try:
         # The remaining plan *and its scope*, from `hub.season.survivor` rather than
         # assembled here. This function used to make nine `sv.*` calls orchestrating
@@ -805,7 +812,7 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | Kept | No
         got = sv.plan_remaining(sv.grid_from_schedule(season), season,
                                 # The pool's own rules, so weeks 13-18 take two teams here
                                 # even though a bare `solve` still takes one.
-                                pool=PoolConfig(),
+                                pool=pool,
                                 # What this entry has already used, read back from the
                                 # remaining plan it published. The only record there is.
                                 prior=sv.published_plan(out / "survivor.json"))
@@ -830,6 +837,12 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | Kept | No
     # `hub.config` so this cannot disagree with the settings it describes.
     art = jsonio.artifact("survivor", "hub.season.survivor", got.picks.to_dicts(),
                           unconfirmed=list(UNCONFIRMED_POOL_RULES),
+                          # Which rules this plan was computed under, as a digest a reader can
+                          # compare between two publishes. Built for exactly this and, until
+                          # #160, called by nothing in production -- so two runs under
+                          # different rules produced identical artifacts *and* identical
+                          # provenance.
+                          pool_digest=pool_digest(pool),
                     season=season,
                     survival=got.survival, unpriced_weeks=got.coverage.missing,
                     # The remaining plan's own scope, said out loud. A survival probability means
