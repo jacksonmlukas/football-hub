@@ -109,8 +109,10 @@ SURVIVORS: dict[tuple[str, str], str] = {
 # Two sites per function at two of them, one at the other three. Stated as a number because
 # that is the acceptance criterion: a new sniff has to move a figure a person wrote down.
 # Eight until #146; `report.injuries` was two of them and is now none. Six until #148 widened
-# the scan past `hub.draft` and `season.roster.market` came into view.
-EXPECTED_SITES = 6
+# the scan past `hub.draft` and `season.roster.market` came into view. Seven since #86:
+# `durability.correct_projection` asks the frame for `sat_out` beside `missed` and
+# `injury_status`, for the producer reason already given for that function.
+EXPECTED_SITES = 7
 
 
 def _stage_literals(node: ast.AST) -> set[str]:
