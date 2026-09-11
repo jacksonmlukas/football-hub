@@ -90,7 +90,7 @@ def test_a_decision_and_its_outcome_are_two_rows_joined_on_a_key(tmp_path):
 
 
 def test_the_outcome_attaches_without_touching_the_decision(tmp_path):
-    k = _decide(tmp_path, market_price=-320.0, expected_dollars=1.5)
+    k = _decide(tmp_path, market_price=0.76, expected_dollars=1.5)
     before = journal.read(2026, base=tmp_path)
     journal.settle(k, season=2026, week=1, survived=True, dollars=0.0, base=tmp_path)
     after = journal.read(2026, base=tmp_path)
@@ -344,10 +344,41 @@ def test_a_credit_balance_that_rose_is_unknown_cost_rather_than_a_negative_one(t
 def test_a_price_note_survives_alongside_a_price(tmp_path):
     """It was dropped the moment there was a price, so the note saying which source a price
     came from, or what was odd about it, could not be written at all."""
-    _decide(tmp_path, market_price=-320.0, price_note="closing price, snapshot 18:04")
+    _decide(tmp_path, market_price=0.76, price_note="closing price, snapshot 18:04")
     got = journal.read(2026, base=tmp_path)
-    assert got["market_price"][0] == pytest.approx(-320.0)
+    assert got["market_price"][0] == pytest.approx(0.76)
     assert got["price_note"][0] == "closing price, snapshot 18:04"
+
+
+def test_a_market_price_outside_the_unit_interval_is_refused_on_every_row(tmp_path):
+    """One unit per column (#239). `market_price` is a win probability, because `week_cost`
+    is a difference of it and `fallback_price` and is only a cost when both are one. The
+    range check fired only once a `fallback_price` stood beside it, so a matched pick could
+    carry 5.0 there and a moneyline row and a probability row were indistinguishable in a
+    query. It fires whether or not the free pick's price is on the row."""
+    with pytest.raises(ValueError, match=r"market_price=5\.0 is not a probability"):
+        _decide(tmp_path, market_price=5.0)
+    with pytest.raises(ValueError, match=r"market_price=5\.0 is not a probability"):
+        _departure(tmp_path, price=5.0, free_price=0.70, week_cost=0.70 - 5.0)
+    assert journal.read(2026, base=tmp_path).is_empty()
+
+
+def test_a_moneyline_is_converted_before_it_is_written_and_says_so(tmp_path):
+    """The other unit, and where it lands (#239). An American price is not a probability
+    and is refused as one; the caller that has a moneyline converts it through
+    `hub.models.props.implied` and records the source in `price_note`, so the number on
+    the row is the same unit `record_weekly` writes and the note says how it got there."""
+    from hub.models.props import implied
+
+    with pytest.raises(ValueError, match=r"market_price=-320\.0 is not a probability"):
+        _decide(tmp_path, market_price=-320.0)
+    p = implied(-320.0)
+    assert p is not None and p == pytest.approx(320 / 420)
+    _decide(tmp_path, market_price=p, price_note="implied from moneyline -320, vig in")
+    got = journal.read(2026, base=tmp_path)
+    assert got["market_price"][0] == pytest.approx(320 / 420)
+    assert 0.0 <= got["market_price"][0] <= 1.0
+    assert got["price_note"][0] == "implied from moneyline -320, vig in"
 
 
 def test_a_string_that_is_not_a_key_is_refused_rather_than_parsed_loosely(tmp_path):
