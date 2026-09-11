@@ -452,6 +452,43 @@ def test_log_without_its_inputs_is_a_sentence(tmp_path, capsys):
     assert "unavailable" in capsys.readouterr().err
 
 
+def test_a_poisson_count_is_the_family_at_a_dispersion_of_one():
+    """No measured phase sits at exactly one, so the branch is reached only by asking."""
+    d = props._counts(np.random.default_rng(0), 4.0, 1.0, 100_000)
+    assert d.var() / d.mean() == pytest.approx(1.0, rel=0.05)
+
+
+def test_a_player_with_no_pick_or_no_projection_has_no_line_and_is_not_an_error():
+    players = pl.DataFrame({"player": ["Has Both", "No Pick", "No Proj"],
+                            "pos": ["WR", "WR", "WR"], "adp": [3.0, None, 4.0],
+                            "proj_blend": [17.0, 15.0, None]})
+    assert set(props.component_lines(players)) == {"has both"}
+
+
+def test_a_quote_with_no_readable_over_price_is_decided_against_even_money():
+    quotes = _polls(_poll("Justin Jefferson", "player_reception_yds", 40.5, -110, None)
+                    ).with_columns(pl.lit(None, dtype=pl.Float64).alias("over_price"))
+    row = _rec_yds(props.card(_players(), quotes, decided_at=T0, n=2000))
+    assert row["side"] == props.OVER and row["edge"] > 0.2
+
+
+def test_the_log_command_names_the_missing_archive(tmp_path, capsys):
+    players = tmp_path / "players.parquet"
+    _players().write_parquet(players)
+    code = props.main(["--log", "--players", str(players), "--decided-at", T0.isoformat(),
+                       "--week", "2", "--base", str(tmp_path)])
+    assert code == 1
+    assert "prop_lines" in capsys.readouterr().err
+
+
+def test_the_report_names_a_season_the_log_does_not_hold(tmp_path, capsys):
+    polls = _polls(_poll("Justin Jefferson", "player_reception_yds", 40.5, -110, at=_at(0)))
+    log = props.log_decisions(_players(), polls, decided_at=_at(1), n=2000)
+    props.write_log(log, 2026, 2, base=tmp_path)
+    assert props.main(["--report", "--season", "2027", "--base", str(tmp_path)]) == 1
+    assert "no 2027 rows" in capsys.readouterr().err
+
+
 def test_players_without_a_pick_or_a_projection_are_refused_by_name():
     with pytest.raises(ValueError, match="proj_blend"):
         props.component_lines(pl.DataFrame({"player": ["a"], "pos": ["WR"], "adp": [1.0]}))

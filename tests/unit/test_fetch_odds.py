@@ -1010,6 +1010,16 @@ def test_a_point_market_with_no_point_or_no_over_is_skipped_not_stored():
     assert rows[0]["under_price"] is None, "an unreadable price is a null beside the point"
 
 
+def test_an_outcome_with_no_player_or_an_unknown_side_is_skipped():
+    ev = _prop_event(books=())
+    ev["bookmakers"] = [{"key": "b", "markets": [{"key": "player_receptions", "outcomes": [
+        {"name": "Over", "price": -110, "point": 4.5},
+        {"name": "Exactly", "description": "Odd Side", "price": +500, "point": 4.5},
+        {"name": "Over", "description": "Kept", "price": -110, "point": 4.5},
+    ]}]}]
+    assert [r["player_key"] for r in odds.prop_quotes(ev, "g", 1, NOON)] == ["kept"]
+
+
 def test_no_props_market_is_budgeted_and_every_one_is_refused_by_name(transport, teams,
                                                                        schedule, paths):
     """The line this ticket must not cross. A props market runs about four credits an event,

@@ -83,6 +83,7 @@ FLOOR: dict[str, int] = {
     "src/hub/models/market.py": 1,
     "src/hub/models/panel.py": 1,
     "src/hub/models/predict.py": 2,
+    "src/hub/models/props.py": 1,
     "src/hub/models/ratings.py": 4,
     "src/hub/models/scoring_rules.py": 1,
     "src/hub/models/spread.py": 9,
