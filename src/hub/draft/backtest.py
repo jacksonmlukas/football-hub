@@ -53,14 +53,18 @@ from hub.draft.optimize import (
     DEFAULT_ROUNDS,
     ROOM,
     market_pick,
-    rank_tiers,
     root_seed,
     simulate_remaining_draft,
     stream,
-    win_probability,
 )
 from hub.draft.season import CorrelationReport, lineup_points
 from hub.draft.state import DraftState
+
+# The arm under test, from the exhibit. This harness is the one production reader
+# `hub.exhibits` has -- ADR-0007 keeps the measurement re-runnable and ADR-0009 says
+# reopening it means re-running this file -- and
+# `tests/contracts/test_the_exhibit_is_not_a_dependency.py` holds it to being the only one.
+from hub.exhibits.championship_equity import rank_tiers, win_probability
 from hub.league import REG_SEASON_WEEKS
 from hub.models.experiment import (
     BOOTSTRAP,  # noqa: F401 -- re-exported: tests reach it as `bt.BOOTSTRAP`
@@ -243,6 +247,15 @@ def draft_root(seed: int, season: int, k: int) -> np.random.SeedSequence:
 
     What descends from it is `optimize.ROOM`, `optimize.ROLLOUT` and `optimize.SEASON_SIM`;
     the tree is documented there.
+
+    **Not `cohort.seed_for`, and #200 is where the difference is stated rather than left to
+    look like a drift.** The Cohort the other two Gates score still opens
+    `default_rng(seed + 1000 * season + k)`, the integer draw this harness used before #195.
+    This harness left it because arm B evaluates draft futures inside the room it is scored
+    in, and on the integer line rollout 0 *was* that room; a Cohort has no arm B under it,
+    so the leak cannot occur there, and both season-side gates' published figures were
+    measured on the integer draw. Two recipes, each declared once, each with its reason --
+    `tests/unit/test_cohort.py` guards that neither is written anywhere else.
     """
     return root_seed(seed, season, k)
 
@@ -313,10 +326,12 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     statistics testable, and a backtest whose statistics can only be exercised by hitting
     ESPN is one nobody re-runs.
 
-    `n_draft_sims` and `n_season_sims` are pinned at the shipped 12 x 250. The first P0 run
-    used 6 x 120 -- a quarter of the live budget -- and produced -5.79 [-9.17, -2.45], an
-    artifact that vanished at adequate power. Lower them and you are measuring a different
-    optimizer.
+    `n_draft_sims` and `n_season_sims` default to 12 x 250, the budget every published figure
+    in ADR-0009 was measured at. It used to read "pinned at the shipped 12 x 250", and there
+    is no shipped path: equity left the draft-night output under that ADR, so the budget is
+    the measurement's own and not a product setting it mirrors (#198). The first P0 run used
+    6 x 120 -- a quarter of it -- and produced -5.79 [-9.17, -2.45], an artifact that
+    vanished at adequate power. Lower them and you are measuring a different optimizer.
 
     **The season stays the cluster, and #195 is why the question was asked.** Before it, the
     rows were dependent for two separate reasons: they share a board, a player pool and one
@@ -734,11 +749,15 @@ def join_report(rates: dict[str, float]) -> list[str]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # Function-local for the same reason `build` is below: `hub.draft.cohort` imports
+    # `market_strategy` from this module, so a module-level import here would be a cycle.
+    from hub.draft.cohort import DRAFTS
+
     ap = argparse.ArgumentParser(
         prog="hub.draft.backtest",
         description="Championship equity against the market, on realised outcomes.")
     ap.add_argument("--seasons", default="2022,2023,2024,2025")
-    ap.add_argument("--drafts", type=int, default=20, help="drafts per season")
+    ap.add_argument("--drafts", type=int, default=DRAFTS, help="drafts per season")
     ap.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS)
     ap.add_argument("--draft-sims", type=int, default=12)
     ap.add_argument("--season-sims", type=int, default=250)

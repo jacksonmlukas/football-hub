@@ -1,5 +1,10 @@
 """What this league's structure actually rewards, measured rather than argued.
 
+**This is an exhibit.** It was `hub.draft.leverage` until #198, a CLI with no importer
+sitting in the draft package as if the product read it; the package docstring says what an
+exhibit is. The measurement is `docs/six-of-twelve.md`, and this is the harness that re-runs
+it -- nothing else, and nothing in `hub.draft` reaches it.
+
 `docs/championship-leverage.md` derives its draft-time strategy from *"12 teams, 8 make
 playoffs, 3 weeks (15-17), no byes"*, concludes the regular season is *"nearly a
 formality"* and that *"dP(champ)/d(regular-season win) is close to zero"*, and lands on
@@ -30,7 +35,7 @@ own past drafts (`hub.draft.calibrate`, `docs/talent-cv.md`); refitting it from 
 strengthened every conclusion here rather than changing one. Read the directions, not the
 decimals.
 
-    uv run python -m hub.draft.leverage
+    uv run python -m hub.exhibits.leverage
 """
 from __future__ import annotations
 
@@ -258,7 +263,7 @@ def _miss(err: float) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
-        prog="hub.draft.leverage",
+        prog="hub.exhibits.leverage",
         description="Measure what 6-of-12 with two byes rewards.")
     ap.add_argument("--sims", type=int, default=20000)
     a = ap.parse_args(argv)

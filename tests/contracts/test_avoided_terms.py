@@ -547,7 +547,8 @@ OUTSTANDING: dict[tuple[str, str], tuple[int, str]] = {
     ("src/hub/draft/board.py", "p(win) as a standalone term"): (
         2, "championship equity, discussed by the standalone name the entry reserves for "
            "the `p_win` column alone"),
-    ("src/hub/draft/optimize.py", "p(win) as a standalone term"): (1, "the same"),
+    ("src/hub/exhibits/championship_equity.py", "p(win) as a standalone term"): (
+        1, "the same, in the module #198 moved the sentence to"),
     # `regression.py` was here for the same reason until #48. The sentence carrying it lived
     # in `correct_projection`, and that function went with the correction #186 withdrew.
     ("src/hub/draft/season.py", "p(win) as a standalone term"): (1, "the same"),
@@ -557,7 +558,8 @@ OUTSTANDING: dict[tuple[str, str], tuple[int, str]] = {
     ("src/hub/draft/state.py", "normalised name"): (1, "the pre-2026-08-27 spelling of "
                                                        "Player key, in the module it left"),
     ("src/hub/models/panel.py", "normalised name"): (1, "the same spelling"),
-    ("src/hub/draft/optimize.py", "projected points"): (1, "xFP, spelled as forbidden"),
+    ("src/hub/exhibits/championship_equity.py", "projected points"): (
+        1, "xFP, spelled as forbidden, in the module #198 moved the sentence to"),
     ("src/hub/fetch/espn.py", "projected points"): (1, "ESPN's own projection field"),
     ("src/hub/models/market.py", "the closing line"): (1, "a snapshot, described as the "
                                                           "close it rarely is"),

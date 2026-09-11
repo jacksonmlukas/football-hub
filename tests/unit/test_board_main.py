@@ -220,6 +220,20 @@ def test_persisting_creates_both_parents(tmp_path):
     assert (out / "draft_board.json").exists()
 
 
+def test_the_archive_goes_beside_the_board_it_was_written_with(tmp_path):
+    """#244. `_persist` redirected the board and the site copy and archived to the real
+    store regardless, so every test that persisted a synthetic board left a frame in
+    `data/processed/boards/` -- 906 of them beside two real boards. The archive's base is
+    the board's own parent: in production that is `data/processed`, which is the store."""
+    out, path = tmp_path / "s", tmp_path / "d" / "b.parquet"
+    board._persist(_board(["A"], pos=["RB"]), out=out, path=path)
+    archived = list((tmp_path / "d").rglob("board-*.parquet"))
+    assert len(archived) == 1 and "boards" in archived[0].parts
+    from hub import store
+    from hub.paths import PROCESSED
+    assert PROCESSED == store.DATA, "the production base is the store, or the archive moves"
+
+
 def test_persisting_is_safe_to_repeat(tmp_path):
     out, path = tmp_path / "s", tmp_path / "d" / "b.parquet"
     df = _board(["A"], pos=["RB"])

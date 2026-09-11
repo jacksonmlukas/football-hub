@@ -822,6 +822,8 @@ def treatment_report(effects: Sequence[TreatmentEffect], *, unit: str = UNIT,
 
 
 def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - network
+    from hub.draft.cohort import DRAFTS
+
     ap = argparse.ArgumentParser(
         prog="hub.season.weekly_gate",
         description="Does the Weekly projection beat weekly consensus rank at setting lineups?")
@@ -849,7 +851,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                          "actually happened -- and report the largest effect any weekly "
                          "projection could show. `docs/gate-power.md` stage 2")
     ap.add_argument("--seasons", default="2022,2023,2024,2025")
-    ap.add_argument("--drafts", type=int, default=20, help="rosters per season")
+    ap.add_argument("--drafts", type=int, default=DRAFTS, help="rosters per season")
     ap.add_argument("--seed", type=int, default=0)
     # The stamped paired rows, the same four stamps the other two gates write. This gate
     # wrote nothing until #135; `docs/gate-power.md` names a frozen paired frame as what

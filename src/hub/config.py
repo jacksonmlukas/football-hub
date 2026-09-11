@@ -368,6 +368,11 @@ FITTED_MODULES: tuple[str, ...] = (
 # module-level names, so nothing here can address them -- there is no name to register. They
 # set the extent of a draw exactly as the six below do. Covering them means giving them a name
 # first, which is a change to those two modules and not to this file.
+#
+# `cohort:ROUNDS` has been `optimize:DEFAULT_ROUNDS` under a second name since #200, so the
+# last two round entries hash one 14 twice. The entry stays because dropping it would move
+# this digest for a refactor that moved no constant, which is the version claiming a
+# difference that does not exist -- ADR-0006's objection from the other side.
 FITTED_EXTRA: tuple[str, ...] = (
     "hub.draft.board:MIN_GAMES",
     "hub.draft.board:FLEX_SHARES",

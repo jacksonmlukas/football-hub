@@ -354,8 +354,8 @@ def test_equity_sees_the_roster_you_already_hold():
     it named a third and fourth running back at three of your first six turns while QB, WR
     and TE sat empty.
     """
-    from hub.draft.optimize import win_probability
     from hub.draft.state import DraftState, roster_for
+    from hub.exhibits.championship_equity import win_probability
 
     n = 48
     board = pl.DataFrame({
@@ -659,16 +659,6 @@ def test_compare_produces_one_paired_row_per_draft():
     assert (got["diff"] == got["optimizer"] - got["market"]).all()
 
 
-def test_compare_is_deterministic_under_a_seed():
-    """Same seed, same rooms, same answer -- or the paired design means nothing."""
-    board, real = _full_board(), None
-    real = _flat_realised(board)
-    kw = {"n_drafts": 1, "rounds": 4, "n_draft_sims": 2, "n_season_sims": 10, "seed": 7}
-    a = bt.compare({2024: board}, {2024: real}, **kw)
-    b = bt.compare({2024: board}, {2024: real}, **kw)
-    assert a.equals(b)
-
-
 def test_the_optimizer_arm_returns_a_live_player():
     """It ranks `recommend()`'s shortlist by equity and breaks ties on consensus. The failure
     it must not have is returning someone already drafted."""
@@ -888,13 +878,13 @@ def _stream_spy(monkeypatch):
     room being played never does.
 
     Both namespaces are patched because both hold a reference: `backtest.play` imported the
-    function, and `optimize.win_probability` calls it where it is defined.
+    function for the room, and the exhibit's `win_probability` imported it for the rollouts.
     """
-    from hub.draft import optimize as opt
+    from hub.exhibits import championship_equity as ce
 
     seen: dict[str, list] = {"room": [], "rollout": [], "season": [], "log": []}
-    real_draft = opt.simulate_remaining_draft
-    real_season = opt.champion_probability
+    real_draft = ce.simulate_remaining_draft
+    real_season = ce.champion_probability
 
     def _key(rng):
         return repr(rng.bit_generator.state)
@@ -911,9 +901,9 @@ def _stream_spy(monkeypatch):
         _note("season", rng)
         return real_season(rosters, mu, sd, pos, rng=rng, **kw)
 
-    monkeypatch.setattr(opt, "simulate_remaining_draft", draft_spy)
+    monkeypatch.setattr(ce, "simulate_remaining_draft", draft_spy)
     monkeypatch.setattr(bt, "simulate_remaining_draft", draft_spy)
-    monkeypatch.setattr(opt, "champion_probability", season_spy)
+    monkeypatch.setattr(ce, "champion_probability", season_spy)
     return seen
 
 
@@ -1367,3 +1357,128 @@ def test_both_arms_rates_are_reported_and_a_difference_is_said():
     assert "differ" in differ[1] and "differential" in differ[1]
     assert bt.join_report({"picks": 0.0, "market": float("nan"), "optimizer": float("nan")}) \
         == []
+# --- the arm under test has a frozen identity (issue #197) ------------------
+
+# `test_compare_is_deterministic_under_a_seed` used to live here. It asserted that two calls
+# in one process agree, which is true at every commit in history while the measured effect
+# moved eight points -- the seed-to-outcome map is a function of the code, and a test that
+# only compares the code with itself cannot see the code change. The pin below proves the
+# same property more strongly (a value that matches across processes is a value that matches
+# within one) and adds the half that was missing: *which* draft the seed maps to. Its second
+# half replays the pinned draft through `compare` in the same process as the direct plays, so
+# the cross-call statelessness the old test named is asserted rather than dropped.
+
+# The recipe. Fixed here rather than read from the CLI defaults, because the pin is a claim
+# about this Board at this seed and this budget, and a default that moved would move the
+# claim without moving the code the claim is about. The budget is a fraction of the shipped
+# 12 x 250 so the test costs seconds; `compare`'s docstring says why the *published* number
+# may not be measured at a reduced budget, and this is not that number -- it is the arm's
+# identity, and a changed objective moves the roster at any budget.
+FROZEN_BOARD_DIGEST = "f9fe3e88"
+FROZEN_SEASON, FROZEN_SEED, FROZEN_DRAFT = 2025, 7, 0
+FROZEN_BUDGET = {"rounds": 6, "n_draft_sims": 2, "n_season_sims": 10}
+
+# What each arm drafted from slot 3 on that Board, at that root, in pick order. Pinned at
+# commit 9732519 (2026-09-11). A commit that changes either list must say so, because the
+# arm's published verdict (ADR-0009) was measured on the arm that produced these.
+#
+# Moved once already, the same day: `e9360c7` (#235) refitted `TALENT_CV` net of the absence
+# the season simulator now draws, and arm B -- whose objective is that simulator -- took
+# CeeDee Lamb over Christian McCaffrey at pick 1 and Austin Ekeler over David Njoku at pick
+# 6, with the room unchanged. That commit did not say the arm moved because this pin was
+# not yet on `main` to say it; ADR-0009's -17.30 was measured on the arm before it.
+#
+# What the pin sees is the roster, not every constant behind it. Mutation-proved against the
+# tie-break direction, the lift ordering, the seeding root and `compare`'s own stream; it
+# did *not* move when the co-leader bar was widened from 2 to 200 se, because at this budget
+# the consensus-best co-leader is the same player either way. A change to the tiering rule
+# is `test_optimize.py`'s to catch; this catches a change to what the arm drafts.
+FROZEN_ARM_A = ["Christian McCaffrey", "Drake London", "Travis Etienne Jr.",
+                "Patrick Mahomes II", "D.K. Metcalf", "Terry McLaurin"]
+# Three running backs in six picks is the preference ADR-0009 describes.
+FROZEN_ARM_B = ["CeeDee Lamb", "Jalen Hurts", "Kyren Williams", "Josh Jacobs",
+                "Ken Walker III", "Austin Ekeler"]
+
+
+def _frozen_board():
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    import panelarchive as arc
+
+    return arc.frame("draft_board")
+
+
+def _frozen_realised(board):
+    """Every player scores his own xFP per game, every week. Deterministic and derived from
+    the Board, so the pinned scores below are a function of the pinned rosters alone."""
+    return pl.DataFrame({
+        "player": [player_key(n) for n in board["player"].to_list() for _ in range(14)],
+        "week": [w for _ in range(board.height) for w in range(1, 15)],
+        "points": [float(x) for x in board["xfp_per_game"].to_list() for _ in range(14)],
+    }, schema={"player": pl.Utf8, "week": pl.Int64, "points": pl.Float64})
+
+
+def test_the_arm_under_test_is_pinned_on_the_frozen_board():
+    """A fixed Board, seed and budget produce a fixed roster from each arm, and the failure
+    names which arm moved rather than which number did.
+
+    Three things can move this and the message tells them apart. The Board digest moving is
+    the fixture, not the code. Arm A moving is the room -- the simulator or the seeding tree,
+    which both arms share, so arm B's roster is expected to move with it and says nothing on
+    its own. Arm B moving alone is the objective: `win_probability`, `rank_tiers`, the season
+    simulator underneath, or the shortlist -- the thing ADR-0009's verdict was measured on.
+    """
+    from hub.config import frame_digest
+    from hub.draft.optimize import ROOM, stream
+
+    board = _frozen_board()
+    assert frame_digest(board) == FROZEN_BOARD_DIGEST, (
+        "the frozen Board moved, so nothing below is about the arm -- re-pin the fixture "
+        "first (test_the_frozen_board_digests_to_a_pinned_value)")
+    report = BuildReport.of_served(board)
+    root = bt.draft_root(FROZEN_SEED, FROZEN_SEASON, FROZEN_DRAFT)
+    a_names, _ = bt.play(board, bt.market_strategy(), my_slot=3, teams=12,
+                         rounds=FROZEN_BUDGET["rounds"], rng=stream(root, ROOM),
+                         report=report)
+    arm_b = bt.optimizer_strategy(board, my_slot=3, teams=12, seed=root, report=report,
+                                  **FROZEN_BUDGET)
+    b_names, _ = bt.play(board, arm_b, my_slot=3, teams=12,
+                         rounds=FROZEN_BUDGET["rounds"], rng=stream(root, ROOM),
+                         report=report)
+    assert a_names == FROZEN_ARM_A, (
+        f"THE ROOM MOVED: arm A (the draft market, which the product ships) drafted a "
+        f"different roster from the frozen Board at the same root. The simulator or the "
+        f"seeding tree changed, and every recorded room is now a different room -- say so "
+        f"in the commit and re-pin both arms.\n  pinned: {FROZEN_ARM_A}\n  now:    {a_names}")
+    assert b_names == FROZEN_ARM_B, (
+        f"THE ARM UNDER TEST MOVED: championship equity drafted a different roster from the "
+        f"frozen Board at the same root and budget, while the room did not move. The "
+        f"objective ADR-0009's verdict was measured on is not the one in this tree -- say so "
+        f"in the commit and re-pin.\n  pinned: {FROZEN_ARM_B}\n  now:    {b_names}")
+
+
+def test_compare_plays_the_pinned_draft():
+    """`compare`'s row is the score of exactly the rosters pinned above.
+
+    This is what ties the pin to the harness: the two plays above reach the room through
+    `draft_root` and `stream(root, ROOM)`, and this asserts that `compare` does too, on a
+    Board whose rosters are known -- so a seeding change inside `compare` that the direct
+    plays cannot see fails here. It also runs after the direct plays in the same process, so
+    a room advanced by module-level state would score a different draft.
+    """
+    board = _frozen_board()
+    real = _frozen_realised(board)
+    got = bt.compare({FROZEN_SEASON: board}, {FROZEN_SEASON: real}, n_drafts=1,
+                     seed=FROZEN_SEED, my_slot=3, teams=12, **FROZEN_BUDGET)
+    assert got.height == 1
+    row = got.row(0, named=True)
+    a_pos = [board.filter(pl.col("player") == n)["pos"][0] for n in FROZEN_ARM_A]
+    b_pos = [board.filter(pl.col("player") == n)["pos"][0] for n in FROZEN_ARM_B]
+    assert row["market"] == pytest.approx(bt.score_roster(FROZEN_ARM_A, a_pos, real)), (
+        "compare's market column is not the score of the pinned arm-A roster: compare is "
+        "playing a different room from the one the pin was taken in")
+    assert row["optimizer"] == pytest.approx(bt.score_roster(FROZEN_ARM_B, b_pos, real)), (
+        "compare's optimizer column is not the score of the pinned arm-B roster: compare is "
+        "playing a different arm B from the one the pin was taken in")

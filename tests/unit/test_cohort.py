@@ -15,6 +15,9 @@ What is asserted here is the recipe, not a golden roster: same ingredients in, s
 A frozen list of player indices would pass while the seed drifted, as long as it drifted in the
 fixture too.
 """
+import ast
+import pathlib
+
 import numpy as np
 import polars as pl
 import pytest
@@ -223,3 +226,108 @@ def test_the_cohort_is_what_the_gates_used_to_build_for_themselves():
                             rounds=14, rng=np.random.default_rng(0 + 1000 * 2024 + k))
         assert [names_at[i] for i in got.rosters[k]] == was
         assert [got.pos[i] for i in got.rosters[k]] == was_pos
+
+
+# --- the recipe is declared once (#200) --------------------------------------
+#
+# `seed_for` exists because "a formula copied by hand into two places is one that eventually
+# differs in one", and by 2026-09-11 its constants had been copied into three more: the draft
+# count as a bare `default=20` in three CLIs, and the round count as `optimize.DEFAULT_ROUNDS`
+# and `cohort.ROUNDS`, two declarations of one 14 under two different reasons. The seed
+# formula itself now has a sibling rather than a copy -- `backtest.draft_root` descends from
+# the #195 seeding tree, and the Cohort deliberately does not (its docstring says why) -- so
+# what is guarded is that each recipe is written where it is declared and nowhere else.
+
+SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
+
+
+def _walk(path: pathlib.Path):
+    return ast.walk(ast.parse(path.read_text()))
+
+
+def _enclosing_functions(tree: ast.AST) -> dict[int, str]:
+    """Line -> the name of the function that line sits inside, for reporting."""
+    owner: dict[int, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for line in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+                owner.setdefault(line, node.name)
+    return owner
+
+
+def _is_season_times_1000(node: ast.AST) -> bool:
+    """`1000 * season` or `season * 1000`: the Cohort formula's fingerprint."""
+    if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult)):
+        return False
+    sides = (node.left, node.right)
+    return (any(isinstance(s, ast.Constant) and s.value == 1000 for s in sides)
+            and any(isinstance(s, ast.Name) and s.id == "season" for s in sides))
+
+
+def test_the_seed_formula_is_written_once():
+    """The AST guard the ticket asks for: the Cohort's draw is stated in `seed_for` and the
+    backtest's root in `draft_root`, and neither expression appears anywhere else in `src/`.
+
+    Two fingerprints. The integer formula is `1000 * season` inside an expression -- the
+    thing that was hand-copied into both season-side gates and then into `compare` and
+    `ceiling`. The tree's is `root_seed` called with coordinates: one argument is a caller
+    handing a root down (`diagnose`, `win_probability`), which is what the pass-through
+    exists for; two or more is a caller re-deriving the backtest's room recipe.
+    """
+    offenders = []
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        owner = _enclosing_functions(tree)
+        for node in ast.walk(tree):
+            line = getattr(node, "lineno", 0)
+            where = f"{path.relative_to(SRC)}:{line} in {owner.get(line)}"
+            if _is_season_times_1000(node) and not (
+                    path.name == "cohort.py" and owner.get(line) == "seed_for"):
+                offenders.append(f"{where} -- the Cohort seed formula, restated")
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == "root_seed" and len(node.args) > 1 and not (
+                        path.name == "backtest.py" and owner.get(line) == "draft_root")):
+                offenders.append(f"{where} -- the backtest's room recipe, restated")
+    assert not offenders, (
+        "a room recipe written outside its declaration -- `cohort.seed_for` for the Cohort "
+        f"and `backtest.draft_root` for the backtest; call the declaration: {offenders}")
+
+
+def test_rounds_is_one_declaration():
+    """`cohort.ROUNDS` names `optimize.DEFAULT_ROUNDS` rather than restating 14 beside it.
+
+    Read off the source rather than compared by value: `assert ROUNDS == DEFAULT_ROUNDS`
+    passes on two independent 14s, which is the state this test exists to end.
+    """
+    from hub.draft.optimize import DEFAULT_ROUNDS
+
+    assigned = [node.value for node in _walk(SRC / "draft" / "cohort.py")
+                if isinstance(node, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == "ROUNDS" for t in node.targets)]
+    assert len(assigned) == 1
+    assert isinstance(assigned[0], ast.Name) and assigned[0].id == "DEFAULT_ROUNDS", (
+        "cohort.ROUNDS is declared as a literal beside optimize.DEFAULT_ROUNDS; two "
+        "declarations of one number are two numbers as soon as one is edited")
+    assert C.ROUNDS == DEFAULT_ROUNDS
+
+
+@pytest.mark.parametrize("cli", [
+    SRC / "draft" / "backtest.py",
+    SRC / "season" / "lineup_gate.py",
+    SRC / "season" / "weekly_gate.py",
+])
+def test_each_cli_defaults_its_draft_count_from_the_declaration(cli):
+    """`--drafts` defaults to `DRAFTS`, the name, in all three Gate CLIs -- not to a 20 that
+    happens to agree with it today."""
+    defaults = []
+    for node in _walk(cli):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument" and node.args
+                and isinstance(node.args[0], ast.Constant) and node.args[0].value == "--drafts"):
+            continue
+        defaults += [kw.value for kw in node.keywords if kw.arg == "default"]
+    assert len(defaults) == 1, f"{cli.name} declares --drafts {len(defaults)} times"
+    got = defaults[0]
+    assert isinstance(got, ast.Name) and got.id == "DRAFTS", (
+        f"{cli.name} defaults --drafts to {ast.unparse(got)} rather than to "
+        f"`cohort.DRAFTS`; the literal is the recipe restated where nothing updates it")
