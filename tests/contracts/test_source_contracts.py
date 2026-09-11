@@ -422,7 +422,7 @@ def test_a_snapshot_that_does_not_say_how_long_its_number_has_stood_is_refused()
          "close_total": [44.5], "total_price": [-110.0],
          "captured_at": [dt.datetime(2025, 9, 1)]},
         schema=ODDS_COLUMNS)
-    with pytest.raises(ContractViolation, match="polls_unmoved.*unmoved_since"):
+    with pytest.raises(ContractViolation, match=r"polls_unmoved.*unmoved_since"):
         ODDS_SNAPSHOT.validate(df)
     with pytest.raises(ContractViolation, match="polls_unmoved"):
         ODDS_SNAPSHOT.validate(_stamped(df).with_columns(
