@@ -507,3 +507,116 @@ def test_the_network_has_exactly_one_door_in_this_module():
     assert users == ["import requests",
                      'r = requests.get(url, timeout=30, headers={"User-Agent": USER_AGENT})'], (
         f"something other than `_get` reaches the network now: {users}")
+
+
+# --- the watchdog's reading of the stamp (#240) ------------------------------------------
+#
+# `watchdog.yml` measures the committed `site/data/bigten.json` against the deadline the
+# capture was scheduled for, inside a window that opens `WATCH_DELAY` after each deadline --
+# the allowance for GitHub delivering a scheduled start late -- and closes when the next
+# deadline fires. Outside every window the check says so rather than measuring.
+
+# Saturday 3 October 2026. The gameday-early deadline is 15:00 UTC, the gameday-late 21:00.
+GAMEDAY = datetime(2026, 10, 3, 15, 0, tzinfo=UTC)
+
+
+def _stamp(tmp_path, generated_at: datetime | str | None):
+    p = tmp_path / "site" / "bigten.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    body: dict = {"fetched": True, "missed": {"count": 0, "deadlines": []}}
+    if generated_at is not None:
+        body["generated_at"] = (generated_at.isoformat() if isinstance(generated_at, datetime)
+                                else generated_at)
+    p.write_text(json.dumps(body))
+    return p
+
+
+def test_a_stamp_written_since_the_deadline_is_healthy_inside_its_window(season, tmp_path):
+    now = GAMEDAY + bigten.WATCH_DELAY + timedelta(minutes=10)
+    p = _stamp(tmp_path, GAMEDAY + timedelta(minutes=95))     # the capture, delivered late
+    got = bigten.watch(p, now=now)
+    assert got.startswith("inside 2026-10-03T1500Z ok "), got
+    assert got.split()[3].isdigit()
+    # A stamp with no offset on its clock is read as UTC, which is the only clock any
+    # envelope here is written on, rather than refused as unreadable.
+    naive = _stamp(tmp_path, "2026-10-03T16:35:00")
+    assert bigten.watch(naive, now=now) == got
+
+
+def test_a_stamp_older_than_the_deadline_is_stale_once_the_delay_has_passed(season, tmp_path):
+    """The stall this exists to file: the deadline fired, the delay a late start is allowed
+    has passed, and nothing has written the stamp since the deadline."""
+    now = GAMEDAY + bigten.WATCH_DELAY + timedelta(minutes=10)
+    p = _stamp(tmp_path, GAMEDAY - timedelta(hours=13))       # last night's capture
+    got = bigten.watch(p, now=now)
+    assert got.startswith("inside 2026-10-03T1500Z stale "), got
+    behind = int(got.split()[3])
+    assert behind == int((now - (GAMEDAY - timedelta(hours=13))).total_seconds())
+
+
+def test_inside_the_delay_after_a_deadline_the_check_is_outside_a_window(season, tmp_path):
+    """A capture scheduled at the deadline may still be queued -- `live.yml` records starts
+    delivered 97-126 minutes late -- so a stale stamp here is not evidence of a stall, and
+    the check reports that it is outside a window rather than measuring."""
+    p = _stamp(tmp_path, GAMEDAY - timedelta(hours=13))
+    for minutes in (0, 1, 60, int(bigten.WATCH_DELAY.total_seconds() // 60) - 1):
+        got = bigten.watch(p, now=GAMEDAY + timedelta(minutes=minutes))
+        assert got.startswith("outside 2026-10-03T1500Z "), (minutes, got)
+        until = int(got.split()[2])
+        assert until == int(bigten.WATCH_DELAY.total_seconds()) - minutes * 60
+    # And the moment the delay has passed, it measures.
+    assert bigten.watch(p, now=GAMEDAY + bigten.WATCH_DELAY).startswith("inside ")
+
+
+def test_the_window_closes_when_the_next_deadline_fires(season, tmp_path):
+    """Saturday 21:00 is the next deadline after 15:00: at 21:00 the check is inside the
+    delay for that one, whatever the 15:00 capture did."""
+    p = _stamp(tmp_path, GAMEDAY + timedelta(minutes=95))
+    late = GAMEDAY + timedelta(hours=6)
+    assert bigten.watch(p, now=late - timedelta(minutes=1)).startswith(
+        "inside 2026-10-03T1500Z ok ")
+    assert bigten.watch(p, now=late).startswith("outside 2026-10-03T2100Z ")
+
+
+def test_before_the_first_report_there_is_no_window_to_measure_in(season, tmp_path):
+    p = _stamp(tmp_path, bigten.REPORTS_BEGIN - timedelta(days=30))
+    got = bigten.watch(p, now=bigten.REPORTS_BEGIN - timedelta(hours=1))
+    assert got.startswith("preseason "), got
+    assert bigten.REPORTS_BEGIN.isoformat() in got
+    # `REPORTS_BEGIN` is midnight and the first deadline fires at 01:30, so for ninety
+    # minutes the season has begun and the most recent deadline is still last week's.
+    got = bigten.watch(p, now=bigten.REPORTS_BEGIN + timedelta(minutes=30))
+    assert got.startswith("preseason ") and "no deadline has fired" in got, got
+    got = bigten.watch(p, now=bigten.REPORTS_BEGIN + timedelta(hours=1, minutes=30))
+    assert got.startswith("outside 2026-09-17T0130Z "), got
+
+
+def test_with_no_season_configured_nothing_captures_so_nothing_is_measured(monkeypatch,
+                                                                            tmp_path):
+    monkeypatch.setattr(cfbd, "_env", lambda: {})
+    p = _stamp(tmp_path, GAMEDAY - timedelta(hours=13))
+    got = bigten.watch(p, now=GAMEDAY + bigten.WATCH_DELAY + timedelta(minutes=10))
+    assert got.startswith("preseason "), got
+    assert "CFB_WEEK_ONE" in got
+
+
+def test_an_absent_or_unreadable_stamp_is_named_and_not_reported_as_an_age(season, tmp_path):
+    """Three failures with three fixes, apart -- `heartbeat.sh`'s rule, and its own history
+    is a sentinel that turned an absent field into 56.7 years of staleness."""
+    now = GAMEDAY + bigten.WATCH_DELAY + timedelta(minutes=10)
+    assert bigten.watch(tmp_path / "nowhere.json", now=now) == "unreachable"
+    assert bigten.watch(_stamp(tmp_path, None), now=now) == "unreadable"
+    assert bigten.watch(_stamp(tmp_path, "last tuesday"), now=now) == "unreadable"
+    (tmp_path / "site" / "bigten.json").write_text("not json {")
+    assert bigten.watch(tmp_path / "site" / "bigten.json", now=now) == "unreadable"
+
+
+def test_the_cli_answers_watch_with_the_one_line_the_workflow_reads(season, tmp_path, capsys,
+                                                                    clock):
+    clock(GAMEDAY + bigten.WATCH_DELAY + timedelta(minutes=10))
+    p = _stamp(tmp_path, GAMEDAY + timedelta(minutes=95))
+    assert bigten.main(["--watch", "--status-path", str(p)]) == 0
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("inside 2026-10-03T1500Z ok "), out
+    assert bigten.main(["--watch", "--status-path", str(tmp_path / "missing.json")]) == 0
+    assert capsys.readouterr().out.strip() == "unreachable"
