@@ -172,3 +172,35 @@ already suggests using to break a tie the simulation cannot.
 ```bash
 make draft
 ```
+
+## A player who sat out is not a rookie (#86, 2026-09-11)
+
+The stats source gives no row to a player who recorded nothing, so a receiver who spent
+last season on the shelf and a rookie were the same null to `attach`. They are told apart
+now by last season's preseason consensus: in it and in no stats row **at any position** is a
+player who sat out. The position filter matters — on the served board three of eighteen
+candidates by the drafted-position filter had played, listed as a cornerback (Travis
+Hunter) or a fullback (Juszczyk, Ingold); `durability.appearances` reads presence
+unfiltered.
+
+**The price carries the full season; the draw does not.** A sat-out player is priced as
+seventeen missed (`BETA × 17`: −2.57 ppg for a receiver, −7.77 for a quarterback — a linear
+coefficient fitted on players who missed fewer, extrapolated, and said so), while `missed`
+stays the measured column, because `next_season_absence` estimates its population moments
+from that column and the +0.407 persistence was measured on players with a real prior role.
+So the simulator draws him as unknown, the marginal, like a rookie; the alternative was to
+extrapolate a linear persistence to seventeen and move every other player's draw through the
+population mean.
+
+**Its own restatement, as #50 required.** Computed on the drafted inputs held fixed, the
+board of `docs/corrected-board.md` before and after:
+
+| | count |
+|---|---|
+| flagged sat-out on the board | 22 of 509 (13 RB, 8 WR, 1 QB) |
+| `proj_correction` moved | **9, all of them sat-out** — the 8 receivers and the quarterback; running backs carry no `BETA` |
+| of those with an ADP | 1 (Tank Dell, 158.3 → corrected 159.0) |
+| `adp_corrected` moved | 346 players by ≤ 0.74 picks — `optimize.corrected_adp` refits the curve every player is priced against |
+| corrected-ADP rank changes | 3, by at most 2 places (Dell 133 → 135) |
+
+No projection became null; an observed zero is still the zero-valued correction.

@@ -69,6 +69,7 @@ def offline(monkeypatch):
     from hub.draft import regression as td
     monkeypatch.setattr(td, "prior_season", _boom)
     monkeypatch.setattr(durability, "prior_season", _boom)
+    monkeypatch.setattr(durability, "appearances", _boom)
     from hub.fetch import espn as espn_fetch
     monkeypatch.setattr(espn_fetch, "scoring_settings", _boom)
     monkeypatch.setattr(espn_fetch, "league_settings", _boom)
@@ -172,10 +173,11 @@ def test_touchdown_luck_and_durability_attach_when_available(offline):
     # stage in and flagging it, and both modules have their own tests for the join itself.
     offline.setattr(td, "prior_season", lambda season: pl.DataFrame({"player": NAMES[:3]}))
     offline.setattr(durability, "prior_season", lambda season: pl.DataFrame({"player": NAMES[:3]}))
+    offline.setattr(durability, "appearances", lambda season: pl.DataFrame({"player": NAMES[:3]}))
     offline.setattr(td, "attach", lambda b, s: b.with_columns(
         pl.lit(1.0).alias("td_luck")))
-    offline.setattr(durability, "attach", lambda b, s: b.with_columns(
-        pl.lit(2).cast(pl.Int64).alias("missed")))
+    offline.setattr(durability, "attach", lambda b, s, **kw: b.with_columns(
+        pl.lit(2).cast(pl.Int64).alias("missed"), pl.lit(False).alias("sat_out")))
     b, report = board.build()
     assert report.td_luck is True and report.durability is True
     assert "td_luck" in b.columns and "missed" in b.columns
@@ -199,9 +201,11 @@ def test_a_served_report_names_the_columns_build_actually_leaves(offline):
     offline.setattr(td, "prior_season", lambda season: pl.DataFrame({"player": NAMES[:3]}))
     offline.setattr(durability, "prior_season",
                     lambda season: pl.DataFrame({"player": NAMES[:3]}))
+    offline.setattr(durability, "appearances",
+                    lambda season: pl.DataFrame({"player": NAMES[:3]}))
     offline.setattr(td, "attach", lambda b, s: b.with_columns(pl.lit(1.0).alias("td_luck")))
-    offline.setattr(durability, "attach", lambda b, s: b.with_columns(
-        pl.lit(2).cast(pl.Int64).alias("missed")))
+    offline.setattr(durability, "attach", lambda b, s, **kw: b.with_columns(
+        pl.lit(2).cast(pl.Int64).alias("missed"), pl.lit(False).alias("sat_out")))
     offline.setattr(board, "espn_adp", lambda *a, **k: pl.DataFrame(
         {"player": [NAMES[0], NAMES[1]], "adp": [1.5, 2.5], "proj_ppg": [18.0, 16.0],
          "injury_status": ["ACTIVE", "QUESTIONABLE"]}))
@@ -268,6 +272,10 @@ def _build_with_every_stage(offline, absorb: str | None = None):
     offline.setattr(durability, "prior_season",
                     _source_is_down if absorb == "durability"
                     else lambda season: _prior_missed_season())
+    # The sat-out cohort (#86): last preseason's consensus is the stubbed one, and one of its
+    # names has no stats row, so the real `sat_out` has someone to flag.
+    offline.setattr(durability, "appearances",
+                    lambda season: pl.DataFrame({"player": NAMES[1:8]}))
     # The ADP stage absorbs nothing, so its outage is `espn_adp` returning None -- the one
     # path by which this stage is legitimately absent, and the one `build` is written for.
     offline.setattr(board, "espn_adp",
