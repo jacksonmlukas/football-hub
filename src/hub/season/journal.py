@@ -41,12 +41,26 @@ the cost is checked against them.
 Those checks name `pool.Weekly`'s fields and nothing supplied one, so a units or
 sign-convention disagreement between the two shapes could not have shown up. `record_weekly`
 is the adapter that closes that, and the disagreement it found -- the column ADR-0014's rule
-would be judged by is not the quantity ADR-0014's rule fires on -- is written down there
-rather than quietly reconciled.
+would be judged by was not the quantity ADR-0014's rule fires on -- is settled by #209: a
+departure logs **both** costs under distinct names. `week_cost`, the free pick's win
+probability minus ours, is the threshold quantity and the column that discharges the duty;
+`survival_given_up` is the season figure and the thesis of our plan, and on the pinned grid
+the two disagree in sign.
+
+**A row carries what it takes to reproduce its own figure** (#162). The schema carried the
+dollar figure and the survival given up and none of what produced them -- no pool digest, no
+trial count, no seed, no board -- so a row could not be re-derived, and two rows written
+under different pool rules were indistinguishable without reading something outside the
+journal. `RERUN_COLUMNS` is what a re-run needs, and `test_journal` shows a re-run from a
+row's own columns landing on its `expected_dollars` exactly. Rows written before those
+columns existed read back with nulls in them and are never migrated to a value nobody
+measured: a null there is the row saying it cannot be re-derived, which is true of it.
 """
 from __future__ import annotations
 
+import argparse
 import re
+import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,7 +69,7 @@ from typing import Any
 import polars as pl
 
 from hub import store
-from hub.season.pool import Weekly
+from hub.season.pool import Weekly, plural
 
 # Two tables, not two schemas in one. The store builds a view per directory, and a
 # directory holding partitions of differing shape has no single view to build -- a
@@ -95,10 +109,34 @@ SCHEMA: dict[str, Any] = {
     "expected_dollars": pl.Float64,
     "chose_survives": pl.Float64,      # P(the season is survived, having taken what we took)
     "fallback_survives": pl.Float64,   # the same, for the free pick
-    "survival_given_up": pl.Float64,   # their difference, per ADR-0014's logging duty
+    "survival_given_up": pl.Float64,   # their difference: the thesis of our plan, not the
+                                       # threshold quantity (#209)
+    "fallback_price": pl.Float64,      # the free pick's own win probability this week
+    "week_cost": pl.Float64,           # fallback_price - market_price: the win-probability
+                                       # cost ADR-0014's threshold is stated in, and the
+                                       # column that discharges its logging duty (#209)
     "cost_credits": pl.Float64,        # a before-and-after difference, not a meter
     "cost_note": pl.Utf8,
+    # What it takes to run the figure again (#162): the rules, the board, the trials and
+    # the seed they were reseeded to, and the two inputs the caller stated. Null on every
+    # row written before these existed, and never filled in -- a null here says the row
+    # cannot be re-derived, which is true of it, where a value nobody measured would say
+    # it can. `RERUN_COLUMNS` names them so a reader can ask which rows carry it.
+    "pool_digest": pl.Utf8,            # `hub.config.pool_digest` of the rules
+    "grid_digest": pl.Utf8,            # `hub.season.pool.grid_digest` of the board
+    "seed": pl.Int64,                  # what every candidate was reseeded to
+    "trials": pl.Int64,                # trials each candidate ran; 0 for closed form
+    "entries": pl.Int64,               # the field priced against, ours included
+    "pot": pl.Float64,
+    "outlay": pl.Float64,              # what `expected_dollars` is net of
+    "plan_source": pl.Utf8,            # `Plan.source`: the optimiser, or the fallback
 }
+
+# The columns a row needs to be re-derived, in one place. `read` fills them with nulls on a
+# store written before they existed rather than failing to select them, and a row whose
+# `pool_digest` is null is one no re-run can be checked against.
+RERUN_COLUMNS = ("pool_digest", "grid_digest", "seed", "trials", "entries", "pot",
+                 "outlay", "plan_source")
 
 OUTCOME_SCHEMA: dict[str, Any] = {
     "key": pl.Utf8,
@@ -141,8 +179,9 @@ def parse_key(k: str) -> tuple[int, int, str]:
 
 def _check_adr_0014(*, week: int, kind: str, chose: str, fallback: str | None,
                     fallback_note: str | None, chose_survives: float | None,
-                    fallback_survives: float | None,
-                    survival_given_up: float | None) -> None:
+                    fallback_survives: float | None, survival_given_up: float | None,
+                    market_price: float | None = None, fallback_price: float | None = None,
+                    week_cost: float | None = None) -> None:
     """ADR-0014's logging duty, as an invariant rather than a column that may be filled.
 
     `docs/decisions.md` registers the survivor contrarian threshold under ADR-0014, and the
@@ -160,6 +199,15 @@ def _check_adr_0014(*, week: int, kind: str, chose: str, fallback: str | None,
 
     **Using a kind nothing validates.** `kind` was free text, so a row could be filed under a
     name no rule had heard of. It is a closed set, checked before anything else here.
+
+    **And the cost in the wrong quantity** (#209). ADR-0014's threshold is a *week*
+    win-probability cost -- "under ~8pp" -- and the column that discharged its logging duty
+    was a season-survival difference, which disagrees with it in sign on the pinned grid.
+    A departure now carries both, under distinct names: `week_cost` is the free pick's win
+    probability minus ours and is the threshold quantity; `survival_given_up` stays as the
+    thesis of our plan working. The same shape as the survival trio -- both prices on the
+    row and the cost checked against them -- so a week cost nobody computed cannot be
+    written either.
     """
     if kind not in KINDS:
         raise ValueError(
@@ -184,10 +232,32 @@ def _check_adr_0014(*, week: int, kind: str, chose: str, fallback: str | None,
             "fallback_survives and survival_given_up. Zero is an answer -- the two plans "
             "survive alike -- and it is an answer that has to be computed to be written.")
 
+    if given and (market_price is None or fallback_price is None or week_cost is None):
+        raise ValueError(
+            f"week {week}: {chose!r} departs from the free pick {fallback!r} without "
+            "recording the week's cost. ADR-0014's threshold is stated in win probability "
+            "on the week -- under ~8pp -- and `survival_given_up` is not that quantity "
+            "(#209). Pass market_price (ours), fallback_price (the free pick's) and "
+            "week_cost, their difference, so the cost the rule fires on is on the row.")
+
     for name, p in (("chose_survives", chose_survives),
-                    ("fallback_survives", fallback_survives)):
+                    ("fallback_survives", fallback_survives),
+                    ("fallback_price", fallback_price),
+                    # A price is a probability only once a week cost is being stated in it;
+                    # a row with no fallback price may carry the betting market's number --
+                    # `test_journal` writes a moneyline there. One column, two units, which
+                    # is issue #239 and not this check's to settle.
+                    ("market_price", market_price if fallback_price is not None else None)):
         if p is not None and not 0.0 <= p <= 1.0:
             raise ValueError(f"{name}={p} is not a probability")
+    if (market_price is not None and fallback_price is not None and week_cost is not None
+            and abs((fallback_price - market_price) - week_cost) > _SAME):
+        raise ValueError(
+            f"week {week}: week_cost={week_cost} is not what the two prices say. The free "
+            f"pick wins at {fallback_price} and ours at {market_price}, a cost of "
+            f"{fallback_price - market_price} on the week. ADR-0014's threshold is stated "
+            "in this quantity, so a cost that was not computed from the prices is not "
+            "the cost the rule fires on.")
     if (chose_survives is not None and fallback_survives is not None
             and survival_given_up is not None
             and abs((fallback_survives - chose_survives) - survival_given_up) > _SAME):
@@ -201,11 +271,16 @@ def _check_adr_0014(*, week: int, kind: str, chose: str, fallback: str | None,
 
 def record(*, season: int, week: int, kind: str, chose: str,
            fallback: str | None = None, fallback_note: str | None = None,
-           market_price: float | None = None,
+           market_price: float | None = None, fallback_price: float | None = None,
+           week_cost: float | None = None,
            price_note: str | None = None, expected_dollars: float | None = None,
            chose_survives: float | None = None, fallback_survives: float | None = None,
            survival_given_up: float | None = None,
            credits_before: float | None = None, credits_after: float | None = None,
+           pool_digest: str | None = None, grid_digest: str | None = None,
+           seed: int | None = None, trials: int | None = None, entries: int | None = None,
+           pot: float | None = None, outlay: float | None = None,
+           plan_source: str | None = None,
            at: datetime | None = None, base: Path | None = None) -> str:
     """Append one decision. Returns its key, which is how the outcome finds it later.
 
@@ -222,11 +297,32 @@ def record(*, season: int, week: int, kind: str, chose: str,
     or what was odd about it, could not be written at all.
 
     The ADR-0014 duty is `_check_adr_0014`, which is where its three escapes are named.
+
+    The `RERUN_COLUMNS` columns are what a re-run needs, and they are optional here because a
+    decision is a decision whether or not its figure can be reproduced -- a row that says
+    "this was chosen" and cannot say under what is still the record of a choice. What is
+    refused is *pretending*: a row carrying some of them and not others would read as
+    reproducible to a query on any one column, so either every one of them is present or
+    none is. `record_weekly` supplies all of them off `pool.Weekly`.
     """
+    # `plan_source` is a label on the plan, not an input to the re-run, and a buyback has no
+    # plan; the seven that follow are what `pool.weekly` has to be handed to land on the row's
+    # figure again.
+    rerun = {"pool_digest": pool_digest, "grid_digest": grid_digest, "seed": seed,
+             "trials": trials, "entries": entries, "pot": pot, "outlay": outlay}
+    absent = tuple(k for k, v in rerun.items() if v is None)
+    if absent and len(absent) != len(rerun):
+        raise ValueError(
+            f"week {week}: provenance has to come whole. Missing {absent} beside "
+            f"{tuple(k for k in rerun if k not in absent)} -- a row naming the rules but "
+            "not the seed, or the seed but not the board or the stakes, reads as "
+            "reproducible to whichever column is queried and is not. Pass all of "
+            f"{tuple(rerun)}, or none and let the row say it cannot be re-derived.")
     _check_adr_0014(week=week, kind=kind, chose=chose, fallback=fallback,
                     fallback_note=fallback_note, chose_survives=chose_survives,
                     fallback_survives=fallback_survives,
-                    survival_given_up=survival_given_up)
+                    survival_given_up=survival_given_up, market_price=market_price,
+                    fallback_price=fallback_price, week_cost=week_cost)
     cost = (credits_before - credits_after
             if credits_before is not None and credits_after is not None else None)
     if cost is not None and cost < 0:
@@ -247,9 +343,13 @@ def record(*, season: int, week: int, kind: str, chose: str,
         "expected_dollars": [expected_dollars],
         "chose_survives": [chose_survives], "fallback_survives": [fallback_survives],
         "survival_given_up": [survival_given_up],
+        "fallback_price": [fallback_price], "week_cost": [week_cost],
         "cost_credits": [cost],
         "cost_note": [None if cost is not None
                       else "credit balance unknown on at least one side"],
+        "pool_digest": [pool_digest], "grid_digest": [grid_digest],
+        "seed": [seed], "trials": [trials], "entries": [entries],
+        "pot": [pot], "outlay": [outlay], "plan_source": [plan_source],
     }, schema=SCHEMA)
     store.write(row, TABLE, LEAGUE, season, week, name=k, base=base)
     return k
@@ -281,12 +381,14 @@ def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
     not incidental -- the whole thesis of the survivor plan is that a lower win probability
     now can buy a higher survival later, so the two routinely disagree.
 
-    Neither is relabelled as the other. `market_price` carries the taken team's own win
-    probability, so the week's price is on the row; the chalk's price is not, so the
-    win-probability cost the ADR's threshold is stated in is **not recoverable from the
-    journal today**. Recording it would mean adding columns to what a provisional rule logs,
-    which is ADR-0014's decision and not this function's -- so it is surfaced here rather than
-    settled here.
+    Neither is relabelled as the other, and both are logged (#209). `market_price` carries
+    the taken team's own win probability, `fallback_price` the free pick's, and `week_cost`
+    their difference -- the quantity the ADR's threshold is stated in, and the column that
+    discharges its logging duty. `survival_given_up` stays beside it as the thesis of the
+    plan working: on the grid in `tests/unit/test_journal.py` they disagree in sign, 2.0pp
+    better on the week and 27.8pp worse over the season, and dropping the season figure
+    would lose the argument for our plan where logging it under the threshold's name was
+    the error. ADR-0014 names which column is its threshold quantity, dated.
 
     **Who calls this.** An operator, at the point the week's pick is entered: `pool.weekly`
     prices the week and this writes down what was done about it. There is no scheduled job
@@ -310,12 +412,20 @@ def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
         fallback_note=(None if w.fallback is not None else
                        "auto-pick had no team left to assign, so there was nothing free"),
         market_price=by_team[took].win_prob,
+        fallback_price=fb.win_prob if fb is not None else None,
+        week_cost=(fb.win_prob - by_team[took].win_prob) if fb is not None else None,
         price_note="win probability off the board's grid at the moment of the decision",
         expected_dollars=by_team[took].expected_dollars,
         chose_survives=by_team[took].survives,
         fallback_survives=fb.survives if fb is not None else None,
         survival_given_up=(fb.survives - by_team[took].survives) if fb is not None else None,
-        credits_before=credits_before, credits_after=credits_after, at=at, base=base)
+        credits_before=credits_before, credits_after=credits_after,
+        # Everything a re-run needs, off the shape that ran (#162). `plan_source` is the
+        # taken candidate's, because the figure on this row is that candidate's figure.
+        pool_digest=w.pool_digest, grid_digest=w.grid_digest, seed=w.seed,
+        trials=w.trials, entries=w.entries, pot=w.pot, outlay=w.outlay,
+        plan_source=by_team[took].plan_source or None,
+        at=at, base=base)
 
 
 def settle(k: str, *, survived: bool, season: int | None = None, week: int | None = None,
@@ -378,8 +488,17 @@ def read(season: int, week: int | None = None,
     # `season` and `week` arrive twice: once as written and once as the Hive partition the
     # store lays out, and the partition's string wins the name. Cast back, so a caller
     # filtering on week does not compare an int to "02".
+    #
+    # A column the schema has and the store does not is one every row predates: the store
+    # unions partitions by name, so a mix of old and new rows already reads with nulls in
+    # the old ones, and a store holding *only* old rows has no such column to union. Added
+    # as null rather than failing the select, because those rows are readable decisions
+    # that cannot be re-derived, and a null in `RERUN_COLUMNS` is exactly that claim (#162).
+    absent = [pl.lit(None, dtype=t).alias(c) for c, t in SCHEMA.items()
+              if c not in decisions.columns]
     decisions = decisions.with_columns(
-        pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64)).select(list(SCHEMA))
+        pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64), *absent
+    ).select(list(SCHEMA))
     if OUTCOME_TABLE not in have:
         outcomes = pl.DataFrame(schema=OUTCOME_SCHEMA)
     else:
@@ -407,3 +526,92 @@ def unmatched_weeks(season: int, base: Path | None = None) -> Sequence[int]:
         return []
     hit = got.filter(~pl.col("matched_fallback"))
     return sorted(int(w) for w in hit["week"].unique().to_list())
+
+
+# --- the entry point (#163) ---------------------------------------------------------------
+#
+# The journal had writers and readers and no way to reach either from a terminal, which is
+# the shape `tests/contracts/test_cli_surface.py` exists to refuse: a module with no `main`
+# is exempt from the contract that every entry point answers absent input with a sentence.
+# `hub.season.pool --record` is what writes a pick; this is what reads the season back and
+# what settles a decision once the games it was about have been played.
+
+def report(rows: pl.DataFrame) -> list[str]:
+    """Decisions as lines rather than prints, so `hub.season.pool` can serve them as last-good.
+
+    One line per row, and the columns a reader acts on: what was chosen, over what, at
+    what price, and -- where the row can be re-derived -- the rules and the seed it can be
+    re-derived under. A row from before `RERUN_COLUMNS` existed says so rather than printing
+    a blank where a digest would go, because the blank would read as a missing digest and the
+    fact is that nothing was recorded.
+    """
+    if rows.is_empty():
+        return ["\n  no decisions recorded"]
+    out = [f"\n  {'week':>4}  {'kind':<7}  {'chose':<10}  {'free':<5}  {'$':>8}  "
+           f"{'week cost':>9}  {'given up':>9}  {'settled':<8}  rules"]
+    for r in rows.sort("at").iter_rows(named=True):
+        dollars = "" if r["expected_dollars"] is None else f"{r['expected_dollars']:+.2f}"
+        # Both costs, under their own names (#209): the week's is the threshold quantity,
+        # the season's is the thesis, and on a real grid they disagree in sign.
+        week = "" if r["week_cost"] is None else f"{r['week_cost'] * 100:+.1f}pp"
+        cost = ("" if r["survival_given_up"] is None else
+                f"{r['survival_given_up'] * 100:+.1f}pp")
+        settled = ("" if r.get("survived") is None else
+                   "survived" if r["survived"] else "out")
+        rules = (f"{r['pool_digest']} seed {r['seed']} x{r['trials']}"
+                 if r.get("pool_digest") is not None else "not re-derivable")
+        out.append(f"  {r['week']:>4}  {r['kind']:<7}  {r['chose']:<10}  "
+                   f"{(r['fallback'] or '-'):<5}  {dollars:>8}  {week:>9}  {cost:>9}  "
+                   f"{settled:<8}  {rules}")
+    return out
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    from hub.cli import unavailable
+    from hub.config import SEASON_AHEAD
+
+    ap = argparse.ArgumentParser(
+        prog="hub.season.journal",
+        description="Read the season's survivor decisions back, or settle one.")
+    ap.add_argument("--season", type=int, default=SEASON_AHEAD)
+    ap.add_argument("--week", type=int, default=None)
+    ap.add_argument("--settle", default=None, metavar="KEY",
+                    help="attach an outcome to the decision with this key")
+    ap.add_argument("--survived", action="store_true", help="with --settle: the pick won")
+    ap.add_argument("--dollars", type=float, default=None,
+                    help="with --settle: what the decision paid, net")
+    ap.add_argument("--note", default=None, help="with --settle: anything a replay cannot")
+    ap.add_argument("--store", type=Path, default=None,
+                    help="the processed store the journal is read from and written to")
+    a = ap.parse_args(argv)
+
+    if a.settle:
+        try:
+            settle(a.settle, survived=a.survived, dollars=a.dollars, note=a.note,
+                   base=a.store)
+        except (KeyError, ValueError) as e:
+            return unavailable("hub.season.journal", f"the decision {a.settle!r}", e)
+        print(f"  settled {a.settle}: {'survived' if a.survived else 'out'}")
+        return 0
+
+    try:
+        rows = read(a.season, a.week, base=a.store)
+    except Exception as e:
+        return unavailable("hub.season.journal", f"the {a.season} decision journal", e)
+    if rows.is_empty():
+        where = a.store or store.DATA
+        return unavailable(
+            "hub.season.journal", f"the {a.season} decision journal",
+            FileNotFoundError(f"no decision recorded for {a.season}"
+                              + (f" week {a.week}" if a.week is not None else "")
+                              + f" under {where}; `hub.season.pool --record` writes one"))
+    for line in report(rows):
+        print(line)
+    left = unmatched_weeks(a.season, base=a.store)
+    print(f"  {rows.height} decision(s); departed from auto-pick in "
+          f"{plural(len(left), 'week')}" + (f": {', '.join(map(str, left))}" if left else ""))
+    return 0
+
+
+if __name__ == "__main__":                       # pragma: no cover - entry point
+    sys.exit(main())

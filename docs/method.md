@@ -120,6 +120,15 @@ Clustering is not a synonym for a wider interval; it is a claim about which obse
 exchangeable, and the number moves whichever way the data says. Choosing the unit by the
 direction it moves the answer is the failure this whole page exists to prevent.
 
+**A third form, 2026-09-11 (#161).** The survivor pool's leverage term was measured at five
+concentrations for five candidates: twenty-five comparisons, two clearing two standard errors,
+twenty-four positive in sign. Neither count is twenty-five observations. The rows are one seed,
+so both arms meet the same game results at every concentration and the five candidates at one
+concentration share the free pick's arm. `hub.season.pool.resolvable_on_the_axis` holds the
+count of hits to the same bar as a single row -- and says it treats the rows as independent,
+which overstates them -- and the sign count is reported as a direction, never pooled into a
+finding. Two hits in twenty-five is what the null gives; the term is unresolved, not zero.
+
 ### 4. A significant result whose sign flips between seasons is a bug, not a finding
 
 The cheapest diagnostic available, and it was the tell in both errors above.

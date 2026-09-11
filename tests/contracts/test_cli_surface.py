@@ -62,7 +62,7 @@ CLI_MODULES = (
     "hub.models.ratings", "hub.models.spread",
     "hub.models.component_error", "hub.models.weekly", "hub.models.weekly_screen", "hub.publish", "hub.season.lineup",
     "hub.season.lineup_gate", "hub.season.roster", "hub.season.weekly_gate",
-    "hub.season.survivor", "hub.store",
+    "hub.season.survivor", "hub.season.pool", "hub.season.journal", "hub.store",
 )
 
 
@@ -251,6 +251,11 @@ ABSENT_INPUT = [
     ("hub.season.lineup_gate", []),
     ("hub.season.roster", ["--out", "{tmp}/roster.parquet"]),
     ("hub.season.survivor", []),
+    # The money layer and its journal (#163). `--store` keeps the pool's last-good read --
+    # the journal -- and the journal's own read off the developer's store, so a fresh clone
+    # is what both meet: no schedule, and no decision recorded to serve in its place.
+    ("hub.season.pool", ["--week", "1", "--store", "{tmp}"]),
+    ("hub.season.journal", ["--store", "{tmp}"]),
     ("hub.season.weekly_gate", ["--run"]),
     ("hub.store", ["--verify"]),
 ]
