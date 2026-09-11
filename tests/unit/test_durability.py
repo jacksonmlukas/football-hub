@@ -225,3 +225,92 @@ def test_both_modules_use_the_shared_shape():
         names = {a.name for n in ast.walk(ast.parse((root / rel).read_text()))
                  if isinstance(n, ast.ImportFrom) for a in n.names}
         assert "prior_signal" in names, f"{rel} still carries its own copy of the join"
+
+
+# --- a player who sat out is not a rookie (#86) ------------------------------------------
+
+def _prior(names):
+    return pl.DataFrame({"player": list(names), "pos": ["WR"] * len(names),
+                         "ecr": [float(i + 1) for i in range(len(names))]})
+
+
+def _appeared(names):
+    return pl.DataFrame({"player": list(names)})
+
+
+def test_a_player_ranked_last_preseason_with_no_stats_row_sat_out():
+    """In last season's consensus and in no stats row of any position: he was in the league
+    and played nothing. A rookie is in neither."""
+    got = D.sat_out(_prior(["A", "B"]), _appeared(["A"]))
+    assert got["player"].to_list() == ["B"] and (got["sat_out"] == True).all()  # noqa: E712
+
+
+def test_a_stats_row_at_any_position_counts_as_having_played():
+    """The position filter `prior_season` applies is for the scoring rate, not for
+    presence: a receiver nflverse lists as a cornerback, a back it lists as a fullback,
+    played. Measured on the served board, three of eighteen candidates were exactly that."""
+    got = D.sat_out(_prior(["Two Way"]), _appeared(["Two Way"]))
+    assert got.height == 0
+
+
+def test_a_sat_out_receiver_carries_the_full_season_markdown():
+    board = pl.DataFrame({"player": ["A", "R"], "pos": ["WR", "WR"], "proj_blend": [14.0, 9.0]})
+    season = _seasons([])
+    attached = D.attach(board, season, sat_out=D.sat_out(_prior(["A"]), _appeared([])))
+    assert attached["sat_out"].to_list() == [True, False]
+    assert attached["missed"].to_list() == [None, None], (
+        "the measured column stays measured: the simulator's persistence population is the "
+        "players with a real prior role, and a whole season sat out was not in it")
+    got = D.correct_projection(attached)
+    assert got["proj_blend"][0] == pytest.approx(14.0 + D.BETA["WR"] * D.TEAM_GAMES)
+    assert got["proj_blend"][1] == pytest.approx(9.0), "the rookie is untouched"
+
+
+def test_an_observed_zero_is_still_a_measurement_and_a_sat_out_is_not_a_zero():
+    board = pl.DataFrame({"player": ["A", "B"], "pos": ["WR", "WR"], "proj_blend": [14.0, 14.0]})
+    attached = D.attach(board, _seasons([("A", "WR", D.TEAM_GAMES)]),
+                        sat_out=D.sat_out(_prior(["A", "B"]), _appeared(["A"])))
+    assert attached["missed"].to_list() == [0, None]
+    assert attached["sat_out"].to_list() == [False, True]
+    got = D.correct_projection(attached)
+    assert got["proj_blend"][0] == pytest.approx(14.0)
+    assert got["proj_blend"][1] == pytest.approx(14.0 + D.BETA["WR"] * D.TEAM_GAMES)
+
+
+def test_without_a_prior_consensus_nobody_is_marked_as_sat_out():
+    board = pl.DataFrame({"player": ["A"], "pos": ["WR"], "proj_blend": [14.0]})
+    attached = D.attach(board, _seasons([]))
+    assert attached["sat_out"].to_list() == [False]
+    assert D.correct_projection(attached)["proj_blend"][0] == pytest.approx(14.0)
+
+
+def test_no_projection_becomes_null_for_a_sat_out_player():
+    board = pl.DataFrame({"player": ["A"], "pos": ["QB"], "proj_blend": [3.0]})
+    attached = D.attach(board, _seasons([]), sat_out=D.sat_out(_prior(["A"]), _appeared([])))
+    got = D.correct_projection(attached)
+    assert got["proj_blend"][0] is not None and got["proj_blend"][0] >= 0.0
+
+
+def test_appearances_reads_presence_at_every_position_and_prior_season_only_the_drafted(monkeypatch):
+    """Both go through the validated loader; the stub is the frame it would return. The
+    cornerback appears in `appearances` and not in `prior_season`."""
+    from hub.fetch import nflverse
+    rows = pl.DataFrame({
+        "player_id": ["1", "1", "2", "3"],
+        "player_display_name": ["Two Way", "Two Way", "Deep WR", "Post WR"],
+        "position": ["CB", "CB", "WR", "WR"],
+        "season": [2025] * 4, "week": [1, 2, 1, 5],
+        "season_type": ["REG", "REG", "REG", "POST"],
+        "fantasy_points_ppr": [8.0, 10.0, 12.0, 20.0],
+    })
+    seen = {}
+
+    def fake(name, seasons, cols, cache=None):
+        seen["cols"] = set(cols)
+        return rows
+    monkeypatch.setattr(nflverse, "load", fake)
+    who = D.appearances(2025)
+    assert set(who["player"].to_list()) == {"Two Way", "Deep WR"}, "postseason-only is absent"
+    assert {"player_id", "season", "fantasy_points_ppr"} <= seen["cols"]
+    prior = D.prior_season(2025)
+    assert prior["player"].to_list() == ["Deep WR"] and prior["g"][0] == 1

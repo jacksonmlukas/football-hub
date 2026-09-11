@@ -42,11 +42,13 @@ def join_by_player(board: pl.DataFrame, signal: pl.DataFrame, column: str) -> pl
                  .join(keyed, on="_k", how="left").drop("_k"))
 
 
-def priced(column: str, beta: dict[str, float]) -> pl.Expr:
+def priced(column: str | pl.Expr, beta: dict[str, float]) -> pl.Expr:
     """`beta[position] * column`, as an expression, with an unlisted position priced at zero.
 
     Zero rather than a pooled default: a position absent from a `BETA` is one the fit found
     nothing for, and inventing a coefficient for it would ship an effect nobody measured.
+    `column` may be an expression, for a signal that is a column with a case on top.
     """
+    signal = pl.col(column) if isinstance(column, str) else column
     return (pl.col("pos").replace_strict(beta, default=0.0, return_dtype=pl.Float64)
-            * pl.col(column).fill_null(0.0))
+            * signal.fill_null(0.0))
