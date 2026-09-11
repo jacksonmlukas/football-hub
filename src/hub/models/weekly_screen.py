@@ -40,11 +40,18 @@ threshold keeps that value because a threshold is what the measurement was for. 
 `SCREEN_TREND_ANCHORS` instead, runs at every one of them, and `sensitivity` names any verdict
 that is not the same at all five. One is not: see `docs/weekly-screen.md`.
 
-THE CONTROL BASIS is itself a question, and #179 is where that was found out. `ppg_before` is
-PPR points and PPR points contain touchdowns, so the pre-registered control set contains
-`td_rate_prior`'s own numerator. `BASES` names the sets a run may be taken on and `--basis`
-chooses; the default is the pre-registration and every published figure rests on it. What the
-alternative did to the one feature it was run for is in `docs/weekly-screen.md`.
+THE CONTROL BASIS is `(yds_prior, ecr)` -- #229, deciding what #179 found. The screen was
+pre-registered on `(ppg_before, ecr)`, and `ppg_before` is PPR points, which contain touchdowns:
+the control set held `td_rate_prior`'s own numerator, so at a fixed points total a higher
+touchdown rate was arithmetically fewer yards. Splitting the control into its touchdown and
+non-touchdown halves was tried first and made it worse -- it pinned the numerator, and the
+partial correlation between the feature and prior yardage went from -0.114 to -0.401. Prior
+yardage and consensus rank is the one basis that neither contains the numerator nor pins it,
+and it is the basis #179's own issue body pre-registered. Under it `td_rate_prior` is -0.012
+at -2.49 se with 2023 positive: 4/5 seasons, and `docs/method.md` rule 4 fires. **It is not a
+finding.** `BASES` keeps `pooled` and `decomposed` reachable through `--basis` as the record
+of what was tried; every figure taken on them is restated on this basis in
+`docs/weekly-screen.md` under rule 13, all eight features and not the one the ticket was about.
 
 THE CONFOUND, which the first run found and which no available data removes: `weekly-op` is
 FantasyPros' Monday ranking, scraped a median of six days before kickoff. Any feature carrying
@@ -194,36 +201,56 @@ def require_anchor(features: Sequence[Feature]) -> None:
             f"{SCREEN_TREND_ANCHORS}, or run the sweep.")
 
 
-CONTROLS: tuple[str, ...] = ("ppg_before", "ecr")
+# **The control basis every surviving claim is conditional on -- #229.** Season-to-date
+# *yardage* a game, strictly before week w, and that week's consensus rank. Not the
+# pre-registration: that was `CONTROLS_POOLED` below, and it contains `td_rate_prior`'s own
+# numerator. This is the set #179's issue body pre-registered and the maintainer adopted on
+# 2026-09-07, before the decomposition replaced it; the decomposition was then measured and
+# found to concentrate the confound rather than remove it, and the decision on #229 came back
+# to this. It is the only basis of the three that neither contains the touchdown count nor
+# pins it.
+#
+# What it costs is stated rather than hidden. `yds_prior` is a weaker player control than
+# `ppg_before` -- it is the yardage half of prior scoring, not the whole of it -- so the
+# eight features are being asked a slightly different question than they were asked on the
+# published basis, and `docs/weekly-screen.md` reports all eight on it rather than the one the
+# ticket was about. Moving the basis for one feature and not the rest would itself be a choice.
+CONTROLS: tuple[str, ...] = ("yds_prior", "ecr")
 
 
-# **The alternative control basis, pre-registered in #179 before it was run.** `ppg_before` is
-# season-to-date PPR points a game, and PPR points contain touchdowns -- so the control set for
-# `td_rate_prior` contains the feature's own numerator, and at a fixed points total a higher
-# touchdown rate is arithmetically fewer yards. The recorded result could therefore have been a
-# yardage effect wearing an efficiency label, and no amount of staring at the number says which.
-#
-# `td_ppg_before + nontd_ppg_before == ppg_before` on every row, so this set **spans** the one
-# above rather than replacing what it controlled for. That is what makes the comparison a clean
-# one: the only thing relaxed is the constraint that a point of touchdown scoring and a point of
-# everything else carry the same slope, which is exactly the constraint that made the two
-# stories indistinguishable.
-#
-# Not the default, deliberately. Every published figure on `docs/weekly-screen.md` was run on
-# the basis above, and quietly moving all eight features onto a new one would restate a page's
-# worth of numbers under cover of a ticket about one of them. `--basis decomposed` reports it
-# beside the default; which basis a surviving claim is conditional on is then something the
-# write-up can say, which is #179's third criterion.
+# **The pre-registration, and the basis every figure published before #229 rests on.** Kept
+# reachable through `--basis pooled` because those figures are the record and a re-run has to
+# be able to reproduce them; not the default, because `ppg_before` is PPR points, PPR points
+# contain touchdowns, and `td_rate_prior` is `tds_prior / yds_prior` -- so at a fixed points
+# total a higher touchdown rate is arithmetically fewer yards, and the -0.040 this basis
+# returned could not say whether it was efficiency or yardage.
+CONTROLS_POOLED: tuple[str, ...] = ("ppg_before", "ecr")
+
+
+# **The alternative #179 pre-registered and ran, kept as the record of what it showed.**
+# `td_ppg_before + nontd_ppg_before == ppg_before` on every row, so this set **spans** the
+# pooled one and the only constraint relaxed is that a point of touchdown scoring and a point
+# of everything else carry the same slope. That constraint turned out not to bind (the halves
+# want +0.328 and +0.289, a difference at t +1.75), and holding the touchdown half fixed pins
+# the feature's numerator, so what varies in `tds_prior / yds_prior` is very nearly the
+# denominator alone: the partial correlation between the feature and `yds_prior` goes from
+# -0.114 on the pooled basis to -0.401 here. The instrument built to remove the yardage
+# confound concentrated it, which is why #229 did not adopt it.
 CONTROLS_DECOMPOSED: tuple[str, ...] = ("td_ppg_before", "nontd_ppg_before", "ecr")
 
 
-BASES: dict[str, tuple[str, ...]] = {"pooled": CONTROLS, "decomposed": CONTROLS_DECOMPOSED}
+BASES: dict[str, tuple[str, ...]] = {"yardage": CONTROLS, "pooled": CONTROLS_POOLED,
+                                     "decomposed": CONTROLS_DECOMPOSED}
 """The control bases a run may be taken on, by the name `--basis` takes.
 
-"pooled" names what `CONTROLS` does rather than describing it as the default, because the
-thing that distinguishes the two is that one holds prior scoring as a single number and the
-other holds its two halves apart.
+Each name says what the basis *does* with prior scoring rather than which one is current:
+`yardage` holds the yards and leaves the touchdowns free, `pooled` holds the PPR total as one
+number, `decomposed` holds its two halves apart. `DEFAULT_BASIS` names the one `CONTROLS` is.
 """
+
+
+DEFAULT_BASIS = "yardage"
+"""The name `--basis` defaults to, and the entry of `BASES` that is `CONTROLS` -- #229."""
 
 
 # A verdict is one of three, not two. A pre-stated null that comes back significant in every
@@ -411,8 +438,9 @@ def screen(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES,
 
     `controls` is a parameter for the same reason `outcome` is one on `cell_correlations`:
     which basis a partial correlation is taken on is a property of the question, and #179 is
-    the ticket that found out how much of an answer it can carry. The default is the
-    pre-registered set and every published figure rests on it.
+    the ticket that found out how much of an answer it can carry. The default is the basis
+    #229 decided, `CONTROLS`; the pre-registered set is `CONTROLS_POOLED` and is what every
+    figure published before that decision rests on.
     """
     require_anchor(features)
     rows = []
@@ -604,10 +632,13 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                     help="add route_trend -- reproduces the null against snap_trend")
     ap.add_argument("--usage", action="store_true",
                     help="screen the survivors against Usage counts, not points")
-    ap.add_argument("--basis", choices=sorted(BASES), default="pooled",
-                    help="the control basis: 'pooled' holds season-to-date PPG as one number "
-                         "(the pre-registration, and every published figure); 'decomposed' "
-                         "holds its touchdown and non-touchdown halves apart -- #179")
+    ap.add_argument("--basis", choices=sorted(BASES), default=DEFAULT_BASIS,
+                    help="the control basis: 'yardage' holds season-to-date yards a game "
+                         "(the default -- #229, and what every surviving claim is conditional "
+                         "on); 'pooled' holds season-to-date PPG as one number (the "
+                         "pre-registration, and every figure published before #229); "
+                         "'decomposed' holds its touchdown and non-touchdown halves apart "
+                         "(#179)")
     ap.add_argument("--trend-min-week", dest="trend_min_week", type=int, default=None,
                     metavar="N",
                     help="run the screen at this one anchor instead of sweeping "
@@ -641,12 +672,12 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     controls = BASES[a.basis]
     sample = panel.filter(pl.col("week").is_in(list(FANTASY_WEEKS))
                           & (pl.col("games_before") >= MIN_GAMES_BEFORE))
-    # The **union** of the default basis and the one being run, not just the one being run, so
-    # that a `--basis` run is on the same rows as the published one and the movement is
-    # attributable to the basis alone. Under `--basis pooled` that is `CONTROLS` listed twice
-    # and the sample is unchanged. `docs/method.md` rule 13 asks for a re-run rather than an
-    # argument, and a re-run on a different sample is an argument with a number attached.
-    sample = sample.drop_nulls([OUTCOME, *CONTROLS, *controls])
+    # The **union** of every basis, not just the one being run, so that a `--basis` run is on
+    # the same rows as any other and the movement between two of them is attributable to the
+    # basis alone. `docs/method.md` rule 13 asks for a re-run rather than an argument, and a
+    # re-run on a different sample is an argument with a number attached. Sorted so the drop
+    # is the same list in the same order whichever basis was asked for.
+    sample = sample.drop_nulls([OUTCOME, *sorted({c for b in BASES.values() for c in b})])
     print(f"  {sample.height} player-weeks, {sample['player_id'].n_unique()} players, "
           f"seasons {sorted(sample['season'].unique().to_list())}")
     print(f"  controls: {', '.join(controls)}   (--basis {a.basis})")

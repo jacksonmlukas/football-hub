@@ -22,7 +22,7 @@ def _panel(seasons=(2023, 2024), weeks=(1, 2), players=60, seed=0):
             for i in range(players):
                 rows.append({"season": s, "week": w, "player_id": f"p{i}",
                              "fantasy_points_ppr": float(rng.normal(12, 6)),
-                             "ppg_before": float(rng.normal(12, 4)),
+                             "yds_prior": float(rng.normal(12, 4)),
                              "ecr": float(i + 1), "feat": float(rng.normal())})
     return pl.DataFrame(rows)
 
@@ -43,7 +43,7 @@ def _collinear_panel(n=80, seed=3):
                 # outcome. Symmetric on purpose: neither is the truth and the other a copy,
                 # so neither *residual* carries signal once the other is controlled for.
                 rows.append({"season": s, "week": w, "player_id": f"p{i}",
-                             "ppg_before": 12.0, "ecr": float(i + 1),
+                             "yds_prior": 12.0, "ecr": float(i + 1),
                              "a": float(common[i] + 0.4 * rng.normal()),
                              "b": float(common[i] + 0.4 * rng.normal()),
                              "late": float(rng.normal()),
@@ -59,7 +59,7 @@ def _usage_panel(seasons=(2023, 2024), weeks=range(1, 13), players=60, seed=5):
         for w in weeks:
             for i in range(players):
                 rows.append({"season": s, "week": w, "player_id": f"p{i}",
-                             "ecr": float(i + 1), "ppg_before": 12.0,
+                             "ecr": float(i + 1), "yds_prior": 12.0,
                              "targets": float(rng.poisson(5)),
                              "fantasy_points_ppr": float(rng.normal(12, 6)),
                              "feat": float(rng.normal())})
@@ -130,7 +130,7 @@ def test_the_screen_refuses_a_raw_outcome_column_as_a_feature_or_as_a_control():
     with pytest.raises(pnl.PanelRuleViolation, match="targets"):
         ws.cell_correlations(p, "targets")
     with pytest.raises(pnl.PanelRuleViolation, match="targets"):
-        ws.cell_correlations(p, "feat", controls=("ppg_before", "targets"))
+        ws.cell_correlations(p, "feat", controls=("yds_prior", "targets"))
     with pytest.raises(pnl.PanelRuleViolation, match="targets"):
         ws.screen(p, [ws.Feature("targets", "+", 1)])
 
@@ -412,7 +412,7 @@ def test_wind_left_the_family_rather_than_being_quietly_retained():
     with pytest.raises(pnl.PanelRuleViolation, match="observed during week w"):
         ws.screen(p, [ws.Feature("wind", "-", 1)])
     with pytest.raises(pnl.PanelRuleViolation, match="observed during week w"):
-        ws.cell_correlations(p, "feat", controls=("ppg_before", "wind"))
+        ws.cell_correlations(p, "feat", controls=("yds_prior", "wind"))
 
 
 def test_the_scheme_trends_are_not_in_the_default_screen():
@@ -483,7 +483,7 @@ def _panel_with_every_feature(seasons=(2023, 2024), weeks=tuple(range(1, 15)),
             for i in range(players):
                 row = {"season": s, "week": w, "player_id": f"p{i}",
                        "fantasy_points_ppr": float(rng.normal(12, 6)),
-                       "ppg_before": float(rng.normal(12, 4)),
+                       "yds_prior": float(rng.normal(12, 4)),
                        "ecr": float(i + 1)}
                 for f in ws.FEATURES:
                     row[f.name] = float(rng.normal())
@@ -528,14 +528,15 @@ def test_the_screen_returns_the_same_correlation_for_every_feature_when_rerun():
             f"{runs[1][name]}. The screen has an input the as-of does not pin.")
 
 
-# --- The alternative control basis, #179 --------------------------------------------------
+# --- The control bases: #179's alternative, and #229's decision ---------------------------
 #
 # `ppg_before` contains prior touchdowns and `td_rate_prior`'s numerator is prior touchdowns,
 # so the pre-registered control set contained the feature's own numerator. What these hold is
 # the *property* the decomposition was chosen for -- that the new set spans the old one, so a
 # coefficient that moves moved because of the constraint that was relaxed and not because
-# something else stopped being controlled for -- and that the basis a run is taken on actually
-# reaches the arithmetic.
+# something else stopped being controlled for -- that the basis a run is taken on actually
+# reaches the arithmetic, and that the basis the screen *defaults* to is the one #229 decided
+# on and not the pre-registration it replaced.
 
 
 def _split_panel(n=80, seed=11):
@@ -543,7 +544,8 @@ def _split_panel(n=80, seed=11):
 
     The outcome is driven by the touchdown half **alone**, which is what lets a test tell the
     two bases apart: pooling the halves into one control leaves signal in that holding them
-    apart removes.
+    apart removes. `yds_prior` is carried beside them, unrelated to either, so the yardage
+    basis is a third distinguishable set on the same frame.
     """
     rng = np.random.default_rng(seed)
     rows = []
@@ -555,9 +557,53 @@ def _split_panel(n=80, seed=11):
                 rows.append({"season": s, "week": w, "player_id": f"p{i}",
                              "td_ppg_before": td, "nontd_ppg_before": nontd,
                              "ppg_before": td + nontd, "ecr": float(i + 1),
+                             "yds_prior": float(abs(rng.normal(60.0, 20.0))),
                              "feat": float(rng.normal()),
                              "fantasy_points_ppr": float(2.0 * td + rng.normal())})
     return pl.DataFrame(rows)
+
+
+def test_the_default_basis_is_prior_yardage_and_consensus_rank():
+    """#229, as a fact the suite holds rather than a sentence in a docstring.
+
+    Three bases were run on one panel and two of them contained or pinned `td_rate_prior`'s
+    numerator: `ppg_before` is PPR points and PPR points contain touchdowns, and holding the
+    touchdown half of it fixed pins the count outright. `(yds_prior, ecr)` is the one that
+    does neither, it is the set #179's issue body pre-registered, and the decision on #229
+    made it what every surviving claim is conditional on. A default that drifted back to the
+    pre-registration would restate every figure on `docs/weekly-screen.md` silently.
+    """
+    assert ws.CONTROLS == ("yds_prior", "ecr")
+    assert ws.BASES[ws.DEFAULT_BASIS] is ws.CONTROLS
+    for c in ws.CONTROLS:
+        assert "ppg" not in c and "td" not in c, (
+            f"the default basis controls on `{c}`, which carries prior touchdowns -- the "
+            f"feature's own numerator, which is the confound #229 moved the basis to escape.")
+
+
+def test_the_screen_defaults_to_the_decided_basis_not_the_pre_registration():
+    """`screen` and `screen_joint` called without `controls` run on `CONTROLS`, and `CONTROLS`
+    is not the pooled set. The two halves are asked separately: a default that still bound to
+    `CONTROLS_POOLED` would pass the first test above on the constant and fail here on the
+    arithmetic, which is where a run actually reads it.
+    """
+    p = _split_panel()
+    feature = [ws.Feature("feat", "0", 1)]
+    default = ws.screen(p, feature).to_dicts()[0]
+    yardage = ws.screen(p, feature, ws.CONTROLS).to_dicts()[0]
+    pooled = ws.screen(p, feature, ws.CONTROLS_POOLED).to_dicts()[0]
+    assert default["r"] == yardage["r"]
+    assert default["r"] != pooled["r"], \
+        "`screen` with no basis named is still running on the pre-registration"
+
+    both = [*feature, ws.Feature("ppg_before", "?", 1)]
+    j_default = {d["feature"]: d for d in ws.screen_joint(p, both).to_dicts()}
+    j_yardage = {d["feature"]: d for d in ws.screen_joint(p, both, ws.CONTROLS).to_dicts()}
+    j_pooled = {d["feature"]: d
+                for d in ws.screen_joint(p, both, ws.CONTROLS_POOLED).to_dicts()}
+    assert j_default["feat"]["r"] == j_yardage["feat"]["r"]
+    assert j_default["feat"]["r"] != j_pooled["feat"]["r"], \
+        "`screen_joint` with no basis named is still running on the pre-registration"
 
 
 def test_the_decomposed_basis_spans_the_pooled_one():
@@ -589,10 +635,10 @@ def test_the_pooled_control_does_not_span_the_decomposed_one():
     Asked over **every** column of the decomposed basis rather than over `td_ppg_before` by
     name. The first draft of this named the column, which made it a fact about the fixture's
     columns and not about the two bases: it passed unchanged with `CONTROLS_DECOMPOSED` set
-    to `CONTROLS`, the one mutation it exists to catch.
+    to `CONTROLS_POOLED`, the one mutation it exists to catch.
     """
     p = _split_panel()
-    pooled = np.column_stack([p[c].to_numpy() for c in ws.CONTROLS])
+    pooled = np.column_stack([p[c].to_numpy() for c in ws.CONTROLS_POOLED])
     left = max(float(np.abs(ws.residual(p[c].to_numpy(), pooled)).max())
                for c in ws.CONTROLS_DECOMPOSED)
     assert left > 1e-3, (
@@ -610,7 +656,7 @@ def test_the_screen_takes_the_basis_it_is_given():
     """
     p = _split_panel()
     feature = [ws.Feature("feat", "0", 1)]
-    pooled = ws.screen(p, feature, ws.CONTROLS).to_dicts()[0]
+    pooled = ws.screen(p, feature, ws.CONTROLS_POOLED).to_dicts()[0]
     split = ws.screen(p, feature, ws.CONTROLS_DECOMPOSED).to_dicts()[0]
     assert pooled["cells"] == split["cells"] == 20, "same rows, so only the basis differs"
     assert pooled["r"] != split["r"], (
@@ -618,7 +664,7 @@ def test_the_screen_takes_the_basis_it_is_given():
         "`controls` is not reaching `cell_correlations`.")
 
     both = [*feature, ws.Feature("ppg_before", "?", 1)]
-    j_pooled = {d["feature"]: d for d in ws.screen_joint(p, both, ws.CONTROLS).to_dicts()}
+    j_pooled = {d["feature"]: d for d in ws.screen_joint(p, both, ws.CONTROLS_POOLED).to_dicts()}
     j_split = {d["feature"]: d
                for d in ws.screen_joint(p, both, ws.CONTROLS_DECOMPOSED).to_dicts()}
     assert j_pooled["feat"]["r"] != j_split["feat"]["r"], \
@@ -633,7 +679,8 @@ def test_every_named_basis_is_one_the_panel_would_serve_as_features():
     because it refuses a bad *feature* and a control arrives by the other parameter. Checked
     here against `column_role` so a basis added later cannot introduce one quietly.
     """
-    assert ws.BASES["pooled"] == ws.CONTROLS
+    assert ws.BASES["yardage"] == ws.CONTROLS
+    assert ws.BASES["pooled"] == ws.CONTROLS_POOLED
     assert ws.BASES["decomposed"] == ws.CONTROLS_DECOMPOSED
     for name, controls in ws.BASES.items():
         for c in controls:
@@ -758,7 +805,7 @@ def _sweep_panel(seasons=(2021, 2022, 2023, 2024, 2025), weeks=range(1, 15),
                 y = 12.0 + 3.0 * flat + rng.normal(0, 2)
                 y += late * lt if w >= late_from else sign * early * lt
                 rows.append({"season": s, "week": w, "player_id": f"p{i}",
-                             "ppg_before": 12.0, "ecr": float(i + 1),
+                             "yds_prior": 12.0, "ecr": float(i + 1),
                              "late_trend": lt, "flat": flat,
                              "dud": float(rng.normal()),
                              "fantasy_points_ppr": y})
