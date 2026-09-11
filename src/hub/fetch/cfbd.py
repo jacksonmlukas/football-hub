@@ -529,6 +529,34 @@ class WeekChoice(NamedTuple):
     why: str
 
 
+def week_one_opens() -> tuple[date | None, date | None, str]:
+    """The season's first game, the Tuesday its week opens, and the sentence if there is
+    neither.
+
+    Factored out of `configured_week` for `hub.fetch.bigten`, which counts its report
+    deadlines from the same anchor rather than stating a second one -- two dates for one
+    season is the drift this module's docstring argues against. Both dates are returned
+    because both are needed: the first game is the fact a human stated, and the Tuesday is
+    where CFBD's week numbers change over.
+    """
+    raw = (_env().get(CFB_WEEK_ONE_ENV) or "").strip()
+    if not raw:
+        return None, None, (
+            f"nothing was fetched: {CFB_WEEK_ONE_ENV} is not set, so nothing here knows "
+            f"which college week it is. Set it to the date of the season's first game "
+            f"(YYYY-MM-DD), or pass --week N")
+    try:
+        first = date.fromisoformat(raw)
+    except ValueError:
+        return None, None, (
+            f"nothing was fetched: {CFB_WEEK_ONE_ENV}={raw!r} is not a YYYY-MM-DD date, "
+            f"and a week is not being guessed from it")
+    # Back to the Tuesday that opens the stated date's week. `weekday()` is Monday 0, so
+    # Tuesday is 1 and `(w - 1) % 7` is how many days back that Tuesday is -- zero when the
+    # date given is already one.
+    return first, first - timedelta(days=(first.weekday() - 1) % 7), ""
+
+
 def configured_week(now: datetime | None = None) -> WeekChoice:
     """Which college week a scheduled run fetches, counted from the season's start date.
 
@@ -575,22 +603,9 @@ def configured_week(now: datetime | None = None) -> WeekChoice:
     week and the sentence for it. Nothing here ever invents one -- `--week N` is how a human
     asks for a specific week, including a backfill.
     """
-    raw = (_env().get(CFB_WEEK_ONE_ENV) or "").strip()
-    if not raw:
-        return WeekChoice(None, (
-            f"nothing was fetched: {CFB_WEEK_ONE_ENV} is not set, so nothing here knows "
-            f"which college week it is. Set it to the date of the season's first game "
-            f"(YYYY-MM-DD), or pass --week N"))
-    try:
-        first = date.fromisoformat(raw)
-    except ValueError:
-        return WeekChoice(None, (
-            f"nothing was fetched: {CFB_WEEK_ONE_ENV}={raw!r} is not a YYYY-MM-DD date, "
-            f"and a week is not being guessed from it"))
-    # Back to the Tuesday that opens the stated date's week. `weekday()` is Monday 0, so
-    # Tuesday is 1 and `(w - 1) % 7` is how many days back that Tuesday is -- zero when the
-    # date given is already one.
-    opens = first - timedelta(days=(first.weekday() - 1) % 7)
+    first, opens, why = week_one_opens()
+    if first is None or opens is None:
+        return WeekChoice(None, why)
     today = (now or datetime.now(UTC)).date()
     if today < opens:
         return WeekChoice(None, (
