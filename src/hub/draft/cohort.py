@@ -30,7 +30,7 @@ import polars as pl
 from hub.config import RosterConfig
 from hub.draft.backtest import market_strategy
 from hub.draft.board import BuildReport
-from hub.draft.optimize import simulate_remaining_draft
+from hub.draft.optimize import DEFAULT_ROUNDS, simulate_remaining_draft
 from hub.draft.state import DraftState
 
 _CFG = RosterConfig()
@@ -38,10 +38,15 @@ SLOT = _CFG.slot
 TEAMS = _CFG.teams
 
 # Fourteen rounds, not the league's sixteen: the last two are kickers and defences, which the
-# board does not carry (ADR-0008). Twenty drafts a season is what both gates have always used
-# and what every published result was measured on -- these are the recipe, and changing one
-# invalidates a recorded number rather than improving a default.
-ROUNDS = 14
+# board does not carry (ADR-0008). One number, declared in `hub.draft.optimize` where the
+# simulator defaults to it, and reached here under the name both season-side gates and
+# `config.FITTED_EXTRA` already use -- it was a second literal 14 until #200, under a second
+# reason ("bench depth beyond the eight starting slots"), and two declarations of one number
+# are two numbers as soon as one is edited. Twenty drafts a season is what every Gate has
+# always used and what every published result was measured on: three CLIs default to this
+# name rather than restating the literal. These are the recipe, and changing one invalidates
+# a recorded number rather than improving a default.
+ROUNDS = DEFAULT_ROUNDS
 DRAFTS = 20
 
 
@@ -51,6 +56,17 @@ def seed_for(seed: int, season: int, k: int) -> int:
     The season is in it so that a four-season gate scores four cohorts rather than one cohort
     four times, and `k` so that twenty drafts are twenty drafts. It was written out in both
     gates; a formula copied by hand into two places is one that eventually differs in one.
+
+    **The draft backtest does not draw its rooms from this, and the difference is deliberate
+    rather than a drift.** `backtest.draft_root` descends from the `SeedSequence` tree #195
+    built, because arm B evaluates draft futures *inside* the room it is scored in and the
+    integer arithmetic let rollout 0 be that room. A Cohort has no arm B and no rollout under
+    it -- one market draft per `k`, scored once -- so the leak #195 closed cannot occur here,
+    and both season-side gates' published figures were measured on exactly this draw
+    (`test_the_cohort_is_what_the_gates_used_to_build_for_themselves` pins it). Moving it
+    onto the tree would be a re-measurement of two Gates that persist nothing and cannot be
+    re-run, not a refactor; #200 states the reason here instead. `tests/unit/test_cohort.py`
+    guards that neither recipe is written anywhere but its declaration.
     """
     return seed + 1000 * season + k
 

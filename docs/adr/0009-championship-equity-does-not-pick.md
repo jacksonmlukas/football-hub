@@ -139,3 +139,17 @@ accurate enough to beat following consensus and filling your starting slots.
 > which names the conflict explicitly and fills the gap rather than re-litigating either side.
 > `hub.draft.cohort`'s use of `simulate_remaining_draft` is *not* part of the removed arm — it
 > serves the other two Gates.
+
+> **Restated 2026-09-11 (#198): it lives in `hub.exhibits.championship_equity`.** The
+> objective this ADR gated — `win_probability`, `_lift_frame`, `rank_tiers` and, from
+> `hub.draft.season`, `champion_probability` — is there verbatim, and `hub.draft.backtest`
+> imports it from there as the one production reader, which is what *"reopening this means
+> re-running `hub.draft.backtest`"* above needs. `hub.draft.optimize` now opens on the room,
+> the seeding tree and THE PICK, which is what the product reads; its *"pinned at the shipped
+> 12 × 250"* sentence in `compare` is corrected to say the budget is the measurement's own.
+> `tag_for` is deleted (no caller, no measurement), `hub/draft/leverage.py` is
+> `hub.exhibits.leverage`, and `cost_of_waiting` was never part of this arm — it is
+> `pick_value`'s column and the product reads it. The numbers above are unchanged and were not
+> re-run: a move of code is not a re-measurement. What *has* moved the arm since, and says so,
+> is #235's `TALENT_CV` refit; `tests/unit/test_backtest.py`'s frozen-Board pin (#197)
+> records the roster before and after.

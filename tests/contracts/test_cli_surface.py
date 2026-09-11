@@ -55,7 +55,7 @@ from hub.fetch import nflverse
 CLI_MODULES = (
     "hub.draft.adherence", "hub.draft.backtest", "hub.draft.board", "hub.draft.calibrate", "hub.draft.evaluate",
     "hub.draft.fit_corrections",
-    "hub.draft.leverage", "hub.draft.live", "hub.draft.tune", "hub.fetch.bigten",
+    "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage", "hub.fetch.bigten",
     "hub.fetch.cfbd", "hub.fetch.nflverse", "hub.fetch.odds", "hub.inspect", "hub.models.conformal",
     "hub.models.coverage",
     "hub.models.correlate", "hub.models.eval", "hub.models.injury", "hub.models.margin",
@@ -308,7 +308,7 @@ def test_every_cli_is_driven_against_absent_input():
 
     Two modules are not driven, and the two reasons are different in kind:
 
-      * `hub.draft.leverage` has no input for absence to arrive at. It reads no file, opens
+      * `hub.exhibits.leverage` has no input for absence to arrive at. It reads no file, opens
         no socket and takes no credential: it simulates this league's bracket from the
         constants in `hub.draft.season`, and `--sims` is the only thing it is given. Driving
         it would mean inventing a refusal -- a floor on `--sims` written for this test and
@@ -324,9 +324,9 @@ def test_every_cli_is_driven_against_absent_input():
         and this subtraction goes with it.
     """
     driven = {name for name, _ in ABSENT_INPUT}
-    assert driven == set(CLI_MODULES) - {"hub.draft.leverage", "hub.draft.board"}, (
+    assert driven == set(CLI_MODULES) - {"hub.exhibits.leverage", "hub.draft.board"}, (
         f"not driven against absent input: "
-        f"{sorted(set(CLI_MODULES) - driven - {'hub.draft.leverage', 'hub.draft.board'})}; "
+        f"{sorted(set(CLI_MODULES) - driven - {'hub.exhibits.leverage', 'hub.draft.board'})}; "
         f"driven but not a CLI: {sorted(driven - set(CLI_MODULES))}")
 
 

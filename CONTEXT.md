@@ -189,6 +189,19 @@ A third case exists and is not a third test: a signal passes a screen and its de
 be gated at any n this project will see. That is a **provisional rule**, above.
 _Avoid_: validate, backtest — both hide which question is being asked.
 
+**Exhibit**:
+Code that exists only so a measurement the product no longer reads can be re-run. Two ADRs
+meet here: a gate that removed a model from the product
+([ADR-0009](docs/adr/0009-championship-equity-does-not-pick.md)) and the rule that a
+measurement which steered a decision stays committed and re-runnable
+([ADR-0007](docs/adr/0007-measurements-that-steer-the-product-are-committed-code.md)). An
+exhibit lives in `hub.exhibits`, one module per measurement, imports the simulators it
+measures with, and is imported by the harness that re-runs it and by nothing that ships —
+`tests/contracts/test_the_exhibit_is_not_a_dependency.py` holds that, so a reader of
+`hub.draft` can tell the removed arm from the product without a call-site census. Not the
+same as machinery a live Gate runs on: the room simulator draws two Gates' Cohorts and stays
+in `hub.draft`, however close it sits to the arm that lost.
+
 ### At the boundary
 
 **Contract**:

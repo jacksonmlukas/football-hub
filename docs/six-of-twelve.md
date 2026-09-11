@@ -207,5 +207,9 @@ bust. See [talent-cv.md](talent-cv.md), which also flags the next unfitted const
 ## Reproduce
 
 ```bash
-uv run python -m hub.draft.leverage --sims 20000
+uv run python -m hub.exhibits.leverage --sims 20000
 ```
+
+The harness was `hub.draft.leverage` when the numbers above were measured and until
+2026-09-11, when #198 moved it to `hub.exhibits` with the other removed measurements; the
+citations above keep the name it had. Same code, one import path changed.

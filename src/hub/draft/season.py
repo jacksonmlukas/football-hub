@@ -397,34 +397,3 @@ def champion(pts: np.ndarray, seeds: np.ndarray, sim: int, *,
     semi = [alive[0] if pts[sim, w + 1, alive[0]] > pts[sim, w + 1, alive[3]] else alive[3],
             alive[1] if pts[sim, w + 1, alive[1]] > pts[sim, w + 1, alive[2]] else alive[2]]
     return int(semi[0] if pts[sim, w + 2, semi[0]] > pts[sim, w + 2, semi[1]] else semi[1])
-
-
-def champion_probability(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
-                         pos: np.ndarray, n_sims: int = 400,
-                         rng: np.random.Generator | None = None,
-                         talent_cv: float | np.ndarray | None = None,
-                         nfl_team: np.ndarray | None = None,
-                         skew: np.ndarray | None = None,
-                         missed: np.ndarray | None = None,
-                         report: CorrelationReport | None = None,
-                         bye_week: np.ndarray | None = None) -> np.ndarray:
-    """P(each team wins the league). Returns (teams,) summing to 1.
-
-    14-week H2H regular season, top 6 seeds, two byes, then single elimination on one-week
-    matchups -- read off the live league, not assumed. Three further weeks are simulated so
-    the bracket has draws of its own.
-
-    The two byes here are playoff seeding; `bye_week` is the NFL bye #226 is about, one
-    per player, handed straight to `simulate_weeks` like `missed`, which is the absence
-    model -- see `_absence_factor`. `leverage.py` uses the word in the seeding sense.
-    """
-    rng = rng or np.random.default_rng(0)
-    teams = len(rosters)
-    pts = simulate_weeks(rosters, mu, sd, pos, n_sims,
-                         REG_SEASON_WEEKS + PLAYOFF_ROUNDS, rng, talent_cv, nfl_team, skew,
-                         missed, report, bye_week=bye_week)
-    _, seeds = seed_table(pts)
-    champs = np.array([champion(pts, seeds, s) for s in range(n_sims)])
-    return np.bincount(champs, minlength=teams) / n_sims
-
-
