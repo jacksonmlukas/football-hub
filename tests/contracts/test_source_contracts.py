@@ -327,7 +327,7 @@ def test_odds_fixture_parses_to_the_lines_table_shape():
     """
     import datetime as dt
 
-    from hub.fetch.odds import _median_game_total, _median_home_spread
+    from hub.fetch.odds import _median_game_total, _median_home_spread, staleness
 
     events = load("odds_spreads.synthetic.json")
     rows = []
@@ -342,7 +342,8 @@ def test_odds_fixture_parses_to_the_lines_table_shape():
                                     "spread_price": pl.Float64, "close_total": pl.Float64,
                                     "total_price": pl.Float64,
                                     "captured_at": pl.Datetime})
-    assert ODDS_SNAPSHOT.validate(df).height == 1
+    # The two staleness columns are derived, never parsed: `staleness` is the one producer.
+    assert ODDS_SNAPSHOT.validate(staleness(df)).height == 1
     # books at -8.5 and -8.0; median -8.25, stored positive because home is favoured
     assert df["close_spread"][0] == pytest.approx(8.25)
     # books at 47.5 and 47.0. A total is a sum, so it is not negated the way a spread is.
@@ -394,6 +395,12 @@ ODDS_COLUMNS = {"game_id": pl.Utf8, "close_spread": pl.Float64,
                 "total_price": pl.Float64, "captured_at": pl.Datetime}
 
 
+def _stamped(df: pl.DataFrame) -> pl.DataFrame:
+    """The frame as `hub.fetch.odds._record` writes it: staleness derived, never typed in."""
+    from hub.fetch.odds import staleness
+    return staleness(df)
+
+
 def test_odds_allows_repeated_games_by_design():
     """Several snapshots per game is the point, so uniqueness here would be wrong."""
     import datetime as dt
@@ -403,7 +410,23 @@ def test_odds_allows_repeated_games_by_design():
          "total_price": [-110.0, -110.0],
          "captured_at": [dt.datetime(2025, 9, 1), dt.datetime(2025, 9, 3)]},
         schema=ODDS_COLUMNS)
-    assert ODDS_SNAPSHOT.validate(df).height == 2
+    assert ODDS_SNAPSHOT.validate(_stamped(df)).height == 2
+
+
+def test_a_snapshot_that_does_not_say_how_long_its_number_has_stood_is_refused():
+    """#210: a dated capture that ranks above the schedule field on provenance must carry
+    what says whether the number has moved. The six-column shape is the labelling error."""
+    import datetime as dt
+    df = pl.DataFrame(
+        {"game_id": ["g1"], "close_spread": [-3.0], "spread_price": [-110.0],
+         "close_total": [44.5], "total_price": [-110.0],
+         "captured_at": [dt.datetime(2025, 9, 1)]},
+        schema=ODDS_COLUMNS)
+    with pytest.raises(ContractViolation, match="polls_unmoved.*unmoved_since"):
+        ODDS_SNAPSHOT.validate(df)
+    with pytest.raises(ContractViolation, match="polls_unmoved"):
+        ODDS_SNAPSHOT.validate(_stamped(df).with_columns(
+            pl.lit(None, dtype=pl.Int64).alias("polls_unmoved")))
 
 
 def test_a_snapshot_of_the_pre_totals_shape_reports_an_absent_total(tmp_path):
@@ -431,8 +454,8 @@ def test_a_snapshot_of_the_pre_totals_shape_reports_an_absent_total(tmp_path):
          "captured_at": [dt.datetime(2025, 9, 3, 12)]},
         schema=ODDS_COLUMNS)
     store.write(old, "lines", "nfl", 2025, 1, base=tmp_path, name="snap-old")
-    store.write(ODDS_SNAPSHOT.validate(new), "lines", "nfl", 2025, 1, base=tmp_path,
-                name="snap-new")
+    store.write(ODDS_SNAPSHOT.validate(_stamped(new)), "lines", "nfl", 2025, 1,
+                base=tmp_path, name="snap-new")
 
     got = store.sql("SELECT close_spread, close_total, total_price FROM lines "
                     "ORDER BY captured_at", base=tmp_path)

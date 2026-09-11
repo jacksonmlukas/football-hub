@@ -32,8 +32,19 @@ island, so events are mapped back to nflverse games via team abbreviations and k
 date. Every snapshot appends, because a single closing line makes the as-of join
 degenerate -- line *movement* is the thing it exists to resolve.
 
+**A dated line is not the same as a live one, and since #210 the row says which.** A number
+polled eight times over twelve days and identical at every poll is not a noisy estimate of
+the close; it is a posted lookahead that does not respond to news, and the archive measured
+on 2026-09-11 is mostly that -- 259 of 272 games never moved across the whole of it, and
+every week from 3 out had at most one game move. So each row carries `polls_unmoved` and
+`unmoved_since`: how many consecutive polls have returned this quote and when the run began.
+`staleness` derives both from the archive, `_record` stamps them on the rows it writes, and
+a consumer ranking a snapshot above the schedule's own field has the number it needs to stop
+doing that for a quote nothing has touched in a fortnight.
+
     uv run python -m hub.fetch.odds --credits
     uv run python -m hub.fetch.odds --snapshot
+    uv run python -m hub.fetch.odds --staleness
 """
 from __future__ import annotations
 
@@ -392,6 +403,159 @@ def _median_game_total(event: Mapping[str, Any]) -> tuple[float | None, float | 
     return _median_quote(event, TOTALS_MARKET, OVER)
 
 
+# --- staleness (#210) ---------------------------------------------------------
+
+# The two columns a row carries about how long its spread quote has stood still. Declared
+# here and read by `ODDS_SNAPSHOT`, so the writer and the contract cannot spell them apart.
+STALENESS_COLUMNS: dict[str, Any] = {"polls_unmoved": pl.Int64, "unmoved_since": pl.Datetime}
+
+# What `staleness` reads and the order it reads it in. `spread_price` is optional on the
+# way in -- a partition written before #211 has no such column and the store hands it back
+# as null -- and the derivation treats a null there as no evidence rather than as a move.
+_QUOTE = ("game_id", "close_spread", "spread_price", "captured_at")
+
+
+def _quote_moved() -> pl.Expr:
+    """Whether this poll's spread quote differs from the previous poll of the same game.
+
+    A quote is the pair -- the point and the price on it -- and the pair moved if either did.
+    The point is the obvious half. The price is the half #211 made storable and the one this
+    rule has to say something about, because a book that has a reason to move a line moves
+    the juice first: -7 at -110 becoming -7 at -120 is the betting market leaning without crossing
+    the key number, and a run of polls that is "unmoved" on the point alone would count that
+    as nothing happening. A frozen lookahead is a number nobody has touched, and a shaded
+    price is a touch.
+
+    A price that is null on either side contributes nothing. Every snapshot before #211 has
+    no price at all, and the poll that first records one is the archive gaining a column,
+    not the betting market moving -- so the comparison is made only where both polls priced the
+    point, and the point decides otherwise. Floats compare exactly because the medians on
+    both sides are the same arithmetic over the same books' quotes: two polls at which no
+    book changed anything produce identical bits, and a book joining or leaving the set is
+    the betting market changing shape, which is honestly a move.
+
+    The first poll of a game starts a run. There is no earlier quote to stand still against.
+    """
+    prev_point = pl.col("close_spread").shift(1).over("game_id")
+    prev_price = pl.col("spread_price").shift(1).over("game_id")
+    point_moved = pl.col("close_spread") != prev_point
+    price_moved = (pl.col("spread_price").is_not_null() & prev_price.is_not_null()
+                   & (pl.col("spread_price") != prev_price))
+    return (prev_point.is_null() | point_moved | price_moved).alias("_moved")
+
+
+def staleness(lines: pl.DataFrame) -> pl.DataFrame:
+    """Every poll, with how long its spread quote had stood still by then.
+
+    Two columns, and both are needed because they answer different questions. `polls_unmoved`
+    is the count of consecutive polls, this one included, that returned the quote this row
+    holds -- so a game polled once and a game polled eight times at one number read 1 and 8,
+    which is the distinction #210 asks for. `unmoved_since` is `captured_at` of the first
+    poll in that run: the *moment*, not the elapsed time, because how long ago that was
+    depends on when the question is asked and a stored duration would be stale the moment it
+    was written. A consumer subtracts it from its own `at`.
+
+    Neither is a verdict. "Stale" is a threshold on these two numbers, and the threshold is
+    the consumer's to declare -- `hub.schedule.priced_games` ranks a snapshot above the
+    schedule field and is the one that has to say at what age it stops. This module measures.
+
+    Derived from the archive rather than kept as running state, so it is the same function
+    on the way in and on the way out: `_record` runs it over the prior polls plus the new
+    rows and stamps the new rows, and a reader of the whole archive -- `hub.models.market`'s
+    noise floor, `--staleness` below -- runs it over every partition and gets the same answer
+    for the rows written before the columns existed. One derivation, two callers, nothing to
+    drift.
+
+    Rows are returned sorted by game and time, the two columns appended, and any column the
+    caller passed beyond `_QUOTE` carried through untouched.
+    """
+    frame = lines if "spread_price" in lines.columns else lines.with_columns(
+        pl.lit(None, dtype=pl.Float64).alias("spread_price"))
+    ordered = frame.sort("game_id", "captured_at")
+    run = pl.col("_moved").cast(pl.Int64).cum_sum().over("game_id").alias("_run")
+    return (ordered.with_columns(_quote_moved())
+                   .with_columns(run)
+                   .with_columns(
+                       pl.col("captured_at").cum_count().over("game_id", "_run")
+                         .cast(pl.Int64).alias("polls_unmoved"),
+                       pl.col("captured_at").min().over("game_id", "_run")
+                         .alias("unmoved_since"))
+                   .drop("_moved", "_run")
+                   .pipe(lambda d: d if "spread_price" in lines.columns
+                         else d.drop("spread_price")))
+
+
+_QUOTE_SCHEMA: dict[str, Any] = {"game_id": pl.Utf8, "close_spread": pl.Float64,
+                                 "spread_price": pl.Float64, "captured_at": pl.Datetime}
+
+
+def _archive(season: int, base: Path | None) -> pl.DataFrame:
+    """Every poll already in the store for the season, in `_QUOTE` shape plus `week`.
+
+    Empty on a fresh clone. Read with `SELECT *` rather than by naming the columns, because
+    an archive written entirely before #211 -- which is the live one on 2026-09-11 -- has no
+    `spread_price` column in any partition, and `union_by_name` unions what exists rather
+    than what a contract now declares. A column the archive has never had is added here as
+    nulls, which `_quote_moved` reads as no evidence.
+    """
+    if "lines" not in store.tables(base):
+        return pl.DataFrame(schema={**_QUOTE_SCHEMA, "week": pl.Int64})
+    got = store.sql("SELECT * FROM lines WHERE league = 'nfl' AND season = ?",
+                    params=[season], base=base)
+    absent = [pl.lit(None, dtype=t).alias(c) for c, t in _QUOTE_SCHEMA.items()
+              if c not in got.columns]
+    return got.with_columns(absent).select(*_QUOTE, pl.col("week").cast(pl.Int64))
+
+
+def _with_staleness(new: pl.DataFrame, season: int, base: Path | None) -> pl.DataFrame:
+    """The new rows, stamped with their staleness against everything already stored.
+
+    The prior polls are read and never rewritten. Immutability of what is on disk is the
+    whole as-of guarantee, so the archive's older rows keep the columns they were written
+    with and get these two on read, from the same `staleness`, rather than by a backfill.
+    """
+    prior = _archive(season, base).select(_QUOTE)
+    both = pl.concat([prior, new.select(_QUOTE)], how="vertical_relaxed")
+    stamped = staleness(both).select("game_id", "captured_at", *STALENESS_COLUMNS)
+    return new.join(stamped, on=["game_id", "captured_at"], how="left")
+
+
+def staleness_report(season: int = SEASON_AHEAD, base: Path | None = None) -> int:
+    """Per week: how much of the archive is a number that has never moved.
+
+    Printed rather than returned because the reader is a person deciding whether the
+    snapshot for a distant week is worth ranking above the schedule field. "Frozen" here is
+    the whole-archive fact -- `polls_unmoved` equal to the game's poll count -- which is
+    the one a consumer cannot see from a single row.
+    """
+    if "lines" not in store.tables(base):
+        print("  odds staleness: no snapshot archive here")
+        return 0
+    got = _archive(season, base)
+    if got.is_empty():
+        print(f"  odds staleness: no {season} snapshots in the archive")
+        return 0
+    stale = staleness(got)
+    latest = stale["captured_at"].max()
+    per_game = (stale.group_by("game_id", "week")
+                     .agg(polls=pl.len(),
+                          unmoved=pl.col("polls_unmoved").last(),
+                          since=pl.col("unmoved_since").last())
+                     .with_columns((pl.col("polls") == pl.col("unmoved")).alias("frozen"),
+                                   ((pl.lit(latest) - pl.col("since")).dt.total_hours()
+                                    / 24.0).alias("days")))
+    print(f"  odds staleness: {per_game.height} games, "
+          f"{stale['captured_at'].n_unique()} polls, as of {latest}")
+    print("  week  games  polls  frozen  median_days_unmoved")
+    for r in (per_game.group_by("week")
+                      .agg(games=pl.len(), polls=pl.col("polls").max(),
+                           frozen=pl.col("frozen").sum(), days=pl.col("days").median())
+                      .sort("week").iter_rows(named=True)):
+        print(f"  {int(r['week']):>4}  {r['games']:>5}  {r['polls']:>5}  "
+              f"{r['frozen']:>6}  {r['days']:>19.1f}")
+    return 0
+
+
 def snapshot(season: int = SEASON_AHEAD, *, markets: str = ",".join(MARKETS),
              regions: str = ",".join(REGIONS),
              state_path: Path | None = None, base: Path | None = None,
@@ -536,6 +700,10 @@ def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetim
                                     "spread_price": pl.Float64, "close_total": pl.Float64,
                                     "total_price": pl.Float64,
                                     "captured_at": pl.Datetime, "week": pl.Int64})
+    # GUARD staleness-stamped-against-the-archive: a row says how long its quote has stood
+    # still, measured against every poll already stored rather than asserted as new
+    df = _with_staleness(df, season, base)
+    # /GUARD
     # Every partition is checked before any is written. Interleaved, a contract failure on
     # week 3 left weeks 1 and 2 on disk carrying a fresh timestamp while the CLI reported
     # that nothing had been fetched -- a half-written snapshot the as-of join would read as
@@ -577,11 +745,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"Cost is markets x regions, so {len(MARKETS) * len(REGIONS)} credits.")
     ap.add_argument("--snapshot", action="store_true", help="take one dated line snapshot")
     ap.add_argument("--credits", action="store_true", help="report the stored balance")
+    ap.add_argument("--staleness", action="store_true",
+                    help="per week, how much of the archive is a number that never moved; "
+                         "reads the store and spends nothing")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD)
     ap.add_argument("--state-path", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--base", default=None, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     spath = Path(a.state_path) if a.state_path else None
 
+    if a.staleness:
+        return staleness_report(a.season, base=Path(a.base) if a.base else None)
     if a.credits or not a.snapshot:
         return credits_report(spath)
 

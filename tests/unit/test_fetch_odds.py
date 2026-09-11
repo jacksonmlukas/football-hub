@@ -585,3 +585,135 @@ def test_a_point_with_no_readable_price_keeps_the_point(transport, teams, schedu
     assert row["spread_price"] is None
     said = capsys.readouterr().out
     assert "no American price" in said, f"the null price was not reported: {said}"
+
+
+# --- staleness (#210) -------------------------------------------------------
+
+def _quotes(*polls, game="g1"):
+    """One game's polls as (day, spread, price) triples, in the order given."""
+    return pl.DataFrame(
+        {"game_id": [game] * len(polls),
+         "close_spread": [p[1] for p in polls],
+         "spread_price": [p[2] for p in polls],
+         "captured_at": [dt.datetime(2026, 8, 25) + dt.timedelta(days=p[0]) for p in polls]},
+        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                "spread_price": pl.Float64, "captured_at": pl.Datetime})
+
+
+def test_a_first_poll_is_a_run_of_one():
+    got = odds.staleness(_quotes((0, -3.0, -110.0)))
+    assert got["polls_unmoved"].to_list() == [1]
+    assert got["unmoved_since"].to_list() == [dt.datetime(2026, 8, 25)]
+
+
+def test_polls_at_one_number_count_up_and_a_move_starts_the_count_again():
+    """The measure #210 asks for: consecutive polls at this quote, and since when."""
+    got = odds.staleness(_quotes((0, -3.0, -110.0), (1, -3.0, -110.0), (2, -3.0, -110.0),
+                                 (5, -3.5, -110.0), (6, -3.5, -110.0)))
+    assert got["polls_unmoved"].to_list() == [1, 2, 3, 1, 2]
+    assert got["unmoved_since"].to_list() == [dt.datetime(2026, 8, 25)] * 3 + [
+        dt.datetime(2026, 8, 30)] * 2
+
+
+def test_never_moved_is_distinguishable_from_polled_once():
+    """A game polled eight times at one number and a game polled once both have an
+    `unmoved_since` equal to their first capture. Only the count tells them apart, which is
+    why there are two columns and not one."""
+    eight = _quotes(*[(d, 7.0, -110.0) for d in range(8)], game="frozen")
+    once = _quotes((0, 7.0, -110.0), game="fresh")
+    got = odds.staleness(pl.concat([eight, once]))
+    last = got.group_by("game_id").agg(pl.col("polls_unmoved").last()).sort("game_id")
+    assert last["polls_unmoved"].to_list() == [1, 8]
+
+
+def test_a_price_moving_on_a_fixed_point_is_a_move():
+    """-7 at -110 becoming -7 at -120 is the betting market leaning without crossing the
+    number. A frozen lookahead is a quote nobody has touched; a shaded price is a touch."""
+    got = odds.staleness(_quotes((0, -7.0, -110.0), (1, -7.0, -120.0), (2, -7.0, -120.0)))
+    assert got["polls_unmoved"].to_list() == [1, 1, 2]
+
+
+def test_a_missing_price_is_no_evidence_either_way():
+    """Every snapshot before #211 has no price. The poll that first records one is the
+    archive gaining a column, not the quote moving, so the point decides alone there."""
+    got = odds.staleness(_quotes((0, -7.0, None), (1, -7.0, None), (2, -7.0, -110.0),
+                                 (3, -7.0, None), (4, -7.5, None)))
+    assert got["polls_unmoved"].to_list() == [1, 2, 3, 4, 1]
+
+
+def test_a_frame_with_no_price_column_at_all_is_measured_on_the_point():
+    """What the archive looks like read back through the store before #211's first poll."""
+    got = odds.staleness(_quotes((0, -7.0, None), (1, -7.0, None)).drop("spread_price"))
+    assert got["polls_unmoved"].to_list() == [1, 2]
+    assert "spread_price" not in got.columns, "a column the caller did not pass was invented"
+
+
+def test_games_are_measured_apart():
+    a = _quotes((0, -3.0, -110.0), (1, -3.0, -110.0), game="a")
+    b = _quotes((0, 2.5, -110.0), (1, 3.0, -110.0), game="b")
+    got = odds.staleness(pl.concat([b, a]))
+    assert got.sort("game_id", "captured_at")["polls_unmoved"].to_list() == [1, 2, 1, 1]
+
+
+def test_a_snapshot_is_stamped_against_the_polls_already_stored(transport, teams, schedule,
+                                                                paths):
+    """The guard: the third poll of an unmoved number is written as the third, not as a
+    first. `_record` sees only the rows it is about to write, so the count has to come from
+    reading the archive back -- and a row that says 1 when the archive says 3 is exactly the
+    labelling error #210 names."""
+    transport()
+    for day in (1, 2, 3):
+        odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
+                      now=dt.datetime(2025, 9, day, 12))
+    from hub import store
+    got = store.sql("SELECT polls_unmoved, unmoved_since FROM lines ORDER BY captured_at",
+                    base=paths["store"])
+    assert got["polls_unmoved"].to_list() == [1, 2, 3]
+    assert got["unmoved_since"].to_list() == [dt.datetime(2025, 9, 1, 12)] * 3
+
+
+def test_a_moved_number_is_written_as_a_fresh_run(transport, teams, schedule, paths):
+    transport(events=[_event("Philadelphia Eagles", "Dallas Cowboys", "2025-09-04", -8.5)])
+    odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
+                  now=dt.datetime(2025, 9, 1, 12))
+    transport(events=[_event("Philadelphia Eagles", "Dallas Cowboys", "2025-09-04", -9.5)])
+    got = odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
+                        now=dt.datetime(2025, 9, 2, 12))
+    assert got["polls_unmoved"].to_list() == [1]
+    assert got["unmoved_since"].to_list() == [dt.datetime(2025, 9, 2, 12)]
+
+
+def test_the_archive_on_disk_is_not_rewritten_to_carry_the_columns(transport, teams,
+                                                                   schedule, paths):
+    """Immutability is the as-of guarantee. Older rows get the columns on read, from the
+    same derivation, never from a backfill."""
+    from hub import store
+    old = pl.DataFrame({"game_id": ["2025_01_DAL_PHI"], "close_spread": [8.0],
+                        "captured_at": [dt.datetime(2025, 8, 30, 12)]})
+    p = store.write(old, "lines", "nfl", 2025, 1, base=paths["store"], name="snap-old")
+    before = p.read_bytes()
+    transport()
+    odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
+                  now=dt.datetime(2025, 9, 1, 12))
+    assert p.read_bytes() == before
+    got = store.sql("SELECT polls_unmoved FROM lines ORDER BY captured_at", base=paths["store"])
+    assert got["polls_unmoved"].to_list() == [None, 1], (
+        "the old partition must read back with a null, and the new row a run of one -- "
+        "8.0 is not the 8.25 the two fixture books median to")
+
+
+def test_the_staleness_report_names_the_frozen_games_per_week(transport, teams, schedule,
+                                                              paths, capsys):
+    transport()
+    for day in (1, 2):
+        odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
+                      now=dt.datetime(2025, 9, day, 12))
+    assert odds.main(["--staleness", "--season", "2025", "--base", str(paths["store"])]) == 0
+    said = capsys.readouterr().out
+    assert "1 games, 2 polls" in said, said
+    assert "     1      1      2       1" in said, said
+
+
+def test_the_staleness_report_on_a_fresh_clone_says_so(paths, capsys):
+    assert odds.main(["--staleness", "--base", str(paths["store"])]) == 0
+    assert "no snapshot archive" in capsys.readouterr().out
