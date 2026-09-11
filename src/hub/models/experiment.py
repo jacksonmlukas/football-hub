@@ -49,6 +49,14 @@ import numpy as np
 import numpy.typing as npt
 import polars as pl
 
+from hub.config import (
+    NO_FRAMES,
+    commit,
+    config_digest,
+    data_digest,
+    frames_digest,
+    resolved_config,
+)
 from hub.names import player_key
 from hub.paths import STATE_DIR
 
@@ -475,10 +483,15 @@ def paired_report(s: dict, *, arm_a: str, arm_b: str,
     # called the second one foresight would be the exact confusion
     # `lineup_gate.foresight_lineup_points` exists as a separate function to prevent -- a
     # ceiling that had quietly become full foresight makes an underpowered gate look powered.
-    # `None` says the caller renders its own ceiling line, so this one is not printed twice:
-    # the weekly and lineup gates each have a `ceiling_report` that says more than this can.
+    # `None` says no line at all. Until #135 the weekly and lineup gates passed it because
+    # each rendered its own `ceiling_report`; now `run_gate` hands in the declared arm's name
+    # and this is the one renderer, so `None` is what a run with no ceiling passes.
     if reading(s, "ceiling") is Field.VALUE and ceiling_arm is not None:
-        lines.append(f"  ceiling ({ceiling_arm}) {s['ceiling']:+.{places}f} {unit}")
+        # The caveat travels with the number. Stage 2 reads three gates' ceilings and holds
+        # each against its own MDE; three numbers in three units under one word is the
+        # tabulation the arm's name and this clause together prevent.
+        lines.append(f"  ceiling ({ceiling_arm}) {s['ceiling']:+.{places}f} {unit}, measured "
+                     f"on this gate's own harness -- not comparable with another gate's")
     return lines
 
 
@@ -723,7 +736,15 @@ class Actions(NamedTuple):
 
 
 def per_season(paired: pl.DataFrame) -> pl.DataFrame:
-    """Mean paired difference per held-out season -- the every-season half of the bar."""
+    """Mean paired difference per held-out season -- the every-season half of the bar.
+
+    An empty frame answers with the empty table. `weekly_gate.compare` returns a frame with
+    no rows *and no columns* when nothing is covered, and a `group_by` on a season column
+    that is not there is a traceback where the verdict already knows what to say -- nothing
+    was measured.
+    """
+    if paired.is_empty():
+        return pl.DataFrame(schema={"season": pl.Int64, "gain": pl.Float64, "n": pl.UInt32})
     return (paired.group_by("season")
                   .agg(pl.col("diff").mean().alias("gain"), pl.len().alias("n"))
                   .sort("season"))
@@ -799,3 +820,190 @@ def gate(summary: dict, seasons: pl.DataFrame, actions: Actions,
            else "the interval excludes zero but the sign is not consistent across seasons")
     return "SHOW", (f"{actions.show} Won {won}/{total} seasons and {why} -- absence of "
                     f"evidence, not evidence of equivalence.")
+
+
+# --- one gate run: the sequence around the rule, written once (issue #135) -----------------
+#
+# `gate` above unified the three *verdict* branches (ADR-0019). What it did not unify is the
+# sequence around it -- summarise, break out by season, take the verdict, render the report,
+# stamp the output -- which every entry point wrote for itself. The consequences arrived as
+# tickets: only one gate could void (#46), only one stamped its output (#133), only one could
+# reach its ceiling (#134). Two of the eight tickets in the modelling programme were "apply
+# this gate property in the other gates too", which is the signature of a function that
+# should exist. This is it. Each entry point assembles its arms, calls this, and prints what
+# comes back.
+#
+# What is deliberately still the caller's: the cluster unit (see `run_gate`), the three
+# sentences (`Actions`), the void condition, and the ceiling arm's *name* -- because two of
+# the three gates bound perfect foresight and the lineup gate bounds a perfect spread, and a
+# run that named the arm itself would be the confusion `lineup_gate.foresight_lineup_points`
+# exists as a separate function to prevent.
+
+
+class Ceiling(NamedTuple):
+    """A gate's declared ceiling arm: what it is called where it is printed, and its rows.
+
+    `arm` is the gate's own `CEILING_ARM` -- *perfect foresight, the season known in advance*
+    for the draft gate, *perfect foresight* for the weekly gate, *a perfect spread* for the
+    lineup gate -- and `diff` is one paired difference per row, the ceiling arm minus the
+    incumbent, on that gate's own harness. The run takes the mean; the caller does not, so
+    the number the rule reads and the number the line prints cannot be two numbers.
+    """
+
+    arm: str
+    diff: npt.ArrayLike
+
+
+class GateRun(NamedTuple):
+    """What one gate run returns, in the order an entry point used to assemble them."""
+
+    summary: dict[str, float]
+    seasons: pl.DataFrame
+    verdict: tuple[str, str]
+    lines: list[str]
+    stamped: pl.DataFrame
+
+
+def ceiling_check(summary: Mapping[str, float], *, places: int = 2) -> list[str]:
+    """A loud line when the ceiling does not bound the effect it was measured to bound.
+
+    A ceiling below the effect is not a tight result, it is a broken one: either the ceiling
+    arm is not seeing what it was handed or the arm under test is being scored on something
+    else. Said loudly rather than published quietly, because the number's whole use is as an
+    upper bound in `docs/gate-power.md`, and a bound that does not bound reads exactly like a
+    tight one. This sentence was written three times -- `backtest.with_ceiling` at two
+    places, `lineup_gate.ceiling_report` at two, `weekly_gate.ceiling_report` at three -- and
+    is now written once, at the caller's places.
+
+    Nothing when there is no ceiling to check, and nothing on an empty frame: `nan` compares
+    false and an experiment that scored nothing has no effect to fall below.
+    """
+    if reading(summary, "ceiling") is not Field.VALUE:
+        return []
+    top, mean = summary["ceiling"], summary["mean"]
+    if top < mean:
+        return [f"\n  CEILING BELOW THE EFFECT: {top:+.{places}f} < {mean:+.{places}f}. One "
+                f"of the two is measuring something the other is not; do not read the "
+                f"interval above as bounded."]
+    return []
+
+
+def stamped_for_publication(paired: pl.DataFrame,
+                            boards: Mapping[int, pl.DataFrame] | None = None,
+                            ) -> tuple[pl.DataFrame, str]:
+    """The paired frame carrying what produced it, and the lines a reader gets.
+
+    **Four stamps, and until #196 there were two.** `cfg_digest` says which model, `data_digest`
+    says which upstream bytes -- and neither says which *Board*, which is the object a gate's
+    `compare` is actually handed, or which *code* read it.
+
+    `board_digest` closes the first gap. The Board is built from those bytes by `board_as_of`,
+    through joins, an as-of boundary, a `MIN_GAMES` filter and an xFP imputation, and any of
+    them can change its membership without a source byte moving -- `90a9bbb` dropped 814 of
+    1,372 players from 2025 at an unchanged data digest. `backtest.compare`'s docstring says
+    *"Pure: takes frames, returns a frame, touches no network"*, and purity with respect to the
+    network had been getting read as reproducibility. It is not: it is a statement about what
+    the function does not touch, and the frames it does take were unrecorded.
+
+    `commit` closes the second. `docs/gate-power.md` records the draft gate's effect moving
+    8.07 points across 270 commits at an identical data digest, with no owning commit --
+    a movement nobody can attribute because the runs recorded which bytes they read and never
+    which tree read them. `docs/track-record.md` rule 1 makes these numbers commit-dated.
+
+    `boards` is optional and defaults to `NO_FRAMES`, which is a sentinel and not a hash, so a
+    caller that did not hand its frames over says so rather than publishing eight
+    legitimate-looking characters that name nothing.
+
+    `resolved_config()`, not `HubConfig()`: ADR-0007 keeps this file so a later reader can tell
+    which configuration produced these rows, and the defaults are that only while `conf/`
+    overrides nothing that diverges from one. Same call as the fetch layer's provenance line
+    and `ratings.live_config`, so a run's three stamps cannot disagree about what a run was.
+
+    `data_digest` beside it is the pinning layer's premise arriving: every gate output should
+    name the data it scored against, so an archive that moved shows up as a changed digest
+    rather than as a silently different number. The digest existed and nothing computed one,
+    so until 2026-09-04 a moved archive was exactly the silent case (issue #71).
+
+    **Here rather than in `hub.draft.backtest`, where it was written**, because the lineup
+    gate reached it through a draft module (#133) and the weekly gate did not reach it at all.
+    It is the stamping half of `run_gate`, and a stamping rule that every gate applies is a
+    property of one function rather than of three entry points a network has to reach.
+    """
+    from hub.fetch.nflverse import pins_this_run
+
+    pins = pins_this_run()
+    data = data_digest(pins)
+    played = NO_FRAMES if boards is None else frames_digest(boards)
+    made_by = commit()
+    stamped = paired.with_columns(
+        pl.lit(config_digest(resolved_config())).alias("cfg_digest"),
+        pl.lit(data).alias("data_digest"),
+        pl.lit(played).alias("board_digest"),
+        pl.lit(made_by).alias("commit"))
+    if paired.is_empty():
+        # A literal broadcasts to one row over a frame with no columns at all, which is what
+        # `weekly_gate.compare` returns when nothing is covered. No rows scored, no rows stamped.
+        stamped = stamped.clear()
+    # Said as well as stored, because the reader deciding whether two runs are comparable is
+    # usually reading the terminal, not the parquet.
+    said = (f"  data: {data} over {len(pins)} pinned source(s)"
+            + ("" if pins else " -- nothing was loaded through the pinning layer")
+            + f"\n  board: {played}"
+            + ("" if boards else " -- the run did not hand over the frames it played")
+            + f"\n  commit: {made_by}"
+            + ("-- a dirty tree; this run is not that commit" if made_by.endswith("-dirty")
+               else ""))
+    return stamped, said
+
+
+def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, actions: Actions,
+             name: str, arm_a: str, arm_b: str, unit: str = "points per team game",
+             places: int = 2, show_n: bool = True, void: str | None = None,
+             ceiling: Ceiling | None = None, seed: int = 0, bootstrap: int = BOOTSTRAP,
+             boards: Mapping[int, pl.DataFrame] | None = None,
+             width_path: Path = WIDTH_STATE, record_width: bool = True) -> GateRun:
+    """One gate run: summarise, break out by season, take the verdict, render, stamp.
+
+    **`cluster` has no default, and that is the most important line of the signature.**
+    `summarise`'s docstring says what one independent observation is has no safe default and
+    that getting it wrong is the most expensive mistake in this repo's record. A shared run
+    that guessed one would make that mistake in every gate at once, silently, with the same
+    interval shape a correct run produces. So each gate states its own at its own call site,
+    and `tests/contracts/test_gates_cluster_on_the_season.py` reads the argument off the call.
+
+    `name` keys the interval-width history in `WIDTH_STATE`, so three gates do not overwrite
+    each other's; `record_width=False` is for a test, which has no history to keep.
+
+    `void` is the caller's precondition, already phrased -- the weekly gate voids above a
+    join-failure share, and since #46 so does the draft gate. `gate` honours it ahead of every
+    branch. `ceiling` is the caller's declared arm with its rows; its mean enters the summary
+    the verdict reads (so NOT-RUNNABLE can fire) and its name enters the line a reader sees.
+
+    **The weekly gate's ceiling now reaches the rule, and this is the one place the shape
+    change is not a no-op.** Its `main` handed the ceiling to a report and never to
+    `summarise`, so `docs/weekly-blend-gate.md` records that its NOT-RUNNABLE branch "does not
+    fire and cannot". The lineup gate had already been wired the other way (#134). One run
+    means one wiring, and it is the lineup gate's. No published weekly verdict was reached
+    with a ceiling in hand, so none moves.
+
+    The report is the block, the small-sample lines, the width review, the ceiling check and
+    the stamp -- in that order for every gate, so a reader of one gate's output can read
+    another's. The stamp is said on every run and not only when a frame is written, for the
+    reason `stamped_for_publication` gives: the reader deciding whether two runs compare is at
+    the terminal.
+    """
+    top = None if ceiling is None else float(np.asarray(ceiling.diff, dtype=float).mean())
+    summary = summarise(paired, cluster=cluster, bootstrap=bootstrap, seed=seed, ceiling=top)
+    seasons = per_season(paired)
+    verdict = gate(summary, seasons, actions, void=void)
+    stamped, stamp = stamped_for_publication(paired, boards)
+    lines = [
+        *paired_report(summary, arm_a=arm_a, arm_b=arm_b, unit=unit, places=places,
+                       show_n=show_n, ceiling_arm=None if ceiling is None else ceiling.arm),
+        *small_sample_report(summary, seasons, unit=unit, places=places),
+        *review_width(name, summary, path=width_path, places=places, write=record_width),
+        *ceiling_check(summary, places=places),
+        "",
+        *stamp.split("\n"),
+    ]
+    return GateRun(summary, seasons, verdict, lines, stamped)

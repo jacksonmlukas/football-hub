@@ -46,17 +46,7 @@ import numpy as np
 import polars as pl
 
 from hub.cli import unavailable
-from hub.config import (
-    NO_FRAMES,
-    DraftConfig,
-    RosterConfig,
-    commit,
-    config_digest,
-    data_digest,
-    drafted_positions,
-    frames_digest,
-    resolved_config,
-)
+from hub.config import DraftConfig, RosterConfig, drafted_positions
 from hub.draft.board import BuildReport, board_as_of
 from hub.draft.optimize import (
     DEFAULT_ROUNDS,
@@ -70,19 +60,16 @@ from hub.draft.optimize import (
 )
 from hub.draft.season import CorrelationReport, lineup_points
 from hub.draft.state import DraftState
-from hub.fetch.nflverse import pins_this_run
 from hub.league import REG_SEASON_WEEKS
 from hub.models.experiment import (
     BOOTSTRAP,  # noqa: F401 -- re-exported: tests reach it as `bt.BOOTSTRAP`
     SEASON_CLUSTER,
     Actions,
-    gate,
-    paired_report,
-    per_season,
+    Ceiling,
     realised_ppg,  # noqa: F401 -- same
-    review_width,
-    small_sample_report,
-    summarise,
+    run_gate,
+    stamped_for_publication,  # noqa: F401 -- same; it was written here and moved (#135)
+    summarise,  # noqa: F401 -- same
     walk_forward_inputs,
 )
 from hub.names import player_key
@@ -403,29 +390,6 @@ def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     return out.with_columns((pl.col("foresight") - pl.col("market")).alias("diff"))
 
 
-def with_ceiling(summary: dict, bound: pl.DataFrame) -> tuple[dict, str]:
-    """The summary carrying its ceiling, and a warning when the ceiling does not bound.
-
-    A ceiling below the effect it is meant to bound is not a tight result, it is a broken one:
-    either the foresight arm is not seeing the season or the arm under test is being scored on
-    something else. Said loudly rather than published quietly, because the number's whole use
-    is as an upper bound in `docs/gate-power.md`, and a bound that does not bound would be
-    read as a tight one.
-
-    Returned rather than printed, and taking the frame rather than computing it, because
-    reaching this through `main` needs the boards -- and a rule exercised only behind a
-    network is a rule with no test. The coverage ratchet has now made that point three times
-    in this repo; this is the shape that answers it.
-    """
-    top = float(np.asarray(bound["diff"].to_numpy()).mean())
-    out = dict(summary, ceiling=top)
-    if top < summary["mean"]:
-        return out, (f"\n  CEILING BELOW THE EFFECT: {top:+.2f} < {summary['mean']:+.2f}. One "
-                     f"of the two is measuring something the other is not; do not read the "
-                     f"interval below as bounded.")
-    return out, ""
-
-
 # Your first six turns from slot 3 of 12. Fixed rather than read from the live draft state,
 # because `--diagnose` is run twice at two different commits and anything state-dependent
 # would not be comparable between them.
@@ -649,80 +613,6 @@ ACTIONS = Actions(
     show="NO CHANGE: the market leads and equity stays a tiebreaker.")
 
 
-def verdict(summary: dict[str, float], seasons: pl.DataFrame) -> tuple[str, str]:
-    """The pre-registered action, read off the interval *and* the seasons.
-
-    The every-season half is new here and was not a choice this gate made -- it adopted on
-    the pooled interval alone because the rule lived in three places and only one of them had
-    been corrected. See ADR-0019. It does not move what ADR-0009 recorded: equity lost in all
-    four seasons with an interval well below zero, which is REMOVE under either form.
-    """
-    return gate(summary, seasons, ACTIONS)
-
-
-def stamped_for_publication(paired: pl.DataFrame,
-                            boards: dict[int, pl.DataFrame] | None = None,
-                            ) -> tuple[pl.DataFrame, str]:
-    """The paired frame carrying what produced it, and the line a reader gets.
-
-    **Four stamps, and until #196 there were two.** `cfg_digest` says which model, `data_digest`
-    says which upstream bytes -- and neither says which *Board*, which is the object `compare`
-    is actually handed, or which *code* read it.
-
-    `board_digest` closes the first gap. The Board is built from those bytes by `board_as_of`,
-    through joins, an as-of boundary, a `MIN_GAMES` filter and an xFP imputation, and any of
-    them can change its membership without a source byte moving -- `90a9bbb` dropped 814 of
-    1,372 players from 2025 at an unchanged data digest. `compare`'s docstring says *"Pure:
-    takes frames, returns a frame, touches no network"*, and purity with respect to the network
-    had been getting read as reproducibility. It is not: it is a statement about what the
-    function does not touch, and the frames it does take were unrecorded.
-
-    `commit` closes the second. `docs/gate-power.md` records the draft gate's effect moving
-    8.07 points across 270 commits at an identical data digest, with no owning commit --
-    a movement nobody can attribute because the runs recorded which bytes they read and never
-    which tree read them. `docs/track-record.md` rule 1 makes these numbers commit-dated.
-
-    `boards` is optional and defaults to `NO_FRAMES`, which is a sentinel and not a hash, so a
-    caller that did not hand its frames over says so rather than publishing eight
-    legitimate-looking characters that name nothing.
-
-    `resolved_config()`, not `HubConfig()`: ADR-0007 keeps this file so a later reader can tell
-    which configuration produced these rows, and the defaults are that only while `conf/`
-    overrides nothing that diverges from one. Same call as the fetch layer's provenance line
-    and `ratings.live_config`, so a run's three stamps cannot disagree about what a run was.
-
-    `data_digest` beside it is the pinning layer's premise arriving: every gate output should
-    name the data it scored against, so an archive that moved shows up as a changed digest
-    rather than as a silently different number. The digest existed and nothing computed one,
-    so until now a moved archive was exactly the silent case (issue #71).
-
-    The line is returned rather than printed, and the frame rather than written, because
-    `main` needs a network to reach this and a stamping rule that can only be exercised
-    through a network is a stamping rule with no test. That is not hypothetical: the first
-    version of this lived inline and the coverage ratchet caught it as three untested
-    statements the commit after the ratchet landed.
-    """
-    pins = pins_this_run()
-    data = data_digest(pins)
-    played = NO_FRAMES if boards is None else frames_digest(boards)
-    made_by = commit()
-    stamped = paired.with_columns(
-        pl.lit(config_digest(resolved_config())).alias("cfg_digest"),
-        pl.lit(data).alias("data_digest"),
-        pl.lit(played).alias("board_digest"),
-        pl.lit(made_by).alias("commit"))
-    # Said as well as stored, because the reader deciding whether two runs are comparable is
-    # usually reading the terminal, not the parquet.
-    said = (f"  data: {data} over {len(pins)} pinned source(s)"
-            + ("" if pins else " -- nothing was loaded through the pinning layer")
-            + f"\n  board: {played}"
-            + ("" if boards else " -- the run did not hand over the frames it played")
-            + f"\n  commit: {made_by}"
-            + ("-- a dirty tree; this run is not that commit" if made_by.endswith("-dirty")
-               else ""))
-    return stamped, said
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.draft.backtest",
@@ -883,37 +773,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"\n  {correlation.note()}")
     for line in correlation.repair_lines():
         print(line)
+    bound = None
+    if a.ceiling:
+        print("  measuring the ceiling: the same arm, given the season in advance ...")
+        top = ceiling(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
+                      on_draft=_tick("ceiling") if a.progress else None)
+        bound = Ceiling(CEILING_ARM, top["diff"])
+
     # `SEASON_CLUSTER`, not the row this gate used to take: the eighty (season, draft) rows
     # are twenty rooms drawn against four boards, and what varies independently between them
     # is the season. Issue #45; the effect is unmoved and the interval widens.
     #
     # Re-examined under #195, which removed a second and undeclared source of dependence
     # between the rows, and left unchanged: see `compare`'s docstring for why the surviving
-    # reason is sufficient on its own.
-    s = summarise(paired, cluster=SEASON_CLUSTER, seed=a.seed)
-    if a.ceiling:
-        print("  measuring the ceiling: the same arm, given the season in advance ...")
-        bound = ceiling(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
-                        on_draft=_tick("ceiling") if a.progress else None)
-        s, warning = with_ceiling(s, bound)
-        if warning:
-            print(warning)
-
-    seasons_tbl = per_season(paired)
-    for line in [*paired_report(s, arm_a="optimizer", arm_b="market",
-                                ceiling_arm=CEILING_ARM),
-                 *small_sample_report(s, seasons_tbl),
-                 *review_width("draft", s)]:
+    # reason is sufficient on its own. Stated here, at this gate's own call site, because the
+    # run has no default for it (#135).
+    run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="draft",
+                   arm_a="optimizer", arm_b="market", ceiling=bound, seed=a.seed,
+                   boards=boards)
+    for line in run.lines:
         print(line)
-    print(f"\n  {verdict(s, seasons_tbl)[1]}")
+    print(f"\n  {run.verdict[1]}")
     print("\n  Limitations, fixed before the run:")
     for line in LIMITATIONS:
         print(f"    - {line}")
 
     if a.out:
-        stamped, said = stamped_for_publication(paired, boards)
-        stamped.write_parquet(a.out)
-        print(f"\n  wrote {paired.height} paired rows to {a.out}\n{said}")
+        run.stamped.write_parquet(a.out)
+        print(f"\n  wrote {run.stamped.height} paired rows to {a.out}")
     return 0
 
 

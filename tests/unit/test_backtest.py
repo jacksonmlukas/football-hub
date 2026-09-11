@@ -23,6 +23,13 @@ from hub.names import player_key
 # The three branches, and the boundary where an interval endpoint is exactly zero, are
 # tested once in `test_experiment.py` -- there is one rule now (ADR-0019). What is this
 # gate's own is which sentence each branch produces, and that its record still reads the same.
+# Since #135 there is no per-gate `verdict` wrapper either: the rule is `experiment.gate` and
+# the sentences are `ACTIONS`, and the two meet inside `experiment.run_gate`.
+
+def _verdict(summary, seasons):
+    from hub.models.experiment import gate
+    return gate(summary, seasons, bt.ACTIONS)
+
 
 def _yrs(gains):
     return pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
@@ -35,34 +42,34 @@ def _sum(lo, hi):
 
 
 def test_an_interval_above_zero_in_every_season_promotes_equity():
-    status, said = bt.verdict(_sum(0.4, 3.0), _yrs([0.5, 1.2, 0.9]))
+    status, said = _verdict(_sum(0.4, 3.0), _yrs([0.5, 1.2, 0.9]))
     assert status == "ADOPT" and said.startswith("PROMOTE")
 
 
 def test_an_interval_below_zero_in_every_season_removes_equity():
     """Evidence demotes as well as promotes. A rule that only ever promotes is
     'heads I win, tails nothing changes'."""
-    status, said = bt.verdict(_sum(-3.0, -0.4), _yrs([-0.5, -1.2, -0.9]))
+    status, said = _verdict(_sum(-3.0, -0.4), _yrs([-0.5, -1.2, -0.9]))
     assert status == "REMOVE" and said.startswith("REMOVE")
 
 
 def test_an_interval_containing_zero_changes_nothing():
     """The branch P0 landed on, and the one worth pre-registering: a null has an action
     rather than being a disappointment to explain away."""
-    status, said = bt.verdict(_sum(-3.64, 3.58), _yrs([0.5, -1.2, 0.9]))
+    status, said = _verdict(_sum(-3.64, 3.58), _yrs([0.5, -1.2, 0.9]))
     assert status == "SHOW" and said.startswith("NO CHANGE")
 
 
 def test_p0s_own_numbers_still_read_as_no_change():
     """Regression on the historical result: +0.04, [-3.64, +3.58], n=36."""
-    status, said = bt.verdict(_sum(-3.64, 3.58), _yrs([0.4, -0.3, 0.1]))
+    status, said = _verdict(_sum(-3.64, 3.58), _yrs([0.4, -0.3, 0.1]))
     assert status == "SHOW" and said.startswith("NO CHANGE")
 
 
 def test_adr_0009s_own_numbers_still_remove_equity():
     """The published decision: -19.66, CI [-23.16, -16.20], losing in all four seasons.
     Unifying the rule tightened this gate, and it must not have moved what it published."""
-    status, said = bt.verdict(_sum(-23.16, -16.20), _yrs([-19.0, -21.0, -18.0, -20.0]))
+    status, said = _verdict(_sum(-23.16, -16.20), _yrs([-19.0, -21.0, -18.0, -20.0]))
     assert status == "REMOVE" and said.startswith("REMOVE")
 
 
@@ -821,22 +828,31 @@ def test_the_ceiling_bounds_the_arm_under_test_on_the_same_frame():
         "the ceiling does not bound the arm under test, so it bounds nothing")
 
 
+def _gate_run(paired, bound):
+    """This gate's call, as `main` spells it, with the width history pointed nowhere."""
+    from hub.models.experiment import SEASON_CLUSTER, Ceiling, run_gate
+    return run_gate(paired, cluster=SEASON_CLUSTER, actions=bt.ACTIONS, name="draft",
+                    arm_a="optimizer", arm_b="market", bootstrap=200,
+                    ceiling=Ceiling(bt.CEILING_ARM, bound["diff"]), record_width=False)
+
+
 def test_a_ceiling_that_does_not_bound_says_so_loudly():
     """The number's whole use is as an upper bound. A ceiling below the effect means one of
     the two is measuring something the other is not, and publishing it quietly would let a
-    reader take a broken bound for a tight one."""
-    from hub.draft.backtest import with_ceiling
-    bound = pl.DataFrame({"diff": [1.0, 1.0]})
-    _s, warning = with_ceiling({"mean": 5.0}, bound)
+    reader take a broken bound for a tight one. `with_ceiling` said this for this gate alone
+    until #135; the run says it for every gate."""
+    run = _gate_run(_paired([5.0] * 8), pl.DataFrame({"diff": [1.0] * 8}))
+    warning = "\n".join(run.lines)
     assert "CEILING BELOW THE EFFECT" in warning and "+1.00 < +5.00" in warning
 
 
 def test_a_ceiling_that_bounds_carries_the_number_and_says_nothing():
-    from hub.draft.backtest import with_ceiling
-    bound = pl.DataFrame({"diff": [40.0, 42.0]})
-    s, warning = with_ceiling({"mean": -19.66}, bound)
-    assert s["ceiling"] == 41.0 and warning == ""
-    assert s["mean"] == -19.66, "the summary it was given must come back intact"
+    run = _gate_run(_paired([-19.66] * 8), pl.DataFrame({"diff": [40.0, 42.0] * 4}))
+    assert run.summary["ceiling"] == 41.0
+    assert "CEILING BELOW" not in "\n".join(run.lines)
+    assert run.summary["mean"] == pytest.approx(-19.66), "the effect comes back intact"
+    assert f"ceiling ({bt.CEILING_ARM}) +41.00" in "\n".join(run.lines), (
+        "the line names this gate's declared arm, not the block's default")
 
 
 # --- the seed lattice (issue #195) ----------------------------------------

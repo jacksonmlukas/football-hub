@@ -103,6 +103,25 @@ def test_the_inputs_are_one_thing_rather_than_nine():
 
 
 # --- the verdict, every branch ---------------------------------------------
+#
+# The branches are `experiment.gate` and the sentences are `ACTIONS`; what is this gate's own
+# is `void_condition`, the one precondition only it has. Since #135 the two meet inside
+# `experiment.run_gate`, which `main` calls, so the wrapper `verdict` used to be is spelled
+# here as what it was.
+
+def _verdict(summary, seasons, cover):
+    from hub.models.experiment import gate
+    return gate(summary, seasons, G.ACTIONS, void=G.void_condition(cover))
+
+
+def _gate_run(paired, **kw):
+    """This gate's call, as `main` spells it, with the width history pointed nowhere."""
+    from hub.models.experiment import SEASON_CLUSTER, run_gate
+    return run_gate(paired, cluster=SEASON_CLUSTER, actions=G.ACTIONS, name="weekly",
+                    arm_a="weekly", arm_b="consensus", unit=G.UNIT, places=G.PLACES,
+                    show_n=False, bootstrap=200, ceiling=G.declared_ceiling(paired),
+                    record_width=False, **kw)
+
 
 def _summary(mean, lo, hi, clusters=60):
     return {"n": 800.0, "clusters": float(clusters), "mean": mean, "lo": lo, "hi": hi,
@@ -117,37 +136,50 @@ def _seasons(gains):
 def test_a_join_failure_voids_the_run_however_large_the_result():
     """The branch that fired on the first live run: +11.1 points per team-week at P 100%,
     which is the repo's own rule that a result too large to believe is a bug."""
-    status, note = G.verdict(_summary(11.1, 10.1, 12.3), _seasons([10.0, 10.2, 13.2]),
+    status, note = _verdict(_summary(11.1, 10.1, 12.3), _seasons([10.0, 10.2, 13.2]),
                              {"cells": 680.0, "unranked": 0.157, "join_failure": 0.062})
     assert status == "VOID"
     assert "6.2%" in note and "2%" in note
 
 
 def test_a_clean_join_lets_the_result_through():
-    status, _ = G.verdict(_summary(0.9, 0.3, 1.5), _seasons([0.8, 1.0, 0.9]),
+    status, _ = _verdict(_summary(0.9, 0.3, 1.5), _seasons([0.8, 1.0, 0.9]),
                           {"cells": 680.0, "unranked": 0.1, "join_failure": 0.005})
     assert status == "ADOPT"
 
 
+def test_the_floor_itself_is_not_a_void():
+    """`VOID_FLOOR` is the share *above* which a run is void, as `verdict` spelled it before
+    #135 moved the condition into `void_condition`. A run exactly at the floor still reports.
+    Held because the mutant `<` for `<=` survived every other test in this file."""
+    at = {"cells": 100.0, "unranked": 0.1, "join_failure": G.VOID_FLOOR}
+    assert G.void_condition(at) is None
+    above = dict(at, join_failure=G.VOID_FLOOR + 1e-9)
+    assert (G.void_condition(above) or "").startswith("VOID")
+    assert G.void_condition(None) is None
+    assert G.void_condition({"cells": 0, "unranked": float("nan"),
+                             "join_failure": float("nan")}) is None
+
+
 def test_adopt_needs_every_season_as_well_as_the_interval():
-    status, note = G.verdict(_summary(0.9, 0.3, 1.5), _seasons([-0.2, 1.4, 1.5]), None)
+    status, note = _verdict(_summary(0.9, 0.3, 1.5), _seasons([-0.2, 1.4, 1.5]), None)
     assert status == "SHOW" and "2/3" in note
 
 
 def test_losing_in_every_season_removes_the_module():
-    status, note = G.verdict(_summary(-1.2, -1.8, -0.6), _seasons([-1.0, -1.3, -1.3]), None)
+    status, note = _verdict(_summary(-1.2, -1.8, -0.6), _seasons([-1.0, -1.3, -1.3]), None)
     assert status == "REMOVE" and "Delete" in note
 
 
 def test_an_interval_containing_zero_is_shown_never_ranked_on():
     """The expected branch, and it carries an action rather than a disappointment."""
-    status, note = G.verdict(_summary(0.2, -0.4, 0.8), _seasons([0.1, 0.4, 0.1]), None)
+    status, note = _verdict(_summary(0.2, -0.4, 0.8), _seasons([0.1, 0.4, 0.1]), None)
     assert status == "SHOW"
     assert "NEVER RANK ON" in note and "absence of evidence" in note
 
 
 def test_nothing_measured_does_not_adopt():
-    assert G.verdict(_summary(0.0, 0.0, 0.0, clusters=0), _seasons([]), None)[0] == "SHOW"
+    assert _verdict(_summary(0.0, 0.0, 0.0, clusters=0), _seasons([]), None)[0] == "SHOW"
 
 
 # --- pairing and the cluster bootstrap -------------------------------------
@@ -500,7 +532,7 @@ def test_the_ceiling_line_names_its_arm_its_unit_and_that_it_travels_nowhere():
     *here* and the wrong one for the lineup gate, whose arms already share a projection.
     """
     paired = G.compare(_three_separate_numbers(), weeks=[5], ceiling=True)
-    said = G.ceiling_report(_summary(14.0, 8.0, 20.0), paired)
+    said = [ln for ln in _gate_run(paired).lines if "ceiling" in ln.lower()]
     assert len(said) == 1, "a ceiling that bounds the effect says one thing and no more"
     assert "+19.000" in said[0], "this gate quotes three places; +19.00 would be another's"
     assert G.UNIT in said[0]
@@ -511,12 +543,13 @@ def test_the_ceiling_line_names_its_arm_its_unit_and_that_it_travels_nowhere():
 def test_a_ceiling_that_does_not_bound_the_effect_says_so_loudly():
     """A bound that does not bound reads exactly like a tight one, and a tight one is what
     would license a verdict nothing supports. The draft gate has said this since #42; until
-    now neither season gate could say it at all."""
-    paired = pl.DataFrame({"diff": [0.4, 0.6], "ceiling_diff": [0.1, 0.1]})
-    said = G.ceiling_report(_summary(0.5, 0.3, 0.7), paired)
-    assert len(said) == 2
-    assert "CEILING BELOW THE EFFECT" in said[1]
-    assert "+0.100" in said[1] and "+0.500" in said[1]
+    #134 neither season gate could say it at all, and since #135 all three say it through
+    one function, at this gate's three places."""
+    paired = pl.DataFrame({"season": [2024, 2024], "roster": [0, 1], "diff": [0.4, 0.6],
+                           "ceiling_diff": [0.1, 0.1]})
+    said = [ln for ln in _gate_run(paired).lines if "CEILING BELOW THE EFFECT" in ln]
+    assert len(said) == 1
+    assert "+0.100" in said[0] and "+0.500" in said[0]
 
 
 def test_a_run_that_asked_for_no_ceiling_prints_no_ceiling_line():
@@ -524,8 +557,23 @@ def test_a_run_that_asked_for_no_ceiling_prints_no_ceiling_line():
     uses for a field nothing computed, because `nan` beside a unit reads as a measurement.
     A VOID run and an empty frame take the same branch, neither carrying the column."""
     plain = G.compare(_three_separate_numbers(), weeks=[5])
-    assert G.ceiling_report(_summary(14.0, 8.0, 20.0), plain) == []
-    assert G.ceiling_report(_summary(14.0, 8.0, 20.0), G.compare(_inputs(), weeks=[9])) == []
+    assert G.declared_ceiling(plain) is None
+    assert not [ln for ln in _gate_run(plain).lines if "ceiling" in ln.lower()]
+    empty = G.compare(_inputs(), weeks=[9])
+    assert G.declared_ceiling(empty) is None
+    assert not [ln for ln in _gate_run(empty).lines if "ceiling" in ln.lower()]
+
+
+def test_the_ceiling_reaches_the_rule_this_gate_never_handed_it_to():
+    """The one departure #135 makes on this gate, recorded in `docs/weekly-blend-gate.md` as
+    the thing that could not happen: *"nothing here hands `summarise` a ceiling, so the
+    NOT-RUNNABLE branch does not fire and cannot."* It now can. The lineup gate was wired
+    this way under #134; one run means one wiring."""
+    paired = G.compare(_three_separate_numbers(), weeks=[5], ceiling=True)
+    run = _gate_run(paired)
+    from hub.models.experiment import Field, reading
+    assert reading(run.summary, "ceiling") is Field.VALUE
+    assert run.summary["ceiling"] == pytest.approx(19.0)
 
 
 # --- the fallback, and the three treatments a run reports under --------------

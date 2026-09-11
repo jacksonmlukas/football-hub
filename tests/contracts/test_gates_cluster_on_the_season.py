@@ -22,6 +22,12 @@ The assertion is on the **call**, not on a constant. A harness that declared
 default and is the mistake -- would satisfy any check that only read the module's constants.
 This resolves the argument actually written at the call site through the module it is written
 in, so the thing asserted is the value `summarise` receives.
+
+Since #135 each entry point reaches `summarise` through `experiment.run_gate`, which has **no
+default** for the cluster at all -- a caller that omits it gets a `TypeError`, not the row. So
+the call each gate writes is `run_gate(...)`, and it is read here beside any `summarise(...)`
+a harness still spells itself (the weekly gate's treatment table does). What is asserted is
+unchanged: the cluster the gate states, at its own call site, is the season.
 """
 import ast
 import importlib
@@ -33,6 +39,9 @@ from hub.models.experiment import SEASON_CLUSTER
 
 SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
 
+# The two spellings of the call a harness makes, both carrying `cluster=`.
+CALLS = ("summarise", "run_gate")
+
 # The three harnesses `CONTEXT.md` calls Gates, as (module path, dotted import name).
 HARNESSES = {
     "backtest": ("draft/backtest.py", "hub.draft.backtest"),
@@ -42,7 +51,7 @@ HARNESSES = {
 
 
 def _summarise_calls(path: pathlib.Path) -> list[ast.Call]:
-    """Every `summarise(...)` call in a module, however it is spelled."""
+    """Every `summarise(...)` or `run_gate(...)` call in a module, however it is spelled."""
     tree = ast.parse(path.read_text())
     out = []
     for node in ast.walk(tree):
@@ -51,7 +60,7 @@ def _summarise_calls(path: pathlib.Path) -> list[ast.Call]:
         fn = node.func
         name = fn.id if isinstance(fn, ast.Name) else (
             fn.attr if isinstance(fn, ast.Attribute) else None)
-        if name == "summarise":
+        if name in CALLS:
             out.append(node)
     return out
 
@@ -70,11 +79,21 @@ def test_the_gate_passes_a_cluster_at_all(harness):
     which is why this is asserted rather than reviewed."""
     rel, _ = HARNESSES[harness]
     calls = _summarise_calls(SRC / rel)
-    assert calls, f"{harness} calls summarise nowhere"
+    assert calls, f"{harness} calls neither summarise nor run_gate"
     for call in calls:
         assert _cluster_arg(call) is not None, (
-            f"{harness} calls summarise with no cluster -- the default is the row, and "
-            f"`summarise`'s own docstring says there is no safe default")
+            f"{harness} calls {ast.unparse(call.func)} with no cluster -- `summarise`'s "
+            f"default is the row and `run_gate` has none, and `summarise`'s own docstring "
+            f"says there is no safe default")
+
+
+def test_every_gate_runs_through_the_one_run():
+    """The shape #135 asks for: each entry point assembles its arms, calls the run, and
+    prints what comes back. A harness that summarised, took the verdict and stamped by hand
+    would be the fourth copy of the sequence this function exists to be the only one of."""
+    for harness, (rel, _) in sorted(HARNESSES.items()):
+        names = [ast.unparse(c.func) for c in _summarise_calls(SRC / rel)]
+        assert "run_gate" in names, f"{harness} does not call run_gate"
 
 
 @pytest.mark.parametrize("harness", sorted(HARNESSES))

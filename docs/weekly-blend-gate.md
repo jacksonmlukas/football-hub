@@ -167,6 +167,14 @@ gate's **foresight ceiling**, which has never been measured: nothing here hands 
 ceiling, so the NOT-RUNNABLE branch does not fire and cannot. What this restatement establishes
 is that the question is now askable of this gate, not that it has been answered.
 
+> **Restated 2026-09-11 under #135.** The sentence above — *nothing here hands `summarise` a
+> ceiling* — no longer describes the code. All three gates now run through
+> `experiment.run_gate`, which carries a `--ceiling` run's measured ceiling into the summary
+> the verdict reads, as the lineup gate's entry point already did under #134. So on a
+> `--ceiling` run this gate's NOT-RUNNABLE branch *can* fire. No published figure on this page
+> was measured with a ceiling in hand, so nothing here moves; the ceiling itself is still
+> unmeasured, and `--out` now writes the stamped paired frame stage 2 needs.
+
 ## Restated 2026-09-07 — the gate prints the spread, and this page stops keeping it
 
 Issue #207. Two sections up, this page carries a three-row table and a mixture — 54.2% model

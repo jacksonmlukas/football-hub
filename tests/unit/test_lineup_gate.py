@@ -26,7 +26,23 @@ def _realised(rows):
 #
 # The three branches themselves -- including the boundary where an interval endpoint is
 # exactly zero -- are tested once in `test_experiment.py`, because there is one rule now
-# (ADR-0019). What is this gate's own is which sentence each branch produces.
+# (ADR-0019). What is this gate's own is which sentence each branch produces. Since #135
+# there is no per-gate `verdict` wrapper either: the rule and the sentences meet inside
+# `experiment.run_gate`, which `main` calls with this gate's `ACTIONS`.
+
+def _verdict(summary, seasons):
+    from hub.models.experiment import gate
+    return gate(summary, seasons, lg.ACTIONS)
+
+
+def _gate_run(paired, *, ceiling_arm=lg.DECLARED_CEILING_ARM, **kw):
+    """This gate's call, as `main` spells it, with the width history pointed nowhere."""
+    from hub.models.experiment import SEASON_CLUSTER, run_gate
+    return run_gate(paired, cluster=SEASON_CLUSTER, actions=lg.ACTIONS, name="lineup",
+                    arm_a="optimiser", arm_b="projections", unit=lg.UNIT, bootstrap=200,
+                    ceiling=lg.declared_ceiling(paired, ceiling_arm=ceiling_arm),
+                    record_width=False, **kw)
+
 
 def _yrs(gains):
     return pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
@@ -39,26 +55,26 @@ def _sum(lo, hi):
 
 
 def test_an_interval_above_zero_in_every_season_trusts_the_optimiser():
-    status, said = lg.verdict(_sum(0.5, 3.0), _yrs([0.4, 0.6, 0.9]))
+    status, said = _verdict(_sum(0.5, 3.0), _yrs([0.4, 0.6, 0.9]))
     assert status == "ADOPT" and said.startswith("TRUST")
 
 
 def test_an_interval_containing_zero_says_start_your_projections():
     """The likely branch, and it has an action rather than being a disappointment."""
-    status, said = lg.verdict(_sum(-1.0, 2.0), _yrs([0.4, -0.6, 0.9]))
+    status, said = _verdict(_sum(-1.0, 2.0), _yrs([0.4, -0.6, 0.9]))
     assert status == "SHOW" and said.startswith("START YOUR PROJECTIONS")
 
 
 def test_an_interval_below_zero_in_every_season_removes_it():
     """Evidence demotes as well as promotes -- the asymmetry P0's rule originally lacked."""
-    status, said = lg.verdict(_sum(-3.0, -0.5), _yrs([-0.4, -0.6, -0.9]))
+    status, said = _verdict(_sum(-3.0, -0.5), _yrs([-0.4, -0.6, -0.9]))
     assert status == "REMOVE" and said.startswith("REMOVE")
 
 
 def test_adr_0012s_own_numbers_still_read_as_start_your_projections():
     """Regression on the recorded result: +0.00, CI [-0.00, +0.00] over four seasons.
     Unifying the rule tightened this gate, and it must not have moved what it published."""
-    status, said = lg.verdict(_sum(-0.00, 0.00), _yrs([0.0, 0.0, 0.0, 0.0]))
+    status, said = _verdict(_sum(-0.00, 0.00), _yrs([0.0, 0.0, 0.0, 0.0]))
     assert status == "SHOW" and said.startswith("START YOUR PROJECTIONS")
 
 
@@ -383,11 +399,11 @@ def test_the_declared_arm_is_the_default_and_is_the_variance_oracle_today():
 
 def test_one_line_switches_every_path_that_names_an_arm():
     """#138's answer has to be a one-line change, which is only true if nothing else in the
-    tree names an arm. `DECLARED_CEILING_ARM` is the default of `compare`, of `ceiling_report`
-    and of the CLI flag, so all three follow it."""
+    tree names an arm. `DECLARED_CEILING_ARM` is the default of `compare`, of
+    `declared_ceiling` and of the CLI flag, so all three follow it."""
     import inspect
 
-    for fn in (lg.compare, lg.ceiling_report):
+    for fn in (lg.compare, lg.declared_ceiling):
         default = inspect.signature(fn).parameters["ceiling_arm"].default
         assert default == lg.DECLARED_CEILING_ARM, fn.__name__
     assert set(lg.CEILING_ARMS) == set(lg.CEILING_ARM_NAMES)
@@ -402,7 +418,7 @@ def test_the_printed_line_names_the_arm_that_actually_ran():
                           ("foresight", "full foresight")]:
         paired = lg.compare({2024: [roster]}, {2024: real}, weeks=14, ceiling=True,
                             ceiling_arm=arm)
-        said = "\n".join(lg.ceiling_report(_sum(-1.0, 1.0), paired, ceiling_arm=arm))
+        said = "\n".join(_gate_run(paired, ceiling_arm=arm).lines)
         assert expected in said, arm
 
 
@@ -433,7 +449,7 @@ def test_the_ceiling_line_names_its_arm_its_unit_and_that_it_travels_nowhere():
     """
     roster, real = _contested_flex()
     paired = lg.compare({2024: [roster]}, {2024: real}, weeks=14, ceiling=True)
-    said = lg.ceiling_report(_sum(-1.0, 1.0), paired)
+    said = [ln for ln in _gate_run(paired).lines if "ceiling" in ln.lower()]
     assert len(said) == 1, "a ceiling that bounds the effect says one thing and no more"
     assert "+10.00" in said[0]
     assert lg.UNIT in said[0]
@@ -444,12 +460,13 @@ def test_the_ceiling_line_names_its_arm_its_unit_and_that_it_travels_nowhere():
 def test_a_ceiling_that_does_not_bound_the_effect_says_so_loudly():
     """A bound that does not bound reads exactly like a tight one, and a tight one is what
     would license a verdict nothing supports. The draft gate has said this since #42; until
-    now neither season gate could say it at all."""
-    paired = pl.DataFrame({"diff": [4.0, 6.0], "ceiling_diff": [1.0, 1.0]})
-    said = lg.ceiling_report(_sum(4.0, 6.0), paired)
-    assert len(said) == 2
-    assert "CEILING BELOW THE EFFECT" in said[1]
-    assert "+1.00" in said[1] and "+5.00" in said[1]
+    #134 neither season gate could say it at all, and since #135 all three say it through
+    one function."""
+    paired = pl.DataFrame({"season": [2024, 2024], "roster": [0, 1], "diff": [4.0, 6.0],
+                           "ceiling_diff": [1.0, 1.0]})
+    said = [ln for ln in _gate_run(paired).lines if "CEILING BELOW THE EFFECT" in ln]
+    assert len(said) == 1
+    assert "+1.00" in said[0] and "+5.00" in said[0]
 
 
 def test_a_run_that_asked_for_no_ceiling_prints_no_ceiling_line():
@@ -457,7 +474,8 @@ def test_a_run_that_asked_for_no_ceiling_prints_no_ceiling_line():
     uses for a field nothing computed, because `nan` beside a unit reads as a measurement."""
     roster, real = _contested_flex()
     plain = lg.compare({2024: [roster]}, {2024: real}, weeks=14)
-    assert lg.ceiling_report(_sum(-1.0, 1.0), plain) == []
+    assert lg.declared_ceiling(plain) is None
+    assert not [ln for ln in _gate_run(plain).lines if "ceiling" in ln.lower()]
 
 
 # --- what produced these rows (issue #133) --------------------------------
@@ -465,6 +483,10 @@ def test_a_run_that_asked_for_no_ceiling_prints_no_ceiling_line():
 # The gate wrote a bare parquet: no configuration digest, no data digest. Two runs over
 # different archives were therefore indistinguishable after the fact, which is the silent
 # case the pinning layer exists to remove -- and this is the gate ADR-0012 defers to.
+#
+# Since #135 the stamp is the run's, so "every gate stamps the data it scored against" is a
+# property of `experiment.run_gate` held in `tests/unit/test_gate_run.py`. What stays here is
+# that *this* gate's frame comes back stamped and that the file it writes is that frame.
 
 def test_the_published_frame_names_the_config_and_the_data_that_made_it(tmp_path,
                                                                         monkeypatch):
@@ -481,7 +503,8 @@ def test_the_published_frame_names_the_config_and_the_data_that_made_it(tmp_path
     paired = pl.DataFrame({"season": [2024, 2025], "roster": [0, 0], "diff": [1.0, -2.0]})
     out = tmp_path / "lineup_paired.parquet"
 
-    said = lg.publish_paired(paired, str(out))
+    run = _gate_run(paired)
+    run.stamped.write_parquet(out)
     back = pl.read_parquet(out)
 
     assert back.height == paired.height
@@ -489,12 +512,10 @@ def test_the_published_frame_names_the_config_and_the_data_that_made_it(tmp_path
     assert back["data_digest"].unique().to_list() == [UNPINNED], (
         "a run that pinned nothing must say so rather than publishing eight characters that "
         "look like a digest of data")
-    assert "nothing was loaded through the pinning layer" in said
-    assert "2 paired rows" in said and str(out) in said
+    assert "nothing was loaded through the pinning layer" in "\n".join(run.lines)
 
 
-def test_a_pinned_load_moves_this_gates_data_digest_and_leaves_its_config_alone(tmp_path,
-                                                                                monkeypatch):
+def test_a_pinned_load_moves_this_gates_data_digest_and_leaves_its_config_alone(monkeypatch):
     """The property a reader acts on: two runs over different archives do not carry the same
     stamp, and the archive moving does not pretend the model moved with it."""
     from hub.config import UNPINNED
@@ -502,25 +523,29 @@ def test_a_pinned_load_moves_this_gates_data_digest_and_leaves_its_config_alone(
 
     paired = pl.DataFrame({"season": [2024], "roster": [0], "diff": [1.0]})
     monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
-    lg.publish_paired(paired, str(tmp_path / "unpinned.parquet"))
-    unpinned = pl.read_parquet(tmp_path / "unpinned.parquet")
+    unpinned = _gate_run(paired).stamped
 
     monkeypatch.setattr(nv, "_READ_THIS_RUN", {
         "entry": nv.Pin(source="player_stats", as_of="2026-09-04", digest="abcd1234",
                         rows=10, pinned_at=None)})
-    said = lg.publish_paired(paired, str(tmp_path / "pinned.parquet"))
-    pinned = pl.read_parquet(tmp_path / "pinned.parquet")
+    run = _gate_run(paired)
+    pinned = run.stamped
 
     assert unpinned["data_digest"][0] == UNPINNED
     assert pinned["data_digest"][0] != UNPINNED
-    assert "over 1 pinned source(s)" in said
+    assert "over 1 pinned source(s)" in "\n".join(run.lines)
     assert pinned["cfg_digest"][0] == unpinned["cfg_digest"][0]
 
 
 def test_this_gate_stamps_by_the_one_rule_rather_than_by_a_second_copy_of_it():
     """Two gates that agree because somebody keeps them agreeing is the arrangement this
     module already records losing: `cohort` is imported rather than restated because the
-    recipe had been written out twice. The same argument decides the stamp."""
-    from hub.draft import backtest as bt
+    recipe had been written out twice. The same argument decides the stamp -- and since #135
+    the stamp is not addressed through a draft module at all. Nothing in this module names a
+    digest column; the run does."""
+    import inspect
 
-    assert lg.stamped_for_publication is bt.stamped_for_publication
+    src = inspect.getsource(lg)
+    assert "stamped_for_publication" not in src
+    assert "cfg_digest" not in src and "data_digest" not in src
+    assert "run_gate(" in src

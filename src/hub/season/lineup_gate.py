@@ -37,18 +37,13 @@ import numpy as np
 import polars as pl
 
 from hub.cli import unavailable
-from hub.draft.backtest import stamped_for_publication
 from hub.draft.board import BuildReport, board_as_of
 from hub.league import REG_SEASON_WEEKS, starting_lineup
 from hub.models.experiment import (
     SEASON_CLUSTER,
     Actions,
-    gate,
-    paired_report,
-    per_season,
-    review_width,
-    small_sample_report,
-    summarise,
+    Ceiling,
+    run_gate,
     walk_forward_inputs,
 )
 from hub.names import player_key
@@ -265,60 +260,24 @@ def compare(rosters: dict[int, list[Roster]], realised: dict[int, pl.DataFrame],
     return out
 
 
-def ceiling_report(summary: dict[str, float], paired: pl.DataFrame, *,
-                   ceiling_arm: str = DECLARED_CEILING_ARM) -> list[str]:
-    """The ceiling beside the effect, and a loud line when it does not bound it.
+def declared_ceiling(paired: pl.DataFrame, *,
+                     ceiling_arm: str = DECLARED_CEILING_ARM) -> Ceiling | None:
+    """The ceiling this run played, named by the arm that played it -- or nothing.
 
     Nothing at all when the frame carries no ceiling, which is how a run without `--ceiling`
-    prints exactly what it printed before. Same shape `paired_report` uses for `mde`: a field
-    nothing computed prints nothing, because a `nan` set against a unit reads as a
-    measurement and silence does not.
+    prints exactly what it printed before: no line, not a blank, not a `nan` set against a
+    unit. What reaches the run is the arm's *name* beside its rows, so the one renderer in
+    `experiment.run_gate` can print *a perfect spread, not foresight* here and *perfect
+    foresight* for the weekly gate without lying about either (#135). Until then this gate
+    bypassed the shared block with a `ceiling_report` of its own, because the block
+    hard-coded the wrong words.
 
-    **A ceiling below the effect it is meant to bound is not a tight result, it is a broken
-    one** -- either the oracle arm is not reading the realised spread or the arm under test is
-    being scored on something else. Said loudly rather than published quietly, because the
-    number's whole use is as an upper bound and a bound that does not bound reads exactly
-    like a tight one. `backtest.with_ceiling` says the same thing for the draft gate; the two
-    are separate because the sentence naming *which* ceiling this is differs, and #135's
-    shared gate protocol is where they become one.
-
-    Lines rather than prints, so the rule is reachable without the network `main` needs --
-    the same reason `paired_report` returns lines and `publish_paired` below returns its own.
+    `ceiling_arm` defaults to the arm this gate declares, for the reason `compare`'s does:
+    which arm that should be is #138's one line, and nothing else in the tree names one.
     """
     if "ceiling_diff" not in paired.columns:
-        return []
-    top = float(np.asarray(paired["ceiling_diff"].to_numpy()).mean())
-    out = [f"  ceiling ({CEILING_ARM_NAMES[ceiling_arm]}) {top:+.2f} {UNIT}, measured on this "
-           f"gate's own harness -- not comparable with another gate's"]
-    if top < summary["mean"]:
-        out.append(f"\n  CEILING BELOW THE EFFECT: {top:+.2f} < {summary['mean']:+.2f}. One "
-                   f"of the two is measuring something the other is not; do not read the "
-                   f"interval above as bounded.")
-    return out
-
-
-def publish_paired(paired: pl.DataFrame, path: str) -> str:
-    """Write the paired rows carrying what produced them, and return the line a reader gets.
-
-    Until this landed, this gate wrote a bare parquet -- no configuration digest, no data
-    digest -- so two runs over different archives were indistinguishable after the fact.
-    That is the silent case the pinning layer exists to remove (issue #71), left standing on
-    the gate whose verdict ADR-0012 defers to.
-
-    The rule is `backtest.stamped_for_publication` itself and not a second copy that agrees
-    with it. This module already records what the other choice costs: `cohort` is imported
-    rather than restated because the recipe had been written out in two places, and "a
-    formula copied by hand into two places is one that eventually differs in one". It lives
-    under `hub.draft` today because the draft gate needed it first; issue #135's shared gate
-    protocol is where it stops being addressed through a draft module.
-
-    A function rather than three lines under `if a.out:`, because reaching those needs a
-    network, and a stamping rule only reachable behind a network is a stamping rule with no
-    test. `stamped_for_publication` names the same reason for the same shape.
-    """
-    stamped, said = stamped_for_publication(paired)
-    stamped.write_parquet(path)
-    return f"\n  wrote {stamped.height} paired rows to {path}\n{said}"
+        return None
+    return Ceiling(CEILING_ARM_NAMES[ceiling_arm], paired["ceiling_diff"])
 
 
 # The pre-registered actions, fixed before the numbers and quoted in this module's own
@@ -329,15 +288,6 @@ ACTIONS = Actions(
     remove="REMOVE: the optimiser is worse than sorting on projection. Enumerating every "
            "legal lineup to maximise a win probability actively costs points.",
     show="START YOUR PROJECTIONS: variance-awareness buys nothing detectable.")
-
-
-def verdict(summary: dict[str, float], seasons: pl.DataFrame) -> tuple[str, str]:
-    """The pre-registered action, read off the interval *and* the seasons.
-
-    The every-season half is new and does not move what ADR-0012 recorded: that interval is
-    [-0.00, +0.00], which contains zero and is the middle branch under either form.
-    """
-    return gate(summary, seasons, ACTIONS)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -422,31 +372,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         rosters[yr] = made
 
     paired = compare(rosters, realised, ceiling=a.ceiling, ceiling_arm=a.ceiling_arm)
-    # The ceiling reaches `summarise` as well as `ceiling_report`, because the not-runnable
-    # rule in `experiment.gate` reads it off the summary. Without this it printed beside the
-    # effect and no rule could act on it.
-    top = (float(np.asarray(paired["ceiling_diff"].to_numpy()).mean())
-           if "ceiling_diff" in paired.columns else None)
-    # `SEASON_CLUSTER`, not the roster this gate used to take. Issue #45.
-    s = summarise(paired, cluster=SEASON_CLUSTER, seed=a.seed, ceiling=top)
-    seasons_tbl = per_season(paired)
-    # `ceiling_arm=None`: this gate renders its own ceiling line through `ceiling_report`,
-    # which names *which* ceiling it is and warns when it fails to bound. Letting the generic
-    # block print one too would print the number twice and call it perfect foresight, which is
-    # the one thing this gate's ceiling is not.
-    for line in [*paired_report(s, arm_a="optimiser", arm_b="projections", unit=UNIT,
-                                ceiling_arm=None),
-                 *small_sample_report(s, seasons_tbl, unit=UNIT),
-                 *review_width("lineup", s),
-                 *ceiling_report(s, paired, ceiling_arm=a.ceiling_arm)]:
+    run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="lineup",
+                   arm_a="optimiser", arm_b="projections", unit=UNIT,
+                   ceiling=declared_ceiling(paired, ceiling_arm=a.ceiling_arm), seed=a.seed,
+                   boards=boards)
+    for line in run.lines:
         print(line)
-    print(f"\n  {verdict(s, seasons_tbl)[1]}")
+    print(f"\n  {run.verdict[1]}")
     print("\n  Both arms see only projections. The optimiser's sole advantage is that it")
     print("  reads `sd` as well as `mu`, so it can start upside when the matchup wants it.")
     print("  Limitation: projections are static across the season, because weekly historical")
     print("  projections do not exist. This measures variance-awareness, not in-season news.")
     if a.out:
-        print(publish_paired(paired, a.out))
+        run.stamped.write_parquet(a.out)
+        print(f"\n  wrote {run.stamped.height} paired rows to {a.out}")
     return 0
 
 

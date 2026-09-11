@@ -78,13 +78,11 @@ from hub.league import STARTERS, starting_lineup
 from hub.models.experiment import (
     SEASON_CLUSTER,
     Actions,
+    Ceiling,
     Field,
-    gate,
-    paired_report,
     per_season,
     reading,
-    review_width,
-    small_sample_report,
+    run_gate,
     summarise,
 )
 
@@ -378,36 +376,40 @@ def compare(g: GateInputs, *, weeks: Sequence[int] = GATE_WEEKS, churn: bool = F
     return out
 
 
-def ceiling_report(summary: dict, paired: pl.DataFrame) -> list[str]:
-    """The ceiling beside the effect, and a loud line when it does not bound it.
+def declared_ceiling(paired: pl.DataFrame) -> Ceiling | None:
+    """The foresight arm this run scored, named as this gate declares it -- or nothing.
 
-    Nothing at all when the frame carries no ceiling, which is how a run without `--ceiling`
-    prints exactly what it printed before. Same shape `paired_report` uses for `mde`: a field
-    nothing computed prints nothing, because a `nan` set against a unit reads as a
-    measurement and silence does not. It is also what a VOID run and an empty frame get,
-    since neither carries the column.
-
-    **A ceiling below the effect it is meant to bound is not a tight result, it is a broken
-    one** -- either the foresight arm is not reading the realised frame or the arm under test
-    is being scored on something else. Said loudly rather than published quietly, because the
-    number's whole use is as an upper bound and a bound that does not bound reads exactly
-    like a tight one. `backtest.with_ceiling` says the same thing for the draft gate; the two
-    are separate because the sentence naming *which* ceiling this is differs, and #135's
-    shared gate protocol is where they become one.
-
-    Lines rather than prints, so the rule is reachable without the network `main` needs --
-    the same reason `paired_report` returns lines.
+    Nothing when the frame carries no ceiling, which is how a run without `--ceiling` prints
+    exactly what it printed before -- and what a VOID run and an empty frame get, since
+    neither carries the column. The arm's *name* travels with its rows so the one renderer in
+    `experiment.run_gate` prints *perfect foresight* here and *a perfect spread* for the
+    lineup gate (#135); until then this gate rendered its own line through a `ceiling_report`
+    and handed `summarise` nothing, so the not-runnable rule could never read its ceiling.
     """
     if "ceiling_diff" not in paired.columns:
-        return []
-    top = float(np.asarray(paired["ceiling_diff"].to_numpy()).mean())
-    out = [f"  ceiling ({CEILING_ARM}) {top:+.{PLACES}f} {UNIT}, measured on this gate's own "
-           f"harness -- not comparable with another gate's"]
-    if top < summary["mean"]:
-        out.append(f"\n  CEILING BELOW THE EFFECT: {top:+.{PLACES}f} < "
-                   f"{summary['mean']:+.{PLACES}f}. One of the two is measuring something "
-                   f"the other is not; do not read the interval above as bounded.")
-    return out
+        return None
+    return Ceiling(CEILING_ARM, paired["ceiling_diff"])
+
+
+def void_condition(cover: dict[str, float] | None) -> str | None:
+    """The one precondition only this gate has, phrased for `experiment.gate`'s `void`.
+
+    This gate *voids* on a join failure, and **what a join failure does changed with #206
+    while the floor did not**. It used to be directional: an unmatched player was ranked
+    last, so the failure benched the incumbent's arm and biased the result toward us. He is
+    now unpriceable by consensus and so is scored by neither arm, which makes the failure a
+    hole in the covered share rather than a thumb on the scale. Either way it is not a verdict
+    about the arm, it is a statement that there is no verdict to read at the slate the run
+    names, and the floor it trips at is pre-registered in `docs/weekly-projection-plan.md`.
+    """
+    if cover is None or not cover["cells"] or cover["join_failure"] <= VOID_FLOOR:
+        return None
+    return (f"VOID: {cover['join_failure']:.1%} of roster-weeks are a join failure -- the "
+            f"player was not on that week's consensus page and scored anyway -- against a "
+            f"pre-registered floor of {VOID_FLOOR:.0%}.\n  Consensus cannot price him, so "
+            f"since #206 neither arm scores him: this is that much of the slate silently "
+            f"outside the result rather than a bias in it. Fix the join before reading any "
+            f"number below.")
 
 
 # The pre-registered actions, fixed in `docs/weekly-projection-plan.md` before this ran.
@@ -421,31 +423,6 @@ ACTIONS = Actions(
     remove="REMOVE: worse than a free ranking. Delete the module rather than shipping it as "
            "an option.",
     show="SHOW, NEVER RANK ON: printed beside consensus, never sorted on.")
-
-
-def verdict(summary: dict, seasons: pl.DataFrame,
-            cover: dict[str, float] | None = None) -> tuple[str, str]:
-    """The three branches, plus the one precondition only this gate has.
-
-    The branches are `experiment.gate` -- one rule for every gate in the repo, ADR-0019. This
-    gate additionally *voids* on a join failure, and **what a join failure does changed with
-    #206 while the floor did not**. It used to be directional: an unmatched player was ranked
-    last, so the failure benched the incumbent's arm and biased the result toward us. He is
-    now unpriceable by consensus and so is scored by neither arm, which makes the failure a
-    hole in the covered share rather than a thumb on the scale. Either way it is not a verdict
-    about the arm, it is a statement that there is no verdict to read at the slate the run
-    names, and the floor it trips at is pre-registered in `docs/weekly-projection-plan.md`.
-    """
-    void = None
-    if cover is not None and cover["cells"] and cover["join_failure"] > VOID_FLOOR:
-        void = (
-            f"VOID: {cover['join_failure']:.1%} of roster-weeks are a join failure -- the "
-            f"player was not on that week's consensus page and scored anyway -- against a "
-            f"pre-registered floor of {VOID_FLOOR:.0%}.\n  Consensus cannot price him, so "
-            f"since #206 neither arm scores him: this is that much of the slate silently "
-            f"outside the result rather than a bias in it. Fix the join before reading any "
-            f"number below.")
-    return gate(summary, seasons, ACTIONS, void=void)
 
 
 def coverage(g: GateInputs, weeks: Sequence[int] = GATE_WEEKS) -> dict[str, float]:
@@ -612,7 +589,7 @@ def mixture_report(mix: dict[str, float], *,
                    fallback_name: str = COLUMN_TREATMENT) -> list[str]:
     """The mixture beside the effect. Lines, not prints, like every other block here.
 
-    Nothing at all when nothing was counted, for the reason `ceiling_report` prints nothing
+    Nothing at all when nothing was counted, for the reason the ceiling line prints nothing
     without a ceiling: a percentage of no cells is not a small number, it is not a number.
 
     It describes the column **as assembled**, not as scored: since #206 only the first share
@@ -689,7 +666,7 @@ def priced_report(pop: dict[str, float]) -> list[str]:
     way, and a result that speaks for half a slate while reading as though it speaks for all
     of it is the failure this whole ticket is about.
 
-    Loud, in the register `ceiling_report` and the VOID line already use here, because it is
+    Loud, in the register the ceiling check and the VOID line already use here, because it is
     the one line in the block that says what the verdict underneath it does *not* cover.
 
     **`forced` is printed with no threshold on purpose.** A share above which a run should be
@@ -874,6 +851,10 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     ap.add_argument("--seasons", default="2022,2023,2024,2025")
     ap.add_argument("--drafts", type=int, default=20, help="rosters per season")
     ap.add_argument("--seed", type=int, default=0)
+    # The stamped paired rows, the same four stamps the other two gates write. This gate
+    # wrote nothing until #135; `docs/gate-power.md` names a frozen paired frame as what
+    # stage 2 needs for the two network-built gates, and this is how one is made.
+    ap.add_argument("--out", default=None, help="write the stamped paired rows to this parquet")
     a = ap.parse_args(list(argv) if argv is not None else None)
     if not a.run:
         ap.print_help()
@@ -891,8 +872,11 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     restrict = not a.unrestricted
     paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
                      ceiling=a.ceiling, restrict=restrict)
-    s = summarise(paired, cluster=SEASON_CLUSTER, seed=a.seed)
-    seasons_tbl = per_season(paired)
+    # `SEASON_CLUSTER`, stated at this gate's own call site: the run has no default for it.
+    run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="weekly",
+                   arm_a="weekly", arm_b="consensus", unit=UNIT, places=PLACES, show_n=False,
+                   void=void_condition(cover), ceiling=declared_ceiling(paired), seed=a.seed)
+    s, seasons_tbl = run.summary, run.seasons
     # The assembled column's frame is handed back rather than rebuilt, so this is two extra
     # scorings and not three, and the row it fills is the one the verdict is read off. No
     # `--ceiling` on the other two: the ceiling is a property of the harness rather than of
@@ -922,15 +906,14 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     print(f"  unranked {cover['unranked']:.1%}, of which a join failure "
           f"{cover['join_failure']:.1%} (floor {VOID_FLOOR:.0%})")
     print(seasons_tbl)
-    print("\n".join([*paired_report(s, arm_a="weekly", arm_b="consensus", unit=UNIT,
-                                    places=PLACES, show_n=False),
-                      *small_sample_report(s, seasons_tbl, unit=UNIT, places=PLACES),
-                      *review_width("weekly", s, places=PLACES),
-                      *ceiling_report(s, paired),
+    print("\n".join([*run.lines,
                       *mixture_report(mix),
                       *(priced_report(pop) if restrict else []),
                       *treatment_report(effects, restricted=restrict)]))
-    print(f"\n  {verdict(s, seasons_tbl, cover)[1]}")
+    print(f"\n  {run.verdict[1]}")
+    if a.out:
+        run.stamped.write_parquet(a.out)
+        print(f"\n  wrote {run.stamped.height} paired rows to {a.out}")
     return 0
 
 
