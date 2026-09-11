@@ -80,10 +80,13 @@ same class of bug, and a reproducible simulator cannot afford it.
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
+import sys
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
@@ -256,7 +259,7 @@ class EntryOutcome(NamedTuple):
         return sum(m > 1 for m in self.last_out_each) / len(self.last_out_each)
 
 
-def _plural(n: int, word: str) -> str:
+def plural(n: int, word: str) -> str:
     """`1 team`, `2 teams`. A count printed beside a decision is read by a person."""
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
@@ -582,10 +585,10 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
         if len(games) < f.needs:
             raise UnpricedWeek(
                 (f"week {f.week} has no completely priced fixture: " if not games else
-                 f"week {f.week} takes {_plural(f.needs, 'pick')} and has only "
-                 f"{_plural(len(games), 'completely priced fixture')} to take them from: ")
-                + f"{_plural(len(games) + len(f.half), 'fixture')} in the grid, "
-                f"{_plural(len(f.half), 'fixture')} priced on one side only. Refused rather "
+                 f"week {f.week} takes {plural(f.needs, 'pick')} and has only "
+                 f"{plural(len(games), 'completely priced fixture')} to take them from: ")
+                + f"{plural(len(games) + len(f.half), 'fixture')} in the grid, "
+                f"{plural(len(f.half), 'fixture')} priced on one side only. Refused rather "
                 "than simulated -- with no legal pick to field, every entry is eliminated at "
                 "once and the ending week would report the contest ending in a week the grid "
                 "never covered. Two picks cannot come from both sides of one fixture, because "
@@ -1168,7 +1171,7 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
                        len(set(ledger)), 0.0, 0.0, cfg.buyback_fee, 0.0, 0.0, False)
     if used >= cfg.buyback_cap:
         return Buyback(False,
-                       f"no buyback: this entry has used {_plural(used, 'buyback')} of "
+                       f"no buyback: this entry has used {plural(used, 'buyback')} of "
                        f"the {cfg.buyback_cap} the cap allows each entry",
                        pot, live_entries, len(set(ledger)), 0.0, 0.0, cfg.buyback_fee,
                        0.0, 0.0, False)
@@ -1216,7 +1219,7 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
         available=True,
         reason=(f"{'BUY BACK' if yes else 'DO NOT BUY BACK'}: "
                 f"${equity:.2f} of equity against a ${cfg.buyback_fee:.2f} fee, "
-                + (f"re-entering with {_plural(len(inherits), 'team')} already spent"
+                + (f"re-entering with {plural(len(inherits), 'team')} already spent"
                    if cfg.buyback_restores_ledger else
                    "re-entering with a clean ledger, which is what this pool's rules say a "
                    "buyback restores")),
@@ -1484,7 +1487,7 @@ def report(b: Buyback, *, places: int = 2) -> list[str]:
     # least a dollar of pot to our side, so no fee flips the verdict.
     flip = (f"  breakeven fee ${b.breakeven:.{places}f}" if np.isfinite(b.breakeven) else
             f"  no breakeven: a {b.share * 100:.1f}% share of a pot "
-            f"{_plural(1 + b.rivals, 'buyback')} pay into gains at least a dollar per "
+            f"{plural(1 + b.rivals, 'buyback')} pay into gains at least a dollar per "
             "dollar of fee, so no fee flips this verdict")
     return [
         f"\n  {b.reason}",
@@ -1508,7 +1511,7 @@ def simulate(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
     """
     if ledgers is not None and len(ledgers) != entries:
         raise ValueError(
-            f"{_plural(len(ledgers), 'starting ledger')} for {entries} entries: `ledgers` is "
+            f"{plural(len(ledgers), 'starting ledger')} for {entries} entries: `ledgers` is "
             "matched to entries by position, so it has to name every one of them. Pass a "
             "ledger per entry -- an empty set for an entry that has spent nothing.")
     rng = rng or np.random.default_rng(0)
@@ -1673,7 +1676,7 @@ def sensitivity_report(rows: Sequence[Sensitivity], *, places: int = 2) -> list[
         return ["\n  no concentrations swept"]
     weeks = sorted(rows[0].field.alive_by_week)
     last = weeks[-1]
-    out = [f"\n  field concentration: {_plural(len(rows), 'point')} on the axis, "
+    out = [f"\n  field concentration: {plural(len(rows), 'point')} on the axis, "
            f"{rows[0].field.trials} trials each. 1.0 is sampling proportional to win "
            "probability -- stated, never fitted",
            f"  {'k':>5}  {'own':>7}  {'wiped':>7}  {'alive':>7}  {'survives':>9}  "
@@ -1694,3 +1697,205 @@ def sensitivity_report(rows: Sequence[Sensitivity], *, places: int = 2) -> list[
     out.append(f"  equity ${lo:.{places}f} to ${hi:.{places}f} across the axis, against "
                f"${res:.{places}f} these trials resolve")
     return out
+
+
+# --- the entry point (#163) ---------------------------------------------------------------
+#
+# The money layer had no `main`, no importer and no target, which also exempted it from
+# `tests/contracts/test_cli_surface.py` -- the contract asserting that every module in the
+# tree with an entry point answers absent input with a sentence, and serves last-good state
+# where it has any. So the most operationally consequential code in the repo was the only
+# code not held to the rule that a module must produce a usable answer with a failed fetch.
+# `buyback` in particular had no production caller at all: a slot with no producer reads to
+# a future maintainer as a capability.
+
+def drawable_weeks(grid: pl.DataFrame, cfg: PoolConfig, through: int) -> list[int]:
+    """The weeks the simulator can play: enough completely priced fixtures to take the picks.
+
+    `weeks_from_grid` refuses a week with fewer drawable fixtures than picks, and refusing is
+    right for a caller that named the week; a caller pricing "the season from here" wants the
+    weeks the board *can* price, which is this list. The rule is `survivor.week_fixtures`'s
+    drawable half, read here rather than restated.
+    """
+    return [f.week for f in week_fixtures(grid, list(range(1, through + 1)), cfg)
+            if len(f.drawable) >= f.needs]
+
+
+def _axis(text: str) -> tuple[float, ...]:
+    """`--at 1,2,4` as floats, in the order given."""
+    return tuple(float(x) for x in text.split(",") if x.strip())
+
+
+def _last_good(season: int, week: int | None, base: Path | None, why: Exception) -> int:
+    """The decision already recorded for this week, served in place of a figure.
+
+    `CLAUDE.md`'s degradation rule: a failed fetch serves last-good state from the store
+    rather than erroring. What this module's last-good state *is* is the journal -- the
+    figure it recorded the last time it could run, under the columns that let a reader tell
+    what it was conditional on -- so a schedule that cannot be read hands back the last row
+    for the week rather than a traceback. No row is the fresh-clone case, and that is
+    reported the way every other entry point reports it: `hub.cli.unavailable`.
+    """
+    from hub.cli import unavailable
+    from hub.season import journal
+    try:
+        rows = journal.read(season, week, base=base)
+    except Exception:
+        rows = pl.DataFrame()
+    if rows.is_empty():
+        return unavailable("hub.season.pool", f"the {season} schedule and its prices", why)
+    last = rows.sort("at").tail(1)
+    print(f"hub.season.pool: the {season} schedule is unavailable ({type(why).__name__}: "
+          f"{why}); serving the last decision recorded for week {last['week'][0]}",
+          file=sys.stderr)
+    for line in journal.report(last):
+        print(line)
+    return 0
+
+
+def axis_report(by_k: dict[float, Weekly], *, places: int = 2) -> list[str]:
+    """The week's figure as a range over the concentration knob, which is the published form.
+
+    `weekly` answers at one concentration and `sensitivity` sweeps the season; this is the
+    week swept, because #152 established that a dollar figure quoted at one concentration is
+    quoting an assumption, and a recommendation is the figure a reader acts on. A pick that
+    holds at every point on the axis is a pick about the pool; one that moves is a pick
+    about the assumption, and the line says which.
+    """
+    if not by_k:
+        return ["\n  no concentrations swept"]
+    out = [f"\n  across the field-concentration axis, {plural(len(by_k), 'point')}:",
+           f"  {'k':>5}  {'pick':<4}  {'free':<4}  {'pick $':>9}  {'free $':>9}  decisive"]
+    for k, w in by_k.items():
+        best = w.candidates[0]
+        fb = next((c for c in w.candidates if c.is_fallback), None)
+        out.append(f"  {k:>5.2f}  {w.recommend:<4}  {w.fallback or '-':<4}  "
+                   f"${best.expected_dollars:>8.{places}f}  "
+                   + (f"${fb.expected_dollars:>8.{places}f}" if fb else f"{'-':>9}")
+                   + f"  {'yes' if w.decisive else 'no'}")
+    picks = {w.recommend for w in by_k.values()}
+    lo = min(w.candidates[0].expected_dollars for w in by_k.values())
+    hi = max(w.candidates[0].expected_dollars for w in by_k.values())
+    res = max(w.resolution for w in by_k.values())
+    out.append(f"  ${lo:.{places}f} to ${hi:.{places}f} across the axis against "
+               f"${res:.{places}f} these trials resolve -- "
+               + (f"{next(iter(picks))} at every point" if len(picks) == 1 else
+                  f"the pick moves with the assumption: {', '.join(sorted(picks))}"))
+    return out
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    from hub.cli import unavailable
+    from hub.config import SEASON_AHEAD, resolved_config
+    from hub.season import journal
+    from hub.season import survivor as sv
+
+    ap = argparse.ArgumentParser(
+        prog="hub.season.pool",
+        description="Price this week's survivor pick against the field, as a range over the "
+                    "field-concentration axis; or, with --eliminated, price the buyback.")
+    ap.add_argument("--season", type=int, default=SEASON_AHEAD)
+    ap.add_argument("--week", type=int, default=None,
+                    help="the week being decided; defaults to the first week still ahead")
+    ap.add_argument("--entries", type=int, default=None,
+                    help="live entries, ours included; defaults to the pool's field size")
+    ap.add_argument("--pot", type=float, default=None,
+                    help="the pot as it stands; defaults to entry fee times field size")
+    ap.add_argument("--outlay", type=float, default=None,
+                    help="what this entry has paid in; defaults to the entry fee")
+    ap.add_argument("--ledger", default=None,
+                    help="teams already spent, comma-separated; defaults to what the "
+                         "published plan spent in the weeks already played")
+    ap.add_argument("--trials", type=int, default=WEEKLY_TRIALS)
+    ap.add_argument("--at", default=",".join(str(k) for k in DEFAULT_CONCENTRATIONS),
+                    help="the field-concentration axis to report across")
+    ap.add_argument("--eliminated", action="store_true",
+                    help="price re-entering after going out in --week, instead of a pick")
+    ap.add_argument("--used", type=int, default=0, help="buybacks this entry has taken")
+    ap.add_argument("--rival-buybacks", type=int, default=0,
+                    help="rivals assumed to re-enter alongside us")
+    ap.add_argument("--record", action="store_true",
+                    help="write the decision to the journal, at the configured concentration")
+    ap.add_argument("--chose", default=None,
+                    help="what was actually entered, if not the recommendation (--record)")
+    ap.add_argument("--store", type=Path, default=None,
+                    help="the processed store the journal is read from and written to")
+    a = ap.parse_args(argv)
+
+    cfg = resolved_config().pool
+    try:
+        grid = sv.grid_from_schedule(a.season)
+    except Exception as e:
+        return _last_good(a.season, a.week, a.store, e)
+
+    behind = sv.played(grid)
+    weeks = [w for w in drawable_weeks(grid, cfg, sv.NFL_WEEKS) if w not in behind]
+    week = a.week if a.week is not None else (weeks[0] if weeks else None)
+    if week is None or (week not in weeks and not a.eliminated):
+        return unavailable(
+            "hub.season.pool", f"a priced week to decide in the {a.season} schedule",
+            UnpricedWeek(f"week {week} is not among the weeks the board can play: "
+                         f"{weeks or 'none'}"))
+    entries = a.entries if a.entries is not None else cfg.field_size
+    pot = a.pot if a.pot is not None else cfg.entry_fee * cfg.field_size
+    outlay = a.outlay if a.outlay is not None else cfg.entry_fee
+    ledger = ([t.strip() for t in a.ledger.split(",") if t.strip()] if a.ledger is not None
+              else sv.spent_teams(sv.published_plan(), behind, season=a.season))
+    axis = _axis(a.at)
+    # One seed for every point on the axis and both kinds of decision, so a row recorded
+    # from here can be run again from its own columns (#162) and two points on the axis
+    # start from the same stream, as `sensitivity` has them start.
+    seed = int(np.random.default_rng(0).integers(2 ** 32))
+
+    print(f"  survivor pool, {a.season} week {week}: {entries} entries, pot ${pot:.2f}, "
+          f"{plural(len(ledger), 'team')} spent"
+          + (f" ({', '.join(ledger)})" if ledger else ""))
+    print(f"  rules {pool_digest(cfg)}  board {grid_digest(grid)}  seed {seed}  "
+          f"{a.trials} trials per candidate; field concentration {cfg.field_concentration} "
+          f"is the configured point, reported across {', '.join(str(k) for k in axis)}")
+
+    if a.eliminated:
+        def price(k: float) -> Buyback:
+            return buyback(grid, weeks, week=week, ledger=ledger, live_entries=entries,
+                           pot=pot, rival_buybacks=a.rival_buybacks, used=a.used,
+                           pool=replace(cfg, field_concentration=k), trials=a.trials,
+                           rng=np.random.default_rng(seed))
+        by_k = {k: price(k) for k in axis}
+        here = by_k.get(cfg.field_concentration) or price(cfg.field_concentration)
+        for line in report(here):
+            print(line)
+        nets = [b.net for b in by_k.values() if b.available]
+        if nets:
+            verdicts = {b.recommend for b in by_k.values() if b.available}
+            print(f"  net ${min(nets):+.2f} to ${max(nets):+.2f} across the axis -- "
+                  + ("the verdict holds at every point" if len(verdicts) == 1 else
+                     "the verdict flips inside that range, so it is about the "
+                     "concentration assumption and not the pool"))
+        if a.record:
+            took = a.chose or ("buy back" if here.recommend else "stay out")
+            k = journal.record(season=a.season, week=week, kind="buyback", chose=took,
+                               expected_dollars=here.net if here.available else None,
+                               pool_digest=pool_digest(cfg), grid_digest=grid_digest(grid),
+                               seed=seed, trials=a.trials, entries=entries, pot=pot,
+                               outlay=outlay, base=a.store)
+            print(f"  recorded {k}")
+        return 0
+
+    def value(k: float) -> Weekly:
+        return weekly(grid, weeks, week=week, ledger=ledger, entries=entries, pot=pot,
+                      outlay=outlay, pool=replace(cfg, field_concentration=k),
+                      trials=a.trials, seed=seed)
+    by_k = {k: value(k) for k in axis}
+    here = by_k.get(cfg.field_concentration) or value(cfg.field_concentration)
+    for line in weekly_report(here):
+        print(line)
+    for line in axis_report(by_k):
+        print(line)
+    if a.record:
+        k = journal.record_weekly(here, season=a.season, chose=a.chose, base=a.store)
+        print(f"  recorded {k}")
+    return 0
+
+
+if __name__ == "__main__":                       # pragma: no cover - entry point
+    sys.exit(main())

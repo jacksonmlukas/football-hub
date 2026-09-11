@@ -1,4 +1,4 @@
-.PHONY: setup draft slate check serve preflight
+.PHONY: setup draft slate pool check serve preflight
 
 setup:           ## Create the venv and install, dev extras included
 	uv sync --all-extras
@@ -37,6 +37,12 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 # about your team.
 	-uv run python -m hub.season.roster --write
 	uv run python -m hub.publish --all $(if $(strip $(WEEK)),--week $(WEEK))
+
+pool:           ## This week's survivor pick priced against the field, across the concentration axis
+# The money layer's target (#163). WEEK is the NFL week and is optional, exactly as it is for
+# `slate`: unset, the CLI takes the first week still ahead. `make pool WEEK=3 ARGS=--record`
+# writes the decision to the journal; `ARGS="--eliminated --week 3"` prices the buyback.
+	uv run python -m hub.season.pool $(if $(strip $(WEEK)),--week $(WEEK)) $(ARGS)
 
 check:          ## Quota + cache health, prints a summary only
 	uv run python -m hub.fetch.cfbd --quota

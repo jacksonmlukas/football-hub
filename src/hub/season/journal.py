@@ -55,7 +55,9 @@ measured: a null there is the row saying it cannot be re-derived, which is true 
 """
 from __future__ import annotations
 
+import argparse
 import re
+import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -64,7 +66,7 @@ from typing import Any
 import polars as pl
 
 from hub import store
-from hub.season.pool import Weekly
+from hub.season.pool import Weekly, plural
 
 # Two tables, not two schemas in one. The store builds a view per directory, and a
 # directory holding partitions of differing shape has no single view to build -- a
@@ -125,8 +127,8 @@ SCHEMA: dict[str, Any] = {
 # The columns a row needs to be re-derived, in one place. `read` fills them with nulls on a
 # store written before they existed rather than failing to select them, and a row whose
 # `pool_digest` is null is one no re-run can be checked against.
-RERUN_COLUMNS = ("pool_digest", "grid_digest", "seed", "trials", "entries", "pot", "outlay",
-              "plan_source")
+RERUN_COLUMNS = ("pool_digest", "grid_digest", "seed", "trials", "entries", "pot",
+                 "outlay", "plan_source")
 
 OUTCOME_SCHEMA: dict[str, Any] = {
     "key": pl.Utf8,
@@ -470,3 +472,89 @@ def unmatched_weeks(season: int, base: Path | None = None) -> Sequence[int]:
         return []
     hit = got.filter(~pl.col("matched_fallback"))
     return sorted(int(w) for w in hit["week"].unique().to_list())
+
+
+# --- the entry point (#163) ---------------------------------------------------------------
+#
+# The journal had writers and readers and no way to reach either from a terminal, which is
+# the shape `tests/contracts/test_cli_surface.py` exists to refuse: a module with no `main`
+# is exempt from the contract that every entry point answers absent input with a sentence.
+# `hub.season.pool --record` is what writes a pick; this is what reads the season back and
+# what settles a decision once the games it was about have been played.
+
+def report(rows: pl.DataFrame) -> list[str]:
+    """Decisions as lines rather than prints, so `hub.season.pool` can serve them as last-good.
+
+    One line per row, and the columns a reader acts on: what was chosen, over what, at
+    what price, and -- where the row can be re-derived -- the rules and the seed it can be
+    re-derived under. A row from before `RERUN_COLUMNS` existed says so rather than printing
+    a blank where a digest would go, because the blank would read as a missing digest and the
+    fact is that nothing was recorded.
+    """
+    if rows.is_empty():
+        return ["\n  no decisions recorded"]
+    out = [f"\n  {'week':>4}  {'kind':<7}  {'chose':<10}  {'free':<5}  {'$':>8}  "
+           f"{'given up':>9}  {'settled':<8}  rules"]
+    for r in rows.sort("at").iter_rows(named=True):
+        dollars = "" if r["expected_dollars"] is None else f"{r['expected_dollars']:+.2f}"
+        cost = ("" if r["survival_given_up"] is None else
+                f"{r['survival_given_up'] * 100:+.1f}pp")
+        settled = ("" if r.get("survived") is None else
+                   "survived" if r["survived"] else "out")
+        rules = (f"{r['pool_digest']} seed {r['seed']} x{r['trials']}"
+                 if r.get("pool_digest") is not None else "not re-derivable")
+        out.append(f"  {r['week']:>4}  {r['kind']:<7}  {r['chose']:<10}  "
+                   f"{(r['fallback'] or '-'):<5}  {dollars:>8}  {cost:>9}  {settled:<8}  "
+                   f"{rules}")
+    return out
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    from hub.cli import unavailable
+    from hub.config import SEASON_AHEAD
+
+    ap = argparse.ArgumentParser(
+        prog="hub.season.journal",
+        description="Read the season's survivor decisions back, or settle one.")
+    ap.add_argument("--season", type=int, default=SEASON_AHEAD)
+    ap.add_argument("--week", type=int, default=None)
+    ap.add_argument("--settle", default=None, metavar="KEY",
+                    help="attach an outcome to the decision with this key")
+    ap.add_argument("--survived", action="store_true", help="with --settle: the pick won")
+    ap.add_argument("--dollars", type=float, default=None,
+                    help="with --settle: what the decision paid, net")
+    ap.add_argument("--note", default=None, help="with --settle: anything a replay cannot")
+    ap.add_argument("--store", type=Path, default=None,
+                    help="the processed store the journal is read from and written to")
+    a = ap.parse_args(argv)
+
+    if a.settle:
+        try:
+            settle(a.settle, survived=a.survived, dollars=a.dollars, note=a.note,
+                   base=a.store)
+        except (KeyError, ValueError) as e:
+            return unavailable("hub.season.journal", f"the decision {a.settle!r}", e)
+        print(f"  settled {a.settle}: {'survived' if a.survived else 'out'}")
+        return 0
+
+    try:
+        rows = read(a.season, a.week, base=a.store)
+    except Exception as e:
+        return unavailable("hub.season.journal", f"the {a.season} decision journal", e)
+    if rows.is_empty():
+        where = a.store or store.DATA
+        return unavailable(
+            "hub.season.journal", f"the {a.season} decision journal",
+            FileNotFoundError(f"no decision recorded for {a.season}"
+                              + (f" week {a.week}" if a.week is not None else "")
+                              + f" under {where}; `hub.season.pool --record` writes one"))
+    for line in report(rows):
+        print(line)
+    left = unmatched_weeks(a.season, base=a.store)
+    print(f"  {rows.height} decision(s); departed from auto-pick in "
+          f"{plural(len(left), 'week')}" + (f": {', '.join(map(str, left))}" if left else ""))
+    return 0
+
+
+if __name__ == "__main__":                       # pragma: no cover - entry point
+    sys.exit(main())
