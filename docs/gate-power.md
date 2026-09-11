@@ -62,9 +62,26 @@ by construction -- the point estimate is what the noise produced.
 
 **Stage 2 -- after #42 and #43, comparator is the measured ceiling.**
 
-> If a gate's season-clustered MDE exceeds its foresight ceiling, that gate is **declared
-> unable to run on four seasons**. It is recorded with the numbers, and the tickets that fit or
-> apply constants for it close as *not planned* -- not as *failed*.
+> If a gate's season-clustered MDE exceeds its **declared ceiling arm**, that gate is
+> **declared unable to run on four seasons**. It is recorded with the numbers, and the tickets
+> that fit or apply constants for it close as *not planned* -- not as *failed*.
+
+> **Amended 2026-09-11 under #138, before any stage 2 run.** As pre-registered on 2026-09-06
+> this read *"its foresight ceiling"*. #43 then built the lineup gate's ceiling as a
+> **variance oracle** -- mu untouched, sd taken from the realised spread -- deliberately and
+> correctly: a foresight lineup is the best XI after the fact and bounds nothing interesting,
+> where a perfect *spread* bounds what any spread model could deliver. So the rule as written
+> named a quantity that gate does not produce under the arm it runs with. Three options were
+> weighed: amend the wording, expose the foresight arm under `--ceiling`, or report both and
+> apply the rule to foresight. The second and third both apply the *weaker* comparator --
+> foresight is strictly the larger of the two arms, so a smaller ceiling declares underpowered
+> more readily, and the variance oracle is the stricter test. The wording was amended instead.
+> What was known at the time: no stage 2 number existed for any gate, so this changes which
+> comparator each gate is measured against and not which side of it any gate falls. Each gate
+> now declares its arm by name where it prints -- the draft gate *perfect foresight, the
+> season known in advance*; the weekly gate *perfect foresight*; the lineup gate
+> *variance-oracle* -- and `tests/contracts/test_each_gate_declares_its_ceiling_arm.py` holds
+> that all three declare, that no two share a name, and that this paragraph does not revert.
 
 The distinction matters. *Failed* would say the arm lost. *Not planned* says the design cannot
 answer the question with the data that exists, which is a different and more useful thing for a

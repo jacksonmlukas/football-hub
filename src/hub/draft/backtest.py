@@ -339,6 +339,17 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     return out.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
 
 
+# What this gate's ceiling *is*, spelled where it is printed (#138). The draft gate's ceiling
+# is genuine foresight: `ceiling` hands the arm under test the season in advance, so the
+# largest effect any board could show is what a drafter who already knew the season achieves.
+# That is the same *kind* of arm as the weekly gate's and a different kind from the lineup
+# gate's variance oracle -- and `docs/gate-power.md` stage 2 compares each gate's MDE against
+# its own declared arm, never another's. Until this constant existed the line read
+# `paired_report`'s default, which happened to be the right words; a default that happens to
+# be right is the shape this repo keeps finding, and #138 is where it was written down.
+CEILING_ARM = "perfect foresight -- the season known in advance"
+
+
 def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], *,
             n_drafts: int = 20, seed: int = 0, my_slot: int | None = None,
             teams: int | None = None, rounds: int = DEFAULT_ROUNDS,
@@ -889,7 +900,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(warning)
 
     seasons_tbl = per_season(paired)
-    for line in [*paired_report(s, arm_a="optimizer", arm_b="market"),
+    for line in [*paired_report(s, arm_a="optimizer", arm_b="market",
+                                ceiling_arm=CEILING_ARM),
                  *small_sample_report(s, seasons_tbl),
                  *review_width("draft", s)]:
         print(line)
