@@ -236,9 +236,9 @@ def test_passing_a_single_number_still_works():
 
 def test_the_fitted_constants_are_inside_their_fitted_intervals():
     """Guard against a silent revert to a guessed value, same as the pooled one."""
-    from hub.draft.calibrate import FITTED_BY_POS, FITTED_CI95
+    from hub.draft.calibrate import FITTED_BY_POS, FITTED_NOMINAL_CI95
     from hub.draft.season import TALENT_CV, TALENT_CV_BY_POS
-    assert FITTED_CI95[0] <= TALENT_CV <= FITTED_CI95[1]
+    assert FITTED_NOMINAL_CI95[0] <= TALENT_CV <= FITTED_NOMINAL_CI95[1]
     for pos, v in TALENT_CV_BY_POS.items():
         assert v == pytest.approx(FITTED_BY_POS[pos], abs=0.01)
 

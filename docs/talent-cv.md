@@ -45,6 +45,32 @@ market opinion with nothing carried over.
 
 ## Result
 
+> **Nominal restated 2026-09-11 — net of absence, issue #235.** Nothing in the fit below
+> moved: the dispersion is 0.408, CI [0.370, 0.453], on the same 460 player-seasons. What
+> moved is the inversion that turns it into the constant the model needs. Since #183 the
+> season simulator draws missed games for itself, and `calibrate.nominal_for` was still
+> inverting through a full season for every player — so the constant carried the absence
+> variance a second time. Inverted through each player's real games played (sd 2.9–4.3 of
+> ~14 by position):
+>
+> | | 2026-09-07 | re-run 2026-09-11 |
+> |---|---|---|
+> | nominal, pooled | 0.424, shipped 0.42 | **0.322, shipped 0.32** |
+> | dispersion interval's ends, inverted | — | **[0.267, 0.385]** |
+> | QB / RB / WR / TE nominal | 0.419 / 0.482 / 0.419 / 0.332 | **0.198 / 0.380 / 0.314 / 0.181** |
+> | shrunk raw by position | 0.408 / 0.451 / 0.390 / 0.315 | unchanged |
+>
+> The double count, measured through `season.simulate_weeks` at a mean-14 projection with
+> two missed games prior, old constants against new with absence drawn either way: season-
+> total spread was overstated **46% (QB), 38% (TE), 23% (WR), 18% (RB)**; means unchanged.
+> Quarterbacks and tight ends move most because their seasons vary most in length relative
+> to their spread. On synthetic rows with a quarter of the players missing six to fourteen
+> games, the full-season inversion returned 0.464 for a true 0.30; the real-games inversion
+> recovers it (`test_calibrate`). "Availability belongs inside the number" was right while
+> the simulator had no absence and is not now; it is drawn, and the number is talent net of
+> it. Downstream: the `six-of-twelve.md` variance sweep is a sweep in this quantity at the
+> old base and is not re-run here.
+
 > **Interval restated 2026-09-07 — it was over the wrong unit, around a curve it treated as
 > known.** Issue #172. Everything in the table below is a figure from the 2026-08-23 fit and
 > keeps its original text; what follows supersedes the interval and the two shrunk
