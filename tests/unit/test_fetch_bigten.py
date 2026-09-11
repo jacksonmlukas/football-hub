@@ -170,6 +170,9 @@ def test_links_are_absolute_and_their_labels_are_text():
     (b'<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{}}}</script>',
      "fallback"),
     (b'<script id="__NEXT_DATA__" type="application/json">'
+     b'{"props":{"pageProps":{"fallback":{"1":{"_content_type_uid":"image"}}}}}</script>',
+     "no article record"),
+    (b'<script id="__NEXT_DATA__" type="application/json">'
      b'{"props":{"pageProps":{"fallback":{"1":{"_content_type_uid":"article","title":"t"}}}}}'
      b"</script>", "lacks"),
 ])
@@ -354,6 +357,16 @@ def test_a_shape_change_is_recorded_as_degraded_not_as_nothing(web, season):
     got = bigten.record_run(bigten.capture(now=FIRST_RUN, skip_lines=True), now=FIRST_RUN)
     assert got["fetched"] and got["stale"]
     assert "PageShapeChanged" in got["reason"] and got["documents"]["seen"] == 1
+
+
+def test_one_lost_document_is_recorded_as_degraded_with_the_rest_kept(web, season):
+    two = ONE_LINK.replace("</p>", '<a href="/api/media/file/gone.pdf">gone</a></p>')
+    web[bigten.PAGE] = page_with(two)
+    web["https://bigten.org/api/media/file/abc-Week_4.pdf"] = PDF
+    got = bigten.record_run(bigten.capture(now=FIRST_RUN, skip_lines=True), now=FIRST_RUN)
+    assert got["fetched"] and got["stale"]
+    assert "linked document" in got["reason"] and "OSError" in got["reason"]
+    assert got["documents"] == {"seen": 2, "new": 2}
 
 
 def test_an_unreachable_page_is_recorded_as_not_fetched(web, season):

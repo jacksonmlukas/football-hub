@@ -1,0 +1,34 @@
+{
+  "name": "bigten",
+  "source": "hub.fetch.bigten",
+  "generated_at": "2026-09-11T19:13:46+00:00",
+  "shape": "summary",
+  "season": 2026,
+  "week": null,
+  "slot": {
+    "id": null,
+    "name": null
+  },
+  "fetched": false,
+  "stale": true,
+  "reason": "nothing was captured: the first availability report is due 2026-09-17T00:00:00+00:00, and this run is before it",
+  "documents": {
+    "seen": 0,
+    "new": 0
+  },
+  "lines": {
+    "rows": null,
+    "captured_at": null,
+    "why": "nothing was captured: the first availability report is due 2026-09-17T00:00:00+00:00, and this run is before it"
+  },
+  "missed": {
+    "count": 0,
+    "slots": []
+  },
+  "archive_rows": 0,
+  "quota": {
+    "month": "2026-09",
+    "used": 0,
+    "limit": 1000
+  }
+}

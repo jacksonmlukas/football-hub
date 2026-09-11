@@ -400,16 +400,18 @@ def capture(*, now: datetime | None = None, season: int = SEASON_AHEAD,
         return cap
     cap.fetched = True
 
+    article: Article | None
     try:
         article = parse_article(page)
     except PageShapeChanged as e:
-        # GUARD shape-change-keeps-the-bytes [unit/test_fetch_bigten.py]: a page the parser
-        # cannot read is archived whole rather than dropped
-        cap.error = e
+        article, cap.error = None, e
+    # GUARD shape-change-keeps-the-bytes [unit/test_fetch_bigten.py]: a page the parser
+    # cannot read is archived whole rather than dropped
+    if article is None:
         _keep(cap, kind="page", url=PAGE, label=None, updated_at=None, data=page,
               ext="html", archive=archive, seen=seen, captured_at=stamp)
-        # /GUARD
-    else:
+    # /GUARD
+    if article is not None:
         cap.parsed = True
         record = jsonio.dumps(article.record, indent=1).encode()
         _keep(cap, kind="article", url=PAGE, label=article.title,
@@ -592,8 +594,10 @@ def not_yet(now: datetime | None = None) -> str | None:
     """
     at_now = now or _now()
     if at_now < REPORTS_BEGIN:
+        # No "now" in the sentence: the stamp's `generated_at` says when, and a reason that
+        # moved with the clock would make every pre-season run a commit.
         return (f"nothing was captured: the first availability report is due "
-                f"{REPORTS_BEGIN.isoformat()}, and this is {at_now.isoformat()}")
+                f"{REPORTS_BEGIN.isoformat()}, and this run is before it")
     choice = cfbd.configured_week(at_now)
     if choice.week is None:
         return "nothing was captured: " + choice.why.removeprefix("nothing was fetched: ")

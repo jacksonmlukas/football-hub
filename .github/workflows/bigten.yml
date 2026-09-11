@@ -1,0 +1,172 @@
+name: bigten
+
+# The Big Ten availability archive, captured on the conference's own deadlines (#215).
+#
+# **A workflow and not a person**, which is the whole of the disposition on that ticket:
+# "poll the reports, starting now" as a standing task for a human is the system CLAUDE.md
+# says dies in October. This has the slate's shape -- fetch through a CLI under
+# `src/hub/fetch/`, serve last-good on failure, never loop over teams against a metered
+# endpoint, stamp what was written so the watchdog can read it -- and adds one thing the
+# slate does not need: a schedule that follows the reports rather than the week.
+#
+# **What each run costs.** One CFBD `/lines` call, for the odds snapshot paired with the
+# reports (`docs/cfbd-quota.md` states the per-week total before this ever ran). The
+# conference's page is public and unmetered. A run with no `BIGTEN_ARCHIVE_KEY` to keep the
+# snapshot with spends nothing at all -- see the capture step.
+#
+# **It commits what it captured.** The reports are the point and a runner is ephemeral, so
+# the archive under `archive/bigten/` is committed -- the one tracked archive in this repo,
+# and the argument for that is on `hub.fetch.bigten.ARCHIVE`. The odds snapshot is a CFBD
+# payload and cannot be committed in the clear (`docs/cfbd-quota.md`, terms), so it is
+# committed encrypted with a repository secret, which is what makes it retrievable later
+# without being redistributed now.
+on:
+  # One cron per slot in `hub.fetch.bigten.SLOTS`, and `tests/contracts/test_bigten_schedule.py`
+  # holds the two lists to each other. The argument for each line is on that constant; the
+  # short form is that the midweek reports are due 8pm ET and 01:30 UTC is after that in both
+  # daylight-saving states, and the gameday reports are due two hours before kickoff so
+  # Saturday gets two more captures across the kickoff windows.
+  #
+  # A cron is a request for a start, not a guarantee of one -- `live.yml` records GitHub
+  # delivering these 97-126 minutes late. The CLI attributes a late run to the deadline it
+  # was scheduled after and records the deadlines no run reached, so nothing here has to be
+  # on time to be right.
+  schedule:
+    - cron: "30 1 * * 3"    # Tuesday night ET: the three-day report for a Friday game
+    - cron: "30 1 * * 4"    # Wednesday night ET
+    - cron: "30 1 * * 5"    # Thursday night ET
+    - cron: "30 1 * * 6"    # Friday night ET, and a Friday game's gameday report
+    - cron: "30 1 * * 0"    # Saturday night ET: gameday reports for the late kickoffs
+    - cron: "0 15 * * 6"    # Saturday 11:00 EDT: gameday reports for the noon kickoffs
+    - cron: "0 21 * * 6"    # Saturday 17:00 EDT: gameday reports for the afternoon kickoffs
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# The slate's group, on purpose. Both jobs commit `state/cfbd-quota.json`, and two runs
+# rebasing onto each other's counter is the race the slate's group exists to prevent.
+concurrency:
+  group: slate
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+
+      # `set +e` and a captured exit code: a capture that fetched nothing exits 1 and says
+      # why in the stamp, and the steps below read the stamp. Failing the job here would
+      # stop the record being committed, which is the silence this exists to replace.
+      #
+      # `--skip-lines` without an archive key. The odds snapshot is a CFBD payload; without
+      # a key to encrypt it with it could be neither committed nor kept, and a call spent
+      # on a snapshot that is then thrown away is the one thing `docs/cfbd-quota.md` is
+      # about. The reports are captured either way.
+      - name: Capture the current deadline
+        env:
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+          CFB_WEEK_ONE: ${{ vars.CFB_WEEK_ONE }}
+          BIGTEN_ARCHIVE_KEY: ${{ secrets.BIGTEN_ARCHIVE_KEY }}
+        run: |
+          set +e
+          SKIP=""
+          if [ -z "$BIGTEN_ARCHIVE_KEY" ]; then
+            SKIP="--skip-lines"
+            echo "::warning::no BIGTEN_ARCHIVE_KEY, so no odds snapshot is taken and no CFBD call is spent; the reports are still archived"
+          fi
+          uv run python -m hub.fetch.bigten --capture $SKIP
+          echo "capture exited $?"
+          exit 0
+
+      # The snapshot this run took, encrypted into the tracked tree. A runner starts with an
+      # empty `data/raw/`, so what is under it is exactly this run's; the archive path
+      # mirrors the cache path, so a later reader can pair a snapshot with its slot by name.
+      # AES-256-CBC with a PBKDF2-derived key from the secret: `openssl enc -d` with the same
+      # arguments and `-pass env:BIGTEN_ARCHIVE_KEY` reads one back.
+      - name: Keep the odds snapshot where it can be committed
+        env:
+          BIGTEN_ARCHIVE_KEY: ${{ secrets.BIGTEN_ARCHIVE_KEY }}
+        run: |
+          [ -n "$BIGTEN_ARCHIVE_KEY" ] || { echo "no key; nothing to keep"; exit 0; }
+          [ -d data/raw/bigten/lines ] || { echo "no snapshot was taken this run"; exit 0; }
+          find data/raw/bigten/lines -name '*.parquet' | while read -r f; do
+            rel="${f#data/raw/bigten/lines/}"
+            out="archive/bigten/lines/${rel}.enc"
+            mkdir -p "$(dirname "$out")"
+            openssl enc -aes-256-cbc -pbkdf2 -salt -in "$f" -out "$out" -pass env:BIGTEN_ARCHIVE_KEY
+            echo "kept $out"
+          done
+
+      # Read back rather than trusted, the way the slate reads `cfbd.json`. Annotations and
+      # never `exit 1`: a deadline the conference did not publish for, a page that moved,
+      # an odds call refused -- each is a warning on the run summary, and the run still
+      # commits the record of it.
+      - name: Report what was captured
+        run: |
+          B=site/data/bigten.json
+          if [ ! -f "$B" ]; then
+            echo "::error::hub.fetch.bigten left no run record at all -- it did not run"
+            exit 1
+          fi
+          if [ "$(jq -r '.fetched' "$B")" != "true" ]; then
+            echo "::warning::nothing was captured. $(jq -r '.reason' "$B")"
+          elif [ "$(jq -r '.stale' "$B")" = "true" ]; then
+            echo "::warning::captured, degraded. $(jq -r '.reason' "$B")"
+          else
+            echo "::notice::slot $(jq -r '.slot.id' "$B") captured: $(jq -r '.documents | "\(.seen) documents, \(.new) new"' "$B"); lines $(jq -r '.lines.rows' "$B") rows"
+          fi
+          MISSED=$(jq -r '.missed.count' "$B")
+          if [ "$MISSED" != "0" ]; then
+            echo "::warning::$MISSED deadlines have no capture: $(jq -r '.missed.slots | join(" ")' "$B")"
+          fi
+          echo "quota: $(jq -r '.quota | "\(.used) of \(.limit) this month"' "$B")"
+
+      # The contracts that read what this job wrote, run before it is committed -- the
+      # slate's step (#228), and for the same reason: a push made with `GITHUB_TOKEN`
+      # triggers no other workflow, so `ci.yml` never sees a commit this job makes, and the
+      # first process to read a malformed stamp would otherwise be the next human push.
+      # The schedule contract is here too, so a cron edited without the module's slots is
+      # caught by the job that would have run on it.
+      - name: Check the artifacts against the contracts that read them
+        run: |
+          uv run pytest tests/contracts/test_page_reads.py \
+                        tests/contracts/test_published_envelopes.py \
+                        tests/contracts/test_bigten_schedule.py -q
+
+      # Only when something other than the clock moved. The stamp's `generated_at` changes on
+      # every run by construction, and these crons fire all year: seven commits a week saying
+      # "still before the season" would be noise in a history that is the pre-registration.
+      # In season every run moves the index (a row per document per deadline, unchanged or
+      # not), so every run in season commits, which is what the archive is.
+      - name: Commit what was captured
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add archive site/data/bigten.json state
+          if git diff --cached --quiet; then
+            echo "nothing changed; no commit"
+            exit 0
+          fi
+          if [ "$(git diff --cached --name-only)" = "site/data/bigten.json" ]; then
+            WAS=$(git show HEAD:site/data/bigten.json 2>/dev/null | jq -S 'del(.generated_at)' || echo '{}')
+            NOW=$(jq -S 'del(.generated_at)' site/data/bigten.json)
+            if [ "$WAS" = "$NOW" ]; then
+              echo "only the stamp's clock moved; no commit"
+              git reset -q
+              exit 0
+            fi
+          fi
+          SLOT=$(jq -r '.slot.id // "no slot"' site/data/bigten.json)
+          git commit -m "bigten: ${SLOT} capture
+
+          Captured by the scheduled availability-report job. The commit is the
+          timestamp -- see docs/track-record.md rule 1."
+          # Rebase before pushing, for the reason the slate does: `main` moves between
+          # checkout and push, and a job that produced the archive and pushed none of it is
+          # the quiet failure this exists to replace. A conflict fails loudly, which is right.
+          git pull --rebase origin main
+          git push
