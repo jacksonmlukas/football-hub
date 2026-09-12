@@ -74,8 +74,7 @@ def test_the_recipe_is_its_ingredients_not_a_frozen_answer():
     """The assertion that catches a drifted seed. Run the documented ingredients directly and
     require the cohort to equal them -- a golden list of indices would pass while the formula
     moved, as long as it moved in the fixture too."""
-    from hub.draft.backtest import market_strategy
-    from hub.draft.optimize import simulate_remaining_draft
+    from hub.draft.optimize import market_strategy, simulate_remaining_draft
     from hub.draft.state import DraftState
 
     board = _board()
@@ -216,7 +215,8 @@ def test_the_cohort_is_what_the_gates_used_to_build_for_themselves():
 
     `backtest.play` is what the lineup gate called; it is still here, so the equality can be
     asserted directly rather than against a frozen list that would drift with the fixture."""
-    from hub.draft.backtest import market_strategy, play
+    from hub.draft.backtest import play
+    from hub.draft.optimize import market_strategy
 
     board = _board()
     got = C.cohort(board, 2024, drafts=3, seed=0)

@@ -120,6 +120,33 @@ def stream(root: np.random.SeedSequence, *path: int) -> np.random.Generator:
 MyPick = Callable[[pl.DataFrame, np.ndarray, dict[str, int], list[str]], int]
 
 
+def market_strategy(by: str = "ecr") -> MyPick:
+    """`market_pick` in the shape the room takes a strategy: best available in `by` that
+    fills an unfilled starting slot, adapted to `MyPick`.
+
+    Two things draft with it and neither owns it. It is arm A of the draft Gate, the
+    incumbent every published figure in ADR-0009 was measured against; and it is what the
+    **Cohort** drafts my seat with for the two season-side Gates. Until #257 it lived in
+    `hub.draft.backtest`, and `hub.draft.cohort` imported it from there -- so every Gate
+    that scored a Cohort loaded the harness, and the harness loads the exhibit. The Cohort
+    is not the arm under test and should not carry it; this module is where the room and
+    THE PICK already are, and both the Cohort and the harness import from here.
+
+    `by` names which ranking: `ecr` is consensus, what a replay of a past season has to use
+    since ESPN publishes ADP for the current season only; `backtest.FORESIGHT` is the same
+    rule reading a ranking that already knows the season. When the column is absent or all
+    null the first live row is taken, so a draft always completes.
+    """
+    def pick(pool: pl.DataFrame, live: np.ndarray, counts: dict[str, int],
+             taken: list[str]) -> int:
+        avail = pool[[int(i) for i in live]]
+        name = market_pick(avail, counts, by=by)
+        if name is None:
+            return int(live[0])
+        return pool["player"].to_list().index(name)
+    return pick
+
+
 def _need_score(counts: dict[str, int], pos: str) -> int:
     """How badly an unfilled starting slot wants this position.
 

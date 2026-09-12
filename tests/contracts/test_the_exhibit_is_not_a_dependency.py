@@ -95,7 +95,94 @@ def test_the_removed_arm_is_defined_in_the_exhibit_and_nowhere_in_the_draft_pack
         f"defined in the exhibit and a copy left behind puts the census back")
 
 
-@pytest.mark.parametrize("target", ["hub.draft.board", "hub.draft.live", "hub.publish"])
+# What ships, and what the product's verdicts are measured on. The first three are the
+# draft-night tools and the publisher, the wiring REMOVE undid. The last three are the season
+# Gates -- the lineup gate, the weekly gate and the weekly gate's universe assembly -- which
+# score the Cohort and must not reach the removed arm either: a Gate that loads the exhibit
+# on its way to its own verdict has championship equity on the path its number was measured
+# on, whether or not anything reads it (#257).
+PRODUCT = ("hub.draft.board", "hub.draft.live", "hub.publish")
+GATES = ("hub.season.lineup_gate", "hub.season.weekly_gate", "hub.season.weekly_gate_data")
+
+
+def _path_of(module: str) -> pathlib.Path | None:
+    """The file a `hub.*` module name resolves to, or None for a name that is not a module
+    (a function imported by name, a package attribute)."""
+    stem = SRC.parent / pathlib.Path(*module.split("."))
+    if (stem / "__init__.py").exists():
+        return stem / "__init__.py"
+    if stem.with_suffix(".py").exists():
+        return stem.with_suffix(".py")
+    return None
+
+
+def _runtime_imports_of(path: pathlib.Path) -> set[str]:
+    """Every `hub.*` module one file imports at runtime -- at module level *and inside
+    functions*, which is where all three Gates import the Cohort. An `if TYPE_CHECKING:`
+    block is skipped: nothing under it loads."""
+    tree = ast.parse(path.read_text())
+    typing_only: set[int] = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.If) and isinstance(node.test, ast.Name)
+                and node.test.id == "TYPE_CHECKING"):
+            typing_only |= {id(n) for n in ast.walk(node)}
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if id(node) in typing_only:
+            continue
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("hub"):
+            out.add(node.module)
+            # `from hub.pkg import submodule` names a module too, not only a function.
+            out |= {f"{node.module}.{a.name}" for a in node.names
+                    if _path_of(f"{node.module}.{a.name}")}
+        elif isinstance(node, ast.Import):
+            out |= {a.name for a in node.names if a.name.startswith("hub")}
+    return out
+
+
+def _reach(module: str) -> dict[str, str | None]:
+    """Every `hub.*` module `module` can load by importing, with the module that first
+    reached each -- so a failure names the path and not only the endpoint."""
+    parent: dict[str, str | None] = {module: None}
+    todo = [module]
+    while todo:
+        here = todo.pop()
+        path = _path_of(here)
+        if path is None:
+            continue
+        for dep in sorted(_runtime_imports_of(path)):
+            if dep not in parent:
+                parent[dep] = here
+                todo.append(dep)
+    return parent
+
+
+@pytest.mark.parametrize("target", [*PRODUCT, *GATES])
+def test_nothing_that_ships_or_gates_can_load_the_exhibit_by_any_import(target):
+    """Read off the AST, transitively, with function-local imports counted.
+
+    The subprocess test below asks what a fresh interpreter loads when it imports the
+    target, and that is the right question for a module-level import -- but all three
+    season Gates import `hub.draft.cohort` inside a function, so importing the Gate loads
+    nothing and the test passes while the Gate, once run, reaches the exhibit through the
+    Cohort's import of the harness. `docs/method.md` rule 10: a check whose validity
+    depends on context it cannot see. This one sees the function bodies.
+    """
+    reach = _reach(target)
+    hit = sorted(m for m in reach if m.startswith("hub.exhibits"))
+    chain = []
+    if hit:
+        step: str | None = hit[0]
+        while step is not None:
+            chain.append(step)
+            step = reach[step]
+    assert not hit, (
+        f"{target} can load {hit} through {' <- '.join(chain)}: the exhibit is on a path "
+        f"the product or a Gate runs on. ADR-0009 removed championship equity from what "
+        f"ships; a Gate scoring the Cohort must not carry it either.")
+
+
+@pytest.mark.parametrize("target", [*PRODUCT, *GATES])
 def test_the_draft_night_tools_and_the_publisher_do_not_reach_the_exhibit_transitively(target):
     """Not only a direct import: `hub.draft.board`, `hub.draft.live` and `hub.publish` must
     not import anything that imports an exhibit, or REMOVE is undone one hop away.

@@ -49,10 +49,12 @@ import polars as pl
 from hub.cli import unavailable
 from hub.config import DraftConfig, RosterConfig, drafted_positions
 from hub.draft.board import BuildReport, board_as_of
+from hub.draft.cohort import DRAFTS
 from hub.draft.optimize import (
     DEFAULT_ROUNDS,
     ROOM,
     market_pick,
+    market_strategy,  # arm A; declared with the room since #257, and tests reach it here
     root_seed,
     simulate_remaining_draft,
     stream,
@@ -204,17 +206,6 @@ def join_failures(names: Sequence[str], known: RealisedNames) -> int:
 
 def _pool_index(pool: pl.DataFrame, name: str) -> int:
     return pool["player"].to_list().index(name)
-
-
-def market_strategy(by: str = "ecr"):
-    """Arm A. Best available in `by` that fills an unfilled starting slot."""
-    def pick(pool, live, counts, taken):
-        avail = pool[[int(i) for i in live]]
-        name = market_pick(avail, counts, by=by)
-        if name is None:
-            return int(live[0])
-        return _pool_index(pool, name)
-    return pick
 
 
 FORESIGHT = "_foresight"
@@ -871,10 +862,6 @@ def join_report(rates: dict[str, float]) -> list[str]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    # Function-local for the same reason `build` is below: `hub.draft.cohort` imports
-    # `market_strategy` from this module, so a module-level import here would be a cycle.
-    from hub.draft.cohort import DRAFTS
-
     ap = argparse.ArgumentParser(
         prog="hub.draft.backtest",
         description="Championship equity against the market, on realised outcomes.")

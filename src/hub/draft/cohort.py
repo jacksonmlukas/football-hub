@@ -19,6 +19,13 @@ executed, not whether the seam between a module and the real world exists.
 
 So this returns the widest useful form and lets each gate narrow it. Building the narrow form
 and reconstructing the wide one is what produced two copies in the first place.
+
+**Nothing here imports the harness.** Until #257 `market_strategy` was read from
+`hub.draft.backtest`, and the harness imports the exhibit -- so every Gate that scored a
+Cohort loaded championship equity on the way to its own verdict, and the contract test that
+holds the exhibit off the product never asked about a Gate. The strategy is declared with
+the room in `hub.draft.optimize`, and `tests/contracts/test_the_exhibit_is_not_a_dependency.py`
+now walks the three season Gates' imports, function-local ones included.
 """
 from __future__ import annotations
 
@@ -28,9 +35,8 @@ import numpy as np
 import polars as pl
 
 from hub.config import RosterConfig
-from hub.draft.backtest import market_strategy
 from hub.draft.board import BuildReport
-from hub.draft.optimize import DEFAULT_ROUNDS, simulate_remaining_draft
+from hub.draft.optimize import DEFAULT_ROUNDS, market_strategy, simulate_remaining_draft
 from hub.draft.state import DraftState
 
 _CFG = RosterConfig()
