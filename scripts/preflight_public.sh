@@ -63,13 +63,18 @@ P_ODDS='ODDS_API_KEY=[A-Za-z0-9+/=_-]{20,}'
 # them the pattern would still fire, on a prefix; with them it spans the token, and the
 # synthetic sample below carries both so the charset is exercised rather than asserted.
 P_POOL_SESSION='POOL_SESSION=[A-Za-z0-9%+/=_.-]{20,}'
-PATTERNS="$P_ESPN_S2|$P_ESPN_S2_QUOTED|$P_SWID|$P_CFBD|$P_ODDS|$P_POOL_SESSION"
+# Our own entry's id on the pool host, named by `hub.fetch.pool` (#85). Not a credential,
+# but the one string that ties this repository's index 0 to a person on the host, and it is
+# pasted into `.env` beside the cookie -- so it gets the same treatment. Short, because an
+# entry id is short: four characters is above `POOL_ENTRY_ID=` left empty in `.env.example`.
+P_POOL_ENTRY='POOL_ENTRY_ID=[A-Za-z0-9_.-]{4,}'
+PATTERNS="$P_ESPN_S2|$P_ESPN_S2_QUOTED|$P_SWID|$P_CFBD|$P_ODDS|$P_POOL_SESSION|$P_POOL_ENTRY"
 
 # label:pattern-variable, one per synthetic sample the self-check plants. Two labels share
 # P_SWID: the braces are optional in that pattern, and the brace-less form is the one that
 # was actually pasted into a repository secret on 2026-09-04. The coverage check compares
 # distinct *variables* against the alternations in PATTERNS, not labels.
-CANARY_CASES='espn-cookie:P_ESPN_S2 espn-cookie-quoted:P_ESPN_S2_QUOTED braced-swid:P_SWID brace-less-swid:P_SWID cfbd-key:P_CFBD odds-key:P_ODDS pool-cookie:P_POOL_SESSION'
+CANARY_CASES='espn-cookie:P_ESPN_S2 espn-cookie-quoted:P_ESPN_S2_QUOTED braced-swid:P_SWID brace-less-swid:P_SWID cfbd-key:P_CFBD odds-key:P_ODDS pool-cookie:P_POOL_SESSION pool-entry:P_POOL_ENTRY'
 
 # Every sample is synthetic and assembled at runtime from parts. Not style: the scan below
 # reads every commit, this script is in every commit, so a credential-shaped literal here
@@ -89,6 +94,7 @@ canary_sample() {
     cfbd-key)           printf 'CFBD_API_KEY=%s\n' "$KEY" ;;
     odds-key)           printf 'ODDS_API_KEY=%s\n' "$KEY" ;;
     pool-cookie)        printf 'POOL_SESSION=%s\n' "$SESSION" ;;
+    pool-entry)         printf 'POOL_ENTRY_ID=%s\n' "e-$KEY" ;;
     *)                  return 1 ;;
   esac
 }

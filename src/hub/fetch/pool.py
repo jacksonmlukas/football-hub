@@ -40,10 +40,18 @@ own is present, and counting it would spend a team the week has not yet resolved
 the week's status, not its number.
 
 **Who is who.** Other members are real people, and this repository publishes artifacts. So
-the parser sorts entries by the host's id, numbers them from zero, and drops the id and the
-name before anything is returned -- the `PoolState` has no field that could hold either, the
-store never sees one, and the Ledger is addressed by index. The sort is what makes the index
-stable across two reads of the same field; it carries no identity because the id is gone.
+the parser numbers entries and drops the id and the name before anything is returned -- the
+`PoolState` has no field that could hold either, the store never sees one, and the Ledger is
+addressed by index. Two things make the index mean something. **Ours is 0**, always:
+`hub.season.pool.simulate` reads our Ledger at index 0, so our own host id is named in
+`POOL_ENTRY_ID` and a payload without it is refused before anything is written -- whichever
+id happened to sort first would otherwise be "us". **And an index is never reused.** A
+member who drops out of a later payload would shift every index after theirs, and nothing
+downstream could tell; so the store keeps an append-only map under `pool_entries.json`
+from `sha256(host id)` to index, read before any index is assigned, with a newcomer taking
+the next free one. The key is a hash of an opaque id, not a member's name: it identifies
+nobody outside this store and is kept only so the store agrees with itself from one week
+to the next.
 
 **The cookie goes to the host and nowhere else.** It is read through `dotenv` the way every
 credential here is, sent as the one cookie on the request, and scrubbed from every message
@@ -62,6 +70,7 @@ trusted to a runner.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -80,10 +89,13 @@ from hub.paths import PROCESSED
 
 PROG = "hub.fetch.pool"
 
-# The three environment names. `POOL_SESSION` is the one `scripts/preflight_public.sh`
-# scans for and was chosen there (#77); the other two carry no secret.
+# The four environment names. `POOL_SESSION` is the one `scripts/preflight_public.sh`
+# scans for and was chosen there (#77); `POOL_ENTRY_ID` -- our own entry on the host, the
+# one that is index 0 -- has its own pattern there since this module named it; the other
+# two carry no secret.
 SESSION_ENV = "POOL_SESSION"
 URL_ENV = "POOL_URL"
+ENTRY_ENV = "POOL_ENTRY_ID"
 COOKIE_NAME_ENV = "POOL_COOKIE_NAME"
 DEFAULT_COOKIE_NAME = "session"
 
@@ -97,6 +109,11 @@ REDACTED = f"<{SESSION_ENV}>"
 FINAL_STATUSES = frozenset({"final", "complete", "completed"})
 
 STATE_FILE = "pool_state.json"
+# The append-only map from `sha256(host id)` to index, beside the state. Never rewritten
+# with a row missing, never with a row moved: see `write_index_map`.
+INDEX_FILE = "pool_entries.json"
+# Ours, by construction, and `hub.season.pool.simulate` reads it there.
+OUR_INDEX = 0
 
 # The pytest node running right now, or nothing outside a test. Same guard as
 # `hub.fetch.cfbd._http_get`: the suite patches the transport and should, and this is what
@@ -155,6 +172,12 @@ def _url() -> str | None:
     from dotenv import load_dotenv
     load_dotenv()
     return os.environ.get(URL_ENV) or None
+
+
+def _entry_id() -> str | None:
+    from dotenv import load_dotenv
+    load_dotenv()
+    return os.environ.get(ENTRY_ENV) or None
 
 
 def _cookie_name() -> str:
@@ -227,8 +250,48 @@ def _need(m: Any, key: str, where: str, kinds: tuple[type, ...]) -> Any:
     return v
 
 
-def parse_payload(payload: Any, *, season: int | None = None) -> PoolState:
-    """The host's payload as a `PoolState`, or a `ContractViolation` and nothing.
+def entry_key(ident: str) -> str:
+    """The store's name for a host id: its sha256, which identifies nobody outside the store."""
+    return hashlib.sha256(ident.encode()).hexdigest()
+
+
+def assign_indices(idents: Sequence[str], *, ours: str,
+                   index_map: Mapping[str, int] | None = None) -> dict[str, int]:
+    """Every id in the payload mapped to its index: the one it already holds, or the next
+    free one. Ours is `OUR_INDEX`, and a map that says otherwise -- somebody else at 0, or
+    our id elsewhere -- was built under another `POOL_ENTRY_ID` and is refused rather than
+    renumbered around. Newcomers are numbered in id order so two reads agree."""
+    if ours not in idents:
+        raise ContractViolation(
+            f"pool payload: the entry named by {ENTRY_ENV} is not among the "
+            f"{len(idents)} entries listed, so nothing can be index {OUR_INDEX}. Check the "
+            f"id in .env against the host; nothing has been written.")
+    out = dict(index_map or {})
+    ours_key = entry_key(ours)
+    holder = next((k for k, v in out.items() if v == OUR_INDEX), None)
+    if (holder is not None and holder != ours_key) or out.get(ours_key, OUR_INDEX) != OUR_INDEX:
+        raise ContractViolation(
+            f"pool payload: the entry map under {INDEX_FILE} does not have {ENTRY_ENV}'s "
+            f"entry at index {OUR_INDEX}; it was built for another entry id. Move the map "
+            f"aside rather than renumbering the field around it.")
+    out.setdefault(ours_key, OUR_INDEX)
+    free = max(out.values()) + 1
+    for ident in sorted(set(idents)):
+        key = entry_key(ident)
+        if key not in out:
+            out[key] = free
+            free += 1
+    return out
+
+
+def parse_payload(payload: Any, *, ours: str, season: int | None = None,
+                  index_map: Mapping[str, int] | None = None
+                  ) -> tuple[PoolState, dict[str, int]]:
+    """The host's payload as a `PoolState` and the index map that numbers it -- or a
+    `ContractViolation` and nothing.
+
+    `ours` is our own host id and lands at `OUR_INDEX`; `index_map` is what the store
+    already holds, and the map returned is that plus every newcomer, for `write_index_map`.
 
     Every field the state needs is required, and the refusals a reader is most likely to
     meet are the ones that would otherwise read as a smaller, emptier pool: an entry with no
@@ -289,17 +352,22 @@ def parse_payload(payload: Any, *, season: int | None = None) -> PoolState:
             used.add(team)
         keyed.append((ident, alive, used))
 
-    # Sorted by the host's id so two reads of one field number the same entry the same way,
-    # then the id is dropped: from here an entry is its index and nothing else.
-    keyed.sort(key=lambda t: t[0])
-    entries = tuple(Entry(index=i, alive=alive, used=tuple(sorted(used)))
-                    for i, (_, alive, used) in enumerate(keyed))
+    idents = [k[0] for k in keyed]
+    if len(set(idents)) != len(idents):
+        raise ContractViolation("pool payload: an entry id is listed twice.")
+    # The map decides the number, then the id is dropped: from here an entry is its index
+    # and nothing else. Index order, so ours is first and the store reads back the same.
+    numbered = assign_indices(idents, ours=ours, index_map=index_map)
+    entries = tuple(sorted(
+        (Entry(index=numbered[entry_key(ident)], alive=alive, used=tuple(sorted(used)))
+         for ident, alive, used in keyed), key=lambda e: e.index))
     return PoolState(season=got_season, week=week, field_size=field_size, pot=pot,
-                     entries=entries)
+                     entries=entries), numbered
 
 
 def ledgers(state: PoolState) -> list[set[str]]:
-    """Every entry's Ledger in index order -- the `ledgers` `hub.season.pool.simulate` takes."""
+    """Every entry's Ledger in index order, ours first -- the `ledgers` that
+    `hub.season.pool.simulate` takes, one per entry present, positional gaps closed."""
     return [set(e.used) for e in state.entries]
 
 
@@ -334,6 +402,35 @@ def _from_frame(df: pl.DataFrame) -> PoolState:
 
 def state_path(base: Path | None = None) -> Path:
     return Path(base or PROCESSED) / STATE_FILE
+
+
+def index_map_path(base: Path | None = None) -> Path:
+    return Path(base or PROCESSED) / INDEX_FILE
+
+
+def read_index_map(base: Path | None = None) -> dict[str, int]:
+    """The map as stored, or empty on a fresh clone."""
+    path = index_map_path(base)
+    if not path.exists():
+        return {}
+    return {str(k): int(v) for k, v in json.loads(path.read_text()).items()}
+
+
+def write_index_map(index_map: Mapping[str, int], base: Path | None = None) -> Path:
+    """Append-only. A row already stored keeps its index whatever `index_map` says: a
+    write that lost a row would hand the next newcomer a rival's Ledger, and one that
+    moved a row would hand a rival ours. A row that disagrees is refused, not overwritten."""
+    stored = read_index_map(base)
+    moved = {k for k, v in index_map.items() if k in stored and stored[k] != v}
+    if moved:
+        raise ContractViolation(
+            f"{INDEX_FILE}: {len(moved)} entries are already at another index; the map is "
+            f"append-only and an index is never reassigned.")
+    merged = {**stored, **{k: int(v) for k, v in index_map.items()}}
+    path = index_map_path(base)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(dict(sorted(merged.items(), key=lambda kv: kv[1])), indent=2))
+    return path
 
 
 def write_state(state: PoolState, base: Path | None = None, *,
@@ -388,12 +485,15 @@ def refresh(*, season: int = SEASON_AHEAD, store: Path | None = None,
 
     `AuthFailure` for a refused cookie, `EmptyPool` for a pool with nobody in it,
     `HostUnreachable` for a transport that failed, `ContractViolation` for a payload that
-    does not parse, `RuntimeError` for an environment with no host or no cookie named. The
-    cookie appears in none of them.
+    does not parse or does not list our entry, `RuntimeError` for an environment with no
+    host, no entry id or no cookie named. The cookie appears in none of them.
     """
     url = _url()
     if not url:
         raise RuntimeError(f"no {URL_ENV} set; the pool host's resource URL goes in .env")
+    ours = _entry_id()
+    if not ours:
+        raise RuntimeError(f"no {ENTRY_ENV} set; our own entry's id on the host goes in .env")
     cookie = _cookie()
     if not cookie:
         raise RuntimeError(f"no {SESSION_ENV} set; the pool host's session cookie goes in .env")
@@ -415,7 +515,9 @@ def refresh(*, season: int = SEASON_AHEAD, store: Path | None = None,
         raise AuthFailure(
             f"the pool host answered HTTP {status}: the session cookie in {SESSION_ENV} was "
             f"refused. Copy a fresh one from the browser into .env.")
-    state = parse_payload(body, season=season)
+    state, index_map = parse_payload(body, ours=ours, season=season,
+                                     index_map=read_index_map(store))
+    write_index_map(index_map, store)
     write_state(state, store, when=now)
     return state
 
@@ -428,7 +530,8 @@ def report(state: PoolState, *, captured: str | None = None) -> list[str]:
              + (f" (read {captured})" if captured else "")]
     for e in state.entries:
         spent = ", ".join(e.used) if e.used else "nothing spent"
-        lines.append(f"  entry {e.index}: {'alive' if e.alive else 'out'}, {spent}")
+        who = " (ours)" if e.index == OUR_INDEX else ""
+        lines.append(f"  entry {e.index}{who}: {'alive' if e.alive else 'out'}, {spent}")
     lines.append(f"  hub.season.pool --entries {state.alive} --pot {state.pot:.2f}")
     return lines
 
@@ -472,7 +575,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if a.payload:
         try:
-            state = parse_payload(json.loads(Path(a.payload).read_text()), season=a.season)
+            ours = _entry_id()
+            if not ours:
+                raise RuntimeError(f"no {ENTRY_ENV} set; our own entry's id goes in .env")
+            state, index_map = parse_payload(json.loads(Path(a.payload).read_text()),
+                                             ours=ours, season=a.season,
+                                             index_map=read_index_map(a.store))
+            write_index_map(index_map, a.store)
             write_state(state, a.store)
         except Exception as exc:
             return unavailable(PROG, f"the saved payload {a.payload}", exc)

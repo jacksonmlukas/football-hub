@@ -190,7 +190,7 @@ def a_fresh_clone(monkeypatch, tmp_path):
     # read a key, so a developer's own `.env` would otherwise decide whether a CLI refuses.
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
     for key in ("CFBD_API_KEY", "ODDS_API_KEY", "ESPN_S2", "ESPN_SWID", "ESPN_LEAGUE_ID",
-                "POOL_SESSION", "POOL_URL"):
+                "POOL_SESSION", "POOL_URL", "POOL_ENTRY_ID"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(nflverse, "RAW", tmp_path / "raw")
     monkeypatch.setattr(store, "DATA", tmp_path / "processed")

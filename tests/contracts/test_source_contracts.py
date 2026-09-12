@@ -340,8 +340,11 @@ def test_pool_state_contract_holds_on_the_hand_built_payload():
     week that must not be in any Ledger."""
     from hub.fetch import pool
 
-    state = pool.parse_payload(load("pool_payload.synthetic.json"))
-    got = POOL_STATE.validate(pool.to_frame(state))
+    # One name, not a tuple unpack: `test_every_contract_is_applied` follows the payload
+    # from a single-name binding to the `.validate` argument, and a tuple target is invisible
+    # to it -- which would leave POOL_STATE reading as evidenced by nothing.
+    parsed = pool.parse_payload(load("pool_payload.synthetic.json"), ours="ent-8841")
+    got = POOL_STATE.validate(pool.to_frame(parsed[0]))
     assert got.height == 5
     assert got["used"].dtype == pl.List(pl.Utf8), "an empty Ledger inferred as List(Null)"
     assert got.filter(pl.col("entry") == 0)["used"].to_list() == [["DAL", "KC"]]

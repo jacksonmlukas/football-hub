@@ -173,6 +173,7 @@ def _plant(repo: Path, name: str, body: str) -> None:
     pytest.param("cfbd key", "CFBD_API_KEY=" + KEY_BODY, id="cfbd-key"),
     pytest.param("odds key", "ODDS_API_KEY=" + KEY_BODY, id="odds-key"),
     pytest.param("pool session cookie", "POOL_SESSION=" + POOL_BODY, id="pool-cookie"),
+    pytest.param("pool entry id", "POOL_ENTRY_ID=" + "e-" + KEY_BODY, id="pool-entry"),
 ])
 def test_a_planted_credential_blocks_the_flip(repo, shape, line):
     """The assertion that was missing. Exit non-zero, or the scan is decoration."""
@@ -217,7 +218,8 @@ def test_ordinary_prose_is_not_flagged(repo):
     (repo / "docs.md").write_text(
         "Set ESPN_S2 and SWID in .env. The CFBD_API_KEY is optional.\n"
         "See ODDS_API_KEY= in SETUP.md for where to get one.\n"
-        "POOL_SESSION= is the pool host's session cookie, read from the environment.\n")
+        "POOL_SESSION= is the pool host's session cookie, read from the environment.\n"
+        "POOL_ENTRY_ID= is our own entry there, and lands at index 0.\n")
     git(repo, "add", "-A")
     git(repo, "commit", "-m", "docs")
     assert preflight(repo).returncode == 0

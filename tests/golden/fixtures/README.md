@@ -62,7 +62,9 @@ each deadline -- because the host's payload is documented nowhere in this repo. 
 docstring of `hub.fetch.pool` lists what the first live run must confirm. The first real
 capture replaces it: save the resource from the browser, strip every `name` and `id` to a
 placeholder before committing (other members are real people), keep it under a name without
-`.synthetic`, and flip `POOL_STATE.verified_against_live`.
+`.synthetic`, and flip `POOL_STATE.verified_against_live`. Beside the state the module keeps
+`pool_entries.json`, an append-only map from `sha256(host id)` to index: a hash of an opaque
+id, not a member's name, kept only so an index is never reused when the field changes.
 
 The `.synthetic` suffix is not decoration. Those three were written by hand because no
 `CFBD_API_KEY` or `ODDS_API_KEY` exists on this machine, so **they prove our parser handles

@@ -27,10 +27,19 @@ FIXTURES = Path(__file__).resolve().parents[1] / "golden" / "fixtures"
 # Assembled from parts so the file itself is never a hit for the secret scan in
 # `scripts/preflight_public.sh`, which reads every commit this file is in.
 COOKIE = "s%3A" + "0f1e2d3c4b5a" * 3 + "." + "9a8b7c6d5e4f" * 3
+# Our own entry on the host: Member A in the fixture, whose id sorts first there, which is
+# why `test_our_entry_is_index_0_however_its_id_sorts` moves it.
+OURS = "ent-8841"
 
 
 def payload() -> dict:
     return json.loads((FIXTURES / "pool_payload.synthetic.json").read_text())
+
+
+def parse(p: dict, **kw) -> pool.PoolState:
+    """The state alone; the index map `parse_payload` returns beside it is tested by name."""
+    state, _ = pool.parse_payload(p, ours=kw.pop("ours", OURS), **kw)
+    return state
 
 
 @pytest.fixture
@@ -45,6 +54,7 @@ def session(monkeypatch):
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
     monkeypatch.setenv(pool.SESSION_ENV, COOKIE)
     monkeypatch.setenv(pool.URL_ENV, "https://pool.example.test/api/pools/1")
+    monkeypatch.setenv(pool.ENTRY_ENV, OURS)
 
 
 @pytest.fixture
@@ -78,7 +88,7 @@ def test_a_payload_missing_a_required_field_is_refused_and_nothing_partial_is_wr
     broken = payload()
     del broken["pool"]["pot"]
     with pytest.raises(ContractViolation, match="pot"):
-        pool.parse_payload(broken)
+        parse(broken)
 
     transport(body=broken)
     assert pool.main(["--refresh", "--store", str(store)]) != 0
@@ -93,7 +103,7 @@ def test_an_entry_missing_its_picks_is_refused_rather_than_read_as_an_empty_ledg
     broken = payload()
     del broken["entries"][1]["picks"]
     with pytest.raises(ContractViolation, match="picks"):
-        pool.parse_payload(broken)
+        parse(broken)
 
 
 def test_a_field_size_that_disagrees_with_the_entries_listed_is_refused():
@@ -102,7 +112,7 @@ def test_a_field_size_that_disagrees_with_the_entries_listed_is_refused():
     broken = payload()
     broken["pool"]["field_size"] = 6
     with pytest.raises(ContractViolation, match="field_size"):
-        pool.parse_payload(broken)
+        parse(broken)
 
 
 def test_a_pick_in_a_week_the_payload_does_not_describe_is_refused():
@@ -111,13 +121,13 @@ def test_a_pick_in_a_week_the_payload_does_not_describe_is_refused():
     broken = payload()
     broken["entries"][0]["picks"].append({"week": 4, "team": "MIA", "result": None})
     with pytest.raises(ContractViolation, match="week 4"):
-        pool.parse_payload(broken)
+        parse(broken)
 
 
 # --- 2. field size, pot and per-entry used teams --------------------------------------------
 
 def test_field_size_pot_and_each_entrys_used_teams_are_parsed_from_the_payload():
-    state = pool.parse_payload(payload())
+    state = parse(payload())
     assert state.season == 2026
     assert state.week == 3
     assert state.field_size == 5
@@ -134,10 +144,10 @@ def test_field_size_pot_and_each_entrys_used_teams_are_parsed_from_the_payload()
 def test_a_team_is_upper_cased_and_an_empty_one_is_refused():
     p = payload()
     p["entries"][1]["picks"][0]["team"] = "phi"
-    assert pool.parse_payload(p).entries[1].used == ("BUF", "PHI")
+    assert parse(p).entries[1].used == ("BUF", "PHI")
     p["entries"][1]["picks"][0]["team"] = " "
     with pytest.raises(ContractViolation, match="team"):
-        pool.parse_payload(p)
+        parse(p)
 
 
 # --- 3. an unauthenticated response is an auth failure, distinct from an empty pool --------
@@ -206,7 +216,7 @@ def test_revealed_picks_from_a_final_week_populate_rival_ledgers_and_an_open_wee
     """Member A's week-3 pick is in the payload -- our own pick is visible to us before the
     deadline even under Hidden Picks -- and week 3 is open, so SF is not spent. Weeks 1 and
     2 are final and every pick in them is."""
-    state = pool.parse_payload(payload())
+    state = parse(payload())
     ledgers = pool.ledgers(state)
     assert ledgers[0] == {"DAL", "KC"}, "an open week's pick reached the Ledger"
     assert ledgers[3] == {"DAL", "KC"}
@@ -217,13 +227,13 @@ def test_revealed_picks_from_a_final_week_populate_rival_ledgers_and_an_open_wee
     # week 3 final counts SF.
     p = payload()
     p["weeks"][2]["status"] = "final"
-    assert pool.ledgers(pool.parse_payload(p))[0] == {"DAL", "KC", "SF"}
+    assert pool.ledgers(parse(p))[0] == {"DAL", "KC", "SF"}
 
 
 def test_ledgers_are_in_entry_index_order_for_the_simulator():
     """`hub.season.pool.simulate` takes `ledgers` in entry order and checks the count
     against `entries`, so the list has to be one per entry, index for index."""
-    state = pool.parse_payload(payload())
+    state = parse(payload())
     got = pool.ledgers(state)
     assert len(got) == len(state.entries)
     assert all(got[e.index] == set(e.used) for e in state.entries)
@@ -298,14 +308,120 @@ def test_the_index_is_stable_under_the_hosts_ordering_but_carries_no_identity():
     p = payload()
     shuffled = copy.deepcopy(p)
     shuffled["entries"] = list(reversed(shuffled["entries"]))
-    a, b = pool.parse_payload(p), pool.parse_payload(shuffled)
+    a, b = parse(p), parse(shuffled)
     assert [e.used for e in a.entries] == [e.used for e in b.entries]
+
+
+# --- our own entry is index 0, whatever its id --------------------------------------------
+
+def test_our_entry_is_index_0_however_its_id_sorts():
+    """`hub.season.pool.simulate` takes our Ledger at index 0. Member E's id sorts last in
+    the fixture; named as ours, it is index 0 and Member A moves off it."""
+    state = parse(payload(), ours="ent-8845")
+    assert state.entries[0].index == 0 and state.entries[0].used == ()
+    assert [e.used for e in state.entries][1:] == [("DAL", "KC"), ("BUF", "PHI"), ("NYG",),
+                                                    ("DAL", "KC")]
+    assert pool.ledgers(state)[0] == set()
+
+
+def test_our_id_absent_from_the_entries_is_refused_before_anything_is_written(
+        store, session, transport, monkeypatch, capsys):
+    monkeypatch.setenv(pool.ENTRY_ENV, "ent-0000")
+    with pytest.raises(ContractViolation, match=pool.ENTRY_ENV) as e:
+        parse(payload(), ours="ent-0000")
+    _no_secret_in(str(e.value), "the refusal")
+    transport()
+    assert pool.main(["--refresh", "--store", str(store)]) != 0
+    assert not list(store.glob("**/*")), "a refused payload wrote something"
+    err = capsys.readouterr().err
+    assert pool.ENTRY_ENV in err
+    _no_secret_in(err, "stderr")
+
+
+def test_an_unset_entry_id_serves_the_last_known_state_and_names_the_variable(
+        store, session, transport, monkeypatch, capsys):
+    transport()
+    assert pool.main(["--refresh", "--store", str(store)]) == 0
+    capsys.readouterr()
+    monkeypatch.delenv(pool.ENTRY_ENV)
+    calls = transport()
+    assert pool.main(["--refresh", "--store", str(store)]) == 0
+    assert calls == [], "no entry id, and the host was asked anyway"
+    err = capsys.readouterr().err
+    assert pool.ENTRY_ENV in err and "last-known" in err
+
+
+# --- the index survives a membership change ------------------------------------------------
+
+def test_a_surviving_entry_keeps_its_index_when_another_is_dropped(
+        store, session, transport, capsys):
+    """Refresh, then refresh again with Member C gone from the payload. Every entry still
+    there keeps the index it had, C's index is never handed to anybody, and a newcomer
+    takes the next free one."""
+    transport()
+    assert pool.main(["--refresh", "--store", str(store)]) == 0
+    first = pool.read_state(store)
+    assert first is not None
+    before = {e.index: e.used for e in first.entries}
+    assert sorted(before) == [0, 1, 2, 3, 4]
+
+    later = payload()
+    later["entries"] = [e for e in later["entries"] if e["id"] != "ent-8843"]
+    later["entries"].append({"id": "ent-9999", "name": "Member F", "alive": True,
+                             "picks": [{"week": 1, "team": "MIA", "result": "win"}]})
+    transport(body=later)
+    assert pool.main(["--refresh", "--store", str(store)]) == 0
+    second = pool.read_state(store)
+    assert second is not None
+    after = {e.index: e.used for e in second.entries}
+    assert 2 not in after, "the dropped entry's index was reused"
+    assert after[5] == ("MIA",), "the newcomer did not take the next free index"
+    for i in (0, 1, 3, 4):
+        assert after[i] == before[i], f"entry {i} moved"
+    assert "5 entries" in capsys.readouterr().out
+
+
+def test_the_index_map_holds_hashes_and_never_a_raw_id_or_a_name(store, session, transport):
+    transport()
+    assert pool.main(["--refresh", "--store", str(store)]) == 0
+    path = pool.index_map_path(store)
+    assert path.exists()
+    text = path.read_text()
+    for member in ("ent-884", "Member", OURS):
+        assert member not in text, f"{member!r} reached the index map"
+    doc = json.loads(text)
+    assert all(len(k) == 64 and int(k, 16) >= 0 for k in doc), "keys are not sha256 hex"
+    assert sorted(doc.values()) == [0, 1, 2, 3, 4]
+    assert doc[pool.entry_key(OURS)] == 0
+
+
+def test_the_index_map_is_append_only(store):
+    """An index once assigned is never changed and never dropped, whoever is in the payload
+    this week: a rewrite that lost a row would hand the next newcomer a rival's Ledger."""
+    _, index_map = pool.parse_payload(payload(), ours=OURS)
+    pool.write_index_map(index_map, store)
+    smaller = dict(list(index_map.items())[:2])
+    pool.write_index_map(smaller, store)
+    assert pool.read_index_map(store) == index_map
+    moved = dict(index_map)
+    moved[pool.entry_key("ent-8842")] = 9
+    with pytest.raises(ContractViolation, match="already"):
+        pool.write_index_map(moved, store)
+
+
+def test_a_map_built_for_another_entry_id_is_refused_rather_than_moved():
+    """Index 0 is ours by construction. A map that has somebody else there, or has our id
+    somewhere else, was built under a different `POOL_ENTRY_ID` and is refused rather than
+    quietly renumbered around."""
+    _, index_map = pool.parse_payload(payload(), ours=OURS)
+    with pytest.raises(ContractViolation, match="index 0"):
+        pool.parse_payload(payload(), ours="ent-8842", index_map=index_map)
 
 
 # --- the shape stored, and the entry point around it ---------------------------------------
 
 def test_the_stored_state_reads_back_as_it_was_written(store):
-    state = pool.parse_payload(payload())
+    state = parse(payload())
     pool.write_state(state, store)
     assert pool.read_state(store) == state
 
@@ -313,7 +429,7 @@ def test_the_stored_state_reads_back_as_it_was_written(store):
 def test_a_stored_state_is_validated_by_the_contract_on_the_way_out(store):
     """`read_state` refuses a file that has drifted from the declared shape rather than
     serving it as last-known: a partial cache is the one thing worse than none."""
-    pool.write_state(pool.parse_payload(payload()), store)
+    pool.write_state(parse(payload()), store)
     path = next(store.rglob("*.json"))
     doc = json.loads(path.read_text())
     del doc["entries"][0]["used"]
@@ -328,18 +444,27 @@ def test_a_field_of_the_wrong_kind_is_refused_by_name():
     p = payload()
     p["entries"][0]["alive"] = "yes"
     with pytest.raises(ContractViolation, match=r"entries\[0\].alive is str, expected bool"):
-        pool.parse_payload(p)
+        parse(p)
     p = payload()
     p["pool"]["pot"] = True
     with pytest.raises(ContractViolation, match=r"pool\.pot is bool"):
-        pool.parse_payload(p)
+        parse(p)
+
+
+def test_an_entry_id_listed_twice_is_refused():
+    """Two entries under one id could not both be numbered, and the second would silently
+    take the first's index."""
+    p = payload()
+    p["entries"][1]["id"] = p["entries"][2]["id"]
+    with pytest.raises(ContractViolation, match="listed twice"):
+        parse(p)
 
 
 def test_a_week_described_twice_is_refused():
     p = payload()
     p["weeks"].append({"week": 2, "status": "open"})
     with pytest.raises(ContractViolation, match="week 2 is described twice"):
-        pool.parse_payload(p)
+        parse(p)
 
 
 def test_the_cookie_name_comes_from_the_environment_with_a_stated_default(monkeypatch):
@@ -377,12 +502,13 @@ def test_a_season_other_than_the_one_asked_for_is_refused():
     """A stale URL pointing at last year's pool would otherwise write last year's field as
     this year's state."""
     with pytest.raises(ContractViolation, match="2025"):
-        pool.parse_payload(payload(), season=2025)
+        parse(payload(), season=2025)
 
 
-def test_a_saved_payload_file_is_ingested_offline(store, tmp_path, capsys):
+def test_a_saved_payload_file_is_ingested_offline(store, tmp_path, session, monkeypatch, capsys):
     """The first live run's escape hatch: a payload saved from the browser is read from
     disk, spends nothing, needs no cookie, and lands in the store as a refresh would."""
+    monkeypatch.delenv(pool.SESSION_ENV)
     f = tmp_path / "payload.json"
     f.write_text(json.dumps(payload()))
     assert pool.main(["--payload", str(f), "--store", str(store)]) == 0
