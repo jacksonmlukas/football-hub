@@ -528,11 +528,10 @@ def test_the_panel_is_one_row_per_player_season_week(monkeypatch, tmp_path):
     ("player_stats", "player_display_name"),
     ("ff_opportunity", "full_name"),
     ("ff_rankings", "player"),
-    pytest.param("snap_counts", "player", marks=pytest.mark.xfail(
-        strict=True, reason="#234: the first `--write` matched the cohort by display name and "
-        "PFR spells `Michael Pittman Jr.` with the suffix, so his 25 snap rows are absent until "
-        "the archive is re-taken with the corrected rule. Strict: the re-take makes this pass, "
-        "and then this marker comes off.")),
+    # Was a strict xfail while the first `--write` had matched the cohort by display name
+    # and left Michael Pittman Jr.'s 25 snap rows out; re-taken 2026-09-11 with the corrected
+    # rule and the marker came off (#234).
+    ("snap_counts", "player"),
 ])
 def test_every_cohort_player_reaches_every_per_player_capture(source, name_col):
     """The archive's cohort is sixteen players in every source that names players, on the key
