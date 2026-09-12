@@ -53,7 +53,7 @@ def _is_local(address: object) -> bool:
 
 
 @pytest.fixture(autouse=True)
-def _the_suite_stays_offline(request, monkeypatch):
+def _the_suite_stays_offline(request, monkeypatch, tmp_path_factory):
     """Every test that is not `golden` runs with the wire cut, and the attempt is recorded.
 
     **Raising is not enough on its own, and that is the whole design here.** This repo
@@ -90,6 +90,15 @@ def _the_suite_stays_offline(request, monkeypatch):
 
     monkeypatch.setattr(socket.socket, "connect", refuse(real_connect))
     monkeypatch.setattr(socket.socket, "connect_ex", refuse(real_connect_ex))
+    # The quarterback ratings' cache (#218) is read by every rating a test builds without
+    # naming a cache -- `survivor.grid_from_schedule(2026, base=tmp_path)` is the usual
+    # shape -- and its default is the developer's own `data/raw/nfeloqb/`. The day a live
+    # pull lands there, every such test would start rating from it and a dozen assertions
+    # about the passthrough would move for a reason no test states. So the default points at
+    # an empty directory here, for the reason `test_cli_surface.a_fresh_clone` redirects
+    # `nflverse.RAW`: a test that wants the state writes it where its own `cache` points.
+    from hub.fetch import nfeloqb
+    monkeypatch.setattr(nfeloqb, "RAW", tmp_path_factory.mktemp("nfeloqb-default"))
     yield
     if reached:
         pytest.fail(

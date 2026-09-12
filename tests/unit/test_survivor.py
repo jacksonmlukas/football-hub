@@ -741,3 +741,72 @@ def test_a_grid_with_no_fixture_key_prices_teams_and_draws_nothing():
     f = survivor.week_fixtures(g, [1])[0]
     assert f.pickable == ("KC", "LV") and f.drawable == () and f.half == ()
     assert survivor.coverage(g, [1]).covered == [1]
+
+
+# --- the grid is rated where no live price exists (#218) ----------------------------------
+#
+# The rule is `hub.models.quarterback`'s and the seam is `hub.models.ratings.rated_games`;
+# what is held here is that survivor reads the same seam, so a game the weekly prediction
+# adjusts is the same game, adjusted the same way, in the survivor plan.
+
+def _qb_state(cache):
+    import json
+    from pathlib import Path
+
+    from hub.fetch import nfeloqb
+    rows = json.loads((Path(__file__).resolve().parents[1] / "golden" / "fixtures"
+                       / "nfeloqb_qb_elos.synthetic.json").read_text())
+    cols = list(rows[0])
+    text = "\n".join([",".join(cols)] + [",".join("" if r[c] is None else str(r[c]) for c in cols)
+                                         for r in rows]) + "\n"
+    (cache / "nfeloqb").mkdir(parents=True)
+    (cache / "nfeloqb" / nfeloqb.FILE).write_text(text)
+
+
+def test_a_week_priced_only_by_the_moving_field_is_rated_from_the_quarterback_state(tmp_path,
+                                                                                    monkeypatch):
+    """LV's starter in the fixture is a fresh backup; the game is priced from the moving
+    field, which nothing polls. The away side is worse by 13.2 points less its own gap, and
+    KC's win probability rises to say so. The row carries the adjustment and its source."""
+    import hub.fetch.nflverse as nflverse
+    from hub.models.market import MARGIN_SD, normal_cdf
+    sched = pl.DataFrame({"game_id": ["2026_09_LV_KC"], "season": [2026], "week": [9],
+                          "home_team": ["KC"], "away_team": ["LV"],
+                          "spread_line": [3.0], "result": [None]})
+    monkeypatch.setattr(nflverse, "load", lambda *a, **k: sched)
+    _qb_state(tmp_path / "cache")
+    grid = survivor.grid_from_schedule(2026, cache=tmp_path / "cache",
+                                       at=dt.datetime(2026, 9, 12), base=tmp_path)
+    p = dict(zip(grid["team"].to_list(), grid["win_prob"].to_list(), strict=True))
+    adj = grid.filter(pl.col("team") == "KC")["qb_adjustment"][0]
+    assert adj > 0
+    assert p["KC"] == pytest.approx(normal_cdf((3.0 + adj) / MARGIN_SD))
+    assert grid["adjusted_by"].to_list() == ["nfeloqb", "nfeloqb"]
+
+
+def test_survivor_and_the_weekly_prediction_adjust_a_game_the_same_way(tmp_path, monkeypatch):
+    """The claim the seam exists for, asserted across the two readers."""
+    import hub.fetch.nflverse as nflverse
+    from hub.models import ratings
+    sched = pl.DataFrame({"game_id": ["2026_09_LV_KC"], "season": [2026], "week": [9],
+                          "home_team": ["KC"], "away_team": ["LV"],
+                          "spread_line": [3.0], "result": [None]})
+    monkeypatch.setattr(nflverse, "load", lambda *a, **k: sched)
+    _qb_state(tmp_path / "cache")
+    at = dt.datetime(2026, 9, 12)
+    grid = survivor.grid_from_schedule(2026, cache=tmp_path / "cache", at=at, base=tmp_path)
+    preds = ratings.fit(2026, 9, at=at, base=tmp_path, cache=tmp_path / "cache")
+    home = grid.filter(pl.col("team") == "KC")
+    assert home["win_prob"][0] == pytest.approx(preds["home_win_prob"][0])
+    assert home["qb_adjustment"][0] == pytest.approx(preds["qb_adjustment"][0])
+
+
+def test_the_survivor_cli_reports_the_change_once(capsys, monkeypatch):
+    g = _grid([(1, "A", 0.7), (1, "B", 0.3)]).with_columns(
+        pl.lit("g1").alias("game_id"), pl.lit(3.0).alias("close_spread"),
+        pl.lit(2.5).alias("qb_adjustment"), pl.lit("nfeloqb").alias("adjusted_by"))
+    monkeypatch.setattr(survivor, "grid_from_schedule", lambda season, cache=None: g)
+    assert survivor.main(["--season", "2026", "--weeks", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "quarterback adjustment: 1 of 1 priced games touched" in out
+    assert "2.50 points" in out

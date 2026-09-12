@@ -305,3 +305,49 @@ def test_the_league_column_is_written_by_the_loader_and_not_by_the_argument():
     assert "league" not in aliased, (
         "`priced_games` writes the league column itself. It has to come from the loader that "
         "fetched the rows, or it is the argument talking about the rows again -- issue #174.")
+
+
+# --- how long the snapshot's quote has stood still (#210, read here for #218) -----------
+#
+# `hub.fetch.odds.staleness` measures; this module carries the measurement onto the row so a
+# consumer can declare its threshold. Nothing here decides what "stale" is.
+
+def test_a_snapshot_priced_row_carries_how_long_its_quote_has_stood(sched, tmp_path):
+    sched([("a", 2, 3.0, None)])
+    _snap(tmp_path, 2026, 2, [("a", 6.5)], dt.datetime(2026, 9, 1))
+    _snap(tmp_path, 2026, 2, [("a", 6.5)], dt.datetime(2026, 9, 4))
+    _snap(tmp_path, 2026, 2, [("a", 6.5)], dt.datetime(2026, 9, 8))
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 9), base=tmp_path)
+    assert got["polls_unmoved"].to_list() == [3]
+    assert got["unmoved_since"].to_list() == [dt.datetime(2026, 9, 1)]
+
+
+def test_the_staleness_is_of_the_snapshot_that_priced_the_row_not_of_a_later_one(sched,
+                                                                                tmp_path):
+    """Asked as of the 5th, the row is priced by the 4th's poll and its run is two polls
+    long -- the 8th's poll is the future and must not lengthen it."""
+    sched([("a", 2, 3.0, None)])
+    _snap(tmp_path, 2026, 2, [("a", 6.5)], dt.datetime(2026, 9, 1))
+    _snap(tmp_path, 2026, 2, [("a", 6.5)], dt.datetime(2026, 9, 4))
+    _snap(tmp_path, 2026, 2, [("a", 6.5)], dt.datetime(2026, 9, 8))
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 5), base=tmp_path)
+    assert got["priced_at"].to_list() == [dt.datetime(2026, 9, 4)]
+    assert got["polls_unmoved"].to_list() == [2]
+
+
+def test_a_quote_that_moved_starts_its_run_again(sched, tmp_path):
+    sched([("a", 2, 3.0, None)])
+    _snap(tmp_path, 2026, 2, [("a", 6.5)], dt.datetime(2026, 9, 1))
+    _snap(tmp_path, 2026, 2, [("a", 7.0)], dt.datetime(2026, 9, 4))
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 5), base=tmp_path)
+    assert got["polls_unmoved"].to_list() == [1]
+    assert got["unmoved_since"].to_list() == [dt.datetime(2026, 9, 4)]
+
+
+def test_a_row_priced_from_the_moving_field_carries_no_staleness(sched, tmp_path):
+    """Nothing polls the schedule's field, so there is no run to measure: null, not zero."""
+    sched([("a", 2, 3.0, None)])
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 5), base=tmp_path)
+    assert got["price_source"].to_list() == ["schedule"]
+    assert got["polls_unmoved"].to_list() == [None]
+    assert got["unmoved_since"].to_list() == [None]

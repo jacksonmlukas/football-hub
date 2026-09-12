@@ -12,6 +12,16 @@ something that works rather than construction against a gap.
 a model that has learned something. Track A -- the Bayesian state-space ratings -- replaces
 what `forecaster()` returns and nothing else.
 
+**One exception, since #218, and it is narrow on purpose.** Where the staleness field (#210)
+marks a game as having no live price -- a snapshot quote that has stood untouched for more
+than `hub.models.quarterback.STALE_AFTER_DAYS`, or the moving field that nothing polls -- the
+number handed to the forecaster is quarterback-adjusted from `hub.fetch.nfeloqb`'s published
+state, and the row says so: `adjusted_by` and `qb_adjustment` are filled, and the version
+string gains `-qb`. Where a live price exists the row is what it always was, byte for byte.
+`rated_games` is the seam, and it is shared with `hub.season.survivor` so the two cannot
+disagree about a game they both rate. `docs/qb-adjustment.md` is the validation that licenses
+this and no more.
+
 **What this module is, and what it is not.** It is the *writer*: it decides which week may
 be predicted, stamps provenance, and files partitions. It is not a model, and it no longer
 does a model's job by hand -- fitting, predicting and checking are `hub.models.base.forecast`
@@ -27,7 +37,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -35,6 +45,9 @@ import polars as pl
 
 from hub import schedule, store
 from hub.config import SEASON_AHEAD, config_digest
+from hub.contracts import ContractViolation
+from hub.fetch import nfeloqb
+from hub.models import quarterback
 from hub.models.base import FitSpec, Forecaster, forecast
 from hub.models.market import MarketBaseline
 
@@ -92,6 +105,53 @@ def forecaster() -> Forecaster:
     return MarketBaseline()
 
 
+def quarterback_state(cache: Path | None) -> tuple[pl.DataFrame | None, str]:
+    """`hub.fetch.nfeloqb`'s per-team state off its cache, and one sentence about it.
+
+    `cache` is the nflverse cache root a fit was given, and the nfeloqb file is looked for
+    under it -- `<cache>/nfeloqb/` -- so a test that redirects one redirects both and a
+    developer's own `data/raw/nfeloqb/` cannot reach a test through the default. With no
+    cache given, the module's own default.
+
+    Three answers, and the sentence says which: a state, no file (a fresh clone, or a pull
+    that has never run), or a file the contract refused. The last two both mean the
+    passthrough, and neither is an error -- CLAUDE.md's rule is that a missing fetch serves
+    what can be served, and what can be served here is the betting market's number as it was.
+    """
+    where = None if cache is None else cache / "nfeloqb"
+    try:
+        state = nfeloqb.read_state(where)
+    except ContractViolation as e:
+        return None, f"the cached nfeloqb file was refused, so no rating moved: {e}"
+    if state is None:
+        return None, "no nfeloqb file cached, so no rating moved (hub.fetch.nfeloqb --refresh)"
+    return state, f"nfeloqb state for {state.height} teams, pulled {nfeloqb.captured_at(where)}"
+
+
+def rated_games(season: int, *, at: datetime | None = None, cache: Path | None = None,
+                base: Path | None = None) -> tuple[pl.DataFrame, str]:
+    """The season's games as this module rates them, and one sentence about the state used.
+
+    `hub.schedule.priced_games` with `hub.models.quarterback.apply` over it: every game
+    priced from the betting market where a live price exists, and quarterback-adjusted where
+    the staleness field marks none. The one seam for both readers -- the weekly fit below and
+    `hub.season.survivor.grid_from_schedule` -- for the reason `hub.schedule` exists at all:
+    two readers of one rule, so they cannot disagree about the same game.
+
+    `at` defaults to now, naive UTC, the way `priced_games` defaults it, and the same moment
+    decides both which snapshot priced a game and how long that quote had stood.
+    """
+    moment = at or datetime.now(UTC).replace(tzinfo=None)
+    games = schedule.priced_games(season, at=moment, cache=cache, base=base)
+    state, said = quarterback_state(cache)
+    if state is not None and (unknown := nfeloqb.unknown_teams(state, games)):
+        # A spelling the source uses and nflverse does not is a team that never adjusts,
+        # and nothing downstream would say so. See `nfeloqb.ABBREVIATIONS`.
+        said += (f"; {len(unknown)} team(s) in the state match no game and never adjust: "
+                 f"{', '.join(unknown)} -- a spelling nfeloqb.ABBREVIATIONS does not map?")
+    return quarterback.apply(games, state, at=moment), said
+
+
 def _with_committed(part: pl.DataFrame, season: int, week: int, name: str,
                     base: Path | None) -> pl.DataFrame:
     """This run's predictions, plus any already committed for a game it can no longer make.
@@ -119,7 +179,7 @@ def _with_committed(part: pl.DataFrame, season: int, week: int, name: str,
 def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | None = None,
         base: Path | None = None, at: datetime | None = None) -> pl.DataFrame:
     """Pick a week, drive a `Forecaster` through `base.forecast`, write the rows it checked."""
-    games = schedule.priced_games(season, at=at, cache=cache, base=base)
+    games, qb_said = rated_games(season, at=at, cache=cache, base=base)
     wk = week if week is not None else target_week(games, at)
 
     # Fit through the week before the one being predicted. The gap is the leakage
@@ -157,9 +217,14 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
     # `preds` and duplicate every game in the published artifact. The pre-registration that
     # `docs/track-record.md` rule 1 counts is the *commit*, not this timestamp, so replacing
     # it costs the record nothing.
-    for src in sorted(set(preds["price_source"].to_list())):
-        part = preds.filter(pl.col("price_source") == src)
-        name = f"{part['version'][0]}-{digest}"
+    #
+    # By version rather than by `price_source`, since #218: the version carries the source
+    # *and* whether the quarterback layer moved the row, and a partition of one source can
+    # hold both kinds -- a frozen quote beside a fresh one. Before #218 the two keys were the
+    # same partition, so nothing already written is filed differently.
+    for ver in sorted(set(preds["version"].to_list())):
+        part = preds.filter(pl.col("version") == ver)
+        name = f"{ver}-{digest}"
         store.write(_with_committed(part, season, wk, name, base), "preds", "nfl", season, wk,
                     base=base, name=name, replace=True)
 
@@ -177,6 +242,11 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
     # and not what this module used to import.
     print(f"    model={model.name} version={model.version}"
           f" fit_through_week={spec.through_week}")
+    # #218's last criterion: the change to the published numbers, said once per run, with
+    # the count of games it touched. Off the slate that was predicted, so the line is about
+    # what this run wrote and not about the season.
+    print(f"    {quarterback.report_line(slate)}")
+    print(f"    {qb_said}")
     return preds
 
 

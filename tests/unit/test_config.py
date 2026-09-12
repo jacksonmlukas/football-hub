@@ -904,8 +904,18 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
 
     The one escape that is not closed is stated in `FITTED_EXTRA`'s comment: `n_draft_sims`
     and `n_season_sims` are function-signature defaults, so there is no name to register.
+
+    **Moved again 2026-09-12 (#218): `e3d549ab` -> `08ceee28`**, `fitted_digest` `0df8d593`
+    -> `90a4b5de`. A new module, `hub.models.quarterback`, registered wholesale. Its three
+    numbers -- 0.132 spread points per quarterback value unit, 0.9 of the relative gap kept
+    per game of a starter's tenure, and 7 days before a snapshot quote stops being a live
+    price -- are **stated choices with their provenance beside them, not fitted constants**,
+    and they are in the digest anyway, for `FLEX_SHARES`'s reason: coverage is owed by
+    anything that changes a prediction, measured or not. Every game the staleness field
+    marks as having no live price is now rated differently from the run before this commit,
+    and a digest that did not move would be claiming those two runs were the same model.
     """
-    assert config_digest(HubConfig()) == "e3d549ab"
+    assert config_digest(HubConfig()) == "08ceee28"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

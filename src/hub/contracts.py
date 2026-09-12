@@ -723,6 +723,45 @@ POOL_STATE = Contract(
     verified_against_live=False,
 )
 
+# The published quarterback ratings `hub.fetch.nfeloqb` reads (#218): `greerreNFL/nfeloqb`
+# runs 538's quarterback-Elo method on nflfastR data and publishes one row per game in 538's
+# own `qb_elo` schema, both teams on the row. This declares the twelve columns the reader
+# walks and no more; the file carries thirty-odd and the rest are neither read nor bounded.
+#
+# The two `_adj` columns are the source's own quarterback adjustment in Elo points --
+# 3.3 x (the starter's value minus the team's rolling quarterback value) -- and are what the
+# team layer subtracts back out to learn what the team rating already embeds. `_value_pre`
+# is the starter's rolling value going into the game. A quarterback value is a per-game
+# box-score metric that runs about 40 to 120 on a rolling basis, so [-200, 400] refuses a
+# units change (an Elo written into a value column reads 1500) without refusing a bad
+# month; an adjustment past +/-500 Elo is twenty spread points and no starter is worth that.
+#
+# Scores are nullable on purpose: the file lists the coming week's games with their expected
+# starters and no result, and that unplayed row is the one row the team layer most wants --
+# it is where a backup is first named. `season` is bounded from 1920 because 538's file ran
+# from there and nfeloqb's from 1999; the ceiling is the same one every season column has.
+NFELOQB = Contract(
+    name="nfeloqb_qb_elos",
+    required={"date": pl.Utf8, "season": pl.Int64, "team1": pl.Utf8, "team2": pl.Utf8,
+              "qb1": pl.Utf8, "qb2": pl.Utf8,
+              "qb1_value_pre": pl.Float64, "qb2_value_pre": pl.Float64,
+              "qb1_adj": pl.Float64, "qb2_adj": pl.Float64,
+              "score1": pl.Int64, "score2": pl.Int64},
+    non_null=("date", "season", "team1", "team2", "qb1", "qb2",
+              "qb1_value_pre", "qb2_value_pre", "qb1_adj", "qb2_adj"),
+    no_nan=("qb1_value_pre", "qb2_value_pre", "qb1_adj", "qb2_adj"),
+    ranges={"season": (1920, 2100),
+            "qb1_value_pre": (-200, 400), "qb2_value_pre": (-200, 400),
+            "qb1_adj": (-500, 500), "qb2_adj": (-500, 500),
+            "score1": (0, 120), "score2": (0, 120)},
+    min_rows=1,
+    # Checked against `nfeloqb_qb_elos.synthetic.json`, hand-built in 538's published
+    # schema: no pull of the file has been made from this repo, and the test harness
+    # refuses the network. See `verified_against_live`, and the module docstring of
+    # `hub.fetch.nfeloqb` for what the first live pull must confirm.
+    verified_against_live=False,
+)
+
 # Two markets and their prices, since #211. The four number columns are two pairs and the
 # pairing is the declaration: a point without the price beside it says -7 at -120 and -7 at
 # -105 are the same fact, and they are not the same price.

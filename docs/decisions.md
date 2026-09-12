@@ -90,6 +90,17 @@ Still needed before Week 1: whether one loss eliminates, and whether rivals' pic
 outstanding; under straight-up or against-the-spread the market baseline is already the play and
 nothing needs building, and only confidence points would require work.
 
+**One thing the survivor grid does that the market baseline does not (2026-09-12, #218).**
+Where the staleness field marks a game as having no live price — a snapshot quote untouched
+for more than seven days, or the moving field — the spread it converts is quarterback-adjusted
+from `greerreNFL/nfeloqb`'s published ratings, relative to what the team rating already embeds
+and decaying at 10% a game of the starter's tenure. Where a live price exists nothing changes.
+The validation that licenses this and no more is [qb-adjustment.md](qb-adjustment.md): +0.0057
+Brier on 538's own two columns over 2013–2022, positive in 9 of 10 seasons. It is not a claim
+of an edge over the betting market; it is a claim about weeks the betting market has not
+priced yet. The weekly prediction reads the same seam (`hub.models.ratings.rated_games`), so
+the two cannot disagree about a game.
+
 ### The deep-simulation programme is objective 2, not objective 1
 
 The stated vision — simulate every fantasy-relevant statistic for every game, down to offensive

@@ -64,6 +64,34 @@ can be shown afterwards and one priced from a moving field can only be asserted.
 predictions that agree on the number and differ here are different artifacts.
 _Avoid_: line source, provenance alone.
 
+**Live price**:
+A **Snapshot** whose quote has stood unmoved for less than
+`hub.models.quarterback.STALE_AFTER_DAYS` — seven days — at the moment asked. The two
+staleness columns `hub.fetch.odds` derives, `polls_unmoved` and `unmoved_since`, measure;
+"live" is the threshold a consumer declares over them, and this is the one consumer. What is
+not a live price: a snapshot that has stood longer (#210 measured every week from 2 out at the
+full twelve days of the archive), the moving field (nothing polls it, so nothing can show it
+is), and an unpriced game. **Ratings** change nothing where a live price exists.
+
+**Ratings**:
+The number the weekly prediction and the survivor grid are built from, and the module that
+writes the first (`hub.models.ratings`). A passthrough of the betting market's spread where a
+**Live price** exists, and where none does, since #218, that spread moved by the
+**Quarterback adjustment**; `rated_games` is the one seam both readers take, so they cannot
+disagree about a game. Not a model with an edge — rows carry `market_baseline`'s own name.
+
+**Quarterback adjustment**:
+This quarterback's value minus what the team rating already embeds, in spread points, decaying
+at 10% per game of his tenure as the starter — so it sits near zero for an established
+starter, is the full gap for a backup named this week, and is nearly gone for one thirty
+starts in. Consumed from `greerreNFL/nfeloqb`'s published ratings through `hub.fetch.nfeloqb`,
+never refitted here; 0.132 points per value unit is a stated choice, not a fit. Applied only
+where there is no **Live price**, and the row says so: `adjusted_by`, `qb_adjustment`, and
+`-qb` on the version string. Validated before it was built:
+[qb-adjustment.md](docs/qb-adjustment.md), +0.0057 Brier on 538's own columns.
+_Avoid_: QB Elo (the source's quantity, in Elo points; the adjustment here is in spread
+points and relative to the team), QB rating (a passer rating is a different statistic).
+
 **Edge**:
 Consensus rank minus draft-market pick, on a common scale. Positive means your leaguemates,
 drafting off ESPN's board, will let this player fall past his consensus value. Displayed and

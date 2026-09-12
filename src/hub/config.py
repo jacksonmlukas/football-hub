@@ -318,6 +318,7 @@ FITTED_MODULES: tuple[str, ...] = (
     "hub.models.predict",
     "hub.models.market",
     "hub.models.volume",
+    "hub.models.quarterback",
     "hub.draft.availability",
     "hub.draft.durability",
     "hub.draft.regression",
@@ -418,6 +419,13 @@ NOT_IN_DIGEST: dict[str, str] = {
     "components.YARDS_PER_UNIT": "no points prediction reads it; props.version() carries it",
     "components.COUNT_DISPERSION": "no points prediction reads it; props.version() carries it",
     "components.TD_DISPERSION": "no points prediction reads it; props.version() carries it",
+    # `hub.models.quarterback` (#218) is registered wholesale for its three numbers. These
+    # two are the names of the columns it writes and the label it writes in one of them:
+    # renaming a column moves no rating, and a digest that moved on a rename would be a
+    # version claiming a difference that does not exist -- ADR-0006's objection from the
+    # other side, the one `cohort:ROUNDS` is kept for.
+    "quarterback.ADJUSTMENT_COLUMNS": "column names; no number a prediction reads",
+    "quarterback.SOURCE": "the provenance label written into `adjusted_by`; not a number",
     # The four in `hub.models.predict` that #187 and #201 argued about. Each was out of the
     # digest before only because someone spelled it with a leading underscore; each is out of
     # it now because of what it is, and the claim is here to be checked.

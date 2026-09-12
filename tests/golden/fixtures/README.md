@@ -47,6 +47,7 @@ sentence stop agreeing.
 | `odds_spreads.synthetic.json` | **Hand-built** from The Odds API's documented response shape |
 | `bigten_captures.synthetic.json` | **Hand-built** index of `hub.fetch.bigten`'s own archive: the 2026 page held no report on 2026-09-11, so nothing existed to capture — see below |
 | `pool_payload.synthetic.json` | **Hand-built** payload of the shape `hub.fetch.pool` assumes the pool host returns: the shape is documented nowhere in this repo and no `POOL_SESSION` exists on this machine — see below |
+| `nfeloqb_qb_elos.synthetic.json` | **Hand-built** rows in 538's published `qb_elo` schema, the shape `hub.fetch.nfeloqb` assumes `greerreNFL/nfeloqb`'s `qb_elos.csv` carries: no pull has been made from this repo — see below |
 
 **The Big Ten index is hand-built for a different reason.** `bigten_captures.synthetic.json`
 describes a shape this repo writes rather than one a third party returns, so a "real capture"
@@ -65,6 +66,17 @@ placeholder before committing (other members are real people), keep it under a n
 `.synthetic`, and flip `POOL_STATE.verified_against_live`. Beside the state the module keeps
 `pool_entries.json`, an append-only map from `sha256(host id)` to index: a hash of an opaque
 id, not a member's name, kept only so an index is never reused when the field changes.
+
+**The nfeloqb rows are hand-built because the suite refuses the network, not because a key
+is missing.** The file is public and unmetered; what has never happened is a pull from this
+repo. The rows are JSON where the source is CSV -- the resolver in
+`tests/contracts/test_every_contract_is_applied.py` reads `.json` fixtures only, and the
+reader's own test (`tests/unit/test_fetch_nfeloqb.py`) serialises these same rows back to CSV
+to drive the parser. The module docstring of `hub.fetch.nfeloqb` lists what the first live pull
+must confirm: the URL, the column names, that the coming week is listed with expected starters
+and null scores, and the team abbreviations. The first real pull replaces it: keep the first
+few hundred rows of `data/raw/nfeloqb/qb_elos.csv` here as JSON under a name without
+`.synthetic`, and flip `NFELOQB.verified_against_live`.
 
 The `.synthetic` suffix is not decoration. Those three were written by hand because no
 `CFBD_API_KEY` or `ODDS_API_KEY` exists on this machine, so **they prove our parser handles

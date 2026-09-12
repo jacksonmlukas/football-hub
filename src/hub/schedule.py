@@ -46,7 +46,7 @@ from zoneinfo import ZoneInfo
 import polars as pl
 
 from hub import store
-from hub.fetch import nflverse
+from hub.fetch import nflverse, odds
 
 ET = ZoneInfo("America/New_York")
 
@@ -180,6 +180,14 @@ def priced_games(season: int, *, at: datetime | None = None, cache: Path | None 
     moment = at or datetime.now(UTC).replace(tzinfo=None)
     snaps = store.lines_as_of(moment, season, slate.league, base=base).rename(
         {"close_spread": "snapshot_spread", "captured_at": "priced_at"})
+    # How long the snapshot's quote had stood still at `moment` (#210), carried onto the row
+    # for the consumer that has to say at what age a quote stops being a live price --
+    # `hub.models.quarterback` since #218. Joined on the capture that priced the row, so
+    # the two columns describe that poll and not a later one. Null on a row the moving
+    # field priced: nothing polls that field, so there is no run to measure.
+    stale = odds.staleness_as_of(moment, season, base)
+    snaps = snaps.join(stale, left_on=["game_id", "priced_at"],
+                       right_on=["game_id", "captured_at"], how="left")
     return (games.join(snaps, on="game_id", how="left")
                  .with_columns(
                      pl.coalesce("snapshot_spread", "schedule_spread").alias("close_spread"),

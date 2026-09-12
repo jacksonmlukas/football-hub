@@ -102,6 +102,17 @@ class MarketBaseline:
             provenance = [source.alias("price_source")]
             if "priced_at" in priced.columns:
                 provenance.append(pl.col("priced_at").cast(pl.Datetime))
+            # A spread the quarterback layer moved (#218) is not the passthrough of the
+            # number it was moved from, and the version says so on exactly those rows:
+            # `-qb` is appended where `adjusted_by` names a source and nowhere else, so a
+            # row a live price protected carries the string it always did. The two columns
+            # ride along, null on the protected rows, which is how a reader tells "not
+            # adjusted" from "adjusted by nothing".
+            if "adjusted_by" in priced.columns:
+                version = pl.when(pl.col("adjusted_by").is_not_null()) \
+                            .then(pl.format("{}-qb", version)).otherwise(version)
+                provenance += [pl.col("qb_adjustment").cast(pl.Float64),
+                               pl.col("adjusted_by").cast(pl.Utf8)]
         else:
             version, provenance = pl.lit(self.version), []
 

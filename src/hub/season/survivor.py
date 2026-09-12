@@ -483,11 +483,15 @@ def grid_from_schedule(season: int, cache: Path | None = None, *,
 
     The spread-to-probability conversion is `MarketBaseline`'s, so a survivor pick and a
     weekly prediction cannot disagree about a game they both price. And the *spread* is
-    `hub.schedule`'s, so they cannot disagree about which number that is either -- which
-    they did, for a day: the weekly prediction moved onto the dated snapshots and this was
-    left reading nflverse's own field, which upstream leaves empty for the late season. That
-    planned twelve of eighteen weeks and reported the rest unpriced while the store held
-    every game of the season, week 18 included.
+    `hub.models.ratings.rated_games`'s -- `hub.schedule`'s number, quarterback-adjusted
+    where the staleness field marks no live price (#218) -- so they cannot disagree about
+    which number that is either. They did, for a day: the weekly prediction moved onto the
+    dated snapshots and this was left reading nflverse's own field, which upstream leaves
+    empty for the late season. That planned twelve of eighteen weeks and reported the rest
+    unpriced while the store held every game of the season, week 18 included. The survivor
+    horizon is where the adjustment matters most: for most of it the betting market's
+    number is a posted lookahead that no news has touched, and a starter ruled out in
+    October reaches a week-14 pick through nothing else.
 
     Spending a team early costs you that team later, so a plan over twelve weeks followed by
     a plan over the remaining six, with the best teams already gone, is strictly worse than
@@ -499,10 +503,15 @@ def grid_from_schedule(season: int, cache: Path | None = None, *,
     Each row also carries the `game_id` it came from. Nothing reads it yet: it is here so
     that a week taking two picks can be stopped from taking both sides of one fixture, which
     is unreachable while a week takes one pick and guaranteed fatal once it takes two.
+
+    And since #218 each row carries the game's `close_spread` (the home side's, as rated),
+    `qb_adjustment` and `adjusted_by`, so the CLI can say once what the adjustment did to
+    the season it planned -- `hub.models.quarterback.report_line` reads exactly those three.
     """
+    from hub.models import ratings
     from hub.models.market import MARGIN_SD, normal_cdf
 
-    games = schedule.priced_games(season, at=at, cache=cache, base=base)
+    games, _ = ratings.rated_games(season, at=at, cache=cache, base=base)
     rows = []
     for r in games.filter(pl.col("close_spread").is_not_null()).iter_rows(named=True):
         # close_spread is positive when the home team is favoured, both sources alike.
@@ -524,17 +533,24 @@ def grid_from_schedule(season: int, cache: Path | None = None, *,
         # rather than a key assembled here, because `hub.schedule` already carries it and a
         # second spelling of one identifier is the drift this module keeps being bitten by.
         gid = r["game_id"]
-        rows.append((int(r["week"]), r["home_team"], home_p, moving, kick, res, gid))
-        rows.append((int(r["week"]), r["away_team"], 1.0 - home_p, moving, kick, res, gid))
+        rated = (float(r["close_spread"]), r.get("qb_adjustment"), r.get("adjusted_by"))
+        rows.append((int(r["week"]), r["home_team"], home_p, moving, kick, res, gid, *rated))
+        rows.append((int(r["week"]), r["away_team"], 1.0 - home_p, moving, kick, res, gid,
+                     *rated))
     return pl.DataFrame({"week": [r[0] for r in rows], "team": [r[1] for r in rows],
                          "win_prob": [r[2] for r in rows],
                          "moving_field": [r[3] for r in rows],
                          "kickoff": [r[4] for r in rows],
                          "result": [r[5] for r in rows],
-                         "game_id": [r[6] for r in rows]},
+                         "game_id": [r[6] for r in rows],
+                         "close_spread": [r[7] for r in rows],
+                         "qb_adjustment": [r[8] for r in rows],
+                         "adjusted_by": [r[9] for r in rows]},
                         schema={"week": pl.Int64, "team": pl.Utf8, "win_prob": pl.Float64,
                                 "moving_field": pl.Boolean, "kickoff": pl.Datetime,
-                                "result": pl.Float64, "game_id": pl.Utf8})
+                                "result": pl.Float64, "game_id": pl.Utf8,
+                                "close_spread": pl.Float64, "qb_adjustment": pl.Float64,
+                                "adjusted_by": pl.Utf8})
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -573,6 +589,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     wk_n = got.picks["week"].n_unique()
     print(f"  survives the {wk_n} planned weeks "
           f"({got.picks.height} picks): {got.survival:.1%}")
+    # #218's last criterion, for the survivor numbers: once, over the games the grid holds
+    # -- one row per game rather than per side, so a game is counted once.
+    if "adjusted_by" in grid.columns and "game_id" in grid.columns:
+        from hub.models import quarterback
+        print(f"  {quarterback.report_line(grid.unique(subset=['game_id'], keep='first'))}")
     # What the snapshot store actually buys, said out loud. These are the weeks nflverse's
     # lookahead field does not price, and the difference between a season plan and most of
     # one -- a team spent in week 3 is unavailable in week 17 whether or not this plan could

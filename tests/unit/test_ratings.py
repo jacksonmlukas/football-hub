@@ -308,3 +308,109 @@ def test_the_later_run_still_refreshes_what_it_may(sched, tmp_path):
     is_ = dict(zip(now["game_id"].to_list(), now["predicted_at"].to_list(), strict=True))
     assert is_["thu"] == was["thu"], "a started game keeps the prediction it was committed with"
     assert is_["sun"] >= was["sun"], "an unstarted game is re-priced"
+
+
+# --- the quarterback adjustment reaches the row only where no live price exists (#218) ------
+#
+# The rule itself -- relative, decaying, which rows it may touch -- is `hub.models.quarterback`'s
+# and is tested beside it. What is asserted here is that the writer routes the slate through
+# it, that the row and the version say so, and that a live price is left as it was.
+
+def _qb_state(cache):
+    """The hand-built nfeloqb file, cached where the fit looks for it."""
+    import json
+    from pathlib import Path
+
+    from hub.fetch import nfeloqb
+    rows = json.loads((Path(__file__).resolve().parents[1] / "golden" / "fixtures"
+                       / "nfeloqb_qb_elos.synthetic.json").read_text())
+    cols = list(rows[0])
+    text = "\n".join([",".join(cols)] + [",".join("" if r[c] is None else str(r[c]) for c in cols)
+                                         for r in rows]) + "\n"
+    (cache / "nfeloqb").mkdir(parents=True)
+    (cache / "nfeloqb" / nfeloqb.FILE).write_text(text)
+
+
+def test_a_frozen_quote_is_rated_from_the_quarterback_state_and_the_row_says_so(sched,
+                                                                                tmp_path):
+    """Two games, one snapshot each. `b`'s quote was polled an hour before the fit and is
+    live; `c`'s has stood untouched for three weeks and is not. LV's starter in the fixture
+    is a fresh backup, so `c` moves and `b` does not."""
+    sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None, "KC", "LAC"), ("c", 2, 3.0, None, "KC", "LV")])
+    _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 12, 11))
+    _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
+    _qb_state(tmp_path / "cache")
+    got = ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
+                      cache=tmp_path / "cache")
+    by = {r["game_id"]: r for r in got.to_dicts()}
+    assert by["b"]["adjusted_by"] is None and by["b"]["qb_adjustment"] is None
+    assert by["b"]["version"].endswith("-snapshot")
+    assert by["b"]["margin_mean"] == 3.0
+    assert by["c"]["adjusted_by"] == "nfeloqb"
+    assert by["c"]["version"].endswith("-snapshot-qb")
+    assert by["c"]["margin_mean"] == pytest.approx(3.0 + by["c"]["qb_adjustment"])
+    assert by["c"]["qb_adjustment"] > 0, "the home side keeps its starter; the away side lost his"
+
+
+def test_the_adjusted_rows_are_their_own_partition(sched, tmp_path):
+    """A partition is homogeneous in what priced it, and an adjusted rating is not the
+    same thing as the passthrough it was adjusted from."""
+    sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None, "KC", "LAC"), ("c", 2, 3.0, None, "KC", "LV")])
+    _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 12, 11))
+    _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
+    _qb_state(tmp_path / "cache")
+    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
+                cache=tmp_path / "cache")
+    written = sorted(p.name for p in (tmp_path / "preds").rglob("*.parquet"))
+    assert len(written) == 2, written
+    assert any("snapshot-qb" in n for n in written)
+
+
+def test_the_fit_reports_the_change_once(sched, tmp_path, capsys):
+    sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None, "KC", "LAC"), ("c", 2, 3.0, None, "KC", "LV")])
+    _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 12, 11))
+    _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
+    _qb_state(tmp_path / "cache")
+    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
+                cache=tmp_path / "cache")
+    out = capsys.readouterr().out
+    assert "quarterback adjustment: 1 of 2 priced games touched" in out
+
+
+def test_no_quarterback_state_is_the_passthrough_and_says_so(sched, tmp_path, capsys):
+    """A fresh clone has no nfeloqb file. Every number is what the passthrough wrote
+    before #218, and the run says why nothing moved rather than saying nothing."""
+    sched([("a", 1, 3.0, 7), ("c", 2, 3.0, None, "KC", "LV")])
+    _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
+    got = ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
+                      cache=tmp_path / "cache")
+    assert got["adjusted_by"].to_list() == [None]
+    assert got["version"][0].endswith("-snapshot")
+    assert "no nfeloqb file" in capsys.readouterr().out
+
+
+def test_a_team_the_state_spells_differently_is_named_rather_than_silently_unadjusted(
+        sched, tmp_path, capsys):
+    """The fixture carries six teams; a slate of one game names two of them. The other four
+    match no game, and the run says so -- the sentence a mis-spelled abbreviation would
+    otherwise never produce."""
+    sched([("a", 1, 3.0, 7), ("c", 2, 3.0, None, "KC", "LV")])
+    _qb_state(tmp_path / "cache")
+    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
+                cache=tmp_path / "cache")
+    out = capsys.readouterr().out
+    assert "4 team(s) in the state match no game" in out
+    assert "DEN, LA, LAC, WAS" in out
+
+
+def test_a_drifted_quarterback_file_is_refused_and_the_fit_still_runs(sched, tmp_path, capsys):
+    from hub.fetch import nfeloqb
+    sched([("a", 1, 3.0, 7), ("c", 2, 3.0, None, "KC", "LV")])
+    _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
+    (tmp_path / "cache" / "nfeloqb").mkdir(parents=True)
+    (tmp_path / "cache" / "nfeloqb" / nfeloqb.FILE).write_text(
+        "date,season,team1\n2026-09-01,2026,KC\n")
+    got = ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
+                      cache=tmp_path / "cache")
+    assert got["adjusted_by"].to_list() == [None]
+    assert "refused" in capsys.readouterr().out

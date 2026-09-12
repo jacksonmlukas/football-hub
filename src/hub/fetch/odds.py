@@ -552,6 +552,27 @@ def _with_staleness(new: pl.DataFrame, season: int, base: Path | None) -> pl.Dat
     return new.join(stamped, on=["game_id", "captured_at"], how="left")
 
 
+def staleness_as_of(at: datetime, season: int, base: Path | None = None) -> pl.DataFrame:
+    """Every poll captured at or before `at`, with the two staleness columns derived.
+
+    The third caller of `staleness` (#218), and it is the as-of one: `hub.schedule.priced_games`
+    joins this onto the snapshot that priced each game so the row carries how long that
+    quote had stood *at the moment asked*. Polls after `at` are dropped before the
+    derivation rather than after it. Either order gives the same two numbers for a row --
+    both are cumulative over earlier polls only -- but dropping first is the one that cannot
+    be argued about, and it is the same as-of rule `store.lines_as_of` applies to the price.
+
+    Derived over the archive rather than read off the rows, for `_with_staleness`'s reason:
+    the partitions written before #210 carry neither column, and this is how they get them.
+    Empty, with the schema, on a fresh clone.
+    """
+    polls = _archive(season, base).filter(pl.col("captured_at") <= at)
+    if not polls.height:
+        return pl.DataFrame(schema={"game_id": pl.Utf8, "captured_at": pl.Datetime,
+                                    **STALENESS_COLUMNS})
+    return staleness(polls).select("game_id", "captured_at", *STALENESS_COLUMNS)
+
+
 def staleness_report(season: int = SEASON_AHEAD, base: Path | None = None) -> int:
     """Per week: how much of the archive is a number that has never moved.
 

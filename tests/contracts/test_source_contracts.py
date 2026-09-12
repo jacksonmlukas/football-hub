@@ -42,6 +42,7 @@ from hub.contracts import (
     FF_OPPORTUNITY,
     FF_RANKINGS,
     INJURIES,
+    NFELOQB,
     ODDS_SNAPSHOT,
     PBP,
     POOL_STATE,
@@ -349,6 +350,18 @@ def test_pool_state_contract_holds_on_the_hand_built_payload():
     assert got["used"].dtype == pl.List(pl.Utf8), "an empty Ledger inferred as List(Null)"
     assert got.filter(pl.col("entry") == 0)["used"].to_list() == [["DAL", "KC"]]
     assert got["alive"].sum() == 4
+
+
+def test_nfeloqb_contract_holds_on_the_hand_built_shape():
+    """Hand-built in 538's published `qb_elo` schema (#218): no pull of `greerreNFL/nfeloqb`'s
+    file has been made from this repo and the suite refuses the network. Seven game rows,
+    both sides on each, the last two unplayed with null scores -- the row where a backup is
+    first named, and the one the reader must accept without a result."""
+    df = frame("nfeloqb_qb_elos.synthetic.json")
+    got = NFELOQB.validate(df)
+    assert got.height == 7
+    assert got["score1"].null_count() == 2
+    assert got.schema["qb1_adj"] == pl.Float64
 
 
 def test_odds_fixture_parses_to_the_lines_table_shape():

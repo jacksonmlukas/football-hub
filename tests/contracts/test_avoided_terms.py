@@ -239,6 +239,15 @@ CHECKED: dict[str, Rule] = {
     "vegas": Rule("phrase", "a proper noun for the Betting market and nothing else"),
     "hunch": Rule("phrase", "the entry's point is that a Provisional rule is pre-registered "
                             "and logged; nothing here is a hunch on purpose"),
+    # The Quarterback adjustment's two neighbours (#218). Both are proper names for other
+    # quantities -- the source's Elo-point figure and the passer-rating statistic -- and
+    # neither names anything this repo computes, so a bare use is the confusion the entry
+    # names. `nfeloqb` and `qb_elos.csv` are not hits: the word boundary the rule requires
+    # is absent inside a module or file name.
+    "qb elo": Rule("phrase", "the source's quantity, in Elo points; the adjustment here is "
+                             "in spread points and relative to the team"),
+    "qb rating": Rule("phrase", "a passer rating is a different statistic, and nothing "
+                                "here computes one"),
     "p(win) as a standalone term": Rule(
         "phrase", "the entry reserves `p_win` for the column and forbids the standalone "
                   "term, which is spelled only this way", pattern="p(win)"),
