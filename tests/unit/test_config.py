@@ -914,8 +914,19 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     anything that changes a prediction, measured or not. Every game the staleness field
     marks as having no live price is now rated differently from the run before this commit,
     and a digest that did not move would be claiming those two runs were the same model.
+
+    **Moved again 2026-09-12 (#268): `08ceee28` -> `fd28e5e5`**, `fitted_digest` `90a4b5de`
+    -> `4152f399`. Two of the three left: `POINTS_PER_VALUE` (0.132) and `DECAY_PER_GAME`
+    (0.9) went with the estimator they belonged to, and `ELO_PER_VALUE` (3.3), which was
+    never in the digest's view as a number a prediction read, left with them. The
+    quarterback adjustment is now the source's own `qb_adj` on the latest row over
+    `ELO_PER_POINT` (25) and nothing else; the replaced construction subtracted an
+    arrival-time baseline from a current value and decayed the difference by tenure, which
+    on the 32 live teams was a mean absolute error of 0.4 spread points and worst 3.6. Every
+    game rated without a live price moves, most by under half a point, and the digest says
+    so. **This one is a model change**, not a coverage correction.
     """
-    assert config_digest(HubConfig()) == "08ceee28"
+    assert config_digest(HubConfig()) == "fd28e5e5"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

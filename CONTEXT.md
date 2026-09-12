@@ -81,14 +81,20 @@ writes the first (`hub.models.ratings`). A passthrough of the betting market's s
 disagree about a game. Not a model with an edge — rows carry `market_baseline`'s own name.
 
 **Quarterback adjustment**:
-This quarterback's value minus what the team rating already embeds, in spread points, decaying
-at 10% per game of his tenure as the starter — so it sits near zero for an established
-starter, is the full gap for a backup named this week, and is nearly gone for one thirty
-starts in. Consumed from `greerreNFL/nfeloqb`'s published ratings through `hub.fetch.nfeloqb`,
-never refitted here; 0.132 points per value unit is a stated choice, not a fit. Applied only
+This quarterback minus what the team rating already embeds, in spread points: the source's own
+adjustment on the latest row, `qb_adj`, over 25 Elo per point, and nothing else. It sits near
+zero for an established starter and goes sharply negative for a backup named this week, and
+the decay as the team rating absorbs him is the source's rolling update, not a factor applied
+here. Consumed from `greerreNFL/nfeloqb`'s published ratings through `hub.fetch.nfeloqb`,
+never refitted here; 25 Elo per point is a stated choice, not a fit. Applied only
 where there is no **Live price**, and the row says so: `adjusted_by`, `qb_adjustment`, and
 `-qb` on the version string. Validated before it was built:
 [qb-adjustment.md](docs/qb-adjustment.md), +0.0057 Brier on 538's own columns.
+> **Restated 2026-09-12 (#268).** Until #268 this entry read *this quarterback's value minus
+> what the team rating already embeds, decaying at 10% per game of his tenure*, and the module
+> rebuilt that gap from an arrival-time baseline. The rebuilt gap carried the starter's own
+> value drift and was right only where tenure was zero — on the live teams, 0.4 points mean
+> absolute error and 3.6 worst. The source publishes the gap; the module now reads it.
 _Avoid_: QB Elo (the source's quantity, in Elo points; the adjustment here is in spread
 points and relative to the team), QB rating (a passer rating is a different statistic).
 

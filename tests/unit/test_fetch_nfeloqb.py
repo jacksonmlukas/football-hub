@@ -112,15 +112,18 @@ def test_tenure_counts_the_games_the_starter_has_played_in_his_current_run():
     assert by["DEN"]["tenure"] == 2, "two played rows and no unplayed one"
 
 
-def test_the_arrival_row_is_the_first_of_the_current_run():
-    """What the team rating embeds is read off the row the starter arrived on, not the
-    latest one -- the latest one's gap is already decayed by the source's rolling value."""
+def test_the_state_carries_the_latest_rows_adjustment_and_not_the_arrival_rows():
+    """#268: the source's `qb_adj` is already the gap between the starter and what the
+    team's rolling value embeds, already decayed by its own update rule, so the state hands
+    over the latest row's number and nothing about the row he arrived on. KC's run in the
+    fixture is three rows with the value drifting 145.2 -> 147.0 and the adjustment
+    12.0 -> 10.0; the state says 10.0, which is the row the old state never read."""
     by = {r["team"]: r for r in nfeloqb.state(nfeloqb.parse(csv_text().encode())).to_dicts()}
-    assert by["KC"]["arrival_value"] == pytest.approx(145.2)
-    assert by["KC"]["arrival_adj"] == pytest.approx(12.0)
-    assert by["KC"]["qb_value"] == pytest.approx(147.0)
-    assert by["LV"]["arrival_value"] == pytest.approx(52.0)
-    assert by["LV"]["arrival_adj"] == pytest.approx(-110.0)
+    assert by["KC"]["qb_adj"] == pytest.approx(10.0), "the latest row, not the arrival row's 12"
+    assert by["KC"]["qb_value"] == pytest.approx(147.0), "drifted since he arrived at 145.2"
+    assert by["KC"]["tenure"] == 2, "an input the replaced estimator would have decayed on"
+    assert by["LV"]["qb_adj"] == pytest.approx(-110.0)
+    assert set(by["KC"]) == {"team", "qb", "qb_value", "qb_adj", "tenure", "as_of"}
 
 
 def test_538_abbreviations_are_spelled_as_nflverse_spells_them():

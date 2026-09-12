@@ -5,8 +5,8 @@
 was to consume it and build only the team layer, and this module is the consuming half: one
 GET of the file, the contract on the columns the team layer reads, a cache under `data/raw/`
 that a failed pull serves from, and a per-team **state** -- who starts, what he is worth,
-what the team's rating already embeds, and how long he has been the starter -- which is all
-`hub.models.quarterback` needs to move a rating.
+the source's own adjustment for him on the latest row, and how long he has been the
+starter -- of which the adjustment is all `hub.models.quarterback` needs to move a rating.
 
 **What the first live pull confirmed, 2026-09-12.** The shape the hand-built fixture guessed
 is the shape the source publishes: the last 300 rows are frozen as
@@ -23,8 +23,8 @@ dropped and counted by `parse` rather than refused. Field by field, what was con
   contract refusal and the last-good file is served instead.
 * that the coming week's games are listed with their expected starters and null scores.
   538's file did this, and it is the row the team layer wants most: it is where a backup is
-  first named. If nfeloqb lists only played games, `tenure` is still right and the starter
-  is last week's, which is stale by one week and said nowhere -- so this is the one to check.
+  first named. If nfeloqb lists only played games, the starter and his adjustment are last
+  week's, which is stale by one week and said nowhere -- so this is the one to check.
 * the team abbreviations. 538 spelled Washington `WSH` and the Rams `LAR`; nflverse spells
   them `WAS` and `LA`, and every join in this repo is on nflverse's. `ABBREVIATIONS` maps
   the two known differences and `unknown_teams` names any team the state carries that the
@@ -88,8 +88,7 @@ USER_AGENT = "football-hub/0.1 (+https://github.com/jacksonmlukas/football-hub)"
 _SIDE = ("team", "qb", "value", "adj", "score")
 
 STATE_SCHEMA = {"team": pl.Utf8, "qb": pl.Utf8, "qb_value": pl.Float64,
-                "arrival_value": pl.Float64, "arrival_adj": pl.Float64,
-                "tenure": pl.Int64, "as_of": pl.Utf8}
+                "qb_adj": pl.Float64, "tenure": pl.Int64, "as_of": pl.Utf8}
 
 
 class LiveCallRefused(Exception):
@@ -166,19 +165,24 @@ def _long(rows: pl.DataFrame) -> pl.DataFrame:
 
 
 def state(rows: pl.DataFrame) -> pl.DataFrame:
-    """Per team: the current starter, his value, the row he arrived on, and his tenure.
+    """Per team: the current starter, his value and adjustment on the latest row, and his
+    tenure.
 
-    The *run* is the trailing rows of a team's games whose starter is the latest row's
-    starter. `tenure` counts the played rows in it -- a starter named for the coming game
-    and yet to start it has a tenure of zero, which is what makes a fresh backup a fresh
-    backup. `arrival_value` and `arrival_adj` are read off the run's first row: what the
-    team rating embedded when he arrived is what the adjustment is relative to, and the
-    latest row's own gap is already decayed by the source's rolling value, so reading it
-    there and decaying it again would count the decay twice. `qb_value` is the latest row's,
-    which is the starter as he stands now.
+    Everything the team layer prices is on the latest row. `qb_adj` is the source's own
+    adjustment there -- the gap between this starter and what the team's rolling value
+    embeds, in Elo, already decayed by the source's update rule -- and
+    `hub.models.quarterback.points` divides it by 25 and adds nothing (#268). `qb_value` is
+    the starter as he stands now, reported and not priced.
+
+    `tenure` is reported and not priced either. The *run* is the trailing rows of a team's
+    games whose starter is the latest row's starter, and `tenure` counts the played rows
+    in it: a starter named for the coming game and yet to start it has none. Until #268
+    the state also carried the run's first row, and the estimator subtracted it from the
+    latest and decayed the difference by `tenure` -- a quantity carrying the starter's own
+    value drift, which is not the gap the module prices. Nothing reads an arrival row now.
 
     Rows are not filtered to a season on purpose. A run that began late last season is
-    one run, and the tenure that decays it should say so.
+    one run, and the tenure reported for it should say so.
     """
     long = _long(rows)
     out = []
@@ -187,11 +191,9 @@ def state(rows: pl.DataFrame) -> pl.DataFrame:
         run = 0
         while run < games.height and games["qb"][games.height - 1 - run] == latest["qb"]:
             run += 1
-        first = games.row(games.height - run, named=True)
         played = games.tail(run)["score"].is_not_null().sum()
         out.append({"team": team[0], "qb": latest["qb"], "qb_value": float(latest["value"]),
-                    "arrival_value": float(first["value"]),
-                    "arrival_adj": float(first["adj"]),
+                    "qb_adj": float(latest["adj"]),
                     "tenure": int(played), "as_of": str(latest["date"])})
     return pl.DataFrame(out, schema=STATE_SCHEMA).sort("team")
 
@@ -255,7 +257,7 @@ def report(st: pl.DataFrame, *, captured: str | None = None) -> list[str]:
              + (f" (pulled {captured})" if captured else "")]
     for r in st.iter_rows(named=True):
         lines.append(f"  {r['team']:<4} {r['qb']:<22} value {r['qb_value']:6.1f}  "
-                     f"tenure {r['tenure']:>3}")
+                     f"adj {r['qb_adj']:+7.1f}  tenure {r['tenure']:>3}")
     return lines
 
 
@@ -285,7 +287,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog=PROG,
         description="The published nfeloqb quarterback ratings, pulled into data/raw/ and "
-                    "read as a per-team state: starter, value, tenure.")
+                    "read as a per-team state: starter, value, adjustment, tenure.")
     ap.add_argument("--refresh", action="store_true",
                     help="pull the file; on any failure serve the last-good one and say why")
     ap.add_argument("--status", action="store_true",
