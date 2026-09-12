@@ -649,3 +649,44 @@ def test_the_pick_leaves_an_undrafted_player_at_the_tail_wherever_he_sits(undraf
     # And market_pick agrees on its own, pool order and all.
     pool = b.select("player", "pos", "adp_corrected")
     assert optimize.market_pick(pool, {}, by="adp_corrected") == tp.player
+
+
+# --- the room's board-invariant state, prepared once (#259) ----------------------------
+
+def test_a_prepared_room_plays_the_same_draft_as_an_unprepared_one():
+    """`prepare_room` is a pure refactor of the top of `simulate_remaining_draft`: handing
+    the prepared state in, or letting the call prepare its own, must give the identical
+    rosters from the identical generator state -- the draw is the one random act and it
+    is unmoved. Two seeds, so the equality is not a fixed point of one draw."""
+    board = _board()
+    room = optimize.prepare_room(board)
+    for seed in (0, 1):
+        own = simulate_remaining_draft(board, DraftState(), my_slot=3, teams=12, rounds=6,
+                                       rng=np.random.default_rng(seed))
+        given = simulate_remaining_draft(board, DraftState(), my_slot=3, teams=12, rounds=6,
+                                         rng=np.random.default_rng(seed), room=room)
+        assert [r.tolist() for r in own] == [r.tolist() for r in given]
+
+
+def test_a_prepared_room_ranks_in_the_currency_its_own_report_names():
+    """The report travels inside the prepared room, so the greedy reads the one the room
+    was prepared with and not one re-derived from the frame -- the same seam
+    `test_the_room_ranks_in_the_currency_the_report_names` holds for the unprepared call.
+    This frame carries `adp`, so a re-derivation would say the stage ran and rank on
+    `vor_proj`; the room was told it did not."""
+    from hub.draft.board import BuildReport
+    board = _two_currency_board()
+    room = optimize.prepare_room(board, report=BuildReport(adp=False))
+    got = simulate_remaining_draft(board, DraftState(), my_slot=1, teams=2, rounds=1,
+                                   room=room)
+    assert board["player"][int(got[0][0])] == "P59", "vor tops out at the last row"
+
+
+def test_a_room_prepared_from_another_board_is_refused():
+    """Indices are into `board`, and a room prepared from a different frame would hand back
+    indices into the wrong one -- silently, since both are integer arrays. The cheap check
+    is the height, which is what every index is bounded by."""
+    room = optimize.prepare_room(_board(180))
+    with pytest.raises(ValueError, match="prepared from a different"):
+        simulate_remaining_draft(_board(120), DraftState(), my_slot=3, teams=12, rounds=2,
+                                 room=room)

@@ -412,3 +412,43 @@ def test_the_room_widens_the_talent_spread_of_imputed_players(monkeypatch):
     seen.clear()
     win_probability(_board(), DraftState(), ["P0"], report=BuildReport(adp=True), **kw)
     assert seen[0] is None, "no flag on the frame: the simulator's own default"
+
+
+# --- the room computes its board-invariant state once per call (#259) ------------------
+
+def test_the_room_is_prepared_once_per_call_not_once_per_rollout(monkeypatch):
+    """A `win_probability` call makes candidates x draft-sims rollouts of the room, and
+    every rollout used to rebuild what is fixed for the whole call: the blended ADP, the
+    pick-noise sigma over it, the currency the greedy ranks in, and a `player_key` pass
+    over every Board row to index the names. Counted at the two seams that are functions
+    rather than lines: `blended_adp` and `pick_noise` are each called once per call, not
+    once per rollout -- three candidates over four futures is twelve rollouts and one
+    preparation. The draw itself stays per rollout; the #197 pin holds the output."""
+    from hub.draft import availability, optimize
+    from hub.exhibits import championship_equity as ce
+
+    blends, sigmas = [], []
+    real_blend, real_noise = optimize.blended_adp, availability.pick_noise
+
+    def counted_blend(*a, **k):
+        blends.append(1)
+        return real_blend(*a, **k)
+
+    def counted_noise(*a, **k):
+        sigmas.append(1)
+        return real_noise(*a, **k)
+
+    monkeypatch.setattr(optimize, "blended_adp", counted_blend)
+    # The exhibit bound this name until #259 and makes the call through the room now;
+    # patched wherever it is bound, so the count is the count whichever module calls.
+    monkeypatch.setattr(ce, "blended_adp", counted_blend, raising=False)
+    monkeypatch.setattr(availability, "pick_noise", counted_noise)
+    monkeypatch.setattr(optimize, "pick_noise", counted_noise, raising=False)
+    win_probability(_board(), DraftState(), ["P0", "P1", "P2"], my_slot=3, rounds=8,
+                    n_draft_sims=4, n_season_sims=5)
+    assert len(blends) == 1, (
+        f"blended_adp ran {len(blends)} times for one win_probability call of 12 rollouts: "
+        f"the room is rebuilding board-invariant state per rollout")
+    assert len(sigmas) == 1, (
+        f"pick_noise ran {len(sigmas)} times for one win_probability call of 12 rollouts: "
+        f"the sigma is fixed for the call and is being recomputed per rollout")

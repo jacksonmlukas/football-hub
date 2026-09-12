@@ -64,11 +64,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 import polars as pl
 
-from hub.draft.availability import DEFAULT_ESPN_WEIGHT, blended_adp
+from hub.draft.availability import DEFAULT_ESPN_WEIGHT
 from hub.draft.optimize import (
     DEFAULT_ROUNDS,
     ROLLOUT,
     SEASON_SIM,
+    prepare_room,
     root_seed,
     simulate_remaining_draft,
     stream,
@@ -145,7 +146,9 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     from. `report` is the `BuildReport` describing the board handed in: which stages built
     this frame, and therefore which currency the room below ranks in (issue #199). It is
     resolved once here and handed down, rather than re-derived inside every one of the
-    candidates x draft-sims rollouts.
+    candidates x draft-sims rollouts -- and since #259 so is everything else a rollout
+    reads off the Board and does not change, as one `optimize.Room` prepared here and
+    handed to each rollout. Byte-identical output: the #197 pin did not move.
 
     `correlation` is a `CorrelationReport` the caller owns, and every one of those
     simulations writes into it. Passing one is how a run learns that some team's players were
@@ -161,9 +164,15 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     that happen to differ. Handing down the root is what makes them so; handing down an
     integer is how rollout 0 came to be the room itself (issue #195).
     """
-    from hub.draft.board import report_for
-    report = report_for(board, report)
-    pool = blended_adp(board, w, report=report)
+    # The room's board-invariant state, once (#259). A call makes candidates x draft-sims
+    # rollouts, and each used to rebuild the blended ADP, the sigma over it, the currency,
+    # and a `player_key` index of every row -- none of which a rollout changes. The report
+    # is resolved inside `prepare_room`, through the same `report_for` seam as before, and
+    # the frame the season is scored on below is the room's pool: the same `blended_adp`
+    # call this function used to make itself.
+    room = prepare_room(board, w, report=report)
+    report = room.report
+    pool = room.pool
     pred = moments(pool)
     mu = pred["mu"].fill_null(0.0).to_numpy()
     sd = pred["sd"].fill_null(2.0).to_numpy()
@@ -227,7 +236,8 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
             rosters = simulate_remaining_draft(board, state, my_slot=my_slot, teams=teams,
                                                rounds=rounds, forced=c, w=w,
                                                rng=stream(root, ROLLOUT, k),
-                                               report=report, opp_noise=opp_noise)
+                                               report=report, opp_noise=opp_noise,
+                                               room=room)
             p = champion_probability(rosters, mu, sd, pos, n_sims=n_season_sims,
                                      rng=stream(root, SEASON_SIM, k),
                                      nfl_team=nfl_team, skew=skew, missed=missed,

@@ -37,7 +37,7 @@ import polars as pl
 
 from hub.config import DraftConfig
 from hub.draft import durability
-from hub.draft.availability import DEFAULT_ESPN_WEIGHT, blended_adp
+from hub.draft.availability import DEFAULT_ESPN_WEIGHT, blended_adp, pick_noise
 from hub.draft.picks import MY_SLOT, TEAMS, snake_picks
 from hub.draft.state import DraftState, remaining, roster_for
 from hub.league import FLEX_CAPACITY, FLEX_FROM, STARTERS
@@ -207,13 +207,74 @@ def _greedy_currency(pool: pl.DataFrame, report: BuildReport) -> np.ndarray:
             f"the fixture the column its report claims.") from None
 
 
+@dataclass
+class Room:
+    """The simulated room's board-invariant state: what every rollout of one Board shares.
+
+    A `win_probability` call plays candidates x draft-sims rollouts of
+    `simulate_remaining_draft`, and until #259 each rollout rebuilt everything here from
+    the frame -- the blended ADP, the pick-noise sigma over it, the position and name
+    arrays, a `player_key` pass over every Board row to index the names, and the currency
+    the greedy ranks in. None of it depends on the rollout: it is a function of the Board,
+    the ESPN weight and the report, all fixed for the call. `prepare_room` computes it once
+    and `simulate_remaining_draft` takes it as `room`; a caller that passes none gets one
+    prepared for it, so every existing call site is unchanged.
+
+    **The draw is not here.** `rng.normal(0, opp_noise * sigma)` is the one random act in
+    the room and it stays inside the rollout, in the same order, consuming the same
+    numbers -- which is what makes this a pure refactor and what the #197 frozen-Board pin
+    holds. The `ROOM` coordinate above is the generator that draw is made from; this is
+    what it is drawn against.
+
+    `greedy_currency` is resolved on first use and memoised rather than eagerly, for the
+    reason `simulate_remaining_draft`'s own comment gives: every caller that supplies a
+    strategy replaces the greedy outright, and resolving a currency none of them ranks in
+    made the room's ranking a precondition on runs that never ranked. Resolved lazily, an
+    incoherent frame is refused exactly where it was before -- at the first greedy pick --
+    and nowhere else.
+    """
+    pool: pl.DataFrame           # the Board with `mu_pick` attached
+    report: BuildReport          # what built the Board, and so which currency the room is in
+    mu_pick: np.ndarray          # expected pick per row, 999 where no ranking places him
+    sigma: np.ndarray            # `pick_noise(mu_pick)`: the fitted law, before the scale
+    pos: np.ndarray              # position per row, "NA" where the Board has none
+    names: list[str]             # player per row
+    by_key: dict[str, int]       # `player_key(name)` -> row, for seeding held rosters
+    _vor: np.ndarray | None = None
+
+    def greedy_currency(self) -> np.ndarray:
+        if self._vor is None:
+            self._vor = _greedy_currency(self.pool, self.report)
+        return self._vor
+
+
+def prepare_room(board: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT, *,
+                 report: BuildReport | None = None) -> Room:
+    """Everything `simulate_remaining_draft` needs from `board` that no rollout changes.
+
+    The report is resolved here, once, through `board.report_for` -- the same seam every
+    consumer of a frame-and-maybe-report goes through (#199) -- and travels inside the
+    room, so a rollout handed a prepared room ranks in the currency the room was prepared
+    with and never re-derives one from the frame.
+    """
+    from hub.draft.board import report_for
+    report = report_for(board, report)
+    pool = blended_adp(board, w, report=report)
+    mu_pick = pool["mu_pick"].fill_null(999.0).to_numpy()
+    names = pool["player"].to_list()
+    return Room(pool=pool, report=report, mu_pick=mu_pick, sigma=pick_noise(mu_pick),
+                pos=pool["pos"].fill_null("NA").to_numpy(), names=names,
+                by_key={player_key(n): i for i, n in enumerate(names)})
+
+
 def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot: int,
                              teams: int = 12, rounds: int = DEFAULT_ROUNDS,
                              forced: str | None = None,
                              w: float = DEFAULT_ESPN_WEIGHT, opp_noise: float = 1.0,
                              rng: np.random.Generator | None = None,
                              my_pick: MyPick | None = None,
-                             report: BuildReport | None = None) -> list[np.ndarray]:
+                             report: BuildReport | None = None,
+                             room: Room | None = None) -> list[np.ndarray]:
     """Play out the draft. Returns one array of `board` row indices per team.
 
     Two separable things live here: the **room** -- eleven opponents following a noisy board
@@ -234,13 +295,23 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
 
     **`report` says which currency this room ranks in**, and it is the whole of the sharp
     half of issue #199 -- see the `key` line below for what it decides and what that costs.
+
+    **`room` is the Board-invariant state, prepared once by a caller that plays many
+    rollouts of one Board** (#259) -- `win_probability` makes candidates x draft-sims of
+    them per call. Given, it must have been prepared from this `board`, and `w` and
+    `report` are already inside it. Absent, one is prepared here, so the call is what it
+    always was.
     """
     rng = rng or np.random.default_rng(0)
-    from hub.draft.board import report_for
-    report = report_for(board, report)
-    pool = blended_adp(board, w, report=report)
+    if room is None:
+        room = prepare_room(board, w, report=report)
+    elif room.pool.height != board.height:
+        raise ValueError(
+            f"this room was prepared from a different Board ({room.pool.height} rows against "
+            f"{board.height}); its indices would be into the wrong frame")
+    pool = room.pool
 
-    mu_pick = pool["mu_pick"].fill_null(999.0).to_numpy()
+    mu_pick = room.mu_pick
     # How loosely opponents follow their own board. The fitted sigma in availability.py
     # measures deviation from FantasyPros ECR, which is NOT what this is: a manager
     # drafting off ESPN's app barely deviates from ESPN's order, and ESPN's order is very
@@ -249,8 +320,7 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
     # for the greedy. Scale it explicitly and treat the result as a sensitivity, not a
     # measurement -- the quantity that would settle it (deviation from historical ADP) is
     # exactly the one ESPN does not retain. See fit_espn_weight.
-    from hub.draft.availability import pick_noise
-    noise = rng.normal(0.0, opp_noise * pick_noise(mu_pick))
+    noise = rng.normal(0.0, opp_noise * room.sigma)
     order = np.argsort(mu_pick + noise)          # opponents' perceived board
 
     # Rank on the same forecast the season is scored against. Using a different signal
@@ -275,9 +345,9 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
     # else. Every caller that supplies a strategy -- `backtest.play`, `cohort`, both arms of
     # the backtest -- replaces the greedy outright, so eagerly resolving a currency none of
     # them ranks in made the room's ranking a precondition on runs that never ranked.
-    vor = _greedy_currency(pool, report) if my_pick is None else None
-    pos = pool["pos"].fill_null("NA").to_numpy()
-    names = pool["player"].to_list()
+    vor = room.greedy_currency() if my_pick is None else None
+    pos = room.pos
+    names = room.names
 
     my_picks = set(snake_picks(my_slot, teams, rounds))
     rosters: list[list[int]] = [[] for _ in range(teams)]
@@ -305,7 +375,7 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
     # A recorded pick that is not on the board (K, DST, or a misspelling) is skipped. Those
     # are expected -- `DRAFTED_POSITIONS` excludes kickers and defences on purpose -- and
     # `suggest_unmatched` already flags a misspelling where a human can still fix it.
-    by_norm = {player_key(n): i for i, n in enumerate(names)}
+    by_norm = room.by_key
     for seat in range(1, teams + 1):
         for held_name in roster_for(state, seat, teams, rounds):
             i = by_norm.get(player_key(held_name))
