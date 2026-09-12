@@ -371,6 +371,61 @@ None of the four is a licence to quote a magnitude. #190 is open on eight points
 drift at a fixed data digest, and #195 and #196 together are its leading mechanism rather than
 its resolution.
 
+## Measured 2026-09-12 — the run-to-run spread at one commit, and it is not the drift
+
+Issue #194. The same commit, `e14ab56` (the tree after #195's seeding tree, #187's PSD
+repair and #155's pick-noise refit), run twice with two root seeds, the same four seasons,
+twenty drafts a season, 12 × 250 sims, Board digest `6769f585` in both — which is the run's
+own condition for two runs being comparable at all. The tree was dirty only by an untracked
+symlink to `data/`; the code is that commit.
+
+| | seed 0 | seed 7 | difference |
+|---|---|---|---|
+| optimizer − market | **−12.19** | **−11.88** | **0.31** |
+| 95% percentile CI | [−18.33, −6.05] | [−17.09, −6.67] | |
+| 95% t CI, 3 df | [−22.06, −2.32] | [−20.34, −3.42] | |
+| MDE at 80% power | 12.48 | 10.70 | |
+| 2022 | −19.95 | −18.23 | 1.72 |
+| 2023 | −5.38 | −6.00 | 0.62 |
+| 2024 | −6.72 | −7.34 | 0.62 |
+| 2025 | −16.71 | −15.95 | 0.76 |
+| seasons worse | 4 of 4 | 4 of 4 | |
+| verdict | REMOVE | REMOVE | |
+
+**The two-seed spread is 0.31 points on the mean and under two on any season.** The
+four-point table above moved **8.07** between the published figure and the shipped
+constants, and 3.17 over eleven commits at one data digest. A difference between two
+independent re-draws of this harness carries a standard error near 0.5 (the four per-season
+differences have sd 0.53), so the historical movement is fifteen-plus of those. **The drift
+is real and it is in the code**, which is the second of #194's two worlds: #190 is an
+attribution problem and not a precision problem, and nothing in it is closed by this.
+
+**Against the four expectations registered above, and the fifth from #187.**
+
+1. *The effect should move away from zero, and the sign should not.* Against re-run B
+   (−11.59, the last run before #195), both seeds sit further from zero by 0.3 to 0.6, and
+   the sign and all four seasons hold. A move that small is inside this measurement's own
+   noise, so the direction is consistent with the expectation rather than a confirmation
+   of it.
+2. *The run-to-run spread should narrow.* No two-seed run exists at a pre-#195 commit, so
+   there is nothing to narrow *from*; what is established is the spread's size now.
+3. *Bounded by 1/n_draft_sims.* The move against re-run B is of the order the guess allowed
+   and nothing larger needs explaining.
+4. *Seasons should stay 4 of 4.* They do, at both seeds — ADR-0019's second condition is
+   standing on its own for the first time.
+5. *Zero blocks repaired by silence.* Twenty-one team blocks were repaired to PSD and each
+   was printed with its eigenvalue move (largest single pairing +0.057, CLE); none was
+   silent.
+
+**What has changed since this commit, and what it means for the number.** `e14ab56` is not
+the tree. Since it: #235 refit `TALENT_CV` net of absence (0.42 → 0.32; the #197 pin showed
+arm B's roster move under it), #246 found four drafted players scored as zero in 2022
+because the stats source spelled their nickname (Gabriel Davis, Ken Walker III, Kenneth
+Gainwell, Joshua Palmer — 2022 is the season with the largest effect in every run), #226
+added byes and #87 widened imputed players' spread. Each moves the arm or the scoring, so
+the shipped-constants run for #245 and #246 is the next figure and not this one. Paired rows
+for both seeds are under `data/processed/gate/p194_e14ab56_seed{0,7}.parquet`.
+
 ## What was measured on which board is now recorded
 
 Separately, under #196: a run stamped `cfg_digest` and `data_digest`, and the second is a digest
