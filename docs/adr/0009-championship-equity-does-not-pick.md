@@ -126,6 +126,29 @@ one that would have promoted equity back to the headline.
 > the named changes rather than re-derived, because the published run recorded no digest to
 > re-derive from. Paired rows: `data/processed/gate/p245_shipped_seed0.parquet`.
 
+> **Restated 2026-09-12 (#260): the season draw was narrowed to the rostered union, which is
+> a total re-draw, and the −11.07 above was measured on the draw before it.**
+> `season.simulate_weeks` drew correlated weekly points for every Board row (~450) on every
+> season simulation and read back the ~168 rostered players at the lineup; it now draws over
+> the rostered union in Board order. The model is unchanged -- same constants, same
+> correlation blocks factored per team over their rostered members, same lineup rule -- but a
+> player's talent and weekly draws are now a function of his position in the union rather
+> than his Board row, and `docs/gate-power.md` says what any change to the drawn width is:
+> a re-pairing of every player with his noise, not a perturbation. On the frozen 200-row
+> Board at the #197 pin's budget, arm A's roster did not move and arm B's did at three of six
+> picks (McCaffrey over Lamb at 1, Jacobs over Prescott at 4, Marquise Brown over Ekeler at
+> 6); the pin is re-pinned with that cause. **The shipped-constants figure in the table above
+> must be re-run at the new draw**, and read against #194's run-to-run spread of 0.31: a
+> movement inside a few of the 0.5-point run-to-run standard errors is the re-pairing and
+> nothing else, and a larger one needs its own explanation. That run needs the four Boards
+> under `data/` and hours of wall-clock, neither of which the change was made with, so it is
+> the maintainer's next action and is not claimed here -- `docs/method.md` rule 13, an open
+> incident until the number beside −11.07 exists. Nothing this ADR rests on is touched by a
+> re-pairing: worse in 4 of 4, an interval excluding zero, `P(optimizer better)` 0.0%.
+> Time per arm-B draft on the frozen Board, 12 x 250: 83.28 s to 77.01 s, on a 200-row
+> instrument where the union is 84% of the Board; the production Boards are ~450 rows and
+> the union the same 168, so the saving there is larger and is measured with the re-run.
+
 ## Why this is surprising, which is why it is written down
 
 The repo contains a real season simulator: talent drawn once per season, a square-root weekly

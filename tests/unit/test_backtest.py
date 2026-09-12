@@ -1427,8 +1427,19 @@ FROZEN_ARM_A = ["Christian McCaffrey", "Drake London", "Travis Etienne Jr.",
 # them and every roster index after that row shifts. Josh Jacobs became Dak Prescott at pick
 # 4 with the room unchanged: a re-pairing of the rollout draw, not a different objective.
 # The duplicate itself is #250.
-FROZEN_ARM_B = ["CeeDee Lamb", "Jalen Hurts", "Kyren Williams", "Dak Prescott",
-                "Ken Walker III", "Austin Ekeler"]
+# Moved a third time under #260, and this one is the *season* half of the objective rather
+# than the room or the index: `season.simulate_weeks` now draws over the rostered union
+# (~168 players) instead of every Board row (~450), so a player's talent and weekly draws
+# are a function of his position in the union rather than of his Board row. That is a total
+# re-draw of the random pairing -- `docs/gate-power.md` says why any change to the drawn
+# array's width is one -- and the roster below is what the same objective draws under the
+# new pairing: McCaffrey over Lamb at pick 1, Jacobs over Prescott at 4, Marquise Brown over
+# Ekeler at 6, with the room (arm A above) unchanged. Not a different objective, and not a
+# different constant: the same model on differently-paired noise, which is what the 0.31
+# run-to-run spread in gate-power.md is the size of at the published budget. The published
+# figure is re-run under ADR-0009's 2026-09-12 restatement, not here.
+FROZEN_ARM_B = ["Christian McCaffrey", "Jalen Hurts", "Kyren Williams", "Josh Jacobs",
+                "Ken Walker III", "Marquise Brown"]
 
 
 def _frozen_board():

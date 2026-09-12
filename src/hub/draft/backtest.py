@@ -125,13 +125,15 @@ LIMITATIONS = (
     "scoring stay in one currency. What cannot be made to match is the two harnesses: arm "
     "B's room is a prior-season-xFP room and the shipped room is not",
     "the noise is drawn per Board ROW, not per player: both stochastic quantities are arrays "
-    "whose last axis is the Board's height (optimize.simulate_remaining_draft draws one "
-    "pick-noise normal per row; predict.correlated_normal draws (n_sims, weeks, mu.size)). "
-    "Probed directly: drop one player and everyone ABOVE him keeps his pick-noise draw, "
-    "nobody below him does, and no player's season draw survives at all. So any commit that "
-    "moves Board membership -- MIN_GAMES, the xFP imputation, a join key, the as-of boundary "
-    "by a day -- re-pairs the whole board and is a total re-draw, not a small perturbation. "
-    "Two runs are comparable only at an identical board_digest",
+    "ordered by Board row (optimize.simulate_remaining_draft draws one pick-noise normal per "
+    "row, last axis the Board's height; since #260 season.simulate_weeks draws "
+    "(n_sims, weeks, rostered union) over the rostered players in Board order, not the whole "
+    "Board). Probed directly before #260: drop one player and everyone ABOVE him keeps his "
+    "pick-noise draw, nobody below him does, and no player's season draw survives at all. "
+    "So any commit that moves Board membership -- MIN_GAMES, the xFP imputation, a join "
+    "key, the as-of boundary by a day -- re-pairs the whole board and is a total re-draw, "
+    "not a small perturbation; #260 itself was one, and re-pinned #197 with the cause. Two "
+    "runs are comparable only at an identical board_digest",
     # Issue #279 (audit III, Q10; audit I, B6). The one the list omitted: the simulator arm's
     # constants were fitted on the seasons this harness replays. The hold-out is #290.
     "the simulator's constants are FITTED ON THE SEASONS THIS REPLAYS: the weekly spread "

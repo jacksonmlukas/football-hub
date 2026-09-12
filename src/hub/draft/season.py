@@ -284,8 +284,38 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
     `report` is the caller's `CorrelationReport`, carried through so that a run making many
     simulations counts its unfactorable blocks once for the run rather than losing the
     count with each call's stack frame.
+
+    **Drawn over the rostered union, not over every row handed in (#260).** `mu`, `sd`,
+    `pos` and the per-player arrays are the Board's -- ~450 rows -- and until #260 every
+    draw below was that wide, then sliced to the ~168 rostered players at the read-back.
+    The last axis of every drawn array is now the sorted union of the rosters' indices,
+    and each roster reads back through its position in that union. The correlation is
+    unchanged in kind: a team's block is factored over its *rostered* members, which is the
+    block the read-back ever saw. What changed is the random pairing: a player's draw is a
+    function of his position in the union rather than his Board row, so this was a total
+    re-draw of every seeded figure -- `docs/gate-power.md` says why any change to the drawn
+    width is -- and the #197 pin was re-pinned with that cause. A caller whose rosters cover
+    every row in order (`exhibits.leverage`'s pool) draws exactly what it drew before.
     """
     rng = rng or np.random.default_rng(0)
+    # Checked against the Board's width, before the narrowing: the caller hands in one
+    # bye per row, and a wrong shape is a wrong caller rather than a wrong union.
+    bye_all = None if bye_week is None else np.asarray(bye_week, dtype=int)
+    if bye_all is not None and bye_all.shape != (mu.size,):
+        raise ValueError(f"bye_week has shape {bye_all.shape}; expected ({mu.size},)")
+    n_teams = len(rosters)
+    union = np.unique(np.concatenate([np.asarray(r, dtype=int) for r in rosters])
+                      if rosters else np.array([], dtype=int))
+    # Where each roster's players sit in the union: the read-back index. An empty union
+    # draws nothing and scores zeros, with no branch for it -- `test_season.py` holds that.
+    slots = [np.searchsorted(union, np.asarray(r, dtype=int)) for r in rosters]
+    mu, sd, pos = mu[union], sd[union], pos[union]
+    if isinstance(talent_cv, np.ndarray):
+        talent_cv = talent_cv[union]
+    nfl_team = None if nfl_team is None else np.asarray(nfl_team, dtype=object)[union]
+    skew = None if skew is None else skew[union]
+    missed = None if missed is None else np.asarray(missed, dtype=float)[union]
+    bye_week = None if bye_all is None else bye_all[union]
     # None means per position; a scalar is still accepted, which is what the sweeps in
     # hub.draft.leverage need in order to vary one thing at a time.
     if talent_cv is None:
@@ -331,9 +361,7 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
     # factor: `missed` counts games missed out of the seventeen a team plays, which never
     # includes the bye. Applied after every draw so it consumes no random numbers.
     if bye_week is not None:
-        bye = np.asarray(bye_week, dtype=int)
-        if bye.shape != (mu.size,):
-            raise ValueError(f"bye_week has shape {bye.shape}; expected ({mu.size},)")
+        bye = bye_week
         beyond = bye[(bye < 0) | (bye > weeks)]
         if beyond.size:
             raise ValueError(
@@ -345,8 +373,8 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
             # Row = week index, column = player; True where that player's team sits.
             mask = (np.arange(1, weeks + 1)[:, None] == bye[None, :]) & on_bye[None, :]
             draws = draws * (~mask)[None, :, :]
-    out = np.empty((n_sims, weeks, len(rosters)))
-    for t, r in enumerate(rosters):
+    out = np.empty((n_sims, weeks, n_teams))
+    for t, r in enumerate(slots):
         out[:, :, t] = lineup_points(draws[:, :, r], pos[r]) if r.size else 0.0
     return out
 
