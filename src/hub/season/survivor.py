@@ -79,8 +79,19 @@ def published_plan(path: Path | None = None) -> list[dict]:
     # artifact. `site/data/survivor.json` is committed and `data/processed/` is not, so a
     # scheduled run that starts a season mid-way reads last season's plan as this one's.
     season = got.get("season")
-    return [{**r, **({"season": season} if season is not None else {})}
-            for r in rows if isinstance(r, dict)]
+    out = [{**r, **({"season": season} if season is not None else {})}
+           for r in rows if isinstance(r, dict)]
+    # The envelope's own ledger, carried forward as rows of a week already behind. The rows
+    # are the *remaining* plan: the first publish after a played week trims that week's row
+    # out, so the second publish of the same week found no played rows, read the ledger as
+    # empty, and offered the spent team again (review 2026-09-12, reproduced). A ledger row
+    # carries week 0 -- behind every real week -- so `spent_teams` counts it whatever `weeks`
+    # it is handed, and the season the envelope names so last season's ledger does not.
+    for team in got.get("spent") or []:
+        if isinstance(team, str) and team:
+            out.append({"week": 0, "team": team, "ledger": True,
+                        **({"season": season} if season is not None else {})})
+    return out
 
 
 def _solver():
@@ -260,7 +271,7 @@ def spent_teams(prior: Sequence[Mapping[str, Any]], weeks: Sequence[int],
             continue
         if season is not None and r.get("season") not in (None, season):
             continue
-        if int(r["week"]) in gone:
+        if int(r["week"]) in gone or r.get("ledger"):
             out.add(str(r["team"]))
     return sorted(out)
 

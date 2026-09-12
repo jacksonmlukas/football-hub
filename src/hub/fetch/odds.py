@@ -131,6 +131,30 @@ class QuotaFloor(Exception):
     """Stored balance is below the floor. Refused before spending a credit."""
 
 
+class MarketUnreachable(Exception):
+    """The reach for the betting market failed, with the key scrubbed from the reason.
+
+    The key travels as a query parameter, and `requests` quotes the full URL in the text of
+    an `HTTPError` or `ConnectionError` -- so the transport's own message, printed as-is by
+    `hub.cli.unavailable`, put the key on stderr, which on the Actions runner is the public
+    job log. Raised from the transport's error with the cause dropped, so no traceback
+    frame carries it either. The original type's name is kept for the operator.
+    """
+
+
+def redact_key(text: str, key: str | None) -> str:
+    """`text` with every spelling of the key replaced by `REDACTED` -- as sent, decoded and
+    encoded, since a URL may quote it either way. Under eight characters nothing is
+    scrubbed by substring; no key is that short."""
+    from urllib.parse import quote, unquote
+    if not key or len(key) < 8:
+        return text
+    for form in {key, unquote(key), quote(key, safe="")}:
+        if len(form) >= 8:
+            text = text.replace(form, "REDACTED")
+    return text
+
+
 class SnapshotIncomplete(Exception):
     """The betting market answered, the credit is spent, and what failed after is ours.
 
@@ -921,8 +945,12 @@ def snapshot(season: int = SEASON_AHEAD, *, markets: str = ",".join(MARKETS),
 
     # The reach for the source, and the only part of this function that is one. Its errors
     # are the betting market's and are reported as such; everything below has answered.
-    payload, headers = _http_get(
-        {"markets": markets, "regions": regions, "oddsFormat": "american"}, key)
+    try:
+        payload, headers = _http_get(
+            {"markets": markets, "regions": regions, "oddsFormat": "american"}, key)
+    except Exception as exc:
+        raise MarketUnreachable(
+            f"{type(exc).__name__}: {redact_key(str(exc), key)}") from None
 
     try:
         return _record(payload, headers, season, when, state_path, base, floor,

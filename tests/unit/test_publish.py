@@ -1421,6 +1421,29 @@ def test_a_team_spent_in_a_played_week_is_gone_from_the_next_plan(site, base, mo
     assert [r["team"] for r in got["rows"]] == ["SF", "SEA"]
 
 
+def test_a_spent_team_stays_spent_across_a_second_publish(site, base, monkeypatch):
+    """Review 2026-09-12, reproduced: the first publish after a played week trims that
+    week's row out of the artifact, and `spent_teams` read history only off the rows -- so
+    the *second* publish of the same week saw no played rows, forgot KC, and offered him
+    again. The envelope's own `spent` list is the ledger and is carried forward."""
+    import hub.season.survivor as sv
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "survivor.json").write_text(json.dumps(
+        {"name": "survivor", "n": 3, "rows": [{"week": 1, "team": "KC", "win_prob": 0.9},
+                                              {"week": 2, "team": "SF", "win_prob": 0.7},
+                                              {"week": 3, "team": "SEA", "win_prob": 0.6}]}))
+    monkeypatch.setattr(sv, "grid_from_schedule",
+                        lambda season, cache=None: _mid_season_grid())
+    first = publish.survivor(2026, out=site)
+    assert isinstance(first, dict) and first["spent"] == ["KC"]
+    second = publish.survivor(2026, out=site)
+    assert isinstance(second, dict)
+    assert second["spent"] == ["KC"], "the second slate of the week forgot what the first knew"
+    assert "KC" not in [r["team"] for r in second["rows"]]
+    third = publish.survivor(2026, out=site)
+    assert isinstance(third, dict) and third["spent"] == ["KC"]
+
+
 def test_the_published_survival_covers_the_remaining_weeks_only(site, base, monkeypatch):
     """It was the product over games already won or lost, which says nothing about whether
     the entry survives from here."""
@@ -1464,13 +1487,13 @@ def test_a_survivor_plan_from_another_season_spends_nothing(site, base, monkeypa
     import hub.season.survivor as sv
     site.mkdir(parents=True, exist_ok=True)
     (site / "survivor.json").write_text(json.dumps(
-        {"name": "survivor", "season": 2025, "n": 1,
+        {"name": "survivor", "season": 2025, "n": 1, "spent": ["SF"],
          "rows": [{"week": 1, "team": "KC", "win_prob": 0.9}]}))
     monkeypatch.setattr(sv, "grid_from_schedule",
                         lambda season, cache=None: _mid_season_grid())
     got = publish.survivor(2026, out=site)
     assert isinstance(got, dict)
-    assert got["spent"] == [], "2025's week 1 pick is not 2026's"
+    assert got["spent"] == [], "2025's week 1 pick is not 2026's, and nor is its ledger"
     assert "KC" in [r["team"] for r in got["rows"]]
 
 

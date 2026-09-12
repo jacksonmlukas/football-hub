@@ -2075,7 +2075,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--week", type=int, default=None,
                     help="the week being decided; defaults to the first week still ahead")
     ap.add_argument("--entries", type=int, default=None,
-                    help="live entries, ours included; defaults to the pool's field size")
+                    help="live entries, ours included; defaults to the pool's field size -- "
+                         "less one under --eliminated, where ours is not among them")
     ap.add_argument("--pot", type=float, default=None,
                     help="the pot as it stands; defaults to entry fee times field size")
     ap.add_argument("--outlay", type=float, default=None,
@@ -2116,7 +2117,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "hub.season.pool", f"a priced week to decide in the {a.season} schedule",
             UnpricedWeek(f"week {week} is not among the weeks the board can play: "
                          f"{weeks or 'none'}"))
-    entries = a.entries if a.entries is not None else cfg.field_size
+    # Eliminated, we are not among the live: `buyback` counts ours back in itself, so the
+    # default field there is one smaller, or the default run priced a field one larger
+    # than the pool (review 2026-09-12).
+    entries = (a.entries if a.entries is not None
+               else cfg.field_size - (1 if a.eliminated else 0))
     pot = a.pot if a.pot is not None else cfg.entry_fee * cfg.field_size
     outlay = a.outlay if a.outlay is not None else cfg.entry_fee
     ledger = ([t.strip() for t in a.ledger.split(",") if t.strip()] if a.ledger is not None

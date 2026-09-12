@@ -43,6 +43,7 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -101,8 +102,12 @@ jobs:
             echo "::notice::college week $(jq -r '.week' "$CFBD") fetched: $(jq -r '.rows_by_endpoint | to_entries | map("\(.key)=\(.value)") | join(" ")' "$CFBD")"
           fi
 
-          test "$(jq '[.artifacts[] | select(.stale | not)] | length' site/data/manifest.json)" -gt 0 \
-            || { echo "::error::every artifact is stale; nothing was refreshed"; exit 1; }
+          # "Nothing was refreshed" has to be judged on the artifacts a refresh *produces*.
+          # `draft_board` is read back off disk and `live` is an overlay outside the last-good
+          # rule (ADR-0018), so both count as fresh on a run where every fetch failed -- with
+          # them in the count this guard could never fire (review 2026-09-12).
+          test "$(jq '[.artifacts[] | select(.name != "draft_board" and .name != "live") | select(.stale | not)] | length' site/data/manifest.json)" -gt 0 \
+            || { echo "::error::every produced artifact is stale; nothing was refreshed"; exit 1; }
 
       # The contracts that read published artifacts, run on the artifacts this job just
       # wrote and before it commits them (#228).

@@ -393,6 +393,32 @@ def test_the_betting_market_not_answering_is_reported_as_the_markets(monkeypatch
     assert "ConnectionError" in err
 
 
+def test_the_api_key_never_reaches_stderr_when_the_transport_fails(monkeypatch, paths, capsys):
+    """The key travels as a query parameter, and `requests` quotes the full URL in its
+    `HTTPError` and `ConnectionError` text -- so a transport failure printed as-is put the
+    key on stderr, which on the Actions runner is the public job log. Scrubbed on the way
+    out, the way the pool fetcher scrubs its cookie."""
+    key = "sekrit-odds-key-0123456789"
+
+    def _down(params, key):
+        raise ConnectionError(f"Max retries exceeded with url: /v4/sports?apiKey={key}&regions=us")
+    monkeypatch.setattr(odds, "_http_get", _down)
+    monkeypatch.setattr(odds, "_api_key", lambda: key)
+
+    assert odds.main(["--snapshot", "--state-path", str(paths["state"])]) == 1
+    err = capsys.readouterr().err
+    assert key not in err and "sekrit" not in err
+    assert "ConnectionError" in err and "REDACTED" in err
+
+
+def test_a_short_or_missing_key_is_not_scrubbed_by_substring():
+    """Under eight characters nothing is replaced: scrubbing "abc" would eat ordinary words,
+    and no key is that short. A missing key scrubs nothing either."""
+    assert odds.redact_key("error at abc", "abc") == "error at abc"
+    assert odds.redact_key("error at abc", None) == "error at abc"
+    assert odds.redact_key("k=long%2Fkey%2Fvalue", "long/key/value") == "k=REDACTED"
+
+
 def test_a_failure_after_the_credit_is_spent_is_not_the_markets(
         transport, teams, monkeypatch, paths, capsys):
     """Issue #119. The guard spanned the whole snapshot, so the schedule join against a

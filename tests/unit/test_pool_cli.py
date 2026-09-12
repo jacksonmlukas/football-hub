@@ -113,6 +113,21 @@ def test_a_week_the_board_cannot_play_is_refused_with_a_sentence(board, tmp_path
     assert "week 9 is not among the weeks the board can play" in out.err
 
 
+def test_the_eliminated_path_does_not_count_us_among_the_live_entries(board, tmp_path, capsys):
+    """Review 2026-09-12: `--entries` is live entries *ours included*, and `buyback` adds
+    ours back in -- so the default `--eliminated` run priced a field one larger than the
+    pool. Eliminated, we are not among the live, and the default is the field less one."""
+    args = _run(tmp_path, "--eliminated", "--week", "2")
+    i = args.index("--entries")
+    del args[i:i + 2]                                       # take the default
+    code = pool.main(args)
+    out = capsys.readouterr().out
+    assert code == 0
+    field = pool.PoolConfig().field_size
+    assert f"across {field} entries" in out, out[:600]
+    assert f"across {field + 1} entries" not in out
+
+
 def test_the_buyback_has_a_production_caller_and_records_its_verdict(board, tmp_path,
                                                                      capsys):
     """`buyback` had no caller outside the tests. `--eliminated` prices the re-entry after

@@ -755,10 +755,10 @@ NFELOQB = Contract(
             "qb1_adj": (-500, 500), "qb2_adj": (-500, 500),
             "score1": (0, 120), "score2": (0, 120)},
     min_rows=1,
-    # Checked against `nfeloqb_qb_elos.synthetic.json`, hand-built in 538's published
-    # schema: no pull of the file has been made from this repo, and the test harness
-    # refuses the network. See `verified_against_live`, and the module docstring of
-    # `hub.fetch.nfeloqb` for what the first live pull must confirm.
+    # Checked against `nfeloqb_qb_elos.json`, the last 300 rows of the live file frozen on
+    # the first pull (2026-09-12), beside the hand-built `.synthetic` rows the behavioural
+    # tests still drive. The module docstring of `hub.fetch.nfeloqb` records what the pull
+    # confirmed and the two kinds of quarterback-less row it found.
     verified_against_live=True,
 )
 

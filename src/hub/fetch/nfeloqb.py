@@ -8,17 +8,19 @@ that a failed pull serves from, and a per-team **state** -- who starts, what he 
 what the team's rating already embeds, and how long he has been the starter -- which is all
 `hub.models.quarterback` needs to move a rating.
 
-**What is assumed, and what the first live pull must confirm.** No pull has been made from
-this repo: the test harness refuses the network and the fixture under
-`tests/golden/fixtures/nfeloqb_qb_elos.synthetic.json` is hand-built, so `NFELOQB` says
-`verified_against_live=False`. Field by field, the first live pull must confirm:
+**What the first live pull confirmed, 2026-09-12.** The shape the hand-built fixture guessed
+is the shape the source publishes: the last 300 rows are frozen as
+`tests/golden/fixtures/nfeloqb_qb_elos.json` and validated through `NFELOQB`, which now says
+`verified_against_live=True`. What the pull found that the guess could not: 2,162 rows before
+1950, when the source's quarterback Elo begins, and two played games of the current week
+whose quarterback fields the source had not filled yet -- both carry no quarterback and are
+dropped and counted by `parse` rather than refused. Field by field, what was confirmed:
 
-* the URL. `URL` is the raw-content path of the file at the repository's default branch;
-  the file's name and location inside the repository are read off its README as of
-  2026-09-07 and not off a response.
+* the URL. `URL` is the raw-content path of the file at the repository's default branch,
+  read off its README as of 2026-09-07 and answered on 2026-09-12.
 * the schema. `NFELOQB` declares 538's names -- `team1`/`team2`, `qb1`/`qb2`,
-  `qb1_value_pre`, `qb1_adj`, `score1` -- and the file is described as "538's exact
-  schema". A rename is a contract refusal and the last-good file is served instead.
+  `qb1_value_pre`, `qb1_adj`, `score1` -- and the live file carries them. A rename is a
+  contract refusal and the last-good file is served instead.
 * that the coming week's games are listed with their expected starters and null scores.
   538's file did this, and it is the row the team layer wants most: it is where a backup is
   first named. If nfeloqb lists only played games, `tenure` is still right and the starter
