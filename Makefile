@@ -47,6 +47,14 @@ pool:           ## This week's survivor pick priced against the field, across th
 # writes the decision to the journal; `ARGS="--eliminated --week 3"` prices the buyback.
 	uv run python -m hub.season.pool $(if $(strip $(WEEK)),--week $(WEEK)) $(ARGS)
 
+journal:        ## The survivor decision history read back, and a key settled with ARGS
+# `make pool ARGS=--record` writes a row; this reads the season back (#267). Settle an
+# outcome with `ARGS="--settle 2026-w03-pick-... --survived"`; see `hub.season.journal --help`.
+	uv run python -m hub.season.journal $(if $(strip $(SEASON)),--season $(SEASON)) $(ARGS)
+
+inspect:        ## What a summary can be asked for: every dataset under both roots
+	uv run python -m hub.inspect --list
+
 check:          ## Quota + cache health, prints a summary only
 	uv run python -m hub.fetch.cfbd --quota
 

@@ -49,3 +49,19 @@ If the concept you need isn't in the glossary yet, that's a signal: either you'r
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
 
 > _Contradicts ADR-0007 (event-sourced orders), but worth reopening because…_
+
+
+## Looking at data without reading it
+
+`CLAUDE.md` rule 1: never read a data file into context. The one approved way to look is the
+summarising CLI, and it can tell you what exists:
+
+```bash
+uv run python -m hub.inspect --list               # every dataset under both roots
+uv run python -m hub.inspect draft_board --schema # a processed dataset by name
+uv run python -m hub.inspect pbp --nulls          # a raw nflverse cache by source name
+```
+
+The raw caches (`data/raw/nflverse/<source>/<hash>.parquet`) are reachable by source name;
+a processed dataset of the same name wins, and `--raw` moves the root. The survivor decision
+history is `make journal` (`hub.season.journal`); `make pool ARGS=--record` is what writes it.
