@@ -71,7 +71,7 @@ def test_a_row_with_no_quarterback_is_dropped_and_counted_not_refused(capsys):
     blank = dict(got[-1])
     blank.update({"qb1": None, "qb2": None, "qb1_value_pre": None, "qb2_value_pre": None,
                   "qb1_adj": None, "qb2_adj": None, "date": "2026-09-09"})
-    frame = nfeloqb.parse(csv_text(got + [blank]).encode())
+    frame = nfeloqb.parse(csv_text([*got, blank]).encode())
     assert frame.height == len(got)
     said = capsys.readouterr().out
     assert "dropped 1 rows with no quarterback" in said and "1 of them this season" in said
