@@ -20,7 +20,9 @@ The multiplier cannot be triggered by accident -- a market or region this module
 declared, or one asked for twice, is refused before a request is formed, which refuses every
 props market by name rather than by counting commas. The balance is never a mystery: every
 pull reads `x-requests-remaining` from the response, prints it, and stores it, and a stored
-balance below the floor refuses the *next* pull before spending anything. And what a poll
+balance below the floor refuses the *next* pull before spending anything -- until the month
+turns, when a sub-floor reading from before the reset is unknown again and one pull may
+re-read it, because the balance only ever arrives in a response (#264). And what a poll
 actually cost is *measured* rather than asserted -- the balance before minus the balance
 after, recorded beside the balance and compared against markets x regions, so the day the
 billing model stops being what the guard assumes, the guard says so instead of the invoice.
@@ -187,6 +189,41 @@ def credits_remaining(path: Path | None = None) -> int | None:
     """
     v = _read_state(path).get("remaining")
     return int(v) if v is not None else None
+
+
+def known_balance(path: Path | None, when: datetime, *, floor: int = CREDIT_FLOOR) -> int | None:
+    """The balance the floor may refuse on: the stored one, unless a monthly reset has made
+    it unknowable (#264).
+
+    The quota resets on the first of the month and the balance is only ever re-read from a
+    response, so a sub-floor reading latched the refusal for good: nothing would spend the
+    credit that reports the new balance. A sub-floor reading whose `checked_at` is from an
+    earlier month is therefore unknown -- one probing pull may re-read the header -- while
+    one from this month refuses as before. Readings above the floor pass either way, and an
+    undated sub-floor reading refuses: the reset is inferred from the stamp, and a reading
+    with none could be from this morning.
+
+    The calendar month is The Odds API's stated cycle ("usage resets at the start of each
+    month"), not something this repo has observed. If the boundary is elsewhere, the cost
+    is one refused pull a month at the mismatch -- the original fault bounded, not
+    reintroduced.
+    """
+    state = _read_state(path)
+    have = state.get("remaining")
+    if have is None:
+        return None
+    have = int(have)
+    if have >= floor:
+        return have
+    try:
+        seen = datetime.fromisoformat(str(state["checked_at"]))
+    except (KeyError, ValueError, TypeError):
+        return have
+    if (seen.year, seen.month) < (when.year, when.month):
+        print(f"  odds credits: {have} was read {seen.date()}, before this month's reset; "
+              f"treating the balance as unknown for one pull")
+        return None
+    return have
 
 
 def _write_state(path: Path | None, remaining: int | None, when: datetime, *,
@@ -932,7 +969,7 @@ def snapshot(season: int = SEASON_AHEAD, *, markets: str = ",".join(MARKETS),
     declared_cost = len(asked_markets) * len(asked_regions)
 
     when = now or datetime.now(UTC).replace(tzinfo=None)
-    have = credits_remaining(state_path)
+    have = known_balance(state_path, when, floor=floor)
     # GUARD credit-floor-refuses [unit/test_fetch_odds.py]: a low balance spends nothing
     if have is not None and have < floor:
         raise QuotaFloor(
@@ -1258,6 +1295,13 @@ def credits_report(path: Path | None = None) -> int:
     else:
         print(f"  odds credits: {have:,} remaining, floor {CREDIT_FLOOR} "
               f"(as of {state.get('checked_at', '?')})")
+        # What the next pull will do with it, which is not the same question once the
+        # month has turned (#264).
+        now = datetime.now(UTC).replace(tzinfo=None)
+        if have < CREDIT_FLOOR and known_balance(path, now) is None:
+            print("  that reading is from an earlier month; the next pull will probe the reset")
+        elif have < CREDIT_FLOOR:
+            print("  below the floor; the next pull will refuse")
     if not _api_key():
         print("  no ODDS_API_KEY set; fetching unavailable, accounting still works")
     return 0

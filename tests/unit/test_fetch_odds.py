@@ -191,6 +191,56 @@ def test_a_balance_below_the_floor_refuses_before_calling(transport, teams, sche
     assert not calls, "refusing after spending the credit would defeat the point"
 
 
+def test_a_sub_floor_reading_from_last_month_lets_one_probe_through(transport, teams,
+                                                                    schedule, paths):
+    """The quota resets monthly and the balance is only ever re-read from a response, so a
+    sub-floor reading latched the refusal for good (#264). A reading dated an earlier
+    month is unknown, not low: one pull re-reads `x-requests-remaining`, and its cost is a
+    first-poll None because the number it would subtract from is from another month."""
+    calls = transport(remaining=480)
+    paths["state"].write_text(json.dumps({"remaining": 3, "checked_at": "2026-08-30T10:00:00"}))
+    odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
+                  now=dt.datetime(2026, 9, 3, 12, 0))
+    assert len(calls) == 1
+    state = json.loads(paths["state"].read_text())
+    assert state["remaining"] == 480 and state["last_cost"] is None
+    assert state["checked_at"].startswith("2026-09-03")
+
+
+def test_a_sub_floor_reading_from_this_month_still_refuses(transport, teams, schedule, paths):
+    calls = transport()
+    paths["state"].write_text(json.dumps({"remaining": 3, "checked_at": "2026-09-01T10:00:00"}))
+    with pytest.raises(odds.QuotaFloor):
+        odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
+                      now=dt.datetime(2026, 9, 3, 12, 0))
+    assert not calls
+
+
+def test_a_sub_floor_reading_with_no_date_refuses(transport, teams, schedule, paths):
+    """Undated is not "earlier": the reset is inferred from the stamp, and a reading that
+    has none could be from this morning."""
+    calls = transport()
+    paths["state"].write_text(json.dumps({"remaining": 3}))
+    with pytest.raises(odds.QuotaFloor):
+        odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
+                      now=dt.datetime(2026, 9, 3, 12, 0))
+    assert not calls
+
+
+def test_the_credits_report_says_what_the_next_pull_will_do(paths, capsys, monkeypatch):
+    """`--credits` and `--snapshot` must agree about a sub-floor reading: the report reads
+    the same rule the guard does, so it says "probe" after the month turns and "refuse"
+    before it."""
+    monkeypatch.setattr(odds, "_api_key", lambda: "test-key")
+    paths["state"].write_text(json.dumps({"remaining": 3, "checked_at": "2000-01-15T10:00:00"}))
+    odds.credits_report(paths["state"])
+    assert "probe" in capsys.readouterr().out
+    now = dt.datetime.now(dt.UTC).replace(tzinfo=None)
+    paths["state"].write_text(json.dumps({"remaining": 3, "checked_at": now.isoformat()}))
+    odds.credits_report(paths["state"])
+    assert "refuse" in capsys.readouterr().out
+
+
 def test_the_first_ever_pull_is_allowed(transport, teams, schedule, paths):
     """No stored balance is unknown, not empty. Refusing would be unrecoverable."""
     calls = transport()
