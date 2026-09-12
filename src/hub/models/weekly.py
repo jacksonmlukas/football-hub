@@ -8,6 +8,18 @@ rather than chosen -- see `docs/weekly-screen.md`.
     weekly TDs   = weekly yards x the POSITION's touchdown rate
     weekly points = league scoring applied to the counts
 
+> **Restated 2026-09-11 -- the Usage multiplier is the identity.** #233 revoked the
+> snap-share trend's licence: on the settled `(yds_prior, ecr)` control basis it is +0.014 at
+> permutation p 0.24 at the published anchor 8, +0.008 at p 0.66 at 12, and clears at 10
+> alone -- a claim that survives one row filter and not another is a claim about the filter.
+> #248 implements it. `coef` is not fitted, not zero, and not a parameter: `project` takes
+> no coefficient and the first line above reads `weekly Usage = season-to-date Usage`, which
+> is the `f = 1` incumbent the next paragraph names. **The touchdown term is untouched**: the
+> position's rate, `components.td_rate`, applied to the same yards the `f = 1` arm always
+> projected, byte for byte. The two coefficients' fates side by side are on
+> `docs/weekly-projection.md`; the screen keeps the trend's cell as the record of what was
+> tried and why it lost (ADR-0007), printed with the licence it no longer has.
+
 **`f = 1` is the incumbent.** With `coef = 0` the multiplier is one and the projection is
 exactly the flat one, so the null is the identity and this cannot be much worse than what it
 adjusts. It also means a failed gate leaves one interpretable object -- a multiplier printable
@@ -63,26 +75,22 @@ from hub.models.experiment import expanding_seasons
 from hub.models.panel import (
     MIN_GAMES_BEFORE,
     SEASONS,
-    TREND_MIN_WEEK,
     PanelSpec,
     build_panel,
 )
 from hub.models.scoring_rules import crps_from_quantiles, normal_quantile, quantile_levels
 
 NOT_FITTED_BECAUSE = (
-    "the Weekly projection. MULTIPLIER_LO/HI bound a fitted multiplier, MIN_UNITS is a volume "
-    "floor below which a per-unit efficiency rate is noise, TAIL_Q is the slice the shrinkage "
-    "experiment scores and the two SHRINK_GRIDs are search grids -- all settings. The "
-    "multiplier's coefficients are fitted at run time from the panel and never frozen into "
-    "the module, the same shape as hub.models.injury. See docs/weekly-screen.md "
+    "the Weekly projection. MIN_UNITS is a volume floor below which a per-unit efficiency "
+    "rate is noise, TAIL_Q is the slice the shrinkage experiment scores and the two "
+    "SHRINK_GRIDs are search grids -- all settings. The Usage multiplier is the identity "
+    "since #248 and carries no coefficient; the shrinkage constants are fitted at run time "
+    "from the panel and never frozen into the module, the same shape as hub.models.injury. "
+    "See docs/weekly-screen.md "
 )
 
-# The multiplier is bounded. A snap share that doubled is real information; a multiplier of 4
-# on a player's target count is an extrapolation past anything in the fit, and the cost of
-# being wrong upward on a lineup is asymmetric -- you start him.
-MULTIPLIER_LO, MULTIPLIER_HI = 0.6, 1.6
-
-# Usage counts the multiplier applies to, and the phase each one scores through.
+# The Usage counts a week is projected from. Until #248 the multiplier applied to each of
+# them; the walk-forward's shrinkage still fits a prior for each.
 VOLUME: tuple[str, ...] = ("targets", "carries", "attempts")
 
 # (yards, units) pairs whose ratio is the efficiency held at the player's own rate.
@@ -95,37 +103,6 @@ EFFICIENCY_PAIRS: tuple[tuple[str, str], ...] = (
 # comparing a per-game mean against this sent almost every receiver to the pooled rate, since
 # nobody catches eight passes a game, and under-projected the good ones by 0.66 points a week.
 MIN_UNITS = 8.0
-
-
-def fit_multiplier(train: pl.DataFrame, component: str, *,
-                   feature: str = "snap_trend") -> float:
-    """`coef` in `count = expected * exp(coef * feature)`, by least squares on the log ratio.
-
-    The log ratio rather than the raw difference so the term is multiplicative and scale-free:
-    a snap-share jump should move a twelve-target receiver by more targets than a four-target
-    one, and by the same *fraction*. Fitting the difference instead would apply a receiver's
-    absolute gain to a tight end.
-
-    Returns 0.0 -- the identity -- when there is nothing to fit, which keeps the incumbent
-    rather than inventing a coefficient from a handful of rows.
-    """
-    d = train.drop_nulls([component, f"{component}_prior", feature]).filter(
-        (pl.col(f"{component}_prior") > 0) & (pl.col("week") >= TREND_MIN_WEEK))
-    if d.height < 100:
-        return 0.0
-    y = np.log((d[component].to_numpy().astype(float) + 1.0)
-               / (d[f"{component}_prior"].to_numpy().astype(float) + 1.0))
-    x = d[feature].to_numpy().astype(float)
-    if x.std() == 0:
-        return 0.0
-    return float(np.polyfit(x, y, 1)[0])
-
-
-def multiplier(feature: np.ndarray, coef: float, *, lo: float = MULTIPLIER_LO,
-               hi: float = MULTIPLIER_HI) -> np.ndarray:
-    """`exp(coef * feature)`, clipped, and exactly 1.0 wherever the feature is missing."""
-    x = np.nan_to_num(np.asarray(feature, dtype=float), nan=0.0)
-    return np.clip(np.exp(coef * x), lo, hi)
 
 
 # Grids for the two shrinkage constants, searched on TRAINING seasons only. Both are in the
@@ -214,7 +191,7 @@ def _pos_means(train: pl.DataFrame) -> tuple[dict, dict]:
 TAIL_Q = 0.90
 
 
-def fit_shrink(train: pl.DataFrame, coefs: dict[str, float], *,
+def fit_shrink(train: pl.DataFrame, *,
                objective: str = "mae", target: str = "position") -> Shrink:
     """Fit both constants by grid search on `train`. Zero is in both grids.
 
@@ -249,7 +226,7 @@ def fit_shrink(train: pl.DataFrame, coefs: dict[str, float], *,
     for vk in VOLUME_SHRINK_GRID:
         for ek in EFF_SHRINK_GRID:
             cand = Shrink(vk, ek, vol_mean, eff_mean, prior)
-            mu = project(train, coefs, shrink=cand)["mu"].to_numpy().astype(float)
+            mu = project(train, shrink=cand)["mu"].to_numpy().astype(float)
             if objective == "mae":
                 loss = float(np.abs(mu - actual).mean())
             else:
@@ -316,22 +293,24 @@ def efficiency(df: pl.DataFrame, yards: str, units: str,
     return w * own + (1.0 - w) * target
 
 
-def project(now: pl.DataFrame, coefs: dict[str, float],
-            *, shrink: Shrink | None = None) -> pl.DataFrame:
+def project(now: pl.DataFrame, *, shrink: Shrink | None = None) -> pl.DataFrame:
     """Weekly Usage, yards and touchdowns, and the points they add up to.
+
+    **The Usage counts are the priors themselves -- `f = 1`, since #248.** Until then each
+    was multiplied by `exp(coef . snap_trend)` with `coef` fitted on earlier seasons and
+    forced to zero before `panel.TREND_MIN_WEEK`; #233 revoked the trend's licence and the
+    multiplier is the identity everywhere. Not a coefficient of zero, which something could
+    refit, and not a parameter: there is nowhere here to put one. `walk_forward` carried the
+    `f = 1` arm beside the fitted one from the start, and this is that arm, unchanged.
 
     Touchdowns come from projected yards times the **position's** rate, never the player's
     own: `docs/component-projection.md` measured a player's own touchdown rate as carrying no
     information beyond his yardage (year-over-year r of -0.004 receiving, -0.030 rushing), and
     the weekly screen found the same thing from the other direction -- a high prior rate
-    predicts *fewer* touchdowns at -14 se, which is what over-shrinking would not do.
+    predicts *fewer* touchdowns at -14 se, which is what over-shrinking would not do. That
+    term is untouched by #248: `components.td_rate` did not move, and the yards it multiplies
+    are the `f = 1` arm's yards, so `tds_hat` is byte-identical to what that arm projected.
     """
-    # The trend is dark before TREND_MIN_WEEK, so the multiplier is exactly 1 there. Gating
-    # it here as well as in the fit matters: `snap_trend` is non-null from week 7 (it needs
-    # six prior weeks), and week 7 is a week the screen never established it in.
-    early = (now["week"].to_numpy().astype(int) < TREND_MIN_WEEK)
-    trend = np.where(early, 0.0, np.nan_to_num(now["snap_trend"].to_numpy(), nan=0.0))
-    m = {c: multiplier(trend, coefs.get(c, 0.0)) for c in VOLUME}
     pos = now["position"].to_list()
 
     def prior(col: str) -> np.ndarray:
@@ -340,9 +319,9 @@ def project(now: pl.DataFrame, coefs: dict[str, float],
         return _shrunk(now, col, shrink.volume_k, shrink.volume_mean, col,
                        shrink.consensus_prior)
 
-    tgt = prior("targets") * m["targets"]
-    car = prior("carries") * m["carries"]
-    att = prior("attempts") * m["attempts"]
+    tgt = prior("targets")
+    car = prior("carries")
+    att = prior("attempts")
 
     catch = np.clip(np.nan_to_num(
         prior("receptions") / np.maximum(prior("targets"), 1e-9), nan=0.0), 0.0, 1.0)
@@ -441,23 +420,24 @@ def shipped_quantiles(mu: np.ndarray, position: Sequence[str]) -> np.ndarray:
 
 
 def walk_forward(panel: pl.DataFrame) -> pl.DataFrame:
-    """One row per held-out player-week, carrying **three** arms' absolute error.
+    """One row per held-out player-week, carrying **two** arms' absolute error.
 
-    Three, not two, because the first version carried two and could not see its own subject.
-    It compared the fitted projection against `ppg_before` -- a component rebuild against a
-    points mean -- so the multiplier's contribution was buried under every difference between
-    two whole estimators, and the answer it gave (-0.0025 MAE, 1/4 seasons) was about the
-    rebuild rather than about the week.
+    Two, since #248. It carried three from the day the first version's two could not see
+    their own subject -- that one compared the fitted projection against `ppg_before`, a
+    component rebuild against a points mean, and buried the multiplier under every
+    difference between two whole estimators -- so `component`, the rebuild with the
+    multiplier switched off, was put between them to isolate the week. The week is gone: the
+    weekly projection *is* `f = 1` now, and a third arm would be the second arm under another
+    name, with a coefficient column beside it that nothing applies.
 
-    The plan's design is that **`f = 1` is the incumbent**. So:
+      * `flat`   -- his season-to-date points per game. What the repo did before the rebuild.
+      * `weekly` -- the rebuild. `f = 1`, which is `project` with nothing fitted.
 
-      * `flat`      -- his season-to-date points per game. What the repo does today.
-      * `component` -- the same rebuild with the multiplier switched off. `f = 1`.
-      * `weekly`    -- the rebuild with the fitted multiplier.
-
-    `weekly` against `component` isolates the week. `component` against `flat` is a separate
-    question about the rebuild, and conflating them is how a null gets attributed to the wrong
-    half. Fitting is on strictly earlier seasons only, through `expanding_seasons`.
+    `weekly` against `flat` is the question about the rebuild, and it is the only one left.
+    **Nothing is fitted and the window is kept anyway**: `expanding_seasons` holds out the
+    same seasons the published figures were taken on, so the rebuild's +0.0634 MAE against
+    flat on `docs/weekly-projection.md` is re-runnable on the same rows rather than on a
+    wider window that would not be comparable with it.
 
     **And one column that is not an absolute error** (#177). `crps_weekly` is the continuous
     ranked probability score of the *distribution* the deployed arm publishes -- mean, spread
@@ -465,26 +445,22 @@ def walk_forward(panel: pl.DataFrame) -> pl.DataFrame:
     rule returns for the same projection published as a point mass, so the two are on one
     scale and their difference is what the spread and the skew earn.
 
-    Only the deployed arm carries one, deliberately. Scoring all three under CRPS would be
-    re-running the contrasts under a second rule, which is a decision about what the gate is
-    (ADR-0015) and not what this ticket asks for; `flat` and `component` are alternative
-    *means* and the repo publishes a distribution for neither.
+    Only the deployed arm carries one, deliberately. Scoring both under CRPS would be
+    re-running the contrast under a second rule, which is a decision about what the gate is
+    (ADR-0015) and not what this ticket asks for; `flat` is an alternative *mean* and the
+    repo publishes no distribution for it.
     """
     frames = []
-    for season, past, now in expanding_seasons(panel):
-        coefs = {c: fit_multiplier(past, c) for c in VOLUME}
-        fitted = project(now, coefs)
-        base = project(now, dict.fromkeys(VOLUME, 0.0))
+    for season, _past, now in expanding_seasons(panel):
+        fitted = project(now)
         actual = fitted["fantasy_points_ppr"].to_numpy().astype(float)
         mu = fitted["mu"].to_numpy().astype(float)
         frames.append(pl.DataFrame({
             "season": [season] * fitted.height, "week": fitted["week"],
             "err_weekly": np.abs(mu - actual),
-            "err_component": np.abs(base["mu"].to_numpy().astype(float) - actual),
             "err_flat": np.abs(flat(fitted) - actual),
             "crps_weekly": crps_from_quantiles(
-                shipped_quantiles(mu, fitted["position"].to_list()), actual),
-            **{f"coef_{c}": [coefs[c]] * fitted.height for c in VOLUME}}))
+                shipped_quantiles(mu, fitted["position"].to_list()), actual)}))
     return pl.concat(frames) if frames else pl.DataFrame()
 
 
@@ -585,30 +561,26 @@ def _what_the_coverage_measurement_says() -> list[str]:
 def diagnostic(errs: pl.DataFrame) -> list[str]:
     """Gate A, which is a **diagnostic and not a gate** -- ADR-0015.
 
-    Both contrasts are reported because they answer different questions and only one of them
-    is about the week. Neither decides anything: what decides is the lineup, and its incumbent
-    is a consensus ranking with no points to take an error against.
+    One contrast since #248, where there were three: the weekly projection is the `f = 1`
+    rebuild, so the question about the week has no arm to ask it of and the question about
+    the rebuild is the whole diagnostic. It decides nothing: what decides is the lineup, and
+    its incumbent is a consensus ranking with no points to take an error against.
     """
     if errs.is_empty():
         return ["  nothing measured -- no held-out season"]
     per = (errs.group_by("season")
                .agg(pl.len().alias("n"),
                     pl.col("err_flat").mean().alias("flat"),
-                    pl.col("err_component").mean().alias("component"),
-                    pl.col("err_weekly").mean().alias("weekly"),
-                    *[pl.col(f"coef_{c}").first().alias(c) for c in VOLUME])
+                    pl.col("err_weekly").mean().alias("weekly"))
                .sort("season"))
-    lines = [f"  {'season':>7} {'n':>6} {'flat':>8} {'f=1':>8} {'weekly':>8}"
-             f" {'coef tgt':>9} {'coef car':>9}"]
+    lines = [f"  {'season':>7} {'n':>6} {'flat':>8} {'weekly':>8}",
+             "  (weekly is the rebuild at f = 1: the Usage multiplier is the identity, #248)"]
     for r in per.iter_rows(named=True):
         lines.append(f"  {r['season']:>7} {r['n']:>6} {r['flat']:>8.3f} "
-                     f"{r['component']:>8.3f} {r['weekly']:>8.3f} "
-                     f"{r['targets']:>9.4f} {r['carries']:>9.4f}")
+                     f"{r['weekly']:>8.3f}")
     lines.append("")
-    lines += _contrast(errs, "component", "weekly", "the week (weekly vs f=1)")
-    lines += _contrast(errs, "flat", "component", "the rebuild (f=1 vs flat)")
-    lines += _contrast(errs, "flat", "weekly", "both together (weekly vs flat)")
-    lines.append("\n  DIAGNOSTIC ONLY -- none of these is the gate. The flat projection has no "
+    lines += _contrast(errs, "flat", "weekly", "the rebuild (f=1 vs flat)")
+    lines.append("\n  DIAGNOSTIC ONLY -- this is not the gate. The flat projection has no "
                  "week-level term, so beating it is nearly free; the gate is the "
                  "lineup (ADR-0015).")
     return lines + distribution_report(errs)
@@ -617,8 +589,10 @@ def diagnostic(errs: pl.DataFrame) -> list[str]:
 def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - network
     ap = argparse.ArgumentParser(
         prog="hub.models.weekly",
-        description="Fit the Weekly projection and report the Gate A diagnostic.")
-    ap.add_argument("--fit", action="store_true", help="build the panel, fit, walk forward")
+        description="Walk the Weekly projection forward and report the Gate A diagnostic.")
+    ap.add_argument("--fit", action="store_true",
+                    help="build the panel and walk forward (the flag keeps its name; nothing "
+                         "is fitted since #248 -- the Usage multiplier is the identity)")
     ap.add_argument("--expected", action="store_true",
                     help="use ff_opportunity's expected receptions and yardage in the priors")
     a = ap.parse_args(list(argv) if argv is not None else None)

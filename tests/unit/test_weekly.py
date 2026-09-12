@@ -36,61 +36,55 @@ def _rows(n=200, week=10, season=2024, seed=0, **over):
     return pl.DataFrame(base)
 
 
-# --- the multiplier ---------------------------------------------------------
+# --- the Usage multiplier, which is the identity ----------------------------
 
-def test_a_zero_coefficient_is_the_identity():
-    """The design the plan fixed: `f = 1` recovers the incumbent exactly, so the null is the
-    identity and this cannot be much worse than the projection it adjusts."""
-    x = np.array([-0.3, 0.0, 0.4])
-    assert np.allclose(W.multiplier(x, 0.0), 1.0)
+def test_the_usage_multiplier_is_exactly_one_for_every_player_week():
+    """#248, implementing the decision on #233: `snap_trend` leaves the Usage multiplier.
 
-
-def test_a_zero_feature_is_the_identity_whatever_the_coefficient():
-    assert W.multiplier(np.zeros(3), 5.0).tolist() == [1.0, 1.0, 1.0]
-
-
-def test_a_missing_trend_leaves_the_projection_alone():
-    """A player with no snap history must get the flat projection, not a multiplier of zero."""
-    assert W.multiplier(np.array([np.nan, np.nan]), 0.5).tolist() == [1.0, 1.0]
-
-
-def test_the_multiplier_is_bounded_in_both_directions():
-    assert W.multiplier(np.array([10.0]), 1.0)[0] == W.MULTIPLIER_HI
-    assert W.multiplier(np.array([-10.0]), 1.0)[0] == W.MULTIPLIER_LO
-
-
-def test_fit_recovers_a_coefficient_it_was_given():
-    rng = np.random.default_rng(3)
-    n = 4000
-    trend = rng.normal(0, 0.15, n)
-    prior = np.full(n, 6.0)
-    count = (prior + 1.0) * np.exp(0.5 * trend) - 1.0
-    d = pl.DataFrame({"week": [10] * n, "targets": count, "targets_prior": prior,
-                      "snap_trend": trend})
-    assert W.fit_multiplier(d, "targets") == pytest.approx(0.5, abs=0.05)
+    On the settled `(yds_prior, ecr)` basis the trend is +0.014 at permutation p 0.24 at
+    the published anchor, so its licence is revoked and the multiplier is the `f = 1`
+    incumbent the module was built around. Exactly one -- not a coefficient of zero that
+    something could refit -- at every week, whatever the trend says, and where it is
+    missing. Byte equality rather than `allclose`, because `x * 1.0` is `x` in IEEE
+    arithmetic and anything short of that is a multiplier.
+    """
+    from hub.models.panel import TREND_MIN_WEEK
+    trend = [3.0, -3.0, float("nan"), 0.25] * 50
+    for week in (TREND_MIN_WEEK - 1, TREND_MIN_WEEK, 14):
+        rows = _rows(week=week, snap_trend=trend, carries_prior=2.5, attempts_prior=1.5)
+        out = W.project(rows)
+        for c in W.VOLUME:
+            hat, prior = out[f"{c}_hat"].to_numpy(), rows[f"{c}_prior"].to_numpy()
+            assert hat.tobytes() == prior.tobytes(), f"{c} moved in week {week}"
+            assert (hat / prior == 1.0).all(), f"the {c} multiplier is not exactly 1.0"
 
 
-def test_a_thin_sample_returns_the_identity_rather_than_a_coefficient():
-    d = pl.DataFrame({"week": [10] * 20, "targets": [5.0] * 20,
-                      "targets_prior": [5.0] * 20, "snap_trend": [0.1] * 20})
-    assert W.fit_multiplier(d, "targets") == 0.0
+def test_the_touchdown_term_is_untouched_by_the_multiplier_leaving():
+    """The other coefficient's fate, side by side. The touchdown term is the position's
+    rate applied to projected yards, and it is the same bytes it was under the `f = 1` arm
+    the walk-forward already carried: `components.td_rate` does not move, and neither does
+    the yardage it multiplies now that the Usage it is built from is the prior itself."""
+    from hub.models.components import td_rate
+    rows = _rows(snap_trend=[2.0] * 200, carries_prior=2.5, rushing_yards_prior=12.0)
+    out = W.project(rows)
+    rec_y = rows["receptions_prior"].to_numpy() / rows["targets_prior"].to_numpy() \
+        * rows["targets_prior"].to_numpy() \
+        * (rows["receiving_yards_prior"].to_numpy() / rows["receptions_prior"].to_numpy())
+    rush_y = rows["carries_prior"].to_numpy() \
+        * (rows["rushing_yards_prior"].to_numpy() / rows["carries_prior"].to_numpy())
+    want = rec_y * td_rate("WR", "rec") + rush_y * td_rate("WR", "rush")
+    assert out["tds_hat"].to_numpy().tobytes() == want.tobytes()
+    assert out["tds_hat"][0] > 0.0, "and the term is live, not zero on both sides"
 
 
-def test_a_constant_feature_returns_the_identity():
-    d = pl.DataFrame({"week": [10] * 200, "targets": list(np.arange(200.0)),
-                      "targets_prior": [5.0] * 200, "snap_trend": [0.1] * 200})
-    assert W.fit_multiplier(d, "targets") == 0.0
-
-
-def test_the_multiplier_is_off_before_the_week_the_trend_exists():
-    """`snap_trend` is non-null from week 7 -- it needs six prior weeks -- but the screen only
-    ever established it from week 8. docs/snap-trend-signal.md: anchors 4 and 6 are null and
-    flip sign between seasons."""
-    coefs = dict.fromkeys(W.VOLUME, 1.0)
-    early = W.project(_rows(week=W.TREND_MIN_WEEK - 1, snap_trend=[0.3] * 200), coefs)
-    late = W.project(_rows(week=W.TREND_MIN_WEEK, snap_trend=[0.3] * 200), coefs)
-    assert early["targets_hat"].to_list() == pytest.approx([6.0] * 200)
-    assert late["targets_hat"][0] > 6.5, "and it is on from the week it was measured in"
+def test_the_projection_takes_no_coefficient_at_all():
+    """A `coefs` argument that is always zero is a hook, and a hook is what the four rescue
+    variants were built on. The projection has nowhere to put a fitted multiplier."""
+    import inspect
+    assert "coefs" not in inspect.signature(W.project).parameters
+    assert not hasattr(W, "fit_multiplier") and not hasattr(W, "multiplier"), (
+        "the fit is gone with the licence; the record of what was tried is the screen's "
+        "(`weekly_screen --permute snap_trend`, `--usage`), per ADR-0007")
 
 
 # --- efficiency, and the floor that was measured against the wrong thing ----
@@ -123,7 +117,7 @@ def test_the_volume_floor_is_a_total_not_a_per_game_figure():
 # --- the projection ---------------------------------------------------------
 
 def test_points_are_rebuilt_from_counts_never_projected_directly():
-    p = W.project(_rows(), dict.fromkeys(W.VOLUME, 0.0))
+    p = W.project(_rows())
     for c in ("targets_hat", "receptions_hat", "rec_yards_hat", "tds_hat", "mu"):
         assert c in p.columns
     row = p.to_dicts()[0]
@@ -135,66 +129,77 @@ def test_turnovers_are_priced():
     """Omitting them over-projected quarterbacks by +1.44 points a week -- an interception a
     game, almost exactly. A projection that leaves out two of the scoring components is not
     projecting fantasy points."""
-    clean = W.project(_rows(position="QB"), dict.fromkeys(W.VOLUME, 0.0))
-    picky = W.project(_rows(position="QB", passing_interceptions_prior=1.0),
-                      dict.fromkeys(W.VOLUME, 0.0))
+    clean = W.project(_rows(position="QB"))
+    picky = W.project(_rows(position="QB", passing_interceptions_prior=1.0))
     assert picky["mu"][0] == pytest.approx(clean["mu"][0] - 2.0)
-    fumbler = W.project(_rows(fumbles_lost_total_prior=1.0), dict.fromkeys(W.VOLUME, 0.0))
+    fumbler = W.project(_rows(fumbles_lost_total_prior=1.0))
     assert fumbler["mu"][0] == pytest.approx(
-        W.project(_rows(), dict.fromkeys(W.VOLUME, 0.0))["mu"][0] - 2.0)
+        W.project(_rows())["mu"][0] - 2.0)
 
 
 def test_touchdowns_come_from_the_position_rate_not_the_player_s_own():
     """component-projection.md measured a player's own touchdown rate as carrying no
     information beyond his yardage: year-over-year r of -0.004 receiving, -0.030 rushing."""
     from hub.models.components import td_rate
-    p = W.project(_rows(), dict.fromkeys(W.VOLUME, 0.0)).to_dicts()[0]
+    p = W.project(_rows()).to_dicts()[0]
     assert p["tds_hat"] == pytest.approx(
         p["rec_yards_hat"] * td_rate("WR", "rec") + p["rush_yards_hat"] * td_rate("WR", "rush"))
 
 
 def test_a_quarterback_gets_passing_touchdowns_and_a_receiver_does_not():
-    qb = W.project(_rows(position="QB", attempts_prior=32.0, passing_yards_prior=240.0),
-                   dict.fromkeys(W.VOLUME, 0.0)).to_dicts()[0]
+    qb = W.project(_rows(position="QB", attempts_prior=32.0, passing_yards_prior=240.0)).to_dicts()[0]
     assert qb["pass_yards_hat"] == pytest.approx(240.0)
-    wr = W.project(_rows(attempts_prior=0.0), dict.fromkeys(W.VOLUME, 0.0)).to_dicts()[0]
+    wr = W.project(_rows(attempts_prior=0.0)).to_dicts()[0]
     assert wr["pass_yards_hat"] == pytest.approx(0.0)
 
 
-# --- the walk-forward, and the arm it was missing ---------------------------
+# --- the walk-forward, and the arm it no longer carries ---------------------
 
 def _panel(seasons=(2022, 2023, 2024)):
     return pl.concat([_rows(n=300, season=s, week=w, seed=s + w)
                       for s in seasons for w in (8, 9, 10)])
 
 
-def test_the_walk_forward_carries_three_arms_not_two():
-    """The first version carried two -- fitted against `ppg_before` -- so it compared a
-    component rebuild with a points mean and buried the multiplier under every difference
-    between two whole estimators. It reported -0.0025 MAE at 1/4 seasons, about the rebuild."""
+def test_the_walk_forward_carries_two_arms_and_no_fitted_one():
+    """It carried three until #248: `flat`, `component` (`f = 1`) and `weekly` (the fitted
+    multiplier), because the first version had two and could not see its own subject. The
+    subject is gone -- the weekly projection *is* `f = 1` now -- so the fitted arm and the
+    coefficient columns beside it go with it, rather than staying as a third arm that is
+    the second arm again under another name."""
     errs = W.walk_forward(_panel())
-    assert {"err_flat", "err_component", "err_weekly"} <= set(errs.columns)
+    assert {"err_flat", "err_weekly", "crps_weekly"} <= set(errs.columns)
+    assert "err_component" not in errs.columns
+    assert not [c for c in errs.columns if c.startswith("coef_")], (
+        "a coefficient column with no multiplier to carry it")
 
 
-def test_the_component_arm_is_the_fitted_arm_with_the_multiplier_off():
-    """`f = 1` is the incumbent, so the two arms differ by exactly the week."""
-    errs = W.walk_forward(_panel())
-    assert errs.height > 0
-    coef = errs["coef_targets"].to_list()[0]
-    if coef == 0.0:
-        assert (errs["err_component"] == errs["err_weekly"]).all()
+def test_the_weekly_arm_is_the_rebuild_with_nothing_fitted():
+    """`f = 1` is the incumbent and it is also the projection, so the arm the walk-forward
+    scores is `project` on the held-out rows and nothing else -- the same number a caller
+    with no training seasons at all would get."""
+    panel = _panel()
+    errs = W.walk_forward(panel)
+    held = panel.filter(pl.col("season") > 2022)
+    mu = W.project(held)["mu"].to_numpy()
+    actual = held["fantasy_points_ppr"].to_numpy()
+    assert np.array_equal(errs["err_weekly"].to_numpy(), np.abs(mu - actual))
 
 
 def test_nothing_is_scored_on_the_season_it_was_fitted_on():
+    """Nothing is fitted any more, and the window is kept anyway: the rebuild's published
+    +0.0634 MAE against flat was taken on the seasons `expanding_seasons` holds out, and a
+    re-run that widened the window would not be comparable with it."""
     errs = W.walk_forward(_panel(seasons=(2022, 2023, 2024)))
     assert sorted(errs["season"].unique().to_list()) == [2023, 2024], \
         "the earliest season is training data only"
 
 
-def test_the_diagnostic_reports_all_three_contrasts_and_says_it_decides_nothing():
+def test_the_diagnostic_reports_the_rebuild_and_says_it_decides_nothing():
     text = "\n".join(W.diagnostic(W.walk_forward(_panel())))
-    for label in ("the week", "the rebuild", "both together"):
-        assert label in text
+    assert "the rebuild" in text
+    assert "the week" not in text and "both together" not in text, (
+        "a contrast against an arm that no longer exists")
+    assert "f = 1" in text and "#248" in text, "the diagnostic says what the arm is"
     assert "DIAGNOSTIC ONLY" in text and "ADR-0015" in text
 
 
@@ -219,10 +224,9 @@ def test_a_zero_constant_leaves_the_projection_untouched():
     """Zero is in both grids on purpose, so 'no shrinkage' is a candidate the fit can pick --
     which is what makes this an experiment rather than an assumption. It picked it."""
     t = _train()
-    coefs = dict.fromkeys(W.VOLUME, 0.0)
-    plain = W.project(t, coefs)["mu"].to_numpy()
+    plain = W.project(t)["mu"].to_numpy()
     vm, em = W._pos_means(t)
-    zeroed = W.project(t, coefs, shrink=W.Shrink(0.0, 0.0, vm, em))["mu"].to_numpy()
+    zeroed = W.project(t, shrink=W.Shrink(0.0, 0.0, vm, em))["mu"].to_numpy()
     assert np.allclose(plain, zeroed)
 
 
@@ -263,11 +267,10 @@ def test_each_objective_optimises_its_own_loss():
     and the objective was blind to the defect the shrinkage was meant to fix.
     """
     t = _train()
-    coefs = dict.fromkeys(W.VOLUME, 0.0)
     actual = t["fantasy_points_ppr"].to_numpy().astype(float)
 
     def loss(sh, kind):
-        mu = W.project(t, coefs, shrink=sh)["mu"].to_numpy().astype(float)
+        mu = W.project(t, shrink=sh)["mu"].to_numpy().astype(float)
         if kind == "mae":
             return float(np.abs(mu - actual).mean())
         top = mu >= float(np.quantile(mu, W.TAIL_Q))
@@ -275,7 +278,7 @@ def test_each_objective_optimises_its_own_loss():
 
     vm, em = W._pos_means(t)
     for kind in ("mae", "tail"):
-        fitted = W.fit_shrink(t, coefs, objective=kind)
+        fitted = W.fit_shrink(t, objective=kind)
         best = loss(fitted, kind)
         for vk in W.VOLUME_SHRINK_GRID:
             for ek in W.EFF_SHRINK_GRID:

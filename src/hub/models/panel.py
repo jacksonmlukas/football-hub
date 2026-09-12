@@ -97,6 +97,12 @@ MIN_GAMES_BEFORE = 3
 # value because the measurement is what it is for; what moved is that
 # `hub.models.weekly_screen` no longer reads it. The screen sweeps its own anchors and
 # publishes the sensitivity -- `weekly_screen.SCREEN_TREND_ANCHORS`.
+#
+# **Restated 2026-09-11 -- and `hub.models.weekly` no longer reads it either (#248).** #233
+# revoked the trend's licence and the Usage multiplier is exactly 1 at every week, not only
+# before this one. The constant keeps its measured value as the record of where the trend was
+# found to exist; nothing in `src/` gates on it now, and `tests/unit/test_weekly_screen.py`
+# holds the value.
 TREND_MIN_WEEK = 8
 
 
@@ -773,9 +779,10 @@ def best_per_week(joined: pl.DataFrame) -> pl.DataFrame:
 # so `targets`, `receptions`, `offense_pct`, `tds`, `yds` and a dozen more of week w's own
 # outcome ride along to the return.
 #
-# **They are kept on purpose and the keeping is not the defect.** `hub.models.weekly` fits
-# its multiplier with `targets` on the left-hand side, `weekly_screen.screen_usage` screens
-# against **Usage**, and Gate B scores a lineup on realised points. Every one of those is
+# **They are kept on purpose and the keeping is not the defect.** `hub.models.weekly` fitted
+# its multiplier with `targets` on the left-hand side until #248 and its shrinkage priors
+# still read the realised counts, `weekly_screen.screen_usage` screens against **Usage**, and
+# Gate B scores a lineup on realised points. Every one of those is
 # reading a realised column *as an outcome*, which is the only thing it is.
 #
 # The defect was that the return said nothing about which was which, so using the Panel

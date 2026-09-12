@@ -748,6 +748,11 @@ settled basis the point estimate is well short of it at every anchor but 10. Whe
 multiplier keeps a licence that rests on a pooled-basis screen result is #233's decision, and
 this is the measurement it asked for and not the decision.
 
+> **Decided 2026-09-11 — it does not.** #233 revoked the licence on this measurement and
+> #248 made the Usage multiplier the identity. The trend stays on this page and in the
+> screen's family as the record; see *What this does and does not license*, below, for the
+> two coefficients' fates side by side.
+
 ## The staleness question, and why it is smaller than first reported
 
 The consensus control is FantasyPros' `weekly-op` page, and the first version of this document
@@ -869,6 +874,38 @@ being the own-spread finding in another hat.
 > two-features-two-places argument also leans on is unaffected by the basis, and #233 is where
 > the snap-share half is open. What this note does is stop the sentences above being read as
 > unconditional.
+
+> **Decided 2026-09-11 — the snap-share half is revoked; the touchdown half is where #229
+> left it.** Issue #233, implemented in #248, under [method.md rule 13](method.md). The
+> measurement under *The every-season half under the null* is what it was decided on: on
+> the settled basis the trend is **+0.0142 at permutation *p* 0.24** at the published anchor,
+> +0.0081 at *p* 0.66 at 12, and clears at 10 alone. The every-season half is not what kills
+> it at the published anchor; the size is. **The two coefficients' fates, side by side:**
+>
+> | licence granted above | screen result it rested on | on the settled basis | fate | in `hub.models.weekly` since #248 |
+> |---|---|---|---|---|
+> | the snap-share trend as a Usage multiplier, week ≥ 8 | +0.038 alone, +0.043 joint, 5/5 seasons, pooled basis | +0.0142, *p* 0.24 at anchor 8; killed at 4, 6, 8, 12; clears at 10 alone | **revoked** — #233 | the multiplier is **the identity**, exactly 1.0 every player-week; `project` takes no coefficient and the fit is gone |
+> | the prior TD rate as a touchdown regression | −0.040 at 5/5 seasons, null broken, pooled basis | −0.012 at −2.49 se, 4/5 seasons — not a finding, rule 4 | **qualified, not withdrawn** — #229; #233 did not decide it and #248 does not touch it | **untouched**: the position's rate on projected yards, `components.td_rate` unchanged, `tds_hat` byte-identical to the `f = 1` arm |
+>
+> **What the screen does with it.** `snap_trend` stays in `FEATURES`. This page is the
+> record of what was tried and why it lost — ADR-0007 — and the record has to be able to say
+> it clears at anchor 10, so its cell is computed and reported at every anchor, on every
+> basis, exactly as before. What changes is the line it prints on: `UNLICENSED` in
+> `hub.models.weekly_screen` names the revoked licence, and `report`, `sweep_report` and the
+> *independent signals* line append it, so a `clears` in the verdict column cannot be read as
+> the licence coming back. The verdict machinery — `verdict`, `signals`, `surviving`,
+> `sensitivity` — does not read it: a licence is not a number. No figure on this page moves
+> under #248, and `--run`, `--trend-min-week 8`, `--basis pooled` and `--permute snap_trend`
+> reproduce every table above unchanged, each with the note beside the trend's row.
+>
+> **What it does not decide.** The Usage-screen cells under *Against Usage, not points* —
+> +0.088 on targets and the rest — stand as published under their own controls and were not
+> what the licence was revoked on; they are not re-run here. The prior TD rate's licence is
+> not decided here in either direction. And the weekly projection's own gates:
+> [ADR-0016](adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md)'s −0.304 and
+> the blend gate's REMOVE were both scored on the fitted arm, and the maintainer re-runs the
+> blend gate once after #248 lands to record what the change cost — its inputs still build
+> and its verdict stands until then.
 
 It licenses **nothing about lineups**. A partial correlation says a quantity adds to the board
 and never that it should be the board

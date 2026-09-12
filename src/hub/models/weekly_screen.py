@@ -53,6 +53,14 @@ finding.** `BASES` keeps `pooled` and `decomposed` reachable through `--basis` a
 of what was tried; every figure taken on them is restated on this basis in
 `docs/weekly-screen.md` under rule 13, all eight features and not the one the ticket was about.
 
+THE LICENCE IS NOT THE VERDICT -- #233, implemented in #248. On the settled basis the
+snap-share trend is +0.014 at permutation p 0.24 at the published anchor and clears at anchor
+10 alone, and the maintainer revoked the licence the pooled-basis screen had granted it as a
+Usage multiplier. It stays in `FEATURES`, screened and reported at every anchor, because this
+module is the record of what was tried and why it lost (ADR-0007); `UNLICENSED` names it, and
+every line it prints on says so, so a `clears` in the verdict column at one anchor cannot be
+read as the licence coming back. `hub.models.weekly` applies no multiplier.
+
 THE CONFOUND, which the first run found and which no available data removes: `weekly-op` is
 FantasyPros' Monday ranking, scraped a median of six days before kickoff. Any feature carrying
 Tuesday-to-Sunday news beats it for that reason alone. `LEAD_DAYS` reports the distribution so
@@ -175,6 +183,29 @@ FEATURES: tuple[Feature, ...] = (
 # property of the columns and does not depend on the controls; the two coefficients do, and
 # have not been re-run here.
 ROUTE_TREND = Feature("route_trend", "+", TREND_ANCHOR_UNSET)
+
+
+# **A licence this screen granted and a decision revoked, by feature -- #233, implemented in
+# #248.** The screen asks "is this real?" and nothing more; what a screen result *licenses*
+# is a decision, and this is where the decisions that went against a feature are written so
+# that a run cannot be read as reversing them. `snap_trend` stays in `FEATURES` -- the screen
+# is the record of what was tried and why it lost (ADR-0007), and the record has to be able
+# to say it clears at anchor 10 and is killed at the other four -- and every line it prints
+# on carries the note below, because the verdict column at one anchor reads `clears` and a
+# reader taking a licence from that column would be taking one that was revoked.
+#
+# The verdict machinery does not read this. `verdict`, `signals`, `surviving` and
+# `sensitivity` report the numbers' answer; a licence is not a number, so it enters at the
+# report and nowhere upstream of it.
+UNLICENSED: dict[str, str] = {
+    "snap_trend": ("not licensed -- #233: +0.014 at permutation p 0.24 at the published "
+                   "anchor on the settled basis; the Usage multiplier is the identity, #248"),
+}
+
+
+def licence_note(name: str) -> str:
+    """What a report line appends for a feature whose licence was revoked, else nothing."""
+    return f"  [{UNLICENSED[name]}]" if name in UNLICENSED else ""
 
 
 def at_anchor(features: Sequence[Feature], anchor: int) -> tuple[Feature, ...]:
@@ -442,12 +473,16 @@ def report(rows: Sequence[dict]) -> list[str]:
     Both counts are printed, and the header says which one the `t` is built from. A reader
     seeing 55 cells beside a t of 5.7 will read the t as a 55-unit statistic unless the
     column tells them otherwise, and that misreading is exactly what #169 corrected.
+
+    A feature in `UNLICENSED` prints its verdict and then the licence it does not have, in
+    that order: the verdict is the record, the note is what stops it being read as more.
     """
     out = ["", f"  {'feature':16} {'pre':>4} {'r':>9} {'t':>7} {'cells':>6} {'szn':>4}"
                "  verdict", "  (t is over the seasons; cells are how each season is built)"]
     for row in rows:
         out.append(f"  {row['feature']:16} {row['sign']:>4} {row['r']:+9.4f} "
-                   f"{row['t']:+7.2f} {row['cells']:6d} {row['seasons']:4d}  {row['note']}")
+                   f"{row['t']:+7.2f} {row['cells']:6d} {row['seasons']:4d}  {row['note']}"
+                   + licence_note(row["feature"]))
     return out
 
 
@@ -614,7 +649,8 @@ def sweep_report(swept: pl.DataFrame, sens: pl.DataFrame) -> list[str]:
     for row in sens.iter_rows(named=True):
         out.append(f"  {row['feature']:16} {row['r_lo']:+8.4f} {row['r_hi']:+8.4f}  "
                    f"{row['verdict']}"
-                   + ("" if row["stable"] else f"  [{row['by_anchor']}]"))
+                   + ("" if row["stable"] else f"  [{row['by_anchor']}]")
+                   + licence_note(row["feature"]))
     out.append("")
     out.append("  every verdict holds at all five anchors -- the screen's minimum week "
                "changed nothing" if moved.is_empty() else
@@ -845,6 +881,9 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                                        for r in j.to_dicts()])))
             left = surviving(swept, anchor)
             print(f"\n  independent signals: {', '.join(left) if left else 'nothing'}")
+            for name in left:
+                if name in UNLICENSED:
+                    print(f"  {name} is a survivor here and {UNLICENSED[name]}")
             if a.usage and left:
                 print("\n  and against Usage rather than points:")
                 u = screen_usage(sample, [f for f in at_anchor(pool, anchor) if f.name in left])
