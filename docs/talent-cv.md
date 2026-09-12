@@ -10,6 +10,11 @@
 | **TE** | **0.32** | **−3.8 se** |
 | *pooled* | *0.41* | — |
 
+> **Superseded twice; the table above keeps its original text.** Restated 2026-09-07 (the
+> interval was over the wrong unit) and 2026-09-11 (net of absence, #235): what ships is
+> **0.32** pooled, QB 0.20 / RB 0.38 / WR 0.31 / TE 0.18. Both restatements are under
+> [Result](#result).
+
 Replacing a guessed 0.35 that sat 4.6 standard errors below the pooled fit. Going per
 position also turned up a model bug that this constant had been silently absorbing — see
 [The model could not produce a bust](#the-model-could-not-produce-a-bust).

@@ -535,6 +535,10 @@ number. Costs ~4 credits per event and errors are free.
     weekly - consensus = -0.684 points per team-week
     95% CI [-1.519, +0.159]   P(weekly better) 5.8%    lost 3 of 3 seasons
 
+*(Superseded 2026-08-28: one draw from a non-reproducible board — improvements.md #18. With the
+board sorted the same command returns **−0.304**, CI [−1.043, +0.415], 2 of 3; the verdict is
+unchanged. [weekly-gate.md](weekly-gate.md) is the record.)*
+
 A projection that beats the flat one this repo ships by +0.074 MAE at 5.9 se, losing the lineup
 decision to a free public ranking. A lineup is a max over a roster, so most projection error
 never reaches the decision -- which is what [ADR-0015](adr/0015-the-weekly-gate-is-a-decision-not-an-accuracy-test.md)

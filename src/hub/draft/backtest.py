@@ -693,7 +693,9 @@ def tripwire(board: pl.DataFrame, diagnosed: pl.DataFrame) -> list[str]:
 
     Read as a quality check, it was correct and the clause was wrong. P0b then measured that
     same running-back-over-need preference at **-19.66 points per team game** against
-    consensus-following, across four seasons, losing in all of them. The clause is reverted:
+    consensus-following, across four seasons, losing in all of them (the figure as first
+    measured; docs/adr/0009, restated 2026-09-11, withdraws the magnitude and keeps the
+    4-of-4). The clause is reverted:
     a need-filling co-leader means the objective cannot tell the difference between filling a
     hole and not filling one, which is exactly the thing worth knowing.
 

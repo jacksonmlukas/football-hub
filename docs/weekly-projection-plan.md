@@ -445,7 +445,7 @@ Written before measuring. Scored 2026-08-28, after.
 | 2 | it does **not** beat weekly consensus on market-derived features alone | **right in substance.** The implied total and own spread each cleared alone and both died in the joint screen, being one signal in two hats |
 | 3 | if anything survives it is the snap trend and the injury designation | **right, and understated.** Both survive, and so do the prior TD rate and defence-vs-position |
 | 4 | week-over-week TD rate comes back null | **wrong, informatively.** −0.040 at 5.5 se in every season — `component-projection.md`'s "regress touchdowns" arriving at weekly grain by an independent route |
-| 5 | **Gate B fails even where Gate A passes** | **right, and it is the one that decided.** −0.684 points per team-week, lost 0/3 seasons → SHOW, NEVER RANK ON |
+| 5 | **Gate B fails even where Gate A passes** | **right, and it is the one that decided.** −0.684 points per team-week as first published, lost 0/3 seasons → SHOW, NEVER RANK ON *(corrected 2026-08-28: −0.684 was one draw from a non-reproducible board; sorted, the gate returns **−0.304**, CI [−1.043, +0.415], 2 of 3 lost — same verdict; [weekly-gate.md](weekly-gate.md))* |
 
 Prediction 5 was the one that mattered and it held: a projection measurably better on accuracy
 lost the decision, because a lineup is a max over a roster and most projection error never

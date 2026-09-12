@@ -1,8 +1,13 @@
 # Signal screens
 
-Six hypotheses for beating consensus. Five null, **one not** — the snap-share trend, screened
-2026-08-25, which is the first thing in this repo to survive a control for ECR. This is the
-index; the ones with longer stories have their own documents.
+Twenty rows for beating consensus, one since withdrawn. The first seven rows are the six
+hypotheses screened before the season: five were null and **one not** — the snap-share trend,
+screened 2026-08-25, which is the first thing in this repo to survive a control for ECR. The
+weekly screen that followed added thirteen rows at the next-week horizon; the table has **five
+rows positive**, which is four signals — the snap-share trend at two horizons, the prior TD
+rate per yard, defence vs position and injury severity — and every other row is null. This is
+the index; the ones with longer stories have their own documents. The counts in this paragraph
+are read off the table by `tests/contracts/test_signal_screens_index_counts_its_table.py`.
 
 Kept because a record of what does not work is worth more than a fifth attempt at the same
 thing, and because two of these produced errors worth not repeating.
@@ -37,6 +42,10 @@ projection on accuracy and lost the lineup decision to a free consensus ranking,
 waivers than without. A market/Usage blend finally beat consensus on average — **+0.711 points
 a team-week, interval excluding zero** — and lost the every-season half, with the gain decaying
 to negative in the most recent season. **Shown, never ranked on; the programme is closed.**
+*(As written 2026-08-29. The +0.711 was superseded the next day by +0.215 under a reproducible
+board, and that by **−1.004**, REMOVE, when the treatment arm was scored on one scale (#44,
+2026-09-07); whether the weekly model itself is REMOVEd is pending #206. The chain is in
+[weekly-blend-gate.md](weekly-blend-gate.md).)*
 [weekly-screen.md](weekly-screen.md) → [weekly-projection.md](weekly-projection.md) →
 [weekly-gate.md](weekly-gate.md) → [weekly-shrinkage.md](weekly-shrinkage.md) →
 [weekly-market-shrinkage.md](weekly-market-shrinkage.md) →

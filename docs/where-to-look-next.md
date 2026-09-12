@@ -3,10 +3,14 @@
 **Written 2026-08-25**, after the per-player spread null. This is a research note, not a plan:
 nothing here is committed to, and every proposal carries the gate it would have to clear.
 
+> **The count is the one of 2026-08-25.** The record this page reads is
+> [method.md](method.md)'s table, which is where the count lives and is kept; this page keeps
+> its original text and the numbers it was written against (#52).
+
 ## The record
 
-Fourteen things have now been measured properly in this repo. Two worked, and both worked for
-the same reason.
+Fourteen things had been measured properly in this repo when this was written. Two worked, and
+both worked for the same reason.
 
 | # | attempt | horizon | result |
 |---|---|---|---|
@@ -15,7 +19,7 @@ the same reason.
 | 3 | Depth-chart climb | next season | null — partial r = +0.008 beyond ECR |
 | 4 | Depth-chart climb | rest of season | null — within 1 se of zero |
 | 5 | Age | next season | null |
-| 6 | Championship equity as the objective | draft | **−19.66** pts/team-game vs consensus |
+| 6 | Championship equity as the objective | draft | **REMOVE** — lost 4 of 4 seasons; −19.66 pts/team-game vs consensus as first measured, magnitude not quotable ([ADR-0009](adr/0009-championship-equity-does-not-pick.md)) |
 | 7 | VOR ordering | draft | **−5.06** pts/team-game vs the market |
 | 8 | `edge` | draft | unvalidatable — needs historical ADP |
 | 9 | Volume model beating the market's mean | draft | null — market mean reproduced instead |

@@ -1075,3 +1075,51 @@ def test_the_result_says_what_it_covers_and_what_it_leaves_unanswered():
            "cannot price" in said
     assert "in either direction" in said, "unanswered is not a negative result"
     assert "What would answer it is a projection for those players" in said
+
+
+# --- the gate names its own reads, however it is invoked (issue #247) ---------------------
+#
+# `main` is network-bound and `# pragma: no cover` for it; what is driven here is the whole of
+# it with `assemble_universe` replaced by a fixture that records the one read it made. #192
+# scoped `backtest.main` and `weekly_screen.main` with `reads_of_one_run` and left this gate
+# unwired: called in-process by anything that has already read something -- the one gate run
+# of #135 -- it inherited the enclosing run's reads and published a digest over bytes it never
+# touched, a failure that looks exactly like a clean digest.
+
+def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_path, capsys):
+    """Called from inside a run that has already read something, the gate's published digest
+    covers the gate's reads and not the enclosing run's -- and the enclosing run still ends
+    up holding both, because a scope narrows what a component reports and must never be a
+    way for a run to lose a read."""
+    from functools import partial
+
+    from hub.config import data_digest
+    from hub.fetch import nflverse as nv
+    from hub.models.experiment import run_gate
+    from hub.season import weekly_gate_data
+
+    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
+    outer = nv.Pin(source="player_stats", as_of=None, digest="0ut51de0", rows=1,
+                   pinned_at=None)
+    inner = nv.Pin(source="ff_rankings", as_of="2024-09-01", digest="1n51de01", rows=1,
+                   pinned_at=None)
+    # The enclosing run: something else in this process has read a source already.
+    nv._remember(tmp_path / "the-enclosing-runs-entry.parquet", outer)
+
+    def assembles(seasons, *, drafts, seed, shrink, expected):
+        nv._remember(tmp_path / "the-gates-own-entry.parquet", inner)
+        return _inputs()
+
+    monkeypatch.setattr(weekly_gate_data, "assemble_universe", assembles)
+    monkeypatch.setattr(G, "run_gate", partial(run_gate, record_width=False, bootstrap=100))
+    out = tmp_path / "paired.parquet"
+    assert G.main(["--run", "--seasons", "2024", "--drafts", "1", "--out", str(out)]) == 0
+    stamped = pl.read_parquet(out)
+
+    assert stamped["data_digest"].unique().to_list() == [data_digest([inner])], (
+        "the gate's digest is not a digest over the gate's own read")
+    assert stamped["data_digest"][0] != data_digest([outer, inner]), (
+        "the gate published a digest over the enclosing run's reads as well as its own")
+    assert "over 1 pinned source(s)" in capsys.readouterr().out
+    assert sorted(p.source for p in nv.pins_this_run()) == ["ff_rankings", "player_stats"], (
+        "the gate's read did not reach the run around it: scoping lost a read")
