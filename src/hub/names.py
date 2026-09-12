@@ -29,19 +29,39 @@ import unicodedata
 _SUFFIX = re.compile(r"\b(jr|sr|ii|iii|iv|v)\b")
 
 
+# Whole-key aliases: the consensus page's spelling on the left, the stats source's on the
+# right, both already in key form. By whole name and never by first name -- `Mike` is not
+# `Michael` for everyone, and `Irv Smith` / `Ito Smith`, `Robbie Anderson` / `Ryan Anderson`
+# are pairs a first-initial rule would merge. Each entry is a player found by #246's sweep
+# of every drafted-position consensus name 2021-2025 against its season's realised rows:
+# absent exactly, matching under `relaxed_key`, and the same person. Every published
+# draft-gate figure scored these players' seasons as zero. Add a pair here only with the
+# season and rank it was found at.
+ALIASES: dict[str, str] = {
+    "gabriel davis": "gabe davis",            # 2021 (ecr 191), 2022 (75)
+    "ken walker": "kenneth walker",           # 2022 (102); `III` is stripped as a suffix
+    "kenneth gainwell": "kenny gainwell",     # 2021 (199), 2022 (122), 2023 (148)
+    "joshua palmer": "josh palmer",           # 2022-2025 (125-197)
+    "chigoziem okonkwo": "chig okonkwo",      # 2023 (140)
+    "cameron ward": "cam ward",               # 2025 (172)
+}
+
+
 def player_key(name: str) -> str:
     """Collapse a display name to a comparable key.
 
     Lower-cased, accents folded, punctuation and generational suffixes removed, whitespace
-    collapsed. `Ja'Marr Chase` and `JaMarr Chase` land on the same key; `Justin Jefferson`
-    and `Justin Herbert` do not.
+    collapsed, then `ALIASES` applied to the whole key. `Ja'Marr Chase` and `JaMarr Chase`
+    land on the same key; `Justin Jefferson` and `Justin Herbert` do not; `Gabriel Davis`
+    lands on `gabe davis` because one source calls him that and the other does not (#246).
     """
     s = unicodedata.normalize("NFKD", name or "")
     s = "".join(c for c in s if not unicodedata.combining(c)).lower()
     s = s.replace("-", " ")
     s = re.sub(r"[^a-z0-9 ]", "", s)          # punctuation: Ja'Marr -> jamarr, D.J. -> dj
     s = _SUFFIX.sub(" ", s)
-    return " ".join(s.split())
+    key = " ".join(s.split())
+    return ALIASES.get(key, key)
 
 
 def relaxed_key(name: str) -> str:

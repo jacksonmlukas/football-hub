@@ -189,3 +189,41 @@ def test_a_one_word_or_empty_name_relaxes_to_itself():
     assert relaxed_key("P0") == "p0"
     assert relaxed_key("") == ""
     assert relaxed_key(None) == ""            # type: ignore[arg-type]
+
+
+# --- the nickname crosswalk (#246) ------------------------------------------------------
+
+@pytest.mark.parametrize(("consensus", "stats"), [
+    ("Gabriel Davis", "Gabe Davis"),
+    ("Ken Walker III", "Kenneth Walker"),
+    ("Kenneth Gainwell", "Kenny Gainwell"),
+    ("Joshua Palmer", "Josh Palmer"),
+    ("Chigoziem Okonkwo", "Chig Okonkwo"),
+    ("Cameron Ward", "Cam Ward"),
+])
+def test_a_player_the_stats_source_calls_by_a_nickname_joins_exactly(consensus, stats):
+    """Six drafted players scored zero in every published draft-gate number because the
+    consensus page spells the full name and the stats source the nickname (#246). The
+    crosswalk is by whole key, never by first name: `Mike` is not `Michael` for everyone."""
+    assert player_key(consensus) == player_key(stats)
+
+
+def test_the_crosswalk_is_by_whole_name_and_not_by_first_name():
+    """`Irv Smith Jr.` and `Ito Smith` share an initial and a surname and are two people;
+    so do `Robbie Anderson` and `Ryan Anderson`. Only a name on the list moves."""
+    assert player_key("Irv Smith Jr.") != player_key("Ito Smith")
+    assert player_key("Robbie Anderson") != player_key("Ryan Anderson")
+    assert player_key("Joshua Allen") != player_key("Josh Allen"), "a first name alone is not an alias"
+
+
+def test_every_alias_maps_a_key_to_a_key_and_never_to_itself():
+    import re
+
+    from hub.names import ALIASES
+    for src, dst in ALIASES.items():
+        # `src` is already key-shaped (it is what the key looks like before the alias step)
+        # and `dst` is a fixed point of the whole function.
+        assert re.fullmatch(r"[a-z0-9 ]+", src) and src == " ".join(src.split()), src
+        assert dst == player_key(dst), dst
+        assert src != dst
+        assert dst not in ALIASES, "an alias must land on a canonical key, not another alias"

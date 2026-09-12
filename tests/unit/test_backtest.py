@@ -1396,7 +1396,13 @@ FROZEN_BUDGET = {"rounds": 6, "n_draft_sims": 2, "n_season_sims": 10}
 FROZEN_ARM_A = ["Christian McCaffrey", "Drake London", "Travis Etienne Jr.",
                 "Patrick Mahomes II", "D.K. Metcalf", "Terry McLaurin"]
 # Three running backs in six picks is the preference ADR-0009 describes.
-FROZEN_ARM_B = ["CeeDee Lamb", "Jalen Hurts", "Kyren Williams", "Josh Jacobs",
+# Moved again under #246 (the nickname crosswalk in `player_key`): the frozen Board carries
+# `Kenneth Walker III` and `Ken Walker III` as two rows -- one player from two sources --
+# and the alias lands both on one key, so `simulate_remaining_draft`'s name index collapses
+# them and every roster index after that row shifts. Josh Jacobs became Dak Prescott at pick
+# 4 with the room unchanged: a re-pairing of the rollout draw, not a different objective.
+# The duplicate itself is #250.
+FROZEN_ARM_B = ["CeeDee Lamb", "Jalen Hurts", "Kyren Williams", "Dak Prescott",
                 "Ken Walker III", "Austin Ekeler"]
 
 
