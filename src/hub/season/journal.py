@@ -69,7 +69,7 @@ from typing import Any
 import polars as pl
 
 from hub import store
-from hub.season.pool import Weekly, plural
+from hub.season.pool import Weekly, pick_name, pick_teams, plural
 
 # Two tables, not two schemas in one. The store builds a view per directory, and a
 # directory holding partitions of differing shape has no single view to build -- a
@@ -408,7 +408,11 @@ def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
     every time anybody asked what a week was worth.
     """
     by_team = {c.team: c for c in w.candidates}
-    took = chose if chose is not None else w.recommend
+    # A double-pick week's candidate is a pair spelled by `pool.pick_name` (#256), and an
+    # operator typing `SF+KC` meant the same pick as `KC+SF`; a single team is its own name.
+    # The row's `chose` then carries both teams, and `market_price` their product, which is
+    # the pick's win probability on the week and the unit `week_cost` is stated in.
+    took = pick_name(pick_teams(chose)) if chose is not None else w.recommend
     if took not in by_team:
         raise ValueError(
             f"week {w.week}: {took!r} is not one of the teams this week priced "

@@ -530,6 +530,25 @@ def test_a_row_carries_what_it_takes_to_run_its_figure_again(tmp_path):
     assert again.seed == row["seed"] and again.pool_digest == row["pool_digest"]
 
 
+def test_a_double_pick_week_is_recorded_with_both_teams_and_priced_as_their_product(tmp_path):
+    """#256's journal half. HOARD moved onto weeks 13 and 14, which the default rules make
+    double: the row's `chose` spells both teams, its `market_price` is the pair's win
+    probability on the week -- the product, the unit `week_cost` is stated in -- and an
+    operator's `SF+KC` is the same pick as the priced `KC+SF`."""
+    grid = _hoard().with_columns(pl.col("week") + 12)
+    w = pool.weekly(grid, [13, 14], week=13, entries=12, pot=420.0, trials=50, seed=7)
+    assert len(pool.pick_teams(w.recommend)) == 2 and w.fallback == "KC+SF"
+    k = journal.record_weekly(w, season=2026, chose="SF+KC", at=AT, base=tmp_path)
+    row = journal.read(2026, base=tmp_path).filter(pl.col("key") == k).to_dicts()[0]
+    assert pool.pick_teams(row["chose"]) == ("KC", "SF")
+    assert row["fallback"] == "KC+SF" and row["matched_fallback"] is True
+    assert row["market_price"] == pytest.approx(0.70 * 0.68)
+    assert row["fallback_price"] == pytest.approx(0.70 * 0.68) and row["week_cost"] == 0.0
+    # A pair nobody priced -- KC and its own opponent -- is refused like any other stranger.
+    with pytest.raises(ValueError, match="not one of the teams this week priced"):
+        journal.record_weekly(w, season=2026, chose="KC+LV", at=AT, base=tmp_path)
+
+
 def test_two_rows_under_different_pool_rules_are_told_apart_by_the_journal_alone(tmp_path):
     """Nothing outside the journal is read. The two rows carry the same week, the same pick
     and the same trials, and differ only in the digest of the rules they were priced under."""

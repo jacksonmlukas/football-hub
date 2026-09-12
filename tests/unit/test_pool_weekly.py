@@ -513,3 +513,135 @@ def test_the_axis_verdict_holds_the_count_of_hits_to_the_same_bar():
 
     assert pool.resolvable_on_the_axis([row(1.0, "SF", 3.0), row(4.0, "SF", 0.4)])
     assert not pool.resolvable_on_the_axis([])
+
+
+# --- a double-pick week is two picks, and is priced as two (#256) ------------------------
+#
+# `PoolConfig.double_pick_weeks` names the weeks the Pool takes two teams, and the simulator
+# has honoured it since #156 -- every rival spends two, our replayed plan spends two. The
+# week being *decided* did not: `weekly`, `auto_pick` and `leverage` filtered the grid on the
+# week number and win probability and handed back one team, priced as one, with nothing
+# raised. In a double week the entry survives only if both win, both leave the Ledger, and
+# the candidates are pairs from distinct fixtures.
+
+# HOARD moved onto weeks 13 and 14, which the default rules make double. KC and SF are the
+# two best sides and sit in different fixtures, so the best pair is KC+SF; LV is KC's own
+# opponent, so KC+LV is not a pair at all.
+DOUBLE = _grid({13: [("KC", "LV", 0.70), ("SF", "SEA", 0.68), ("BUF", "NYJ", 0.66)],
+                14: [("KC", "LV", 0.97), ("SF", "SEA", 0.55), ("BUF", "NYJ", 0.54)]})
+
+
+def test_a_double_pick_week_under_the_default_rules_is_priced_as_a_pair():
+    """The reproduction, closed. Under `PoolConfig()` week 13 takes two picks: the
+    recommendation names two teams from two fixtures, its win probability is the product of
+    theirs, and its season survival is that product times the rest of the season with
+    *both* spent -- which is `entry_outcome` on the same seed with both in the ledger,
+    exactly. A mutation that prices one team, or spends one, fails the last line."""
+    assert 13 in PoolConfig().double_pick_weeks
+    w = _weekly(DOUBLE, [13, 14], week=13, seed=3, trials=100)
+    teams = pool.pick_teams(w.recommend)
+    assert len(teams) == 2
+    fixture = {r["team"]: r["game_id"] for r in DOUBLE.filter(pl.col("week") == 13).to_dicts()}
+    assert fixture[teams[0]] != fixture[teams[1]]
+    price = {r["team"]: r["win_prob"] for r in DOUBLE.filter(pl.col("week") == 13).to_dicts()}
+    for c in w.candidates:
+        a, b = pool.pick_teams(c.team)
+        assert c.win_prob == pytest.approx(price[a] * price[b])
+        rest = pool.entry_outcome(DOUBLE, [14], entries=12, ledger=[a, b], trials=100,
+                                  rng=np.random.default_rng(3))
+        assert c.survives == price[a] * price[b] * rest.survives
+        assert c.expected_dollars == price[a] * price[b] * rest.share * 420.0
+    assert w.fallback == "KC+SF" and _team(w, "KC+SF").is_fallback
+    assert all(pool.PAIR not in t for t in teams)
+
+
+def test_no_candidate_pair_is_the_two_sides_of_one_fixture():
+    """Both sides of one game cannot both win, so a pair from one fixture is lost the
+    moment it is entered. Every candidate, not only the recommendation: the free pick's
+    figure and the ranking both read the whole list."""
+    w = _weekly(DOUBLE, [13, 14], week=13, seed=3, trials=20, top=20)
+    fixture = {r["team"]: r["game_id"] for r in DOUBLE.filter(pl.col("week") == 13).to_dicts()}
+    assert len(w.candidates) == 12         # C(6, 2) less the three same-fixture pairs
+    for c in w.candidates:
+        a, b = pool.pick_teams(c.team)
+        assert fixture[a] != fixture[b], c.team
+
+
+def test_the_free_pick_in_a_double_week_is_the_best_pair_from_two_fixtures():
+    """`auto_pick` with the pool's rules hands back what the Pool would assign: the two
+    likeliest teams it may still take, one per fixture, spelled as one pick. Without the
+    rules it is one team, as `solve` handed no rules takes one pick a week."""
+    assert pool.auto_pick(DOUBLE, 13, pool=PoolConfig()) == "KC+SF"
+    assert pool.auto_pick(DOUBLE, 13, ["KC"], pool=PoolConfig()) == "BUF+SF"
+    # SF spent: BUF and KC from two fixtures, never KC and its own opponent LV.
+    assert pool.auto_pick(DOUBLE, 13, ["SF"], pool=PoolConfig()) == "BUF+KC"
+    assert pool.auto_pick(DOUBLE, 13, ["KC", "SF", "BUF", "SEA"], pool=PoolConfig()) == "LV+NYJ"
+    assert pool.auto_pick(DOUBLE, 13, ["KC", "SF", "BUF", "SEA", "NYJ"],
+                          pool=PoolConfig()) is None
+    assert pool.auto_pick(DOUBLE, 13) == "KC"
+    assert pool.auto_pick(DOUBLE, 13, pool=PoolConfig(double_pick_weeks=())) == "KC"
+
+
+def test_a_double_week_with_one_fixture_left_is_refused_rather_than_priced_as_a_single():
+    """With four teams spent the sides left are LV and NYJ -- two teams, two fixtures, so
+    that still covers; spend NYJ as well and LV stands alone. A week the legal teams cannot
+    cover from two fixtures is refused with a sentence, never priced as one team. The second
+    grid is the same refusal for a week the board itself priced as one game."""
+    with pytest.raises(ValueError, match="two picks"):
+        _weekly(DOUBLE, [13, 14], week=13, ledger=["KC", "SF", "BUF", "SEA", "NYJ"], trials=10)
+    thin = _grid({13: [("KC", "LV", 0.70)], 14: [("KC", "LV", 0.97), ("SF", "SEA", 0.55)]})
+    with pytest.raises(ValueError, match="two picks"):
+        _weekly(thin, [13, 14], week=13, trials=10)
+    # And a grid that cannot say which rows are one fixture: refused, and not the same
+    # answer as no legal pair -- `auto_pick` answers `None` to the second and raises this.
+    with pytest.raises(ValueError, match="no `game_id`"):
+        pool.auto_pick(DOUBLE.drop("game_id"), 13, pool=PoolConfig())
+
+
+def test_the_leverage_term_in_a_double_week_is_measured_on_pairs():
+    """The third reader of the week. Each row names a pair against the free pair, and the
+    advanced arm replays that pair in front of our plan -- which `_Ours.plays` accepts only
+    as two teams from two fixtures in a week that takes two."""
+    rows = pool.leverage(DOUBLE, [13, 14], week=13, entries=12, pot=420.0, at=(1.0,),
+                         top=3, trials=20, rng=np.random.default_rng(0))
+    assert rows and all(r.fallback == "KC+SF" for r in rows)
+    assert {r.team for r in rows} == {"BUF+KC", "BUF+SF"}
+    # The unadvanced arm is `weekly`'s difference: each pair's product times what the rest
+    # of the season pays with *both* spent, against the free pair's, on the seed `leverage`
+    # drew. Spending one of the two would move this.
+    seed = int(np.random.default_rng(0).integers(2 ** 32))
+    price = {r["team"]: r["win_prob"] for r in DOUBLE.filter(pl.col("week") == 13).to_dicts()}
+
+    def paid(pair: tuple[str, str]) -> np.ndarray:
+        rest = pool.entry_outcome(DOUBLE, [14], entries=12, ledger=list(pair), trials=20,
+                                  rng=np.random.default_rng(seed))
+        return price[pair[0]] * price[pair[1]] * pool._shares(PoolConfig(), rest)
+
+    for r in rows:
+        a, b = pool.pick_teams(r.team)
+        assert r.unadvanced == pytest.approx(420.0 * float((paid((a, b)) - paid(("KC", "SF")))
+                                                           .mean()))
+
+
+def test_a_pick_name_spells_a_pair_once_and_reads_it_back():
+    """One spelling for a two-team pick, sorted so `KC+SF` and `SF+KC` are one pick; a
+    single team is its own name in both directions."""
+    assert pool.pick_name(("SF", "KC")) == "KC+SF" == pool.pick_name(("KC", "SF"))
+    assert pool.pick_teams("SF+KC") == ("KC", "SF")
+    assert pool.pick_name(("KC",)) == "KC" and pool.pick_teams("KC") == ("KC",)
+
+
+def test_a_single_pick_week_is_unchanged_by_the_pair_machinery():
+    """Byte-identical: the figures below are what HOARD priced at before #256, off the same
+    seed, and the recommendation is one team spelled as itself. A single week must not
+    consume a different number of draws or sort its candidates any other way."""
+    w = _weekly(HOARD, [1, 2], week=1, seed=3, trials=200)
+    assert w.recommend == "SF" and w.fallback == "KC"
+    assert [c.team for c in w.candidates] == ["SF", "BUF", "KC", "NYJ", "SEA", "LV"]
+    assert _team(w, "SF").survives == 0.6664
+    assert _team(w, "SF").expected_dollars == 35.75460606060606
+    assert _team(w, "KC").survives == 0.42
+    assert _team(w, "KC").expected_dollars == 22.169583333333332
+    assert w.given_up == -0.2464
+    assert float(w.resolution) == 2.8812226482369026
+    assert pool.pick_teams(w.recommend) == ("SF",)
