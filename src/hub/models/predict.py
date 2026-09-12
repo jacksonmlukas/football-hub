@@ -98,6 +98,16 @@ TALENT_CV_BY_POS = {"QB": 0.20, "RB": 0.38, "WR": 0.31, "TE": 0.18}
 # are independent by construction. ADR-0006: fitted, so it lives here beside its number
 # and moves the digest when it moves; the script is `scratchpad/impute_err.py` of that day
 # and the procedure is the paragraph above.
+#
+# **A better imputation was tried and did not beat this, 2026-09-11 (#88).** The one input the
+# board carries that consensus rank does not is the draft market's disagreement with it, so
+# the same leave-one-out was run interpolating on the draft market's pick (`ecr + edge` where an
+# ADP exists, 145 of the 165) instead of the consensus rank. Rule fixed before the run: adopt
+# only if the pooled sd falls by more than the bootstrap se over players and no position gets
+# worse by more than its own. Result: pooled 0.261 against 0.260, +0.001 with se 0.010, 95%
+# [-0.018, +0.020]; QB -0.013 (se 0.013), RB -0.001, WR +0.005, TE -0.001. Kept as the record
+# of a null (ADR-0007): the draft market's rank imputes a prior season no better than consensus
+# does. The rank transform stays, and the uncertainty it carries is the number above.
 IMPUTE_CV = 0.260
 IMPUTE_CV_BY_POS = {"QB": 0.217, "RB": 0.334, "WR": 0.223, "TE": 0.220}
 
