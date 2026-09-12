@@ -335,8 +335,9 @@ def the_pick(tp: ThePick | None) -> list[str]:
     """The market picks, and nothing else does.
 
     P0b measured championship equity against consensus-following on realised outcomes across
-    2022-25 and it lost by 19.66 points per team game, losing in all four seasons. Per the
-    rule fixed before that run, equity leaves this output. See docs/adr/0009.
+    2022-25 and it lost by 19.66 points per team game as first measured, losing in all four
+    seasons. Per the rule fixed before that run, equity leaves this output. See docs/adr/0009,
+    restated 2026-09-11: the magnitude is not quotable and the 4-of-4 is what stands.
     """
     if tp is None:
         return ["\n  THE PICK unavailable -- the board carries neither ADP nor ECR, which "

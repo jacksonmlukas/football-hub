@@ -48,7 +48,9 @@ implemented is worse than no rule, because it gets quoted in the write-up.
 
 **And the harder version.** A tripwire fired against the thing its author was building. It was
 argued past — narrowed, with a reason that sounded good — and the very next measurement produced
-exactly the preference it had flagged, at −19.66 points per team-game. Both the amendment and
+exactly the preference it had flagged, at −19.66 points per team-game as first measured (the
+magnitude has since been withdrawn as quotable; the verdict has not — [ADR-0009](adr/0009-championship-equity-does-not-pick.md),
+restated 2026-09-11). Both the amendment and
 its vindication are in the record ([ADR-0009](adr/0009-championship-equity-does-not-pick.md)).
 The rule is not "have a tripwire". It is *do not touch it after you have seen what it caught.*
 
@@ -235,7 +237,10 @@ it is **[−26.68, −11.45]**, at an MDE of 10.29 ([gate-power.md](gate-power.m
 verdict survives; the interval does not. The producer that would have printed it was *"tried,
 reverted, and is recorded here"* because supplying the key moved a pinned digest, so
 `experiment.summarise` still says nothing computes an MDE, and the narrow interval is still the
-one in `README.md`, ADR-0009 and ADR-0019. Issue #45 is open.
+one in `README.md`, ADR-0009 and ADR-0019. Issue #45 is open. *(Discharged: #45 closed
+2026-09-07 — `summarise` clusters on the season and prints the MDE, restated at 14.77 under the
+t-quantile in [gate-power.md](gate-power.md); the season-clustered interval reached `README.md`
+and ADR-0009 on 2026-09-11 under #52, ADR-0019 by its own amendment.)*
 
 *A gate figure invalidated by its own fix, never re-run.* The weekly gate's treatment arm scored
 negated consensus rank and fantasy points in one column, so every player it could project
@@ -244,7 +249,8 @@ under test, which the commit says itself: *"the frozen +0.215 will move — and 
 the next action, not something this commit may claim"* (`7873de6`). Nothing re-ran it. **+0.215** *(re-run 2026-09-07 (#44): **−1.004**, verdict REMOVE — this incident is now discharged; see `docs/weekly-blend-gate.md`)*
 is still the headline of [weekly-blend-gate.md](weekly-blend-gate.md), ADR-0016 and ADR-0017.
 Issue #44 is open on its fourth criterion alone — *the gate's result is re-run and the movement
-recorded* — with the code half verified done.
+recorded* — with the code half verified done. *(Discharged: #44 closed 2026-09-07 with the
+re-run; all three documents carry −1.004 beside the kept +0.215.)*
 
 *An estimator repaired, its estimate left pinned.* `fit_pick_noise` carried two defects, both
 inflating the fitted slope: it fitted against a consensus rank over a 300-plus-player board and
@@ -324,10 +330,17 @@ the removals in its commit messages.
 
 ## The record
 
-Fourteen things have been measured properly. **Two came back positive** — and one of those two
+Fifteen things have been measured properly. **Two came back positive** — and one of those two
 produced a decision that then failed its own gate.
 
-This fourteen counts **measurements**, not decision records. There are twenty-five of those,
+**This table is where the count lives.** [where-to-look-next.md](where-to-look-next.md) was
+written at fourteen and [what-the-field-knows.md](what-the-field-knows.md) at fifteen, each
+dated; neither restates the count as current, and row 15 is the one those two pages pre-declared
+the fifteenth (#52, 2026-09-11). Measurements taken since 2026-08-29 that this table does not yet
+row — touchdown luck zeroed, durability shipped, the lambda sweep re-run, pick noise refitted —
+are the separate work the count needs next; each has its own page and none of them is a gate.
+
+This fifteen counts **measurements**, not decision records. There are twenty-five of those,
 in [`docs/adr/`](adr/). The two numbers were equal for eleven days in August and this file
 carried both, which is how the Primary sources table below came to describe the ADRs with the
 count belonging to the table beneath this line — corrected 2026-09-07 under #51.
@@ -337,7 +350,7 @@ count belonging to the table beneath this line — corrected 2026-09-07 under #5
 | 1–2 | Expected-vs-actual points; recency-weighted | null — r = 0.21 self-persistence |
 | 3–4 | Depth-chart climb, two horizons | null — +0.008 beyond consensus |
 | 5 | Age | null |
-| 6 | Championship equity as the objective | **−19.66** pts/team-game |
+| 6 | Championship equity as the objective | **REMOVE** — lost 4 of 4 seasons; −19.66 pts/team-game as first measured, magnitude not quotable ([ADR-0009](adr/0009-championship-equity-does-not-pick.md)) |
 | 7 | VOR ordering | **−5.06** pts/team-game |
 | 8 | `edge`, the repo's original signal | unvalidatable — needs ADP nobody retains |
 | 9 | Volume model beating the market's mean | null |
@@ -346,11 +359,14 @@ count belonging to the table beneath this line — corrected 2026-09-07 under #5
 | 12 | **Weekly injury retention** | **adopted** — +0.170 MAE at 3.8 se |
 | 13 | Injury type on top of it | null by the gate — 3.1 se but 2/3 seasons |
 | 14 | **Snap-share trend** | **screen positive** — +0.236 beyond consensus |
+| 15 | Weekly projection vs weekly consensus rank, at setting a lineup | **shown, never ranked on** — −0.304 pts/team-week, 2 of 3 seasons lost; the market/Usage blend it closed on re-scored to −1.004, REMOVE, pending #206 ([weekly-blend-gate.md](weekly-blend-gate.md)) |
 
-What separates #12 and #14 from the other twelve is not sophistication — #12 is a nine-cell
-lookup table of ratios. It is *what information they use*. The twelve failures all tried to
-out-think a market using information that market had had all summer. #12 used Wednesday's
-practice report to set Sunday's lineup; #14 used snap counts published on a Monday.
+What separates #12 and #14 from the other thirteen is not sophistication — #12 is a nine-cell
+lookup table of ratios. It is *what information they use*. The first twelve failures all tried
+to out-think a market using information that market had had all summer. #12 used Wednesday's
+practice report to set Sunday's lineup; #14 used snap counts published on a Monday. #15 is the
+one that asked about the week and still lost, which is [what-the-field-knows.md](what-the-field-knows.md)'s
+finding: week-level information exists, is measurable, and consensus already has enough of it.
 
 **Edge came from timeliness, not from better processing of shared information.**
 
@@ -358,7 +374,7 @@ practice report to set Sunday's lineup; #14 used snap counts published on a Mond
 
 ## What it costs, and what it buys
 
-It killed most of the work. Twelve of fourteen measurements ended in a removal, a demotion or a
+It killed most of the work. Thirteen of fifteen measurements ended in a removal, a demotion or a
 null, and the components that were hardest to build — a nested draft-and-season simulation
 optimising championship probability, a component-level projection layer, a lineup optimiser —
 are the ones that lost.

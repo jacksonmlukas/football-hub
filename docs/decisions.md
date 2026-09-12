@@ -36,7 +36,8 @@ Given, not assumptions to re-litigate.
 explicit non-goal.** The standing decision below -- backtest to audit ourselves, not to find
 edges -- had already retired it in practice, and the list had not caught up. Six measured
 attempts have now failed to beat a market: four screens, VOR ordering at -5.06 points per
-team-game, and championship equity at -19.66. Leaving it stated invites the move this document
+team-game, and championship equity at -19.66 as first measured (4 of 4 seasons lost; the
+magnitude is not quotable since 2026-09-07, ADR-0009). Leaving it stated invites the move this document
 records going wrong twice in one day: when a pre-registered rule fires against the complicated
 thing, an ambition to find edge is what makes "the test was unfair" feel reasonable.
 
@@ -97,7 +98,7 @@ and defensive schemes — has now met a gate four times and lost four times:
 | | result |
 |---|---|
 | Component-derived weekly spread | lost to `k·sqrt(mu)`, 1.365 vs 1.140, P(better) **0.0%** |
-| Championship equity, the deepest simulation here | **−19.66** pts/team-game |
+| Championship equity, the deepest simulation here | **REMOVE** — lost 4 of 4 seasons; −19.66 pts/team-game as first measured, magnitude not quotable ([ADR-0009](adr/0009-championship-equity-does-not-pick.md)) |
 | The usage layer | retired: per-player spread is ±9.3%, 85% noise, total headroom 0.085 MAE |
 | Depth-chart climb | null at both horizons |
 
@@ -136,7 +137,8 @@ own unless the thing is nearly free.
 The reader is **ML/DS hiring**, which is what the repo is already shaped for: the README leads
 with what was measured and then *removed*, and that is the pitch. The gap is that the method —
 pre-registration, screens versus gates, tripwires, what a provisional rule is — is scattered
-across `signal-screens.md`, `CONTEXT.md` and fourteen ADRs with no single page stating it.
+across `signal-screens.md`, `CONTEXT.md` and fourteen ADRs (twenty-five today, indexed in
+[architecture.md](architecture.md)) with no single page stating it.
 
 Note the ordering that falls out of the calendar: **the third-ranked objective has the nearest
 deadline.** Draft Sep 3, repo public Sep 4, Week 1 around Sep 10. The method page wants to exist
@@ -426,7 +428,9 @@ CV (0.47 to 0.73) was positions differing in mean points; once the law is right,
 which the best-lineup max turned into free points off the bench.
 
 `TALENT_CV` was refitted against the new law since the two are coupled: pooled 0.41 -> 0.42,
-per-position by ~0.01, all inside their intervals, nothing downstream reversed. The QB
+per-position by ~0.01, all inside their intervals, nothing downstream reversed. *(Refitted
+again 2026-09-11 net of the absence the simulator now draws, #235: pooled 0.32, QB 0.20 / RB
+0.38 / WR 0.31 / TE 0.18 — [talent-cv.md](talent-cv.md) is the record.)* The QB
 anomaly flagged earlier resolved as suspected -- under the sqrt law QB sits at -0.0 se from
 the pool, so 0.55 had been over-subtracting for the steadiest position.
 

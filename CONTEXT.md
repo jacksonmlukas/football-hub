@@ -159,15 +159,19 @@ market that fills an unfilled starting slot.
 
 **Signal**:
 A claim that some quantity predicts outcomes *beyond what consensus already knows*. Tested by
-a **screen**: partial correlation against ECR. Six have been screened; five were null and one —
-the in-season snap-share trend — survived. Note what separates it: the five nulls all asked
-consensus about information it had had all summer, and the one that survived asked about
-something published on a Monday.
+a **screen**: partial correlation against ECR. Six preseason hypotheses have been screened;
+five were null and one — the in-season snap-share trend — survived. Note what separates it: the
+five nulls all asked consensus about information it had had all summer, and the one that
+survived asked about something published on a Monday. The weekly screen that followed cleared
+three more on the next-week horizon (prior TD rate per yard, defence vs position, injury
+severity); the one index of every screen, with its counts, is
+[signal-screens.md](docs/signal-screens.md).
 
 **Model**:
 A component that produces a projection or a decision. Tested by a **gate**: does it beat the
 simplest thing that already works? Championship equity was gated against following the draft
-market and lost by 19.66 points a team-game.
+market and lost in all four held-out seasons — 19.66 points a team-game as first measured; the
+magnitude is not quotable, see the term below.
 
 **Provisional rule**:
 A decision rule adopted *without* a gate, because no gate can run at available n — never
@@ -255,8 +259,13 @@ is whether the week adds anything.
 
 **Championship equity**:
 A candidate's probability of winning the league, from simulating the season to a champion.
-Measured worse than consensus at actually picking — −19.66 points per team game across
-2022–25 — so it does not choose the pick; see [ADR-0009](docs/adr/0009-championship-equity-does-not-pick.md).
+Measured worse than consensus at actually picking — worse in 4 of 4 held-out seasons across
+2022–25, −19.66 points per team game as first measured — so it does not choose the pick; see
+[ADR-0009](docs/adr/0009-championship-equity-does-not-pick.md).
+> **Restated 2026-09-11 (#52).** The −19.66 is the P0b run's figure and is not quoted as the
+> size of the effect: season-clustered its interval is [−26.68, −11.45], and re-runs at a fixed
+> data digest returned −17.30, −12.48 and −11.59 with nothing in the inputs moving
+> ([gate-power.md](docs/gate-power.md), #190). The verdict rests on the sign and the 4 of 4.
 _Avoid_: P(win) as a standalone term — say championship equity, and reserve `p_win` for the
 column.
 

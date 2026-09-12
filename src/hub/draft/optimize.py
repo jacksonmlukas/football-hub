@@ -564,7 +564,10 @@ def market_pick(pool: pl.DataFrame, counts: dict[str, int],
     committed harness, `recommend()`'s shortlist as the design had always specified, four
     seasons and n=80 -- separated them decisively: **-19.66 points per team game, 95% CI
     [-23.16, -16.20]**, equity losing in every season and winning 9 of 80 drafts. Per the
-    rule fixed before that run, equity left the output. See docs/adr/0009.
+    rule fixed before that run, equity left the output. See docs/adr/0009 -- restated
+    2026-09-11: that interval is row-clustered (season-clustered it is [-26.68, -11.45]) and
+    the magnitude is not quotable, re-runs at fixed inputs having returned -17.30, -12.48 and
+    -11.59 (docs/gate-power.md); the 4-of-4 and the verdict are what stand.
 
     Lexicographic, matching `simulate_remaining_draft`: an unfilled starting slot outranks
     any amount of market position, and the market breaks ties within a need tier.

@@ -3,7 +3,8 @@
 **Written 2026-08-29**, after fifteen measurements and an outside literature scan. Successor to
 [where-to-look-next.md](where-to-look-next.md), which was written at fourteen and before any of
 the weekly work. Same rules: nothing here is committed to, and every proposal carries the gate
-it would have to clear.
+it would have to clear. The count is the one of the date above; the record it reads is
+[method.md](method.md)'s table, which is where the count is kept (#52).
 
 ## The frame
 

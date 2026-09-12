@@ -417,20 +417,34 @@ def _scored(out: Path) -> pl.DataFrame | None:
     full credit for it -- a confident correct call on a game nobody won, awarded to whichever
     model gave the home side the lower probability, on the one path that feeds the public
     record. `hub.models.eval` had always dropped ties, so the repo answered the question two
-    ways and only the wrong answer was published (issue #64). Latent when it was fixed: of
-    the 32 published predictions on 2026-09-05, sixteen were scored and none was a tie, so
-    no published number moved -- verified against nflverse rather than assumed.
+    ways and only the wrong answer was published (issue #64). Latent when it was fixed:
+    when the fix landed on 2026-09-05, sixteen of the 32 published predictions were scored
+    and none was a tie, so no published number moved. That was a count taken by hand
+    against nflverse, true until the first slate that finishes level; `track_record` now
+    publishes it as `n_tied`, re-derived from `_finished` on every run, so the claim is the
+    artifact's and not this docstring's (issue #52).
+    """
+    finished = _finished(out)
+    return None if finished is None else _record_of(finished)
+
+
+def _finished(out: Path) -> pl.DataFrame | None:
+    """Published predictions joined to every game that has a result, ties included.
+
+    One fetch, two readers: `_record_of` keeps the rows the record can score, and
+    `track_record` counts the ties that leave it. Same None-versus-empty contract as
+    `_scored`, for the same reason.
     """
     empty = pl.DataFrame(schema={"game_id": pl.Utf8, "home_win_prob": pl.Float64,
-                                 "home_won": pl.Int64, "predicted_at": pl.Utf8})
+                                 "result": pl.Int64, "predicted_at": pl.Utf8})
     preds = _published(out)
     if preds.is_empty():
         return empty
 
     try:
         import nflreadpy as nfl
-        sched = (home_won(nfl.load_schedules().select("game_id", "result"))
-                 .select("game_id", "home_won"))
+        sched = (nfl.load_schedules().select("game_id", "result").drop_nulls("result")
+                 .with_columns(pl.col("result").cast(pl.Int64)))
     except Exception as e:
         # This one stays broad -- it is a network call on a schedule that runs unattended --
         # but it says which failure it was rather than presenting every cause as "no results".
@@ -438,6 +452,22 @@ def _scored(out: Path) -> pl.DataFrame | None:
               f"published", flush=True)
         return None
     return preds.join(sched, on="game_id", how="inner")
+
+
+def _record_of(finished: pl.DataFrame) -> pl.DataFrame:
+    """The scorable rows of `finished`, with the outcome the scoring rule reads."""
+    return home_won(finished).drop("result")
+
+
+def _n_tied(finished: pl.DataFrame) -> int:
+    """How many published predictions were on a game that finished level.
+
+    Counted off the finished games and not off what the record dropped, so it is the same
+    number whichever way `margin.DROP_TIES` is set: with ties dropped it is what the record
+    left out, with them kept it is what the record scored as a home loss. Either way the
+    page says how many, which is what a hand count in a docstring could not keep doing.
+    """
+    return int((finished["result"] == 0).sum()) if finished.height else 0
 
 
 def track_record(base: Path | None = None, out: Path | None = None,
@@ -475,9 +505,10 @@ def track_record(base: Path | None = None, out: Path | None = None,
     a reader written against them keeps working and reads one season instead of a blend.
     """
     out = out or SITE
-    df = _scored(out)
-    if df is None:
+    finished = _finished(out)
+    if finished is None:
         return None
+    df = _record_of(finished)
 
     seasons = [_curve(season, rows, n_bins) for season, rows in _by_season(df)]
     # An empty record still carries the trio, as nulls: `site/index.html` reads them off the
@@ -489,6 +520,10 @@ def track_record(base: Path | None = None, out: Path | None = None,
     payload: dict[str, Any] = jsonio.summary(
         "track_record", "preds+results",
         n_scored=df.height,
+        # The ties the record could not score, said as a number: the #64 fix rested on there
+        # being none among the published predictions, and that stays true only as long as
+        # something re-derives it (#52).
+        n_tied=_n_tied(finished),
         # Nothing is pre-registered until a prediction is committed before kickoff, which
         # the Sunday Actions job does. Counting it here would be marking my own homework.
         n_preregistered=0,

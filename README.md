@@ -16,7 +16,7 @@ Every one of these was built, measured against a rule fixed before the numbers, 
 
 | Thing | Verdict | Evidence |
 |---|---|---|
-| Championship equity — nested draft + season simulation optimising P(win) | **Removed from the draft output** | −19.66 pts/team-game vs following the market, 95% CI [−23.16, −16.20], n=80 ([ADR-0009](docs/adr/0009-championship-equity-does-not-pick.md)) |
+| Championship equity — nested draft + season simulation optimising P(win) | **Removed from the draft output** | Lost in 4 of 4 held-out seasons, n=80; −19.66 pts/team-game vs following the market *as first measured* — season-clustered CI [−26.68, −11.45], and re-runs at fixed inputs returned −17.30, −12.48 and −11.59, so no magnitude is quoted ([ADR-0009](docs/adr/0009-championship-equity-does-not-pick.md), restated 2026-09-11; [gate-power.md](docs/gate-power.md)) |
 | VOR ordering | **Demoted to context** | −5.06 pts/team-game ([market-value.md](docs/market-value.md)) |
 | `edge` (consensus vs ADP), the repo's original signal | **Displayed, never sorted on** | Structurally unmeasurable — needs historical ADP that ESPN does not retain ([ADR-0010](docs/adr/0010-edge-is-displayed-but-never-ranked-on.md)) |
 | Lineup optimiser | **Inert until variance is real** | +0.00 pts/game; `sd = k·√mu`, so it is handed no information sorting lacks ([ADR-0012](docs/adr/0012-the-lineup-optimiser-waits-for-real-variance.md)) |
@@ -49,7 +49,10 @@ audits itself against markets; it does not try to beat them.
 Two tests, deliberately not interchangeable:
 
 - A **signal** claims to predict outcomes beyond what consensus already knows. It is
-  **screened**: partial correlation against expert consensus rank. Five screened, five null.
+  **screened**: partial correlation against expert consensus rank. Six preseason hypotheses
+  screened, five null and one — the in-season snap-share trend — positive; the weekly screen
+  that followed cleared three more on the next-week horizon. The index is
+  [signal-screens.md](docs/signal-screens.md).
 - A **model** produces a projection or a decision. It is **gated**: does it beat the simplest
   thing that already works? Championship equity was gated against following the market and
   lost.

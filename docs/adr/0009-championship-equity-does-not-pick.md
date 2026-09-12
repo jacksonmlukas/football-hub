@@ -84,6 +84,21 @@ Losing in all four seasons, winning 9 of 80 drafts. `config_digest` 9975101f; pa
 The rule that produced this action was fixed before the run, and had three branches, including
 one that would have promoted equity back to the headline.
 
+> **Restated 2026-09-11 (#52): the intervals above are over the wrong unit, no magnitude
+> is quotable, and the verdict is untouched.** Every interval above is bootstrapped over the
+> eighty (season, draft) rows. With the season as the unit of replication — four, not eighty
+> — the published run's interval is **[−26.68, −11.45]** and its MDE 14.77 rather than 5.03
+> (#45; `experiment.summarise` now clusters on the season and prints the MDE;
+> [gate-power.md](../gate-power.md)). Re-run on the repaired harness at a fixed data digest
+> the effect returned **−12.48** and then **−11.59**, having moved eight points across 270
+> commits with the input bytes unchanged (#190, open), and every run to date was made on a
+> harness with a foresight leak that favoured arm B — the arm that lost — so the losses are if
+> anything understated (#195, fixed; #194 re-measures). So none of −19.66, −19.13, −17.30 or
+> the later figures is quoted as the size of the effect, and where the record cites −19.66 it
+> reads *as first measured*. What every run agrees on, and what REMOVE rests on: worse in 4 of
+> 4 held-out seasons, an interval excluding zero, `P(optimizer better)` 0.0%. The figures
+> above keep their original text.
+
 ## Why this is surprising, which is why it is written down
 
 The repo contains a real season simulator: talent drawn once per season, a square-root weekly

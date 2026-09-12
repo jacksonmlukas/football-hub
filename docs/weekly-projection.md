@@ -109,9 +109,11 @@ The overall bias was −0.002 the whole time. Pooling hid all four.
 ## What is not done
 
 **Gate B has been run and this does not set a lineup.** A lineup set off the Weekly projection
-lost to one set off weekly consensus rank by **−0.684 points per team-week**, in all three
-held-out seasons, CI [−1.519, +0.159] — *SHOW, NEVER RANK ON*. See
-[weekly-gate.md](weekly-gate.md). Beating the flat projection on accuracy and losing the lineup
+lost to one set off weekly consensus rank by **−0.304 points per team-week**, CI
+[−1.043, +0.415], in two of three held-out seasons — *SHOW, NEVER RANK ON*. See
+[weekly-gate.md](weekly-gate.md). *(Restated 2026-08-28: this first read −0.684, CI
+[−1.519, +0.159], 3 of 3 — one draw from a non-reproducible board, improvements.md #18. The
+verdict did not move.)* Beating the flat projection on accuracy and losing the lineup
 decision to a free public ranking is the screen/gate distinction at its sharpest.
 
 **The injury designation is not in the model, and it cannot go in here.** The plan admits it

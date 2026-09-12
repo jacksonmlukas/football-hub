@@ -211,8 +211,10 @@ def render(view: dict[str, Any]) -> list[str]:
 
     top = rank(view, "vor_live").head(TOP_N)
     # Context, not the recommendation. This table has no need term in its ordering -- need
-    # is the `*` below, never the sort -- and P0b measured a need-blind objective losing by
-    # 19.66 points a team-game. It is here to show what else is close, and how close.
+    # is the `*` below, never the sort -- and P0b measured a need-blind objective losing in
+    # 4 of 4 seasons, 19.66 points a team-game as first measured (docs/adr/0009, restated
+    # 2026-09-11: the magnitude is not quotable, the verdict is). It is here to show what
+    # else is close, and how close.
     out.append("  also close, by value over replacement -- context, not a ranking to draft off:")
     for r in top.iter_rows(named=True):
         edge = r.get("edge")

@@ -226,7 +226,8 @@ def test_no_measurement_drops_the_field_rather_than_the_page(site, base, monkeyp
 # against whichever model gave the home side the lower probability. `hub.models.eval` and
 # `hub.models.margin` already dropped ties, and the two conventions could not both be right
 # in one repo. Latent when this was written: measured 2026-09-05, none of the 32 published
-# predictions is a tie (16 scored, 16 not yet played), so no published number moves.
+# predictions is a tie (16 scored, 16 not yet played), so no published number moves. That
+# count was taken by hand; since #52 the record publishes it as `n_tied`, tested below.
 
 
 def _tied_and_won(base, monkeypatch, site):
@@ -279,6 +280,30 @@ def test_both_paths_score_the_same_tied_game_the_same_way(site, base, monkeypatc
 
     assert record["game_id"].to_list() == comparison["game_id"].to_list() == ["g2"]
     assert record["home_won"].to_list() == comparison["home_won"].to_list() == [1]
+
+
+def test_the_record_counts_the_ties_it_dropped(site, base, monkeypatch):
+    """The "none was a tie" the #64 fix rested on was measured once, by hand, on 2026-09-05,
+    and a count nothing re-derives is true until the next slate scores a tie (issue #52). So
+    the record carries `n_tied` -- published predictions whose game finished level and so
+    left the record -- re-derived on every run, and the page can say it rather than a
+    docstring recalling it."""
+    _tied_and_won(base, monkeypatch, site)
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    assert got["n_tied"] == 1, "the dropped tie is not counted"
+    assert got["n_scored"] == 1
+    assert json.loads((site / "track_record.json").read_text())["n_tied"] == 1, (
+        "the count is in memory and not in the artifact anyone reads")
+
+
+def test_a_record_with_no_tie_says_zero_rather_than_nothing(site, base, monkeypatch):
+    """Zero is the answer the docstring used to assert; it is published as a number, not
+    implied by a missing key."""
+    _scored_one(base, monkeypatch, site)
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    assert got["n_tied"] == 0
 
 
 def test_calibration_bins_are_reported_with_counts(site, base):

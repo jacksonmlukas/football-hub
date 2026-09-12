@@ -104,7 +104,8 @@ This used to read *16s with championship equity, 3s without*; equity was removed
 **THE PICK** is the best available player who fills an unfilled starting slot, ranked on
 **corrected ADP** — the market's ordering, moved by what this repo has measured the market to
 miss. It is what beat every alternative that could be measured: the room, VOR ordering
-(−5.06 pts/team-game) and championship equity (−19.66). Take it unless something below argues
+(−5.06 pts/team-game) and championship equity (lost 4 of 4 seasons; −19.66 as first measured,
+[ADR-0009](adr/0009-championship-equity-does-not-pick.md)). Take it unless something below argues
 otherwise.
 
 The line says which market chose it:
