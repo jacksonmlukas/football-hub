@@ -407,3 +407,32 @@ def test_a_survivor_window_with_no_completed_game_is_reported_by_the_cli(capsys,
 def test_no_flag_prints_help_rather_than_measuring(capsys):
     assert coverage.main([]) == 0
     assert "usage:" in capsys.readouterr().out
+
+
+# --- the gate is wired (#273) -------------------------------------------------------------
+
+def test_the_artifact_lives_where_a_commit_can_carry_it():
+    """`data/processed/` is gitignored, so a file written there never reaches the runner
+    and the publisher read nothing, by design. `state/` is committed."""
+    from hub.paths import STATE_DIR
+    assert coverage.ARTIFACT.parent == STATE_DIR
+
+
+def test_the_survivor_verdict_is_written_beside_the_weekly_one(tmp_path, monkeypatch):
+    """One file, two verdicts, one reader. `--survivor --write` after `--measure --write`
+    adds the survivor block without losing the weekly one, and the publisher's summary
+    carries both."""
+    art = tmp_path / "interval_coverage.json"
+    monkeypatch.setattr(coverage, "ARTIFACT", art)
+    monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: _drawn(n_players=40))
+    monkeypatch.setattr(coverage, "_schedules",
+                        lambda seasons, cache: _schedule([(10.0, 7.0)] * 40 + [(10.0, -7.0)] * 10))
+    assert coverage.main(["--measure", "--write"]) == 0
+    assert coverage.main(["--survivor", "--write", "--seasons", "2024"]) == 0
+    got = coverage.published_summary(art)
+    assert got is not None and got["verdict"] in ("COVERS", "DOES NOT COVER")
+    assert got["survivor"]["verdict"] and "favourite_gap" in got["survivor"]
+    # the order does not matter either
+    assert coverage.main(["--measure", "--write"]) == 0
+    again = coverage.published_summary(art)
+    assert again is not None and again["survivor"]["verdict"]
