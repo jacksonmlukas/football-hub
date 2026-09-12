@@ -163,6 +163,77 @@ def test_the_state_carries_the_latest_rows_adjustment_and_not_the_arrival_rows()
     assert set(by["KC"]) == {"team", "qb", "qb_value", "qb_adj", "tenure", "as_of"}
 
 
+# --- the as-of (#272) ------------------------------------------------------------------
+#
+# The quarterback state for a fixture is built from rows strictly earlier than that
+# fixture's kickoff, so a backtest of the layer can be leak-free. `docs/method.md` rule 2:
+# measure the predictor strictly before the outcome window. Asserted on the split -- which
+# rows reach the state -- rather than on what the state says about them.
+
+def test_the_split_is_strictly_before_the_as_of_day():
+    """`before` is the split. Given a day, every row it keeps is dated before that day and
+    every row it drops is dated on or after it -- so a fixture's own row, dated its game
+    day, never reaches a state built as of its kickoff, and neither does any later one."""
+    rows = nfeloqb.parse(csv_text().encode())
+    kept = nfeloqb.before(rows, dt.date(2026, 9, 20))
+    assert kept["date"].to_list() == ["2026-09-10", "2026-09-13", "2026-09-14"]
+    assert kept.height + rows.filter(pl.col("date") >= "2026-09-20").height == rows.height
+    assert nfeloqb.before(rows, dt.date(2026, 9, 10)).height == 0, "the first day has nothing before it"
+
+
+def test_a_kickoff_is_read_as_the_eastern_game_day_before_the_split():
+    """The source dates a row by its Eastern game day; the repo's kickoffs are naive UTC. A
+    Thursday 20:15 ET kickoff is 00:15 UTC Friday, and a split on the UTC day would keep
+    the Thursday row -- the game's own -- as if it were earlier. The datetime form of the
+    as-of is converted to the Eastern day first."""
+    rows = nfeloqb.parse(csv_text().encode())
+    friday_utc = dt.datetime(2026, 9, 11, 0, 15)         # Thursday 09-10, 20:15 ET
+    assert nfeloqb.before(rows, friday_utc).height == 0, "the 09-10 row is the game's own"
+    assert nfeloqb.before(rows, dt.datetime(2026, 9, 14, 17, 0))["date"].to_list() == [
+        "2026-09-10", "2026-09-13"]
+
+
+def test_state_as_of_a_fixture_carries_nothing_from_that_game_or_later():
+    """Every game in the captured file: the state built as of its kickoff is built from a
+    split that holds no row of that game and no row dated on or after its day. On the split,
+    by `game_id`, over all 298 rows the file names a quarterback on."""
+    captured = json.loads((FIXTURES / "nfeloqb_qb_elos.json").read_text())
+    rows = nfeloqb.parse(csv_text(captured).encode())
+    checked = 0
+    for r in rows.select("game_id", "date").unique().iter_rows(named=True):
+        day = dt.date.fromisoformat(r["date"])
+        split = nfeloqb.before(rows, day)
+        assert r["game_id"] not in split["game_id"].to_list()
+        assert all(d < r["date"] for d in split["date"].to_list())
+        checked += 1
+    assert checked == 298, "every game in the capture, once"
+    st = nfeloqb.state(rows, as_of=dt.date(2026, 9, 13))
+    assert all(d < "2026-09-13" for d in st["as_of"].to_list())
+
+
+def test_state_as_of_is_the_latest_row_before_the_day_per_team():
+    """KC's rows in the fixture are 09-10, 09-20 and 09-27. As of the 09-20 game the state
+    is the 09-10 row: the adjustment the source published there (12.0, not the 10.0 of the
+    latest row), one game played in the run. A team with no row before the day is absent
+    rather than served from its future."""
+    rows = nfeloqb.parse(csv_text().encode())
+    by = {r["team"]: r for r in nfeloqb.state(rows, as_of=dt.date(2026, 9, 20)).to_dicts()}
+    assert by["KC"]["qb_adj"] == pytest.approx(12.0) and by["KC"]["as_of"] == "2026-09-10"
+    assert by["KC"]["tenure"] == 1
+    assert by["LV"]["qb"] == "Gardner Minshew", "the 09-13 row; O'Connell is named on 09-27"
+    assert set(by) == {"KC", "LAC", "LV", "DEN", "WAS", "LA"}
+    assert set(nfeloqb.state(rows, as_of=dt.date(2026, 9, 13)).to_dicts()[0].keys()) == set(
+        nfeloqb.STATE_SCHEMA)
+    assert nfeloqb.state(rows, as_of=dt.date(2026, 9, 13))["team"].to_list() == ["KC", "LAC"]
+
+
+def test_without_an_as_of_the_state_is_unchanged():
+    """No current consumer moves: the default is every row, which is the latest state."""
+    rows = nfeloqb.parse(csv_text().encode())
+    assert nfeloqb.state(rows).equals(nfeloqb.state(rows, as_of=None))
+    assert max(nfeloqb.state(rows)["as_of"].to_list()) == "2026-09-27"
+
+
 def test_538_abbreviations_are_spelled_as_nflverse_spells_them():
     teams = set(nfeloqb.state(nfeloqb.parse(csv_text().encode()))["team"].to_list())
     assert "WAS" in teams and "LA" in teams

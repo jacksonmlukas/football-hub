@@ -419,7 +419,7 @@ def test_a_drifted_quarterback_file_is_refused_and_the_fit_still_runs(sched, tmp
 def test_the_fit_repeats_a_source_change_the_pull_reported(sched, tmp_path, capsys):
     """#271: a pull whose bytes did not match the pin says so once, on the day; the fit runs
     days later off the cached file and must not serve the change silently. The stamp
-    carries the answer and `quarterback_state`'s sentence repeats it, with the commit."""
+    carries the answer and `quarterback_rows`'s sentence repeats it, with the commit."""
     import json
 
     from hub.fetch import nfeloqb
@@ -433,3 +433,44 @@ def test_the_fit_repeats_a_source_change_the_pull_reported(sched, tmp_path, caps
     out = capsys.readouterr().out
     assert "source change" in out and "expects 222222222222" in out
     assert "pulled 2026-09-12T12:00:00 at commit abcdef012345" in out
+
+
+# --- a played week is rated from the state as of its first kickoff (#272) -------------------
+#
+# `nfeloqb.state(rows, as_of=...)` is the split and is tested beside it. What is asserted
+# here is that the writer passes the kickoff: a week that has kicked off at `at` is rated
+# from rows strictly before its first kickoff's game day, and a week still ahead from the
+# latest state, so a backtest of the quarterback layer through this seam cannot leak.
+
+def test_a_played_week_is_rated_from_the_state_as_of_its_first_kickoff(sched, tmp_path):
+    """Week 1 is KC @ LV on Monday 09-14 (ET), played; week 2 is the same pair on 09-27,
+    ahead. The fixture's rows before 09-14 are KC's 09-10 (adj +12) and LV's 09-13 (Minshew,
+    adj -2): 0.48 - (-0.08) = 0.56 points. The latest state -- KC +10, O'Connell -110 --
+    is 4.80, and that is what week 2 gets. Both weeks are priced from the moving field, so
+    both are adjusted; only the state differs."""
+    sched([("w1", 1, 3.0, 7, "KC", "LV", "2026-09-14", "20:15"),
+           ("w2", 2, 3.0, None, "KC", "LV", "2026-09-27", "13:00")])
+    _qb_state(tmp_path / "cache")
+    games, _ = ratings.rated_games(2026, at=dt.datetime(2026, 9, 20, 12), cache=tmp_path / "cache",
+                                   base=tmp_path)
+    by = {r["game_id"]: r for r in games.to_dicts()}
+    assert by["w1"]["adjusted_by"] == "nfeloqb" and by["w2"]["adjusted_by"] == "nfeloqb"
+    assert by["w1"]["qb_adjustment"] == pytest.approx(0.56)
+    assert by["w2"]["qb_adjustment"] == pytest.approx(4.80)
+    assert games["game_id"].to_list() == ["w1", "w2"], "the slate's order is kept"
+
+
+def test_a_played_week_with_no_state_before_its_kickoff_is_not_adjusted(sched, tmp_path):
+    """A night game on 09-13, 20:15 ET, is 00:15 UTC on 09-14. LV's earliest row in the
+    fixture is dated 09-13 -- its own game day -- so as of that kickoff, read as the
+    Eastern day, LV is unknown and the game is left as priced. Read as the UTC day the
+    split would keep LV's 09-13 row and move the game by 0.56; the latest state would move
+    it by 4.80. A backdated adjustment is the leak this seam exists to refuse."""
+    sched([("night", 1, 3.0, 7, "KC", "LV", "2026-09-13", "20:15"),
+           ("w2", 2, 3.0, None, "KC", "LV", "2026-09-27", "13:00")])
+    _qb_state(tmp_path / "cache")
+    games, _ = ratings.rated_games(2026, at=dt.datetime(2026, 9, 15, 12), cache=tmp_path / "cache",
+                                   base=tmp_path)
+    by = {r["game_id"]: r for r in games.to_dicts()}
+    assert by["night"]["adjusted_by"] is None and by["night"]["close_spread"] == 3.0
+    assert by["w2"]["qb_adjustment"] == pytest.approx(4.80)

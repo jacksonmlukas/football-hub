@@ -63,7 +63,7 @@ import json
 import os
 import sys
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -246,9 +246,39 @@ def _long(rows: pl.DataFrame) -> pl.DataFrame:
     return pl.concat(sides).sort("team", "date")
 
 
-def state(rows: pl.DataFrame) -> pl.DataFrame:
+# The source dates a row by the game's Eastern day, the way nflverse's `gameday` does;
+# every kickoff and as-of in this repo is naive UTC. The two meet in `before`.
+GAME_DAY_ZONE = "America/New_York"
+
+
+def game_day(as_of: date | datetime) -> date:
+    """The Eastern game day an as-of falls on. A `date` is taken as one already; a naive
+    `datetime` is UTC, the way every moment in this repo is, and is converted -- a Thursday
+    20:15 ET kickoff is 00:15 UTC Friday, and read as Friday it would keep the Thursday
+    row, the game's own, on the wrong side of the split."""
+    if isinstance(as_of, datetime):
+        from zoneinfo import ZoneInfo
+        return as_of.replace(tzinfo=UTC).astimezone(ZoneInfo(GAME_DAY_ZONE)).date()
+    return as_of
+
+
+def before(rows: pl.DataFrame, as_of: date | datetime) -> pl.DataFrame:
+    """The split (#272): the rows dated strictly before the as-of's game day, and none
+    dated on or after it. A fixture's own row is dated its game day, so a state built as of
+    its kickoff is built from rows that hold nothing about that game or any later one.
+    `docs/method.md` rule 2, and the only comparison against the date column here."""
+    return rows.filter(pl.col("date") < game_day(as_of).isoformat())
+
+
+def state(rows: pl.DataFrame, as_of: date | datetime | None = None) -> pl.DataFrame:
     """Per team: the current starter, his value and adjustment on the latest row, and his
-    tenure.
+    tenure -- as of a moment, or of the whole file.
+
+    With `as_of`, the latest row is the latest *before* that moment's game day (`before`
+    is the split), so a played fixture can be rated from what was knowable before it
+    kicked off and a team with no row before the day is absent rather than served from its
+    future. Without it, every row: the state as it stands, which is what every consumer
+    read before #272 and what the live path still reads for the weeks ahead.
 
     Everything the team layer prices is on the latest row. `qb_adj` is the source's own
     adjustment there -- the gap between this starter and what the team's rolling value
@@ -266,7 +296,7 @@ def state(rows: pl.DataFrame) -> pl.DataFrame:
     Rows are not filtered to a season on purpose. A run that began late last season is
     one run, and the tenure reported for it should say so.
     """
-    long = _long(rows)
+    long = _long(rows if as_of is None else before(rows, as_of))
     out = []
     for team, games in long.group_by("team", maintain_order=True):
         latest = games.row(-1, named=True)
@@ -308,7 +338,7 @@ def captured_at(cache: Path | None = None) -> str | None:
 
 def source_change(cache: Path | None = None) -> str | None:
     """One sentence if the cached file's bytes did not match the pin when it was pulled,
-    else None. Read by `hub.models.ratings.quarterback_state`, so a fit run days after the
+    else None. Read by `hub.models.ratings.quarterback_rows`, so a fit run days after the
     pull repeats what the pull said rather than serving the change silently."""
     st = stamp(cache)
     if st.get("matches_pin") is not False:
