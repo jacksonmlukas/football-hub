@@ -122,6 +122,14 @@ Assembled from the errors these produced, not from foresight.
    it.
 6. **Do not assert a mechanism the screen did not test.** "Already priced" is a satisfying
    explanation and was wrong once here already.
+7. **Count the family, and print the false-discovery threshold beside the rule.** Every
+   screen run says how many tests it ran and the Benjamini–Hochberg threshold at q = 0.10,
+   with the adjusted p beside each raw t; the pre-registered rule still decides, and a
+   feature that clears it above the threshold is reported as clearing with the adjustment
+   beside it ([method.md rule 14](method.md), #37). The six preseason hypotheses in the
+   table above were run by hand before this item existed and print no threshold; the age
+   screen's twenty buckets are the case the item was written for — "two cells near 1.7
+   sigma ... is what chance produces" is the argument the threshold now makes in a number.
 
 ## Where this leaves the modelling
 

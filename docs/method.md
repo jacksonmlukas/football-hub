@@ -326,6 +326,60 @@ last step, and what is left on the page is a number this repo's own record contr
 project whose most useful artifact is its record of what was measured and removed cannot keep
 the removals in its commit messages.
 
+### 14. Count the family, and print the threshold beside the rule — not instead of it
+
+A screen over eight features is eight tests. Eight verdicts at a bar of 2 standard errors
+are eight chances for noise to clear it, and a reader of the verdict column is owed the count
+and what the count does to the bar.
+
+**The incident.** The weekly screen's family size was quoted in a docstring — *nine features*
+— and moved to eight when wind was withdrawn (#170) without any number on the page moving
+with it, because nothing on the page depended on the count. A multiple-comparison family that
+lives only in prose is one that understates itself the first time a feature is added or
+removed, and nobody notices because no figure changes.
+
+**What the run prints now (#37).** Every screen run reports, for each family it screens, how
+many tests it ran and the Benjamini–Hochberg threshold controlling the false discovery rate at
+**q = 0.10** — `experiment.FDR_Q`, a stated choice and not a fitted constant — with the
+two-sided *p* of the season-clustered *t* and its adjusted value beside every row. Each
+screen counts **its own family**, never the union across screens: the alone screen's family
+is every feature in the pool, the joint screen's is that anchor's survivors, the Usage
+screen's is every (feature, count) pair. A feature the screen could not measure still counts;
+it ran.
+
+**Why it does not decide.** The verdict is the pre-registered rule and only that: a stated
+sign holding in every season and the season-clustered *t* clearing `MIN_SE`. A feature that
+clears the rule and sits above the threshold is reported as **clearing**, with the adjusted
+result beside it — because a rule written down before the run is the whole reason the screen
+is trusted, and swapping it for a threshold after seeing the vector would be rule 1's incident
+in a new coat. What the threshold does is make the multiplicity visible on the same line. The
+arithmetic makes the relationship plain: at five seasons the bar of 2 se is a two-sided *p* of
+0.116 on four degrees of freedom, and a BH threshold can never exceed *q*, so a feature at
+exactly the bar is one the rule clears and the threshold never does, at any family size. The
+rule's every-season half is what carries the burden the bar alone does not, and that is
+already rule 4.
+
+**The tally.** The counts below are read off the code by
+`tests/contracts/test_method_tally_matches_the_screens.py`, so a feature entering or leaving a
+family moves this table or fails the build.
+
+| screen | tests in the family | where the count comes from |
+|---|---|---|
+| weekly screen, alone (`--run`) | **8** | `len(weekly_screen.FEATURES)` — `snap_trend` counted, unlicensed (#248) |
+| weekly screen, alone, `--routes` | **9** | the eight plus `ROUTE_TREND` |
+| weekly screen, alone, `--scheme` | **13** | the eight plus `len(SCHEME_TRENDS)` |
+| weekly screen, joint | the survivors at that anchor | printed by the run; not fixed here |
+| weekly screen, Usage | survivors × **5** | `len(panel.USAGE)` counts per feature |
+| preseason screens, by hand | **6** hypotheses, no threshold printed | [signal-screens.md](signal-screens.md); no code ran them |
+
+The preseason row is the honest gap: those six were run by hand before the protocol existed,
+have no module, and so print no threshold. Their family size is the count the index page
+states and this table repeats; a reader wanting the adjusted result for the age screen has the
+five per-season *r* values on that page and can compute it. No table on
+[weekly-screen.md](weekly-screen.md) has been re-run under this rule yet — the printed
+threshold arrives with the next `--run`, and until then the page says what it will print rather
+than what it printed.
+
 ---
 
 ## The record

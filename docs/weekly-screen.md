@@ -919,6 +919,41 @@ than the plan assumed. The gate should say so, and should report the same split:
 any win comes from features consensus could have priced, and how much from being newer than the
 snapshot we are measuring against.
 
+## The family, counted, and the false-discovery threshold beside the rule
+
+**Added 2026-09-11, issue #37, under [method.md rule 14](method.md).** Nothing on this page
+is re-run by it and no verdict moves. What changes is what a run prints.
+
+Every screen this module runs is a **family of tests**, and every family now says how big it
+is: the alone screen over the eight features in `FEATURES` — the snap-share trend counted,
+licence or no licence (#248) — is **eight tests** at each anchor; `--routes` makes it nine and
+`--scheme` thirteen; the joint screen is a family of the features that cleared alone at that anchor, four on the
+settled basis at the published anchor, of which three survive it; the Usage screen is every (survivor, count) pair, five
+counts a feature. Each family is counted on its own and adjusted within itself, never as the
+union across screens, because the alone screen and the joint screen ask different questions of
+different rows and pooling them would be a family nobody ran.
+
+Beside the season-clustered `t` on every row the run prints its two-sided **p** on
+`seasons − 1` degrees of freedom — the same unit the `t` is built from, #169 — and its
+**Benjamini–Hochberg adjusted p**; above each table, the family size, the BH threshold at
+**q = 0.10** (`experiment.FDR_Q`, a stated choice) and how many rows sit below it.
+
+**The verdict column does not read any of it.** A feature that clears the pre-registered rule
+and sits above the threshold is still `clears`, with the adjusted p beside it; the rule was
+written down before the first run and the threshold is what a reader is owed alongside it,
+not a replacement for it. The arithmetic is worth having in front of you when reading the
+tables above: at five seasons, `MIN_SE` is a two-sided p of **0.116** on four degrees of
+freedom, and a BH threshold is never above q, so a feature at exactly the bar clears the rule
+and never the threshold, at any family size. What separates a `clears` at +3.8 from one at
++2.1 is exactly the thing the adjusted column will show.
+
+**What is not established.** The threshold for the tables above has not been printed: this
+change was made in a tree with no Panel to build, and rule 13 says the number comes from a
+re-run and not from an argument about which way it would go. The next `--run` prints it for
+every table under *The basis, decided* and the sweep, and this section is where those figures
+land. The `--permute` line's permutation p is a single feature's and carries no family; its
+family, if one is wanted, is the number of features permuted in that run.
+
 ## Reproduce
 
 ```bash

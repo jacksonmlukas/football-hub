@@ -10,6 +10,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from hub.models import experiment
 from hub.models import panel as pnl
 from hub.models import weekly_screen as ws
 
@@ -272,7 +273,7 @@ def test_the_snap_share_trend_is_still_screened_and_reported_as_not_licensed():
     by_name = {r["feature"]: r for r in rows.to_dicts()}
     assert by_name["snap_trend"]["status"] in (ws.CLEARS, ws.KILLED), (
         "the verdict is the numbers' verdict, not the licence's")
-    lines = {ln.split()[0]: ln for ln in ws.report(rows.to_dicts())[3:]}
+    lines = {ln.split()[0]: ln for ln in ws.report(rows.to_dicts())[4:]}
     assert "not licensed" in lines["snap_trend"] and "#233" in lines["snap_trend"]
     assert "not licensed" not in lines["ecr"], "the note is the revoked licence's alone"
     assert lines["snap_trend"].index(by_name["snap_trend"]["note"]) < \
@@ -1114,3 +1115,129 @@ def test_the_screen_called_in_process_names_only_its_own_reads(monkeypatch, caps
         "the screen printed a digest over the enclosing run's reads as well as its own")
     assert sorted(p.source for p in nv.pins_this_run()) == ["ff_rankings", "player_stats"], (
         "the screen's read did not reach the run around it: scoping lost a read")
+
+
+# --- #37: the family is counted and the false-discovery threshold printed beside the t -------
+
+def _family_panel(names, seasons=(2021, 2022, 2023, 2024, 2025), weeks=range(1, 11),
+                  players=60, seed=37):
+    """A panel carrying one noise column per name, so a real feature tuple can be screened."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for s in seasons:
+        for w in weeks:
+            for i in range(players):
+                rows.append({"season": s, "week": w, "player_id": f"p{i}",
+                             "fantasy_points_ppr": float(rng.normal(12, 6)),
+                             "yds_prior": float(rng.normal(12, 4)),
+                             "ecr": float(i + 1),
+                             **{n: float(rng.normal()) for n in names}})
+    return pl.DataFrame(rows)
+
+
+def test_each_screen_counts_its_own_family_and_not_the_union():
+    """The alone screen over three features is three tests; the joint screen over the two
+    that survived is two, not three and not five; the Usage screen over one feature and two
+    counts is two. Each frame says how many tests *it* ran, and the p beside every t is
+    adjusted within that family alone."""
+    p = _collinear_panel()
+    alone = ws.screen(p, [ws.Feature("a", "+", 1), ws.Feature("b", "+", 1),
+                          ws.Feature("late", "+", 8)])
+    assert alone["tests"].to_list() == [3, 3, 3]
+    joint = ws.screen_joint(p, [ws.Feature("a", "+", 1), ws.Feature("b", "+", 1)])
+    assert joint["tests"].to_list() == [2, 2]
+    u = _usage_panel().with_columns(pl.col("targets").alias("carries"))
+    for c in ("targets", "carries"):
+        u = pnl.recent_mean(pnl.prior_means(u, ["player_id"], [c], within_season=True)
+                            .join(u, on=["player_id", "season", "week"], how="right"), c)
+    usage = ws.screen_usage(u, [ws.Feature("feat", "+", 1)], components=("targets", "carries"))
+    assert usage["tests"].to_list() == [2, 2]
+    for frame in (alone, joint, usage):
+        rows = frame.to_dicts()
+        fd = experiment.false_discovery([r["p"] for r in rows])
+        assert fd.tests == frame.height
+        assert [r["p_adj"] for r in rows] == pytest.approx(list(fd.adjusted)), \
+            "the adjusted p on the frame is the family's own adjustment"
+        assert all(r["p"] == pytest.approx(experiment.two_sided_p(r["t"], r["seasons"] - 1))
+                   for r in rows), "and the p is the two-sided p of the t over the seasons"
+
+
+def test_the_family_counts_the_unlicensed_record():
+    """#248 keeps `snap_trend` in `FEATURES` as a record with no licence; #37 counts it. A
+    screen over the default family runs eight tests, the trend's among them, and every row
+    says so -- a family of seven beside eight verdicts would be #170's understatement again."""
+    names = [f.name for f in ws.FEATURES]
+    assert "snap_trend" in names and len(names) == 8
+    out = ws.screen(_family_panel(names), ws.at_anchor(ws.FEATURES, 8))
+    assert out.height == 8 and out["tests"].unique().to_list() == [8]
+    assert out.filter(pl.col("feature") == "snap_trend")["tests"].item() == 8
+
+
+def test_the_report_prints_the_family_and_the_threshold_beside_the_t():
+    """The line a reader takes the multiplicity from: how many tests, the rate, the threshold,
+    and how many sit below it. Then `p` and `p_adj` columns on every row, beside the `t`."""
+    rows = ws.screen(_panel(), [ws.Feature("feat", "+", 1)]).to_dicts()
+    lines = ws.report(rows)
+    assert "1 test" in lines[3] and "q = 0.10" in lines[3] and "threshold" in lines[3]
+    assert "rule decides; the threshold does not" in lines[3]
+    assert "p" in lines[1].split() and "p_adj" in lines[1].split()
+    assert lines[-1].split()[0] == "feat"
+    p, p_adj = lines[-1].split()[4], lines[-1].split()[5]
+    assert float(p) == pytest.approx(rows[0]["p"], abs=5e-4)
+    assert float(p_adj) == pytest.approx(rows[0]["p"], abs=5e-4), "a family of one is unadjusted"
+
+
+def test_the_report_counts_the_rows_it_is_given_as_the_family():
+    """`main` hands `report` the alone rows at one anchor and then the joint rows at that
+    anchor, and the family printed is the rows handed over each time -- not a count fixed
+    elsewhere that the two calls would both misreport."""
+    rows = [{"feature": f"f{i}", "sign": "+", "r": 0.01, "t": 0.5, "cells": 10, "seasons": 5,
+             "note": "killed: 5/5 seasons but only +0.5 se"} for i in range(5)]
+    assert "5 tests" in ws.report(rows)[3]
+    assert "2 tests" in ws.report(rows[:2])[3]
+
+
+def test_a_feature_clearing_the_rule_above_the_threshold_still_clears():
+    """The pre-registered rule is unchanged and the threshold does not decide. A t of 2.2
+    over five seasons is two-sided p 0.093 -- past `MIN_SE`, so `clears`, and below q on its
+    own -- and in a family of eight nothing that size survives q = 0.10. The row still says
+    clears; the adjusted p beside it says what the family does to that, and the header says
+    nothing is below."""
+    lead = {"feature": "lead", "sign": "+", "r": 0.03, "t": 2.2, "cells": 50, "seasons": 5,
+            "status": ws.CLEARS, "note": "clears: +0.0300 at +2.2 se, 5/5 seasons"}
+    rest = [{"feature": f"dud{i}", "sign": "+", "r": 0.001, "t": 0.1, "cells": 50, "seasons": 5,
+             "status": ws.KILLED, "note": "killed: 3/5 seasons"} for i in range(7)]
+    lines = ws.report([lead, *rest])
+    assert "8 tests" in lines[3] and "0 below" in lines[3]
+    line = next(ln for ln in lines if ln.split()[:1] == ["lead"])
+    assert "clears: +0.0300 at +2.2 se" in line
+    p_adj = float(line.split()[5])
+    assert p_adj > experiment.FDR_Q, "adjusted past the rate, and still reported as clearing"
+    assert ws.report([lead])[3].startswith("  1 test"), "alone it is a family of one"
+    assert "1 below" in ws.report([lead])[3], "and at p 0.093 it is below q on its own"
+
+
+def test_the_sweep_carries_each_screen_s_family_and_adjusted_p():
+    """The sweep is what `--run` prints, so the per-anchor frames it is built from keep
+    their own family and adjusted p: the alone family is every feature in the pool, the
+    joint family is that anchor's survivors, and a feature that never reached the joint
+    screen has no joint family to report."""
+    swept = ws.sweep(_sweep_panel(), _SWEEP_FEATURES, (8,))
+    assert swept["alone_tests"].unique().to_list() == [3]
+    by = {r["feature"]: r for r in swept.to_dicts()}
+    assert by["dud"]["joint_tests"] is None and by["dud"]["joint_p_adj"] is None
+    assert by["flat"]["joint_tests"] == 2, "flat and late_trend survive; dud does not"
+    assert by["flat"]["alone_p_adj"] == pytest.approx(
+        experiment.false_discovery([by[f]["alone_p"] for f in ("flat", "dud", "late_trend")]
+                                      ).adjusted[0])
+    # `main` rebuilds the joint rows from the sweep and hands them to `report`, which
+    # recomputes the family from `t` and `seasons`; the seasons have to be the joint
+    # screen's own for the printed adjustment to be the frame's.
+    joint_rows = [{**r, "r": r["joint_r"], "t": r["joint_t"], "cells": r["joint_cells"],
+                   "seasons": r["joint_seasons"], "note": r["joint_note"]}
+                  for r in swept.to_dicts() if r["joint"] is not None]
+    lines = ws.report(joint_rows)
+    assert "2 tests" in lines[3]
+    printed = {ln.split()[0]: float(ln.split()[5]) for ln in lines[4:]}
+    assert printed["flat"] == pytest.approx(by["flat"]["joint_p_adj"], abs=5e-4)
+    assert printed["late_trend"] == pytest.approx(by["late_trend"]["joint_p_adj"], abs=5e-4)
