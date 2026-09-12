@@ -208,7 +208,7 @@ def test_the_record_carries_the_weekly_interval_coverage(site, base, monkeypatch
 
 def test_no_measurement_drops_the_field_rather_than_the_page(site, base, monkeypatch,
                                                              tmp_path):
-    """`data/processed/` is gitignored, so a fresh clone has no measurement. The record must
+    """A tree where the measurement was never written has no artifact. The record must
     still publish -- graceful degradation, the same call `_scored` makes about schedules."""
     from hub.models import coverage
     monkeypatch.setattr(coverage, "ARTIFACT", tmp_path / "absent.json")
