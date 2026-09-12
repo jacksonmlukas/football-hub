@@ -1074,6 +1074,29 @@ def test_the_frozen_board_digests_to_a_pinned_value():
     assert frame_digest(board) == "f9fe3e88"
 
 
+def test_the_frozen_board_carries_the_pair_the_build_contract_refuses():
+    """#250. The frozen 2024 Board holds `Kenneth Walker III` and `Ken Walker III` -- one
+    player, two of the archive's spellings -- and is not re-taken (#50's argument: the pins
+    above are its digest). `DRAFT_BOARD.unique_by_key` would refuse it, so the check applies
+    where a Board is built and not where a frozen one is read: this file reads it through
+    `panelarchive.frame`, which validates nothing. Both halves asserted, so the day the pair
+    leaves the fixture or the check reaches the reader, this says which."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    import panelarchive as arc
+
+    from hub.contracts import DRAFT_BOARD, ContractViolation
+    from hub.names import player_key
+
+    board = arc.frame("draft_board")
+    walkers = [n for n in board["player"].to_list() if player_key(n) == "kenneth walker"]
+    assert sorted(walkers) == ["Ken Walker III", "Kenneth Walker III"]
+    with pytest.raises(ContractViolation, match="'Ken Walker III' / 'Kenneth Walker III'"):
+        DRAFT_BOARD.conform(board, "player")
+
+
 def test_two_boards_differing_by_one_player_do_not_share_a_digest():
     """The property the stamp exists for, and the reason it is worth having.
 

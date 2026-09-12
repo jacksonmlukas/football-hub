@@ -21,6 +21,8 @@ from typing import Any, cast
 
 import polars as pl
 
+from hub.names import player_key
+
 NOT_FITTED_BECAUSE = (
     "declared plausibility bounds, not fitted inputs. A range here says what a source may "
     "plausibly return -- SNAP_COUNTS bounds offense_pct at [0, 1.05], measured over 2019-25 "
@@ -37,6 +39,24 @@ NOT_FITTED_BECAUSE = (
 
 class ContractViolation(Exception):
     pass
+
+
+def _spelling_pairs(names: pl.Series) -> list[str]:
+    """Every set of spellings in `names` that `player_key` lands on one key, as one line
+    each: `'Ken Walker III' / 'Kenneth Walker III' -> kenneth walker`.
+
+    Spellings sorted within a key and keys sorted across, so the refusal reads the same
+    however the frame was ordered. A pair is two *different* strings on one key; a string
+    that appears twice is `unique`'s refusal, already in the list, and is not repeated here.
+    """
+    keyed = (pl.DataFrame({"name": names.drop_nulls().unique()})
+               .with_columns(pl.col("name").map_elements(player_key, return_dtype=pl.Utf8)
+                               .alias("key"))
+               .group_by("key").agg(pl.col("name").sort())
+               .filter(pl.col("name").list.len() > 1)
+               .sort("key"))
+    return [f"{' / '.join(repr(n) for n in row['name'])} -> {row['key']}"
+            for row in keyed.to_dicts()]
 
 
 def _family(dt: Any) -> str:
@@ -214,6 +234,14 @@ class Contract:
     # null into, which is how `adp_corrected` carried one on 293 of 457 served rows. The
     # range check cannot see it either: polars' `min` and `max` skip NaN.
     no_nan: tuple[str, ...] = ()
+    # Name columns compared under `hub.names.player_key` rather than as strings (#250).
+    # `unique` sees `Kenneth Walker III` and `Ken Walker III` as two values; every join in
+    # the repo sees one player, so a frame carrying both drafts him twice and scores him
+    # twice. The refusal names the pair. Checked where a frame is *built* -- `validate` is
+    # what `hub.draft.board.build` returns through -- and not where a frozen one is read:
+    # the frozen 2024 Board under `tests/golden/fixtures/panel_archive/` carries exactly
+    # that pair, is not re-taken (#50), and is read by nothing that validates.
+    unique_by_key: tuple[str, ...] = ()
     # The repairs this declaration owns, applied before any bound is checked. Empty for
     # thirteen of the fourteen contracts, because a source that has never varied has nothing
     # to declare here and an unexercised repair is worse than none.
@@ -246,12 +274,12 @@ class Contract:
     def validate(self, df: pl.DataFrame) -> pl.DataFrame:
         """Every check here is a refusal, and every one of them is declared.
 
-        Seven checks append to one list (six until #243) and one `raise` turns the list into a
-        `ContractViolation`. Only the dtype check carried a `# GUARD` until #62, so five
-        refusals applied to fourteen contracts at every fetch boundary in the repo were
-        proved by nothing -- and the unmarked five sat either side of the marked one, in the
-        same function, appending to the same list. That is the decay this marker habit exists
-        to stop, caught in the one place it is easiest to see.
+        Eight checks append to one list (six until #243, seven until #250) and one `raise`
+        turns the list into a `ContractViolation`. Only the dtype check carried a `# GUARD`
+        until #62, so five refusals applied to fourteen contracts at every fetch boundary in
+        the repo were proved by nothing -- and the unmarked five sat either side of the
+        marked one, in the same function, appending to the same list. That is the decay this
+        marker habit exists to stop, caught in the one place it is easiest to see.
 
         `tests/contracts/test_guards_are_load_bearing.py` reads this function rather than
         trusting the sweep: every `problems.append(` and every `raise ContractViolation(` in
@@ -312,6 +340,13 @@ class Contract:
         for c in self.unique:
             if c in df.columns and df[c].n_unique() != df.height:
                 problems.append(f"{c} not unique ({df[c].n_unique()}/{df.height})")
+        # /GUARD
+        # GUARD one-player-two-spellings-refused: two rows one `player_key` apart are caught
+        # by the pair, where the raw string's uniqueness above lets both through
+        for c in self.unique_by_key:
+            if c in df.columns and df.schema[c] == pl.Utf8:
+                for pair in _spelling_pairs(df[c]):
+                    problems.append(f"{c} not unique under player_key: {pair}")
         # /GUARD
         # GUARD out-of-range-refused: a units change inside a plausible column is caught
         for c, (lo, hi) in self.ranges.items():
@@ -460,6 +495,7 @@ class Contract:
             unique=tuple(c for c in self.unique if c in keep),
             ranges={c: r for c, r in self.ranges.items() if c in keep},
             no_nan=tuple(c for c in self.no_nan if c in keep),
+            unique_by_key=tuple(c for c in self.unique_by_key if c in keep),
             # Narrowed to the columns named -- except the repairs, which are not narrowed.
             # A `Normalisation` is a fact about the response and is decided across all the
             # columns it names; splitting it per caller puts back the half-repaired frame
@@ -487,6 +523,12 @@ DRAFT_BOARD = Contract(
               "consensus_rank": pl.Float64},
     non_null=("player", "ecr", "pos"),
     unique=("player",),
+    # And unique under the key (#250): the consensus source spelled Kenneth Walker III two
+    # ways across 2024's preseason scrapes, `unique` on the raw string passed both, and a
+    # Board carrying both drafts one player as two. `consensus(as_of=...)` merges a rename
+    # between scrapes under its own latest-scrape rule and prints the pair; anything else
+    # that reaches `build` with two spellings is refused here, by the pair.
+    unique_by_key=("player",),
     ranges={"ecr": (1, 1000)},
     # The ADP stage's derived columns, optional because the stage is, and NaN-free where
     # they are present (#243). An undrafted player is a null in each -- the shape `edge`

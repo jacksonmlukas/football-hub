@@ -215,7 +215,7 @@ key, no loop over teams or games.
 | `panel_archive/injuries.json` | **Captured**, `load_injuries([2023, 2024])`, 101 rows, `INJURIES.required` included |
 | `panel_archive/ff_rankings.json` | **Captured**, `load_ff_rankings("all")`, the `weekly-op` page at the scrapes of weeks 1-14, 365 rows — see below |
 | `panel_archive/ff_opportunity.json` | **Captured**, `load_ff_opportunity(stat_type="weekly")`, 1,000 rows — see below |
-| `panel_archive/draft_board.json` | **Captured** 2026-09-05, output of `board_as_of(2024)`, its top 200 rows |
+| `panel_archive/draft_board.json` | **Captured** 2026-09-05, output of `board_as_of(2024)`, its top 200 rows — carries one player under two spellings, see below |
 
 **Two of the six were re-taken from the repo's own pinned cache rather than from the wire,
 and that is recorded here so the next `--write` can confirm it.** The first run of the script
@@ -270,6 +270,24 @@ and 200 because twelve teams over fourteen rounds take 168 of them. Freezing the
 *inputs* instead would mean a whole season of `ff_opportunity` and the redraft archive, to
 exercise a seam that belongs to `hub.draft.board` and has six test files of its own. What
 `assemble_universe` owns is everything from the board onward, and that runs here for real.
+
+**The frozen Board carries `Kenneth Walker III` and `Ken Walker III` as two rows, and that is
+one player (#250).** Consensus ranks 51 and 64: the archive spelled him both ways across
+2024's preseason scrapes, `consensus` took the latest scrape per *raw string*, and both strings
+survived — the older one under a July ECR of 58.5 with a spread of 37.75 and no xFP joined,
+because the crosswalk that lands `ken walker` on `kenneth walker` (`hub.names.ALIASES`, #246)
+did not exist at the capture. `DRAFT_BOARD.unique_by_key` now refuses that pair where a Board
+is *built*, and `consensus(as_of=...)` merges a rename between scrapes under its latest-scrape
+rule with a printed line, so `board_as_of(2024)` run today returns one row for him. The
+fixture is **not re-taken**: it is the Board the pins in `tests/unit/test_backtest.py` digest
+(`f9fe3e88`, 200 x 32) and the roster the #197 pin was drawn on, and #50's argument holds —
+a fixture that moves with each correction is a fixture nobody can read an old figure
+against. The check applies where a Board is built and not where a frozen one is read;
+`tests/panelarchive.py` validates nothing, so the pair reads fine, and
+`test_the_frozen_board_carries_the_pair_the_build_contract_refuses` asserts both halves — that
+the pair is still here, and that the contract would refuse it — so the day either changes,
+that test says which. Whether the other archived boards under `data/processed/boards/` carry
+such pairs is the maintainer's sweep and is not recorded here.
 
 **The 591 rows of `ff_opportunity` that join to nothing.** `FF_OPPORTUNITY` declares
 `min_rows=1000` and the production loader validates before the panel sees the frame, so a file

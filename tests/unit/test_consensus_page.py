@@ -239,6 +239,26 @@ def test_the_boundary_day_is_inside_the_as_of_on_both_sides(monkeypatch, tmp_pat
          "which is a silent re-pricing of every historical board, not a test detail.")
 
 
+def test_a_player_renamed_between_scrapes_is_one_row_under_the_latest_spelling(
+        monkeypatch, tmp_path, capsys):
+    """#250. The archive is every scrape of a preseason, and FantasyPros renamed Kenneth
+    Walker III between two of 2024's: taken unique on the raw string, the replay Board carried
+    him twice, the older spelling under a stale ECR. The rule this function already states --
+    the latest scrape per player -- is applied on the key, so the row that survives is the
+    latest one and its spelling, and the merge is printed by the pair rather than absorbed.
+    The live path is not merged: one scrape spelling one player two ways is a source defect,
+    and `DRAFT_BOARD` refuses it where the Board is built."""
+    from hub.draft.board import consensus
+    _patch(monkeypatch, tmp_path, _dated(("Ken Walker III", 58.5, "2024-07-20"),
+                                         ("Kenneth Walker III", 50.46, "2024-08-28"),
+                                         ("Guy", 12.0, "2024-08-28")))
+    got = consensus(as_of="2024-08-31")
+    assert got["player"].to_list() == ["Guy", "Kenneth Walker III"]
+    assert got.filter(pl.col("player") == "Kenneth Walker III")["ecr"][0] == 50.46
+    out = capsys.readouterr().out
+    assert "Ken Walker III -> Kenneth Walker III" in out, out
+
+
 def test_the_board_keeps_no_date_comparison_of_its_own(monkeypatch):
     """The structural half of the same guarantee.
 

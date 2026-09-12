@@ -102,6 +102,38 @@ def test_the_board_contract_refuses_a_nan_in_every_corrected_column():
         assert DRAFT_BOARD.validate(fine).height == 300
 
 
+def test_contract_catches_two_spellings_of_one_player():
+    """`unique` compares the raw string, so `Kenneth Walker III` and `Ken Walker III` are two
+    values to it and one player to every join in the repo (#250). A column declared
+    `unique_by_key` is compared under `hub.names.player_key`, and the refusal names the
+    pair rather than a count, because the pair is what a reader has to go and find."""
+    two = pl.DataFrame({"player": ["Kenneth Walker III", "Ken Walker III", "Zay Flowers"],
+                        "ecr": [50.0, 58.0, 60.0]})
+    c = Contract("t", required={"player": pl.Utf8, "ecr": pl.Float64}, unique_by_key=("player",))
+    with pytest.raises(ContractViolation,
+                       match=r"'Ken Walker III' / 'Kenneth Walker III' -> kenneth walker"):
+        c.validate(two)
+    # Narrowed with the column, and dropped with it: a consumer that reads only `ecr` is not
+    # refused for a pair it never sees, and `conform` must carry the declaration through.
+    with pytest.raises(ContractViolation, match="kenneth walker"):
+        c.conform(two, "player")
+    assert c.conform(two, "ecr").height == 3
+    ok = Contract("t", required={"player": pl.Utf8}, unique_by_key=("player", "absent"))
+    assert ok.validate(pl.DataFrame({"player": ["A.J. Brown", "Marvin Harrison Jr."]})).height == 2
+
+
+def test_the_board_contract_refuses_one_player_under_two_spellings():
+    """Declared on `DRAFT_BOARD`, and applied where a Board is *built* -- `build` is the one
+    caller of `validate` -- not where a frozen one is read: the frozen 2024 Board in
+    `tests/golden/fixtures/panel_archive/` carries exactly this pair and is not re-taken
+    (#50's argument; the README records the pair)."""
+    assert DRAFT_BOARD.unique_by_key == ("player",)
+    bad = _board().with_columns(
+        pl.Series("player", ["Kenneth Walker III", "Ken Walker III"] + [f"v{i}" for i in range(298)]))
+    with pytest.raises(ContractViolation, match=r"player not unique under player_key"):
+        DRAFT_BOARD.validate(bad)
+
+
 def test_contract_catches_missing_column():
     df = pl.DataFrame({"player": ["A"], "ecr": [1.0]})
     with pytest.raises(ContractViolation, match="missing columns"):

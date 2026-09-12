@@ -164,6 +164,48 @@ def _select_consensus(r: pl.DataFrame) -> pl.DataFrame:
     return out
 
 
+def _merge_renamed(snap: pl.DataFrame, as_of: str) -> pl.DataFrame:
+    """One row per `player_key`, the latest scrape's, where the archive spelled a player two
+    ways within one preseason (#250).
+
+    `snap` is already the latest scrape per raw `player` string. That is the rule
+    `consensus` states -- the latest scrape per player -- keyed on the wrong column:
+    FantasyPros renamed `Ken Walker III` to `Kenneth Walker III` between two of 2024's
+    scrapes, both strings survived, and the replay Board carried him twice, the older spelling
+    under a July ECR with a 37.75 spread. The frozen 2024 Board holds that pair still.
+
+    So the same rule is applied on the key, which is a merge and not a refusal because this
+    source *legitimately* produces both spellings in one build: an archive of every scrape
+    across a preseason contains every name the page used that summer, and there is nothing an
+    operator could do about a rename but pick the row the rule already picks. The row that
+    survives is the latest scrape's, so its spelling is the one the page used last. Each merge
+    is printed by the pair, because it moves a replay Board and a height that moves without a
+    line saying so is the kind of change nobody connects to its cause.
+
+    The live path is not routed through here. One scrape spelling one player two ways is a
+    source defect with no rule to apply, and `DRAFT_BOARD.unique_by_key` refuses it where the
+    Board is built.
+    """
+    # Sorted here and not trusted from the caller: `consensus` sorts latest-first and then
+    # calls `unique`, which keeps no order unless asked to, and the full suite is where that
+    # showed -- the older spelling survived a run the isolated test passed. The order this
+    # `keep="first"` reads is the one this line makes.
+    keyed = (snap.sort("scrape_date", descending=True)
+                 .with_columns(pl.col("player").map_elements(player_key, return_dtype=pl.Utf8)
+                                 .alias("_key")))
+    kept = keyed.unique(subset=["_key"], keep="first", maintain_order=True)
+    if kept.height < keyed.height:
+        # The rows that did not survive, each beside the spelling that did.
+        merged = (keyed.join(kept.select("_key", pl.col("player").alias("_into")), on="_key")
+                       .filter(pl.col("player") != pl.col("_into"))
+                       .sort("player"))
+        for row in merged.to_dicts():
+            print(f"    consensus as of {as_of}: one player under two spellings, the "
+                  f"{row['scrape_date']} scrape merged into the later one: "
+                  f"{row['player']} -> {row['_into']} ({row['_key']})")
+    return kept.drop("_key")
+
+
 def consensus(as_of: str | None = None) -> pl.DataFrame:
     """FantasyPros ECR. `ecr_sd` is a crude prior on uncertainty until conformal lands.
 
@@ -223,6 +265,7 @@ def consensus(as_of: str | None = None) -> pl.DataFrame:
     if stale:
         print(f"    consensus as of {as_of}: {snap.height} ranked in this preseason, "
               f"{stale} dropped whose last scrape predates {opens}")
+    snap = _merge_renamed(snap, as_of)
     if snap.is_empty():
         raise ContractViolation(
             f"ff_rankings: no `{CONSENSUS_PAGE}` rows scraped between {opens} and {as_of}; "

@@ -87,6 +87,18 @@ def test_a_board_builds_with_every_optional_stage_failing(offline, capsys):
     assert set(report.degraded()) >= {"sos", "td_luck", "durability", "adp", "bye"}
 
 
+def test_a_board_carrying_one_player_under_two_spellings_is_refused_at_build(offline):
+    """#250. The consensus source can spell one player two ways, and the raw string is
+    unique either way; `player_key` lands both on one key, and a Board carrying both drafts
+    one player as two. Refused where the Board is built, by the pair's names, rather than
+    served -- a live Board is the one thing this must never reach."""
+    from hub.contracts import ContractViolation
+    names = ["Kenneth Walker III", "Ken Walker III", *NAMES[2:]]
+    offline.setattr(board, "consensus", lambda as_of=None: _ecr(names))
+    with pytest.raises(ContractViolation, match="'Ken Walker III' / 'Kenneth Walker III'"):
+        board.build()
+
+
 def test_vor_is_points_over_the_position_replacement(offline):
     b, _ = board.build()
     row = b.filter(pl.col("player") == NAMES[0]).to_dicts()[0]
