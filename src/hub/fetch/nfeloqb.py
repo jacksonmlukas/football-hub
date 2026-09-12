@@ -20,8 +20,9 @@ does not read. Both kinds are dropped and counted by `parse` rather than refused
 blank on *one* side loses that side alone. Field by field, what was confirmed and what the
 re-read found:
 
-* the URL. `URL` is the raw-content path of the file at the repository's default branch,
-  read off its README as of 2026-09-07 and answered on 2026-09-12.
+* the URL. The raw-content path of the file at the repository's root, read off its README
+  as of 2026-09-07 and answered on 2026-09-12. Since #271 `url()` names a commit (`COMMIT`)
+  rather than the default branch, and the stamp records which; see the pin below.
 * the schema. `NFELOQB` declares 538's names -- `team1`/`team2`, `qb1`/`qb2`,
   `qb1_value_pre`, `qb1_adj`, `score1` -- and the live file carries them. A rename is a
   contract refusal and the last-good file is served instead. Confirmed.
@@ -64,6 +65,7 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
@@ -73,13 +75,37 @@ from hub.paths import DATA
 
 PROG = "hub.fetch.nfeloqb"
 
-# Assumed, see the module docstring. The repository publishes the file at its root.
-URL = "https://raw.githubusercontent.com/greerreNFL/nfeloqb/main/qb_elos.csv"
+# The pin (#271). Two runs a week apart from the same pinned input produce the same number,
+# so the URL names a *commit* of the source repository and not its default branch, and
+# `PINNED_SHA256` is what the file at that commit hashes to. Advancing either is an edit to
+# this file; `COMMIT` is in `config_digest` through `hub.config.FITTED_EXTRA`, so predictions
+# under the new input carry a different version from predictions under the old, and a pull
+# whose bytes do not match the pin is reported as a source change by `refresh`, the stamp
+# and the fit's own sentence -- served, because the file validated, and never silently.
+#
+# `None` is unpinned: the default branch, whatever it held at pull time, which is what the
+# URL always was until #271. Allowed, because a fetch must serve with zero attention, and
+# said on every pull with the two values to set from the stamp it writes. The first pull
+# (2026-09-12) recorded a hash and a row count and not the commit, so the pin could not be
+# written from the record; it is the maintainer's to set from the next `--refresh`.
+REPO = "greerreNFL/nfeloqb"
+BRANCH = "main"
+COMMIT: str | None = None
+PINNED_SHA256: str | None = None
+
+
+def url(commit: str | None = None) -> str:
+    """The raw-content path of the file at `commit`, or at the default branch with none.
+    The repository publishes the file at its root (confirmed 2026-09-12)."""
+    return f"https://raw.githubusercontent.com/{REPO}/{commit or BRANCH}/{FILE}"
+
+
+FILE = "qb_elos.csv"
+URL = url(COMMIT)
 
 # Under `data/raw/`, beside the nflverse releases, and gitignored for the same reason: it is
 # someone else's data. The stamp beside it is when the file was pulled and what it hashed to.
 RAW = DATA / "raw" / "nfeloqb"
-FILE = "qb_elos.csv"
 STAMP = "qb_elos.json"
 
 # The source's spellings that nflverse spells differently, applied to both team columns; a
@@ -261,15 +287,35 @@ def _paths(cache: Path | None) -> tuple[Path, Path]:
     return root / FILE, root / STAMP
 
 
+def stamp(cache: Path | None = None) -> dict[str, Any]:
+    """The record written beside the cached file, or an empty record with nothing cached
+    or nothing readable: when it was pulled, from which URL and commit, what it hashed to,
+    what the pin expected, whether the two matched, and how many rows it carried."""
+    _, path = _paths(cache)
+    if not path.exists():
+        return {}
+    try:
+        got = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
 def captured_at(cache: Path | None = None) -> str | None:
     """When the cached file was pulled, or None with nothing cached."""
-    _, stamp = _paths(cache)
-    if not stamp.exists():
+    return stamp(cache).get("captured_at")
+
+
+def source_change(cache: Path | None = None) -> str | None:
+    """One sentence if the cached file's bytes did not match the pin when it was pulled,
+    else None. Read by `hub.models.ratings.quarterback_state`, so a fit run days after the
+    pull repeats what the pull said rather than serving the change silently."""
+    st = stamp(cache)
+    if st.get("matches_pin") is not False:
         return None
-    try:
-        return json.loads(stamp.read_text()).get("captured_at")
-    except (OSError, ValueError):
-        return None
+    return (f"source change: the nfeloqb file pulled {st.get('captured_at')} at commit "
+            f"{str(st.get('commit'))[:12]} hashed {str(st.get('sha256'))[:12]}, and the pin "
+            f"expects {str(st.get('pinned_sha256'))[:12]}")
 
 
 def read_rows(cache: Path | None = None) -> pl.DataFrame | None:
@@ -294,15 +340,29 @@ def read_state(cache: Path | None = None) -> pl.DataFrame | None:
 def refresh(*, cache: Path | None = None, now: datetime | None = None) -> pl.DataFrame:
     """One pull, validated, written, returned. Raises rather than degrading: the entry
     point is what serves last-good, and says which failure it is serving over."""
-    body = _http_get(URL)
+    where = url(COMMIT)
+    body = _http_get(where)
     rows = parse(body)
-    path, stamp = _paths(cache)
+    path, record = _paths(cache)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(body)
     when = (now or datetime.now(UTC)).replace(tzinfo=None, microsecond=0)
-    stamp.write_text(json.dumps({"captured_at": when.isoformat(timespec="seconds"),
-                                 "url": URL, "sha256": hashlib.sha256(body).hexdigest(),
-                                 "rows": rows.height}, indent=2))
+    sha = hashlib.sha256(body).hexdigest()
+    # Three answers, and the stamp carries which: matched the pin, did not, or there was no
+    # pin to match. The second is a source change and is said here and again by every
+    # reader of the stamp; the third is said with the two values that would end it.
+    matches = None if PINNED_SHA256 is None else sha == PINNED_SHA256
+    record.write_text(json.dumps({"captured_at": when.isoformat(timespec="seconds"),
+                                  "url": where, "commit": COMMIT, "sha256": sha,
+                                  "pinned_sha256": PINNED_SHA256, "matches_pin": matches,
+                                  "rows": rows.height}, indent=2))
+    if matches is False:
+        print(f"{PROG}: {source_change(cache)}; served, because it validated -- advance "
+              f"PINNED_SHA256 deliberately, or restore COMMIT", file=sys.stderr)
+    elif COMMIT is None:
+        print(f"{PROG}: unpinned: pulled {BRANCH} as it stood at {when.isoformat()}, "
+              f"sha256 {sha[:12]}. To pin it set COMMIT to the commit {BRANCH} was at and "
+              f"PINNED_SHA256 to {sha}", file=sys.stderr)
     return rows
 
 

@@ -414,3 +414,22 @@ def test_a_drifted_quarterback_file_is_refused_and_the_fit_still_runs(sched, tmp
                       cache=tmp_path / "cache")
     assert got["adjusted_by"].to_list() == [None]
     assert "refused" in capsys.readouterr().out
+
+
+def test_the_fit_repeats_a_source_change_the_pull_reported(sched, tmp_path, capsys):
+    """#271: a pull whose bytes did not match the pin says so once, on the day; the fit runs
+    days later off the cached file and must not serve the change silently. The stamp
+    carries the answer and `quarterback_state`'s sentence repeats it, with the commit."""
+    import json
+
+    from hub.fetch import nfeloqb
+    sched([("a", 1, 3.0, 7), ("c", 2, 3.0, None, "KC", "LV")])
+    _qb_state(tmp_path / "cache")
+    (tmp_path / "cache" / "nfeloqb" / nfeloqb.STAMP).write_text(json.dumps(
+        {"captured_at": "2026-09-12T12:00:00", "commit": "abcdef0123456789",
+         "sha256": "1" * 64, "pinned_sha256": "2" * 64, "matches_pin": False, "rows": 7}))
+    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
+                cache=tmp_path / "cache")
+    out = capsys.readouterr().out
+    assert "source change" in out and "expects 222222222222" in out
+    assert "pulled 2026-09-12T12:00:00 at commit abcdef012345" in out

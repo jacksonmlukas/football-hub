@@ -311,3 +311,77 @@ def test_the_transport_refuses_a_live_call_from_the_default_suite(monkeypatch):
     with pytest.raises(nfeloqb.LiveCallRefused) as e:
         nfeloqb._http_get(nfeloqb.URL)
     assert "test_the_transport_refuses_a_live_call" in str(e.value)
+
+
+# --- the pin (#271) -------------------------------------------------------------------
+#
+# Two runs a week apart from the same pinned input produce the same number. The URL names a
+# commit of the source repository rather than its default branch, the stamp records that
+# commit and whether the bytes matched the pinned hash, and the commit is in the model
+# digest so advancing it is a deliberate edit that moves the version.
+
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
+
+
+def _sha(text: str) -> str:
+    import hashlib
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def test_the_url_names_a_commit_not_a_branch(cache, transport, monkeypatch):
+    monkeypatch.setattr(nfeloqb, "COMMIT", COMMIT)
+    assert f"/greerreNFL/nfeloqb/{COMMIT}/qb_elos.csv" in nfeloqb.url(COMMIT)
+    assert "/main/" not in nfeloqb.url(COMMIT)
+    nfeloqb.refresh(cache=cache)
+    assert transport == [nfeloqb.url(COMMIT)], "the pull went to the pinned commit"
+    assert nfeloqb.stamp(cache)["commit"] == COMMIT, "the stamp records the commit"
+
+
+def test_a_pull_whose_hash_differs_from_the_pin_is_a_source_change_said_out_loud(
+        cache, transport, monkeypatch, capsys):
+    """Served -- the file validated -- but never silently: the stamp says the bytes did not
+    match, the CLI says so on stderr, and the fit's sentence repeats it (test_ratings.py)."""
+    monkeypatch.setattr(nfeloqb, "COMMIT", COMMIT)
+    monkeypatch.setattr(nfeloqb, "PINNED_SHA256", "0" * 64)
+    assert nfeloqb.main(["--refresh", "--cache", str(cache)]) == 0
+    out = capsys.readouterr()
+    assert "source change" in out.err and COMMIT[:12] in out.err
+    assert "6 teams" in out.out, "served, not refused"
+    st = nfeloqb.stamp(cache)
+    assert st["matches_pin"] is False and st["pinned_sha256"] == "0" * 64
+    assert "source change" in (nfeloqb.source_change(cache) or "")
+
+
+def test_a_pull_that_matches_the_pin_is_not_a_source_change(cache, transport, monkeypatch,
+                                                            capsys):
+    monkeypatch.setattr(nfeloqb, "COMMIT", COMMIT)
+    monkeypatch.setattr(nfeloqb, "PINNED_SHA256", _sha(csv_text()))
+    assert nfeloqb.main(["--refresh", "--cache", str(cache)]) == 0
+    assert "source change" not in capsys.readouterr().err
+    assert nfeloqb.stamp(cache)["matches_pin"] is True
+    assert nfeloqb.source_change(cache) is None
+
+
+def test_an_unpinned_pull_is_said_rather_than_silent(cache, transport, monkeypatch, capsys):
+    """No commit pinned is the default branch at pull time, which is what the URL always
+    was. It is allowed -- a fetch must serve with zero attention -- and it is said: the
+    stamp records no commit and the run names the two constants to set from it."""
+    monkeypatch.setattr(nfeloqb, "COMMIT", None)
+    monkeypatch.setattr(nfeloqb, "PINNED_SHA256", None)
+    assert nfeloqb.main(["--refresh", "--cache", str(cache)]) == 0
+    err = capsys.readouterr().err
+    assert "unpinned" in err and "COMMIT" in err and "PINNED_SHA256" in err
+    st = nfeloqb.stamp(cache)
+    assert st["commit"] is None and st["matches_pin"] is None
+    assert transport == [nfeloqb.url(None)] and "/main/" in transport[0]
+
+
+def test_advancing_the_pin_is_an_edit_that_moves_the_model_digest(monkeypatch):
+    """The predictions under a new input are distinguishable from the old: `COMMIT` is in
+    `config_digest` through `FITTED_EXTRA`, so the version string moves with the pin and
+    nothing else about the run has to."""
+    from hub.config import HubConfig, config_digest, fitted_constants
+    assert "nfeloqb.COMMIT" in fitted_constants()
+    before = config_digest(HubConfig())
+    monkeypatch.setattr(nfeloqb, "COMMIT", COMMIT)
+    assert config_digest(HubConfig()) != before

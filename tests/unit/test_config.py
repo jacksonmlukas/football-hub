@@ -925,8 +925,17 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     on the 32 live teams was a mean absolute error of 0.4 spread points and worst 3.6. Every
     game rated without a live price moves, most by under half a point, and the digest says
     so. **This one is a model change**, not a coverage correction.
+
+    **Moved again 2026-09-12 (#271): `fd28e5e5` -> `a1e669b9`**, `fitted_digest` `4152f399`
+    -> `9be7844c`. One name entered through `FITTED_EXTRA`: `nfeloqb.COMMIT`, the commit of
+    `greerreNFL/nfeloqb` the quarterback adjustment reads, so advancing the pin is an edit
+    that moves the version and predictions under the new input are distinguishable from the
+    old. **A coverage correction and not a model change**: the value is `None` -- the
+    default branch, which is what the URL always was -- so nothing any run computes is
+    different on either side of this commit. The first move of this name to a commit will be
+    the model change, and it is the maintainer's to make from the next pull's stamp.
     """
-    assert config_digest(HubConfig()) == "fd28e5e5"
+    assert config_digest(HubConfig()) == "a1e669b9"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

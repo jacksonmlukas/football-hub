@@ -125,7 +125,17 @@ def quarterback_state(cache: Path | None) -> tuple[pl.DataFrame | None, str]:
         return None, f"the cached nfeloqb file was refused, so no rating moved: {e}"
     if state is None:
         return None, "no nfeloqb file cached, so no rating moved (hub.fetch.nfeloqb --refresh)"
-    return state, f"nfeloqb state for {state.height} teams, pulled {nfeloqb.captured_at(where)}"
+    # The pin (#271): which commit the file came from, and -- said again here, because the
+    # pull said it once on the day and this run may be days later -- whether its bytes
+    # matched the pin. A source change is served, and it is never served silently.
+    record = nfeloqb.stamp(where)
+    commit = record.get("commit")
+    at = (f"pulled {record.get('captured_at')} at commit "
+          f"{str(commit)[:12] if commit else 'none (unpinned, the default branch)'}")
+    said = f"nfeloqb state for {state.height} teams, {at}"
+    if (change := nfeloqb.source_change(where)):
+        said += f"; {change}"
+    return state, said
 
 
 def rated_games(season: int, *, at: datetime | None = None, cache: Path | None = None,
