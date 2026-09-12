@@ -63,26 +63,63 @@ def test_the_csv_parses_to_the_contracted_frame():
     assert df["score1"].null_count() == 2, "the coming week's rows have no score"
 
 
-def test_a_row_with_no_quarterback_is_dropped_and_counted_not_refused(capsys):
-    """The live file's first pull (2026-09-12) carried 2,162 pre-1950 rows and two played
-    2026 games with no quarterback filled in yet; the contract refused the whole file. Both
-    kinds are dropped and counted, and the this-season count is the one printed to watch."""
+def test_a_row_with_no_quarterback_on_either_side_is_dropped_and_counted_not_refused(capsys):
+    """The live file's first pull (2026-09-12) carried 2,162 pre-1950 rows and, for each of
+    the two played 2026 games, an Elo-only twin of the quarterback row: same teams, same
+    date, same score, no quarterback on either side. The contract refused the whole file.
+    Both kinds are dropped and counted, and the line says what the this-season ones are."""
     got = rows()
-    blank = dict(got[-1])
-    blank.update({"qb1": None, "qb2": None, "qb1_value_pre": None, "qb2_value_pre": None,
-                  "qb1_adj": None, "qb2_adj": None, "date": "2026-09-09"})
-    frame = nfeloqb.parse(csv_text([*got, blank]).encode())
+    twin = dict(got[0])
+    twin.update({"qb1": None, "qb2": None, "qb1_value_pre": None, "qb2_value_pre": None,
+                 "qb1_adj": None, "qb2_adj": None})
+    frame = nfeloqb.parse(csv_text([twin, *got]).encode())
     assert frame.height == len(got)
     said = capsys.readouterr().out
-    assert "dropped 1 rows with no quarterback" in said and "1 of them this season" in said
+    assert "dropped 1 rows with no quarterback on either side" in said
+    assert "1 of them this season, the Elo-only twin" in said
+
+
+def test_one_null_pre_game_value_drops_that_side_and_serves_the_other_31_teams(capsys):
+    """#283: one unknown quarterback with a null prior -- a rookie the source has no value
+    for -- refused the whole eighteen-thousand-row file and every team fell back to
+    last-good. The refusal is scoped to the side: LV's value on its coming game is null, so
+    LV's state is its previous row and its opponent's game is served as it was."""
+    got = rows()
+    got[-2]["qb1_value_pre"] = None                       # LV @ WSH on 09-27, LV's side
+    by = {r["team"]: r for r in nfeloqb.state(nfeloqb.parse(csv_text(got).encode())).to_dicts()}
+    assert len(by) == 6, "every team is served"
+    assert by["LV"]["as_of"] == "2026-09-21" and by["LV"]["qb"] == "Gardner Minshew"
+    assert by["WAS"]["as_of"] == "2026-09-27" and by["WAS"]["qb_adj"] == pytest.approx(7.0)
+    said = capsys.readouterr().out
+    assert "1 rows blank on one side" in said and "LV 2026-09-27" in said
+
+
+def test_a_row_blank_on_one_side_keeps_the_other_sides_game(capsys):
+    """The twin-row structure the source emits is blank on *both* sides, and the filter was
+    two-sided too: a row blank on one side dropped the opponent's game with it. KC's side of
+    the 09-27 row is blanked; LA's side of the same row is the row LA's state is built from,
+    and KC's tenure counts the two played rows before it."""
+    got = rows()
+    got[-1].update({"qb1": None, "qb1_value_pre": None, "qb1_adj": None})   # KC @ LAR, KC's side
+    by = {r["team"]: r for r in nfeloqb.state(nfeloqb.parse(csv_text(got).encode())).to_dicts()}
+    assert by["LA"]["as_of"] == "2026-09-27" and by["LA"]["qb"] == "Matthew Stafford"
+    assert by["KC"]["as_of"] == "2026-09-20" and by["KC"]["qb_adj"] == pytest.approx(11.0)
+    assert by["KC"]["tenure"] == 2
+    assert "KC 2026-09-27" in capsys.readouterr().out
 
 
 def test_the_captured_file_parses_through_the_contract():
     """The first live pull, 2026-09-12: the last 300 rows of `qb_elos.csv` frozen as a
-    capture, two of them 2026 games with no quarterback filled in yet. The shape the
+    capture, two of them the Elo-only twins of the two played 2026 games -- same teams,
+    same date, same score as their quarterback rows, and no quarterback. The shape the
     synthetic rows guessed is the shape the source publishes -- which is what moves
     `NFELOQB.verified_against_live` to True."""
     captured = json.loads((FIXTURES / "nfeloqb_qb_elos.json").read_text())
+    twins = [r for r in captured if r["qb1"] is None]
+    assert len(twins) == 2 and all(r["score1"] is not None for r in twins)
+    for t in twins:
+        named = [r for r in captured if r["game_id"] == t["game_id"] and r["qb1"] is not None]
+        assert len(named) == 1 and named[0]["score1"] == t["score1"], "the twin names the starter"
     frame = nfeloqb.parse(csv_text(captured).encode())
     assert frame.height == 298 and set(frame["season"].to_list()) == {2025, 2026}
     state = nfeloqb.state(frame)
@@ -130,6 +167,39 @@ def test_538_abbreviations_are_spelled_as_nflverse_spells_them():
     teams = set(nfeloqb.state(nfeloqb.parse(csv_text().encode()))["team"].to_list())
     assert "WAS" in teams and "LA" in teams
     assert "WSH" not in teams and "LAR" not in teams
+
+
+# nflverse's 32 spellings, which every join in this repo is on.
+NFLVERSE = ["ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE", "DAL", "DEN", "DET", "GB",
+            "HOU", "IND", "JAX", "KC", "LA", "LAC", "LV", "MIA", "MIN", "NE", "NO", "NYG",
+            "NYJ", "PHI", "PIT", "SEA", "SF", "TB", "TEN", "WAS"]
+
+
+def test_the_raiders_are_spelled_as_nflverse_spells_them_and_no_team_is_unknown():
+    """#283: nfeloqb spells the Raiders `OAK` and nflverse `LV`, and the map carried the two
+    other differences and not this one, so every Raiders game was unadjustable on both
+    sides. On the captured live file every one of the 32 teams now matches a schedule in
+    nflverse's spellings, and `unknown_teams` -- the sentence a missing mapping would
+    otherwise be the only sign of -- is empty."""
+    captured = json.loads((FIXTURES / "nfeloqb_qb_elos.json").read_text())
+    assert any(r["team1"] == "OAK" or r["team2"] == "OAK" for r in captured), "the source's spelling"
+    st = nfeloqb.state(nfeloqb.parse(csv_text(captured).encode()))
+    assert "LV" in st["team"].to_list() and "OAK" not in st["team"].to_list()
+    games = pl.DataFrame({"home_team": NFLVERSE[:16], "away_team": NFLVERSE[16:]})
+    assert nfeloqb.unknown_teams(st, games) == []
+
+
+def test_the_spellings_the_docstring_reports_are_the_captured_files():
+    """The re-read #283 asks for: 538 spelled Washington `WSH`, and the docstring said the
+    map carried that difference; the live file spells it `WAS` already, spells the Rams
+    `LAR` and the Raiders `OAK`. The docstring now says what each was found to be, and this
+    holds the capture to it."""
+    captured = json.loads((FIXTURES / "nfeloqb_qb_elos.json").read_text())
+    spelled = {r["team1"] for r in captured} | {r["team2"] for r in captured}
+    assert {"WAS", "LAR", "OAK"} <= spelled
+    assert not {"WSH", "LA", "LV"} & spelled
+    assert set(nfeloqb.ABBREVIATIONS) == {"WSH", "LAR", "OAK"}
+    assert nfeloqb.ABBREVIATIONS["OAK"] == "LV"
 
 
 # --- cache, last-good, refusal -----------------------------------------------------

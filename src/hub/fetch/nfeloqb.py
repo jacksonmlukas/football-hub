@@ -8,30 +8,41 @@ that a failed pull serves from, and a per-team **state** -- who starts, what he 
 the source's own adjustment for him on the latest row, and how long he has been the
 starter -- of which the adjustment is all `hub.models.quarterback` needs to move a rating.
 
-**What the first live pull confirmed, 2026-09-12.** The shape the hand-built fixture guessed
-is the shape the source publishes: the last 300 rows are frozen as
-`tests/golden/fixtures/nfeloqb_qb_elos.json` and validated through `NFELOQB`, which now says
-`verified_against_live=True`. What the pull found that the guess could not: 2,162 rows before
-1950, when the source's quarterback Elo begins, and two played games of the current week
-whose quarterback fields the source had not filled yet -- both carry no quarterback and are
-dropped and counted by `parse` rather than refused. Field by field, what was confirmed:
+**What the first live pull confirmed, 2026-09-12, re-read under #283.** The shape the
+hand-built fixture guessed is the shape the source publishes: the last 300 rows are frozen
+as `tests/golden/fixtures/nfeloqb_qb_elos.json` and validated through `NFELOQB`, which now
+says `verified_against_live=True`. What the pull found that the guess could not: 2,162 rows
+before 1950, when the source's quarterback Elo begins, and a **twin row** for each played
+game of the current week -- the source emits an Elo-only row (score and post-game Elo, no
+quarterback) beside the quarterback row (starters, score, no post-game Elo). The first pull
+read the twin as a game the source had not filled yet; it is the half of a pair this reader
+does not read. Both kinds are dropped and counted by `parse` rather than refused, and a row
+blank on *one* side loses that side alone. Field by field, what was confirmed and what the
+re-read found:
 
 * the URL. `URL` is the raw-content path of the file at the repository's default branch,
   read off its README as of 2026-09-07 and answered on 2026-09-12.
 * the schema. `NFELOQB` declares 538's names -- `team1`/`team2`, `qb1`/`qb2`,
   `qb1_value_pre`, `qb1_adj`, `score1` -- and the live file carries them. A rename is a
-  contract refusal and the last-good file is served instead.
+  contract refusal and the last-good file is served instead. Confirmed.
 * that the coming week's games are listed with their expected starters and null scores.
   538's file did this, and it is the row the team layer wants most: it is where a backup is
-  first named. If nfeloqb lists only played games, the starter and his adjustment are last
-  week's, which is stale by one week and said nowhere -- so this is the one to check.
-* the team abbreviations. 538 spelled Washington `WSH` and the Rams `LAR`; nflverse spells
-  them `WAS` and `LA`, and every join in this repo is on nflverse's. `ABBREVIATIONS` maps
-  the two known differences and `unknown_teams` names any team the state carries that the
-  season's schedule does not -- `hub.models.ratings` prints it -- so a third spelling shows
-  up as a sentence rather than as a team that silently never adjusts.
+  first named. Confirmed: the capture's fourteen unplayed rows (2026-09-13 and -14) every
+  one name both starters and carry no score. Had nfeloqb listed only played games, the
+  starter and his adjustment would have been last week's, stale by one week and said
+  nowhere -- which is why this was the one to check.
+* the team abbreviations. **This is the confirmation that failed.** 538 spelled Washington
+  `WSH` and the Rams `LAR`, and the map carried those two. The live file spells Washington
+  `WAS` already, the Rams `LAR`, and the Raiders `OAK` -- and `OAK` was unmapped, so `OAK`
+  was in the state, `LV` was not, and every Raiders game was unadjustable on both sides
+  with nothing downstream saying so beyond `unknown_teams`' sentence. `ABBREVIATIONS` maps
+  all three now and `unknown_teams` reports empty on the capture against nflverse's 32;
+  `hub.models.ratings` prints that sentence so a fourth spelling shows up as words rather
+  than as a team that silently never adjusts.
 * the sign and scale of `qb1_adj`. Read as 538 defined it: Elo points, positive when the
-  starter is better than what the team's rolling value embeds, 3.3 per value unit.
+  starter is better than what the team's rolling value embeds. Confirmed on the capture:
+  596 sides, median +0.9, range -125 to +50, and `qb_adj / 25` over the whole cached file
+  reproduces the published 538 and nfelo magnitudes (#268).
 
 **Degradation.** `CLAUDE.md`'s rule: a failed fetch serves last-good state rather than
 erroring. The transport failing, a refused contract, a file that will not parse -- each
@@ -71,9 +82,14 @@ RAW = DATA / "raw" / "nfeloqb"
 FILE = "qb_elos.csv"
 STAMP = "qb_elos.json"
 
-# 538's spellings that nflverse spells differently. Applied to both team columns; a
-# spelling not listed passes through, and `report` says so when it matches no schedule.
-ABBREVIATIONS = {"WSH": "WAS", "LAR": "LA"}
+# The source's spellings that nflverse spells differently, applied to both team columns; a
+# spelling not listed passes through, and `unknown_teams` names it when it matches no
+# schedule. `LAR` and `OAK` are what the live file spells (2026-09-12); `WSH` is 538's
+# spelling, which the live file does not use -- it already says `WAS` -- and it is kept
+# because mapping a spelling that never occurs costs nothing and a file that reverted to
+# it would otherwise be a team that silently never adjusts. `OAK` was the missing one
+# (#283): every Raiders game was unadjustable on both sides until it was mapped.
+ABBREVIATIONS = {"WSH": "WAS", "LAR": "LA", "OAK": "LV"}
 
 # The pytest node running right now, or nothing outside a test. Same guard as
 # `hub.fetch.pool._http_get`: the suite patches the transport and should, and this is what
@@ -121,7 +137,18 @@ def _transport(url: str) -> bytes:                          # pragma: no cover -
 # --- the parser -------------------------------------------------------------------------
 
 def parse(body: bytes) -> pl.DataFrame:
-    """The file's rows, cast to the contract's dtypes and validated through it.
+    """The file's rows, cast to the contract's dtypes and validated through it, less the
+    rows with no quarterback on either side.
+
+    **The twin-row structure the source emits.** A game the current week has played arrives
+    as two rows (first pull, 2026-09-12): an Elo-only row with the score and the post-game
+    Elo and nulls in every quarterback column, and a quarterback row with the starters, the
+    score, and no post-game Elo. The twin names the starter; the Elo-only row is the half of
+    the pair this reader does not read, dropped and counted here beside the 2,162 rows before
+    1950 where the source's quarterback Elo has not begun. Unplayed games arrive as one row
+    with both starters and no score, and played games of earlier weeks as one row -- the
+    capture's 2025 rows carry no twins -- so the twin is how the current week's results land.
+    A row blank on one side only is kept, said by team and date, and `_long` drops that side.
 
     Cast before the check rather than trusting inference: a short file whose values happen
     to be whole numbers infers `qb1_adj` as an integer column, and the contract would refuse
@@ -132,29 +159,58 @@ def parse(body: bytes) -> pl.DataFrame:
     casts = [pl.col(c).cast(t, strict=False) for c, t in NFELOQB.required.items()
              if c in got.columns and t is not pl.Utf8]
     got = got.with_columns(casts)
-    # Rows with no quarterback on them are not rows this reader can use, and the live file
-    # has two kinds (first pull, 2026-09-12): every game before 1950, when the source's
-    # quarterback Elo begins -- 2,162 rows -- and a played game of the current week whose
-    # quarterback fields the source has not filled yet (two of eighteen 2026 rows). Neither is
-    # a shape change, so neither is a refusal; both are dropped and counted, and the count of
-    # *this-season* rows dropped is the one to watch, because a starter's tenure cannot count
-    # a game the row does not name him on.
-    if "qb1" in got.columns and "qb2" in got.columns:
-        blank = got.filter(pl.col("qb1").is_null() | pl.col("qb2").is_null())
-        if blank.height:
-            this = (blank.filter(pl.col("season") == got["season"].max()).height
-                    if "season" in got.columns else 0)
-            print(f"  nfeloqb: dropped {blank.height} rows with no quarterback named "
-                  f"({this} of them this season, not yet filled by the source)")
-            got = got.filter(pl.col("qb1").is_not_null() & pl.col("qb2").is_not_null())
+    if not set(_SIDE_COLUMNS) <= set(got.columns):
+        return NFELOQB.validate(got)            # a rename: the contract names the column
+    # Rows with no quarterback on either side are not rows this reader can use, and the live
+    # file has two kinds (first pull, 2026-09-12): every game before 1950, when the source's
+    # quarterback Elo begins -- 2,162 rows -- and the **Elo-only twin** of each played game
+    # of the current week. The source emits two rows for those games: one carrying the score
+    # and the post-game Elo and no quarterback, and one carrying the starters, the score and
+    # no post-game Elo. Both twins carry the score, so the blank one is not a game the source
+    # has not filled yet; it is the half of the pair this reader does not read. Neither kind
+    # is a shape change, so neither is a refusal; both are dropped and counted here.
+    both = pl.col("qb1").is_null() & pl.col("qb2").is_null()
+    twins = got.filter(both)
+    if twins.height:
+        this = (twins.filter(pl.col("season") == got["season"].max()).height
+                if "season" in got.columns else 0)
+        print(f"  nfeloqb: dropped {twins.height} rows with no quarterback on either side "
+              f"({this} of them this season, the Elo-only twin of a played game)")
+        got = got.filter(~both)
+    # A row blank on *one* side -- a quarterback the source has no prior for, a side it has
+    # not named -- is kept, and `_long` drops that side alone (#283). The filter used to be
+    # two-sided, so one team's blank dropped the opponent's game with it, and before that the
+    # contract's null check refused the whole file for one such row. Said here by team and
+    # date, because a starter this reader cannot see is a rating that will not move.
+    half = got.filter(_blank("1") | _blank("2"))
+    if half.height:
+        named = [f"{r[f'team{n}']} {r['date']}" for r in half.iter_rows(named=True)
+                 for n in ("1", "2") if any(r[c] is None for c in _side_columns(n))]
+        print(f"  nfeloqb: {half.height} rows blank on one side; that side is dropped and the "
+              f"other side's game kept: {', '.join(named)}")
     return NFELOQB.validate(got)
 
 
+def _side_columns(n: str) -> tuple[str, str, str]:
+    """The three columns a side must carry for the team layer to read it."""
+    return f"qb{n}", f"qb{n}_value_pre", f"qb{n}_adj"
+
+
+_SIDE_COLUMNS = (*_side_columns("1"), *_side_columns("2"))
+
+
+def _blank(n: str) -> pl.Expr:
+    """Side `n` of a row is blank: any of the three the team layer reads is null."""
+    return pl.any_horizontal([pl.col(c).is_null() for c in _side_columns(n)])
+
+
 def _long(rows: pl.DataFrame) -> pl.DataFrame:
-    """One row per (team, game), both sides of every game, in nflverse's spellings."""
+    """One row per (team, game), every side that carries a quarterback, his value and his
+    adjustment, in nflverse's spellings. A side blank in any of the three is dropped alone
+    (#283); the other side of the row is a game the team layer can read."""
     sides = []
     for n in ("1", "2"):
-        sides.append(rows.select(
+        sides.append(rows.filter(~_blank(n)).select(
             pl.col("date"), pl.col("season"),
             pl.col(f"team{n}").replace(ABBREVIATIONS).alias("team"),
             pl.col(f"qb{n}").alias("qb"),
