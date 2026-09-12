@@ -1,6 +1,7 @@
 # Where to look next, and what fourteen measurements say about it
 
-**Written 2026-08-25**, after the per-player spread null. This is a research note, not a plan:
+**Written 2026-08-25**, after the per-player spread null (fourteen on that date; the table in
+[method.md](method.md) is the current count, fifteen since 2026-09-11). This is a research note, not a plan:
 nothing here is committed to, and every proposal carries the gate it would have to clear.
 
 > **The count is the one of 2026-08-25.** The record this page reads is

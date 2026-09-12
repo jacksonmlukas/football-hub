@@ -66,7 +66,8 @@ change is unreachable from that path.
 **The prediction is wrong.** −1.926 against a pre-stated "better than −1.0", and the
 exploratory sweep is non-monotone with a shallow optimum near z = 0.5 worth 0.14 points out of
 a two-point deficit. **The tripwire is clean**: the frozen gate returned +0.711, unchanged to
-three decimals.
+three decimals *(the figure as it stood on this page's date; since restated to +0.215 and then
+−1.004 on the corrected scale — [weekly-blend-gate.md](weekly-blend-gate.md))*.
 
 So the winner's curse is real — the +5.88 tail bias is still there — and correcting for it
 recovers about a fourteenth of the loss. It was diagnosed correctly and it is not the

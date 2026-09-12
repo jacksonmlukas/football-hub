@@ -37,7 +37,8 @@ Do not re-measure these. They are in the tree with their harnesses.
 | Efficiency persistence | ypc 0.108, ypt 0.369, catch rate 0.402 | do not try to predict weekly efficiency. Predict opportunity |
 | Volume persistence | targets 0.805, carries 0.791 > points 0.775 | volume is the part that carries, which is the premise of all of this and it holds |
 
-And two positives, which are the only two this repo has ever found in fourteen measurements:
+And two positives, which are the only two this repo has ever found in fourteen measurements
+(the count on this plan's date; the table in [method.md](method.md) is the current count):
 
 * **Snap-share trend**, next three weeks in season: partial r **+0.236** beyond both PPG and
   ECR, 12/12 season-anchor cells, placebo-clean ([snap-trend-signal.md](snap-trend-signal.md)).

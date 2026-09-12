@@ -24,7 +24,7 @@ rushing, 12% of passing; `targets_prior` is unchanged, by design.
 
 | gate | realised | expected |
 |---|---|---|
-| frozen | **+0.711** [+0.313, +1.129] | **+0.082** [−0.372, +0.534] |
+| frozen | **+0.711** [+0.313, +1.129] *(as first measured; restated to +0.215, then −1.004 on the corrected scale — [weekly-blend-gate.md](weekly-blend-gate.md))* | **+0.082** [−0.372, +0.534] |
 | churn | −2.006 [−2.761, −1.229] | −3.068 [−3.927, −2.258] |
 
 **Against the pre-registration**, which said *"the rebuild arm improves materially — at least

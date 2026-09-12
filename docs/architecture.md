@@ -95,8 +95,9 @@ Three places in this repo gave three different answers, and none of them was twe
 
 **The fourteen is a coincidence worth naming, because it is what made the drift invisible.**
 `docs/method.md` separately reports that *"Fourteen things have been measured properly"* — a
-count of **measurements**, not of decision records, and a genuinely different fourteen that is
-still correct. The two sat in one file agreeing with each other for eleven days while both
+count of **measurements**, not of decision records, and a genuinely different fourteen that
+was correct on this page's date (fifteen since 2026-09-11; the table in `docs/method.md` is
+the count). The two sat in one file agreeing with each other for eleven days while both
 descriptions of `docs/adr/` were going wrong, and a reader checking one against the other would
 have been reassured.
 
