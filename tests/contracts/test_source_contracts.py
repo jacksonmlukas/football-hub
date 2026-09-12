@@ -364,6 +364,19 @@ def test_nfeloqb_contract_holds_on_the_hand_built_shape():
     assert got.schema["qb1_adj"] == pl.Float64
 
 
+def test_nfeloqb_contract_holds_on_the_captured_file():
+    """The first live pull, 2026-09-12: the last 300 rows of `greerreNFL/nfeloqb`'s
+    `qb_elos.csv`, seasons 2025-2026. Two played 2026 games carry no quarterback yet --
+    the reader drops those before the contract sees them, so here they are dropped the same
+    way. The hand-built shape above was right; this is what lets the contract say so."""
+    df = frame("nfeloqb_qb_elos.json").filter(
+        pl.col("qb1").is_not_null() & pl.col("qb2").is_not_null())
+    got = NFELOQB.validate(df)
+    assert got.height == 298
+    assert set(got["season"].to_list()) == {2025, 2026}
+    assert got.schema["qb1_adj"] == pl.Float64
+
+
 def test_odds_fixture_parses_to_the_lines_table_shape():
     """The parser, not just the contract: the snapshot has to land in `lines`.
 

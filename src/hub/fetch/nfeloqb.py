@@ -130,7 +130,23 @@ def parse(body: bytes) -> pl.DataFrame:
     got = pl.read_csv(io.BytesIO(body), infer_schema_length=10000)
     casts = [pl.col(c).cast(t, strict=False) for c, t in NFELOQB.required.items()
              if c in got.columns and t is not pl.Utf8]
-    return NFELOQB.validate(got.with_columns(casts))
+    got = got.with_columns(casts)
+    # Rows with no quarterback on them are not rows this reader can use, and the live file
+    # has two kinds (first pull, 2026-09-12): every game before 1950, when the source's
+    # quarterback Elo begins -- 2,162 rows -- and a played game of the current week whose
+    # quarterback fields the source has not filled yet (two of eighteen 2026 rows). Neither is
+    # a shape change, so neither is a refusal; both are dropped and counted, and the count of
+    # *this-season* rows dropped is the one to watch, because a starter's tenure cannot count
+    # a game the row does not name him on.
+    if "qb1" in got.columns and "qb2" in got.columns:
+        blank = got.filter(pl.col("qb1").is_null() | pl.col("qb2").is_null())
+        if blank.height:
+            this = (blank.filter(pl.col("season") == got["season"].max()).height
+                    if "season" in got.columns else 0)
+            print(f"  nfeloqb: dropped {blank.height} rows with no quarterback named "
+                  f"({this} of them this season, not yet filled by the source)")
+            got = got.filter(pl.col("qb1").is_not_null() & pl.col("qb2").is_not_null())
+    return NFELOQB.validate(got)
 
 
 def _long(rows: pl.DataFrame) -> pl.DataFrame:

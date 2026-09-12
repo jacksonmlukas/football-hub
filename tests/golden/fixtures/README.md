@@ -48,6 +48,7 @@ sentence stop agreeing.
 | `bigten_captures.synthetic.json` | **Hand-built** index of `hub.fetch.bigten`'s own archive: the 2026 page held no report on 2026-09-11, so nothing existed to capture — see below |
 | `pool_payload.synthetic.json` | **Hand-built** payload of the shape `hub.fetch.pool` assumes the pool host returns: the shape is documented nowhere in this repo and no `POOL_SESSION` exists on this machine — see below |
 | `nfeloqb_qb_elos.synthetic.json` | **Hand-built** rows in 538's published `qb_elo` schema, the shape `hub.fetch.nfeloqb` assumes `greerreNFL/nfeloqb`'s `qb_elos.csv` carries: no pull has been made from this repo — see below |
+| `nfeloqb_qb_elos.json` | **Captured** 2026-09-12: the last 300 rows of `greerreNFL/nfeloqb`'s `qb_elos.csv` (seasons 2025–2026), including two played 2026 games the source had not yet filled a quarterback in for — the shape the synthetic rows guessed, confirmed; the synthetic file stays for the behavioural tests that depend on its arranged tenure runs |
 
 **The Big Ten index is hand-built for a different reason.** `bigten_captures.synthetic.json`
 describes a shape this repo writes rather than one a third party returns, so a "real capture"

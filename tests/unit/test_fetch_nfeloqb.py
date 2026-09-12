@@ -63,6 +63,32 @@ def test_the_csv_parses_to_the_contracted_frame():
     assert df["score1"].null_count() == 2, "the coming week's rows have no score"
 
 
+def test_a_row_with_no_quarterback_is_dropped_and_counted_not_refused(capsys):
+    """The live file's first pull (2026-09-12) carried 2,162 pre-1950 rows and two played
+    2026 games with no quarterback filled in yet; the contract refused the whole file. Both
+    kinds are dropped and counted, and the this-season count is the one printed to watch."""
+    got = rows()
+    blank = dict(got[-1])
+    blank.update({"qb1": None, "qb2": None, "qb1_value_pre": None, "qb2_value_pre": None,
+                  "qb1_adj": None, "qb2_adj": None, "date": "2026-09-09"})
+    frame = nfeloqb.parse(csv_text(got + [blank]).encode())
+    assert frame.height == len(got)
+    said = capsys.readouterr().out
+    assert "dropped 1 rows with no quarterback" in said and "1 of them this season" in said
+
+
+def test_the_captured_file_parses_through_the_contract():
+    """The first live pull, 2026-09-12: the last 300 rows of `qb_elos.csv` frozen as a
+    capture, two of them 2026 games with no quarterback filled in yet. The shape the
+    synthetic rows guessed is the shape the source publishes -- which is what moves
+    `NFELOQB.verified_against_live` to True."""
+    captured = json.loads((FIXTURES / "nfeloqb_qb_elos.json").read_text())
+    frame = nfeloqb.parse(csv_text(captured).encode())
+    assert frame.height == 298 and set(frame["season"].to_list()) == {2025, 2026}
+    state = nfeloqb.state(frame)
+    assert state.height == 32, "every team has a starter on the captured file"
+
+
 def test_a_renamed_column_is_refused_by_name():
     text = csv_text().replace("qb1_value_pre", "qb1_val_pre")
     with pytest.raises(ContractViolation, match="qb1_value_pre"):

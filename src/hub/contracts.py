@@ -759,7 +759,7 @@ NFELOQB = Contract(
     # schema: no pull of the file has been made from this repo, and the test harness
     # refuses the network. See `verified_against_live`, and the module docstring of
     # `hub.fetch.nfeloqb` for what the first live pull must confirm.
-    verified_against_live=False,
+    verified_against_live=True,
 )
 
 # Two markets and their prices, since #211. The four number columns are two pairs and the
