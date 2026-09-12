@@ -40,6 +40,24 @@ BLOCKED_BASH = re.compile(
 # the guard should not trip the guard.
 ALLOWED = re.compile(r"\bhub\.inspect\b|\bgit\s+(-c\s+\S+\s+)*commit\b")
 
+# The readers that are not `cat` (#267). The four names above were the whole guard, and an
+# agent following its own instincts writes `python -c "print(pl.read_parquet(...))"` or
+# `duckdb -c "select * from '...parquet'"` instead -- the same 40k tokens, unrecognised. Two
+# shapes, both on ONE line like the reader pattern:
+#   * a data-file reader call whose result is printed on the same line -- `print(` and a
+#     `read_parquet(`/`read_csv(`/`read_json(` naming a data path. A read that is *not*
+#     printed on the line (a count, a group-by, a summary written by the script) is allowed:
+#     a summary is what rule 1 asks for, and the guard cannot read a script's intent.
+#   * a query or text tool pointed straight at a data file: duckdb, sqlite3, jq, awk, sed.
+# Accepted gaps, stated: a frame bound to a name and printed on a later statement
+# (`df = read_parquet(...); print(df)`), and a heredoc script doing the same across lines.
+# Both are the shape a *summary* script has too, and the guard cannot read intent. This is
+# guidance, not a sandbox.
+_DATA = r"(data/(raw|interim|processed)/[^'\"\s]*|[^'\"\s]*\.(parquet|csv|duckdb|json))"
+BLOCKED_READER = re.compile(
+    r"print\([^\n]*\bread_(parquet|csv|json|ipc)\([^\n]*" + _DATA
+    + r"|\b(duckdb|sqlite3|jq|awk|sed)\b[^|&;\n]*data/(raw|interim|processed)/")
+
 try:
     ev = json.load(sys.stdin)
 except Exception:
@@ -53,7 +71,7 @@ if tool == "Read" and BLOCKED_READ.search(str(inp.get("file_path", ""))):
     hit = inp.get("file_path")
 elif tool == "Bash":
     cmd = str(inp.get("command", ""))
-    if BLOCKED_BASH.search(cmd) and not ALLOWED.search(cmd):
+    if (BLOCKED_BASH.search(cmd) or BLOCKED_READER.search(cmd)) and not ALLOWED.search(cmd):
         hit = cmd
 
 if hit:

@@ -30,6 +30,7 @@ from typing import cast
 
 import polars as pl
 
+from hub.fetch.nflverse import RAW
 from hub.store import DATA
 
 # The budget. Output is for an agent's context window, not a terminal, so this is a hard
@@ -54,14 +55,36 @@ def _available(base: Path) -> list[str]:
     return sorted(names)
 
 
-def resolve(name: str, base: Path | None = None) -> list[Path]:
+def _raw_sources(raw: Path) -> list[str]:
+    """The raw caches by source: one directory per nflverse table, hashed filenames inside
+    (`hub.fetch.nflverse.RAW`). A name never found them because they live under a different
+    root and no file is called by its source (#267)."""
+    if not raw.exists():
+        return []
+    return sorted(d.name for d in raw.iterdir() if d.is_dir() and any(d.glob("*.parquet")))
+
+
+def listing(base: Path | None = None, raw: Path | None = None) -> list[str]:
+    """`--list`: every dataset a summary can be asked for, and how to ask (#267)."""
+    base = base or DATA
+    raw = raw or RAW
+    out = [f"processed ({base}):"] + [f"  {n}" for n in _available(base) or ["(none)"]]
+    sources = _raw_sources(raw)
+    out += [f"raw caches ({raw}), by source name; a processed dataset of the same name wins, "
+            f"--raw moves the root:"] + [f"  {n}" for n in sources or ["(none)"]]
+    return out
+
+
+def resolve(name: str, base: Path | None = None, raw: Path | None = None) -> list[Path]:
     """Turn a dataset name into the parquet files behind it.
 
-    Three shapes, in order: an explicit path; a bare name under the processed root; or a
-    Hive-partitioned directory of the kind `hub.store.write` produces. The last returns
+    Four shapes, in order: an explicit path; a bare name under the processed root; a
+    Hive-partitioned directory of the kind `hub.store.write` produces; or a raw source
+    under the nflverse cache root, whose files are named by hash (#267). The last two return
     many files, which `scan_parquet` handles as one frame.
     """
     base = base or DATA
+    raw = raw or RAW
 
     p = Path(name)
     if p.is_file():
@@ -77,9 +100,18 @@ def resolve(name: str, base: Path | None = None) -> list[Path]:
         if parts:
             return parts
 
+    cache = raw / name
+    if cache.is_dir():
+        parts = sorted(cache.glob("*.parquet"))
+        if parts:
+            return parts
+
     known = _available(base)
     hint = ", ".join(known[:12]) if known else "(none found)"
-    raise DatasetNotFound(f"no dataset {name!r} under {base}. Available: {hint}")
+    sources = _raw_sources(raw)
+    raw_hint = (f"; raw caches under {raw}: {', '.join(sources[:12])}" if sources else "")
+    raise DatasetNotFound(
+        f"no dataset {name!r} under {base}. Available: {hint}{raw_hint}. `--list` shows both.")
 
 
 def _scan(paths: Sequence[Path]) -> pl.LazyFrame:
@@ -203,7 +235,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.inspect",
         description="Summarize a dataset without reading it into context.")
-    ap.add_argument("dataset", help="name (draft_board, preds) or path to a parquet file")
+    ap.add_argument("dataset", nargs="?", default=None,
+                    help="name (draft_board, preds, pbp) or path to a parquet file")
     ap.add_argument("--schema", action="store_true", help="column names and dtypes")
     ap.add_argument("--head", type=int, default=None, metavar="N", help="first N rows")
     ap.add_argument("--cols", default=None, help="comma-separated columns for --head")
@@ -211,10 +244,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--nulls", action="store_true", help="null counts, non-zero only")
     ap.add_argument("--base", default=None,
                     help="override the processed-data root (mainly for tests)")
+    ap.add_argument("--raw", default=None,
+                    help="override the raw nflverse cache root (mainly for tests)")
+    ap.add_argument("--list", action="store_true",
+                    help="every dataset a summary can be asked for, under both roots")
     a = ap.parse_args(argv)
+    base = Path(a.base) if a.base else None
+    raw = Path(a.raw) if a.raw else None
 
+    if a.list:
+        print("\n".join(cap(listing(base, raw))))
+        return 0
+    if a.dataset is None:
+        ap.error("a dataset name or path is required (or --list)")
     try:
-        paths = resolve(a.dataset, base=Path(a.base) if a.base else None)
+        paths = resolve(a.dataset, base=base, raw=raw)
         cols = [c.strip() for c in a.cols.split(",") if c.strip()] if a.cols else None
         if a.schema:
             lines = schema_lines(paths)
