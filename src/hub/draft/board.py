@@ -182,6 +182,20 @@ def _merge_renamed(snap: pl.DataFrame, as_of: str) -> pl.DataFrame:
     is printed by the pair, because it moves a replay Board and a height that moves without a
     line saying so is the kind of change nobody connects to its cause.
 
+    **A key collision is not a rename.** Two players can share a key -- a `Josh Allen` at
+    quarterback and another at linebacker, or two names an `ALIASES` entry lands together --
+    and merging them would delete one on the strength of a spelling. Rows merge only where
+    `pos` agrees, and `team` too where the frame carries it; a collision that fails that test
+    is left as the rows it was, nothing is printed, and `DRAFT_BOARD.unique_by_key` refuses it
+    where the Board is built if both rows reach it. Left rather than refused here because
+    this runs before `_select_consensus` drops the undrafted positions: a kicker who shares
+    a key with a quarterback is not on any Board, and refusing the replay for him would be
+    refusing it for nobody.
+
+    Two rows carrying the *same* string at two positions are not this function's case at all:
+    `consensus` has already taken the latest scrape per raw string before this runs, so one
+    string is one row here. That is the pre-existing rule, unchanged.
+
     The live path is not routed through here. One scrape spelling one player two ways is a
     source defect with no rule to apply, and `DRAFT_BOARD.unique_by_key` refuses it where the
     Board is built.
@@ -193,17 +207,27 @@ def _merge_renamed(snap: pl.DataFrame, as_of: str) -> pl.DataFrame:
     keyed = (snap.sort("scrape_date", descending=True)
                  .with_columns(pl.col("player").map_elements(player_key, return_dtype=pl.Utf8)
                                  .alias("_key")))
-    kept = keyed.unique(subset=["_key"], keep="first", maintain_order=True)
-    if kept.height < keyed.height:
+    # GUARD collision-is-not-a-rename [unit/test_consensus_page.py]: rows on one key merge
+    # only where position (and team, where carried) agree; two players are left as two rows
+    same = ["pos", *(["team"] if "team" in keyed.columns else [])]
+    one_person = set(keyed.group_by("_key")
+                          .agg([pl.col(c).n_unique().alias(c) for c in same])
+                          .filter(pl.all_horizontal([pl.col(c) == 1 for c in same]))
+                          ["_key"].to_list())
+    mergeable = keyed.filter(pl.col("_key").is_in(one_person))
+    left = keyed.filter(pl.col("_key").is_in(one_person).not_())
+    # /GUARD
+    kept = mergeable.unique(subset=["_key"], keep="first", maintain_order=True)
+    if kept.height < mergeable.height:
         # The rows that did not survive, each beside the spelling that did.
-        merged = (keyed.join(kept.select("_key", pl.col("player").alias("_into")), on="_key")
-                       .filter(pl.col("player") != pl.col("_into"))
-                       .sort("player"))
+        merged = (mergeable.join(kept.select("_key", pl.col("player").alias("_into")), on="_key")
+                           .filter(pl.col("player") != pl.col("_into"))
+                           .sort("player"))
         for row in merged.to_dicts():
             print(f"    consensus as of {as_of}: one player under two spellings, the "
                   f"{row['scrape_date']} scrape merged into the later one: "
                   f"{row['player']} -> {row['_into']} ({row['_key']})")
-    return kept.drop("_key")
+    return pl.concat([kept, left]).drop("_key")
 
 
 def consensus(as_of: str | None = None) -> pl.DataFrame:

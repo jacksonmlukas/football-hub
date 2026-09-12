@@ -259,6 +259,31 @@ def test_a_player_renamed_between_scrapes_is_one_row_under_the_latest_spelling(
     assert "Ken Walker III -> Kenneth Walker III" in out, out
 
 
+def test_two_players_on_one_key_at_different_positions_are_not_merged(
+        monkeypatch, tmp_path, capsys):
+    """A key collision is not a rename. `Josh Allen` the QB and a `Josh Allen Jr.` at
+    linebacker land on one key -- the suffix carries no identity to `player_key` -- and
+    merging them would delete a first-round quarterback on the strength of a spelling. Rows
+    merge only where `pos` (and `team`, where the frame carries it) agree;
+    a collision across positions is left as two rows, nothing is printed as a rename, and it
+    is `DRAFT_BOARD.unique_by_key` that refuses it where the Board is built."""
+    from hub.contracts import DRAFT_BOARD, ContractViolation
+    from hub.draft.board import consensus
+    frame = _dated(("Josh Allen", 5.0, "2024-08-28"), ("Josh Allen Jr.", 400.0, "2024-07-20"))
+    frame = frame.with_columns(pl.Series("pos", ["QB", "LB"]))
+    _patch(monkeypatch, tmp_path, frame)
+    # `_select_consensus` keeps drafted positions only, so the collision is asserted on the
+    # frame `_merge_renamed` hands back, through the same monkeypatched archive.
+    from hub.draft import board as board_mod
+    snap = board_mod._merge_renamed(frame, "2024-08-31")
+    assert sorted(snap["player"].to_list()) == ["Josh Allen", "Josh Allen Jr."]
+    assert "merged" not in capsys.readouterr().out
+    with pytest.raises(ContractViolation, match=r"'Josh Allen' / 'Josh Allen Jr\.'"):
+        DRAFT_BOARD.conform(snap, "player")
+    # And the drafted-position path still serves the quarterback under his own rank.
+    assert consensus(as_of="2024-08-31")["player"].to_list() == ["Josh Allen"]
+
+
 def test_the_board_keeps_no_date_comparison_of_its_own(monkeypatch):
     """The structural half of the same guarantee.
 
