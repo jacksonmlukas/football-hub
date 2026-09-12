@@ -1413,3 +1413,76 @@ def test_a_width_state_that_cannot_be_written_does_not_take_the_gate_down(tmp_pa
         assert not path.exists(), "the fixture did not actually make the write fail"
     finally:
         d.chmod(0o700)
+
+
+# --- #37: the family is counted, and the false-discovery threshold is printed beside the t ---
+
+def test_a_two_sided_p_is_the_tail_both_ways():
+    """t = 2.776 on four degrees of freedom is the 0.975 quantile, so its two-sided p is 0.05.
+    Symmetric: the sign of the t does not move it. And no degrees of freedom is no p rather
+    than a p of zero -- a single season has a mean and no dispersion to test it against."""
+    assert experiment.two_sided_p(2.776445, 4) == pytest.approx(0.05, abs=1e-5)
+    assert experiment.two_sided_p(-2.776445, 4) == pytest.approx(0.05, abs=1e-5)
+    assert experiment.two_sided_p(2.0, 4) == pytest.approx(0.1161, abs=1e-4), \
+        "the screen's bar, MIN_SE, on five seasons: above q at any family size"
+    assert math.isnan(experiment.two_sided_p(3.0, 0))
+    assert math.isnan(experiment.two_sided_p(float("nan"), 4))
+
+
+def test_the_threshold_is_correct_on_a_known_vector():
+    """Benjamini-Hochberg by hand. Sorted, the five are 0.005, 0.01, 0.03, 0.04, 0.20 against
+    steps of 0.02, 0.04, 0.06, 0.08, 0.10 at q = 0.10: the fourth is the largest that sits
+    below its step, so the threshold is 0.04 and four are rejected. The adjusted values are
+    the step-up minima, m * p_(j) / j from the right, returned in the caller's order."""
+    fd = experiment.false_discovery([0.01, 0.04, 0.03, 0.005, 0.20], q=0.10)
+    assert fd.tests == 5 and fd.q == 0.10
+    assert fd.threshold == pytest.approx(0.04)
+    assert fd.rejected == (True, True, True, True, False)
+    assert fd.adjusted == pytest.approx((0.025, 0.05, 0.05, 0.025, 0.20))
+
+
+def test_the_procedure_steps_up_rather_than_stopping_at_the_first_failure():
+    """0.035 fails its own step of 0.0333 and is still rejected, because 0.09 clears the
+    third step of 0.10 and BH rejects everything at or below the largest p that clears.
+    A step-down reading of the same vector would reject nothing."""
+    fd = experiment.false_discovery([0.035, 0.04, 0.09], q=0.10)
+    assert fd.threshold == pytest.approx(0.09)
+    assert fd.rejected == (True, True, True)
+
+
+def test_nothing_is_rejected_when_every_p_is_one():
+    fd = experiment.false_discovery([1.0, 1.0, 1.0, 1.0])
+    assert fd.tests == 4
+    assert fd.threshold == 0.0
+    assert fd.rejected == (False, False, False, False)
+    assert fd.adjusted == (1.0, 1.0, 1.0, 1.0)
+
+
+def test_a_family_of_one_returns_the_single_p():
+    """Adjusting one test is no adjustment: the adjusted p is the raw p, and the threshold is
+    that p when it is at or below q and nothing when it is not."""
+    fd = experiment.false_discovery([0.03])
+    assert fd.tests == 1 and fd.adjusted == (0.03,) and fd.rejected == (True,)
+    assert fd.threshold == pytest.approx(0.03)
+    fd = experiment.false_discovery([0.5])
+    assert fd.adjusted == (0.5,) and fd.rejected == (False,) and fd.threshold == 0.0
+
+
+def test_a_test_with_no_p_counts_in_the_family_and_is_never_rejected():
+    """A feature the screen could not measure still ran: it is a test in the family, so the
+    family size counts it, but it has no p to rank and is neither rejected nor adjusted."""
+    fd = experiment.false_discovery([0.001, float("nan"), 0.002])
+    assert fd.tests == 3
+    assert fd.rejected == (True, False, True)
+    assert math.isnan(fd.adjusted[1])
+    assert fd.adjusted[0] == pytest.approx(0.003), "m = 3, and the NaN ranks last"
+
+
+def test_the_rate_is_a_stated_choice_and_the_default():
+    assert experiment.FDR_Q == 0.10
+    assert experiment.false_discovery([0.05]).q == experiment.FDR_Q
+
+
+def test_an_empty_family_is_reported_as_empty():
+    fd = experiment.false_discovery([])
+    assert fd.tests == 0 and fd.threshold == 0.0 and fd.adjusted == () and fd.rejected == ()

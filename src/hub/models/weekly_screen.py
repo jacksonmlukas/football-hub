@@ -79,7 +79,7 @@ import polars as pl
 from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS, digests, resolved_config
 from hub.fetch.nflverse import pins_this_run, reads_of_one_run
-from hub.models.experiment import MIN_SE
+from hub.models.experiment import FDR_Q, MIN_SE, FalseDiscovery, false_discovery, two_sided_p
 from hub.models.panel import (
     MIN_GAMES_BEFORE,
     OUTCOME,
@@ -94,7 +94,8 @@ from hub.models.panel import (
 NOT_FITTED_BECAUSE = (
     "the Phase 1 screen for week-level features. DEGENERATE is a floating-point tolerance -- "
     "below it a residual is rounding error rather than a signal -- and nothing here predicts: "
-    "it reads outcomes and reports correlations. See docs/weekly-screen.md "
+    "it reads outcomes and reports correlations, each family beside its false-discovery "
+    "threshold at experiment.FDR_Q, a stated choice (#37). See docs/weekly-screen.md "
 )
 
 # A cell smaller than this is a correlation on noise. 40 is roughly a tenth of a normal week.
@@ -467,6 +468,36 @@ def verdict(summary: dict, sign: str, *, min_se: float = MIN_SE) -> tuple[str, s
     return CLEARS, f"clears: {summary['r']:+.4f} at {t:+.1f} se, {held}/{len(per)} seasons"
 
 
+def with_family(rows: Sequence[dict], q: float = FDR_Q) -> tuple[list[dict], FalseDiscovery]:
+    """Each row with its two-sided `p`, its adjusted `p_adj` and the family's `tests` -- #37.
+
+    **The family is the rows given, and nothing else.** A screen run is a family of tests:
+    `screen` runs one per feature, `screen_joint` one per survivor, `screen_usage` one per
+    feature and count, and each calls this on its own rows, so every frame says how many
+    tests *it* ran and adjusts within them. Not the union across screens -- the alone screen
+    and the joint screen ask different questions of different rows, and pooling them would
+    be a family nobody ran. The p is the two-sided p of the season-clustered `t` on
+    `seasons - 1` degrees of freedom, so it is about the same unit the `t` is (#169).
+
+    What it does not do is decide. `verdict` is the pre-registered rule and reads none of
+    this; a feature it clears that sits above the threshold is still `clears`, with the
+    adjusted p beside it, because the rule was written down before the run and the count is
+    what the reader is owed alongside it.
+    """
+    p = [two_sided_p(r["t"], r["seasons"] - 1) for r in rows]
+    fd = false_discovery(p, q)
+    return [{**r, "p": pi, "p_adj": ai, "tests": fd.tests}
+            for r, pi, ai in zip(rows, p, fd.adjusted, strict=True)], fd
+
+
+def family_line(fd: FalseDiscovery) -> str:
+    """The one line a reader takes the multiplicity from."""
+    below = sum(fd.rejected)
+    return (f"  {fd.tests} test{'s' if fd.tests != 1 else ''} in this family; "
+            f"Benjamini-Hochberg threshold at q = {fd.q:.2f}: {fd.threshold:.4f}, "
+            f"{below} below it  (the pre-registered rule decides; the threshold does not)")
+
+
 def report(rows: Sequence[dict]) -> list[str]:
     """Lines, not prints -- the reason `hub.draft.report` exists.
 
@@ -474,14 +505,22 @@ def report(rows: Sequence[dict]) -> list[str]:
     seeing 55 cells beside a t of 5.7 will read the t as a 55-unit statistic unless the
     column tells them otherwise, and that misreading is exactly what #169 corrected.
 
+    The family is the rows handed in -- `with_family` -- and its size and threshold are the
+    fourth line, so the alone rows at one anchor and the joint rows at the same anchor each
+    print their own count. `p` and `p_adj` sit beside the `t` on every row.
+
     A feature in `UNLICENSED` prints its verdict and then the licence it does not have, in
     that order: the verdict is the record, the note is what stops it being read as more.
     """
-    out = ["", f"  {'feature':16} {'pre':>4} {'r':>9} {'t':>7} {'cells':>6} {'szn':>4}"
-               "  verdict", "  (t is over the seasons; cells are how each season is built)"]
+    rows, fd = with_family(rows)
+    out = ["", f"  {'feature':16} {'pre':>4} {'r':>9} {'t':>7} {'p':>6} {'p_adj':>6} "
+               f"{'cells':>6} {'szn':>4}  verdict",
+           "  (t is over the seasons; cells are how each season is built)",
+           family_line(fd)]
     for row in rows:
         out.append(f"  {row['feature']:16} {row['sign']:>4} {row['r']:+9.4f} "
-                   f"{row['t']:+7.2f} {row['cells']:6d} {row['seasons']:4d}  {row['note']}"
+                   f"{row['t']:+7.2f} {row['p']:6.3f} {row['p_adj']:6.3f} "
+                   f"{row['cells']:6d} {row['seasons']:4d}  {row['note']}"
                    + licence_note(row["feature"]))
     return out
 
@@ -511,6 +550,7 @@ def screen(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES,
                      "t": s["t"], "cells": s["cells"], "seasons": s["seasons"],
                      "n": s["n"], "status": status, "note": note,
                      "per_season": str({k: round(v, 4) for k, v in s["per_season"].items()})})
+    rows, _ = with_family(rows)
     return pl.DataFrame(rows).sort("r", descending=True)
 
 
@@ -540,6 +580,7 @@ def screen_joint(panel: pl.DataFrame, survivors: Sequence[Feature],
         rows.append({"feature": f.name, "sign": f.sign, "r": s["r"], "t": s["t"],
                      "cells": s["cells"], "seasons": s["seasons"], "status": status,
                      "note": note, "controls": ", ".join(others) or "-"})
+    rows, _ = with_family(rows)
     return pl.DataFrame(rows).sort("r", descending=True)
 
 
@@ -578,19 +619,26 @@ def sweep(panel: pl.DataFrame, features: Sequence[Feature] = FEATURES,
             rows.append({
                 "anchor": anchor, "feature": d["feature"], "sign": d["sign"],
                 "min_week": next(f.min_week for f in pool if f.name == d["feature"]),
-                "alone_r": d["r"], "alone_t": d["t"], "cells": d["cells"],
+                "alone_r": d["r"], "alone_t": d["t"], "alone_p": d["p"],
+                "alone_p_adj": d["p_adj"], "alone_tests": d["tests"], "cells": d["cells"],
                 "seasons": d["seasons"], "alone": d["status"], "alone_note": d["note"],
                 "joint_r": j["r"] if j else None, "joint_t": j["t"] if j else None,
+                "joint_p": j["p"] if j else None, "joint_p_adj": j["p_adj"] if j else None,
+                "joint_tests": j["tests"] if j else None,
                 "joint_cells": j["cells"] if j else None,
+                "joint_seasons": j["seasons"] if j else None,
                 "joint": j["status"] if j else None,
                 "joint_note": j["note"] if j else None,
                 "joint_controls": j["controls"] if j else None,
                 "final": j["status"] if j else d["status"]})
     return pl.DataFrame(rows, schema={
         "anchor": pl.Int64, "feature": pl.Utf8, "sign": pl.Utf8, "min_week": pl.Int64,
-        "alone_r": pl.Float64, "alone_t": pl.Float64, "cells": pl.Int64,
+        "alone_r": pl.Float64, "alone_t": pl.Float64, "alone_p": pl.Float64,
+        "alone_p_adj": pl.Float64, "alone_tests": pl.Int64, "cells": pl.Int64,
         "seasons": pl.Int64, "alone": pl.Utf8, "alone_note": pl.Utf8,
-        "joint_r": pl.Float64, "joint_t": pl.Float64, "joint_cells": pl.Int64,
+        "joint_r": pl.Float64, "joint_t": pl.Float64, "joint_p": pl.Float64,
+        "joint_p_adj": pl.Float64, "joint_tests": pl.Int64, "joint_cells": pl.Int64,
+        "joint_seasons": pl.Int64,
         "joint": pl.Utf8, "joint_note": pl.Utf8, "joint_controls": pl.Utf8,
         "final": pl.Utf8}).sort(["feature", "anchor"])
 
@@ -764,7 +812,10 @@ def screen_usage(panel: pl.DataFrame, features: Sequence[Feature],
             status, note = verdict(s, f.sign)
             rows.append({"feature": f.name, "component": c, "sign": f.sign,
                          "r": s["r"], "t": s["t"], "cells": s["cells"],
-                         "status": status, "note": note})
+                         "seasons": s["seasons"], "status": status, "note": note})
+    # One family: every (feature, count) pair this call screened. The counts are five
+    # questions asked of each feature, and a reader of the five verdicts is owed the five.
+    rows, _ = with_family(rows)
     return pl.DataFrame(rows)
 
 
@@ -877,7 +928,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
             if not j.is_empty():
                 print("\n  each one, controlled for the others that exist over its weeks:")
                 print("\n".join(report([{**r, "r": r["joint_r"], "t": r["joint_t"],
-                                        "cells": r["joint_cells"], "note": r["joint_note"]}
+                                        "cells": r["joint_cells"], "seasons": r["joint_seasons"],
+                                        "note": r["joint_note"]}
                                        for r in j.to_dicts()])))
             left = surviving(swept, anchor)
             print(f"\n  independent signals: {', '.join(left) if left else 'nothing'}")
@@ -887,9 +939,11 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
             if a.usage and left:
                 print("\n  and against Usage rather than points:")
                 u = screen_usage(sample, [f for f in at_anchor(pool, anchor) if f.name in left])
+                print(family_line(false_discovery(u["p"].to_list())))
                 for row in u.iter_rows(named=True):
                     print(f"  {row['feature']:16} {row['component']:11} {row['r']:+7.4f} "
-                          f"{row['t']:+6.2f}  {row['status']}")
+                          f"{row['t']:+6.2f} p {row['p']:.3f} adj {row['p_adj']:.3f}  "
+                          f"{row['status']}")
             for name in a.permute:
                 f = next(g for g in at_anchor(pool, anchor) if g.name == name)
                 # The alternatives are the sizes the feature has been published at, so the
