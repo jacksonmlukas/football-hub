@@ -99,6 +99,33 @@ one that would have promoted equity back to the headline.
 > 4 held-out seasons, an interval excluding zero, `P(optimizer better)` 0.0%. The figures
 > above keep their original text.
 
+> **Restated 2026-09-12 (#194, #245, #246): the run-to-run spread is 0.3, the current tree
+> reads −11.07, and the verdict stands on the seasons.** #194 ran `e14ab56` at two root
+> seeds on one Board digest: **−12.19** and **−11.88**, per-season differences 1.72 / 0.62 /
+> 0.62 / 0.76 — so the eight-point historical drift is code, not noise. Then the shipped
+> tree (`24bbe45`: `TALENT_CV` net of absence #235, the nickname crosswalk #246 that had
+> been scoring four 2022 draftees as zero, byes #226, the imputed-player spread #87, a
+> different Board digest for all four reasons) on the same seasons, seed and budget:
+>
+> | | `e14ab56` seed 0 | `e14ab56` seed 7 | **shipped, 2026-09-12** |
+> |---|---|---|---|
+> | optimizer − market | −12.19 | −11.88 | **−11.07** |
+> | 95% percentile CI | [−18.33, −6.05] | [−17.09, −6.67] | **[−16.92, −5.22]** |
+> | 95% t CI, 3 df | [−22.06, −2.32] | [−20.34, −3.42] | **[−20.32, −1.82]** |
+> | 2022 / 2023 / 2024 / 2025 | −19.95 / −5.38 / −6.72 / −16.71 | −18.23 / −6.00 / −7.34 / −15.95 | **−17.52 / −5.07 / −5.38 / −16.31** |
+> | join failures (market / optimizer) | — | — | 0.0% / 0.5%, floor 2% |
+> | verdict | REMOVE, 4/4 | REMOVE, 4/4 | **REMOVE, 4/4** |
+>
+> The current tree sits about a point nearer zero than `e14ab56` — two of the 0.5-point
+> run-to-run standard errors — with 2022, the season whose draftees were being scored as
+> zero, moving most. That is the direction #246 predicted and about its size; #235's refit
+> is the other candidate and the two are not separated by one run. **What this ADR rests on
+> has not moved in any run ever made**: worse in 4 of 4 seasons, an interval excluding zero,
+> `P(optimizer better)` 0.0%. The −17.30 above was measured on the arm and the constants of
+> 2026-08-27 and reads *as first measured*; the eight-point history (#190) is attributed to
+> the named changes rather than re-derived, because the published run recorded no digest to
+> re-derive from. Paired rows: `data/processed/gate/p245_shipped_seed0.parquet`.
+
 ## Why this is surprising, which is why it is written down
 
 The repo contains a real season simulator: talent drawn once per season, a square-root weekly
