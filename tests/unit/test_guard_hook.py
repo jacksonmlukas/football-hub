@@ -44,6 +44,38 @@ def test_real_reads_are_still_blocked(cmd):
     assert bash(cmd).returncode == 2, f"must block: {cmd}"
 
 
+# --- readers that are not `cat` (#267) ----------------------------------------------------
+
+ONE_LINER = "uv run python -c \"import polars as pl; print(pl.read_parquet('data/processed/draft_board.parquet'))\""
+PANDAS = "uv run python -c \"import pandas as pd; print(pd.read_csv('data/raw/x.csv').head())\""
+COUNT = "uv run python -c \"import polars as pl; df = pl.read_parquet('data/processed/draft_board.parquet'); print(df.height)\""
+
+
+@pytest.mark.parametrize("cmd", [
+    # a one-liner that reads a data file and prints what it read: the shape an agent reaches
+    # for instead of `cat`, and the one the four-name guard never saw
+    ONE_LINER,
+    PANDAS,
+    "duckdb -c \"select * from 'data/processed/preds/part.parquet'\"",
+    "jq . data/processed/lines/x.json | head",
+    "awk -F, '{print $1}' data/raw/nflverse/pbp.csv",
+    "sqlite3 data/processed/hub.duckdb 'select 1'",
+])
+def test_a_reader_that_is_not_cat_is_blocked_too(cmd):
+    assert bash(cmd).returncode == 2, f"must block: {cmd}"
+
+
+@pytest.mark.parametrize("cmd", [
+    # summaries through the approved path, and code that reads a frame without printing it
+    "uv run python -m hub.inspect data/processed/draft_board.parquet --schema",
+    COUNT,
+    "uv run pytest tests/unit/test_board_build.py -q",
+    "ls data/processed/boards/",
+])
+def test_a_summary_or_a_count_is_not_a_read(cmd):
+    assert bash(cmd).returncode == 0, f"must allow: {cmd}"
+
+
 def test_reading_a_parquet_via_the_read_tool_is_blocked():
     r = run({"tool_name": "Read", "tool_input": {"file_path": "data/processed/board.parquet"}})
     assert r.returncode == 2

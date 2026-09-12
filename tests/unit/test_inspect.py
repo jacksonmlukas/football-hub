@@ -161,3 +161,47 @@ def test_cli_reports_a_missing_dataset_without_a_traceback(base, capsys):
 def test_cli_defaults_to_overview_when_no_mode_is_given(base, capsys):
     assert ins.main(["draft_board", "--base", str(base)]) == 0
     assert "rows" in capsys.readouterr().out.lower()
+
+
+# --- what an agent can find (#267) --------------------------------------------------------
+
+def test_list_names_every_dataset_under_both_roots(base, tmp_path, capsys):
+    """`--list` is the discovery command `hub.store.tables()` was and no CLI exposed: the
+    processed datasets by name, and the raw caches by source -- which live under a different
+    root with hashed filenames, so a name alone never found them."""
+    raw = tmp_path / "raw" / "nflverse"
+    (raw / "pbp").mkdir(parents=True)
+    pl.DataFrame({"x": [1]}).write_parquet(raw / "pbp" / "ab12cd.parquet")
+    assert ins.main(["--list", "--base", str(base), "--raw", str(raw)]) == 0
+    out = capsys.readouterr().out
+    assert "draft_board" in out and "preds" in out
+    assert "pbp" in out and "raw caches" in out, "a raw source is listed under its root"
+
+
+def test_a_raw_source_is_summarised_through_the_raw_root(base, tmp_path, capsys):
+    raw = tmp_path / "raw" / "nflverse"
+    (raw / "pbp").mkdir(parents=True)
+    pl.DataFrame({"play_id": [1, 2], "epa": [0.1, -0.4]}).write_parquet(raw / "pbp" / "ab12cd.parquet")
+    assert ins.main(["pbp", "--schema", "--base", str(base), "--raw", str(raw)]) == 0
+    assert "epa" in capsys.readouterr().out
+
+
+def test_a_miss_names_the_raw_root_it_did_not_look_under(base, tmp_path, capsys):
+    """The error used to list only what sits under the processed root, so an agent asking
+    for `pbp` learned nothing about where it lives."""
+    raw = tmp_path / "raw" / "nflverse"
+    (raw / "pbp").mkdir(parents=True)
+    pl.DataFrame({"x": [1]}).write_parquet(raw / "pbp" / "ab12cd.parquet")
+    assert ins.main(["nothing_here", "--base", str(base), "--raw", str(raw)]) == 1
+    err = capsys.readouterr().err
+    assert "raw" in err and "pbp" in err and "--list" in err
+
+
+def test_a_missing_raw_root_lists_nothing_and_no_dataset_is_an_argument_error(base, tmp_path, capsys):
+    """A fresh clone has no raw cache: the listing says so rather than raising; and a bare
+    `hub.inspect` with nothing to inspect is a usage error, not a traceback."""
+    assert ins.main(["--list", "--base", str(base), "--raw", str(tmp_path / "absent")]) == 0
+    assert "(none)" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as died:
+        ins.main(["--base", str(base)])
+    assert died.value.code == 2
