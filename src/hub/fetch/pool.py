@@ -1,0 +1,511 @@
+"""The survivor pool's state, read off the pool host instead of retyped each week (#85).
+
+`hub.season.pool` prices a pick against the field: how many entries are live, what the pot
+is, and which teams each entry has already spent -- its **Ledger**, in `CONTEXT.md`'s sense,
+one per entry. Until this module those three were typed on the command line from a browser
+tab. This reads them from the host's JSON resource, replaces every member's identity with an
+index, and keeps the last state it read under `data/processed/` so a host that is down on a
+Sunday serves last week's field rather than no field.
+
+**The payload shape is assumed, not documented.** Nothing in this repository records what
+the host returns. The money-layer plan, U6 of
+`docs/plans/2026-09-05-001-feat-survivor-money-layer-plan.md`, established only that the
+resource is JSON behind a session cookie, answers 401 unauthenticated, and reveals each
+week's picks after that week's deadline under Hidden Picks. #77 landed the environment
+name, `POOL_SESSION`, ahead of this module so the secret scan could see the credential
+before it existed. So the shape below is a guess written down in one place, held by
+`tests/golden/fixtures/pool_payload.synthetic.json`, and the contract on what is stored
+says `verified_against_live=False` for that reason. The first live run confirms or corrects
+it, and a payload that does not match is *refused* -- see `parse_payload` -- never read
+halfway.
+
+    {"pool":    {"season": 2026, "current_week": 3, "field_size": 21, "pot": 420.0},
+     "weeks":   [{"week": 1, "status": "final"}, ..., {"week": 3, "status": "open"}],
+     "entries": [{"id": "...", "name": "...", "alive": true,
+                  "picks": [{"week": 1, "team": "DAL", "result": "win"}, ...]}, ...]}
+
+What the first live run must confirm, field by field: the four keys under `pool` and
+whether `field_size` counts entries or people; that `weeks[].status` spells a completed
+week as one of `FINAL_STATUSES`; that `entries[].picks[].team` is a nflverse abbreviation
+rather than a full name, since a Ledger is compared against the board's `team` column and
+no mapping is attempted here; that an entry's `alive` is a boolean; and the name the host's
+cookie carries, which `POOL_COOKIE_NAME` sets and `scripts/preflight_public.sh` says it
+cannot scan for until it is known. The URL is `POOL_URL`, read from the environment for the
+same reason the cookie is: the host is a small operator's site, and naming it in a public
+repository is not this module's decision to make.
+
+**Which picks are spent.** A pick counts toward an entry's Ledger when its week is final and
+not before. Under Hidden Picks a rival's current pick is absent from the payload anyway; our
+own is present, and counting it would spend a team the week has not yet resolved. The line is
+the week's status, not its number.
+
+**Who is who.** Other members are real people, and this repository publishes artifacts. So
+the parser sorts entries by the host's id, numbers them from zero, and drops the id and the
+name before anything is returned -- the `PoolState` has no field that could hold either, the
+store never sees one, and the Ledger is addressed by index. The sort is what makes the index
+stable across two reads of the same field; it carries no identity because the id is gone.
+
+**The cookie goes to the host and nowhere else.** It is read through `dotenv` the way every
+credential here is, sent as the one cookie on the request, and scrubbed from every message
+this module raises or prints: a transport exception quotes its own request, header and all,
+and a 401 body may echo what it refused. `redact` is applied on both paths, and the chained
+cause is dropped on purpose, because a traceback would print it.
+
+**Degradation.** `CLAUDE.md`'s rule: a failed fetch serves last-good state rather than
+erroring. Every way a refresh can fail -- no host named, no cookie, the host unreachable, the
+cookie refused, a payload that does not parse, a pool with nobody in it -- prints why on
+stderr and then serves the last-known state, and only a fresh clone with nothing to serve
+exits non-zero. `--payload FILE` ingests a payload saved from the browser with no network and
+no cookie, which is how the first live run can be done by hand before the credential is
+trusted to a runner.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, NamedTuple
+from urllib.parse import quote, unquote
+
+import polars as pl
+
+from hub.cli import unavailable
+from hub.config import SEASON_AHEAD
+from hub.contracts import POOL_STATE, ContractViolation
+from hub.paths import PROCESSED
+
+PROG = "hub.fetch.pool"
+
+# The three environment names. `POOL_SESSION` is the one `scripts/preflight_public.sh`
+# scans for and was chosen there (#77); the other two carry no secret.
+SESSION_ENV = "POOL_SESSION"
+URL_ENV = "POOL_URL"
+COOKIE_NAME_ENV = "POOL_COOKIE_NAME"
+DEFAULT_COOKIE_NAME = "session"
+
+# What a scrubbed message says where the cookie was. Names the variable so a reader knows
+# what was there without being shown it.
+REDACTED = f"<{SESSION_ENV}>"
+
+# The statuses that mean a week's picks are spent. Assumed; the first live run confirms the
+# spelling. Anything else -- `open`, `locked`, `in_progress`, a spelling not listed -- is a
+# week whose picks contribute nothing yet.
+FINAL_STATUSES = frozenset({"final", "complete", "completed"})
+
+STATE_FILE = "pool_state.json"
+
+# The pytest node running right now, or nothing outside a test. Same guard as
+# `hub.fetch.cfbd._http_get`: the suite patches the transport and should, and this is what
+# holds for the test nobody remembered to patch.
+PYTEST_NODE_ENV = "PYTEST_CURRENT_TEST"
+LIVE_TEST_SUITE = "tests/golden/"
+
+_SHAPE_NOTE = (" The payload shape is assumed rather than documented -- see the module "
+               "docstring of hub.fetch.pool for what the first live run must confirm.")
+
+
+class AuthFailure(Exception):
+    """The host refused the session cookie. Not an empty pool, and not the host being down."""
+
+
+class EmptyPool(Exception):
+    """The host answered, the cookie was accepted, and the pool has no entries in it."""
+
+
+class HostUnreachable(OSError):
+    """The reach for the host failed. Its message has already been scrubbed of the cookie."""
+
+
+class LiveCallRefused(Exception):
+    """A test outside `tests/golden/` reached for the network."""
+
+
+class Entry(NamedTuple):
+    """One entry in the pool, by index. Deliberately no field for who it is."""
+    index: int
+    alive: bool
+    used: tuple[str, ...]        # its Ledger: the teams spent in weeks that are final, sorted
+
+
+class PoolState(NamedTuple):
+    season: int
+    week: int                    # the week the state is as of: the host's current week
+    field_size: int
+    pot: float
+    entries: tuple[Entry, ...]   # in index order, so `entries[i].index == i`
+
+    @property
+    def alive(self) -> int:
+        return sum(1 for e in self.entries if e.alive)
+
+
+# --- the environment --------------------------------------------------------------------
+
+def _cookie() -> str | None:
+    from dotenv import load_dotenv
+    load_dotenv()
+    return os.environ.get(SESSION_ENV) or None
+
+
+def _url() -> str | None:
+    from dotenv import load_dotenv
+    load_dotenv()
+    return os.environ.get(URL_ENV) or None
+
+
+def _cookie_name() -> str:
+    return os.environ.get(COOKIE_NAME_ENV) or DEFAULT_COOKIE_NAME
+
+
+def redact(text: str, cookie: str | None) -> str:
+    """`text` with every spelling of the cookie replaced by `REDACTED`.
+
+    Three spellings, because a session cookie is routinely url-encoded and a message may
+    quote it either way: as sent, decoded, and encoded again. A cookie under eight
+    characters is not scrubbed by substring, since that would eat ordinary words; nothing
+    that short is a session.
+    """
+    if not cookie or len(cookie) < 8:
+        return text
+    for form in {cookie, unquote(cookie), quote(cookie, safe="")}:
+        if len(form) >= 8:
+            text = text.replace(form, REDACTED)
+    return text
+
+
+# --- the transport ----------------------------------------------------------------------
+
+def _http_get(url: str, cookie: str) -> tuple[int, Any]:
+    """One GET of the pool resource with the session cookie. Status and decoded body.
+
+    A 401 or 403 returns its status and no body rather than raising, so the caller can name
+    it as an auth failure; every other non-2xx raises. The body of a refusal is never
+    returned: it is the one place the host might echo the cookie back.
+    """
+    # GUARD no-live-call-under-pytest [unit/test_fetch_pool.py]: a test outside
+    # tests/golden/ never reaches the host
+    node = os.environ.get(PYTEST_NODE_ENV, "")
+    if node and not node.startswith(LIVE_TEST_SUITE):
+        raise LiveCallRefused(
+            f"{node.split(' ')[0]} would reach the pool host with the session cookie. Patch "
+            f"`_http_get`, the way tests/unit/test_fetch_pool.py does; only "
+            f"{LIVE_TEST_SUITE} may reach the host, and it is deselected by default.")
+    # /GUARD
+    return _transport(url, cookie)
+
+
+def _transport(url: str, cookie: str) -> tuple[int, Any]:     # pragma: no cover - network
+    import requests
+    r = requests.get(url, timeout=30, cookies={_cookie_name(): cookie},
+                     headers={"Accept": "application/json"})
+    if r.status_code in (401, 403):
+        return r.status_code, None
+    r.raise_for_status()
+    return r.status_code, r.json()
+
+
+# --- the parser -------------------------------------------------------------------------
+
+def _need(m: Any, key: str, where: str, kinds: tuple[type, ...]) -> Any:
+    """`m[key]`, or a contract violation naming the field that is not there.
+
+    A field that is absent, null, or of the wrong kind is one refusal: each would otherwise
+    become a partial state one step later, and the criterion is that none of them does. `bool`
+    is excluded from a numeric field explicitly, because Python says it is an `int`.
+    """
+    if not isinstance(m, Mapping) or key not in m or m[key] is None:
+        raise ContractViolation(f"pool payload: {where} has no {key!r}." + _SHAPE_NOTE)
+    v = m[key]
+    if not isinstance(v, kinds) or (isinstance(v, bool) and bool not in kinds):
+        want = "/".join(k.__name__ for k in kinds)
+        raise ContractViolation(
+            f"pool payload: {where}.{key} is {type(v).__name__}, expected {want}." + _SHAPE_NOTE)
+    return v
+
+
+def parse_payload(payload: Any, *, season: int | None = None) -> PoolState:
+    """The host's payload as a `PoolState`, or a `ContractViolation` and nothing.
+
+    Every field the state needs is required, and the refusals a reader is most likely to
+    meet are the ones that would otherwise read as a smaller, emptier pool: an entry with no
+    `picks` key is not an entry that has spent nothing, a `field_size` that disagrees with
+    the entries listed is a truncated payload and not a smaller field, and a pick in a week
+    the payload does not describe cannot be placed either side of the final/open line.
+
+    `season`, when given, must match the payload's own: a stale URL pointing at last year's
+    pool would otherwise write last year's field as this year's state.
+    """
+    pool = _need(payload, "pool", "the payload", (Mapping,))
+    got_season = _need(pool, "season", "pool", (int,))
+    if season is not None and got_season != season:
+        raise ContractViolation(
+            f"pool payload: the payload is season {got_season}, asked for {season}.")
+    week = _need(pool, "current_week", "pool", (int,))
+    field_size = _need(pool, "field_size", "pool", (int,))
+    pot = float(_need(pool, "pot", "pool", (int, float)))
+
+    statuses: dict[int, str] = {}
+    for i, w in enumerate(_need(payload, "weeks", "the payload", (list,))):
+        wk = _need(w, "week", f"weeks[{i}]", (int,))
+        if wk in statuses:
+            raise ContractViolation(f"pool payload: week {wk} is described twice.")
+        statuses[wk] = _need(w, "status", f"weeks[{i}]", (str,)).strip().lower()
+
+    raw = _need(payload, "entries", "the payload", (list,))
+    if field_size != len(raw):
+        raise ContractViolation(
+            f"pool payload: field_size is {field_size} and {len(raw)} entries are listed. "
+            f"A field smaller than its size is a truncated or paginated payload, and reading "
+            f"it as the field would price the pick against people who are not there.")
+    if not raw:
+        raise EmptyPool("the pool host answered with no entries in the pool")
+
+    keyed: list[tuple[str, bool, set[str]]] = []
+    for i, e in enumerate(raw):
+        where = f"entries[{i}]"
+        ident = str(_need(e, "id", where, (str, int)))
+        alive = _need(e, "alive", where, (bool,))
+        used: set[str] = set()
+        for j, p in enumerate(_need(e, "picks", where, (list,))):
+            wk = _need(p, "week", f"{where}.picks[{j}]", (int,))
+            if wk not in statuses:
+                raise ContractViolation(
+                    f"pool payload: {where}.picks[{j}] names week {wk}, which the payload "
+                    f"does not describe, so it cannot be told final from open.")
+            team = _need(p, "team", f"{where}.picks[{j}]", (str,)).strip().upper()
+            if not team:
+                raise ContractViolation(
+                    f"pool payload: {where}.picks[{j}].team is empty in week {wk}.")
+            # GUARD in-progress-week-contributes-nothing [unit/test_fetch_pool.py]: a pick
+            # in a week that is not final is not spent, ours included -- the line is the
+            # week's status, not its number
+            if statuses[wk] not in FINAL_STATUSES:
+                continue
+            # /GUARD
+            used.add(team)
+        keyed.append((ident, alive, used))
+
+    # Sorted by the host's id so two reads of one field number the same entry the same way,
+    # then the id is dropped: from here an entry is its index and nothing else.
+    keyed.sort(key=lambda t: t[0])
+    entries = tuple(Entry(index=i, alive=alive, used=tuple(sorted(used)))
+                    for i, (_, alive, used) in enumerate(keyed))
+    return PoolState(season=got_season, week=week, field_size=field_size, pot=pot,
+                     entries=entries)
+
+
+def ledgers(state: PoolState) -> list[set[str]]:
+    """Every entry's Ledger in index order -- the `ledgers` `hub.season.pool.simulate` takes."""
+    return [set(e.used) for e in state.entries]
+
+
+# --- the store --------------------------------------------------------------------------
+
+_SCHEMA = {"entry": pl.Int64, "alive": pl.Boolean, "used": pl.List(pl.Utf8),
+           "season": pl.Int64, "week": pl.Int64, "field_size": pl.Int64, "pot": pl.Float64}
+
+
+def to_frame(state: PoolState) -> pl.DataFrame:
+    """The state as the flat frame `POOL_STATE` declares, dtypes stated by the writer."""
+    return pl.DataFrame({
+        "entry": [e.index for e in state.entries],
+        "alive": [e.alive for e in state.entries],
+        "used": [list(e.used) for e in state.entries],
+        "season": [state.season] * len(state.entries),
+        "week": [state.week] * len(state.entries),
+        "field_size": [state.field_size] * len(state.entries),
+        "pot": [state.pot] * len(state.entries),
+    }, schema=_SCHEMA)
+
+
+def _from_frame(df: pl.DataFrame) -> PoolState:
+    rows = df.sort("entry").to_dicts()
+    first = rows[0]
+    return PoolState(
+        season=int(first["season"]), week=int(first["week"]),
+        field_size=int(first["field_size"]), pot=float(first["pot"]),
+        entries=tuple(Entry(index=int(r["entry"]), alive=bool(r["alive"]),
+                            used=tuple(r["used"])) for r in rows))
+
+
+def state_path(base: Path | None = None) -> Path:
+    return Path(base or PROCESSED) / STATE_FILE
+
+
+def write_state(state: PoolState, base: Path | None = None, *,
+                when: datetime | None = None) -> Path:
+    """Validate, then write. The file holds what `validate` handed back and nothing else."""
+    df = POOL_STATE.validate(to_frame(state))
+    when = when or datetime.now(UTC)
+    path = state_path(base)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = {"captured_at": when.isoformat(timespec="seconds"),
+           "season": state.season, "week": state.week,
+           "field_size": state.field_size, "pot": state.pot,
+           "entries": df.select("entry", "alive", "used").to_dicts()}
+    path.write_text(json.dumps(doc, indent=2))
+    return path
+
+
+def _read_doc(base: Path | None) -> dict[str, Any] | None:
+    path = state_path(base)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())
+
+
+def captured_at(base: Path | None = None) -> str | None:
+    """When the last-known state was read from the host, or None with no state."""
+    doc = _read_doc(base)
+    return None if doc is None else doc.get("captured_at")
+
+
+def read_state(base: Path | None = None) -> PoolState | None:
+    """The last-known state, validated on the way out; None on a fresh clone.
+
+    Through the contract rather than trusted, because a cached file that has drifted from
+    the declared shape is the one thing worse than no cache: it would be served as the field.
+    """
+    doc = _read_doc(base)
+    if doc is None:
+        return None
+    rows = [{**{k: doc.get(k) for k in ("season", "week", "field_size", "pot")}, **e}
+            for e in doc.get("entries", [])]
+    df = POOL_STATE.validate(pl.DataFrame(rows, schema=_SCHEMA))
+    return _from_frame(df)
+
+
+# --- the refresh ------------------------------------------------------------------------
+
+def refresh(*, season: int = SEASON_AHEAD, store: Path | None = None,
+            now: datetime | None = None) -> PoolState:
+    """One read of the host, parsed, written, returned. Raises rather than degrading: the
+    entry point is what serves last-known state, and says which failure it is serving over.
+
+    `AuthFailure` for a refused cookie, `EmptyPool` for a pool with nobody in it,
+    `HostUnreachable` for a transport that failed, `ContractViolation` for a payload that
+    does not parse, `RuntimeError` for an environment with no host or no cookie named. The
+    cookie appears in none of them.
+    """
+    url = _url()
+    if not url:
+        raise RuntimeError(f"no {URL_ENV} set; the pool host's resource URL goes in .env")
+    cookie = _cookie()
+    if not cookie:
+        raise RuntimeError(f"no {SESSION_ENV} set; the pool host's session cookie goes in .env")
+    try:
+        status, body = _http_get(url, cookie)
+    except LiveCallRefused:
+        raise
+    except Exception as exc:
+        text = f"{type(exc).__name__}: {exc}"
+        # GUARD cookie-never-printed [unit/test_fetch_pool.py]: a transport error quotes
+        # its own request, cookie header and all, and is scrubbed before it becomes a
+        # message anybody prints
+        text = redact(text, cookie)
+        # /GUARD
+        # `from None`: the chained cause is the unscrubbed exception, and a traceback prints
+        # the chain.
+        raise HostUnreachable(text) from None
+    if status in (401, 403):
+        raise AuthFailure(
+            f"the pool host answered HTTP {status}: the session cookie in {SESSION_ENV} was "
+            f"refused. Copy a fresh one from the browser into .env.")
+    state = parse_payload(body, season=season)
+    write_state(state, store, when=now)
+    return state
+
+
+# --- the entry point --------------------------------------------------------------------
+
+def report(state: PoolState, *, captured: str | None = None) -> list[str]:
+    lines = [f"  survivor pool, {state.season} as of week {state.week}: {state.field_size} "
+             f"entries, {state.alive} alive, pot ${state.pot:.2f}"
+             + (f" (read {captured})" if captured else "")]
+    for e in state.entries:
+        spent = ", ".join(e.used) if e.used else "nothing spent"
+        lines.append(f"  entry {e.index}: {'alive' if e.alive else 'out'}, {spent}")
+    lines.append(f"  hub.season.pool --entries {state.alive} --pot {state.pot:.2f}")
+    return lines
+
+
+def _serve_last_known(store: Path | None, why: str) -> int:
+    """Print why the refresh could not run, then the last-known state; or say there is none.
+
+    `why` is already scrubbed by whoever raised it. The read goes through the contract, so a
+    drifted cache is reported as unavailable rather than served.
+    """
+    try:
+        state = read_state(store)
+    except ContractViolation as exc:
+        return unavailable(PROG, f"the pool host's state ({why}; and the cached state", exc)
+    if state is None:
+        return unavailable(PROG, "the pool host's state", RuntimeError(why))
+    print(f"{PROG}: {why}; serving the last-known pool state read {captured_at(store)}",
+          file=sys.stderr)
+    for line in report(state, captured=captured_at(store)):
+        print(line)
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog=PROG,
+        description="The survivor pool's field, pot and every entry's spent teams, read "
+                    "from the pool host and cached under data/processed/. Members are "
+                    "indexed, never named.")
+    ap.add_argument("--refresh", action="store_true",
+                    help=f"read the host with the cookie in {SESSION_ENV}; on any failure "
+                         f"serve the last-known state and say why")
+    ap.add_argument("--status", action="store_true",
+                    help="print the last-known state; reads nothing but the store")
+    ap.add_argument("--payload", metavar="FILE", default=None,
+                    help="ingest a payload saved from the browser; no network, no cookie")
+    ap.add_argument("--season", type=int, default=SEASON_AHEAD)
+    ap.add_argument("--store", type=Path, default=None,
+                    help="the processed store the state is written to and read from")
+    a = ap.parse_args(argv)
+
+    if a.payload:
+        try:
+            state = parse_payload(json.loads(Path(a.payload).read_text()), season=a.season)
+            write_state(state, a.store)
+        except Exception as exc:
+            return unavailable(PROG, f"the saved payload {a.payload}", exc)
+        for line in report(state):
+            print(line)
+        return 0
+
+    if not a.refresh:
+        state = read_state(a.store) if state_path(a.store).exists() else None
+        if state is None:
+            return unavailable(PROG, "the pool host's state",
+                               FileNotFoundError(f"nothing under {state_path(a.store)}; run "
+                                                 f"--refresh with {SESSION_ENV} set"))
+        for line in report(state, captured=captured_at(a.store)):
+            print(line)
+        return 0
+
+    try:
+        state = refresh(season=a.season, store=a.store)
+    except EmptyPool as exc:
+        return _serve_last_known(a.store, str(exc))
+    except AuthFailure as exc:
+        return _serve_last_known(a.store, str(exc))
+    except ContractViolation as exc:
+        return _serve_last_known(a.store, f"the payload was refused: {exc}")
+    except Exception as exc:
+        # `HostUnreachable` and the two unset-environment cases, plus anything else the
+        # reach can raise. Scrubbed again here, so no path prints what a message carries.
+        return _serve_last_known(a.store, redact(f"{type(exc).__name__}: {exc}", _cookie()))
+    for line in report(state):
+        print(line)
+    return 0
+
+
+if __name__ == "__main__":                       # pragma: no cover - entry point
+    sys.exit(main())

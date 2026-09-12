@@ -56,7 +56,8 @@ CLI_MODULES = (
     "hub.draft.adherence", "hub.draft.backtest", "hub.draft.board", "hub.draft.calibrate", "hub.draft.evaluate",
     "hub.draft.fit_corrections",
     "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage", "hub.fetch.bigten",
-    "hub.fetch.cfbd", "hub.fetch.nflverse", "hub.fetch.odds", "hub.inspect", "hub.models.conformal",
+    "hub.fetch.cfbd", "hub.fetch.nflverse", "hub.fetch.odds", "hub.fetch.pool", "hub.inspect",
+    "hub.models.conformal",
     "hub.models.coverage",
     "hub.models.correlate", "hub.models.eval", "hub.models.injury", "hub.models.margin",
     "hub.models.ratings", "hub.models.spread",
@@ -188,7 +189,8 @@ def a_fresh_clone(monkeypatch, tmp_path):
     # Patched rather than merely unset: `load_dotenv` is called *inside* the functions that
     # read a key, so a developer's own `.env` would otherwise decide whether a CLI refuses.
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
-    for key in ("CFBD_API_KEY", "ODDS_API_KEY", "ESPN_S2", "ESPN_SWID", "ESPN_LEAGUE_ID"):
+    for key in ("CFBD_API_KEY", "ODDS_API_KEY", "ESPN_S2", "ESPN_SWID", "ESPN_LEAGUE_ID",
+                "POOL_SESSION", "POOL_URL"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(nflverse, "RAW", tmp_path / "raw")
     monkeypatch.setattr(store, "DATA", tmp_path / "processed")
@@ -238,6 +240,9 @@ ABSENT_INPUT = [
                         "--quota-path", "{tmp}/quota.json"]),
     ("hub.fetch.nflverse", ["--refresh"]),
     ("hub.fetch.odds", ["--snapshot", "--state-path", "{tmp}/odds.json"]),
+    # The pool host (#85). `--store` keeps the refresh's last-good read off the developer's
+    # store, so a fresh clone meets no cookie, no host and nothing cached to serve instead.
+    ("hub.fetch.pool", ["--refresh", "--store", "{tmp}"]),
     ("hub.inspect", ["{tmp}/nope"]),
     ("hub.models.component_error", ["--run"]),
     ("hub.models.conformal", ["--recalibrate", "--store", "{tmp}"]),

@@ -201,7 +201,10 @@ class Normalisation:
 @dataclass(frozen=True)
 class Contract:
     name: str
-    required: dict[str, type]                      # column -> polars dtype family
+    # column -> polars dtype family. A class for the scalar families, or a parametrised
+    # instance (`pl.List(pl.Utf8)`) where the family is the whole dtype -- `_family` reads
+    # either, and `POOL_STATE.used` is the one declaration that needs the second form.
+    required: dict[str, type | pl.DataType]
     non_null: tuple[str, ...] = ()
     unique: tuple[str, ...] = ()
     ranges: dict[str, tuple[float, float]] = field(default_factory=dict)
@@ -638,6 +641,43 @@ BIGTEN_CAPTURES = Contract(
     # Checked against `bigten_captures.synthetic.json`, a hand-built index: the 2026 page
     # held no report on the day this was written, so no capture exists to freeze. See
     # `verified_against_live`.
+    verified_against_live=False,
+)
+
+# What `hub.fetch.pool` *stores* (#85): one row per entry in the survivor pool, addressed by
+# an internal index and nothing else. The host's payload is nested JSON -- a pool, its weeks,
+# its entries and their picks -- and is refused field by field in `parse_payload`, which
+# raises this module's `ContractViolation` so a missing field is the same kind of refusal
+# a renamed column is. This is the declaration on the flat frame that parse produces and the
+# last-known state is read back through, so a cached file that has drifted is refused on the
+# way out rather than served as the field.
+#
+# `used` is the entry's Ledger -- the teams it has spent, in the CONTEXT.md sense -- and is
+# a list column rather than a joined string so an empty Ledger is `[]` and not `""`. The
+# writer declares the dtype, because a field where nobody has spent anything yet infers as
+# `List(Null)`, and the family check refuses that by design. No identity column exists to
+# declare: the whole point of the index is that the store never holds one.
+#
+# The pool-level facts -- season, the week the state is as of, the field size and the pot --
+# ride on every row the way `season` does on a Big Ten capture, so the frame is the state and
+# not half of it. `entry` is unique and runs 0..field_size-1; `field_size` is checked against
+# the row count in the parser, so a paginated or truncated payload is a refusal and not a
+# smaller field. Ranges are plausibility bounds: a pot in the millions or a week past the
+# playoffs is a units or a parsing error, not a pool.
+POOL_STATE = Contract(
+    name="pool_state",
+    required={"entry": pl.Int64, "alive": pl.Boolean, "used": pl.List(pl.Utf8),
+              "season": pl.Int64, "week": pl.Int64, "field_size": pl.Int64,
+              "pot": pl.Float64},
+    non_null=("entry", "alive", "used", "season", "week", "field_size", "pot"),
+    unique=("entry",),
+    ranges={"entry": (0, 100_000), "season": (2026, 2100), "week": (0, 22),
+            "field_size": (1, 100_000), "pot": (0, 10_000_000)},
+    min_rows=1,
+    # Checked against `pool_payload.synthetic.json`, a hand-built payload of the shape the
+    # module assumes: the host's payload is documented nowhere in this repo and no session
+    # cookie exists on the machine this was written on. See `verified_against_live`, and
+    # the module docstring for what the first live run must confirm.
     verified_against_live=False,
 )
 

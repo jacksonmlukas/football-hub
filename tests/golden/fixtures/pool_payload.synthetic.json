@@ -1,0 +1,60 @@
+{
+  "pool": {
+    "id": "pool-0001",
+    "name": "Survivor 2026",
+    "season": 2026,
+    "current_week": 3,
+    "field_size": 5,
+    "pot": 100.0,
+    "entry_fee": 20.0
+  },
+  "weeks": [
+    {"week": 1, "status": "final"},
+    {"week": 2, "status": "final"},
+    {"week": 3, "status": "open"}
+  ],
+  "entries": [
+    {
+      "id": "ent-8841",
+      "name": "Member A",
+      "alive": true,
+      "picks": [
+        {"week": 1, "team": "DAL", "result": "win"},
+        {"week": 2, "team": "KC", "result": "win"},
+        {"week": 3, "team": "SF", "result": null}
+      ]
+    },
+    {
+      "id": "ent-8842",
+      "name": "Member B",
+      "alive": true,
+      "picks": [
+        {"week": 1, "team": "PHI", "result": "win"},
+        {"week": 2, "team": "BUF", "result": "win"}
+      ]
+    },
+    {
+      "id": "ent-8843",
+      "name": "Member C",
+      "alive": false,
+      "picks": [
+        {"week": 1, "team": "NYG", "result": "loss"}
+      ]
+    },
+    {
+      "id": "ent-8844",
+      "name": "Member D",
+      "alive": true,
+      "picks": [
+        {"week": 1, "team": "DAL", "result": "win"},
+        {"week": 2, "team": "KC", "result": "win"}
+      ]
+    },
+    {
+      "id": "ent-8845",
+      "name": "Member E",
+      "alive": true,
+      "picks": []
+    }
+  ]
+}

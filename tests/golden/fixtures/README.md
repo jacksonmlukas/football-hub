@@ -46,6 +46,7 @@ sentence stop agreeing.
 | `cfbd_lines.synthetic.json` | **Hand-built** from CFBD's documented response shape |
 | `odds_spreads.synthetic.json` | **Hand-built** from The Odds API's documented response shape |
 | `bigten_captures.synthetic.json` | **Hand-built** index of `hub.fetch.bigten`'s own archive: the 2026 page held no report on 2026-09-11, so nothing existed to capture — see below |
+| `pool_payload.synthetic.json` | **Hand-built** payload of the shape `hub.fetch.pool` assumes the pool host returns: the shape is documented nowhere in this repo and no `POOL_SESSION` exists on this machine — see below |
 
 **The Big Ten index is hand-built for a different reason.** `bigten_captures.synthetic.json`
 describes a shape this repo writes rather than one a third party returns, so a "real capture"
@@ -53,6 +54,15 @@ of it would be a run of `hub.fetch.bigten --capture` on a day the page carries a
 page existed and held nothing on 2026-09-11, five days before the first report was due. The
 first real capture replaces it: copy `archive/bigten/availability/captures.json` here under a
 name without `.synthetic` and flip the flag.
+
+**The pool payload is hand-built for the CFBD reason, one step further out.** The CFBD pair
+were written from documentation; `pool_payload.synthetic.json` was written from nothing but
+the money-layer plan's facts -- JSON behind a session cookie, 401 unauthenticated, picks revealed after
+each deadline -- because the host's payload is documented nowhere in this repo. The module
+docstring of `hub.fetch.pool` lists what the first live run must confirm. The first real
+capture replaces it: save the resource from the browser, strip every `name` and `id` to a
+placeholder before committing (other members are real people), keep it under a name without
+`.synthetic`, and flip `POOL_STATE.verified_against_live`.
 
 The `.synthetic` suffix is not decoration. Those three were written by hand because no
 `CFBD_API_KEY` or `ODDS_API_KEY` exists on this machine, so **they prove our parser handles

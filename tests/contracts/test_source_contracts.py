@@ -44,6 +44,7 @@ from hub.contracts import (
     INJURIES,
     ODDS_SNAPSHOT,
     PBP,
+    POOL_STATE,
     SCHEDULES,
     SNAP_COUNTS,
     ContractViolation,
@@ -329,6 +330,22 @@ def test_bigten_captures_contract_holds_on_the_hand_built_index():
     assert got.height == 4
     assert set(got["kind"].to_list()) == {"article", "file", "lines"}
     assert got.filter(pl.col("kind") == "lines")["label"].null_count() == 1
+
+
+def test_pool_state_contract_holds_on_the_hand_built_payload():
+    """Hand-built for the Big Ten reason and one more: the shape is what `hub.fetch.pool`
+    *stores*, and the host's payload it is parsed from is documented nowhere in this repo --
+    so the fixture is the assumed payload, and the contract meets it only through the
+    parser. Five entries, one out, one that has spent nothing, and a week-3 pick in an open
+    week that must not be in any Ledger."""
+    from hub.fetch import pool
+
+    state = pool.parse_payload(load("pool_payload.synthetic.json"))
+    got = POOL_STATE.validate(pool.to_frame(state))
+    assert got.height == 5
+    assert got["used"].dtype == pl.List(pl.Utf8), "an empty Ledger inferred as List(Null)"
+    assert got.filter(pl.col("entry") == 0)["used"].to_list() == [["DAL", "KC"]]
+    assert got["alive"].sum() == 4
 
 
 def test_odds_fixture_parses_to_the_lines_table_shape():

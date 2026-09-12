@@ -30,6 +30,9 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 # code is no longer the only thing that knew.
 	-uv run python -m hub.fetch.cfbd $(if $(strip $(CFB_WEEK)),--week $(CFB_WEEK))
 	-uv run python -m hub.fetch.odds --snapshot
+# The pool host (#85). Optional like the other cookie-gated sources: with no POOL_SESSION,
+# or the host down, the CLI serves the last-known field and says so.
+	-uv run python -m hub.fetch.pool --refresh
 	uv run python -m hub.models.ratings --fit
 # The roster changes every week the waiver wire does, so it is refreshed here rather than
 # written once after the draft. Optional like the other ESPN-cookie sources: if the league is

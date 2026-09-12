@@ -22,9 +22,12 @@ def _board(n=300, **override):
     Built from the contract itself rather than a hand-written column list, so adding a
     required column cannot leave this fixture quietly behind the thing it is testing.
     """
-    fill = {pl.Utf8: [f"v{i}" for i in range(n)],
-            pl.Float64: [float(i + 1) for i in range(n)],
-            pl.UInt32: pl.Series([16] * n, dtype=pl.UInt32)}
+    # Keyed by whatever `required` declares -- a dtype class here, and since #85 a
+    # parametrised instance is also a legal value -- so the key type is left open.
+    fill: dict[object, object] = {
+        pl.Utf8: [f"v{i}" for i in range(n)],
+        pl.Float64: [float(i + 1) for i in range(n)],
+        pl.UInt32: pl.Series([16] * n, dtype=pl.UInt32)}
     df = pl.DataFrame({c: fill[dt] for c, dt in DRAFT_BOARD.required.items()})
     return df.with_columns(**override) if override else df
 
