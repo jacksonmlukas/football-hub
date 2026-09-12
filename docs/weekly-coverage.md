@@ -76,8 +76,12 @@ is wrong. It is not.
 > points under it, so the *ceiling* that section computes is not the ceiling. That paragraph
 > is superseded with the headline; whether CRPS is worth running is open again.
 >
-> The gate now refuses on this: `uv run python -m hub.models.coverage --gate` exits 1, and
-> `hub.publish` carries the verdict in `track_record.json`. See
+> The gate now refuses on this: `uv run python -m hub.models.coverage --gate` exits 1.
+> **Until 2026-09-12 nothing ran it, and nothing carried its verdict** -- the artifact the
+> publisher reads lived under the gitignored `data/processed/`, so the runner that builds
+> `track_record.json` never had it (#273). The slate workflow now measures, commits
+> `state/interval_coverage.json`, and gates -- in that order -- so the verdict reaches the
+> page and the red gate is a red scheduled run, twice a week, until #289 is decided. See
 > [the survivor price](#the-survivor-price-measured-2026-09-07), below, for the second
 > distribution this document listed as untested.
 
@@ -184,8 +188,9 @@ is unchanged until something gates it.
 
 ## Reproduce
 
-The harness is `hub.models.coverage`, committed under ADR-0007 because `--gate` now refuses
-on the result and `hub.publish` carries it. It calls `predict.moments` and `predict.skewed`
+The harness is `hub.models.coverage`, committed under ADR-0007 because `--gate` refuses on
+the result and the slate workflow runs it: measure, commit `state/interval_coverage.json`,
+then gate, so `hub.publish` reads a file that exists on the runner (#273). It calls `predict.moments` and `predict.skewed`
 rather than restating the laws behind them, and `tests/unit/test_coverage.py` holds it to
 that by moving `WEEKLY_K` and requiring the graded table to move with it.
 
@@ -194,7 +199,7 @@ uv run python -m hub.models.coverage --measure                    # the real one
 uv run python -m hub.models.coverage --measure --centre realised  # this document's
 uv run python -m hub.models.coverage --survivor --seasons 2015,2016,2017,2018,2019,2020,2021,2022,2023,2024,2025
 uv run python -m hub.models.coverage --gate                       # exits 1 today
-uv run python -m hub.models.coverage --measure --write            # for the publisher
+uv run python -m hub.models.coverage --measure --survivor --write # what the slate commits
 ```
 
 *(Superseded, kept as the record of how this was first run.)* No committed harness. ADR-0007

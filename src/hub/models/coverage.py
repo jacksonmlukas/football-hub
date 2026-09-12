@@ -60,7 +60,7 @@ from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.models import predict
 from hub.models.scoring_rules import reliability_by
-from hub.paths import PROCESSED
+from hub.paths import STATE_DIR
 
 # Nothing here is fitted. Every number below is either a filter this measurement inherits
 # from the document it supersedes, a nominal level, or a threshold pre-registered before the
@@ -120,10 +120,13 @@ SPREAD_EDGES: tuple[float, ...] = (0.0, 3.0, 6.0, 9.0, 14.0, 30.0)
 # What counts as "the favourites survivor actually picks", for the headline the gate reads.
 SURVIVOR_SPREAD = 7.0
 
-# Where `--measure --write` leaves its answer and where `hub.publish` reads it from. Under
-# `data/processed/` rather than `site/data/` because the site copy is published output and
-# this is the measurement behind it; the publisher joins the two.
-ARTIFACT = PROCESSED / "interval_coverage.json"
+# Where `--measure --write` and `--survivor --write` leave their answers and where
+# `hub.publish` reads them from. Under `state/`, which is committed, rather than
+# `data/processed/`, which is gitignored: a file written there never reached the runner, so
+# the publisher read nothing and the track record shipped with no coverage field while the
+# doc said it carried one (#273). Not under `site/data/` because the site copy is published
+# output and this is the measurement behind it; the publisher joins the two.
+ARTIFACT = STATE_DIR / "interval_coverage.json"
 
 
 class NotEnoughWeeks(Exception):
@@ -365,16 +368,45 @@ def survivor_price(schedules: pl.DataFrame, edges: Sequence[float] = SPREAD_EDGE
 
 
 def write_summary(result: dict[str, Any], path: Path | None = None) -> Path:
-    """Leave the measurement where a publisher can read it.
+    """Leave the weekly measurement where a publisher can read it.
 
     ADR-0007's second consequence: the result is written rather than printed, so a later
-    disagreement is between two recorded runs instead of between two memories.
+    disagreement is between two recorded runs instead of between two memories. A survivor
+    block already in the file is kept (#273): one file, two verdicts, one reader.
     """
     p = path or ARTIFACT
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(jsonio.dumps({"name": "interval_coverage",
-                               "generated_at": jsonio.stamp(), **result}, indent=2))
+    kept = _existing(p).get("survivor")
+    p.write_text(jsonio.dumps({"name": "interval_coverage", "generated_at": jsonio.stamp(),
+                               **result, **({"survivor": kept} if kept else {})}, indent=2))
     return p
+
+
+def write_survivor(result: dict[str, Any], path: Path | None = None) -> Path:
+    """Leave the survivor verdict beside the weekly one, in the same file (#273).
+
+    A companion block, not a summary of its own: each block carries its own `generated_at`,
+    and `published_summary` reads nothing until the weekly measurement has been written,
+    because the page's consumers key on the weekly `verdict`. The slate runs `--measure
+    --survivor --write` together, which is the order that leaves both.
+    """
+    p = path or ARTIFACT
+    p.parent.mkdir(parents=True, exist_ok=True)
+    have = _existing(p)
+    block = {k: result.get(k) for k in
+             ("verdict", "favourite_spread", "favourite_predicted", "favourite_actual",
+              "favourite_gap", "favourite_sigma", "favourite_n", "n_games", "margin_sd")}
+    block["generated_at"] = jsonio.stamp()
+    p.write_text(jsonio.dumps({"name": "interval_coverage", **have, "survivor": block}, indent=2))
+    return p
+
+
+def _existing(p: Path) -> dict[str, Any]:
+    try:
+        got = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return {}
+    return got if isinstance(got, dict) else {}
 
 
 def published_summary(path: Path | None = None) -> dict[str, Any] | None:
@@ -392,9 +424,12 @@ def published_summary(path: Path | None = None) -> dict[str, Any] | None:
         return None
     if not isinstance(got, dict) or "verdict" not in got:
         return None
-    return {k: got.get(k) for k in
-            ("centre", "lookahead", "n", "gate_subset", "gate_n", "gate_cov80", "band",
-             "verdict", "generated_at")}
+    out = {k: got.get(k) for k in
+           ("centre", "lookahead", "n", "gate_subset", "gate_n", "gate_cov80", "band",
+            "verdict", "generated_at")}
+    if isinstance(got.get("survivor"), dict):
+        out["survivor"] = got["survivor"]
+    return out
 
 
 def _print_table(rows: list[dict[str, Any]]) -> None:
@@ -468,6 +503,8 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"{got['favourite_predicted']:.3f}, actual {got['favourite_actual']:.3f}, "
               f"gap {got['favourite_gap']:+.3f} at {got['favourite_sigma']:+.1f} se "
               f"over {got['favourite_n']:,} sides -> {got['verdict']}")
+        if a.write:
+            print(f"    written to {write_survivor(got)}")
 
     if a.measure or a.gate:
         try:
