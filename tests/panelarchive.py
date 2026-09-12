@@ -104,7 +104,12 @@ def install(monkeypatch, tmp_path: Path, *, edits: dict[str, Edit] | None = None
         def load(seasons=None, **_kw):
             df = served(name)
             want = _seasons(seasons)
-            return df if want is None else df.filter(pl.col("season").is_in(want))
+            # nflreadpy picks the season *files* to read, so its `seasons` argument never
+            # meets the column's dtype. This filter does, and `ff_opportunity` ships `season`
+            # as a string -- the capture records that, as it should, and `expected_weekly`
+            # casts it -- so the comparison is made on the integer the argument names.
+            return df if want is None else df.filter(
+                pl.col("season").cast(pl.Int64).is_in(want))
         return load
 
     def refuse(source: str):

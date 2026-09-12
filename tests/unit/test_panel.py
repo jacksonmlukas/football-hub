@@ -525,6 +525,35 @@ def test_the_panel_is_one_row_per_player_season_week(monkeypatch, tmp_path):
     assert not p.select("player_id", "season", "week").is_duplicated().any()
 
 
+@pytest.mark.parametrize(("source", "name_col"), [
+    ("player_stats", "player_display_name"),
+    ("ff_opportunity", "full_name"),
+    ("ff_rankings", "player"),
+    pytest.param("snap_counts", "player", marks=pytest.mark.xfail(
+        strict=True, reason="#234: the first `--write` matched the cohort by display name and "
+        "PFR spells `Michael Pittman Jr.` with the suffix, so his 25 snap rows are absent until "
+        "the archive is re-taken with the corrected rule. Strict: the re-take makes this pass, "
+        "and then this marker comes off.")),
+])
+def test_every_cohort_player_reaches_every_per_player_capture(source, name_col):
+    """The archive's cohort is sixteen players in every source that names players, on the key
+    the Panel joins on. Not the injury report, where a player with no row is a real fact.
+
+    The first re-take (#234) matched the cohort by display name, and the sources do not agree
+    on one: `ff_rankings` carries `Michael Pittman Jr.` and `Patrick Mahomes II`, `snap_counts`
+    the first of those. Both fell out of those captures and nothing said so -- the Panel
+    joined, found no row, and carried the null, which is exactly the shape a trimmed fixture
+    fails in: it still reads as a capture and proves less. `player_key` is what every join in
+    `build_panel` collapses a name to, so the cohort is asserted on it.
+    """
+    keys = {player_key(n) for n in arc.PLAYERS}
+    got = {player_key(n) for n in arc.frame(source)[name_col].drop_nulls().to_list()}
+    missing = sorted(keys - got)
+    assert not missing, (
+        f"{missing} are in the cohort and not in the frozen `{source}` capture; every join "
+        f"onto them resolves to null and no test downstream can tell that from a quiet week")
+
+
 def test_the_trend_features_have_something_to_compute_on(monkeypatch, tmp_path):
     """The archive's own premise. `trend` reaches back six calendar weeks, so a capture of
     three weeks would return an all-null column and every leakage assertion above would hold

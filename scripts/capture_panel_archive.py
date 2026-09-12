@@ -30,21 +30,18 @@ is re-taken it should be its own change, with the before and after recorded.
 
 Live calls, so this is not run by the suite. It is the thing the suite's fixtures come from.
 
-**Not yet adopted, and the reason is the ticket's own point.** Run on 2026-09-06 this produces
-a contract-valid archive at 0.62 MB, against the committed 0.75 MB -- but eleven Panel tests
-fail against it, on content rather than columns: `snap_trend` goes null where the tests expect
-a trend, and the row counts do not match what is committed (`ff_opportunity` 409 against 1000,
-`ff_rankings` 835 against 456, `snap_counts` 385 against 410).
-
-That is the unwritten trim rule biting. The committed archive was cut by hand and the cuts
-were never recorded, so this script can state *a* rule but not *the* rule, and a different
-rule is a different world -- one where a six-week trend has fewer weeks to be computed from.
-Adopting it therefore means reconciling those eleven tests against the new archive, deciding
-in each case whether the assertion was about the Panel or about the fixture. That is real work
-and it is not a re-capture, so it is not smuggled in here.
-
-What this file buys today is that the rule is finally written down and executable. What it
-costs is that the first person to run `--write` owns those eleven tests.
+**The rule is stated in terms of the readers the archive serves, and that was the first
+version's defect (#234).** Run on 2026-09-11, it cut `ff_rankings` to the preseason
+window `hub.draft.board.consensus` reads -- a reader this archive does not serve, because the
+draft board is frozen separately as `draft_board.json` -- and so held eight scrape dates, four of
+them in December, for a Panel whose `weekly_consensus` reads the in-season `weekly-op` page.
+The screen's Panel shrank from 344 rows to 13 and every trend went null. It matched the cohort
+by display name, which dropped `Michael Pittman Jr.` and `Patrick Mahomes II` from the
+sources that spell them so, while the Panel joins on `player_key`. And it left
+`ff_opportunity` at 409 rows against the 1,000 its own contract requires, so `nflverse.load`
+refused the very capture that was meant to be routed through it. Each of those is now a
+sentence in the code below, and every capture is validated against its contract before it is
+written, so "contract-valid" is checked rather than claimed.
 """
 from __future__ import annotations
 
@@ -62,6 +59,8 @@ ARCHIVE = ROOT / "tests" / "golden" / "fixtures" / "panel_archive"
 # The seasons the archive covers, read from the module that reads the archive, so the two
 # cannot disagree about what was captured.
 from panelarchive import SEASONS  # noqa: E402
+
+from hub.names import player_key  # noqa: E402
 
 # What the Panel reads, per source, beyond the contract's own required set. Both are kept:
 # the contract's, because `nflverse.load` validates against it and a capture that fails its
@@ -113,10 +112,6 @@ COHORT: tuple[str, ...] = (
 # held-out tail. Whole seasons would triple the archive to prove nothing more.
 WEEKS = range(1, 15)
 
-# Scrape dates kept per preseason for `ff_rankings`. One would serve `consensus` and prove
-# nothing about the as-of filter; the whole window is four hundred dates and 54 MB.
-SCRAPES_PER_SEASON = 4
-
 # The column each source names its player in. `schedules` has none -- it is per game, and every
 # row is needed for the join regardless of who is in the cohort.
 PLAYER_COLUMN: dict[str, str] = {
@@ -128,14 +123,64 @@ PLAYER_COLUMN: dict[str, str] = {
 }
 
 
+def _in_cohort(col: str) -> pl.Expr:
+    """Cohort membership, on the key the Panel joins on and not on the display name.
+
+    The sources do not agree on a spelling: `snap_counts` and `ff_rankings` carry
+    `Michael Pittman Jr.` and `ff_rankings` carries `Patrick Mahomes II`, while `player_stats`
+    has neither suffix. An exact match kept both players in some sources and lost them in
+    others, and the loss was invisible -- the Panel joined, found nothing, and carried the
+    null. `hub.names.player_key` is what every join in the Panel collapses a name to, so it
+    is what the cohort is matched on.
+    """
+    keys = {player_key(n) for n in COHORT}
+    return pl.col(col).map_elements(player_key, return_dtype=pl.Utf8).is_in(list(keys))
+
+
 def _trim(source: str, df: pl.DataFrame) -> pl.DataFrame:
     """The row rule, applied where the source has the column to apply it to."""
     col = PLAYER_COLUMN.get(source)
     if col and col in df.columns:
-        df = df.filter(pl.col(col).is_in(list(COHORT)))
+        df = df.filter(_in_cohort(col))
     if "week" in df.columns:
-        df = df.filter(pl.col("week").is_in(list(WEEKS)))
+        df = df.filter(pl.col("week").cast(pl.Int64).is_in(list(WEEKS)))
     return df
+
+
+def _pad_to_floor(source: str, kept: pl.DataFrame, pool: pl.DataFrame) -> pl.DataFrame:
+    """Rows that join to no Panel row, kept so the capture clears its own contract's floor.
+
+    `FF_OPPORTUNITY` declares `min_rows=1000` and `nflverse.load` validates before the Panel
+    sees the frame, so the cohort's 409 rows would fail the contract rather than the test --
+    which is what the first version of this rule did, and claimed otherwise. The remainder is
+    every other row in the same (season, week) cells, in `(season, week, player_id)` order,
+    taken until the file reaches exactly the floor. They are there for the floor and nothing
+    else, and the fixtures README says so.
+    """
+    from hub.fetch.nflverse import SOURCES
+    contract = SOURCES.get(source)
+    floor = contract.min_rows if contract else 0
+    if kept.height >= floor:
+        return kept
+    col = PLAYER_COLUMN[source]
+    cells = kept.select("season", "week").unique()
+    filler = (pool.join(cells, on=["season", "week"], how="semi")
+                  .filter(~_in_cohort(col) & pl.col("player_id").is_not_null())
+                  .sort(["season", "week", "player_id"])
+                  .head(floor - kept.height))
+    return pl.concat([kept, filler])
+
+
+def _week_windows(schedules: pl.DataFrame) -> pl.DataFrame:
+    """First and last kickoff per (season, week), the frame `hub.models.panel.assign_weeks`
+    maps a scrape onto. The same three lines as `panel.week_windows`, on the frame this run
+    captured rather than on a second fetch."""
+    return (schedules.filter(pl.col("season").is_in(list(SEASONS))
+                             & (pl.col("game_type") == "REG"))
+                     .group_by(["season", "week"])
+                     .agg(pl.col("gameday").str.to_date().min().alias("first_kick"),
+                          pl.col("gameday").str.to_date().max().alias("last_kick"))
+                     .sort("last_kick"))
 
 
 def _wanted(source: str) -> list[str]:
@@ -163,25 +208,19 @@ def capture(source: str, keep: list[str]) -> pl.DataFrame:
     if source == "schedules":
         got = nfl.load_schedules().filter(pl.col("season").is_in(list(SEASONS)))
     elif source == "ff_rankings":
-        # The archive, narrowed to the preseasons the captured seasons drafted from. The full
-        # table is 1.83M rows from 2019 and has no business in a fixture directory; the window
-        # is the one `hub.draft.board.consensus` reads for these seasons.
-        # `scrape_date` is an ISO string and sorts correctly as text, which is the comparison
-        # `hub.draft.board.consensus` makes; casting it here just to compare would be waste
-        # and would differ from the reader this fixture serves.
-        window = nfl.load_ff_rankings("all").filter(
-            (pl.col("scrape_date") >= f"{min(SEASONS)}-07-01")
-            & (pl.col("scrape_date") <= f"{max(SEASONS)}-09-01"))
-        # The last few scrapes of each preseason, not all of them. `consensus(as_of)` takes
-        # the latest scrape per player at or before its date, so one date would serve the
-        # reader and prove nothing about the as-of filter; a handful exercises it while
-        # keeping four hundred rows rather than four hundred dates.
-        keep_dates = []
-        for yr in SEASONS:
-            dates = sorted(window.filter(pl.col("scrape_date").str.starts_with(str(yr)))
-                                 ["scrape_date"].unique().to_list())
-            keep_dates += dates[-SCRAPES_PER_SEASON:]
-        got = window.filter(pl.col("scrape_date").is_in(keep_dates))
+        # The page the Panel reads, at the scrapes the Panel would assign to the captured
+        # weeks. `weekly_consensus` takes `CONSENSUS_PAGE` -- the cross-position weekly page,
+        # 47 pages are stacked in the full table on their own scales -- and `assign_weeks`
+        # is what decides which week a scrape belongs to, so it decides here too: a scrape
+        # is kept when it lands on one of `WEEKS` in one of `SEASONS`. The draft board's preseason
+        # window is *not* this archive's business; `draft_board.json` serves the draft board.
+        from hub.models.panel import CONSENSUS_PAGE, assign_weeks
+        page = nfl.load_ff_rankings("all").filter(pl.col("page_type") == CONSENSUS_PAGE)
+        scrapes = page.select(pl.col("scrape_date").str.to_date()).unique()
+        assigned = assign_weeks(scrapes, _week_windows(nfl.load_schedules()))
+        dates = (assigned.filter(pl.col("week").is_in(list(WEEKS)))["scrape_date"]
+                         .dt.strftime("%Y-%m-%d").to_list())
+        got = page.filter(pl.col("scrape_date").is_in(dates))
     elif source == "ff_opportunity":
         got = nfl.load_ff_opportunity(seasons=list(SEASONS), stat_type="weekly")
     else:
@@ -191,7 +230,23 @@ def capture(source: str, keep: list[str]) -> pl.DataFrame:
     if missing:
         raise SystemExit(f"{source}: upstream no longer has {missing}; the contract or the "
                          f"Panel is reading a column that is gone")
-    return _trim(source, got.select(have) if have else got)
+    pool = got.select(have) if have else got
+    return _pad_to_floor(source, _trim(source, pool), pool)
+
+
+def check(source: str, df: pl.DataFrame) -> None:
+    """The capture, asked the question `nflverse.load` will ask of it. A capture that fails
+    its own contract blocks the routing it exists to serve, and the first run of this script
+    wrote one while its docstring said it had not."""
+    from hub.contracts import ContractViolation
+    from hub.fetch.nflverse import SOURCES
+    contract = SOURCES.get(source)
+    if contract is None:
+        return
+    try:
+        contract.validate(df)
+    except ContractViolation as e:
+        raise SystemExit(f"{source}: the capture fails its own contract -- {e}") from e
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -203,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
     for source in sorted(set(PANEL_READS)):
         keep = _wanted(source)
         df = capture(source, keep)
+        check(source, df)
         blob = json.dumps(_dump(df), separators=(",", ":"))
         total += len(blob)
         print(f"  {source:16} {df.height:>7,} rows x {df.width:>3} cols  "

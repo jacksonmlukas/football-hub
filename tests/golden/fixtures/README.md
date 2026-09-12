@@ -189,18 +189,37 @@ before-its-outcome rule — was covered by a single `inspect.getsource` call tha
 function's own text. `tests/panelarchive.py` serves these files to the assembly at the last
 call before the wire, so that everything above that line is the production path.
 
-Captured on **2026-09-05** by one bulk `nflreadpy` call per source, plus one run of
-`hub.draft.board.board_as_of(2024)`. No key, no loop over teams or games.
+Six of the seven are the output of `scripts/capture_panel_archive.py --write` — the trim rule
+in code, one as-of for every nflverse source, each capture validated against its contract
+before it is written. The seventh, `draft_board.json`, is the 2026-09-05 capture untouched;
+the script says why. Re-taken **2026-09-11** (#234), one bulk `nflreadpy` call per source. No
+key, no loop over teams or games.
 
 | Fixture | Source |
 |---|---|
 | `panel_archive/player_stats.json` | **Captured**, `load_player_stats([2023, 2024], summary_level="week")`, 410 rows |
-| `panel_archive/schedules.json` | **Captured**, `load_schedules()`, all 416 REG games of weeks 1-14 |
-| `panel_archive/snap_counts.json` | **Captured**, `load_snap_counts([2023, 2024])`, 410 rows |
-| `panel_archive/injuries.json` | **Captured**, `load_injuries([2023, 2024])`, 101 rows |
-| `panel_archive/ff_rankings.json` | **Captured**, `load_ff_rankings("all")`, the `weekly-op` page, 456 rows |
+| `panel_archive/schedules.json` | **Captured**, `load_schedules()`, all 416 REG games of weeks 1-14, `SCHEDULES.required` included |
+| `panel_archive/snap_counts.json` | **Captured**, `load_snap_counts([2023, 2024])`, 385 rows, `SNAP_COUNTS.required` included — see below |
+| `panel_archive/injuries.json` | **Captured**, `load_injuries([2023, 2024])`, 101 rows, `INJURIES.required` included |
+| `panel_archive/ff_rankings.json` | **Captured**, `load_ff_rankings("all")`, the `weekly-op` page at the scrapes of weeks 1-14, 365 rows — see below |
 | `panel_archive/ff_opportunity.json` | **Captured**, `load_ff_opportunity(stat_type="weekly")`, 1,000 rows — see below |
-| `panel_archive/draft_board.json` | **Captured** output of `board_as_of(2024)`, its top 200 rows |
+| `panel_archive/draft_board.json` | **Captured** 2026-09-05, output of `board_as_of(2024)`, its top 200 rows |
+
+**Two of the six were re-taken from the repo's own pinned cache rather than from the wire,
+and that is recorded here so the next `--write` can confirm it.** The first run of the script
+cut `ff_rankings` to the draft board's preseason window and left `ff_opportunity` under its
+contract's floor (the script's docstring has the account); the rule was corrected offline, and
+`ff_rankings` and `ff_opportunity` were re-taken through the corrected `capture()` from
+`data/raw/nflverse/ff_rankings/all-fadb12e5.parquet` and
+`data/raw/nflverse/ff_opportunity/{2023,2024}-5ef5ef03.parquet` — real frames `nflverse.load`
+fetched, validated and pinned on 2026-09-06/07. `ff_rankings` is append-only and both seasons of
+`ff_opportunity` are closed, so those rows are what a live call returns today; the 365
+rankings rows are byte-for-byte the 2026-09-05 hand capture's rows on those dates. The one
+thing the pinned cache could not supply is `snap_counts`: the first run matched the cohort by
+display name and PFR spells `Michael Pittman Jr.` with the suffix, so **his 25 snap rows are
+absent and his `snap_share` is null on every row** until `--write` is run again with the
+corrected rule, which matches on `player_key`. Nothing asserts on that column for him; the
+385 is the count to watch.
 
 **Each file carries its own dtypes.** These are `{"dtypes": {...}, "rows": [...]}` rather than
 a bare list, and that is not a second dialect for its own sake. JSON has three scalar types and
@@ -215,10 +234,13 @@ reach back six calendar weeks and the priors expand over every earlier week, so 
 constraint is *consecutive weeks*, not players: a capture of four hundred players over three
 weeks would leave every trend null and every leakage assertion true over nothing.
 `test_the_trend_features_have_something_to_compute_on` is the floor that says so, in numbers.
-Columns are cut to what the reader takes — the twenty-three `weekly_stats` names, the eleven
-`game_context` and `week_windows` read off a schedule, `offense_pct` and the REG marker for
-snaps, the status/practice pair plus identity for injuries, and `FF_RANKINGS.required` exactly,
-since that is the column list `load_rankings` asks the loader for.
+Columns are the contract's required set plus what the reader takes, and nothing else — the
+union `scripts/capture_panel_archive.py` states per source. The first capture kept only the
+second half, and that is what #234 was: a capture that satisfied every reader and failed its
+own contract the day the reader was routed through `nflverse.load`. Rows for `ff_rankings` are
+the `weekly-op` page — the one `weekly_consensus` reads — at every scrape `assign_weeks` maps
+onto one of weeks 1-14 of either season, so the page's coverage here (2023 from week 2, 2024
+from week 4) is FantasyPros' own and not a cut.
 
 **Which sixteen, and why those.** Six change team between the two seasons or miss weeks, so the
 calendar-grid reindexing in `trend` and `recent_mean` is exercised on real gaps rather than on
@@ -237,12 +259,13 @@ and 200 because twelve teams over fourteen rounds take 168 of them. Freezing the
 exercise a seam that belongs to `hub.draft.board` and has six test files of its own. What
 `assemble_universe` owns is everything from the board onward, and that runs here for real.
 
-**The 650 rows of `ff_opportunity` that join to nothing.** `FF_OPPORTUNITY` declares
+**The 591 rows of `ff_opportunity` that join to nothing.** `FF_OPPORTUNITY` declares
 `min_rows=1000` and the production loader validates before the panel sees the frame, so a file
-holding only the sixteen players' 350 rows would fail the contract rather than the test. The
-remainder is every other row in the same (season, week) cells, in `(season, week, player_id)`
-order, taken until the file reaches exactly 1,000. They join to no Panel row and are there for
-the floor and nothing else.
+holding only the sixteen players' 409 rows would fail the contract rather than the test — and
+did, on the first run of the script, which had dropped this paragraph's rule. The remainder is
+every other row in the same (season, week) cells, in `(season, week, player_id)` order, taken
+until the file reaches exactly 1,000 (`_pad_to_floor`). They join to no Panel row and are there
+for the floor and nothing else.
 
 **What this archive cannot drive, and why no file here does.** `PanelSpec(routes=...)` and
 `PanelSpec(scheme=...)` read `load_participation` and `load_ftn_charting`, which are
