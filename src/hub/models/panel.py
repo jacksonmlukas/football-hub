@@ -43,7 +43,7 @@ from typing import NamedTuple
 import polars as pl
 
 from hub.config import DRAFTED_POSITIONS, SEASON_COMPLETED
-from hub.contracts import INJURIES, SNAP_COUNTS, ContractViolation
+from hub.contracts import ContractViolation
 from hub.fetch import nflverse
 from hub.fetch.nflverse import RANKINGS_COLS, Pin, data_pin, load_rankings
 from hub.models import components
@@ -152,25 +152,26 @@ TD_COLUMNS: tuple[str, ...] = ("receiving_tds", "rushing_tds", "passing_tds")
 # means the frame no contract has ever seen, refetched live on every build, and a digest that
 # cannot name what it read.
 #
-# Six nflverse sources reach this module. Five now route:
+# Eight nflverse sources reach this module, and every one of them routes:
 #
 #   ff_rankings    `weekly_consensus`, through `load_rankings` -- #33, and the only one an
 #                  as-of can filter rather than label
 #   ff_opportunity `expected_weekly`
 #   player_stats   `weekly_stats`
+#   schedules      `game_context`, `week_windows`, `scheme_rates`, `route_share`
+#   snap_counts    `snap_share`
+#   injuries       `injury_severity`
 #   participation  `route_share` and `scheme_rates`
 #   ftn_charting   `scheme_rates`
 #
-# **Three do not, and the obstacle is the frozen archive rather than this module.**
-# `schedules`, `snap_counts` and `injuries` are the three captures in
-# `tests/golden/fixtures/panel_archive/` that were trimmed to the columns the Panel *selects*,
-# which is narrower than what their contracts require -- so routing them makes `load` refuse
-# the archive, and eleven Panel tests fail on a frame that is not the Panel's fault.
-# `scripts/capture_panel_archive.py` states the trim rule in code and re-takes the archive from
-# a live nflverse; adopting what it produces is the rest of #35 and it needs a network run.
-# `tests/unit/test_panel.py::test_the_three_unrouted_sources_are_blocked_by_the_archive_and_
-# not_by_this_module` names the missing columns and goes red the day they arrive, so this
-# paragraph cannot quietly outlive the block it describes.
+# The last three to route -- `schedules`, `snap_counts`, `injuries` -- waited on the frozen
+# archive rather than on this module: their captures had been trimmed to the columns the Panel
+# *selects*, narrower than what their contracts require, so routing them made `load` refuse
+# `tests/golden/fixtures/panel_archive/`. #234 re-took the archive with the trim rule in
+# `scripts/capture_panel_archive.py`, contract-checked before it is written, and the block
+# went with it. `tests/unit/test_panel.py` holds the routing two ways: an AST scan that no
+# `nfl.load_*` call is left in this module, and a build under a watched loader that sees --
+# and pins -- all six sources the archive can drive.
 #
 # The two that route without being exercised offline -- `participation` and `ftn_charting` --
 # are the two the archive deliberately refuses (they are play-level; see that directory's
@@ -178,11 +179,29 @@ TD_COLUMNS: tuple[str, ...] = ("receiving_tds", "rushing_tds", "passing_tds")
 # archive nothing and buys the live path the same contract every other source now gets.
 
 
+# What the four `schedules` readers below take between them, asked for by name so a column
+# that stops arriving is named by `load`'s `column-vanished-upstream` guard rather than found
+# three joins later. It is also every column `SCHEDULES` requires, so the contract runs on the
+# frame these functions actually read -- the same shape `WEEK_STATS_COLS` gives `weekly_stats`.
+SCHEDULE_COLS: tuple[str, ...] = (
+    "game_id", "season", "week", "game_type", "home_team", "away_team", "gameday",
+    "spread_line", "total_line", "home_rest", "away_rest", "roof", "wind")
+
+
+def schedule(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
+    """The schedule for `seasons`, through the validated cached loader -- #35, its last part.
+
+    One call for the four readers, so the cache carries one entry per season set rather than
+    one per reader. Nothing is filtered here: `game_context` and `week_windows` want the REG
+    games and `scheme_rates` and `route_share` want every game's id, and each says which.
+    """
+    return nflverse.load("schedules", list(seasons), cols=SCHEDULE_COLS)
+
+
 def game_context(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
     """One row per (team, season, week): the facts published before kickoff.
 
-    **Not routed through `hub.fetch.nflverse.load`** -- see the note above this function.
-    `SCHEDULES` requires `game_id` and the frozen capture does not carry it.
+    Read off `schedule`, the validated cached loader's frame -- #35.
 
     `spread_line` is home-relative and positive means the home team is favoured, so the away
     row negates it. The implied team total is `total/2 + own_spread/2` -- the market's own
@@ -204,9 +223,7 @@ def game_context(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - 
     column. The other half of #170 is `RECORDED` below: what this column is is a *condition
     observed during* week w, so it cannot be a feature of week w either way.
     """
-    import nflreadpy as nfl
-    s = (nfl.load_schedules()
-           .filter(pl.col("season").is_in(list(seasons)) & (pl.col("game_type") == "REG")))
+    s = schedule(seasons).filter(pl.col("game_type") == "REG")
     sides = []
     for home in (True, False):
         team, opp = ("home_team", "away_team") if home else ("away_team", "home_team")
@@ -452,21 +469,18 @@ FTN_FIRST_SEASON = 2022
 
 def scheme_rates(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
     """`scheme_rates_from_plays` over real seasons, skipping those FTN does not cover."""
-    import nflreadpy as nfl
     frames = []
     for yr in seasons:
         if yr < FTN_FIRST_SEASON:
             continue
-        # Both play-level sources go through the validated cached path (#35). Neither is
-        # `WIDE` -- 29 and 26 columns -- so neither needs `cols`, and asking for one would
-        # anyway have to be a superset of the contract's required set rather than the four
-        # booleans read below. `schedules` is the one call in this function still reaching
-        # nflreadpy, for the reason stated above `game_context`.
+        # All three sources go through the validated cached path (#35). Neither play-level
+        # one is `WIDE` -- 29 and 26 columns -- so neither needs `cols`, and asking for one
+        # would anyway have to be a superset of the contract's required set rather than the
+        # four booleans read below.
         c = nflverse.load("ftn_charting", [yr]).select(
             "nflverse_game_id", "nflverse_play_id", *SCHEME.values())
-        wk = (nfl.load_schedules().filter(pl.col("season") == yr)
-                .select(pl.col("game_id").alias("nflverse_game_id"),
-                        pl.col("week").cast(pl.Int64)))
+        wk = schedule([yr]).select(pl.col("game_id").alias("nflverse_game_id"),
+                                   pl.col("week").cast(pl.Int64))
         pa = (nflverse.load("participation", [yr])
                 .select("nflverse_game_id", "play_id", "possession_team",
                         (pl.col("route").is_not_null()
@@ -518,20 +532,17 @@ def route_share(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - n
     is the share of those a player was on the field for. `offense_players` is populated for
     91-100% of plays across 2021-25.
     """
-    import nflreadpy as nfl
     frames = []
     for yr in seasons:
-        # Through the validated cached path (#35), as in `scheme_rates`. `schedules` below is
-        # the one call left reaching nflreadpy here -- see the note above `game_context`.
+        # Through the validated cached path (#35), as in `scheme_rates`.
         p = (nflverse.load("participation", [yr])
                .filter(pl.col("route").is_not_null() & (pl.col("route") != "")
                        & pl.col("offense_players").is_not_null()
                        & (pl.col("offense_players") != "")))
         if p.is_empty():
             continue
-        wk = (nfl.load_schedules().filter(pl.col("season") == yr)
-                .select(pl.col("game_id").alias("nflverse_game_id"),
-                        pl.col("week").cast(pl.Int64)))
+        wk = schedule([yr]).select(pl.col("game_id").alias("nflverse_game_id"),
+                                   pl.col("week").cast(pl.Int64))
         frames.append(route_share_from_plays(p.join(wk, on="nflverse_game_id", how="inner"), yr))
     if not frames:
         return route_share_from_plays(pl.DataFrame(), 0)
@@ -545,21 +556,16 @@ def snap_share(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - ne
     name instead is what `hub.names.player_key` is for, and `docs/snap-trend-signal.md` records
     the crosswalk at 99.8%.
 
-    The five columns it reads are asked of `SNAP_COUNTS` rather than taken on trust, which is
-    also how `offense_pct` arrives as a fraction whichever way nflverse shipped it. This
-    function loads from nflreadpy directly, so no contract had ever seen the frame, and it
-    never had the private repair `hub.models.spread.snap_usage` had either -- a whole-percent
-    refresh would have multiplied `snap_trend` by a hundred here while the same refresh came
-    out right over there. One variation, one declaration, one answer.
-
-    **`conform` and not `nflverse.load`, and that is the half of #35 still open.** `conform`
-    checks the five columns this function reads; `load` would additionally cache the frame,
-    pin it and check the other eight `SNAP_COUNTS` declares -- and the frozen capture carries
-    none of those eight. See the note above `game_context`.
+    Through the validated cached loader -- #35, its last part -- which is where `SNAP_COUNTS`
+    runs on the frame and where `offense_pct` arrives as a fraction whichever way nflverse
+    shipped it. This function used to load from nflreadpy directly, so no contract had ever
+    seen the frame, and it never had the private repair `hub.models.spread.snap_usage` had
+    either -- a whole-percent refresh would have multiplied `snap_trend` by a hundred here
+    while the same refresh came out right over there. One variation, one declaration, one
+    answer. `conform` stood in for `load` while the frozen capture carried five of the
+    thirteen columns the contract declares; #234 re-took it and `load` asks all thirteen.
     """
-    import nflreadpy as nfl
-    s = SNAP_COUNTS.conform(nfl.load_snap_counts(seasons=list(seasons)),
-                            "season", "week", "game_type", "player", "offense_pct")
+    s = nflverse.load("snap_counts", list(seasons))
     return (s.filter(pl.col("game_type") == "REG")
              .select(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64),
                      pl.col("player").map_elements(player_key, return_dtype=pl.Utf8).alias("key"),
@@ -591,14 +597,13 @@ def injury_severity(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover
     null rather than healthy. Refusing here and coping there is what keeps one statement of
     what this source may return.
 
-    **`conform` and not `nflverse.load`**, for the reason `snap_share` gives above: the frozen
-    capture carries five of the nine columns `INJURIES` declares, so the cached path refuses
-    it. See the note above `game_context`.
+    **Through `nflverse.load`, and the refusals above are its.** `conform` stood in while the
+    frozen capture carried five of the nine columns `INJURIES` declares (#35); #234 re-took
+    it, and `load` now asks all nine of the frame and refuses in the same words -- the
+    declared name, never the one that arrived.
     """
-    import nflreadpy as nfl
-    inj = INJURIES.conform(nfl.load_injuries(seasons=list(seasons)),
-                           "season", "week", "full_name", "report_status", "practice_status")
-    sev = (pl.when(pl.col("report_status") == "Out").then(3.0)
+    inj = nflverse.load("injuries", list(seasons))
+    sev =(pl.when(pl.col("report_status") == "Out").then(3.0)
              .when(pl.col("report_status") == "Doubtful").then(2.0)
              .when(pl.col("report_status") == "Questionable").then(1.0).otherwise(0.0))
     # `status` and `practice` are carried alongside the ordinal because they are the cells
@@ -660,12 +665,9 @@ def injury_columns(p: pl.DataFrame, seasons: Sequence[int]) -> pl.DataFrame:
 def week_windows(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
     """First and **last** kickoff per (season, week). The last one is what the join uses.
 
-    Reads `schedules`, so it is unrouted for the same reason `game_context` is -- the note
-    above that function.
+    Read off `schedule`, the validated cached loader's frame -- #35.
     """
-    import nflreadpy as nfl
-    s = (nfl.load_schedules()
-           .filter(pl.col("season").is_in(list(seasons)) & (pl.col("game_type") == "REG")))
+    s = schedule(seasons).filter(pl.col("game_type") == "REG")
     return (s.group_by(["season", "week"])
              .agg(pl.col("gameday").str.to_date().min().alias("first_kick"),
                   pl.col("gameday").str.to_date().max().alias("last_kick"))
