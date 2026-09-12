@@ -144,8 +144,8 @@ def blended_adp(df: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT, *,
 # the model would be identified by its functional form rather than by evidence -- a fitted
 # constant with no provenance, which ADR-0006 exists to prevent.
 # ------------------------------------------------------------------------------------------
-# Fitted on this league's drafts of the seasons the draft backtest replays -- `backtest.LIMITATIONS`,
-# last entry (#279).
+# Fitted on this league's drafts of the seasons the draft backtest replays --
+# `backtest.LIMITATIONS`, last entry (#279).
 PICK_NOISE_INTERCEPT = 2.51
 PICK_NOISE_SLOPE = 0.150
 
