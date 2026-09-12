@@ -257,6 +257,42 @@ def test_the_report_names_the_unit_the_t_is_built_from():
     assert lines[-1].split()[0] == "feat"
 
 
+def test_the_snap_share_trend_is_still_screened_and_reported_as_not_licensed():
+    """#248, implementing #233. The licence is revoked and the feature stays in the family:
+    the screen is the record of what was tried and why it lost (ADR-0007), so its cell is
+    still computed, its verdict is still whatever the numbers say at that anchor -- it
+    clears at 10 on the settled basis, and the record has to be able to say so -- and the
+    line it prints on says the licence is gone, so a run that finds it clearing somewhere
+    cannot be read as the licence coming back. Both halves: the verdict machinery does not
+    know about the licence, and the report does."""
+    assert "snap_trend" in [f.name for f in ws.FEATURES], "still in the family"
+    assert "snap_trend" in ws.UNLICENSED and "#233" in ws.UNLICENSED["snap_trend"]
+    panel = _panel().rename({"feat": "snap_trend"})
+    rows = ws.screen(panel, [ws.Feature("snap_trend", "+", 1), ws.Feature("ecr", "?", 1)])
+    by_name = {r["feature"]: r for r in rows.to_dicts()}
+    assert by_name["snap_trend"]["status"] in (ws.CLEARS, ws.KILLED), (
+        "the verdict is the numbers' verdict, not the licence's")
+    lines = {ln.split()[0]: ln for ln in ws.report(rows.to_dicts())[3:]}
+    assert "not licensed" in lines["snap_trend"] and "#233" in lines["snap_trend"]
+    assert "not licensed" not in lines["ecr"], "the note is the revoked licence's alone"
+    assert lines["snap_trend"].index(by_name["snap_trend"]["note"]) < \
+        lines["snap_trend"].index("not licensed"), "the verdict first, then the licence"
+
+
+def test_the_sweep_report_carries_the_revoked_licence_at_every_anchor():
+    """The sweep is what `--run` prints by default, and it is where the trend clears at one
+    anchor and not the others; the sensitivity line is the one a reader would take a
+    licence from, so it is the one that says there is none."""
+    feats = (*_SWEEP_FEATURES, ws.Feature("snap_trend", "+", ws.TREND_ANCHOR_UNSET))
+    panel = _sweep_panel().with_columns(pl.col("late_trend").alias("snap_trend"))
+    swept = ws.sweep(panel, feats, (4, 12))
+    lines = ws.sweep_report(swept, ws.sensitivity(swept))
+    trend = [ln for ln in lines if ln.split()[:1] == ["snap_trend"]]
+    assert len(trend) == 1 and "not licensed" in trend[0] and "#233" in trend[0]
+    assert not [ln for ln in lines if ln.split()[:1] == ["late_trend"]
+                and "not licensed" in ln]
+
+
 def test_the_reported_t_and_the_verdict_read_the_same_seasons():
     """`verdict` counts sign agreement over `per_season`; `t` is now built from the same
     vector. The two used to be a season-level rule beside a cell-level precision."""

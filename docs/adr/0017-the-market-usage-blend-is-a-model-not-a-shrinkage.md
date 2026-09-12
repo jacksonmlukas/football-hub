@@ -37,6 +37,32 @@ was exploratory, it cost 16% of MAE, and it lost.
 **The rank is the August board's `ecr`, never the weekly ranking.** Shrinking toward the
 incumbent would make the arm partly be the thing it is measured against.
 
+> **Restated 2026-09-11 — the `exp(coef · snap_trend)` factor is 1.** Issue #233 revoked the
+> snap-share trend's licence — on the settled `(yds_prior, ecr)` basis it is +0.0142 at
+> permutation *p* 0.24 at the published anchor, and clears at anchor 10 alone — and #248
+> implements it in `hub.models.weekly`, which this model is built on. The first line of the
+> formula above therefore reads `weekly Usage = w · in-season Usage + (1 − w) · market prior`
+> and the fitting sentence loses one of its three: **`k` and `(a, b)` are still fitted on
+> strictly earlier seasons, every fold; `coef` is not fitted, and there is no longer a
+> parameter to pass it through** (`fit_shrink` and `project` take none). The two coefficients
+> named in the model, side by side:
+>
+> | | fate | in the model since #248 |
+> |---|---|---|
+> | `coef` on the snap-share trend, the Usage multiplier | **revoked** — #233 | the identity, exactly 1.0 for every player-week |
+> | the touchdown term, `weekly TDs = weekly yards × the POSITION's touchdown rate` | **qualified, not withdrawn** — #229; not decided by #233 or #248 | untouched; `components.td_rate` unchanged and `tds_hat` byte-identical to the `f = 1` arm |
+>
+> **What this does and does not do to the record below.** The rules of the run are
+> untouched. The gate's inputs still build under the same command, and its verdict —
+> **REMOVE**, −1.004, CI [−1.391, −0.621], 0 of 4 seasons, from the re-run under #44 — stands
+> as scored: it was scored on the fitted arm, and it is not re-run in #248. The maintainer
+> re-runs it once after the change lands, on the machine, to record what the change cost, and
+> that figure is restated here when it exists and not before. No fitted constant moved and
+> `config_digest` / `fitted_digest` are the same before and after — neither weekly module is
+> in `FITTED_MODULES`. The weekly projection is shown and never ranked on
+> ([ADR-0016](0016-the-weekly-projection-is-shown-and-never-ranked-on.md)), so nothing that
+> picks moves.
+
 ## Its null is not `f = 1`
 
 The Weekly projection's null was the identity, because a multiplier of one recovers the

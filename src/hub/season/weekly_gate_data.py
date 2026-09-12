@@ -142,8 +142,6 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     from hub.draft.cohort import cohort
     from hub.models.experiment import PLAYER_STATS_COLS, expanding_seasons
     from hub.models.weekly import (
-        VOLUME,
-        fit_multiplier,
         fit_shrink,
         positional_sd,
         project,
@@ -157,15 +155,16 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
 
     projected = []
     for _season, past, now in expanding_seasons(panel):
-        coefs = {c: fit_multiplier(past, c) for c in VOLUME}
+        # No multiplier is fitted here since #248: the weekly projection is the `f = 1`
+        # rebuild, and its Usage counts are the priors. The shrinkage still is, on `past`
+        # only. A shrinkage fitted on the season it is scored against would be the treatment
+        # arm reading its own answer sheet.
         sigma = positional_sd(past)
-        # Fitted on `past` only, like the multiplier. A shrinkage fitted on the season it is
-        # scored against would be the treatment arm reading its own answer sheet.
         sh = None if shrink is None else fit_shrink(
-            past, coefs, objective=shrink.split("-")[0],
+            past, objective=shrink.split("-")[0],
             target=("market-only" if shrink == "market-only"
                     else "market" if shrink is not None and "market" in shrink else "position"))
-        projected.append(project(now, coefs, shrink=sh)
+        projected.append(project(now, shrink=sh)
                          .with_columns(pl.Series("se", standard_error(now, sigma)))
                          .select("key", "season", "week", "mu", "se"))
     proj = pl.concat(projected) if projected else pl.DataFrame(

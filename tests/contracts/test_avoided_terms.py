@@ -533,7 +533,8 @@ OUTSTANDING: dict[tuple[str, str], tuple[int, str]] = {
     ("site/index.html", "the plan unqualified"): (2, "the survivor panel's own copy"),
     ("src/hub/models/eval.py", "the plan unqualified"): (1, "the foundation plan document"),
     ("src/hub/models/ratings.py", "the plan unqualified"): (1, "the foundation plan doc"),
-    ("src/hub/models/weekly.py", "the plan unqualified"): (1, "the weekly projection plan"),
+    # `weekly.py` was here until #248: the sentence lived in `walk_forward`'s docstring and
+    # went with the fitted arm it described.
     ("src/hub/schedule.py", "the plan unqualified"): (1, "a survivor plan is meant"),
     # --- the rest -------------------------------------------------------------------------
     ("src/hub/draft/board.py", "expected points"): (4, _XFP),
