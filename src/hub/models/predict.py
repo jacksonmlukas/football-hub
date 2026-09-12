@@ -57,6 +57,7 @@ import polars as pl
 # Restated in docs/talent-cv.md. Availability is no longer "inside the number on purpose":
 # it is drawn, and the number is talent net of it.
 TALENT_CV = 0.32
+# Fitted on seasons the draft backtest replays -- `backtest.LIMITATIONS`, last entry (#279).
 
 # Per position, from the same fit, shrunk toward the pool in proportion to each position's
 # own standard error rather than taken raw -- four positions holding 51 to 200 player-seasons
@@ -140,6 +141,7 @@ def talent_cv_for(pos: np.ndarray, imputed: np.ndarray | None = None) -> np.ndar
 # Note how little is left between positions once the law is right: most of what looked like
 # a position effect in weekly CV was position differences in mean points.
 WEEKLY_K = {"QB": 1.88, "RB": 2.07, "WR": 2.13, "TE": 1.99}
+# Fitted on seasons the draft backtest replays -- `backtest.LIMITATIONS`, last entry (#279).
 WEEKLY_K_POOLED = 2.04
 
 # Weekly scoring is right-skewed, measured within player-season across 2022-25. A normal
@@ -152,6 +154,7 @@ WEEKLY_K_POOLED = 2.04
 # docs/component-projection.md, where this falls out of sampling the components rather than
 # being imposed here.
 WEEKLY_SKEW = {"QB": 0.15, "RB": 0.67, "WR": 0.66, "TE": 0.72}
+# Fitted on seasons the draft backtest replays -- `backtest.LIMITATIONS`, last entry (#279).
 WEEKLY_SKEW_POOLED = 0.60
 # Beyond this the gamma is indistinguishable from a normal and the shift gets numerically
 # silly, so fall back rather than push it.
@@ -532,6 +535,7 @@ NOT_A_TEAM = frozenset({"FA", ""})
 # quarterback and his own pass catchers, treating them as independent gives an 80% interval
 # that covers 72.9% of the time. Adding these puts it at 80.4%. For a lineup with no
 # quarterback, independence is already calibrated and this changes nothing.
+# Fitted on seasons the draft backtest replays -- `backtest.LIMITATIONS`, last entry (#279).
 TEAMMATE_RHO: dict[tuple[str, str], float] = {
     ("QB", "WR"): 0.232, ("QB", "TE"): 0.225, ("QB", "RB"): 0.054,
 }

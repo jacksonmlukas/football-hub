@@ -334,12 +334,14 @@ def test_the_named_gaps_between_harness_and_product_are_recorded():
     than argued away. It is not a gap against the product; it is a bound on which two runs of
     this harness may be compared at all.
     """
-    assert len(bt.LIMITATIONS) == 7
+    assert len(bt.LIMITATIONS) == 8
     joined = " ".join(bt.LIMITATIONS)
     for expected in ("consensus", "xFP", "ties", "simulated", "POST-FIX", "board_digest",
                      # #199: the room's currency follows the draft-market stage, so a
                      # backtested room ranks on prior-season xFP and the live one does not.
-                     "vor_proj"):
+                     "vor_proj",
+                     # #279: the simulator's constants were fitted on the replayed seasons.
+                     "FITTED ON THE SEASONS"):
         assert expected in joined
 
 
@@ -1730,3 +1732,23 @@ def test_the_sweep_is_reachable_from_the_command_line(monkeypatch, tmp_path):
     from hub.config import data_digest
     assert table["data_digest"].unique().to_list() == [data_digest([inner])], (
         "a sensitivity row does not say which bytes its gate was scored against")
+
+
+def test_the_limitations_name_the_constants_fitted_on_the_replayed_seasons():
+    """#279. The simulator arm's constants were fitted on the seasons the backtest replays,
+    and the list of limitations did not say so. The entry names each one and the default
+    seasons, and each constant's own comment points back at it."""
+    import inspect
+
+    from hub.draft import availability
+    from hub.models import predict
+    entry = next(x for x in bt.LIMITATIONS if "FITTED ON THE SEASONS" in x)
+    for name in ("WEEKLY_K", "WEEKLY_SKEW", "TEAMMATE_RHO", "TALENT_CV", "PICK_NOISE_"):
+        assert name in entry, name
+    assert "2022,2023,2024,2025" in entry
+    assert "#290" in entry, "the hold-out is named"
+    for mod, name in ((predict, "TALENT_CV"), (predict, "WEEKLY_K"), (predict, "WEEKLY_SKEW"),
+                      (predict, "TEAMMATE_RHO"), (availability, "PICK_NOISE_INTERCEPT")):
+        src = inspect.getsource(mod)
+        i = src.index(f"\n{name}")
+        assert "backtest.LIMITATIONS" in src[max(0, i - 400): i + 200], f"{name} does not point at the entry"

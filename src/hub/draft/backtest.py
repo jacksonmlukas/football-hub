@@ -130,6 +130,16 @@ LIMITATIONS = (
     "moves Board membership -- MIN_GAMES, the xFP imputation, a join key, the as-of boundary "
     "by a day -- re-pairs the whole board and is a total re-draw, not a small perturbation. "
     "Two runs are comparable only at an identical board_digest",
+    # Issue #279 (audit III, Q10; audit I, B6). The one the list omitted: the simulator arm's
+    # constants were fitted on the seasons this harness replays. The hold-out is #290.
+    "the simulator's constants are FITTED ON THE SEASONS THIS REPLAYS: the weekly spread "
+    "law and skew (predict.WEEKLY_K, WEEKLY_SKEW; 2022-25), the teammate correlation "
+    "(predict.TEAMMATE_RHO; 2022-25), the pick-noise line (availability.PICK_NOISE_*; this "
+    "league's 2022-25 drafts) and the talent dispersion (predict.TALENT_CV; 2023-25) -- and "
+    "the default --seasons is 2022,2023,2024,2025. Arm B's season sims therefore carry "
+    "in-sample constants on every held-out season, which flatters the arm that lost: the "
+    "headline is a lower bound on how badly it loses out of sample, not the out-of-sample "
+    "number. A hold-out is #290",
 )
 
 def score_roster(names: Sequence[str], pos: Sequence[str], realised: pl.DataFrame,
