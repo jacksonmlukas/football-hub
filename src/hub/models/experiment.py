@@ -62,8 +62,9 @@ from hub.paths import STATE_DIR
 
 NOT_FITTED_BECAUSE = (
     "MIN_SE is the significance bar every gate reads -- a setting, and the one this module "
-    "exists to stop being declared twice. Nothing here predicts; it holds the walk-forward "
-    "protocol. "
+    "exists to stop being declared twice. FDR_Q is the false-discovery rate a screen's family "
+    "is read at -- a stated choice, #37, printed beside the pre-registered rule and deciding "
+    "nothing. Nothing here predicts; it holds the walk-forward protocol. "
 )
 
 # One column list, so both harnesses hit one cache entry. `nflverse._cache_path` keys on the
@@ -265,6 +266,71 @@ def t_quantile(p: float, df: int) -> float:
         else:
             hi = mid
     return (lo + hi) / 2.0
+
+
+def two_sided_p(t: float, df: int) -> float:
+    """`P(|T| >= |t|)` for Student's t on `df` degrees of freedom -- the p a screen's `t` is.
+
+    Two-sided because the screen's bar is `abs(t) < MIN_SE`, and on the same `_t_cdf` the
+    quantile above comes from, so the p printed beside a `t` and the interval printed beside
+    a gain cannot disagree about the reference distribution. NaN when there are no degrees of
+    freedom -- one season has a mean and nothing to test it against -- or no `t`.
+    """
+    if df < 1 or not math.isfinite(t):
+        return float("nan")
+    return 2.0 * (1.0 - _t_cdf(abs(t), df))
+
+
+# **The false-discovery rate a screen's family is read at -- a stated choice, #37.** Not a
+# rule: every screen's verdict is its pre-registered rule and nothing else, and a feature
+# clearing that rule while sitting above this threshold is reported as clearing, with the
+# adjusted result beside it. What the threshold does is make the multiplicity visible. A
+# screen over eight features at `MIN_SE` runs eight tests, and a reader of eight verdicts
+# is owed the count and what the count does to the bar; until #37 the count was quoted in a
+# docstring and moved silently when a feature left the family (#170). 0.10 rather than 0.05
+# because a screen asks "is this real?" ahead of a gate that will ask again with a different
+# incumbent; a false discovery here costs a gate run, not a shipped model.
+FDR_Q = 0.10
+
+
+class FalseDiscovery(NamedTuple):
+    """One family's Benjamini-Hochberg reading, in the caller's order."""
+    tests: int                     # the family size: every test run, measured or not
+    q: float                       # the rate it was read at
+    threshold: float               # the largest p rejected; 0.0 when nothing is
+    adjusted: tuple[float, ...]    # the step-up adjusted p per test; NaN where p was NaN
+    rejected: tuple[bool, ...]     # p <= threshold, per test; never for a NaN
+
+
+def false_discovery(p: Sequence[float], q: float = FDR_Q) -> FalseDiscovery:
+    """Benjamini-Hochberg over one family of p-values, controlling the FDR at `q`.
+
+    Step-up: sorted ascending, the threshold is the largest `p_(i)` with `p_(i) <= i q / m`,
+    and every p at or below it is rejected -- including one that fails its own step, which
+    is what makes it step-up rather than a stop at the first failure. The adjusted p is the
+    running minimum from the right of `m p_(j) / j`, capped at one, so an adjusted p at or
+    below `q` is exactly a rejection. A family of one is unadjusted: its adjusted p is its p.
+
+    **`m` counts every test the caller ran**, and a NaN -- a feature the screen could not
+    measure -- stays in the count: it was a test, and dropping it would shrink the family by
+    exactly the tests that came back empty. It ranks last, is never rejected, and its
+    adjusted p is NaN rather than a number nobody computed.
+    """
+    m = len(p)
+    ranked = [(float("inf") if math.isnan(v) else v) for v in p]
+    order = sorted(range(m), key=lambda i: ranked[i])
+    threshold = 0.0
+    for rank, i in enumerate(order, start=1):
+        if ranked[i] <= rank * q / m:
+            threshold = ranked[i]
+    adjusted = [float("nan")] * m
+    running = 1.0
+    for rank, i in reversed(list(enumerate(order, start=1))):
+        if math.isfinite(ranked[i]):
+            running = min(running, m * ranked[i] / rank)
+            adjusted[i] = running
+    rejected = tuple(math.isfinite(v) and v <= threshold for v in ranked)
+    return FalseDiscovery(m, q, threshold, tuple(adjusted), rejected)
 
 
 def minimum_detectable_effect(se: float, clusters: int) -> float:
