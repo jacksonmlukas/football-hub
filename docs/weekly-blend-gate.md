@@ -370,6 +370,26 @@ realised points, and the held-out seasons are 2022–2025. *Production* here mea
 network archive over those four seasons rather than the trimmed capture, which is the
 distinction #232 turns on.
 
+> **Re-run 2026-09-11 after #248, the Usage multiplier gone.** #233 revoked `snap_trend`'s
+> licence and #248 removed the multiplier, so the weekly arm is now the season-to-date
+> priors with the touchdown term and nothing fitted. Same command, same configuration line,
+> same 2,000 roster-weeks over 4 seasons on the 79 weeks consensus covers, 75.9% priced by
+> both arms, unranked 15.3%, join failure 0.0%:
+>
+> | | with the multiplier (`ae8818a`, above) | **without it (2026-09-11)** |
+> |---|---|---|
+> | weekly − consensus | −0.843 | **−0.825** |
+> | 95% CI, percentile | [−1.131, −0.556] | **[−1.152, −0.541]** |
+> | 95% CI, t on 3 df | [−1.296, −0.390] | **[−1.326, −0.323]** |
+> | seasons (2022 / 2023 / 2024 / 2025) | −0.558 / −1.114 / −0.553 / −1.148 | **−0.690 / −1.306 / −0.430 / −0.873** |
+> | MDE at 80% power | 0.573 | **0.634** |
+> | verdict | REMOVE, 0 of 4 | **REMOVE, 0 of 4** |
+>
+> The revocation moved the restricted effect 0.018 toward zero, inside every interval it
+> has: the multiplier was contributing nothing the rule could see, which is what a +0.014 at
+> p 0.24 term should do. Nothing is adopted or disposed by this row either; it is the
+> record #248 owed. Paired rows in `data/processed/gate/weekly_post248.parquet`.
+
 ## The result
 
 | gate | weekly − consensus | 95% CI | seasons won | verdict |

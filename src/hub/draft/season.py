@@ -218,7 +218,10 @@ def bye_weeks(season: int) -> dict[str, int]:
     reg = sched.filter(pl.col("game_type") == "REG") if "game_type" in sched.columns else sched
     played = pl.concat([reg.select("week", pl.col("home_team").alias("team")),
                         reg.select("week", pl.col("away_team").alias("team"))])
-    weeks = sorted(int(w) for w in reg["week"].unique().to_list())
+    # Inside the simulated season only. Buffalo and Cincinnati's week-17 game of 2022 was
+    # cancelled, which reads as a second absence for each and refused the whole season --
+    # over a week the fourteen-week fantasy season never sees.
+    weeks = sorted(int(w) for w in reg["week"].unique().to_list() if int(w) <= REG_SEASON_WEEKS)
     out: dict[str, int] = {}
     bad: dict[str, list[int]] = {}
     for team in sorted(played["team"].unique().to_list()):
