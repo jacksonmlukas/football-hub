@@ -540,8 +540,9 @@ def _what_the_coverage_measurement_says() -> list[str]:
     down. A figure restated here would go stale the next time the measurement is re-run, and
     would say so to nobody.
 
-    Degrades to the command that produces it, per `CLAUDE.md`: a tree with no
-    `data/processed/` is a fresh clone, not a defect.
+    Degrades to the command that produces it, per `CLAUDE.md`. The artifact is committed
+    under `state/` (#273), so a tree without it is one where the measurement was never run
+    rather than a fresh clone -- the command is still the right answer.
     """
     from hub.models.coverage import published_summary
 

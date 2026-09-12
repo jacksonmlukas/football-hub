@@ -194,11 +194,17 @@ def test_nothing_is_scored_on_the_season_it_was_fitted_on():
         "the earliest season is training data only"
 
 
-def test_the_diagnostic_reports_the_rebuild_and_says_it_decides_nothing():
+def test_the_diagnostic_reports_the_rebuild_and_says_it_decides_nothing(tmp_path, monkeypatch):
+    # The artifact `hub.models.coverage` commits under `state/` is part of the tree now (#273),
+    # and its sentence says "the week it scores". Pin the tree to one with no artifact so the
+    # text is the diagnostic's own, and look for the retired contrast by its label.
+    from hub.models import coverage
+    monkeypatch.setattr(coverage, "ARTIFACT", tmp_path / "none.json")
     text = "\n".join(W.diagnostic(W.walk_forward(_panel())))
     assert "the rebuild" in text
-    assert "the week" not in text and "both together" not in text, (
+    assert "(weekly vs f=1)" not in text and "both together" not in text, (
         "a contrast against an arm that no longer exists")
+    assert "--measure --write" in text, "degrades to the command that produces the artifact"
     assert "f = 1" in text and "#248" in text, "the diagnostic says what the arm is"
     assert "DIAGNOSTIC ONLY" in text and "ADR-0015" in text
 
