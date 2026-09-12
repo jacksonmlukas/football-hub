@@ -1754,3 +1754,41 @@ def test_every_pool_field_is_read_by_the_simulation():
     assert not unread, (
         f"PoolConfig fields nothing outside config.py reads: {unread}. Wire each to the "
         f"behaviour it names, or remove it and say why where it was.")
+
+
+# --- the three CLI branches nothing drove (#266) -------------------------------------------
+
+def test_the_predictions_branch_prints_the_weeks_row_count(tmp_path, monkeypatch, capsys):
+    """`--predictions` alone: the sentence names the artifact and its count, exit 0."""
+    monkeypatch.setattr(publish, "SITE", tmp_path)
+    monkeypatch.setattr(publish, "predictions", lambda season, week: {"n": 14, "generated_at": "x"})
+    assert publish.main(["--predictions", "--season", "2026", "--week", "3"]) == 0
+    out = capsys.readouterr().out
+    assert publish.preds_name(2026, 3) in out and "14 games" in out
+
+
+def test_the_track_record_branch_prints_scored_and_preregistered(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(publish, "SITE", tmp_path)
+    monkeypatch.setattr(publish, "track_record",
+                        lambda: {"n_scored": 16, "n_preregistered": 32, "generated_at": "x"})
+    assert publish.main(["--track-record", "--season", "2026", "--week", "3"]) == 0
+    out = capsys.readouterr().out
+    assert "track_record:" in out and "16 scored" in out and "32 pre-registered" in out
+
+
+def test_the_all_branch_prints_one_line_per_artifact_with_its_state(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(publish, "SITE", tmp_path)
+    monkeypatch.setattr(publish, "publish_all", lambda season, week: {"artifacts": [
+        {"name": "preds_wk03", "stale": False, "reason": None},
+        {"name": "live", "stale": True, "reason": "ESPN scoreboard unavailable"}]})
+    assert publish.main(["--all", "--season", "2026", "--week", "3"]) == 0
+    out = capsys.readouterr().out
+    assert "published 2 artifacts for 2026 week 3" in out
+    assert "preds_wk03" in out and "ok" in out
+    assert "live" in out and "stale" in out and "ESPN scoreboard unavailable" in out
+
+
+def test_no_branch_prints_help_and_exits_zero(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(publish, "SITE", tmp_path)
+    assert publish.main(["--season", "2026", "--week", "3"]) == 0
+    assert "usage:" in capsys.readouterr().out
