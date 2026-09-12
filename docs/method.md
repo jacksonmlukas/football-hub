@@ -222,6 +222,12 @@ exception.
 
 ### 13. A measurement that contradicts a published number is not finished until it moves
 
+> **Discharged 2026-09-12.** All three incidents this rule was written on are closed, each by
+> the published number moving: the season-clustered interval reached `README.md` and ADR-0009
+> under #52; the +0.215 blend gate was re-run to **−1.004** under #44 and the record restated
+> under #282; the pick-noise constants were refit under #150 and again under #155. The rule
+> stands as a rule; what it no longer has is an open incident.
+
 **A measurement that contradicts a published number is not finished until the published number
 moves.** Measuring is the cheap half. The published figure is what anyone reads, so a refutation
 that stops at the working note leaves a number standing that its own author already knows is
@@ -379,6 +385,36 @@ five per-season *r* values on that page and can compute it. No table on
 [weekly-screen.md](weekly-screen.md) has been re-run under this rule yet — the printed
 threshold arrives with the next `--run`, and until then the page says what it will print rather
 than what it printed.
+
+### 15. A fixture that sets the condition under which the estimator is trivially correct is not a test of the estimator
+
+**Plant the condition the estimator must handle, not the one it cannot get wrong.** A test's
+fixture is a claim about the input the code exists for. When every fixture sets the one input
+on which the formula collapses to the right answer by algebra, the suite is green, coverage is
+full, and the estimator has never once been exercised.
+
+**The incident (#268, 2026-09-12).** The quarterback adjustment shipped as an *arrival-time*
+baseline subtracted from a *current* value, decayed by tenure. The difference carries the
+starter's own value drift since he arrived — nothing to do with the gap the module exists to
+price. Measured on the 32 live teams: mean absolute error 0.4 spread points, worst 3.6, four
+sign flips; Baltimore, an established starter with no quarterback change, at **+4.018** where
+the source says **+0.404**. The error is exactly zero when tenure is zero, because then the
+arrival row *is* the latest row and the formula reduces to the right one — and **every fixture
+in the unit tests set tenure to zero.** Three named tests, each mutation-proved, each proving
+the estimator on the one input it could not get wrong.
+
+**The instinct the repo already had, pointed at the wrong modules.** `hub.draft.tune`'s
+harness is validated before it is trusted: its tests plant a signal that genuinely predicts
+and check the sweep finds it, then plant pure noise and check it returns zero. That is the
+shape — the fixture carries the thing the estimator has to *do*, and a version of the estimator
+that does nothing fails it. A quarterback fixture with a starter whose value drifted since he
+arrived, and tenure above zero, would have failed the shipped formula on its first run. The
+mutation discipline (#197's pin, the guard excisions) catches a test that proves nothing about
+the code; this rule is about a test that proves the code on nothing.
+
+**What to ask of a fixture:** what input does the estimator exist to handle, and does this
+fixture contain it? If the answer is a special case where the code is right by construction,
+the test is coverage, not evidence.
 
 ---
 
