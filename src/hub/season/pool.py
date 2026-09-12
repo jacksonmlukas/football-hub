@@ -95,6 +95,7 @@ import sys
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
@@ -102,6 +103,7 @@ import numpy as np
 import polars as pl
 
 from hub.config import PoolConfig, pool_digest
+from hub.schedule import forecastable
 from hub.season.survivor import MIN_PROB, Infeasible, solve, week_fixtures
 
 NOT_FITTED_BECAUSE = (
@@ -512,7 +514,9 @@ def grid_digest(grid: pl.DataFrame) -> str:
     Text rather than Arrow bytes, for the reason `hub.fetch.nflverse.content_digest` gives:
     a frame and the same frame read back from parquet serialise to different IPC bytes.
     Not that function itself, because it lives in a fetch layer and this module imports
-    none -- the simulator has to be answerable from a frame alone.
+    no fetcher -- the simulator has to be answerable from a frame alone. (`hub.schedule`'s
+    `forecastable` is read for the clock, #263; it is the schedule's rule about two columns
+    on the frame, and reaches for nothing.)
     """
     cols = [c for c in ("week", "team", "win_prob", "game_id") if c in grid.columns]
     canon = grid.select(cols).sort(cols)
@@ -1272,14 +1276,25 @@ def _picks_in(week: int, cfg: PoolConfig | None) -> int:
     return 2 if cfg is not None and week in cfg.double_pick_weeks else 1
 
 
-def _legal(grid: pl.DataFrame, week: int, spent: set[str]) -> pl.DataFrame:
-    """The rows of `week` an entry holding `spent` may still take: above `MIN_PROB`, unspent.
+def _legal(grid: pl.DataFrame, week: int, spent: set[str],
+           now: datetime | None = None) -> pl.DataFrame:
+    """The rows of `week` an entry holding `spent` may still take: above `MIN_PROB`, unspent,
+    and still ahead of the clock.
 
     One filter for the three readers of the week being decided -- `auto_pick`, `weekly` and
     `leverage` -- which each spelled it out and could therefore have disagreed about what
     was legal.
+
+    **A team whose game has kicked off is not on offer** (#263). The three filtered on the
+    week number and the win probability only, so on the Friday of a week the Thursday
+    game's winner was still a candidate an hour after it had won. The rule is
+    `hub.schedule.forecastable`'s -- kickoff not yet passed, no result -- read here rather
+    than restated, on `now` where the caller states the moment and the clock where it does
+    not; a grid carrying no `kickoff` or `result` is read as entirely ahead, which is the
+    preseason shape and every hand-priced grid in the tests.
     """
     wk = grid.filter((pl.col("week") == week) & (pl.col("win_prob") > MIN_PROB))
+    wk = forecastable(wk, now)
     return wk.filter(~pl.col("team").is_in(list(spent))) if spent else wk
 
 
@@ -1327,7 +1342,7 @@ def _ranked(wk: pl.DataFrame, week: int, needs: int, top: int
 
 
 def auto_pick(grid: pl.DataFrame, week: int, ledger: Sequence[str] = (),
-              pool: PoolConfig | None = None) -> str | None:
+              pool: PoolConfig | None = None, now: datetime | None = None) -> str | None:
     """What the pool assigns when nobody submits: the best available team by the betting market.
 
     Not a courtesy. `docs/method.md` rule 5 says gate against the simplest thing that already
@@ -1339,8 +1354,11 @@ def auto_pick(grid: pl.DataFrame, week: int, ledger: Sequence[str] = (),
     take from two fixtures, spelled as one pick by `pick_name` -- `_best_available`'s rule,
     stated on the grid rather than on a reshaped week. `pool` says which weeks those are;
     handed none, every week takes one, as `solve` handed no rules takes one.
+
+    **Among the teams still ahead of the clock** (#263), which is `_legal`'s rule: `now` is
+    the moment, and the clock where none is stated.
     """
-    wk = _legal(grid, week, set(ledger))
+    wk = _legal(grid, week, set(ledger), now)
     if wk.is_empty():
         return None
     needs = _picks_in(week, pool)
@@ -1359,7 +1377,7 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
            ledger: Sequence[str] = (), entries: int, pot: float, outlay: float = 0.0,
            pool: PoolConfig | None = None, top: int = 6,
            trials: int = WEEKLY_TRIALS, rng: np.random.Generator | None = None,
-           seed: int | None = None) -> Weekly:
+           seed: int | None = None, now: datetime | None = None) -> Weekly:
     """This week's pick, what it is worth, and what it cost against the free one.
 
     A candidate is worth `P(it wins this week)` times what the rest of the season is worth
@@ -1427,16 +1445,21 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     The value is carried out on `Weekly.seed` either way, so a journal row that names it can
     hand it back here and meet the identical trials -- which is what makes a recorded figure
     reproducible rather than merely recorded.
+
+    **`now` is the clock the week is read against** (#263): a team whose game has kicked off
+    by then is not offered, which is `_legal`'s rule. Left out, the clock is read, so a
+    re-run of a recorded week on a grid that carries kickoffs should pass the row's `at`
+    here -- run later, the teams that had not yet played are the ones no longer on offer.
     """
     cfg = pool or PoolConfig()
     rng = rng or np.random.default_rng(0)
     spent = set(ledger)
-    wk = _legal(grid, week, spent)
+    wk = _legal(grid, week, spent, now)
     if wk.is_empty():
         raise ValueError(f"week {week} has no legal pick left: {len(spent)} teams are spent")
 
     ahead = _ahead(weeks, week)
-    free = auto_pick(grid, week, ledger, pool=cfg)
+    free = auto_pick(grid, week, ledger, pool=cfg, now=now)
     # One team, or in a double-pick week a pair from two fixtures priced as the product
     # (#256): `team` is then the pick's name and `takes` the two teams it spends, both of
     # which leave the ledger the rest of the season is valued against.
@@ -1904,7 +1927,8 @@ def leverage(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
              ledger: Sequence[str] = (), entries: int, pot: float,
              pool: PoolConfig | None = None, at: Sequence[float] = DEFAULT_CONCENTRATIONS,
              top: int = 6, trials: int = WEEKLY_TRIALS,
-             rng: np.random.Generator | None = None) -> list[Leverage]:
+             rng: np.random.Generator | None = None,
+             now: datetime | None = None) -> list[Leverage]:
     """The leverage term for every candidate this week, at every concentration in `at`.
 
     The measurement #161 was re-scoped to. Two arms per candidate per concentration, on one
@@ -1957,14 +1981,15 @@ def leverage(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
             "field's attrition this week is worth something *in*, so with no weeks ahead "
             "there is no term to measure. `weekly` prices such a week in closed form.")
     spent = set(ledger)
-    free = auto_pick(grid, week, ledger, pool=cfg)
+    free = auto_pick(grid, week, ledger, pool=cfg, now=now)
     if free is None:
         raise ValueError(f"week {week} has no legal pick left: {len(spent)} teams are spent")
     # The free pick is always the first of these: `auto_pick` is the same filter and the
     # same ranking, so a guard appending it when absent would be a guard that cannot fire.
     # In a double-pick week each is a pair from two fixtures priced as the product (#256),
-    # and `takes` is what it spends.
-    teams = _ranked(_legal(grid, week, spent), week, _picks_in(week, cfg), top)
+    # and `takes` is what it spends. `now` is the clock the week is read against (#263):
+    # `at` here is the concentration axis, so the moment carries the other name.
+    teams = _ranked(_legal(grid, week, spent, now), week, _picks_in(week, cfg), top)
     root = np.sqrt(trials)
     rows: list[Leverage] = []
     for k in at:
@@ -2220,9 +2245,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _last_good(a.season, a.week, a.store, e)
 
     behind = sv.played(grid)
-    weeks = [w for w in drawable_weeks(grid, cfg, sv.NFL_WEEKS) if w not in behind]
+    drawable = drawable_weeks(grid, cfg, sv.NFL_WEEKS)
+    weeks = [w for w in drawable if w not in behind]
+    # A week the clock has entered is behind (#263): its pick is locked with the Pool and
+    # the published plan's team for it is spent, so it is not decided by default. Named, it
+    # can still be priced on the fixtures ahead of the clock -- the Sunday pick after a
+    # Thursday game -- and `weekly` offers no team whose game has kicked off.
+    still = {int(w) for w in forecastable(grid)["week"].to_list()}
+    partial = [w for w in drawable if w in behind and w in still]
     week = a.week if a.week is not None else (weeks[0] if weeks else None)
-    if week is None or (week not in weeks and not a.eliminated):
+    if week is None or (week not in weeks and week not in partial and not a.eliminated):
         return unavailable(
             "hub.season.pool", f"a priced week to decide in the {a.season} schedule",
             UnpricedWeek(f"week {week} is not among the weeks the board can play: "

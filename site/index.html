@@ -299,7 +299,7 @@ function survivorBody(surv) {
        : `the rows below are every week it covers, which is all this artifact records. `)
     + (played === null ? ""
        : played.length
-         ? `${esc(played.length)} week(s) already played and absent from it: `
+         ? `${esc(played.length)} week(s) already played or under way, and absent from it: `
            + `${esc(weekList(played))}. `
          : `No week has been played yet. `)
     + (storeOnly.length

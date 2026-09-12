@@ -113,6 +113,29 @@ def test_a_week_the_board_cannot_play_is_refused_with_a_sentence(board, tmp_path
     assert "week 9 is not among the weeks the board can play" in out.err
 
 
+def test_a_week_the_clock_has_entered_is_behind_by_default_and_decidable_by_name(
+        tmp_path, capsys, monkeypatch):
+    """#263 at the entry point. Week 2's KC-LV game is over and its other two are still
+    ahead. Unnamed, the week decided is week 3 -- week 2's pick is locked with the Pool and
+    the published plan's team for it is spent. Named, week 2 is priced on the fixtures
+    still ahead of the clock: neither side of the played game is offered."""
+    grid = _grid().with_columns(
+        pl.when((pl.col("week") == 2) & pl.col("team").is_in(["KC", "LV"]))
+        .then(pl.lit(1.0)).otherwise(pl.col("result")).alias("result"))
+    monkeypatch.setattr(sv, "grid_from_schedule", lambda season, cache=None: grid)
+    monkeypatch.setattr(sv, "published_plan",
+                        lambda path=None: [{"week": 2, "team": "SF"}, {"week": 3, "team": "KC"}])
+    assert pool.main(_run(tmp_path)) == 0
+    out = capsys.readouterr().out
+    assert "week 3:" in out and "SF" in out.split("\n")[0], "week 2 is behind, SF spent"
+    assert pool.main(_run(tmp_path, "--week", "2")) == 0
+    out = capsys.readouterr().out
+    assert "\n  week 2:" in out
+    body = out.split("\n  week 2:")[1]
+    assert " KC " not in body and " LV " not in body and " SF " not in body
+    assert " BUF " in body and " NYJ " in body
+
+
 def test_the_eliminated_path_does_not_count_us_among_the_live_entries(board, tmp_path, capsys):
     """Review 2026-09-12: `--entries` is live entries *ours included*, and `buyback` adds
     ours back in -- so the default `--eliminated` run priced a field one larger than the

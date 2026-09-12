@@ -623,6 +623,44 @@ def test_the_leverage_term_in_a_double_week_is_measured_on_pairs():
                                                            .mean()))
 
 
+def _clocked(grid: pl.DataFrame, started: dict[str, float | None],
+             ahead: object) -> pl.DataFrame:
+    """`grid` carrying `kickoff` and `result`: a team in `started` kicked off on the Thursday
+    with that result (None while under way), everything else kicks off at `ahead`."""
+    import datetime as dt
+    thu = dt.datetime(2026, 9, 17, 20, 15)
+    return grid.with_columns(
+        pl.when(pl.col("team").is_in(list(started))).then(pl.lit(thu))
+        .otherwise(pl.lit(ahead)).alias("kickoff"),
+        pl.col("team").replace_strict(started, default=None, return_dtype=pl.Float64)
+        .alias("result"))
+
+
+def test_no_team_whose_game_has_kicked_off_is_offered_for_the_week(monkeypatch):
+    """#263's other half. On the Friday of week 1, KC's Thursday game is under way and
+    BUF's is over; SF and SEA play Sunday. The week's candidates are the fixtures still
+    ahead of the clock: `auto_pick`, `weekly` and `leverage` each offer neither side of a
+    started game, and `weekly`'s pick is priced on what is left."""
+    import datetime as dt
+    sun = dt.datetime(2026, 9, 20, 13, 0)
+    grid = _clocked(HOARD, {"KC": None, "LV": None, "BUF": 3.0, "NYJ": 3.0}, sun)
+    friday = dt.datetime(2026, 9, 18, 9, 0)
+    assert pool.auto_pick(grid, 1, now=friday) == "SF"
+    assert pool.auto_pick(grid, 1, ["SF", "SEA"], now=friday) is None
+    w = _weekly(grid, [1, 2], week=1, now=friday, trials=20)
+    assert {c.team for c in w.candidates} == {"SF", "SEA"}
+    assert w.recommend == "SF" and w.fallback == "SF"
+    rows = pool.leverage(grid, [1, 2], week=1, entries=12, pot=420.0, at=(1.0,),
+                         trials=10, now=friday, rng=np.random.default_rng(0))
+    assert {r.team for r in rows} == {"SEA"} and rows[0].fallback == "SF"
+    # Before the first kickoff the whole week is on offer, and a grid that carries no
+    # kickoff at all is read as entirely ahead -- the preseason shape every other test uses.
+    assert pool.auto_pick(grid, 1, now=dt.datetime(2026, 9, 17, 12, 0)) == "KC"
+    assert pool.auto_pick(HOARD, 1, now=friday) == "KC"
+    # And the clock defaults to now: a game with a result is over whatever the hour.
+    assert "BUF" not in {c.team for c in _weekly(grid, [1, 2], week=1, trials=20).candidates}
+
+
 def test_a_pick_name_spells_a_pair_once_and_reads_it_back():
     """One spelling for a two-team pick, sorted so `KC+SF` and `SF+KC` are one pick; a
     single team is its own name in both directions."""

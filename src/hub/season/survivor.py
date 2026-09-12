@@ -229,18 +229,28 @@ def solve(grid: pl.DataFrame, weeks: Sequence[int] | None = None,
 
 
 def played(grid: pl.DataFrame, at: datetime | None = None) -> list[int]:
-    """Weeks the season has already run: in the grid, and absent from what is ahead.
+    """Weeks the season has reached: any game in them has kicked off or has a result.
 
-    Derived by difference rather than by comparing a week number to a date, because the two
-    would disagree the first time a week straddled a boundary -- and because
-    `schedule.forecastable` is then the only place the rule is written. This module wrapped
-    that call as `forthcoming` for a while, under a docstring saying the rule was
-    "unchanged and unrestated" while the name restated it; `docs/agents/domain.md` is
-    specific about not drifting to a synonym, so the wrapper is gone and its callers ask
-    `hub.schedule` directly.
+    **Any game, not every game** (#263). A week was behind only once nothing in it was still
+    ahead, so on a Saturday the week with Thursday's game already played was *ahead*:
+    `plan_remaining` re-solved it and could publish a pick different from the one already
+    locked with the Pool before Thursday's kickoff. A week the clock has entered is a week
+    whose pick is locked, whatever is still to be played in it -- so it is behind the
+    remaining plan, its published pick is kept as spent, and it is not a week to cover. The
+    teams still ahead of the clock in it are `weekly`'s and `auto_pick`'s business, not this
+    plan's.
+
+    Derived from `schedule.forecastable` rather than by comparing a week number to a date,
+    because the two would disagree the first time a week straddled a boundary -- and because
+    that is then the only place the rule is written. This module wrapped that call as
+    `forthcoming` for a while, under a docstring saying the rule was "unchanged and
+    unrestated" while the name restated it; `docs/agents/domain.md` is specific about not
+    drifting to a synonym, so the wrapper is gone and its callers ask `hub.schedule` directly.
     """
-    ahead = set(schedule.forecastable(grid, at)["week"].to_list())
-    return sorted({int(w) for w in grid["week"].to_list()} - {int(w) for w in ahead})
+    ahead = schedule.forecastable(grid, at)
+    whole = {int(w): int(n) for w, n in grid.group_by("week").len().iter_rows()}
+    still = {int(w): int(n) for w, n in ahead.group_by("week").len().iter_rows()}
+    return sorted(w for w, n in whole.items() if still.get(w, 0) < n)
 
 
 def spent_teams(prior: Sequence[Mapping[str, Any]], weeks: Sequence[int],
@@ -590,8 +600,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  survivor plan, {a.season}, {len(cov.covered)} of "
           f"{len(cov.covered) + len(cov.missing)} remaining weeks priced")
     if got.played:
-        print(f"  {len(got.played)} week(s) already played and absent from this plan: "
-              + ", ".join(f"wk {w}" for w in got.played))
+        # Played, or under way: a week with one game kicked off is behind this plan too,
+        # its pick locked with the Pool (#263).
+        print(f"  {len(got.played)} week(s) already played or under way, and absent from "
+              "this plan: " + ", ".join(f"wk {w}" for w in got.played))
     if got.spent:
         print(f"  unavailable, already spent: {', '.join(got.spent)}")
     for r in got.picks.iter_rows(named=True):

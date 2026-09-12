@@ -441,6 +441,38 @@ def test_a_week_in_progress_is_no_more_pickable_than_a_finished_one():
     assert survivor.played(grid, at=dt.datetime(2026, 9, 10, 21, 0)) == [1]
 
 
+def test_a_week_with_one_game_started_keeps_its_published_pick_and_is_not_re_solved():
+    """#263. Week 2's Thursday game has kicked off and its Sunday games have not. The pick
+    for week 2 was entered before that kickoff and is locked with the Pool, so the week is
+    behind the remaining plan: the published pick -- SEA, which no re-solve would choose --
+    is kept as spent, and the plan covers week 3 alone. A week fully ahead and a week fully
+    behind read exactly as they did."""
+    import datetime as dt
+    thu, sun = dt.datetime(2026, 9, 17, 20, 15), dt.datetime(2026, 9, 20, 13, 0)
+    grid = _dated_grid([
+        (1, "KC", 0.9, dt.datetime(2026, 9, 10, 20, 15), 7.0),
+        (1, "LV", 0.1, dt.datetime(2026, 9, 10, 20, 15), 7.0),
+        (2, "BUF", 0.8, thu, None), (2, "NYJ", 0.2, thu, None),
+        (2, "SF", 0.6, sun, None), (2, "SEA", 0.4, sun, None),
+        (3, "SF", 0.7, dt.datetime(2026, 9, 27, 13, 0), None),
+        (3, "SEA", 0.3, dt.datetime(2026, 9, 27, 13, 0), None),
+        (3, "BUF", 0.65, dt.datetime(2026, 9, 27, 13, 0), None),
+        (3, "NYJ", 0.35, dt.datetime(2026, 9, 27, 13, 0), None),
+    ])
+    at = dt.datetime(2026, 9, 18, 9, 0)      # Friday: Thursday played, Sunday ahead
+    assert survivor.played(grid, at=at) == [1, 2]
+    prior = [{"week": 1, "team": "KC"}, {"week": 2, "team": "SEA"}, {"week": 3, "team": "SF"}]
+    got = survivor.plan_remaining(grid, 2026, prior=prior, season_weeks=3, at=at)
+    assert got.played == [1, 2]
+    assert got.spent == ["KC", "SEA"], "the locked pick is kept, not re-solved away"
+    assert got.picks["week"].to_list() == [3]
+    assert got.coverage.covered == [3] and got.coverage.missing == []
+    # Unchanged either side of it: a week nothing in has started is ahead, and one with
+    # every game over is behind, as before.
+    assert survivor.played(grid, at=dt.datetime(2026, 9, 15)) == [1]
+    assert survivor.played(grid, at=dt.datetime(2026, 9, 21)) == [1, 2]
+
+
 def test_survival_is_the_product_over_the_weeks_still_to_come():
     """The reported number was the product over games already won or lost, which says
     nothing about whether the entry survives from here."""
