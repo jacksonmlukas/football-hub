@@ -56,6 +56,7 @@ CONTEXT = ROOT / "CONTEXT.md"
 SCAN_ROOTS: tuple[Path, ...] = (
     *sorted((ROOT / "src" / "hub").rglob("*.py")),
     *sorted((ROOT / "scripts").glob("*.sh")),
+    *sorted((ROOT / "scripts").glob("*.py")),      # #266: the Python scripts were unscanned
     ROOT / "site" / "index.html",
     CONTEXT,
 )
