@@ -760,6 +760,27 @@ def test_bye_weeks_are_derived_from_the_schedule_one_per_team(monkeypatch):
     assert got == {"AAA": 2, "BBB": 2, "CCC": 4, "DDD": 4}, got
 
 
+def test_a_cancelled_game_beyond_the_fantasy_season_is_not_a_second_bye(monkeypatch):
+    """2022: Buffalo and Cincinnati's week-17 game was cancelled, so each is absent from two
+    regular-season weeks, and the derivation refused the whole season -- every 2022 backtest
+    board lost its byes to a game the fourteen-week fantasy season cannot see. Absences are
+    counted inside the simulated season only."""
+    import polars as pl
+
+    from hub.draft import season as S
+
+    rows = []
+    for w in range(1, 18):
+        if w != 7 and w != 17:   # week 7 the bye, week 17 the cancelled game: no row at all
+            rows.append({"game_id": f"{w}_bc", "season": 2022, "week": w, "home_team": "BUF",
+                         "away_team": "CIN", "game_type": "REG"})
+        if w != 3:               # the rest of the league plays on, week 17 included
+            rows.append({"game_id": f"{w}_ab", "season": 2022, "week": w, "home_team": "AAA",
+                         "away_team": "BBB", "game_type": "REG"})
+    monkeypatch.setattr(S, "_schedule_for", lambda season: pl.DataFrame(rows))
+    assert S.bye_weeks(2022) == {"AAA": 3, "BBB": 3, "BUF": 7, "CIN": 7}
+
+
 def test_bye_weeks_refuse_a_team_with_two_byes_or_none(monkeypatch):
     """A schedule where a team sits twice is not this league's shape, and the derivation
     must not quietly pick one of the two."""
