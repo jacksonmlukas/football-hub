@@ -1001,3 +1001,16 @@ def test_the_bye_stage_places_every_player_by_his_team(offline):
     assert report.bye is True
     placed = b.filter(pl.col("team") == "KC")
     assert placed.height > 0 and (placed["bye_week"] == 10).all()
+
+
+def test_a_report_answers_only_for_the_stages_it_was_built_for():
+    """The flags are derived from the declaration (#252): a stage the report was not built
+    for is an `AttributeError`, not a silent False -- which is what lets `getattr(report,
+    flag, False)` in `hub.draft.report` mean "not declared" rather than "not run". Two
+    reports agree when they record the same run of the same stages, and one prints them."""
+    rep = board.BuildReport(adp=True)
+    with pytest.raises(AttributeError, match="snap_share"):
+        _ = rep.snap_share
+    assert rep == board.BuildReport(adp=True) and rep != board.BuildReport()
+    assert rep != board.BuildReport(adp=True, source=board.SERVED)
+    assert repr(rep).startswith("BuildReport(sos=False, td_luck=False, ") and "adp=True" in repr(rep)
