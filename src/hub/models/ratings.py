@@ -176,6 +176,11 @@ def rated_games(season: int, *, at: datetime | None = None, cache: Path | None =
         # and nothing downstream would say so. See `nfeloqb.ABBREVIATIONS`.
         said += (f"; {len(unknown)} team(s) in the state match no game and never adjust: "
                  f"{', '.join(unknown)} -- a spelling nfeloqb.ABBREVIATIONS does not map?")
+    if (missing := nfeloqb.missing_teams(latest, games)):
+        # The other direction: a schedule team the source has no row for is a team whose
+        # games are left as priced, and nothing else on the run would say so.
+        said += (f"; {len(missing)} schedule team(s) have no row in the state and never "
+                 f"adjust: {', '.join(missing)}")
     return _rated_by_week(games, rows, latest, moment), said
 
 
@@ -274,12 +279,15 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
         store.write(_with_committed(part, season, wk, name, base), "preds", "nfl", season, wk,
                     base=base, name=name, replace=True)
 
-    # The run line says what this run did (#284): how many of the slate's games the
+    # The run line says what this run did (#284): how many of the slate's priced games the
     # quarterback layer moved, and `passthrough` only when that count is zero. Off the
-    # slate that was predicted, the same rows `report_line` below describes.
+    # slate that was predicted, and over the priced games -- the population the adjustment
+    # can touch, and the denominator `quarterback.report_line` below already uses, so the
+    # two adjacent lines cannot disagree about it when the slate carries an unpriced game.
     moved = slate.filter(pl.col("adjusted_by").is_not_null()).height
+    priced = slate.filter(pl.col("close_spread").is_not_null()).height
     if moved:
-        print(f"  ratings: season {season} week {wk}, {moved} of {slate.height} games "
+        print(f"  ratings: season {season} week {wk}, {moved} of {priced} priced games "
               f"quarterback-adjusted")
     else:
         print(f"  ratings (passthrough): season {season} week {wk}")

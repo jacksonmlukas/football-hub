@@ -117,7 +117,12 @@ def load_predictions(model: str, base: Path | None = None,
     # what returning nothing means. Returning it before the fetch is deliberate: a model
     # with nothing stored must not cost a network call to say so, and a fresh clone has to
     # reach the NoOverlap message even with nflverse down.
-    got = store.predictions(model=model, base=base)
+    #
+    # The family, not the exact name (#284): `market_baseline-qb` is the row the quarterback
+    # layer moved, and what is scored is what the module published for every game. On the
+    # exact name the comparison would drop exactly the backup-quarterback games and score
+    # the rest as if they were the whole.
+    got = store.predictions(model=model, base=base, family=True)
     if got.is_empty():
         return _nothing_predicted()
     preds = got.select("game_id", "season", "week", "model", "home_win_prob")
@@ -153,8 +158,13 @@ def _labels(a: pl.DataFrame, b: pl.DataFrame,
     def one(df: pl.DataFrame, fallback: str) -> str:
         if "model" not in df.columns:
             return fallback
-        got = df["model"].unique().to_list()
-        return str(got[0]) if len(got) == 1 and got[0] else fallback
+        # A family reads back under two names, `market_baseline` and `market_baseline-qb`
+        # (#284); the family's name is the shortest, the one every variant is spelled from.
+        got = sorted(str(m) for m in df["model"].unique().to_list() if m)
+        if not got:
+            return fallback
+        head = min(got, key=len)
+        return head if all(m == head or m.startswith(head + "-") for m in got) else fallback
 
     return given if given else (one(a, "the first model"), one(b, "the second model"))
 

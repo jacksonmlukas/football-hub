@@ -245,6 +245,33 @@ def _store_with_predictions(base, n_weeks=12, per_week=16, seed=0):
     return base
 
 
+def test_an_adjusted_game_is_in_what_conformal_scores(tmp_path):
+    """#284 named an adjusted row `market_baseline-qb`, and this reader filtered on the
+    exact string -- so once the quarterback layer moved a few games, the calibration window
+    quietly scored the unadjusted subset, which is biased: the backup-quarterback games are
+    the ones that left. `market_baseline` here means the family, one row per game."""
+    import datetime as dt
+
+    from hub import store
+    base = _store_with_predictions(tmp_path / "processed", n_weeks=1, per_week=4)
+    store.write(
+        pl.DataFrame({
+            "game_id": ["2026_01_adjusted"], "league": ["nfl"],
+            "season": pl.Series([2026], dtype=pl.Int32), "week": pl.Series([1], dtype=pl.Int32),
+            "home_win_prob": [0.6], "margin_mean": [4.8], "margin_lo": [-12.2],
+            "margin_hi": [21.8], "model": ["market_baseline-qb"], "version": ["v1-qb"],
+            "fit_through_week": pl.Series([0], dtype=pl.Int32),
+            "predicted_at": [dt.datetime(2026, 9, 1)]}),
+        "preds", "nfl", 2026, 1, base=base, name="v1-qb")
+    sched = pl.DataFrame(
+        {"game_id": [f"2026_01_g{i}" for i in range(4)] + ["2026_01_adjusted"],
+         "result": [3.0, -7.0, 10.0, 1.0, 6.0]},
+        schema={"game_id": pl.Utf8, "result": pl.Float64})
+    scored = conformal.load_scored("market_baseline", base=base, schedules=sched)
+    assert scored.height == 5, "four plain games and the adjusted one"
+    assert 4.8 in scored["margin_mean"].to_list(), "the adjusted game's own number"
+
+
 def test_the_rolling_window_runs_on_what_the_store_actually_returns(tmp_path):
     """The end-to-end shape: store -> load_scored -> rolling_coverage. Nothing hand-built,
     so a week that arrives as a padded string fails here rather than in October."""

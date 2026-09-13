@@ -285,11 +285,22 @@ ORDER BY season, week, game_id
 
 def predictions(league: str | None = None, season: int | None = None,
                 week: int | None = None, model: str | None = None,
-                base: Path | None = None) -> pl.DataFrame:
+                base: Path | None = None, *, family: bool = False) -> pl.DataFrame:
     """Predictions from the store, one row per game, week and season.
 
     Every filter is optional and `None` means "do not narrow on this" -- a league default of
     "nfl" would silently drop college predictions the day the first one is written.
+
+    **`model` is exact, and `family=True` widens it to the name and every variant spelled
+    `name-<suffix>`** -- `market_baseline` and `market_baseline-qb`, the row the quarterback
+    layer moved (#284), still one row per game. The distinction is the reader's to declare:
+    a reader scoring *what the module published* wants the family, because a game is
+    published once and the adjusted rows are exactly the backup-quarterback games, so a
+    reader on the exact name scores a subset biased by what left. `hub.models.conformal`
+    and `hub.models.eval` read the family; a reader after one model's rows alone -- auditing
+    what the adjustment did against what the baseline would have said -- asks for the exact
+    name. The suffix convention is `hub.models.market`'s; a prefix match (`market_baseliner`)
+    is not a variant and is not returned.
 
     `week` takes an int. The zero-padding `week_key` exists for is the store's business, and
     a caller passing 1 against a `week=01` partition matches nothing and reports it as an
@@ -316,10 +327,17 @@ def predictions(league: str | None = None, season: int | None = None,
         return pl.DataFrame()
     clauses: list[str] = []
     params: list[object] = []
-    for col, val in (("league", league), ("season", season), ("model", model)):
+    for col, val in (("league", league), ("season", season)):
         if val is not None:
             clauses.append(f"{col} = ?")
             params.append(val)
+    if model is not None:
+        if family:
+            clauses.append("(model = ? OR model LIKE ?)")
+            params += [model, f"{model}-%"]
+        else:
+            clauses.append("model = ?")
+            params.append(model)
     if week is not None:
         clauses.append("week = ?")
         params.append(week_key(week))

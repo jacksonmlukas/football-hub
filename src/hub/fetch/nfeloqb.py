@@ -415,6 +415,14 @@ def unknown_teams(st: pl.DataFrame, games: pl.DataFrame) -> list[str]:
     return sorted(set(st["team"].to_list()) - known)
 
 
+def missing_teams(st: pl.DataFrame, games: pl.DataFrame) -> list[str]:
+    """The mirror of `unknown_teams`: teams the season's games carry that the state does
+    not -- a team the source has no usable row for -- whose games therefore never adjust.
+    Silently, until `hub.models.ratings.rated_games` began printing this beside the other."""
+    known = set(games["home_team"].to_list()) | set(games["away_team"].to_list())
+    return sorted(known - set(st["team"].to_list()))
+
+
 def _serve_last_good(cache: Path | None, why: str) -> int:
     try:
         st = read_state(cache)

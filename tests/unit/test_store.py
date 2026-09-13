@@ -525,6 +525,35 @@ def test_predictions_can_be_narrowed_to_a_week_a_season_and_a_model(base):
     assert store.predictions(model="nobody", base=base).is_empty()
 
 
+def test_a_model_family_is_the_name_and_its_suffixed_variants_one_row_per_game(base):
+    """#284 gave an adjusted row its own model string, `market_baseline-qb`, and every
+    reader filtering on the exact name lost exactly the games the quarterback layer moved
+    -- the backup-quarterback games, a biased subset. `family=True` reads the name and
+    every variant spelled `name-<suffix>`, still one row per game; the default is exact."""
+    store.write(_versioned("g1", "v1", dt.datetime(2026, 9, 1)), "preds", "nfl", 2026, 1,
+                base=base, name="plain")
+    store.write(_versioned("g2", "v1-qb", dt.datetime(2026, 9, 1), model="market_baseline-qb"),
+                "preds", "nfl", 2026, 1, base=base, name="adjusted")
+    store.write(_versioned("g3", "v1", dt.datetime(2026, 9, 1), model="market_baseliner"),
+                "preds", "nfl", 2026, 1, base=base, name="other")
+    exact = store.predictions(model="market_baseline", base=base)
+    assert exact["game_id"].to_list() == ["g1"]
+    fam = store.predictions(model="market_baseline", family=True, base=base)
+    assert fam["game_id"].to_list() == ["g1", "g2"], "the name and its -qb variant, not a prefix"
+    assert sorted(fam["model"].to_list()) == ["market_baseline", "market_baseline-qb"]
+
+
+def test_a_family_still_returns_one_row_per_game(base):
+    """A game re-fitted from adjusted to plain -- a live price arrived -- is one game; the
+    latest row wins across the family exactly as it does within one model."""
+    store.write(_versioned("g1", "v1-qb", dt.datetime(2026, 9, 1), model="market_baseline-qb"),
+                "preds", "nfl", 2026, 1, base=base, name="adjusted")
+    store.write(_versioned("g1", "v1", dt.datetime(2026, 9, 2)), "preds", "nfl", 2026, 1,
+                base=base, name="plain")
+    fam = store.predictions(model="market_baseline", family=True, base=base)
+    assert fam.height == 1 and fam["model"].to_list() == ["market_baseline"]
+
+
 def test_the_week_filter_takes_an_int_not_a_padded_key(base):
     """`week_key` padding is the store's business. A caller passing 1 and silently matching
     nothing is the footgun this removes."""

@@ -372,6 +372,15 @@ def test_a_team_the_schedule_does_not_spell_is_named():
     assert nfeloqb.unknown_teams(st, games) == ["DEN", "LAC"]
 
 
+def test_a_schedule_team_the_state_does_not_carry_is_named():
+    """The mirror of `unknown_teams`: a schedule team with no row in the state, whose games
+    never adjust. `KC` is in both; `BUF` is on the schedule and not in the fixture."""
+    st = nfeloqb.state(nfeloqb.parse(csv_text().encode()))
+    games = pl.DataFrame({"home_team": ["KC", "BUF"], "away_team": ["LV", "NYJ"]})
+    assert nfeloqb.missing_teams(st, games) == ["BUF", "NYJ"]
+    assert nfeloqb.unknown_teams(st, games) == ["DEN", "LA", "LAC", "WAS"]
+
+
 def test_the_transport_refuses_a_live_call_from_the_default_suite(monkeypatch):
     """`hub.fetch.pool`'s guard, at the one function here that touches the network."""
     import urllib.request

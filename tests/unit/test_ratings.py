@@ -384,8 +384,27 @@ def test_the_run_line_says_passthrough_only_when_nothing_was_adjusted(sched, tmp
     ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
                 cache=tmp_path / "cache")
     adjusted = capsys.readouterr().out.splitlines()[0]
-    assert "ratings: season 2026 week 2, 1 of 2 games quarterback-adjusted" in adjusted
+    assert "ratings: season 2026 week 2, 1 of 2 priced games quarterback-adjusted" in adjusted
     assert "passthrough" not in adjusted
+
+
+def test_the_run_line_and_the_report_line_count_the_same_population(sched, tmp_path, capsys):
+    """An unpriced game on the slate: the run line's denominator is the priced count, the
+    population the adjustment can touch, which is what `quarterback.report_line` two lines
+    below already counts. With `slate.height` the two adjacent lines said 2 and 3."""
+    sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None, "KC", "LAC"), ("c", 2, 3.0, None, "KC", "LV"),
+           ("d", 2, None, None, "DEN", "WAS")])
+    _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 12, 11))
+    _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
+    _qb_state(tmp_path / "cache")
+    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
+                cache=tmp_path / "cache")
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    assert "1 of 2 priced games quarterback-adjusted" in lines[0]
+    assert any("quarterback adjustment: 1 of 2 priced games touched" in ln for ln in lines)
+    assert "2 of 3 games priced" in lines[1] and "1 unpriced" in lines[1], (
+        "the coverage line is about the whole slate, and says so")
 
 
 def test_the_adjusted_rows_are_their_own_partition(sched, tmp_path):
@@ -437,6 +456,20 @@ def test_a_team_the_state_spells_differently_is_named_rather_than_silently_unadj
     out = capsys.readouterr().out
     assert "4 team(s) in the state match no game" in out
     assert "DEN, LA, LAC, WAS" in out
+
+
+def test_a_schedule_team_with_no_row_in_the_state_is_named_rather_than_silently_untouched(
+        sched, tmp_path, capsys):
+    """The other direction of the spelling check. `unknown_teams` names a state team the
+    schedule lacks; a schedule team the *state* lacks -- a team the source has no row for
+    -- was silently untouched, every one of its games left as priced with nothing saying
+    so. Counted and named on the same sentence."""
+    sched([("a", 1, 3.0, 7), ("c", 2, 3.0, None, "BUF", "LV"), ("e", 2, 3.0, None, "KC", "NYJ")])
+    _qb_state(tmp_path / "cache")
+    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
+                cache=tmp_path / "cache")
+    out = capsys.readouterr().out
+    assert "2 schedule team(s) have no row in the state and never adjust: BUF, NYJ" in out
 
 
 def test_a_drifted_quarterback_file_is_refused_and_the_fit_still_runs(sched, tmp_path, capsys):
