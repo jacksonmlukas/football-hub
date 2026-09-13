@@ -184,7 +184,7 @@ def test_the_version_changes_with_the_source(sched, tmp_path):
     got = ratings.fit(2026, 2, at=dt.datetime(2026, 9, 6), base=tmp_path,
                       cache=tmp_path / "cache")
     by = dict(zip(got["game_id"].to_list(), got["version"].to_list(), strict=True))
-    assert by["b"].endswith("-snapshot") and by["c"].endswith("-schedule")
+    assert by["b"].endswith("-live") and by["c"].endswith("-schedule")
     assert by["b"] != by["c"], "identical numbers, different artifacts"
 
 
@@ -196,7 +196,7 @@ def test_the_two_sources_are_written_as_separate_partitions(sched, tmp_path):
     ratings.fit(2026, 2, at=dt.datetime(2026, 9, 6), base=tmp_path, cache=tmp_path / "cache")
     written = sorted(p.name for p in (tmp_path / "preds").rglob("*.parquet"))
     assert len(written) == 2, written
-    assert any("snapshot" in n for n in written) and any("schedule" in n for n in written)
+    assert any("live" in n for n in written) and any("schedule" in n for n in written)
 
 
 def test_the_fit_reports_how_many_games_each_source_priced(sched, tmp_path, capsys):
@@ -205,9 +205,20 @@ def test_the_fit_reports_how_many_games_each_source_priced(sched, tmp_path, caps
     _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 5))
     ratings.fit(2026, 2, at=dt.datetime(2026, 9, 6), base=tmp_path, cache=tmp_path / "cache")
     out = capsys.readouterr().out
-    assert "1 from a dated snapshot" in out
+    assert "1 from a live snapshot" in out
+    assert "0 from a stale one" in out
     assert "1 from the moving field" in out
     assert "1 unpriced" in out
+
+
+def test_the_fit_reports_a_stale_snapshot_as_such(sched, tmp_path, capsys):
+    """#281: a frozen quote with no moving field behind it prices the game and is counted
+    as stale, not as a dated snapshot -- the wording that used to cover both."""
+    sched([("a", 1, 3.0, 7), ("b", 2, None, None), ("c", 2, 3.0, None)])
+    _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 8, 20))
+    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12), base=tmp_path, cache=tmp_path / "cache")
+    out = capsys.readouterr().out
+    assert "0 from a live snapshot" in out and "1 from a stale one" in out
 
 
 def test_a_store_with_no_snapshots_at_all_still_fits(sched, tmp_path):
@@ -334,8 +345,9 @@ def _qb_state(cache):
 def test_a_frozen_quote_is_rated_from_the_quarterback_state_and_the_row_says_so(sched,
                                                                                 tmp_path):
     """Two games, one snapshot each. `b`'s quote was polled an hour before the fit and is
-    live; `c`'s has stood untouched for three weeks and is not. LV's starter in the fixture
-    is a fresh backup, so `c` moves and `b` does not."""
+    live; `c`'s has stood untouched for three weeks and is not -- since #281 it yields to
+    the moving field, which carries the same number, and the row says `schedule`. LV's
+    starter in the fixture is a fresh backup, so `c` moves and `b` does not."""
     sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None, "KC", "LAC"), ("c", 2, 3.0, None, "KC", "LV")])
     _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 12, 11))
     _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
@@ -344,10 +356,10 @@ def test_a_frozen_quote_is_rated_from_the_quarterback_state_and_the_row_says_so(
                       cache=tmp_path / "cache")
     by = {r["game_id"]: r for r in got.to_dicts()}
     assert by["b"]["adjusted_by"] is None and by["b"]["qb_adjustment"] is None
-    assert by["b"]["version"].endswith("-snapshot")
+    assert by["b"]["version"].endswith("-live")
     assert by["b"]["margin_mean"] == 3.0
     assert by["c"]["adjusted_by"] == "nfeloqb"
-    assert by["c"]["version"].endswith("-snapshot-qb")
+    assert by["c"]["version"].endswith("-schedule-qb")
     assert by["c"]["margin_mean"] == pytest.approx(3.0 + by["c"]["qb_adjustment"])
     assert by["c"]["qb_adjustment"] > 0, "the home side keeps its starter; the away side lost his"
 
@@ -418,7 +430,7 @@ def test_the_adjusted_rows_are_their_own_partition(sched, tmp_path):
                 cache=tmp_path / "cache")
     written = sorted(p.name for p in (tmp_path / "preds").rglob("*.parquet"))
     assert len(written) == 2, written
-    assert any("snapshot-qb" in n for n in written)
+    assert any("schedule-qb" in n for n in written)
 
 
 def test_the_fit_reports_the_change_once(sched, tmp_path, capsys):
@@ -440,7 +452,7 @@ def test_no_quarterback_state_is_the_passthrough_and_says_so(sched, tmp_path, ca
     got = ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
                       cache=tmp_path / "cache")
     assert got["adjusted_by"].to_list() == [None]
-    assert got["version"][0].endswith("-snapshot")
+    assert got["version"][0].endswith("-schedule")
     assert "no nfeloqb file" in capsys.readouterr().out
 
 

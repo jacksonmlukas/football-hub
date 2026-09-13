@@ -105,7 +105,7 @@ def test_every_source_the_schedule_can_choose_is_classified():
     """The premise. A test that only checks an unknown name raises would pass against a
     `PROVENANCE` table that had gone empty."""
     from hub import schedule
-    assert {"snapshot", "schedule"} <= set(schedule.PROVENANCE)
-    for source in ("snapshot", "schedule"):
+    assert {"live", "stale", "schedule"} <= set(schedule.PROVENANCE)
+    for source in ("live", "stale", "schedule"):
         got = schedule.provenance(source)
         assert isinstance(got.reader_can_obtain, bool) and got.why

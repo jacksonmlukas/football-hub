@@ -159,3 +159,33 @@ takes one fresh snapshot, so there every quote is seconds old and reads as live,
 adjustment reaches the published numbers through the maintainer's own runs against the local
 archive, or once the runner keeps one. #210's second criterion — `price_source` distinguishing
 live from stale in the coalesce — is still open, and this change does not decide it.
+
+## Restated 2026-09-12 (#281) — the row arrives labelled, and the cut is declared once
+
+#210's second criterion is now met, and it moves where the rule above is applied. The
+coalesce in `hub.schedule.priced_games` used to rank any snapshot above the moving field, so
+the quote frozen for twelve days that #210 measured outranked a field upstream still
+refreshes. `price_source` is now three-way: **`live`** (a snapshot whose run of unchanged
+polls began within `STALE_AFTER_DAYS` of the moment asked), **`schedule`** (the moving
+field — no snapshot, or a snapshot gone stale), and **`stale`** (a stale snapshot with no
+moving field behind it: used, because dropping the game would shrink the season, and said
+so). A stale snapshot that the moving field beats keeps its `snapshot_spread` and staleness
+columns on the row, and `priced_at` is null, since no snapshot priced it.
+
+**The cut is declared once.** `quarterback.live_price(at)` is the expression over
+`unmoved_since`, applied in `priced_games` and nowhere else; `quarterback.apply` no longer
+takes the moment and reads the label — a row is adjusted exactly when `price_source` is
+`stale` or `schedule`. The two consumers of the cut cannot disagree about a row, which is what
+#281 asked for, and what #251 settles about the cut itself (the poll age rather than the
+quote's last move; what a change in book set does to the run) changes in that one
+expression. `STALE_AFTER_DAYS` stays in this module and in the digest: `config_digest`
+and `fitted_digest` are unmoved (`a1e669b9`, `9be7844c`).
+
+What this changes on a run: a game both sources price and whose snapshot is stale is now
+priced from the moving field — the same number where the two agree, which
+`tests/golden/test_line_agreement.py` holds — and its version string reads `-schedule-qb`
+where it read `-snapshot-qb`. The ratings run line counts the three: `N from a live
+snapshot, M from a stale one, K from the moving field`. Weeks published before #281 carry
+`snapshot`, which `schedule.PROVENANCE` still classifies so the publisher can read them
+back. The survivor grid rates from the same seam and so reads the three-way label; carrying
+it onto the grid's own rows is the survivor lane's.

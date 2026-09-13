@@ -50,7 +50,12 @@ This is what separates evaluation infrastructure from a picks account:
 
 - **Reliability diagram**, ten bins, with counts per bin
 - **Log-loss and Brier** against the market-only baseline, with the delta and a bootstrap interval
-- **Conformal coverage**: nominal versus empirical, tracked weekly
+- **Conformal coverage**: nominal versus empirical, tracked weekly. Calibrated on strictly
+  earlier `(season, week)` cells since #262 (2026-09-12) -- a later season never reaches an
+  earlier season's window. No coverage figure has been published yet: the store holds one
+  season and no scored week, so there is no old number to restate beside a new one; the first
+  is `uv run python -m hub.models.conformal --recalibrate --model market_baseline` once a
+  week has results.
 - **Every number carries its interval.** With ~285 NFL games a season, most weekly deltas are
   noise, and showing that you know it is the credibility signal.
 - **A wrong-predictions section**, not buried. The biggest misses, with what the model saw.

@@ -533,6 +533,111 @@ def test_the_corrections_gate_runs_on_a_board_that_has_a_corrected_ranking(monke
     assert "tripwire clear" in capsys.readouterr().out
 
 
+# --- `--diagnose`, driven through main() (#266) ---------------------------------------
+#
+# The path a coverage run measured as never reached: the board pin, its error path, and the
+# tripwire wiring. Stubbed at the seams `main` already has -- `hub.draft.board.build` for
+# the live board and `backtest.diagnose` for the sims -- so what is held is the wiring and
+# not the simulation, which has its own tests above.
+
+_CLEAR = {"pick": 22, "held": "QB1", "leader": "P5", "leader_pos": "RB", "lift": 0.01,
+          "co_leaders": 1, "candidates": 8,
+          "held_qb": 1, "held_rb": 0, "held_wr": 0, "held_te": 0, "need_co_led": False}
+_TRIPPED = {**_CLEAR, "leader": "P4", "leader_pos": "QB"}
+
+
+def _diagnose_seams(monkeypatch, rows, builds=None):
+    """Stub the live board and the sims; return what each was handed."""
+    from hub.draft import board as board_mod
+    calls = {"build": 0, "diagnosed": []}
+
+    def build(*a, **k):
+        calls["build"] += 1
+        if isinstance(builds, Exception):
+            raise builds
+        return _board(8), board_mod.BuildReport(adp=True)
+
+    def diagnose(board, report, **kw):
+        calls["diagnosed"].append((board, report, kw))
+        return _diagnosed(rows) if rows else pl.DataFrame()
+
+    monkeypatch.setattr(board_mod, "build", build)
+    monkeypatch.setattr(bt, "diagnose", diagnose)
+    return calls
+
+
+def test_diagnose_pins_the_board_on_the_first_run_and_reuses_it_on_the_second(
+        monkeypatch, tmp_path, capsys):
+    """Two runs at two commits must diagnose the same board. The first run writes the
+    snapshot and reports off the live build; the second never builds, reads the pin, and
+    its report is `of_served` -- derived from the frame, since the run that wrote it is
+    over."""
+    calls = _diagnose_seams(monkeypatch, [_CLEAR])
+    snap = tmp_path / "board.parquet"
+    assert bt.main(["--diagnose", "--board", str(snap)]) == 0
+    first = capsys.readouterr().out
+    assert "board snapshot written to" in first and snap.exists()
+    assert bt.main(["--diagnose", "--board", str(snap)]) == 0
+    second = capsys.readouterr().out
+    assert "board pinned from" in second and "snapshot written" not in second
+    assert calls["build"] == 1, "the pin is what stops a second live fetch"
+    live, pinned = calls["diagnosed"]
+    assert not live[1].served and pinned[1].served
+    assert pinned[0].columns == live[0].columns
+    assert pinned[2]["rounds"] == bt.DEFAULT_ROUNDS and pinned[2]["n_draft_sims"] == 12
+
+
+def test_diagnose_without_a_pin_builds_live_and_writes_nothing(monkeypatch, tmp_path,
+                                                                capsys):
+    calls = _diagnose_seams(monkeypatch, [_CLEAR])
+    assert bt.main(["--diagnose"]) == 0
+    assert calls["build"] == 1
+    assert "snapshot written" not in capsys.readouterr().out
+    assert not list(tmp_path.iterdir())
+
+
+def test_diagnose_says_when_the_live_board_is_unavailable(monkeypatch, capsys):
+    """The error path: `build()` raising is an input that could not be read, reported the
+    way `hub.cli.unavailable` reports every fetch failure, and exit 1."""
+    calls = _diagnose_seams(monkeypatch, [_CLEAR], builds=RuntimeError("ESPN 503"))
+    assert bt.main(["--diagnose"]) == 1
+    err = capsys.readouterr().err
+    assert "the live board unavailable" in err and "ESPN 503" in err
+    assert calls["diagnosed"] == [], "nothing is simulated on a board that never built"
+
+
+def test_diagnose_with_no_rankable_pick_exits_one(monkeypatch, capsys):
+    _diagnose_seams(monkeypatch, [])
+    assert bt.main(["--diagnose"]) == 1
+    assert "nothing to compare" in capsys.readouterr().out
+
+
+def test_diagnose_prints_the_tripwire_when_it_trips_and_still_writes_the_rows(
+        monkeypatch, tmp_path, capsys):
+    """The tripwire is a sentence in the output, not the exit code: the run is a diff
+    between two commits and both halves have to be written for the diff to exist."""
+    _diagnose_seams(monkeypatch, [_TRIPPED])
+    out = tmp_path / "diag.parquet"
+    assert bt.main(["--diagnose", "--out", str(out)]) == 0
+    said = capsys.readouterr().out
+    assert "TRIPWIRE TRIPPED" in said and "QB is full" in said
+    assert "tripwire clear" not in said
+    assert pl.read_parquet(out).height == 1 and f"wrote 1 rows to {out}" in said
+
+
+def test_diagnose_reports_the_tripwire_clear_and_the_correlation_note(monkeypatch, capsys):
+    calls = _diagnose_seams(monkeypatch, [_CLEAR])
+    assert bt.main(["--diagnose", "--draft-sims", "3", "--season-sims", "7", "--rounds", "5",
+                    "--seed", "9"]) == 0
+    said = capsys.readouterr().out
+    assert "tripwire clear" in said and "TRIPPED" not in said
+    assert "3 x 7 sims" in said
+    assert "Championship equity at your first 1 turns" in said
+    # the flags reach the sims, not only the sentence about them
+    (_, _, kw), = calls["diagnosed"]
+    assert (kw["n_draft_sims"], kw["n_season_sims"], kw["rounds"], kw["seed"]) == (3, 7, 5, 9)
+
+
 # --- the corrected-ADP gate (ADR-0011) ------------------------------------
 #
 # Fixed before the numbers, and deliberately NOT "did the recommendation change" -- it is
