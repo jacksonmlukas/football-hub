@@ -5,6 +5,16 @@ contest last, and how many people are still in it" -- which is a different quest
 one a dollar figure needs. A buyback is worth what the pot will be times the chance of taking
 it, and both of those depend on the field, not on us.
 
+**The shape, since #254: one field, one trial, six readers.** `Field` is the board reshaped
+into the weeks it can play under the Pool's rules, built once; its one operation is `trial`,
+one play of the season with a stated policy for our entry. `Policy` is that seam, with two
+adapters: `Replay` (our plan, replayed) and `Rival` (a member of the field, sampled). The
+six questions -- `weekly`, `Field.plan`, `Field.entry`, `buyback`, `sensitivity`,
+`leverage` -- read trial outcomes and re-derive nothing; the renderers sit beside `main`.
+The three rules below -- every game drawn once and the whole season before anybody picks,
+no entry handed both sides of one fixture, every holder of a team sharing its result --
+live on `Field` and are read here for why.
+
 **Every game is drawn once per trial.** All entries holding that team share the result. This
 is the whole point: a field playing chalk dies *together*, and the correlation is what decides
 whether the pool reaches week 13 at all. Drawing per entry would make eliminations independent,
@@ -14,7 +24,7 @@ which would thin the field smoothly and stretch the contest far past anything re
 a double-pick week spending them together is lost by construction and can eliminate the entry
 outright -- which is a loss the simulator inflicted rather than one the pool did. The game
 identity was read for the draw and never for the pick until #156; `_Week.fixture` is where it
-is now stated, and `_pick` and `_Ours.plays` are the two places that read it.
+is now stated, and `Rival.sample` and `Replay.plays` are the two places that read it.
 
 **Rivals are sampled, not deterministic**, and that is a correction rather than a refinement.
 Twenty-one rivals following one deterministic rule against identical empty ledgers pick the
@@ -28,8 +38,8 @@ probability -- concentrated on chalk, but not identical to it.
 of the field on the week's best team, where real survivor fields concentrate several times
 that. Since concentration is exactly what makes a field die together, the sampling rule was
 quietly deciding whether the pool reaches week 13 -- the question this module exists to answer.
-`PoolConfig.field_concentration` is the exponent `_pick` raises `win_prob` to, and 1.0 is the
-old behaviour reproduced rather than a measurement.
+`PoolConfig.field_concentration` is the exponent `Rival.sample` raises `win_prob` to, and 1.0
+is the old behaviour reproduced rather than a measurement.
 
 What that buys is divergence. What it costs is a modelling choice with no measurement behind
 it: nobody has observed this pool's rivals, and under Hidden Picks nobody can before the
@@ -93,11 +103,11 @@ import argparse
 import hashlib
 import sys
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 import numpy as np
 import polars as pl
@@ -180,7 +190,7 @@ class Plan(NamedTuple):
 
     `picks` is missing a week wherever the rule that built it ran out of teams. That is not a
     gap to be filled with a repeat -- it is the no-repeat ledger binding, and the entry is
-    eliminated there for want of a legal pick, exactly as `_pick` returning None eliminates a
+    eliminated there for want of a legal pick, exactly as `Rival.sample` returning None eliminates a
     rival.
     """
     picks: dict[int, tuple[str, ...]]   # week -> the teams taken in it, sorted
@@ -203,7 +213,7 @@ class EntryOutcome(NamedTuple):
     `survivors_each` is the trial-by-trial record the three means above are means *of*,
     carried out rather than reduced here because a difference between two of these outcomes
     has to be taken **paired** to be worth anything. Two candidate plans on the same seed meet
-    the same season trial for trial (`_play`), so the spread of `a - b` is far tighter than
+    the same season trial for trial (`Field.trial`), so the spread of `a - b` is far tighter than
     the spread of either arm -- and computing it from `share_sd` alone would throw that away
     and report an interval several times too wide.
 
@@ -481,13 +491,13 @@ class _Week(NamedTuple):
     `weight` is `prob` raised to `PoolConfig.field_concentration`, and it is the *rivals'*
     sampling weight and nothing else. `prob` is what a game is drawn at and what the optimiser
     and `_best_available` rank on; the two must not be confused, which is why the exponent is
-    applied here, once per week per run, rather than inside `_pick` where a reader would have
+    applied here, once per week per run, rather than inside `Rival.sample` where a reader would have
     to check it had not leaked into a price. Only the teams in `pickable` have one, because
     they are the only teams the sampler can reach.
 
     `fixture` is which game each team is in, and it is carried rather than rebuilt because
-    `_pick` needs it -- once per live entry per week per trial, not once per week per run.
-    It was rebuilt on demand while the only readers were `_greedy` and `_Ours`, and the whole
+    `Rival.sample` needs it -- once per live entry per week per trial, not once per week per run.
+    It was rebuilt on demand while the only readers were `_greedy` and `Replay`, and the whole
     of #156 is that the *sampler* was not one of them: `games` is the only field on this week
     that still knows two rows are two sides of one fixture, and `teams`, `prob`, `pickable`
     and `weight` have each flattened that away. A rule stated on a shape the code doing the
@@ -502,7 +512,7 @@ class _Week(NamedTuple):
     picks: int                                  # 1, or 2 in a double-pick week
     dropped: int = 0                            # fixtures in the week priced on one side only
     concentration: float = 1.0                  # the exponent `weight` was raised to, so a
-                                                # refusal in `_pick` can name it (#286)
+                                                # refusal in `Rival.sample` can name it (#286)
 
 
 def grid_digest(grid: pl.DataFrame) -> str:
@@ -539,9 +549,9 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
     than falling back to per-team draws, which would let a team and its opponent both win.
 
     **Both halves of that sentence are now wired to something.** The first was: `games` pairs
-    the rows and `_play` draws each pair once. The second was prose -- the identity was used
+    the rows and `Field.trial` draws each pair once. The second was prose -- the identity was used
     for the draw and never for the pick, where the only exclusion applied was the entry's own
-    ledger, so `_pick` handed a rival both sides of one game in a double-pick week and the
+    ledger, so `Rival.sample` handed a rival both sides of one game in a double-pick week and the
     entry lost by construction (#156). `_Week.fixture` is that identity in the shape the
     sampler can read, built here beside `games` so the two cannot drift.
 
@@ -554,7 +564,7 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
     was simply not covered.
 
     **The count is against the picks the week takes, not against zero.** A double-pick week
-    with one priced fixture has two teams and no way to cover itself -- `_pick` hands the
+    with one priced fixture has two teams and no way to cover itself -- `Rival.sample` hands the
     entry both sides of that one game, one of them loses, and every entry in the field dies
     with certainty in a week `survivor.solve` calls infeasible and `coverage` calls missing.
     That reads out as `ending_week` naming a week nobody could have played, which is exactly
@@ -569,11 +579,11 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
     simulate a week the board has fully priced.
 
     **`PoolConfig.field_concentration` is applied here and only here.** Raising `prob` to it
-    once per week per run costs nothing next to doing it inside `_pick`, which runs once per
+    once per week per run costs nothing next to doing it inside `Rival.sample`, which runs once per
     live entry per week per trial -- but the reason it lives here is that this is the seam
     where a price stops being a price. `_Week.weight` is a sampling weight for rivals;
     `_Week.prob` stays the drawn probability, and every other reader of the week --
-    `_best_available`, the optimiser's grid, the draw in `_play` -- goes on reading `prob`.
+    `_best_available`, the optimiser's grid, the draw in `Field.trial` -- goes on reading `prob`.
     """
     if "game_id" not in grid.columns:
         raise ValueError(
@@ -627,80 +637,10 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
     return out
 
 
-def _pick(rng: np.random.Generator, week: _Week, ledger: set[str], k: int) -> list[str] | None:
-    """`k` teams this entry has not used, one per fixture, sampled toward the best available.
-
-    None when the entry cannot field a legal pick -- it has spent too many teams to cover the
-    week, which is elimination by the no-repeat rule rather than by losing.
-
-    **One per fixture, which is #156 and was the whole of the defect.** Both sides of one game
-    cannot both win, so a double-pick week spending them together is lost the moment it is
-    entered -- and it can eliminate the entry outright. `hub.season.survivor.solve` forbids it
-    as `one_side_wk` and `_best_available` takes one team per fixture, so our own entry was
-    never exposed; this sampler, which is what prices the *money*, drew `k` teams out of a flat
-    list and the only exclusion it applied was the ledger. The two counts that matter are
-    therefore different counts: `k` distinct *teams* were always available where `k` distinct
-    *fixtures* were not, and the second is the one a week can actually be covered from.
-
-    The draw is sequential rather than one `size=k` call, because the legal set narrows after
-    each pick: taking a team removes its opponent as well as itself. At `k == 1` that is the
-    identical `rng.choice` call on the identical list, so nothing about a single-pick week --
-    which is every week outside 13 through 18 -- moves by a float.
-
-    **This is the whole of the field's sampling rule, and since #151 it is theirs alone**: our
-    own entry replays a plan and reaches this function through no path. So how hard the field
-    crowds onto the week's best team is a property of this one draw, and
-    `PoolConfig.field_concentration` is where it is stated -- carried in as `_Week.weight`,
-    which is `prob` raised to it. At 1.0 the weight *is* the probability and this samples
-    exactly as it always has; above 1.0 the field concentrates, which is what makes it die
-    together. Nobody has observed this pool's rivals and under Hidden Picks nobody can before
-    a deadline, so the knob is stated rather than fitted and `sensitivity` reports what the
-    answer does across it instead of asserting a value.
-
-    **Drawn from `pickable`, not from `teams`.** A team below `MIN_PROB` is one `auto_pick`
-    and `weekly` both refuse to hand us, and it was still reachable here -- so our own entry
-    was valued over seasons in which it made picks the pick side would never have allowed.
-    Its sampling weight was near zero either way, which is why the figures barely move; what
-    moves is that one rule now says what may be taken, in both places that take one.
-
-    That retired one guard and, for a while, argued away another. This returned None a
-    second time when the weights summed to zero -- a whole week of teams the betting market
-    gives no chance -- which was the only way a zero-priced team could reach the sampler at
-    all. Every member of `pickable` is above `MIN_PROB` by construction, so a non-empty
-    `avail` cannot sum to zero and *that* branch was unreachable rather than merely untaken;
-    deleted, because a guard that cannot fire still reads as a case someone has thought
-    about. The docstring then claimed the argument survived the exponent, because a
-    positive weight raised to a finite non-negative power is positive. **True in the reals,
-    false in float64** (#286): with the floor at `MIN_PROB` and a concentration of 400 --
-    legal, since `weeks_from_grid` refuses only a negative or non-finite one -- every
-    probability below about 0.17 is raised to exactly zero, and a rival whose legal teams
-    are all underdogs holds a vector that sums to zero. `w / w.sum()` was then NaN and
-    `rng.choice` raised it several frames from the setting that caused it. So the vector is
-    checked where it is built: a sum that is not positive is refused with the concentration
-    and the floor named, before the draw, and it is an error rather than an elimination
-    because the entry had legal teams and the arithmetic lost them. Unreachable on the
-    default axis, which tops out at 16; reachable on any a caller supplies.
-    """
-    avail = [t for t in week.teams if t in week.pickable and t not in ledger]
-    # Fixtures, not teams. A double-pick week whose only legal teams are the two sides of one
-    # game cannot be covered at all, and saying so here is what makes that elimination the
-    # no-repeat rule's rather than a loss the entry was handed.
-    if len({week.fixture[t] for t in avail}) < k:
-        return None
-    out: list[str] = []
-    while len(out) < k:
-        w = np.array([week.weight[t] for t in avail], dtype=float)
-        total = _weight_total(week, avail, float(w.sum()))
-        got = str(rng.choice(avail, size=1, replace=False, p=w / total)[0])
-        out.append(got)
-        avail = [t for t in avail if week.fixture[t] != week.fixture[got]]
-    return out
-
-
 def _weight_total(week: _Week, teams: Sequence[str], total: float) -> float:
     """`total`, the sum of these teams' sampling weights, refused if it is not positive.
 
-    The one rule for the one failure mode (#286, and the review of it): `_pick` divides a
+    The one rule for the one failure mode (#286, and the review of it): `Rival.sample` divides a
     rival's vector by this and `_chalk_share` divides the field's, and either sum is zero
     once every team in it has underflowed. The sum arrives computed rather than being
     computed here, because the two callers sum differently -- numpy over a vector, Python
@@ -723,7 +663,7 @@ def _chalk_share(week: _Week) -> tuple[str, float]:
     """The week's best team, and the share of a clean-ledger field that draws it.
 
     The quantity the concentration knob is *about*, so it is reported rather than left to be
-    inferred from a lifetime. Computed and not counted: with every ledger empty, `_pick`'s
+    inferred from a lifetime. Computed and not counted: with every ledger empty, `Rival.sample`'s
     normalised weight on a team **is** its expected ownership, so estimating it by simulation
     would put Monte Carlo noise on a number already known exactly.
 
@@ -740,7 +680,7 @@ def _chalk_share(week: _Week) -> tuple[str, float]:
     """
     best = min(sorted(week.pickable), key=lambda t: (-week.prob[t], t))
     field = sorted(week.pickable)
-    # The same refusal `_pick` makes on a rival's vector, reached from `sensitivity` on
+    # The same refusal `Rival.sample` makes on a rival's vector, reached from `sensitivity` on
     # any axis a caller supplies: a field whose every weight has underflowed owns nothing.
     total = _weight_total(week, field, sum(week.weight[t] for t in field))
     return best, week.weight[best] / total
@@ -838,23 +778,125 @@ def _solved(wks: Sequence[_Week], weeks: Sequence[int], ledger: set[str],
                 "the optimiser on the weeks ahead, carrying our ledger")
 
 
-def solve_plan(grid: pl.DataFrame, weeks: Sequence[int], *, ledger: Sequence[str] = (),
-               pool: PoolConfig | None = None) -> Plan:
-    """What our entry would pick in each of these weeks, before any trial is run.
+# --- the field: one object, one trial, six readers (#254) ---------------------------------
+#
+# Six public questions -- the week's pick, the season plan, an entry's outcome, the buyback,
+# the concentration sensitivity, the leverage term -- each re-ran the same preamble (the
+# rules, the generator, the grid reshaped into weeks) and re-threaded the same eight
+# arguments, and the one season draw sat behind all of them behind an index test. `Field`
+# is that preamble done once: a reshaped season plus the Pool's rules, whose one operation
+# is `trial` -- play the season once with a stated policy for our entry. Everything below
+# it reads trial outcomes. `Policy` is the pick seam that was hidden inside `Field.trial`'s
+# `i == 0`, with its two adapters public: `Replay`, our plan replayed, and `Rival`, a
+# member of the field sampled under the stated concentration.
 
-    The seam. `entry_outcome` calls this when it is handed no plan, and a caller that wants to
-    compare two of them -- #159's pairing -- builds them here and passes each in, so the only
-    difference between the two figures is the picks and not the season they met.
 
-    Solved against the same weeks the simulator will play, which is why it takes a grid and
-    reshapes it rather than taking `hub.season.survivor.plan_remaining`'s answer: a plan over
-    weeks this simulator cannot draw is not a plan this simulator can score.
+class Policy(Protocol):
+    """What an entry plays in a week, given the Ledger this trial has spent so far.
+
+    The pick seam. `Field.trial` asks it once per live entry per week and reads nothing
+    else about who is picking: `Replay` answers for our entry and `Rival` for every other,
+    and a change to how one of them picks cannot reach the other. `plan` and `replans`
+    are what an `EntryOutcome` carries back out about the policy it was scored under --
+    a rival has no plan and never re-plans.
     """
-    cfg = pool or PoolConfig()
-    return _solved(weeks_from_grid(grid, weeks, cfg), weeks, set(ledger), cfg)
+    plan: Plan | None
+    replans: int
+
+    def picks(self, rng: np.random.Generator, at: int, ledger: set[str]) -> list[str] | None:
+        """The teams taken at position `at` of the season, or None: no legal pick, which
+        is elimination by the no-repeat rule rather than by losing."""
+        ...
 
 
-class _Ours:
+class Rival:
+    """A member of the field: samples the week's pick under `PoolConfig.field_concentration`.
+
+    The whole of the field's sampling rule, and since #151 it is theirs alone -- our own
+    entry is `Replay` and reaches this through no path.
+    """
+    plan: Plan | None = None
+    replans: int = 0
+
+    def __init__(self, wks: Sequence[_Week]) -> None:
+        self.wks = tuple(wks)
+
+    def picks(self, rng: np.random.Generator, at: int, ledger: set[str]) -> list[str] | None:
+        return self.sample(rng, self.wks[at], ledger, self.wks[at].picks)
+
+    @staticmethod
+    def sample(rng: np.random.Generator, week: _Week, ledger: set[str], k: int
+               ) -> list[str] | None:
+        """`k` teams this entry has not used, one per fixture, sampled toward the best available.
+
+        None when the entry cannot field a legal pick -- it has spent too many teams to cover the
+        week, which is elimination by the no-repeat rule rather than by losing.
+
+        **One per fixture, which is #156 and was the whole of the defect.** Both sides of one game
+        cannot both win, so a double-pick week spending them together is lost the moment it is
+        entered -- and it can eliminate the entry outright. `hub.season.survivor.solve` forbids it
+        as `one_side_wk` and `_best_available` takes one team per fixture, so our own entry was
+        never exposed; this sampler, which is what prices the *money*, drew `k` teams out of a flat
+        list and the only exclusion it applied was the ledger. The two counts that matter are
+        therefore different counts: `k` distinct *teams* were always available where `k` distinct
+        *fixtures* were not, and the second is the one a week can actually be covered from.
+
+        The draw is sequential rather than one `size=k` call, because the legal set narrows after
+        each pick: taking a team removes its opponent as well as itself. At `k == 1` that is the
+        identical `rng.choice` call on the identical list, so nothing about a single-pick week --
+        which is every week outside 13 through 18 -- moves by a float.
+
+        **This is the whole of the field's sampling rule, and since #151 it is theirs alone**: our
+        own entry replays a plan and reaches this function through no path. So how hard the field
+        crowds onto the week's best team is a property of this one draw, and
+        `PoolConfig.field_concentration` is where it is stated -- carried in as `_Week.weight`,
+        which is `prob` raised to it. At 1.0 the weight *is* the probability and this samples
+        exactly as it always has; above 1.0 the field concentrates, which is what makes it die
+        together. Nobody has observed this pool's rivals and under Hidden Picks nobody can before
+        a deadline, so the knob is stated rather than fitted and `sensitivity` reports what the
+        answer does across it instead of asserting a value.
+
+        **Drawn from `pickable`, not from `teams`.** A team below `MIN_PROB` is one `auto_pick`
+        and `weekly` both refuse to hand us, and it was still reachable here -- so our own entry
+        was valued over seasons in which it made picks the pick side would never have allowed.
+        Its sampling weight was near zero either way, which is why the figures barely move; what
+        moves is that one rule now says what may be taken, in both places that take one.
+
+        That retired one guard and, for a while, argued away another. This returned None a
+        second time when the weights summed to zero -- a whole week of teams the betting market
+        gives no chance -- which was the only way a zero-priced team could reach the sampler at
+        all. Every member of `pickable` is above `MIN_PROB` by construction, so a non-empty
+        `avail` cannot sum to zero and *that* branch was unreachable rather than merely untaken;
+        deleted, because a guard that cannot fire still reads as a case someone has thought
+        about. The docstring then claimed the argument survived the exponent, because a
+        positive weight raised to a finite non-negative power is positive. **True in the reals,
+        false in float64** (#286): with the floor at `MIN_PROB` and a concentration of 400 --
+        legal, since `weeks_from_grid` refuses only a negative or non-finite one -- every
+        probability below about 0.17 is raised to exactly zero, and a rival whose legal teams
+        are all underdogs holds a vector that sums to zero. `w / w.sum()` was then NaN and
+        `rng.choice` raised it several frames from the setting that caused it. So the vector is
+        checked where it is built: a sum that is not positive is refused with the concentration
+        and the floor named, before the draw, and it is an error rather than an elimination
+        because the entry had legal teams and the arithmetic lost them. Unreachable on the
+        default axis, which tops out at 16; reachable on any a caller supplies.
+        """
+        avail = [t for t in week.teams if t in week.pickable and t not in ledger]
+        # Fixtures, not teams. A double-pick week whose only legal teams are the two sides of one
+        # game cannot be covered at all, and saying so here is what makes that elimination the
+        # no-repeat rule's rather than a loss the entry was handed.
+        if len({week.fixture[t] for t in avail}) < k:
+            return None
+        out: list[str] = []
+        while len(out) < k:
+            w = np.array([week.weight[t] for t in avail], dtype=float)
+            total = _weight_total(week, avail, float(w.sum()))
+            got = str(rng.choice(avail, size=1, replace=False, p=w / total)[0])
+            out.append(got)
+            avail = [t for t in avail if week.fixture[t] != week.fixture[got]]
+        return out
+
+
+class Replay:
     """Our entry's side of a trial: replay a plan, and re-solve only where it will not play.
 
     The invalidation rule, which is the whole of what makes replaying safe. A week's picks are
@@ -884,17 +926,17 @@ class _Ours:
         self.wks = tuple(wks)
         self.weeks = tuple(weeks)
         self.cfg = cfg
-        self.plan = plan if plan is not None else _solved(wks, weeks, ledger, cfg)
+        self.plan: Plan | None = plan if plan is not None else _solved(wks, weeks, ledger, cfg)
         self.memo: dict[tuple[int, frozenset[str]], tuple[str, ...] | None] = {}
         self.replans = 0
 
     def plays(self, at: int, teams: Sequence[str], ledger: set[str]) -> bool:
         """Whether these picks are legal in this week for an entry holding this ledger.
 
-        The three conditions are the same three `_pick` now applies to a rival, which is the
+        The three conditions are the same three `Rival.sample` now applies to a rival, which is the
         point of #156: our entry has always been held to one team per fixture -- by `solve`'s
         `one_side_wk`, by `_best_available`, and by this line -- and the field was not. One
-        rule, checked on both sides of the branch in `_play`.
+        rule, checked on both sides of the branch in `Field.trial`.
         """
         week = self.wks[at]
         if len(teams) != week.picks:
@@ -903,8 +945,11 @@ class _Ours:
             return False
         return len({week.fixture[t] for t in teams}) == len(teams)
 
-    def picks(self, at: int, ledger: set[str]) -> list[str] | None:
-        """This week's picks: our plan's, or a fresh solve where our plan will not play."""
+    def picks(self, rng: np.random.Generator, at: int, ledger: set[str]) -> list[str] | None:
+        """This week's picks: our plan's, or a fresh solve where our plan will not play.
+        `rng` is the seam's and is not read: replaying consumes no draws (#151), which is
+        what lets two plans meet the identical field."""
+        assert self.plan is not None
         want = self.plan.picks.get(self.weeks[at])
         if want is not None and self.plays(at, want, ledger):
             return list(want)
@@ -929,67 +974,278 @@ class _Ours:
         return got if got is not None and self.plays(at, got, ledger) else None
 
 
-def _play(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int],
-          led: list[set[str]], alive: list[bool],
-          ours: _Ours | None = None) -> tuple[int | None, list[int], int | None]:
-    """Play one trial out. Returns the week everyone died -- None if somebody lasted -- the
-    live count after each week, and the position in `weeks` at which entry 0 went out, or
-    None if it lasted.
+class Trial(NamedTuple):
+    """One play of the season: the week everyone died (None if somebody lasted), the live
+    count after each week, the position in the season at which entry 0 went out (None if it
+    lasted), and who was standing at the end."""
+    died: int | None
+    counts: list[int]
+    out_at: int | None
+    alive: list[bool]
 
-    The third is what `_entry_trials` needs to price the week the field empties (#157): once
-    every entry is dead the `alive` list cannot say whether ours went out in that week or
-    three weeks earlier, and the two are worth the whole pot and nothing respectively.
-    `simulate` gets it too and reads it for nothing, because entry 0 is a rival there.
 
-    Every game is drawn once here and the result shared by each entry holding either side.
-    Extracted rather than written twice: `simulate` and `entry_outcome` ask different
-    questions of the same trial, and a second copy of this loop is a second answer about it.
+class Field:
+    """The survivor field: a reshaped season and the Pool's rules, built once.
 
-    `ours` is the one branch on entry index in this module, and it is the difference between
-    the two questions. Given, entry 0 is *our* entry and replays our plan;
-    left out, entry 0 is another member of the field and samples like one -- which is what
-    `simulate` wants, because a field statistic has no us in it. Every other index samples
-    either way, so a change to how we pick cannot reach a rival.
+    The one object the six questions share. `weeks` are the weeks it can play and `wks` is
+    the grid reshaped into them by `weeks_from_grid`, under `cfg`; `at` re-states the
+    concentration and `after`/`since` narrow the season, each a new Field because the
+    reshaped weeks carry the concentration (`_Week.weight`) and the season is what a trial
+    plays. Its one operation is `trial`; `entry` and `outcome` are the two loops over it,
+    `plan` and `replay` are our entry's side, `rival` the field's.
 
-    **The whole season is drawn before anybody picks, and that is what makes two candidates
-    comparable.** It reads like an ordering detail and is the pairing #159 is about. Drawn
-    week by week inside the loop, the number of games this trial consumed from the generator
-    depended on how far the trial got -- and the trial stops when the *last* entry dies, ours
-    included. So the moment our entry outlived the field in one candidate and not in the
-    other, that trial consumed a different number of draws, the stream offset, and every
-    later trial met a different season. Pairing survived only up to the first week our fate
-    differed, which is exactly the trials carrying the signal.
+    **Three rules live here and nowhere else.**
 
-    Drawn up front, the count is `sum(len(wk.games))` whatever happens afterwards. Rivals then
-    consume from the same stream, but only ever as a function of the results and their own
-    ledgers -- our entry replays a plan and consumes nothing (#151) -- so two candidate plans
-    handed the same seed meet the identical field, game for game and rival pick for rival
-    pick. `weekly` relies on that and `test_two_candidates_meet_the_identical_field` is what
-    holds it.
+    *Every game is drawn once per trial, and the whole season is drawn before anybody
+    picks* (#159). Drawn week by week inside the loop, the number of games a trial consumed
+    from the generator depended on how far it got, and the trial stops when the last entry
+    dies -- ours included -- so two candidate plans handed the same seed offset the stream
+    the first time our fate differed, which is exactly the trials carrying the signal. Drawn
+    up front, the count is fixed; rivals then consume as a function of the results and their
+    own Ledgers, and our entry replays a plan and consumes nothing (#151), so two plans meet
+    the identical field, game for game and rival pick for rival pick. `weekly` relies on it.
+
+    *No entry is handed both sides of one fixture* (#156), ours or a rival's. `Rival.sample`
+    takes one team per fixture and `Replay.plays` refuses a plan that does not; one rule,
+    checked on both sides of the seam.
+
+    *All entries holding a team share its result.* A field playing chalk dies together, and
+    that correlation is what decides whether the pool reaches week 13 at all.
     """
-    counts = []
-    out_at: int | None = None
-    # One draw per game per trial, and the same result read by every entry holding either
-    # side: the correlation this module exists for, unchanged. What is new is *when*.
-    results = [frozenset(a if rng.random() < p_a else b for a, b, p_a in wk.games)
-               for wk in wks]
-    for at, (wk, w) in enumerate(zip(wks, weeks, strict=True)):
-        won = results[at]
-        for i in range(len(alive)):
-            if not alive[i]:
-                continue
-            picks = (ours.picks(at, led[i]) if ours is not None and i == 0
-                     else _pick(rng, wk, led[i], wk.picks))
-            if picks is None or not all(t in won for t in picks):
-                alive[i] = False
-                if i == 0:
-                    out_at = at
-                continue
-            led[i].update(picks)
-        counts.append(sum(alive))
-        if counts[-1] == 0:
-            return w, counts, out_at
-    return None, counts, out_at
+
+    def __init__(self, grid: pl.DataFrame, weeks: Sequence[int],
+                 pool: PoolConfig | None = None) -> None:
+        self.cfg = pool or PoolConfig()
+        self.grid = grid
+        self.weeks = tuple(weeks)
+        self.wks = tuple(weeks_from_grid(grid, self.weeks, self.cfg))
+
+    def at(self, concentration: float) -> Field:
+        """The same season at another point on the concentration axis. A whole config per
+        point, not a loose float threaded past one: everything that reads a pool rule takes
+        a `PoolConfig`, and a second way to say the concentration would be a second thing
+        to keep in step with `pool_digest`."""
+        return Field(self.grid, self.weeks,
+                     replace(self.cfg, field_concentration=float(concentration)))
+
+    def after(self, week: int) -> Field:
+        """The weeks still to be played after `week` -- what a pick this week is valued
+        over, and what a re-entry after an elimination in it plays (`_ahead`)."""
+        return Field(self.grid, _ahead(self.weeks, week), self.cfg)
+
+    def since(self, week: int) -> Field:
+        """`week` and the weeks after it: the season our entry plays from a pick made now,
+        rivals sampling this week like any other and going out on it (`leverage`)."""
+        return Field(self.grid, [week, *_ahead(self.weeks, week)], self.cfg)
+
+    def rival(self) -> Rival:
+        """The field's policy over this season."""
+        return Rival(self.wks)
+
+    def replay(self, ledger: Iterable[str] = (), plan: Plan | None = None) -> Replay:
+        """Our entry's policy: `plan` replayed, or one solved here from `ledger`."""
+        return Replay(self.wks, self.weeks, self.cfg, plan, set(ledger))
+
+    def plan(self, ledger: Sequence[str] = ()) -> Plan:
+        """What our entry would pick in each of these weeks, before any trial is run.
+
+        The seam. `entry` calls this when it is handed no plan, and a caller that wants to
+        compare two of them -- #159's pairing -- builds them here and passes each in, so the
+        only difference between the two figures is the picks and not the season they met.
+        Solved against the same weeks the simulator will play, which is why it reads the
+        reshaped weeks and not `hub.season.survivor.plan_remaining`'s answer: a plan over
+        weeks this simulator cannot draw is not a plan this simulator can score.
+        """
+        return _solved(self.wks, self.weeks, set(ledger), self.cfg)
+
+    def chalk(self) -> tuple[str, float]:
+        """The first week's best team and the share of a clean-ledger field that draws it
+        (`_chalk_share`) -- the quantity the concentration knob is about."""
+        return _chalk_share(self.wks[0])
+
+    def trial(self, rng: np.random.Generator, ledgers: Sequence[set[str]],
+              ours: Policy | None = None) -> Trial:
+        """Play one trial out: the one operation. `ledgers` is what each entry has spent
+            going in, ours first; `ours` is the policy entry 0 plays, and left out entry 0 is
+            a member of the field.
+
+        The third is what `Field.entry` needs to price the week the field empties (#157): once
+        every entry is dead the `alive` list cannot say whether ours went out in that week or
+        three weeks earlier, and the two are worth the whole pot and nothing respectively.
+        `Field.outcome` gets it too and reads it for nothing, because entry 0 is a rival there.
+
+        Every game is drawn once here and the result shared by each entry holding either side.
+        Extracted rather than written twice: `Field.outcome` and `Field.entry` ask different
+        questions of the same trial, and a second copy of this loop is a second answer about it.
+
+        `ours` is the one branch on entry index in this module, and it is the difference between
+        the two questions. Given, entry 0 is *our* entry and replays our plan;
+        left out, entry 0 is another member of the field and samples like one -- which is what
+        `Field.outcome` wants, because a field statistic has no us in it. Every other index samples
+        either way, so a change to how we pick cannot reach a rival.
+
+        **The whole season is drawn before anybody picks, and that is what makes two candidates
+        comparable.** It reads like an ordering detail and is the pairing #159 is about. Drawn
+        week by week inside the loop, the number of games this trial consumed from the generator
+        depended on how far the trial got -- and the trial stops when the *last* entry dies, ours
+        included. So the moment our entry outlived the field in one candidate and not in the
+        other, that trial consumed a different number of draws, the stream offset, and every
+        later trial met a different season. Pairing survived only up to the first week our fate
+        differed, which is exactly the trials carrying the signal.
+
+        Drawn up front, the count is `sum(len(wk.games))` whatever happens afterwards. Rivals then
+        consume from the same stream, but only ever as a function of the results and their own
+        ledgers -- our entry replays a plan and consumes nothing (#151) -- so two candidate plans
+        handed the same seed meet the identical field, game for game and rival pick for rival
+        pick. `weekly` relies on that and `test_two_candidates_meet_the_identical_field` is what
+        holds it.
+        """
+        wks, weeks = self.wks, self.weeks
+        led = [set(lg) for lg in ledgers]
+        alive = [True] * len(led)
+        rival = self.rival()
+        counts = []
+        out_at: int | None = None
+        # One draw per game per trial, and the same result read by every entry holding either
+        # side: the correlation this module exists for, unchanged. What is new is *when*.
+        results = [frozenset(a if rng.random() < p_a else b for a, b, p_a in wk.games)
+                   for wk in wks]
+        for at, w in enumerate(weeks):
+            won = results[at]
+            for i in range(len(alive)):
+                if not alive[i]:
+                    continue
+                policy = ours if ours is not None and i == 0 else rival
+                picks = policy.picks(rng, at, led[i])
+                if picks is None or not all(t in won for t in picks):
+                    alive[i] = False
+                    if i == 0:
+                        out_at = at
+                    continue
+                led[i].update(picks)
+            counts.append(sum(alive))
+            if counts[-1] == 0:
+                return Trial(w, counts, out_at, alive)
+        return Trial(None, counts, out_at, alive)
+
+    def outcome(self, *, entries: int, ledgers: Sequence[set[str]] | None = None,
+                trials: int = DEFAULT_TRIALS, rng: np.random.Generator | None = None
+                ) -> PoolOutcome:
+        """Play the pool forward `trials` times and report what the field did.
+
+        `ledgers` is what each entry has already spent, in entry order, for a mid-season run. Left
+        out, every entry starts clean -- which is week 1 and is the case the model knows least
+        about. Given, there must be exactly one per entry: the two are matched by position, so a
+        short list is not "the rest start clean", it is an entry reading the wrong ledger or an
+        index error thrown partway through a trial, and neither is an answer.
+        """
+        if ledgers is not None and len(ledgers) != entries:
+            raise ValueError(
+                f"{plural(len(ledgers), 'starting ledger')} for {entries} entries: `ledgers` is "
+                "matched to entries by position, so it has to name every one of them. Pass a "
+                "ledger per entry -- an empty set for an entry that has spent nothing.")
+        rng = rng or np.random.default_rng(0)
+        weeks = self.weeks
+        ended: Counter[int] = Counter()
+        co: Counter[int] = Counter()
+        alive_tot = dict.fromkeys(weeks, 0)
+
+        for _ in range(trials):
+            led = [set(ledgers[i]) if ledgers is not None else set() for i in range(entries)]
+            died, counts, _, alive = self.trial(rng, led)
+            for w, n in zip(weeks, counts, strict=False):
+                alive_tot[w] += n
+            if died is not None:
+                ended[died] += 1
+            else:
+                co[sum(alive)] += 1
+
+        return PoolOutcome(
+            trials=trials,
+            ending_week={w: c / trials for w, c in sorted(ended.items())},
+            co_survivors={n: c / trials for n, c in sorted(co.items())},
+            alive_by_week={w: alive_tot[w] / trials for w in weeks},
+        )
+
+    def entry(self, *, entries: int, ledger: Sequence[str] = (), plan: Plan | None = None,
+              ours: Policy | None = None, trials: int = DEFAULT_TRIALS,
+              rng: np.random.Generator | None = None) -> EntryOutcome:
+        """What our own entry is worth from here, carrying the teams it has already spent.
+
+        The quantity a buyback is priced against, and the reason it cannot be one-over-the-field:
+        that number is blind to the ledger, so it is the same in week 2 and week 6 and a buyback
+        figure built on it never moves with the teams already gone. Here a fuller ledger means
+        fewer legal picks, which means more weeks the entry cannot cover.
+
+        Our entry runs in the same trials as the field, so it shares game outcomes with every
+        rival holding the same team -- which is why it cannot be computed on its own and then
+        combined with a field number afterwards.
+
+        **It picks like us and not like them**, which is the correction #151 was. Its picks come
+        from `Field.plan` -- `hub.season.survivor.solve` over these weeks with this ledger -- or,
+        where that cannot run, from the best-available fallback `_best_available` states. Which of
+        the two produced them is on `EntryOutcome.plan.source`, because they are not equally good
+        and the difference between them is the model's own uncertainty about this figure. It was
+        the rival sampler, and every published number was therefore about an entry that picks a
+        near-chalk random team every week for the rest of the season.
+
+        `plan` is that plan as an *argument*. Left out, one is solved here from `ledger`; passed
+        in, it is played as given and re-solved only where it will not play, so two candidates can
+        be scored against the same trials and differ by the picks alone. Either way it comes back
+        on the result.
+
+        `ours` is the policy itself, for the one measurement that wants entry 0 under the
+        *field's* rule: `rival()` here is what this module valued our own entry with
+        until #151, kept reachable so the gap between the two is measured rather than
+        asserted from memory. From outside this module our entry plays our plan.
+        """
+        rng = rng or np.random.default_rng(0)
+        spent = set(ledger)
+        policy = ours if ours is not None else self.replay(spent, plan)
+        return self._trials(rng, entries=entries, ledger=spent, ours=policy, trials=trials)
+
+    def _trials(self, rng: np.random.Generator, *, entries: int, ledger: set[str],
+                ours: Policy, trials: int) -> EntryOutcome:
+        """The trial loop `Field.entry` reports, over an already-reshaped season.
+
+        The loop `entry` reports, over the reshaped season.
+
+        Two counts per trial, and which one is set says how the trial ended. `n` is the entries
+        left after the final week when ours is one of them; `m` is the entries that went *into*
+        the week the field emptied when ours went out in it -- the live count after the week
+        before, or the whole field if it was the first. `Field.trial` says which week ours went
+        out in because the `alive` list cannot: once the field is empty every entry reads the
+        same, and an entry eliminated in the last week and one eliminated three weeks earlier
+        are worth the pot and nothing.
+        """
+        cfg = self.cfg
+        survived = sole = last = 0
+        # Kept per trial, not just summed: two candidate picks are compared by their means, and a
+        # difference smaller than the spread of what was averaged is not a difference. Counts
+        # rather than shares, so the record does not have either pool rule baked into it.
+        each: list[int] = []
+        out: list[int] = []
+        share: list[float] = []
+        for _ in range(trials):
+            led = [set(ledger)] + [set() for _ in range(entries - 1)]
+            died, counts, out_at, alive = self.trial(rng, led, ours)
+            n = sum(alive) if alive[0] else 0
+            m = 0
+            if died is not None and out_at == len(counts) - 1:
+                m = counts[-2] if len(counts) > 1 else entries
+            each.append(n)
+            out.append(m)
+            share.append(trial_share(cfg, n, m))
+            survived += int(n > 0)
+            sole += int(n == 1)
+            last += int(m > 0)
+        return EntryOutcome(trials=trials, survives=survived / trials,
+                            sole=sole / trials, share=sum(share) / trials,
+                            share_sd=float(np.std(share)) if share else 0.0,
+                            plan=ours.plan if ours is not None else None,
+                            replans=(ours.replans / trials) if ours is not None else 0.0,
+                            survivors_each=tuple(each), last_out=last / trials,
+                            last_out_each=tuple(out))
 
 
 def share_of_pot(rule: str, survivors: int) -> float:
@@ -1044,7 +1300,7 @@ def trial_share(cfg: PoolConfig, survivors: int, last_out: int) -> float:
     pays when ours went out strictly before the last entry did -- the one terminal state
     that really is worth nothing.
 
-    The one place either rule meets a trial. `_entry_trials` builds the means from it and
+    The one place either rule meets a trial. `Field.entry` builds the means from it and
     `weekly` rebuilds the per-trial vector from it, so the two cannot read the record
     differently -- which is what stored shares would have let them do.
     """
@@ -1055,102 +1311,14 @@ def trial_share(cfg: PoolConfig, survivors: int, last_out: int) -> float:
     return 0.0
 
 
-def _entry_trials(rng: np.random.Generator, wks: Sequence[_Week], weeks: Sequence[int], *,
-                  entries: int, ledger: set[str], ours: _Ours | None, trials: int,
-                  pool: PoolConfig | None = None) -> EntryOutcome:
-    """The trial loop `entry_outcome` reports, over an already-reshaped season.
-
-    Split out because `ours=None` is a quantity worth being able to ask for: it is entry 0
-    played under the *field's* sampling rule, which is what this module valued our own entry
-    with until #151. Keeping it reachable is what lets the gap between the two be measured
-    rather than asserted from memory -- and the gap is the whole finding, since it is what
-    reverses #161's leverage claim. `entry_outcome` itself never passes None: from outside
-    this module our entry plays our plan.
-
-    Two counts per trial, and which one is set says how the trial ended. `n` is the entries
-    left after the final week when ours is one of them; `m` is the entries that went *into*
-    the week the field emptied when ours went out in it -- the live count after the week
-    before, or the whole field if it was the first. `_play` says which week ours went out in
-    because the `alive` list cannot: once the field is empty every entry reads the same, and
-    an entry eliminated in the last week and one eliminated three weeks earlier are worth
-    the pot and nothing.
-    """
-    cfg = pool or PoolConfig()
-    survived = sole = last = 0
-    # Kept per trial, not just summed: two candidate picks are compared by their means, and a
-    # difference smaller than the spread of what was averaged is not a difference. Counts
-    # rather than shares, so the record does not have either pool rule baked into it.
-    each: list[int] = []
-    out: list[int] = []
-    share: list[float] = []
-    for _ in range(trials):
-        led = [set(ledger)] + [set() for _ in range(entries - 1)]
-        alive = [True] * entries
-        died, counts, out_at = _play(rng, wks, weeks, led, alive, ours)
-        n = sum(alive) if alive[0] else 0
-        m = 0
-        if died is not None and out_at == len(counts) - 1:
-            m = counts[-2] if len(counts) > 1 else entries
-        each.append(n)
-        out.append(m)
-        share.append(trial_share(cfg, n, m))
-        survived += int(n > 0)
-        sole += int(n == 1)
-        last += int(m > 0)
-    return EntryOutcome(trials=trials, survives=survived / trials,
-                        sole=sole / trials, share=sum(share) / trials,
-                        share_sd=float(np.std(share)) if share else 0.0,
-                        plan=ours.plan if ours is not None else None,
-                        replans=(ours.replans / trials) if ours is not None else 0.0,
-                        survivors_each=tuple(each), last_out=last / trials,
-                        last_out_each=tuple(out))
-
-
-def entry_outcome(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
-                  ledger: Sequence[str] = (), pool: PoolConfig | None = None,
-                  plan: Plan | None = None, trials: int = DEFAULT_TRIALS,
-                  rng: np.random.Generator | None = None) -> EntryOutcome:
-    """What our own entry is worth from here, carrying the teams it has already spent.
-
-    The quantity a buyback is priced against, and the reason it cannot be one-over-the-field:
-    that number is blind to the ledger, so it is the same in week 2 and week 6 and a buyback
-    figure built on it never moves with the teams already gone. Here a fuller ledger means
-    fewer legal picks, which means more weeks the entry cannot cover.
-
-    Our entry runs in the same trials as the field, so it shares game outcomes with every
-    rival holding the same team -- which is why it cannot be computed on its own and then
-    combined with a field number afterwards.
-
-    **It picks like us and not like them**, which is the correction #151 was. Its picks come
-    from `solve_plan` -- `hub.season.survivor.solve` over these weeks with this ledger -- or,
-    where that cannot run, from the best-available fallback `_best_available` states. Which of
-    the two produced them is on `EntryOutcome.plan.source`, because they are not equally good
-    and the difference between them is the model's own uncertainty about this figure. It was
-    the rival sampler, and every published number was therefore about an entry that picks a
-    near-chalk random team every week for the rest of the season.
-
-    `plan` is that plan as an *argument*. Left out, one is solved here from `ledger`; passed
-    in, it is played as given and re-solved only where it will not play, so two candidates can
-    be scored against the same trials and differ by the picks alone. Either way it comes back
-    on the result.
-    """
-    cfg = pool or PoolConfig()
-    rng = rng or np.random.default_rng(0)
-    wks = weeks_from_grid(grid, weeks, cfg)
-    spent = set(ledger)
-    return _entry_trials(rng, wks, weeks, entries=entries, ledger=spent,
-                         ours=_Ours(wks, weeks, cfg, plan, spent), trials=trials, pool=cfg)
-
-
-def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
-            ledger: Sequence[str], live_entries: int, pot: float,
-            rival_buybacks: int = 0, used: int = 0, pool: PoolConfig | None = None,
+def buyback(field: Field, *, week: int, ledger: Sequence[str], live_entries: int,
+            pot: float, rival_buybacks: int = 0, used: int = 0,
             trials: int = DEFAULT_TRIALS,
             rng: np.random.Generator | None = None) -> Buyback:
     """Whether paying the fee to re-enter is worth it, and the fee at which that changes.
 
     `week` is the week our entry was eliminated in, and the re-entry is priced over the
-    weeks of `weeks` **after** it -- `_ahead`, the same slice `weekly` takes. It used to be
+    weeks of `field` **after** it -- `_ahead`, the same slice `weekly` takes. It used to be
     priced over the whole list, so a caller handing in the season while eliminating in week
     3 had the re-entry replay weeks 1 to 3 against a ledger that had already spent them
     (#158). A week with nothing priced after it is reported as unavailable rather than
@@ -1163,7 +1331,7 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
 
     **The re-entry is not a fresh entry.** It carries the teams already spent, which the
     commissioner confirmed, so the same $20 buys less in week 6 than in week 2. That is why
-    the equity comes from `entry_outcome` on the real ledger rather than from one over the
+    the equity comes from `Field.entry` on the real ledger rather than from one over the
     field, which is ledger-blind and identical in both.
 
     That confirmation is `PoolConfig.buyback_restores_ledger`, and until #160 it was read by
@@ -1175,7 +1343,7 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     entry is worse than either answer on its own.
 
     **The equity is what the re-entry is worth to somebody who plays it well**, since
-    `entry_outcome` values it on our plan, solved from that inherited ledger. It used to be
+    `Field.entry` values it on our plan, solved from that inherited ledger. It used to be
     what the re-entry was worth to somebody picking near-chalk at random, which is nobody, and
     the direction of that error is why this verdict was essentially fixed before the pool's
     economics were consulted. It is still a floor and the reasons below are unchanged.
@@ -1207,7 +1375,7 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     assumption rather than about the pool's economics.
 
     **What the pot pays a co-survivor is `PoolConfig.co_survivor_rule`**, applied in
-    `share_of_pot` and reaching this figure through `entry_outcome.share`. It defaults to an
+    `share_of_pot` and reaching this figure through `Field.entry`'s share. It defaults to an
     even split and is a rule nobody has confirmed, so this equity is conditional on it -- and
     how *much* it is conditional on it is not fixed: a shared finish is nearly unreachable at
     a flat field and common at a concentrated one, which is `sensitivity`'s `shared` column
@@ -1219,7 +1387,7 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     nothing before. `EntryOutcome.last_out` is how much of this equity is that week, and
     `co_eliminated` how much of it the rule can move.
     """
-    cfg = pool or PoolConfig()
+    cfg = field.cfg
     if cfg.buyback_cap <= 0:
         return Buyback(False, "no buybacks: the cap is zero", pot, live_entries,
                        len(set(ledger)), 0.0, 0.0, cfg.buyback_fee, 0.0, 0.0, False)
@@ -1241,7 +1409,7 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
             "assumes re-enter alongside us, and a negative count is not an assumption "
             "about the field. State zero or more; there is no cap applied here, because "
             "`PoolConfig.buyback_cap` is per entry and this is the field's total.")
-    ahead = _ahead(weeks, week)
+    ahead = _ahead(field.weeks, week)
     if not ahead:
         return Buyback(False,
                        f"no buyback: nothing is priced after week {week} to re-enter for",
@@ -1251,15 +1419,14 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     # Ours plus theirs, as the caller states them. Both sides of the ledger move: the fees
     # enlarge the pot and the entries refill the field.
     rivals = int(rival_buybacks)
-    field = live_entries + 1 + rivals
+    live = live_entries + 1 + rivals
     grown = pot + (1 + rivals) * cfg.buyback_fee
     # The rule, not the argument: what the re-entry inherits is what the pool says it
     # inherits. The caller still passes the ledger, because a run under a pool that clears it
     # has to be able to say what was cleared.
     inherits = sorted(set(ledger)) if cfg.buyback_restores_ledger else []
 
-    out = entry_outcome(grid, ahead, entries=field, ledger=inherits, pool=cfg,
-                        trials=trials, rng=rng)
+    out = field.after(week).entry(entries=live, ledger=inherits, trials=trials, rng=rng)
     equity = out.share * grown
     net = equity - cfg.buyback_fee
     yes = net > 0
@@ -1277,7 +1444,7 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
                    if cfg.buyback_restores_ledger else
                    "re-entering with a clean ledger, which is what this pool's rules say a "
                    "buyback restores")),
-        pot=grown, field=field, spent=len(inherits), share=out.share,
+        pot=grown, field=live, spent=len(inherits), share=out.share,
         equity=equity, fee=cfg.buyback_fee, net=net, breakeven=breakeven, recommend=yes,
         ahead=tuple(ahead), rivals=rivals)
 
@@ -1347,7 +1514,7 @@ def _ranked(wk: pl.DataFrame, week: int, needs: int, top: int
     week's entry survives only if both teams win, so a candidate there is a *pair* and its
     win probability is `p1 * p2`; both sides of one fixture cannot both win, so a pair from
     one game is not a candidate at all, which is the same exclusion `solve` states as
-    `one_side_wk` and `_pick` applies to a rival. Pairs are enumerated whole and ranked on
+    `one_side_wk` and `Rival.sample` applies to a rival. Pairs are enumerated whole and ranked on
     the product rather than built greedily from the top teams, so a caller asking for the
     `top` pairs gets the `top` pairs and not the neighbourhood of the best one.
 
@@ -1419,15 +1586,14 @@ def auto_pick(grid: pl.DataFrame, week: int, ledger: Sequence[str] = (),
         return None
 
 
-def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
-           ledger: Sequence[str] = (), entries: int, pot: float, outlay: float = 0.0,
-           pool: PoolConfig | None = None, top: int = 6,
+def weekly(field: Field, *, week: int, ledger: Sequence[str] = (), entries: int,
+           pot: float, outlay: float = 0.0, top: int = 6,
            trials: int = WEEKLY_TRIALS, rng: np.random.Generator | None = None,
            seed: int | None = None, now: datetime | None = None) -> Weekly:
     """This week's pick, what it is worth, and what it cost against the free one.
 
     A candidate is worth `P(it wins this week)` times what the rest of the season is worth
-    with it spent -- which `entry_outcome` already answers, over the weeks still to come and
+    with it spent -- which `Field.entry` already answers, over the weeks still to come and
     against the field. Two things follow from using the simulator rather than a formula, and
     both are properties this had to have: future team value is discounted by the chance the
     pool is still running, because a season that ends in week 6 never reaches the weeks a
@@ -1456,7 +1622,7 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     trial stopped when the last live entry died, ours included, so the first trial our entry
     outlasted the field in one candidate and not the other consumed a different number of
     game draws and offset everything after it. The pairing held up to the first week our fate
-    differed, which is precisely the trials the comparison is about. `_play` now draws the
+    differed, which is precisely the trials the comparison is about. `Field.trial` now draws the
     whole season before anybody picks, so the count is fixed and the field two candidates meet
     is the same field, rival pick for rival pick.
 
@@ -1497,14 +1663,14 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     re-run of a recorded week on a grid that carries kickoffs should pass the row's `at`
     here -- run later, the teams that had not yet played are the ones no longer on offer.
     """
-    cfg = pool or PoolConfig()
+    cfg, grid = field.cfg, field.grid
     rng = rng or np.random.default_rng(0)
     spent = set(ledger)
     wk = _legal(grid, week, spent, now)
     if wk.is_empty():
         raise ValueError(f"week {week} has no legal pick left: {len(spent)} teams are spent")
 
-    ahead = _ahead(weeks, week)
+    ahead = _ahead(field.weeks, week)
     free = auto_pick(grid, week, ledger, pool=cfg, now=now)
     # One team, or in a double-pick week a pair from two fixtures priced as the product
     # (#256): `team` is then the pick's name and `takes` the two teams it spends, both of
@@ -1520,10 +1686,13 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     each: dict[str, np.ndarray] = {}
     live: dict[str, np.ndarray] = {}
     root = np.sqrt(trials)
+    # The weeks ahead reshaped once, and every candidate scored on them: the same season
+    # for each, which is the pairing, and one reshape rather than one per candidate.
+    rest_of = field.after(week) if ahead else None
     for team, p, takes in ranked:
-        if ahead:
-            rest = entry_outcome(grid, ahead, entries=entries, ledger=[*spent, *takes],
-                                 pool=cfg, trials=trials, rng=np.random.default_rng(seed))
+        if rest_of is not None:
+            rest = rest_of.entry(entries=entries, ledger=[*spent, *takes], trials=trials,
+                                 rng=np.random.default_rng(seed))
             survives, share = rest.survives, rest.share
             # The pool rules applied here rather than read off a stored share: what a trial
             # paid is a *rule* about a count, and the counts are what the trial recorded.
@@ -1553,7 +1722,7 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     best = cands[0]
     fb = next((c for c in cands if c.is_fallback), None)
     # The interval on the *difference*, taken paired. Both arms met the same season trial for
-    # trial (`_play`), so `d` is a per-trial difference and not two independent means being
+    # trial (`Field.trial`), so `d` is a per-trial difference and not two independent means being
     # subtracted -- the correlation is what makes this tight enough to decide a week with.
     # `win_prob` is inside it rather than left out: the figures being compared are
     # `win_prob * share * pot`, and dropping the factor inflated the bar by roughly 1/p and
@@ -1583,6 +1752,380 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
         seed=seed, entries=entries, outlay=outlay,
         pool_digest=pool_digest(cfg), grid_digest=grid_digest(grid))
 
+
+def unpaired_bar(se_a: float, se_b: float) -> float:
+    """The dollar difference two *separate* runs must clear at `DECISIVE_SIGMA`.
+
+    Two runs that do not share their draws are not repeated measures of one thing
+    (`docs/method.md` rule 3), so the difference between them carries both errors and the
+    bar is `DECISIVE_SIGMA` times their root sum of squares. `Leverage.resolvable` reads
+    this across its two arms and `sensitivity` reads it across two rows of one sweep, where
+    each row's error is the same figure and the bar is `DECISIVE_SIGMA * sqrt(2) * se`. It
+    was one row's `se` unmultiplied until #276 -- a bar 2.83 times too easy, one screen from
+    the construction that had it right.
+    """
+    return DECISIVE_SIGMA * float(np.hypot(se_a, se_b))
+
+
+class Sensitivity(NamedTuple):
+    """One point on the field-concentration axis, and everything that moved with it.
+
+    Both halves on one row on purpose. `chalk_share` is what the knob *sets* and the field
+    and entry figures are what it *costs*, and a reader deciding whether the knob matters has
+    to see the two together -- a table of lifetimes with no ownership beside them says the
+    answer moved without saying what moved it.
+
+    `resolution` is the dollar difference `trials` can actually resolve *between this row
+    and another*, `unpaired_bar` of this row's own error with itself, so an equity range
+    across the axis can be compared against the noise inside it rather than read as a
+    finding by width alone.
+    """
+    concentration: float
+    chalk: str                  # the best team in the sweep's first week
+    chalk_share: float          # the share of a clean-ledger field that draws it
+    field: PoolOutcome          # ending week, co-survivors, entries alive by week
+    entry: EntryOutcome         # our own entry, playing our plan against that field
+    pot: float
+    resolution: float           # the dollar difference these trials can resolve
+
+    @property
+    def equity(self) -> float:
+        """What our position is worth in dollars at this concentration."""
+        return self.entry.share * self.pot
+
+    @property
+    def wiped_out(self) -> float:
+        """P(the whole field is gone before the last week ends) -- the knob's headline cost."""
+        return sum(self.field.ending_week.values())
+
+
+def sensitivity(field: Field, *, entries: int,
+                at: Sequence[float] = DEFAULT_CONCENTRATIONS,
+                ledger: Sequence[str] = (), pot: float | None = None,
+                trials: int = DEFAULT_TRIALS,
+                rng: np.random.Generator | None = None) -> list[Sensitivity]:
+    """The pool and our position, re-answered at each field concentration in `at`.
+
+    **The deliverable of #152, and the reason the knob defaults to a no-op.** Nobody has
+    observed this pool's rivals, no pick-popularity data is fetched anywhere under
+    `hub.fetch`, and under Hidden Picks nobody can observe them before a deadline -- so
+    `PoolConfig.field_concentration` cannot be fitted, only stated. ADR-0024's disposition for
+    a parameter in exactly that position is to measure the alternatives side by side and
+    report the sensitivity rather than pick one, and this is that table. A figure quoted from
+    a single concentration is a figure quoting an assumption; the range is the honest form.
+
+    Two simulations per point -- the field's, and ours against it -- so the real cost is twice
+    `trials` times `len(at)`, which at the defaults is ten `DEFAULT_TRIALS` runs. A caller
+    scanning the shape of the axis should lower `trials` before it drops points from `at`:
+    every point dropped is a stretch of the axis nobody looked at, and the axis is the answer.
+
+    **The rows are separate runs and not paired trials**, which is the opposite of `weekly`
+    and is stated because the difference matters to how the table reads. Each row is reseeded
+    to the same value, so every row starts from the same stream and a row at 1.0 reproduces
+    `Field.outcome` at the default exactly. But the concentration changes what the *sampler*
+    consumes from that stream, so the draws diverge at the first pick and no two rows share a
+    season. A difference between two rows therefore carries both rows' noise, and `resolution`
+    is what it has to clear: `unpaired_bar` of a row's error with itself, `DECISIVE_SIGMA *
+    sqrt(2) * se`, the construction `leverage` uses between its arms -- `docs/method.md`
+    rule 3, in its general form: the rows are not repeated measures of one thing that may be
+    pooled into a tighter interval.
+
+    `pot` defaults to the field's entry fees, `entry_fee * field_size`, because that is the
+    pot the configured pool starts with and a sweep run for its shape should not need one
+    named. A caller pricing a real week passes the pot it actually has.
+
+    **What the first run of it found**, on the synthetic 32-team board in
+    `tests/unit/test_pool.py` over weeks 1-14 with 21 entries and 1600 trials, 2026-09-10.
+    Quoted as the shape of the response and not as figures about the real board, which this
+    was not run against:
+
+      * The ticket's premise holds and is larger than it reads. At 1.0 the field is wiped out
+        before week 14 in **99.4%** of trials and only **3.3%** of endings fall in weeks 13-14
+        -- so the double-pick machinery is priced into essentially nothing. At 16.0 those are
+        70.4% and 43.2%. Concentration is what lets this pool reach its own back half.
+      * **Our survival barely moves** across the whole axis (5.1% to 6.6%, inside the noise),
+        but our *share* falls hard at the top of it (5.1% to 2.9%). The knob does not decide
+        whether we survive; it decides how many rivals survive **with** us, and a split pot is
+        what that costs. Reading survival alone would have reported the knob as inert.
+      * `co_survivor_rule` is the rule nobody has confirmed, and at 1.0 it is unreachable --
+        a co-survivor occurs in 0.6% of trials. At 16.0 it decides 29.5% of them. An
+        unconfirmed rule looking harmless can be an artefact of an unmeasured assumption.
+      * Equity ran $21.39, $25.99, $24.28, $21.97, $12.37 against a resolution then stated
+        as $2.53 -- one row's standard error, which is not the bar this docstring describes.
+        **Re-read 2026-09-12 (#276) against the corrected bar of $7.16**
+        (`DECISIVE_SIGMA * sqrt(2) * 2.53`): 1.0 through 8.0 span $4.60 and remain **one
+        flat region**, the peak near 2.0 is still not a peak this many trials can see, and
+        the fall to 16.0 ($9.60 from 8.0, $9.02 from 1.0) is still the only step that
+        clears. The conclusion holds -- but not on the bar it was drawn against: at $2.53 the
+        $4.60 rise from 1.0 to 2.0 cleared too, and "only the fall at 16.0" was not true of
+        the sweep on its own stated terms. It is a range straddling a $20 buyback fee, which
+        is the sense in which that verdict is currently about the assumption.
+
+    **Re-run with #157 in, 2026-09-11**, same board over weeks 1-14, 21 entries, 1600 trials,
+    seed 0, both rules at `split`. The week the field empties was priced at zero above and
+    is priced by `co_elimination_rule` now, and it is the larger term at every point:
+
+      * `last_out` -- ours went out in the week the field emptied -- runs 33.5%, 24.4%,
+        15.2%, 10.2%, 7.5% across the axis against a `survives` that stays 5-7%. At 1.0
+        most of that is ours **alone**: 26.6% of trials our plan outlives the whole field
+        and then loses, which is the pot in full. Share therefore runs 35.7%, 26.9%, 17.3%,
+        11.6%, 6.6% and equity $149.96, $112.86, $72.63, $48.90, $27.81 against $4.85.
+      * **The flat region above is gone.** Every step down the axis clears the resolution
+        -- and still does against the corrected bar of $13.72 (#276), the smallest step
+        being $21.09 -- because concentration is what decides whether the field outlasts
+        our plan or dies underneath it, and that was the term worth nothing. The knob was
+        never inert; it was priced into a state the model refused to pay.
+      * `co_elimination_rule` decides 5-7% of trials at every concentration -- flat, where
+        `co_survivor_rule` runs 0% to 3.3%. Under `rollover` for both, equity is $137.29,
+        $98.96, $60.90, $35.70, $14.70: $12-13 lower at every point, and the verdict at 16.0
+        moves from above a $20 fee to below it.
+    """
+    cfg = field.cfg
+    rng = rng or np.random.default_rng(0)
+    seed = int(rng.integers(2 ** 32))
+    stake = cfg.entry_fee * cfg.field_size if pot is None else pot
+    rows: list[Sensitivity] = []
+    for k in at:
+        this = field.at(k)
+        chalk, own = this.chalk()
+        theirs = this.outcome(entries=entries, trials=trials, rng=np.random.default_rng(seed))
+        entry = this.entry(entries=entries, ledger=ledger, trials=trials,
+                           rng=np.random.default_rng(seed))
+        se = entry.share_sd / np.sqrt(trials) * stake
+        rows.append(Sensitivity(
+            concentration=float(k), chalk=chalk, chalk_share=own, field=theirs, entry=entry,
+            pot=stake, resolution=unpaired_bar(se, se)))
+    return rows
+
+
+# --- the current week's rival attrition, measured (#161) --------------------------------
+#
+# `weekly` prices a candidate as `P(it wins this week)` times what the rest of the season is
+# worth with it spent, and the rest of the season is simulated against a field that has
+# *not* been played through the week being decided. So the week's rival attrition -- the
+# rivals that go out on the pick they made this week -- is credited to no candidate. #161's
+# original text argued that this understates every candidate by about the same factor and
+# leaves the ranking intact, and then argued against itself: the attrition is correlated
+# with our own pick. Taking the chalk everybody holds means the field does not thin when it
+# wins; taking a contrarian winner while the chalk loses thins it enormously. That
+# correlation *is* the leverage term, and it is the economic case for departing from the
+# free pick at all.
+#
+# It was to be declared absent. #151 made it measurable instead: our entry replays a plan and
+# rival attrition is a property of the field sampler alone, with a stated concentration
+# exponent, so "advance the field through the week" is one more week handed to the same
+# simulator with our pick as the first week of our plan. `leverage` runs both arms and
+# reports their difference across the concentration axis, paired per #159 within each arm.
+
+class Leverage(NamedTuple):
+    """One candidate against the free pick, priced with and without this week's attrition.
+
+    `unadvanced` is the dollar difference `weekly` reports: the candidate's figure minus the
+    fallback's, each `P(wins) * share(rest of season) * pot`, on trials where both plans met
+    the identical field over the weeks *after* this one. `advanced` is the same difference on
+    trials that started from this week -- our entry playing the candidate here and our plan
+    after it, every rival sampling this week's pick under `PoolConfig.field_concentration`
+    and going out on it or not -- so the field the rest of the season is priced against is
+    the field this week left standing.
+
+    **Each arm is paired and the two arms are not**, and the interval says so. Within an arm
+    the two candidates meet the same season trial for trial (`Field.trial` draws the whole season
+    before anybody picks), so `unadvanced_se` and `advanced_se` are standard errors of a
+    per-trial difference and tight. Between the arms the seasons differ -- one draws this
+    week's games and one does not, so the same seed produces offset streams -- and the
+    difference of the two differences carries both errors: `term_se` is their root sum of
+    squares. `docs/method.md` rule 3, in its general form: two runs are not repeated
+    measures of one thing unless they share the draws, and these cannot.
+
+    `term` is the leverage term: what advancing the field through this week does to the
+    case for this candidate over the free one. Positive means the attrition favours the
+    departure; `resolvable` is whether the trials can see it at `DECISIVE_SIGMA` at all,
+    and where they cannot the honest report is that the term is unresolved -- not that it
+    is zero.
+    """
+    concentration: float
+    team: str
+    fallback: str
+    unadvanced: float
+    unadvanced_se: float
+    advanced: float
+    advanced_se: float
+    trials: int
+
+    @property
+    def term(self) -> float:
+        """What this week's rival attrition is worth to the departure, in dollars."""
+        return self.advanced - self.unadvanced
+
+    @property
+    def term_se(self) -> float:
+        """The two arms are independent runs, so their errors add in quadrature."""
+        return float(np.hypot(self.advanced_se, self.unadvanced_se))
+
+    @property
+    def resolvable(self) -> bool:
+        """Whether these trials can tell the term from zero at the repo's bar."""
+        return abs(self.term) > unpaired_bar(self.advanced_se, self.unadvanced_se)
+
+
+def _shares(cfg: PoolConfig, out: EntryOutcome) -> np.ndarray:
+    """What each trial paid, off the two-count record, under the rules given."""
+    return np.array([trial_share(cfg, n, m)
+                     for n, m in zip(out.survivors_each, out.last_out_each, strict=True)],
+                    dtype=float)
+
+
+def leverage(field: Field, *, week: int, ledger: Sequence[str] = (), entries: int,
+             pot: float, at: Sequence[float] = DEFAULT_CONCENTRATIONS,
+             top: int = 6, trials: int = WEEKLY_TRIALS,
+             rng: np.random.Generator | None = None,
+             now: datetime | None = None) -> list[Leverage]:
+    """The leverage term for every candidate this week, at every concentration in `at`.
+
+    The measurement #161 was re-scoped to. Two arms per candidate per concentration, on one
+    seed: the rest of the season with the candidate spent and the field untouched -- exactly
+    what `weekly` prices -- and the whole season from this week with the candidate as its
+    first pick, so the field is played through the week and thinned by it before the rest is
+    valued. Both arms meet the free pick on the identical field within the arm, which is the
+    pairing #159 built and the reason the difference within an arm is tight.
+
+    Every candidate is run rather than the recommendation alone, because the question is
+    whether the term is resolvable *anywhere* -- and on a board where the recommendation is
+    the free pick there would otherwise be nothing to measure.
+
+    **What the first run found**, 2026-09-11, on the synthetic 32-team board in
+    `tests/unit/test_pool.py` over weeks 1-14, week 1 decided, 21 entries, pot $420, 1600
+    trials, seed 0, both pool rules at `split` -- the board and seed `sensitivity`'s two
+    sweeps used. Five candidates against the free pick T31 at each of the five default
+    concentrations, twenty-five comparisons, 415 seconds:
+
+      * **Not resolvable at two standard errors on the axis.** Two of twenty-five clear the
+        bar -- T30 at 8.0, +$3.77 against +/-$3.23 (z 2.3), and T28 at 16.0, +$6.60 against
+        +/-$5.29 (z 2.5) -- and twenty-five null comparisons clear it about 1.1 times, with
+        a spread of one; two hits is inside that. So the term is *unresolved* at these
+        trials, which is the absence #161 asks to be stated and is not a zero.
+      * **The direction is consistent and grows with concentration.** Twenty-four of the
+        twenty-five terms are positive -- the attrition favours the departure, as #161's
+        argument says it should -- and at 16.0 the five run +$1.20, +$2.73, +$6.60, +$2.24,
+        +$4.26 (z 0.8 to 2.5) where at 1.0 they run -$2.20 to +$5.48 (z -0.8 to 0.8). But
+        the twenty-five rows are one seed: the arms meet the same game results at every
+        concentration and the five candidates at one concentration share the free pick's
+        arm, so that is not twenty-four readings and it is not pooled into one
+        (`docs/method.md` rule 3).
+      * **The resolution is the advanced arm's.** Its standard error runs $1.3 to $5.4
+        against $0.08 to $4.5 for the unadvanced arm, because our own week-1 result is drawn
+        there and multiplied in here. Resolving a +$3 term at 16.0 needs roughly 4,000
+        trials per arm; nobody has run that, and until somebody does the published figure
+        carries `LEVERAGE` below beside `pool_digest`.
+
+    Costs twice what `weekly` costs: `top` candidates, two simulations each, per point on
+    the axis. It is a measurement and not the weekly path, and `hub.season.pool --leverage`
+    is how an operator asks for it on a real week.
+    """
+    cfg, grid = field.cfg, field.grid
+    rng = rng or np.random.default_rng(0)
+    seed = int(rng.integers(2 ** 32))
+    ahead = _ahead(field.weeks, week)
+    if not ahead:
+        raise ValueError(
+            f"week {week} has nothing priced after it: the rest of the season is what the "
+            "field's attrition this week is worth something *in*, so with no weeks ahead "
+            "there is no term to measure. `weekly` prices such a week in closed form.")
+    spent = set(ledger)
+    # The candidates before the free pick, so a double week the grid cannot pair -- a
+    # `game_id` missing on a row -- is refused with that sentence rather than read as a
+    # week with no legal pick. In a double-pick week each is a pair from two fixtures
+    # priced as the product (#256), and `takes` is what it spends. `now` is the clock the
+    # week is read against (#263): `at` here is the concentration axis, so the moment
+    # carries the other name.
+    teams = _ranked(_legal(grid, week, spent, now), week, _picks_in(week, cfg), top)
+    free = auto_pick(grid, week, ledger, pool=cfg, now=now)
+    if free is None:
+        raise ValueError(f"week {week} has no legal pick left: {len(spent)} teams are spent")
+    # The free pick is always the first of these: `auto_pick` is the same filter and the
+    # same ranking, so a guard appending it when absent would be a guard that cannot fire.
+    root = np.sqrt(trials)
+    rows: list[Leverage] = []
+    for k in at:
+        this = field.at(k)
+        rest_of, whole_of = this.after(week), this.since(week)
+        unadvanced: dict[str, np.ndarray] = {}
+        advanced: dict[str, np.ndarray] = {}
+        for team, p, takes in teams:
+            rest = rest_of.entry(entries=entries, ledger=[*sorted(spent), *takes],
+                                 trials=trials, rng=np.random.default_rng(seed))
+            unadvanced[team] = p * _shares(this.cfg, rest)
+            # The same plan with this week's pick in front of it, replayed from this week:
+            # `Field.entry` solved `rest.plan` over `ahead` with the candidate spent, so
+            # putting the candidate at `week` and that plan after it is the season our entry
+            # would play. Rivals sample this week like any other, and go out on it.
+            after = rest.plan if rest.plan is not None else Plan({}, "none")
+            whole = Plan({week: takes, **after.picks}, after.source)
+            full = whole_of.entry(entries=entries, ledger=sorted(spent), plan=whole,
+                                  trials=trials, rng=np.random.default_rng(seed))
+            advanced[team] = _shares(this.cfg, full)
+        for team, _, _ in teams:
+            if team == free:
+                continue
+            du = pot * (unadvanced[team] - unadvanced[free])
+            da = pot * (advanced[team] - advanced[free])
+            rows.append(Leverage(
+                concentration=float(k), team=team, fallback=free,
+                unadvanced=float(du.mean()), unadvanced_se=float(np.std(du)) / root,
+                advanced=float(da.mean()), advanced_se=float(np.std(da)) / root,
+                trials=trials))
+    return rows
+
+
+# The two-sided tail beyond DECISIVE_SIGMA standard errors under the null: what fraction of
+# comparisons with no effect clear the bar anyway. 4.55% at two, and stated once.
+_NULL_TAIL = 0.0455
+
+
+def expected_by_chance(comparisons: int) -> float:
+    """How many of this many null comparisons clear `DECISIVE_SIGMA` by chance."""
+    return comparisons * _NULL_TAIL
+
+
+def resolvable_on_the_axis(rows: Sequence[Leverage]) -> bool:
+    """Whether the comparisons that clear the bar are more than the bar itself produces.
+
+    Twenty-five comparisons at two standard errors clear it about once with nothing there,
+    so "resolvable somewhere on the axis" cannot be read off any one row: a sweep that asks
+    the question twenty-five times has to hold the *count* to the same bar. The count of
+    hits is compared against its own expectation under the null plus `DECISIVE_SIGMA` of its
+    binomial spread. That treats the rows as independent, and they are less than that --
+    one seed means the arms meet the same game results across the axis, and the candidates
+    at one concentration share the free pick's arm -- so the real bar is higher still, and
+    a sweep that fails this one has certainly not resolved the term.
+    """
+    n = len(rows)
+    if n == 0:
+        return False
+    hits = sum(r.resolvable for r in rows)
+    mean = expected_by_chance(n)
+    spread = float(np.sqrt(n * _NULL_TAIL * (1.0 - _NULL_TAIL)))
+    return hits > mean + DECISIVE_SIGMA * spread
+
+
+# The statement the published figure carries beside `pool_digest` (#161): what the first
+# run of `leverage` found, so a reader of a weekly figure is told whether the term it omits
+# has been seen. Re-measured, this line moves with it (`docs/method.md` rule 13).
+LEVERAGE = (
+    "this week's rival attrition is not priced into these figures (#161). Measured "
+    "2026-09-11 on the synthetic 32-team board over weeks 1-14, week 1 decided, 21 entries, "
+    "1600 trials, seed 0, across concentrations 1 to 16: not resolvable at 2 standard "
+    "errors on the axis (2 of 25 comparisons clear it, where chance gives about 1), so the "
+    "term is unresolved rather than zero; 24 of the 25 terms are positive and grow with "
+    "concentration, on rows that share their draws. `hub.season.pool --leverage` "
+    "re-measures it on the week in front of you."
+)
+
+
+# --- the renderers, beside the entry point that prints them (#254) ------------------------
+#
+# Each reader above returns a shape; these turn one into lines, so a report can be composed
+# and asserted on. Nothing here decides anything and nothing above here prints.
 
 def _places(se: float, *, cap: int) -> int:
     """How many decimals a figure carrying this standard error may honestly be printed to.
@@ -1690,198 +2233,6 @@ def report(b: Buyback, *, places: int = 2) -> list[str]:
     ]
 
 
-def simulate(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
-             pool: PoolConfig | None = None, ledgers: Sequence[set[str]] | None = None,
-             trials: int = DEFAULT_TRIALS,
-             rng: np.random.Generator | None = None) -> PoolOutcome:
-    """Play the pool forward `trials` times and report what the field did.
-
-    `ledgers` is what each entry has already spent, in entry order, for a mid-season run. Left
-    out, every entry starts clean -- which is week 1 and is the case the model knows least
-    about. Given, there must be exactly one per entry: the two are matched by position, so a
-    short list is not "the rest start clean", it is an entry reading the wrong ledger or an
-    index error thrown partway through a trial, and neither is an answer.
-    """
-    if ledgers is not None and len(ledgers) != entries:
-        raise ValueError(
-            f"{plural(len(ledgers), 'starting ledger')} for {entries} entries: `ledgers` is "
-            "matched to entries by position, so it has to name every one of them. Pass a "
-            "ledger per entry -- an empty set for an entry that has spent nothing.")
-    rng = rng or np.random.default_rng(0)
-    wks = weeks_from_grid(grid, weeks, pool)
-    ended: Counter[int] = Counter()
-    co: Counter[int] = Counter()
-    alive_tot = dict.fromkeys(weeks, 0)
-
-    for _ in range(trials):
-        led = [set(ledgers[i]) if ledgers is not None else set() for i in range(entries)]
-        alive = [True] * entries
-        died, counts, _ = _play(rng, wks, weeks, led, alive)
-        for w, n in zip(weeks, counts, strict=False):
-            alive_tot[w] += n
-        if died is not None:
-            ended[died] += 1
-        else:
-            co[sum(alive)] += 1
-
-    return PoolOutcome(
-        trials=trials,
-        ending_week={w: c / trials for w, c in sorted(ended.items())},
-        co_survivors={n: c / trials for n, c in sorted(co.items())},
-        alive_by_week={w: alive_tot[w] / trials for w in weeks},
-    )
-
-
-def unpaired_bar(se_a: float, se_b: float) -> float:
-    """The dollar difference two *separate* runs must clear at `DECISIVE_SIGMA`.
-
-    Two runs that do not share their draws are not repeated measures of one thing
-    (`docs/method.md` rule 3), so the difference between them carries both errors and the
-    bar is `DECISIVE_SIGMA` times their root sum of squares. `Leverage.resolvable` reads
-    this across its two arms and `sensitivity` reads it across two rows of one sweep, where
-    each row's error is the same figure and the bar is `DECISIVE_SIGMA * sqrt(2) * se`. It
-    was one row's `se` unmultiplied until #276 -- a bar 2.83 times too easy, one screen from
-    the construction that had it right.
-    """
-    return DECISIVE_SIGMA * float(np.hypot(se_a, se_b))
-
-
-class Sensitivity(NamedTuple):
-    """One point on the field-concentration axis, and everything that moved with it.
-
-    Both halves on one row on purpose. `chalk_share` is what the knob *sets* and the field
-    and entry figures are what it *costs*, and a reader deciding whether the knob matters has
-    to see the two together -- a table of lifetimes with no ownership beside them says the
-    answer moved without saying what moved it.
-
-    `resolution` is the dollar difference `trials` can actually resolve *between this row
-    and another*, `unpaired_bar` of this row's own error with itself, so an equity range
-    across the axis can be compared against the noise inside it rather than read as a
-    finding by width alone.
-    """
-    concentration: float
-    chalk: str                  # the best team in the sweep's first week
-    chalk_share: float          # the share of a clean-ledger field that draws it
-    field: PoolOutcome          # ending week, co-survivors, entries alive by week
-    entry: EntryOutcome         # our own entry, playing our plan against that field
-    pot: float
-    resolution: float           # the dollar difference these trials can resolve
-
-    @property
-    def equity(self) -> float:
-        """What our position is worth in dollars at this concentration."""
-        return self.entry.share * self.pot
-
-    @property
-    def wiped_out(self) -> float:
-        """P(the whole field is gone before the last week ends) -- the knob's headline cost."""
-        return sum(self.field.ending_week.values())
-
-
-def sensitivity(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
-                at: Sequence[float] = DEFAULT_CONCENTRATIONS,
-                ledger: Sequence[str] = (), pot: float | None = None,
-                pool: PoolConfig | None = None, trials: int = DEFAULT_TRIALS,
-                rng: np.random.Generator | None = None) -> list[Sensitivity]:
-    """The pool and our position, re-answered at each field concentration in `at`.
-
-    **The deliverable of #152, and the reason the knob defaults to a no-op.** Nobody has
-    observed this pool's rivals, no pick-popularity data is fetched anywhere under
-    `hub.fetch`, and under Hidden Picks nobody can observe them before a deadline -- so
-    `PoolConfig.field_concentration` cannot be fitted, only stated. ADR-0024's disposition for
-    a parameter in exactly that position is to measure the alternatives side by side and
-    report the sensitivity rather than pick one, and this is that table. A figure quoted from
-    a single concentration is a figure quoting an assumption; the range is the honest form.
-
-    Two simulations per point -- the field's, and ours against it -- so the real cost is twice
-    `trials` times `len(at)`, which at the defaults is ten `DEFAULT_TRIALS` runs. A caller
-    scanning the shape of the axis should lower `trials` before it drops points from `at`:
-    every point dropped is a stretch of the axis nobody looked at, and the axis is the answer.
-
-    **The rows are separate runs and not paired trials**, which is the opposite of `weekly`
-    and is stated because the difference matters to how the table reads. Each row is reseeded
-    to the same value, so every row starts from the same stream and a row at 1.0 reproduces
-    `simulate` at the default exactly. But the concentration changes what the *sampler*
-    consumes from that stream, so the draws diverge at the first pick and no two rows share a
-    season. A difference between two rows therefore carries both rows' noise, and `resolution`
-    is what it has to clear: `unpaired_bar` of a row's error with itself, `DECISIVE_SIGMA *
-    sqrt(2) * se`, the construction `leverage` uses between its arms -- `docs/method.md`
-    rule 3, in its general form: the rows are not repeated measures of one thing that may be
-    pooled into a tighter interval.
-
-    `pot` defaults to the field's entry fees, `entry_fee * field_size`, because that is the
-    pot the configured pool starts with and a sweep run for its shape should not need one
-    named. A caller pricing a real week passes the pot it actually has.
-
-    **What the first run of it found**, on the synthetic 32-team board in
-    `tests/unit/test_pool.py` over weeks 1-14 with 21 entries and 1600 trials, 2026-09-10.
-    Quoted as the shape of the response and not as figures about the real board, which this
-    was not run against:
-
-      * The ticket's premise holds and is larger than it reads. At 1.0 the field is wiped out
-        before week 14 in **99.4%** of trials and only **3.3%** of endings fall in weeks 13-14
-        -- so the double-pick machinery is priced into essentially nothing. At 16.0 those are
-        70.4% and 43.2%. Concentration is what lets this pool reach its own back half.
-      * **Our survival barely moves** across the whole axis (5.1% to 6.6%, inside the noise),
-        but our *share* falls hard at the top of it (5.1% to 2.9%). The knob does not decide
-        whether we survive; it decides how many rivals survive **with** us, and a split pot is
-        what that costs. Reading survival alone would have reported the knob as inert.
-      * `co_survivor_rule` is the rule nobody has confirmed, and at 1.0 it is unreachable --
-        a co-survivor occurs in 0.6% of trials. At 16.0 it decides 29.5% of them. An
-        unconfirmed rule looking harmless can be an artefact of an unmeasured assumption.
-      * Equity ran $21.39, $25.99, $24.28, $21.97, $12.37 against a resolution then stated
-        as $2.53 -- one row's standard error, which is not the bar this docstring describes.
-        **Re-read 2026-09-12 (#276) against the corrected bar of $7.16**
-        (`DECISIVE_SIGMA * sqrt(2) * 2.53`): 1.0 through 8.0 span $4.60 and remain **one
-        flat region**, the peak near 2.0 is still not a peak this many trials can see, and
-        the fall to 16.0 ($9.60 from 8.0, $9.02 from 1.0) is still the only step that
-        clears. The conclusion holds -- but not on the bar it was drawn against: at $2.53 the
-        $4.60 rise from 1.0 to 2.0 cleared too, and "only the fall at 16.0" was not true of
-        the sweep on its own stated terms. It is a range straddling a $20 buyback fee, which
-        is the sense in which that verdict is currently about the assumption.
-
-    **Re-run with #157 in, 2026-09-11**, same board over weeks 1-14, 21 entries, 1600 trials,
-    seed 0, both rules at `split`. The week the field empties was priced at zero above and
-    is priced by `co_elimination_rule` now, and it is the larger term at every point:
-
-      * `last_out` -- ours went out in the week the field emptied -- runs 33.5%, 24.4%,
-        15.2%, 10.2%, 7.5% across the axis against a `survives` that stays 5-7%. At 1.0
-        most of that is ours **alone**: 26.6% of trials our plan outlives the whole field
-        and then loses, which is the pot in full. Share therefore runs 35.7%, 26.9%, 17.3%,
-        11.6%, 6.6% and equity $149.96, $112.86, $72.63, $48.90, $27.81 against $4.85.
-      * **The flat region above is gone.** Every step down the axis clears the resolution
-        -- and still does against the corrected bar of $13.72 (#276), the smallest step
-        being $21.09 -- because concentration is what decides whether the field outlasts
-        our plan or dies underneath it, and that was the term worth nothing. The knob was
-        never inert; it was priced into a state the model refused to pay.
-      * `co_elimination_rule` decides 5-7% of trials at every concentration -- flat, where
-        `co_survivor_rule` runs 0% to 3.3%. Under `rollover` for both, equity is $137.29,
-        $98.96, $60.90, $35.70, $14.70: $12-13 lower at every point, and the verdict at 16.0
-        moves from above a $20 fee to below it.
-    """
-    cfg = pool or PoolConfig()
-    rng = rng or np.random.default_rng(0)
-    seed = int(rng.integers(2 ** 32))
-    stake = cfg.entry_fee * cfg.field_size if pot is None else pot
-    rows: list[Sensitivity] = []
-    for k in at:
-        # A whole config per point, not a loose float threaded past one: everything that reads
-        # a pool rule on this path -- `week_fixtures`, `solve`, `buyback`'s caller -- takes a
-        # `PoolConfig`, and a second way to say what the concentration is would be a second
-        # thing to keep in step with `pool_digest`.
-        this = replace(cfg, field_concentration=float(k))
-        chalk, own = _chalk_share(weeks_from_grid(grid, weeks, this)[0])
-        field = simulate(grid, weeks, entries=entries, pool=this, trials=trials,
-                         rng=np.random.default_rng(seed))
-        entry = entry_outcome(grid, weeks, entries=entries, ledger=ledger, pool=this,
-                              trials=trials, rng=np.random.default_rng(seed))
-        se = entry.share_sd / np.sqrt(trials) * stake
-        rows.append(Sensitivity(
-            concentration=float(k), chalk=chalk, chalk_share=own, field=field, entry=entry,
-            pot=stake, resolution=unpaired_bar(se, se)))
-    return rows
-
-
 def sensitivity_report(rows: Sequence[Sensitivity], *, places: int = 2) -> list[str]:
     """The sweep as lines rather than prints, so it can be composed and asserted on.
 
@@ -1915,186 +2266,6 @@ def sensitivity_report(rows: Sequence[Sensitivity], *, places: int = 2) -> list[
     out.append(f"  equity ${lo:.{places}f} to ${hi:.{places}f} across the axis, against "
                f"${res:.{places}f} these trials resolve")
     return out
-
-
-# --- the current week's rival attrition, measured (#161) --------------------------------
-#
-# `weekly` prices a candidate as `P(it wins this week)` times what the rest of the season is
-# worth with it spent, and the rest of the season is simulated against a field that has
-# *not* been played through the week being decided. So the week's rival attrition -- the
-# rivals that go out on the pick they made this week -- is credited to no candidate. #161's
-# original text argued that this understates every candidate by about the same factor and
-# leaves the ranking intact, and then argued against itself: the attrition is correlated
-# with our own pick. Taking the chalk everybody holds means the field does not thin when it
-# wins; taking a contrarian winner while the chalk loses thins it enormously. That
-# correlation *is* the leverage term, and it is the economic case for departing from the
-# free pick at all.
-#
-# It was to be declared absent. #151 made it measurable instead: our entry replays a plan and
-# rival attrition is a property of the field sampler alone, with a stated concentration
-# exponent, so "advance the field through the week" is one more week handed to the same
-# simulator with our pick as the first week of our plan. `leverage` runs both arms and
-# reports their difference across the concentration axis, paired per #159 within each arm.
-
-class Leverage(NamedTuple):
-    """One candidate against the free pick, priced with and without this week's attrition.
-
-    `unadvanced` is the dollar difference `weekly` reports: the candidate's figure minus the
-    fallback's, each `P(wins) * share(rest of season) * pot`, on trials where both plans met
-    the identical field over the weeks *after* this one. `advanced` is the same difference on
-    trials that started from this week -- our entry playing the candidate here and our plan
-    after it, every rival sampling this week's pick under `PoolConfig.field_concentration`
-    and going out on it or not -- so the field the rest of the season is priced against is
-    the field this week left standing.
-
-    **Each arm is paired and the two arms are not**, and the interval says so. Within an arm
-    the two candidates meet the same season trial for trial (`_play` draws the whole season
-    before anybody picks), so `unadvanced_se` and `advanced_se` are standard errors of a
-    per-trial difference and tight. Between the arms the seasons differ -- one draws this
-    week's games and one does not, so the same seed produces offset streams -- and the
-    difference of the two differences carries both errors: `term_se` is their root sum of
-    squares. `docs/method.md` rule 3, in its general form: two runs are not repeated
-    measures of one thing unless they share the draws, and these cannot.
-
-    `term` is the leverage term: what advancing the field through this week does to the
-    case for this candidate over the free one. Positive means the attrition favours the
-    departure; `resolvable` is whether the trials can see it at `DECISIVE_SIGMA` at all,
-    and where they cannot the honest report is that the term is unresolved -- not that it
-    is zero.
-    """
-    concentration: float
-    team: str
-    fallback: str
-    unadvanced: float
-    unadvanced_se: float
-    advanced: float
-    advanced_se: float
-    trials: int
-
-    @property
-    def term(self) -> float:
-        """What this week's rival attrition is worth to the departure, in dollars."""
-        return self.advanced - self.unadvanced
-
-    @property
-    def term_se(self) -> float:
-        """The two arms are independent runs, so their errors add in quadrature."""
-        return float(np.hypot(self.advanced_se, self.unadvanced_se))
-
-    @property
-    def resolvable(self) -> bool:
-        """Whether these trials can tell the term from zero at the repo's bar."""
-        return abs(self.term) > unpaired_bar(self.advanced_se, self.unadvanced_se)
-
-
-def _shares(cfg: PoolConfig, out: EntryOutcome) -> np.ndarray:
-    """What each trial paid, off the two-count record, under the rules given."""
-    return np.array([trial_share(cfg, n, m)
-                     for n, m in zip(out.survivors_each, out.last_out_each, strict=True)],
-                    dtype=float)
-
-
-def leverage(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
-             ledger: Sequence[str] = (), entries: int, pot: float,
-             pool: PoolConfig | None = None, at: Sequence[float] = DEFAULT_CONCENTRATIONS,
-             top: int = 6, trials: int = WEEKLY_TRIALS,
-             rng: np.random.Generator | None = None,
-             now: datetime | None = None) -> list[Leverage]:
-    """The leverage term for every candidate this week, at every concentration in `at`.
-
-    The measurement #161 was re-scoped to. Two arms per candidate per concentration, on one
-    seed: the rest of the season with the candidate spent and the field untouched -- exactly
-    what `weekly` prices -- and the whole season from this week with the candidate as its
-    first pick, so the field is played through the week and thinned by it before the rest is
-    valued. Both arms meet the free pick on the identical field within the arm, which is the
-    pairing #159 built and the reason the difference within an arm is tight.
-
-    Every candidate is run rather than the recommendation alone, because the question is
-    whether the term is resolvable *anywhere* -- and on a board where the recommendation is
-    the free pick there would otherwise be nothing to measure.
-
-    **What the first run found**, 2026-09-11, on the synthetic 32-team board in
-    `tests/unit/test_pool.py` over weeks 1-14, week 1 decided, 21 entries, pot $420, 1600
-    trials, seed 0, both pool rules at `split` -- the board and seed `sensitivity`'s two
-    sweeps used. Five candidates against the free pick T31 at each of the five default
-    concentrations, twenty-five comparisons, 415 seconds:
-
-      * **Not resolvable at two standard errors on the axis.** Two of twenty-five clear the
-        bar -- T30 at 8.0, +$3.77 against +/-$3.23 (z 2.3), and T28 at 16.0, +$6.60 against
-        +/-$5.29 (z 2.5) -- and twenty-five null comparisons clear it about 1.1 times, with
-        a spread of one; two hits is inside that. So the term is *unresolved* at these
-        trials, which is the absence #161 asks to be stated and is not a zero.
-      * **The direction is consistent and grows with concentration.** Twenty-four of the
-        twenty-five terms are positive -- the attrition favours the departure, as #161's
-        argument says it should -- and at 16.0 the five run +$1.20, +$2.73, +$6.60, +$2.24,
-        +$4.26 (z 0.8 to 2.5) where at 1.0 they run -$2.20 to +$5.48 (z -0.8 to 0.8). But
-        the twenty-five rows are one seed: the arms meet the same game results at every
-        concentration and the five candidates at one concentration share the free pick's
-        arm, so that is not twenty-four readings and it is not pooled into one
-        (`docs/method.md` rule 3).
-      * **The resolution is the advanced arm's.** Its standard error runs $1.3 to $5.4
-        against $0.08 to $4.5 for the unadvanced arm, because our own week-1 result is drawn
-        there and multiplied in here. Resolving a +$3 term at 16.0 needs roughly 4,000
-        trials per arm; nobody has run that, and until somebody does the published figure
-        carries `LEVERAGE` below beside `pool_digest`.
-
-    Costs twice what `weekly` costs: `top` candidates, two simulations each, per point on
-    the axis. It is a measurement and not the weekly path, and `hub.season.pool --leverage`
-    is how an operator asks for it on a real week.
-    """
-    cfg = pool or PoolConfig()
-    rng = rng or np.random.default_rng(0)
-    seed = int(rng.integers(2 ** 32))
-    ahead = _ahead(weeks, week)
-    if not ahead:
-        raise ValueError(
-            f"week {week} has nothing priced after it: the rest of the season is what the "
-            "field's attrition this week is worth something *in*, so with no weeks ahead "
-            "there is no term to measure. `weekly` prices such a week in closed form.")
-    spent = set(ledger)
-    # The candidates before the free pick, so a double week the grid cannot pair -- a
-    # `game_id` missing on a row -- is refused with that sentence rather than read as a
-    # week with no legal pick. In a double-pick week each is a pair from two fixtures
-    # priced as the product (#256), and `takes` is what it spends. `now` is the clock the
-    # week is read against (#263): `at` here is the concentration axis, so the moment
-    # carries the other name.
-    teams = _ranked(_legal(grid, week, spent, now), week, _picks_in(week, cfg), top)
-    free = auto_pick(grid, week, ledger, pool=cfg, now=now)
-    if free is None:
-        raise ValueError(f"week {week} has no legal pick left: {len(spent)} teams are spent")
-    # The free pick is always the first of these: `auto_pick` is the same filter and the
-    # same ranking, so a guard appending it when absent would be a guard that cannot fire.
-    root = np.sqrt(trials)
-    rows: list[Leverage] = []
-    for k in at:
-        this = replace(cfg, field_concentration=float(k))
-        unadvanced: dict[str, np.ndarray] = {}
-        advanced: dict[str, np.ndarray] = {}
-        for team, p, takes in teams:
-            rest = entry_outcome(grid, ahead, entries=entries, ledger=[*sorted(spent), *takes],
-                                 pool=this, trials=trials, rng=np.random.default_rng(seed))
-            unadvanced[team] = p * _shares(this, rest)
-            # The same plan with this week's pick in front of it, replayed from this week:
-            # `entry_outcome` solved `rest.plan` over `ahead` with the candidate spent, so
-            # putting the candidate at `week` and that plan after it is the season our entry
-            # would play. Rivals sample this week like any other, and go out on it.
-            after = rest.plan if rest.plan is not None else Plan({}, "none")
-            whole = Plan({week: takes, **after.picks}, after.source)
-            full = entry_outcome(grid, [week, *ahead], entries=entries, ledger=sorted(spent),
-                                 pool=this, plan=whole, trials=trials,
-                                 rng=np.random.default_rng(seed))
-            advanced[team] = _shares(this, full)
-        for team, _, _ in teams:
-            if team == free:
-                continue
-            du = pot * (unadvanced[team] - unadvanced[free])
-            da = pot * (advanced[team] - advanced[free])
-            rows.append(Leverage(
-                concentration=float(k), team=team, fallback=free,
-                unadvanced=float(du.mean()), unadvanced_se=float(np.std(du)) / root,
-                advanced=float(da.mean()), advanced_se=float(np.std(da)) / root,
-                trials=trials))
-    return rows
 
 
 def leverage_report(rows: Sequence[Leverage], *, places: int = 2) -> list[str]:
@@ -2139,49 +2310,35 @@ def leverage_report(rows: Sequence[Leverage], *, places: int = 2) -> list[str]:
     return out
 
 
-# The two-sided tail beyond DECISIVE_SIGMA standard errors under the null: what fraction of
-# comparisons with no effect clear the bar anyway. 4.55% at two, and stated once.
-_NULL_TAIL = 0.0455
+def axis_report(by_k: dict[float, Weekly], *, places: int = 2) -> list[str]:
+    """The week's figure as a range over the concentration knob, which is the published form.
 
-
-def expected_by_chance(comparisons: int) -> float:
-    """How many of this many null comparisons clear `DECISIVE_SIGMA` by chance."""
-    return comparisons * _NULL_TAIL
-
-
-def resolvable_on_the_axis(rows: Sequence[Leverage]) -> bool:
-    """Whether the comparisons that clear the bar are more than the bar itself produces.
-
-    Twenty-five comparisons at two standard errors clear it about once with nothing there,
-    so "resolvable somewhere on the axis" cannot be read off any one row: a sweep that asks
-    the question twenty-five times has to hold the *count* to the same bar. The count of
-    hits is compared against its own expectation under the null plus `DECISIVE_SIGMA` of its
-    binomial spread. That treats the rows as independent, and they are less than that --
-    one seed means the arms meet the same game results across the axis, and the candidates
-    at one concentration share the free pick's arm -- so the real bar is higher still, and
-    a sweep that fails this one has certainly not resolved the term.
+    `weekly` answers at one concentration and `sensitivity` sweeps the season; this is the
+    week swept, because #152 established that a dollar figure quoted at one concentration is
+    quoting an assumption, and a recommendation is the figure a reader acts on. A pick that
+    holds at every point on the axis is a pick about the pool; one that moves is a pick
+    about the assumption, and the line says which.
     """
-    n = len(rows)
-    if n == 0:
-        return False
-    hits = sum(r.resolvable for r in rows)
-    mean = expected_by_chance(n)
-    spread = float(np.sqrt(n * _NULL_TAIL * (1.0 - _NULL_TAIL)))
-    return hits > mean + DECISIVE_SIGMA * spread
-
-
-# The statement the published figure carries beside `pool_digest` (#161): what the first
-# run of `leverage` found, so a reader of a weekly figure is told whether the term it omits
-# has been seen. Re-measured, this line moves with it (`docs/method.md` rule 13).
-LEVERAGE = (
-    "this week's rival attrition is not priced into these figures (#161). Measured "
-    "2026-09-11 on the synthetic 32-team board over weeks 1-14, week 1 decided, 21 entries, "
-    "1600 trials, seed 0, across concentrations 1 to 16: not resolvable at 2 standard "
-    "errors on the axis (2 of 25 comparisons clear it, where chance gives about 1), so the "
-    "term is unresolved rather than zero; 24 of the 25 terms are positive and grow with "
-    "concentration, on rows that share their draws. `hub.season.pool --leverage` "
-    "re-measures it on the week in front of you."
-)
+    if not by_k:
+        return ["\n  no concentrations swept"]
+    out = [f"\n  across the field-concentration axis, {plural(len(by_k), 'point')}:",
+           f"  {'k':>5}  {'pick':<4}  {'free':<4}  {'pick $':>9}  {'free $':>9}  decisive"]
+    for k, w in by_k.items():
+        best = w.candidates[0]
+        fb = next((c for c in w.candidates if c.is_fallback), None)
+        out.append(f"  {k:>5.2f}  {w.recommend:<4}  {w.fallback or '-':<4}  "
+                   f"${best.expected_dollars:>8.{places}f}  "
+                   + (f"${fb.expected_dollars:>8.{places}f}" if fb else f"{'-':>9}")
+                   + f"  {'yes' if w.decisive else 'no'}")
+    picks = {w.recommend for w in by_k.values()}
+    lo = min(w.candidates[0].expected_dollars for w in by_k.values())
+    hi = max(w.candidates[0].expected_dollars for w in by_k.values())
+    res = max(w.resolution for w in by_k.values())
+    out.append(f"  ${lo:.{places}f} to ${hi:.{places}f} across the axis against "
+               f"${res:.{places}f} these trials resolve -- "
+               + (f"{next(iter(picks))} at every point" if len(picks) == 1 else
+                  f"the pick moves with the assumption: {', '.join(sorted(picks))}"))
+    return out
 
 
 # --- the entry point (#163) ---------------------------------------------------------------
@@ -2263,37 +2420,6 @@ def _field(store: Path | None, season: int) -> tuple[PoolState | None, str | Non
     return state, digest, (f"field from the pool host, read {read} as of its week "
                            f"{state.week}: {state.alive} alive of {state.field_size}, pot "
                            f"${state.pot:.2f}, state {digest}")
-
-
-def axis_report(by_k: dict[float, Weekly], *, places: int = 2) -> list[str]:
-    """The week's figure as a range over the concentration knob, which is the published form.
-
-    `weekly` answers at one concentration and `sensitivity` sweeps the season; this is the
-    week swept, because #152 established that a dollar figure quoted at one concentration is
-    quoting an assumption, and a recommendation is the figure a reader acts on. A pick that
-    holds at every point on the axis is a pick about the pool; one that moves is a pick
-    about the assumption, and the line says which.
-    """
-    if not by_k:
-        return ["\n  no concentrations swept"]
-    out = [f"\n  across the field-concentration axis, {plural(len(by_k), 'point')}:",
-           f"  {'k':>5}  {'pick':<4}  {'free':<4}  {'pick $':>9}  {'free $':>9}  decisive"]
-    for k, w in by_k.items():
-        best = w.candidates[0]
-        fb = next((c for c in w.candidates if c.is_fallback), None)
-        out.append(f"  {k:>5.2f}  {w.recommend:<4}  {w.fallback or '-':<4}  "
-                   f"${best.expected_dollars:>8.{places}f}  "
-                   + (f"${fb.expected_dollars:>8.{places}f}" if fb else f"{'-':>9}")
-                   + f"  {'yes' if w.decisive else 'no'}")
-    picks = {w.recommend for w in by_k.values()}
-    lo = min(w.candidates[0].expected_dollars for w in by_k.values())
-    hi = max(w.candidates[0].expected_dollars for w in by_k.values())
-    res = max(w.resolution for w in by_k.values())
-    out.append(f"  ${lo:.{places}f} to ${hi:.{places}f} across the axis against "
-               f"${res:.{places}f} these trials resolve -- "
-               + (f"{next(iter(picks))} at every point" if len(picks) == 1 else
-                  f"the pick moves with the assumption: {', '.join(sorted(picks))}"))
-    return out
 
 
 def _unrecorded(prior: Sequence[Mapping[str, Any]], behind: Sequence[int], season: int,
@@ -2433,12 +2559,14 @@ def main(argv: Sequence[str] | None = None) -> int:
           f"{a.trials} trials per candidate; field concentration {cfg.field_concentration} "
           f"is the configured point, reported across {', '.join(str(k) for k in axis)}")
 
+    # The field, built once: the board reshaped into the weeks it can play under the
+    # configured rules, re-stated at each point on the axis (#254).
+    season = Field(grid, weeks, cfg)
     if a.eliminated:
         def price(k: float) -> Buyback:
-            return buyback(grid, weeks, week=week, ledger=ledger, live_entries=entries,
+            return buyback(season.at(k), week=week, ledger=ledger, live_entries=entries,
                            pot=pot, rival_buybacks=a.rival_buybacks, used=a.used,
-                           pool=replace(cfg, field_concentration=k), trials=a.trials,
-                           rng=np.random.default_rng(seed))
+                           trials=a.trials, rng=np.random.default_rng(seed))
         by_k = {k: price(k) for k in axis}
         here = by_k.get(cfg.field_concentration) or price(cfg.field_concentration)
         for line in report(here):
@@ -2452,18 +2580,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                      "concentration assumption and not the pool"))
         if a.record:
             took = a.chose or ("buy back" if here.recommend else "stay out")
-            k = journal.record(season=a.season, week=week, kind="buyback", chose=took,
-                               expected_dollars=here.net if here.available else None,
-                               pool_digest=pool_digest(cfg), grid_digest=grid_digest(grid),
-                               seed=seed, trials=a.trials, entries=entries, pot=pot,
-                               outlay=outlay, pool_state_digest=field_digest, base=a.store)
+            k = journal.record(journal.BuybackDecision(
+                week=week, chose=took, expected_dollars=here.net if here.available else None,
+                rerun=journal.Rerun(pool_digest=pool_digest(cfg), grid_digest=grid_digest(grid),
+                                    seed=seed, trials=a.trials, entries=entries, pot=pot,
+                                    outlay=outlay),
+                pool_state_digest=field_digest), season=a.season, base=a.store)
             print(f"  recorded {k}")
         return 0
 
     def value(k: float) -> Weekly:
-        return weekly(grid, weeks, week=week, ledger=ledger, entries=entries, pot=pot,
-                      outlay=outlay, pool=replace(cfg, field_concentration=k),
-                      trials=a.trials, seed=seed)
+        return weekly(season.at(k), week=week, ledger=ledger, entries=entries, pot=pot,
+                      outlay=outlay, trials=a.trials, seed=seed)
     by_k = {k: value(k) for k in axis}
     here = by_k.get(cfg.field_concentration) or value(cfg.field_concentration)
     for line in weekly_report(here):
@@ -2474,7 +2602,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # the first run found; `--leverage` measures it on this week instead of quoting it.
     if a.leverage:
         for line in leverage_report(leverage(
-                grid, weeks, week=week, ledger=ledger, entries=entries, pot=pot, pool=cfg,
+                season, week=week, ledger=ledger, entries=entries, pot=pot,
                 at=axis, trials=a.trials, rng=np.random.default_rng(seed))):
             print(line)
     else:

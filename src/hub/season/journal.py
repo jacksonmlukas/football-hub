@@ -33,9 +33,19 @@ under.
 **The obligation is an invariant and not a column that may be filled.** It was checked by
 asking whether a float was there, and three things walked past that: a departure written with
 no free pick beside it, the zero the error message itself suggested, and a `kind` nothing
-recognised. `_check_adr_0014` is where each of those is closed, and the shape of the fix is
+recognised. `Pick.check` is where each of those is closed, and the shape of the fix is
 that a cost is a *difference* -- so both figures it is the difference of are on the row, and
 the cost is checked against them.
+
+**A decision is one value, and the obligations are its shape** (#254). `record` took
+twenty-four keywords whose duties depended on `kind` and were checked after the fact; it
+takes a `Pick` or a `BuybackDecision` now. A pick carries its fallback, both prices and
+both survival figures, and the two costs -- `week_cost`, `survival_given_up` -- are
+*derived* from them rather than written in beside them, so a cost that disagrees with its
+figures, a zero nobody computed and a kind nobody validates cannot be built at all. What a
+type cannot hold -- a departure that names no free pick and no reason, or records no
+figures -- `Pick.check` refuses, and `record` calls it. Provenance is one `Rerun` value,
+whole by construction, or absent.
 
 **And an invariant with no caller is checked only against fixtures written to satisfy it.**
 Those checks name `pool.Weekly`'s fields and nothing supplied one, so a units or
@@ -64,7 +74,7 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import polars as pl
 
@@ -197,118 +207,168 @@ def parse_key(k: str) -> tuple[int, int, str]:
     return int(m["season"]), int(m["week"]), m["kind"]
 
 
-def _check_adr_0014(*, week: int, kind: str, chose: str, fallback: str | None,
-                    fallback_note: str | None, chose_survives: float | None,
-                    fallback_survives: float | None, survival_given_up: float | None,
-                    market_price: float | None = None, fallback_price: float | None = None,
-                    week_cost: float | None = None) -> None:
-    """ADR-0014's logging duty, as an invariant rather than a column that may be filled.
+class Rerun(NamedTuple):
+    """What a re-run needs (#162), whole: the rules, the board, the seed, the trials and
+    the two inputs the caller stated. A decision carries one of these or none -- a row
+    naming the rules but not the seed would read as reproducible to whichever column is
+    queried and is not, and this shape cannot express that row. `plan_source` labels the
+    plan and `pool_state_digest` names the field; neither is an input to the re-run, so
+    they ride on the decision beside this rather than inside it."""
+    pool_digest: str            # `hub.config.pool_digest` of the rules
+    grid_digest: str            # `hub.season.pool.grid_digest` of the board
+    seed: int                   # what every candidate was reseeded to
+    trials: int                 # trials each candidate ran; 0 for closed form
+    entries: int                # the field priced against, ours included
+    pot: float
+    outlay: float               # what `expected_dollars` is net of
 
-    `docs/decisions.md` registers the survivor contrarian threshold under ADR-0014, and the
-    rule's own logging duty is the week, the chalk pick, ours, and the probability cost
-    accepted. The check tested that a float was present, which three things walked past.
 
-    **Omitting the fallback.** A departure written with no free pick beside it claims nothing
-    and so breaks nothing -- the duty was evaded by silence. A kind that has a free
-    alternative every week has to say what it was, or say why there was none.
+class Pick(NamedTuple):
+    """A week's pick, carrying ADR-0014's logging duty as its shape.
 
-    **Passing the zero the error message suggested.** A cost is a difference between two
-    survival figures, so both of them are named and the difference is checked against them.
-    Zero remains a legitimate answer -- the two plans survive alike -- and is now an answer
-    that had to be worked out to be written.
+    The duty is the week, the chalk pick, ours, and the probability cost accepted -- and a
+    cost is a *difference*, so what this carries is the two figures on each side of it and
+    the cost is read off them: `week_cost` is the free pick's win probability minus ours,
+    the quantity the threshold is stated in (#209), and `survival_given_up` the free plan's
+    season survival minus ours, the thesis of our plan. Neither can be supplied, so neither
+    can disagree with its figures or be a zero nobody computed. `check` holds the rest:
+    a departure names its free pick or says why there was none, and carries both survival
+    figures and both prices; every probability is one.
 
-    **Using a kind nothing validates.** `kind` was free text, so a row could be filed under a
-    name no rule had heard of. It is a closed set, checked before anything else here.
-
-    **And the price in the wrong unit** (#239). `market_price` is the taken team's win
-    probability -- `week_cost` is `fallback_price - market_price` and is a cost only when
-    both are one -- and it was range-checked as one only beside a `fallback_price`, so a
-    matched pick could carry an American price there and nothing said so. It is checked
-    on every row; a caller with a moneyline converts through `hub.models.props.implied`
-    first and names the source in `price_note`.
-
-    **And the cost in the wrong quantity** (#209). ADR-0014's threshold is a *week*
-    win-probability cost -- "under ~8pp" -- and the column that discharged its logging duty
-    was a season-survival difference, which disagrees with it in sign on the pinned grid.
-    A departure now carries both, under distinct names: `week_cost` is the free pick's win
-    probability minus ours and is the threshold quantity; `survival_given_up` stays as the
-    thesis of our plan working. The same shape as the survival trio -- both prices on the
-    row and the cost checked against them -- so a week cost nobody computed cannot be
-    written either.
+    `fallback` is `None` where auto-pick had no team left to assign, and `fallback_note`
+    then says so. `credits_before`/`credits_after` are the odds fetcher's balance either
+    side of the work this decision needed; `record` turns them into a cost or an unknown.
     """
-    if kind not in KINDS:
-        raise ValueError(
-            f"{kind!r} is not a journal kind. One of {', '.join(map(repr, KINDS))} -- a kind "
-            "decides which obligations a row carries, so an unrecognised one is a row that "
-            "owes nothing, which is how ADR-0014's logging duty was walked past.")
-    if kind in FALLBACK_KINDS and fallback is None and not fallback_note:
-        raise ValueError(
-            f"week {week}: a {kind} has a free alternative every week and this one names "
-            "none. Pass `fallback` -- what auto-pick would have assigned -- or, where there "
-            "genuinely was none, `fallback_note` saying so. Silence about the free pick is "
-            "how ADR-0014's logging duty gets evaded rather than broken.")
+    week: int
+    chose: str
+    fallback: str | None
+    fallback_note: str | None = None
+    market_price: float | None = None       # the taken pick's win probability on the week
+    fallback_price: float | None = None     # the free pick's
+    price_note: str | None = None
+    expected_dollars: float | None = None
+    chose_survives: float | None = None
+    fallback_survives: float | None = None
+    plan_source: str | None = None
+    rerun: Rerun | None = None
+    pool_state_digest: str | None = None
+    credits_before: float | None = None
+    credits_after: float | None = None
 
-    given = fallback is not None and chose != fallback
-    if given and (chose_survives is None or fallback_survives is None
-                  or survival_given_up is None):
-        raise ValueError(
-            f"week {week}: {chose!r} departs from the free pick {fallback!r} without "
-            "recording what it gave up. ADR-0014's logging duty is the week, the chalk pick, "
-            "ours, and the probability cost accepted -- and a cost is a difference, so it "
-            "needs both survival figures it is the difference of. Pass chose_survives, "
-            "fallback_survives and survival_given_up. Zero is an answer -- the two plans "
-            "survive alike -- and it is an answer that has to be computed to be written.")
+    @property
+    def kind(self) -> str:
+        return "pick"
 
-    if given and (market_price is None or fallback_price is None or week_cost is None):
-        raise ValueError(
-            f"week {week}: {chose!r} departs from the free pick {fallback!r} without "
-            "recording the week's cost. ADR-0014's threshold is stated in win probability "
-            "on the week -- under ~8pp -- and `survival_given_up` is not that quantity "
-            "(#209). Pass market_price (ours), fallback_price (the free pick's) and "
-            "week_cost, their difference, so the cost the rule fires on is on the row.")
+    @property
+    def departs(self) -> bool:
+        """Whether this pick left the free one -- the case the duty binds."""
+        return self.fallback is not None and self.chose != self.fallback
 
-    # `market_price` is a probability on every row, not only where a week cost is stated
-    # in it (#239): checked only beside a `fallback_price`, a matched pick could carry 5.0
-    # there and a moneyline row and a probability row were indistinguishable in a query.
-    for name, p in (("chose_survives", chose_survives),
-                    ("fallback_survives", fallback_survives),
-                    ("fallback_price", fallback_price),
-                    ("market_price", market_price)):
-        if p is not None and not 0.0 <= p <= 1.0:
-            raise ValueError(f"{name}={p} is not a probability")
-    if (market_price is not None and fallback_price is not None and week_cost is not None
-            and abs((fallback_price - market_price) - week_cost) > _SAME):
-        raise ValueError(
-            f"week {week}: week_cost={week_cost} is not what the two prices say. The free "
-            f"pick wins at {fallback_price} and ours at {market_price}, a cost of "
-            f"{fallback_price - market_price} on the week. ADR-0014's threshold is stated "
-            "in this quantity, so a cost that was not computed from the prices is not "
-            "the cost the rule fires on.")
-    if (chose_survives is not None and fallback_survives is not None
-            and survival_given_up is not None
-            and abs((fallback_survives - chose_survives) - survival_given_up) > _SAME):
-        raise ValueError(
-            f"week {week}: survival_given_up={survival_given_up} is not what the two "
-            f"survival figures say. The free pick survives {fallback_survives} and ours "
-            f"{chose_survives}, a cost of {fallback_survives - chose_survives}. A cost that "
-            "does not follow from the figures it is a difference of was not computed from "
-            "them, which is the thing ADR-0014 asks to be written down.")
+    @property
+    def matched_fallback(self) -> bool | None:
+        return None if self.fallback is None else self.chose == self.fallback
+
+    @property
+    def week_cost(self) -> float | None:
+        """`fallback_price - market_price`: ADR-0014's threshold quantity (#209)."""
+        if self.market_price is None or self.fallback_price is None:
+            return None
+        return self.fallback_price - self.market_price
+
+    @property
+    def survival_given_up(self) -> float | None:
+        """`fallback_survives - chose_survives`: the season figure, the thesis of our plan."""
+        if self.chose_survives is None or self.fallback_survives is None:
+            return None
+        return self.fallback_survives - self.chose_survives
+
+    def check(self) -> None:
+        """ADR-0014's logging duty: the half of it a shape cannot hold, refused here.
+
+        `docs/decisions.md` registers the survivor contrarian threshold under ADR-0014, and the
+        rule's own logging duty is the week, the chalk pick, ours, and the probability cost
+        accepted. The check once tested that a float was present, which three things walked
+        past -- a departure written with no free pick beside it, the zero the error message
+        itself suggested, and a `kind` nothing recognised. Two of the three are gone by
+        construction since #254: the kind is the type, and both costs are read off the
+        figures they are differences of, so neither a zero nobody computed nor a cost that
+        disagrees with its figures can be built. What remains is the silence:
+
+        **Omitting the fallback.** A departure written with no free pick beside it claims
+        nothing and so breaks nothing -- the duty was evaded by silence. A pick has a free
+        alternative every week and has to say what it was, or say why there was none.
+
+        **Omitting the figures.** A departure has to carry both survival figures its season
+        cost is the difference of, and both prices its week cost is the difference of --
+        the week cost being the quantity ADR-0014's threshold is stated in (#209), which the
+        season figure is not; on the pinned grid the two disagree in sign.
+
+        **And the price in the wrong unit** (#239). `market_price` is the taken team's win
+        probability -- `week_cost` is `fallback_price - market_price` and is a cost only when
+        both are one -- and it was range-checked as one only beside a `fallback_price`, so a
+        matched pick could carry an American price there and nothing said so. It is checked
+        on every row; a caller with a moneyline converts through `hub.models.props.implied`
+        first and names the source in `price_note`.
+        """
+        week, chose, fallback = self.week, self.chose, self.fallback
+        if fallback is None and not self.fallback_note:
+            raise ValueError(
+                f"week {week}: a pick has a free alternative every week and this one names "
+                "none. Pass `fallback` -- what auto-pick would have assigned -- or, where there "
+                "genuinely was none, `fallback_note` saying so. Silence about the free pick is "
+                "how ADR-0014's logging duty gets evaded rather than broken.")
+        if self.departs and (self.chose_survives is None or self.fallback_survives is None):
+            raise ValueError(
+                f"week {week}: {chose!r} departs from the free pick {fallback!r} without "
+                "recording what it gave up. ADR-0014's logging duty is the week, the chalk pick, "
+                "ours, and the probability cost accepted -- and a cost is a difference, so it "
+                "needs both survival figures it is the difference of. Pass chose_survives and "
+                "fallback_survives. Zero is an answer -- the two plans survive alike -- and it "
+                "is an answer that has to be computed to be written.")
+        if self.departs and (self.market_price is None or self.fallback_price is None):
+            raise ValueError(
+                f"week {week}: {chose!r} departs from the free pick {fallback!r} without "
+                "recording the week's cost. ADR-0014's threshold is stated in win probability "
+                "on the week -- under ~8pp -- and `survival_given_up` is not that quantity "
+                "(#209). Pass market_price (ours) and fallback_price (the free pick's), so the "
+                "cost the rule fires on is on the row.")
+        # `market_price` is a probability on every row, not only where a week cost is stated
+        # in it (#239): checked only beside a `fallback_price`, a matched pick could carry 5.0
+        # there and a moneyline row and a probability row were indistinguishable in a query.
+        for name, p in (("chose_survives", self.chose_survives),
+                        ("fallback_survives", self.fallback_survives),
+                        ("fallback_price", self.fallback_price),
+                        ("market_price", self.market_price)):
+            if p is not None and not 0.0 <= p <= 1.0:
+                raise ValueError(f"{name}={p} is not a probability")
 
 
-def record(*, season: int, week: int, kind: str, chose: str,
-           fallback: str | None = None, fallback_note: str | None = None,
-           market_price: float | None = None, fallback_price: float | None = None,
-           week_cost: float | None = None,
-           price_note: str | None = None, expected_dollars: float | None = None,
-           chose_survives: float | None = None, fallback_survives: float | None = None,
-           survival_given_up: float | None = None,
-           credits_before: float | None = None, credits_after: float | None = None,
-           pool_digest: str | None = None, grid_digest: str | None = None,
-           seed: int | None = None, trials: int | None = None, entries: int | None = None,
-           pot: float | None = None, outlay: float | None = None,
-           plan_source: str | None = None, pool_state_digest: str | None = None,
-           at: datetime | None = None, base: Path | None = None) -> str:
+class BuybackDecision(NamedTuple):
+    """A re-entry decision: bought back or stayed out, at what expected net. There is no
+    standing free offer to re-enter, so a buyback owes no fallback and no cost."""
+    week: int
+    chose: str
+    expected_dollars: float | None = None
+    rerun: Rerun | None = None
+    pool_state_digest: str | None = None
+    credits_before: float | None = None
+    credits_after: float | None = None
+
+    @property
+    def kind(self) -> str:
+        return "buyback"
+
+
+Decision = Pick | BuybackDecision
+
+
+def record(decision: Decision, *, season: int, at: datetime | None = None,
+           base: Path | None = None) -> str:
     """Append one decision. Returns its key, which is how the outcome finds it later.
+
+    `decision` is a `Pick` or a `BuybackDecision`, and what it owes is its shape: the
+    kind is the type, the costs are read off the figures, and the provenance is one
+    `Rerun` or none. `Pick.check` is called here for the duties a type cannot hold.
 
     `credits_before`/`credits_after` are the odds fetcher's balance either side of the work
     this decision needed. Either one unknown means the cost is unknown, which is recorded as
@@ -318,70 +378,60 @@ def record(*, season: int, week: int, kind: str, chose: str,
     readings makes the difference negative, which would be written into the one column whose
     whole point is that absent is not zero. Refused, so it is recorded as unknown instead.
 
-    `price_note` stands whether or not a price does. It said why the price was null and was
-    dropped the moment there was one, so the note that says *which* source a price came from,
-    or what was odd about it, could not be written at all.
-
-    The ADR-0014 duty is `_check_adr_0014`, which is where its three escapes are named.
-
-    The `RERUN_COLUMNS` columns are what a re-run needs, and they are optional here because a
-    decision is a decision whether or not its figure can be reproduced -- a row that says
-    "this was chosen" and cannot say under what is still the record of a choice. What is
-    refused is *pretending*: a row carrying some of them and not others would read as
-    reproducible to a query on any one column, so either every one of them is present or
-    none is. `record_weekly` supplies all of them off `pool.Weekly`.
-
-    `pool_state_digest` stands outside that all-or-none (#280): it names the archived field
+    `pool_state_digest` stands outside the re-run (#280): it names the archived field
     `entries`, `pot` and the Ledger were read from, and a row priced against a field stated
     by hand has none to name. The null is that claim, and `hub.fetch.pool.archived_state`
     is what resolves a digest back to the field.
     """
-    # `plan_source` labels the survivor plan and is no input to the re-run, and a buyback has no
-    # plan; the seven that follow are what `pool.weekly` has to be handed to land on the row's
-    # figure again.
-    rerun = {"pool_digest": pool_digest, "grid_digest": grid_digest, "seed": seed,
-             "trials": trials, "entries": entries, "pot": pot, "outlay": outlay}
-    absent = tuple(k for k, v in rerun.items() if v is None)
-    if absent and len(absent) != len(rerun):
+    week, rerun = decision.week, decision.rerun
+    if rerun is not None and any(v is None for v in rerun):
         raise ValueError(
-            f"week {week}: provenance has to come whole. Missing {absent} beside "
-            f"{tuple(k for k in rerun if k not in absent)} -- a row naming the rules but "
-            "not the seed, or the seed but not the board or the stakes, reads as "
-            "reproducible to whichever column is queried and is not. Pass all of "
-            f"{tuple(rerun)}, or none and let the row say it cannot be re-derived.")
-    _check_adr_0014(week=week, kind=kind, chose=chose, fallback=fallback,
-                    fallback_note=fallback_note, chose_survives=chose_survives,
-                    fallback_survives=fallback_survives,
-                    survival_given_up=survival_given_up, market_price=market_price,
-                    fallback_price=fallback_price, week_cost=week_cost)
-    cost = (credits_before - credits_after
-            if credits_before is not None and credits_after is not None else None)
+            f"week {week}: provenance has to come whole. `Rerun` carries "
+            f"{tuple(Rerun._fields)} and this one is missing "
+            f"{tuple(f for f, v in zip(Rerun._fields, rerun, strict=True) if v is None)} -- "
+            "a row naming the rules but not the seed, or the seed but not the board or the "
+            "stakes, reads as reproducible to whichever column is queried and is not. Pass "
+            "every field, or no `Rerun` and let the row say it cannot be re-derived.")
+    pick = decision if isinstance(decision, Pick) else None
+    if pick is not None:
+        pick.check()
+    before, after = decision.credits_before, decision.credits_after
+    cost = before - after if before is not None and after is not None else None
     if cost is not None and cost < 0:
         raise ValueError(
-            f"week {week}: the credit balance rose from {credits_before} to {credits_after}, "
+            f"week {week}: the credit balance rose from {before} to {after}, "
             "which is a top-up between the two readings rather than a decision that earned "
             "credits. Recording the difference would put a negative in `cost_credits`, whose "
             "whole purpose is that absent is not zero. Leave a reading out to record the "
             "cost as unknown, which is what it is.")
     at = at or datetime.now(UTC).replace(tzinfo=None)
-    k = key(season, week, kind, at)
+    k = key(season, week, decision.kind, at)
     row = pl.DataFrame({
-        "key": [k], "kind": [kind], "season": [season], "week": [week], "at": [at],
-        "chose": [chose], "fallback": [fallback], "fallback_note": [fallback_note],
-        "matched_fallback": [None if fallback is None else chose == fallback],
-        "market_price": [market_price],
-        "price_note": [price_note],
-        "expected_dollars": [expected_dollars],
-        "chose_survives": [chose_survives], "fallback_survives": [fallback_survives],
-        "survival_given_up": [survival_given_up],
-        "fallback_price": [fallback_price], "week_cost": [week_cost],
+        "key": [k], "kind": [decision.kind], "season": [season], "week": [week], "at": [at],
+        "chose": [decision.chose],
+        "fallback": [pick.fallback if pick else None],
+        "fallback_note": [pick.fallback_note if pick else None],
+        "matched_fallback": [pick.matched_fallback if pick else None],
+        "market_price": [pick.market_price if pick else None],
+        "price_note": [pick.price_note if pick else None],
+        "expected_dollars": [decision.expected_dollars],
+        "chose_survives": [pick.chose_survives if pick else None],
+        "fallback_survives": [pick.fallback_survives if pick else None],
+        "survival_given_up": [pick.survival_given_up if pick else None],
+        "fallback_price": [pick.fallback_price if pick else None],
+        "week_cost": [pick.week_cost if pick else None],
         "cost_credits": [cost],
         "cost_note": [None if cost is not None
                       else "credit balance unknown on at least one side"],
-        "pool_digest": [pool_digest], "grid_digest": [grid_digest],
-        "seed": [seed], "trials": [trials], "entries": [entries],
-        "pot": [pot], "outlay": [outlay], "plan_source": [plan_source],
-        "pool_state_digest": [pool_state_digest],
+        "pool_digest": [rerun.pool_digest if rerun else None],
+        "grid_digest": [rerun.grid_digest if rerun else None],
+        "seed": [rerun.seed if rerun else None],
+        "trials": [rerun.trials if rerun else None],
+        "entries": [rerun.entries if rerun else None],
+        "pot": [rerun.pot if rerun else None],
+        "outlay": [rerun.outlay if rerun else None],
+        "plan_source": [pick.plan_source if pick else None],
+        "pool_state_digest": [decision.pool_state_digest],
     }, schema=SCHEMA)
     store.write(row, TABLE, LEAGUE, season, week, name=k, base=base)
     return k
@@ -393,7 +443,7 @@ def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
                   at: datetime | None = None, base: Path | None = None) -> str:
     """Record a week `hub.season.pool.weekly` priced. The caller ADR-0014's duty was missing.
 
-    `_check_adr_0014` was written against `pool.Weekly`'s field names and had no caller, so
+    The duty's check was written against `pool.Weekly`'s field names and had no caller, so
     every figure it checks was only ever supplied by a hand-built fixture. This is the
     adapter, and it is the only place the two shapes meet -- which is where a units or
     sign-convention disagreement between them can be seen at all.
@@ -403,7 +453,7 @@ def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
     the decision rather than the advice. `Weekly.given_up` cannot be forwarded in that case --
     it is `fallback.survives - recommend.survives` by construction, so against an overridden
     pick it is a cost from a comparison nobody made. The difference is recomputed from the
-    candidate actually taken, and `_check_adr_0014` refuses the row if the two disagree.
+    candidate actually taken -- on the `Pick`, it is the difference by construction.
 
     **The quantity mismatch, named rather than folded away.** ADR-0014 adopts the survivor
     contrarian threshold as "take a differentiation week when the win-probability *cost* is
@@ -441,31 +491,29 @@ def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
             f"({', '.join(sorted(by_team))}). A row whose survival figures came from a "
             "candidate nobody valued would satisfy ADR-0014's check and mean nothing.")
     fb = next((c for c in w.candidates if c.is_fallback), None)
-    return record(
-        season=season, week=w.week, kind="pick", chose=took,
-        fallback=w.fallback,
+    pick = Pick(
+        week=w.week, chose=took, fallback=w.fallback,
         # `weekly_report` already refuses to stringify an absent auto-pick, and the note is
         # the same fact in the column that exists to carry it.
         fallback_note=(None if w.fallback is not None else
                        "auto-pick had no team left to assign, so there was nothing free"),
         market_price=by_team[took].win_prob,
         fallback_price=fb.win_prob if fb is not None else None,
-        week_cost=(fb.win_prob - by_team[took].win_prob) if fb is not None else None,
         price_note="win probability off the board's grid at the moment of the decision",
         expected_dollars=by_team[took].expected_dollars,
         chose_survives=by_team[took].survives,
         fallback_survives=fb.survives if fb is not None else None,
-        survival_given_up=(fb.survives - by_team[took].survives) if fb is not None else None,
-        credits_before=credits_before, credits_after=credits_after,
-        # Everything a re-run needs, off the shape that ran (#162). `plan_source` is the
-        # taken candidate's, because the figure on this row is that candidate's figure.
-        pool_digest=w.pool_digest, grid_digest=w.grid_digest, seed=w.seed,
-        trials=w.trials, entries=w.entries, pot=w.pot, outlay=w.outlay,
+        # `plan_source` is the taken candidate's, because the figure on this row is that
+        # candidate's figure.
         plan_source=by_team[took].plan_source or None,
+        # Everything a re-run needs, off the shape that ran (#162), as one value.
+        rerun=Rerun(pool_digest=w.pool_digest, grid_digest=w.grid_digest, seed=w.seed,
+                    trials=w.trials, entries=w.entries, pot=w.pot, outlay=w.outlay),
         # The field is not on `Weekly` -- it prices what it is handed -- so the caller that
         # read the pool state names it (#280); `hub.season.pool.main` does.
         pool_state_digest=pool_state_digest,
-        at=at, base=base)
+        credits_before=credits_before, credits_after=credits_after)
+    return record(pick, season=season, at=at, base=base)
 
 
 def settle(k: str, *, survived: bool, season: int | None = None, week: int | None = None,

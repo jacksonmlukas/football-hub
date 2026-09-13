@@ -43,7 +43,7 @@ the week's status, not its number.
 the parser numbers entries and drops the id and the name before anything is returned -- the
 `PoolState` has no field that could hold either, the store never sees one, and the Ledger is
 addressed by index. Two things make the index mean something. **Ours is 0**, always:
-`hub.season.pool.simulate` reads our Ledger at index 0, so our own host id is named in
+`hub.season.pool.Field.outcome` reads our Ledger at index 0, so our own host id is named in
 `POOL_ENTRY_ID` and a payload without it is refused before anything is written -- whichever
 id happened to sort first would otherwise be "us". **And an index is never reused.** A
 member who drops out of a later payload would shift every index after theirs, and nothing
@@ -130,7 +130,7 @@ INDEX_FILE = "pool_entries.json"
 # them back; `state_digest` is how a journal row names one.
 ARCHIVE_TABLE = "pool_state"
 LEAGUE = "nfl"
-# Ours, by construction, and `hub.season.pool.simulate` reads it there.
+# Ours, by construction, and `hub.season.pool.Field.outcome` reads it there.
 OUR_INDEX = 0
 
 # The pytest node running right now, or nothing outside a test. Same guard as
@@ -385,7 +385,7 @@ def parse_payload(payload: Any, *, ours: str, season: int | None = None,
 
 def ledgers(state: PoolState) -> list[set[str]]:
     """Every entry's Ledger in index order, ours first -- the `ledgers` that
-    `hub.season.pool.simulate` takes, one per entry present, positional gaps closed."""
+    `hub.season.pool.Field.outcome` takes, one per entry present, positional gaps closed."""
     return [set(e.used) for e in state.entries]
 
 

@@ -66,7 +66,7 @@ def _weekly(grid, weeks, **kw):
     kw.setdefault("pot", 420.0)
     kw.setdefault("trials", 400)
     kw.setdefault("rng", np.random.default_rng(0))
-    return pool.weekly(grid, weeks, **kw)
+    return pool.weekly(pool.Field(grid, weeks, kw.pop("pool", None)), **kw)
 
 
 def test_every_candidate_carries_a_dollar_figure_beside_its_survival():
@@ -211,8 +211,8 @@ def test_the_figures_are_net_of_what_the_entry_already_paid():
     subtracted anyway: "which of these is best" and "is any of them worth having" are
     different questions, and only the second one notices the entry cost money."""
     kw = {"week": 1, "entries": 12, "pot": 420.0, "trials": 400}
-    gross = pool.weekly(FLAT, [1, 2, 3], rng=np.random.default_rng(4), **kw)
-    net = pool.weekly(FLAT, [1, 2, 3], outlay=25.0, rng=np.random.default_rng(4), **kw)
+    gross = pool.weekly(pool.Field(FLAT, [1, 2, 3]), rng=np.random.default_rng(4), **kw)
+    net = pool.weekly(pool.Field(FLAT, [1, 2, 3]), outlay=25.0, rng=np.random.default_rng(4), **kw)
     assert [c.team for c in net.candidates] == [c.team for c in gross.candidates]
     for g, n in zip(gross.candidates, net.candidates, strict=True):
         assert n.expected_dollars == pytest.approx(g.expected_dollars - 25.0)
@@ -246,8 +246,8 @@ def test_the_same_seed_prices_the_week_the_same_way_twice():
     """Every candidate faces the identical season, so the ranking is the pick and not the
     draw. Independent draws put the top of a flat board inside sampling noise."""
     kw = {"week": 1, "entries": 12, "pot": 420.0, "trials": 400}
-    a = pool.weekly(FLAT, [1, 2, 3], rng=np.random.default_rng(11), **kw)
-    b = pool.weekly(FLAT, [1, 2, 3], rng=np.random.default_rng(11), **kw)
+    a = pool.weekly(pool.Field(FLAT, [1, 2, 3]), rng=np.random.default_rng(11), **kw)
+    b = pool.weekly(pool.Field(FLAT, [1, 2, 3]), rng=np.random.default_rng(11), **kw)
     assert a == b
     # And the answer does not move with an unrelated seed, because the board is not close.
     assert a.candidates == b.candidates
@@ -291,7 +291,7 @@ def test_a_week_with_no_free_pick_says_so_rather_than_naming_one():
 # at the same rate, and they did not: the trial stopped when the last live entry died, ours
 # included, so the first trial our entry outlasted the field in one candidate and not in the
 # other offset everything after it. The pairing held up to the first week our fate differed --
-# which is exactly the trials the comparison carries its signal in. `_play` now draws the whole
+# which is exactly the trials the comparison carries its signal in. `Field.trial` now draws the whole
 # season before anybody picks, so the count is fixed whatever becomes of us.
 #
 # Which comparison the interval is for: the recommended plan against the auto-pick plan, both
@@ -401,8 +401,8 @@ def test_more_trials_buy_more_digits():
     """The visible half of the same rule: precision is a property of the run rather than of
     the format string, so a reader can see what a longer run bought."""
     kw = {"week": 1, "entries": 12, "pot": 420.0}
-    coarse = pool.weekly(HOARD, [1, 2], trials=200, rng=np.random.default_rng(5), **kw)
-    fine = pool.weekly(HOARD, [1, 2], trials=3200, rng=np.random.default_rng(5), **kw)
+    coarse = pool.weekly(pool.Field(HOARD, [1, 2]), trials=200, rng=np.random.default_rng(5), **kw)
+    fine = pool.weekly(pool.Field(HOARD, [1, 2]), trials=3200, rng=np.random.default_rng(5), **kw)
     dug = {c.team: pool._places(c.dollars_se, cap=2) for c in coarse.candidates}
     fig = {c.team: pool._places(c.dollars_se, cap=2) for c in fine.candidates}
     assert all(fig[t] >= dug[t] for t in dug)
@@ -428,7 +428,7 @@ def test_the_leverage_term_is_the_advanced_difference_less_the_unadvanced_one():
     free pick; the unadvanced arm is exactly what `weekly` prices on the same seed, so the
     two cannot disagree about the figure the term is measured *from*; and the interval on
     the term carries both arms' errors, because the arms draw different seasons."""
-    rows = pool.leverage(HOARD, [1, 2], week=1, entries=12, pot=420.0, at=(1.0, 4.0),
+    rows = pool.leverage(pool.Field(HOARD, [1, 2]), week=1, entries=12, pot=420.0, at=(1.0, 4.0),
                          top=3, trials=80, rng=np.random.default_rng(3))
     assert [(r.concentration, r.team) for r in rows] == [
         (1.0, "SF"), (1.0, "BUF"), (4.0, "SF"), (4.0, "BUF")]
@@ -439,7 +439,7 @@ def test_the_leverage_term_is_the_advanced_difference_less_the_unadvanced_one():
         assert r.resolvable == (abs(r.term) > pool.DECISIVE_SIGMA * r.term_se)
 
     seed = int(np.random.default_rng(3).integers(2 ** 32))
-    w = pool.weekly(HOARD, [1, 2], week=1, entries=12, pot=420.0, trials=80, seed=seed)
+    w = pool.weekly(pool.Field(HOARD, [1, 2]), week=1, entries=12, pot=420.0, trials=80, seed=seed)
     fb = _team(w, "KC")
     for r in rows:
         if r.concentration == 1.0:
@@ -456,7 +456,7 @@ def test_advancing_the_field_through_the_week_prices_what_a_chalk_pick_cannot_ea
     untouched field. So the term is positive for the departure, and these trials resolve
     it -- which is the instrument finding the effect where the grid was built to have one,
     not a claim about any real board."""
-    rows = pool.leverage(CROWD, [1, 2], week=1, entries=12, pot=420.0, at=(0.0, 16.0),
+    rows = pool.leverage(pool.Field(CROWD, [1, 2]), week=1, entries=12, pot=420.0, at=(0.0, 16.0),
                          trials=300, rng=np.random.default_rng(0))
     crowded = next(r for r in rows if r.concentration == 16.0 and r.team == "SF")
     flat = next(r for r in rows if r.concentration == 0.0 and r.team == "SF")
@@ -467,12 +467,12 @@ def test_advancing_the_field_through_the_week_prices_what_a_chalk_pick_cannot_ea
 
 def test_a_week_with_nothing_ahead_has_no_term_to_measure():
     with pytest.raises(ValueError, match="nothing priced after it"):
-        pool.leverage(HOARD, [1, 2], week=2, entries=12, pot=420.0, trials=10)
+        pool.leverage(pool.Field(HOARD, [1, 2]), week=2, entries=12, pot=420.0, trials=10)
 
 
 def test_a_week_with_no_legal_pick_has_no_candidate_to_measure():
     with pytest.raises(ValueError, match="no legal pick left: 6 teams are spent"):
-        pool.leverage(HOARD, [1, 2], week=1, entries=12, pot=420.0, trials=10,
+        pool.leverage(pool.Field(HOARD, [1, 2]), week=1, entries=12, pot=420.0, trials=10,
                       ledger=["KC", "LV", "SF", "SEA", "BUF", "NYJ"])
 
 
@@ -535,7 +535,7 @@ def test_a_double_pick_week_under_the_default_rules_is_priced_as_a_pair():
     """The reproduction, closed. Under `PoolConfig()` week 13 takes two picks: the
     recommendation names two teams from two fixtures, its win probability is the product of
     theirs, and its season survival is that product times the rest of the season with
-    *both* spent -- which is `entry_outcome` on the same seed with both in the ledger,
+    *both* spent -- which is `Field.entry` on the same seed with both in the ledger,
     exactly. A mutation that prices one team, or spends one, fails the last line."""
     assert 13 in PoolConfig().double_pick_weeks
     w = _weekly(DOUBLE, [13, 14], week=13, seed=3, trials=100)
@@ -547,8 +547,7 @@ def test_a_double_pick_week_under_the_default_rules_is_priced_as_a_pair():
     for c in w.candidates:
         a, b = pool.pick_teams(c.team)
         assert c.win_prob == pytest.approx(price[a] * price[b])
-        rest = pool.entry_outcome(DOUBLE, [14], entries=12, ledger=[a, b], trials=100,
-                                  rng=np.random.default_rng(3))
+        rest = pool.Field(DOUBLE, [14]).entry(entries=12, ledger=[a, b], trials=100, rng=np.random.default_rng(3))
         assert c.survives == price[a] * price[b] * rest.survives
         assert c.expected_dollars == price[a] * price[b] * rest.share * 420.0
     assert w.fallback == "KC+SF" and _team(w, "KC+SF").is_fallback
@@ -586,11 +585,13 @@ def test_a_double_week_with_one_fixture_left_is_refused_rather_than_priced_as_a_
     """With four teams spent the sides left are LV and NYJ -- two teams, two fixtures, so
     that still covers; spend NYJ as well and LV stands alone. A week the legal teams cannot
     cover from two fixtures is refused with a sentence, never priced as one team. The second
-    grid is the same refusal for a week the board itself priced as one game."""
+    grid is the same refusal for a week the board itself priced as one game -- made by the
+    Field as it is built (#254), since a week the board cannot cover is one no trial can
+    play, rather than by the week's own ranking."""
     with pytest.raises(ValueError, match="two picks"):
         _weekly(DOUBLE, [13, 14], week=13, ledger=["KC", "SF", "BUF", "SEA", "NYJ"], trials=10)
     thin = _grid({13: [("KC", "LV", 0.70)], 14: [("KC", "LV", 0.97), ("SF", "SEA", 0.55)]})
-    with pytest.raises(ValueError, match="two picks"):
+    with pytest.raises(pool.UnpricedWeek, match=r"[Tt]wo picks"):
         _weekly(thin, [13, 14], week=13, trials=10)
     # And a grid that cannot say which rows are one fixture: refused, and not the same
     # answer as no legal pair -- `auto_pick` answers `None` to the second and raises this.
@@ -603,15 +604,16 @@ def test_a_double_week_with_one_fixture_left_is_refused_rather_than_priced_as_a_
     with pytest.raises(pool.UncoverableWeek, match="no `game_id`"):
         _weekly(holed, [13, 14], week=13, trials=10)
     with pytest.raises(pool.UncoverableWeek, match="no `game_id`"):
-        pool.leverage(holed, [13, 14], week=13, entries=12, pot=420.0, at=(1.0,), trials=5)
+        pool.leverage(pool.Field(holed, [13, 14]), week=13, entries=12, pot=420.0, at=(1.0,),
+                      trials=5)
     assert pool.auto_pick(holed, 13, pool=PoolConfig()) is None
 
 
 def test_the_leverage_term_in_a_double_week_is_measured_on_pairs():
     """The third reader of the week. Each row names a pair against the free pair, and the
-    advanced arm replays that pair in front of our plan -- which `_Ours.plays` accepts only
+    advanced arm replays that pair in front of our plan -- which `Replay.plays` accepts only
     as two teams from two fixtures in a week that takes two."""
-    rows = pool.leverage(DOUBLE, [13, 14], week=13, entries=12, pot=420.0, at=(1.0,),
+    rows = pool.leverage(pool.Field(DOUBLE, [13, 14]), week=13, entries=12, pot=420.0, at=(1.0,),
                          top=3, trials=20, rng=np.random.default_rng(0))
     assert rows and all(r.fallback == "KC+SF" for r in rows)
     assert {r.team for r in rows} == {"BUF+KC", "BUF+SF"}
@@ -622,8 +624,7 @@ def test_the_leverage_term_in_a_double_week_is_measured_on_pairs():
     price = {r["team"]: r["win_prob"] for r in DOUBLE.filter(pl.col("week") == 13).to_dicts()}
 
     def paid(pair: tuple[str, str]) -> np.ndarray:
-        rest = pool.entry_outcome(DOUBLE, [14], entries=12, ledger=list(pair), trials=20,
-                                  rng=np.random.default_rng(seed))
+        rest = pool.Field(DOUBLE, [14]).entry(entries=12, ledger=list(pair), trials=20, rng=np.random.default_rng(seed))
         return price[pair[0]] * price[pair[1]] * pool._shares(PoolConfig(), rest)
 
     for r in rows:
@@ -659,7 +660,7 @@ def test_no_team_whose_game_has_kicked_off_is_offered_for_the_week(monkeypatch):
     w = _weekly(grid, [1, 2], week=1, now=friday, trials=20)
     assert {c.team for c in w.candidates} == {"SF", "SEA"}
     assert w.recommend == "SF" and w.fallback == "SF"
-    rows = pool.leverage(grid, [1, 2], week=1, entries=12, pot=420.0, at=(1.0,),
+    rows = pool.leverage(pool.Field(grid, [1, 2]), week=1, entries=12, pot=420.0, at=(1.0,),
                          trials=10, now=friday, rng=np.random.default_rng(0))
     assert {r.team for r in rows} == {"SEA"} and rows[0].fallback == "SF"
     # Before the first kickoff the whole week is on offer, and a grid that carries no

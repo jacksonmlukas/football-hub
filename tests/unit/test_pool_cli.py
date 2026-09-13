@@ -153,7 +153,7 @@ def test_a_played_week_with_no_pick_of_record_is_said_loudly_rather_than_skipped
     err = capsys.readouterr().err
     assert "week 1" in err and "no pick of record" in err and "week 2" not in err
     # A journal row is a pick of record too: recorded, week 1 is no longer named.
-    journal.record(season=2026, week=1, kind="pick", chose="DAL", fallback="DAL",
+    journal.record(journal.Pick(week=1, chose="DAL", fallback="DAL"), season=2026,
                    at=dt.datetime(2026, 9, 9, 12, 0), base=tmp_path)
     assert pool.main(_run(tmp_path)) == 0
     assert "no pick of record" not in capsys.readouterr().err
