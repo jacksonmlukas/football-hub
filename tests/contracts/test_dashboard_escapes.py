@@ -325,8 +325,77 @@ def _record_body(node: str, tr: dict) -> str:
         _lift(r"function table\(cols, rows\) \{[\s\S]*?\n\}"),
         _lift(r"function reliabilitySVG\(bins\) \{[\s\S]*?\n\}"),
         _lift(r"function trackRecordBody\(tr\) \{[\s\S]*?\n\}"),
+        _lift(r"function intervalCoverageBody\(ic\) \{[\s\S]*?\n\}"),
     ])
     return _run(node, f"{lifted}\nconsole.log(trackRecordBody({json.dumps(tr)}));")
+
+
+# What `hub.models.coverage.published_summary` writes into the record (#289, #293): the
+# weekly interval's claim beside its verdict, and the survivor price by spread bucket with
+# one bucket under the floor.
+COVERAGE = {
+    "centre": "prior", "lookahead": False, "n": 16061, "gate_subset": "unclipped",
+    "gate_n": 10536, "gate_cov80": 0.7737, "gate_claim": 0.77, "band": 0.02,
+    "verdict": "COVERS", "generated_at": "2026-09-13T00:00:00+00:00",
+    "survivor": {
+        "verdict": "HOLDS", "favourite_spread": 7.0, "favourite_predicted": 0.775,
+        "favourite_actual": 0.797, "favourite_gap": 0.023, "favourite_sigma": 1.1,
+        "favourite_n": 395, "n_games": 1420, "margin_sd": 12.741, "min_bucket": 50,
+        "buckets": [
+            {"bin": "0.0-3.0", "label": "<3", "n": 344, "predicted": 0.560, "actual": 0.535,
+             "gap": -0.025, "thin": False},
+            {"bin": "3.0-7.0", "label": "3-7", "n": 548, "predicted": 0.616, "actual": 0.630,
+             "gap": 0.013, "thin": False},
+            {"bin": "7.0-10.0", "label": "7-10", "n": 316, "predicted": 0.708,
+             "actual": 0.728, "gap": 0.020, "thin": False},
+            {"bin": "10.0-14.0", "label": "10-14", "n": 160, "predicted": 0.802,
+             "actual": 0.850, "gap": 0.048, "thin": False},
+            {"bin": "14.0-30.0", "label": "14+", "n": 12, "predicted": 0.879,
+             "actual": 0.942, "gap": 0.063, "thin": True},
+        ],
+    },
+}
+
+
+def test_the_record_shows_the_interval_claim_beside_its_verdict(node):
+    """#289: `COVERS` is printed with the 77% it was read against and the 80% the interval
+    is labelled, so the verdict cannot be read as the label covering."""
+    out = _record_body(node, dict(PER_SEASON, interval_coverage=COVERAGE))
+    assert "77.4%" in out and "77.0%" in out and "COVERS" in out
+    assert "labelled 80%" in out and "10,536" in out
+
+
+def test_the_record_shows_every_survivor_bucket_and_marks_the_thin_one(node):
+    """#293: five rows, the count beside each rate, and the twelve-game bucket present and
+    marked rather than gone."""
+    out = _record_body(node, dict(PER_SEASON, interval_coverage=COVERAGE))
+    for label in ("&lt;3", "3-7", "7-10", "10-14", "14+"):
+        assert f">{label}</td>" in out, f"bucket {label} is not on the page"
+    assert "12 (under 50)" in out, "the thin bucket is shown and marked, not dropped"
+    assert "344" in out and "HOLDS" in out and "+0.063" in out
+
+
+def test_a_record_with_no_coverage_measurement_still_renders(node):
+    """The committed `track_record.json` carries `interval_coverage: null` until the slate
+    next runs; the record must render its calibration without it."""
+    out = _record_body(node, dict(PER_SEASON, interval_coverage=None))
+    assert "<svg" in out and "Weekly interval" not in out and "spread" not in out
+
+
+def test_the_coverage_block_escapes_its_interpolations():
+    """The same rule `test_the_record_panel_escapes_its_own_numbers_too` holds the record
+    panel to: every hand-built `${...}` in the coverage block goes through `esc`."""
+    body = _lift(r"function intervalCoverageBody\(ic\) \{[\s\S]*?\n\}")
+    raw = [e for e in re.findall(r"\$\{([^{}]*)\}", body) if "esc(" not in e]
+    assert not raw, f"unescaped interpolations in the coverage block: {raw}"
+
+
+def test_a_hostile_bucket_label_cannot_reach_the_markup(node):
+    hostile = dict(COVERAGE, survivor=dict(
+        COVERAGE["survivor"],
+        buckets=[dict(COVERAGE["survivor"]["buckets"][0], label=HOSTILE)]))
+    out = _record_body(node, dict(PER_SEASON, interval_coverage=hostile))
+    assert "<script>" not in out and "&lt;script&gt;" in out
 
 
 def test_the_numbers_are_shown_in_the_branch_every_artifact_actually_lands_in(node):

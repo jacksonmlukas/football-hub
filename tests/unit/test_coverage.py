@@ -333,7 +333,44 @@ def test_a_tied_game_is_not_scored_as_a_home_loss():
 def test_the_buckets_are_spread_ranges_not_probability_ranges():
     got = coverage.survivor_price(_schedule([(1.0, 1.0), (8.0, 1.0), (20.0, 1.0)]))
     filled = [b["bin"] for b in got["buckets"] if b["n"]]
-    assert filled == ["0.0-3.0", "6.0-9.0", "14.0-30.0"]
+    assert filled == ["0.0-3.0", "7.0-10.0", "14.0-30.0"]
+
+
+def test_the_buckets_are_the_ranges_survivor_picks_from_and_seven_starts_its_own():
+    """#293: under 3, 3-7, 7-10, 10-14, 14 and up -- each closed at its low edge, so a
+    7-point favourite is in the 7-10 bucket, the same side of the line the `7+` headline
+    counts it on. The old edges put 7 in a 6-9 bucket that pooled it with a 6, which is a
+    range no pick rule reads."""
+    got = coverage.survivor_price(_schedule([(7.0, 1.0), (3.0, 1.0), (14.0, 1.0)]))
+    assert [b["label"] for b in got["buckets"]] == ["<3", "3-7", "7-10", "10-14", "14+"]
+    by = {b["label"]: b["n"] for b in got["buckets"]}
+    assert by["7-10"] == 1 and by["3-7"] == 1 and by["14+"] == 1
+    assert by["<3"] == 0 and by["10-14"] == 0
+    assert coverage.SPREAD_EDGES == (0.0, 3.0, 7.0, 10.0, 14.0, 30.0)
+
+
+def test_a_bucket_under_fifty_games_is_marked_thin_and_not_dropped():
+    """Sixty ten-point favourites and seven twenty-point ones. Every bucket comes back --
+    the empty ones too -- and the ones under `MIN_BUCKET` carry `thin`, because a bucket
+    holding seven games says nothing and a bucket that vanished says less."""
+    got = coverage.survivor_price(_schedule([(10.0, 3.0)] * 60 + [(20.0, 3.0)] * 7))
+    assert coverage.MIN_BUCKET == 50
+    assert len(got["buckets"]) == 5, "no bucket is dropped, however few games it holds"
+    by = {b["label"]: b for b in got["buckets"]}
+    assert by["10-14"]["n"] == 60 and by["10-14"]["thin"] is False
+    assert by["14+"]["n"] == 7 and by["14+"]["thin"] is True
+    assert by["<3"]["n"] == 0 and by["<3"]["thin"] is True
+
+
+def test_the_favourite_headline_does_not_read_the_buckets():
+    """#293's fourth criterion: the verdict and `favourite_gap` are what they were. They are
+    read off `SURVIVOR_SPREAD` and not off any bucket, so moving the edges cannot move
+    them -- asserted by moving the edges."""
+    games = [(10.0, 7.0)] * 97 + [(10.0, -7.0)] * 3 + [(2.0, 1.0)] * 40
+    a = coverage.survivor_price(_schedule(games))
+    b = coverage.survivor_price(_schedule(games), edges=(0.0, 30.0))
+    assert a["favourite_gap"] == b["favourite_gap"] and a["verdict"] == b["verdict"]
+    assert a["favourite_n"] == b["favourite_n"] == 100
 
 
 def test_schedules_without_a_spread_says_so():
@@ -419,6 +456,22 @@ def test_the_survivor_cli_reports_by_bucket(capsys, monkeypatch):
     assert "survivor price" in out and "favourites of 7+" in out
 
 
+def test_the_survivor_cli_prints_every_bucket_and_marks_the_thin_ones(capsys, monkeypatch):
+    """#293: the count beside the rate on every line, the buckets under fifty games shown
+    and marked rather than left out. The empty buckets are printed too: a reader of four
+    lines cannot tell a bucket with no games from one that was dropped."""
+    monkeypatch.setattr(coverage, "_schedules",
+                        lambda seasons, cache: _schedule([(10.0, 7.0)] * 60
+                                                         + [(20.0, 7.0)] * 7))
+    assert coverage.main(["--survivor", "--seasons", "2024"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    rows = {ln.split()[0]: ln for ln in lines if ln.strip().split()[:1]
+            and ln.split()[0] in ("<3", "3-7", "7-10", "10-14", "14+")}
+    assert set(rows) == {"<3", "3-7", "7-10", "10-14", "14+"}
+    assert "under 50" in rows["14+"] and "under 50" not in rows["10-14"]
+    assert "under 50" in rows["<3"], "an empty bucket is a thin bucket, and is shown"
+
+
 def _raises(*_a, **_k):
     raise OSError("no such cache entry and nflverse is unreachable")
 
@@ -482,6 +535,11 @@ def test_the_survivor_verdict_is_written_beside_the_weekly_one(tmp_path, monkeyp
     got = coverage.published_summary(art)
     assert got is not None and got["verdict"] in ("COVERS", "UNDER-COVERS", "OVER-COVERS")
     assert got["survivor"]["verdict"] and "favourite_gap" in got["survivor"]
+    # #293: the buckets travel in the block, so the page can show where the price holds.
+    buckets = got["survivor"]["buckets"]
+    assert [b["label"] for b in buckets] == ["<3", "3-7", "7-10", "10-14", "14+"]
+    assert {"n", "predicted", "actual", "gap", "thin"} <= set(buckets[3])
+    assert buckets[3]["n"] == 50 and buckets[3]["thin"] is False
     # the order does not matter either
     assert coverage.main(["--measure", "--write"]) == 0
     again = coverage.published_summary(art)

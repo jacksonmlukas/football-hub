@@ -143,11 +143,33 @@ BAND = not_an_input(
 # here as the reason to exclude them rather than as a footnote.
 GATE_SUBSET = "unclipped"
 
-# Spread buckets for the survivor price, home-relative and in points. The top bucket is where
-# survivor lives: `season/survivor.py` picks the biggest favourite on the board, so a bucket
-# that pools a 3-point favourite with a 13-point one answers a question nobody asks of it.
+# Spread buckets for the survivor price, favourite-relative and in points: under 3, 3-7,
+# 7-10, 10-14, 14 and up (#293). Each bucket is closed at its low edge and open at its high
+# one, and the last takes its top edge, so a 7-point favourite is in 7-10 -- the same side
+# of the line the `SURVIVOR_SPREAD` headline counts it on -- and 3 and 7, the two spreads
+# the betting market lands on most, each start a bucket rather than splitting one. The top
+# bucket is where survivor lives: `season/survivor.py` picks the biggest favourite on the
+# board, so a bucket that pools a 3-point favourite with a 13-point one answers a question
+# nobody asks of it. The edges before #293 were (3, 6, 9, 14), which put 7 in a 6-9 bucket
+# no pick rule reads; the pooled verdict and `favourite_gap` do not read the buckets and did
+# not move.
 SPREAD_EDGES: tuple[float, ...] = not_an_input(
-    (0.0, 3.0, 6.0, 9.0, 14.0, 30.0),
+    (0.0, 3.0, 7.0, 10.0, 14.0, 30.0),
+    "a pre-registered filter of the grading harness, which measures interval coverage "
+    "of predictions already made and makes none of its own")
+
+# How the buckets are labelled where they are printed and published, one per pair of
+# edges: `<3` is [0, 3), `3-7` is [3, 7), `14+` is [14, 30]. A label that said `<=3` would
+# be lying about the 3-point favourites, which are in the next one.
+SPREAD_LABELS: tuple[str, ...] = ("<3", "3-7", "7-10", "10-14", "14+")
+
+# A bucket holding fewer games than this is shown and marked thin, never dropped (#293).
+# Fifty is where the standard error of a win rate near 0.85 is about five points -- wide
+# enough that a gap inside it says nothing, and a reader is owed the count to see that.
+# An empty bucket is a thin bucket: four lines where five were expected read as a bucket
+# that was dropped, which is the thing this exists to stop.
+MIN_BUCKET = not_an_input(
+    50,
     "a pre-registered filter of the grading harness, which measures interval coverage "
     "of predictions already made and makes none of its own")
 
@@ -361,13 +383,36 @@ def measure(stats: pl.DataFrame, centre: Centre = "prior", *,
 # --- the survivor price ---------------------------------------------------
 
 
+def _bucketed(sides: pl.DataFrame, edges: Sequence[float]) -> list[dict[str, Any]]:
+    """The reliability rows by spread, each labelled and each saying whether it is thin.
+
+    `reliability_by` bins on the favourite's spread (a non-negative `spread` is the
+    favourite's side of a game, so the count is one per game and the bins never see the
+    underdog rows). Labels come from `SPREAD_LABELS` when the edges are the pre-registered
+    ones and from the bin string otherwise, so a caller grading at other edges gets an
+    honest label and not one written for different edges. `thin` is `n < MIN_BUCKET`, and
+    an empty bucket is kept and marked rather than dropped (#293).
+    """
+    rows = reliability_by(sides, list(edges), on="spread", prob="win_prob", outcome="won")
+    labels = (SPREAD_LABELS if tuple(edges) == tuple(SPREAD_EDGES)
+              else tuple(r["bin"] for r in rows))
+    return [{**r, "label": label, "thin": r["n"] < MIN_BUCKET}
+            for r, label in zip(rows, labels, strict=True)]
+
+
 def survivor_price(schedules: pl.DataFrame, edges: Sequence[float] = SPREAD_EDGES,
                    *, sd: float | None = None) -> dict[str, Any]:
     """Survivor's win probability, graded by spread bucket.
 
     Both sides of every game go in, home-relative spread negated for the away row, which is
     exactly the grid `survivor.grid_from_schedule` builds -- a diagram over home rows alone
-    would grade one half of the pick space and survivor picks from both.
+    would grade one half of the pick space and survivor picks from both. The buckets then
+    read the favourite's side of each game, so `n` in a bucket is games, and the realised
+    rate is the favourite's win rate against the price it was given -- a survivor pick wins
+    outright or it does not; nothing here is about covering the spread (#293).
+
+    The headline -- `favourite_*` and `verdict` -- reads `SURVIVOR_SPREAD` and never a
+    bucket, so the buckets can be re-cut without the verdict moving, and were (#293).
 
     The price and the tie convention are read from the modules that own them
     (`hub.models.margin`), not restated: a survivor pick and a weekly prediction are not
@@ -399,8 +444,7 @@ def survivor_price(schedules: pl.DataFrame, edges: Sequence[float] = SPREAD_EDGE
     se = math.sqrt(act * (1.0 - act) / n) if n else float("nan")
     return {
         "margin_sd": margin_sd, "n_games": scored.height, "n_sides": sides.height,
-        "buckets": reliability_by(sides, list(edges), on="spread", prob="win_prob",
-                                  outcome="won"),
+        "buckets": _bucketed(sides, edges), "min_bucket": MIN_BUCKET,
         "favourite_spread": SURVIVOR_SPREAD, "favourite_n": n,
         "favourite_predicted": pred, "favourite_actual": act,
         "favourite_gap": act - pred, "favourite_se": se,
@@ -440,7 +484,10 @@ def write_survivor(result: dict[str, Any], path: Path | None = None) -> Path:
     have = _existing(p)
     block = {k: result.get(k) for k in
              ("verdict", "favourite_spread", "favourite_predicted", "favourite_actual",
-              "favourite_gap", "favourite_sigma", "favourite_n", "n_games", "margin_sd")}
+              "favourite_gap", "favourite_sigma", "favourite_n", "n_games", "margin_sd",
+              # The buckets ride along whole (#293): the page shows where the price holds
+              # and where it is thin, and it cannot without the count in each.
+              "buckets", "min_bucket")}
     block["generated_at"] = jsonio.stamp()
     atomic.write_text(p, jsonio.dumps({"name": "interval_coverage", **have,
                                        "survivor": block}, indent=2))
@@ -546,10 +593,11 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"{seasons[0]}-{seasons[-1]}, margin sd {got['margin_sd']}")
         print(f"    {'spread':<14}{'n':>7}{'predicted':>12}{'actual':>10}{'gap':>10}")
         for b in got["buckets"]:
-            if not b["n"]:
-                continue
-            print(f"    {b['bin']:<14}{b['n']:>7,}{b['predicted']:>12.3f}"
-                  f"{b['actual']:>10.3f}{b['gap']:>+10.3f}")
+            # Every bucket, the empty and the thin ones marked rather than dropped (#293).
+            rate = (f"{b['predicted']:>12.3f}{b['actual']:>10.3f}{b['gap']:>+10.3f}"
+                    if b["n"] else f"{'--':>12}{'--':>10}{'--':>10}")
+            thin = f"   under {got['min_bucket']} games" if b["thin"] else ""
+            print(f"    {b['label']:<14}{b['n']:>7,}{rate}{thin}")
         print(f"    favourites of {got['favourite_spread']:.0f}+ : predicted "
               f"{got['favourite_predicted']:.3f}, actual {got['favourite_actual']:.3f}, "
               f"gap {got['favourite_gap']:+.3f} at {got['favourite_sigma']:+.1f} se "

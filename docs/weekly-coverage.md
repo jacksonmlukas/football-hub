@@ -238,6 +238,45 @@ one closes the favourite gap and widens the pick'em one.
 Nothing is refit on this. It is a finding with a direction and a magnitude, and the pick rule
 is unchanged until something gates it.
 
+## The survivor price by spread bucket, 2026-09-13
+
+Issue #293, the third criterion of #289: the favourite's realised win rate against its price,
+by closing spread, reported beside the weekly interval's claim and published in the survivor
+block of `state/interval_coverage.json` so the track-record page shows where the price holds
+and where it does not. The 2026-09-07 table above was cut at 3, 6, 9 and 14; the buckets are
+now **under 3, 3–7, 7–10, 10–14, 14 and up**, each closed at its low edge, so a 7-point
+favourite sits in 7–10 on the same side of the line the `7+` headline counts it, and 3 and 7 —
+the two numbers the betting market lands on most — each start a bucket rather than splitting
+one. Over the same **1,420** games of 2021–2025 the slate measures (both sides in; the buckets
+read the favourite's side, so `n` is games):
+
+| closing spread | games | priced | won | gap |
+|---|---|---|---|---|
+| under 3 | 344 | 0.560 | 0.535 | −0.025 |
+| 3–7 | 681 | 0.630 | 0.653 | +0.023 |
+| 7–10 | 219 | 0.730 | 0.735 | +0.005 |
+| 10–14 | 124 | 0.811 | 0.847 | +0.036 |
+| 14 and up | 52 | 0.879 | 0.942 | +0.063 |
+| **favourites of 7+** | **395** | **0.775** | **0.797** | **+0.023** at 1.1 se, **HOLDS** |
+
+**The pooled verdict and `favourite_gap` did not move** — they read `SURVIVOR_SPREAD` and
+never a bucket, and `test_the_favourite_headline_does_not_read_the_buckets` moves the edges
+to say so. What the re-cut shows that the old one hid: the price is closest to right exactly
+at 7–10, the range the headline is built on (+0.005 over 219 games), and the under-confidence
+is concentrated in the two big-favourite buckets, +0.036 at 10–14 and +0.063 at 14 and up.
+The 14-and-up bucket holds 52 games, two above the floor.
+
+**A bucket under 50 games is shown and marked, never dropped.** `MIN_BUCKET` is 50, where
+the standard error of a win rate near 0.85 is about five points — wide enough that a gap
+inside it says nothing, and a reader is owed the count to see that. An empty bucket is a thin
+bucket and is printed too: four rows where five were expected read as a bucket that was
+dropped. Nothing in this window is thin; a shorter window (`--seasons 2025`) shows what the
+marking looks like.
+
+Nothing is refit on this. The 2026-09-07 finding stands with its direction and magnitude: a
+big favourite is priced under what it wins, which is the safe direction for a survivor plan
+to be wrong in, and the pick rule is unchanged until something gates it.
+
 ## Reproduce
 
 The harness is `hub.models.coverage`, committed under ADR-0007 because `--gate` refuses on

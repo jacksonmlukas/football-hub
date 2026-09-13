@@ -42,7 +42,7 @@ READS: dict[str, tuple[str, tuple[str, ...]]] = {
                        "withheld", "start", "sit")),
     "draft_board": ("boardArt", ("generated_at", "rows")),
     "track_record": ("tr", ("generated_at", "n_scored", "n_preregistered", "brier",
-                            "log_loss", "bins", "seasons", "note")),
+                            "log_loss", "bins", "seasons", "note", "interval_coverage")),
     "survivor": ("surv", ("rows", "season", "spent", "survival", "weeks_played",
                           "weeks_remaining", "unpriced_weeks", "snapshot_only_weeks",
                           "unconfirmed")),
