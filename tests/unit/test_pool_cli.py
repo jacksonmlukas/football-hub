@@ -157,6 +157,12 @@ def test_a_played_week_with_no_pick_of_record_is_said_loudly_rather_than_skipped
                    at=dt.datetime(2026, 9, 9, 12, 0), base=tmp_path)
     assert pool.main(_run(tmp_path)) == 0
     assert "no pick of record" not in capsys.readouterr().err
+    # A journal that cannot be read vouches for nothing: the warning errs toward firing.
+    def _broken(season, base=None):
+        raise OSError("journal unreadable")
+    monkeypatch.setattr(journal, "read", _broken)
+    assert pool.main(_run(tmp_path)) == 0
+    assert "week 1" in capsys.readouterr().err
 
 
 def test_the_field_is_read_from_the_pool_host_and_named_on_the_journal_row(
