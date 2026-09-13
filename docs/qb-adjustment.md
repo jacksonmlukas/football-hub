@@ -216,3 +216,25 @@ A gate the archive cannot yet carry is recorded as *not-runnable* with the numbe
 event-seasons it needs, and the mark stands until it can run. What the mark never becomes is a
 validation: a row marked `-qb` is published as what it is, and the sentence above travels with
 it into any write-up.
+
+**What the source's timing implies, found on review of #291's harness (2026-09-13).** The
+nfeloqb file carries a starter per *game row*: a played row names who started, and the
+coming week's unplayed row names who is expected to. It carries no date on which a starter
+was named. Two consequences for this module, one per path:
+
+* **On the replay** — `ratings._rated_by_week` rating a week that has kicked off from
+  `nfeloqb.state(rows, as_of=<its first kickoff>)`, rows strictly before the game day
+  (#272) — a new starter is on no row the state can see until his first game has been
+  played. On the shipped path **a starter change cannot move a line before that game is
+  played**; the replayed adjustment on an event game is the departing starter's. #291's gate
+  is built on exactly this seam and its arm is therefore a stale adjustment; the arm with
+  the arriving starter known is reported beside it as an oracle, a diagnostic and not the
+  gate ([gate-power.md](gate-power.md)).
+* **On the live path** — the weeks ahead, rated from the latest state — the coming week's
+  row names the expected starter, so a change *can* reach the line, but only through a file
+  pulled after the source wrote it. The pin (#271) fixes the file at commit `2c95e5fc`, so
+  until `COMMIT` is advanced the live state names the starters as they stood at the pin, and
+  a change after it reaches nothing.
+
+Neither is a defect in the estimator; both are what the mark means in practice, and both
+belong beside the pull trigger when #270 is next read.

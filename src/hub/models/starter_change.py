@@ -14,9 +14,14 @@ across the offseason is flagged and is not an event; the betting market priced i
 summer.
 
 **The gate** (`docs/gate-power.md`, pre-registered 2026-09-13 before this module existed):
-over event games, log-loss of the frozen price moved by `hub.models.quarterback.apply` --
-the shipped estimator, on a row labelled as having no live price, with the state the live
-path would read on the morning of the game -- against the frozen price unmoved. The frozen
+over event games, log-loss of the frozen price moved by the shipped seam --
+`nfeloqb.state(rows, as_of=<the week's first game day>)` handed to
+`hub.models.quarterback.apply` on a row labelled as having no live price, exactly as
+`ratings._rated_by_week` rates a played week -- against the frozen price unmoved. That state
+holds every team's previous game, so it prices the departing starter: the source carries a
+new starter on the row of his first game and no earlier, and a replay cannot know him
+before it. An **oracle** arm with the arriving starter known is reported beside it as a
+diagnostic and is never read by the rule. The frozen
 price is the last snapshot captured before the Eastern game day of the changed team's
 previous game: the price the adjustment would actually have replaced, and not the close.
 The cluster is the season; the rule is the house rule and nothing beside it; fewer than
@@ -309,57 +314,84 @@ def _results(tg: pl.DataFrame) -> pl.DataFrame:
 
 # --- the gate ---------------------------------------------------------------------------------
 
-def _adjusted(frame: pl.DataFrame, tg: pl.DataFrame) -> pl.DataFrame:
-    """The arm: `quarterback.apply` on each week's event games, labelled `stale`, with that
-    week's state -- every team's starter and adjustment off its own row for the week, which
-    is the row the live path reads on the morning of the game. One state per week because a
-    team plays at most once in one."""
+def _moved(part: pl.DataFrame, state: pl.DataFrame, name: str) -> pl.DataFrame:
+    """`quarterback.apply` over one week's event games, labelled `stale`, priced from the
+    frozen line, with `state`; the moved spread comes back as `<name>` and the points added
+    as `<name>_adjustment`."""
+    games = part.select(pl.col("game_id"), pl.col("home_team"), pl.col("away_team"),
+                        pl.col("frozen").alias("close_spread"),
+                        pl.lit("stale").alias("price_source"))
+    moved = quarterback.apply(games, state)
+    return part.join(moved.select(pl.col("game_id"), pl.col("close_spread").alias(name),
+                                  pl.col("qb_adjustment").alias(f"{name}_adjustment")),
+                     on="game_id", how="left")
+
+
+def _adjusted(frame: pl.DataFrame, rows: pl.DataFrame, tg: pl.DataFrame) -> pl.DataFrame:
+    """The two arms, per week.
+
+    **`adjusted` is the gate's arm and it is the shipped seam**: `nfeloqb.state(rows,
+    as_of=<the week's first game day>)` -- rows strictly before that day (#272) -- handed
+    to `quarterback.apply`, exactly as `hub.models.ratings._rated_by_week` rates a week that
+    has kicked off. That state's latest row for every team is its *previous* game, so on an
+    event game the arm prices the departing starter's adjustment: the source's file carries
+    a new starter on the row of his first game and on no earlier row, and the replay cannot
+    know him before it. Until the review of 2026-09-13 this arm read the event game's own
+    row -- the arriving starter known with certainty -- which is a better estimator than the
+    one being gated, and a `diff` biased toward ADOPT.
+
+    **`oracle` is a diagnostic and not the gate**: the same estimator with the week's own
+    rows as the state, the arriving starter known. It answers what the mechanism could do
+    if the state were timely, which #270's disposition needs beside the gate's answer, and
+    it is never read by the rule.
+    """
     out = []
     for (season, week), part in frame.group_by(["season", "week"], maintain_order=True):
-        rows = tg.filter((pl.col("season") == season) & (pl.col("week") == week))
-        state = rows.select(pl.col("team"), pl.col("qb"), pl.col("value").alias("qb_value"),
+        this = tg.filter((pl.col("season") == season) & (pl.col("week") == week))
+        first_day = dt.date.fromisoformat(str(this["date"].min()))
+        shipped = nfeloqb.state(rows, as_of=first_day)
+        known = this.select(pl.col("team"), pl.col("qb"), pl.col("value").alias("qb_value"),
                             pl.col("adj").alias("qb_adj"),
                             pl.lit(0, dtype=pl.Int64).alias("tenure"),
                             pl.col("date").alias("as_of")).sort("team")
-        games = part.select(pl.col("game_id"), pl.col("home_team"), pl.col("away_team"),
-                            pl.col("frozen").alias("close_spread"),
-                            pl.lit("stale").alias("price_source"))
-        moved = quarterback.apply(games, state)
-        out.append(part.join(moved.select(pl.col("game_id"),
-                                          pl.col("close_spread").alias("adjusted"),
-                                          pl.col("qb_adjustment")),
-                             on="game_id", how="left"))
+        out.append(_moved(_moved(part, shipped, "adjusted"), known, "oracle"))
     return pl.concat(out)
 
 
 PAIRED_SCHEMA: dict[str, Any] = {
     "game_id": pl.Utf8, "season": pl.Int64, "week": pl.Int64, "home_team": pl.Utf8,
     "away_team": pl.Utf8, "net_gap": pl.Float64, "frozen": pl.Float64,
-    "qb_adjustment": pl.Float64, "adjusted": pl.Float64, "close": pl.Float64,
-    "y": pl.Float64, "diff": pl.Float64, "ceiling": pl.Float64,
+    "adjusted_adjustment": pl.Float64, "adjusted": pl.Float64,
+    "oracle_adjustment": pl.Float64, "oracle": pl.Float64, "close": pl.Float64,
+    "y": pl.Float64, "diff": pl.Float64, "oracle_diff": pl.Float64, "ceiling": pl.Float64,
 }
 
 
-def gate_rows(polls: pl.DataFrame, games: pl.DataFrame, tg: pl.DataFrame) -> pl.DataFrame:
+def gate_rows(polls: pl.DataFrame, games: pl.DataFrame, tg: pl.DataFrame,
+              rows: pl.DataFrame) -> pl.DataFrame:
     """The paired frame the gate reads: one row per scored, uncensored event game.
 
-    `diff` is log-loss of the frozen price minus log-loss of the adjusted one, positive when
-    the adjustment helped; `ceiling` is log-loss of the frozen price minus that of the last
-    snapshot before the game day -- what the betting market's own repricing recovered, the
-    declared ceiling arm. Both on the home result, ties 0.5, through `MarketBaseline`'s
-    conversion.
+    `diff` is log-loss of the frozen price minus log-loss of the shipped arm's, positive
+    when the adjustment helped; `oracle_diff` the same for the diagnostic arm, never read by
+    the rule; `ceiling` is log-loss of the frozen price minus that of the last snapshot
+    before the game day -- what the betting market's own repricing recovered, the declared
+    ceiling arm. All on the home result, ties 0.5, through `MarketBaseline`'s conversion.
+    `rows` are the source's rows the shipped seam builds its state from.
     """
     have = priced(polls, games).filter(~pl.col("censored") & pl.col("close").is_not_null())
     have = have.join(_results(tg).select("game_id", "y"), on="game_id", how="inner")
     if have.is_empty():
         return pl.DataFrame(schema=PAIRED_SCHEMA)
-    have = _adjusted(have, tg).filter(pl.col("adjusted").is_not_null())
-    diff, ceiling = [], []
+    have = _adjusted(have, rows, tg).filter(pl.col("adjusted").is_not_null()
+                                            & pl.col("oracle").is_not_null())
+    diff, oracle, ceiling = [], [], []
     for r in have.iter_rows(named=True):
         base = _log_loss(_home_prob(r["frozen"]), r["y"])
         diff.append(base - _log_loss(_home_prob(r["adjusted"]), r["y"]))
+        oracle.append(base - _log_loss(_home_prob(r["oracle"]), r["y"]))
         ceiling.append(base - _log_loss(_home_prob(r["close"]), r["y"]))
     return (have.with_columns(pl.Series("diff", diff, dtype=pl.Float64),
+                              pl.Series("oracle_diff", oracle, dtype=pl.Float64),
                               pl.Series("ceiling", ceiling, dtype=pl.Float64))
                 .select(*PAIRED_SCHEMA))
 
@@ -648,12 +680,17 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"{needed if needed is not None else 'more than 100, or not computable'}")
         for d in pil["per_season"]:
             print(f"    {d['season']}: n={d['n']}, mean {d['mean']:+.4f}, sd {d['sd']:.4f}")
-        paired = gate_rows(polls, season_games, tg)
+        paired = gate_rows(polls, season_games, tg, rows)
         # The width history is kept only when a run has an interval to keep; a run over
         # no rows would file a NaN width under the gate's name.
         got = run(paired, needed=needed, ceiling=a.ceiling, record_width=paired.height > 0)
         print(f"  gate: {paired.height} scored event games over "
-              f"{paired['season'].n_unique() if paired.height else 0} event-season(s)")
+              f"{paired['season'].n_unique() if paired.height else 0} event-season(s); the "
+              f"arm is the shipped seam, nfeloqb.state as of the week's first game day")
+        if paired.height:
+            print(f"  diagnostic, not the gate -- the oracle arm (arriving starter known): "
+                  f"mean {paired['oracle_diff'].mean():+.4f} log-loss against the shipped "
+                  f"arm's {paired['diff'].mean():+.4f} over n={paired.height}")
         for line in got.lines:
             print(line)
         print(f"  {got.verdict[0]}: {got.verdict[1]}")

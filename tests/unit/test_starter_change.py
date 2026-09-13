@@ -204,23 +204,51 @@ def test_an_event_with_no_snapshot_before_its_previous_game_day_is_censored(rows
     assert priced.filter(pl.col("censored"))["frozen"].is_null().all()
 
 
-def test_the_arm_is_the_shipped_estimator_on_the_frozen_line_and_the_pair_is_log_loss(rows):
-    """The adjusted arm is `quarterback.apply` on a row labelled `stale`, with the two
-    starters' adjustments from the event row: the frozen +3 moves by (-110 - (-90)) / 25.
-    Both arms score the home result by `MarketBaseline`'s conversion, and the difference is
-    unadjusted minus adjusted -- positive when the adjustment helped."""
+def test_the_arm_is_the_shipped_seam_and_prices_the_departing_starter(rows):
+    """The gate's arm is `nfeloqb.state(rows, as_of=<the week's first game day>)` handed to
+    `quarterback.apply` -- what `ratings._rated_by_week` does for a played week. Rows
+    strictly before 2026-09-27 hold KC's week-2 row (Mahomes, +42) and LA's last 2025 row
+    (Stafford, +10), so the frozen +3 moves by (42 - 10) / 25: the *departing* starter's
+    adjustment, because the file carries Gabbert on no row before his first start. Both
+    arms score the home result by `MarketBaseline`'s conversion; the difference is
+    unadjusted minus adjusted, positive when the adjustment helped."""
     tg = sc.team_games(rows)
     games = sc.event_games(sc.in_season_events(sc.events(tg)))
-    paired = sc.gate_rows(ARCHIVE, games, tg)
+    paired = sc.gate_rows(ARCHIVE, games, tg, rows)
     assert paired["game_id"].to_list() == ["2026_03_LA_KC"]      # week 4 has no result yet
     row = paired.row(0, named=True)
-    assert row["qb_adjustment"] == pytest.approx((-110.0 + 90.0) / quarterback.ELO_PER_POINT)
-    assert row["adjusted"] == pytest.approx(3.0 + row["qb_adjustment"])
+    shipped = nfeloqb.state(rows, as_of=dt.date(2026, 9, 27))
+    assert shipped.filter(pl.col("team") == "KC")["qb"][0] == "Mahomes"
+    assert row["adjusted_adjustment"] == pytest.approx((42.0 - 10.0) / quarterback.ELO_PER_POINT)
+    assert row["adjusted"] == pytest.approx(3.0 + row["adjusted_adjustment"])
     # KC lost 10-20 at home: y = 0.
     ll = lambda s: -math.log(1.0 - normal_cdf(s / MARGIN_SD))  # noqa: E731
     assert row["diff"] == pytest.approx(ll(3.0) - ll(row["adjusted"]))
     assert row["ceiling"] == pytest.approx(ll(3.0) - ll(-2.0))
     assert row["season"] == 2026
+
+
+def test_the_oracle_arm_knows_the_arriving_starter_and_is_reported_beside_the_gate(rows):
+    """The diagnostic: the same estimator with the week's own rows as the state, so the
+    frozen +3 moves by (-110 - (-90)) / 25 -- Gabbert against Bethard. Its difference is a
+    separate column the rule never reads."""
+    tg = sc.team_games(rows)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    row = sc.gate_rows(ARCHIVE, games, tg, rows).row(0, named=True)
+    assert row["oracle_adjustment"] == pytest.approx((-110.0 + 90.0) / quarterback.ELO_PER_POINT)
+    assert row["oracle"] == pytest.approx(3.0 + row["oracle_adjustment"])
+    ll = lambda s: -math.log(1.0 - normal_cdf(s / MARGIN_SD))  # noqa: E731
+    assert row["oracle_diff"] == pytest.approx(ll(3.0) - ll(row["oracle"]))
+    assert row["oracle_diff"] != pytest.approx(row["diff"])
+
+
+def test_the_rule_reads_the_shipped_arm_and_never_the_oracle(tmp_path):
+    """Three seasons where the oracle would ADOPT and the shipped arm loses everywhere: the
+    verdict is the shipped arm's."""
+    paired = _paired([2026, 2027, 2028], diff=-0.05).with_columns(
+        pl.lit(0.05).alias("oracle_diff"))
+    run = sc.run(paired, needed=3, width_path=tmp_path / "w.json")
+    assert run.verdict[0] == "REMOVE"
 
 
 def test_the_pilot_reads_the_sources_own_two_columns_on_event_games_only(rows):
@@ -391,7 +419,7 @@ def test_no_event_at_all_yields_empty_frames_with_the_schema(rows):
     tg = sc.team_games(rows).filter(pl.col("team") == "DEN")
     games = sc.event_games(sc.in_season_events(sc.events(tg)))
     assert games.is_empty() and list(games.columns) == list(sc.EVENT_GAME_SCHEMA)
-    assert sc.gate_rows(ARCHIVE, games, tg).is_empty()
+    assert sc.gate_rows(ARCHIVE, games, tg, rows).is_empty()
     assert sc.study_rows(ARCHIVE, games).is_empty()
     assert math.isnan(sc.study_fit(sc.study_rows(ARCHIVE, games), floor_per_root_day=0.4)["beta"])
     assert math.isnan(sc.study_mde(n=1, sd_gap=70.0, window_days=7.0, floor_per_root_day=0.4))
@@ -424,6 +452,7 @@ def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, c
     assert "archive: 3 games" in out
     assert "2026: 2 event games; 0 censored" in out
     assert "gate: 1 scored event games over 1 event-season(s)" in out
+    assert "diagnostic, not the gate -- the oracle arm" in out
     assert "NOT-RUNNABLE" in out
     assert "coefficient:" in out and "n=2 event games" in out
     assert "change-point: seen on" in out

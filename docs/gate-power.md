@@ -479,6 +479,24 @@ event game with two changes on it. Event counts are reported per season beside e
   shipped estimator, called as `ratings` calls it, on a row labelled as having no live price —
   with the state the live path would read on the morning of the game: both teams' starter and
   `qb_adj` from the event game's own row, which the source publishes before kickoff.
+
+  > **Amended 2026-09-13, on review, before any row existed to score.** As first written the
+  > arm read the event game's *own* row — the arriving starter known with certainty. That is
+  > not the shipped path. `hub.models.ratings._rated_by_week` rates a week that has kicked
+  > off from `nfeloqb.state(rows, as_of=<its first kickoff>)`, rows strictly before that
+  > game day (#272), and says in its own docstring that this is the seam #291 reads. That
+  > state's latest row for every team is its previous game, so on an event game the shipped
+  > estimator prices the *departing* starter — the source's file carries a new starter on
+  > the row of his first game and on no earlier row, and a replay cannot know him before it.
+  > An arm reading the same-week row replays a better estimator than the one being gated and
+  > biases the difference toward ADOPT. **The arm is the shipped seam:** `nfeloqb.state(rows,
+  > as_of=<the week's first game day>)` handed to `quarterback.apply`, exactly as `ratings`
+  > does. The same-week-row arm is kept as an **oracle, a diagnostic and not the gate**,
+  > reported beside the shipped arm under its own column (`oracle_diff`) because it answers
+  > a different question #270's disposition needs — whether the mechanism could help *if*
+  > the state were timely — and it is never read by the rule
+  > (`tests/unit/test_starter_change.py::test_the_rule_reads_the_shipped_arm_and_never_the_oracle`).
+  > The wording above is left as written, per [method.md](method.md) rule 13.
 * Both arms convert a spread to a home win probability by `MarketBaseline`'s own conversion
   (`normal_cdf(spread / MARGIN_SD)`), so the two arms differ in the spread and nothing else.
 
@@ -636,6 +654,22 @@ fixtures (`tests/unit/test_starter_change.py`): the frozen price is the last sna
 the changed team's previous game day, the arm is `quarterback.apply` on a row labelled
 `stale`, the pair is log-loss on the home result, the ceiling arm is the last snapshot
 before the game day, and the precondition fires ahead of the house rule.
+
+**Re-run 2026-09-13 after the review amendment above, and nothing numerical moves.** The arm
+is now the shipped seam (`nfeloqb.state` as of the week's first game day) and the oracle is
+reported beside it as a diagnostic; the gate still has zero rows, so neither arm has a
+figure. The event counts do not depend on the arm and are unchanged. The pilot is scored on
+the source's own two probability columns and never touched either arm; it is unchanged to
+the fourth decimal (target 0.0180, s 0.0332, 29 event-seasons). Held by two mutants: the
+arm swapped back to the same-week row, and the as-of moved onto the game day, each fails
+`test_the_arm_is_the_shipped_seam_and_prices_the_departing_starter`.
+
+**What the seam implies for the gate's answer, said plainly.** On the shipped replay, an
+event game's adjustment is the departing starter's — near zero for an established starter
+— so the shipped arm on an event game is close to the frozen line, and the gate is asking
+whether a *stale* adjustment beats no adjustment. The oracle is the arm the module's
+docstring describes. The gap between the two, once rows exist, is the cost of the source's
+timing, and [qb-adjustment.md](qb-adjustment.md) records what that timing is.
 
 ## The pilot, and the number of event-seasons needed
 
