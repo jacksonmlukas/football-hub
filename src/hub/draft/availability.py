@@ -12,13 +12,15 @@ question that actually drives a pick: will he still be there at my next turn?
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from math import comb
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import polars as pl
 
-from hub.declare import chosen, fitted
+from hub.declare import chosen, fitted, not_an_input
 from hub.league import preseason_start
 from hub.names import player_key
 
@@ -126,10 +128,34 @@ def blended_adp(df: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT, *,
 #       145    545   2.83   0.143   [0.116, 0.170]     17.1
 #       120    460   2.33   0.156   [0.138, 0.174]     17.9
 #
-# The published interval and the restricted one do not overlap, so the censored tail's effect
-# on the slope is resolvable at two standard errors clustered on the draft -- measured rather
-# than assumed, per the ticket. Below 168 the slope is stable across cuts and the intervals
-# overlap; the cut is where the data stops being one-sided, not where the slope is prettiest.
+# **Withdrawn 2026-09-13 (#287): the claim that the 204 and 168 fits are "resolvably different".**
+# What stood here read non-overlap of those two intervals as the censored tail's effect
+# being resolvable at two standard errors. It is not evidence of a difference at any level:
+# the two fits are nested subsets of the same four drafts sharing 612 of 672 rows (91%), so
+# their bootstrap resamples move together and the intervals are not two independent
+# measurements of one quantity. What the interval *can* say is stated by `noise_from_picks`
+# on every fit: four clusters give 4^4 = 256 ordered resamples (35 distinct multisets), so
+# the 2,000 draws revisit at most 256 of them, and the band is what four observations of
+# this league's drafting support -- no more. The ceiling of 168 is therefore stated as an
+# **assumption** -- the last bin before the one-sided signature in the signed-deviation table
+# -- with its sensitivity beside it rather than a finding the interval established.
+#
+# The sweep #287 asked for, {120, 144, 168, 192, 216}, runs as
+# `uv run python scripts/fit_pick_noise.py --ceilings 120,144,168,192,216` and needs an ESPN
+# session (the drafts live nowhere else, `historical_picks`). The 2026-09-13 lane had no
+# session, so the cells it could not fill are marked; the 120 and 168 rows are the 2026-09-11
+# sweep's, 216 collapses to the 204-pick pool (`min(pool, ceiling)`) and is that row:
+#
+#     ceiling   n     a      slope   95% CI            sigma @ pick 100
+#       120    460   2.33   0.156   [0.138, 0.174]     17.9
+#       144    not established (2026-09-11 ran 145: 545, 2.83, 0.143, [0.116, 0.170], 17.1)
+#       168    612   2.51   0.150   [0.143, 0.156]     17.5   <- shipped
+#       192    not established
+#       216    672   1.31   0.169   [0.159, 0.179]     18.2   (= the 204-pick pool)
+#
+# Across the cells that exist the slope spans 0.143-0.169 and sigma at pick 100 spans
+# 17.1-18.2, about one pick; whether 192 sits on a cliff between 168 and the pool is the
+# cell the sweep is for. `docs/pick-noise.md` carries the same table.
 #
 # **The axis, stated correctly this time.** The fit reads `ecr`. `_sigma` applies it to
 # `mu_pick`, and for the historical drafts the two are the *same number*: no draft market
@@ -158,8 +184,15 @@ PICK_NOISE_SLOPE_CI = fitted((0.143, 0.156))
 
 # The rank past which the drafted sample is one-sided -- see the table above. A fitted
 # constant in the ADR-0006 sense: it was chosen from the data, it decides the slope, and it
-# is declared `chosen` so it moves the digest when it moves.
+# is declared `chosen` so it moves the digest when it moves. Since #287 it is stated as an
+# assumption with the ceiling sweep beside it, not as a cut the interval established.
 PICK_NOISE_FIT_CEILING = chosen(168)
+
+# The sweep #287 asked for. `sweep_ceilings` runs it; `scripts/fit_pick_noise.py` prints it.
+PICK_NOISE_SWEEP_CEILINGS: tuple[int, ...] = not_an_input(
+    (120, 144, 168, 192, 216),
+    "the axis the ceiling sweep runs over; no prediction is computed at any ceiling but "
+    "the shipped one, so the list moves nothing a board serves")
 
 
 def pick_noise(mu):
@@ -343,8 +376,15 @@ def _constrained(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
     return a, b
 
 
+def _distinct_resamples(k: int) -> tuple[int, int]:
+    """Ordered and distinct cluster resamples of `k` clusters with replacement: `k^k`, and
+    the multisets `C(2k-1, k)`. What a bootstrap over four drafts can visit."""
+    return k ** k, comb(2 * k - 1, k)
+
+
 def noise_from_picks(df: pl.DataFrame, default: tuple[float, float] = (2.0, 0.18),
-                     draws: int = 2000, seed: int = 0) -> tuple[tuple[float, float], str]:
+                     draws: int = 2000, seed: int = 0, *,
+                     ceiling: float | None = None) -> tuple[tuple[float, float], str]:
     """`sigma(pick)` fitted from where this room's picks actually landed, and what to say.
 
     **Fitted on `ecr`, which is `mu_pick` for every draft this fits on.** `_sigma` applies the
@@ -368,6 +408,17 @@ def noise_from_picks(df: pl.DataFrame, default: tuple[float, float] = (2.0, 0.18
     an interval several times too tight, which is the same error `docs/gate-power.md` is about
     one layer up.
 
+    **And the sentence says what four clusters can support (#287).** Four drafts resampled
+    with replacement give 4^4 = 256 ordered resamples and 35 distinct multisets, so the
+    2,000 draws revisit at most 256 of them and the percentiles are those of a small discrete
+    set. It also says what the interval cannot do: two fits on nested subsets of the same
+    drafts -- the whole pool and the part under the ceiling -- share their resamples, so
+    non-overlap of their intervals is not evidence that they differ. That reading was the
+    claim #287 withdrew.
+
+    `ceiling` overrides `PICK_NOISE_FIT_CEILING` for the sweep and nothing else; the shipped
+    fit is the default.
+
     Returned rather than printed, and taking a frame rather than a league id, because reaching
     this through `fit_pick_noise` needs an ESPN session.
     """
@@ -378,7 +429,7 @@ def noise_from_picks(df: pl.DataFrame, default: tuple[float, float] = (2.0, 0.18
     # Two boundaries, and they are different claims. The pool is where picks stop existing;
     # the ceiling is where the drafted sample stops being two-sided. The second is inside the
     # first, and it is the one the fit needs.
-    ceiling = min(pool, float(PICK_NOISE_FIT_CEILING))
+    ceiling = min(pool, float(PICK_NOISE_FIT_CEILING if ceiling is None else ceiling))
     inside = df.filter(pl.col("ecr") <= ceiling)
     if inside.height < 50:
         return default, (f"  only {inside.height} picks inside the fit ceiling of "
@@ -402,11 +453,38 @@ def noise_from_picks(df: pl.DataFrame, default: tuple[float, float] = (2.0, 0.18
         ys = np.abs(rows["pick"].to_numpy().astype(float) - xs) * np.sqrt(np.pi / 2.0)
         slopes.append(_constrained(xs, ys)[1])
     lo, hi = (float(v) for v in np.percentile(slopes, [2.5, 97.5]))
+    k = len(drafts)
+    ordered, distinct = _distinct_resamples(k)
     return (a, b), (
         f"  fitted pick noise from {inside.height} picks with ecr <= {ceiling:.0f} (pool "
-        f"{pool:.0f}; past the ceiling the drafted sample is one-sided) over {len(drafts)} "
+        f"{pool:.0f}; past the ceiling the drafted sample is one-sided) over {k} "
         f"drafts: sigma = {a:.2f} + {b:.3f} * pick "
-        f"(slope 95% CI [{lo:.3f}, {hi:.3f}], clustered on the draft)")
+        f"(slope 95% CI [{lo:.3f}, {hi:.3f}], clustered on the draft; {k} clusters give "
+        f"{k}^{k} = {ordered} ordered resamples, {distinct} distinct, so {draws} draws "
+        f"revisit at most {ordered} of them, and the interval cannot resolve a difference "
+        f"between nested subsets of the same drafts)")
+
+
+def sweep_ceilings(df: pl.DataFrame, ceilings: Sequence[int] = PICK_NOISE_SWEEP_CEILINGS, *,
+                   draws: int = 2000, seed: int = 0) -> list[dict[str, Any]]:
+    """The fit at each ceiling, so the cut is published as a sensitivity and not asserted.
+
+    One row per ceiling: the ceiling asked for, the one applied (a ceiling past the pool
+    collapses to the pool), `n`, the line, the draft-clustered slope interval and sigma at
+    pick 100. A ceiling too thin to fit carries the fallback the fitter returned and no
+    interval. `scripts/fit_pick_noise.py` prints it; #287 asked for it.
+    """
+    out: list[dict[str, Any]] = []
+    pool = float(df["pick"].to_numpy().max()) if df.height else float("nan")
+    for c in ceilings:
+        applied = min(pool, float(c))
+        n = df.filter(pl.col("ecr") <= applied).height
+        (a, b), said = noise_from_picks(df, draws=draws, seed=seed, ceiling=float(c))
+        m = re.search(r"slope 95% CI \[([0-9.]+), ([0-9.]+)\]", said)
+        ci = (float(m.group(1)), float(m.group(2))) if m else None
+        out.append({"ceiling": int(c), "applied": applied, "n": n, "a": a, "b": b, "ci": ci,
+                    "sigma_100": a + 100.0 * b, "said": said})
+    return out
 
 
 def fit_espn_weight(league_id: int, years: list[int]) -> float:

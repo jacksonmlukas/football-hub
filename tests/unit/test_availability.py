@@ -424,6 +424,49 @@ def test_enough_picks_but_too_few_inside_the_pool_falls_back_too():
     assert "inside the fit ceiling" in said and "keeping the" in said
 
 
+# --- what four clusters can say, and the ceiling swept (issue #287) --------
+
+def test_the_interval_states_its_resample_count_and_what_it_cannot_resolve():
+    """Four drafts give 4^4 = 256 ordered resamples (35 distinct multisets), so 2,000 draws
+    revisit at most 256 of them; the sentence says so on every fit, and says that an interval
+    on nested subsets of the same drafts cannot resolve a difference between them. Before
+    #287 the module read non-overlap of two such intervals as a two-standard-error finding."""
+    from hub.draft.availability import noise_from_picks
+    df = _picks(a_true=3.0, b_true=0.2, n=100, drafts=4, seed=5)
+    _fit, said = noise_from_picks(df, draws=200)
+    assert "4^4 = 256 ordered resamples" in said, said
+    assert "35 distinct" in said, said
+    assert "cannot resolve" in said and "nested" in said, said
+    three = _picks(a_true=3.0, b_true=0.2, n=100, drafts=3, seed=5)
+    _fit, said3 = noise_from_picks(three, draws=200)
+    assert "3^3 = 27 ordered resamples" in said3 and "10 distinct" in said3, said3
+
+
+def test_the_ceiling_can_be_handed_in_and_the_sweep_runs_every_cell():
+    """The cut is swept rather than asserted: one row per ceiling, the rows fitted on
+    nested samples whose size does not grow as the ceiling falls, and each row carrying
+    its n, its line and its draft-clustered interval. A ceiling past the pool collapses
+    to the pool, which is why 216 and 204 are one row on four 204-pick drafts."""
+    from hub.draft.availability import PICK_NOISE_FIT_CEILING, noise_from_picks, sweep_ceilings
+    df = (_picks(a_true=3.0, b_true=0.2, n=100, drafts=4, pool=204, seed=5)
+          .with_columns(pl.col("pick").clip(1.0, 204.0)))   # a pick number is inside the pool
+    (_a, b_default), _ = noise_from_picks(df, draws=50)
+    (_a, b_same), _ = noise_from_picks(df, draws=50, ceiling=PICK_NOISE_FIT_CEILING)
+    assert b_same == b_default
+    (_a, b_low), said_low = noise_from_picks(df, draws=50, ceiling=120)
+    assert "ecr <= 120" in said_low and b_low != b_default
+
+    rows = sweep_ceilings(df, (120, 144, 168, 192, 216), draws=50)
+    assert [r["ceiling"] for r in rows] == [120, 144, 168, 192, 216]
+    ns = [r["n"] for r in rows]
+    assert ns == sorted(ns), ns
+    assert rows[-1]["applied"] == 204.0 and rows[-1]["n"] == df.height, rows[-1]
+    for r in rows:
+        assert set(r) >= {"ceiling", "applied", "n", "a", "b", "ci", "sigma_100"}, r
+        assert r["ci"][0] <= r["b"] <= r["ci"][1], r
+        assert r["sigma_100"] == pytest.approx(r["a"] + 100 * r["b"])
+
+
 # --- one base dispersion, three readers (issue #41) ------------------------
 
 def test_all_three_readers_resolve_to_the_same_base_at_scale_one():

@@ -50,10 +50,50 @@ visible:
 | 145 | 545 | 2.83 | 0.143 | [0.116, 0.170] | 17.1 |
 | 120 | 460 | 2.33 | 0.156 | [0.138, 0.174] | 17.9 |
 
-The superseded interval and the restated one do not overlap, so the censored tail's effect on
-the slope is resolvable at two standard errors clustered on the draft. Below 168 the slope is
-stable across cuts and the intervals overlap; the cut is where the data stops being two-sided,
-not where the slope is prettiest.
+~~The superseded interval and the restated one do not overlap, so the censored tail's effect on
+the slope is resolvable at two standard errors clustered on the draft.~~ **Withdrawn 2026-09-13
+(#287)**, see the section below. Below 168 the slope is stable across cuts and the intervals
+overlap; the cut is where the data stops being two-sided, not where the slope is prettiest —
+and since #287 it is stated as an assumption with its sensitivity beside it.
+
+## Restated 2026-09-13: what four clusters can say, and the ceiling as an assumption (#287)
+
+Two corrections to the section above, from audit III's finding Q16.
+
+**The "resolvably different" claim is withdrawn.** The 204 fit and the 168 fit are nested
+subsets of the same four drafts — 612 of the 672 rows, 91%, are in both — so their bootstrap
+resamples move together, and non-overlap of the two intervals is not evidence of a difference
+at any level. It was read above as the censored tail's effect being resolvable at two standard
+errors. It is not; what the signed-deviation table shows is a *signature* in the last two bins,
+and the ceiling is the cut before it. That is a stated assumption, not a finding the interval
+established.
+
+**The interval states its resample count.** Four drafts resampled with replacement give
+4⁴ = 256 ordered resamples and 35 distinct multisets, so the 2,000 draws in
+`noise_from_picks` revisit at most 256 of them and the 2.5th and 97.5th percentiles are those
+of a small discrete set. The fitter's sentence now says so on every run, beside the interval
+and beside the statement that it cannot resolve a difference between nested subsets.
+The published `PICK_NOISE_SLOPE_CI` [0.143, 0.156] is unchanged; what changed is what it is
+read as — the band four observations of this league's drafting support, no more.
+
+**The ceiling is swept, not asserted.** `scripts/fit_pick_noise.py --ceilings 120,144,168,192,216`
+runs `sweep_ceilings` and prints one row per cut. It needs an ESPN session; the 2026-09-13
+lane had none, so the cells below that were not run are marked rather than filled. The 120 and
+168 rows are the 2026-09-11 sweep's; 216 collapses to the 204-pick pool (`min(pool, ceiling)`)
+and is that row.
+
+| fit ceiling | n | `a` | `b` | 95% CI | sigma at pick 100 |
+|---|---|---|---|---|---|
+| 120 | 460 | 2.33 | 0.156 | [0.138, 0.174] | 17.9 |
+| 144 | *not established* — the 2026-09-11 sweep ran 145: 545, 2.83, 0.143, [0.116, 0.170], 17.1 | | | | |
+| **168 (shipped)** | **612** | **2.51** | **0.150** | **[0.143, 0.156]** | **17.5** |
+| 192 | *not established* | | | | |
+| 216 (= the 204-pick pool) | 672 | 1.31 | 0.169 | [0.159, 0.179] | 18.2 |
+
+Across the cells that exist the slope spans 0.143–0.169 and sigma at pick 100 spans 17.1–18.2,
+about one pick. Whether 192 sits on a cliff between 168 and the pool is the cell the sweep is
+for; if it does, that is a separate decision and not a number this restatement moves.
+`PICK_NOISE_INTERCEPT`, `PICK_NOISE_SLOPE` and `PICK_NOISE_SLOPE_CI` ship unchanged.
 
 **The axis, stated correctly.** The fit reads `ecr`; `_sigma` applies it to `mu_pick`. For the
 historical drafts these are the *same number* — no draft market exists for a past preseason
