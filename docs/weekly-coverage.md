@@ -3,7 +3,61 @@
 > **This title is superseded.** The measurement below is centred on the player's own realised
 > mean, which is a lookahead, and its headline does not survive removing it. The original text
 > is kept whole; the restatement of 2026-09-07 sits directly above the result table it
-> supersedes.
+> supersedes, and the restatement of 2026-09-13 -- what the interval is now *claimed* to
+> cover, and what the gate holds it to -- sits directly below this note.
+
+## Restated 2026-09-13: the interval labelled 80% covers 77%, and that is now the claim
+
+Under [method.md rule 13](method.md) and issue #289, the decision recorded there on
+2026-09-13.
+
+**The claim.** The weekly interval `hub.models.predict.moments` serves at `(p10, p90)` is
+labelled 80%. Measured on a centre that cannot see the week it scores, over the **10,536**
+player-weeks of 2021-2025 whose lower bound is not pinned at the zero floor, it covers
+**77.4%**. On the same weeks the skew-free interval covers 79.5% and the clipped-at-zero
+half of the sample 84.5%. Those three numbers are the 2026-09-07 restatement below, re-run
+unchanged on 2026-09-13; nothing about the measurement moved. What moved is what the repo
+says about it: **the interval labelled 80% covers 77% of the unclipped weeks**, and the
+published `interval_coverage` carries that claim beside its verdict as `gate_claim`.
+
+**The gate's band is re-registered at 77 +/- 2, on the deployed function.** It was
+pre-registered at 80 +/- 2 before the prior-centre numbers were looked at, and the deployed
+function sits 2.6 points outside it. Three things could follow, and only one is a
+restatement:
+
+1. *Widen sigma by a fitted factor* until the gate goes green. That is a data-chosen cut --
+   the number would be picked to make this gate pass, which is exactly what #287 faults
+   elsewhere -- and it is not the fix.
+2. *Refit the shape law* -- keep or drop the skew. That is a modelling decision with a
+   measurable alternative, so under [ADR-0024](adr/0024-a-modelling-decision-becomes-agent-work-when-its-alternatives-can-be-measured.md)
+   it is its own pre-registered ticket, **#292**, and CRPS decides it (the one decision CRPS
+   is promoted to, per #274). Its rule and minimum detectable effect are written in
+   [gate-power.md](gate-power.md) before it runs.
+   *Run 2026-09-13, same day, after the rule was committed:* **not runnable** on five
+   seasons -- the MDE (+0.0117 CRPS points per player-week) exceeds the ceiling (+0.0081),
+   so no verdict is reported and **the skew stays; the CRPS comparison could not remove
+   it.** For the record and without a verdict attached: the skew-free interval scored worse
+   by 0.036 in every season. The numbers and the reasoning are under
+   [gate-power.md](gate-power.md#measured-2026-09-13-not-runnable-on-five-seasons).
+3. *Say what the interval covers.* This.
+
+So `hub.models.coverage.CLAIMED_COV80` is 0.77 and `--gate` refuses when the deployed
+function leaves two points of it in **either** direction. The gate goes green on a truthful
+claim and not on a number chosen to make it green -- and it goes red again if the function
+drifts, including upward: an interval that came to cover 80% would make *this* claim stale,
+and a stale claim is the thing the gate exists to report, whichever way it is stale. The
+label is unchanged: `LEVELS` still builds the bounds at (0.10, 0.90), `season/lineup.py`
+still asserts 80%, and a consumer reading the interval as 80% is reading a number this
+document now says is 2.6 points optimistic on the weeks that are not clipped.
+
+**What the published figure moved from and to.** `state/interval_coverage.json`:
+`verdict` UNDER-COVERS -> **COVERS**; `gate_claim` absent (read as the 80% label) ->
+**0.77**; `gate_cov80` 77.4% -> 77.4%, `gate_n` 10,536 -> 10,536, `band` 0.02 -> 0.02.
+The scheduled slate's gate step, red on every run since 2026-09-12, is green on this
+commit and stays green only while the function covers what this section says.
+
+**Beside it, the survivor price by spread bucket** -- the third criterion of #289 --
+is under #293, below, in [the survivor price by spread bucket](#the-survivor-price-by-spread-bucket-2026-09-13).
 
 **Measured 2026-09-05**, over 22,571 player-weeks from 2021-2025. This tests the half of the
 weekly forecast that no gate has ever scored.
@@ -84,6 +138,10 @@ is wrong. It is not.
 > page and the red gate is a red scheduled run, twice a week, until #289 is decided. See
 > [the survivor price](#the-survivor-price-measured-2026-09-07), below, for the second
 > distribution this document listed as untested.
+>
+> *#289 was decided on 2026-09-13: the claim is restated to 77% and the gate re-registered
+> against it. See the section at the top of this document. The "exits 1" above was true of
+> the tree between 2026-09-12 and that commit.*
 
 ## Result
 
@@ -186,6 +244,45 @@ one closes the favourite gap and widens the pick'em one.
 Nothing is refit on this. It is a finding with a direction and a magnitude, and the pick rule
 is unchanged until something gates it.
 
+## The survivor price by spread bucket, 2026-09-13
+
+Issue #293, the third criterion of #289: the favourite's realised win rate against its price,
+by closing spread, reported beside the weekly interval's claim and published in the survivor
+block of `state/interval_coverage.json` so the track-record page shows where the price holds
+and where it does not. The 2026-09-07 table above was cut at 3, 6, 9 and 14; the buckets are
+now **under 3, 3–7, 7–10, 10–14, 14 and up**, each closed at its low edge, so a 7-point
+favourite sits in 7–10 on the same side of the line the `7+` headline counts it, and 3 and 7 —
+the two numbers the betting market lands on most — each start a bucket rather than splitting
+one. Over the same **1,420** games of 2021–2025 the slate measures (both sides in; the buckets
+read the favourite's side, so `n` is games):
+
+| closing spread | games | priced | won | gap |
+|---|---|---|---|---|
+| under 3 | 344 | 0.560 | 0.535 | −0.025 |
+| 3–7 | 681 | 0.630 | 0.653 | +0.023 |
+| 7–10 | 219 | 0.730 | 0.735 | +0.005 |
+| 10–14 | 124 | 0.811 | 0.847 | +0.036 |
+| 14 and up | 52 | 0.879 | 0.942 | +0.063 |
+| **favourites of 7+** | **395** | **0.775** | **0.797** | **+0.023** at 1.1 se, **HOLDS** |
+
+**The pooled verdict and `favourite_gap` did not move** — they read `SURVIVOR_SPREAD` and
+never a bucket, and `test_the_favourite_headline_does_not_read_the_buckets` moves the edges
+to say so. What the re-cut shows that the old one hid: the price is closest to right exactly
+at 7–10, the range the headline is built on (+0.005 over 219 games), and the under-confidence
+is concentrated in the two big-favourite buckets, +0.036 at 10–14 and +0.063 at 14 and up.
+The 14-and-up bucket holds 52 games, two above the floor.
+
+**A bucket under 50 games is shown and marked, never dropped.** `MIN_BUCKET` is 50, where
+the standard error of a win rate near 0.85 is about five points — wide enough that a gap
+inside it says nothing, and a reader is owed the count to see that. An empty bucket is a thin
+bucket and is printed too: four rows where five were expected read as a bucket that was
+dropped. Nothing in this window is thin; a shorter window (`--seasons 2025`) shows what the
+marking looks like.
+
+Nothing is refit on this. The 2026-09-07 finding stands with its direction and magnitude: a
+big favourite is priced under what it wins, which is the safe direction for a survivor plan
+to be wrong in, and the pick rule is unchanged until something gates it.
+
 ## Reproduce
 
 The harness is `hub.models.coverage`, committed under ADR-0007 because `--gate` refuses on
@@ -198,7 +295,7 @@ that by moving `WEEKLY_K` and requiring the graded table to move with it.
 uv run python -m hub.models.coverage --measure                    # the real one
 uv run python -m hub.models.coverage --measure --centre realised  # this document's
 uv run python -m hub.models.coverage --survivor --seasons 2015,2016,2017,2018,2019,2020,2021,2022,2023,2024,2025
-uv run python -m hub.models.coverage --gate                       # exits 1 today
+uv run python -m hub.models.coverage --gate                       # exits 0 on the 77% claim (#289)
 uv run python -m hub.models.coverage --measure --survivor --write # what the slate commits
 ```
 

@@ -1180,6 +1180,9 @@ def test_the_report_prints_the_family_and_the_threshold_beside_the_t():
     lines = ws.report(rows)
     assert "1 test" in lines[3] and "q = 0.10" in lines[3] and "threshold" in lines[3]
     assert "rule decides; the threshold does not" in lines[3]
+    # #274: the line names itself a diagnostic, so a reader does not take the count of rows
+    # below the threshold for a verdict column.
+    assert "diagnostic" in lines[3]
     assert "p" in lines[1].split() and "p_adj" in lines[1].split()
     assert lines[-1].split()[0] == "feat"
     p, p_adj = lines[-1].split()[4], lines[-1].split()[5]

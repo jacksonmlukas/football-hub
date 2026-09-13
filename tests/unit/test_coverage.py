@@ -42,7 +42,8 @@ def _player(pid, pos, season, points, season_type="REG"):
             for w, p in enumerate(points)]
 
 
-def _drawn(n_players=400, weeks=17, pos="WR", mu=12.0, seed=0, spread=1.0):
+def _drawn(n_players=400, weeks=17, pos="WR", mu=12.0, seed=0, spread=1.0,
+           seasons=(2024,), skew=None):
     """Weeks drawn from the model's own distribution, so nominal coverage is the truth.
 
     The centre is the same for every week of a player-season, which is what makes the
@@ -51,15 +52,18 @@ def _drawn(n_players=400, weeks=17, pos="WR", mu=12.0, seed=0, spread=1.0):
     then separated by what each is allowed to see.
 
     `spread` above 1 draws weeks wider than the model believes, which is a model whose
-    intervals are too narrow -- the failure the gate exists to catch.
+    intervals are too narrow -- the failure the gate exists to catch. `skew` overrides the
+    shipped skew the weeks are drawn through, for the shape comparison (#292); `seasons`
+    gives the season cluster something to resample.
     """
     rng = np.random.default_rng(seed)
     sd = predict.WEEKLY_K[pos] * math.sqrt(mu) * spread
-    sk = predict.WEEKLY_SKEW[pos]
+    sk = predict.WEEKLY_SKEW[pos] if skew is None else skew
     rows = []
-    for p in range(n_players):
-        z = rng.standard_normal(weeks)
-        rows += _player(f"p{p}", pos, 2024, predict.skewed(mu, sd, sk, z))
+    for season in seasons:
+        for p in range(n_players):
+            z = rng.standard_normal(weeks)
+            rows += _player(f"p{p}", pos, season, predict.skewed(mu, sd, sk, z))
     return _stats(rows)
 
 
@@ -211,9 +215,34 @@ def test_an_unknown_centre_is_refused():
 # --- the verdict, and what reads it --------------------------------------
 
 @pytest.mark.parametrize("cov,want", [
-    (0.80, "COVERS"), (0.815, "COVERS"), (0.774, "UNDER-COVERS"), (0.893, "OVER-COVERS")])
+    (0.77, "COVERS"), (0.774, "COVERS"), (0.785, "COVERS"), (0.745, "UNDER-COVERS"),
+    (0.80, "OVER-COVERS"), (0.893, "OVER-COVERS")])
 def test_the_verdict_reads_the_pre_registered_band(cov, want):
+    """Against the *claim*, 77 +/- 2 (#289), and not the label. 80.0% is outside the band:
+    an interval that drifted up to what its label says would be a stale claim, and the
+    gate's job is to say the claim is stale, whichever way it went."""
     assert coverage.verdict({"cov80": cov}) == want
+
+
+def test_the_gate_reads_the_restated_claim_and_the_label_is_unchanged():
+    """#289: the interval is still built at (p10, p90) and still labelled 80%; what moved is
+    what the gate holds it to. Two constants, two jobs, and the test pins both so a later
+    hand cannot "fix" the gate by relabelling the interval."""
+    assert coverage.CLAIMED_COV80 == 0.77
+    assert coverage.LEVELS[0] == (0.10, 0.90), "the label did not move; the claim did"
+    got = coverage.measure(_drawn(n_players=40), "prior")
+    assert got["nominal"]["cov80"] == 0.80, "the label the interval is served under"
+    assert got["gate_claim"] == coverage.CLAIMED_COV80
+    assert got["verdict"] == coverage.verdict({"cov80": got["gate_cov80"]},
+                                               claim=coverage.CLAIMED_COV80)
+
+
+def test_the_published_summary_carries_the_claim_the_verdict_was_read_against(tmp_path):
+    """A reader of `COVERS` beside `77.4%` needs the number it was compared with on the same
+    line, or the verdict reads as 80% covering."""
+    got = coverage.measure(_drawn(n_players=40), "prior")
+    back = coverage.published_summary(coverage.write_summary(got, tmp_path / "ic.json"))
+    assert back is not None and back["gate_claim"] == coverage.CLAIMED_COV80
 
 
 def test_the_gate_reads_the_unclipped_weeks_not_the_pool():
@@ -236,6 +265,17 @@ def test_the_summary_round_trips_for_the_publisher(tmp_path):
     assert "by_position" not in back, "the published field is a summary, not the table"
 
 
+def test_an_artifact_from_before_the_claim_is_published_against_the_label(tmp_path):
+    """`state/interval_coverage.json` as committed on 2026-09-12 carries no `gate_claim`;
+    its UNDER-COVERS was read against 80%, and a summary that said 77% for it would be
+    rewriting what that run compared."""
+    p = tmp_path / "interval_coverage.json"
+    p.write_text(json.dumps({"name": "interval_coverage", "verdict": "UNDER-COVERS",
+                             "gate_cov80": 0.774}))
+    got = coverage.published_summary(p)
+    assert got is not None and got["gate_claim"] == pytest.approx(0.80)
+
+
 def test_a_missing_measurement_is_no_field_rather_than_a_traceback(tmp_path):
     assert coverage.published_summary(tmp_path / "nope.json") is None
 
@@ -246,6 +286,110 @@ def test_an_unreadable_measurement_is_the_same_nothing_as_an_absent_one(tmp_path
     assert coverage.published_summary(p) is None
     p.write_text(json.dumps({"name": "interval_coverage"}))       # no verdict in it
     assert coverage.published_summary(p) is None
+
+
+# --- the shape law, decided by CRPS (#292) --------------------------------
+
+def _mean(series: pl.Series) -> float:
+    return float(cast(float, series.mean()))
+
+
+def test_the_shape_arms_are_the_deployed_function_and_the_same_function_without_its_skew():
+    """Arm B is `predict.skewed` on the graded moments at the CRPS grid, clip included; arm A
+    is the same call with the skew zeroed -- which the function floors at `MIN_SKEW`, so it
+    is what would be served with `WEEKLY_SKEW` removed and not a normal written out here."""
+    from hub.models.scoring_rules import crps_from_quantiles, normal_quantile, quantile_levels
+    g = coverage.graded(coverage.centred(coverage.player_weeks(_drawn(n_players=6)), "prior"))
+    got = coverage.shape_scores(g)
+    z = normal_quantile(quantile_levels())[None, :]
+    mu, sd, sk = (g[c].to_numpy()[:, None] for c in ("mu", "sd", "skew"))
+    y = g["points"].to_numpy()
+    assert got["crps_deployed"].to_numpy() == pytest.approx(
+        crps_from_quantiles(predict.skewed(mu, sd, sk, z), y))
+    assert got["crps_skewfree"].to_numpy() == pytest.approx(
+        crps_from_quantiles(predict.skewed(mu, sd, 0.0, z), y))
+    assert got["diff"].to_numpy() == pytest.approx(
+        (got["crps_deployed"] - got["crps_skewfree"]).to_numpy())
+
+
+def test_weeks_drawn_with_the_shipped_skew_score_the_deployed_arm_better_and_vice_versa():
+    """The sign convention, checked on samples whose truth is known: drawn through the
+    shipped skew, the deployed arm scores lower CRPS and `diff` is negative; drawn with no
+    skew, the skew-free arm does and `diff` is positive."""
+    with_skew = coverage.graded(coverage.centred(
+        coverage.player_weeks(_drawn(n_players=300, seed=21)), "prior"))
+    assert _mean(coverage.shape_scores(with_skew)["diff"]) < 0
+    without = coverage.graded(coverage.centred(
+        coverage.player_weeks(_drawn(n_players=300, seed=22, skew=0.0)), "prior"))
+    assert _mean(coverage.shape_scores(without)["diff"]) > 0
+
+
+def test_the_ceiling_is_the_best_skew_on_these_rows_and_bounds_the_deployed_arm():
+    """The declared arm: per position, the skew on the grid (plus the deployed value, so the
+    bound is a bound) that minimises mean CRPS on the same rows. In-sample, so it can never
+    score worse than the deployed arm, and `ceiling_diff` -- deployed minus oracle -- is
+    non-negative in the mean for every position."""
+    g = coverage.graded(coverage.centred(
+        coverage.player_weeks(_drawn(n_players=60, seed=23, skew=1.4)), "prior"))
+    got = coverage.shape_scores(g)
+    assert _mean(got["ceiling_diff"]) >= 0
+    assert _mean(got["ceiling_diff"]) > 0, "weeks drawn at skew 1.4 leave the deployed 0.66 room"
+    assert coverage.CEILING_ARM and "skew" in coverage.CEILING_ARM
+    assert got["best_skew"].n_unique() == 1 and 0.0 <= got["best_skew"][0] <= 2.0
+
+
+def test_the_shape_gate_clusters_on_the_season_reads_the_unclipped_weeks_and_names_its_arm(
+        tmp_path):
+    """The rule as pre-registered in docs/gate-power.md: season clusters, the coverage gate's
+    unclipped subset, `experiment.gate`'s four verdicts, the declared ceiling arm on the
+    ceiling line."""
+    stats = _drawn(n_players=40, seed=24, seasons=(2021, 2022, 2023, 2024, 2025))
+    run, paired, pooled = coverage.shape_law(stats, width_path=tmp_path / "w.json")
+    assert run.summary["clusters"] == 5
+    assert paired["season"].n_unique() == 5
+    assert run.verdict[0] in ("NOT-RUNNABLE", "ADOPT", "REMOVE", "SHOW")
+    text = "\n".join(run.lines)
+    assert coverage.CEILING_ARM in text and "MDE at 80% power" in text
+    # the rows are the unclipped subset: every one has a positive raw p10
+    assert (paired["p10_raw"] > 0).all()
+    assert pooled["n"] > paired.height or pooled["n"] == paired.height
+
+
+def test_the_shape_gate_removes_the_skew_free_arm_when_the_skew_is_the_truth(tmp_path):
+    """Weeks drawn through the shipped skew, in every season: the deployed arm wins each of
+    them and the interval sits below zero, which is REMOVE -- the skew earns its place."""
+    stats = _drawn(n_players=200, seed=25, seasons=(2021, 2022, 2023, 2024, 2025))
+    run, _paired, _pooled = coverage.shape_law(stats, width_path=tmp_path / "w.json")
+    assert run.summary["mean"] < 0
+    assert run.verdict[0] in ("REMOVE", "NOT-RUNNABLE"), run.verdict
+
+
+def test_the_shape_cli_prints_the_block_and_the_verdict(capsys, monkeypatch, tmp_path):
+    monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: _drawn(
+        n_players=30, seed=26, seasons=(2021, 2022, 2023, 2024, 2025)))
+    monkeypatch.setattr(coverage, "WIDTH_STATE", tmp_path / "w.json")
+    assert coverage.main(["--shape"]) == 0
+    out = capsys.readouterr().out
+    assert "skew-free - deployed skew" in out and "MDE at 80% power" in out
+    assert coverage.CEILING_ARM in out
+    assert "pooled" in out and "diagnostic" in out
+    assert any(v in out for v in ("NOT RUNNABLE", "ADOPT", "REMOVE", "SHOW",
+                                  "earns its place", "could not remove", "maintainer"))
+
+
+def test_unreachable_player_stats_under_shape_are_a_sentence_not_a_traceback(capsys,
+                                                                          monkeypatch):
+    monkeypatch.setattr(coverage, "_stats", _raises)
+    assert coverage.main(["--shape"]) == 1
+    err = capsys.readouterr().err
+    assert "nflverse player_stats unavailable" in err and "Traceback" not in err
+
+
+def test_a_shape_window_nothing_survives_is_reported_by_the_cli(capsys, monkeypatch):
+    monkeypatch.setattr(coverage, "_stats",
+                        lambda seasons, cache: _stats(_player("a", "WR", 2024, [0.1] * 17)))
+    assert coverage.main(["--shape"]) == 1
+    assert "no player-week survived" in capsys.readouterr().err
 
 
 # --- the survivor price ---------------------------------------------------
@@ -297,7 +441,44 @@ def test_a_tied_game_is_not_scored_as_a_home_loss():
 def test_the_buckets_are_spread_ranges_not_probability_ranges():
     got = coverage.survivor_price(_schedule([(1.0, 1.0), (8.0, 1.0), (20.0, 1.0)]))
     filled = [b["bin"] for b in got["buckets"] if b["n"]]
-    assert filled == ["0.0-3.0", "6.0-9.0", "14.0-30.0"]
+    assert filled == ["0.0-3.0", "7.0-10.0", "14.0-30.0"]
+
+
+def test_the_buckets_are_the_ranges_survivor_picks_from_and_seven_starts_its_own():
+    """#293: under 3, 3-7, 7-10, 10-14, 14 and up -- each closed at its low edge, so a
+    7-point favourite is in the 7-10 bucket, the same side of the line the `7+` headline
+    counts it on. The old edges put 7 in a 6-9 bucket that pooled it with a 6, which is a
+    range no pick rule reads."""
+    got = coverage.survivor_price(_schedule([(7.0, 1.0), (3.0, 1.0), (14.0, 1.0)]))
+    assert [b["label"] for b in got["buckets"]] == ["<3", "3-7", "7-10", "10-14", "14+"]
+    by = {b["label"]: b["n"] for b in got["buckets"]}
+    assert by["7-10"] == 1 and by["3-7"] == 1 and by["14+"] == 1
+    assert by["<3"] == 0 and by["10-14"] == 0
+    assert coverage.SPREAD_EDGES == (0.0, 3.0, 7.0, 10.0, 14.0, 30.0)
+
+
+def test_a_bucket_under_fifty_games_is_marked_thin_and_not_dropped():
+    """Sixty ten-point favourites and seven twenty-point ones. Every bucket comes back --
+    the empty ones too -- and the ones under `MIN_BUCKET` carry `thin`, because a bucket
+    holding seven games says nothing and a bucket that vanished says less."""
+    got = coverage.survivor_price(_schedule([(10.0, 3.0)] * 60 + [(20.0, 3.0)] * 7))
+    assert coverage.MIN_BUCKET == 50
+    assert len(got["buckets"]) == 5, "no bucket is dropped, however few games it holds"
+    by = {b["label"]: b for b in got["buckets"]}
+    assert by["10-14"]["n"] == 60 and by["10-14"]["thin"] is False
+    assert by["14+"]["n"] == 7 and by["14+"]["thin"] is True
+    assert by["<3"]["n"] == 0 and by["<3"]["thin"] is True
+
+
+def test_the_favourite_headline_does_not_read_the_buckets():
+    """#293's fourth criterion: the verdict and `favourite_gap` are what they were. They are
+    read off `SURVIVOR_SPREAD` and not off any bucket, so moving the edges cannot move
+    them -- asserted by moving the edges."""
+    games = [(10.0, 7.0)] * 97 + [(10.0, -7.0)] * 3 + [(2.0, 1.0)] * 40
+    a = coverage.survivor_price(_schedule(games))
+    b = coverage.survivor_price(_schedule(games), edges=(0.0, 30.0))
+    assert a["favourite_gap"] == b["favourite_gap"] and a["verdict"] == b["verdict"]
+    assert a["favourite_n"] == b["favourite_n"] == 100
 
 
 def test_schedules_without_a_spread_says_so():
@@ -338,19 +519,33 @@ def test_the_gate_refuses_when_the_interval_leaves_the_band(capsys, monkeypatch)
     assert "does not cover" in capsys.readouterr().err
 
 
-def test_the_gate_passes_a_calibrated_interval(monkeypatch):
-    """Same command, same band, weeks drawn at the width the model claims. A gate that only
-    ever refuses is not reading anything.
+def test_the_gate_passes_an_interval_that_covers_what_it_claims(monkeypatch, capsys):
+    """Same command, same band, weeks drawn so the interval covers the 77% it claims (#289).
+    A gate that only ever refuses is not reading anything.
 
-    The seasons here are absurdly long on purpose. Even a perfectly specified model
+    `spread=1.07` is the width at which a nominal 80% normal interval covers about 77% --
+    `P(|z| < 1.2816 / 1.07)` -- so this is the deployed function measured to be what the doc
+    says it is. The seasons are absurdly long on purpose: even a correctly specified model
     under-covers once the centre is *estimated*, because the residual carries the centre's
-    own error on top of the week's -- which is the whole finding on real data. Give the
-    centre a hundred weeks to settle and that term goes away, and what is left is the gate
-    reading a model that is right.
+    own error on top of the week's, and a hundred weeks is what makes that term vanish.
     """
     monkeypatch.setattr(coverage, "_stats",
-                        lambda seasons, cache: _drawn(n_players=40, weeks=200, seed=9))
+                        lambda seasons, cache: _drawn(n_players=40, weeks=200, seed=9,
+                                                      spread=1.07))
     assert coverage.main(["--gate", "--min-prior", "100"]) == 0
+    out = capsys.readouterr().out
+    assert "against the claimed 77.0%" in out and "labelled 80%" in out
+
+
+def test_an_interval_that_covers_its_label_fails_the_claim(monkeypatch, capsys):
+    """The other direction, and the one that says the gate reads the claim rather than the
+    label: weeks drawn at exactly the model's width cover 80%, and 80% is not what the doc
+    says, so the gate refuses -- the claim is stale upward, and a stale claim is the thing
+    to be told about whichever way it is stale."""
+    monkeypatch.setattr(coverage, "_stats",
+                        lambda seasons, cache: _drawn(n_players=40, weeks=200, seed=9))
+    assert coverage.main(["--gate", "--min-prior", "100"]) == 1
+    assert "OVER-COVERS" in capsys.readouterr().out
 
 
 def test_the_cli_writes_the_artifact_the_publisher_reads(tmp_path, monkeypatch, capsys):
@@ -367,6 +562,22 @@ def test_the_survivor_cli_reports_by_bucket(capsys, monkeypatch):
     assert coverage.main(["--survivor", "--seasons", "2024"]) == 0
     out = capsys.readouterr().out
     assert "survivor price" in out and "favourites of 7+" in out
+
+
+def test_the_survivor_cli_prints_every_bucket_and_marks_the_thin_ones(capsys, monkeypatch):
+    """#293: the count beside the rate on every line, the buckets under fifty games shown
+    and marked rather than left out. The empty buckets are printed too: a reader of four
+    lines cannot tell a bucket with no games from one that was dropped."""
+    monkeypatch.setattr(coverage, "_schedules",
+                        lambda seasons, cache: _schedule([(10.0, 7.0)] * 60
+                                                         + [(20.0, 7.0)] * 7))
+    assert coverage.main(["--survivor", "--seasons", "2024"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    rows = {ln.split()[0]: ln for ln in lines if ln.strip().split()[:1]
+            and ln.split()[0] in ("<3", "3-7", "7-10", "10-14", "14+")}
+    assert set(rows) == {"<3", "3-7", "7-10", "10-14", "14+"}
+    assert "under 50" in rows["14+"] and "under 50" not in rows["10-14"]
+    assert "under 50" in rows["<3"], "an empty bucket is a thin bucket, and is shown"
 
 
 def _raises(*_a, **_k):
@@ -430,8 +641,13 @@ def test_the_survivor_verdict_is_written_beside_the_weekly_one(tmp_path, monkeyp
     assert coverage.main(["--measure", "--write"]) == 0
     assert coverage.main(["--survivor", "--write", "--seasons", "2024"]) == 0
     got = coverage.published_summary(art)
-    assert got is not None and got["verdict"] in ("COVERS", "DOES NOT COVER")
+    assert got is not None and got["verdict"] in ("COVERS", "UNDER-COVERS", "OVER-COVERS")
     assert got["survivor"]["verdict"] and "favourite_gap" in got["survivor"]
+    # #293: the buckets travel in the block, so the page can show where the price holds.
+    buckets = got["survivor"]["buckets"]
+    assert [b["label"] for b in buckets] == ["<3", "3-7", "7-10", "10-14", "14+"]
+    assert {"n", "predicted", "actual", "gap", "thin"} <= set(buckets[3])
+    assert buckets[3]["n"] == 50 and buckets[3]["thin"] is False
     # the order does not matter either
     assert coverage.main(["--measure", "--write"]) == 0
     again = coverage.published_summary(art)

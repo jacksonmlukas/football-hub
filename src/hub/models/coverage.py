@@ -36,10 +36,16 @@ actually picks at*, which are the big favourites and nowhere near the middle of 
 distribution. Graded by spread bucket rather than by probability bucket, because a miss
 concentrated in one spread range is what a pick rule would walk into.
 
+**What the gate holds the interval to** is the claim, not the label (#289). The interval is
+served as 80% and measured to cover 77.4% of the unclipped weeks; `CLAIMED_COV80` is that
+restated claim and the gate refuses when the deployed function leaves `BAND` of it in
+either direction. The label is `LEVELS`, which has not moved.
+
     uv run python -m hub.models.coverage --measure
     uv run python -m hub.models.coverage --measure --centre realised
     uv run python -m hub.models.coverage --survivor
     uv run python -m hub.models.coverage --gate          # exits 1 on a refusal
+    uv run python -m hub.models.coverage --shape         # the skew law under CRPS (#292)
 """
 from __future__ import annotations
 
@@ -60,7 +66,20 @@ from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.declare import not_an_input
 from hub.models import predict
-from hub.models.scoring_rules import reliability_by
+from hub.models.experiment import (
+    SEASON_CLUSTER,
+    WIDTH_STATE,
+    Actions,
+    Ceiling,
+    GateRun,
+    run_gate,
+)
+from hub.models.scoring_rules import (
+    crps_from_quantiles,
+    normal_quantile,
+    quantile_levels,
+    reliability_by,
+)
 from hub.paths import STATE_DIR
 
 # Nothing here is fitted. Every number below is either a filter this measurement inherits
@@ -102,10 +121,31 @@ LEVELS: tuple[tuple[float, float], ...] = not_an_input(
     "a pre-registered filter of the grading harness, which measures interval coverage "
     "of predictions already made and makes none of its own")
 
-# Pre-registered before the prior-centre numbers were looked at, and the only thing `--gate`
-# reads: empirical coverage must sit within this of nominal. Two points is roughly three
-# standard errors at n = 10,000, so it is a band a calibrated model clears comfortably and a
-# real miss does not.
+# **What the interval is measured to cover, which is what the gate holds it to (#289).** The
+# interval is built at (p10, p90) and served under the label 80% -- `LEVELS` above is
+# unchanged and `season/lineup.py` still asserts it -- and on the unclipped weeks it covers
+# 77.4% (10,536 player-weeks, 2021-2025, prior centre; `docs/weekly-coverage.md`, restated
+# 2026-09-13). The band was pre-registered at 80 +/- 2 and the deployed function sits outside
+# it. Three things could follow: widen sigma by a fitted factor, refit the shape law, or say
+# what the interval covers. The first is a data-chosen cut -- the number would be picked to
+# make this gate green, which is #287's fault elsewhere; the second is #292, pre-registered
+# and decided by CRPS; this is the third. So the claim is restated to the measured rate and
+# the gate is re-registered against it: **77 +/- 2, on the deployed function.** The gate goes
+# green on a truthful claim and not on a number chosen to make it green, and it goes red
+# again if the deployed function drifts *either* way from what the doc says -- an interval
+# that came to cover 80% would be a stale claim upward, and the gate says so.
+#
+# Not a fitted constant and not a choice a prediction reads: a restated claim about a
+# measurement, pinned so that the gate and the doc cannot say two different numbers.
+CLAIMED_COV80 = not_an_input(
+    0.77,
+    "the restated claim the grading harness holds the deployed interval to; it grades "
+    "predictions already made and makes none of its own")
+
+# Pre-registered before the prior-centre numbers were looked at, and the only other thing
+# `--gate` reads: empirical coverage must sit within this of the claim. Two points is roughly
+# three standard errors at n = 10,000, so it is a band a truthful claim clears comfortably and
+# a stale one does not.
 BAND = not_an_input(
     0.02,
     "a pre-registered filter of the grading harness, which measures interval coverage "
@@ -117,11 +157,33 @@ BAND = not_an_input(
 # here as the reason to exclude them rather than as a footnote.
 GATE_SUBSET = "unclipped"
 
-# Spread buckets for the survivor price, home-relative and in points. The top bucket is where
-# survivor lives: `season/survivor.py` picks the biggest favourite on the board, so a bucket
-# that pools a 3-point favourite with a 13-point one answers a question nobody asks of it.
+# Spread buckets for the survivor price, favourite-relative and in points: under 3, 3-7,
+# 7-10, 10-14, 14 and up (#293). Each bucket is closed at its low edge and open at its high
+# one, and the last takes its top edge, so a 7-point favourite is in 7-10 -- the same side
+# of the line the `SURVIVOR_SPREAD` headline counts it on -- and 3 and 7, the two spreads
+# the betting market lands on most, each start a bucket rather than splitting one. The top
+# bucket is where survivor lives: `season/survivor.py` picks the biggest favourite on the
+# board, so a bucket that pools a 3-point favourite with a 13-point one answers a question
+# nobody asks of it. The edges before #293 were (3, 6, 9, 14), which put 7 in a 6-9 bucket
+# no pick rule reads; the pooled verdict and `favourite_gap` do not read the buckets and did
+# not move.
 SPREAD_EDGES: tuple[float, ...] = not_an_input(
-    (0.0, 3.0, 6.0, 9.0, 14.0, 30.0),
+    (0.0, 3.0, 7.0, 10.0, 14.0, 30.0),
+    "a pre-registered filter of the grading harness, which measures interval coverage "
+    "of predictions already made and makes none of its own")
+
+# How the buckets are labelled where they are printed and published, one per pair of
+# edges: `<3` is [0, 3), `3-7` is [3, 7), `14+` is [14, 30]. A label that said `<=3` would
+# be lying about the 3-point favourites, which are in the next one.
+SPREAD_LABELS: tuple[str, ...] = ("<3", "3-7", "7-10", "10-14", "14+")
+
+# A bucket holding fewer games than this is shown and marked thin, never dropped (#293).
+# Fifty is where the standard error of a win rate near 0.85 is about five points -- wide
+# enough that a gap inside it says nothing, and a reader is owed the count to see that.
+# An empty bucket is a thin bucket: four lines where five were expected read as a bucket
+# that was dropped, which is the thing this exists to stop.
+MIN_BUCKET = not_an_input(
+    50,
     "a pre-registered filter of the grading harness, which measures interval coverage "
     "of predictions already made and makes none of its own")
 
@@ -292,14 +354,17 @@ def floor_split(g: pl.DataFrame) -> list[dict[str, Any]]:
             if g.filter(sel).height]
 
 
-def verdict(row: dict[str, Any], nominal: float = 0.80, band: float = BAND) -> str:
-    """COVERS, UNDER-COVERS or OVER-COVERS, against the pre-registered band.
+def verdict(row: dict[str, Any], claim: float = CLAIMED_COV80, band: float = BAND) -> str:
+    """COVERS, UNDER-COVERS or OVER-COVERS, against the pre-registered band around the claim.
 
-    Three answers rather than a boolean because the two failures have opposite fixes: an
-    interval that is too narrow makes a lineup rule overconfident, and one that is too wide
-    makes it refuse to distinguish players it could.
+    The claim and not the label (#289): `CLAIMED_COV80` is what the doc says the interval
+    covers, and the verdict is whether the deployed function still does. Three answers
+    rather than a boolean because the two failures have opposite fixes: an interval that is
+    too narrow makes a lineup rule overconfident, and one that is too wide makes it refuse to
+    distinguish players it could -- and either way the published claim is the thing to
+    restate first.
     """
-    gap = row["cov80"] - nominal
+    gap = row["cov80"] - claim
     if abs(gap) <= band:
         return "COVERS"
     return "UNDER-COVERS" if gap < 0 else "OVER-COVERS"
@@ -307,8 +372,14 @@ def verdict(row: dict[str, Any], nominal: float = 0.80, band: float = BAND) -> s
 
 def measure(stats: pl.DataFrame, centre: Centre = "prior", *,
             min_weeks: int = MIN_WEEKS, min_prior: int = MIN_PRIOR,
-            min_mu: float = MIN_MU, band: float = BAND) -> dict[str, Any]:
-    """The whole weekly-interval measurement, as one dict."""
+            min_mu: float = MIN_MU, band: float = BAND,
+            claim: float = CLAIMED_COV80) -> dict[str, Any]:
+    """The whole weekly-interval measurement, as one dict.
+
+    `nominal` is the label the interval is served under; `gate_claim` is what the doc says
+    it covers and what `verdict` was read against. Both are carried because a reader of
+    `COVERS` beside `77.4%` needs the number it was compared with on the same line (#289).
+    """
     g = graded(centred(player_weeks(stats), centre, min_weeks=min_weeks,
                        min_prior=min_prior, min_mu=min_mu))
     rows = table(g)
@@ -319,11 +390,28 @@ def measure(stats: pl.DataFrame, centre: Centre = "prior", *,
         "n": int(g.height), "nominal": {"cov80": 0.80, "cov68": 0.68},
         "band": band, "by_position": rows, "floor_split": split,
         "gate_subset": GATE_SUBSET, "gate_n": gated["n"], "gate_cov80": gated["cov80"],
-        "verdict": verdict(gated, band=band),
+        "gate_claim": claim, "verdict": verdict(gated, claim=claim, band=band),
     }
 
 
 # --- the survivor price ---------------------------------------------------
+
+
+def _bucketed(sides: pl.DataFrame, edges: Sequence[float]) -> list[dict[str, Any]]:
+    """The reliability rows by spread, each labelled and each saying whether it is thin.
+
+    `reliability_by` bins on the favourite's spread (a non-negative `spread` is the
+    favourite's side of a game, so the count is one per game and the bins never see the
+    underdog rows). Labels come from `SPREAD_LABELS` when the edges are the pre-registered
+    ones and from the bin string otherwise, so a caller grading at other edges gets an
+    honest label and not one written for different edges. `thin` is `n < MIN_BUCKET`, and
+    an empty bucket is kept and marked rather than dropped (#293).
+    """
+    rows = reliability_by(sides, list(edges), on="spread", prob="win_prob", outcome="won")
+    labels = (SPREAD_LABELS if tuple(edges) == tuple(SPREAD_EDGES)
+              else tuple(r["bin"] for r in rows))
+    return [{**r, "label": label, "thin": r["n"] < MIN_BUCKET}
+            for r, label in zip(rows, labels, strict=True)]
 
 
 def survivor_price(schedules: pl.DataFrame, edges: Sequence[float] = SPREAD_EDGES,
@@ -332,7 +420,13 @@ def survivor_price(schedules: pl.DataFrame, edges: Sequence[float] = SPREAD_EDGE
 
     Both sides of every game go in, home-relative spread negated for the away row, which is
     exactly the grid `survivor.grid_from_schedule` builds -- a diagram over home rows alone
-    would grade one half of the pick space and survivor picks from both.
+    would grade one half of the pick space and survivor picks from both. The buckets then
+    read the favourite's side of each game, so `n` in a bucket is games, and the realised
+    rate is the favourite's win rate against the price it was given -- a survivor pick wins
+    outright or it does not; nothing here is about covering the spread (#293).
+
+    The headline -- `favourite_*` and `verdict` -- reads `SURVIVOR_SPREAD` and never a
+    bucket, so the buckets can be re-cut without the verdict moving, and were (#293).
 
     The price and the tie convention are read from the modules that own them
     (`hub.models.margin`), not restated: a survivor pick and a weekly prediction are not
@@ -364,8 +458,7 @@ def survivor_price(schedules: pl.DataFrame, edges: Sequence[float] = SPREAD_EDGE
     se = math.sqrt(act * (1.0 - act) / n) if n else float("nan")
     return {
         "margin_sd": margin_sd, "n_games": scored.height, "n_sides": sides.height,
-        "buckets": reliability_by(sides, list(edges), on="spread", prob="win_prob",
-                                  outcome="won"),
+        "buckets": _bucketed(sides, edges), "min_bucket": MIN_BUCKET,
         "favourite_spread": SURVIVOR_SPREAD, "favourite_n": n,
         "favourite_predicted": pred, "favourite_actual": act,
         "favourite_gap": act - pred, "favourite_se": se,
@@ -373,6 +466,92 @@ def survivor_price(schedules: pl.DataFrame, edges: Sequence[float] = SPREAD_EDGE
         "verdict": ("HOLDS" if not se or abs(act - pred) <= 2.0 * se
                     else "UNDER-CONFIDENT" if act > pred else "OVER-CONFIDENT"),
     }
+
+
+# --- the shape law, decided by CRPS (#292) --------------------------------
+#
+# Pre-registered in `docs/gate-power.md` on 2026-09-13, before this was written: the rows,
+# the two arms, the paired difference, the cluster, the MDE and the ceiling arm are all
+# fixed there, and this is the harness that runs them. CRPS is a gate input for exactly this
+# decision and a diagnostic everywhere else (#274).
+
+# The declared ceiling arm, by name, on the ceiling line -- distinct from the three gates'
+# arms so no two numbers can be tabulated as one (`docs/gate-power.md`, #138). Per position,
+# the skew that minimises mean CRPS on the same rows, chosen from `SKEW_GRID` plus the
+# deployed value so the bound is a bound. In-sample by construction: it says how much *any*
+# per-position skew law could gain over the deployed one here, and the skew-free arm is one
+# such law.
+CEILING_ARM = "the best per-position skew, chosen on these rows"
+SKEW_GRID: tuple[float, ...] = not_an_input(
+    tuple(round(0.05 * i, 2) for i in range(41)),
+    "the candidate skews the ceiling arm is chosen from, a grading harness's search grid "
+    "that no prediction reads")
+
+SHAPE_ACTIONS = Actions(
+    adopt="The skew-free interval scores better under CRPS: the deployed function is the "
+          "maintainer's to change, and #289's claim is re-registered against it first.",
+    remove="The skew earns its place: the deployed interval stays as served.",
+    show="The skew stays; the CRPS comparison could not remove it.")
+
+
+def shape_scores(g: pl.DataFrame) -> pl.DataFrame:
+    """CRPS of the deployed distribution and of the same function without its skew, per row.
+
+    Arm B is `predict.skewed(mu, sd, skew, z)` on the graded moments at the CRPS quantile
+    grid, clip included, which is the path `hub.models.weekly.shipped_quantiles` takes. Arm A
+    is the same call with the skew zeroed -- which `skewed` floors at `MIN_SKEW`, so the arm
+    is exactly what would be served with `WEEKLY_SKEW` removed, floor and all, and not a
+    normal written out beside it. `diff` is deployed minus skew-free: positive when the
+    skew-free arm scores lower, which is the sign `experiment.gate` adopts on.
+
+    `ceiling_diff` is deployed minus the oracle -- the best per-position skew on these rows,
+    `CEILING_ARM` -- and `best_skew` says which skew that was, so a reader can see how far
+    the deployed law sits from the in-sample optimum.
+    """
+    z = normal_quantile(quantile_levels())[None, :]
+    mu, sd, sk = (g[c].to_numpy().astype(float)[:, None] for c in ("mu", "sd", "skew"))
+    y = g["points"].to_numpy().astype(float)
+    pos = g["position"].to_numpy()
+    deployed = crps_from_quantiles(predict.skewed(mu, sd, sk, z), y)
+    skewfree = crps_from_quantiles(predict.skewed(mu, sd, 0.0, z), y)
+    oracle = np.empty_like(deployed)
+    best = np.empty_like(deployed)
+    for name in np.unique(pos):
+        rows = pos == name
+        candidates = sorted(set(SKEW_GRID) | {float(sk[rows][0, 0])})
+        scored = {c: crps_from_quantiles(predict.skewed(mu[rows], sd[rows], c, z), y[rows])
+                  for c in candidates}
+        pick = min(candidates, key=lambda c: float(scored[c].mean()))
+        oracle[rows] = scored[pick]
+        best[rows] = pick
+    return g.select("season", "player_id", "week", "position", "points", "p10_raw").with_columns(
+        pl.Series("crps_deployed", deployed), pl.Series("crps_skewfree", skewfree),
+        pl.Series("diff", deployed - skewfree), pl.Series("ceiling_diff", deployed - oracle),
+        pl.Series("best_skew", best))
+
+
+def shape_law(stats: pl.DataFrame, *, min_weeks: int = MIN_WEEKS, min_prior: int = MIN_PRIOR,
+              min_mu: float = MIN_MU, seed: int = 0,
+              width_path: Path = WIDTH_STATE) -> tuple[GateRun, pl.DataFrame, dict[str, Any]]:
+    """The pre-registered comparison: one gate run, the paired rows, and the pooled diagnostic.
+
+    The rows are the coverage gate's -- prior centre, the same filters -- restricted to the
+    unclipped subset it reads, fixed in `docs/gate-power.md` so the subset cannot be chosen
+    after the sign is seen. The season is the cluster, the MDE comes from the interval's own
+    bootstrap, and the ceiling is `CEILING_ARM` on the same rows. The pooled figure over every
+    row, clipped weeks included, is returned beside it as a diagnostic and decides nothing.
+    """
+    g = graded(centred(player_weeks(stats), "prior", min_weeks=min_weeks,
+                       min_prior=min_prior, min_mu=min_mu))
+    scored = shape_scores(g)
+    paired = scored.filter(pl.col("p10_raw") > 0.0)
+    pooled = {"n": int(scored.height), "mean": float(cast(float, scored["diff"].mean()))}
+    run = run_gate(paired, cluster=SEASON_CLUSTER, actions=SHAPE_ACTIONS,
+                   name="interval_shape", arm_a="skew-free", arm_b="deployed skew",
+                   unit="CRPS points per player-week", places=4, seed=seed,
+                   ceiling=Ceiling(CEILING_ARM, paired["ceiling_diff"].to_numpy()),
+                   width_path=width_path)
+    return run, paired, pooled
 
 
 # --- what reads the answer ------------------------------------------------
@@ -405,7 +584,10 @@ def write_survivor(result: dict[str, Any], path: Path | None = None) -> Path:
     have = _existing(p)
     block = {k: result.get(k) for k in
              ("verdict", "favourite_spread", "favourite_predicted", "favourite_actual",
-              "favourite_gap", "favourite_sigma", "favourite_n", "n_games", "margin_sd")}
+              "favourite_gap", "favourite_sigma", "favourite_n", "n_games", "margin_sd",
+              # The buckets ride along whole (#293): the page shows where the price holds
+              # and where it is thin, and it cannot without the count in each.
+              "buckets", "min_bucket")}
     block["generated_at"] = jsonio.stamp()
     atomic.write_text(p, jsonio.dumps({"name": "interval_coverage", **have,
                                        "survivor": block}, indent=2))
@@ -436,8 +618,13 @@ def published_summary(path: Path | None = None) -> dict[str, Any] | None:
     if not isinstance(got, dict) or "verdict" not in got:
         return None
     out = {k: got.get(k) for k in
-           ("centre", "lookahead", "n", "gate_subset", "gate_n", "gate_cov80", "band",
-            "verdict", "generated_at")}
+           ("centre", "lookahead", "n", "gate_subset", "gate_n", "gate_cov80", "gate_claim",
+            "band", "verdict", "generated_at")}
+    # An artifact written before the claim was carried (#289) had its verdict read against
+    # the label, so that is the claim it is published with -- a reader printing `verdict`
+    # beside `gate_claim` then says what that run actually compared.
+    if out["gate_claim"] is None:
+        out["gate_claim"] = LEVELS[0][1] - LEVELS[0][0]
     if isinstance(got.get("survivor"), dict):
         out["survivor"] = got["survivor"]
     return out
@@ -472,6 +659,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="survivor win probability by spread bucket")
     ap.add_argument("--gate", action="store_true",
                     help="measure, then exit 1 if the interval leaves the band")
+    ap.add_argument("--shape", action="store_true",
+                    help="the skew law under CRPS, season-clustered, as pre-registered (#292)")
     ap.add_argument("--centre", default="prior", choices=("prior", "realised"),
                     help="'prior' uses only earlier weeks; 'realised' is the document's "
                          "lookahead centre and is kept to reproduce it")
@@ -483,7 +672,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--cache", default=None, help="raw-cache root; defaults to this repo's")
     a = ap.parse_args(argv)
 
-    if not (a.measure or a.survivor or a.gate):
+    if not (a.measure or a.survivor or a.gate or a.shape):
         ap.print_help()
         return 0
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
@@ -506,16 +695,46 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"{seasons[0]}-{seasons[-1]}, margin sd {got['margin_sd']}")
         print(f"    {'spread':<14}{'n':>7}{'predicted':>12}{'actual':>10}{'gap':>10}")
         for b in got["buckets"]:
-            if not b["n"]:
-                continue
-            print(f"    {b['bin']:<14}{b['n']:>7,}{b['predicted']:>12.3f}"
-                  f"{b['actual']:>10.3f}{b['gap']:>+10.3f}")
+            # Every bucket, the empty and the thin ones marked rather than dropped (#293).
+            rate = (f"{b['predicted']:>12.3f}{b['actual']:>10.3f}{b['gap']:>+10.3f}"
+                    if b["n"] else f"{'--':>12}{'--':>10}{'--':>10}")
+            thin = f"   under {got['min_bucket']} games" if b["thin"] else ""
+            print(f"    {b['label']:<14}{b['n']:>7,}{rate}{thin}")
         print(f"    favourites of {got['favourite_spread']:.0f}+ : predicted "
               f"{got['favourite_predicted']:.3f}, actual {got['favourite_actual']:.3f}, "
               f"gap {got['favourite_gap']:+.3f} at {got['favourite_sigma']:+.1f} se "
               f"over {got['favourite_n']:,} sides -> {got['verdict']}")
         if a.write:
             print(f"    written to {write_survivor(got)}")
+
+    if a.shape:
+        try:
+            stats = _stats(seasons, cache)
+        except Exception as e:
+            return unavailable("hub.models.coverage", "nflverse player_stats", e)
+        try:
+            run, paired, pooled = shape_law(stats, min_prior=a.min_prior,
+                                            width_path=WIDTH_STATE)
+        except (ValueError, NotEnoughWeeks) as e:
+            print(f"hub.models.coverage: {e}", file=sys.stderr)
+            return 1
+        print(f"  the weekly interval's shape law under CRPS (#292), centre=prior, "
+              f"{paired.height:,} unclipped player-weeks over seasons "
+              f"{seasons[0]}-{seasons[-1]}; skew-free is the arm under test")
+        for line in run.lines:
+            print(line)
+        by = paired.group_by("position").agg(pl.col("best_skew").first(),
+                                             pl.col("diff").mean().alias("diff"),
+                                             pl.len().alias("n")).sort("position")
+        print("\n  per position: the deployed skew, the best skew on these rows, and the "
+              "skew-free gain")
+        for r in by.iter_rows(named=True):
+            print(f"    {r['position']:<4}{r['n']:>7,}   deployed "
+                  f"{predict.WEEKLY_SKEW.get(r['position'], predict.WEEKLY_SKEW_POOLED):.2f}"
+                  f"   best {r['best_skew']:.2f}   skew-free {r['diff']:+.4f}")
+        print(f"\n  pooled over every row, clipped weeks included: {pooled['mean']:+.4f} over "
+              f"{pooled['n']:,}  (a diagnostic; the verdict reads the unclipped rows)")
+        print(f"\n  {run.verdict[1]}")
 
     if a.measure or a.gate:
         try:
@@ -534,13 +753,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("    -- split on whether the model's own p10 survived the zero clip --")
         _print_table(got["floor_split"])
         print(f"    gate reads the {got['gate_subset']} weeks: {got['gate_cov80']:.1%} "
-              f"against 80.0% +/- {got['band']:.0%} over {got['gate_n']:,} "
+              f"against the claimed {got['gate_claim']:.1%} +/- {got['band']:.0%} "
+              f"(interval labelled {got['nominal']['cov80']:.0%}) over {got['gate_n']:,} "
               f"-> {got['verdict']}")
         if a.write:
             print(f"    written to {write_summary(got)}")
         if a.gate and got["verdict"] != "COVERS":
-            print("    the deployed interval does not cover; sd = K*sqrt(mu) carries no "
-                  "term for the error in the centre.", file=sys.stderr)
+            print("    the deployed interval does not cover what docs/weekly-coverage.md "
+                  "says it covers; restate the claim or find what moved the function.",
+                  file=sys.stderr)
             return 1
     return 0
 
