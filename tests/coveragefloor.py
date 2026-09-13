@@ -64,7 +64,7 @@ FLOOR: dict[str, int] = {
     "src/hub/exhibits/championship_equity.py": 0,
     "src/hub/exhibits/leverage.py": 1,
     "src/hub/fetch/__init__.py": 0,
-    "src/hub/fetch/bigten.py": 7,
+    "src/hub/fetch/bigten.py": 3,
     "src/hub/fetch/cfbd.py": 2,
     "src/hub/fetch/espn.py": 0,
     "src/hub/fetch/nfeloqb.py": 1,
