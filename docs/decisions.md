@@ -103,6 +103,50 @@ of an edge over the betting market; it is a claim about weeks the betting market
 priced yet. The weekly prediction reads the same seam (`hub.models.ratings.rated_games`), so
 the two cannot disagree about a game.
 
+### The quarterback adjustment ships marked, with a pull trigger (#270)
+
+**Decided 2026-09-13 (Jackson), at the grilling session; recorded the same day.** The
+adjustment above reaches written predictions and published survivor picks without a gate of
+its own. What stands behind it — +0.0057 Brier on 538's two columns — validates 538's
+adjustment against 538's base Elo, and says nothing about this repo's estimator applied to a
+frozen betting-market line, which is the only place it fires. That is past the standard the
+rest of the repo is held to: the key-number margin shape was built, gated, lost and kept out;
+this shipped ungated. The re-audit of 2026-09-12 (audit III, finding Q2) asked for one of two
+things — pull it until it has a gate, or mark every row it touches.
+
+**The decision is to mark, not pull**, for three reasons that were weighed and not one:
+
+| | |
+|---|---|
+| where it fires | only on a game with no live price — on the Actions runner never (the store starts empty, so every quote reads as live; #251 confirms from the runner's first output), on the laptop the stale-snapshot and moving-field cases |
+| what the row already says | `adjusted_by`, `qb_adjustment`, and `model="market_baseline-qb"` **in the artifact itself**, not only in a partition name (#284) |
+| what the record can do with it | readers take the suffix as the family — `store.predictions(family=True)` — so the track record keeps the adjusted rows and can still tell them from the passthrough |
+
+**The mark is the row-level `model` suffix.** A row reading `market_baseline-qb` carries an
+adjustment that is *ungated in this repo*: validated on 538's own data against 538's Elo, not
+this estimator against a frozen line. [qb-adjustment.md](qb-adjustment.md) says what the mark
+means in those words, and every public write-up that quotes an adjusted row carries it.
+
+**The pull trigger is #291's gate failing the house rule.** #291 pre-registers a gate on this
+repo's own harness — log-loss of the adjusted against the unadjusted frozen line over
+starter-change event games, clustered on the season, every held-out season and an interval
+excluding zero ([gate-power.md](gate-power.md)). If that gate runs and fails, the module leaves
+`ratings` and `survivor` that day and is reachable only from the harness. Until it runs the
+mark stands, and a gate that cannot run at the archive's size is recorded as not-runnable
+([ADR-0014](adr/0014-a-provisional-rule-may-act-where-no-gate-can-run.md)), not as a null and
+not as a pass.
+
+**What was already true, verified 2026-09-13.** #284 retired the passthrough claim before this
+decision was recorded: `hub.models.ratings`'s headline describes both behaviours, its run line
+names how many priced games were adjusted and says `passthrough` only when that count is zero,
+and the model string on an adjusted row is `market_baseline-qb`, not the baseline's. Nothing in
+this decision re-does that.
+
+**Not a provisional rule.** ADR-0014's mechanism needs a signal that passed a screen and a
+logged horizon; the adjustment is a consumed published model with a validation of its own on
+someone else's data. The mark is weaker than provisional adoption and says less: the number is
+published, labelled as what it is, and its own gate decides whether it stays.
+
 ### The deep-simulation programme is objective 2, not objective 1
 
 The stated vision — simulate every fantasy-relevant statistic for every game, down to offensive
