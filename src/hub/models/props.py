@@ -31,15 +31,20 @@ quote on a player the statline cannot price is recorded as `no_number`.
 and it does not need the game to be played: if the betting market's close moved toward the
 side our number implied, our number carried information the quote at decision time did
 not. Two forms per prop -- in the quote's own units (yards, receptions) and in vig-free
-implied probability, which is the only form the anytime-touchdown market has.
+implied probability, which is the only form the anytime-touchdown market has. The two are
+not one number in two units: a point move is invisible to a probability differenced at
+each quote's own point, so the close's point is first translated onto the decision's
+through our own distribution (#275) -- the mass our draws put between the two points is
+what the betting market conceded by moving.
 
 **The ceiling is computed before the gap is chased** (`docs/method.md` rule 8). The most
 CLV any side-picker can log on a market is the mean absolute move between decision and
 close -- a model that always sided with the move -- so the report prints that beside what
 was captured, and a captured share rather than a bare mean. **Repeated props on one player
 are not independent** (rule 3): a player's pass yards, pass touchdowns and rush yards share
-a game script, and his week 3 and week 4 share him, so every standard error here is taken
-over players, and the count of players is printed beside the count of props.
+a game script -- and so do two players in the same game, as hard as one player's own
+markets do -- so every standard error here is taken over games, and the count of games is
+printed beside the count of props.
 
 **The baseline to beat is already recorded**: twelve stat-lines against the Week 1 opener,
 mean bias +3.5 yards at +16%, MAE 8.8 yards (`docs/next.md`), corroborated at four seasons
@@ -260,7 +265,7 @@ class PropPrice:
 
 
 def price(line: Mapping[str, float], market: str, point: float | None, *,
-          n: int = DRAWS, seed: int = SEED) -> PropPrice:
+          n: int = DRAWS, seed: int = SEED, draws: np.ndarray | None = None) -> PropPrice:
     """Price one prop off a component line.
 
     The anytime market has no point: its over is "at least one", and `point` is ignored
@@ -268,7 +273,8 @@ def price(line: Mapping[str, float], market: str, point: float | None, *,
     `p_over` null -- which is what a `no_line` row carries.
     """
     stat = MARKET_STATS[market]
-    draws = stat_draws(line, stat, n=n, seed=seed)
+    if draws is None:
+        draws = stat_draws(line, stat, n=n, seed=seed)
     sd = float(draws.std())
     p10, p50, p90 = (float(x) for x in np.percentile(draws, (10, 50, 90)))
     nonzero = float((draws > 0).mean())
@@ -339,8 +345,39 @@ def quotes_as_of(polls: pl.DataFrame, at: datetime) -> pl.DataFrame:
                  .sort("captured_at").group_by(*_KEY, maintain_order=True).last())
 
 
+class Pricer:
+    """Every player's component line, and the draws behind each stat, held once.
+
+    `card` prices each prop at the decision's point and `scorecard` re-reads the same
+    draws at the close's -- the point translation in #275 -- so the draws are cached per
+    (player, stat) rather than redrawn, and the two reads are of one distribution.
+    """
+
+    def __init__(self, players: pl.DataFrame, *, n: int = DRAWS, seed: int = SEED):
+        self.lines = component_lines(players)
+        self.n, self.seed = n, seed
+        self._draws: dict[tuple[str, str], np.ndarray] = {}
+
+    def draws(self, pk: str, stat: str) -> np.ndarray:
+        key = (pk, stat)
+        if key not in self._draws:
+            self._draws[key] = stat_draws(self.lines[pk][2], stat, n=self.n, seed=self.seed)
+        return self._draws[key]
+
+    def price(self, pk: str, market: str, point: float | None) -> PropPrice:
+        return price(self.lines[pk][2], market, point, n=self.n, seed=self.seed,
+                     draws=self.draws(pk, MARKET_STATS[market]))
+
+    def p_over_at(self, pk: str, market: str, point: float | None) -> float | None:
+        """Our no-push over probability at `point`, or None for a player with no line or a
+        market with no point."""
+        if pk not in self.lines or point is None or market not in MARKET_STATS:
+            return None
+        return _no_push(self.price(pk, market, point))
+
+
 def card(players: pl.DataFrame, quotes: pl.DataFrame, *, decided_at: datetime,
-         n: int = DRAWS, seed: int = SEED) -> pl.DataFrame:
+         n: int = DRAWS, seed: int = SEED, pricer: Pricer | None = None) -> pl.DataFrame:
     """Every prop the statline can price, and every prop the betting market posted, priced.
 
     One row per (player, market). A player with a line is priced on every market posted on
@@ -353,15 +390,15 @@ def card(players: pl.DataFrame, quotes: pl.DataFrame, *, decided_at: datetime,
     `quotes` is what `quotes_as_of` returns for `decided_at`; the caller passes the moment
     and this stamps it on every row, so the decision point is a timestamp and not a week.
     """
-    lines = component_lines(players)
+    ours = pricer or Pricer(players, n=n, seed=seed)
     posted = {(r["player_key"], r["market"]): r
               for r in quotes.iter_rows(named=True) if r["market"] in MARKET_STATS}
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
-    for pk, (name, pos, line) in lines.items():
+    for pk, (name, pos, _line) in ours.lines.items():
         for market, stat in MARKET_STATS.items():
             q = posted.get((pk, market))
-            p = price(line, market, None if q is None else q.get("point"), n=n, seed=seed)
+            p = ours.price(pk, market, None if q is None else q.get("point"))
             if q is None and p.p_nonzero < MIN_WEEKS_NONZERO:
                 continue
             seen.add((pk, market))
@@ -379,7 +416,8 @@ _CARD_SCHEMA: dict[str, Any] = {
     "game_id": pl.Utf8, "player_key": pl.Utf8, "player": pl.Utf8, "position": pl.Utf8,
     "market": pl.Utf8, "stat": pl.Utf8, "status": pl.Utf8, "decided_at": pl.Datetime,
     "our_mean": pl.Float64, "our_sd": pl.Float64, "our_p50": pl.Float64,
-    "our_p_over": pl.Float64, "side": pl.Utf8, "edge": pl.Float64,
+    "our_p_over": pl.Float64, "our_p_over_close": pl.Float64, "side": pl.Utf8,
+    "edge": pl.Float64,
     "decision_point": pl.Float64, "decision_over_price": pl.Float64,
     "decision_under_price": pl.Float64, "decision_captured_at": pl.Datetime,
     "decision_polls_unmoved": pl.Int64, "decision_unmoved_since": pl.Datetime,
@@ -393,6 +431,15 @@ def _blank(pk: str, name: str, pos: str | None, market: str, stat: str,
             "status": NO_LINE}
 
 
+def _no_push(p: PropPrice) -> float | None:
+    """Our over probability on the mass that is not a push -- a push is refunded, so the
+    two sides are compared, and a point translated, on what is left."""
+    if p.p_over is None:
+        return None
+    push = p.p_push or 0.0
+    return p.p_over / (1.0 - push) if push < 1.0 else 0.5
+
+
 def _ours(p: PropPrice) -> dict[str, Any]:
     return {"our_mean": p.mean, "our_sd": p.sd, "our_p50": p.p50, "our_p_over": p.p_over}
 
@@ -400,10 +447,13 @@ def _ours(p: PropPrice) -> dict[str, Any]:
 def _decision(q: Mapping[str, Any] | None, p: PropPrice | None) -> dict[str, Any]:
     """The quote at the decision, and the side our number takes against it.
 
-    The side is the one our probability exceeds the vig-free implied on. `edge` is that
-    excess on the chosen side, which is why it is never negative: a prop where the betting
-    market and the statline agree exactly has an edge of zero and a side chosen by the
-    tie-break toward the Under, which is the side a push refunds toward on most books.
+    `edge` is signed toward the Over: our over probability minus the vig-free implied, so
+    it is positive where we lean Over and negative where we lean Under, and its mean under
+    no information is zero. Folded to the chosen side it was strictly positive under a
+    pure null, and a threshold on it selected on noise (#275). `side` is the sign; a prop
+    where the betting market and the statline agree exactly has an edge of zero and a side
+    chosen by the tie-break toward the Under, which is the side a push refunds toward on
+    most books.
     """
     if q is None:
         return {}
@@ -420,12 +470,11 @@ def _decision(q: Mapping[str, Any] | None, p: PropPrice | None) -> dict[str, Any
     q_over = novig_over(q.get("over_price"), q.get("under_price"))
     if q_over is None:
         q_over = 0.5
-    # A push is refunded, so the two sides are compared on the mass that is not a push.
-    p_over = p.p_over / (1.0 - (p.p_push or 0.0)) if (p.p_push or 0.0) < 1.0 else 0.5
-    if p_over > q_over:
-        out.update(side=OVER, edge=p_over - q_over)
-    else:
-        out.update(side=UNDER, edge=q_over - p_over)
+    p_over = _no_push(p)
+    if p_over is None:
+        return out
+    edge = p_over - q_over
+    out.update(side=OVER if edge > 0 else UNDER, edge=edge)
     return out
 
 
@@ -450,25 +499,44 @@ def _novig_col(over: str, under: str) -> pl.Expr:
         lambda s: novig_over(s[over], s[under]), return_dtype=pl.Float64)
 
 
-def scorecard(card_rows: pl.DataFrame, close: pl.DataFrame) -> pl.DataFrame:
+def scorecard(card_rows: pl.DataFrame, close: pl.DataFrame,
+              pricer: Pricer | None = None) -> pl.DataFrame:
     """The card with the close beside every decision, and the two CLVs derived.
 
     `clv_points` is the close's point minus the decision's, signed toward our side: positive
-    means the betting market moved toward the number we had. `clv_prob` is the same thing in
-    vig-free implied probability on our side, which is the one form every market has. Both
-    are null where there was no decision -- a `no_line` or `no_number` row -- so a mean over
-    the column is a mean over decisions and nothing else.
+    means the betting market moved toward the number we had. `clv_prob` is the vig-free
+    probability the betting market conceded on our side, and it is not the same number in
+    other units: differenced at each quote's own point it could not see a point move at
+    all (#275). So the close's point is translated onto the decision's through our own
+    distribution -- `pricer` re-reads the draws that priced the card at the close's point,
+    and the mass between the two points is added to the close's probability before the
+    difference is taken. `our_p_over_close` carries that read on the row. Without a
+    `pricer` no translation is possible and `clv_prob` is the price move alone, which is
+    the anytime market's case on every row. Both CLVs are null where there was no decision
+    -- a `no_line` or `no_number` row -- so a mean over the column is a mean over decisions
+    and nothing else.
     """
     joined = card_rows.join(close, on=list(_KEY), how="left")
+    if pricer is not None:
+        at_close = [pricer.p_over_at(r["player_key"], r["market"], r["close_point"])
+                    if r["side"] is not None else None
+                    for r in joined.select("player_key", "market", "close_point",
+                                           "side").iter_rows(named=True)]
+        joined = joined.with_columns(pl.Series("our_p_over_close", at_close, dtype=pl.Float64))
     # `side` is null exactly where there was no decision, so the sign carries the null and
     # both CLVs are null on a `no_line` or `no_number` row without a second condition.
     sign = (pl.when(pl.col("side") == OVER).then(1.0)
               .when(pl.col("side") == UNDER).then(-1.0).otherwise(None))
     q_dec = _novig_col("decision_over_price", "decision_under_price")
     q_close = _novig_col("close_over_price", "close_under_price")
+    # The card's `our_p_over` is the raw over; the decision compared on the no-push mass,
+    # and the translation is on that same mass at both points.
+    at_dec = pl.col("edge") + q_dec
+    translated = (pl.when(pl.col("our_p_over_close").is_not_null())
+                    .then(at_dec - pl.col("our_p_over_close")).otherwise(0.0))
     return joined.with_columns(
         (sign * (pl.col("close_point") - pl.col("decision_point"))).alias("clv_points"),
-        (sign * (q_close - q_dec)).alias("clv_prob"),
+        (sign * ((q_close + translated).clip(0.0, 1.0) - q_dec)).alias("clv_prob"),
         pl.lit(MODEL).alias("model"),
         pl.lit(version()).alias("version"),
     )
@@ -497,10 +565,13 @@ def write_log(log: pl.DataFrame, season: int, week: int, *,
 
 # --- the report -------------------------------------------------------------------
 
-def _by_player(log: pl.DataFrame, col: str) -> pl.DataFrame:
-    """One value per player: the mean of that player's props, which is the unit a standard
-    error is taken over here (`docs/method.md` rule 3)."""
-    return (log.filter(pl.col(col).is_not_null()).group_by("player_key")
+def _by_game(log: pl.DataFrame, col: str) -> pl.DataFrame:
+    """One value per game: the mean of that game's props, which is the unit a standard
+    error is taken over here (`docs/method.md` rule 3). The game and not the player,
+    because two players in one game share its script as hard as one player's own markets
+    do (#275); a row with no game clusters on its player, which is the next best unit."""
+    cluster = pl.coalesce(pl.col("game_id"), pl.col("player_key")).alias("cluster")
+    return (log.filter(pl.col(col).is_not_null()).with_columns(cluster).group_by("cluster")
                .agg(pl.col(col).mean().alias(col), pl.len().alias("props")))
 
 
@@ -515,11 +586,11 @@ def _mean_se(values: pl.Series) -> tuple[float | None, float | None]:
 
 
 def _ceiling(log: pl.DataFrame, col: str) -> float | None:
-    """The mean absolute move, per player and then over players -- the same unit as the
+    """The mean absolute move, per game and then over games -- the same unit as the
     captured mean it is the denominator of. Taken over props it was a different average,
-    and a player with many flat props diluted it under a numerator he barely touched."""
-    per_player = _by_player(log.with_columns(pl.col(col).abs()), col)
-    v = per_player[col].to_numpy().astype(float)
+    and a game with many flat props diluted it under a numerator it barely touched."""
+    per_game = _by_game(log.with_columns(pl.col(col).abs()), col)
+    v = per_game[col].to_numpy().astype(float)
     return float(v.mean()) if v.size else None
 
 
@@ -528,26 +599,26 @@ def clv_by_market(log: pl.DataFrame) -> pl.DataFrame:
 
     `ceiling_points` and `ceiling_prob` are the mean absolute move between decision and
     close -- what a side-picker who was always right would have logged -- and `share` is
-    the captured mean over that. Both means are over players, so the ratio is of one
-    unit; a per-prop ceiling under a per-player numerator read 500% on ten props. `hit`
+    the captured mean over that. Both means are over games, so the ratio is of one
+    unit; a per-prop ceiling under a per-cluster numerator read 500% on ten props. `hit`
     is the share of moved quotes that moved toward us; a quote that did not move is
     neither a hit nor a miss and is counted in `unmoved`.
-    Standard errors are over players, and `players` is printed beside `props` so the reader
+    Standard errors are over games, and `games` is printed beside `props` so the reader
     sees which count the precision came from.
     """
     rows = []
     for market in MARKET_STATS:
         got = log.filter((pl.col("market") == market) & (pl.col("status") == PRICED))
         moved = got.filter(pl.col("clv_prob").is_not_null() & (pl.col("clv_prob") != 0))
-        per_player = _by_player(got, "clv_prob")
-        mean_prob, se_prob = _mean_se(per_player["clv_prob"])
-        per_player_pts = _by_player(got, "clv_points")
-        mean_pts, se_pts = _mean_se(per_player_pts["clv_points"])
+        per_game = _by_game(got, "clv_prob")
+        mean_prob, se_prob = _mean_se(per_game["clv_prob"])
+        per_game_pts = _by_game(got, "clv_points")
+        mean_pts, se_pts = _mean_se(per_game_pts["clv_points"])
         hits = (moved["clv_prob"] > 0).to_numpy()
         with_point = market in POINT_MARKETS
         rows.append({
             "market": market, "props": got.height,
-            "players": per_player.height,
+            "games": per_game.height,
             "unmoved": got.height - moved.height,
             "hit": float(hits.mean()) if hits.size else None,
             "clv_prob": mean_prob, "se_prob": se_prob,
@@ -602,10 +673,10 @@ def report(log: pl.DataFrame) -> None:
     print(f"  prop scorecard: {log.height} rows, {decisions} decision points; "
           f"{cov[PRICED]} priced, {cov[NO_LINE]} with no posted line, "
           f"{cov[NO_NUMBER]} posted on a player the statline cannot price")
-    print("  market                  props players unmoved    hit   clv_prob  se  ceiling "
+    print("  market                  props   games unmoved    hit   clv_prob  se  ceiling "
           "share   clv_pts  se  ceiling")
     for r in clv_by_market(log).iter_rows(named=True):
-        print(f"  {r['market']:<22} {r['props']:>6} {r['players']:>7} {r['unmoved']:>7} "
+        print(f"  {r['market']:<22} {r['props']:>6} {r['games']:>7} {r['unmoved']:>7} "
               f"{_fmt(r['hit'], 6, 2)} {_fmt(r['clv_prob'], 9, 4)} {_fmt(r['se_prob'], 6, 4)} "
               f"{_fmt(r['ceiling_prob'], 7, 4)} {_fmt(r['share'], 5, 2)} "
               f"{_fmt(r['clv_points'], 8, 2)} {_fmt(r['se_points'], 6, 2)} "
@@ -637,9 +708,10 @@ def log_decisions(players: pl.DataFrame, polls: pl.DataFrame, *, decided_at: dat
                   close_at: datetime | None = None, n: int = DRAWS,
                   seed: int = SEED) -> pl.DataFrame:
     """Price the card at `decided_at` against the quotes live then, and score it at the close."""
+    ours = Pricer(players, n=n, seed=seed)
     priced = card(players, quotes_as_of(polls, decided_at), decided_at=decided_at,
-                  n=n, seed=seed)
-    return scorecard(priced, closing_quotes(polls, close_at))
+                  n=n, seed=seed, pricer=ours)
+    return scorecard(priced, closing_quotes(polls, close_at), pricer=ours)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
