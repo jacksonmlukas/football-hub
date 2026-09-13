@@ -14,10 +14,13 @@ is a Next.js page whose content is a CMS article record in its `__NEXT_DATA__` b
 an `updatedAt`, and a body of links to documents under `/api/media/file/`. In 2024 that was
 one PDF per week; the 2026 page existed and held nothing on the day this was written, so
 what the four-a-week regime does to that shape is unknown until it starts. That is the
-reason for the shape of the capture below -- every linked document is archived by content
-hash, and the article record itself is archived too, so a report published as a table in the
-body rather than as a linked file is still kept. None of that costs quota: the conference's
-page is public and unmetered.
+reason for the shape of the capture below -- every linked document the conference serves
+from its own domain is archived by content hash (a link to anyone else's host, to a page
+rather than a document, or past a size cap is skipped and named in the stamp, #265), and the
+article record itself is archived too, so a report published as a table in the body rather
+than as a linked file is still kept. Inside the reporting regime a capture that parses the
+page and archives no report is recorded degraded rather than green (#278). None of that
+costs quota: the conference's page is public and unmetered.
 
 The odds snapshot is the metered half. CFBD has no availability endpoint (checked against
 its OpenAPI spec on 2026-09-11, not from memory), and `/lines?year&week` is the one bulk
@@ -66,11 +69,11 @@ import os
 import re
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import polars as pl
 
@@ -115,6 +118,24 @@ PYTEST_NODE_ENV = "PYTEST_CURRENT_TEST"
 LIVE_TEST_SUITE = "tests/golden/"
 
 USER_AGENT = "football-hub/0.1 (+https://github.com/jacksonmlukas/football-hub)"
+
+# What the capture will follow out of the article's body (#265). The body is the
+# conference's CMS, and a CMS carries whatever it carries -- an ad, a partner site, a video --
+# and every one of those was an absolute href this loop fetched to any origin, with no size
+# cap, and committed into the tracked archive. Three rules, each admitting everything the
+# regime is expected to publish: the host is the conference's own domain or a subdomain of it
+# (the document CDN, if the files move onto one, is under it); the link is a document by
+# extension; and the bytes stop at a cap that clears any report by two orders of magnitude.
+# A link the rules refuse is recorded in the stamp with the reason -- a legitimate report
+# behind a host these rules do not know has to be visible rather than silently dropped.
+ALLOWED_HOST = "bigten.org"
+DOCUMENT_EXTENSIONS = frozenset({"pdf", "xlsx", "xls", "csv", "docx", "doc", "txt"})
+DOCUMENT_CAP = 16 * 1024 * 1024
+
+# The words the availability-reports article's title carries. The page's `fallback` map
+# holds every CMS record the page was rendered from, and taking the first `article` by dict
+# order archived whichever related-content block landed first (#278).
+AVAILABILITY_TITLE = re.compile(r"availability\s+reports?", re.I)
 
 # How many missed deadlines the stamp lists in full. The count is always exact; the list is
 # capped so the stamp stays a stamp.
@@ -187,8 +208,17 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _get(url: str) -> bytes:
-    """The one door to the network in this module."""
+class DocumentTooLarge(Exception):
+    """A linked document ran past `DOCUMENT_CAP` mid-stream; the bytes were not kept."""
+
+
+def _get(url: str, cap: int | None = None) -> bytes:
+    """The one door to the network in this module.
+
+    `cap` is enforced on the stream: the response is read in chunks and abandoned the
+    moment it would pass the cap, so the bytes past it are never appended, let alone
+    written.
+    """
     # GUARD no-live-call-from-the-suite [unit/test_fetch_bigten.py]: a test cannot reach
     # the conference
     node = os.environ.get(PYTEST_NODE_ENV, "")
@@ -198,9 +228,34 @@ def _get(url: str) -> bytes:
             f"`_get`, the way tests/unit/test_fetch_bigten.py does.")
     # /GUARD
     import requests
-    r = requests.get(url, timeout=30, headers={"User-Agent": USER_AGENT})
-    r.raise_for_status()
-    return r.content
+    with requests.get(url, timeout=30, headers={"User-Agent": USER_AGENT},
+                      stream=True) as r:
+        r.raise_for_status()
+        held = bytearray()
+        for chunk in r.iter_content(chunk_size=1 << 16):
+            # Checked before the chunk is appended, so nothing past the cap is ever held
+            # here. One chunk can still be larger than asked for -- `requests` decodes a
+            # gzipped body as it streams -- and that chunk is the residual this cannot see.
+            if cap is not None and len(held) + len(chunk) > cap:
+                raise DocumentTooLarge(f"{url} ran past {cap} bytes; not kept")
+            held.extend(chunk)
+    return bytes(held)
+
+
+def admit(url: str) -> str | None:
+    """Why the capture will not follow this link, or None if it will (#265).
+
+    The reason starts with one of three words, which is what the stamp counts by:
+    `off-host: <host>`, `not a document: <ext>`. `too large` is the third and is decided by
+    the stream rather than here.
+    """
+    host = urlparse(url).netloc.lower().split("@")[-1].split(":")[0]
+    if host != ALLOWED_HOST and not host.endswith("." + ALLOWED_HOST):
+        return f"off-host: {host}"
+    ext = _ext(url, "")
+    if ext not in DOCUMENT_EXTENSIONS:
+        return f"not a document: {ext or 'no extension'}"
+    return None
 
 
 # --- deadlines ----------------------------------------------------------------------
@@ -300,7 +355,15 @@ def parse_article(page: bytes) -> Article:
                 if isinstance(v, dict) and v.get("_content_type_uid") == "article"]
     if not articles:
         raise PageShapeChanged("no article record in pageProps.fallback")
-    rec = articles[0]
+    # By title, not by dict order: a related-content block that lands first in the map is
+    # an article record too, and archiving it as the reports article would be green (#278).
+    named = [v for v in articles
+             if isinstance(v.get("title"), str) and AVAILABILITY_TITLE.search(v["title"])]
+    if not named:
+        raise PageShapeChanged(
+            f"none of the {len(articles)} article records is the availability-reports "
+            f"article by title")
+    rec = named[0]
     missing = [k for k in ("title", "updatedAt", "body") if not isinstance(rec.get(k), str)]
     if missing:
         raise PageShapeChanged(f"article record lacks {missing}")
@@ -315,7 +378,7 @@ def _sha(data: bytes) -> str:
 
 
 def _ext(url: str, default: str) -> str:
-    tail = url.rsplit("/", 1)[-1].split("?", 1)[0]
+    tail = url.rsplit("/", 1)[-1].split("?", 1)[0].split("#", 1)[0]
     return tail.rsplit(".", 1)[-1].lower() if "." in tail else default
 
 
@@ -353,10 +416,17 @@ class Capture:
     lines_rows: int | None = None
     lines_captured_at: str | None = None
     lines_why: str | None = None
+    # Links the rules refused, as {url, host, why}; the stamp carries the counts and hosts.
+    skipped: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def documents(self) -> int:
         return sum(1 for r in self.rows if r["kind"] != "lines")
+
+    @property
+    def reports(self) -> int:
+        """Linked documents kept -- the reports themselves, not the article or the page."""
+        return sum(1 for r in self.rows if r["kind"] == "file")
 
     @property
     def new_documents(self) -> int:
@@ -388,7 +458,8 @@ def capture(*, now: datetime | None = None, season: int = SEASON_AHEAD,
             archive: Path | None = None, index: Path | None = None,
             lines_dir: Path | None = None, skip_lines: bool = False,
             quota_path: Path | None = None) -> Capture:
-    """One capture: the page, every document it links, and the odds snapshot beside them.
+    """One capture: the page, every document it links that `admit` allows, and the odds
+    snapshot beside them.
 
     Nothing here raises for a failed fetch. The page unreachable is a `Capture` with
     `fetched=False` and the error; the page's shape changed is one with the raw page archived
@@ -433,8 +504,20 @@ def capture(*, now: datetime | None = None, season: int = SEASON_AHEAD,
               updated_at=article.updated_at, data=record, ext="json",
               archive=archive, seen=seen, captured_at=stamp)
         for url, label in article.links():
+            if (why := admit(url)) is not None:
+                cap.skipped.append({"url": url, "host": urlparse(url).netloc, "why": why})
+                print(f"  bigten: {url} was not followed: {why}", file=sys.stderr)
+                continue
             try:
-                data = _get(url)
+                data = _get(url, cap=DOCUMENT_CAP)
+            except DocumentTooLarge as e:
+                # A document on the conference's host that the cap refused is a report this
+                # capture did not keep: recorded as skipped *and* as the run's error.
+                cap.skipped.append({"url": url, "host": urlparse(url).netloc,
+                                    "why": f"too large: over {DOCUMENT_CAP} bytes"})
+                cap.error = cap.error or e
+                print(f"  bigten: {url} was not kept: {e}", file=sys.stderr)
+                continue
             except Exception as e:
                 # One document unreachable is not the capture failing: the rest are kept
                 # and the stamp names the kind of failure.
@@ -527,6 +610,17 @@ def missed_deadlines(index: pl.DataFrame, *, now: datetime, since: datetime = RE
             if deadline_id(at) not in have]
 
 
+def _skipped_summary(skipped: list[dict[str, str]]) -> dict[str, Any]:
+    """Counts by reason and the hosts involved -- never the URLs, for the reason the stamp
+    records no payload text: a link is a string a third party wrote."""
+    by_reason: dict[str, int] = {}
+    for k in skipped:
+        word = k["why"].split(":", 1)[0]
+        by_reason[word] = by_reason.get(word, 0) + 1
+    return {"count": len(skipped), "by_reason": by_reason,
+            "hosts": sorted({k["host"] for k in skipped})}
+
+
 def record_run(cap: Capture | None, *, why: str | None = None, season: int = SEASON_AHEAD,
                index: Path | None = None, path: Path | None = None,
                quota_path: Path | None = None, now: datetime | None = None) -> dict[str, Any]:
@@ -536,7 +630,10 @@ def record_run(cap: Capture | None, *, why: str | None = None, season: int = SEA
       odds snapshot is the one this deadline asked for (or was deliberately skipped).
     * **captured, degraded** -- `fetched: true`, `stale: true`, with the reason: the page's
       shape changed and only the raw bytes were kept, a linked document could not be
-      fetched, or the odds snapshot is an earlier one or missing.
+      fetched or was over the cap, the page parsed but linked no report inside the regime
+      (#278), or the odds snapshot is an earlier one or missing. Links the rules declined
+      (#265) are counted under `skipped` and do not on their own degrade the run: an ad
+      beside the report is the CMS's normal state.
     * **not captured** -- `fetched: false`, `stale: true`, and the sentence from whatever
       declined: before the first report, no season, the page unreachable.
 
@@ -559,12 +656,14 @@ def record_run(cap: Capture | None, *, why: str | None = None, season: int = SEA
         fetched, stale, reason = False, True, (why or "nothing was captured")
         deadline: dict[str, Any] = {"id": None, "name": None}
         week: int | None = None
-        documents = {"seen": 0, "new": 0}
+        documents = {"seen": 0, "new": 0, "reports": 0}
+        skipped = _skipped_summary([])
         lines: dict[str, Any] = {"rows": None, "captured_at": None, "why": reason}
     else:
         deadline = {"id": deadline_id(cap.at), "name": cap.deadline.name}
         week = cap.week
-        documents = {"seen": cap.documents, "new": cap.new_documents}
+        documents = {"seen": cap.documents, "new": cap.new_documents, "reports": cap.reports}
+        skipped = _skipped_summary(cap.skipped)
         lines = {"rows": cap.lines_rows, "captured_at": cap.lines_captured_at,
                  "why": cap.lines_why}
         kind = type(cap.error).__name__ if cap.error is not None else None
@@ -579,6 +678,15 @@ def record_run(cap: Capture | None, *, why: str | None = None, season: int = SEA
         elif cap.error is not None:
             fetched, stale = True, True
             reason = f"a linked document could not be fetched ({kind}); the rest were kept"
+        elif cap.reports == 0 and cap.at >= REPORTS_BEGIN:
+            # The loop ran zero times and nothing was wrong, which inside the regime is the
+            # page having changed under the parser -- a table, a reorganised CMS -- and was
+            # recorded green (#278).
+            fetched, stale = True, True
+            reason = ("the page parsed but linked no report documents; nothing was archived "
+                      "from it" + (f" ({skipped['count']} links skipped: "
+                                   f"{', '.join(skipped['by_reason'])})"
+                                   if skipped["count"] else ""))
         elif cap.lines_why and not cap.lines_why.startswith("skipped"):
             fetched, stale = True, True
             reason = f"reports captured; odds snapshot {cap.lines_why}"
@@ -587,7 +695,7 @@ def record_run(cap: Capture | None, *, why: str | None = None, season: int = SEA
     got: dict[str, Any] = jsonio.summary(
         "bigten", "hub.fetch.bigten",
         season=season, week=week, deadline=deadline, fetched=fetched, stale=stale, reason=reason,
-        documents=documents, lines=lines,
+        documents=documents, skipped=skipped, lines=lines,
         missed={"count": len(missed), "deadlines": missed[-MISSED_LISTED:]},
         archive_rows=held.height,
         quota={"month": cfbd._month_key(), "used": cfbd.quota_used(quota_path),
@@ -644,6 +752,8 @@ def watch(path: Path | None = None, *, now: datetime | None = None) -> str:
                                       long ago
       inside <deadline> stale <age>   the deadline fired, the delay has passed, and the stamp
                                       predates it by <age> seconds of now -- the stall
+      inside <deadline> empty <age>   the stamp is fresh and says the page was fetched and
+                                      no report document was archived (#278)
       unreachable                     no stamp at all
       unreadable                      a stamp with no `generated_at` this can read
 
@@ -683,10 +793,18 @@ def watch(path: Path | None = None, *, now: datetime | None = None) -> str:
     if written.tzinfo is None:
         written = written.replace(tzinfo=UTC)
     age = int((at_now - written).total_seconds())
-    return f"inside {ident} {'ok' if written >= at else 'stale'} {age}"
+    if written < at:
+        return f"inside {ident} stale {age}"
+    # Written on time and archived no report: the stall wearing a fresh date (#278). A
+    # stamp from before `reports` was recorded has nothing to say about it and reads as ok.
+    docs = stamp.get("documents")
+    if stamp.get("fetched") and isinstance(docs, dict) and docs.get("reports") == 0:
+        return f"inside {ident} empty {age}"
+    return f"inside {ident} ok {age}"
 
 
-def status_report(index: Path | None = None, now: datetime | None = None) -> int:
+def status_report(index: Path | None = None, now: datetime | None = None,
+                  status: Path | None = None) -> int:
     at_now = now or _now()
     held = read_index(index)
     _first, opens, _why = cfbd.week_one_opens()
@@ -698,6 +816,19 @@ def status_report(index: Path | None = None, now: datetime | None = None) -> int
     print(f"  missed deadlines since {REPORTS_BEGIN.date().isoformat()}: {len(missed)}")
     for s in missed[-MISSED_LISTED:]:
         print(f"    {s}")
+    # What the last run declined to follow, off its stamp (#265): the one place a report
+    # behind a host the rules do not know becomes visible.
+    try:
+        stamp = json.loads(Path(status or STATUS).read_text())
+        skipped = stamp["skipped"]
+        n = int(skipped["count"])
+    except (OSError, ValueError, KeyError, TypeError):
+        n = 0
+        skipped = {}
+    if n:
+        reasons = ", ".join(f"{k} {v}" for k, v in skipped["by_reason"].items())
+        print(f"  last run skipped {n} link{'s' if n != 1 else ''}: {reasons}; "
+              f"hosts {', '.join(skipped['hosts'])}")
     return 0
 
 
@@ -707,7 +838,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="Archive the Big Ten availability reports for the current deadline, "
                     "with an odds snapshot beside them. One CFBD call per capture.")
     ap.add_argument("--capture", action="store_true",
-                    help="fetch the page, archive every document it links, snapshot lines")
+                    help="fetch the page, archive the documents it links from the "
+                         "conference's own host, snapshot lines")
     ap.add_argument("--status", action="store_true",
                     help="what the archive holds and which deadlines were missed")
     ap.add_argument("--watch", action="store_true",
@@ -734,7 +866,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(watch(spath))
         return 0
     if a.status or not a.capture:
-        return status_report(index)
+        return status_report(index, status=spath)
 
     # GUARD nothing-to-capture-is-recorded [unit/test_fetch_bigten.py]: before the first
     # report, or with no season, the run leaves a record and spends nothing
