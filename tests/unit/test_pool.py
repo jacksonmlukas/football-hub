@@ -1346,6 +1346,26 @@ def test_the_sweep_reports_a_range_over_the_knob_rather_than_a_point():
     assert pool.sensitivity_report([]) == ["\n  no concentrations swept"]
 
 
+def test_the_sensitivity_bar_is_the_leverage_bar_on_the_same_inputs():
+    """#276. Two rows of the sweep are separate runs, so a difference between them carries
+    both rows' noise: the bar is `DECISIVE_SIGMA * sqrt(2) * se`, which is what `leverage`
+    already builds with `hypot` -- and it was one row's `se` unmultiplied, a bar 2.83 times
+    too easy. One function, `unpaired_bar`, and both readers of it agree on the same inputs."""
+    g = _board([1, 2, 3])
+    r = pool.sensitivity(g, [1, 2, 3], entries=21, at=(1.0,), trials=120, pot=420.0,
+                         rng=np.random.default_rng(5))[0]
+    se = r.entry.share_sd / np.sqrt(120) * 420.0
+    assert se > 0
+    assert r.resolution == pool.unpaired_bar(se, se) == pool.DECISIVE_SIGMA * np.hypot(se, se)
+    assert r.resolution == pytest.approx(pool.DECISIVE_SIGMA * np.sqrt(2) * se)
+    lev = pool.Leverage(concentration=1.0, team="SF", fallback="KC", unadvanced=0.0,
+                        unadvanced_se=se, advanced=r.resolution, advanced_se=se, trials=120)
+    assert pool.DECISIVE_SIGMA * lev.term_se == r.resolution
+    assert not lev.resolvable, "a term exactly at the bar is not past it"
+    assert lev._replace(advanced=r.resolution * 1.01).resolvable
+    assert not lev._replace(advanced=r.resolution * 0.99).resolvable
+
+
 def test_the_sweep_anchors_on_the_behaviour_already_in_the_tree():
     """The row at 1.0 is not a new number, it is `simulate` at the default reseeded.
 

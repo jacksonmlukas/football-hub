@@ -1732,6 +1732,20 @@ def simulate(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
     )
 
 
+def unpaired_bar(se_a: float, se_b: float) -> float:
+    """The dollar difference two *separate* runs must clear at `DECISIVE_SIGMA`.
+
+    Two runs that do not share their draws are not repeated measures of one thing
+    (`docs/method.md` rule 3), so the difference between them carries both errors and the
+    bar is `DECISIVE_SIGMA` times their root sum of squares. `Leverage.resolvable` reads
+    this across its two arms and `sensitivity` reads it across two rows of one sweep, where
+    each row's error is the same figure and the bar is `DECISIVE_SIGMA * sqrt(2) * se`. It
+    was one row's `se` unmultiplied until #276 -- a bar 2.83 times too easy, one screen from
+    the construction that had it right.
+    """
+    return DECISIVE_SIGMA * float(np.hypot(se_a, se_b))
+
+
 class Sensitivity(NamedTuple):
     """One point on the field-concentration axis, and everything that moved with it.
 
@@ -1740,9 +1754,10 @@ class Sensitivity(NamedTuple):
     to see the two together -- a table of lifetimes with no ownership beside them says the
     answer moved without saying what moved it.
 
-    `resolution` is the dollar difference `trials` can actually resolve on this row, so an
-    equity range across the axis can be compared against the noise inside it rather than read
-    as a finding by width alone.
+    `resolution` is the dollar difference `trials` can actually resolve *between this row
+    and another*, `unpaired_bar` of this row's own error with itself, so an equity range
+    across the axis can be compared against the noise inside it rather than read as a
+    finding by width alone.
     """
     concentration: float
     chalk: str                  # the best team in the sweep's first week
@@ -1789,8 +1804,10 @@ def sensitivity(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
     `simulate` at the default exactly. But the concentration changes what the *sampler*
     consumes from that stream, so the draws diverge at the first pick and no two rows share a
     season. A difference between two rows therefore carries both rows' noise, and `resolution`
-    is what it has to clear -- `docs/method.md` rule 3, in its general form: the rows are not
-    repeated measures of one thing that may be pooled into a tighter interval.
+    is what it has to clear: `unpaired_bar` of a row's error with itself, `DECISIVE_SIGMA *
+    sqrt(2) * se`, the construction `leverage` uses between its arms -- `docs/method.md`
+    rule 3, in its general form: the rows are not repeated measures of one thing that may be
+    pooled into a tighter interval.
 
     `pot` defaults to the field's entry fees, `entry_fee * field_size`, because that is the
     pot the configured pool starts with and a sweep run for its shape should not need one
@@ -1812,10 +1829,16 @@ def sensitivity(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
       * `co_survivor_rule` is the rule nobody has confirmed, and at 1.0 it is unreachable --
         a co-survivor occurs in 0.6% of trials. At 16.0 it decides 29.5% of them. An
         unconfirmed rule looking harmless can be an artefact of an unmeasured assumption.
-      * Equity ran $21.39, $25.99, $24.28, $21.97, $12.37 against a resolution of $2.53. Only
-        the fall at 16.0 clears it: **1.0 through 8.0 are one flat region**, and the peak near
-        2.0 is not a peak this many trials can see. It is a range straddling a $20 buyback
-        fee, which is the sense in which that verdict is currently about the assumption.
+      * Equity ran $21.39, $25.99, $24.28, $21.97, $12.37 against a resolution then stated
+        as $2.53 -- one row's standard error, which is not the bar this docstring describes.
+        **Re-read 2026-09-12 (#276) against the corrected bar of $7.16**
+        (`DECISIVE_SIGMA * sqrt(2) * 2.53`): 1.0 through 8.0 span $4.60 and remain **one
+        flat region**, the peak near 2.0 is still not a peak this many trials can see, and
+        the fall to 16.0 ($9.60 from 8.0, $9.02 from 1.0) is still the only step that
+        clears. The conclusion holds -- but not on the bar it was drawn against: at $2.53 the
+        $4.60 rise from 1.0 to 2.0 cleared too, and "only the fall at 16.0" was not true of
+        the sweep on its own stated terms. It is a range straddling a $20 buyback fee, which
+        is the sense in which that verdict is currently about the assumption.
 
     **Re-run with #157 in, 2026-09-11**, same board over weeks 1-14, 21 entries, 1600 trials,
     seed 0, both rules at `split`. The week the field empties was priced at zero above and
@@ -1826,10 +1849,11 @@ def sensitivity(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
         most of that is ours **alone**: 26.6% of trials our plan outlives the whole field
         and then loses, which is the pot in full. Share therefore runs 35.7%, 26.9%, 17.3%,
         11.6%, 6.6% and equity $149.96, $112.86, $72.63, $48.90, $27.81 against $4.85.
-      * **The flat region above is gone.** Every step down the axis clears the resolution,
-        because concentration is what decides whether the field outlasts our plan or dies
-        underneath it, and that was the term worth nothing. The knob was never inert; it
-        was priced into a state the model refused to pay.
+      * **The flat region above is gone.** Every step down the axis clears the resolution
+        -- and still does against the corrected bar of $13.72 (#276), the smallest step
+        being $21.09 -- because concentration is what decides whether the field outlasts
+        our plan or dies underneath it, and that was the term worth nothing. The knob was
+        never inert; it was priced into a state the model refused to pay.
       * `co_elimination_rule` decides 5-7% of trials at every concentration -- flat, where
         `co_survivor_rule` runs 0% to 3.3%. Under `rollover` for both, equity is $137.29,
         $98.96, $60.90, $35.70, $14.70: $12-13 lower at every point, and the verdict at 16.0
@@ -1851,9 +1875,10 @@ def sensitivity(grid: pl.DataFrame, weeks: Sequence[int], *, entries: int,
                          rng=np.random.default_rng(seed))
         entry = entry_outcome(grid, weeks, entries=entries, ledger=ledger, pool=this,
                               trials=trials, rng=np.random.default_rng(seed))
+        se = entry.share_sd / np.sqrt(trials) * stake
         rows.append(Sensitivity(
             concentration=float(k), chalk=chalk, chalk_share=own, field=field, entry=entry,
-            pot=stake, resolution=entry.share_sd / np.sqrt(trials) * stake))
+            pot=stake, resolution=unpaired_bar(se, se)))
     return rows
 
 
@@ -1959,7 +1984,7 @@ class Leverage(NamedTuple):
     @property
     def resolvable(self) -> bool:
         """Whether these trials can tell the term from zero at the repo's bar."""
-        return abs(self.term) > DECISIVE_SIGMA * self.term_se
+        return abs(self.term) > unpaired_bar(self.advanced_se, self.unadvanced_se)
 
 
 def _shares(cfg: PoolConfig, out: EntryOutcome) -> np.ndarray:
