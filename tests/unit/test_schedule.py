@@ -58,7 +58,87 @@ def test_a_dated_snapshot_prices_the_game_rather_than_the_moving_field(sched, tm
     _snap(tmp_path, 2026, 1, [("a", 6.5)], dt.datetime(2026, 9, 5))
     got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 6), base=tmp_path)
     assert got["close_spread"].to_list() == [6.5]
-    assert got["price_source"].to_list() == ["snapshot"]
+    assert got["price_source"].to_list() == ["live"]
+
+
+# --- live, stale, or the moving field (#281; the staleness field is #210's) -------------
+#
+# The coalesce used to rank any snapshot above the moving field, so a quote frozen for
+# twelve days outranked a field upstream still refreshes. The cut between live and stale is
+# `hub.models.quarterback.live_price` -- declared once, read here to label the row and by
+# the quarterback layer to decide which rows it may move, so the two cannot disagree.
+
+def test_a_stale_snapshot_no_longer_outranks_the_moving_field(sched, tmp_path):
+    """Both sources price the game; the snapshot's quote has stood three weeks. The moving
+    field wins, the row says so, and no snapshot is cited as having priced it."""
+    sched([("a", 5, 3.0, None)])
+    _snap(tmp_path, 2026, 5, [("a", 6.5)], dt.datetime(2026, 8, 20))
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 12), base=tmp_path)
+    assert got["close_spread"].to_list() == [3.0]
+    assert got["price_source"].to_list() == ["schedule"]
+    assert got["priced_at"].to_list() == [None]
+    # the candidate it lost to is still on the row, with how long it had stood
+    assert got["snapshot_spread"].to_list() == [6.5]
+    assert got["unmoved_since"].to_list() == [dt.datetime(2026, 8, 20)]
+
+
+def test_a_stale_snapshot_with_no_moving_field_still_prices_the_game_and_says_stale(
+        sched, tmp_path):
+    """Week 18 has no `spread_line` until December. A frozen snapshot is the only number, so
+    it is used -- dropping the game would shrink the season -- and the label says what it
+    is rather than calling it a price."""
+    sched([("a", 18, None, None)])
+    _snap(tmp_path, 2026, 18, [("a", 6.5)], dt.datetime(2026, 8, 20))
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 12), base=tmp_path)
+    assert got["close_spread"].to_list() == [6.5]
+    assert got["price_source"].to_list() == ["stale"]
+    assert got["priced_at"].to_list() == [dt.datetime(2026, 8, 20)]
+
+
+def test_the_cut_between_live_and_stale_is_the_quarterback_layers(sched, tmp_path):
+    """A quote unmoved for exactly `STALE_AFTER_DAYS` is live; a second past it is not. The
+    number is `hub.models.quarterback.STALE_AFTER_DAYS` and nothing here restates it."""
+    from hub.models import quarterback
+    at = dt.datetime(2026, 9, 12, 12)
+    edge = at - dt.timedelta(days=quarterback.STALE_AFTER_DAYS)
+    sched([("a", 2, 3.0, None), ("b", 2, 3.0, None)])
+    _snap(tmp_path, 2026, 2, [("a", 6.5)], edge)
+    _snap(tmp_path, 2026, 2, [("b", 6.5)], edge - dt.timedelta(seconds=1))
+    got = schedule.priced_games(2026, at=at, base=tmp_path).sort("game_id")
+    assert got["price_source"].to_list() == ["live", "schedule"]
+    assert got["close_spread"].to_list() == [6.5, 3.0]
+
+
+def test_the_two_consumers_of_the_cut_agree_row_by_row(sched, tmp_path):
+    """The label this module writes and the rows `hub.models.quarterback` moves are one
+    decision: every row not labelled live is adjusted, every row labelled live is not."""
+    from hub.models import quarterback
+    at = dt.datetime(2026, 9, 12, 12)
+    sched([("live", 2, 3.0, None, "KC", "LAC"), ("stale", 18, None, None, "KC", "LV"),
+           ("moving", 3, 3.0, None, "LAC", "LV"), ("both", 4, 3.0, None, "LV", "KC")])
+    _snap(tmp_path, 2026, 2, [("live", 6.5)], dt.datetime(2026, 9, 12, 11))
+    _snap(tmp_path, 2026, 18, [("stale", 6.5)], dt.datetime(2026, 8, 20))
+    _snap(tmp_path, 2026, 4, [("both", 6.5)], dt.datetime(2026, 8, 20))
+    games = schedule.priced_games(2026, at=at, base=tmp_path).sort("game_id")
+    state = pl.DataFrame({"team": ["KC", "LAC", "LV"], "qb": ["a", "b", "c"],
+                          "qb_value": [100.0, 100.0, 40.0], "qb_adj": [0.0, 0.0, -100.0],
+                          "tenure": [10, 10, 2], "as_of": ["2026-09-10"] * 3})
+    after = quarterback.apply(games, state)
+    by = dict(zip(after["game_id"].to_list(), after["adjusted_by"].to_list(), strict=True))
+    src = dict(zip(games["game_id"].to_list(), games["price_source"].to_list(), strict=True))
+    assert src == {"live": "live", "stale": "stale", "moving": "schedule", "both": "schedule"}
+    assert {g for g, s in by.items() if s is not None} == {g for g, s in src.items()
+                                                            if s != "live"}
+
+
+def test_by_source_counts_all_three_and_the_unpriced(sched, tmp_path):
+    sched([("a", 2, 3.0, None), ("b", 18, None, None), ("c", 3, 3.0, None),
+           ("d", 4, None, None)])
+    _snap(tmp_path, 2026, 2, [("a", 6.5)], dt.datetime(2026, 9, 12, 11))
+    _snap(tmp_path, 2026, 18, [("b", 6.5)], dt.datetime(2026, 8, 20))
+    got = schedule.by_source(schedule.priced_games(2026, at=dt.datetime(2026, 9, 12, 12),
+                                                   base=tmp_path))
+    assert got == {"live": 1, "stale": 1, "schedule": 1, "unpriced": 1}
 
 
 def test_a_game_with_no_snapshot_still_prices_from_the_moving_field(sched, tmp_path):
@@ -152,7 +232,7 @@ def test_every_source_the_rule_can_emit_is_classified():
                 and isinstance(arg.args[0].value, str)):
             emitted.add(arg.args[0].value)
 
-    assert emitted == {"snapshot", "schedule"}, (
+    assert emitted == {"live", "stale", "schedule"}, (
         f"the branch chain now emits {sorted(emitted)}; this test reads the rule and the "
         f"rule has changed shape")
     unclassified = emitted - set(schedule.PROVENANCE)
@@ -171,19 +251,29 @@ def test_neither_source_is_obtainable_by_a_reader_today_and_for_different_reason
     """The finding worth publishing, and it is not the one the ticket assumed. A snapshot is
     immutable and unpublished; the moving field is published and has since moved. Both fail
     re-derivation, and the *reason* is what tells a reader which could change."""
-    snap, sched = schedule.provenance("snapshot"), schedule.provenance("schedule")
-    assert not snap.reader_can_obtain and not sched.reader_can_obtain
-    assert snap.why != sched.why
-    assert "publish" in snap.why and "moved" in sched.why
+    sched = schedule.provenance("schedule")
+    for snap in (schedule.provenance("live"), schedule.provenance("stale")):
+        assert not snap.reader_can_obtain and not sched.reader_can_obtain
+        assert snap.why != sched.why
+        assert "publish" in snap.why and "moved" in sched.why
 
 
 def test_the_reason_cites_the_constraint_rather_than_restating_it():
     """A future reader has to be able to tell a licence constraint from an oversight."""
-    assert ".gitignore" in schedule.provenance("snapshot").why
+    assert ".gitignore" in schedule.provenance("live").why
+    assert ".gitignore" in schedule.provenance("stale").why
+
+
+def test_a_week_published_before_the_three_way_source_still_classifies():
+    """`site/data/preds_2026_wk01.json` carries `price_source: snapshot`, and `hub.publish`
+    classifies every published week on every run. The old name stays classified so an
+    old partition cannot take the page down."""
+    got = schedule.provenance("snapshot")
+    assert not got.reader_can_obtain and "#281" in got.why
 
 
 def test_the_classification_is_data_a_caller_can_serialise():
-    got = schedule.provenance("snapshot")
+    got = schedule.provenance("live")
     assert isinstance(got.reader_can_obtain, bool) and isinstance(got.why, str)
 
 
@@ -309,8 +399,9 @@ def test_the_league_column_is_written_by_the_loader_and_not_by_the_argument():
 
 # --- how long the snapshot's quote has stood still (#210, read here for #218) -----------
 #
-# `hub.fetch.odds.staleness` measures; this module carries the measurement onto the row so a
-# consumer can declare its threshold. Nothing here decides what "stale" is.
+# `hub.fetch.odds.staleness` measures; this module carries the measurement onto the row. The
+# threshold over it is `hub.models.quarterback.live_price`, applied here (#281) and nowhere
+# else.
 
 def test_a_snapshot_priced_row_carries_how_long_its_quote_has_stood(sched, tmp_path):
     sched([("a", 2, 3.0, None)])

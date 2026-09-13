@@ -15,12 +15,13 @@ mistaken in the track record for output from a model that has learned something,
 two cannot be mistaken for each other. Track A -- the Bayesian state-space ratings --
 replaces what `forecaster()` returns and nothing else.
 
-**One exception, since #218, and it is narrow on purpose.** Where the staleness field (#210)
-marks a game as having no live price -- a snapshot quote that has stood untouched for more
-than `hub.models.quarterback.STALE_AFTER_DAYS`, or the moving field that nothing polls -- the
-number handed to the forecaster is quarterback-adjusted from `hub.fetch.nfeloqb`'s published
-state, and the row says so: `adjusted_by` and `qb_adjustment` are filled, and the version
-string gains `-qb`. Where a live price exists the row is what it always was, byte for byte.
+**One exception, since #218, and it is narrow on purpose.** Where `price_source` marks a
+game as having no live price -- `stale`, a snapshot quote that has stood untouched for more
+than `hub.models.quarterback.STALE_AFTER_DAYS` and has nothing else to yield to, or
+`schedule`, the moving field that nothing polls (#281) -- the number handed to the
+forecaster is quarterback-adjusted from `hub.fetch.nfeloqb`'s published state, and the row
+says so: `adjusted_by` and `qb_adjustment` are filled, and the version string gains `-qb`.
+Where a live price exists the row is what it always was, byte for byte.
 `rated_games` is the seam, and it is shared with `hub.season.survivor` so the two cannot
 disagree about a game they both rate. `docs/qb-adjustment.md` is the validation that licenses
 this and no more.
@@ -152,8 +153,10 @@ def rated_games(season: int, *, at: datetime | None = None, cache: Path | None =
     `hub.season.survivor.grid_from_schedule` -- for the reason `hub.schedule` exists at all:
     two readers of one rule, so they cannot disagree about the same game.
 
-    `at` defaults to now, naive UTC, the way `priced_games` defaults it, and the same moment
-    decides both which snapshot priced a game and how long that quote had stood.
+    `at` defaults to now, naive UTC, the way `priced_games` defaults it, and that one
+    moment decides which snapshot priced a game, how long its quote had stood, and so
+    whether the row reads `live`, `stale` or `schedule` -- the label `quarterback.apply`
+    reads (#281), so it is not handed the moment again.
 
     **A week that has kicked off is rated from the quarterback state as of its first
     kickoff (#272)**: `nfeloqb.state(rows, as_of=kickoff)` is built from rows strictly
@@ -169,7 +172,7 @@ def rated_games(season: int, *, at: datetime | None = None, cache: Path | None =
     games = schedule.priced_games(season, at=moment, cache=cache, base=base)
     rows, said = quarterback_rows(cache)
     if rows is None:
-        return quarterback.apply(games, None, at=moment), said
+        return quarterback.apply(games, None), said
     latest = nfeloqb.state(rows)
     if (unknown := nfeloqb.unknown_teams(latest, games)):
         # A spelling the source uses and nflverse does not is a team that never adjusts,
@@ -195,11 +198,10 @@ def _rated_by_week(games: pl.DataFrame, rows: pl.DataFrame, latest: pl.DataFrame
                           & (pl.col("first_kickoff") <= pl.lit(moment))))
     started = dict(zip(first["week"].to_list(), first["first_kickoff"].to_list(), strict=True))
     ordered = games.with_row_index("_order")
-    parts = [quarterback.apply(ordered.filter(~pl.col("week").is_in(list(started))), latest,
-                               at=moment)]
+    parts = [quarterback.apply(ordered.filter(~pl.col("week").is_in(list(started))), latest)]
     for week, kickoff in started.items():
         parts.append(quarterback.apply(ordered.filter(pl.col("week") == week),
-                                       nfeloqb.state(rows, as_of=kickoff), at=moment))
+                                       nfeloqb.state(rows, as_of=kickoff)))
     return pl.concat(parts).sort("_order").drop("_order")
 
 
@@ -298,8 +300,8 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
               f"only if it was committed before kickoff")
     cov = schedule.by_source(slate)
     print(f"    {slate.height - cov['unpriced']} of {slate.height} games priced: "
-          f"{cov['snapshot']} from a dated snapshot, {cov['schedule']} from the moving "
-          f"field, {cov['unpriced']} unpriced")
+          f"{cov['live']} from a live snapshot, {cov['stale']} from a stale one, "
+          f"{cov['schedule']} from the moving field, {cov['unpriced']} unpriced")
     # Read off the fitted object rather than off a class name, so the line says what ran
     # and not what this module used to import.
     print(f"    model={model.name} version={model.version}"

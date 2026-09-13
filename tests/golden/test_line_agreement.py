@@ -112,7 +112,8 @@ def test_the_coverage_report_accounts_for_every_game(priced):
     games, _ = priced
     cov = schedule.by_source(games)
     assert sum(cov.values()) == games.height
-    assert cov["snapshot"], "no game priced from a snapshot; the store or the as-of moment"
+    assert cov["live"] or cov["stale"], (
+        "no game priced from a snapshot; the store or the as-of moment")
 
 
 @pytest.mark.golden
@@ -120,5 +121,8 @@ def test_every_game_the_snapshot_priced_names_the_snapshot_that_did_it(priced):
     """"Which source" is only half of provenance. There are seven snapshots in this store
     and the row has to say which one, or re-deriving it means guessing."""
     games, _ = priced
-    from_snap = games.filter(pl.col("price_source") == "snapshot")
+    from_snap = games.filter(pl.col("price_source").is_in(["live", "stale"]))
     assert from_snap["priced_at"].null_count() == 0
+    # and a row the moving field priced over a stale snapshot cites no snapshot (#281)
+    assert games.filter(pl.col("price_source") == "schedule")["priced_at"].null_count() == (
+        games.filter(pl.col("price_source") == "schedule").height)

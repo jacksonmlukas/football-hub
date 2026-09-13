@@ -34,6 +34,15 @@ opposite holds -- The Odds API is already posting week 18. What the fallback is 
 is a store with no snapshot for a game: a fresh clone, a poller that has been down since the
 last schedule refresh, or a game the pull did not return. Dropping those games would shrink
 the slate rather than admit what priced it.
+
+**And since #281, a snapshot outranks the moving field only while it is a live price.** #210
+measured the archive: every week from 2 out had returned the identical quote at every poll
+for the full twelve days it spanned. A quote no book has touched across a slate's worth of
+news is a posted lookahead, and ranking it above a field upstream still refreshes labelled
+it as though it were priced. So `price_source` is three-way -- `live`, `stale`, `schedule`
+-- decided from the staleness field by the one cut `hub.models.quarterback.live_price`
+declares: a live snapshot prices the game; a stale one yields to the moving field where
+that field has a number and prices the game, labelled stale, where it does not.
 """
 from __future__ import annotations
 
@@ -47,6 +56,7 @@ import polars as pl
 
 from hub import store
 from hub.fetch import nflverse, odds
+from hub.models import quarterback
 
 ET = ZoneInfo("America/New_York")
 
@@ -135,12 +145,20 @@ SLATES: dict[str, Callable[[int, Path | None], Slate]] = {"nfl": _nfl_slate}
 
 def priced_games(season: int, *, at: datetime | None = None, cache: Path | None = None,
                  base: Path | None = None, league: str = "nfl") -> pl.DataFrame:
-    """Every scheduled game, priced from the dated snapshot where one exists.
+    """Every scheduled game, priced from the dated snapshot where a live one exists.
 
     Carries `close_spread` -- the number to use -- alongside the two candidates it was
     chosen from, plus `price_source` naming which one won and `priced_at` naming the
-    snapshot that did it. A game neither source prices keeps a null `close_spread` and a
-    null source: absent from the plan rather than guessed at.
+    snapshot that did it, null where the moving field did. A game neither source prices
+    keeps a null `close_spread` and a null source: absent from the plan rather than guessed
+    at.
+
+    `price_source` is `live` (a snapshot whose quote has stood within
+    `hub.models.quarterback.STALE_AFTER_DAYS` at `at`), `schedule` (the moving field: no
+    snapshot, or a snapshot gone stale), or `stale` (a stale snapshot and nothing else to
+    price the game from -- used, and said so). The staleness columns `polls_unmoved` and
+    `unmoved_since` describe the snapshot candidate whichever way it went, so a row the
+    moving field priced over a frozen snapshot still shows how long that quote had stood.
 
     `at` defaults to now, in UTC and naive, which is how `hub.fetch.odds` stamps
     `captured_at`. Passing a *local* `datetime.now()` silently asks the as-of question hours
@@ -188,12 +206,27 @@ def priced_games(season: int, *, at: datetime | None = None, cache: Path | None 
     stale = odds.staleness_as_of(moment, season, base)
     snaps = snaps.join(stale, left_on=["game_id", "priced_at"],
                        right_on=["game_id", "captured_at"], how="left")
+    # The cut is the quarterback layer's, applied here and read there (#281). The branch
+    # order is the ranking: a live snapshot first, then the moving field, then a stale
+    # snapshot only where the moving field has nothing -- which is what stops a frozen
+    # lookahead outranking a field upstream still refreshes.
+    snapshot = pl.col("snapshot_spread").is_not_null()
+    moving = pl.col("schedule_spread").is_not_null()
+    source = (pl.when(snapshot & quarterback.live_price(moment)).then(pl.lit("live"))
+                .when(moving).then(pl.lit("schedule"))
+                .when(snapshot).then(pl.lit("stale"))
+                .otherwise(None))
+    from_snapshot = pl.col("price_source").is_in(["live", "stale"])
     return (games.join(snaps, on="game_id", how="left")
+                 .with_columns(source.alias("price_source"))
                  .with_columns(
-                     pl.coalesce("snapshot_spread", "schedule_spread").alias("close_spread"),
-                     pl.when(pl.col("snapshot_spread").is_not_null()).then(pl.lit("snapshot"))
-                       .when(pl.col("schedule_spread").is_not_null()).then(pl.lit("schedule"))
-                       .otherwise(None).alias("price_source")))
+                     pl.when(from_snapshot).then(pl.col("snapshot_spread"))
+                       .when(pl.col("price_source") == "schedule")
+                       .then(pl.col("schedule_spread"))
+                       .otherwise(None).alias("close_spread"),
+                     # The citation names the snapshot that priced the row and no other.
+                     pl.when(from_snapshot).then(pl.col("priced_at")).otherwise(None)
+                       .alias("priced_at")))
 
 
 def forecastable(games: pl.DataFrame, at: datetime | None = None) -> pl.DataFrame:
@@ -233,7 +266,8 @@ def by_source(games: pl.DataFrame) -> dict[str, int]:
     output, not only in the watchdog.
     """
     src = games["price_source"]
-    return {"snapshot": int((src == "snapshot").sum()),
+    return {"live": int((src == "live").sum()),
+            "stale": int((src == "stale").sum()),
             "schedule": int((src == "schedule").sum()),
             "unpriced": int(src.null_count())}
 
@@ -258,19 +292,30 @@ class Provenance(NamedTuple):
 #
 # Stated here rather than in the site writer because this module owns `price_source`, and a
 # classification that lives away from the thing it classifies is one that stops matching it.
+_SNAPSHOT_WHY = ("the capture is dated and immutable, and it is not published: `.gitignore` "
+                 "excludes the processed store as redistributed third-party data the repo "
+                 "cannot publish. The number used is in the artifact; the source it came from "
+                 "is not something a reader can open.")
+
 PROVENANCE: dict[str, Provenance] = {
-    "snapshot": Provenance(
+    "live": Provenance(reader_can_obtain=False, why=_SNAPSHOT_WHY),
+    "stale": Provenance(
         reader_can_obtain=False,
-        why=("the capture is dated and immutable, and it is not published: `.gitignore` "
-             "excludes the processed store as redistributed third-party data the repo "
-             "cannot publish. The number used is in the artifact; the source it came from "
-             "is not something a reader can open.")),
+        why=(_SNAPSHOT_WHY + " And this quote had stood unmoved past the cut that makes a "
+             "snapshot a live price; it priced the game because the moving field had no "
+             "number for it (#281).")),
     "schedule": Provenance(
         reader_can_obtain=False,
         why=("the source is public, but the value has moved. nflverse keeps one current "
              "`spread_line` per game and no history, so the lookahead number this was "
              "priced from cannot be fetched back -- which is why #6 stopped pricing from "
              "it where a snapshot exists.")),
+    # The name every week published before #281 carries. `hub.publish` classifies every
+    # published week on every run, and an old artifact must not take the page down.
+    "snapshot": Provenance(
+        reader_can_obtain=False,
+        why=(_SNAPSHOT_WHY + " Written before #281 split the label into live and stale, so "
+             "whether this quote was a live price at the time is not on the row.")),
 }
 
 

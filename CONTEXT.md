@@ -58,20 +58,25 @@ _Avoid_: cutoff, up to (both read as exclusive to half the people who see them),
 an as-of anywhere but at the fetch boundary.
 
 **Price source**:
-Which input priced a prediction — a dated snapshot, or the moving field it falls back to.
-Carried on the row and in the version string, because a prediction priced from a snapshot
-can be shown afterwards and one priced from a moving field can only be asserted. Two
-predictions that agree on the number and differ here are different artifacts.
+Which input priced a prediction — `live`, a dated snapshot that is a **Live price**;
+`schedule`, the moving field, either because no snapshot exists or because the snapshot has
+gone stale and yields to it (#281); or `stale`, a snapshot past the cut with no moving field
+behind it, used and labelled. Carried on the row and in the version string, because a
+prediction priced from a snapshot can be shown afterwards and one priced from a moving field
+can only be asserted. Two predictions that agree on the number and differ here are different
+artifacts. `snapshot` is the two-way name every week published before #281 carries.
 _Avoid_: line source, provenance alone.
 
 **Live price**:
 A **Snapshot** whose quote has stood unmoved for less than
 `hub.models.quarterback.STALE_AFTER_DAYS` — seven days — at the moment asked. The two
 staleness columns `hub.fetch.odds` derives, `polls_unmoved` and `unmoved_since`, measure;
-"live" is the threshold a consumer declares over them, and this is the one consumer. What is
-not a live price: a snapshot that has stood longer (#210 measured every week from 2 out at the
-full twelve days of the archive), the moving field (nothing polls it, so nothing can show it
-is), and an unpriced game. **Ratings** change nothing where a live price exists.
+"live" is the threshold `quarterback.live_price` declares over them, and
+`hub.schedule.priced_games` is the one place it is applied, writing the **Price source**
+that every consumer then reads (#281). What is not a live price: a snapshot that has stood
+longer (#210 measured every week from 2 out at the full twelve days of the archive), the
+moving field (nothing polls it, so nothing can show it is), and an unpriced game. **Ratings**
+change nothing where a live price exists.
 
 **Ratings**:
 The number the weekly prediction and the survivor grid are built from, and the module that

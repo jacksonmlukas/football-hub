@@ -7,6 +7,11 @@ for weeks, a starting quarterback ruled out reaches survivor and the weekly pred
 through whatever the betting market has already done to it -- which, for most of the
 survivor horizon, is nothing the poller can see.
 
+Since #281 the row arrives already labelled. `hub.schedule.priced_games` applies
+`live_price` below to write `price_source` as `live`, `stale` or `schedule`, and `apply`
+reads that label: the one cut, declared here and applied there, so the coalesce that
+chooses the number and the layer that may move it agree row by row.
+
 **What licenses it, and how far.** `docs/qb-adjustment.md`: 538 shipped both a base and a
 quarterback-adjusted win probability for every game, and the Brier difference between the
 two columns over 2013-2022 is +0.0057 with a 95% t interval excluding zero, positive in 9 of
@@ -79,25 +84,36 @@ def points(state: pl.DataFrame) -> pl.DataFrame:
     return state.select(pl.col("team"), (pl.col("qb_adj") / ELO_PER_POINT).alias("points"))
 
 
-def no_live_price(games: pl.DataFrame, at: datetime) -> pl.Expr:
-    """The rows the staleness field marks as having no live price, and that carry a number
-    to adjust.
+def live_price(at: datetime) -> pl.Expr:
+    """Whether a snapshot's quote is a live price at `at`: the run of polls returning it
+    began within `STALE_AFTER_DAYS`, read off `unmoved_since`.
 
-    A snapshot is live while the run of polls returning its quote began within
-    `STALE_AFTER_DAYS` of `at`. The moving field is never live: nothing polls it, so nothing
-    can show it is. A snapshot row on a frame that carries no staleness columns is not
-    *marked* either way and is left alone -- the rule reaches only what the field says.
+    The one declaration of the cut, and it is applied in exactly one place --
+    `hub.schedule.priced_games`, which labels every row `live`, `stale` or `schedule` and
+    lets a stale snapshot lose to the moving field (#281). This module then reads the label
+    rather than the clock, so the coalesce and the adjustment cannot disagree about a row;
+    when #251 settles what "live" should read (the poll age, what a change in book set does
+    to the run), it changes here and both consumers move together.
+
+    A snapshot the staleness field has no row for is not *marked* either way and reads as
+    live -- the rule reaches only what the field says, and that is how every snapshot read
+    before #210 existed.
+    """
+    since = pl.col("unmoved_since")
+    return since.is_null() | (since >= pl.lit(at - timedelta(days=STALE_AFTER_DAYS)))
+
+
+def no_live_price(games: pl.DataFrame) -> pl.Expr:
+    """The rows `price_source` marks as having no live price, and that carry a number to
+    adjust: a stale snapshot, or the moving field, which nothing polls. The label is
+    `hub.schedule.priced_games`'s, decided by `live_price` above; nothing here re-derives
+    it, which is what keeps the two consumers of the cut in agreement (#281).
     """
     priced = pl.col("close_spread").is_not_null()
-    moving = pl.col("price_source") == "schedule"
-    if "unmoved_since" not in games.columns:
-        return priced & moving
-    stood = pl.col("unmoved_since") < pl.lit(at - timedelta(days=STALE_AFTER_DAYS))
-    frozen = (pl.col("price_source") == "snapshot") & pl.col("unmoved_since").is_not_null() & stood
-    return priced & (moving | frozen)
+    return priced & pl.col("price_source").is_in(["stale", "schedule"])
 
 
-def apply(games: pl.DataFrame, state: pl.DataFrame | None, *, at: datetime) -> pl.DataFrame:
+def apply(games: pl.DataFrame, state: pl.DataFrame | None) -> pl.DataFrame:
     """The slate with its ratings adjusted where no live price exists, and said so.
 
     Every column the frame arrived with is returned as it arrived on every row a live price
@@ -116,7 +132,7 @@ def apply(games: pl.DataFrame, state: pl.DataFrame | None, *, at: datetime) -> p
     home = pts.rename({"team": "home_team", "points": "_home_points"})
     away = pts.rename({"team": "away_team", "points": "_away_points"})
     joined = games.join(home, on="home_team", how="left").join(away, on="away_team", how="left")
-    touched = (no_live_price(games, at) & pl.col("_home_points").is_not_null()
+    touched = (no_live_price(games) & pl.col("_home_points").is_not_null()
                & pl.col("_away_points").is_not_null())
     delta = pl.col("_home_points") - pl.col("_away_points")
     return (joined.with_columns(
