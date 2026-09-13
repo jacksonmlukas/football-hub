@@ -99,8 +99,30 @@ TALENT_CV_BY_POS = fitted({"QB": 0.20, "RB": 0.38, "WR": 0.31, "TE": 0.18})
 # TE 0.220 (21); pooled 0.260, median -0.03 (the smoothed curve sits a little low). Added
 # in quadrature to the talent spread, since the error of the mean and the spread around it
 # are independent by construction. ADR-0006: fitted, so it lives here beside its number
-# and moves the digest when it moves; the script is `scratchpad/impute_err.py` of that day
-# and the procedure is the paragraph above.
+# and moves the digest when it moves.
+#
+# **Measured on the wrong population, and superseded by a committed measurement on the right
+# one (#277, 2026-09-13).** The numbers below are a leave-one-out error on *blanked
+# veterans* -- players whose rank was set partly by the production the curve predicts. The
+# players the board imputes are *rookies*, whose rank carries no such information, so this
+# is a lower bound on the error the flag carries. The script that produced it was a
+# scratchpad file and is not in the tree; the committed successor is
+# `scripts/fit_impute_cv.py` (`hub.draft.impute_cv`), which measures rookies -- first
+# weekly line in nflverse player stats is the board season, inside the top 200 by consensus
+# on that season's board -- against the curve's own prediction. Run 2026-09-13 on the
+# 2021-25 boards, 92 rookies over 5 seasons (the clusters), >= 8 games:
+#
+#     residual CV        QB (8)   RB (36)   WR (42)   TE (6)   pooled (92)
+#     shipped, veterans  0.217    0.334     0.223     0.220    0.260
+#     rookies, vs PPG    0.186    0.423     0.379     0.378    0.395  (se 0.031 over players)
+#     rookies, vs xFP    0.164    0.359     0.288     0.319    0.324  (se 0.026)
+#
+# `vs xFP` is the like-for-like: the season's own xFP per game, the quantity the
+# curve imputes and what the veteran measurement compared against. Both read above the
+# shipped pooled value by two to four standard errors; QB and TE are eight and six players.
+# The constant keeps shipping meanwhile -- withdrawing to `TALENT_CV_BY_POS` would
+# under-state the risk further -- and moving it to the rookie number is a decision, not
+# this fit's side effect.
 #
 # **A better imputation was tried and did not beat this, 2026-09-11 (#88).** The one input the
 # board carries that consensus rank does not is the draft market's disagreement with it, so
