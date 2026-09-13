@@ -120,6 +120,12 @@ jobs:
           else
             echo "::notice::deadline $(jq -r '.deadline.id' "$B") captured: $(jq -r '.documents | "\(.seen) documents, \(.new) new"' "$B"); lines $(jq -r '.lines.rows' "$B") rows"
           fi
+          # Links the rules declined to follow (#265): an ad is expected, a report behind a
+          # host the allowlist does not know is the thing this line exists to surface.
+          SKIPPED=$(jq -r '.skipped.count // 0' "$B")
+          if [ "$SKIPPED" != "0" ]; then
+            echo "::notice::$SKIPPED links not followed: $(jq -r '.skipped.by_reason | to_entries | map("\(.key)=\(.value)") | join(" ")' "$B"); hosts $(jq -r '.skipped.hosts | join(" ")' "$B")"
+          fi
           MISSED=$(jq -r '.missed.count' "$B")
           if [ "$MISSED" != "0" ]; then
             echo "::warning::$MISSED deadlines have no capture: $(jq -r '.missed.deadlines | join(" ")' "$B")"

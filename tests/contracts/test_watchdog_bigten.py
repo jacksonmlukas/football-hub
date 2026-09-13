@@ -86,6 +86,15 @@ def test_a_stale_stamp_inside_a_window_is_an_incident_and_a_fresh_one_closes_it(
     assert "2026-10-03T1500Z" in got["close_note"]
 
 
+def test_a_fresh_stamp_that_archived_no_report_is_an_incident_with_the_reason():
+    """#278: written on time and kept nothing is the stall wearing a fresh date. It files
+    like a stall and says so, rather than being read as healthy or as predating the deadline."""
+    got = _verdict("inside 2026-10-03T1500Z empty 5700")
+    assert got["verdict"] == "stale" and got["closes"] == "false", got
+    assert "no report document" in got["why"] and "2026-10-03T1500Z" in got["why"], got
+    assert "predates" not in got["why"], "the stamp is fresh; that is the point"
+
+
 def test_outside_every_window_the_run_reports_that_rather_than_measuring():
     """The second acceptance criterion, read off the branch. A stamp that predates the
     deadline is not evidence while a late start may still be queued."""

@@ -367,8 +367,9 @@ jobs:
       #     nothing; the next run inside the window is what catches a real stall.
       #   * `preseason` -- nothing captures yet, so a standing incident is unfounded
       #     whoever filed it, and it closes.
-      #   * everything else measures. `inside ... stale`, `unreachable`, `unreadable` and a
-      #     line this step cannot read all file: the fall-throughs point at monitoring.
+      #   * everything else measures. `inside ... stale`, `inside ... empty`, `unreachable`,
+      #     `unreadable` and a line this step cannot read all file: the fall-throughs point
+      #     at monitoring.
       - name: What this run can conclude about the capture
         id: capture
         run: |
@@ -393,7 +394,13 @@ jobs:
               echo "closes=false"      >> "$GITHUB_OUTPUT"
               echo "detail=deadline $DEADLINE fired less than the delay ago; its window opens in ${STATE}s" >> "$GITHUB_OUTPUT" ;;
             inside)
-              if [ "$STATE" = "ok" ]; then
+              if [ "$STATE" = "empty" ]; then
+                # Written on time, archived no report (#278): the stall wearing a fresh
+                # date. Files like a stall, with the reason a reader needs.
+                echo "verdict=stale" >> "$GITHUB_OUTPUT"
+                echo "closes=false"  >> "$GITHUB_OUTPUT"
+                echo "why=bigten.json was written ${REST}s ago for the $DEADLINE deadline and says the page was fetched and no report document was archived from it; the capture is running against a page it no longer reads" >> "$GITHUB_OUTPUT"
+              elif [ "$STATE" = "ok" ]; then
                 echo "verdict=healthy" >> "$GITHUB_OUTPUT"
                 echo "closes=true"     >> "$GITHUB_OUTPUT"
                 echo "close_reason=completed" >> "$GITHUB_OUTPUT"
