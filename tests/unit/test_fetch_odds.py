@@ -227,6 +227,20 @@ def test_a_sub_floor_reading_with_no_date_refuses(transport, teams, schedule, pa
     assert not calls
 
 
+def test_the_credits_report_says_what_the_next_pull_will_do(paths, capsys, monkeypatch):
+    """`--credits` and `--snapshot` must agree about a sub-floor reading: the report reads
+    the same rule the guard does, so it says "probe" after the month turns and "refuse"
+    before it."""
+    monkeypatch.setattr(odds, "_api_key", lambda: "test-key")
+    paths["state"].write_text(json.dumps({"remaining": 3, "checked_at": "2000-01-15T10:00:00"}))
+    odds.credits_report(paths["state"])
+    assert "probe" in capsys.readouterr().out
+    now = dt.datetime.now(dt.UTC).replace(tzinfo=None)
+    paths["state"].write_text(json.dumps({"remaining": 3, "checked_at": now.isoformat()}))
+    odds.credits_report(paths["state"])
+    assert "refuse" in capsys.readouterr().out
+
+
 def test_the_first_ever_pull_is_allowed(transport, teams, schedule, paths):
     """No stored balance is unknown, not empty. Refusing would be unrecoverable."""
     calls = transport()

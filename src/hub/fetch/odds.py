@@ -202,6 +202,11 @@ def known_balance(path: Path | None, when: datetime, *, floor: int = CREDIT_FLOO
     one from this month refuses as before. Readings above the floor pass either way, and an
     undated sub-floor reading refuses: the reset is inferred from the stamp, and a reading
     with none could be from this morning.
+
+    The calendar month is The Odds API's stated cycle ("usage resets at the start of each
+    month"), not something this repo has observed. If the boundary is elsewhere, the cost
+    is one refused pull a month at the mismatch -- the original fault bounded, not
+    reintroduced.
     """
     state = _read_state(path)
     have = state.get("remaining")
@@ -1290,6 +1295,13 @@ def credits_report(path: Path | None = None) -> int:
     else:
         print(f"  odds credits: {have:,} remaining, floor {CREDIT_FLOOR} "
               f"(as of {state.get('checked_at', '?')})")
+        # What the next pull will do with it, which is not the same question once the
+        # month has turned (#264).
+        now = datetime.now(UTC).replace(tzinfo=None)
+        if have < CREDIT_FLOOR and known_balance(path, now) is None:
+            print("  that reading is from an earlier month; the next pull will probe the reset")
+        elif have < CREDIT_FLOOR:
+            print("  below the floor; the next pull will refuse")
     if not _api_key():
         print("  no ODDS_API_KEY set; fetching unavailable, accounting still works")
     return 0
