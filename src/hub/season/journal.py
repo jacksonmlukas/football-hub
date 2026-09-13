@@ -104,12 +104,21 @@ SCHEMA: dict[str, Any] = {
     "fallback": pl.Utf8,        # what auto-pick would have done for free
     "fallback_note": pl.Utf8,   # why there is none, when there is none
     "matched_fallback": pl.Boolean,
-    "market_price": pl.Float64,  # the taken team's win probability when we decided, in
-                                 # [0, 1]; null if unposted. One unit (#239): a caller
-                                 # holding a moneyline converts it through
+    "market_price": pl.Float64,  # the taken pick's win probability on the week when we
+                                 # decided, in [0, 1]; null if unposted. One unit (#239):
+                                 # a caller holding a moneyline converts it through
                                  # `hub.models.props.implied` before writing and says so
                                  # in `price_note`. Rows written before #239 carry
                                  # whichever unit their caller used and are not migrated.
+                                 # **On a double-pick week it is the joint probability**
+                                 # (#256): `chose` spells two teams and this is the
+                                 # product of their two prices, as `fallback_price` is the
+                                 # free pair's -- so `week_cost` stays a difference of two
+                                 # like quantities. A read over the journal that wants a
+                                 # per-team price splits `chose` with
+                                 # `hub.season.pool.pick_teams`; the team count is on the
+                                 # row already, which is why there is no `picks` column
+                                 # beside this to disagree with it.
     "price_note": pl.Utf8,      # which source it came from, or why it is null
     "expected_dollars": pl.Float64,
     "chose_survives": pl.Float64,      # P(the season is survived, having taken what we took)

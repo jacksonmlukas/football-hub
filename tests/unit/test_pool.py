@@ -1283,6 +1283,16 @@ def test_a_weight_vector_that_underflows_to_zero_is_refused_before_the_draw():
     # The same ledger under a concentration the axis sweeps draws as it always did.
     mild = pool.weeks_from_grid(g, [1], PoolConfig(field_concentration=16.0))[0]
     assert pool._pick(np.random.default_rng(0), mild, {"KC", "SF"}, 1) in (["LV"], ["SEA"])
+    # `_chalk_share` divides by the same sum (review): with no ledger the favourites hold
+    # it up until every side underflows, which `0.9 ** 8000` does. One rule, one sentence,
+    # reached from `sensitivity` on an axis a caller supplies.
+    deep = pool.weeks_from_grid(g, [1], PoolConfig(field_concentration=8000.0))[0]
+    assert all(v == 0.0 for v in deep.weight.values())
+    with pytest.raises(ValueError, match=r"field_concentration.*8000") as e:
+        pool._chalk_share(deep)
+    assert str(pool.MIN_PROB) in str(e.value)
+    with pytest.raises(ValueError, match=r"field_concentration.*8000"):
+        pool.sensitivity(g, [1], entries=3, at=(8000.0,), trials=2)
 
 
 def test_the_concentration_changes_the_field_our_plan_meets_and_not_our_picks():

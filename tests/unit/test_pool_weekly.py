@@ -596,6 +596,15 @@ def test_a_double_week_with_one_fixture_left_is_refused_rather_than_priced_as_a_
     # answer as no legal pair -- `auto_pick` answers `None` to the second and raises this.
     with pytest.raises(ValueError, match="no `game_id`"):
         pool.auto_pick(DOUBLE.drop("game_id"), 13, pool=PoolConfig())
+    # A null on one side of a real fixture is the same refusal (review): read as text it
+    # was the string "None", unequal to its opponent's id, and KC+LV became a pair.
+    holed = DOUBLE.with_columns(
+        pl.when(pl.col("team") == "LV").then(None).otherwise(pl.col("game_id")).alias("game_id"))
+    with pytest.raises(pool.UncoverableWeek, match="no `game_id`"):
+        _weekly(holed, [13, 14], week=13, trials=10)
+    with pytest.raises(pool.UncoverableWeek, match="no `game_id`"):
+        pool.leverage(holed, [13, 14], week=13, entries=12, pot=420.0, at=(1.0,), trials=5)
+    assert pool.auto_pick(holed, 13, pool=PoolConfig()) is None
 
 
 def test_the_leverage_term_in_a_double_week_is_measured_on_pairs():

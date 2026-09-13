@@ -137,6 +137,28 @@ def test_a_week_the_clock_has_entered_is_behind_by_default_and_decidable_by_name
     assert " BUF " in body and " NYJ " in body
 
 
+def test_a_played_week_with_no_pick_of_record_is_said_loudly_rather_than_skipped(
+        tmp_path, capsys, monkeypatch):
+    """Review of #263: the default week skips any week the clock has entered, so a missed
+    Thursday deadline vanished silently -- nothing spent, nothing said. The default stays;
+    what changes is that every played week with no pick of record, in the journal or the
+    published plan, is named on stderr. Week 1 here is over and nothing recorded a pick
+    for it; week 2's Thursday game is over and the plan holds SF for it."""
+    grid = _grid().with_columns(
+        pl.when((pl.col("week") == 2) & pl.col("team").is_in(["KC", "LV"]))
+        .then(pl.lit(1.0)).otherwise(pl.col("result")).alias("result"))
+    monkeypatch.setattr(sv, "grid_from_schedule", lambda season, cache=None: grid)
+    monkeypatch.setattr(sv, "published_plan", lambda path=None: [{"week": 2, "team": "SF"}])
+    assert pool.main(_run(tmp_path)) == 0
+    err = capsys.readouterr().err
+    assert "week 1" in err and "no pick of record" in err and "week 2" not in err
+    # A journal row is a pick of record too: recorded, week 1 is no longer named.
+    journal.record(season=2026, week=1, kind="pick", chose="DAL", fallback="DAL",
+                   at=dt.datetime(2026, 9, 9, 12, 0), base=tmp_path)
+    assert pool.main(_run(tmp_path)) == 0
+    assert "no pick of record" not in capsys.readouterr().err
+
+
 def test_the_field_is_read_from_the_pool_host_and_named_on_the_journal_row(
         board, tmp_path, capsys):
     """#280 at the entry point. With a pool state under the store, the live count, the pot

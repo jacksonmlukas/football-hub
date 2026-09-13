@@ -193,6 +193,12 @@ reconsidered.
 > without the other is refused. `survival_given_up` stays beside it under its own name as the
 > thesis of our plan working — not the threshold quantity, and not dropped, because dropping it
 > loses the argument for the plan. The threshold itself has not moved, so nothing is re-derived.
+> *Units on a double-pick week, 2026-09-12 (#256):* `chose` there spells two teams, and
+> `market_price` and `fallback_price` are each the **joint** probability of a pair on the
+> week, so `week_cost` is still a difference of two like quantities and the threshold reads
+> as it does on a single week. A read that wants a per-team price splits `chose` with
+> `hub.season.pool.pick_teams`; the team count is on the row, which is why no `picks` column
+> was added beside the price to disagree with it.
 > `tests/unit/test_journal.py` holds this line against the schema: if this ADR is re-pointed at
 > another column, or the column's arithmetic changes, that test fails.
 

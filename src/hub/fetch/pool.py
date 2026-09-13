@@ -462,7 +462,10 @@ def write_state(state: PoolState, base: Path | None = None, *,
     (`hub.store.write` under `pool_state/league=nfl/season=/week=/snap-<moment>`), holding
     the validated rows and the capture time. Append-only by the store's own rule: a partition
     is named by its moment and a differing rewrite of one is refused, never destroyed. The
-    week is the host's current week, so a week has as many partitions as it had reads.
+    week is the host's current week, so a week has as many partitions as it had reads --
+    and there is no retention: every `--refresh` adds one, as every odds poll adds a
+    `lines` partition, and nothing prunes either. A partition here is a few rows, and the
+    field a decision was priced against is exactly what a later pruning would lose.
 
     The privacy design is unchanged: the rows archived are exactly the rows validated --
     index, liveness, Ledger -- and no id or name exists on the state to be written.
