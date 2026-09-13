@@ -516,6 +516,28 @@ def test_calibration_on_no_games_is_an_empty_typed_frame():
     assert {"bucket", "n", "gaussian"} <= set(got.columns)
 
 
+def test_survival_beside_is_labelled_as_the_independence_bound_it_is(monkeypatch, capsys):
+    """#286. An eighteenth power of one bucket's rate asserts one price every week and
+    independence across weeks, and it was printed in the register of the measured numbers
+    beside it with no interval, so it read as one. The figure now carries the games its rate
+    rests on, and the line names it as the bound it is -- on the report path, not only on
+    the function."""
+    cal = pl.DataFrame({"bucket": ["[0, 3)", "favourites"], "n": [40, 10],
+                        "gaussian": [0.55, 0.8], "lumpy": [0.55, 0.75], "actual": [0.5, 0.9]})
+    got = margin.survival_beside(cal, picks=3)
+    assert got["n"] == 10.0
+    line = margin.survival_line(got)
+    assert "Survival over 3 such favourites" in line
+    assert "independence bound" in line and "10 games" in line
+    assert "not a measurement" in line and f"{0.9 ** 3:.4f}" in line
+
+    import nflreadpy as nfl
+    sched = _lumpy_synthetic(seasons=range(2010, 2021), share=0.4, symmetric=False)
+    monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: sched)
+    assert margin.main(["--shape"]) == 0
+    assert "independence bound" in capsys.readouterr().out
+
+
 def test_survival_beside_an_empty_calibration_is_nan():
     """A season-long product over no buckets is undefined, and the picks count is still
     reported so a reader can see what was asked for."""

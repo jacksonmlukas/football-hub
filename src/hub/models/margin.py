@@ -363,16 +363,32 @@ def survival_beside(calibration: pl.DataFrame, *, picks: int | None = None) -> d
     the realised rate. `picks` defaults to `hub.season.survivor.NFL_WEEKS`, read from the
     module that owns the season's length rather than restated; imported inside because the
     product's module is downstream of this one.
+
+    **It is a bound, not a measurement** (#286). Raising one bucket's rate to the
+    eighteenth power asserts that every week is priced at that rate and that the weeks are
+    independent; a real plan's favourites are priced differently week to week and share a
+    season. No interval is carried because none would be honest -- the sampling error on
+    the rate is the smaller of its two errors, and the other is the assumption. What is
+    carried is `n`, the games the rate rests on, and `survival_line` is the one place the
+    figure is printed, so it is labelled wherever it is read.
     """
     if picks is None:
         from hub.season.survivor import NFL_WEEKS
         picks = NFL_WEEKS
     fav = calibration.filter(pl.col("bucket") == "favourites")
     if fav.is_empty():
-        return {"picks": float(picks), "gaussian": float("nan"), "lumpy": float("nan"),
-                "actual": float("nan")}
-    return {"picks": float(picks), **{c: float(fav[c][0]) ** picks
-                                      for c in ("gaussian", "lumpy", "actual")}}
+        return {"picks": float(picks), "n": 0.0, "gaussian": float("nan"),
+                "lumpy": float("nan"), "actual": float("nan")}
+    return {"picks": float(picks), "n": float(fav["n"][0]),
+            **{c: float(fav[c][0]) ** picks for c in ("gaussian", "lumpy", "actual")}}
+
+
+def survival_line(surv: dict[str, float]) -> str:
+    """`survival_beside` as the one line it is printed on, labelled as the bound it is."""
+    return (f"Survival over {int(surv['picks'])} such favourites, as the independence bound "
+            f"-- one rate every week, weeks independent, off {int(surv['n'])} games -- and "
+            f"not a measurement: gaussian {surv['gaussian']:.4f}  lumpy {surv['lumpy']:.4f}  "
+            f"realised {surv['actual']:.4f}")
 
 
 
@@ -460,9 +476,7 @@ def _report_shape(resid: pl.DataFrame, *, trailing: int = TRAILING) -> None:
     for r in cal.iter_rows(named=True):
         print(f"  {r['bucket']:>12} {r['n']:>6} {r['gaussian']:>9.3f} {r['lumpy']:>8.3f} "
               f"{r['actual']:>8.3f}")
-    surv = survival_beside(cal)
-    print(f"\n  Survival over {int(surv['picks'])} such favourites: gaussian "
-          f"{surv['gaussian']:.4f}  lumpy {surv['lumpy']:.4f}  realised {surv['actual']:.4f}")
+    print(f"\n  {survival_line(survival_beside(cal))}")
 
     _, sentence = shape_verdict(wf)
     print(f"\n  {sentence}")

@@ -498,6 +498,8 @@ class _Week(NamedTuple):
     fixture: dict[str, int]                     # team -> which game in `games` it plays in
     picks: int                                  # 1, or 2 in a double-pick week
     dropped: int = 0                            # fixtures in the week priced on one side only
+    concentration: float = 1.0                  # the exponent `weight` was raised to, so a
+                                                # refusal in `_pick` can name it (#286)
 
 
 def grid_digest(grid: pl.DataFrame) -> str:
@@ -618,7 +620,7 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
         out.append(_Week(tuple(games), teams, prob, pickable,
                          {t: prob[t] ** k for t in sorted(pickable)},
                          {t: i for i, g in enumerate(games) for t in (g[0], g[1])},
-                         f.needs, len(f.half)))
+                         f.needs, len(f.half), k))
     return out
 
 
@@ -658,14 +660,23 @@ def _pick(rng: np.random.Generator, week: _Week, ledger: set[str], k: int) -> li
     Its sampling weight was near zero either way, which is why the figures barely move; what
     moves is that one rule now says what may be taken, in both places that take one.
 
-    That also retires a guard. This returned None a second time when the weights summed to
-    zero -- a whole week of teams the betting market gives no chance -- which was the only way a
-    zero-priced team could reach the sampler at all. Every member of `pickable` is above
-    `MIN_PROB` by construction, so a non-empty `avail` cannot sum to zero and the branch was
-    unreachable rather than merely untaken. Deleted, because a guard that cannot fire still
-    reads as a case someone has thought about. That argument survives the exponent: a positive
-    weight raised to a finite non-negative power is positive, and `weeks_from_grid` refuses
-    every other power.
+    That retired one guard and, for a while, argued away another. This returned None a
+    second time when the weights summed to zero -- a whole week of teams the betting market
+    gives no chance -- which was the only way a zero-priced team could reach the sampler at
+    all. Every member of `pickable` is above `MIN_PROB` by construction, so a non-empty
+    `avail` cannot sum to zero and *that* branch was unreachable rather than merely untaken;
+    deleted, because a guard that cannot fire still reads as a case someone has thought
+    about. The docstring then claimed the argument survived the exponent, because a
+    positive weight raised to a finite non-negative power is positive. **True in the reals,
+    false in float64** (#286): with the floor at `MIN_PROB` and a concentration of 400 --
+    legal, since `weeks_from_grid` refuses only a negative or non-finite one -- every
+    probability below about 0.17 is raised to exactly zero, and a rival whose legal teams
+    are all underdogs holds a vector that sums to zero. `w / w.sum()` was then NaN and
+    `rng.choice` raised it several frames from the setting that caused it. So the vector is
+    checked where it is built: a sum that is not positive is refused with the concentration
+    and the floor named, before the draw, and it is an error rather than an elimination
+    because the entry had legal teams and the arithmetic lost them. Unreachable on the
+    default axis, which tops out at 16; reachable on any a caller supplies.
     """
     avail = [t for t in week.teams if t in week.pickable and t not in ledger]
     # Fixtures, not teams. A double-pick week whose only legal teams are the two sides of one
@@ -676,7 +687,18 @@ def _pick(rng: np.random.Generator, week: _Week, ledger: set[str], k: int) -> li
     out: list[str] = []
     while len(out) < k:
         w = np.array([week.weight[t] for t in avail], dtype=float)
-        got = str(rng.choice(avail, size=1, replace=False, p=w / w.sum())[0])
+        total = float(w.sum())
+        if not total > 0.0:
+            best = max(week.prob[t] for t in avail)
+            raise ValueError(
+                f"every sampling weight for the {plural(len(avail), 'team')} this entry may "
+                f"still take is zero: `PoolConfig.field_concentration` is "
+                f"{week.concentration:g}, the likeliest of them is priced at {best:.4g}, and "
+                f"`win_prob ** {week.concentration:g}` underflows float64 for all of them. "
+                f"The floor `MIN_PROB` is {MIN_PROB}, which keeps a team pickable in the "
+                "reals and not at this exponent. Lower the concentration; the default axis "
+                "runs to 16.")
+        got = str(rng.choice(avail, size=1, replace=False, p=w / total)[0])
         out.append(got)
         avail = [t for t in avail if week.fixture[t] != week.fixture[got]]
     return out

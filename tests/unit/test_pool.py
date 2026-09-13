@@ -1262,6 +1262,29 @@ def test_a_concentration_that_inverts_the_rule_is_refused():
     assert pool._chalk_share(wk)[1] == pytest.approx(1 / len(wk.pickable))
 
 
+def test_a_weight_vector_that_underflows_to_zero_is_refused_before_the_draw():
+    """#286. `_pick`'s docstring argued in the reals: a positive weight raised to a finite
+    non-negative power is positive, so a non-empty `avail` cannot sum to zero. In float64
+    `0.12 ** 400` is exactly zero, and with the two favourites already spent every team
+    left to a rival underflows together: the weights sum to zero, the probability vector
+    is NaN, and `rng.choice` raised it several frames from the concentration that caused
+    it. The vector is refused where it is built, naming the concentration and the floor.
+
+    Legal, not pathological: 400 passes `weeks_from_grid`'s check, and every team here is
+    above `MIN_PROB`. The fixture is the condition the guard exists for -- a low axis under
+    a high exponent -- not the one on which it cannot fire."""
+    g = _grid([(1, "KC", "LV", 0.90), (1, "SF", "SEA", 0.88)])
+    wk = pool.weeks_from_grid(g, [1], PoolConfig(field_concentration=400.0))[0]
+    assert wk.prob["LV"] > pool.MIN_PROB and wk.weight["LV"] == 0.0
+    assert wk.weight["KC"] > 0.0, "the favourite still carries a weight, so the week is legal"
+    with pytest.raises(ValueError, match=r"field_concentration.*400") as e:
+        pool._pick(np.random.default_rng(0), wk, {"KC", "SF"}, 1)
+    assert str(pool.MIN_PROB) in str(e.value) and "NaN" not in str(e.value)
+    # The same ledger under a concentration the axis sweeps draws as it always did.
+    mild = pool.weeks_from_grid(g, [1], PoolConfig(field_concentration=16.0))[0]
+    assert pool._pick(np.random.default_rng(0), mild, {"KC", "SF"}, 1) in (["LV"], ["SEA"])
+
+
 def test_the_concentration_changes_the_field_our_plan_meets_and_not_our_picks():
     """What #151 bought, held: the knob is the rivals' rule, so it must reach the field our
     entry is scored against and not the picks it plays.
