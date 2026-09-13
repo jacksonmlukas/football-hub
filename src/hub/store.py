@@ -22,6 +22,7 @@ from pathlib import Path
 import duckdb
 import polars as pl
 
+from hub import atomic
 from hub.cli import unavailable
 from hub.config import SEASON_COMPLETED
 
@@ -71,18 +72,27 @@ def write(df: pl.DataFrame, table: str, league: str, season: int, week: int,
     p = partition(table, league, season, week, name, base)
     p.parent.mkdir(parents=True, exist_ok=True)
     if p.exists() and not replace:
+        # GUARD partition-not-silently-overwritten: a differing partition is never destroyed unasked
         try:
             unchanged = pl.read_parquet(p).equals(df)
-        except Exception:                  # an unreadable partition is not a match
-            unchanged = False
-        # GUARD partition-not-silently-overwritten: a differing partition is never destroyed unasked
+        except Exception as e:
+            # Named as what it is. This used to collapse into "different data" and the
+            # instruction below, which is a data-loss instruction for a corruption (#258):
+            # what the file held is not recoverable from here, and the operator deciding
+            # that should be told so rather than told to replace a partition that differs.
+            raise FileExistsError(
+                f"{p} is unreadable ({type(e).__name__}: {e}). This is a corrupt "
+                f"partition, not one that disagrees with the frame, and nothing in it can "
+                f"be recovered from here. Move the file aside to keep its bytes for "
+                f"inspection, or pass `replace=True` to discard them and write this frame "
+                f"in its place.") from e
         if not unchanged:
             raise FileExistsError(
                 f"{p} already holds different data. Pass a distinct `name=` to keep both "
                 f"(what board, ratings and odds do), or `replace=True` to mean it.")
         # /GUARD
         return p
-    df.write_parquet(p)
+    atomic.write_parquet(df, p)
     return p
 
 

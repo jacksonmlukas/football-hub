@@ -54,15 +54,9 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
+from hub.declare import not_an_input
 from hub.models.experiment import MIN_SE, expanding_seasons, paired_gain
 from hub.names import practice_key
-
-NOT_FITTED_BECAUSE = (
-    "the retention table is fitted at run time from nflverse and never frozen into the "
-    "module, so nothing here is a fitted constant. SHRINK_GRID is a search grid, and the "
-    "significance bar it gates on now lives in hub.models.experiment as MIN_SE -- both "
-    "settings. See docs/weekly-injury.md "
-)
 
 # Positions this league drafts.
 
@@ -225,7 +219,10 @@ CANDIDATES = ("baseline", "out_zero", "table", "retention")
 # 1.0 rather than imposing a cell minimum is what lets a thin type (Groin, n=450 across four
 # seasons, far fewer inside any one training window) contribute in proportion to its evidence
 # instead of being either trusted outright or dropped outright.
-SHRINK_GRID = (25.0, 50.0, 100.0, 200.0, 400.0)
+SHRINK_GRID = not_an_input(
+    (25.0, 50.0, 100.0, 200.0, 400.0),
+    "a search grid; the retention table is fitted at run time from nflverse and never "
+    "frozen into this module (docs/weekly-injury.md)")
 
 
 def type_adjustment(obs: pl.DataFrame, table: pl.DataFrame, *, fallback: float,

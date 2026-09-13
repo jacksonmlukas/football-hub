@@ -36,19 +36,19 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import SEASON_COMPLETED
+from hub.declare import not_an_input
 from hub.draft.projection import adjusted
 from hub.names import player_key
-
-NOT_FITTED_BECAUSE = (
-    "hyperparameter search grid, run offline and never at predict time "
-)
 
 ROOT = Path(__file__).resolve().parents[3]
 SWEEP_OUT = ROOT / "docs" / "lambda-sweep.md"
 
 # Spanning "ignore the signal" to "nudge hard". 0.08 is the incumbent, kept in the grid so
 # the write-up can say what it would have scored.
-DEFAULT_GRID: tuple[float, ...] = (0.0, 0.02, 0.04, 0.06, 0.08, 0.12, 0.16, 0.24, 0.32)
+DEFAULT_GRID: tuple[float, ...] = not_an_input(
+    (0.0, 0.02, 0.04, 0.06, 0.08, 0.12, 0.16, 0.24, 0.32),
+    "the hyperparameter search grid, run offline and never at predict time; the value "
+    "it chose is declared where it is read")
 
 # A 12-team league drafts ~192 players, but the first 50 picks decide a season. Scoring the
 # whole board would let deep-bench noise drown the part that matters.
@@ -131,7 +131,10 @@ BOOTSTRAP = 300
 # How many standard errors an improvement must clear before it counts. Two is the usual
 # bar and it is the right one here: consensus is a strong prior and moving off it should
 # require evidence, not a favourable draw.
-MIN_SIGMA = 2.0
+MIN_SIGMA = not_an_input(
+    2.0,
+    "the floor on a projection's sigma the offline tuner scores at; nothing at "
+    "predict time reads it")
 
 
 def sweep(df: pl.DataFrame, lams: Sequence[float] = DEFAULT_GRID,

@@ -78,6 +78,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS, digests, resolved_config
+from hub.declare import not_an_input
 from hub.fetch.nflverse import pins_this_run, reads_of_one_run
 from hub.models.experiment import FDR_Q, MIN_SE, FalseDiscovery, false_discovery, two_sided_p
 from hub.models.panel import (
@@ -89,13 +90,6 @@ from hub.models.panel import (
     PanelSpec,
     build_panel,
     require_features,
-)
-
-NOT_FITTED_BECAUSE = (
-    "the Phase 1 screen for week-level features. DEGENERATE is a floating-point tolerance -- "
-    "below it a residual is rounding error rather than a signal -- and nothing here predicts: "
-    "it reads outcomes and reports correlations, each family beside its false-discovery "
-    "threshold at experiment.FDR_Q, a stated choice (#37). See docs/weekly-screen.md "
 )
 
 # A cell smaller than this is a correlation on noise. 40 is roughly a tenth of a normal week.
@@ -329,7 +323,10 @@ def residual(y: np.ndarray, controls: np.ndarray) -> np.ndarray:
 # signal. Exact zero is the wrong test: a feature that is an exact linear function of a control
 # residualises to ~1e-16 rather than to 0, and correlating two clouds of rounding error returns
 # a number that looks like a finding.
-DEGENERATE = 1e-10
+DEGENERATE = not_an_input(
+    1e-10,
+    "a floating-point tolerance below which a residual is rounding error rather than "
+    "a signal; the screen reads outcomes and predicts nothing")
 
 
 def partial_r(y: np.ndarray, x: np.ndarray, controls: np.ndarray) -> float:

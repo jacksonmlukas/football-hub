@@ -48,20 +48,18 @@ import polars as pl
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.contracts import SNAP_COUNTS
+from hub.declare import not_an_input
 from hub.models.experiment import MIN_SE, expanding_seasons, paired_gain
 from hub.models.predict import WEEKLY_K, WEEKLY_K_POOLED
-
-NOT_FITTED_BECAUSE = (
-    "a measurement that adopted nothing -- it tested whether per-player weekly spread beats "
-    "K[position] and kept the incumbent. MIN_PPG and MIN_SE are a sample threshold and a "
-    "significance bar, both settings. See docs/player-spread.md "
-)
 
 # Matching docs/weekly-spread.md's sample exactly, so the two measurements are comparable.
 # Below 8 games the sd is a handful of numbers; below 3 ppg the ratio sd/sqrt(mu) is
 # dominated by whether he happened to score once.
 MIN_GAMES = 8
-MIN_PPG = 3.0
+MIN_PPG = not_an_input(
+    3.0,
+    "a sample threshold of a measurement that adopted nothing: per-player weekly "
+    "spread lost to K[position] and the incumbent was kept (docs/player-spread.md)")
 
 CANDIDATES = ("positional", "own_k", "usage")
 

@@ -25,7 +25,7 @@ from typing import Any, NamedTuple, cast
 
 import polars as pl
 
-from hub import jsonio, schedule, store
+from hub import atomic, jsonio, schedule, store
 from hub.config import SEASON_AHEAD, UNCONFIRMED_POOL_RULES, pool_digest, resolved_config
 from hub.models import coverage
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
@@ -38,9 +38,8 @@ SITE = ROOT / "site" / "data"
 
 
 def _write(out: Path, name: str, payload: dict[str, Any]) -> Path:
-    out.mkdir(parents=True, exist_ok=True)
     p = out / f"{name}.json"
-    p.write_text(jsonio.dumps(payload, indent=2))
+    atomic.write_text(p, jsonio.dumps(payload, indent=2))
     return p
 
 

@@ -37,6 +37,7 @@ import numpy as np
 import polars as pl
 
 from hub.cli import unavailable
+from hub.declare import not_an_input
 from hub.draft.board import BuildReport, board_as_of
 from hub.fetch.nflverse import reads_of_one_run
 from hub.league import REG_SEASON_WEEKS, starting_lineup
@@ -49,18 +50,20 @@ from hub.models.experiment import (
 )
 from hub.names import player_key
 
-NOT_FITTED_BECAUSE = (
-    "the walk-forward gate for the lineup optimiser. OPP_MU and OPP_SD describe the "
-    "*opponent* a simulated week is played against -- a fixture for scoring two arms against "
-    "each other, not an input any published prediction can reach. "
-)
-
 # What the optimiser is assumed to be playing against each week. The league's own weekly team
 # scores would be better and are not reconstructable for a simulated roster, so this is a
 # stated assumption rather than a measurement -- and it is held identical across both arms,
 # so it cannot favour either.
-OPP_MU = 110.0
-OPP_SD = 25.0
+OPP_MU = not_an_input(
+    110.0,
+    "the opponent a simulated week is played against in the lineup gate: a fixture "
+    "for scoring two arms against each other, not an input any published prediction "
+    "can reach")
+OPP_SD = not_an_input(
+    25.0,
+    "the opponent a simulated week is played against in the lineup gate: a fixture "
+    "for scoring two arms against each other, not an input any published prediction "
+    "can reach")
 
 # This gate's own unit, named once so the effect and the ceiling printed under it cannot end
 # up quoted in two different ones.

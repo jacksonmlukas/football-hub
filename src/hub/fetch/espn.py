@@ -19,7 +19,7 @@ from typing import Any
 import polars as pl
 import requests
 
-from hub import jsonio
+from hub import atomic, jsonio
 from hub.config import SEASON_AHEAD
 from hub.contracts import ESPN_SCOREBOARD
 
@@ -61,7 +61,7 @@ def _get(path: str, params: dict | None = None, cache_key: str | None = None,
                 r.raise_for_status()
                 data = r.json()
                 if cache_key:
-                    (CACHE / f"{cache_key}.json").write_text(json.dumps(data))
+                    atomic.write_text(CACHE / f"{cache_key}.json", json.dumps(data))
                 return data
             except Exception as e:
                 last = e
@@ -283,8 +283,7 @@ def poll_once(out: Path, league: str = "nfl", watch: Sequence[str] = ()) -> dict
         except Exception:
             continue
     payload = jsonio.artifact("live", "espn_scoreboard", state, league=league, detail=detail)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(jsonio.dumps(payload))
+    atomic.write_text(out, jsonio.dumps(payload))
     return payload
 
 

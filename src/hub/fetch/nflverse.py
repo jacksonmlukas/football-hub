@@ -37,7 +37,7 @@ from typing import Any
 
 import polars as pl
 
-from hub import store
+from hub import atomic, store
 from hub.cli import unavailable
 from hub.config import (
     SEASON_COMPLETED,
@@ -685,8 +685,7 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
         # so. Refusing used to keep such a frame out of the cache entirely.
         df = contract.validate(df)
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(path)
+    atomic.write_parquet(df, path)
     pin = Pin(
         source=source,
         as_of=iso,
@@ -695,7 +694,7 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
         pinned_at=None if reproducible else datetime.now(UTC).isoformat(timespec="seconds"),
         rescaled=rescaled,
     )
-    _pin_path(path).write_text(json.dumps(asdict(pin), indent=2, sort_keys=True) + "\n")
+    atomic.write_text(_pin_path(path), json.dumps(asdict(pin), indent=2, sort_keys=True) + "\n")
     _remember(path, pin)
     return df
 

@@ -24,6 +24,7 @@ import numpy as np
 import polars as pl
 
 from hub.config import DRAFTED_POSITIONS, SEASON_AHEAD, SEASON_COMPLETED
+from hub.declare import not_an_input
 
 PLAYOFF_WEEKS = (15, 16, 17)
 
@@ -34,17 +35,15 @@ PLAYOFF_WEEKS = (15, 16, 17)
 # needing provenance under ADR-0006, where a reported range needs none. Whether the playoff
 # ranking is stable across it is the finding; which point on it is "right" is not a
 # question the data can answer with a handful of games per unit.
-RIDGE_PENALTIES: tuple[float, ...] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
+RIDGE_PENALTIES: tuple[float, ...] = not_an_input(
+    (0.25, 0.5, 1.0, 2.0, 4.0, 8.0),
+    "the axis `sos_sensitivity` sweeps and not a value any figure is computed at; the "
+    "penalty the board reads is DraftConfig.sos_ridge, a stated choice covered by "
+    "`config_digest`")
 
 # The penalty a run actually uses is `DraftConfig.sos_ridge` -- a setting, covered by
 # `config_digest`, and the sensitivity above is what licenses its default. Same shape as
 # `hub.season.pool`: the axis lives beside the sweep, the value beside the other choices.
-NOT_FITTED_BECAUSE = (
-    "nothing here is measured. RIDGE_PENALTIES is the axis `sos_sensitivity` sweeps and not "
-    "a value any figure is computed at -- the penalty the board reads is "
-    "DraftConfig.sos_ridge, which is a stated choice covered by `config_digest`. Moving the "
-    "axis changes what the sensitivity reports across, not what any number is.")
-
 # FantasyPros and nflverse disagree on three codes. FA is genuinely teamless.
 TEAM_ALIASES = {"JAC": "JAX", "LAR": "LA", "LV": "LV", "WSH": "WAS", "ARZ": "ARI"}
 

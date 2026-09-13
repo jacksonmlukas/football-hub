@@ -25,6 +25,7 @@ from pathlib import Path
 
 import polars as pl
 
+from hub.declare import not_an_input
 from hub.draft.board import board_age_hours
 from hub.draft.optimize import the_pick
 from hub.draft.picks import MY_SLOT, TEAMS, my_picks
@@ -32,12 +33,6 @@ from hub.draft.state import DraftState
 from hub.draft.state import load as load_state
 from hub.names import player_key
 from hub.paths import BOARD_PARQUET
-
-NOT_FITTED_BECAUSE = (
-    "STALE_HOURS is how old the as-drafted board copy may be before the replay says it is a "
-    "rehearsal leftover -- an operational freshness check on a file, not a quantity any "
-    "prediction reads. "
-)
 
 # docs/decisions.md, fixed 2026-08-27 before the draft rather than chosen in January.
 THRESHOLD = 12
@@ -102,7 +97,10 @@ def verdict(scored: pl.DataFrame, threshold: int = THRESHOLD) -> tuple[bool, str
 # A copy older than this is almost certainly left over from a rehearsal rather than made
 # before the first pick. A day is generous: the runbook says to rebuild on the morning of the
 # draft, so the honest copy is hours old, never days.
-STALE_HOURS = 24.0
+STALE_HOURS = not_an_input(
+    24.0,
+    "how old the as-drafted board copy may be before the replay calls it a rehearsal "
+    "leftover: an operational freshness check on a file, read by no prediction")
 
 
 def age_note(path: Path, now: float | None = None) -> list[str]:

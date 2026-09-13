@@ -60,9 +60,10 @@ from typing import Any, Literal, cast
 import numpy as np
 import polars as pl
 
-from hub import jsonio
+from hub import atomic, jsonio
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
+from hub.declare import not_an_input
 from hub.models import predict
 from hub.models.scoring_rules import reliability_by
 from hub.paths import STATE_DIR
@@ -72,11 +73,6 @@ from hub.paths import STATE_DIR
 # answer was looked at -- and none of them reaches a prediction, because this module grades
 # `hub.models.predict` and never calls it to forecast anything. Registering them in
 # `config_digest` would stamp a prediction with the settings of its own grader.
-NOT_FITTED_BECAUSE = (
-    "grading harness; its thresholds are pre-registered filters, not measured constants, "
-    "and no prediction is made through this module"
-)
-
 Centre = Literal["prior", "realised"]
 
 # The window `docs/weekly-coverage.md` measured over, so `--centre realised` reproduces it
@@ -92,7 +88,10 @@ POSITIONS: tuple[str, ...] = DRAFTED_POSITIONS
 # A player-season is in the sample if it has this many scoring weeks and averages this many
 # points. Both from the document, unchanged, so the two centres are compared on one filter.
 MIN_WEEKS = 8
-MIN_MU = 2.0
+MIN_MU = not_an_input(
+    2.0,
+    "a pre-registered filter of the grading harness, which measures interval coverage "
+    "of predictions already made and makes none of its own")
 
 # Under `--centre prior` a week is scored only once the player has this many earlier weeks
 # behind him. Below it the centre is mostly noise and the measurement becomes a statement
@@ -103,7 +102,10 @@ MIN_PRIOR = 4
 # The two nominal levels, as (lower p, upper p). 80% is the interval `season/lineup.py`'s
 # win probability is effectively asserting; 68% is one sigma, reported because a miss that
 # is about the *shape* rather than the width shows up as the two disagreeing.
-LEVELS: tuple[tuple[float, float], ...] = ((0.10, 0.90), (0.16, 0.84))
+LEVELS: tuple[tuple[float, float], ...] = not_an_input(
+    ((0.10, 0.90), (0.16, 0.84)),
+    "a pre-registered filter of the grading harness, which measures interval coverage "
+    "of predictions already made and makes none of its own")
 
 # **What the interval is measured to cover, which is what the gate holds it to (#289).** The
 # interval is built at (p10, p90) and served under the label 80% -- `LEVELS` above is
@@ -119,15 +121,21 @@ LEVELS: tuple[tuple[float, float], ...] = ((0.10, 0.90), (0.16, 0.84))
 # again if the deployed function drifts *either* way from what the doc says -- an interval
 # that came to cover 80% would be a stale claim upward, and the gate says so.
 #
-# Not a fitted constant: nothing predicts through it. A restated claim about a measurement,
-# pinned so that the gate and the doc cannot say two different numbers.
-CLAIMED_COV80 = 0.77
+# Not a fitted constant and not a choice a prediction reads: a restated claim about a
+# measurement, pinned so that the gate and the doc cannot say two different numbers.
+CLAIMED_COV80 = not_an_input(
+    0.77,
+    "the restated claim the grading harness holds the deployed interval to; it grades "
+    "predictions already made and makes none of its own")
 
 # Pre-registered before the prior-centre numbers were looked at, and the only other thing
 # `--gate` reads: empirical coverage must sit within this of the claim. Two points is roughly
 # three standard errors at n = 10,000, so it is a band a truthful claim clears comfortably and
 # a stale one does not.
-BAND = 0.02
+BAND = not_an_input(
+    0.02,
+    "a pre-registered filter of the grading harness, which measures interval coverage "
+    "of predictions already made and makes none of its own")
 
 # The gate is read off the weeks whose interval is *not* pinned at the zero floor. A clipped
 # lower bound cannot be fallen below, so those weeks report a coverage the model did not
@@ -138,10 +146,16 @@ GATE_SUBSET = "unclipped"
 # Spread buckets for the survivor price, home-relative and in points. The top bucket is where
 # survivor lives: `season/survivor.py` picks the biggest favourite on the board, so a bucket
 # that pools a 3-point favourite with a 13-point one answers a question nobody asks of it.
-SPREAD_EDGES: tuple[float, ...] = (0.0, 3.0, 6.0, 9.0, 14.0, 30.0)
+SPREAD_EDGES: tuple[float, ...] = not_an_input(
+    (0.0, 3.0, 6.0, 9.0, 14.0, 30.0),
+    "a pre-registered filter of the grading harness, which measures interval coverage "
+    "of predictions already made and makes none of its own")
 
 # What counts as "the favourites survivor actually picks", for the headline the gate reads.
-SURVIVOR_SPREAD = 7.0
+SURVIVOR_SPREAD = not_an_input(
+    7.0,
+    "a pre-registered filter of the grading harness, which measures interval coverage "
+    "of predictions already made and makes none of its own")
 
 # Where `--measure --write` and `--survivor --write` leave their answers and where
 # `hub.publish` reads them from. Under `state/`, which is committed, rather than
@@ -407,10 +421,10 @@ def write_summary(result: dict[str, Any], path: Path | None = None) -> Path:
     block already in the file is kept (#273): one file, two verdicts, one reader.
     """
     p = path or ARTIFACT
-    p.parent.mkdir(parents=True, exist_ok=True)
     kept = _existing(p).get("survivor")
-    p.write_text(jsonio.dumps({"name": "interval_coverage", "generated_at": jsonio.stamp(),
-                               **result, **({"survivor": kept} if kept else {})}, indent=2))
+    atomic.write_text(p, jsonio.dumps({"name": "interval_coverage",
+                                       "generated_at": jsonio.stamp(), **result,
+                                       **({"survivor": kept} if kept else {})}, indent=2))
     return p
 
 
@@ -423,13 +437,13 @@ def write_survivor(result: dict[str, Any], path: Path | None = None) -> Path:
     --survivor --write` together, which is the order that leaves both.
     """
     p = path or ARTIFACT
-    p.parent.mkdir(parents=True, exist_ok=True)
     have = _existing(p)
     block = {k: result.get(k) for k in
              ("verdict", "favourite_spread", "favourite_predicted", "favourite_actual",
               "favourite_gap", "favourite_sigma", "favourite_n", "n_games", "margin_sd")}
     block["generated_at"] = jsonio.stamp()
-    p.write_text(jsonio.dumps({"name": "interval_coverage", **have, "survivor": block}, indent=2))
+    atomic.write_text(p, jsonio.dumps({"name": "interval_coverage", **have,
+                                       "survivor": block}, indent=2))
     return p
 
 

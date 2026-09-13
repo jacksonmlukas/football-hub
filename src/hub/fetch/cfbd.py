@@ -61,9 +61,15 @@ from typing import Any, NamedTuple
 
 import polars as pl
 
-from hub import jsonio
+from hub import atomic, jsonio
 from hub.config import SEASON_AHEAD
 from hub.contracts import CFBD_GAMES, CFBD_LINES, Contract
+from hub.fetch.cached import (  # noqa: F401 -- re-exported, see the guard note below
+    LIVE_TEST_SUITE,
+    PYTEST_NODE_ENV,
+    LiveCallRefused,
+    refuse_live_call,
+)
 from hub.paths import SITE, STATE_DIR
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -97,17 +103,9 @@ REGULAR_SEASON_WEEKS = 15
 BASE = "https://api.collegefootballdata.com"
 FREE_TIER_MONTHLY = 1_000
 
-# The pytest node running right now, or nothing outside a test. pytest sets this for the
-# duration of each test's setup, call and teardown, and nothing else in this repo writes it.
-PYTEST_NODE_ENV = "PYTEST_CURRENT_TEST"
-
-# The one suite allowed to reach CFBD. `tests/golden/` exists to diff a live response against
-# the frozen fixture -- it is the only thing in the repo that knows whether the two CFBD
-# contracts, both written from documentation, resemble reality -- and it is marked `golden`
-# and deselected by default (`addopts = "-m 'not golden'"`, pyproject.toml). Node ids are
-# relative to pytest's rootdir, so a run started from inside `tests/` does not match and is
-# refused: erring toward refusal is the direction this module errs in everywhere.
-LIVE_TEST_SUITE = "tests/golden/"
+# The pytest network guard is `hub.fetch.cached.refuse_live_call` (#255), which `_http_get`
+# calls first; `PYTEST_NODE_ENV`, `LIVE_TEST_SUITE` and `LiveCallRefused` are re-exported
+# here so a reader of this module and its tests find them under the names they had.
 
 # Twelve covers the documented 5-8 call week with headroom, and stops a loop over 136 FBS
 # teams at call thirteen. Deliberately per-run rather than per-month: the monthly budget
@@ -155,10 +153,6 @@ class QuotaExceeded(Exception):
     """Refused rather than spend a call: either the run ceiling or the monthly budget."""
 
 
-class LiveCallRefused(Exception):
-    """A test reached the live transport. Refused before anything left the process."""
-
-
 def _env() -> Mapping[str, str]:
     """The process environment with `.env` folded into it.
 
@@ -199,8 +193,7 @@ def _record_call(path: Path | None = None) -> None:
     except Exception:
         counts = {}
     counts[_month_key()] = int(counts.get(_month_key(), 0)) + 1
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(counts, indent=2, sort_keys=True))
+    atomic.write_text(p, json.dumps(counts, indent=2, sort_keys=True))
 
 
 def quota_report(path: Path | None = None) -> int:
@@ -230,14 +223,11 @@ def _http_get(path: str, params: Mapping[str, Any], key: str) -> Any:
     # Patching the transport per test is the right habit and every test in the sibling module
     # does it. It is not a guarantee, because the guarantee has to hold for the test nobody
     # remembered to patch. This does, and it costs one environment read per request.
-    node = os.environ.get(PYTEST_NODE_ENV, "")
-    if node and not node.startswith(LIVE_TEST_SUITE):
-        raise LiveCallRefused(
-            f"{node.split(' ')[0]} would spend a live CFBD call. The free tier is "
-            f"{FREE_TIER_MONTHLY:,} a month and docs/cfbd-quota.md records that "
-            f"rate-limit circumvention gets access revoked rather than throttled, so no "
-            f"test fetches: patch `_http_get`, the way tests/unit/test_fetch_cfbd.py does. "
-            f"Only {LIVE_TEST_SUITE} may reach CFBD, and it is deselected by default.")
+    refuse_live_call(
+        f"would spend a live CFBD call: the free tier is {FREE_TIER_MONTHLY:,} a month and "
+        f"docs/cfbd-quota.md records that rate-limit circumvention gets access revoked "
+        f"rather than throttled, so no test fetches",
+        patch="_http_get", tests="tests/unit/test_fetch_cfbd.py")
     # /GUARD
     import requests
     r = requests.get(f"{BASE}{path}", params=dict(params), timeout=30,
@@ -300,7 +290,7 @@ def _record_capture(path: Path) -> None:
     """
     payload = {"captured_at": jsonio.stamp()}
     try:
-        _capture_path(path).write_text(jsonio.dumps(payload, indent=2))
+        atomic.write_text(_capture_path(path), jsonio.dumps(payload, indent=2))
     except OSError:
         pass
 
@@ -455,8 +445,7 @@ def bulk(endpoint: str, year: int, week: int | None = None, *,
         _record_call(quota_path)
 
     df = pl.DataFrame(payload, infer_schema_length=None) if payload else pl.DataFrame()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(path)
+    atomic.write_parquet(df, path)
     _record_capture(path)
     return df
 
@@ -698,8 +687,7 @@ def record_run(season: int, week_no: int | None, *,
                "limit": FREE_TIER_MONTHLY},
     )
     p = Path(path or STATUS)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(jsonio.dumps(got, indent=2))
+    atomic.write_text(p, jsonio.dumps(got, indent=2))
     # The reason already opens with what happened -- "nothing was fetched: ...", "week 2 of
     # 2026 was read and came back empty" -- so prefixing it with a verdict only stutters.
     print(f"  cfbd: {reason or f'week {week_no} fetched, ' + summary}; recorded in {p}")

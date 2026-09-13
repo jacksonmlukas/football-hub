@@ -34,12 +34,13 @@ from __future__ import annotations
 import polars as pl
 
 from hub.config import drafted_positions
+from hub.declare import chosen, fitted
 from hub.draft import prior_signal
 from hub.models.components import td_rate
 
 # Fewer games than this and the number is noise wearing a number's clothes: a two-game
 # sample of touchdown luck is one red-zone target either way.
-MIN_GAMES = 6
+MIN_GAMES = chosen(6)
 
 # Points of next-season scoring lost per point of prior-season touchdown luck, from
 # `ppg_next ~ proj_ppg + td_luck` on historical ESPN projections. A projection that already
@@ -99,11 +100,11 @@ MIN_GAMES = 6
 # report and stays a stage; what stops is `proj_blend` moving by it, so touchdown luck is no
 # longer a Correction in `hub.draft.board`'s sense and `correct_projection` is gone from this
 # module. docs/td-luck.md and docs/fitted-corrections.md carry the restatement.
-TD_LUCK_BETA: dict[str, float] = {}
+TD_LUCK_BETA: dict[str, float] = fitted({})
 
-_PHASES = (("receiving_yards", "receiving_tds", "rec", 6.0),
+_PHASES = chosen((("receiving_yards", "receiving_tds", "rec", 6.0),
            ("rushing_yards", "rushing_tds", "rush", 6.0),
-           ("passing_yards", "passing_tds", "pass", 4.0))
+           ("passing_yards", "passing_tds", "pass", 4.0)))
 
 
 def prior_season(season: int, cache=None) -> pl.DataFrame:

@@ -21,20 +21,8 @@ from typing import Any, cast
 
 import polars as pl
 
+from hub.declare import not_an_input
 from hub.names import player_key
-
-NOT_FITTED_BECAUSE = (
-    "declared plausibility bounds, not fitted inputs. A range here says what a source may "
-    "plausibly return -- SNAP_COUNTS bounds offense_pct at [0, 1.05], measured over 2019-25 "
-    "where PFR's own rounding reaches 1.01 -- so moving one changes what the fetch layer "
-    "refuses. The one number here a consumer's arithmetic can reach is a Normalisation's, and "
-    "it is the same kind of number read from the other side: 0.01 is what a percent *is*, and "
-    "1.5 is a height no honest fraction reaches. Stated as a module rather than constant by "
-    "constant because every float in this file is that kind of number by construction, and "
-    "because #71 established that adding a data source must not move a model version: the "
-    "eleven contracts before #33 held only integer bounds and this scan had never met one of "
-    "these. "
-)
 
 
 class ContractViolation(Exception):
@@ -1004,7 +992,7 @@ INJURIES = Contract(
 #
 # Not unique on anything a single column can express: the key is (game_id, pfr_player_id),
 # which the 181,477 rows over 2019-25 do respect and this contract cannot say.
-SNAP_COUNTS = Contract(
+SNAP_COUNTS = not_an_input(Contract(
     name="nflverse_snap_counts",
     required={"game_id": pl.Utf8, "season": pl.Int32, "week": pl.Int32,
               "game_type": pl.Utf8, "player": pl.Utf8, "pfr_player_id": pl.Utf8,
@@ -1027,4 +1015,7 @@ SNAP_COUNTS = Contract(
     min_rows=1,
     # Checked against `nflverse_snap_counts.json`, a real 2024 capture.
     verified_against_live=True,
-)
+),
+    "a plausibility bound on what PFR may return -- offense_pct in [0, 1.05], where "
+    "PFR's own rounding reaches 1.01 -- read by the fetch layer's refusal and by no "
+    "prediction; #71: adding a data source must not move a model version")

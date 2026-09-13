@@ -429,14 +429,18 @@ def test_the_league_module_is_a_leaf():
     which is why `models/` could not have them at all (the test above) and why four of the six
     `hub.season` modules imported `draft/`. A leaf that grows a dependency stops being usable
     from the places that needed it.
+
+    `hub.declare` is allowed beside `hub.config` since #253: it is a leaf of the standard
+    library alone, it is where `PLAYOFF_TEAMS` and `PLAYOFF_ROUNDS` take the `chosen`
+    spelling that puts them in the digest, and it pulls nothing in that `config` had not.
     """
     import ast
     import pathlib
     path = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub" / "league.py"
     bad = [n.module for n in ast.walk(ast.parse(path.read_text()))
            if isinstance(n, ast.ImportFrom) and n.module
-           and n.module.startswith("hub.") and n.module != "hub.config"]
-    assert not bad, f"hub.league must import only hub.config; it imports {bad}"
+           and n.module.startswith("hub.") and n.module not in ("hub.config", "hub.declare")]
+    assert not bad, f"hub.league must import only hub.config and hub.declare; it imports {bad}"
 
 
 def test_season_does_not_reach_into_draft_for_league_rules():

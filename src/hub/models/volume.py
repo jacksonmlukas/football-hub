@@ -27,6 +27,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 
+from hub.declare import chosen, fitted
 from hub.models import components as C
 
 # Fitted on 526 player-season pairs from this league's own drafts, 2022-25, joined through
@@ -34,15 +35,15 @@ from hub.models import components as C
 # strictly non-negative. Efficiency is linear in log(pick): yards per carry goes negative
 # for a receiver with one carry for -5, and log(y+1) on that is NaN, which is what the first
 # version of the screen did to 188 of 272 rows before it was caught.
-VOLUME_CURVE: dict[str, dict[str, tuple[float, float]]] = {
+VOLUME_CURVE: dict[str, dict[str, tuple[float, float]]] = fitted({
     "targets":  {"QB": (0.0256, -0.0026), "RB": (1.9641, -0.1678),
                  "WR": (2.7580, -0.1923), "TE": (2.8032, -0.2090)},
     "carries":  {"QB": (3.0117, -0.3259), "RB": (3.4282, -0.2500),
                  "WR": (0.3239, -0.0417), "TE": (-0.0627, 0.0299)},
     "attempts": {"QB": (3.5426, -0.0097), "RB": (0.0171, -0.0027),
                  "WR": (0.0250, -0.0037), "TE": (-0.0393, 0.0103)},
-}
-EFFICIENCY_CURVE: dict[str, dict[str, tuple[float, float]]] = {
+})
+EFFICIENCY_CURVE: dict[str, dict[str, tuple[float, float]]] = fitted({
     "catch_rate":   {"QB": (0.1005, 0.0008), "RB": (0.8286, -0.0135),
                      "WR": (0.7023, -0.0137), "TE": (0.7307, -0.0061)},
     "yd_per_tgt":   {"QB": (-1.4947, 0.4584), "RB": (6.7340, -0.2241),
@@ -51,23 +52,23 @@ EFFICIENCY_CURVE: dict[str, dict[str, tuple[float, float]]] = {
                      "WR": (2.6365, 0.1539), "TE": (1.9721, -0.2902)},
     "yd_per_att":   {"QB": (8.8034, -0.3154), "RB": (1.5943, -0.3383),
                      "WR": (1.8536, -0.1613), "TE": (-0.7306, 0.1914)},
-}
+})
 
 # Where each position was actually drafted. Outside it the curve is extrapolating with
 # nothing behind it: unclamped, it puts a tight end at pick 3 on 10.8 targets a game, more
 # than any real tight end sees, because this league has never drafted one before pick 11.
-PICK_RANGE: dict[str, tuple[int, int]] = {
+PICK_RANGE: dict[str, tuple[int, int]] = chosen({
     "QB": (24, 202), "RB": (1, 204), "WR": (1, 190), "TE": (11, 191),
-}
+})
 
 # How much of his own prior season to keep, chosen on held-out data. Volume is trusted less
 # than efficiency because volume is what a changed situation moves most -- a new coach, a
 # signing, a depth-chart change -- and the pick is the only input that knows the situation
 # changed at all.
-KEEP_VOLUME = 0.5
-KEEP_EFFICIENCY = 0.7
+KEEP_VOLUME = fitted(0.5)
+KEEP_EFFICIENCY = fitted(0.7)
 
-_UNITS = {"targets": "rec", "carries": "rush", "attempts": "pass"}
+_UNITS = chosen({"targets": "rec", "carries": "rush", "attempts": "pass"})
 
 
 def _curve(table: dict, quantity: str, position: str, pick: float,

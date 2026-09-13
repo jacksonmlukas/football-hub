@@ -57,15 +57,9 @@ from hub.config import (
     frames_digest,
     resolved_config,
 )
+from hub.declare import not_an_input
 from hub.names import player_key
 from hub.paths import STATE_DIR
-
-NOT_FITTED_BECAUSE = (
-    "MIN_SE is the significance bar every gate reads -- a setting, and the one this module "
-    "exists to stop being declared twice. FDR_Q is the false-discovery rate a screen's family "
-    "is read at -- a stated choice, #37, printed beside the pre-registered rule and deciding "
-    "nothing. Nothing here predicts; it holds the walk-forward protocol. "
-)
 
 # One column list, so both harnesses hit one cache entry. `nflverse._cache_path` keys on the
 # sorted column set -- deliberately, so a caller asking for six columns is never served an
@@ -187,7 +181,11 @@ def walk_forward_inputs(
 # because it was two -- `spread.MIN_SE` and `injury.TYPE_MIN_SE`, both 2.0, both commented
 # "the repo's usual bar". A gate wanting a different bar passes its own; what it must not do
 # is declare a second 2.0.
-MIN_SE = 2.0
+MIN_SE = not_an_input(
+    2.0,
+    "the significance bar every gate reads: a setting, declared here so it is "
+    "declared once, and a decision about which runs are published rather than what "
+    "one says")
 
 
 # What one independent observation is, for every gate in this repo. One name, declared once,
@@ -205,8 +203,14 @@ MIN_SE = 2.0
 SEASON_CLUSTER: tuple[str, ...] = ("season",)
 
 # Two-sided 5%, 80% power -- the pre-registered pair in `docs/gate-power.md`.
-POWER = 0.80
-ALPHA = 0.05
+POWER = not_an_input(
+    0.80,
+    "the power the walk-forward protocol's sample-size arithmetic is stated at; it "
+    "sizes an experiment and nothing here predicts")
+ALPHA = not_an_input(
+    0.05,
+    "the size the walk-forward protocol's sample-size arithmetic is stated at; it "
+    "sizes an experiment and nothing here predicts")
 
 # At or below this many clusters the percentile bootstrap is reported *beside* a t interval
 # rather than alone. A nonparametric percentile bootstrap resamples the units it was given,
@@ -290,7 +294,10 @@ def two_sided_p(t: float, df: int) -> float:
 # docstring and moved silently when a feature left the family (#170). 0.10 rather than 0.05
 # because a screen asks "is this real?" ahead of a gate that will ask again with a different
 # incumbent; a false discovery here costs a gate run, not a shipped model.
-FDR_Q = 0.10
+FDR_Q = not_an_input(
+    0.10,
+    "the false-discovery rate a screen's family is read at, a stated choice (#37) "
+    "printed beside the pre-registered rule and deciding nothing a prediction reads")
 
 
 class FalseDiscovery(NamedTuple):

@@ -74,6 +74,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS
+from hub.declare import not_an_input
 from hub.fetch.nflverse import reads_of_one_run
 from hub.league import STARTERS, starting_lineup
 from hub.models.experiment import (
@@ -85,12 +86,6 @@ from hub.models.experiment import (
     reading,
     run_gate,
     summarise,
-)
-
-NOT_FITTED_BECAUSE = (
-    "Gate B for the Weekly projection. VOID_FLOOR is the share of roster-weeks lost to a join "
-    "failure above which a run is not reported at all -- a pre-registered guard, not a fitted "
-    "quantity. See docs/weekly-projection-plan.md "
 )
 
 # The fantasy regular season. 15-17 is the playoffs, reported apart; 18 is meaningless.
@@ -111,7 +106,10 @@ GATE_WEEKS = FANTASY_WEEKS
 CLUSTER: tuple[str, ...] = SEASON_CLUSTER
 
 # A player the consensus page does not list is ranked behind every player it does.
-UNRANKED = -1e9
+UNRANKED = not_an_input(
+    -1e9,
+    "the sort key for a roster-week no arm ranked: a sentinel that orders a report, "
+    "not a quantity any prediction reads")
 
 # Above this share of roster-weeks lost to a join failure, the run is VOID rather than
 # reported. Pre-registered in docs/weekly-projection-plan.md.
@@ -124,7 +122,11 @@ UNRANKED = -1e9
 # `priced_by_both` and is reported as coverage. That is a weaker fault and still a fault: a
 # run that silently drops one roster-week in fifty to a name that did not match is answering
 # for a different slate than the one it names, and the floor is what makes it say so.
-VOID_FLOOR = 0.02
+VOID_FLOOR = not_an_input(
+    0.02,
+    "the share of roster-weeks lost to a join failure above which a run is not "
+    "reported at all: a pre-registered guard deciding which runs are published, never "
+    "what one says")
 
 
 WAIVER_LOOK = 15

@@ -37,6 +37,7 @@ import numpy as np
 import polars as pl
 
 from hub.config import DraftConfig
+from hub.declare import chosen
 from hub.draft import durability
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, blended_adp, pick_noise
 from hub.draft.picks import MY_SLOT, TEAMS, snake_picks
@@ -49,7 +50,7 @@ if TYPE_CHECKING:                  # `board` reaches this module function-locall
 
 # Bench depth beyond the 8 starting slots. Deep enough that saturation is punished,
 # shallow enough that the simulated draft stays cheap.
-DEFAULT_ROUNDS = 14
+DEFAULT_ROUNDS = chosen(14)
 
 # --- the seeding tree (issue #195) ------------------------------------------------------
 #
@@ -630,7 +631,7 @@ def the_pick(board: pl.DataFrame, state: DraftState, *,
 
 # Show a touchdown-luck note beside THE PICK only when it is worth a drafter's attention.
 # Private and lower-cased in intent: this is a display threshold, not a fitted constant, so
-# it must not move the model version. See `hub.config.FITTED_MODULES`.
+# it must not move the model version, and nothing declares it (`hub.declare`).
 _TD_LUCK_NOTE = 0.5
 
 
