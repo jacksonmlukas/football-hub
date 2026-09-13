@@ -24,17 +24,24 @@ three event-seasons is NOT-RUNNABLE ahead of every branch (ADR-0019's floor), an
 verdict sentence names the event-seasons the pilot says are needed. Anything but ADOPT is
 #270's pull trigger.
 
-**The study** (#221) reads the same events and lands beside the gate; this commit is
-the events and the gate.
+**The study**: the home-spread move from the frozen price to the last snapshot before the
+game day, less the mean move of the week's other games between the same two poll days,
+regressed on the net ex-ante quality gap -- arriving starter's value minus departing, home
+minus away, both off the pinned file -- against 538's 0.132 points per value unit. The
+standard error is #214's noise floor per window over the gap's spread and root n, because
+the event rows alone cannot resolve their own residual. Censored events (no snapshot before
+the change could be known) and the change-point in days from the previous game day are
+reported beside the coefficient.
 
 Nothing here fetches. The nfeloqb cache and the snapshot archive are what is read, and a
 season the caches do not hold is reported as not established.
 
-    uv run python -m hub.models.starter_change --events --gate
+    uv run python -m hub.models.starter_change --events --gate --study
 """
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import math
 import statistics
 import sys
@@ -42,17 +49,26 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import polars as pl
 
 from hub import store
 from hub.cli import unavailable
 from hub.config import SEASON_AHEAD
-from hub.fetch import nfeloqb
+from hub.declare import not_an_input
+from hub.fetch import nfeloqb, odds
 from hub.models import experiment, quarterback
 from hub.models.experiment import SEASON_CLUSTER, run_gate
 from hub.models.market import MARGIN_SD, normal_cdf
 
 PROG = "hub.models.starter_change"
+
+# 538's conversion, 3.3 Elo per value unit over 25 Elo per point: the coefficient the
+# study's fitted slope is read against. A benchmark no prediction reads.
+BENCHMARK = not_an_input(
+    3.3 / 25,
+    "the study's benchmark slope, 538's own construction; a comparison figure the line-move "
+    "study prints, and nothing that predicts reads it")
 
 # ADR-0019: no gate in the repo runs at fewer than three seasons, and one that did should
 # say so. Pre-registered as the gate's first precondition.
@@ -418,6 +434,119 @@ def run(paired: pl.DataFrame, *, needed: int | None, ceiling: bool = True,
     return got
 
 
+# --- the study --------------------------------------------------------------------------------
+
+def _week_means(polls: pl.DataFrame, rows: pl.DataFrame) -> pl.DataFrame:
+    """Per event game, the mean move over every *other* archived game of the same week
+    between the same two poll days -- the week fixed effect as the subtraction it is; zero
+    where no other game was polled on both days."""
+    days = (polls.with_columns(_poll_day().alias("poll_day"))
+                 .sort("game_id", "captured_at")
+                 .group_by("game_id", "week", "poll_day", maintain_order=True)
+                 .agg(pl.col("close_spread").last()))
+    out = []
+    for r in rows.iter_rows(named=True):
+        f_day, c_day = r["frozen_day"], r["close_day"]
+        others = days.filter((pl.col("week") == r["week"]) & (pl.col("game_id") != r["game_id"])
+                             & pl.col("poll_day").is_in([f_day, c_day]))
+        pivot = (others.group_by("game_id").agg(
+            pl.col("close_spread").filter(pl.col("poll_day") == f_day).first().alias("a"),
+            pl.col("close_spread").filter(pl.col("poll_day") == c_day).first().alias("b"))
+                       .drop_nulls())
+        moves = (pivot["b"] - pivot["a"]).to_list()
+        out.append({"game_id": r["game_id"],
+                    "week_mean": statistics.fmean(moves) if moves else 0.0,
+                    "week_others": len(moves)})
+    return pl.DataFrame(out, schema={"game_id": pl.Utf8, "week_mean": pl.Float64,
+                                     "week_others": pl.Int64})
+
+
+def _change_points(polls: pl.DataFrame, rows: pl.DataFrame, floor: float) -> list[float | None]:
+    """Per event game, days from the previous game day to the first poll after the frozen
+    one whose move from the frozen price clears `floor * sqrt(days since the frozen poll)`;
+    None where no poll does."""
+    days = polls.sort("game_id", "captured_at")
+    out: list[float | None] = []
+    for r in rows.iter_rows(named=True):
+        later = days.filter((pl.col("game_id") == r["game_id"])
+                            & (pl.col("captured_at") > r["frozen_at"]))
+        seen: float | None = None
+        for p in later.iter_rows(named=True):
+            elapsed = (p["captured_at"] - r["frozen_at"]).total_seconds() / 86400.0
+            if abs(p["close_spread"] - r["frozen"]) > floor * math.sqrt(max(elapsed, 0.0)):
+                seen = float((p["captured_at"].date()
+                              - dt.date.fromisoformat(r["frozen_before"])).days)
+                break
+        out.append(seen)
+    return out
+
+
+STUDY_SCHEMA: dict[str, Any] = {
+    "game_id": pl.Utf8, "season": pl.Int64, "week": pl.Int64, "net_gap": pl.Float64,
+    "changes": pl.UInt32, "frozen": pl.Float64, "close": pl.Float64, "move": pl.Float64,
+    "week_mean": pl.Float64, "week_others": pl.Int64, "adjusted_move": pl.Float64,
+    "window_days": pl.Float64, "days_to_change": pl.Float64,
+}
+
+
+def study_rows(polls: pl.DataFrame, games: pl.DataFrame,
+               floor_per_root_day: float | None = None) -> pl.DataFrame:
+    """One row per uncensored event game: the move from the frozen price to the last
+    snapshot before the game day, the week's mean move over the same two poll days, the
+    week-adjusted move, the net gap, the window in days, and -- given a floor per root-day
+    -- the change-point in days from the previous game day."""
+    have = priced(polls, games).filter(~pl.col("censored") & pl.col("close").is_not_null())
+    if have.is_empty():
+        return pl.DataFrame(schema=STUDY_SCHEMA)
+    have = have.with_columns(_poll_day("frozen_at").alias("frozen_day"),
+                             _poll_day("close_at").alias("close_day"),
+                             (pl.col("close") - pl.col("frozen")).alias("move"),
+                             ((pl.col("close_at") - pl.col("frozen_at")).dt.total_seconds()
+                              / 86400.0).alias("window_days"))
+    have = have.join(_week_means(polls, have), on="game_id", how="left")
+    changes = (_change_points(polls, have, floor_per_root_day)
+               if floor_per_root_day is not None else [None] * have.height)
+    return (have.with_columns((pl.col("move") - pl.col("week_mean")).alias("adjusted_move"),
+                              pl.Series("days_to_change", changes, dtype=pl.Float64))
+                .select(*STUDY_SCHEMA))
+
+
+def study_mde(*, n: int, sd_gap: float, window_days: float, floor_per_root_day: float) -> float:
+    """The coefficient's MDE before the run, as pre-registered: `(t(0.975, n-1) + z(0.80))
+    * floor_window / (sd(gap) * sqrt(n))`, the floor per window `floor_per_root_day *
+    sqrt(window_days)`; the cluster is the game."""
+    if n < 2 or not (sd_gap > 0):
+        return float("nan")
+    se = floor_per_root_day * math.sqrt(window_days) / (sd_gap * math.sqrt(n))
+    return experiment.minimum_detectable_effect(se, n)
+
+
+def study_fit(rows: pl.DataFrame, *, floor_per_root_day: float) -> dict[str, float]:
+    """The slope of the week-adjusted move on the net gap, with its error from the floor.
+
+    Ordinary least squares with an intercept; the standard error is the noise floor per
+    window over the gap's spread and root n rather than the residual's, because a season of
+    events cannot resolve its own residual against a floor measured on twelve games. `t`
+    against the benchmark says whether the betting market moved as the source would.
+    """
+    n = rows.height
+    nan = float("nan")
+    if n < 2:
+        return {"n": float(n), "beta": nan, "se": nan, "mde": nan, "benchmark": BENCHMARK,
+                "t_vs_benchmark": nan, "sd_gap": nan, "floor_window": nan}
+    x = rows["net_gap"].to_numpy().astype(float)
+    y = rows["adjusted_move"].to_numpy().astype(float)
+    sd_gap = float(np.std(x, ddof=1))
+    beta = float(np.polyfit(x, y, 1)[0]) if sd_gap > 0 else nan
+    window = rows["window_days"].to_numpy().astype(float).mean()
+    floor_window = floor_per_root_day * math.sqrt(float(window))
+    se = floor_window / (sd_gap * math.sqrt(n)) if sd_gap > 0 else nan
+    return {"n": float(n), "beta": beta, "se": se,
+            "mde": experiment.minimum_detectable_effect(se, n), "benchmark": BENCHMARK,
+            "t_vs_benchmark": (beta - BENCHMARK) / se if se and math.isfinite(se) else nan,
+            "sd_gap": sd_gap, "floor_window": floor_window}
+
+
 # --- the entry point --------------------------------------------------------------------------
 
 def archive(season: int, base: Path | None) -> pl.DataFrame:
@@ -430,6 +559,19 @@ def archive(season: int, base: Path | None) -> pl.DataFrame:
     got = store.sql("SELECT game_id, close_spread, captured_at, week FROM lines "
                     "WHERE league = 'nfl' AND season = ?", params=[season], base=base)
     return got.with_columns(pl.col("week").cast(pl.Utf8).cast(pl.Int64)).select(*schema)
+
+
+def noise_floor_per_root_day(polls: pl.DataFrame) -> tuple[float, int]:
+    """#214's floor per root-day off this archive, frozen lookaheads excluded, and the games
+    it rests on; NaN and zero with nothing to measure."""
+    if polls.is_empty():
+        return float("nan"), 0
+    moves = odds.line_moves(odds.staleness(polls))
+    live = moves.filter(~pl.col("frozen"))
+    if live.is_empty():
+        return float("nan"), 0
+    floor = odds.noise_floor(live, bootstrap=1)
+    return float(floor["sd_per_root_day"]), int(floor["games"])
 
 
 def _event_lines(ev: pl.DataFrame, games: pl.DataFrame, since: int) -> list[str]:
@@ -460,6 +602,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="run the pre-registered gate on the archive's event games")
     ap.add_argument("--ceiling", action="store_true",
                     help=f"hand the rule the declared ceiling arm ({CEILING_ARM})")
+    ap.add_argument("--study", action="store_true", help="run the line-move study")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD,
                     help="the season whose snapshot archive is read (default SEASON_AHEAD)")
     ap.add_argument("--since", type=int, default=2022,
@@ -467,7 +610,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--cache", type=Path, default=None, help="the nfeloqb cache directory")
     ap.add_argument("--store", type=Path, default=None, help="the processed store")
     a = ap.parse_args(argv)
-    if not (a.events or a.gate):
+    if not (a.events or a.gate or a.study):
         ap.print_usage()
         return 2
 
@@ -515,6 +658,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(line)
         print(f"  {got.verdict[0]}: {got.verdict[1]}")
 
+    if a.study:
+        floor, floor_games = noise_floor_per_root_day(polls)
+        used = floor if math.isfinite(floor) else 0.40
+        gaps = in_season_events(ev)["gap"].drop_nulls().to_list()
+        sd_gap = statistics.stdev(gaps) if len(gaps) > 1 else float("nan")
+        per_season = games.group_by("season").len()["len"].to_list()
+        n_typical = int(statistics.median(per_season)) if per_season else 0
+        print(f"  study: noise floor {floor:.3f} points per root-day off {floor_games} live "
+              f"games of this archive (#214 recorded 0.40 on 12; used {used:.2f}); gap sd "
+              f"{sd_gap:.1f} value units over {len(gaps)} events since {a.since}")
+        mde = study_mde(n=n_typical, sd_gap=sd_gap, window_days=7.0, floor_per_root_day=used)
+        print(f"  MDE before the run at a season of {n_typical} event games, a 7-day window: "
+              f"{mde:.4f} points per value unit against a benchmark of {BENCHMARK:.3f}")
+        rows_ = study_rows(polls, season_games,
+                           floor_per_root_day=floor if math.isfinite(floor) else None)
+        fit = study_fit(rows_, floor_per_root_day=used)
+        if rows_.is_empty():
+            print(f"  coefficient: not established -- no uncensored event game with a frozen "
+                  f"and a pre-game price in the {a.season} archive")
+        else:
+            seen_change = rows_["days_to_change"].drop_nulls()
+            print(f"  coefficient: {fit['beta']:+.4f} points per value unit (se {fit['se']:.4f} "
+                  f"from the floor, MDE {fit['mde']:.4f}) over n={int(fit['n'])} event games "
+                  f"(cluster = game); t against {BENCHMARK:.3f}: {fit['t_vs_benchmark']:+.2f}")
+            print(f"  change-point: seen on {seen_change.len()} of {rows_.height} games, median "
+                  f"{seen_change.median() if seen_change.len() else float('nan')} days after "
+                  f"the previous game day; the depth-chart date is not cached, so timing "
+                  f"against the report date is not established")
     return 0
 
 

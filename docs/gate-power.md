@@ -672,3 +672,59 @@ is what #270's mark is for.
 **Not established.** The gate's own effect, interval and ceiling — no row exists to compute
 them from. The run stamps `commit` as dirty because the harness was run before its own
 commit; the numbers above depend on the pinned file and the archive alone, both unchanged.
+
+---
+
+# Measured 2026-09-13: the line-move study's MDE is restated on the real gap spread, and its coefficient is not established (#221)
+
+Run against the pre-registration above by `uv run python -m hub.models.starter_change
+--events --study`, on the same pinned file and archive as the gate. The event construction
+is the gate's (its table above); what follows is the study's own.
+
+## The gap spread, and the MDE restated
+
+The disposition of 2026-09-12 stated the MDE at gap spreads of 10 / 20 / 30 value units and
+said the pinned file would decide. It has: the ex-ante gap between the departing and the
+arriving starter has a standard deviation of **66.3 value units over 231 in-season events,
+2022–2025** (per season 80.4 / 62.2 / 69.2 / 50.3, n = 62 / 61 / 51 / 57). A backup is not
+a slightly worse starter; on the source's scale he is a hundred units worse, which is why
+the source's adjustments run to −125 Elo.
+
+The noise floor, recomputed off this archive with frozen lookaheads excluded, is **0.404
+points per root-day over 12 live games** — #214's 0.40 on the same twelve, reproduced. Over a
+seven-day window that is 1.06 points per event.
+
+| | MDE, points per value unit |
+|---|---|
+| one season, n = 53 event games, 7-day window, t(0.975, 52) | **0.0063** |
+| two seasons, n = 106 | 0.0044 |
+
+Against the 0.132 benchmark, **one season resolves the benchmark twenty times over, and
+resolves 0.132 from 0.10 at five MDEs.** The disposition's "two-season question" was a
+question about the gap spread, and the gap spread answers it: what a second season buys is
+not power but a second cluster for the sign. The 2.8 in the disposition's line is 2.85 on the
+t at fifty-two clusters; the difference is in the third decimal.
+
+## The run
+
+| | |
+|---|---|
+| in-season events in 2026 | **0** |
+| offseason changes in 2026 | 13, every one before the first snapshot (2026-08-25): **censored by construction** |
+| event games with a frozen and a pre-game price | **0** |
+| coefficient | **not established** |
+| change-point against the report date | **not established** — depth charts are not cached, and the play-by-play cache carries no passer column, so the first-pass-attempt reader (`starters_from_pbp`) is held on a fixture and has not met live data |
+
+The harness runs end to end on a synthetic archive (`tests/unit/test_starter_change.py`):
+the week's mean move between the same two poll days is subtracted, the slope on the net gap
+recovers a manufactured 0.132, the standard error is the floor's, and the change-point is the
+first poll clearing the floor per root-day. On the real archive there is nothing for it to
+read until the poller has carried the season past its first in-season change, which the
+first table above says will be about the fourth week.
+
+**What the study cannot do on this archive, and says so.** An event whose change was known
+before the frozen snapshot — a benching announced midweek before the previous game — is
+priced in the frozen quote already, and the study would read a move of zero against a gap of
+a hundred: a censoring in the other direction that only the depth-chart timestamp can
+separate. It is the same limit as the timing criterion, and it closes when the depth charts
+are cached.

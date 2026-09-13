@@ -6,7 +6,8 @@ whose starter on one game differs from its starter on its previous game of the s
 observed off the source's own starter column or the first pass attempt in play-by-play, and
 never off the injury report. The gate is held to its pre-registration in
 `docs/gate-power.md` -- the frozen price is the comparator, the shipped estimator is the arm,
-fewer than three event-seasons is not-runnable. The study (#221) lands beside it.
+fewer than three event-seasons is not-runnable -- and the study to its: the week's mean move
+is subtracted, the regressor is the net ex-ante gap, the floor sets the standard error.
 
 Every fixture is synthetic and every test runs with no `data/` and no network.
 """
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+import statistics
 
 import polars as pl
 import pytest
@@ -280,6 +282,66 @@ def test_no_rows_is_not_runnable_with_zero_event_seasons(tmp_path):
     assert run.verdict[0] == "NOT-RUNNABLE" and "0 event-season" in run.verdict[1]
 
 
+# --- the study ---------------------------------------------------------------------------
+
+
+def test_the_study_subtracts_the_weeks_mean_move_and_regresses_on_the_net_gap(rows):
+    """Week 3: KC-LA moved 3 -> -2 (-5), the other week-3 game moved 1 -> 2 (+1) over the
+    same two poll days, so the week-adjusted move is -6 on a net gap of -145 (KC's change
+    alone; LA's is offseason and not an event). Week 4: -3 -> +4 with no other game to
+    subtract, on a net gap of +139."""
+    tg = sc.team_games(rows)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    study = sc.study_rows(ARCHIVE, games).sort("week")
+    assert study["move"].to_list() == [-5.0, 7.0]
+    assert study["week_mean"].to_list() == [1.0, 0.0]
+    assert study["adjusted_move"].to_list() == [-6.0, 7.0]
+    assert study["net_gap"].to_list() == [-145.0, 139.0]
+
+
+def test_the_change_point_is_the_first_poll_day_past_the_floor(rows):
+    """Days from the previous game day to the first poll whose move from the frozen price
+    clears `floor_per_root_day * sqrt(days since the frozen poll)`. KC-LA's first poll after
+    the frozen one (09-19) is 09-23 at -1: a move of 4 over 4 days clears 0.4 * 2 = 0.8, so
+    the change is seen 3 days after the 09-20 game day. A game whose polls never clear the
+    floor has no change-point."""
+    tg = sc.team_games(rows)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    study = sc.study_rows(ARCHIVE, games, floor_per_root_day=0.4).sort("week")
+    assert study["days_to_change"].to_list() == [3.0, 3.0]
+    quiet = sc.study_rows(ARCHIVE, games, floor_per_root_day=5.0).sort("week")
+    assert quiet["days_to_change"].is_null().all()
+
+
+def test_the_fit_recovers_the_slope_and_takes_its_error_from_the_floor():
+    """Moves manufactured at 0.132 points per unit of gap plus a week effect; after the
+    week's mean is subtracted the slope is the benchmark, and the standard error is the
+    floor per window over the gap's spread and root n, not the residual's."""
+    gaps = [-150.0, -80.0, -20.0, 30.0, 90.0, 140.0]
+    rows_ = pl.DataFrame({
+        "season": [2026] * 6, "week": [1, 1, 2, 2, 3, 3], "game_id": [f"g{i}" for i in range(6)],
+        "net_gap": gaps, "adjusted_move": [0.132 * g for g in gaps],
+        "window_days": [7.0] * 6})
+    fit = sc.study_fit(rows_, floor_per_root_day=0.4)
+    assert fit["beta"] == pytest.approx(0.132)
+    assert fit["n"] == 6
+    floor_window = 0.4 * math.sqrt(7.0)
+    sd_gap = statistics.stdev(gaps)
+    assert fit["se"] == pytest.approx(floor_window / (sd_gap * math.sqrt(6)))
+    assert fit["mde"] == pytest.approx(
+        (experiment.t_quantile(0.975, 5) + 0.8416) * fit["se"], abs=1e-3)
+    assert fit["benchmark"] == sc.BENCHMARK == pytest.approx(3.3 / 25)
+    assert fit["t_vs_benchmark"] == pytest.approx(0.0)
+
+
+def test_the_study_mde_before_the_run_is_stated_from_the_events_gap_spread():
+    """With no archived event the MDE line is still stated: the pinned file's gap spread,
+    the noise floor per window, and the event count a season carries."""
+    line = sc.study_mde(n=53, sd_gap=70.0, window_days=7.0, floor_per_root_day=0.4)
+    assert line == pytest.approx((experiment.t_quantile(0.975, 52) + 0.8416)
+                                 * 0.4 * math.sqrt(7.0) / (70.0 * math.sqrt(53)), abs=1e-4)
+
+
 # --- the entry point ---------------------------------------------------------------------
 
 
@@ -287,12 +349,12 @@ def test_the_cli_reads_the_cache_and_the_store_and_reports_the_counts(tmp_path, 
                                                                        monkeypatch, rows):
     """Driven end to end on the fixture: the nfeloqb cache under `--cache`, an empty store
     under `--store`. The events are counted per season, the gate reports zero event-seasons
-    and NOT-RUNNABLE, and the censored count is reported -- with n on every line."""
+    and NOT-RUNNABLE, and the study reports the censored count -- with n on every line."""
     cache = tmp_path / "nfeloqb"
     cache.mkdir()
     rows.write_csv(cache / nfeloqb.FILE)
     monkeypatch.setattr(experiment, "WIDTH_STATE", tmp_path / "w.json")
-    code = sc.main(["--events", "--gate", "--cache", str(cache),
+    code = sc.main(["--events", "--gate", "--study", "--cache", str(cache),
                     "--store", str(tmp_path / "store")])
     out = capsys.readouterr().out
     assert code == 0
@@ -330,6 +392,9 @@ def test_no_event_at_all_yields_empty_frames_with_the_schema(rows):
     games = sc.event_games(sc.in_season_events(sc.events(tg)))
     assert games.is_empty() and list(games.columns) == list(sc.EVENT_GAME_SCHEMA)
     assert sc.gate_rows(ARCHIVE, games, tg).is_empty()
+    assert sc.study_rows(ARCHIVE, games).is_empty()
+    assert math.isnan(sc.study_fit(sc.study_rows(ARCHIVE, games), floor_per_root_day=0.4)["beta"])
+    assert math.isnan(sc.study_mde(n=1, sd_gap=70.0, window_days=7.0, floor_per_root_day=0.4))
 
 
 def test_rows_without_a_week_are_refused_by_name():
@@ -340,7 +405,7 @@ def test_rows_without_a_week_are_refused_by_name():
 def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, capsys,
                                                                        monkeypatch, rows):
     """Driven with the fixture archive written into a store: the archive line, the noise
-    floor off it, the pilot, and the gate's zero with its n."""
+    floor off it, the pilot, the gate's zero and the study's coefficient with its n."""
     from hub import store
 
     cache = tmp_path / "nfeloqb"
@@ -352,13 +417,16 @@ def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, c
         store.write(part.drop("week"), "lines", "nfl", 2026, int(week[0]), name="t",
                     base=base)
     monkeypatch.setattr(experiment, "WIDTH_STATE", tmp_path / "w.json")
-    code = sc.main(["--gate", "--ceiling", "--cache", str(cache), "--store", str(base)])
+    code = sc.main(["--gate", "--ceiling", "--study", "--cache", str(cache), "--store",
+                    str(base)])
     out = capsys.readouterr().out
     assert code == 0
     assert "archive: 3 games" in out
     assert "2026: 2 event games; 0 censored" in out
     assert "gate: 1 scored event games over 1 event-season(s)" in out
     assert "NOT-RUNNABLE" in out
+    assert "coefficient:" in out and "n=2 event games" in out
+    assert "change-point: seen on" in out
 
 
 def test_the_cli_with_no_reader_asked_for_prints_usage(capsys):
