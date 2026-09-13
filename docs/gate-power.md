@@ -434,3 +434,106 @@ which is what `compare` is actually handed — so the table above can say `621cb
 and still not name the frames they were played on. `board_digest` now stamps that, and the
 paired output carries the commit that produced it. The rows above predate the stamp and cannot
 be given one retroactively; a re-run under #194 will carry all four.
+
+
+---
+
+# Pre-registered 2026-09-13: the weekly interval's shape law, decided by CRPS (#292)
+
+**Written and committed before the comparison was run.** As with the rule at the top of this
+document, the commit order is the point: this section lands in one commit, the harness and
+its result in the next, and a reader can check that the bar was set before the number was
+known. Parent decisions: [#289](weekly-coverage.md), which restated the interval's claim and
+named this as the refit it declined to make by hand, and #274, which promoted CRPS to a
+deciding metric for exactly this decision and nothing else.
+
+## The question
+
+The weekly interval `hub.models.predict.moments` serves is pushed through a fitted
+Cornish-Fisher skew (`WEEKLY_SKEW`, per position) before it reaches `draft/optimize.py`,
+`season/roster.py` and the lineup gate. `hub.models.coverage` measures both interval forms on
+the same weeks -- 77.4% with the skew and 79.5% without, both under an 80% label -- and
+nothing decides between them. Coverage cannot: it reads two quantiles and is blind to the
+shape between them, and "closer to 80%" is a property of a label the interval has already
+been restated away from. A proper scoring rule of the whole distribution is what a shape
+question needs, and CRPS is the one this repo already computes beside MAE.
+
+> **Does removing the skew law improve the served weekly distribution, scored by CRPS on the
+> same player-weeks, under the house rule with the season as the unit of replication?**
+
+## What is measured
+
+For the paired frame, with nothing else changed from the coverage harness:
+
+1. **The rows.** `hub.models.coverage`'s prior-centre player-weeks -- 2021-2025, the four
+   drafted positions, `MIN_WEEKS = 8`, `MIN_MU = 2.0`, `MIN_PRIOR = 4`, centre from strictly
+   earlier weeks -- restricted to the **unclipped** subset the coverage gate reads (10,536 at
+   the last run). These are the weeks the two coverage figures above were quoted on, and the
+   subset is fixed here so the rows cannot be chosen after the sign is seen. The pooled 16,061
+   is printed beside it as a **diagnostic** and decides nothing.
+2. **Arm B, the incumbent: the deployed distribution.** `predict.skewed(mu, sd, skew, z)` on
+   `predict.moments`' own `mu`, `sd` and `skew`, evaluated at `scoring_rules.quantile_levels()`
+   (400 levels) and scored by `scoring_rules.crps_from_quantiles` -- the same path
+   `hub.models.weekly.shipped_quantiles` takes, zero clip included because the clip is served.
+3. **Arm A, under test: the same function with the skew law removed.** `predict.skewed(mu,
+   sd, 0.0, z)`, which the function floors at `MIN_SKEW = 0.05` -- so the arm is exactly what
+   would be served if `WEEKLY_SKEW` were zeroed, floor and all, and not a plain normal written
+   out beside the deployed one. Same `mu`, same `sd`, same clip; only the skew term moves.
+4. **The paired difference** per player-week is `diff = CRPS_B - CRPS_A`, positive when the
+   skew-free arm scores better, in points of CRPS per player-week.
+5. `experiment.run_gate(cluster=SEASON_CLUSTER)`: five clusters, the percentile bootstrap at
+   `BOOTSTRAP = 4000` draws, `seed = 0`, the interval and the standard error from the same
+   draws, and **MDE `(t(0.975, 4) + z(0.80)) * SE`** from that standard error -- the restated
+   form above, not the superseded normal quantile.
+6. **The ceiling arm, declared: *the best per-position skew, chosen on these rows*.**
+   `predict.skewed` with the skew for each position chosen on a grid from 0 to 2 by 0.05 to
+   minimise mean CRPS over these same rows. In-sample by construction, so it is a bound: the
+   largest gain any per-position skew law -- the deployed one, none, or any other -- could show
+   over the deployed one on this frame. Declared as `hub.models.coverage.CEILING_ARM` and
+   printed on the ceiling line, distinct by name from the three gates' arms.
+
+## The bar, set now
+
+In `experiment.gate`'s order, and nothing is added to it:
+
+- **NOT-RUNNABLE** if the season-clustered MDE exceeds the ceiling (stage 2 above, ADR-0019
+  as amended). Recorded as *not runnable* under
+  [ADR-0014](adr/0014-a-provisional-rule-may-act-where-no-gate-can-run.md): no verdict, the
+  skew stays, and this document says the design could not answer the question on five
+  seasons. Stage 1 -- MDE against the reported effect -- is printed beside it for the record
+  and licenses nothing.
+- **ADOPT the skew-free interval** only if the interval excludes zero on the positive side
+  *and* the skew-free arm has the lower mean CRPS in **every one of the five** held-out
+  seasons. What follows is the maintainer's switch and not this lane's: the deployed function
+  changes, and #289's restated claim and band are re-registered against the skew-free
+  function before its gate is read again.
+- **REMOVE** -- the deployed skew wins in every season and the interval is entirely negative:
+  the skew stays, with evidence that it earns its place.
+- **SHOW** otherwise: the skew stays, and this document says the CRPS comparison could not
+  remove it. Absence of evidence, not equivalence.
+
+**Expectation, written before the number.** Two shapes on identical `mu` and `sd` differ in
+CRPS by a small fraction of the score itself; the effect is expected to be of the order of a
+hundredth of a point per player-week either way, against a mean CRPS of several points. That
+is a guess and not a prediction; it is written so that a much larger movement is recognised
+as needing its own explanation rather than absorbed.
+
+## What this measurement cannot do
+
+- It cannot pick a different clustering, a different seed, or a different subset once the
+  sign is seen. All three are fixed above.
+- It cannot license any change to `sd`. `WEEKLY_K` is identical in both arms; the only term
+  on trial is the skew, and a CRPS gain here is the skew term's alone.
+- It cannot say anything about the weeks a player did not play, which are outside the coverage
+  harness's sample by construction, or about the clipped weeks the gate excludes.
+- It cannot promote CRPS anywhere else. #274's promotion is for this decision; every other
+  CRPS line in the repo stays a diagnostic.
+
+## What happens either way
+
+If the gate cannot run, the interval keeps its skew and its restated 77% claim, and the
+programme's honest output is this section plus the numbers. If it runs and the skew-free arm
+does not win every season with an interval clear of zero, the skew stays and the claim stays.
+If it runs and the skew-free arm wins, the deployed function is the maintainer's to change,
+and the claim is re-measured on the function that replaces it before anything is published
+against it.
