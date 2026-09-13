@@ -927,24 +927,33 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     different on either side of this commit. The first move of this name to a commit will be
     the model change, and it is the maintainer's to make from the next pull's stamp.
 
-    **Unmoved 2026-09-12 (#253): `a1e669b9`, `fitted_digest` `9be7844c`.** The mechanism
-    changed under the number and the number did not: the four lists (`FITTED_MODULES`,
-    `FITTED_EXTRA`, `NOT_IN_DIGEST`, the `NOT_FITTED_BECAUSE` strings) are gone and every
-    constant declares its own coverage where it is written (`hub.declare`), and the walk
-    finds exactly the forty-eight the lists found. Recorded here because a pin that only
-    speaks when it moves cannot say that a rewrite of what feeds it was a no-op.
+    **Moved 2026-09-13 (#271, the pin set): `a1e669b9` -> `8169e6c5`**, `fitted_digest`
+    `9be7844c` -> `01df92b8`. `COMMIT` went from `None` to `2c95e5fc`, the source's `main`
+    at the 2026-09-13 pull (16,088 rows, sha256 `9c7ec9f4...`), checked by hashing the file
+    at that commit. **A model change**: the input is now a fixed file, so a later pull that
+    differs is reported as a source change rather than silently becoming the input.
 
-    **Moved again 2026-09-12 (#253): `a1e669b9` -> `432c6b3c`**, `fitted_digest` `9be7844c`
-    -> `429481db`. Four names entered: `components.PER_UNIT_CV`, `YARDS_PER_UNIT`,
+    **Unmoved 2026-09-12 (#253): the mechanism changed under the number and the number did
+    not.** The four lists (`FITTED_MODULES`, `FITTED_EXTRA`, `NOT_IN_DIGEST`, the
+    `NOT_FITTED_BECAUSE` strings) are gone and every constant declares its own coverage
+    where it is written (`hub.declare`); the walk finds exactly the forty-eight the lists
+    found, `nfeloqb.COMMIT` among them in its `chosen(...)` spelling at the pinned value
+    above. On the tree it landed on it was unmoved at `a1e669b9`/`9be7844c`; merged after
+    the pin, unmoved at `8169e6c5`/`01df92b8`. Recorded here because a pin that only speaks
+    when it moves cannot say that a rewrite of what feeds it was a no-op.
+
+    **Moved again 2026-09-13 (#253): `8169e6c5` -> `b1f69382`**, `fitted_digest` `01df92b8`
+    -> `04c2d997`. Four names entered: `components.PER_UNIT_CV`, `YARDS_PER_UNIT`,
     `COUNT_DISPERSION` and `TD_DISPERSION`, the dispersions `hub.models.props` prices a
     published prop from. They were argued out of the digest -- "no points prediction reads
     it" -- while `props.version()` carried them in a second hash of its own, so one model
     version said less than the predictions stamped with it; now they are declared covered
     where they are written and `props.version()` is the one digest. **A coverage correction
     and not a model change**: no constant was refitted and nothing any run computes differs
-    on either side of this commit.
+    on either side of this commit. (Before the pin it read `a1e669b9` -> `432c6b3c`,
+    `9be7844c` -> `429481db`.)
     """
-    assert config_digest(HubConfig()) == "432c6b3c"
+    assert config_digest(HubConfig()) == "b1f69382"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

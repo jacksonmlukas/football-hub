@@ -91,11 +91,12 @@ PROG = "hub.fetch.nfeloqb"
 # URL always was until #271. Allowed, because a fetch must serve with zero attention, and
 # said on every pull with the two values to set from the stamp it writes. The first pull
 # (2026-09-12) recorded a hash and a row count and not the commit, so the pin could not be
-# written from the record; it is the maintainer's to set from the next `--refresh`.
+# written from the record. Set 2026-09-13 from a `--refresh` (16,088 rows, sha256 below) and
+# the source repository's `main` at that moment, checked by hashing the file at that commit.
 REPO = "greerreNFL/nfeloqb"
 BRANCH = "main"
-COMMIT: str | None = chosen(None)
-PINNED_SHA256: str | None = None
+COMMIT: str | None = chosen("2c95e5fc5e9aa289b2e160e5a4fef91f4a160ba8")
+PINNED_SHA256: str | None = "9c7ec9f40e01621174040dd7af9ec1d8698d41e10e5d9e108db72faa776ee124"
 
 
 def url(commit: str | None = None) -> str:

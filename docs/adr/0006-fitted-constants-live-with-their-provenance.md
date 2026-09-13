@@ -122,9 +122,10 @@ stayed `a1e669b9` and `fitted_digest` `9be7844c`: the walk finds exactly the for
 constants the four lists found, and the ten exclusions carry the arguments `NOT_IN_DIGEST`
 carried. The props module's own `version()` — four dispersions hashed outside the digest
 because `NOT_IN_DIGEST` said no points prediction read them — folded into the one digest in
-the commit after: `config_digest` `a1e669b9` → `432c6b3c`, `fitted_digest` `9be7844c` →
-`429481db`, a coverage correction recorded in the pin, with nothing any run computes
-different on either side of it.
+the commit after, a coverage correction recorded in the pin with nothing any run computes
+different on either side of it: `a1e669b9` → `432c6b3c` (`fitted_digest` `9be7844c` →
+`429481db`) on the tree it landed on, and, merged after the #271 pin was set the same day,
+`8169e6c5` → `b1f69382` (`01df92b8` → `04c2d997`) — the sequence the pin's paragraphs carry.
 
 **The escape this file recorded is restated, not closed.** `n_draft_sims` and
 `n_season_sims` are still function-signature defaults in `hub.draft.backtest` with no name
