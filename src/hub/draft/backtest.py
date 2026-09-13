@@ -38,8 +38,11 @@ and the burden is on the complicated thing.
 from __future__ import annotations
 
 import argparse
+import multiprocessing
+import queue
 import sys
 from collections.abc import Callable, Sequence
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import NamedTuple
 
@@ -327,14 +330,89 @@ def play(board: pl.DataFrame, strategy, *, my_slot: int, teams: int, rounds: int
     return names, pos
 
 
+def _season_rows(season: int, board: pl.DataFrame, real: pl.DataFrame, *, n_drafts: int,
+                 seed: int, my_slot: int, teams: int, rounds: int, n_draft_sims: int,
+                 n_season_sims: int, opp_noise: float, carry_correlation: bool,
+                 on_draft: Callable[[int, int, int], None] | None = None,
+                 progress=None) -> tuple[list[dict], CorrelationReport | None]:
+    """One season of `compare`: its paired rows and the correlation report they wrote into.
+
+    The body of `compare`'s loop, at module level so a worker process can be handed it
+    (#261). Every draft's room, rollouts and season simulations descend from
+    `draft_root(seed, season, k)` and nothing else, so a season played here is the same
+    season whichever process plays it -- `test_serial_and_parallel_agree_on_every_paired_row`
+    holds that on every value of every row.
+
+    `carry_correlation` says whether the caller handed `compare` a report to write into. A
+    caller that did gets a fresh one back from each season to absorb; one that did not gets
+    `None` here too, so each draw still keeps its own local count and refuses at the same
+    floor it always did. `progress` is a queue for a worker to post `(season, k, of)` to;
+    `on_draft` is the in-process callback. A season reports through exactly one of them.
+    """
+    correlation = CorrelationReport() if carry_correlation else None
+    known = realised_names(real)
+    arm_a = market_strategy()
+    rows = []
+    for k in range(n_drafts):
+        # Common random numbers: the same room, twice. The only thing that differs
+        # between the arms is who sits in my seat. `stream(root, ROOM)` is a pure
+        # function of the root, so the two calls below open one room and both arms play
+        # it -- the pairing is unchanged by #195 and is asserted, not assumed.
+        #
+        # What #195 changed is the level *below* this line. Arm B's evaluation rollouts
+        # and its season simulations now hang off the same root as separate coordinates,
+        # so they can no longer be the room they are scored in, and two consecutive
+        # drafts no longer share futures.
+        root = draft_root(seed, season, k)
+        a_names, a_pos = play(board, arm_a, my_slot=my_slot, teams=teams,
+                              rounds=rounds, rng=stream(root, ROOM), opp_noise=opp_noise)
+        arm_b = optimizer_strategy(board, my_slot=my_slot, teams=teams, rounds=rounds,
+                                   n_draft_sims=n_draft_sims,
+                                   n_season_sims=n_season_sims, seed=root,
+                                   correlation=correlation, opp_noise=opp_noise)
+        b_names, b_pos = play(board, arm_b, my_slot=my_slot, teams=teams,
+                              rounds=rounds, rng=stream(root, ROOM), opp_noise=opp_noise)
+        # A callback, not a print, so `compare` stays pure and the tests stay quiet. This
+        # run takes long enough that a caller needs to know it is alive: the first attempt
+        # was killed at 49 minutes having emitted nothing at all, because the only output
+        # was buffered behind a pipe and the per-season lines never reached anyone.
+        if on_draft is not None:
+            on_draft(season, k + 1, n_drafts)
+        if progress is not None:
+            progress.put((season, k + 1, n_drafts))
+        rows.append({
+            "season": season, "draft": k,
+            "market": score_roster(a_names, a_pos, real),
+            "optimizer": score_roster(b_names, b_pos, real),
+            # Beside the scores, never inside them (#46): how many of each arm's drafted
+            # names were scored zero for a spelling rather than for a season. Both arms
+            # draft `rounds` players, so one `picks` serves both rates.
+            "market_failed": join_failures(a_names, known),
+            "optimizer_failed": join_failures(b_names, known),
+            "picks": len(a_names),
+        })
+    return rows, correlation
+
+
 def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], *,
             n_drafts: int = 20, seed: int = 0, my_slot: int | None = None,
             teams: int | None = None, rounds: int = DEFAULT_ROUNDS,
             n_draft_sims: int = 12, n_season_sims: int = 250,
             on_draft: Callable[[int, int, int], None] | None = None,
             correlation: CorrelationReport | None = None,
-            opp_noise: float = 1.0) -> pl.DataFrame:
+            opp_noise: float = 1.0, workers: int = 1) -> pl.DataFrame:
     """Paired arm A against arm B, one row per (season, draft).
+
+    **`workers` plays the seasons in parallel, one process each, and changes nothing a
+    reader can see** (#261). The seeding tree makes every `(season, draft)` root a function
+    of its own coordinates with no cross-iteration state, so the seasons are independent
+    work: the rows come back in the same order with the same values, the caller's
+    `correlation` absorbs each worker's count, and the join-failure counts ride on the rows
+    as they always did. The default is serial and in-process -- this is a pure function,
+    and a test that patches the room or the season sees its patch only in this process --
+    and `main` asks for one worker per season. A spawn context, whichever platform: a fork
+    under numpy and polars threads is not safe, and the seasons are big enough that the
+    spawn's import cost is noise.
 
     `opp_noise` scales the room both arms are played in *and* the rollouts arm B evaluates
     inside it, from one argument, so a sweep over it (`noise_sensitivity`) varies the knob
@@ -363,50 +441,54 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     cfg = RosterConfig()
     my_slot = cfg.slot if my_slot is None else my_slot
     teams = cfg.teams if teams is None else teams
+    seasons = sorted(boards)
+    per_season = {"n_drafts": n_drafts, "seed": seed, "my_slot": my_slot, "teams": teams,
+                  "rounds": rounds, "n_draft_sims": n_draft_sims,
+                  "n_season_sims": n_season_sims, "opp_noise": opp_noise,
+                  "carry_correlation": correlation is not None}
 
-    rows = []
-    for season in sorted(boards):
-        board, real = boards[season], realised[season]
-        known = realised_names(real)
-        arm_a = market_strategy()
-        for k in range(n_drafts):
-            # Common random numbers: the same room, twice. The only thing that differs
-            # between the arms is who sits in my seat. `stream(root, ROOM)` is a pure
-            # function of the root, so the two calls below open one room and both arms play
-            # it -- the pairing is unchanged by #195 and is asserted, not assumed.
-            #
-            # What #195 changed is the level *below* this line. Arm B's evaluation rollouts
-            # and its season simulations now hang off the same root as separate coordinates,
-            # so they can no longer be the room they are scored in, and two consecutive
-            # drafts no longer share futures.
-            root = draft_root(seed, season, k)
-            a_names, a_pos = play(board, arm_a, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=stream(root, ROOM), opp_noise=opp_noise)
-            arm_b = optimizer_strategy(board, my_slot=my_slot, teams=teams, rounds=rounds,
-                                       n_draft_sims=n_draft_sims,
-                                       n_season_sims=n_season_sims, seed=root,
-                                       correlation=correlation, opp_noise=opp_noise)
-            b_names, b_pos = play(board, arm_b, my_slot=my_slot, teams=teams,
-                                  rounds=rounds, rng=stream(root, ROOM), opp_noise=opp_noise)
-            # A callback, not a print, so `compare` stays pure and the tests stay quiet. This
-            # run takes long enough that a caller needs to know it is alive: the first attempt
-            # was killed at 49 minutes having emitted nothing at all, because the only output
-            # was buffered behind a pipe and the per-season lines never reached anyone.
-            if on_draft is not None:
-                on_draft(season, k + 1, n_drafts)
-            rows.append({
-                "season": season, "draft": k,
-                "market": score_roster(a_names, a_pos, real),
-                "optimizer": score_roster(b_names, b_pos, real),
-                # Beside the scores, never inside them (#46): how many of each arm's drafted
-                # names were scored zero for a spelling rather than for a season. Both arms
-                # draft `rounds` players, so one `picks` serves both rates.
-                "market_failed": join_failures(a_names, known),
-                "optimizer_failed": join_failures(b_names, known),
-                "picks": len(a_names),
-            })
+    rows: list[dict] = []
+    if max(1, workers) == 1 or len(seasons) <= 1:
+        for season in seasons:
+            got, report = _season_rows(season, boards[season], realised[season],
+                                       on_draft=on_draft, **per_season)
+            rows += got
+            if correlation is not None and report is not None:
+                # Absorbed rather than aliased, so the serial path and the pool below
+                # reach the caller's report one way.
+                correlation.absorb(report)
+    else:
+        ctx = multiprocessing.get_context("spawn")
+        with ctx.Manager() as manager, ProcessPoolExecutor(
+                max_workers=min(workers, len(seasons)), mp_context=ctx) as pool:
+            progress = manager.Queue() if on_draft is not None else None
+            futures = [pool.submit(_season_rows, season, boards[season], realised[season],
+                                   progress=progress, **per_season) for season in seasons]
+            # Relay progress while the seasons play, then drain what arrived after the last
+            # check; a line posted between the two would otherwise be lost.
+            while not all(f.done() for f in futures):
+                _relay(progress, on_draft, wait=True)
+            _relay(progress, on_draft, wait=False)
+            for future in futures:                     # season order, as the serial path
+                got, report = future.result()
+                rows += got
+                if correlation is not None and report is not None:
+                    correlation.absorb(report)
     out = pl.DataFrame(rows)
     return out.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
+
+
+def _relay(progress, on_draft, *, wait: bool) -> None:
+    """Hand every queued `(season, k, of)` to the caller's callback, in this process."""
+    if progress is None:
+        return
+    while True:
+        try:
+            season, k, of = progress.get(timeout=0.2) if wait else progress.get_nowait()
+        except queue.Empty:
+            return
+        on_draft(season, k, of)
+        wait = False
 
 
 # What this gate's ceiling *is*, spelled where it is printed (#138). The draft gate's ceiling
@@ -509,7 +591,8 @@ def noise_sensitivity(boards: dict[int, pl.DataFrame], realised: dict[int, pl.Da
                       with_ceiling: bool = False,
                       on_draft: Callable[[int, int, int], None] | None = None,
                       on_scale: Callable[[float], None] | None = None,
-                      correlation: CorrelationReport | None = None) -> pl.DataFrame:
+                      correlation: CorrelationReport | None = None,
+                      workers: int = 1) -> pl.DataFrame:
     """One gate per scale, and one row per gate: the scale beside its interval.
 
     **Built through `run_gate`, so each row is the summary of one gate run** and not a
@@ -533,7 +616,8 @@ def noise_sensitivity(boards: dict[int, pl.DataFrame], realised: dict[int, pl.Da
             on_scale(scale)
         paired = compare(boards, realised, n_drafts=n_drafts, seed=seed, rounds=rounds,
                          n_draft_sims=n_draft_sims, n_season_sims=n_season_sims,
-                         on_draft=on_draft, correlation=correlation, opp_noise=scale)
+                         on_draft=on_draft, correlation=correlation, opp_noise=scale,
+                         workers=workers)
         bound = None
         if with_ceiling:
             top = ceiling(boards, realised, n_drafts=n_drafts, seed=seed, rounds=rounds,
@@ -873,6 +957,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--draft-sims", type=int, default=12)
     ap.add_argument("--season-sims", type=int, default=250)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--workers", type=int, default=None,
+                    help="processes to play the seasons in; one per season by default, "
+                         "which is the same run in less wall-clock (#261). 1 is serial")
     ap.add_argument("--progress", action="store_true",
                     help="one line per draft, so a long run can be watched rather than trusted")
     ap.add_argument("--ceiling", action="store_true",
@@ -1032,8 +1119,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         # Owned here for the same reason `diagnose`'s is: every simulated season inside
         # `compare` writes into it, and a count that lives inside the call dies with its
-        # stack frame.
+        # stack frame. With workers, each season's count comes back and is absorbed.
         correlation = CorrelationReport()
+        workers = len(seasons) if a.workers is None else max(1, a.workers)
 
         if a.noise_scales:
             # The sensitivity (#49): one gate per scale, the table as the deliverable. Not
@@ -1043,7 +1131,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             table = noise_sensitivity(
                 boards, realised, scales=scales, n_drafts=a.drafts, seed=a.seed,
                 rounds=a.rounds, n_draft_sims=a.draft_sims, n_season_sims=a.season_sims,
-                with_ceiling=a.ceiling, correlation=correlation,
+                with_ceiling=a.ceiling, correlation=correlation, workers=workers,
                 on_draft=_tick("paired") if a.progress else None,
                 on_scale=lambda s: print(f"  scale x{s:g}: playing the room ...", flush=True))
             print(f"\n  {correlation.note()}")
@@ -1060,7 +1148,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         paired = compare(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
                          n_draft_sims=a.draft_sims, n_season_sims=a.season_sims,
                          on_draft=_tick("paired") if a.progress else None,
-                         correlation=correlation)
+                         correlation=correlation, workers=workers)
         print(f"\n  {correlation.note()}")
         for line in correlation.repair_lines():
             print(line)

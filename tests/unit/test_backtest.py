@@ -1763,3 +1763,124 @@ def test_the_limitations_name_the_constants_fitted_on_the_replayed_seasons():
         src = inspect.getsource(mod)
         i = src.index(f"\n{name}")
         assert "backtest.LIMITATIONS" in src[max(0, i - 400): i + 200], f"{name} does not point at the entry"
+
+
+# --- the seasons run in parallel, and the parallel run is the serial run (#261) ----------
+#
+# Every `(season, draft)` root is a function of its own coordinates (#195), so a season
+# shares no random state with another and nothing about the frame depends on which process
+# played which. `compare` stays serial by default -- a pure function a test can spy on
+# in-process -- and takes `workers` for a spawn-context pool of one worker per season, which
+# is what the CLI asks for. What the pool must not change is anything a reader can see: the
+# rows, their order, the correlation count and the join-failure counts.
+
+
+def _two_seasons():
+    """Two seasons on one Board that carries NFL teams, so the season simulation has
+    correlation blocks to count and the merge below has something to merge."""
+    board = _full_board(48).with_columns(
+        pl.Series("team", [f"T{i % 6}" for i in range(48)]))
+    real = _varied_realised(board)
+    return {2024: board, 2025: board}, {2024: real, 2025: real}
+
+
+def test_serial_and_parallel_agree_on_every_paired_row():
+    """The per-season roots are the only randomness a season draws: a worker per season
+    reproduces the serial run row for row, `==` on every value and not approximately."""
+    boards, reals = _two_seasons()
+    kw = {"n_drafts": 2, "seed": 3, "rounds": 3, "n_draft_sims": 2, "n_season_sims": 5}
+    serial = bt.compare(boards, reals, workers=1, **kw)
+    parallel = bt.compare(boards, reals, workers=2, **kw)
+    assert parallel.columns == serial.columns
+    assert parallel.height == serial.height == 4
+    for row_s, row_p in zip(serial.rows(), parallel.rows(), strict=True):
+        assert row_p == row_s, f"a paired row differs between serial and parallel:\n{row_s}\n{row_p}"
+
+
+def test_the_correlation_report_and_the_join_failures_are_merged_across_workers():
+    """Each worker counts its own season's blocks and repairs; the caller's report is the sum,
+    not the last worker's. The join-failure counts ride on the rows, so the rate the void
+    condition reads is over every season's drafted names."""
+    boards, reals = _two_seasons()
+    kw = {"n_drafts": 1, "seed": 0, "rounds": 3, "n_draft_sims": 2, "n_season_sims": 5}
+    one, two = bt.CorrelationReport(), bt.CorrelationReport()
+    serial = bt.compare(boards, reals, workers=1, correlation=one, **kw)
+    parallel = bt.compare(boards, reals, workers=2, correlation=two, **kw)
+    assert one.blocks > 0, "the fixture carries no team block, so nothing is being merged"
+    assert (two.blocks, two.independent, two.repaired) == (one.blocks, one.independent,
+                                                          one.repaired)
+    assert bt.join_failure_rates(parallel) == bt.join_failure_rates(serial)
+    assert parallel["picks"].sum() == serial["picks"].sum() == 2 * kw["rounds"]
+
+
+def test_progress_is_reported_per_draft_from_every_worker():
+    """`--progress` prints one line per draft, and it has to keep doing so when the drafts
+    are played in other processes: the callback runs in the caller's process, once per
+    (season, draft), whichever worker played it."""
+    boards, reals = _two_seasons()
+    seen = []
+    bt.compare(boards, reals, workers=2, n_drafts=2, seed=0, rounds=3, n_draft_sims=2,
+               n_season_sims=5, on_draft=lambda s, k, of: seen.append((s, k, of)))
+    assert sorted(seen) == [(2024, 1, 2), (2024, 2, 2), (2025, 1, 2), (2025, 2, 2)]
+
+
+def test_the_gate_cli_defaults_to_one_worker_per_season(monkeypatch, tmp_path):
+    """The CLI is what runs the seasons in parallel: `--workers` defaults to the number of
+    seasons asked for, and reaches `compare`."""
+    from functools import partial
+
+    got = {}
+
+    def fake_compare(boards, realised, *, workers=1, **kw):
+        got["workers"] = workers
+        return pl.DataFrame({"season": [2024, 2025], "draft": [0, 0], "market": [10.0, 9.0],
+                             "optimizer": [9.0, 8.0], "market_failed": [0, 0],
+                             "optimizer_failed": [0, 0], "picks": [3, 3]}
+                            ).with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
+
+    board = _full_board(24)
+    real = _flat_realised(board)
+    monkeypatch.setattr(bt, "walk_forward_inputs",
+                        lambda seasons, load, *, on_season=None: (
+                            {2024: board, 2025: board}, {2024: real, 2025: real}))
+    monkeypatch.setattr(bt, "compare", fake_compare)
+    monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, record_width=False, bootstrap=50))
+    assert bt.main(["--seasons", "2024,2025", "--drafts", "1"]) == 0
+    assert got["workers"] == 2
+    assert bt.main(["--seasons", "2024,2025", "--drafts", "1", "--workers", "1"]) == 0
+    assert got["workers"] == 1
+
+
+def test_a_report_absorbs_another_count_for_count_and_keeps_the_first_repair_per_team():
+    """`CorrelationReport.absorb` is what makes the pooled run's report the serial run's:
+    every count sums, and the per-team repair record keeps the first record seen, as
+    `record` does within one run -- a second worker's record of the same team is the same
+    repair, and must not displace or double it."""
+    from hub.models.predict import BlockRepair
+    kc_a = BlockRepair("KC", 4, -0.1, 0.01, 0.2, 0.05)
+    kc_b = BlockRepair("KC", 4, -0.9, 0.01, 0.9, 0.50)
+    den = BlockRepair("DEN", 3, -0.2, 0.02, 0.3, 0.06)
+    mine = bt.CorrelationReport(blocks=10, independent=1, repaired=2, repairs={"KC": kc_a})
+    theirs = bt.CorrelationReport(blocks=5, independent=2, repaired=3,
+                                  repairs={"KC": kc_b, "DEN": den})
+    mine.absorb(theirs)
+    assert (mine.blocks, mine.independent, mine.repaired) == (15, 3, 5)
+    assert mine.repairs == {"KC": kc_a, "DEN": den}
+    assert (theirs.blocks, theirs.independent, theirs.repaired) == (5, 2, 3), "absorb reads"
+
+
+def test_a_season_played_for_a_worker_posts_each_draft_to_the_queue_it_is_given():
+    """The worker's half of `--progress`: `_season_rows` handed a queue posts one
+    `(season, k, of)` per draft and calls no callback, so the parent relays and prints.
+    In-process with a plain queue, because a spawned worker's lines are invisible to
+    coverage and the seam is the same either way."""
+    import queue
+
+    board = _full_board(24)
+    real = _flat_realised(board)
+    q: queue.Queue = queue.Queue()
+    rows, report = bt._season_rows(2024, board, real, n_drafts=2, seed=0, my_slot=3,
+                                   teams=12, rounds=3, n_draft_sims=2, n_season_sims=5,
+                                   opp_noise=1.0, carry_correlation=False, progress=q)
+    assert [q.get_nowait() for _ in range(2)] == [(2024, 1, 2), (2024, 2, 2)]
+    assert q.empty() and len(rows) == 2 and report is None
