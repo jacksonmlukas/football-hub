@@ -894,3 +894,35 @@ def test_the_survivor_cli_reports_the_change_once(capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "quarterback adjustment: 1 of 1 priced games touched" in out
     assert "2.50 points" in out
+
+
+# --- the grid carries which source priced each row (#281) --------------------------------
+
+
+def test_a_stale_snapshot_game_is_labelled_schedule_on_the_grid(tmp_path, monkeypatch):
+    """`price_source` is three-way since #281 -- `live`, `stale`, `schedule` -- and the grid
+    rows built through `rated_games` were priced right but carried no label, so a reader of
+    the grid could not tell a live price from a lookahead. The snapshot here has stood three
+    weeks: the moving field prices the game, and both of the game's rows say `schedule`.
+    A game priced by a live snapshot is `live`, on both rows too."""
+    import hub.fetch.nflverse as nflverse
+    from hub import store
+    sched = pl.DataFrame({"game_id": ["2026_05_LV_KC", "2026_05_SEA_SF"],
+                          "season": [2026, 2026], "week": [5, 5],
+                          "home_team": ["KC", "SF"], "away_team": ["LV", "SEA"],
+                          "spread_line": [3.0, 4.0], "result": [None, None]})
+    monkeypatch.setattr(nflverse, "load", lambda *a, **k: sched)
+
+    def snap(game, at):
+        store.write(pl.DataFrame({"game_id": [game], "close_spread": [6.5],
+                                  "captured_at": [at]},
+                                 schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                                         "captured_at": pl.Datetime}),
+                    "lines", "nfl", 2026, 5, base=tmp_path, name=f"snap-{at:%Y%m%dT%H%M%S}")
+    snap("2026_05_LV_KC", dt.datetime(2026, 8, 20))         # frozen for three weeks
+    snap("2026_05_SEA_SF", dt.datetime(2026, 9, 11))        # live
+    grid = survivor.grid_from_schedule(2026, at=dt.datetime(2026, 9, 12), base=tmp_path)
+    src = dict(zip(grid["team"].to_list(), grid["price_source"].to_list(), strict=True))
+    assert src == {"KC": "schedule", "LV": "schedule", "SF": "live", "SEA": "live"}
+    # and the stale candidate lost: the game is priced off the moving field's 3.0
+    assert grid.filter(pl.col("team") == "KC")["close_spread"][0] == 3.0
