@@ -95,6 +95,7 @@ FLOOR: dict[str, int] = {
     "src/hub/models/quarterback.py": 0,
     "src/hub/models/ratings.py": 4,
     "src/hub/models/scoring_rules.py": 1,
+    "src/hub/models/starter_change.py": 1,
     "src/hub/models/spread.py": 9,
     "src/hub/models/volume.py": 1,
     "src/hub/models/weekly.py": 3,

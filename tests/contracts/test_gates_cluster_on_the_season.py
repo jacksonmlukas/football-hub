@@ -47,6 +47,7 @@ HARNESSES = {
     "backtest": ("draft/backtest.py", "hub.draft.backtest"),
     "lineup_gate": ("season/lineup_gate.py", "hub.season.lineup_gate"),
     "weekly_gate": ("season/weekly_gate.py", "hub.season.weekly_gate"),
+    "starter_change": ("models/starter_change.py", "hub.models.starter_change"),
 }
 
 

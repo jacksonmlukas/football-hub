@@ -592,3 +592,83 @@ report date is not cached here and is *not established* until it is.
 **Expected on this archive:** the same zero as the gate — no in-season event precedes the
 archive's last poll — so the run records the event construction's counts, the pilot gap
 spread, the restated MDE, and the censored count, and the coefficient is *not established*.
+
+---
+
+# Measured 2026-09-13: the quarterback gate is not-runnable, and the archive needs about 29 event-seasons (#291)
+
+Run against the pre-registration above, committed first in `8e4e502`, by
+`uv run python -m hub.models.starter_change --events --gate --ceiling` against the pinned
+nfeloqb file (`2c95e5fc`, 16,088 rows) and the 2026 lookahead archive (272 games, 8 polls,
+2026-08-25 to 2026-09-06). Nothing was fetched.
+
+## The event construction, on the pinned file
+
+Events off the source's starter column, a change between two regular-season games of one
+season; a team's first row in the window has nothing to differ from, so 2022's offseason
+count is not computable from a window that opens there.
+
+| season | changes | event games | gap sd (value units) | offseason changes, not events |
+|---|---|---|---|---|
+| 2022 | 62 | 57 | 80.4 (n=62) | — |
+| 2023 | 61 | 53 | 62.2 (n=61) | 15 |
+| 2024 | 51 | 48 | 69.2 (n=51) | 19 |
+| 2025 | 57 | 54 | 50.3 (n=57) | 19 |
+| 2026 | **0** | **0** | — | 13 |
+
+About fifty-five a season, which is the count #221's disposition assumed. **2026 holds no
+event yet**: the file's 2026 rows are week 1, two of them played, and every one of the 13
+changes it shows is a team whose week-1 starter differs from its last 2025 start — priced
+all summer, and censored against an archive that opens 2026-08-25 in any case.
+
+## The gate
+
+| | |
+|---|---|
+| scored event games in the archive | **0** |
+| event-seasons | **0** (pre-registered minimum 3) |
+| verdict | **NOT-RUNNABLE** — precondition 1 |
+| the mark | stands on every `-qb` row (#270); this is not a null |
+
+The archive's last poll (2026-09-06) precedes the season's first kickoff (2026-09-10), so no
+frozen price yet predates an in-season change. The harness is built and held on synthetic
+fixtures (`tests/unit/test_starter_change.py`): the frozen price is the last snapshot before
+the changed team's previous game day, the arm is `quarterback.apply` on a row labelled
+`stale`, the pair is log-loss on the home result, the ceiling arm is the last snapshot
+before the game day, and the precondition fires ahead of the house rule.
+
+## The pilot, and the number of event-seasons needed
+
+The source's own two columns (`elo_prob1`, `qbelo_prob1`) on the same event games, log-loss
+base minus quarterback-adjusted, positive when the adjustment helped:
+
+| season | event games | mean | sd |
+|---|---|---|---|
+| 2022 | 57 | **+0.0248** | 0.224 |
+| 2023 | 53 | **−0.0466** | 0.207 |
+| 2024 | 48 | **−0.0417** | 0.216 |
+| 2025 | 54 | **−0.0085** | 0.216 |
+
+Over 212 event games and 4 seasons: mean of the season means **−0.0180**, between-season sd
+**0.0332**. The pre-registered target is the absolute value, 0.0180, and the smallest `k`
+whose MDE `(t(0.975, k−1) + 0.8416) × 0.0332 / √k` is at or below it is **k = 29
+event-seasons**. At one season a year that is the 2050s; at the three-season floor the MDE
+is 0.099, five times the target.
+
+**Two things the pilot says beside the power figure, neither a verdict on this gate.** The
+sign is negative in three seasons of four: on event games, on nflfastR outcomes, the
+source's quarterback-adjusted probability scored *worse* than its base in 2023, 2024 and
+2025, and the pooled figure is the wrong way for the arm. That is the source's arm and the
+source's base, not this estimator on a frozen line — the gate's question — and the per-game
+sd of 0.21 against per-season means of a few hundredths says a single season's sign is
+mostly noise. It is recorded because the licence in [qb-adjustment.md](qb-adjustment.md)
+rests on the *same* two columns of a different file (538's, 2013–2022, all games, Brier),
+and on the event games this repo's adjustment exists for, the nfeloqb file does not
+reproduce that gain. The second: the target is small against the noise because the
+adjustment's whole effect is a few hundredths of log-loss per event game, so a gate on it
+was always going to be a decades-scale question. That is the not-runnable finding, and it
+is what #270's mark is for.
+
+**Not established.** The gate's own effect, interval and ceiling — no row exists to compute
+them from. The run stamps `commit` as dirty because the harness was run before its own
+commit; the numbers above depend on the pinned file and the archive alone, both unchanged.
