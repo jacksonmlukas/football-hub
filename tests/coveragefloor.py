@@ -35,9 +35,11 @@ from __future__ import annotations
 # module path (as coverage reports it) -> statements it may leave untested
 FLOOR: dict[str, int] = {
     "src/hub/__init__.py": 0,
+    "src/hub/atomic.py": 0,
     "src/hub/cli.py": 0,
     "src/hub/config.py": 0,
     "src/hub/contracts.py": 0,
+    "src/hub/declare.py": 0,
     "src/hub/draft/__init__.py": 0,
     "src/hub/draft/adherence.py": 1,
     "src/hub/draft/adp_history.py": 0,
@@ -65,6 +67,7 @@ FLOOR: dict[str, int] = {
     "src/hub/exhibits/leverage.py": 1,
     "src/hub/fetch/__init__.py": 0,
     "src/hub/fetch/bigten.py": 3,
+    "src/hub/fetch/cached.py": 0,
     "src/hub/fetch/cfbd.py": 2,
     "src/hub/fetch/espn.py": 0,
     "src/hub/fetch/nfeloqb.py": 1,
