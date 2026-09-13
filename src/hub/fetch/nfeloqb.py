@@ -51,16 +51,17 @@ prints why on stderr and serves the cached file, validated again on the way out 
 that has drifted is refused rather than served as the field. Only a fresh clone with nothing
 cached exits non-zero. Nothing here costs a credit: the file is public and unmetered.
 
+Since #255 that policy, the stamp, the pytest network guard and the CLI's branch tree are
+`hub.fetch.cached`'s, and this module is an adapter to it: the transport, the parser, the
+contract and the report, plus the pin, which is this source's alone.
+
     uv run python -m hub.fetch.nfeloqb --refresh
     uv run python -m hub.fetch.nfeloqb --status
 """
 from __future__ import annotations
 
-import argparse
 import hashlib
 import io
-import json
-import os
 import sys
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
@@ -70,8 +71,9 @@ from typing import Any
 import polars as pl
 
 from hub import atomic
-from hub.cli import unavailable
 from hub.contracts import NFELOQB, ContractViolation
+from hub.fetch import cached
+from hub.fetch.cached import LIVE_TEST_SUITE, PYTEST_NODE_ENV, LiveCallRefused  # noqa: F401
 from hub.paths import DATA
 
 PROG = "hub.fetch.nfeloqb"
@@ -118,12 +120,6 @@ STAMP = "qb_elos.json"
 # (#283): every Raiders game was unadjustable on both sides until it was mapped.
 ABBREVIATIONS = {"WSH": "WAS", "LAR": "LA", "OAK": "LV"}
 
-# The pytest node running right now, or nothing outside a test. Same guard as
-# `hub.fetch.pool._http_get`: the suite patches the transport and should, and this is what
-# holds for the test nobody remembered to patch.
-PYTEST_NODE_ENV = "PYTEST_CURRENT_TEST"
-LIVE_TEST_SUITE = "tests/golden/"
-
 USER_AGENT = "football-hub/0.1 (+https://github.com/jacksonmlukas/football-hub)"
 
 # The columns the team layer reads off one game row, per side. `_long` unpivots the
@@ -134,22 +130,14 @@ STATE_SCHEMA = {"team": pl.Utf8, "qb": pl.Utf8, "qb_value": pl.Float64,
                 "qb_adj": pl.Float64, "tenure": pl.Int64, "as_of": pl.Utf8}
 
 
-class LiveCallRefused(Exception):
-    """A test outside `tests/golden/` reached for the network."""
-
-
 # --- the transport ----------------------------------------------------------------------
 
 def _http_get(url: str) -> bytes:
     """One GET of the published file. The bytes, or whatever `urllib` raises."""
     # GUARD no-live-call-under-pytest [unit/test_fetch_nfeloqb.py]: a test outside
-    # tests/golden/ never reaches the network
-    node = os.environ.get(PYTEST_NODE_ENV, "")
-    if node and not node.startswith(LIVE_TEST_SUITE):
-        raise LiveCallRefused(
-            f"{node.split(' ')[0]} would fetch {url}. Patch `_http_get`, the way "
-            f"tests/unit/test_fetch_nfeloqb.py does; only {LIVE_TEST_SUITE} may reach the "
-            f"network, and it is deselected by default.")
+    # tests/golden/ never reaches the network -- the check is `hub.fetch.cached`'s
+    cached.refuse_live_call(f"would fetch {url}", patch="_http_get",
+                            tests="tests/unit/test_fetch_nfeloqb.py")
     # /GUARD
     return _transport(url)
 
@@ -322,14 +310,7 @@ def stamp(cache: Path | None = None) -> dict[str, Any]:
     """The record written beside the cached file, or an empty record with nothing cached
     or nothing readable: when it was pulled, from which URL and commit, what it hashed to,
     what the pin expected, whether the two matched, and how many rows it carried."""
-    _, path = _paths(cache)
-    if not path.exists():
-        return {}
-    try:
-        got = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return {}
-    return got if isinstance(got, dict) else {}
+    return cached.read_stamp(_paths(cache)[1])
 
 
 def captured_at(cache: Path | None = None) -> str | None:
@@ -382,11 +363,9 @@ def refresh(*, cache: Path | None = None, now: datetime | None = None) -> pl.Dat
     # pin to match. The second is a source change and is said here and again by every
     # reader of the stamp; the third is said with the two values that would end it.
     matches = None if PINNED_SHA256 is None else sha == PINNED_SHA256
-    atomic.write_text(record, json.dumps({"captured_at": when.isoformat(timespec="seconds"),
-                                          "url": where, "commit": COMMIT, "sha256": sha,
-                                          "pinned_sha256": PINNED_SHA256,
-                                          "matches_pin": matches,
-                                          "rows": rows.height}, indent=2))
+    cached.write_stamp(record, when.isoformat(timespec="seconds"), url=where, commit=COMMIT,
+                       sha256=sha, pinned_sha256=PINNED_SHA256, matches_pin=matches,
+                       rows=rows.height)
     if matches is False:
         print(f"{PROG}: {source_change(cache)}; served, because it validated -- advance "
               f"PINNED_SHA256 deliberately, or restore COMMIT", file=sys.stderr)
@@ -424,55 +403,38 @@ def missing_teams(st: pl.DataFrame, games: pl.DataFrame) -> list[str]:
     return sorted(known - set(st["team"].to_list()))
 
 
-def _serve_last_good(cache: Path | None, why: str) -> int:
-    try:
-        st = read_state(cache)
-    except ContractViolation as exc:
-        return unavailable(PROG, f"the nfeloqb ratings ({why}; and the cached file", exc)
-    if st is None:
-        return unavailable(PROG, "the nfeloqb ratings", RuntimeError(why))
-    print(f"{PROG}: {why}; serving the last-good file pulled {captured_at(cache)}",
-          file=sys.stderr)
-    for line in report(st, captured=captured_at(cache)):
-        print(line)
-    return 0
+def _describe(exc: BaseException) -> str:
+    """How a failed pull is named in the last-good sentence."""
+    if isinstance(exc, ContractViolation):
+        return f"the file was refused: {exc}"
+    return f"{type(exc).__name__}: {exc}"
+
+
+# The adapter (#255): what this source supplies to `hub.fetch.cached`, which owns the
+# last-good policy and the CLI. The nouns are the ones the sentences carried before.
+ADAPTER: cached.Adapter[pl.DataFrame] = cached.Adapter(
+    prog=PROG,
+    description="The published nfeloqb quarterback ratings, pulled into data/raw/ and "
+                "read as a per-team state: starter, value, adjustment, tenure.",
+    what="the nfeloqb ratings",
+    cached="the cached file",
+    kept="the last-good file pulled",
+    cache_flag="--cache",
+    cache_help=f"the directory the file is kept in (default {RAW})",
+    refresh_help="pull the file; on any failure serve the last-good one and say why",
+    status_help="print the state off the cached file; reads nothing but the cache",
+    refresh_hint="run --refresh",
+    cache_path=lambda cache: _paths(cache)[0],
+    refresh=lambda ns: state(refresh(cache=ns.cache)),
+    read=read_state,
+    captured_at=captured_at,
+    report=report,
+    describe=_describe,
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
-        prog=PROG,
-        description="The published nfeloqb quarterback ratings, pulled into data/raw/ and "
-                    "read as a per-team state: starter, value, adjustment, tenure.")
-    ap.add_argument("--refresh", action="store_true",
-                    help="pull the file; on any failure serve the last-good one and say why")
-    ap.add_argument("--status", action="store_true",
-                    help="print the state off the cached file; reads nothing but the cache")
-    ap.add_argument("--cache", type=Path, default=None,
-                    help=f"the directory the file is kept in (default {RAW})")
-    a = ap.parse_args(argv)
-
-    if not a.refresh:
-        try:
-            st = read_state(a.cache)
-        except ContractViolation as exc:
-            return unavailable(PROG, "the cached nfeloqb file", exc)
-        if st is None:
-            return unavailable(PROG, "the nfeloqb ratings",
-                               FileNotFoundError(f"nothing under {_paths(a.cache)[0]}; "
-                                                 f"run --refresh"))
-        for line in report(st, captured=captured_at(a.cache)):
-            print(line)
-        return 0
-
-    try:
-        rows = refresh(cache=a.cache)
-    except ContractViolation as exc:
-        return _serve_last_good(a.cache, f"the file was refused: {exc}")
-    except Exception as exc:
-        return _serve_last_good(a.cache, f"{type(exc).__name__}: {exc}")
-    for line in report(state(rows), captured=captured_at(a.cache)):
-        print(line)
-    return 0
+    return cached.run(ADAPTER, argv)
 
 
 if __name__ == "__main__":                       # pragma: no cover - entry point

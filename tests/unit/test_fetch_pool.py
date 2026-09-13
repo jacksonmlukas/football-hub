@@ -440,6 +440,21 @@ def test_the_stored_state_reads_back_as_it_was_written(store):
     assert pool.read_state(store) == state
 
 
+def test_the_state_file_is_written_byte_for_byte_as_it_was_before_the_shared_fetcher(store):
+    """#255 moved the stamp write into `hub.fetch.cached`. The document is what the site,
+    the journal and `captured_at` read, so its keys, their order and the capture time's
+    spelling -- aware, with its offset, to the second -- are pinned here."""
+    import datetime as dt
+    state = parse(payload())
+    when = dt.datetime(2026, 9, 12, 12, 0, 7, 500, tzinfo=dt.UTC)
+    doc = json.loads(pool.write_state(state, store, when=when).read_text())
+    assert list(doc) == ["captured_at", "season", "week", "field_size", "pot", "entries"]
+    assert doc["captured_at"] == "2026-09-12T12:00:07+00:00"
+    assert pool.captured_at(store) == "2026-09-12T12:00:07+00:00"
+    assert doc["entries"][0] == {"entry": 0, "alive": True, "used": ["DAL", "KC"]}
+    assert pool.state_path(store).read_text().startswith('{\n  "captured_at": ')
+
+
 def _later(p: dict, *, week: int, pot: float, alive: int) -> dict:
     """The fixture a week on: the host's week advanced, the pot grown, `alive` entries left.
     Members from the end of the list are the ones marked out."""

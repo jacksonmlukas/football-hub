@@ -64,6 +64,12 @@ import polars as pl
 from hub import atomic, jsonio
 from hub.config import SEASON_AHEAD
 from hub.contracts import CFBD_GAMES, CFBD_LINES, Contract
+from hub.fetch.cached import (  # noqa: F401 -- re-exported, see the guard note below
+    LIVE_TEST_SUITE,
+    PYTEST_NODE_ENV,
+    LiveCallRefused,
+    refuse_live_call,
+)
 from hub.paths import SITE, STATE_DIR
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -97,17 +103,9 @@ REGULAR_SEASON_WEEKS = 15
 BASE = "https://api.collegefootballdata.com"
 FREE_TIER_MONTHLY = 1_000
 
-# The pytest node running right now, or nothing outside a test. pytest sets this for the
-# duration of each test's setup, call and teardown, and nothing else in this repo writes it.
-PYTEST_NODE_ENV = "PYTEST_CURRENT_TEST"
-
-# The one suite allowed to reach CFBD. `tests/golden/` exists to diff a live response against
-# the frozen fixture -- it is the only thing in the repo that knows whether the two CFBD
-# contracts, both written from documentation, resemble reality -- and it is marked `golden`
-# and deselected by default (`addopts = "-m 'not golden'"`, pyproject.toml). Node ids are
-# relative to pytest's rootdir, so a run started from inside `tests/` does not match and is
-# refused: erring toward refusal is the direction this module errs in everywhere.
-LIVE_TEST_SUITE = "tests/golden/"
+# The pytest network guard is `hub.fetch.cached.refuse_live_call` (#255), which `_http_get`
+# calls first; `PYTEST_NODE_ENV`, `LIVE_TEST_SUITE` and `LiveCallRefused` are re-exported
+# here so a reader of this module and its tests find them under the names they had.
 
 # Twelve covers the documented 5-8 call week with headroom, and stops a loop over 136 FBS
 # teams at call thirteen. Deliberately per-run rather than per-month: the monthly budget
@@ -153,10 +151,6 @@ class LoopRefused(Exception):
 
 class QuotaExceeded(Exception):
     """Refused rather than spend a call: either the run ceiling or the monthly budget."""
-
-
-class LiveCallRefused(Exception):
-    """A test reached the live transport. Refused before anything left the process."""
 
 
 def _env() -> Mapping[str, str]:
@@ -229,14 +223,11 @@ def _http_get(path: str, params: Mapping[str, Any], key: str) -> Any:
     # Patching the transport per test is the right habit and every test in the sibling module
     # does it. It is not a guarantee, because the guarantee has to hold for the test nobody
     # remembered to patch. This does, and it costs one environment read per request.
-    node = os.environ.get(PYTEST_NODE_ENV, "")
-    if node and not node.startswith(LIVE_TEST_SUITE):
-        raise LiveCallRefused(
-            f"{node.split(' ')[0]} would spend a live CFBD call. The free tier is "
-            f"{FREE_TIER_MONTHLY:,} a month and docs/cfbd-quota.md records that "
-            f"rate-limit circumvention gets access revoked rather than throttled, so no "
-            f"test fetches: patch `_http_get`, the way tests/unit/test_fetch_cfbd.py does. "
-            f"Only {LIVE_TEST_SUITE} may reach CFBD, and it is deselected by default.")
+    refuse_live_call(
+        f"would spend a live CFBD call: the free tier is {FREE_TIER_MONTHLY:,} a month and "
+        f"docs/cfbd-quota.md records that rate-limit circumvention gets access revoked "
+        f"rather than throttled, so no test fetches",
+        patch="_http_get", tests="tests/unit/test_fetch_cfbd.py")
     # /GUARD
     import requests
     r = requests.get(f"{BASE}{path}", params=dict(params), timeout=30,

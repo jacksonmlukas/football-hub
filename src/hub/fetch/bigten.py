@@ -65,7 +65,6 @@ import argparse
 import hashlib
 import html
 import json
-import os
 import re
 import sys
 from collections.abc import Sequence
@@ -81,6 +80,12 @@ from hub import atomic, jsonio
 from hub.config import SEASON_AHEAD
 from hub.contracts import BIGTEN_CAPTURES, CFBD_LINES
 from hub.fetch import cfbd
+from hub.fetch.cached import (  # noqa: F401 -- re-exported, see the guard note below
+    LIVE_TEST_SUITE,
+    PYTEST_NODE_ENV,
+    LiveCallRefused,
+    refuse_live_call,
+)
 from hub.paths import ROOT, SITE
 
 ORIGIN = "https://bigten.org"
@@ -111,11 +116,9 @@ STATUS = SITE / "bigten.json"
 # college week is counted from and is bumped once a year for that reason.
 REPORTS_BEGIN = datetime(2026, 9, 17, 0, 0, tzinfo=UTC)
 
-# The pytest node running right now, or nothing outside a test. Same guard as
-# `hub.fetch.cfbd._http_get`, for the same reason: the transport refuses under the default
-# suite so that the test nobody remembered to patch cannot reach the network.
-PYTEST_NODE_ENV = "PYTEST_CURRENT_TEST"
-LIVE_TEST_SUITE = "tests/golden/"
+# The pytest network guard is `hub.fetch.cached.refuse_live_call` (#255), which `_get`
+# calls first; `PYTEST_NODE_ENV`, `LIVE_TEST_SUITE` and `LiveCallRefused` are re-exported
+# here so a reader of this module and its tests find them under the names they had.
 
 USER_AGENT = "football-hub/0.1 (+https://github.com/jacksonmlukas/football-hub)"
 
@@ -195,10 +198,6 @@ INDEX_SCHEMA: dict[str, type[pl.DataType]] = {
 }
 
 
-class LiveCallRefused(Exception):
-    """A test reached the transport. Refused before anything left the process."""
-
-
 class PageShapeChanged(Exception):
     """The page no longer carries the CMS record this module reads. The raw page is kept."""
 
@@ -221,11 +220,8 @@ def _get(url: str, cap: int | None = None) -> bytes:
     """
     # GUARD no-live-call-from-the-suite [unit/test_fetch_bigten.py]: a test cannot reach
     # the conference
-    node = os.environ.get(PYTEST_NODE_ENV, "")
-    if node and not node.startswith(LIVE_TEST_SUITE):
-        raise LiveCallRefused(
-            f"{node.split(' ')[0]} would fetch {url}. No test reaches the network: patch "
-            f"`_get`, the way tests/unit/test_fetch_bigten.py does.")
+    refuse_live_call(f"would fetch {url}", patch="_get",
+                     tests="tests/unit/test_fetch_bigten.py")
     # /GUARD
     import requests
     with requests.get(url, timeout=30, headers={"User-Agent": USER_AGENT},

@@ -78,6 +78,11 @@ stderr and then serves the last-known state, and only a fresh clone with nothing
 exits non-zero. `--payload FILE` ingests a payload saved from the browser with no network and
 no cookie, which is how the first live run can be done by hand before the credential is
 trusted to a runner.
+
+Since #255 that policy, the stamp, the pytest network guard and the CLI's branch tree are
+`hub.fetch.cached`'s, and this module is an adapter to it: the transport with its cookie,
+the parser, the contract and the report, plus the index map and the archive, which are
+this source's alone.
 """
 from __future__ import annotations
 
@@ -98,6 +103,8 @@ from hub import atomic, store
 from hub.cli import unavailable
 from hub.config import SEASON_AHEAD
 from hub.contracts import POOL_STATE, ContractViolation
+from hub.fetch import cached
+from hub.fetch.cached import LIVE_TEST_SUITE, PYTEST_NODE_ENV, LiveCallRefused  # noqa: F401
 from hub.paths import PROCESSED
 
 PROG = "hub.fetch.pool"
@@ -133,12 +140,6 @@ LEAGUE = "nfl"
 # Ours, by construction, and `hub.season.pool.simulate` reads it there.
 OUR_INDEX = 0
 
-# The pytest node running right now, or nothing outside a test. Same guard as
-# `hub.fetch.cfbd._http_get`: the suite patches the transport and should, and this is what
-# holds for the test nobody remembered to patch.
-PYTEST_NODE_ENV = "PYTEST_CURRENT_TEST"
-LIVE_TEST_SUITE = "tests/golden/"
-
 _SHAPE_NOTE = (" The payload shape is assumed rather than documented -- see the module "
                "docstring of hub.fetch.pool for what the first live run must confirm.")
 
@@ -153,10 +154,6 @@ class EmptyPool(Exception):
 
 class HostUnreachable(OSError):
     """The reach for the host failed. Its message has already been scrubbed of the cookie."""
-
-
-class LiveCallRefused(Exception):
-    """A test outside `tests/golden/` reached for the network."""
 
 
 class Entry(NamedTuple):
@@ -228,13 +225,9 @@ def _http_get(url: str, cookie: str) -> tuple[int, Any]:
     returned: it is the one place the host might echo the cookie back.
     """
     # GUARD no-live-call-under-pytest [unit/test_fetch_pool.py]: a test outside
-    # tests/golden/ never reaches the host
-    node = os.environ.get(PYTEST_NODE_ENV, "")
-    if node and not node.startswith(LIVE_TEST_SUITE):
-        raise LiveCallRefused(
-            f"{node.split(' ')[0]} would reach the pool host with the session cookie. Patch "
-            f"`_http_get`, the way tests/unit/test_fetch_pool.py does; only "
-            f"{LIVE_TEST_SUITE} may reach the host, and it is deselected by default.")
+    # tests/golden/ never reaches the host -- the check is `hub.fetch.cached`'s
+    cached.refuse_live_call("would reach the pool host with the session cookie",
+                            patch="_http_get", tests="tests/unit/test_fetch_pool.py")
     # /GUARD
     return _transport(url, cookie)
 
@@ -473,10 +466,6 @@ def write_state(state: PoolState, base: Path | None = None, *,
     df = POOL_STATE.validate(to_frame(state))
     when = when or datetime.now(UTC)
     path = state_path(base)
-    doc = {"captured_at": when.isoformat(timespec="seconds"),
-           "season": state.season, "week": state.week,
-           "field_size": state.field_size, "pot": state.pot,
-           "entries": df.select("entry", "alive", "used").to_dicts()}
     # The partition before the file: a refused archive write leaves the last-known state as
     # it was, where the other order would serve a state the archive never recorded. Named
     # to the microsecond where the lines archive names to the second, because two reads a
@@ -488,8 +477,10 @@ def write_state(state: PoolState, base: Path | None = None, *,
     store.write(df.drop("season", "week").with_columns(pl.lit(moment).alias("captured_at")),
                 ARCHIVE_TABLE, LEAGUE, state.season, state.week, base=base,
                 name=f"snap-{moment:%Y%m%dT%H%M%S%f}")
-    atomic.write_text(path, json.dumps(doc, indent=2))
-    return path
+    return cached.write_stamp(
+        path, when.isoformat(timespec="seconds"),
+        season=state.season, week=state.week, field_size=state.field_size, pot=state.pot,
+        entries=df.select("entry", "alive", "used").to_dicts())
 
 
 def state_digest(state: PoolState) -> str:
@@ -546,10 +537,13 @@ def archived_state(digest: str, *, season: int, base: Path | None = None) -> Poo
 
 
 def _read_doc(base: Path | None) -> dict[str, Any] | None:
+    """The state file as written, None on a fresh clone, and an empty record where the
+    file will not parse -- which the contract then refuses by name, as it refuses a file
+    that parses to the wrong shape, rather than the read handing back a traceback."""
     path = state_path(base)
     if not path.exists():
         return None
-    return json.loads(path.read_text())
+    return cached.read_stamp(path)
 
 
 def captured_at(base: Path | None = None) -> str | None:
@@ -636,84 +630,76 @@ def report(state: PoolState, *, captured: str | None = None) -> list[str]:
     return lines
 
 
-def _serve_last_known(store: Path | None, why: str) -> int:
-    """Print why the refresh could not run, then the last-known state; or say there is none.
-
-    `why` is already scrubbed by whoever raised it. The read goes through the contract, so a
-    drifted cache is reported as unavailable rather than served.
-    """
-    try:
-        state = read_state(store)
-    except ContractViolation as exc:
-        return unavailable(PROG, f"the pool host's state ({why}; and the cached state", exc)
-    if state is None:
-        return unavailable(PROG, "the pool host's state", RuntimeError(why))
-    print(f"{PROG}: {why}; serving the last-known pool state read {captured_at(store)}",
-          file=sys.stderr)
-    for line in report(state, captured=captured_at(store)):
-        print(line)
-    return 0
+def _describe(exc: BaseException) -> str:
+    """How a failed refresh is named in the last-known sentence. `EmptyPool` and
+    `AuthFailure` are their own sentences; a refused payload says so; everything else --
+    `HostUnreachable`, the unset-environment cases, anything the reach can raise -- is
+    scrubbed again here, so no path prints what a message carries."""
+    if isinstance(exc, (EmptyPool, AuthFailure)):
+        return str(exc)
+    if isinstance(exc, ContractViolation):
+        return f"the payload was refused: {exc}"
+    return redact(f"{type(exc).__name__}: {exc}", _cookie())
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
-        prog=PROG,
-        description="The survivor pool's field, pot and every entry's spent teams, read "
-                    "from the pool host and cached under data/processed/. Members are "
-                    "indexed, never named.")
-    ap.add_argument("--refresh", action="store_true",
-                    help=f"read the host with the cookie in {SESSION_ENV}; on any failure "
-                         f"serve the last-known state and say why")
-    ap.add_argument("--status", action="store_true",
-                    help="print the last-known state; reads nothing but the store")
+def _arguments(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--payload", metavar="FILE", default=None,
                     help="ingest a payload saved from the browser; no network, no cookie")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD)
-    ap.add_argument("--store", type=Path, default=None,
-                    help="the processed store the state is written to and read from")
-    a = ap.parse_args(argv)
 
-    if a.payload:
-        try:
-            ours = _entry_id()
-            if not ours:
-                raise RuntimeError(f"no {ENTRY_ENV} set; our own entry's id goes in .env")
-            state, index_map = parse_payload(json.loads(Path(a.payload).read_text()),
-                                             ours=ours, season=a.season,
-                                             index_map=read_index_map(a.store))
-            write_index_map(index_map, a.store)
-            write_state(state, a.store)
-        except Exception as exc:
-            return unavailable(PROG, f"the saved payload {a.payload}", exc)
-        for line in report(state):
-            print(line)
-        return 0
 
-    if not a.refresh:
-        state = read_state(a.store) if state_path(a.store).exists() else None
-        if state is None:
-            return unavailable(PROG, "the pool host's state",
-                               FileNotFoundError(f"nothing under {state_path(a.store)}; run "
-                                                 f"--refresh with {SESSION_ENV} set"))
-        for line in report(state, captured=captured_at(a.store)):
-            print(line)
-        return 0
-
+def _ingest(ns: argparse.Namespace) -> int | None:
+    """The `--payload FILE` branch, this source's alone: a payload saved from the browser,
+    read from disk, no network and no cookie. None when the flag is absent."""
+    if not ns.payload:
+        return None
     try:
-        state = refresh(season=a.season, store=a.store)
-    except EmptyPool as exc:
-        return _serve_last_known(a.store, str(exc))
-    except AuthFailure as exc:
-        return _serve_last_known(a.store, str(exc))
-    except ContractViolation as exc:
-        return _serve_last_known(a.store, f"the payload was refused: {exc}")
+        ours = _entry_id()
+        if not ours:
+            raise RuntimeError(f"no {ENTRY_ENV} set; our own entry's id goes in .env")
+        state, index_map = parse_payload(json.loads(Path(ns.payload).read_text()),
+                                         ours=ours, season=ns.season,
+                                         index_map=read_index_map(ns.cache))
+        write_index_map(index_map, ns.cache)
+        write_state(state, ns.cache)
     except Exception as exc:
-        # `HostUnreachable` and the two unset-environment cases, plus anything else the
-        # reach can raise. Scrubbed again here, so no path prints what a message carries.
-        return _serve_last_known(a.store, redact(f"{type(exc).__name__}: {exc}", _cookie()))
+        return unavailable(PROG, f"the saved payload {ns.payload}", exc)
     for line in report(state):
         print(line)
     return 0
+
+
+# The adapter (#255): what this source supplies to `hub.fetch.cached`, which owns the
+# last-known policy and the CLI. The nouns are the ones the sentences carried before; the
+# report after a live read carries no capture time, as it did not.
+ADAPTER: cached.Adapter[PoolState] = cached.Adapter(
+    prog=PROG,
+    description="The survivor pool's field, pot and every entry's spent teams, read "
+                "from the pool host and cached under data/processed/. Members are "
+                "indexed, never named.",
+    what="the pool host's state",
+    cached="the cached state",
+    kept="the last-known pool state read",
+    cache_flag="--store",
+    cache_help="the processed store the state is written to and read from",
+    refresh_help=f"read the host with the cookie in {SESSION_ENV}; on any failure "
+                 f"serve the last-known state and say why",
+    status_help="print the last-known state; reads nothing but the store",
+    refresh_hint=f"run --refresh with {SESSION_ENV} set",
+    cache_path=state_path,
+    refresh=lambda ns: refresh(season=ns.season, store=ns.cache),
+    read=read_state,
+    captured_at=captured_at,
+    report=report,
+    describe=_describe,
+    stamped_after_refresh=False,
+    arguments=_arguments,
+    before=_ingest,
+)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    return cached.run(ADAPTER, argv)
 
 
 if __name__ == "__main__":                       # pragma: no cover - entry point
