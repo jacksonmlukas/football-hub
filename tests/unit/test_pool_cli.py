@@ -9,6 +9,7 @@ against a fresh clone; these drive them against a board, end to end, through the
 from __future__ import annotations
 
 import datetime as dt
+import json
 from pathlib import Path
 
 import polars as pl
@@ -134,6 +135,61 @@ def test_a_week_the_clock_has_entered_is_behind_by_default_and_decidable_by_name
     body = out.split("\n  week 2:")[1]
     assert " KC " not in body and " LV " not in body and " SF " not in body
     assert " BUF " in body and " NYJ " in body
+
+
+def test_the_field_is_read_from_the_pool_host_and_named_on_the_journal_row(
+        board, tmp_path, capsys):
+    """#280 at the entry point. With a pool state under the store, the live count, the pot
+    and our Ledger come from it rather than from the configured rules and the published
+    plan alone, the run says which read it priced against, and the recorded row carries
+    the state's digest -- which the archive resolves back to that field. Stated by hand,
+    `--entries` and `--pot` still win, and a row priced with no state names none."""
+    import datetime as dt
+
+    from hub.fetch import pool as fetch_pool
+    state = fetch_pool.PoolState(season=2026, week=2, field_size=9, pot=180.0, entries=(
+        fetch_pool.Entry(0, True, ("DAL",)), fetch_pool.Entry(1, False, ("MIA",)),
+        *(fetch_pool.Entry(i, True, ()) for i in range(2, 9))))
+    fetch_pool.write_state(state, tmp_path, when=dt.datetime(2026, 9, 15, 9, 0, tzinfo=dt.UTC))
+    digest = fetch_pool.state_digest(state)
+    args = ["--season", "2026", "--trials", "40", "--at", "1", "--store", str(tmp_path)]
+    assert pool.main([*args, "--record"]) == 0
+    out = capsys.readouterr().out
+    assert "8 entries, pot $180.00" in out and "1 team spent (DAL)" in out
+    assert "field from the pool host, read 2026-09-15" in out and digest in out
+    row = journal.read(2026, base=tmp_path).to_dicts()[0]
+    assert row["entries"] == 8 and row["pot"] == 180.0
+    assert row["pool_state_digest"] == digest
+    assert fetch_pool.archived_state(row["pool_state_digest"], season=2026,
+                                     base=tmp_path) == state
+
+    assert pool.main([*args, "--entries", "12", "--pot", "420"]) == 0
+    out = capsys.readouterr().out
+    assert "12 entries, pot $420.00" in out and digest in out, "stated by hand, still named"
+
+    bare = tmp_path / "bare"
+    assert pool.main(["--season", "2026", "--trials", "40", "--at", "1", "--store", str(bare),
+                      "--record"]) == 0
+    out = capsys.readouterr().out
+    assert f"{PoolConfig().field_size} entries" in out and "no pool state read" in out
+    assert journal.read(2026, base=bare).to_dicts()[0]["pool_state_digest"] is None
+
+    # Another season's state is no field for this one, and a state that has drifted from
+    # its contract is said and not served: both fall back to the configured rules.
+    stale = tmp_path / "stale"
+    fetch_pool.write_state(state._replace(season=2027), stale,
+                           when=dt.datetime(2027, 9, 15, 9, 0, tzinfo=dt.UTC))
+    assert pool.main(["--season", "2026", "--trials", "40", "--at", "1",
+                      "--store", str(stale)]) == 0
+    out = capsys.readouterr().out
+    assert f"{PoolConfig().field_size} entries" in out and "season 2027's" in out
+    doc = json.loads(fetch_pool.state_path(tmp_path).read_text())
+    del doc["entries"][0]["alive"]
+    fetch_pool.state_path(tmp_path).write_text(json.dumps(doc))
+    assert pool.main(["--season", "2026", "--trials", "40", "--at", "1",
+                      "--store", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert f"{PoolConfig().field_size} entries" in out and "is refused" in out
 
 
 def test_the_eliminated_path_does_not_count_us_among_the_live_entries(board, tmp_path, capsys):

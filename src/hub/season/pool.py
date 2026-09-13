@@ -97,7 +97,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 import polars as pl
@@ -105,6 +105,9 @@ import polars as pl
 from hub.config import PoolConfig, pool_digest
 from hub.schedule import forecastable
 from hub.season.survivor import MIN_PROB, Infeasible, solve, week_fixtures
+
+if TYPE_CHECKING:   # the fetch module is imported where the entry point reads it (#280)
+    from hub.fetch.pool import PoolState
 
 NOT_FITTED_BECAUSE = (
     "nothing here is measured. DEFAULT_TRIALS and WEEKLY_TRIALS buy resolution and are "
@@ -2186,6 +2189,33 @@ def _last_good(season: int, week: int | None, base: Path | None, why: Exception)
     return 0
 
 
+def _field(store: Path | None, season: int) -> tuple[PoolState | None, str | None, str]:
+    """The pool host's last-known state for `season`, its digest, and a line saying which read.
+
+    `None` twice and the line where there is none to price against -- a fresh clone,
+    another season's state, or a state that has drifted from its contract, which is said
+    rather than served -- so the run falls back to the configured rules and says so. The
+    fetch module is imported where it is read, not at the top of the simulator.
+    """
+    from hub.contracts import ContractViolation
+    from hub.fetch import pool as fetch_pool
+    try:
+        state = fetch_pool.read_state(store)
+    except ContractViolation as e:
+        return None, None, (f"field from the configured rules: the last-known pool state "
+                            f"is refused ({e})")
+    if state is None:
+        return None, None, "field from the configured rules: no pool state read"
+    if state.season != season:
+        return None, None, (f"field from the configured rules: the last-known pool state "
+                            f"is season {state.season}'s, no pool state read for {season}")
+    read = fetch_pool.captured_at(store) or "an unrecorded moment"
+    digest = fetch_pool.state_digest(state)
+    return state, digest, (f"field from the pool host, read {read} as of its week "
+                           f"{state.week}: {state.alive} alive of {state.field_size}, pot "
+                           f"${state.pot:.2f}, state {digest}")
+
+
 def axis_report(by_k: dict[float, Weekly], *, places: int = 2) -> list[str]:
     """The week's figure as a range over the concentration knob, which is the published form.
 
@@ -2281,15 +2311,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             "hub.season.pool", f"a priced week to decide in the {a.season} schedule",
             UnpricedWeek(f"week {week} is not among the weeks the board can play: "
                          f"{weeks or 'none'}"))
+    # The field as the pool host last reported it (#280): the live count, the pot and our
+    # Ledger come from there when a state has been read, and the run says which read. The
+    # configured rules are the fallback for a fresh clone, as they always were; a state
+    # that has drifted from its contract is said and not served. `--entries` and `--pot`
+    # stated by hand still win, and the row still names the read they were stated over.
+    field, field_digest, field_read = _field(a.store, a.season)
     # Eliminated, we are not among the live: `buyback` counts ours back in itself, so the
     # default field there is one smaller, or the default run priced a field one larger
-    # than the pool (review 2026-09-12).
-    entries = (a.entries if a.entries is not None
-               else cfg.field_size - (1 if a.eliminated else 0))
-    pot = a.pot if a.pot is not None else cfg.entry_fee * cfg.field_size
+    # than the pool (review 2026-09-12). Off the host's state that is the live count less
+    # ours where the host still lists ours as live.
+    if a.entries is not None:
+        entries = a.entries
+    elif field is not None:
+        entries = field.alive - (1 if a.eliminated and field.entries[0].alive else 0)
+    else:
+        entries = cfg.field_size - (1 if a.eliminated else 0)
+    pot = a.pot if a.pot is not None else (
+        field.pot if field is not None else cfg.entry_fee * cfg.field_size)
     outlay = a.outlay if a.outlay is not None else cfg.entry_fee
+    # The one reading of the Ledger: the published plan and the host's state through
+    # `survivor.prior_rows`, so this and the published plan cannot spend different teams.
     ledger = ([t.strip() for t in a.ledger.split(",") if t.strip()] if a.ledger is not None
-              else sv.spent_teams(sv.published_plan(), behind, season=a.season))
+              else sv.spent_teams(sv.prior_rows(a.season, store=a.store), behind,
+                                  season=a.season))
     axis = _axis(a.at)
     # One seed for every point on the axis and both kinds of decision, so a row recorded
     # from here can be run again from its own columns (#162) and two points on the axis
@@ -2299,6 +2344,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  survivor pool, {a.season} week {week}: {entries} entries, pot ${pot:.2f}, "
           f"{plural(len(ledger), 'team')} spent"
           + (f" ({', '.join(ledger)})" if ledger else ""))
+    print(f"  {field_read}")
     print(f"  rules {pool_digest(cfg)}  board {grid_digest(grid)}  seed {seed}  "
           f"{a.trials} trials per candidate; field concentration {cfg.field_concentration} "
           f"is the configured point, reported across {', '.join(str(k) for k in axis)}")
@@ -2326,7 +2372,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                expected_dollars=here.net if here.available else None,
                                pool_digest=pool_digest(cfg), grid_digest=grid_digest(grid),
                                seed=seed, trials=a.trials, entries=entries, pot=pot,
-                               outlay=outlay, base=a.store)
+                               outlay=outlay, pool_state_digest=field_digest, base=a.store)
             print(f"  recorded {k}")
         return 0
 
@@ -2350,7 +2396,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         print(f"  {LEVERAGE}")
     if a.record:
-        k = journal.record_weekly(here, season=a.season, chose=a.chose, base=a.store)
+        k = journal.record_weekly(here, season=a.season, chose=a.chose,
+                                  pool_state_digest=field_digest, base=a.store)
         print(f"  recorded {k}")
     return 0
 

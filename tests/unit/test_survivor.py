@@ -20,6 +20,14 @@ import pytest
 from hub.season import survivor
 
 
+@pytest.fixture(autouse=True)
+def _no_real_pool_state(monkeypatch, tmp_path):
+    """`prior_rows` reads the pool host's last-known state for the Ledger (#280), and a real
+    one under `data/processed/` must not reach a test's plan through the CLI."""
+    from hub.fetch import pool as fetch_pool
+    monkeypatch.setattr(fetch_pool, "PROCESSED", tmp_path / "no-pool-state")
+
+
 def _grid(rows):
     """rows: (week, team, win_prob)"""
     return pl.DataFrame({"week": [r[0] for r in rows], "team": [r[1] for r in rows],
@@ -588,6 +596,50 @@ def test_a_row_with_no_week_is_skipped_rather_than_raising():
     schedule, which is the wrong cause reported for the wrong reason."""
     prior = [{"week": None, "team": "KC"}, {"week": 1, "team": "SF"}]
     assert survivor.spent_teams(prior, [1], season=2026) == ["SF"]
+
+
+def test_the_ledger_has_one_reading_the_pool_host_and_the_published_plan_both_feed(tmp_path,
+                                                                                  capsys):
+    """#280. The default Ledger came from the published plan, not the fetched pool state
+    and not the journal: three sources of truth for one Ledger. `prior_rows` is the one
+    reading now, in the shape `spent_teams` takes: the host's Ledger for our entry -- what
+    was entered and settled -- as week-0 ledger rows beside the plan's own, which carry what
+    is locked and not yet settled. A state from another season contributes nothing; no
+    state, and the plan's rows stand alone; a drifted state is said and skipped."""
+    import datetime as dt
+    import json
+
+    from hub.fetch import pool as fetch_pool
+    art = tmp_path / "survivor.json"
+    art.write_text(json.dumps({"name": "survivor", "season": 2026, "n": 1, "spent": ["DAL"],
+                               "rows": [{"week": 2, "team": "SF", "win_prob": 0.7}]}))
+    store = tmp_path / "processed"
+    assert survivor.prior_rows(2026, path=art, store=store) == survivor.published_plan(art)
+
+    state = fetch_pool.PoolState(season=2026, week=2, field_size=3, pot=60.0, entries=(
+        fetch_pool.Entry(0, True, ("KC",)), fetch_pool.Entry(1, True, ("PHI",)),
+        fetch_pool.Entry(2, False, ())))
+    fetch_pool.write_state(state, store, when=dt.datetime(2026, 9, 16, 9, 0, tzinfo=dt.UTC))
+    rows = survivor.prior_rows(2026, path=art, store=store)
+    assert {"week": 0, "team": "KC", "ledger": True, "season": 2026} in rows
+    assert not any(r["team"] == "PHI" for r in rows), "a rival's Ledger is not ours"
+    assert survivor.spent_teams(rows, [2], season=2026) == ["DAL", "KC", "SF"]
+    assert survivor.spent_teams(survivor.prior_rows(2025, path=art, store=store), [2],
+                                season=2025) == []
+
+    # A state listing no entry at our index -- `parse_payload` never writes one, but the
+    # store is a file -- contributes nothing rather than somebody else's Ledger.
+    fetch_pool.write_state(state._replace(entries=state.entries[1:]), store,
+                           when=dt.datetime(2026, 9, 16, 10, 0, tzinfo=dt.UTC))
+    assert survivor.spent_teams(survivor.prior_rows(2026, path=art, store=store), [2],
+                                season=2026) == ["DAL", "SF"]
+
+    doc = json.loads(fetch_pool.state_path(store).read_text())
+    del doc["entries"][0]["used"]
+    fetch_pool.state_path(store).write_text(json.dumps(doc))
+    assert survivor.spent_teams(survivor.prior_rows(2026, path=art, store=store), [2],
+                                season=2026) == ["DAL", "SF"]
+    assert "pool state" in capsys.readouterr().err
 
 
 def test_the_published_plan_stamps_each_row_with_the_seasons_it_came_from(tmp_path):

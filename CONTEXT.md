@@ -312,7 +312,12 @@ The teams an entry has already spent and cannot pick again — one per entry, ou
 rival's. `hub.season.pool` takes it as `ledger` for one entry and `ledgers` for the field, and
 a buyback inherits it rather than clearing it (`buyback_restores_ledger`), which is the whole
 reason a late re-entry is worth less than an early one: the figure moves with the teams
-already gone.
+already gone. Ours has one reading, `hub.season.survivor.prior_rows` (#280): the pool host's
+last-known state for our entry beside the published remaining plan's rows, which the money
+layer, the survivor CLI and the published artifact all take their history from -- three
+readings of one Ledger was how the published plan and the priced week came to spend
+different teams. A decision journal row names the archived pool state it was priced against
+(`pool_state_digest`), so the field can be re-derived as it stood rather than as it is.
 
 **Decision journal**:
 Every pick and every dollar decision, appended in the order they were made, carrying the

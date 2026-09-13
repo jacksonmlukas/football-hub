@@ -516,7 +516,10 @@ def test_a_row_carries_what_it_takes_to_run_its_figure_again(tmp_path):
     assert row["seed"] == w.seed and row["trials"] == 400
     assert row["entries"] == 12 and row["pot"] == 420.0 and row["outlay"] == 0.0
     assert row["plan_source"] and "optimiser" in row["plan_source"]
-    assert all(row[c] is not None for c in journal.RERUN_COLUMNS)
+    # Every re-run column off `Weekly` is filled; the field's digest is the one the caller
+    # that read the pool state supplies, and this week's field was stated by hand (#280).
+    assert all(row[c] is not None for c in journal.RERUN_COLUMNS if c != "pool_state_digest")
+    assert row["pool_state_digest"] is None
 
     # A different generator on purpose: `_weekly` drew its seed from `default_rng(0)`, and a
     # re-run that happened to draw the same one would reproduce the figure with `seed`
@@ -547,6 +550,53 @@ def test_a_double_pick_week_is_recorded_with_both_teams_and_priced_as_their_prod
     # A pair nobody priced -- KC and its own opponent -- is refused like any other stranger.
     with pytest.raises(ValueError, match="not one of the teams this week priced"):
         journal.record_weekly(w, season=2026, chose="KC+LV", at=AT, base=tmp_path)
+
+
+def test_a_row_names_the_field_it_was_priced_against_and_re_runs_against_the_archive(tmp_path):
+    """#280. The re-run columns carried the rules, the board, the seed and the trials, and
+    not the field -- the live count, the pot, our Ledger -- so a week could be re-derived
+    against whatever the pool host said *now*. The row carries `pool_state_digest`; the
+    archive resolves it to the field as it stood; and the figure re-run against that field
+    lands exactly, where the current field gives another figure."""
+    import datetime as dt
+
+    from hub.fetch import pool as fetch_pool
+    then = fetch_pool.PoolState(season=2026, week=1, field_size=12, pot=420.0, entries=tuple(
+        fetch_pool.Entry(index=i, alive=True, used=()) for i in range(12)))
+    fetch_pool.write_state(then, tmp_path, when=dt.datetime(2026, 9, 9, 9, 0, tzinfo=dt.UTC))
+    digest = fetch_pool.state_digest(then)
+    w = pool.weekly(_hoard(), [1, 2], week=1, entries=then.alive, pot=then.pot,
+                    ledger=then.entries[0].used, trials=50, seed=11)
+    k = journal.record_weekly(w, season=2026, at=AT, base=tmp_path, pool_state_digest=digest)
+    row = journal.read(2026, base=tmp_path).filter(pl.col("key") == k).to_dicts()[0]
+    assert row["pool_state_digest"] == digest
+    assert "pool_state_digest" in journal.RERUN_COLUMNS
+
+    # The field moves on: three out, the pot grown, KC spent -- the current state.
+    now = fetch_pool.PoolState(season=2026, week=2, field_size=12, pot=480.0, entries=(
+        fetch_pool.Entry(index=0, alive=True, used=("KC",)),
+        *(fetch_pool.Entry(index=i, alive=i < 9, used=("SF",)) for i in range(1, 12))))
+    fetch_pool.write_state(now, tmp_path, when=dt.datetime(2026, 9, 16, 9, 0, tzinfo=dt.UTC))
+    assert fetch_pool.read_state(tmp_path) == now
+    field = fetch_pool.archived_state(row["pool_state_digest"], season=2026, base=tmp_path)
+    assert field is not None and field == then and field != now
+
+    again = pool.weekly(_hoard(), [1, 2], week=row["week"], entries=field.alive, pot=field.pot,
+                        ledger=field.entries[0].used, outlay=row["outlay"],
+                        trials=row["trials"], seed=row["seed"], rng=np.random.default_rng(3))
+    got = next(c for c in again.candidates if c.team == row["chose"])
+    assert got.expected_dollars == row["expected_dollars"]
+    assert (again.entries, again.pot) == (row["entries"], row["pot"])
+    current = pool.weekly(_hoard(), [1, 2], week=row["week"], entries=now.alive, pot=now.pot,
+                          ledger=now.entries[0].used, trials=row["trials"], seed=row["seed"])
+    assert row["chose"] not in {c.team for c in current.candidates} or next(
+        c for c in current.candidates if c.team == row["chose"]
+    ).expected_dollars != row["expected_dollars"]
+
+    # A row priced against a field stated by hand carries none, and says so by the null.
+    bare = journal.record_weekly(w, season=2026, at=AT + dt.timedelta(hours=1), base=tmp_path)
+    assert journal.read(2026, base=tmp_path).filter(
+        pl.col("key") == bare)["pool_state_digest"][0] is None
 
 
 def test_two_rows_under_different_pool_rules_are_told_apart_by_the_journal_alone(tmp_path):

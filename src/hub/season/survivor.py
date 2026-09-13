@@ -94,6 +94,49 @@ def published_plan(path: Path | None = None) -> list[dict]:
     return out
 
 
+def prior_rows(season: int, path: Path | None = None, store: Path | None = None) -> list[dict]:
+    """Everything `spent_teams` reads about this entry, from the two records that hold it.
+
+    **The one reading of the Ledger** (#280). The default Ledger for a run came from the
+    published plan alone -- not the fetched pool state, not the journal -- while the pool
+    fetch kept its own reading of what our entry had spent and the journal a third of what
+    was chosen: three sources for one Ledger, read by no single function. This is that
+    function, and `hub.publish.survivor`, `survivor.main` and `hub.season.pool.main` all
+    take their history from it.
+
+    Two records, because they hold different halves and neither holds the other's. The
+    host's Ledger for our entry -- `hub.fetch.pool.read_state`, index 0 -- is what was
+    *entered and settled*: a pick counts there once its week is final, and a team we
+    deviated onto is there where the published plan never knew it. That plan's rows are what
+    is *locked and not yet settled*: the pick for a week the clock has entered (#263), which
+    the host will not list as spent until the week resolves. Both arrive as rows in the
+    shape `published_plan` already hands over -- the host's as week-0 ledger rows, the
+    same spelling the envelope's own `spent` takes -- and `spent_teams` unions them, so a
+    team in either is spent. The journal is not a source: it records what was chosen and
+    is written after the fact, and `hub.season.pool.main` reads this before it writes there.
+
+    A state from another season contributes nothing, for the reason `spent_teams` scopes
+    rows to one; no state is no history, as no artifact is; a state that has drifted from
+    its contract is said on stderr and skipped, rather than served as a Ledger or allowed
+    to take the remaining plan down with it.
+    """
+    from hub.contracts import ContractViolation
+    from hub.fetch import pool as fetch_pool
+    rows = published_plan(path)
+    try:
+        state = fetch_pool.read_state(store)
+    except ContractViolation as e:
+        print(f"hub.season.survivor: the last-known pool state is not read as a Ledger "
+              f"({e})", file=sys.stderr)
+        return rows
+    if state is None or state.season != season:
+        return rows
+    ours = next((e for e in state.entries if e.index == fetch_pool.OUR_INDEX), None)
+    if ours is None:
+        return rows
+    return rows + [{"week": 0, "team": t, "ledger": True, "season": season} for t in ours.used]
+
+
 def _solver():
     """Prefer COIN_CMD, fall back to the bundled CBC.
 
@@ -587,8 +630,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as e:
         return unavailable("hub.season.survivor", f"the {a.season} schedule and its prices", e)
     try:
-        # The same call `hub.publish.survivor` makes, which is the point of it existing.
-        got = plan_remaining(grid, a.season, prior=published_plan(),
+        # The same call `hub.publish.survivor` makes, which is the point of it existing;
+        # the history from `prior_rows`, the one reading of the Ledger (#280).
+        got = plan_remaining(grid, a.season, prior=prior_rows(a.season),
                              season_weeks=a.weeks)
     except Infeasible as e:
         print(f"hub.season.survivor: {e}", file=sys.stderr)

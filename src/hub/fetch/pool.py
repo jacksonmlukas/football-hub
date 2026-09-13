@@ -59,6 +59,18 @@ this module raises or prints: a transport exception quotes its own request, head
 and a 401 body may echo what it refused. `redact` is applied on both paths, and the chained
 cause is dropped on purpose, because a traceback would print it.
 
+**Every read is kept, and a decision names the one it was priced against** (#280). The
+state file is the last-known state and is overwritten on every refresh; the archive under
+`pool_state/league=nfl/season=/week=/snap-<moment>.parquet` -- the lines archive's layout --
+keeps each read under the host's current week with its capture time, append-only, holding
+exactly the rows the contract validated. `state_digest` names a read by what it says, the
+decision journal carries that digest on the row (`journal.pool_state_digest`), and
+`archived_state` resolves it back to the field as it stood, so a week can be re-derived
+against the field it was priced against rather than the one the host reports now. And
+the Ledger has one reading: `hub.season.survivor.prior_rows` takes our entry's `used` from
+the last-known state beside the published plan's rows, and the money layer, the survivor
+CLI and the published artifact all read that.
+
 **Degradation.** `CLAUDE.md`'s rule: a failed fetch serves last-good state rather than
 erroring. Every way a refresh can fail -- no host named, no cookie, the host unreachable, the
 cookie refused, a payload that does not parse, a pool with nobody in it -- prints why on
@@ -82,6 +94,7 @@ from urllib.parse import quote, unquote
 
 import polars as pl
 
+from hub import store
 from hub.cli import unavailable
 from hub.config import SEASON_AHEAD
 from hub.contracts import POOL_STATE, ContractViolation
@@ -112,6 +125,11 @@ STATE_FILE = "pool_state.json"
 # The append-only map from `sha256(host id)` to index, beside the state. Never rewritten
 # with a row missing, never with a row moved: see `write_index_map`.
 INDEX_FILE = "pool_entries.json"
+# Every read, kept (#280): a dated partition per read under the host's current week, in the
+# store's Hive layout beside the lines archive. `write_state` appends one; `archived` reads
+# them back; `state_digest` is how a journal row names one.
+ARCHIVE_TABLE = "pool_state"
+LEAGUE = "nfl"
 # Ours, by construction, and `hub.season.pool.simulate` reads it there.
 OUR_INDEX = 0
 
@@ -435,7 +453,20 @@ def write_index_map(index_map: Mapping[str, int], base: Path | None = None) -> P
 
 def write_state(state: PoolState, base: Path | None = None, *,
                 when: datetime | None = None) -> Path:
-    """Validate, then write. The file holds what `validate` handed back and nothing else."""
+    """Validate, then write. The file holds what `validate` handed back and nothing else.
+
+    **And the archive keeps every read** (#280). The state file is the last-known state and
+    is overwritten every refresh -- one capture time, no history -- so the field a week-3
+    decision was priced against was gone the moment week 4 was read. Each write now also
+    lands a dated partition under `ARCHIVE_TABLE`, in the layout the lines archive uses
+    (`hub.store.write` under `pool_state/league=nfl/season=/week=/snap-<moment>`), holding
+    the validated rows and the capture time. Append-only by the store's own rule: a partition
+    is named by its moment and a differing rewrite of one is refused, never destroyed. The
+    week is the host's current week, so a week has as many partitions as it had reads.
+
+    The privacy design is unchanged: the rows archived are exactly the rows validated --
+    index, liveness, Ledger -- and no id or name exists on the state to be written.
+    """
     df = POOL_STATE.validate(to_frame(state))
     when = when or datetime.now(UTC)
     path = state_path(base)
@@ -444,8 +475,72 @@ def write_state(state: PoolState, base: Path | None = None, *,
            "season": state.season, "week": state.week,
            "field_size": state.field_size, "pot": state.pot,
            "entries": df.select("entry", "alive", "used").to_dicts()}
+    # The partition before the file: a refused archive write leaves the last-known state as
+    # it was, where the other order would serve a state the archive never recorded. Named
+    # to the microsecond where the lines archive names to the second, because two reads a
+    # second apart -- a saved payload ingested and then a refresh -- are two reads, and the
+    # second would otherwise be refused as a rewrite of the first.
+    moment = when.astimezone(UTC).replace(tzinfo=None)
+    # The season and week are the partition's path, as the lines archive has them; the
+    # rest of the validated frame is the file.
+    store.write(df.drop("season", "week").with_columns(pl.lit(moment).alias("captured_at")),
+                ARCHIVE_TABLE, LEAGUE, state.season, state.week, base=base,
+                name=f"snap-{moment:%Y%m%dT%H%M%S%f}")
     path.write_text(json.dumps(doc, indent=2))
     return path
+
+
+def state_digest(state: PoolState) -> str:
+    """Stable 8-char hash of what the state says: the field a decision was priced against.
+
+    Over the validated frame as text, the way `hub.season.pool.grid_digest` hashes a board
+    and for the same reason -- a frame and the frame read back from disk serialise to
+    different IPC bytes and the same text. The capture time is not in it: two reads that
+    found the identical field are the identical field, and a journal row naming this digest
+    is re-run against that field whichever read is resolved to.
+    """
+    canon = to_frame(state).sort("entry").with_columns(pl.col("used").list.join(","))
+    head = ",".join(f"{c}:{canon.schema[c]}" for c in canon.columns)
+    return hashlib.sha256((head + "\n").encode()
+                          + canon.write_csv().encode()).hexdigest()[:8]
+
+
+def archived(season: int, *, week: int | None = None,
+             base: Path | None = None) -> list[tuple[datetime, PoolState]]:
+    """Every read archived for `season`, oldest first, as (captured at, state).
+
+    Read through the store's catalog rather than by walking the tree, so the partition
+    layout is the store's business; through the contract on the way out, as `read_state`
+    is, so a drifted partition is refused rather than served as a field. Empty on a fresh
+    clone or a season nothing has read.
+    """
+    if ARCHIVE_TABLE not in store.tables(base):
+        return []
+    q = f"SELECT * FROM {ARCHIVE_TABLE} WHERE league = ? AND season = ?"
+    params: list[object] = [LEAGUE, season]
+    if week is not None:
+        q += " AND week = ?"
+        params.append(week)
+    rows = store.sql(q, params=params, base=base)
+    if rows.is_empty():
+        return []
+    out = []
+    for (when,), part in sorted(rows.group_by("captured_at"), key=lambda kv: kv[0]):
+        df = POOL_STATE.validate(
+            part.with_columns(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64))
+            .select(list(_SCHEMA)))
+        out.append((when, _from_frame(df)))
+    return out
+
+
+def archived_state(digest: str, *, season: int, base: Path | None = None) -> PoolState | None:
+    """The archived field a journal row's `pool_state_digest` names, or None if none matches.
+
+    The earliest read carrying the digest, which is the one the decision could have been
+    priced against; later reads that found the same field are the same field.
+    """
+    return next((s for _, s in archived(season, base=base) if state_digest(s) == digest),
+                None)
 
 
 def _read_doc(base: Path | None) -> dict[str, Any] | None:
@@ -532,7 +627,10 @@ def report(state: PoolState, *, captured: str | None = None) -> list[str]:
         spent = ", ".join(e.used) if e.used else "nothing spent"
         who = " (ours)" if e.index == OUR_INDEX else ""
         lines.append(f"  entry {e.index}{who}: {'alive' if e.alive else 'out'}, {spent}")
-    lines.append(f"  hub.season.pool --entries {state.alive} --pot {state.pot:.2f}")
+    # What the money layer reads from this state by default (#280); stated here so an
+    # operator overriding it knows what the figures were read as.
+    lines.append(f"  hub.season.pool reads this field: --entries {state.alive} "
+                 f"--pot {state.pot:.2f}, state {state_digest(state)}")
     return lines
 
 

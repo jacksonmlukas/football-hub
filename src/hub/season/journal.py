@@ -135,13 +135,19 @@ SCHEMA: dict[str, Any] = {
     "pot": pl.Float64,
     "outlay": pl.Float64,              # what `expected_dollars` is net of
     "plan_source": pl.Utf8,            # `Plan.source`: the optimiser, or the fallback
+    # The field itself (#280): `hub.fetch.pool.state_digest` of the pool state `entries`,
+    # `pot` and our Ledger were read from, which the archive under `data/processed/`
+    # resolves back to every rival's Ledger and the live count as they stood. Null where
+    # the field was stated by hand -- `--entries` and `--pot` typed, no state read -- which
+    # is a row priced against a field nothing archived, and the null says so.
+    "pool_state_digest": pl.Utf8,
 }
 
 # The columns a row needs to be re-derived, in one place. `read` fills them with nulls on a
 # store written before they existed rather than failing to select them, and a row whose
 # `pool_digest` is null is one no re-run can be checked against.
 RERUN_COLUMNS = ("pool_digest", "grid_digest", "seed", "trials", "entries", "pot",
-                 "outlay", "plan_source")
+                 "outlay", "plan_source", "pool_state_digest")
 
 OUTCOME_SCHEMA: dict[str, Any] = {
     "key": pl.Utf8,
@@ -291,7 +297,7 @@ def record(*, season: int, week: int, kind: str, chose: str,
            pool_digest: str | None = None, grid_digest: str | None = None,
            seed: int | None = None, trials: int | None = None, entries: int | None = None,
            pot: float | None = None, outlay: float | None = None,
-           plan_source: str | None = None,
+           plan_source: str | None = None, pool_state_digest: str | None = None,
            at: datetime | None = None, base: Path | None = None) -> str:
     """Append one decision. Returns its key, which is how the outcome finds it later.
 
@@ -315,6 +321,11 @@ def record(*, season: int, week: int, kind: str, chose: str,
     refused is *pretending*: a row carrying some of them and not others would read as
     reproducible to a query on any one column, so either every one of them is present or
     none is. `record_weekly` supplies all of them off `pool.Weekly`.
+
+    `pool_state_digest` stands outside that all-or-none (#280): it names the archived field
+    `entries`, `pot` and the Ledger were read from, and a row priced against a field stated
+    by hand has none to name. The null is that claim, and `hub.fetch.pool.archived_state`
+    is what resolves a digest back to the field.
     """
     # `plan_source` labels the survivor plan and is no input to the re-run, and a buyback has no
     # plan; the seven that follow are what `pool.weekly` has to be handed to land on the row's
@@ -361,6 +372,7 @@ def record(*, season: int, week: int, kind: str, chose: str,
         "pool_digest": [pool_digest], "grid_digest": [grid_digest],
         "seed": [seed], "trials": [trials], "entries": [entries],
         "pot": [pot], "outlay": [outlay], "plan_source": [plan_source],
+        "pool_state_digest": [pool_state_digest],
     }, schema=SCHEMA)
     store.write(row, TABLE, LEAGUE, season, week, name=k, base=base)
     return k
@@ -368,6 +380,7 @@ def record(*, season: int, week: int, kind: str, chose: str,
 
 def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
                   credits_before: float | None = None, credits_after: float | None = None,
+                  pool_state_digest: str | None = None,
                   at: datetime | None = None, base: Path | None = None) -> str:
     """Record a week `hub.season.pool.weekly` priced. The caller ADR-0014's duty was missing.
 
@@ -440,6 +453,9 @@ def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
         pool_digest=w.pool_digest, grid_digest=w.grid_digest, seed=w.seed,
         trials=w.trials, entries=w.entries, pot=w.pot, outlay=w.outlay,
         plan_source=by_team[took].plan_source or None,
+        # The field is not on `Weekly` -- it prices what it is handed -- so the caller that
+        # read the pool state names it (#280); `hub.season.pool.main` does.
+        pool_state_digest=pool_state_digest,
         at=at, base=base)
 
 
