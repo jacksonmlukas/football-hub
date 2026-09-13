@@ -305,7 +305,12 @@ def test_rounds_is_one_declaration():
                 if isinstance(node, ast.Assign)
                 and any(isinstance(t, ast.Name) and t.id == "ROUNDS" for t in node.targets)]
     assert len(assigned) == 1
-    assert isinstance(assigned[0], ast.Name) and assigned[0].id == "DEFAULT_ROUNDS", (
+    value = assigned[0]
+    # `chosen(DEFAULT_ROUNDS)` since #253: the declaration wraps the name, and it is the
+    # name inside that this test reads.
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "chosen":
+        value = value.args[0]
+    assert isinstance(value, ast.Name) and value.id == "DEFAULT_ROUNDS", (
         "cohort.ROUNDS is declared as a literal beside optimize.DEFAULT_ROUNDS; two "
         "declarations of one number are two numbers as soon as one is edited")
     assert C.ROUNDS == DEFAULT_ROUNDS

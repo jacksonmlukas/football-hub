@@ -4,11 +4,8 @@ from dataclasses import dataclass, field
 import pytest
 from omegaconf.errors import ValidationError
 
-from hub import config
+from hub import config, declare
 from hub.config import (
-    FITTED_EXTRA,
-    FITTED_MODULES,
-    NOT_IN_DIGEST,
     UNPINNED,
     DraftConfig,
     HubConfig,
@@ -164,11 +161,75 @@ def test_the_constants_that_moved_predictions_are_all_covered():
         assert name in got, name
 
 
-def test_a_fitted_constant_outside_a_registered_module_is_still_covered():
+def test_a_constant_in_a_module_full_of_paths_is_covered_by_its_own_declaration():
     """`MIN_GAMES` decides who is eligible to set replacement level, so it moves every VOR
-    on the board -- but it lives in a CLI module full of filesystem paths that must not be
-    hashed. `FITTED_EXTRA` names it individually."""
+    on the board -- and it lives in a CLI module full of filesystem paths that must not be
+    hashed. Before #253 that took a second list keyed by hand; now the constant says
+    `chosen(10)` where it is written and nothing else in the module is looked at."""
     assert "board.MIN_GAMES" in fitted_constants()
+    assert not [k for k in fitted_constants() if k.startswith("board.") and k != "board.MIN_GAMES"
+                and k != "board.FLEX_SHARES"]
+
+
+def test_a_constant_moves_the_version_without_touching_any_module():
+    """#253: "this constant moves the version" is a question the digest answers from a
+    substituted value, not from a monkeypatched attribute -- so a test of one constant
+    cannot leak into the next through module state."""
+    have = fitted_constants()
+    assert fitted_digest(have) == fitted_digest()
+    assert fitted_digest({**have, "predict.TALENT_CV": 0.35}) != fitted_digest()
+    assert fitted_digest({**have, "predict.TALENT_CV": have["predict.TALENT_CV"]}) == fitted_digest()
+
+
+def test_the_walk_finds_the_declarations_and_only_declarations():
+    """What the digest is derived from. Every covered key is a `fitted` or `chosen`
+    declaration in the tree; every declaration keys one constant; and a declaration is a
+    module-level assignment through one of the three spellings and nothing else."""
+    decls = declare.declarations()
+    keys = [d.key for d in decls]
+    assert len(keys) == len(set(keys)), "two declarations share a key"
+    assert set(fitted_constants()) == {d.key for d in decls if d.covered}
+    assert set(declare.excluded()) == {d.key for d in decls if not d.covered}
+    assert {d.kind for d in decls} == declare.SPELLINGS
+    # The spelling has to be at module level and assign one name: a call inside a function
+    # or a tuple unpacking is not a declaration.
+    src = (
+        "from hub.declare import chosen, fitted, not_an_input\n"
+        "A = fitted(1.0)\n"
+        "B: int = chosen(2)\n"
+        "C = not_an_input(3, why='eight words are the least an argument can be made in')\n"
+        "D, E = fitted(4), fitted(5)\n"
+        "def f():\n    F = fitted(6)\n"
+        "G = 7\n"
+    )
+    got = declare.declared_in(src, "hub.x.y")
+    assert [(d.name, d.kind, d.covered) for d in got] == [
+        ("A", "fitted", True), ("B", "chosen", True), ("C", "not_an_input", False)]
+    assert got[2].why is not None and got[2].why.startswith("eight words")
+    assert got[0].key == "y.A"
+
+
+def test_an_exclusion_without_its_argument_is_refused_not_recorded():
+    with pytest.raises(ValueError, match=r"hub\.x\.y\.C .*without an argument"):
+        declare.declared_in("C = not_an_input(3, 'too short')\n", "hub.x.y")
+    with pytest.raises(ValueError, match=r"hub\.x\.y\.C"):
+        declare.declared_in("C = not_an_input(3)\n", "hub.x.y")
+
+
+def test_two_declaring_modules_with_one_stem_are_refused(monkeypatch, tmp_path):
+    """The stem-keyed scan this replaces would have let `hub.draft.season` and a second
+    `season` module collide in silence; the walk refuses the collision by name."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    (tmp_path / "a" / "season.py").write_text("from hub.declare import fitted\nX = fitted(1.0)\n")
+    (tmp_path / "b" / "season.py").write_text("from hub.declare import fitted\nY = fitted(2.0)\n")
+    monkeypatch.setattr(declare, "SRC", tmp_path)
+    declare.declarations.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match="share the stem 'season'"):
+            declare.declarations()
+    finally:
+        declare.declarations.cache_clear()
 
 
 # --- coverage is a recorded decision, not a property of how a name is typed (#201) ---
@@ -222,15 +283,22 @@ def test_a_cache_bound_does_not_identify_a_model_version(monkeypatch):
     before = config_digest(HubConfig())
     monkeypatch.setattr(predict, "_FACTOR_CACHE_MAX", 8192)
     assert config_digest(HubConfig()) == before
-    assert "predict._FACTOR_CACHE_MAX" in NOT_IN_DIGEST
+    assert "predict._FACTOR_CACHE_MAX" in declare.excluded()
 
 
 @pytest.mark.parametrize("key", ["predict._FACTORS", "predict._FACTOR_CACHE_MAX",
                                  "predict._EIG_FLOOR", "predict._INDEPENDENT_FLOOR"])
 def test_each_exclusion_argues_for_itself(key):
     """A skip-list entry with no argument is the same silence as no entry at all. Each of
-    these is a claim about what the constant does, and the claim is what a reader checks."""
-    assert len(NOT_IN_DIGEST[key].split()) >= 15, NOT_IN_DIGEST[key]
+    these is a claim about what the constant does, and the claim is what a reader checks --
+    at the constant now, where `not_an_input` carries it (#253)."""
+    assert len(declare.excluded()[key].split()) >= 15, declare.excluded()[key]
+
+
+def test_every_exclusion_in_the_tree_says_enough_to_be_checked_later():
+    thin = {k: w for k, w in declare.excluded().items()
+            if len(w.split()) < declare.MIN_REASON_WORDS}
+    assert not thin, thin
 
 
 def test_a_private_name_nobody_excluded_is_covered_anyway():
@@ -259,85 +327,6 @@ def test_a_value_the_digest_cannot_hash_is_refused_rather_than_dropped(monkeypat
     monkeypatch.setattr(predict, "MIN_SKEW", object())
     with pytest.raises(RuntimeError, match=r"predict\.MIN_SKEW"):
         fitted_constants()
-
-
-def test_every_module_holding_a_fitted_constant_is_registered():
-    """What stops the registry rotting. `FITTED_MODULES` is a list of modules rather than of
-    constants so a new number is covered the day it lands -- but a whole new *module* still
-    has to be added, and this is the line that notices.
-
-    Known limitation, stated rather than hidden: this scans for module-level names holding a
-    *float*. An integer threshold in an unregistered module still slips through, which is
-    exactly how `MIN_GAMES` did until `FITTED_EXTRA` picked it up by hand. Widening the scan
-    to ints flags fifty names under `src/hub` -- cache sizes, API tiers, filesystem roots,
-    print widths -- so the line is drawn at floats and the exceptions are named.
-
-    **What #201 changed, and what it did not.** Inside a module the digest already covers,
-    nothing turns on a literal's type any more: `fitted_constants` sweeps every name the
-    module assigns and an exclusion is a named entry in `NOT_IN_DIGEST`. This scan is the
-    other question -- whether a *module* has fallen off the registry entirely -- and it is
-    still a float scan, because there is no declaration to read in a module that has never
-    declared anything. The six shape constants #201 named are no longer relying on it: they
-    are registered individually in `FITTED_EXTRA`, so the ones known to matter are covered
-    rather than left to a scan that cannot see them.
-    """
-    import ast
-    import pathlib
-
-    src = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
-    registered = {m.rsplit(".", 1)[-1] for m in FITTED_MODULES}
-    # Generated from the declarations, not maintained beside them. Each not-fitted module
-    # states its own reason in `NOT_FITTED_BECAUSE`, so the set of excluded modules is a
-    # consequence of what the modules say rather than a second list that can disagree with
-    # them -- the "compute it or stop claiming it" correction issue #109 asked for.
-    registered |= {m.rsplit(".", 1)[-1] for m in not_fitted_modules()}
-    # A module can also be covered constant-by-constant rather than wholesale: registered
-    # into the digest through FITTED_EXTRA, or deliberately excluded through NOT_IN_DIGEST.
-    # `hub.models.components` is both -- three of its constants are live and four describe
-    # code no prediction can reach.
-    by_name = {f"{spec.split(':')[0].rsplit('.', 1)[-1]}.{spec.split(':')[1]}"
-               for spec in FITTED_EXTRA} | set(NOT_IN_DIGEST)
-    # Every module under `src/hub`, with no directory filter. It used to read
-    # `searched = [src / "models", src / "draft"]`, which was a fourth exclusion mechanism
-    # beside the three `config.py` names -- and a silent one, which is exactly what that
-    # module says an exclusion must not be: "a decision on the record, not a module quietly
-    # falling off FITTED_MODULES". A directory list inside a test is the quiet kind, and it
-    # was hiding `lineup_gate.OPP_MU` and `OPP_SD`, in none of the three registries.
-    #
-    # Scanning everything rather than widening the list by one package is what stops it
-    # coming back: a new package is covered the day it lands, and the only way out is a named
-    # entry with a reason. Nothing outside `models/`, `draft/` and `season/` holds a
-    # module-level float today, so the exhaustive scan costs nothing and closes the hole.
-    missing = []
-    for path in sorted(src.rglob("*.py")):
-        if path.stem in registered or path.stem.startswith("_"):
-            continue
-        tree = ast.parse(path.read_text())
-        for node in tree.body:
-            if isinstance(node, ast.Assign):
-                targets = node.targets
-            elif isinstance(node, ast.AnnAssign) and node.value is not None:
-                targets = [node.target]
-            else:
-                continue
-            for t in targets:
-                if not (isinstance(t, ast.Name) and t.id.isupper()
-                        and not t.id.startswith("_")):
-                    continue
-                # A fitted constant is a measured *number*. String and bool settings,
-                # paths and column lists are not, and live in these modules legitimately.
-                if _holds_a_float(node.value) and f"{path.stem}.{t.id}" not in by_name:
-                    missing.append(f"{path.stem}.{t.id}")
-    assert not missing, (
-        f"fitted constants outside FITTED_MODULES, so config_digest does not cover them: "
-        f"{sorted(set(missing))}")
-
-
-def _holds_a_float(node) -> bool:
-    """Whether a literal contains a float anywhere inside it."""
-    import ast
-    return any(isinstance(n, ast.Constant) and isinstance(n.value, float)
-               for n in ast.walk(node))
 
 
 def test_roster_reflects_three_wr_league():
@@ -370,9 +359,12 @@ def test_the_flex_shares_are_not_a_config_field():
 def test_the_flex_shares_are_covered_by_the_digest():
     """Out of the config is not enough -- out of the config and out of the digest would be a
     number that changes every VOR on the board while the model version says nothing, which is
-    the exact failure ADR-0006 was written after. `hub.draft.board` is CLI-excluded from the
-    wholesale sweep, so this rides `FITTED_EXTRA` beside `MIN_GAMES`."""
-    assert "hub.draft.board:FLEX_SHARES" in FITTED_EXTRA
+    the exact failure ADR-0006 was written after. `hub.draft.board` is a CLI full of paths,
+    so the shares declare themselves `chosen` where they are written (#253) -- a stated
+    choice, not a measurement, and covered because coverage is owed by anything that
+    changes a prediction."""
+    decl = {d.key: d for d in declare.declarations()}["board.FLEX_SHARES"]
+    assert decl.kind == "chosen" and decl.module == "hub.draft.board"
     assert fitted_constants()["board.FLEX_SHARES"] == {"RB": 0.45, "WR": 0.50, "TE": 0.05}
 
 
@@ -934,6 +926,13 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     default branch, which is what the URL always was -- so nothing any run computes is
     different on either side of this commit. The first move of this name to a commit will be
     the model change, and it is the maintainer's to make from the next pull's stamp.
+
+    **Unmoved 2026-09-12 (#253): `a1e669b9`, `fitted_digest` `9be7844c`.** The mechanism
+    changed under the number and the number did not: the four lists (`FITTED_MODULES`,
+    `FITTED_EXTRA`, `NOT_IN_DIGEST`, the `NOT_FITTED_BECAUSE` strings) are gone and every
+    constant declares its own coverage where it is written (`hub.declare`), and the walk
+    finds exactly the forty-eight the lists found. Recorded here because a pin that only
+    speaks when it moves cannot say that a rewrite of what feeds it was a no-op.
     """
     assert config_digest(HubConfig()) == "a1e669b9"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
@@ -968,71 +967,6 @@ def test_digests_reports_all_three_and_names_them():
     assert got["fitted"] == fitted_digest()
 
 
-# --- the reason lives with the numbers (issue #109) ------------------------
-
-def not_fitted_modules() -> dict[str, str]:
-    """Every module under `hub` that declares itself not-fitted, and why.
-
-    The registry this replaces lived in `config.py` and was the reason that module churned:
-    a measured float anywhere meant editing it. The knowledge is about the constant, so it is
-    kept with the constant, and any list of exclusions is derived from here.
-
-    Import errors are swallowed rather than reported. A module that cannot import is a defect
-    the rest of the suite fails on directly, and letting it break the exclusion list would
-    turn one broken module into a wall of unrelated "unregistered float" failures.
-    """
-    import importlib
-    import pkgutil
-
-    import hub
-    found: dict[str, str] = {}
-    for info in pkgutil.walk_packages(hub.__path__, prefix="hub."):
-        try:
-            mod = importlib.import_module(info.name)
-        except Exception:
-            continue
-        said = getattr(mod, "NOT_FITTED_BECAUSE", None)
-        if isinstance(said, str) and said.strip():
-            found[info.name] = said
-    return found
-
-
-def test_every_not_fitted_module_gives_a_reason_worth_reading():
-    """The declaration is the record now, so it has to carry what the registry carried.
-
-    A bare marker would pass the exclusion check while saying nothing -- and the whole point
-    of the registry it replaces was that an exclusion is "a decision on the record, not a
-    module quietly falling off FITTED_MODULES". A module can exclude itself here, so the
-    reason is the only thing standing between that and a silent opt-out.
-    """
-    said = not_fitted_modules()
-    assert said, "no module declares itself not-fitted, so the exclusion list is empty"
-    thin = {m: r for m, r in said.items() if len(r.split()) < 8}
-    assert not thin, (
-        f"these exclude themselves without saying enough to be checked later: {thin}")
-
-
-def test_a_module_holding_an_unregistered_float_is_still_caught(tmp_path):
-    """The property the registry existed for, asserted against the reshaped check.
-
-    Proved by construction rather than by trusting the rewrite: a module with a module-level
-    float and no declaration must be visible to the scan and absent from the exclusion set.
-    This is what expand-then-contract was protecting -- if the reshaped check had the same
-    gap as a missed declaration, nothing else here would notice.
-    """
-    import ast
-
-    holder = tmp_path / "newthing.py"
-    holder.write_text("SOME_COEFFICIENT = 0.42\n")
-    tree = ast.parse(holder.read_text())
-    floats = [t.id for node in tree.body if isinstance(node, ast.Assign)
-              for t in node.targets
-              if isinstance(t, ast.Name) and t.id.isupper() and _holds_a_float(node.value)]
-    assert floats == ["SOME_COEFFICIENT"], "the scan no longer sees a module-level float"
-    assert holder.stem not in {m.rsplit(".", 1)[-1] for m in not_fitted_modules()}, (
-        "an undeclared module counts as registered, so the check cannot fail for it")
-
-
 def test_an_imported_upper_case_name_is_not_a_fitted_constant():
     """A `typing` import identified the model version for the length of one merge.
 
@@ -1046,44 +980,10 @@ def test_an_imported_upper_case_name_is_not_a_fitted_constant():
     it, because the only question it asked was about type. This asks the source what the module
     assigns, so it also covers imports nobody has made yet.
     """
-    from hub import config
-
     got = config.fitted_constants()
     assert not [k for k in got if k.endswith(".TYPE_CHECKING")], (
         f"a typing import is in the model version: {sorted(got)}")
-
-    # The general property, not just the one name that got in. Every swept key must be a name
-    # its own module assigns -- checked against the source rather than against a denylist,
-    # because a denylist would need the next import added to it by hand.
-    import importlib
-    for key in got:
-        short, attr = key.rsplit(".", 1)
-        full = next((m for m in config.FITTED_MODULES if m.endswith(f".{short}")), None)
-        if full is None:
-            continue          # FITTED_EXTRA names its constants one at a time and by hand
-        assigned = config._assigned_at_module_level(importlib.import_module(full))
-        assert attr in assigned, (
-            f"{key} is swept into the digest but {full} imports it rather than assigning it")
-
-
-def test_a_module_whose_source_cannot_be_read_stops_the_digest():
-    """The sweep must not answer "no constants" when it means "I could not look".
-
-    An empty set here would drop that module's constants from `fitted_constants`, move
-    `config_digest`, and say nothing -- the model version would change because a file became
-    unreadable. Every module in `FITTED_MODULES` is a file in this repo, so the branch should
-    be unreachable in practice; it is tested because an unreachable branch that fails open is
-    how the other three defects in this file's history got in.
-    """
-    import sys
-    import types
-
-    from hub import config
-
-    synthetic = types.ModuleType("hub.models.notondisk")   # a module with no source file
-    sys.modules["hub.models.notondisk"] = synthetic
-    try:
-        with pytest.raises(RuntimeError, match="cannot read the source"):
-            config._assigned_at_module_level(synthetic)
-    finally:
-        del sys.modules["hub.models.notondisk"]
+    # The general property since #253: nothing enters the digest by being *assigned* at
+    # all. A name enters by being declared, and an import cannot be, because the walk reads
+    # `NAME = fitted(...)` off the source and an import is not that.
+    assert all(d.kind in ("fitted", "chosen") for d in declare.declarations() if d.covered)

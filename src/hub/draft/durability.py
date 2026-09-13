@@ -31,10 +31,11 @@ import numpy as np
 import polars as pl
 
 from hub.config import drafted_positions
+from hub.declare import chosen, fitted
 from hub.draft import prior_signal
 from hub.names import player_key
 
-TEAM_GAMES = 17
+TEAM_GAMES = chosen(17)
 
 # How strongly games missed persists year over year: Pearson r across 1,531 player-season
 # pairs with a real prior role (`docs/durability.md`). Spearman is +0.344; the linear form is
@@ -52,7 +53,7 @@ TEAM_GAMES = 17
 # games is determined, which is why this ticket adds one constant rather than a mixture
 # weight nothing derives -- ADR-0006's line, and the reason the disposition took the
 # games-played draw over the other two options the ticket offered.
-MISSED_YOY_R = 0.407
+MISSED_YOY_R = fitted(0.407)
 
 # Points per team game lost per prior-season game missed, beyond what the projection already
 # prices. From `ppg_next ~ proj_ppg + missed` on historical ESPN projections.
@@ -85,20 +86,20 @@ MISSED_YOY_R = 0.407
 # What #48 does add is that the disagreement is visible on the night. `hub.draft.board`'s
 # `CORRECTION_FLAG` carries the WR line and `hub.draft.report` prints it beside the ranking,
 # so an operator reading a corrected board is told which of its numbers is disputed and how.
-# The flag lives there rather than here because this module is in `FITTED_MODULES`, where an
-# upper-case name would put a disposition string into `fitted_digest`.
+# The flag lives there rather than here because this module's constants are declared
+# `fitted` beside their provenance, and a disposition string is not one of them.
 #
 # QB is reproduced and carries no flag. Its caveat is the one above -- agreement by width.
 #
 # See docs/fitted-corrections.md.
-BETA: dict[str, float] = {"QB": -0.457, "WR": -0.151}
+BETA: dict[str, float] = fitted({"QB": -0.457, "WR": -0.151})
 
 # Below this a player was not a starter, and his missed games are being a backup rather than
 # being hurt. Without it the signal is mostly roster churn.
-MIN_PPG = 5.0
+MIN_PPG = chosen(5.0)
 
 # Designations worth putting in front of a drafter. ACTIVE is not news.
-FLAG_STATUS = frozenset({"OUT", "DOUBTFUL", "QUESTIONABLE", "INJURY_RESERVE"})
+FLAG_STATUS = chosen(frozenset({"OUT", "DOUBTFUL", "QUESTIONABLE", "INJURY_RESERVE"}))
 
 # Points per team game lost by carrying a designation *now*, beyond what the projection
 # prices. Fitted against week-1 injury reports, which are the closest historical analogue to
@@ -138,9 +139,9 @@ FLAG_STATUS = frozenset({"OUT", "DOUBTFUL", "QUESTIONABLE", "INJURY_RESERVE"})
 # provenance for one without. It applies, and `hub.draft.board.CORRECTION_FLAG` carries the
 # disposition so `hub.draft.report` prints it beside the ranking rather than leaving an
 # operator to find it here.
-INJURY_BETA: dict[str, float] = {
+INJURY_BETA: dict[str, float] = fitted({
     "OUT": -1.631, "DOUBTFUL": -1.631, "INJURY_RESERVE": -1.631,
-}
+})
 
 
 def is_flagworthy(status: str | None) -> bool:

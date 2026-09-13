@@ -33,16 +33,17 @@ import numpy as np
 import polars as pl
 
 from hub.config import drafted_positions
+from hub.declare import chosen, fitted, not_an_input
 
 # Full PPR, matching the league. Reconstructs nflverse's own fantasy_points_ppr to within
 # 0.01 for 99.4% of player-weeks; the rest are return and special-teams scores, which no
 # drafted skill player is rostered for.
-SCORING: dict[str, float] = {
+SCORING: dict[str, float] = chosen({
     "passing_yards": 0.04, "passing_tds": 4.0, "interceptions": -2.0,
     "rushing_yards": 0.1, "rushing_tds": 6.0,
     "receiving_yards": 0.1, "receiving_tds": 6.0, "receptions": 1.0,
     "fumbles_lost": -2.0, "two_point_conversions": 2.0,
-}
+})
 
 # Where each scored stat's *expected* value comes from upstream, beside the weights that
 # price it. One owner: it was declared twice, in `hub.models.panel` for the weekly screen and
@@ -95,13 +96,13 @@ NO_EXPECTED_SOURCE: frozenset[str] = frozenset({"fumbles_lost"})
 # quarterback's raw receiving rate is 0.125 per yard, twenty times any true rate, because
 # quarterbacks catch a pass a season and it is usually a trick play that scores. Applying
 # that to a quarterback who caught one would invent points from a sample of nothing.
-TD_RATE: dict[str, dict[str, float]] = {
+TD_RATE: dict[str, dict[str, float]] = fitted({
     "QB": {"pass": 0.00615, "rush": 0.01045},
     "RB": {"rec": 0.00521, "rush": 0.00707},
     "WR": {"rec": 0.00605, "rush": 0.00756},
     "TE": {"rec": 0.00705},
-}
-FALLBACK_TD_RATE: dict[str, float] = {"rec": 0.00600, "rush": 0.00720, "pass": 0.00615}
+})
+FALLBACK_TD_RATE: dict[str, float] = fitted({"rec": 0.00600, "rush": 0.00720, "pass": 0.00615})
 
 # Yardage is compound, not a fixed-spread quantity: a week's receiving yards are the sum
 # of one gain per catch. Modelling it as a Gamma with a constant coefficient of variation
@@ -111,11 +112,21 @@ FALLBACK_TD_RATE: dict[str, float] = {"rec": 0.00600, "rush": 0.00720, "pass": 0
 #
 # So sample the units and the yards-per-unit separately. These are per-unit dispersions,
 # not per-week ones, and the aggregate weekly CV falls out of them.
-PER_UNIT_CV: dict[str, float] = {"pass": 1.00, "rush": 1.47, "rec": 0.76}
+PER_UNIT_CV: dict[str, float] = not_an_input(
+    {"pass": 1.00, "rush": 1.47, "rec": 0.76},
+    "no points prediction reads it: `sample_weeks` lost its gate to the fitted "
+    "square-root law and `models.props`, which does read it, carries the four "
+    "dispersions in `props.version()` rather than through this digest, which "
+    "identifies the points model")
 
 # Typical yards per unit, used to infer a volume count when the caller supplies yards
 # without one. Real usage should pass the count.
-YARDS_PER_UNIT: dict[str, float] = {"pass": 7.1, "rush": 4.3, "rec": 11.6}
+YARDS_PER_UNIT: dict[str, float] = not_an_input(
+    {"pass": 7.1, "rush": 4.3, "rec": 11.6},
+    "no points prediction reads it: `sample_weeks` lost its gate to the fitted "
+    "square-root law and `models.props`, which does read it, carries the four "
+    "dispersions in `props.version()` rather than through this digest, which "
+    "identifies the points model")
 
 # Volume counts are overdispersed relative to Poisson -- measured variance-to-mean, 2022-25.
 # Usage itself moves week to week and a Poisson around a fixed rate cannot say so: a team
@@ -123,13 +134,23 @@ YARDS_PER_UNIT: dict[str, float] = {"pass": 7.1, "rush": 4.3, "rec": 11.6}
 # Poisson; receptions barely. Sampling counts as Poisson understated weekly spread by about
 # 13% and correspondingly overstated skew, because too much of the variance was left to come
 # from the touchdown term.
-COUNT_DISPERSION: dict[str, float] = {"pass": 2.45, "rush": 2.39, "rec": 1.20}
+COUNT_DISPERSION: dict[str, float] = not_an_input(
+    {"pass": 2.45, "rush": 2.39, "rec": 1.20},
+    "no points prediction reads it: `sample_weeks` lost its gate to the fitted "
+    "square-root law and `models.props`, which does read it, carries the four "
+    "dispersions in `props.version()` rather than through this digest, which "
+    "identifies the points model")
 
 # Touchdowns are *under*dispersed -- variance-to-mean 0.83 to 0.86, measured the same way.
 # Poisson would be 1.0, and using it overstated weekly skew (0.80 simulated against 0.60
 # observed) because the lumpiest term was drawn lumpier than it really is. Under 1.0 the
 # right family is binomial: var/mean = 1 - p, so p follows directly from the measurement.
-TD_DISPERSION: dict[str, float] = {"pass": 0.85, "rush": 0.86, "rec": 0.83}
+TD_DISPERSION: dict[str, float] = not_an_input(
+    {"pass": 0.85, "rush": 0.86, "rec": 0.83},
+    "no points prediction reads it: `sample_weeks` lost its gate to the fitted "
+    "square-root law and `models.props`, which does read it, carries the four "
+    "dispersions in `props.version()` rather than through this digest, which "
+    "identifies the points model")
 
 # Teammate correlation is owned by `hub.models.predict` -- who moves together is a
 # prediction, where this module is about how stats become points. It used to be re-exported

@@ -87,3 +87,46 @@ So the rule is not relaxed, it is made true: coverage by the digest is what matt
   > filesystem roots, print widths — which is why the constants known to matter are registered
   > rather than left to it.
 - Refitting anything now moves the model version, which is the point.
+
+## Amendment 2026-09-12 (#253): the mechanism is a declaration at the constant
+
+**The decision stands; the mechanism it named is replaced.** The decision was that a fitted
+constant lives beside its provenance and that coverage by the digest is what matters. The
+mechanism this file named for it — "`FITTED_MODULES` is a list of **modules**, so a new fitted
+number is covered the day it lands" — was re-scored twice above and had grown, by #253, into
+four: a wholesale module list keyed one way, `FITTED_EXTRA` keyed another (eleven entries), a
+`NOT_IN_DIGEST` exclusion list keyed a third (ten), and a `NOT_FITTED_BECAUSE` opt-out string
+copied into twenty-six modules and read only by a test — beside the rule that inside a listed
+module every assignment is a constant, and a float-only scan in the test keyed by file stem.
+Four mechanisms, each added to patch the last (#187, #199, #201, #217), and a module author
+had to learn all of them to declare one number.
+
+**Coverage is now declared at the constant, where ADR-0006 already required the provenance
+to be.** `hub.declare` gives three spellings, and the line that defines a number uses one:
+
+    TALENT_CV = fitted(0.32)                  # a measurement: an interval and a write-up
+    MIN_GAMES = chosen(10)                    # a stated choice a prediction reads
+    _EIG_FLOOR = not_an_input(1e-8, "...")    # a number no prediction reads, and why
+
+`fitted` and `chosen` are both covered — coverage is owed by anything that changes a
+prediction, measured or not — and differ in what they claim. `not_an_input` is the one way out
+and carries its argument at the constant, so an exclusion is a decision on the record. The
+digest is derived by walking the declarations (`hub.declare.declarations`); nothing in
+`hub.config` lists a module or a name any more. The other half is
+`tests/contracts/test_every_number_is_declared.py`: a public module-level number nobody
+declared is refused by name, so the question is asked once per number and cannot be skipped
+by a module never having been registered.
+
+**Proved by the digests not moving.** At the commit that switched over, `config_digest`
+stayed `a1e669b9` and `fitted_digest` `9be7844c`: the walk finds exactly the forty-eight
+constants the four lists found, and the ten exclusions carry the arguments `NOT_IN_DIGEST`
+carried. The props module's own `version()` — four dispersions hashed outside the digest
+because `NOT_IN_DIGEST` said no points prediction read them — folds into the one digest in
+the commit after, as a coverage correction recorded in the pin.
+
+**The escape this file recorded is restated, not closed.** `n_draft_sims` and
+`n_season_sims` are still function-signature defaults in `hub.draft.backtest` with no name
+to declare; the test names each one, with the others of its shape, and refuses a new one.
+Five modules another lane owned that afternoon (`backtest`, `eval`, `margin`, `survivor`,
+`season/pool`) still carry the opt-out string and their fourteen numbers are named as
+undeclared in the same test, a ratchet that only shrinks.

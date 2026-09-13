@@ -101,14 +101,8 @@ import numpy as np
 import polars as pl
 
 from hub.cli import unavailable
+from hub.declare import not_an_input
 from hub.models.experiment import SEASON_CLUSTER, expanding_seasons, summarise
-
-NOT_FITTED_BECAUSE = (
-    "every number in it is an output rather than an input -- this module refits the five "
-    "coefficients that hub.draft.regression and hub.draft.durability declare, and ships "
-    "none of its own. The thresholds here are the span of seasons and the bootstrap seed, "
-    "which are settings. See docs/fitted-corrections.md "
-)
 
 # Points per team game is the currency, so a season total divides by the games the *team*
 # played rather than the games the player did. `hub.draft.durability` and
@@ -137,7 +131,11 @@ HEADLINE_BASELINE = "base_blend"
 # Zero and one have to be on it, and are asserted to be. They are the two arms
 # `walk_forward` already reports -- no correction at all, and the constant applied whole --
 # so a sweep that omitted either would be scoring the middle of a line against nothing.
-SHRINKS: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0)
+SHRINKS: tuple[float, ...] = not_an_input(
+    (0.0, 0.25, 0.5, 0.75, 1.0),
+    "the shrinkage grid the refit sweeps: an output side of the fit, not an input -- "
+    "the five coefficients it refits are declared where they are read, in "
+    "hub.draft.regression and hub.draft.durability (docs/fitted-corrections.md)")
 
 # Designations `hub.draft.durability.INJURY_BETA` prices at -1.631. IR is not on this list and
 # cannot be: `INJURY_BETA` borrows the Out coefficient for it precisely because nobody on
@@ -195,7 +193,7 @@ _TD_LUCK_WITHDRAWN = (
     "the measured shrink is zero"
 )
 
-COEFFICIENTS: tuple[Coefficient, ...] = (
+COEFFICIENTS: tuple[Coefficient, ...] = not_an_input((
     Coefficient("td_luck.QB", "hub.draft.regression", "TD_LUCK_BETA", "QB",
                 "td_luck", "QB", -0.540, "docs/td-luck.md", _TD_LUCK_WITHDRAWN),
     Coefficient("td_luck.WR", "hub.draft.regression", "TD_LUCK_BETA", "WR",
@@ -206,7 +204,10 @@ COEFFICIENTS: tuple[Coefficient, ...] = (
                 "missed", "WR", -0.151, "docs/durability.md"),
     Coefficient("designation.OUT", "hub.draft.durability", "INJURY_BETA", "OUT",
                 "designation", None, -1.631, "docs/durability.md"),
-)
+),
+    "the five coefficients this module refits, named by where each lives: the live "
+    "values are declared `fitted` in hub.draft.regression and hub.draft.durability, "
+    "and this table only says where to write them (docs/fitted-corrections.md)")
 
 DISPOSITIONS: tuple[str, ...] = ("reproduced", "unreproduced", "sign-reversed")
 

@@ -79,27 +79,27 @@ from hub import store
 from hub.cli import unavailable
 from hub.config import SEASON_AHEAD, fitted_digest
 from hub.contracts import PROP_LOG
+from hub.declare import not_an_input
 from hub.models import components as C
 from hub.models.predict import components as component_line
 from hub.names import player_key
-
-NOT_FITTED_BECAUSE = (
-    "every input to a prop price is imported -- the component line from `hub.models.volume` "
-    "through `hub.models.predict`, and the count and yardage dispersions from "
-    "`hub.models.components` -- and is hashed where it lives or named in `NOT_IN_DIGEST`. "
-    "The floats assigned here are the recorded baseline the scorecard is compared against, "
-    "which scores predictions and is an input to none, and `DRAWS` sets the precision of a "
-    "Monte Carlo estimate of a fixed distribution rather than the extent of a simulated "
-    "season: doubling it moves a price in its third decimal and no side with it. "
-)
 
 # The recorded baseline (`docs/next.md`, 2026-08-24): twelve stat-lines against the Week 1
 # opener. Our number was high by 3.5 yards, 16% of the posted line, at 8.8 yards MAE. The
 # report prints these beside what the log now says, on the same three quantities.
 BASELINE_N = 12
-BASELINE_BIAS_YARDS = 3.5
-BASELINE_BIAS_SHARE = 0.16
-BASELINE_MAE_YARDS = 8.8
+BASELINE_BIAS_YARDS = not_an_input(
+    3.5,
+    "the recorded baseline the prop scorecard is compared against; it scores "
+    "predictions and is an input to none of them")
+BASELINE_BIAS_SHARE = not_an_input(
+    0.16,
+    "the recorded baseline the prop scorecard is compared against; it scores "
+    "predictions and is an input to none of them")
+BASELINE_MAE_YARDS = not_an_input(
+    8.8,
+    "the recorded baseline the prop scorecard is compared against; it scores "
+    "predictions and is an input to none of them")
 
 # How many weeks of one prop are drawn to price it. Deterministic under `SEED`, so the same
 # line and the same point give the same number on every machine.
@@ -111,7 +111,10 @@ SEED = 0
 # no book hangs the prop; his anytime touchdown clears it two weeks in five and every book
 # does. A share of weeks rather than a threshold in yards, because the seven markets are in
 # four units and one rule has to read across them. A posted quote is priced regardless.
-MIN_WEEKS_NONZERO = 0.25
+MIN_WEEKS_NONZERO = not_an_input(
+    0.25,
+    "decides which unposted markets are recorded as props at all, never what a price "
+    "says: a rule about the scorecard's scope, and a posted quote is priced regardless")
 
 MODEL = "statline_props"
 

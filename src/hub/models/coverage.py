@@ -58,6 +58,7 @@ import polars as pl
 from hub import atomic, jsonio
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
+from hub.declare import not_an_input
 from hub.models import predict
 from hub.models.scoring_rules import reliability_by
 from hub.paths import STATE_DIR
@@ -67,11 +68,6 @@ from hub.paths import STATE_DIR
 # answer was looked at -- and none of them reaches a prediction, because this module grades
 # `hub.models.predict` and never calls it to forecast anything. Registering them in
 # `config_digest` would stamp a prediction with the settings of its own grader.
-NOT_FITTED_BECAUSE = (
-    "grading harness; its thresholds are pre-registered filters, not measured constants, "
-    "and no prediction is made through this module"
-)
-
 Centre = Literal["prior", "realised"]
 
 # The window `docs/weekly-coverage.md` measured over, so `--centre realised` reproduces it
@@ -87,7 +83,10 @@ POSITIONS: tuple[str, ...] = DRAFTED_POSITIONS
 # A player-season is in the sample if it has this many scoring weeks and averages this many
 # points. Both from the document, unchanged, so the two centres are compared on one filter.
 MIN_WEEKS = 8
-MIN_MU = 2.0
+MIN_MU = not_an_input(
+    2.0,
+    "a pre-registered filter of the grading harness, which measures interval coverage "
+    "of predictions already made and makes none of its own")
 
 # Under `--centre prior` a week is scored only once the player has this many earlier weeks
 # behind him. Below it the centre is mostly noise and the measurement becomes a statement
@@ -98,13 +97,19 @@ MIN_PRIOR = 4
 # The two nominal levels, as (lower p, upper p). 80% is the interval `season/lineup.py`'s
 # win probability is effectively asserting; 68% is one sigma, reported because a miss that
 # is about the *shape* rather than the width shows up as the two disagreeing.
-LEVELS: tuple[tuple[float, float], ...] = ((0.10, 0.90), (0.16, 0.84))
+LEVELS: tuple[tuple[float, float], ...] = not_an_input(
+    ((0.10, 0.90), (0.16, 0.84)),
+    "a pre-registered filter of the grading harness, which measures interval coverage "
+    "of predictions already made and makes none of its own")
 
 # Pre-registered before the prior-centre numbers were looked at, and the only thing `--gate`
 # reads: empirical coverage must sit within this of nominal. Two points is roughly three
 # standard errors at n = 10,000, so it is a band a calibrated model clears comfortably and a
 # real miss does not.
-BAND = 0.02
+BAND = not_an_input(
+    0.02,
+    "a pre-registered filter of the grading harness, which measures interval coverage "
+    "of predictions already made and makes none of its own")
 
 # The gate is read off the weeks whose interval is *not* pinned at the zero floor. A clipped
 # lower bound cannot be fallen below, so those weeks report a coverage the model did not
@@ -115,10 +120,16 @@ GATE_SUBSET = "unclipped"
 # Spread buckets for the survivor price, home-relative and in points. The top bucket is where
 # survivor lives: `season/survivor.py` picks the biggest favourite on the board, so a bucket
 # that pools a 3-point favourite with a 13-point one answers a question nobody asks of it.
-SPREAD_EDGES: tuple[float, ...] = (0.0, 3.0, 6.0, 9.0, 14.0, 30.0)
+SPREAD_EDGES: tuple[float, ...] = not_an_input(
+    (0.0, 3.0, 6.0, 9.0, 14.0, 30.0),
+    "a pre-registered filter of the grading harness, which measures interval coverage "
+    "of predictions already made and makes none of its own")
 
 # What counts as "the favourites survivor actually picks", for the headline the gate reads.
-SURVIVOR_SPREAD = 7.0
+SURVIVOR_SPREAD = not_an_input(
+    7.0,
+    "a pre-registered filter of the grading harness, which measures interval coverage "
+    "of predictions already made and makes none of its own")
 
 # Where `--measure --write` and `--survivor --write` leave their answers and where
 # `hub.publish` reads them from. Under `state/`, which is committed, rather than

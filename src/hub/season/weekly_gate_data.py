@@ -18,11 +18,6 @@ from hub.models.panel import PanelSpec, build_panel, weekly_consensus
 from hub.names import player_key
 from hub.season.weekly_gate import UNRANKED, GateInputs
 
-NOT_FITTED_BECAUSE = (
-    "assembly for Gate B: rosters, realised points and both arms' scores. It reads outcomes "
-    "and never predicts. "
-)
-
 
 def preseason_ranks(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
     """Each player's **August** consensus rank, from the board as it stood before the season.

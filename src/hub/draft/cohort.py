@@ -35,6 +35,7 @@ import numpy as np
 import polars as pl
 
 from hub.config import RosterConfig
+from hub.declare import chosen
 from hub.draft.board import BuildReport
 from hub.draft.optimize import DEFAULT_ROUNDS, market_strategy, simulate_remaining_draft
 from hub.draft.state import DraftState
@@ -46,14 +47,14 @@ TEAMS = _CFG.teams
 # Fourteen rounds, not the league's sixteen: the last two are kickers and defences, which the
 # board does not carry (ADR-0008). One number, declared in `hub.draft.optimize` where the
 # simulator defaults to it, and reached here under the name both season-side gates and
-# `config.FITTED_EXTRA` already use -- it was a second literal 14 until #200, under a second
+# the digest already use -- it was a second literal 14 until #200, under a second
 # reason ("bench depth beyond the eight starting slots"), and two declarations of one number
 # are two numbers as soon as one is edited. Twenty drafts a season is what every Gate has
 # always used and what every published result was measured on: three CLIs default to this
 # name rather than restating the literal. These are the recipe, and changing one invalidates
 # a recorded number rather than improving a default.
-ROUNDS = DEFAULT_ROUNDS
-DRAFTS = 20
+ROUNDS = chosen(DEFAULT_ROUNDS)
+DRAFTS = chosen(20)
 
 
 def seed_for(seed: int, season: int, k: int) -> int:

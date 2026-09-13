@@ -198,9 +198,11 @@ headline command, `make draft`, had never once worked on a fresh clone.
 
 Provenance is a hash of the resolved config *and* every fitted constant, so refitting a
 coefficient moves the model version. When five constants turned out to describe code no
-prediction could reach, they were not silently dropped — they are listed one at a time in a
-`NOT_IN_DIGEST` map with the reason. An exclusion should be a decision on the record, not a
-module quietly falling off a list.
+prediction could reach, they were not silently dropped — each says `not_an_input` where it
+is written, with the reason beside it (`hub.declare`, #253). An exclusion should be a
+decision on the record, not a module quietly falling off a list — and since #253 there is no
+list to fall off: a constant declares `fitted`, `chosen` or `not_an_input` at its own line,
+the digest is walked off those declarations, and a number nobody declared is refused by name.
 
 ### 12. Where no gate *can* run, act provisionally — and say so
 

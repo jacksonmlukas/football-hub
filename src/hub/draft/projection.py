@@ -17,11 +17,7 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 
-NOT_FITTED_BECAUSE = (
-    "the consensus adjustment and its lambda. DEFAULT_LAMBDA is 0.0 -- the sweep found "
-    "nothing to tune (docs/lambda-sweep.md) -- and its only callers are hub.draft.tune and "
-    "hub.draft.evaluate, both offline harnesses. Nothing at predict time reads it. "
-)
+from hub.declare import not_an_input
 
 # Nudge strength, set to zero by measurement rather than judgment.
 #
@@ -60,12 +56,19 @@ NOT_FITTED_BECAUSE = (
 #
 # See docs/lambda-sweep.md for the full path: six seasons, three metrics, and a
 # recency-weighted variant, all arriving at zero.
-DEFAULT_LAMBDA = 0.0
+DEFAULT_LAMBDA = not_an_input(
+    0.0,
+    "the consensus adjustment's lambda, 0.0 after the sweep found nothing to tune "
+    "(docs/lambda-sweep.md); read only by the offline harnesses hub.draft.tune and "
+    "hub.draft.evaluate, never at predict time")
 
 # Evidence is clipped before it moves anybody. Three standard deviations is already far past
 # anything the signal supports, and without a clip one bad `z_regress` becomes an unbounded
 # multiplier on a player's rank.
-Z_CLIP = 3.0
+Z_CLIP = not_an_input(
+    3.0,
+    "the clip on the consensus z-score the offline harnesses apply through `adjust`; "
+    "nothing at predict time reads it, since the lambda it scales is 0.0")
 
 
 def regression_signal(df: pl.DataFrame) -> pl.DataFrame:

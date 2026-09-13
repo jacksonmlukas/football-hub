@@ -25,13 +25,10 @@ import numpy as np
 import polars as pl
 
 from hub.cli import unavailable
+from hub.declare import not_an_input
 from hub.draft.availability import pick_noise
 from hub.draft.projection import adjusted
 from hub.league import FLEX_FROM, FLEX_SLOTS, STARTERS
-
-NOT_FITTED_BECAUSE = (
-    "offline harness for scoring draft strategies against each other "
-)
 
 TEAMS = 12
 ROUNDS = 16
@@ -45,10 +42,16 @@ ROUNDS = 16
 # `docs/lambda-sweep.md`'s verdict is unchanged under both -- the sweep found nothing to tune
 # either way, which is the sense in which this is a re-parameterisation rather than a
 # re-tuning.
-OPP_NOISE = 1.0
+OPP_NOISE = not_an_input(
+    1.0,
+    "the offline harness that scores draft strategies against each other; this shapes "
+    "the opponents it simulates and no published prediction reads it")
 
 # What the old flat sigma was, kept so the change can be shown to be one.
-LEGACY_FLAT_NOISE = 8.0
+LEGACY_FLAT_NOISE = not_an_input(
+    8.0,
+    "the offline harness that scores draft strategies against each other; this shapes "
+    "the opponents it simulates and no published prediction reads it")
 
 
 def equivalent_scale(ecr: np.ndarray, flat: float = LEGACY_FLAT_NOISE) -> float:
@@ -61,7 +64,10 @@ def equivalent_scale(ecr: np.ndarray, flat: float = LEGACY_FLAT_NOISE) -> float:
     base = pick_noise(np.asarray(ecr, dtype=float))
     return float(flat / base.mean()) if base.mean() else 1.0
 
-MIN_SIGMA = 2.0
+MIN_SIGMA = not_an_input(
+    2.0,
+    "the offline harness that scores draft strategies against each other; this shapes "
+    "the opponents it simulates and no published prediction reads it")
 
 
 def starter_points(roster: pl.DataFrame) -> float:

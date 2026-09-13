@@ -45,6 +45,7 @@ from collections.abc import Callable, Sequence
 
 import numpy as np
 
+from hub.declare import not_an_input
 from hub.draft.season import (
     PLAYOFF_ROUNDS,
     PLAYOFF_TEAMS,
@@ -57,10 +58,6 @@ from hub.draft.season import (
     talent_cv_for,
 )
 
-NOT_FITTED_BECAUSE = (
-    "a synthetic fixture league for the variance sweep "
-)
-
 TEAMS = 12
 CHUNK = 4000
 
@@ -69,7 +66,10 @@ CHUNK = 4000
 # under test rather than the inputs.
 POS = np.array(["QB", "QB", "RB", "RB", "RB", "RB", "WR", "WR", "WR", "WR", "WR",
                 "TE", "TE", "RB"])
-MU = np.array([19., 11., 15., 12., 10., 7., 14., 12., 10., 8., 6., 9., 5., 5.])
+MU = not_an_input(
+    np.array([19., 11., 15., 12., 10., 7., 14., 12., 10., 8., 6., 9., 5., 5.]),
+    "a synthetic fixture league for the variance sweep exhibit, which predicts "
+    "nothing and is not a dependency of the product")
 # The square-root law from docs/weekly-spread.md, not the constant it replaced. This file
 # used to hardcode MU * 0.55 and so kept simulating under a superseded model.
 SD = np.array([WEEKLY_K.get(str(p), WEEKLY_K_POOLED) for p in POS]) * np.sqrt(MU)
@@ -93,7 +93,10 @@ SIM_WEEKS = REG_SEASON_WEEKS + PLAYOFF_ROUNDS
 # Half a per cent leaves room for the Monte Carlo wobble in `team_mean` without admitting the
 # 15% the uncalibrated sweep produced -- the confound this module exists to remove is two
 # orders of magnitude larger than this line.
-CALIBRATION_TOL = 0.005
+CALIBRATION_TOL = not_an_input(
+    0.005,
+    "the tolerance the exhibit checks its own fixture's calibration to; an exhibit "
+    "predicts nothing and is not a dependency of the product")
 
 
 def _talent_cv(cv_mult: float) -> np.ndarray:

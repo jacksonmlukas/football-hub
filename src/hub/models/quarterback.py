@@ -52,14 +52,16 @@ from datetime import datetime, timedelta
 
 import polars as pl
 
-# STATED CHOICE, not a fitted constant, and in `FITTED_MODULES` because it is an input to a
+from hub.declare import chosen, not_an_input
+
+# STATED CHOICE, not a fitted constant, and declared `chosen` because it is an input to a
 # published prediction and the digest is owed coverage of anything that is. Its provenance:
 # 538 converted Elo to spread points at 25 per point. The recipe records that the other
 # published conversion, Elway's 21.5 Elo per point, disagrees with 538's by 16%, "which is a
 # fair statement of the precision available". No interval; this repo has not fitted it and
 # does not claim to have. The source's 3.3 Elo per value unit is inside `qb_adj` already and
 # is not restated here.
-ELO_PER_POINT = 25
+ELO_PER_POINT = chosen(25)
 
 # A snapshot quote that has stood still longer than this is not a live price. STATED CHOICE
 # from #210's measurement on 2026-09-11: the current week's median run was 1.8 days unmoved
@@ -67,14 +69,21 @@ ELO_PER_POINT = 25
 # the two populations with margin on both sides. A quote no book has touched across a whole
 # slate's worth of news is a posted lookahead, not a price responding to it. An unpriced
 # game and one priced from the moving field, which nothing polls, are not live prices either.
-STALE_AFTER_DAYS = 7
+STALE_AFTER_DAYS = chosen(7)
 
 # The two columns `apply` writes on a row it moved, and leaves null on one it did not.
 # `adjusted_by` names the source whose state moved it; `qb_adjustment` is the points added
 # to the home spread. A row a live price protects carries null in both, which is how a
 # reader tells "not adjusted" from "adjusted by nothing".
-ADJUSTMENT_COLUMNS = ("qb_adjustment", "adjusted_by")
-SOURCE = "nfeloqb"
+ADJUSTMENT_COLUMNS = not_an_input(
+    ("qb_adjustment", "adjusted_by"),
+    "the names of the columns this module writes; renaming a column moves no rating, "
+    "and a digest that moved on a rename would be a version claiming a difference "
+    "that does not exist")
+SOURCE = not_an_input(
+    "nfeloqb",
+    "the provenance label written into `adjusted_by`; not a number, and renaming the "
+    "source moves no rating -- ADR-0006's objection from the other side")
 
 
 def points(state: pl.DataFrame) -> pl.DataFrame:

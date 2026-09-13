@@ -35,6 +35,7 @@ from hub.config import (
     starters,
 )
 from hub.contracts import DRAFT_BOARD, ContractViolation
+from hub.declare import chosen
 from hub.draft import adp_history, durability
 from hub.draft import regression as td_regression
 from hub.draft import report as report_mod
@@ -302,7 +303,7 @@ def consensus(as_of: str | None = None) -> pl.DataFrame:
 # which is how WR replacement came out ABOVE RB (11.14 vs 11.10), contradicting the
 # three-WR effect. At >= 10 games WR drops to 10.02 and the effect reappears; the sign
 # is stable from 8 games up, so it is not fitted to the threshold.
-MIN_GAMES = 10
+MIN_GAMES = chosen(10)
 
 # How much of the flex slot each eligible position is assumed to absorb. With three required
 # WR slots the top of the WR pool is already consumed by starters, so the flex tilts back
@@ -317,8 +318,8 @@ MIN_GAMES = 10
 # number was fitted: `roster.flex_rb=0.9` on a command line would have moved the replacement
 # index at RB, WR and TE, and with it every VOR on the board, while leaving `config_digest`
 # free to be identical only because the digest hashed the schema these lived in. They are
-# registered by hand in `config.FITTED_EXTRA`, the same way `MIN_GAMES` above is, because
-# this module is CLI-excluded from the wholesale sweep. **Losing the three override knobs is
+# declared `chosen` where they are written, the same way `MIN_GAMES` above is (#253): a
+# stated choice, covered because it changes a prediction. **Losing the three override knobs is
 # the point**: a knob on a quantity nobody derived is what let three replacement levels
 # coexist unnoticed, which is the rest of #184.
 #
@@ -355,7 +356,7 @@ MIN_GAMES = 10
 # The measurement itself is still owed. It is #184's first acceptance criterion and it needs
 # an archive of realised weekly lineups that `hub/draft` does not have; when it lands, the
 # thing to check first is the RB boundary above.
-FLEX_SHARES: dict[str, float] = {"RB": 0.45, "WR": 0.50, "TE": 0.05}
+FLEX_SHARES: dict[str, float] = chosen({"RB": 0.45, "WR": 0.50, "TE": 0.05})
 
 # Which population a replacement level is taken over, and the question each one answers.
 #
@@ -810,12 +811,12 @@ CORRECTION_COLUMN = {"durability": "missed"}
 # with it and `hub.draft.report` cannot print a disposition for a correction that did not run.
 #
 # **Not beside the constants in `hub.draft.durability`, and that is not filing convenience.**
-# That module is in `FITTED_MODULES`, so every upper-case module-level name in it is swept
-# into `fitted_digest` -- a disposition *string* would identify a model version, which is the
-# spurious move `tests/unit/test_config.py` records twice (a cache bound, and a `typing`
-# import). The provenance comments beside the constants carry the same intervals in prose,
-# where nothing hashes them; this is the machine-readable half, and it lives where the board
-# output that prints it lives.
+# That module's constants are declared `fitted` where they are written, and a disposition
+# *string* beside them would read as one more thing about the fit -- the spurious move
+# `tests/unit/test_config.py` records twice (a cache bound, and a `typing` import) came from
+# a sweep that took every name. The provenance comments beside the constants carry the
+# same intervals in prose, where nothing hashes them; this is the machine-readable half,
+# and it lives where the board output that prints it lives.
 #
 # Only flagged coefficients are listed. `BETA["QB"]` reproduces and needs no flag beside the
 # ranking -- its comment carries the caveat that the gap is under the MDE.

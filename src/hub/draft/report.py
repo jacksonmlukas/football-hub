@@ -19,19 +19,17 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
+from hub.declare import not_an_input
 from hub.draft import durability
-
-NOT_FITTED_BECAUSE = (
-    "renders the draft-night output as lines; SOS_GAP and SOS_ADP_WINDOW are display "
-    "thresholds for the same-tier swap list, not fitted quantities -- nothing downstream "
-    "reads them "
-)
 
 if TYPE_CHECKING:                      # both import from `board`, so runtime would cycle
     from hub.draft.board import BuildReport
     from hub.draft.optimize import ThePick
 
-SOS_GAP = 0.15
+SOS_GAP = not_an_input(
+    0.15,
+    "a display threshold for the same-tier swap list the draft-night report renders; "
+    "nothing downstream reads it and no number moves with it")
 SOS_ADP_WINDOW = 8
 
 

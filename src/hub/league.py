@@ -36,6 +36,7 @@ from hub.config import (  # noqa: F401  -- re-exported: see the module docstring
     flex_positions,
     required_starters,
 )
+from hub.declare import chosen
 
 # QB1 / RB2 / WR3 / TE1 / FLEX1 -- confirmed against the live league, not the ESPN default.
 # Derived from `hub.config.RosterConfig` rather than restated: this module is "how a league
@@ -46,10 +47,10 @@ FLEX_FROM = flex_positions(ROSTER)
 FLEX_SLOTS = ROSTER.flex
 # The most flex-eligible players a team can start at once. Was a bare `7` in optimize.py.
 FLEX_CAPACITY = flex_capacity(ROSTER)
-PLAYOFF_TEAMS = 6
+PLAYOFF_TEAMS = chosen(6)
 # Quarter-final, semi-final, final. The bracket needs its own weeks: scoring the playoffs on
 # draws that already decided seeding couples a team's title odds to its week 1 result.
-PLAYOFF_ROUNDS = 3
+PLAYOFF_ROUNDS = chosen(3)
 
 
 def starting_lineup(pos: Sequence[str], score: Sequence[float] | np.ndarray) -> list[int]:

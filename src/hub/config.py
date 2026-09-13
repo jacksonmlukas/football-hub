@@ -42,7 +42,8 @@ from hydra import compose, initialize_config_dir
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 
-from hub import paths
+from hub import declare, paths
+from hub.declare import chosen
 
 
 @dataclass
@@ -96,7 +97,7 @@ SEASON_COMPLETED = SEASON_AHEAD - 1
 # (`test_models_does_not_reach_into_draft`), and the screen and the Weekly projection both need
 # it. Weeks 15-17 are the playoffs, reported apart rather than pooled; week 18 is meaningless in
 # a league that ends at 17.
-REG_SEASON_WEEKS = 14
+REG_SEASON_WEEKS = chosen(14)
 FANTASY_WEEKS: tuple[int, ...] = tuple(range(1, REG_SEASON_WEEKS + 1))
 
 
@@ -296,174 +297,36 @@ def resolved_config() -> HubConfig:
         return cast(HubConfig, OmegaConf.to_object(compose(config_name="config")))
 
 
-# Modules whose module-level constants were *measured* rather than chosen. They are not in
-# `HubConfig` on purpose, and this is the one place that distinction is written down:
+# Where the fitted constants are, and what decides that a number identifies a model version.
 #
-#   * A setting is a choice, and belongs in a dataclass above, where Hydra can override it
-#     from the command line.
-#   * A fitted constant is a measurement with a confidence interval and a write-up in
-#     `docs/`. Making it Hydra-overridable would invite `draft.talent_cv=0.9` on a command
-#     line -- silently replacing a measurement with a preference, which is the exact failure
-#     the digest exists to catch. It also has 30 lines of provenance attached, which belongs
-#     next to the number and not in a config schema.
+# A **setting** is a choice and belongs in a dataclass above, where Hydra can override it
+# from the command line. A **fitted constant** is a measurement with a confidence interval
+# and a write-up in `docs/`, and it lives beside that provenance in the module that reads
+# it (ADR-0006). Making it Hydra-overridable would invite `draft.talent_cv=0.9` on a command
+# line -- silently replacing a measurement with a preference, the exact failure the digest
+# exists to catch -- and it has 30 lines of provenance attached, which belongs next to the
+# number and not in a config schema.
 #
-# But the digest's claim -- "everything that can change a prediction" -- has to be true, and
+# The digest's claim -- "everything that can change a prediction" -- has to be true, and
 # for a while it was not: refitting TALENT_CV from 0.35 to 0.42 changed every prediction in
-# the repo and left the digest untouched.
+# the repo and left the digest untouched. What decided coverage after that was a list of
+# modules here, then a second list of individual names, then a third list of exclusions,
+# then a module-level opt-out string in twenty-six modules (#187, #199, #201, #217) -- four
+# mechanisms a module author had to learn to declare one number, and three separate
+# escapes reached production through the seams between them.
 #
-# The registry is a list of *modules*, not of constants, so a new fitted number added to one
-# of these files is covered the day it lands rather than the day someone remembers to
-# register it. `test_config.py` holds the line that this list is complete.
-FITTED_MODULES: tuple[str, ...] = (
-    "hub.models.predict",
-    "hub.models.market",
-    "hub.models.volume",
-    "hub.models.quarterback",
-    "hub.draft.availability",
-    "hub.draft.durability",
-    "hub.draft.regression",
-)
-
-# Individual fitted constants in modules that cannot be registered wholesale, as
-# "module:NAME". `hub.draft.board` is a CLI: most of its module-level names are filesystem
-# paths, re-exports and values derived from `RosterConfig`, and hashing those would make the
-# digest depend on where the repo is checked out. But `MIN_GAMES` is a real fitted threshold
-# -- it decides who is eligible to set replacement level, so it moves every VOR on the board
-# -- and it was chosen from data ("the sign is stable from 8 games up").
+# **Since #253 the constant declares its own coverage where it is written**, through one
+# of `hub.declare`'s three spellings -- `fitted(v)`, `chosen(v)`, `not_an_input(v, why)`
+# -- and this module derives the digest by walking those declarations. There is no list
+# here to keep in step with the tree. `tests/contracts/test_every_number_is_declared.py`
+# holds the other half: a module-level number nobody declared is refused by name, so the
+# question is asked once per number and cannot be skipped by a module never having been
+# registered.
 #
-# `FLEX_SHARES` arrives the same way and for a sharper reason (#184). It is **not** a
-# measurement -- there is no interval and no fit -- and naming it here does not pretend
-# otherwise: this tuple's job is *digest coverage*, and coverage is owed by anything that
-# changes a prediction, measured or not. The shares set how much of the flex slot each
-# position is assumed to absorb, which sets the replacement index at RB, WR and TE, which
-# moves every VOR on the board. They spent their life as `RosterConfig.flex_rb/_wr/_te`,
-# where `roster.flex_rb=0.9` on a command line could have moved every one of those numbers
-# without moving a digest -- ADR-0006's first objection, on a quantity nobody derived. The
-# override knob is gone on purpose; the provenance that replaces it is a published
-# sensitivity, and it lives beside the constant in `hub.draft.board`.
-#
-# `hub.models.components` is deliberately NOT registered wholesale. Half of it --
-# `sample_weeks`, `moments`, `project` and the four dispersions they read -- has no
-# production caller: component-derived spread was measured worse than the fitted square-root
-# law (1.365 against 1.140, P(better) 0.0%, see predict.py) and the losing measurement is
-# kept per ADR-0007. Keeping it is right; letting it move the digest that identifies a
-# *prediction* is not, because no prediction can reach it. The three constants that are
-# reachable are named individually below.
-#
-# **The six after those are shapes, and they are here because of #201's original finding.**
-# Each sets the *extent of a random draw* -- how many weeks are played, how many playoff
-# rounds are simulated, how large the playoff field is, how many rounds a draft runs, how
-# many drafts a cohort is. By #196, the extent of a draw determines the seed-to-outcome map,
-# so moving any one of them re-prices every published Gate interval. None of them was covered
-# before, and the reason none of them was is that each is written as an `int`: the scan that
-# keeps modules honest looked for a `float`, and ADR-0006 recorded that as a stray-threshold
-# limitation. It is not one. A shape's blast radius is every random draw in the repo, which
-# is a larger claim than the one that ADR weighed, and it is reopened here deliberately.
-#
-# They are registered by name rather than by module for the same reason `MIN_GAMES` is: they
-# live in files full of paths, CLI defaults and re-exports (`hub.league` re-exports two of
-# `config`'s own names) that must not be hashed.
-#
-# **One escape survives and is stated rather than hidden**: `n_draft_sims` and `n_season_sims`
-# are *function-signature defaults* in `hub.draft.optimize` and `hub.draft.backtest`, not
-# module-level names, so nothing here can address them -- there is no name to register. They
-# set the extent of a draw exactly as the six below do. Covering them means giving them a name
-# first, which is a change to those two modules and not to this file.
-#
-# `cohort:ROUNDS` has been `optimize:DEFAULT_ROUNDS` under a second name since #200, so the
-# last two round entries hash one 14 twice. The entry stays because dropping it would move
-# this digest for a refactor that moved no constant, which is the version claiming a
-# difference that does not exist -- ADR-0006's objection from the other side.
-FITTED_EXTRA: tuple[str, ...] = (
-    "hub.draft.board:MIN_GAMES",
-    "hub.draft.board:FLEX_SHARES",
-    "hub.models.components:SCORING",
-    "hub.models.components:TD_RATE",
-    "hub.models.components:FALLBACK_TD_RATE",
-    "hub.config:REG_SEASON_WEEKS",
-    "hub.league:PLAYOFF_TEAMS",
-    "hub.league:PLAYOFF_ROUNDS",
-    "hub.draft.optimize:DEFAULT_ROUNDS",
-    "hub.draft.cohort:ROUNDS",
-    "hub.draft.cohort:DRAFTS",
-    # The commit of `greerreNFL/nfeloqb` the quarterback adjustment reads (#271). Data, and
-    # `data_digest` argues that data belongs beside the model version and not in it -- but
-    # that argument is about an archive that moves under a refetch with no edit made. This
-    # is a *pin*: it moves only when someone edits `hub.fetch.nfeloqb.COMMIT`, which is the
-    # deliberate act that makes predictions under the new input a different version from
-    # predictions under the old. `None` -- unpinned, the default branch -- hashes as itself,
-    # so a pinned run and an unpinned one are distinguishable too.
-    "hub.fetch.nfeloqb:COMMIT",
-)
-
-# Modules that hold measured floats which nonetheless must NOT move a model version, and why.
-# Stated here rather than as a bare skip-list in a test, because each one is a claim about
-# what the number does and the claim is what a future reader needs to check.
-#
-# The distinction throughout: a fitted constant is an *input* to a published prediction. A
-# number that scores, tunes or illustrates predictions is not, and folding it in would make
-# every version bump meaningless -- the same reason `poll` and `quota` are excluded above.
-# Constants that sit in a module the digest otherwise touches and that deliberately do NOT
-# move it, each with its reason. Named one by one on purpose: an exclusion should be a
-# decision on the record, not a module quietly falling off FITTED_MODULES.
-#
-# **This is now the only way out of the sweep, and that is the point of #201.** It used to be
-# one of four, and the other three were properties of how a line is *typed* rather than of
-# what it means: a name left the digest by being lower case, by starting with an underscore,
-# or by holding a value the sweep's `isinstance` test did not list. Three separate escapes
-# reached production through those -- `_FACTOR_CACHE_MAX` (a cache bound, #187),
-# `TYPE_CHECKING` (`bool` subclasses `int`, #199, fixed in `468f368`), and the shape constants
-# above (`int` rather than `float`). `fitted_constants` no longer reads any of the three.
-#
-# So the default is **covered**, and an exclusion has to be argued here by name. That is the
-# right way round: a constant wrongly covered costs one restated digest, and a constant
-# wrongly missing costs a model version that claims two different models are the same one.
-NOT_IN_DIGEST: dict[str, str] = {
-    # Read by `components.sample_weeks`, which no prediction reaches (above), and since #217
-    # by `models.props`, which prices a prop and is a published prediction -- so it carries
-    # the four in its own `props.version()` rather than through this digest, which
-    # identifies the *points* model that never reads them.
-    "components.PER_UNIT_CV": "no points prediction reads it; props.version() carries it",
-    "components.YARDS_PER_UNIT": "no points prediction reads it; props.version() carries it",
-    "components.COUNT_DISPERSION": "no points prediction reads it; props.version() carries it",
-    "components.TD_DISPERSION": "no points prediction reads it; props.version() carries it",
-    # `hub.models.quarterback` (#218) is registered wholesale for its three numbers. These
-    # two are the names of the columns it writes and the label it writes in one of them:
-    # renaming a column moves no rating, and a digest that moved on a rename would be a
-    # version claiming a difference that does not exist -- ADR-0006's objection from the
-    # other side, the one `cohort:ROUNDS` is kept for.
-    "quarterback.ADJUSTMENT_COLUMNS": "column names; no number a prediction reads",
-    "quarterback.SOURCE": "the provenance label written into `adjusted_by`; not a number",
-    # The four in `hub.models.predict` that #187 and #201 argued about. Each was out of the
-    # digest before only because someone spelled it with a leading underscore; each is out of
-    # it now because of what it is, and the claim is here to be checked.
-    "predict._FACTORS":
-        "the Cholesky cache itself, keyed on the matrix. It is not a value at all -- it is "
-        "empty at import and fills during a draw, so hashing it by content would move the "
-        "model version *as a process runs*, which is the one version of this bug that would "
-        "have been serious (#187)",
-    "predict._FACTOR_CACHE_MAX":
-        "a bound on how many factorisations that cache keeps. It buys memory against "
-        "recomputation and every prediction is identical on either side of it. This is the "
-        "constant #187 found identifying a model version, and the reason it did was that it "
-        "was written in capitals",
-    "predict._EIG_FLOOR":
-        "a conditioning tolerance, 1e-8, lifting a repaired block off the boundary of the "
-        "PSD cone so its Cholesky does not fail at random. It is three orders below the last "
-        "decimal any correlation here is quoted to, so no published figure can distinguish "
-        "two runs across it. Raising it to somewhere a correlation could notice would make it "
-        "a modelling choice, and it would belong in the digest that day",
-    "predict._INDEPENDENT_FLOOR":
-        "a pre-registered guard, not an input: above this share of blocks failing to factor "
-        "the draw *refuses* rather than returning a different number. Its opposite number is "
-        "`weekly_gate.VOID_FLOOR`, in a module that excludes itself wholesale for the same "
-        "reason. Moving it changes which runs are published, never what a published run says",
-}
-# ... and why the first four: component-derived spread lost its gate to the fitted square-root
-# law (1.365 against 1.140, P(better) 0.0% -- see hub/models/predict.py). ADR-0007 says a
-# measurement that steered a decision stays in the tree, so the code is kept. But a
-# prediction cannot reach these numbers, so they must not identify one.
-
+# What the spellings mean is `hub.declare`'s docstring; what matters here is that `fitted`
+# and `chosen` are both covered -- coverage is owed by anything that changes a prediction,
+# measured or not (`FLEX_SHARES`, #184; the shape of a random draw, #201; the nfeloqb
+# pin, #271) -- and `not_an_input` is the one way out, carrying its argument.
 
 
 def _canonical(v: Any) -> str:
@@ -486,46 +349,6 @@ def _canonical(v: Any) -> str:
     return repr(v)
 
 
-def _assigned_at_module_level(mod: Any) -> set[str]:
-    """Names this module *assigns*, as opposed to names it imports.
-
-    The sweep below used to separate the two by type, on the reasoning that "a re-export is
-    not a number". Python disagrees about one case and it reached production: `bool` subclasses
-    `int`, so when issue #199 added `from typing import TYPE_CHECKING` to
-    `hub.draft.availability`, `TYPE_CHECKING = False` passed the numeric test and a standard-
-    library import began identifying the model version. The digest moved, no measurement had
-    changed, and under ADR-0006 that is a version claiming a difference that does not exist.
-
-    Asking the source what it assigns decides the question the docstring was already trying to
-    ask, and decides it for imports this repo has not made yet. Same defect as issue #201 from
-    the other side: there, coverage turns on whether a constant is written as a float; here, on
-    whether a re-export happens to be one.
-    """
-    import ast
-    import inspect
-
-    try:
-        tree = ast.parse(inspect.getsource(mod))
-    except (OSError, TypeError) as e:
-        # Returning an empty set here would drop every constant in this module from the digest
-        # and change the model version without saying anything -- a guard answering "nothing"
-        # when it cannot answer, which is the failure this whole function was added to fix.
-        # Every module in `FITTED_MODULES` is a file in this repo, so this cannot happen
-        # without something being badly wrong.
-        raise RuntimeError(
-            f"cannot read the source of {getattr(mod, '__name__', mod)!r}, so which of its "
-            f"names are constants and which are imports is unknown. The digest is not "
-            f"computable over a module it cannot read, and guessing would silently move "
-            f"every model version stamped afterwards.") from e
-    assigned: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            assigned |= {t.id for t in node.targets if isinstance(t, ast.Name)}
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            assigned.add(node.target.id)
-    return assigned
-
-
 def _canonicalisable(v: Any) -> bool:
     """Whether `_canonical` can turn this value into text that means the same thing twice.
 
@@ -544,63 +367,36 @@ def _canonicalisable(v: Any) -> bool:
 
 
 def fitted_constants() -> dict[str, Any]:
-    """Every fitted constant in the prediction modules, as {"module.NAME": value}.
+    """Every covered constant, as {"stem.NAME": live value}: the declarations that said
+    `fitted` or `chosen`, read off their modules now.
 
-    **Every module-level name these modules assign, unless `NOT_IN_DIGEST` says otherwise.**
-    That is issue #201's correction, and what it replaces is worth stating because three
-    separate escapes came through it:
-
-      * upper-case-ness. #187 added `_FACTOR_CACHE_MAX`, `_FACTORS` and `_EIG_FLOOR` to
-        `hub.models.predict`; a cache bound stayed out of the model version by being spelled
-        with an underscore, and would have been in it if spelled without one. The convention
-        was standing in for the question of whether something is a measurement.
-      * being a `float`. The shape constants -- weeks per season, playoff rounds, draft rounds,
-        drafts per cohort -- set the extent of a random draw and so re-price every published
-        interval, and every one of them is an `int`. ADR-0006 called this a stray *threshold*
-        problem; it is not.
-      * the `isinstance` list. `TYPE_CHECKING = False` passed it because `bool` subclasses
-        `int` (#199), which `_assigned_at_module_level` fixed from the import side in
-        `468f368` -- but the type test was still the thing deciding.
-
-    None of the three is a fact about the constant. `config.py`'s own docstring says what the
-    real distinction is -- a setting is a choice, a fitted constant is a measurement with an
-    interval and a write-up -- and no scan can read that off a line of source. So the sweep
-    stops trying to infer it and asks instead: **is this name's exclusion on the record?** The
-    default is covered, exclusion is a named entry with a reason in `NOT_IN_DIGEST`, and the
-    trade is deliberate -- over-covering costs one restated digest, under-covering costs a
-    model version that says two different models are the same one.
-
-    What is still mechanical is *imports* (`_assigned_at_module_level`, which is about
-    ownership, not spelling) and *callability* (`def` and `class` are not `ast.Assign`, so
-    they never reach here). The type test survives only as an assertion: a value the digest
-    cannot canonicalise raises rather than dropping out quietly, because dropping out quietly
-    is how all three escapes above happened.
+    Live, not captured at the declaration, so the value a module holds *now* is what the
+    digest sees -- a test that rebinds `predict.TALENT_CV` moves it, as it always did. A
+    value the digest cannot canonicalise raises rather than dropping out quietly, because
+    dropping out quietly is how #187, #199 and #201 each happened.
     """
-    from importlib import import_module
-
     out: dict[str, Any] = {}
-    for spec in [f"{m}:{a}" for m in FITTED_MODULES
-                 for a in sorted(_assigned_at_module_level(import_module(m)))] + list(
-                     FITTED_EXTRA):
-        mod_name, attr = spec.split(":")
-        key = f"{mod_name.rsplit('.', 1)[-1]}.{attr}"
-        if key in NOT_IN_DIGEST:
-            continue
-        v = getattr(import_module(mod_name), attr)
+    for key, v in declare.covered().items():
         if not _canonicalisable(v):
             raise RuntimeError(
-                f"{key} is assigned at module level in a registered module, so it identifies "
-                f"a model version, but a {type(v).__name__} has no text `_canonical` can hash "
-                f"stably. Either give it a shape the digest can read, or name it in "
-                f"`NOT_IN_DIGEST` with why a prediction cannot reach it. Skipping it silently "
-                f"is what #187, #199 and #201 each were.")
+                f"{key} is declared covered, so it identifies a model version, but a "
+                f"{type(v).__name__} has no text `_canonical` can hash stably. Either give it "
+                f"a shape the digest can read, or declare it `not_an_input` with why a "
+                f"prediction cannot reach it. Skipping it silently is what #187, #199 and "
+                f"#201 each were.")
         out[key] = v
     return out
 
 
-def fitted_digest() -> str:
-    """Stable 8-char hash of the fitted constants alone."""
-    text = "\n".join(f"{k}={_canonical(v)}" for k, v in sorted(fitted_constants().items()))
+def fitted_digest(constants: Mapping[str, Any] | None = None) -> str:
+    """Stable 8-char hash of the fitted constants alone.
+
+    `constants` is for asking what the digest *would* be -- a test that wants to know that
+    one constant moves the version passes `{**fitted_constants(), "predict.TALENT_CV": 0.35}`
+    rather than rebinding a module attribute. Absent, the constants are read live.
+    """
+    have = fitted_constants() if constants is None else constants
+    text = "\n".join(f"{k}={_canonical(v)}" for k, v in sorted(have.items()))
     return hashlib.sha256(text.encode()).hexdigest()[:8]
 
 

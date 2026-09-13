@@ -52,17 +52,13 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
+from hub.declare import not_an_input
 
 # The weekly spread the model assumes, from `hub.draft.season.weekly_moments`:
 # sd = k * sqrt(mu), fitted in docs/weekly-spread.md. This used to be an unfitted 0.55*mu,
 # which the per-game-played variant of this fit flagged by returning an implausible 0.041
 # for quarterbacks -- 0.55 over-subtracts badly for the steadiest position.
 from hub.draft.season import WEEKLY_K, WEEKLY_K_POOLED
-
-NOT_FITTED_BECAUSE = (
-    "the recorded output of a fit, used by tests to guard the live constants -- an assertion "
-    "about predictions, not an input "
-)
 
 TEAM_GAMES = 17
 DRAFTED_THROUGH = 168          # 14 rounds x 12 teams: the roster the simulator holds
@@ -78,13 +74,25 @@ MIN_PER_POSITION = 20
 # wider on an unchanged point estimate of 0.408. The old interval treated the fitted curve as
 # known, and refitting it inside each resample is almost the whole of the movement. Restated
 # in docs/talent-cv.md rather than edited over the top of the old figure.
-FITTED_CI95 = (0.370, 0.453)
+FITTED_CI95 = not_an_input(
+    (0.370, 0.453),
+    "the recorded output of the TALENT_CV fit, held by a test against the live "
+    "constant in hub.models.predict: an assertion about predictions, not an input to "
+    "one")
 # The nominal -- what goes into the model -- and the dispersion interval's ends inverted
 # through the same machinery, so the guard on `TALENT_CV` is on the quantity it is. Until
 # #235 the nominal sat inside `FITTED_CI95` and the two could be confused; net of absence it
 # does not, and a guard reading the dispersion interval would have refused the refit.
-FITTED_NOMINAL = 0.322
-FITTED_NOMINAL_CI95 = (0.267, 0.385)
+FITTED_NOMINAL = not_an_input(
+    0.322,
+    "the recorded output of the TALENT_CV fit, held by a test against the live "
+    "constant in hub.models.predict: an assertion about predictions, not an input to "
+    "one")
+FITTED_NOMINAL_CI95 = not_an_input(
+    (0.267, 0.385),
+    "the recorded output of the TALENT_CV fit, held by a test against the live "
+    "constant in hub.models.predict: an assertion about predictions, not an input to "
+    "one")
 # Shrunk, debiased per-position values behind `season.TALENT_CV_BY_POS`.
 #
 # These moved in the same re-run, and not because any raw estimate did -- all four are
@@ -97,7 +105,11 @@ FITTED_NOMINAL_CI95 = (0.267, 0.385)
 # REFITTED 2026-09-11 net of absence (#235): {QB 0.419, RB 0.482, WR 0.419, TE 0.332} ->
 # this. Again no raw or shrunk estimate moved; each position is inverted through its own
 # games-played distribution, and the ones whose seasons vary most in length move most.
-FITTED_BY_POS = {"QB": 0.198, "RB": 0.380, "WR": 0.314, "TE": 0.181}
+FITTED_BY_POS = not_an_input(
+    {"QB": 0.198, "RB": 0.380, "WR": 0.314, "TE": 0.181},
+    "the recorded output of the TALENT_CV fit, held by a test against the live "
+    "constant in hub.models.predict: an assertion about predictions, not an input to "
+    "one")
 
 
 def _curve_of(real: np.ndarray, logpick: np.ndarray, season: np.ndarray) -> np.ndarray:

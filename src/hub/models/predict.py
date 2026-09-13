@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import polars as pl
 
+from hub.declare import chosen, fitted, not_an_input
+
 # How wrong a preseason projection typically is about a player's season, as a fraction of
 # his projected per-game points. This is the single most important number in the model:
 # at 0 the projection is truth and drafting on it is clairvoyance; the larger it gets, the
@@ -56,7 +58,7 @@ import polars as pl
 # with two missed games prior: season-total spread was overstated 18% (RB) to 46% (QB).
 # Restated in docs/talent-cv.md. Availability is no longer "inside the number on purpose":
 # it is drawn, and the number is talent net of it.
-TALENT_CV = 0.32
+TALENT_CV = fitted(0.32)
 # Fitted on seasons the draft backtest replays -- `backtest.LIMITATIONS`, last entry (#279).
 
 # Per position, from the same fit, shrunk toward the pool in proportion to each position's
@@ -84,7 +86,7 @@ TALENT_CV = 0.32
 # and tight ends move most because their seasons vary most in games played (sd 4.3 and
 # 2.9 of ~14) relative to their spread. Which positions differ from the pool is a statement
 # about the raw values and is unchanged.
-TALENT_CV_BY_POS = {"QB": 0.20, "RB": 0.38, "WR": 0.31, "TE": 0.18}
+TALENT_CV_BY_POS = fitted({"QB": 0.20, "RB": 0.38, "WR": 0.31, "TE": 0.18})
 
 
 # How wrong the rank-based imputation is, as a share of the projection it invents (#87).
@@ -109,8 +111,8 @@ TALENT_CV_BY_POS = {"QB": 0.20, "RB": 0.38, "WR": 0.31, "TE": 0.18}
 # [-0.018, +0.020]; QB -0.013 (se 0.013), RB -0.001, WR +0.005, TE -0.001. Kept as the record
 # of a null (ADR-0007): the draft market's rank imputes a prior season no better than consensus
 # does. The rank transform stays, and the uncertainty it carries is the number above.
-IMPUTE_CV = 0.260
-IMPUTE_CV_BY_POS = {"QB": 0.217, "RB": 0.334, "WR": 0.223, "TE": 0.220}
+IMPUTE_CV = fitted(0.260)
+IMPUTE_CV_BY_POS = fitted({"QB": 0.217, "RB": 0.334, "WR": 0.223, "TE": 0.220})
 
 
 def talent_cv_for(pos: np.ndarray, imputed: np.ndarray | None = None) -> np.ndarray:
@@ -140,9 +142,9 @@ def talent_cv_for(pos: np.ndarray, imputed: np.ndarray | None = None) -> np.ndar
 # Predicting a player's weekly sd this way cuts RMSE about a third versus the old constant.
 # Note how little is left between positions once the law is right: most of what looked like
 # a position effect in weekly CV was position differences in mean points.
-WEEKLY_K = {"QB": 1.88, "RB": 2.07, "WR": 2.13, "TE": 1.99}
+WEEKLY_K = fitted({"QB": 1.88, "RB": 2.07, "WR": 2.13, "TE": 1.99})
 # Fitted on seasons the draft backtest replays -- `backtest.LIMITATIONS`, last entry (#279).
-WEEKLY_K_POOLED = 2.04
+WEEKLY_K_POOLED = fitted(2.04)
 
 # Weekly scoring is right-skewed, measured within player-season across 2022-25. A normal
 # says 0.00, and drawing normals made the simulator believe the typical week was the
@@ -153,12 +155,12 @@ WEEKLY_K_POOLED = 2.04
 # the lumpy touchdown term is a smaller share of their total. See
 # docs/component-projection.md, where this falls out of sampling the components rather than
 # being imposed here.
-WEEKLY_SKEW = {"QB": 0.15, "RB": 0.67, "WR": 0.66, "TE": 0.72}
+WEEKLY_SKEW = fitted({"QB": 0.15, "RB": 0.67, "WR": 0.66, "TE": 0.72})
 # Fitted on seasons the draft backtest replays -- `backtest.LIMITATIONS`, last entry (#279).
-WEEKLY_SKEW_POOLED = 0.60
+WEEKLY_SKEW_POOLED = fitted(0.60)
 # Beyond this the gamma is indistinguishable from a normal and the shift gets numerically
 # silly, so fall back rather than push it.
-MIN_SKEW = 0.05
+MIN_SKEW = chosen(0.05)
 
 
 def weekly_skew_for(pos: np.ndarray) -> np.ndarray:
@@ -186,8 +188,8 @@ def skewed(mean, sd, skew, z):
 # than handing back a "correlated" simulation that is mostly not one.
 #
 # Private and lower-cased in intent, for the reason `board._TD_LUCK_NOTE` is: this is a
-# pre-registered guard rather than a fitted quantity, so it must not move the model version.
-# See `hub.config.FITTED_MODULES`. Its opposite number is `weekly_gate.VOID_FLOOR`, which
+# pre-registered guard rather than a fitted quantity, so it must not move the model version,
+# and it says so below (`not_an_input`). Its opposite number is `weekly_gate.VOID_FLOOR`, which
 # voids a gate run above a join-failure rate, and it is tight for the same reason that one is
 # -- the error is *directional*. A block that will not factor is not drawn with noise added,
 # it is drawn under the exact model this structure exists to replace: for a quarterback and
@@ -200,13 +202,25 @@ def skewed(mean, sd, skew, z):
 # toward the tighter side, and it is stated here BEFORE it was measured against a real board
 # -- which matters, because the first board it met fails it (see docs/correlation.md,
 # 2026-09-07) and a floor chosen after the fact would have been chosen to clear it.
-_INDEPENDENT_FLOOR = 0.05
+_INDEPENDENT_FLOOR = not_an_input(
+    0.05,
+    "a pre-registered guard, not an input: above this share of blocks failing to "
+    "factor the draw *refuses* rather than returning a different number. Its opposite "
+    "number is `weekly_gate.VOID_FLOOR`, declared the same way for the same reason. "
+    "Moving it changes which runs are published, never what a published run says")
 
 
 # A repaired block whose smallest eigenvalue lands exactly on zero is on the boundary of the
 # PSD cone, and a Cholesky of it fails about as often as it succeeds. This lifts the floor off
 # the boundary by an amount far below the third decimal any correlation here is quoted to.
-_EIG_FLOOR = 1e-8
+_EIG_FLOOR = not_an_input(
+    1e-8,
+    "a conditioning tolerance, 1e-8, lifting a repaired block off the boundary of the "
+    "PSD cone so its Cholesky does not fail at random. It is three orders below the "
+    "last decimal any correlation here is quoted to, so no published figure can "
+    "distinguish two runs across it. Raising it to somewhere a correlation could "
+    "notice would make it a modelling choice, and it would belong in the digest that "
+    "day")
 
 
 def nearest_correlation(r: np.ndarray, *, iterations: int = 100,
@@ -419,8 +433,19 @@ class CorrelationReport:
 # block and so share a key, and a cached `BlockRepair` would report the second team's repair
 # under the first team's name -- which is the one thing the per-team record exists to get
 # right. The measured quantities are cached; the name is attached per call.
-_FACTORS: dict[bytes, tuple[np.ndarray | None, tuple[int, float, float, float, float] | None]] = {}
-_FACTOR_CACHE_MAX = 4096
+_FACTORS: dict[bytes, tuple[np.ndarray | None,
+                      tuple[int, float, float, float, float] | None]] = not_an_input(
+    {},
+    "the Cholesky cache itself, keyed on the matrix. It is not a value at all -- it "
+    "is empty at import and fills during a draw, so hashing it by content would move "
+    "the model version *as a process runs*, which is the one version of this bug that "
+    "would have been serious (#187)")
+_FACTOR_CACHE_MAX = not_an_input(
+    4096,
+    "a bound on how many factorisations that cache keeps. It buys memory against "
+    "recomputation and every prediction is identical on either side of it. This is "
+    "the constant #187 found identifying a model version, and the reason it did was "
+    "that it was written in capitals")
 
 
 def _factor(r: np.ndarray, team: str) -> tuple[np.ndarray | None, BlockRepair | None]:
@@ -537,7 +562,7 @@ def correlated_normal(rng, size, pos, nfl_team, *,
 # reached by accident. Repair would have turned an accidentally-correct independent draw into
 # a confidently-wrong correlated one -- so the repair made this worse until the exclusion
 # landed beside it. `playoff_sos.canon_team` has held the same rule since it was written.
-NOT_A_TEAM = frozenset({"FA", ""})
+NOT_A_TEAM = chosen(frozenset({"FA", ""}))
 
 
 # Within-game correlation between teammates, measured on standardised weekly points,
@@ -550,9 +575,9 @@ NOT_A_TEAM = frozenset({"FA", ""})
 # that covers 72.9% of the time. Adding these puts it at 80.4%. For a lineup with no
 # quarterback, independence is already calibrated and this changes nothing.
 # Fitted on seasons the draft backtest replays -- `backtest.LIMITATIONS`, last entry (#279).
-TEAMMATE_RHO: dict[tuple[str, str], float] = {
+TEAMMATE_RHO: dict[tuple[str, str], float] = fitted({
     ("QB", "WR"): 0.232, ("QB", "TE"): 0.225, ("QB", "RB"): 0.054,
-}
+})
 
 
 def teammate_rho(a: str, b: str) -> float:

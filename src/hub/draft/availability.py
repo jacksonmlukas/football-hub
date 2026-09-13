@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import polars as pl
 
+from hub.declare import chosen, fitted
 from hub.league import preseason_start
 from hub.names import player_key
 
@@ -26,11 +27,11 @@ if TYPE_CHECKING:                  # `board` imports this module, so runtime wou
 
 # Fraction of the room drafting off ESPN's default board. Estimate it from your own
 # league's history with fit_espn_weight(); 0.5 is the "mixed room" prior.
-DEFAULT_ESPN_WEIGHT = 0.5
+DEFAULT_ESPN_WEIGHT = chosen(0.5)
 
 # Sigma floor. Even the first overall pick is not perfectly predictable, and a zero or
 # negative sigma makes the availability simulation degenerate.
-MIN_SIGMA = 1.0
+MIN_SIGMA = chosen(1.0)
 
 
 def blended_adp(df: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT, *,
@@ -146,19 +147,19 @@ def blended_adp(df: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT, *,
 # ------------------------------------------------------------------------------------------
 # Fitted on this league's drafts of the seasons the draft backtest replays --
 # `backtest.LIMITATIONS`, last entry (#279).
-PICK_NOISE_INTERCEPT = 2.51
-PICK_NOISE_SLOPE = 0.150
+PICK_NOISE_INTERCEPT = fitted(2.51)
+PICK_NOISE_SLOPE = fitted(0.150)
 
 # Beside the point estimate, never behind it. Bootstrapped over **drafts**, n = 4, not over
 # picks: one manager reaching in round two moves every later pick in that room, so a
 # pick-level interval would be several times too tight -- the same error `docs/gate-power.md`
 # is about one layer up. `noise_from_picks` prints this pair on every fit.
-PICK_NOISE_SLOPE_CI = (0.143, 0.156)
+PICK_NOISE_SLOPE_CI = fitted((0.143, 0.156))
 
 # The rank past which the drafted sample is one-sided -- see the table above. A fitted
-# constant in the ADR-0006 sense: it was chosen from the data, it decides the slope, and this
-# module is in `FITTED_MODULES`, so it moves the digest when it moves.
-PICK_NOISE_FIT_CEILING = 168
+# constant in the ADR-0006 sense: it was chosen from the data, it decides the slope, and it
+# is declared `chosen` so it moves the digest when it moves.
+PICK_NOISE_FIT_CEILING = chosen(168)
 
 
 def pick_noise(mu):

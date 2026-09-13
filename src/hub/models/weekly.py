@@ -69,6 +69,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS
+from hub.declare import not_an_input
 from hub.models import predict
 from hub.models.components import SCORING, td_rate
 from hub.models.experiment import expanding_seasons
@@ -79,15 +80,6 @@ from hub.models.panel import (
     build_panel,
 )
 from hub.models.scoring_rules import crps_from_quantiles, normal_quantile, quantile_levels
-
-NOT_FITTED_BECAUSE = (
-    "the Weekly projection. MIN_UNITS is a volume floor below which a per-unit efficiency "
-    "rate is noise, TAIL_Q is the slice the shrinkage experiment scores and the two "
-    "SHRINK_GRIDs are search grids -- all settings. The Usage multiplier is the identity "
-    "since #248 and carries no coefficient; the shrinkage constants are fitted at run time "
-    "from the panel and never frozen into the module, the same shape as hub.models.injury. "
-    "See docs/weekly-screen.md "
-)
 
 # The Usage counts a week is projected from. Until #248 the multiplier applied to each of
 # them; the walk-forward's shrinkage still fits a prior for each.
@@ -102,15 +94,24 @@ EFFICIENCY_PAIRS: tuple[tuple[str, str], ...] = (
 # rate is a handful of plays and the ratio is noise. It is a *total*, not a per-game figure:
 # comparing a per-game mean against this sent almost every receiver to the pooled rate, since
 # nobody catches eight passes a game, and under-projected the good ones by 0.66 points a week.
-MIN_UNITS = 8.0
+MIN_UNITS = not_an_input(
+    8.0,
+    "a volume floor below which a per-unit efficiency rate is noise: a setting of the "
+    "Weekly projection, which is shown and never ranked on (docs/weekly-screen.md)")
 
 
 # Grids for the two shrinkage constants, searched on TRAINING seasons only. Both are in the
 # units of the thing they temper: games for a volume prior, accumulated units for an
 # efficiency rate. Zero is in each grid so "no shrinkage" is a candidate the fit can pick,
 # which is what makes this an experiment rather than an assumption.
-VOLUME_SHRINK_GRID: tuple[float, ...] = (0.0, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0)
-EFF_SHRINK_GRID: tuple[float, ...] = (0.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0)
+VOLUME_SHRINK_GRID: tuple[float, ...] = not_an_input(
+    (0.0, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0),
+    "a search grid; the shrinkage constants are fitted at run time from the panel and "
+    "never frozen into this module, the same shape as hub.models.injury")
+EFF_SHRINK_GRID: tuple[float, ...] = not_an_input(
+    (0.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0),
+    "a search grid; the shrinkage constants are fitted at run time from the panel and "
+    "never frozen into this module, the same shape as hub.models.injury")
 
 
 class Shrink(NamedTuple):
@@ -188,7 +189,10 @@ def _pos_means(train: pl.DataFrame) -> tuple[dict, dict]:
 
 # The share of the projection's top end the tail objective scores. A waiver pick is roughly
 # the best of a few hundred, so a decile is the coarsest slice that is still about the top.
-TAIL_Q = 0.90
+TAIL_Q = not_an_input(
+    0.90,
+    "the slice the shrinkage experiment scores, a setting of the experiment and not "
+    "of the projection it scores")
 
 
 def fit_shrink(train: pl.DataFrame, *,
@@ -241,7 +245,10 @@ def fit_shrink(train: pl.DataFrame, *,
 # A `volume_k` this large makes `n/(n+k)` ~ 0 for any real sample, so the projection becomes
 # the market prior and nothing else. Not a candidate in any grid -- it exists so a run can ask
 # "how much of this gain is ours and how much is the market's?" and get a number.
-PURE_MARKET_K = 1e9
+PURE_MARKET_K = not_an_input(
+    1e9,
+    "the shrinkage at which the blend is the pure betting-market arm, a limit the "
+    "experiment compares against and not a candidate in any grid")
 
 
 def _shrunk(df: pl.DataFrame, col: str, k: float, means: dict, key: str,
@@ -483,7 +490,10 @@ def _contrast(errs: pl.DataFrame, base: str, arm: str, label: str) -> list[str]:
 # centre scores. It is a *reference*, not a bar: it holds for a normal, and the shipped
 # distribution is skewed and clipped, so the figure printed beside it says how much of the
 # available gain the published spread is collecting rather than whether it passed anything.
-CALIBRATED_RATIO = 1.0 / np.sqrt(2.0)
+CALIBRATED_RATIO = not_an_input(
+    1.0 / np.sqrt(2.0),
+    "a reference derived from the scoring rule -- what crps/err would be for a "
+    "calibrated normal -- printed beside a figure and read by no prediction")
 
 
 def distribution_report(errs: pl.DataFrame) -> list[str]:

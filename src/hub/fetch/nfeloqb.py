@@ -72,6 +72,7 @@ import polars as pl
 
 from hub import atomic
 from hub.contracts import NFELOQB, ContractViolation
+from hub.declare import chosen
 from hub.fetch import cached
 from hub.fetch.cached import LIVE_TEST_SUITE, PYTEST_NODE_ENV, LiveCallRefused  # noqa: F401
 from hub.paths import DATA
@@ -81,7 +82,7 @@ PROG = "hub.fetch.nfeloqb"
 # The pin (#271). Two runs a week apart from the same pinned input produce the same number,
 # so the URL names a *commit* of the source repository and not its default branch, and
 # `PINNED_SHA256` is what the file at that commit hashes to. Advancing either is an edit to
-# this file; `COMMIT` is in `config_digest` through `hub.config.FITTED_EXTRA`, so predictions
+# this file; `COMMIT` is declared `chosen`, so it is in `config_digest` and predictions
 # under the new input carry a different version from predictions under the old, and a pull
 # whose bytes do not match the pin is reported as a source change by `refresh`, the stamp
 # and the fit's own sentence -- served, because the file validated, and never silently.
@@ -93,7 +94,7 @@ PROG = "hub.fetch.nfeloqb"
 # written from the record; it is the maintainer's to set from the next `--refresh`.
 REPO = "greerreNFL/nfeloqb"
 BRANCH = "main"
-COMMIT: str | None = None
+COMMIT: str | None = chosen(None)
 PINNED_SHA256: str | None = None
 
 

@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 
 import polars as pl
 
+from hub.declare import chosen, fitted
 from hub.models.base import FitSpec
 
 # Standard deviation of the actual margin around the closing spread, and the reason a 3-point
@@ -26,9 +27,9 @@ from hub.models.base import FitSpec
 #
 # FITTED 2026-08-24 by `hub.models.margin`, written up in `docs/margin-sd.md`. Trailing ten
 # seasons, n=3018: 12.741 +/- 0.164. It was 13.5 before, asserted under a comment claiming it
-# was "stable across decades" -- with no fit, no interval and no write-up, while sitting in
-# `config.FITTED_MODULES` and being hashed into every model version as though it had been
-# measured. ADR-0006 draws that line; this number was on the wrong side of it.
+# was "stable across decades" -- with no fit, no interval and no write-up, while being
+# hashed into every model version as though it had been measured. ADR-0006 draws that
+# line; this number was on the wrong side of it, and now says `fitted` with the fit beside it.
 #
 # Two things the fit found that the assertion could not:
 #
@@ -42,10 +43,10 @@ from hub.models.base import FitSpec
 # **This is a trailing window, so it goes stale.** Re-run `python -m hub.models.margin --fit`
 # after each season; a fixed constant fitted to a moving target needs a refit date, and a
 # full-history value would not have.
-MARGIN_SD = 12.741
+MARGIN_SD = fitted(12.741)
 
 # 80% interval. z for the two-sided 80% of a normal.
-Z_80 = 1.2816
+Z_80 = chosen(1.2816)
 
 
 def normal_cdf(x: float) -> float:

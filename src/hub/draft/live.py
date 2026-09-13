@@ -29,6 +29,7 @@ from typing import Any
 import polars as pl
 
 from hub.cli import unavailable
+from hub.declare import not_an_input
 from hub.draft import report as report_mod
 from hub.draft.board import (
     DRAFTED_POSITIONS,
@@ -41,17 +42,16 @@ from hub.draft.board import (
 from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.state import DraftState, remaining, take
 
-NOT_FITTED_BECAUSE = (
-    "operational -- a refresh budget in seconds, same class as `poll` "
-)
-
 # A run is three or more picks at one position inside the last five -- the skill's
 # definition, not an invention.
 RUN_WINDOW = 5
 RUN_THRESHOLD = 3
 
 # You have ~90 seconds. Two is the plan's ceiling and generous against that.
-REFRESH_BUDGET_S = 2.0
+REFRESH_BUDGET_S = not_an_input(
+    2.0,
+    "a refresh budget in seconds, the same operational class as `poll`; read by no "
+    "prediction")
 
 # Short enough to read while on the clock.
 MAX_LINES = 24
