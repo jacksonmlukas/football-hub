@@ -25,7 +25,7 @@ from hub import jsonio, publish, store
 
 
 @pytest.fixture(autouse=True)
-def offline(monkeypatch):
+def offline(monkeypatch, tmp_path):
     """Every source this module's producers reach, stubbed to answer nothing.
 
     Seven tests here fetched nflverse for real. They passed, and they passed *through the
@@ -53,8 +53,12 @@ def offline(monkeypatch):
     import nflreadpy as nfl
 
     import hub.season.survivor as sv
+    from hub.fetch import pool as fetch_pool
     monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: pl.DataFrame(
         schema={"game_id": pl.Utf8, "result": pl.Float64}))
+    # The survivor producer reads the pool host's last-known state for the Ledger (#280);
+    # a real one under `data/processed/` must not reach a test's plan.
+    monkeypatch.setattr(fetch_pool, "PROCESSED", tmp_path / "no-pool-state")
     monkeypatch.setattr(sv, "grid_from_schedule", lambda season, cache=None: pl.DataFrame(
         schema={"week": pl.Int64, "team": pl.Utf8, "win_prob": pl.Float64,
                 "kickoff": pl.Datetime, "result": pl.Float64}))
@@ -1442,6 +1446,63 @@ def test_a_spent_team_stays_spent_across_a_second_publish(site, base, monkeypatc
     assert "KC" not in [r["team"] for r in second["rows"]]
     third = publish.survivor(2026, out=site)
     assert isinstance(third, dict) and third["spent"] == ["KC"]
+
+
+def test_a_week_with_one_game_started_keeps_its_pick_in_the_artifact_and_the_journal_agrees(
+        site, base, monkeypatch):
+    """#263's artifact criterion. Week 2's Thursday game is over (a result, so no clock is
+    read) and its Sunday game kicks off far ahead. The pick recorded for week 2 was SF; the
+    published artifact after that kickoff carries SF as spent, plans week 3 alone, and its
+    ledger agrees with what the journal says was chosen -- rather than re-solving week 2
+    onto KC, the team a fresh solve would take."""
+    import hub.season.survivor as sv
+    from hub.season import journal
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "survivor.json").write_text(json.dumps(
+        {"name": "survivor", "season": 2026, "n": 2, "spent": ["DAL"],
+         "rows": [{"week": 2, "team": "SF", "win_prob": 0.7},
+                  {"week": 3, "team": "KC", "win_prob": 0.8}]}))
+    thu, far = dt.datetime(2026, 9, 10, 20, 15), dt.datetime(2099, 9, 20, 13, 0)
+    grid = _dated_survivor_grid([
+        (2, "SF", 0.70, thu, 3.0), (2, "SEA", 0.30, thu, 3.0),
+        (2, "KC", 0.85, far, None), (2, "LV", 0.15, far, None),
+        (3, "KC", 0.80, far, None), (3, "SEA", 0.60, far, None),
+    ])
+    monkeypatch.setattr(sv, "grid_from_schedule", lambda season, cache=None: grid)
+    journal.record(season=2026, week=2, kind="pick", chose="SF", fallback="SF",
+                   market_price=0.70, at=dt.datetime(2026, 9, 9, 12, 0), base=base)
+    got = publish.survivor(2026, out=site)
+    assert isinstance(got, dict)
+    assert got["weeks_played"] == [2] and got["weeks_remaining"] == [3]
+    assert [r["week"] for r in got["rows"]] == [3]
+    assert got["spent"] == ["DAL", "SF"]
+    chosen = journal.read(2026, base=base).filter(pl.col("week") == 2)["chose"].to_list()
+    assert chosen == ["SF"] and set(chosen) <= set(got["spent"])
+    assert "SF" not in [r["team"] for r in got["rows"]]
+
+
+def test_the_published_plan_spends_what_the_pool_host_says_our_entry_spent(site, base,
+                                                                           monkeypatch):
+    """#280's last criterion, from the artifact's side. The published plan knew nothing was
+    spent; the pool host's last-known state says our entry has KC. The artifact reads the
+    Ledger through `survivor.prior_rows`, so KC is spent and the plan is built without it,
+    where the plan alone would have taken KC in every week it appears."""
+    import datetime as dt
+
+    import hub.season.survivor as sv
+    from hub.fetch import pool as fetch_pool
+    monkeypatch.setattr(sv, "grid_from_schedule",
+                        lambda season, cache=None: _mid_season_grid())
+    state = fetch_pool.PoolState(season=2026, week=2, field_size=2, pot=40.0, entries=(
+        fetch_pool.Entry(0, True, ("KC",)), fetch_pool.Entry(1, True, ("SF",))))
+    fetch_pool.write_state(state, base, when=dt.datetime(2026, 9, 16, 9, 0, tzinfo=dt.UTC))
+    got = publish.survivor(2026, out=site, store=base)
+    assert isinstance(got, dict)
+    assert got["spent"] == ["KC"]
+    assert "KC" not in [r["team"] for r in got["rows"]]
+    assert [r["team"] for r in got["rows"]] == ["SF", "SEA"]
+    alone = publish.survivor(2026, out=site / "elsewhere", store=base / "nothing")
+    assert isinstance(alone, dict) and alone["spent"] == []
 
 
 def test_the_published_survival_covers_the_remaining_weeks_only(site, base, monkeypatch):

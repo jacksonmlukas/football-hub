@@ -820,12 +820,16 @@ def publish_all(season: int, week: int, base: Path | None = None,
     return man
 
 
-def survivor(season: int, out: Path | None = None) -> dict[str, Any] | Kept | None:
+def survivor(season: int, out: Path | None = None,
+             store: Path | None = None) -> dict[str, Any] | Kept | None:
     """The survivor plan, as its own artifact.
 
     Wrapped rather than inlined because it reaches the network for a schedule. A failing
     source marks the panel stale and leaves the last good plan in place -- taking the whole
     page down over one panel is the operator-dependence CLAUDE.md warns about.
+
+    `store` is the processed store the pool host's last-known state is read from for the
+    Ledger (#280); the default is the real one, and a test passes its own.
     """
     from hub.season import survivor as sv
     out = out or SITE
@@ -848,9 +852,11 @@ def survivor(season: int, out: Path | None = None) -> dict[str, Any] | Kept | No
                                 # The pool's own rules, so weeks 13-18 take two teams here
                                 # even though a bare `solve` still takes one.
                                 pool=pool,
-                                # What this entry has already used, read back from the
-                                # remaining plan it published. The only record there is.
-                                prior=sv.published_plan(out / "survivor.json"))
+                                # What this entry has already used: the remaining plan it
+                                # published and the pool host's Ledger for it, through the
+                                # one reading of both (#280).
+                                prior=sv.prior_rows(season, path=out / "survivor.json",
+                                                    store=store))
     except sv.Infeasible as e:
         # Caught apart from the failure below, because it is not one. The schedule answered;
         # what is missing is a *posted spread* for the weeks that remain, or a pool of teams

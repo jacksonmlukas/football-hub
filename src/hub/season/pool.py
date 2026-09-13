@@ -93,16 +93,21 @@ import argparse
 import hashlib
 import sys
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 import polars as pl
 
 from hub.config import PoolConfig, pool_digest
+from hub.schedule import forecastable
 from hub.season.survivor import MIN_PROB, Infeasible, solve, week_fixtures
+
+if TYPE_CHECKING:   # the fetch module is imported where the entry point reads it (#280)
+    from hub.fetch.pool import PoolState
 
 NOT_FITTED_BECAUSE = (
     "nothing here is measured. DEFAULT_TRIALS and WEEKLY_TRIALS buy resolution and are "
@@ -496,6 +501,8 @@ class _Week(NamedTuple):
     fixture: dict[str, int]                     # team -> which game in `games` it plays in
     picks: int                                  # 1, or 2 in a double-pick week
     dropped: int = 0                            # fixtures in the week priced on one side only
+    concentration: float = 1.0                  # the exponent `weight` was raised to, so a
+                                                # refusal in `_pick` can name it (#286)
 
 
 def grid_digest(grid: pl.DataFrame) -> str:
@@ -512,7 +519,9 @@ def grid_digest(grid: pl.DataFrame) -> str:
     Text rather than Arrow bytes, for the reason `hub.fetch.nflverse.content_digest` gives:
     a frame and the same frame read back from parquet serialise to different IPC bytes.
     Not that function itself, because it lives in a fetch layer and this module imports
-    none -- the simulator has to be answerable from a frame alone.
+    no fetcher -- the simulator has to be answerable from a frame alone. (`hub.schedule`'s
+    `forecastable` is read for the clock, #263; it is the schedule's rule about two columns
+    on the frame, and reaches for nothing.)
     """
     cols = [c for c in ("week", "team", "win_prob", "game_id") if c in grid.columns]
     canon = grid.select(cols).sort(cols)
@@ -614,7 +623,7 @@ def weeks_from_grid(grid: pl.DataFrame, weeks: Sequence[int],
         out.append(_Week(tuple(games), teams, prob, pickable,
                          {t: prob[t] ** k for t in sorted(pickable)},
                          {t: i for i, g in enumerate(games) for t in (g[0], g[1])},
-                         f.needs, len(f.half)))
+                         f.needs, len(f.half), k))
     return out
 
 
@@ -654,14 +663,23 @@ def _pick(rng: np.random.Generator, week: _Week, ledger: set[str], k: int) -> li
     Its sampling weight was near zero either way, which is why the figures barely move; what
     moves is that one rule now says what may be taken, in both places that take one.
 
-    That also retires a guard. This returned None a second time when the weights summed to
-    zero -- a whole week of teams the betting market gives no chance -- which was the only way a
-    zero-priced team could reach the sampler at all. Every member of `pickable` is above
-    `MIN_PROB` by construction, so a non-empty `avail` cannot sum to zero and the branch was
-    unreachable rather than merely untaken. Deleted, because a guard that cannot fire still
-    reads as a case someone has thought about. That argument survives the exponent: a positive
-    weight raised to a finite non-negative power is positive, and `weeks_from_grid` refuses
-    every other power.
+    That retired one guard and, for a while, argued away another. This returned None a
+    second time when the weights summed to zero -- a whole week of teams the betting market
+    gives no chance -- which was the only way a zero-priced team could reach the sampler at
+    all. Every member of `pickable` is above `MIN_PROB` by construction, so a non-empty
+    `avail` cannot sum to zero and *that* branch was unreachable rather than merely untaken;
+    deleted, because a guard that cannot fire still reads as a case someone has thought
+    about. The docstring then claimed the argument survived the exponent, because a
+    positive weight raised to a finite non-negative power is positive. **True in the reals,
+    false in float64** (#286): with the floor at `MIN_PROB` and a concentration of 400 --
+    legal, since `weeks_from_grid` refuses only a negative or non-finite one -- every
+    probability below about 0.17 is raised to exactly zero, and a rival whose legal teams
+    are all underdogs holds a vector that sums to zero. `w / w.sum()` was then NaN and
+    `rng.choice` raised it several frames from the setting that caused it. So the vector is
+    checked where it is built: a sum that is not positive is refused with the concentration
+    and the floor named, before the draw, and it is an error rather than an elimination
+    because the entry had legal teams and the arithmetic lost them. Unreachable on the
+    default axis, which tops out at 16; reachable on any a caller supplies.
     """
     avail = [t for t in week.teams if t in week.pickable and t not in ledger]
     # Fixtures, not teams. A double-pick week whose only legal teams are the two sides of one
@@ -672,10 +690,33 @@ def _pick(rng: np.random.Generator, week: _Week, ledger: set[str], k: int) -> li
     out: list[str] = []
     while len(out) < k:
         w = np.array([week.weight[t] for t in avail], dtype=float)
-        got = str(rng.choice(avail, size=1, replace=False, p=w / w.sum())[0])
+        total = _weight_total(week, avail, float(w.sum()))
+        got = str(rng.choice(avail, size=1, replace=False, p=w / total)[0])
         out.append(got)
         avail = [t for t in avail if week.fixture[t] != week.fixture[got]]
     return out
+
+
+def _weight_total(week: _Week, teams: Sequence[str], total: float) -> float:
+    """`total`, the sum of these teams' sampling weights, refused if it is not positive.
+
+    The one rule for the one failure mode (#286, and the review of it): `_pick` divides a
+    rival's vector by this and `_chalk_share` divides the field's, and either sum is zero
+    once every team in it has underflowed. The sum arrives computed rather than being
+    computed here, because the two callers sum differently -- numpy over a vector, Python
+    over a comprehension -- and a figure that has held to the ulp since the knob landed
+    must not move by one for the sake of a guard.
+    """
+    if total > 0.0:
+        return total
+    best = max(week.prob[t] for t in teams)
+    raise ValueError(
+        f"every sampling weight for the {plural(len(teams), 'team')} here is zero: "
+        f"`PoolConfig.field_concentration` is {week.concentration:g}, the likeliest of them "
+        f"is priced at {best:.4g}, and `win_prob ** {week.concentration:g}` underflows "
+        f"float64 for all of them. The floor `MIN_PROB` is {MIN_PROB}, which keeps a team "
+        "pickable in the reals and not at this exponent. Lower the concentration; the "
+        "default axis runs to 16.")
 
 
 def _chalk_share(week: _Week) -> tuple[str, float]:
@@ -698,7 +739,10 @@ def _chalk_share(week: _Week) -> tuple[str, float]:
     `_best_available`'s -- so "the best team" means the same team in all three.
     """
     best = min(sorted(week.pickable), key=lambda t: (-week.prob[t], t))
-    total = sum(week.weight[t] for t in sorted(week.pickable))
+    field = sorted(week.pickable)
+    # The same refusal `_pick` makes on a rival's vector, reached from `sensitivity` on
+    # any axis a caller supplies: a field whose every weight has underflowed owns nothing.
+    total = _weight_total(week, field, sum(week.weight[t] for t in field))
     return best, week.weight[best] / total
 
 
@@ -1238,28 +1282,148 @@ def buyback(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
         ahead=tuple(ahead), rivals=rivals)
 
 
-def auto_pick(grid: pl.DataFrame, week: int, ledger: Sequence[str] = ()) -> str | None:
+# The spelling of a pick that takes two teams (#256): sorted and joined on this, so `KC+SF`
+# and `SF+KC` are one pick, one string a journal column can hold, and one thing an operator
+# can type back as `--chose`. A single team is its own name in both directions.
+PAIR = "+"
+
+
+def pick_name(teams: Sequence[str]) -> str:
+    """The one spelling of a pick, however many teams it takes."""
+    return PAIR.join(sorted(teams))
+
+
+def pick_teams(name: str) -> tuple[str, ...]:
+    """The teams a pick's name spells, sorted."""
+    return tuple(sorted(t.strip() for t in name.split(PAIR) if t.strip()))
+
+
+class UncoverableWeek(ValueError):
+    """A week whose legal teams cannot cover the picks it takes: two picks and one fixture.
+
+    Its own name so `auto_pick` can answer it with `None` -- the Pool has nothing legal to
+    assign, which is the same answer as no team at all -- while a grid that cannot say
+    which rows are one fixture stays an error there as everywhere.
+    """
+
+
+def _picks_in(week: int, cfg: PoolConfig | None) -> int:
+    """How many teams the Pool takes in `week`: two where the rules say so, else one.
+
+    `None` is one pick a week, for the reason `hub.season.survivor.solve` gives: these are
+    the pool's rules and not the game's, and a reader handed no rules should not invent them.
+    """
+    return 2 if cfg is not None and week in cfg.double_pick_weeks else 1
+
+
+def _legal(grid: pl.DataFrame, week: int, spent: set[str],
+           now: datetime | None = None) -> pl.DataFrame:
+    """The rows of `week` an entry holding `spent` may still take: above `MIN_PROB`, unspent,
+    and still ahead of the clock.
+
+    One filter for the three readers of the week being decided -- `auto_pick`, `weekly` and
+    `leverage` -- which each spelled it out and could therefore have disagreed about what
+    was legal.
+
+    **A team whose game has kicked off is not on offer** (#263). The three filtered on the
+    week number and the win probability only, so on the Friday of a week the Thursday
+    game's winner was still a candidate an hour after it had won. The rule is
+    `hub.schedule.forecastable`'s -- kickoff not yet passed, no result -- read here rather
+    than restated, on `now` where the caller states the moment and the clock where it does
+    not; a grid carrying no `kickoff` or `result` is read as entirely ahead, which is the
+    preseason shape and every hand-priced grid in the tests.
+    """
+    wk = grid.filter((pl.col("week") == week) & (pl.col("win_prob") > MIN_PROB))
+    wk = forecastable(wk, now)
+    return wk.filter(~pl.col("team").is_in(list(spent))) if spent else wk
+
+
+def _ranked(wk: pl.DataFrame, week: int, needs: int, top: int
+            ) -> list[tuple[str, float, tuple[str, ...]]]:
+    """The `top` picks this week offers, best first: the pick's name, its win probability on
+    the week, and the teams it spends.
+
+    **Two picks are two teams from two fixtures, priced as their product** (#256). A double
+    week's entry survives only if both teams win, so a candidate there is a *pair* and its
+    win probability is `p1 * p2`; both sides of one fixture cannot both win, so a pair from
+    one game is not a candidate at all, which is the same exclusion `solve` states as
+    `one_side_wk` and `_pick` applies to a rival. Pairs are enumerated whole and ranked on
+    the product rather than built greedily from the top teams, so a caller asking for the
+    `top` pairs gets the `top` pairs and not the neighbourhood of the best one.
+
+    A single week is the one sort it always was, on the same frame in the same order, so
+    nothing about a single-pick week moves by a float. `wk` is what `_legal` hands back;
+    an empty one is the caller's refusal to make, since `weekly` and `leverage` say it in
+    different words.
+    """
+    if needs == 1:
+        # Sorted on team as well, so a tie does not let row order pick the fallback.
+        ranked = wk.sort(["win_prob", "team"], descending=[True, False]).head(top)
+        return [(str(r["team"]), float(r["win_prob"]), (str(r["team"]),))
+                for r in ranked.iter_rows(named=True)]
+    no_id = (f"week {week} takes two picks and the grid carries no `game_id`{{}}: without "
+             "it the two cannot be kept off the two sides of one fixture, which loses by "
+             "construction. Refused rather than priced as one team.")
+    if "game_id" not in wk.columns:
+        raise ValueError(no_id.format(""))
+    # A null on a row is the same absence (review 2026-09-12): read as text it was the
+    # string "None", unequal to its opponent's id, and the two sides of one real game
+    # became a pair. Refused as a week that cannot be covered, so `auto_pick` answers None.
+    holes = [str(r["team"]) for r in wk.iter_rows(named=True) if r["game_id"] is None]
+    if holes:
+        raise UncoverableWeek(no_id.format(f" for {', '.join(sorted(holes))}"))
+    sides = [(str(r["team"]), float(r["win_prob"]), str(r["game_id"]))
+             for r in wk.iter_rows(named=True)]
+    pairs = [(pick_name((a, b)), pa * pb, tuple(sorted((a, b))))
+             for i, (a, pa, ga) in enumerate(sides) for b, pb, gb in sides[i + 1:] if ga != gb]
+    if not pairs:
+        raise UncoverableWeek(
+            f"week {week} takes two picks and its {plural(len(sides), 'legal team')} "
+            f"{'cover' if len(sides) != 1 else 'covers'} "
+            f"{plural(len({g for _, _, g in sides}), 'fixture')}: two picks cannot come "
+            "from both sides of one fixture, because one of them loses. Refused rather "
+            "than priced as one team, which is the same refusal `survivor.solve` makes.")
+    pairs.sort(key=lambda c: (-c[1], c[0]))
+    return pairs[:top]
+
+
+def auto_pick(grid: pl.DataFrame, week: int, ledger: Sequence[str] = (),
+              pool: PoolConfig | None = None, now: datetime | None = None) -> str | None:
     """What the pool assigns when nobody submits: the best available team by the betting market.
 
     Not a courtesy. `docs/method.md` rule 5 says gate against the simplest thing that already
     works, and this is that thing -- free, automatic, and available every week. A season of
     weeks where the recommendation matched it is a season the model earned nothing, which is
     only countable if the fallback is worked out and written down beside the pick.
+
+    **In a double-pick week it is two teams** (#256), the two likeliest the entry may still
+    take from two fixtures, spelled as one pick by `pick_name` -- `_best_available`'s rule,
+    stated on the grid rather than on a reshaped week. `pool` says which weeks those are;
+    handed none, every week takes one, as `solve` handed no rules takes one.
+
+    **Among the teams still ahead of the clock** (#263), which is `_legal`'s rule: `now` is
+    the moment, and the clock where none is stated.
     """
-    spent = set(ledger)
-    wk = grid.filter((pl.col("week") == week) & (pl.col("win_prob") > MIN_PROB))
-    wk = wk.filter(~pl.col("team").is_in(list(spent))) if spent else wk
+    wk = _legal(grid, week, set(ledger), now)
     if wk.is_empty():
         return None
-    # Sorted on team as well, so a tie does not let row order pick the fallback.
-    return str(wk.sort(["win_prob", "team"], descending=[True, False])["team"][0])
+    needs = _picks_in(week, pool)
+    if needs == 1:
+        # Sorted on team as well, so a tie does not let row order pick the fallback.
+        return str(wk.sort(["win_prob", "team"], descending=[True, False])["team"][0])
+    try:
+        return _ranked(wk, week, needs, 1)[0][0]
+    except UncoverableWeek:
+        # No pair from two fixtures: the Pool has nothing legal to assign, which is the same
+        # answer as no team at all in a single week.
+        return None
 
 
 def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
            ledger: Sequence[str] = (), entries: int, pot: float, outlay: float = 0.0,
            pool: PoolConfig | None = None, top: int = 6,
            trials: int = WEEKLY_TRIALS, rng: np.random.Generator | None = None,
-           seed: int | None = None) -> Weekly:
+           seed: int | None = None, now: datetime | None = None) -> Weekly:
     """This week's pick, what it is worth, and what it cost against the free one.
 
     A candidate is worth `P(it wins this week)` times what the rest of the season is worth
@@ -1313,23 +1477,39 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     betting market prices below the sixth-best is not a candidate for a pick whose whole
     purpose is surviving the week.
 
+    **A double-pick week is priced as two picks** (#256). Where `PoolConfig.double_pick_weeks`
+    names the week, a candidate is a pair from two fixtures spelled by `pick_name`, its win
+    probability is the product of the two, both teams are spent from the ledger the rest of
+    the season is valued against, and the free pick is the best such pair. The simulator
+    had honoured the rule for every rival and for our replayed plan since #156; the week
+    being decided filtered on the week number alone and handed back one team, priced as
+    one, with nothing raised. A double week whose legal teams cover one fixture is refused
+    with a sentence -- `UncoverableWeek` -- rather than priced as a single.
+
     **`seed` is the reseed value itself, for a re-run** (#162). Left out, one is drawn from
     `rng` as it always was and every candidate is reseeded to it; given, it is used as-is.
     The value is carried out on `Weekly.seed` either way, so a journal row that names it can
     hand it back here and meet the identical trials -- which is what makes a recorded figure
     reproducible rather than merely recorded.
+
+    **`now` is the clock the week is read against** (#263): a team whose game has kicked off
+    by then is not offered, which is `_legal`'s rule. Left out, the clock is read, so a
+    re-run of a recorded week on a grid that carries kickoffs should pass the row's `at`
+    here -- run later, the teams that had not yet played are the ones no longer on offer.
     """
     cfg = pool or PoolConfig()
     rng = rng or np.random.default_rng(0)
     spent = set(ledger)
-    wk = grid.filter((pl.col("week") == week) & (pl.col("win_prob") > MIN_PROB))
-    wk = wk.filter(~pl.col("team").is_in(list(spent))) if spent else wk
+    wk = _legal(grid, week, spent, now)
     if wk.is_empty():
         raise ValueError(f"week {week} has no legal pick left: {len(spent)} teams are spent")
 
     ahead = _ahead(weeks, week)
-    free = auto_pick(grid, week, ledger)
-    ranked = wk.sort(["win_prob", "team"], descending=[True, False]).head(top)
+    free = auto_pick(grid, week, ledger, pool=cfg, now=now)
+    # One team, or in a double-pick week a pair from two fixtures priced as the product
+    # (#256): `team` is then the pick's name and `takes` the two teams it spends, both of
+    # which leave the ledger the rest of the season is valued against.
+    ranked = _ranked(wk, week, _picks_in(week, cfg), top)
 
     seed = int(rng.integers(2 ** 32)) if seed is None else int(seed)
     cands: list[Candidate] = []
@@ -1340,10 +1520,9 @@ def weekly(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
     each: dict[str, np.ndarray] = {}
     live: dict[str, np.ndarray] = {}
     root = np.sqrt(trials)
-    for r in ranked.iter_rows(named=True):
-        team, p = str(r["team"]), float(r["win_prob"])
+    for team, p, takes in ranked:
         if ahead:
-            rest = entry_outcome(grid, ahead, entries=entries, ledger=[*spent, team],
+            rest = entry_outcome(grid, ahead, entries=entries, ledger=[*spent, *takes],
                                  pool=cfg, trials=trials, rng=np.random.default_rng(seed))
             survives, share = rest.survives, rest.share
             # The pool rules applied here rather than read off a stored share: what a trial
@@ -1794,7 +1973,8 @@ def leverage(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
              ledger: Sequence[str] = (), entries: int, pot: float,
              pool: PoolConfig | None = None, at: Sequence[float] = DEFAULT_CONCENTRATIONS,
              top: int = 6, trials: int = WEEKLY_TRIALS,
-             rng: np.random.Generator | None = None) -> list[Leverage]:
+             rng: np.random.Generator | None = None,
+             now: datetime | None = None) -> list[Leverage]:
     """The leverage term for every candidate this week, at every concentration in `at`.
 
     The measurement #161 was re-scoped to. Two arms per candidate per concentration, on one
@@ -1847,23 +2027,26 @@ def leverage(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
             "field's attrition this week is worth something *in*, so with no weeks ahead "
             "there is no term to measure. `weekly` prices such a week in closed form.")
     spent = set(ledger)
-    free = auto_pick(grid, week, ledger)
+    # The candidates before the free pick, so a double week the grid cannot pair -- a
+    # `game_id` missing on a row -- is refused with that sentence rather than read as a
+    # week with no legal pick. In a double-pick week each is a pair from two fixtures
+    # priced as the product (#256), and `takes` is what it spends. `now` is the clock the
+    # week is read against (#263): `at` here is the concentration axis, so the moment
+    # carries the other name.
+    teams = _ranked(_legal(grid, week, spent, now), week, _picks_in(week, cfg), top)
+    free = auto_pick(grid, week, ledger, pool=cfg, now=now)
     if free is None:
         raise ValueError(f"week {week} has no legal pick left: {len(spent)} teams are spent")
-    wk = grid.filter((pl.col("week") == week) & (pl.col("win_prob") > MIN_PROB))
-    wk = wk.filter(~pl.col("team").is_in(list(spent))) if spent else wk
-    ranked = wk.sort(["win_prob", "team"], descending=[True, False]).head(top)
     # The free pick is always the first of these: `auto_pick` is the same filter and the
-    # same sort, so a guard appending it when absent would be a guard that cannot fire.
-    teams = [(str(r["team"]), float(r["win_prob"])) for r in ranked.iter_rows(named=True)]
+    # same ranking, so a guard appending it when absent would be a guard that cannot fire.
     root = np.sqrt(trials)
     rows: list[Leverage] = []
     for k in at:
         this = replace(cfg, field_concentration=float(k))
         unadvanced: dict[str, np.ndarray] = {}
         advanced: dict[str, np.ndarray] = {}
-        for team, p in teams:
-            rest = entry_outcome(grid, ahead, entries=entries, ledger=[*sorted(spent), team],
+        for team, p, takes in teams:
+            rest = entry_outcome(grid, ahead, entries=entries, ledger=[*sorted(spent), *takes],
                                  pool=this, trials=trials, rng=np.random.default_rng(seed))
             unadvanced[team] = p * _shares(this, rest)
             # The same plan with this week's pick in front of it, replayed from this week:
@@ -1871,12 +2054,12 @@ def leverage(grid: pl.DataFrame, weeks: Sequence[int], *, week: int,
             # putting the candidate at `week` and that plan after it is the season our entry
             # would play. Rivals sample this week like any other, and go out on it.
             after = rest.plan if rest.plan is not None else Plan({}, "none")
-            whole = Plan({week: (team,), **after.picks}, after.source)
+            whole = Plan({week: takes, **after.picks}, after.source)
             full = entry_outcome(grid, [week, *ahead], entries=entries, ledger=sorted(spent),
                                  pool=this, plan=whole, trials=trials,
                                  rng=np.random.default_rng(seed))
             advanced[team] = _shares(this, full)
-        for team, _ in teams:
+        for team, _, _ in teams:
             if team == free:
                 continue
             du = pot * (unadvanced[team] - unadvanced[free])
@@ -2030,6 +2213,33 @@ def _last_good(season: int, week: int | None, base: Path | None, why: Exception)
     return 0
 
 
+def _field(store: Path | None, season: int) -> tuple[PoolState | None, str | None, str]:
+    """The pool host's last-known state for `season`, its digest, and a line saying which read.
+
+    `None` twice and the line where there is none to price against -- a fresh clone,
+    another season's state, or a state that has drifted from its contract, which is said
+    rather than served -- so the run falls back to the configured rules and says so. The
+    fetch module is imported where it is read, not at the top of the simulator.
+    """
+    from hub.contracts import ContractViolation
+    from hub.fetch import pool as fetch_pool
+    try:
+        state = fetch_pool.read_state(store)
+    except ContractViolation as e:
+        return None, None, (f"field from the configured rules: the last-known pool state "
+                            f"is refused ({e})")
+    if state is None:
+        return None, None, "field from the configured rules: no pool state read"
+    if state.season != season:
+        return None, None, (f"field from the configured rules: the last-known pool state "
+                            f"is season {state.season}'s, no pool state read for {season}")
+    read = fetch_pool.captured_at(store) or "an unrecorded moment"
+    digest = fetch_pool.state_digest(state)
+    return state, digest, (f"field from the pool host, read {read} as of its week "
+                           f"{state.week}: {state.alive} alive of {state.field_size}, pot "
+                           f"${state.pot:.2f}, state {digest}")
+
+
 def axis_report(by_k: dict[float, Weekly], *, places: int = 2) -> list[str]:
     """The week's figure as a range over the concentration knob, which is the published form.
 
@@ -2061,9 +2271,31 @@ def axis_report(by_k: dict[float, Weekly], *, places: int = 2) -> list[str]:
     return out
 
 
+def _unrecorded(prior: Sequence[Mapping[str, Any]], behind: Sequence[int], season: int,
+                base: Path | None) -> list[int]:
+    """The weeks behind us that neither the journal nor the published plan holds a pick for.
+
+    A pick of record is a journal row of kind `pick` for the week, or a published row
+    naming a team in it; the envelope's week-0 ledger rows say a team is spent and not in
+    which week, so they cannot vouch for one. A journal that cannot be read vouches for
+    nothing, which errs toward the warning.
+    """
+    from hub.season import journal
+    planned = {int(r["week"]) for r in prior
+               if r.get("team") and r.get("week") is not None and not r.get("ledger")
+               and r.get("season") in (None, season)}
+    try:
+        rows = journal.read(season, base=base)
+        recorded = set(rows.filter(pl.col("kind") == "pick")["week"].to_list())
+    except Exception:
+        recorded = set()
+    return [w for w in behind if w not in planned and w not in recorded]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     from hub.cli import unavailable
     from hub.config import SEASON_AHEAD, resolved_config
+    from hub.fetch import pool as fetch_pool
     from hub.season import journal
     from hub.season import survivor as sv
 
@@ -2098,7 +2330,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--record", action="store_true",
                     help="write the decision to the journal, at the configured concentration")
     ap.add_argument("--chose", default=None,
-                    help="what was actually entered, if not the recommendation (--record)")
+                    help="what was actually entered, if not the recommendation (--record); "
+                         f"two teams in a double-pick week as KC{PAIR}SF")
     ap.add_argument("--store", type=Path, default=None,
                     help="the processed store the journal is read from and written to")
     a = ap.parse_args(argv)
@@ -2110,22 +2343,57 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _last_good(a.season, a.week, a.store, e)
 
     behind = sv.played(grid)
-    weeks = [w for w in drawable_weeks(grid, cfg, sv.NFL_WEEKS) if w not in behind]
+    drawable = drawable_weeks(grid, cfg, sv.NFL_WEEKS)
+    weeks = [w for w in drawable if w not in behind]
+    # A week the clock has entered is behind (#263): its pick is locked with the Pool and
+    # the published plan's team for it is spent, so it is not decided by default. Named, it
+    # can still be priced on the fixtures ahead of the clock -- the Sunday pick after a
+    # Thursday game -- and `weekly` offers no team whose game has kicked off.
+    still = {int(w) for w in forecastable(grid)["week"].to_list()}
+    partial = [w for w in drawable if w in behind and w in still]
     week = a.week if a.week is not None else (weeks[0] if weeks else None)
-    if week is None or (week not in weeks and not a.eliminated):
+    if week is None or (week not in weeks and week not in partial and not a.eliminated):
         return unavailable(
             "hub.season.pool", f"a priced week to decide in the {a.season} schedule",
             UnpricedWeek(f"week {week} is not among the weeks the board can play: "
                          f"{weeks or 'none'}"))
+    # The field as the pool host last reported it (#280): the live count, the pot and our
+    # Ledger come from there when a state has been read, and the run says which read. The
+    # configured rules are the fallback for a fresh clone, as they always were; a state
+    # that has drifted from its contract is said and not served. `--entries` and `--pot`
+    # stated by hand still win, and the row still names the read they were stated over.
+    field, field_digest, field_read = _field(a.store, a.season)
     # Eliminated, we are not among the live: `buyback` counts ours back in itself, so the
     # default field there is one smaller, or the default run priced a field one larger
-    # than the pool (review 2026-09-12).
-    entries = (a.entries if a.entries is not None
-               else cfg.field_size - (1 if a.eliminated else 0))
-    pot = a.pot if a.pot is not None else cfg.entry_fee * cfg.field_size
+    # than the pool (review 2026-09-12). Off the host's state that is the live count less
+    # ours where the host still lists ours as live.
+    if a.entries is not None:
+        entries = a.entries
+    elif field is not None:
+        # Ours by its index, as every reader of the state finds it, not by position.
+        ours = next((e for e in field.entries if e.index == fetch_pool.OUR_INDEX), None)
+        entries = field.alive - (1 if a.eliminated and ours is not None and ours.alive else 0)
+    else:
+        entries = cfg.field_size - (1 if a.eliminated else 0)
+    pot = a.pot if a.pot is not None else (
+        field.pot if field is not None else cfg.entry_fee * cfg.field_size)
     outlay = a.outlay if a.outlay is not None else cfg.entry_fee
+    # The one reading of the Ledger: the published plan and the host's state through
+    # `survivor.prior_rows`, so this and the published plan cannot spend different teams.
+    prior = sv.prior_rows(a.season, store=a.store)
     ledger = ([t.strip() for t in a.ledger.split(",") if t.strip()] if a.ledger is not None
-              else sv.spent_teams(sv.published_plan(), behind, season=a.season))
+              else sv.spent_teams(prior, behind, season=a.season))
+    # A week the clock has entered is behind and not decided by default (#263), which is
+    # right for a locked pick and silent for a missed deadline: the run moved on to the
+    # next week with nothing spent and nothing said (review 2026-09-12). Every week behind
+    # with no pick of record -- no journal row, no published row for it -- is named here,
+    # loudly, so a Thursday missed is read on Friday rather than found in October.
+    for w in _unrecorded(prior, behind, a.season, a.store):
+        print(f"hub.season.pool: WARNING week {w} has started and has no pick of record -- "
+              "nothing in the decision journal and no published row for it. If a pick was "
+              f"entered, record it (`--week {w} --record --chose TEAM`); if the deadline "
+              "was missed, the Pool has assigned or eliminated this entry and nothing here "
+              "knows which.", file=sys.stderr)
     axis = _axis(a.at)
     # One seed for every point on the axis and both kinds of decision, so a row recorded
     # from here can be run again from its own columns (#162) and two points on the axis
@@ -2135,6 +2403,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  survivor pool, {a.season} week {week}: {entries} entries, pot ${pot:.2f}, "
           f"{plural(len(ledger), 'team')} spent"
           + (f" ({', '.join(ledger)})" if ledger else ""))
+    print(f"  {field_read}")
     print(f"  rules {pool_digest(cfg)}  board {grid_digest(grid)}  seed {seed}  "
           f"{a.trials} trials per candidate; field concentration {cfg.field_concentration} "
           f"is the configured point, reported across {', '.join(str(k) for k in axis)}")
@@ -2162,7 +2431,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                expected_dollars=here.net if here.available else None,
                                pool_digest=pool_digest(cfg), grid_digest=grid_digest(grid),
                                seed=seed, trials=a.trials, entries=entries, pot=pot,
-                               outlay=outlay, base=a.store)
+                               outlay=outlay, pool_state_digest=field_digest, base=a.store)
             print(f"  recorded {k}")
         return 0
 
@@ -2186,7 +2455,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         print(f"  {LEVERAGE}")
     if a.record:
-        k = journal.record_weekly(here, season=a.season, chose=a.chose, base=a.store)
+        k = journal.record_weekly(here, season=a.season, chose=a.chose,
+                                  pool_state_digest=field_digest, base=a.store)
         print(f"  recorded {k}")
     return 0
 

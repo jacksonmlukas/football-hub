@@ -189,6 +189,14 @@ Season-long survival for a plan of eighteen such favourites, beside the current 
 ticket asked: **Gaussian 0.0099, lumpy 0.0071, realised 0.0206.** The corrected model is lower,
 as #185 pre-registered — and it is lower because it is *further from the truth*, not closer.
 
+> **Labelled 2026-09-12 (#286).** Those three are the favourites row raised to the
+> eighteenth power: an independence bound — one rate every week, weeks independent, off the
+> 732 games in the row — and not a measurement of any plan. They carry no interval because
+> the sampling error on the rate is the smaller of the figure's two errors and the other is
+> the assumption. `hub.models.margin.survival_line` prints them under that label now; the
+> comparison between the three, which is what the paragraph above reads off them, does not
+> depend on the assumption, since all three make it.
+
 ## Why, and this is the finding
 
 A game whose line sits on 3 or 7 does price differently under the lumpy distribution: a

@@ -78,6 +78,20 @@ def _no_secret_in(text: str, where: str) -> None:
     assert COOKIE[:24] not in text, f"a prefix of the session cookie reached {where}"
 
 
+def _stored_text(store: Path) -> list[tuple[Path, str]]:
+    """Every file under the store as text a scan can read: a parquet partition through
+    polars, since a byte scan of a columnar file is not a check; anything else as written.
+    The archive (#280) is what made the store hold parquet at all."""
+    import polars as pl
+    out = []
+    for p in sorted(q for q in store.rglob("*") if q.is_file()):
+        if p.suffix == ".parquet":
+            out.append((p, pl.read_parquet(p).write_json()))
+        elif p.suffix != ".duckdb":
+            out.append((p, p.read_text()))
+    return out
+
+
 # --- 1. a payload missing a required field is refused, not partially served ---------------
 
 def test_a_payload_missing_a_required_field_is_refused_and_nothing_partial_is_written(
@@ -267,10 +281,10 @@ def test_the_cookie_comes_from_the_environment_and_reaches_no_artifact_or_messag
 
     out = capsys.readouterr()
     _no_secret_in(out.out + out.err, "stdout or stderr")
-    files = [p for p in store.rglob("*") if p.is_file()]
+    files = _stored_text(store)
     assert files, "nothing was written, so nothing was searched"
-    for f in files:
-        _no_secret_in(f.read_text(), str(f))
+    for f, text in files:
+        _no_secret_in(text, str(f))
 
 
 def test_the_cookie_is_read_through_dotenv_like_every_other_credential(monkeypatch):
@@ -290,9 +304,9 @@ def test_entry_identifiers_are_replaced_with_an_internal_index_before_caching(
     nothing under the store carries either, and the Ledger is addressed by index."""
     transport()
     assert pool.main(["--refresh", "--store", str(store)]) == 0
-    files = [p for p in store.rglob("*") if p.is_file()]
-    assert files
-    text = "\n".join(p.read_text() for p in files)
+    files = _stored_text(store)
+    assert files and any(p.suffix == ".parquet" for p, _ in files), "the archive is scanned too"
+    text = "\n".join(t for _, t in files)
     for member in ("ent-884", "Member A", "Member B", "Member C", "Member D", "Member E",
                    "Survivor 2026", "pool-0001"):
         assert member not in text, f"{member!r} reached the store"
@@ -424,6 +438,89 @@ def test_the_stored_state_reads_back_as_it_was_written(store):
     state = parse(payload())
     pool.write_state(state, store)
     assert pool.read_state(store) == state
+
+
+def _later(p: dict, *, week: int, pot: float, alive: int) -> dict:
+    """The fixture a week on: the host's week advanced, the pot grown, `alive` entries left.
+    Members from the end of the list are the ones marked out."""
+    q = copy.deepcopy(p)
+    q["pool"]["current_week"], q["pool"]["pot"] = week, pot
+    q["weeks"] = [{"week": w, "status": "final"} for w in range(1, week)] + [
+        {"week": week, "status": "open"}]
+    for e in q["entries"]:
+        e["picks"] = [k for k in e["picks"] if k["week"] < week]
+    for e in q["entries"][alive:]:
+        e["alive"] = False
+    return q
+
+
+# --- the archive (#280): one partition per read, append-only, hashed -----------------------
+
+def test_each_read_is_archived_under_its_week_with_its_capture_time_and_none_is_rewritten(
+        store):
+    """The state file is overwritten every refresh -- one capture time, no history -- so the
+    field a week-3 decision was priced against was gone the moment week 4 was fetched. Every
+    write now also lands a dated partition under the week, in the layout the lines archive
+    uses, and a second write of the same moment with different contents is refused rather
+    than rewritten."""
+    import datetime as dt
+    first = parse(payload())
+    t1 = dt.datetime(2026, 9, 17, 9, 0, tzinfo=dt.UTC)
+    pool.write_state(first, store, when=t1)
+    later = parse(_later(payload(), week=4, pot=140.0, alive=3))
+    t2 = dt.datetime(2026, 9, 24, 9, 0, tzinfo=dt.UTC)
+    pool.write_state(later, store, when=t2)
+
+    parts = sorted(p.relative_to(store).as_posix() for p in store.rglob("*.parquet"))
+    assert parts == [
+        "pool_state/league=nfl/season=2026/week=03/snap-20260917T090000000000.parquet",
+        "pool_state/league=nfl/season=2026/week=04/snap-20260924T090000000000.parquet"]
+    assert pool.read_state(store) == later, "the state file still serves the latest read"
+    got = pool.archived(2026, base=store)
+    assert [(c, s) for c, s in got] == [(t1.replace(tzinfo=None), first),
+                                        (t2.replace(tzinfo=None), later)]
+    with pytest.raises(FileExistsError):
+        pool.write_state(later._replace(pot=141.0), store, when=t2)
+    assert pool.read_state(store) == later, "a refused archive write left the state file alone"
+    assert pool.archived(2026, base=store, week=4) == [(t2.replace(tzinfo=None), later)]
+    assert pool.archived(2025, base=store) == []
+
+
+def test_a_state_digest_names_one_field_and_finds_it_in_the_archive(store):
+    """The hash a journal row carries: eight hex characters over what the state says --
+    week, field size, pot, every entry's index, liveness and Ledger -- the same across a
+    round trip through the archive, and different for a field that differs by a dollar.
+    `archived_state` is how a row's digest is resolved back to the field it named."""
+    import datetime as dt
+    first = parse(payload())
+    d = pool.state_digest(first)
+    assert len(d) == 8 and int(d, 16) >= 0
+    assert pool.state_digest(first._replace(pot=first.pot + 1.0)) != d
+    assert pool.archived_state(d, season=2026, base=store) is None, "nothing archived yet"
+    pool.write_state(first, store, when=dt.datetime(2026, 9, 17, 9, 0, tzinfo=dt.UTC))
+    later = parse(_later(payload(), week=4, pot=140.0, alive=3))
+    pool.write_state(later, store, when=dt.datetime(2026, 9, 24, 9, 0, tzinfo=dt.UTC))
+    back = pool.archived_state(d, season=2026, base=store)
+    assert back is not None and back == first and pool.state_digest(back) == d
+    assert pool.archived_state(pool.state_digest(later), season=2026, base=store) == later
+    assert pool.read_state(store) == later != first
+
+
+def test_the_archive_carries_an_index_and_never_a_name(store, session, transport):
+    """The privacy design, kept: a partition holds exactly what the contract validated plus
+    the capture time, so nothing a member could be recognised by is on disk in the archive
+    either. Read as parquet, since a byte scan of a columnar file is not a check."""
+    import polars as pl
+    transport()
+    assert pool.main(["--refresh", "--store", str(store)]) == 0
+    files = list(store.rglob("*.parquet"))
+    assert files
+    for p in files:
+        df = pl.read_parquet(p)
+        assert set(df.columns) == {"entry", "alive", "used", "field_size", "pot", "captured_at"}
+        text = df.write_json()
+        for member in ("ent-884", "Member", "Survivor 2026", "pool-0001"):
+            assert member not in text, f"{member!r} reached the archive"
 
 
 def test_a_stored_state_is_validated_by_the_contract_on_the_way_out(store):

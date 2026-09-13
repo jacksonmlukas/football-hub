@@ -69,7 +69,7 @@ from typing import Any
 import polars as pl
 
 from hub import store
-from hub.season.pool import Weekly, plural
+from hub.season.pool import Weekly, pick_name, pick_teams, plural
 
 # Two tables, not two schemas in one. The store builds a view per directory, and a
 # directory holding partitions of differing shape has no single view to build -- a
@@ -104,12 +104,21 @@ SCHEMA: dict[str, Any] = {
     "fallback": pl.Utf8,        # what auto-pick would have done for free
     "fallback_note": pl.Utf8,   # why there is none, when there is none
     "matched_fallback": pl.Boolean,
-    "market_price": pl.Float64,  # the taken team's win probability when we decided, in
-                                 # [0, 1]; null if unposted. One unit (#239): a caller
-                                 # holding a moneyline converts it through
+    "market_price": pl.Float64,  # the taken pick's win probability on the week when we
+                                 # decided, in [0, 1]; null if unposted. One unit (#239):
+                                 # a caller holding a moneyline converts it through
                                  # `hub.models.props.implied` before writing and says so
                                  # in `price_note`. Rows written before #239 carry
                                  # whichever unit their caller used and are not migrated.
+                                 # **On a double-pick week it is the joint probability**
+                                 # (#256): `chose` spells two teams and this is the
+                                 # product of their two prices, as `fallback_price` is the
+                                 # free pair's -- so `week_cost` stays a difference of two
+                                 # like quantities. A read over the journal that wants a
+                                 # per-team price splits `chose` with
+                                 # `hub.season.pool.pick_teams`; the team count is on the
+                                 # row already, which is why there is no `picks` column
+                                 # beside this to disagree with it.
     "price_note": pl.Utf8,      # which source it came from, or why it is null
     "expected_dollars": pl.Float64,
     "chose_survives": pl.Float64,      # P(the season is survived, having taken what we took)
@@ -135,13 +144,19 @@ SCHEMA: dict[str, Any] = {
     "pot": pl.Float64,
     "outlay": pl.Float64,              # what `expected_dollars` is net of
     "plan_source": pl.Utf8,            # `Plan.source`: the optimiser, or the fallback
+    # The field itself (#280): `hub.fetch.pool.state_digest` of the pool state `entries`,
+    # `pot` and our Ledger were read from, which the archive under `data/processed/`
+    # resolves back to every rival's Ledger and the live count as they stood. Null where
+    # the field was stated by hand -- `--entries` and `--pot` typed, no state read -- which
+    # is a row priced against a field nothing archived, and the null says so.
+    "pool_state_digest": pl.Utf8,
 }
 
 # The columns a row needs to be re-derived, in one place. `read` fills them with nulls on a
 # store written before they existed rather than failing to select them, and a row whose
 # `pool_digest` is null is one no re-run can be checked against.
 RERUN_COLUMNS = ("pool_digest", "grid_digest", "seed", "trials", "entries", "pot",
-                 "outlay", "plan_source")
+                 "outlay", "plan_source", "pool_state_digest")
 
 OUTCOME_SCHEMA: dict[str, Any] = {
     "key": pl.Utf8,
@@ -291,7 +306,7 @@ def record(*, season: int, week: int, kind: str, chose: str,
            pool_digest: str | None = None, grid_digest: str | None = None,
            seed: int | None = None, trials: int | None = None, entries: int | None = None,
            pot: float | None = None, outlay: float | None = None,
-           plan_source: str | None = None,
+           plan_source: str | None = None, pool_state_digest: str | None = None,
            at: datetime | None = None, base: Path | None = None) -> str:
     """Append one decision. Returns its key, which is how the outcome finds it later.
 
@@ -315,6 +330,11 @@ def record(*, season: int, week: int, kind: str, chose: str,
     refused is *pretending*: a row carrying some of them and not others would read as
     reproducible to a query on any one column, so either every one of them is present or
     none is. `record_weekly` supplies all of them off `pool.Weekly`.
+
+    `pool_state_digest` stands outside that all-or-none (#280): it names the archived field
+    `entries`, `pot` and the Ledger were read from, and a row priced against a field stated
+    by hand has none to name. The null is that claim, and `hub.fetch.pool.archived_state`
+    is what resolves a digest back to the field.
     """
     # `plan_source` labels the survivor plan and is no input to the re-run, and a buyback has no
     # plan; the seven that follow are what `pool.weekly` has to be handed to land on the row's
@@ -361,6 +381,7 @@ def record(*, season: int, week: int, kind: str, chose: str,
         "pool_digest": [pool_digest], "grid_digest": [grid_digest],
         "seed": [seed], "trials": [trials], "entries": [entries],
         "pot": [pot], "outlay": [outlay], "plan_source": [plan_source],
+        "pool_state_digest": [pool_state_digest],
     }, schema=SCHEMA)
     store.write(row, TABLE, LEAGUE, season, week, name=k, base=base)
     return k
@@ -368,6 +389,7 @@ def record(*, season: int, week: int, kind: str, chose: str,
 
 def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
                   credits_before: float | None = None, credits_after: float | None = None,
+                  pool_state_digest: str | None = None,
                   at: datetime | None = None, base: Path | None = None) -> str:
     """Record a week `hub.season.pool.weekly` priced. The caller ADR-0014's duty was missing.
 
@@ -408,7 +430,11 @@ def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
     every time anybody asked what a week was worth.
     """
     by_team = {c.team: c for c in w.candidates}
-    took = chose if chose is not None else w.recommend
+    # A double-pick week's candidate is a pair spelled by `pool.pick_name` (#256), and an
+    # operator typing `SF+KC` meant the same pick as `KC+SF`; a single team is its own name.
+    # The row's `chose` then carries both teams, and `market_price` their product, which is
+    # the pick's win probability on the week and the unit `week_cost` is stated in.
+    took = pick_name(pick_teams(chose)) if chose is not None else w.recommend
     if took not in by_team:
         raise ValueError(
             f"week {w.week}: {took!r} is not one of the teams this week priced "
@@ -436,6 +462,9 @@ def record_weekly(w: Weekly, *, season: int, chose: str | None = None,
         pool_digest=w.pool_digest, grid_digest=w.grid_digest, seed=w.seed,
         trials=w.trials, entries=w.entries, pot=w.pot, outlay=w.outlay,
         plan_source=by_team[took].plan_source or None,
+        # The field is not on `Weekly` -- it prices what it is handed -- so the caller that
+        # read the pool state names it (#280); `hub.season.pool.main` does.
+        pool_state_digest=pool_state_digest,
         at=at, base=base)
 
 

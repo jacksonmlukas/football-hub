@@ -94,6 +94,49 @@ def published_plan(path: Path | None = None) -> list[dict]:
     return out
 
 
+def prior_rows(season: int, path: Path | None = None, store: Path | None = None) -> list[dict]:
+    """Everything `spent_teams` reads about this entry, from the two records that hold it.
+
+    **The one reading of the Ledger** (#280). The default Ledger for a run came from the
+    published plan alone -- not the fetched pool state, not the journal -- while the pool
+    fetch kept its own reading of what our entry had spent and the journal a third of what
+    was chosen: three sources for one Ledger, read by no single function. This is that
+    function, and `hub.publish.survivor`, `survivor.main` and `hub.season.pool.main` all
+    take their history from it.
+
+    Two records, because they hold different halves and neither holds the other's. The
+    host's Ledger for our entry -- `hub.fetch.pool.read_state`, index 0 -- is what was
+    *entered and settled*: a pick counts there once its week is final, and a team we
+    deviated onto is there where the published plan never knew it. That plan's rows are what
+    is *locked and not yet settled*: the pick for a week the clock has entered (#263), which
+    the host will not list as spent until the week resolves. Both arrive as rows in the
+    shape `published_plan` already hands over -- the host's as week-0 ledger rows, the
+    same spelling the envelope's own `spent` takes -- and `spent_teams` unions them, so a
+    team in either is spent. The journal is not a source: it records what was chosen and
+    is written after the fact, and `hub.season.pool.main` reads this before it writes there.
+
+    A state from another season contributes nothing, for the reason `spent_teams` scopes
+    rows to one; no state is no history, as no artifact is; a state that has drifted from
+    its contract is said on stderr and skipped, rather than served as a Ledger or allowed
+    to take the remaining plan down with it.
+    """
+    from hub.contracts import ContractViolation
+    from hub.fetch import pool as fetch_pool
+    rows = published_plan(path)
+    try:
+        state = fetch_pool.read_state(store)
+    except ContractViolation as e:
+        print(f"hub.season.survivor: the last-known pool state is not read as a Ledger "
+              f"({e})", file=sys.stderr)
+        return rows
+    if state is None or state.season != season:
+        return rows
+    ours = next((e for e in state.entries if e.index == fetch_pool.OUR_INDEX), None)
+    if ours is None:
+        return rows
+    return rows + [{"week": 0, "team": t, "ledger": True, "season": season} for t in ours.used]
+
+
 def _solver():
     """Prefer COIN_CMD, fall back to the bundled CBC.
 
@@ -229,18 +272,28 @@ def solve(grid: pl.DataFrame, weeks: Sequence[int] | None = None,
 
 
 def played(grid: pl.DataFrame, at: datetime | None = None) -> list[int]:
-    """Weeks the season has already run: in the grid, and absent from what is ahead.
+    """Weeks the season has reached: any game in them has kicked off or has a result.
 
-    Derived by difference rather than by comparing a week number to a date, because the two
-    would disagree the first time a week straddled a boundary -- and because
-    `schedule.forecastable` is then the only place the rule is written. This module wrapped
-    that call as `forthcoming` for a while, under a docstring saying the rule was
-    "unchanged and unrestated" while the name restated it; `docs/agents/domain.md` is
-    specific about not drifting to a synonym, so the wrapper is gone and its callers ask
-    `hub.schedule` directly.
+    **Any game, not every game** (#263). A week was behind only once nothing in it was still
+    ahead, so on a Saturday the week with Thursday's game already played was *ahead*:
+    `plan_remaining` re-solved it and could publish a pick different from the one already
+    locked with the Pool before Thursday's kickoff. A week the clock has entered is a week
+    whose pick is locked, whatever is still to be played in it -- so it is behind the
+    remaining plan, its published pick is kept as spent, and it is not a week to cover. The
+    teams still ahead of the clock in it are `weekly`'s and `auto_pick`'s business, not this
+    plan's.
+
+    Derived from `schedule.forecastable` rather than by comparing a week number to a date,
+    because the two would disagree the first time a week straddled a boundary -- and because
+    that is then the only place the rule is written. This module wrapped that call as
+    `forthcoming` for a while, under a docstring saying the rule was "unchanged and
+    unrestated" while the name restated it; `docs/agents/domain.md` is specific about not
+    drifting to a synonym, so the wrapper is gone and its callers ask `hub.schedule` directly.
     """
-    ahead = set(schedule.forecastable(grid, at)["week"].to_list())
-    return sorted({int(w) for w in grid["week"].to_list()} - {int(w) for w in ahead})
+    ahead = schedule.forecastable(grid, at)
+    whole = {int(w): int(n) for w, n in grid.group_by("week").len().iter_rows()}
+    still = {int(w): int(n) for w, n in ahead.group_by("week").len().iter_rows()}
+    return sorted(w for w, n in whole.items() if still.get(w, 0) < n)
 
 
 def spent_teams(prior: Sequence[Mapping[str, Any]], weeks: Sequence[int],
@@ -577,8 +630,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as e:
         return unavailable("hub.season.survivor", f"the {a.season} schedule and its prices", e)
     try:
-        # The same call `hub.publish.survivor` makes, which is the point of it existing.
-        got = plan_remaining(grid, a.season, prior=published_plan(),
+        # The same call `hub.publish.survivor` makes, which is the point of it existing;
+        # the history from `prior_rows`, the one reading of the Ledger (#280).
+        got = plan_remaining(grid, a.season, prior=prior_rows(a.season),
                              season_weeks=a.weeks)
     except Infeasible as e:
         print(f"hub.season.survivor: {e}", file=sys.stderr)
@@ -590,8 +644,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  survivor plan, {a.season}, {len(cov.covered)} of "
           f"{len(cov.covered) + len(cov.missing)} remaining weeks priced")
     if got.played:
-        print(f"  {len(got.played)} week(s) already played and absent from this plan: "
-              + ", ".join(f"wk {w}" for w in got.played))
+        # Played, or under way: a week with one game kicked off is behind this plan too,
+        # its pick locked with the Pool (#263).
+        print(f"  {len(got.played)} week(s) already played or under way, and absent from "
+              "this plan: " + ", ".join(f"wk {w}" for w in got.played))
     if got.spent:
         print(f"  unavailable, already spent: {', '.join(got.spent)}")
     for r in got.picks.iter_rows(named=True):
