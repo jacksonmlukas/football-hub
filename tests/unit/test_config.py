@@ -933,8 +933,18 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     constant declares its own coverage where it is written (`hub.declare`), and the walk
     finds exactly the forty-eight the lists found. Recorded here because a pin that only
     speaks when it moves cannot say that a rewrite of what feeds it was a no-op.
+
+    **Moved again 2026-09-12 (#253): `a1e669b9` -> `432c6b3c`**, `fitted_digest` `9be7844c`
+    -> `429481db`. Four names entered: `components.PER_UNIT_CV`, `YARDS_PER_UNIT`,
+    `COUNT_DISPERSION` and `TD_DISPERSION`, the dispersions `hub.models.props` prices a
+    published prop from. They were argued out of the digest -- "no points prediction reads
+    it" -- while `props.version()` carried them in a second hash of its own, so one model
+    version said less than the predictions stamped with it; now they are declared covered
+    where they are written and `props.version()` is the one digest. **A coverage correction
+    and not a model change**: no constant was refitted and nothing any run computes differs
+    on either side of this commit.
     """
-    assert config_digest(HubConfig()) == "a1e669b9"
+    assert config_digest(HubConfig()) == "432c6b3c"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

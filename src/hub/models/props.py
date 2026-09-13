@@ -63,7 +63,6 @@ payload someone has already chosen to pay for.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import math
 import sys
 from collections.abc import Mapping, Sequence
@@ -571,15 +570,13 @@ def scorecard(card_rows: pl.DataFrame, close: pl.DataFrame,
 
 
 def version() -> str:
-    """What identifies a prop price: the fitted constants, plus the four dispersions.
+    """What identifies a prop price: the one model version.
 
-    The dispersions are out of `hub.config.NOT_IN_DIGEST`'s digest because no points
-    prediction reads them; this module does, and is a published prediction of its own, so
-    they are folded in here -- which is what the entry there now says.
+    The four dispersions this module prices from (`hub.models.components`) were out of the
+    digest and folded in here as a second hash until #253; they are declared covered where
+    they are written now, so this is `fitted_digest` and nothing beside it.
     """
-    tables = (C.PER_UNIT_CV, C.YARDS_PER_UNIT, C.COUNT_DISPERSION, C.TD_DISPERSION)
-    text = "|".join(repr(sorted(t.items())) for t in tables)
-    return f"{MODEL}-{fitted_digest()}-{hashlib.sha256(text.encode()).hexdigest()[:8]}"
+    return f"{MODEL}-{fitted_digest()}"
 
 
 def write_log(log: pl.DataFrame, season: int, week: int, *,
