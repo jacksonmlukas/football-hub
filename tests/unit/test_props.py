@@ -194,7 +194,9 @@ def test_the_side_is_where_our_probability_beats_the_vig_free_implied():
     over = _rec_yds(props.card(_players(), low, decided_at=T0, n=4000))
     under = _rec_yds(props.card(_players(), high, decided_at=T0, n=4000))
     assert over["side"] == props.OVER and over["edge"] > 0.2
-    assert under["side"] == props.UNDER and under["edge"] > 0.2
+    assert under["side"] == props.UNDER and under["edge"] < -0.2, (
+        "edge is signed toward the Over (#275): a folded edge is positive under a pure "
+        "null, and selecting on it selects on noise")
 
 
 def test_the_edge_is_against_the_vig_free_price_not_the_charged_one():
@@ -206,7 +208,7 @@ def test_the_edge_is_against_the_vig_free_price_not_the_charged_one():
                 _poll("Justin Jefferson", "player_reception_yds", median, over, under)),
                 decided_at=T0))
             for over, under in ((-110, -110), (-105, -105), (100, 100), (-120, -120))]
-    assert rows[0]["edge"] < 0.03
+    assert abs(rows[0]["edge"]) < 0.03
     assert len({r["side"] for r in rows}) == 1
     assert len({round(r["edge"], 9) for r in rows}) == 1, \
         "four quotes at the same vig-free 50% are one quote; only the charge differs"
@@ -291,6 +293,43 @@ def test_clv_in_probability_is_the_vig_free_move_on_our_side():
     assert under["clv_prob"] == pytest.approx(q_dec - q_close, abs=1e-6)
 
 
+def test_a_point_move_toward_us_at_unchanged_prices_is_positive_clv_in_probability():
+    """#275: `clv_prob` differenced two vig-free probabilities each taken at its own
+    point, so a line moving three yards toward us at unchanged prices read as unmoved --
+    on the five of seven markets that carry a point, the channel that carries the
+    information. The close's point is now translated onto the decision's through our own
+    distribution: the mass our draws put between the two points is what the market
+    conceded by moving."""
+    over = _priced(40.5, 44.5)
+    assert over["side"] == props.OVER and over["clv_points"] == pytest.approx(4.0)
+    ours = props.Pricer(_players(), n=4000)
+    at_dec, at_close = ours.p_over_at(props.player_key("Justin Jefferson"), "player_reception_yds", 40.5), \
+        ours.p_over_at(props.player_key("Justin Jefferson"), "player_reception_yds", 44.5)
+    assert at_dec is not None and at_close is not None and at_dec > at_close
+    assert over["our_p_over_close"] == pytest.approx(at_close, abs=1e-9)
+    assert over["clv_prob"] == pytest.approx(at_dec - at_close, abs=1e-6)
+    assert over["clv_prob"] > 0
+    under = _priced(120.5, 124.5)
+    assert under["side"] == props.UNDER and under["clv_prob"] < 0
+
+
+def test_a_prop_whose_price_and_point_are_both_unchanged_reads_as_unmoved():
+    row = _priced(40.5, 40.5)
+    assert row["clv_points"] == 0.0 and row["clv_prob"] == 0.0
+
+
+def test_a_point_move_and_a_price_move_add():
+    """Price moves toward us and the point moves toward us: both are conceded."""
+    q_dec, q_close = props.novig_over(-120, 100), props.novig_over(-130, 110)
+    assert q_dec is not None and q_close is not None
+    ours = props.Pricer(_players(), n=4000)
+    at_dec, at_close = ours.p_over_at(props.player_key("Justin Jefferson"), "player_reception_yds", 40.5), \
+        ours.p_over_at(props.player_key("Justin Jefferson"), "player_reception_yds", 44.5)
+    assert at_dec is not None and at_close is not None
+    over = _priced(40.5, 44.5, over=-120, under=100, close_over=-130, close_under=110)
+    assert over["clv_prob"] == pytest.approx((q_close - q_dec) + (at_dec - at_close), abs=1e-6)
+
+
 def test_the_close_can_be_read_as_of_kickoff():
     polls = _polls(_poll("Justin Jefferson", "player_receptions", 5.5, -110, at=_at(0)),
                    _poll("Justin Jefferson", "player_receptions", 6.5, -110, at=_at(10)),
@@ -319,11 +358,12 @@ def test_the_version_moves_with_the_dispersions_this_module_reads(monkeypatch):
 # --- the report ----------------------------------------------------------------------
 
 def _log_row(player, market, clv_pts, clv_prob, *, our=None, close=None, status=props.PRICED,
-             decided=T0):
-    return {"game_id": "g", "player_key": props.player_key(player), "player": player,
+             decided=T0, game="g"):
+    return {"game_id": game, "player_key": props.player_key(player), "player": player,
             "position": "WR", "market": market, "stat": props.MARKET_STATS[market],
             "status": status, "decided_at": decided, "our_mean": our, "our_sd": 10.0,
-            "our_p50": our, "our_p_over": 0.5, "side": props.OVER, "edge": 0.05,
+            "our_p50": our, "our_p_over": 0.5, "our_p_over_close": 0.5,
+            "side": props.OVER, "edge": 0.05,
             "decision_point": None if close is None else close - clv_pts,
             "decision_over_price": -110.0, "decision_under_price": -110.0,
             "decision_captured_at": decided, "decision_polls_unmoved": 1,
@@ -341,28 +381,41 @@ def _log(*rows) -> pl.DataFrame:
         "version": pl.Utf8})
 
 
-def test_the_error_is_taken_over_players_not_props():
-    """`docs/method.md` rule 3. Six props on one player at +1 and one on another at -1 are
-    two observations of a process, not seven: the mean over players is zero and the mean
-    over props would be +0.71."""
-    rows = [_log_row("A", "player_reception_yds", 1.0, 0.01, our=70, close=71 + i)
-            for i in range(6)]
-    rows.append(_log_row("B", "player_reception_yds", -1.0, -0.01, our=70, close=69))
+def test_the_error_is_taken_over_games_not_props():
+    """`docs/method.md` rule 3. Six props on one game at +1 and one in another at -1 are
+    two observations of a process, not seven: the mean over games is zero and the mean
+    over props would be +0.71. The cluster is the game and not the player (#275): two
+    players in one game share its script as hard as one player's markets do."""
+    rows = [_log_row("A", "player_reception_yds", 1.0, 0.01, our=70, close=71 + i,
+                     game="g1") for i in range(3)]
+    rows += [_log_row("A2", "player_reception_yds", 1.0, 0.01, our=70, close=71 + i,
+                      game="g1") for i in range(3)]
+    rows.append(_log_row("B", "player_reception_yds", -1.0, -0.01, our=70, close=69,
+                         game="g2"))
     got = props.clv_by_market(_log(*rows)).filter(pl.col("market") == "player_reception_yds")
     r = got.row(0, named=True)
-    assert r["props"] == 7 and r["players"] == 2
+    assert r["props"] == 7 and r["games"] == 2
     assert r["clv_points"] == pytest.approx(0.0)
     assert r["clv_prob"] == pytest.approx(0.0)
     assert r["se_points"] == pytest.approx(1.0)      # sd of (+1, -1) over sqrt(2)
 
 
+def test_a_row_with_no_game_clusters_on_its_player():
+    rows = [_log_row("A", "player_reception_yds", 1.0, 0.01, our=70, close=71, game=None),
+            _log_row("A", "player_reception_yds", 1.0, 0.01, our=70, close=71, game=None),
+            _log_row("B", "player_reception_yds", -1.0, -0.01, our=70, close=69, game=None)]
+    r = (props.clv_by_market(_log(*rows)).filter(pl.col("market") == "player_reception_yds")
+              .row(0, named=True))
+    assert r["games"] == 2 and r["clv_points"] == pytest.approx(0.0)
+
+
 def test_the_ceiling_is_the_absolute_move_and_the_share_is_against_it():
     """Rule 8. A side-picker that was always right logs the whole move; we log what we
     captured of it, and the report says both."""
-    rows = [_log_row("A", "player_receptions", 1.0, 0.02, our=5, close=6),
-            _log_row("B", "player_receptions", -1.0, -0.02, our=5, close=4),
-            _log_row("C", "player_receptions", 2.0, 0.04, our=5, close=7),
-            _log_row("D", "player_receptions", 0.0, 0.0, our=5, close=5)]
+    rows = [_log_row("A", "player_receptions", 1.0, 0.02, our=5, close=6, game="g1"),
+            _log_row("B", "player_receptions", -1.0, -0.02, our=5, close=4, game="g2"),
+            _log_row("C", "player_receptions", 2.0, 0.04, our=5, close=7, game="g3"),
+            _log_row("D", "player_receptions", 0.0, 0.0, our=5, close=5, game="g4")]
     r = (props.clv_by_market(_log(*rows)).filter(pl.col("market") == "player_receptions")
               .row(0, named=True))
     assert r["ceiling_points"] == pytest.approx(1.0)
@@ -372,20 +425,21 @@ def test_the_ceiling_is_the_absolute_move_and_the_share_is_against_it():
     assert r["unmoved"] == 1 and r["hit"] == pytest.approx(2 / 3)
 
 
-def test_the_share_is_a_ratio_of_two_per_player_means():
-    """Review finding: the captured mean was per player (rule 3) and the ceiling was per
-    prop, so a player with many flat props diluted the denominator under a numerator he
+def test_the_share_is_a_ratio_of_two_per_game_means():
+    """Review finding: the captured mean was per cluster (rule 3) and the ceiling was per
+    prop, so a game with many flat props diluted the denominator under a numerator it
     barely touched -- one prop at +0.9 beside nine at zero read as a 500% share. Both are
-    taken over players now, so the share is bounded by what a side-picker could log."""
-    rows = [_log_row("A", "player_receptions", 9.0, 0.9, our=5, close=14)]
-    rows += [_log_row("B", "player_receptions", 0.0, 0.0, our=5, close=5) for _ in range(9)]
+    taken over games now, so the share is bounded by what a side-picker could log."""
+    rows = [_log_row("A", "player_receptions", 9.0, 0.9, our=5, close=14, game="g1")]
+    rows += [_log_row("B", "player_receptions", 0.0, 0.0, our=5, close=5, game="g2")
+             for _ in range(9)]
     r = (props.clv_by_market(_log(*rows)).filter(pl.col("market") == "player_receptions")
               .row(0, named=True))
     assert r["clv_prob"] == pytest.approx(0.45)
     assert r["ceiling_prob"] == pytest.approx(0.45)
     assert r["ceiling_points"] == pytest.approx(4.5)
     assert r["share"] == pytest.approx(1.0)
-    assert r["props"] == 10 and r["players"] == 2
+    assert r["props"] == 10 and r["games"] == 2
 
 
 def test_the_anytime_market_has_no_points_column():
