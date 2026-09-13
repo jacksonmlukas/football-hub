@@ -229,7 +229,7 @@ class PoolConfig:
     # it for a lever, and a caveat naming it makes the caveats that do decide something cheaper
     # to read past. Each returns the day the simulation can honour it.
     # How hard the simulated field crowds onto the week's best team: an exponent applied to
-    # `win_prob` before `hub.season.pool._pick` samples a rival's team. 1.0 is sampling
+    # `win_prob` before `hub.season.pool.Rival.sample` samples a rival's team. 1.0 is sampling
     # proportional to the raw probability, which is what this pool has always simulated and
     # which puts about a sixteenth of the field on the chalk team; real survivor fields
     # concentrate several times that, and concentration is what makes a field die *together*.

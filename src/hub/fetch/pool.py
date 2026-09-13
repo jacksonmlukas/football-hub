@@ -563,7 +563,18 @@ def read_state(base: Path | None = None) -> PoolState | None:
         return None
     rows = [{**{k: doc.get(k) for k in ("season", "week", "field_size", "pot")}, **e}
             for e in doc.get("entries", [])]
-    df = POOL_STATE.validate(pl.DataFrame(rows, schema=_SCHEMA))
+    try:
+        frame = pl.DataFrame(rows, schema=_SCHEMA)
+    except Exception as exc:
+        # A field of the wrong kind -- `"alive": "yes"` -- fails the frame's construction
+        # before the contract sees it, and polars' error is not a `ContractViolation`, so it
+        # used to reach the operator as a traceback out of `--status` and `--refresh` alike.
+        # It is the same fact the contract states about a drifted cache, and it is refused
+        # in the contract's words: unavailable, beside the failure it would have covered.
+        raise ContractViolation(
+            f"{POOL_STATE.name}: {STATE_FILE} does not hold the declared shape "
+            f"({type(exc).__name__}: {exc})") from exc
+    df = POOL_STATE.validate(frame)
     return _from_frame(df)
 
 

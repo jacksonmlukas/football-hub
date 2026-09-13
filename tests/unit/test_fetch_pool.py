@@ -602,6 +602,30 @@ def test_a_drifted_cache_is_not_served_over_a_failed_refresh(store, session, tra
     assert "unavailable" in err and "not unique" in err and "down" in err
 
 
+def test_a_wrong_typed_field_in_the_state_file_is_refused_on_both_paths(store, session,
+                                                                     transport, capsys):
+    """`"alive": "yes"` fails the frame's construction before the contract runs, and
+    polars' error is not a `ContractViolation` -- so `--status` and a failed `--refresh`
+    both handed back a traceback, against `read_state`'s own docstring. Both paths now
+    refuse it as the contract would: unavailable, in a sentence."""
+    transport()
+    pool.main(["--refresh", "--store", str(store)])
+    path = pool.state_path(store)
+    doc = json.loads(path.read_text())
+    doc["entries"][0]["alive"] = "yes"
+    path.write_text(json.dumps(doc))
+    capsys.readouterr()
+    with pytest.raises(ContractViolation, match="declared shape"):
+        pool.read_state(store)
+    assert pool.main(["--status", "--store", str(store)]) == 1
+    err = capsys.readouterr().err
+    assert "unavailable" in err and "Traceback" not in err and "declared shape" in err
+    transport(raises=OSError("down"))
+    assert pool.main(["--refresh", "--store", str(store)]) == 1
+    err = capsys.readouterr().err
+    assert "unavailable" in err and "down" in err and "declared shape" in err
+
+
 def test_a_saved_payload_that_does_not_parse_is_a_sentence_not_a_traceback(store, tmp_path, capsys):
     f = tmp_path / "payload.json"
     f.write_text("{not json")
