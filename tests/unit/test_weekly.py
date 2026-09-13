@@ -546,6 +546,16 @@ def test_an_artifact_written_before_the_claim_was_carried_reads_as_the_label():
     assert "UNDER-COVERS" in text and "against the claimed 80%" in text
 
 
+def test_the_crps_line_says_it_is_a_diagnostic_here_and_names_the_one_decision_it_makes():
+    """#274: CRPS beside MAE decides nothing in this report and the line says so; the one
+    decision it is a gate input for is the weekly interval's shape law, #292, and the line
+    names that too, so a reader does not take the ratio for a verdict or the label for a
+    blanket demotion."""
+    text = "\n".join(W.distribution_report(W.walk_forward(_panel())))
+    assert "diagnostic" in text and "#292" in text
+    assert "crps/mae" in text
+
+
 def test_a_tree_with_no_measurement_published_says_how_to_run_it():
     """Graceful degradation, `CLAUDE.md`'s standing rule: a fresh clone has no
     `data/processed/`, and a report that raised there would make the diagnostic unrunnable

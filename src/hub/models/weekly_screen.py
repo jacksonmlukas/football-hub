@@ -490,9 +490,13 @@ def with_family(rows: Sequence[dict], q: float = FDR_Q) -> tuple[list[dict], Fal
 def family_line(fd: FalseDiscovery) -> str:
     """The one line a reader takes the multiplicity from."""
     below = sum(fd.rejected)
+    # "diagnostic" is on the line by decision (#274): the threshold was pre-registered
+    # before the numbers and makes the multiplicity visible, and a reader of the count below
+    # it is told in the same breath that it is not the verdict column.
     return (f"  {fd.tests} test{'s' if fd.tests != 1 else ''} in this family; "
             f"Benjamini-Hochberg threshold at q = {fd.q:.2f}: {fd.threshold:.4f}, "
-            f"{below} below it  (the pre-registered rule decides; the threshold does not)")
+            f"{below} below it  (a diagnostic: the pre-registered rule decides; the "
+            f"threshold does not)")
 
 
 def report(rows: Sequence[dict]) -> list[str]:

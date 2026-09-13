@@ -520,10 +520,18 @@ def distribution_report(errs: pl.DataFrame) -> list[str]:
                     pl.col("err_weekly").mean().alias("mae"),
                     pl.col("crps_weekly").mean().alias("crps"))
                .sort("season"))
+    # "diagnostic" is on the line by decision (#274). CRPS is a gate input for exactly one
+    # decision in this repo -- the weekly interval's shape law, #292, under a rule written
+    # before the run -- and nowhere else; here it sits beside MAE and decides nothing, and
+    # the line says so before the table so the ratio is not read as a verdict.
     lines = ["", "  The distribution, not just the centre (#177). CRPS of the published "
                  "(mu, sd, skew)",
              "  against MAE, which is the same rule applied to the same projection as a "
-             "point mass:", "",
+             "point mass.",
+             "  A diagnostic: nothing here decides on it. CRPS is a gate input for one "
+             "decision only,",
+             "  the weekly interval's shape law (#292), under its own pre-registered rule.",
+             "",
              f"  {'season':>7} {'n':>6} {'MAE':>8} {'CRPS':>8} {'crps/mae':>9}"]
     for r in per.iter_rows(named=True):
         ratio = r["crps"] / r["mae"] if r["mae"] else float("nan")
