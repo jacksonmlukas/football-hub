@@ -42,7 +42,8 @@ def _player(pid, pos, season, points, season_type="REG"):
             for w, p in enumerate(points)]
 
 
-def _drawn(n_players=400, weeks=17, pos="WR", mu=12.0, seed=0, spread=1.0):
+def _drawn(n_players=400, weeks=17, pos="WR", mu=12.0, seed=0, spread=1.0,
+           seasons=(2024,), skew=None):
     """Weeks drawn from the model's own distribution, so nominal coverage is the truth.
 
     The centre is the same for every week of a player-season, which is what makes the
@@ -51,15 +52,18 @@ def _drawn(n_players=400, weeks=17, pos="WR", mu=12.0, seed=0, spread=1.0):
     then separated by what each is allowed to see.
 
     `spread` above 1 draws weeks wider than the model believes, which is a model whose
-    intervals are too narrow -- the failure the gate exists to catch.
+    intervals are too narrow -- the failure the gate exists to catch. `skew` overrides the
+    shipped skew the weeks are drawn through, for the shape comparison (#292); `seasons`
+    gives the season cluster something to resample.
     """
     rng = np.random.default_rng(seed)
     sd = predict.WEEKLY_K[pos] * math.sqrt(mu) * spread
-    sk = predict.WEEKLY_SKEW[pos]
+    sk = predict.WEEKLY_SKEW[pos] if skew is None else skew
     rows = []
-    for p in range(n_players):
-        z = rng.standard_normal(weeks)
-        rows += _player(f"p{p}", pos, 2024, predict.skewed(mu, sd, sk, z))
+    for season in seasons:
+        for p in range(n_players):
+            z = rng.standard_normal(weeks)
+            rows += _player(f"p{p}", pos, season, predict.skewed(mu, sd, sk, z))
     return _stats(rows)
 
 
@@ -282,6 +286,110 @@ def test_an_unreadable_measurement_is_the_same_nothing_as_an_absent_one(tmp_path
     assert coverage.published_summary(p) is None
     p.write_text(json.dumps({"name": "interval_coverage"}))       # no verdict in it
     assert coverage.published_summary(p) is None
+
+
+# --- the shape law, decided by CRPS (#292) --------------------------------
+
+def _mean(series: pl.Series) -> float:
+    return float(cast(float, series.mean()))
+
+
+def test_the_shape_arms_are_the_deployed_function_and_the_same_function_without_its_skew():
+    """Arm B is `predict.skewed` on the graded moments at the CRPS grid, clip included; arm A
+    is the same call with the skew zeroed -- which the function floors at `MIN_SKEW`, so it
+    is what would be served with `WEEKLY_SKEW` removed and not a normal written out here."""
+    from hub.models.scoring_rules import crps_from_quantiles, normal_quantile, quantile_levels
+    g = coverage.graded(coverage.centred(coverage.player_weeks(_drawn(n_players=6)), "prior"))
+    got = coverage.shape_scores(g)
+    z = normal_quantile(quantile_levels())[None, :]
+    mu, sd, sk = (g[c].to_numpy()[:, None] for c in ("mu", "sd", "skew"))
+    y = g["points"].to_numpy()
+    assert got["crps_deployed"].to_numpy() == pytest.approx(
+        crps_from_quantiles(predict.skewed(mu, sd, sk, z), y))
+    assert got["crps_skewfree"].to_numpy() == pytest.approx(
+        crps_from_quantiles(predict.skewed(mu, sd, 0.0, z), y))
+    assert got["diff"].to_numpy() == pytest.approx(
+        (got["crps_deployed"] - got["crps_skewfree"]).to_numpy())
+
+
+def test_weeks_drawn_with_the_shipped_skew_score_the_deployed_arm_better_and_vice_versa():
+    """The sign convention, checked on samples whose truth is known: drawn through the
+    shipped skew, the deployed arm scores lower CRPS and `diff` is negative; drawn with no
+    skew, the skew-free arm does and `diff` is positive."""
+    with_skew = coverage.graded(coverage.centred(
+        coverage.player_weeks(_drawn(n_players=300, seed=21)), "prior"))
+    assert _mean(coverage.shape_scores(with_skew)["diff"]) < 0
+    without = coverage.graded(coverage.centred(
+        coverage.player_weeks(_drawn(n_players=300, seed=22, skew=0.0)), "prior"))
+    assert _mean(coverage.shape_scores(without)["diff"]) > 0
+
+
+def test_the_ceiling_is_the_best_skew_on_these_rows_and_bounds_the_deployed_arm():
+    """The declared arm: per position, the skew on the grid (plus the deployed value, so the
+    bound is a bound) that minimises mean CRPS on the same rows. In-sample, so it can never
+    score worse than the deployed arm, and `ceiling_diff` -- deployed minus oracle -- is
+    non-negative in the mean for every position."""
+    g = coverage.graded(coverage.centred(
+        coverage.player_weeks(_drawn(n_players=60, seed=23, skew=1.4)), "prior"))
+    got = coverage.shape_scores(g)
+    assert _mean(got["ceiling_diff"]) >= 0
+    assert _mean(got["ceiling_diff"]) > 0, "weeks drawn at skew 1.4 leave the deployed 0.66 room"
+    assert coverage.CEILING_ARM and "skew" in coverage.CEILING_ARM
+    assert got["best_skew"].n_unique() == 1 and 0.0 <= got["best_skew"][0] <= 2.0
+
+
+def test_the_shape_gate_clusters_on_the_season_reads_the_unclipped_weeks_and_names_its_arm(
+        tmp_path):
+    """The rule as pre-registered in docs/gate-power.md: season clusters, the coverage gate's
+    unclipped subset, `experiment.gate`'s four verdicts, the declared ceiling arm on the
+    ceiling line."""
+    stats = _drawn(n_players=40, seed=24, seasons=(2021, 2022, 2023, 2024, 2025))
+    run, paired, pooled = coverage.shape_law(stats, width_path=tmp_path / "w.json")
+    assert run.summary["clusters"] == 5
+    assert paired["season"].n_unique() == 5
+    assert run.verdict[0] in ("NOT-RUNNABLE", "ADOPT", "REMOVE", "SHOW")
+    text = "\n".join(run.lines)
+    assert coverage.CEILING_ARM in text and "MDE at 80% power" in text
+    # the rows are the unclipped subset: every one has a positive raw p10
+    assert (paired["p10_raw"] > 0).all()
+    assert pooled["n"] > paired.height or pooled["n"] == paired.height
+
+
+def test_the_shape_gate_removes_the_skew_free_arm_when_the_skew_is_the_truth(tmp_path):
+    """Weeks drawn through the shipped skew, in every season: the deployed arm wins each of
+    them and the interval sits below zero, which is REMOVE -- the skew earns its place."""
+    stats = _drawn(n_players=200, seed=25, seasons=(2021, 2022, 2023, 2024, 2025))
+    run, _paired, _pooled = coverage.shape_law(stats, width_path=tmp_path / "w.json")
+    assert run.summary["mean"] < 0
+    assert run.verdict[0] in ("REMOVE", "NOT-RUNNABLE"), run.verdict
+
+
+def test_the_shape_cli_prints_the_block_and_the_verdict(capsys, monkeypatch, tmp_path):
+    monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: _drawn(
+        n_players=30, seed=26, seasons=(2021, 2022, 2023, 2024, 2025)))
+    monkeypatch.setattr(coverage, "WIDTH_STATE", tmp_path / "w.json")
+    assert coverage.main(["--shape"]) == 0
+    out = capsys.readouterr().out
+    assert "skew-free - deployed skew" in out and "MDE at 80% power" in out
+    assert coverage.CEILING_ARM in out
+    assert "pooled" in out and "diagnostic" in out
+    assert any(v in out for v in ("NOT RUNNABLE", "ADOPT", "REMOVE", "SHOW",
+                                  "earns its place", "could not remove", "maintainer"))
+
+
+def test_unreachable_player_stats_under_shape_are_a_sentence_not_a_traceback(capsys,
+                                                                          monkeypatch):
+    monkeypatch.setattr(coverage, "_stats", _raises)
+    assert coverage.main(["--shape"]) == 1
+    err = capsys.readouterr().err
+    assert "nflverse player_stats unavailable" in err and "Traceback" not in err
+
+
+def test_a_shape_window_nothing_survives_is_reported_by_the_cli(capsys, monkeypatch):
+    monkeypatch.setattr(coverage, "_stats",
+                        lambda seasons, cache: _stats(_player("a", "WR", 2024, [0.1] * 17)))
+    assert coverage.main(["--shape"]) == 1
+    assert "no player-week survived" in capsys.readouterr().err
 
 
 # --- the survivor price ---------------------------------------------------

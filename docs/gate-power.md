@@ -537,3 +537,56 @@ does not win every season with an interval clear of zero, the skew stays and the
 If it runs and the skew-free arm wins, the deployed function is the maintainer's to change,
 and the claim is re-measured on the function that replaces it before anything is published
 against it.
+
+## Measured 2026-09-13: not runnable on five seasons
+
+Run against the rule above, which was committed first in `12405d0`, by
+`uv run python -m hub.models.coverage --shape` on the harness the next commit carries.
+Data digest `b1a14540` over one pinned source (`player_stats`, 2021–2025); seed 0; 4,000
+bootstrap draws; 10,536 unclipped player-weeks, exactly the rows the coverage gate read on
+the same day.
+
+| | value |
+|---|---|
+| skew-free − deployed skew, mean paired CRPS | **−0.0364** points per player-week |
+| 95% percentile CI, season-clustered (5 clusters) | [−0.0423, −0.0296] |
+| 95% t CI, 4 df | [−0.0453, −0.0274] |
+| P(skew-free better) | 0.0% |
+| per season | 2021 −0.0436 · 2022 −0.0428 · 2023 −0.0324 · 2024 −0.0243 · 2025 −0.0389 |
+| **MDE at 80% power** | **+0.0117** |
+| **ceiling** — *the best per-position skew, chosen on these rows* | **+0.0081** |
+| pooled over every row, clipped weeks included (diagnostic) | −0.0313 over 16,061 |
+
+**Verdict: NOT-RUNNABLE.** The season-clustered MDE (+0.0117) exceeds the ceiling (+0.0081):
+the largest CRPS gain any per-position skew law could show over the deployed one on these
+rows is smaller than the smallest effect five seasons can resolve at 80% power. Under the
+rule as pre-registered — and under
+[ADR-0019](adr/0019-a-gate-requires-every-season.md) as amended — no verdict below that line
+is reported. Recorded as *not runnable* under
+[ADR-0014](adr/0014-a-provisional-rule-may-act-where-no-gate-can-run.md): the arm did not
+lose, the question cannot be answered with the data that exists. **The skew stays**, and
+[weekly-coverage.md](weekly-coverage.md) says the CRPS comparison could not remove it.
+
+**What the numbers say, without a verdict attached.** They are printed by the run and
+recorded here because the run printed them, not because the rule reads them. The skew-free
+arm scores *worse* by 0.036 points of CRPS per player-week, in all five seasons, with both
+intervals clear of zero; had the gate been runnable it would have reached REMOVE — the skew
+earns its place. The reason it is not runnable is worth stating plainly: the ceiling is the
+gain available from re-choosing the skew, and on these rows that is 0.008 — the deployed
+per-position skews (0.15 / 0.67 / 0.66 / 0.72) sit below the in-sample optima (0.35 / 1.05
+/ 1.15 / 0.95), but the CRPS surface is flat enough near them that the whole of that
+headroom is under the MDE. A design that cannot distinguish the deployed law from the best
+one also cannot be trusted to have distinguished it from none, and the order of the branches
+is what refuses to let the second claim through on the strength of the first.
+
+**Against the expectation written above.** The effect was guessed at "of the order of a
+hundredth of a point"; it is three and a half hundredths, in the direction of the skew. That
+is inside the range the guess allowed and needs no separate explanation. The per-position
+optima being *above* the deployed values is a finding the pre-registration did not
+anticipate and does not act on: it is in-sample, it is the ceiling arm and not a fit, and a
+refit of `WEEKLY_SKEW` would be its own pre-registered ticket under ADR-0024 — with the same
+five clusters and, on this evidence, the same MDE problem.
+
+**The deployed function does not change.** #289's claim (77 ± 2) stands against the function
+it was measured on. The `interval_shape` entry in `state/gate-width.json` is this run's
+season-clustered width, 0.0127, for the next run to compare against.

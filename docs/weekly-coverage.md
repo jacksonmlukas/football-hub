@@ -33,6 +33,12 @@ restatement:
    it is its own pre-registered ticket, **#292**, and CRPS decides it (the one decision CRPS
    is promoted to, per #274). Its rule and minimum detectable effect are written in
    [gate-power.md](gate-power.md) before it runs.
+   *Run 2026-09-13, same day, after the rule was committed:* **not runnable** on five
+   seasons -- the MDE (+0.0117 CRPS points per player-week) exceeds the ceiling (+0.0081),
+   so no verdict is reported and **the skew stays; the CRPS comparison could not remove
+   it.** For the record and without a verdict attached: the skew-free interval scored worse
+   by 0.036 in every season. The numbers and the reasoning are under
+   [gate-power.md](gate-power.md#measured-2026-09-13-not-runnable-on-five-seasons).
 3. *Say what the interval covers.* This.
 
 So `hub.models.coverage.CLAIMED_COV80` is 0.77 and `--gate` refuses when the deployed

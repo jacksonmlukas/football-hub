@@ -45,6 +45,7 @@ either direction. The label is `LEVELS`, which has not moved.
     uv run python -m hub.models.coverage --measure --centre realised
     uv run python -m hub.models.coverage --survivor
     uv run python -m hub.models.coverage --gate          # exits 1 on a refusal
+    uv run python -m hub.models.coverage --shape         # the skew law under CRPS (#292)
 """
 from __future__ import annotations
 
@@ -65,7 +66,20 @@ from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.declare import not_an_input
 from hub.models import predict
-from hub.models.scoring_rules import reliability_by
+from hub.models.experiment import (
+    SEASON_CLUSTER,
+    WIDTH_STATE,
+    Actions,
+    Ceiling,
+    GateRun,
+    run_gate,
+)
+from hub.models.scoring_rules import (
+    crps_from_quantiles,
+    normal_quantile,
+    quantile_levels,
+    reliability_by,
+)
 from hub.paths import STATE_DIR
 
 # Nothing here is fitted. Every number below is either a filter this measurement inherits
@@ -454,6 +468,92 @@ def survivor_price(schedules: pl.DataFrame, edges: Sequence[float] = SPREAD_EDGE
     }
 
 
+# --- the shape law, decided by CRPS (#292) --------------------------------
+#
+# Pre-registered in `docs/gate-power.md` on 2026-09-13, before this was written: the rows,
+# the two arms, the paired difference, the cluster, the MDE and the ceiling arm are all
+# fixed there, and this is the harness that runs them. CRPS is a gate input for exactly this
+# decision and a diagnostic everywhere else (#274).
+
+# The declared ceiling arm, by name, on the ceiling line -- distinct from the three gates'
+# arms so no two numbers can be tabulated as one (`docs/gate-power.md`, #138). Per position,
+# the skew that minimises mean CRPS on the same rows, chosen from `SKEW_GRID` plus the
+# deployed value so the bound is a bound. In-sample by construction: it says how much *any*
+# per-position skew law could gain over the deployed one here, and the skew-free arm is one
+# such law.
+CEILING_ARM = "the best per-position skew, chosen on these rows"
+SKEW_GRID: tuple[float, ...] = not_an_input(
+    tuple(round(0.05 * i, 2) for i in range(41)),
+    "the candidate skews the ceiling arm is chosen from, a grading harness's search grid "
+    "that no prediction reads")
+
+SHAPE_ACTIONS = Actions(
+    adopt="The skew-free interval scores better under CRPS: the deployed function is the "
+          "maintainer's to change, and #289's claim is re-registered against it first.",
+    remove="The skew earns its place: the deployed interval stays as served.",
+    show="The skew stays; the CRPS comparison could not remove it.")
+
+
+def shape_scores(g: pl.DataFrame) -> pl.DataFrame:
+    """CRPS of the deployed distribution and of the same function without its skew, per row.
+
+    Arm B is `predict.skewed(mu, sd, skew, z)` on the graded moments at the CRPS quantile
+    grid, clip included, which is the path `hub.models.weekly.shipped_quantiles` takes. Arm A
+    is the same call with the skew zeroed -- which `skewed` floors at `MIN_SKEW`, so the arm
+    is exactly what would be served with `WEEKLY_SKEW` removed, floor and all, and not a
+    normal written out beside it. `diff` is deployed minus skew-free: positive when the
+    skew-free arm scores lower, which is the sign `experiment.gate` adopts on.
+
+    `ceiling_diff` is deployed minus the oracle -- the best per-position skew on these rows,
+    `CEILING_ARM` -- and `best_skew` says which skew that was, so a reader can see how far
+    the deployed law sits from the in-sample optimum.
+    """
+    z = normal_quantile(quantile_levels())[None, :]
+    mu, sd, sk = (g[c].to_numpy().astype(float)[:, None] for c in ("mu", "sd", "skew"))
+    y = g["points"].to_numpy().astype(float)
+    pos = g["position"].to_numpy()
+    deployed = crps_from_quantiles(predict.skewed(mu, sd, sk, z), y)
+    skewfree = crps_from_quantiles(predict.skewed(mu, sd, 0.0, z), y)
+    oracle = np.empty_like(deployed)
+    best = np.empty_like(deployed)
+    for name in np.unique(pos):
+        rows = pos == name
+        candidates = sorted(set(SKEW_GRID) | {float(sk[rows][0, 0])})
+        scored = {c: crps_from_quantiles(predict.skewed(mu[rows], sd[rows], c, z), y[rows])
+                  for c in candidates}
+        pick = min(candidates, key=lambda c: float(scored[c].mean()))
+        oracle[rows] = scored[pick]
+        best[rows] = pick
+    return g.select("season", "player_id", "week", "position", "points", "p10_raw").with_columns(
+        pl.Series("crps_deployed", deployed), pl.Series("crps_skewfree", skewfree),
+        pl.Series("diff", deployed - skewfree), pl.Series("ceiling_diff", deployed - oracle),
+        pl.Series("best_skew", best))
+
+
+def shape_law(stats: pl.DataFrame, *, min_weeks: int = MIN_WEEKS, min_prior: int = MIN_PRIOR,
+              min_mu: float = MIN_MU, seed: int = 0,
+              width_path: Path = WIDTH_STATE) -> tuple[GateRun, pl.DataFrame, dict[str, Any]]:
+    """The pre-registered comparison: one gate run, the paired rows, and the pooled diagnostic.
+
+    The rows are the coverage gate's -- prior centre, the same filters -- restricted to the
+    unclipped subset it reads, fixed in `docs/gate-power.md` so the subset cannot be chosen
+    after the sign is seen. The season is the cluster, the MDE comes from the interval's own
+    bootstrap, and the ceiling is `CEILING_ARM` on the same rows. The pooled figure over every
+    row, clipped weeks included, is returned beside it as a diagnostic and decides nothing.
+    """
+    g = graded(centred(player_weeks(stats), "prior", min_weeks=min_weeks,
+                       min_prior=min_prior, min_mu=min_mu))
+    scored = shape_scores(g)
+    paired = scored.filter(pl.col("p10_raw") > 0.0)
+    pooled = {"n": int(scored.height), "mean": float(cast(float, scored["diff"].mean()))}
+    run = run_gate(paired, cluster=SEASON_CLUSTER, actions=SHAPE_ACTIONS,
+                   name="interval_shape", arm_a="skew-free", arm_b="deployed skew",
+                   unit="CRPS points per player-week", places=4, seed=seed,
+                   ceiling=Ceiling(CEILING_ARM, paired["ceiling_diff"].to_numpy()),
+                   width_path=width_path)
+    return run, paired, pooled
+
+
 # --- what reads the answer ------------------------------------------------
 
 
@@ -559,6 +659,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="survivor win probability by spread bucket")
     ap.add_argument("--gate", action="store_true",
                     help="measure, then exit 1 if the interval leaves the band")
+    ap.add_argument("--shape", action="store_true",
+                    help="the skew law under CRPS, season-clustered, as pre-registered (#292)")
     ap.add_argument("--centre", default="prior", choices=("prior", "realised"),
                     help="'prior' uses only earlier weeks; 'realised' is the document's "
                          "lookahead centre and is kept to reproduce it")
@@ -570,7 +672,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--cache", default=None, help="raw-cache root; defaults to this repo's")
     a = ap.parse_args(argv)
 
-    if not (a.measure or a.survivor or a.gate):
+    if not (a.measure or a.survivor or a.gate or a.shape):
         ap.print_help()
         return 0
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
@@ -604,6 +706,35 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"over {got['favourite_n']:,} sides -> {got['verdict']}")
         if a.write:
             print(f"    written to {write_survivor(got)}")
+
+    if a.shape:
+        try:
+            stats = _stats(seasons, cache)
+        except Exception as e:
+            return unavailable("hub.models.coverage", "nflverse player_stats", e)
+        try:
+            run, paired, pooled = shape_law(stats, min_prior=a.min_prior,
+                                            width_path=WIDTH_STATE)
+        except (ValueError, NotEnoughWeeks) as e:
+            print(f"hub.models.coverage: {e}", file=sys.stderr)
+            return 1
+        print(f"  the weekly interval's shape law under CRPS (#292), centre=prior, "
+              f"{paired.height:,} unclipped player-weeks over seasons "
+              f"{seasons[0]}-{seasons[-1]}; skew-free is the arm under test")
+        for line in run.lines:
+            print(line)
+        by = paired.group_by("position").agg(pl.col("best_skew").first(),
+                                             pl.col("diff").mean().alias("diff"),
+                                             pl.len().alias("n")).sort("position")
+        print("\n  per position: the deployed skew, the best skew on these rows, and the "
+              "skew-free gain")
+        for r in by.iter_rows(named=True):
+            print(f"    {r['position']:<4}{r['n']:>7,}   deployed "
+                  f"{predict.WEEKLY_SKEW.get(r['position'], predict.WEEKLY_SKEW_POOLED):.2f}"
+                  f"   best {r['best_skew']:.2f}   skew-free {r['diff']:+.4f}")
+        print(f"\n  pooled over every row, clipped weeks included: {pooled['mean']:+.4f} over "
+              f"{pooled['n']:,}  (a diagnostic; the verdict reads the unclipped rows)")
+        print(f"\n  {run.verdict[1]}")
 
     if a.measure or a.gate:
         try:
