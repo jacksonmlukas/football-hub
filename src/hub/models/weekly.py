@@ -551,12 +551,17 @@ def _what_the_coverage_measurement_says() -> list[str]:
         return ["  Whether that gap is worth closing is what the interval measurement says: "
                 "run `uv run python -m\n  hub.models.coverage --measure --write` for it. "
                 "Nothing is published in this tree yet."]
-    nominal = 0.80
+    # The claim the verdict was read against travels with it (#289): the interval is
+    # labelled 80% and the doc says it covers 77%, and `COVERS` beside `77.4%` with only the
+    # label printed would read as the label covering. `published_summary` supplies the label
+    # as the claim for an artifact written before the claim was carried.
+    label = 0.80
+    claim = got["gate_claim"]
     return [f"  The published interval, measured on a centre that cannot see the week it "
-            f"scores: {got['verdict']}\n  at {got['gate_cov80']:.1%} against a nominal "
-            f"{nominal:.0%} over {got['gate_n']:,} {got['gate_subset']} weeks "
-            f"(+/- {got['band']:.0%}), measured\n  {got['generated_at']}. That is what the "
-            f"gap between this ratio and {CALIBRATED_RATIO:.3f} is made of."]
+            f"scores: {got['verdict']}\n  at {got['gate_cov80']:.1%} against the claimed "
+            f"{claim:.0%} (labelled {label:.0%}) over {got['gate_n']:,} {got['gate_subset']} "
+            f"weeks (+/- {got['band']:.0%}), measured\n  {got['generated_at']}. That is what "
+            f"the gap between this ratio and {CALIBRATED_RATIO:.3f} is made of."]
 
 
 def diagnostic(errs: pl.DataFrame) -> list[str]:

@@ -517,13 +517,33 @@ def test_the_report_cites_the_coverage_measurement_rather_than_a_figure_typed_he
 
     published = {"centre": "prior", "lookahead": False, "n": 16061,
                  "gate_subset": "strictly positive", "gate_n": 10536, "gate_cov80": 0.774,
-                 "band": 0.02, "verdict": "UNDER-COVERS", "generated_at": "2026-09-07"}
+                 "gate_claim": 0.77, "band": 0.02, "verdict": "COVERS",
+                 "generated_at": "2026-09-13"}
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(coverage, "published_summary", lambda *a, **k: published)
         text = "\n".join(W.diagnostic(W.walk_forward(_panel())))
-    assert "UNDER-COVERS" in text
-    assert "77.4%" in text and "80%" in text and "10,536" in text
-    assert "2026-09-07" in text, "a measurement with no date is not one that can go stale"
+    assert "COVERS" in text
+    assert "77.4%" in text and "10,536" in text
+    # The claim the verdict was read against, beside the label it is served under (#289):
+    # `COVERS` at 77.4% with only "80%" on the line would read as the label covering.
+    assert "against the claimed 77%" in text and "labelled 80%" in text
+    assert "2026-09-13" in text, "a measurement with no date is not one that can go stale"
+
+
+def test_an_artifact_written_before_the_claim_was_carried_reads_as_the_label():
+    """The committed artifact of 2026-09-12 carried no `gate_claim`; its verdict was read
+    against the label, `published_summary` says so on its behalf, and that is the number
+    the line prints for it."""
+    from hub.models import coverage
+
+    published = {"centre": "prior", "lookahead": False, "n": 16061,
+                 "gate_subset": "strictly positive", "gate_n": 10536, "gate_cov80": 0.774,
+                 "gate_claim": 0.80, "band": 0.02, "verdict": "UNDER-COVERS",
+                 "generated_at": "2026-09-07"}
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(coverage, "published_summary", lambda *a, **k: published)
+        text = "\n".join(W.diagnostic(W.walk_forward(_panel())))
+    assert "UNDER-COVERS" in text and "against the claimed 80%" in text
 
 
 def test_a_tree_with_no_measurement_published_says_how_to_run_it():

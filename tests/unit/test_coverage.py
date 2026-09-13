@@ -211,9 +211,34 @@ def test_an_unknown_centre_is_refused():
 # --- the verdict, and what reads it --------------------------------------
 
 @pytest.mark.parametrize("cov,want", [
-    (0.80, "COVERS"), (0.815, "COVERS"), (0.774, "UNDER-COVERS"), (0.893, "OVER-COVERS")])
+    (0.77, "COVERS"), (0.774, "COVERS"), (0.785, "COVERS"), (0.745, "UNDER-COVERS"),
+    (0.80, "OVER-COVERS"), (0.893, "OVER-COVERS")])
 def test_the_verdict_reads_the_pre_registered_band(cov, want):
+    """Against the *claim*, 77 +/- 2 (#289), and not the label. 80.0% is outside the band:
+    an interval that drifted up to what its label says would be a stale claim, and the
+    gate's job is to say the claim is stale, whichever way it went."""
     assert coverage.verdict({"cov80": cov}) == want
+
+
+def test_the_gate_reads_the_restated_claim_and_the_label_is_unchanged():
+    """#289: the interval is still built at (p10, p90) and still labelled 80%; what moved is
+    what the gate holds it to. Two constants, two jobs, and the test pins both so a later
+    hand cannot "fix" the gate by relabelling the interval."""
+    assert coverage.CLAIMED_COV80 == 0.77
+    assert coverage.LEVELS[0] == (0.10, 0.90), "the label did not move; the claim did"
+    got = coverage.measure(_drawn(n_players=40), "prior")
+    assert got["nominal"]["cov80"] == 0.80, "the label the interval is served under"
+    assert got["gate_claim"] == coverage.CLAIMED_COV80
+    assert got["verdict"] == coverage.verdict({"cov80": got["gate_cov80"]},
+                                               claim=coverage.CLAIMED_COV80)
+
+
+def test_the_published_summary_carries_the_claim_the_verdict_was_read_against(tmp_path):
+    """A reader of `COVERS` beside `77.4%` needs the number it was compared with on the same
+    line, or the verdict reads as 80% covering."""
+    got = coverage.measure(_drawn(n_players=40), "prior")
+    back = coverage.published_summary(coverage.write_summary(got, tmp_path / "ic.json"))
+    assert back is not None and back["gate_claim"] == coverage.CLAIMED_COV80
 
 
 def test_the_gate_reads_the_unclipped_weeks_not_the_pool():
@@ -234,6 +259,17 @@ def test_the_summary_round_trips_for_the_publisher(tmp_path):
     assert back["verdict"] == got["verdict"]
     assert back["gate_cov80"] == pytest.approx(got["gate_cov80"])
     assert "by_position" not in back, "the published field is a summary, not the table"
+
+
+def test_an_artifact_from_before_the_claim_is_published_against_the_label(tmp_path):
+    """`state/interval_coverage.json` as committed on 2026-09-12 carries no `gate_claim`;
+    its UNDER-COVERS was read against 80%, and a summary that said 77% for it would be
+    rewriting what that run compared."""
+    p = tmp_path / "interval_coverage.json"
+    p.write_text(json.dumps({"name": "interval_coverage", "verdict": "UNDER-COVERS",
+                             "gate_cov80": 0.774}))
+    got = coverage.published_summary(p)
+    assert got is not None and got["gate_claim"] == pytest.approx(0.80)
 
 
 def test_a_missing_measurement_is_no_field_rather_than_a_traceback(tmp_path):
@@ -338,19 +374,33 @@ def test_the_gate_refuses_when_the_interval_leaves_the_band(capsys, monkeypatch)
     assert "does not cover" in capsys.readouterr().err
 
 
-def test_the_gate_passes_a_calibrated_interval(monkeypatch):
-    """Same command, same band, weeks drawn at the width the model claims. A gate that only
-    ever refuses is not reading anything.
+def test_the_gate_passes_an_interval_that_covers_what_it_claims(monkeypatch, capsys):
+    """Same command, same band, weeks drawn so the interval covers the 77% it claims (#289).
+    A gate that only ever refuses is not reading anything.
 
-    The seasons here are absurdly long on purpose. Even a perfectly specified model
+    `spread=1.07` is the width at which a nominal 80% normal interval covers about 77% --
+    `P(|z| < 1.2816 / 1.07)` -- so this is the deployed function measured to be what the doc
+    says it is. The seasons are absurdly long on purpose: even a correctly specified model
     under-covers once the centre is *estimated*, because the residual carries the centre's
-    own error on top of the week's -- which is the whole finding on real data. Give the
-    centre a hundred weeks to settle and that term goes away, and what is left is the gate
-    reading a model that is right.
+    own error on top of the week's, and a hundred weeks is what makes that term vanish.
     """
     monkeypatch.setattr(coverage, "_stats",
-                        lambda seasons, cache: _drawn(n_players=40, weeks=200, seed=9))
+                        lambda seasons, cache: _drawn(n_players=40, weeks=200, seed=9,
+                                                      spread=1.07))
     assert coverage.main(["--gate", "--min-prior", "100"]) == 0
+    out = capsys.readouterr().out
+    assert "against the claimed 77.0%" in out and "labelled 80%" in out
+
+
+def test_an_interval_that_covers_its_label_fails_the_claim(monkeypatch, capsys):
+    """The other direction, and the one that says the gate reads the claim rather than the
+    label: weeks drawn at exactly the model's width cover 80%, and 80% is not what the doc
+    says, so the gate refuses -- the claim is stale upward, and a stale claim is the thing
+    to be told about whichever way it is stale."""
+    monkeypatch.setattr(coverage, "_stats",
+                        lambda seasons, cache: _drawn(n_players=40, weeks=200, seed=9))
+    assert coverage.main(["--gate", "--min-prior", "100"]) == 1
+    assert "OVER-COVERS" in capsys.readouterr().out
 
 
 def test_the_cli_writes_the_artifact_the_publisher_reads(tmp_path, monkeypatch, capsys):
@@ -430,7 +480,7 @@ def test_the_survivor_verdict_is_written_beside_the_weekly_one(tmp_path, monkeyp
     assert coverage.main(["--measure", "--write"]) == 0
     assert coverage.main(["--survivor", "--write", "--seasons", "2024"]) == 0
     got = coverage.published_summary(art)
-    assert got is not None and got["verdict"] in ("COVERS", "DOES NOT COVER")
+    assert got is not None and got["verdict"] in ("COVERS", "UNDER-COVERS", "OVER-COVERS")
     assert got["survivor"]["verdict"] and "favourite_gap" in got["survivor"]
     # the order does not matter either
     assert coverage.main(["--measure", "--write"]) == 0

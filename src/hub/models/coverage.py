@@ -36,6 +36,11 @@ actually picks at*, which are the big favourites and nowhere near the middle of 
 distribution. Graded by spread bucket rather than by probability bucket, because a miss
 concentrated in one spread range is what a pick rule would walk into.
 
+**What the gate holds the interval to** is the claim, not the label (#289). The interval is
+served as 80% and measured to cover 77.4% of the unclipped weeks; `CLAIMED_COV80` is that
+restated claim and the gate refuses when the deployed function leaves `BAND` of it in
+either direction. The label is `LEVELS`, which has not moved.
+
     uv run python -m hub.models.coverage --measure
     uv run python -m hub.models.coverage --measure --centre realised
     uv run python -m hub.models.coverage --survivor
@@ -100,10 +105,28 @@ MIN_PRIOR = 4
 # is about the *shape* rather than the width shows up as the two disagreeing.
 LEVELS: tuple[tuple[float, float], ...] = ((0.10, 0.90), (0.16, 0.84))
 
-# Pre-registered before the prior-centre numbers were looked at, and the only thing `--gate`
-# reads: empirical coverage must sit within this of nominal. Two points is roughly three
-# standard errors at n = 10,000, so it is a band a calibrated model clears comfortably and a
-# real miss does not.
+# **What the interval is measured to cover, which is what the gate holds it to (#289).** The
+# interval is built at (p10, p90) and served under the label 80% -- `LEVELS` above is
+# unchanged and `season/lineup.py` still asserts it -- and on the unclipped weeks it covers
+# 77.4% (10,536 player-weeks, 2021-2025, prior centre; `docs/weekly-coverage.md`, restated
+# 2026-09-13). The band was pre-registered at 80 +/- 2 and the deployed function sits outside
+# it. Three things could follow: widen sigma by a fitted factor, refit the shape law, or say
+# what the interval covers. The first is a data-chosen cut -- the number would be picked to
+# make this gate green, which is #287's fault elsewhere; the second is #292, pre-registered
+# and decided by CRPS; this is the third. So the claim is restated to the measured rate and
+# the gate is re-registered against it: **77 +/- 2, on the deployed function.** The gate goes
+# green on a truthful claim and not on a number chosen to make it green, and it goes red
+# again if the deployed function drifts *either* way from what the doc says -- an interval
+# that came to cover 80% would be a stale claim upward, and the gate says so.
+#
+# Not a fitted constant: nothing predicts through it. A restated claim about a measurement,
+# pinned so that the gate and the doc cannot say two different numbers.
+CLAIMED_COV80 = 0.77
+
+# Pre-registered before the prior-centre numbers were looked at, and the only other thing
+# `--gate` reads: empirical coverage must sit within this of the claim. Two points is roughly
+# three standard errors at n = 10,000, so it is a band a truthful claim clears comfortably and
+# a stale one does not.
 BAND = 0.02
 
 # The gate is read off the weeks whose interval is *not* pinned at the zero floor. A clipped
@@ -281,14 +304,17 @@ def floor_split(g: pl.DataFrame) -> list[dict[str, Any]]:
             if g.filter(sel).height]
 
 
-def verdict(row: dict[str, Any], nominal: float = 0.80, band: float = BAND) -> str:
-    """COVERS, UNDER-COVERS or OVER-COVERS, against the pre-registered band.
+def verdict(row: dict[str, Any], claim: float = CLAIMED_COV80, band: float = BAND) -> str:
+    """COVERS, UNDER-COVERS or OVER-COVERS, against the pre-registered band around the claim.
 
-    Three answers rather than a boolean because the two failures have opposite fixes: an
-    interval that is too narrow makes a lineup rule overconfident, and one that is too wide
-    makes it refuse to distinguish players it could.
+    The claim and not the label (#289): `CLAIMED_COV80` is what the doc says the interval
+    covers, and the verdict is whether the deployed function still does. Three answers
+    rather than a boolean because the two failures have opposite fixes: an interval that is
+    too narrow makes a lineup rule overconfident, and one that is too wide makes it refuse to
+    distinguish players it could -- and either way the published claim is the thing to
+    restate first.
     """
-    gap = row["cov80"] - nominal
+    gap = row["cov80"] - claim
     if abs(gap) <= band:
         return "COVERS"
     return "UNDER-COVERS" if gap < 0 else "OVER-COVERS"
@@ -296,8 +322,14 @@ def verdict(row: dict[str, Any], nominal: float = 0.80, band: float = BAND) -> s
 
 def measure(stats: pl.DataFrame, centre: Centre = "prior", *,
             min_weeks: int = MIN_WEEKS, min_prior: int = MIN_PRIOR,
-            min_mu: float = MIN_MU, band: float = BAND) -> dict[str, Any]:
-    """The whole weekly-interval measurement, as one dict."""
+            min_mu: float = MIN_MU, band: float = BAND,
+            claim: float = CLAIMED_COV80) -> dict[str, Any]:
+    """The whole weekly-interval measurement, as one dict.
+
+    `nominal` is the label the interval is served under; `gate_claim` is what the doc says
+    it covers and what `verdict` was read against. Both are carried because a reader of
+    `COVERS` beside `77.4%` needs the number it was compared with on the same line (#289).
+    """
     g = graded(centred(player_weeks(stats), centre, min_weeks=min_weeks,
                        min_prior=min_prior, min_mu=min_mu))
     rows = table(g)
@@ -308,7 +340,7 @@ def measure(stats: pl.DataFrame, centre: Centre = "prior", *,
         "n": int(g.height), "nominal": {"cov80": 0.80, "cov68": 0.68},
         "band": band, "by_position": rows, "floor_split": split,
         "gate_subset": GATE_SUBSET, "gate_n": gated["n"], "gate_cov80": gated["cov80"],
-        "verdict": verdict(gated, band=band),
+        "gate_claim": claim, "verdict": verdict(gated, claim=claim, band=band),
     }
 
 
@@ -425,8 +457,13 @@ def published_summary(path: Path | None = None) -> dict[str, Any] | None:
     if not isinstance(got, dict) or "verdict" not in got:
         return None
     out = {k: got.get(k) for k in
-           ("centre", "lookahead", "n", "gate_subset", "gate_n", "gate_cov80", "band",
-            "verdict", "generated_at")}
+           ("centre", "lookahead", "n", "gate_subset", "gate_n", "gate_cov80", "gate_claim",
+            "band", "verdict", "generated_at")}
+    # An artifact written before the claim was carried (#289) had its verdict read against
+    # the label, so that is the claim it is published with -- a reader printing `verdict`
+    # beside `gate_claim` then says what that run actually compared.
+    if out["gate_claim"] is None:
+        out["gate_claim"] = LEVELS[0][1] - LEVELS[0][0]
     if isinstance(got.get("survivor"), dict):
         out["survivor"] = got["survivor"]
     return out
@@ -523,13 +560,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("    -- split on whether the model's own p10 survived the zero clip --")
         _print_table(got["floor_split"])
         print(f"    gate reads the {got['gate_subset']} weeks: {got['gate_cov80']:.1%} "
-              f"against 80.0% +/- {got['band']:.0%} over {got['gate_n']:,} "
+              f"against the claimed {got['gate_claim']:.1%} +/- {got['band']:.0%} "
+              f"(interval labelled {got['nominal']['cov80']:.0%}) over {got['gate_n']:,} "
               f"-> {got['verdict']}")
         if a.write:
             print(f"    written to {write_summary(got)}")
         if a.gate and got["verdict"] != "COVERS":
-            print("    the deployed interval does not cover; sd = K*sqrt(mu) carries no "
-                  "term for the error in the centre.", file=sys.stderr)
+            print("    the deployed interval does not cover what docs/weekly-coverage.md "
+                  "says it covers; restate the claim or find what moved the function.",
+                  file=sys.stderr)
             return 1
     return 0
 
