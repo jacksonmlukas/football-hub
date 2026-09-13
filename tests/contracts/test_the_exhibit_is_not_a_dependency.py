@@ -116,10 +116,27 @@ def _path_of(module: str) -> pathlib.Path | None:
     return None
 
 
+def _literal_import(node: ast.Call) -> str | None:
+    """The module a literal-string `import_module("hub...")`, `importlib.import_module(...)`
+    or `__import__("hub...")` names, or None. `hub.config` imports its fitted modules this
+    way, so the pattern is live here; a name computed at runtime cannot be read off the
+    AST and is the one gap this walker has."""
+    f = node.func
+    called = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+    if called not in ("import_module", "__import__") or not node.args:
+        return None
+    first = node.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str) \
+            and first.value.startswith("hub"):
+        return first.value
+    return None
+
+
 def _runtime_imports_of(path: pathlib.Path) -> set[str]:
     """Every `hub.*` module one file imports at runtime -- at module level *and inside
-    functions*, which is where all three Gates import the Cohort. An `if TYPE_CHECKING:`
-    block is skipped: nothing under it loads."""
+    functions*, which is where all three Gates import the Cohort -- including a literal
+    string handed to `import_module` or `__import__`. An `if TYPE_CHECKING:` block is
+    skipped: nothing under it loads."""
     tree = ast.parse(path.read_text())
     typing_only: set[int] = set()
     for node in ast.walk(tree):
@@ -137,6 +154,8 @@ def _runtime_imports_of(path: pathlib.Path) -> set[str]:
                     if _path_of(f"{node.module}.{a.name}")}
         elif isinstance(node, ast.Import):
             out |= {a.name for a in node.names if a.name.startswith("hub")}
+        elif isinstance(node, ast.Call) and (named := _literal_import(node)):
+            out.add(named)
     return out
 
 

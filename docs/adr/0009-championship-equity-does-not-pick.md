@@ -130,9 +130,15 @@ one that would have promoted equity back to the headline.
 > a total re-draw, and the −11.07 above was measured on the draw before it.**
 > `season.simulate_weeks` drew correlated weekly points for every Board row (~450) on every
 > season simulation and read back the ~168 rostered players at the lineup; it now draws over
-> the rostered union in Board order. The model is unchanged -- same constants, same
-> correlation blocks factored per team over their rostered members, same lineup rule -- but a
-> player's talent and weekly draws are now a function of his position in the union rather
+> the rostered union in Board order. The constants and the lineup rule are unchanged, and
+> so is the correlation *model* -- each NFL team's block is factored over its rostered
+> members, which are the only players the read-back ever saw. **What did change beside the
+> indexing is the set of blocks counted**: a team is a block only where two or more of its
+> rostered players share a fitted pairing, so a team whose quarterback or every receiver
+> went undrafted no longer factors at all, and the run's `correlation:` line counts fewer
+> blocks for the same draft -- 36,960 to 30,774 on the frozen Board at 12 x 250. None of
+> those dropped blocks correlated anything a roster held; they were factored and discarded.
+> A player's talent and weekly draws are now a function of his position in the union rather
 > than his Board row, and `docs/gate-power.md` says what any change to the drawn width is:
 > a re-pairing of every player with his noise, not a perturbation. On the frozen 200-row
 > Board at the #197 pin's budget, arm A's roster did not move and arm B's did at three of six

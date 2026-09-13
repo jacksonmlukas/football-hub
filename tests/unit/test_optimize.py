@@ -684,9 +684,20 @@ def test_a_prepared_room_ranks_in_the_currency_its_own_report_names():
 
 def test_a_room_prepared_from_another_board_is_refused():
     """Indices are into `board`, and a room prepared from a different frame would hand back
-    indices into the wrong one -- silently, since both are integer arrays. The cheap check
-    is the height, which is what every index is bounded by."""
+    indices into the wrong one -- silently, since both are integer arrays. The Room carries
+    a fingerprint of the columns it was built from, and a Board that does not match it is
+    refused: a different height, and -- the case a height check let through -- the same
+    height with the rows re-sorted, or the draft market refreshed under the same names."""
+    kw = {"my_slot": 3, "teams": 12, "rounds": 2}
     room = optimize.prepare_room(_board(180))
     with pytest.raises(ValueError, match="prepared from a different"):
-        simulate_remaining_draft(_board(120), DraftState(), my_slot=3, teams=12, rounds=2,
-                                 room=room)
+        simulate_remaining_draft(_board(120), DraftState(), room=room, **kw)
+    resorted = _board(180).sort("player", descending=True)
+    with pytest.raises(ValueError, match="prepared from a different"):
+        simulate_remaining_draft(resorted, DraftState(), room=room, **kw)
+    refreshed = _board(180).with_columns(pl.col("adp") + 1.0)
+    with pytest.raises(ValueError, match="prepared from a different"):
+        simulate_remaining_draft(refreshed, DraftState(), room=room, **kw)
+    # And the same frame, rebuilt rather than the same object, is accepted: the fingerprint
+    # is of the values, not of identity.
+    simulate_remaining_draft(_board(180), DraftState(), room=room, **kw)

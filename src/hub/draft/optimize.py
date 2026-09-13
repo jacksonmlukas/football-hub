@@ -28,6 +28,7 @@ nothing here imports it.
 from __future__ import annotations
 
 import collections
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -235,6 +236,7 @@ class Room:
     """
     pool: pl.DataFrame           # the Board with `mu_pick` attached
     report: BuildReport          # what built the Board, and so which currency the room is in
+    fingerprint: str             # `room_fingerprint` of the Board it was prepared from
     mu_pick: np.ndarray          # expected pick per row, 999 where no ranking places him
     sigma: np.ndarray            # `pick_noise(mu_pick)`: the fitted law, before the scale
     pos: np.ndarray              # position per row, "NA" where the Board has none
@@ -246,6 +248,26 @@ class Room:
         if self._vor is None:
             self._vor = _greedy_currency(self.pool, self.report)
         return self._vor
+
+
+# The Board columns a Room is a function of: the names and positions every index means, the
+# two rankings `blended_adp` blends into `mu_pick` (and so into `sigma`), and the currency
+# the greedy ranks in. A Board that differs in any of these under the same height is a
+# different room wearing the same shape.
+ROOM_COLUMNS = ("player", "pos", "ecr", "adp", "vor", "vor_proj")
+
+
+def room_fingerprint(board: pl.DataFrame) -> str:
+    """What a Room was prepared from, as one short hash over `ROOM_COLUMNS`, in row order.
+
+    Row order is in it because indices are what a Room hands back: the same players
+    re-sorted are a different frame to index. Cheap enough to check on every rollout --
+    `hash_rows` over a few hundred rows -- and stable within a process, which is the only
+    span a Room lives across.
+    """
+    cols = [c for c in ROOM_COLUMNS if c in board.columns]
+    rows = board.select(cols).hash_rows(seed=0).to_numpy().tobytes() if cols else b""
+    return hashlib.blake2b(rows + "|".join(cols).encode(), digest_size=8).hexdigest()
 
 
 def prepare_room(board: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT, *,
@@ -262,7 +284,8 @@ def prepare_room(board: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT, *,
     pool = blended_adp(board, w, report=report)
     mu_pick = pool["mu_pick"].fill_null(999.0).to_numpy()
     names = pool["player"].to_list()
-    return Room(pool=pool, report=report, mu_pick=mu_pick, sigma=pick_noise(mu_pick),
+    return Room(pool=pool, report=report, fingerprint=room_fingerprint(board),
+                mu_pick=mu_pick, sigma=pick_noise(mu_pick),
                 pos=pool["pos"].fill_null("NA").to_numpy(), names=names,
                 by_key={player_key(n): i for i, n in enumerate(names)})
 
@@ -298,17 +321,20 @@ def simulate_remaining_draft(board: pl.DataFrame, state: DraftState, *, my_slot:
 
     **`room` is the Board-invariant state, prepared once by a caller that plays many
     rollouts of one Board** (#259) -- `win_probability` makes candidates x draft-sims of
-    them per call. Given, it must have been prepared from this `board`, and `w` and
-    `report` are already inside it. Absent, one is prepared here, so the call is what it
-    always was.
+    them per call. Given, it must have been prepared from this `board` -- held by the
+    fingerprint the Room carries, checked here on every call -- and `w` and `report` are
+    already inside it. Absent, one is prepared here, so the call is what it always was.
     """
     rng = rng or np.random.default_rng(0)
     if room is None:
         room = prepare_room(board, w, report=report)
-    elif room.pool.height != board.height:
+    elif room.fingerprint != room_fingerprint(board):
+        # Not the height alone: a same-height Board re-sorted, or with its draft market
+        # refreshed, would pass a height check and be indexed with the old room's arrays.
         raise ValueError(
-            f"this room was prepared from a different Board ({room.pool.height} rows against "
-            f"{board.height}); its indices would be into the wrong frame")
+            f"this room was prepared from a different Board ({room.pool.height} rows, "
+            f"fingerprint {room.fingerprint}; this one has {board.height} rows, "
+            f"{room_fingerprint(board)}); its indices would be into the wrong frame")
     pool = room.pool
 
     mu_pick = room.mu_pick

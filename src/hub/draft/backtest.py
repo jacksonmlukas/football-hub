@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import multiprocessing
+import os
 import queue
 import sys
 from collections.abc import Callable, Sequence
@@ -349,6 +350,26 @@ def _season_rows(season: int, board: pl.DataFrame, real: pl.DataFrame, *, n_draf
     floor it always did. `progress` is a queue for a worker to post `(season, k, of)` to;
     `on_draft` is the in-process callback. A season reports through exactly one of them.
     """
+    try:
+        return _season_rows_unguarded(season, board, real, n_drafts=n_drafts, seed=seed,
+                                      my_slot=my_slot, teams=teams, rounds=rounds,
+                                      n_draft_sims=n_draft_sims, n_season_sims=n_season_sims,
+                                      opp_noise=opp_noise, carry_correlation=carry_correlation,
+                                      on_draft=on_draft, progress=progress)
+    except Exception as exc:
+        # A worker's exception comes back through `future.result()` with nothing saying
+        # which season raised it, and the serial loop's index is not in a traceback either.
+        # A note rather than a wrapper, so the type a caller catches is unchanged.
+        exc.add_note(f"while playing season {season} of the draft gate")
+        raise
+
+
+def _season_rows_unguarded(season: int, board: pl.DataFrame, real: pl.DataFrame, *,
+                           n_drafts: int, seed: int, my_slot: int, teams: int, rounds: int,
+                           n_draft_sims: int, n_season_sims: int, opp_noise: float,
+                           carry_correlation: bool,
+                           on_draft: Callable[[int, int, int], None] | None,
+                           progress) -> tuple[list[dict], CorrelationReport | None]:
     correlation = CorrelationReport() if carry_correlation else None
     known = realised_names(real)
     arm_a = market_strategy()
@@ -464,11 +485,14 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
             progress = manager.Queue() if on_draft is not None else None
             futures = [pool.submit(_season_rows, season, boards[season], realised[season],
                                    progress=progress, **per_season) for season in seasons]
-            # Relay progress while the seasons play, then drain what arrived after the last
-            # check; a line posted between the two would otherwise be lost.
+            # Relay progress while the seasons play. A future reads done on the executor's
+            # result channel and the season's last tick travels the Manager's queue, and
+            # nothing orders the two -- so after the join the drain *waits* until the queue
+            # has been quiet for a whole `PROGRESS_GRACE`, rather than snapshotting it. A
+            # tick still in flight when the futures completed lands inside that.
             while not all(f.done() for f in futures):
-                _relay(progress, on_draft, wait=True)
-            _relay(progress, on_draft, wait=False)
+                _relay(progress, on_draft, grace=PROGRESS_POLL)
+            _relay(progress, on_draft, grace=PROGRESS_GRACE)
             for future in futures:                     # season order, as the serial path
                 got, report = future.result()
                 rows += got
@@ -478,17 +502,24 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     return out.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
 
 
-def _relay(progress, on_draft, *, wait: bool) -> None:
-    """Hand every queued `(season, k, of)` to the caller's callback, in this process."""
+# How long the parent waits on the progress queue between checks that the seasons are
+# done, and how long it waits after they are for a tick that is still in flight. Seconds.
+PROGRESS_POLL = 0.2
+PROGRESS_GRACE = 1.0
+
+
+def _relay(progress, on_draft, *, grace: float) -> None:
+    """Hand every queued `(season, k, of)` to the caller's callback, in this process, and
+    return once the queue has been empty for `grace` seconds -- not on the first empty
+    read, which is a snapshot and can miss a tick posted a moment later."""
     if progress is None:
         return
     while True:
         try:
-            season, k, of = progress.get(timeout=0.2) if wait else progress.get_nowait()
+            season, k, of = progress.get(timeout=grace)
         except queue.Empty:
             return
         on_draft(season, k, of)
-        wait = False
 
 
 # What this gate's ceiling *is*, spelled where it is printed (#138). The draft gate's ceiling
@@ -959,7 +990,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--workers", type=int, default=None,
                     help="processes to play the seasons in; one per season by default, "
-                         "which is the same run in less wall-clock (#261). 1 is serial")
+                         "capped at the machine's cores, which is the same run in less "
+                         "wall-clock (#261). 1 is serial")
     ap.add_argument("--progress", action="store_true",
                     help="one line per draft, so a long run can be watched rather than trusted")
     ap.add_argument("--ceiling", action="store_true",
@@ -1121,7 +1153,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         # `compare` writes into it, and a count that lives inside the call dies with its
         # stack frame. With workers, each season's count comes back and is absorbed.
         correlation = CorrelationReport()
-        workers = len(seasons) if a.workers is None else max(1, a.workers)
+        # One worker per season, capped at the cores. Each worker is a spawned process
+        # holding its own season's frames and running its sims flat out, so more of them
+        # than cores is the same run with the scheduler in the way. The full count rather
+        # than one fewer: the parent only relays progress while it waits, and gives up its
+        # core to the workers. `cpu_count` is None where the platform cannot say; one
+        # worker then, which is the serial run.
+        workers = (min(len(seasons), os.cpu_count() or 1) if a.workers is None
+                   else max(1, a.workers))
 
         if a.noise_scales:
             # The sensitivity (#49): one gate per scale, the table as the deliverable. Not

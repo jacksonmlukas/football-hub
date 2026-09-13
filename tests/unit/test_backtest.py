@@ -1884,3 +1884,68 @@ def test_a_season_played_for_a_worker_posts_each_draft_to_the_queue_it_is_given(
                                    opp_noise=1.0, carry_correlation=False, progress=q)
     assert [q.get_nowait() for _ in range(2)] == [(2024, 1, 2), (2024, 2, 2)]
     assert q.empty() and len(rows) == 2 and report is None
+
+
+def test_the_relay_drains_everything_queued_and_stops_only_when_the_queue_has_gone_quiet():
+    """The parent learns a worker is done on the executor's channel and reads its progress
+    on the Manager's queue, and nothing orders the two -- so the last tick can still be in
+    flight when the futures read done. The drain after the join therefore *waits* for the
+    queue to be empty for a whole grace period, rather than taking a snapshot of it. A queue
+    whose next item arrives late, but inside the grace, is fully relayed."""
+    import queue
+    import threading
+
+    seen = []
+    q: queue.Queue = queue.Queue()
+    q.put((2024, 1, 2))
+    threading.Timer(0.05, lambda: q.put((2024, 2, 2))).start()
+    bt._relay(q, lambda s, k, of: seen.append((s, k, of)), grace=0.5)
+    assert seen == [(2024, 1, 2), (2024, 2, 2)]
+
+
+def test_the_default_worker_count_never_exceeds_the_cores(monkeypatch, tmp_path):
+    """One worker per season, capped at the machine's cores: each worker is a spawned
+    process holding its own season and running the sims, so more of them than cores is the
+    same run with the scheduler in the way."""
+    got = {}
+
+    def fake_compare(boards, realised, *, workers=1, **kw):
+        got["workers"] = workers
+        return pl.DataFrame({"season": [2022, 2023, 2024], "draft": [0, 0, 0],
+                             "market": [10.0, 9.0, 8.0], "optimizer": [9.0, 8.0, 7.0],
+                             "market_failed": [0, 0, 0], "optimizer_failed": [0, 0, 0],
+                             "picks": [3, 3, 3]}
+                            ).with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
+
+    board = _full_board(24)
+    real = _flat_realised(board)
+    monkeypatch.setattr(bt, "walk_forward_inputs",
+                        lambda seasons, load, *, on_season=None: (
+                            dict.fromkeys(seasons, board), dict.fromkeys(seasons, real)))
+    monkeypatch.setattr(bt, "compare", fake_compare)
+    from functools import partial
+    monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, record_width=False, bootstrap=50))
+    monkeypatch.setattr(bt.os, "cpu_count", lambda: 2)
+    assert bt.main(["--seasons", "2022,2023,2024", "--drafts", "1"]) == 0
+    assert got["workers"] == 2
+    monkeypatch.setattr(bt.os, "cpu_count", lambda: None)
+    assert bt.main(["--seasons", "2022,2023,2024", "--drafts", "1"]) == 0
+    assert got["workers"] == 1
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_a_season_that_fails_says_which_season_it_was(workers):
+    """A worker's exception comes back through `future.result()` with nothing saying which
+    season raised it; the serial path is no better, since the loop index is not in the
+    traceback. The re-raise carries the season as a note, on both paths."""
+    boards, reals = _two_seasons()
+    reals = dict(reals)
+    reals[2025] = reals[2025].drop("points")           # 2025 cannot be scored
+    with pytest.raises(Exception) as caught:
+        bt.compare(boards, reals, workers=workers, n_drafts=1, seed=0, rounds=3,
+                   n_draft_sims=2, n_season_sims=5)
+    notes = getattr(caught.value, "__notes__", [])
+    assert any("season 2025" in n for n in notes), (
+        f"the failure does not name its season: {type(caught.value).__name__}: "
+        f"{caught.value}; notes {notes}")
+    assert not any("season 2024" in n for n in notes)
