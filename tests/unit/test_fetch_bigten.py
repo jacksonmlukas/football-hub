@@ -81,11 +81,14 @@ def web(monkeypatch):
     pages: dict[str, bytes] = {}
     calls: list[str] = []
 
-    def _get(url: str) -> bytes:
+    def _get(url: str, cap: int | None = None) -> bytes:
         calls.append(url)
         if url not in pages:
             raise OSError(f"unreachable: {url}")
-        return pages[url]
+        got = pages[url]
+        if isinstance(got, BaseException):
+            raise got
+        return got
     monkeypatch.setattr(bigten, "_get", _get)
     pages["calls"] = calls  # type: ignore[assignment]
     return pages
@@ -191,7 +194,7 @@ def test_links_are_absolute_and_their_labels_are_text():
      b'{"props":{"pageProps":{"fallback":{"1":{"_content_type_uid":"image"}}}}}</script>',
      "no article record"),
     (b'<script id="__NEXT_DATA__" type="application/json">'
-     b'{"props":{"pageProps":{"fallback":{"1":{"_content_type_uid":"article","title":"t"}}}}}'
+     b'{"props":{"pageProps":{"fallback":{"1":{"_content_type_uid":"article","title":"FB Availability Reports"}}}}}'
      b"</script>", "lacks"),
 ])
 def test_a_page_of_another_shape_says_what_it_lacks(page, missing):
@@ -355,7 +358,7 @@ def test_a_full_capture_is_recorded_fresh(web, season, cfbd_lines):
     assert got["shape"] == "summary" and got["name"] == "bigten"
     assert (got["fetched"], got["stale"], got["reason"]) == (True, False, None)
     assert got["deadline"] == {"id": "2026-09-17T0130Z", "name": "evening"}
-    assert got["documents"] == {"seen": 2, "new": 2}
+    assert got["documents"] == {"seen": 2, "new": 2, "reports": 1}
     assert got["lines"]["rows"] == 1 and got["lines"]["why"] is None
     assert got["missed"] == {"count": 0, "deadlines": []}
     assert got["archive_rows"] == 3
@@ -384,7 +387,150 @@ def test_one_lost_document_is_recorded_as_degraded_with_the_rest_kept(web, seaso
     got = bigten.record_run(bigten.capture(now=FIRST_RUN, skip_lines=True), now=FIRST_RUN)
     assert got["fetched"] and got["stale"]
     assert "linked document" in got["reason"] and "OSError" in got["reason"]
-    assert got["documents"] == {"seen": 2, "new": 2}
+    assert got["documents"] == {"seen": 2, "new": 2, "reports": 1}
+
+
+# --- what the capture will and will not follow (#265, #278) -----------------------------
+
+def test_only_the_conferences_own_documents_are_archived_and_the_rest_are_stamped(
+        web, season, tmp_path, capsys):
+    """The body is the conference's CMS and the CMS carries what the conference's CMS
+    carries: an ad, a partner site, a video. Following every absolute href committed a
+    third party's bytes into this repository. An off-host link and a link that is not a
+    document are skipped and *named* in the stamp -- a legitimate report behind a new
+    host has to be visible rather than silently dropped -- and an oversized one is
+    refused mid-stream and recorded as a document this capture failed to keep."""
+    body = ONE_LINK.replace("</p>", (
+        '<a href="https://ads.example.net/promo.pdf">partner</a>'
+        '<a href="/fb/schedule/">the schedule page</a>'
+        '<a href="/api/media/file/huge-Week_4.mp4">a video</a>'
+        '<a href="/api/media/file/big-Week_4.pdf">too big</a></p>'))
+    web[bigten.PAGE] = page_with(body)
+    web["https://bigten.org/api/media/file/abc-Week_4.pdf"] = PDF
+    web["https://bigten.org/api/media/file/big-Week_4.pdf"] = bigten.DocumentTooLarge(
+        "over the cap")
+    cap = bigten.capture(now=FIRST_RUN, skip_lines=True)
+    assert [r["kind"] for r in cap.rows] == ["article", "file"]
+    assert cap.rows[1]["url"].endswith("abc-Week_4.pdf")
+    assert "ads.example.net" not in web["calls"] and not any(
+        "promo.pdf" in u or "schedule" in u or ".mp4" in u for u in web["calls"]), (
+        "a skipped link is never fetched, which is the point of an allowlist")
+    assert [(k["host"], k["why"].split(":")[0]) for k in cap.skipped] == [
+        ("ads.example.net", "off-host"), ("bigten.org", "not a document"),
+        ("bigten.org", "not a document"), ("bigten.org", "too large")]
+    assert isinstance(cap.error, bigten.DocumentTooLarge), (
+        "a report the capture refused to keep is a report not kept")
+    got = bigten.record_run(cap, now=FIRST_RUN)
+    assert got["stale"] and "DocumentTooLarge" in got["reason"]
+    assert got["documents"] == {"seen": 2, "new": 2, "reports": 1}
+    assert got["skipped"] == {"count": 4, "by_reason": {"off-host": 1, "not a document": 2,
+                                                          "too large": 1},
+                              "hosts": ["ads.example.net", "bigten.org"]}
+    err = capsys.readouterr().err
+    assert "promo.pdf" in err and "off-host" in err
+    stored = sorted(str(x.name) for x in (tmp_path / "archive" / "availability").rglob("*.*"))
+    assert len(stored) == 2, stored
+
+
+def test_off_host_and_non_document_skips_alone_do_not_degrade_the_capture(web, season):
+    """An ad link beside the report is the CMS's normal state; a run that is stale for
+    it is stale forever, which trains the reader to ignore stale."""
+    body = ONE_LINK.replace("</p>", '<a href="https://ads.example.net/x">ad</a></p>')
+    web[bigten.PAGE] = page_with(body)
+    web["https://bigten.org/api/media/file/abc-Week_4.pdf"] = PDF
+    got = bigten.record_run(bigten.capture(now=FIRST_RUN, skip_lines=True), now=FIRST_RUN)
+    assert not got["stale"] and got["skipped"]["count"] == 1
+
+
+def test_a_subdomain_of_the_conference_is_the_conference(web, season):
+    """The document CDN, when the conference moves the files onto one, is under its own
+    domain; a host that merely ends in the letters is not."""
+    assert bigten.admit("https://assets.bigten.org/reports/Week_4.pdf") is None
+    assert bigten.admit("https://bigten.org/api/media/file/Week_4.xlsx") is None
+    assert bigten.admit("https://bigten.org/api/media/file/Week_4.pdf#page=2") is None
+    assert bigten.admit("https://bigten.org/api/media/file/Week_4.pdf?v=3") is None
+    assert (bigten.admit("https://notbigten.org/Week_4.pdf") or "").startswith("off-host")
+    assert (bigten.admit("https://bigten.org.example.com/Week_4.pdf") or "").startswith(
+        "off-host")
+    assert (bigten.admit("https://bigten.org/api/media/file/Week_4") or "").startswith(
+        "not a document")
+
+
+def test_the_streamed_transport_refuses_a_document_over_the_cap(monkeypatch):
+    """`_get` is the door and the cap is on the door: the bytes past it are never held."""
+    class _Resp:
+        def __init__(self, chunks): self._chunks = chunks
+        def raise_for_status(self): pass
+        def iter_content(self, chunk_size): yield from self._chunks
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp([b"x" * 10, b"y" * 10]))
+    monkeypatch.delenv(bigten.PYTEST_NODE_ENV, raising=False)
+    assert bigten._get("https://bigten.org/f.pdf", cap=25) == b"x" * 10 + b"y" * 10
+    assert bigten._get("https://bigten.org/f.pdf", cap=20) == b"x" * 10 + b"y" * 10
+    with pytest.raises(bigten.DocumentTooLarge, match="15"):
+        bigten._get("https://bigten.org/f.pdf", cap=15)
+
+
+def test_a_parsed_page_with_no_report_documents_is_stale_inside_the_regime(web, season):
+    """#278: the link loop ran zero times, no error was set, and the run was recorded as
+    fetched and not stale. Forty tests and none covered it. Inside the reporting regime a
+    capture that archives no report is degraded, with the reason."""
+    web[bigten.PAGE] = page_with('<div class="payload-richtext"><p>Reports post here.</p></div>')
+    cap = bigten.capture(now=FIRST_RUN, skip_lines=True)
+    assert cap.fetched and cap.parsed and cap.error is None and cap.reports == 0
+    got = bigten.record_run(cap, now=FIRST_RUN)
+    assert got["fetched"] and got["stale"]
+    assert "no report documents" in got["reason"]
+    assert got["documents"] == {"seen": 1, "new": 1, "reports": 0}
+
+
+def test_the_watchdog_calls_a_fresh_stamp_with_no_reports_empty(season, tmp_path):
+    """A stamp written on time that archived nothing is the stall wearing a fresh date."""
+    now = GAMEDAY + bigten.WATCH_DELAY + timedelta(minutes=10)
+    p = _stamp(tmp_path, GAMEDAY + timedelta(minutes=95),
+               documents={"seen": 1, "new": 1, "reports": 0})
+    got = bigten.watch(p, now=now)
+    assert got.startswith("inside 2026-10-03T1500Z empty "), got
+    kept = _stamp(tmp_path, GAMEDAY + timedelta(minutes=95),
+                  documents={"seen": 2, "new": 2, "reports": 1})
+    assert bigten.watch(kept, now=now).startswith("inside 2026-10-03T1500Z ok ")
+    # A stamp from before `reports` was recorded is read as it always was.
+    assert bigten.watch(_stamp(tmp_path, GAMEDAY + timedelta(minutes=95)),
+                        now=now).startswith("inside 2026-10-03T1500Z ok ")
+
+
+def test_the_availability_article_is_chosen_by_title_not_by_dict_order():
+    """#278: the record was taken by dict order. A related-content block that lands first
+    in `fallback` would have been archived as the reports article, still green."""
+    other = {"_content_type_uid": "article", "title": "Week 4 Game Notes",
+             "updatedAt": "2026-09-17T00:00:00.000Z", "body": "<p>notes</p>", "id": 1}
+    reports = {"_content_type_uid": "article", "title": "2026 FB Availability Reports",
+               "updatedAt": "2026-09-17T00:12:44.000Z", "body": ONE_LINK, "id": 60323}
+    data = {"props": {"pageProps": {"fallback": {"1": other, "60323": reports}}}}
+    page = (b'<html><script id="__NEXT_DATA__" type="application/json">'
+            + json.dumps(data).encode() + b"</script></html>")
+    assert bigten.parse_article(page).title == "2026 FB Availability Reports"
+    data["props"]["pageProps"]["fallback"] = {"1": other}
+    page = (b'<html><script id="__NEXT_DATA__" type="application/json">'
+            + json.dumps(data).encode() + b"</script></html>")
+    with pytest.raises(bigten.PageShapeChanged, match="availability"):
+        bigten.parse_article(page)
+
+
+def test_status_reports_the_last_runs_skipped_links(web, season, clock, capsys, tmp_path):
+    clock(FIRST_RUN)
+    body = ONE_LINK.replace("</p>", '<a href="https://ads.example.net/x">ad</a></p>')
+    web[bigten.PAGE] = page_with(body)
+    web["https://bigten.org/api/media/file/abc-Week_4.pdf"] = PDF
+    bigten.main(["--capture", "--skip-lines", "--status-path", str(tmp_path / "s.json")])
+    assert bigten.main(["--status", "--status-path", str(tmp_path / "s.json")]) == 0
+    out = capsys.readouterr().out
+    assert "skipped 1 link" in out and "off-host" in out and "ads.example.net" in out
+    # `--status` reads the stamp it is pointed at, not the default (review finding).
+    assert bigten.main(["--status"]) == 0
+    assert "skipped" not in capsys.readouterr().out
 
 
 def test_an_unreachable_page_is_recorded_as_not_fetched(web, season):
@@ -505,7 +651,8 @@ def test_the_network_has_exactly_one_door_in_this_module():
     users = [ln.strip() for ln in src.splitlines()
              if "requests" in ln and not ln.strip().startswith("#")]
     assert users == ["import requests",
-                     'r = requests.get(url, timeout=30, headers={"User-Agent": USER_AGENT})'], (
+                     'with requests.get(url, timeout=30, headers={"User-Agent": USER_AGENT},',
+                     ], (
         f"something other than `_get` reaches the network now: {users}")
 
 
@@ -520,10 +667,10 @@ def test_the_network_has_exactly_one_door_in_this_module():
 GAMEDAY = datetime(2026, 10, 3, 15, 0, tzinfo=UTC)
 
 
-def _stamp(tmp_path, generated_at: datetime | str | None):
+def _stamp(tmp_path, generated_at: datetime | str | None, **extra):
     p = tmp_path / "site" / "bigten.json"
     p.parent.mkdir(parents=True, exist_ok=True)
-    body: dict = {"fetched": True, "missed": {"count": 0, "deadlines": []}}
+    body: dict = {"fetched": True, "missed": {"count": 0, "deadlines": []}, **extra}
     if generated_at is not None:
         body["generated_at"] = (generated_at.isoformat() if isinstance(generated_at, datetime)
                                 else generated_at)
