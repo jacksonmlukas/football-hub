@@ -368,12 +368,21 @@ class Pricer:
         return price(self.lines[pk][2], market, point, n=self.n, seed=self.seed,
                      draws=self.draws(pk, MARKET_STATS[market]))
 
-    def p_over_at(self, pk: str, market: str, point: float | None) -> float | None:
-        """Our no-push over probability at `point`, or None for a player with no line or a
-        market with no point."""
+    def at(self, pk: str, market: str, point: float | None) -> tuple[float, float] | None:
+        """Our raw over probability and push mass at `point`, or None for a player with
+        no line or a market with no point. Raw, not no-push: the translation in
+        `scorecard` needs the two separately, because the push mass is different at each
+        point and a probability conditioned on excluding it is not comparable across them."""
         if pk not in self.lines or point is None or market not in MARKET_STATS:
             return None
-        return _no_push(self.price(pk, market, point))
+        got = self.price(pk, market, point)
+        assert got.p_over is not None, "a point was given, so `price` set the over"
+        return got.p_over, got.p_push or 0.0
+
+    def p_over_at(self, pk: str, market: str, point: float | None) -> float | None:
+        """Our no-push over probability at `point` -- what the side is decided on."""
+        got = self.at(pk, market, point)
+        return None if got is None else _no_push(*got)
 
 
 def card(players: pl.DataFrame, quotes: pl.DataFrame, *, decided_at: datetime,
@@ -391,6 +400,9 @@ def card(players: pl.DataFrame, quotes: pl.DataFrame, *, decided_at: datetime,
     and this stamps it on every row, so the decision point is a timestamp and not a week.
     """
     ours = pricer or Pricer(players, n=n, seed=seed)
+    if (ours.n, ours.seed) != (n, seed):
+        raise ValueError(f"the pricer draws n={ours.n} seed={ours.seed}; the card was asked "
+                         f"for n={n} seed={seed}. One distribution prices the card.")
     posted = {(r["player_key"], r["market"]): r
               for r in quotes.iter_rows(named=True) if r["market"] in MARKET_STATS}
     rows: list[dict[str, Any]] = []
@@ -416,8 +428,8 @@ _CARD_SCHEMA: dict[str, Any] = {
     "game_id": pl.Utf8, "player_key": pl.Utf8, "player": pl.Utf8, "position": pl.Utf8,
     "market": pl.Utf8, "stat": pl.Utf8, "status": pl.Utf8, "decided_at": pl.Datetime,
     "our_mean": pl.Float64, "our_sd": pl.Float64, "our_p50": pl.Float64,
-    "our_p_over": pl.Float64, "our_p_over_close": pl.Float64, "side": pl.Utf8,
-    "edge": pl.Float64,
+    "our_p_over": pl.Float64, "our_p_push": pl.Float64, "our_p_over_close": pl.Float64,
+    "our_p_push_close": pl.Float64, "side": pl.Utf8, "edge": pl.Float64,
     "decision_point": pl.Float64, "decision_over_price": pl.Float64,
     "decision_under_price": pl.Float64, "decision_captured_at": pl.Datetime,
     "decision_polls_unmoved": pl.Int64, "decision_unmoved_since": pl.Datetime,
@@ -431,17 +443,15 @@ def _blank(pk: str, name: str, pos: str | None, market: str, stat: str,
             "status": NO_LINE}
 
 
-def _no_push(p: PropPrice) -> float | None:
-    """Our over probability on the mass that is not a push -- a push is refunded, so the
-    two sides are compared, and a point translated, on what is left."""
-    if p.p_over is None:
-        return None
-    push = p.p_push or 0.0
-    return p.p_over / (1.0 - push) if push < 1.0 else 0.5
+def _no_push(p_over: float, push: float) -> float:
+    """The over probability on the mass that is not a push -- a push is refunded, so the
+    two sides are compared on what is left."""
+    return p_over / (1.0 - push) if push < 1.0 else 0.5
 
 
 def _ours(p: PropPrice) -> dict[str, Any]:
-    return {"our_mean": p.mean, "our_sd": p.sd, "our_p50": p.p50, "our_p_over": p.p_over}
+    return {"our_mean": p.mean, "our_sd": p.sd, "our_p50": p.p50, "our_p_over": p.p_over,
+            "our_p_push": p.p_push}
 
 
 def _decision(q: Mapping[str, Any] | None, p: PropPrice | None) -> dict[str, Any]:
@@ -470,10 +480,7 @@ def _decision(q: Mapping[str, Any] | None, p: PropPrice | None) -> dict[str, Any
     q_over = novig_over(q.get("over_price"), q.get("under_price"))
     if q_over is None:
         q_over = 0.5
-    p_over = _no_push(p)
-    if p_over is None:
-        return out
-    edge = p_over - q_over
+    edge = _no_push(p.p_over, p.p_push or 0.0) - q_over
     out.update(side=OVER if edge > 0 else UNDER, edge=edge)
     return out
 
@@ -505,38 +512,56 @@ def scorecard(card_rows: pl.DataFrame, close: pl.DataFrame,
 
     `clv_points` is the close's point minus the decision's, signed toward our side: positive
     means the betting market moved toward the number we had. `clv_prob` is the vig-free
-    probability the betting market conceded on our side, and it is not the same number in
-    other units: differenced at each quote's own point it could not see a point move at
-    all (#275). So the close's point is translated onto the decision's through our own
-    distribution -- `pricer` re-reads the draws that priced the card at the close's point,
-    and the mass between the two points is added to the close's probability before the
-    difference is taken. `our_p_over_close` carries that read on the row. Without a
-    `pricer` no translation is possible and `clv_prob` is the price move alone, which is
-    the anytime market's case on every row. Both CLVs are null where there was no decision
-    -- a `no_line` or `no_number` row -- so a mean over the column is a mean over decisions
-    and nothing else.
+    probability the betting market conceded on *the event we bet* -- over the decision's
+    point -- and it is not the same number in other units: differenced at each quote's own
+    point it could not see a point move at all (#275). So the close is translated onto the
+    decision's point through our own distribution, in raw probabilities, because a quote
+    is a no-push probability and the push mass differs between the points:
+
+        raw_close   = q_close * (1 - push_close)          betting market's P(over close pt)
+        raw_at_dec  = raw_close + (ours_dec - ours_close)  moved by the mass our draws put
+                                                           between the two points
+        clv_prob    = sign * (raw_at_dec / (1 - push_dec) - q_dec)
+
+    with `ours_*` our raw over probability and `push_*` our push mass at each point, both
+    read off the draws that priced the card (`pricer`) and carried on the row as
+    `our_p_push`, `our_p_over_close`, `our_p_push_close`. A count line moving from 5.5 to
+    5.0 at unchanged prices is therefore a *loss* for an Over taken at 5.5: the betting
+    market's belief in X >= 6 fell by half the push mass, whatever the terms of the new bet. Without
+    a `pricer` no translation is possible and `clv_prob` is the price move alone, which is
+    the anytime market's case on every row. A close at the decision's own point is the
+    price move alone by construction, so an unchanged prop reads as exactly zero. Both
+    CLVs are null where there was no decision -- a `no_line` or `no_number` row -- so a
+    mean over the column is a mean over decisions and nothing else.
     """
     joined = card_rows.join(close, on=list(_KEY), how="left")
     if pricer is not None:
-        at_close = [pricer.p_over_at(r["player_key"], r["market"], r["close_point"])
-                    if r["side"] is not None else None
-                    for r in joined.select("player_key", "market", "close_point",
-                                           "side").iter_rows(named=True)]
-        joined = joined.with_columns(pl.Series("our_p_over_close", at_close, dtype=pl.Float64))
+        reads = [pricer.at(r["player_key"], r["market"], r["close_point"])
+                 if r["side"] is not None else None
+                 for r in joined.select("player_key", "market", "close_point",
+                                        "side").iter_rows(named=True)]
+        joined = joined.with_columns(
+            pl.Series("our_p_over_close", [None if g is None else g[0] for g in reads],
+                      dtype=pl.Float64),
+            pl.Series("our_p_push_close", [None if g is None else g[1] for g in reads],
+                      dtype=pl.Float64))
     # `side` is null exactly where there was no decision, so the sign carries the null and
     # both CLVs are null on a `no_line` or `no_number` row without a second condition.
     sign = (pl.when(pl.col("side") == OVER).then(1.0)
               .when(pl.col("side") == UNDER).then(-1.0).otherwise(None))
     q_dec = _novig_col("decision_over_price", "decision_under_price")
     q_close = _novig_col("close_over_price", "close_under_price")
-    # The card's `our_p_over` is the raw over; the decision compared on the no-push mass,
-    # and the translation is on that same mass at both points.
-    at_dec = pl.col("edge") + q_dec
-    translated = (pl.when(pl.col("our_p_over_close").is_not_null())
-                    .then(at_dec - pl.col("our_p_over_close")).otherwise(0.0))
+    push_dec = pl.col("our_p_push").fill_null(0.0)
+    push_close = pl.col("our_p_push_close").fill_null(0.0)
+    shift = pl.col("our_p_over") - pl.col("our_p_over_close")
+    raw_at_dec = (q_close * (1.0 - push_close) + shift).clip(0.0, 1.0)
+    translated = pl.when(pl.col("our_p_over_close").is_not_null()
+                         & (pl.col("close_point") != pl.col("decision_point"))
+                         & (push_dec < 1.0)
+                         ).then(raw_at_dec / (1.0 - push_dec)).otherwise(q_close)
     return joined.with_columns(
         (sign * (pl.col("close_point") - pl.col("decision_point"))).alias("clv_points"),
-        (sign * ((q_close + translated).clip(0.0, 1.0) - q_dec)).alias("clv_prob"),
+        (sign * (translated.clip(0.0, 1.0) - q_dec)).alias("clv_prob"),
         pl.lit(MODEL).alias("model"),
         pl.lit(version()).alias("version"),
     )
@@ -570,6 +595,10 @@ def _by_game(log: pl.DataFrame, col: str) -> pl.DataFrame:
     error is taken over here (`docs/method.md` rule 3). The game and not the player,
     because two players in one game share its script as hard as one player's own markets
     do (#275); a row with no game clusters on its player, which is the next best unit."""
+    # The game is one week's cluster; a player's week 3 and week 4 share him too, and that
+    # correlation is not captured by clustering on the game. The within-week share is the
+    # larger one and the one that grows with the props per game; the across-week one is
+    # the residual this understates, and the count of games says how much room it has.
     cluster = pl.coalesce(pl.col("game_id"), pl.col("player_key")).alias("cluster")
     return (log.filter(pl.col(col).is_not_null()).with_columns(cluster).group_by("cluster")
                .agg(pl.col(col).mean().alias(col), pl.len().alias("props")))

@@ -330,6 +330,49 @@ def test_a_point_move_and_a_price_move_add():
     assert over["clv_prob"] == pytest.approx((q_close - q_dec) + (at_dec - at_close), abs=1e-6)
 
 
+def test_a_count_line_moving_onto_a_push_is_read_in_raw_probability():
+    """Review finding: translated on the no-push probability, a receptions line moving
+    from 5.5 to 5.0 at unchanged prices read as a large move although our raw P(X >= 6)
+    is identical at both points -- the push mass differs and a probability conditioned
+    on excluding it is not comparable across points. Translated raw, the betting market's belief in
+    X >= 6 at 5.0 with -110/-110 is P(X <= 4) = (1 - P(X = 5)) / 2: it fell by half the
+    push mass, which is a loss for an Over taken at 5.5 whatever the new bet's terms."""
+    polls = _polls(_poll("Justin Jefferson", "player_receptions", 5.5, -110, -110, at=_at(0)),
+                   _poll("Justin Jefferson", "player_receptions", 5.0, -110, -110, at=_at(30)))
+    row = (props.log_decisions(_players(), polls, decided_at=_at(1), n=4000)
+                .filter(pl.col("market") == "player_receptions").row(0, named=True))
+    ours = props.Pricer(_players(), n=4000)
+    at_close = ours.at(props.player_key("Justin Jefferson"), "player_receptions", 5.0)
+    assert at_close is not None and at_close[1] > 0.05, "the fixture must carry a push"
+    assert row["our_p_push_close"] == pytest.approx(at_close[1])
+    sign = 1.0 if row["side"] == props.OVER else -1.0
+    assert row["clv_prob"] == pytest.approx(sign * (-0.5 * at_close[1]), abs=1e-9)
+    # and the mirror: 5.0 at the decision, 5.5 at the close
+    polls = _polls(_poll("Justin Jefferson", "player_receptions", 5.0, -110, -110, at=_at(0)),
+                   _poll("Justin Jefferson", "player_receptions", 5.5, -110, -110, at=_at(30)))
+    back = (props.log_decisions(_players(), polls, decided_at=_at(1), n=4000)
+                 .filter(pl.col("market") == "player_receptions").row(0, named=True))
+    sign = 1.0 if back["side"] == props.OVER else -1.0
+    # q_dec is 0.5 no-push at 5.0; the close says P(X >= 6) = 0.5 raw; at the decision's
+    # point that is 0.5 / (1 - push): the betting market conceded half the push mass to the Over.
+    assert back["clv_prob"] == pytest.approx(sign * (0.5 / (1 - at_close[1]) - 0.5), abs=1e-9)
+
+
+def test_a_pricer_drawn_differently_from_the_card_is_refused():
+    with pytest.raises(ValueError, match="One distribution"):
+        props.card(_players(), _polls(), decided_at=T0, n=4000,
+                   pricer=props.Pricer(_players(), n=2000))
+
+
+def test_the_pricer_reads_nothing_off_a_player_or_market_it_cannot_price():
+    ours = props.Pricer(_players(), n=1000)
+    jj = props.player_key("Justin Jefferson")
+    assert ours.at("nobody", "player_receptions", 5.5) is None
+    assert ours.at(jj, "player_receptions", None) is None
+    assert ours.at(jj, "player_anytime_td", 0.5) is not None
+    assert ours.p_over_at(jj, "not_a_market", 5.5) is None
+
+
 def test_the_close_can_be_read_as_of_kickoff():
     polls = _polls(_poll("Justin Jefferson", "player_receptions", 5.5, -110, at=_at(0)),
                    _poll("Justin Jefferson", "player_receptions", 6.5, -110, at=_at(10)),
@@ -362,8 +405,8 @@ def _log_row(player, market, clv_pts, clv_prob, *, our=None, close=None, status=
     return {"game_id": game, "player_key": props.player_key(player), "player": player,
             "position": "WR", "market": market, "stat": props.MARKET_STATS[market],
             "status": status, "decided_at": decided, "our_mean": our, "our_sd": 10.0,
-            "our_p50": our, "our_p_over": 0.5, "our_p_over_close": 0.5,
-            "side": props.OVER, "edge": 0.05,
+            "our_p50": our, "our_p_over": 0.5, "our_p_push": 0.0, "our_p_over_close": 0.5,
+            "our_p_push_close": 0.0, "side": props.OVER, "edge": 0.05,
             "decision_point": None if close is None else close - clv_pts,
             "decision_over_price": -110.0, "decision_under_price": -110.0,
             "decision_captured_at": decided, "decision_polls_unmoved": 1,
