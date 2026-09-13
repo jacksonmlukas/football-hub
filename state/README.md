@@ -3,7 +3,9 @@
 What this repo has spent against two metered third-party accounts:
 
 - `odds.json` — the last balance The Odds API reported in `x-requests-remaining`, and when.
-  `hub.fetch.odds` refuses the next pull below `CREDIT_FLOOR` on this number.
+  `hub.fetch.odds` refuses the next pull below `CREDIT_FLOOR` on this number, unless the
+  reading is from an earlier month than the pull -- the quota resets monthly, so that one
+  is unknown and one pull may re-read it (#264).
 - `cfbd-quota.json` — CFBD calls made, by billing month, against the 1,000-a-month free tier.
 - `gate-width.json` — the last season-clustered interval width each backtest gate produced,
   keyed by gate. `hub.models.experiment.review_width` flags the next run's interval as
