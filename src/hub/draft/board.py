@@ -756,58 +756,215 @@ def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,
 # board, and "what it carries" and "whether it was built" are two halves of one answer.
 BUILT, SERVED = "built", "served"
 
-# Every column each optional stage leaves on the board, sentinel first. Only these four
-# stages leave anything: the scoring and roster checks compare the league's settings against
-# this repo's and write nothing, which is why a served board cannot claim them either way.
+# --- the stages, declared once (#252) --------------------------------------------------
 #
-# It is the full set and not one column per stage because "which stage left this column" is
-# the question consumers actually ask, and for the ADP stage the answer is nine columns. Two
-# of those nine are ones no reader would guess. `injury_status` arrives in ESPN's ADP payload
-# (`hub.fetch.espn._parse_market`), so it belongs to this stage rather than to durability,
-# even though `durability.correct_projection` is what prices it -- absorb the ADP stage and
-# today's designations leave with it. `proj_ppg` arrives the same way, and it is what
-# `proj_blend` is a blend *of*. The rest are this stage's own arithmetic: `consensus_pick`
-# and `edge` from `_attach_edge`, then `proj_blend`, `proj_correction`, `adp_corrected` and
-# `vor_proj` -- what THE PICK ranks on.
-#
-# Declared here rather than restated at each site that needs it. Every consumer asking what
-# an absorbed stage took with it used to answer in its own prose, which is the arrangement
-# `CORRECTION_STAGE` below exists because the repo already got wrong once.
-STAGE_COLUMNS: dict[str, tuple[str, ...]] = {
-    "sos": ("wk15_17_sos", "sos_games"),
-    "td_luck": ("td_luck",),
-    "durability": ("missed", "sat_out"),
-    "bye": ("bye_week",),
-    "adp": ("adp", "proj_ppg", "injury_status", "consensus_pick", "edge",
-            "proj_blend", "proj_correction", "adp_corrected", "vor_proj"),
-}
+# Adding a stage used to mean editing four places that agreed by string: the stage-columns
+# table, a boolean on the build report, the staged call in `build` that set that boolean by
+# name, and the Correction table if the stage was a Correction term -- the module's own
+# comments recorded this as the third attempt at keeping two lists in step. A stage is one
+# `Stage` below now: its name, the columns it leaves (sentinel first), whether it is
+# advisory, whether it leaves a Correction term's column, and whether it is the stage that
+# ranks. `build` iterates `STAGES`; the report, the stage-columns table, the sentinel table
+# and both Correction tables are derived from it and declare nothing of their own.
 
-# The one column per stage that *stands for* the stage, which is a different question from
-# the one above and is why the sentinel is derived rather than listed a second time. A board
-# read back off disk has no record of which stages ran, so `BuildReport.of_served` asks one
-# column per stage and takes its presence as the answer; asking all nine would make a stage
-# that half-wrote its columns unanswerable, and there is nothing on a served board to break
-# the tie with. The first column declared above is that column, and the order is load-bearing
-# for exactly that reason: it has to be one the stage cannot finish without.
-STAGE_COLUMN = {flag: cols[0] for flag, cols in STAGE_COLUMNS.items()}
 
-# The board column each Correction term reads. `_attach_market` is where they are read;
-# `STAGE_COLUMN` above says which stage leaves each one. The two dicts overlap on purpose --
-# that overlap *is* the dependency ADR-0021 does not describe, because a Correction is a
-# shape rather than a module and no module writes the list of them down.
+@dataclass(frozen=True)
+class BuildContext:
+    """What a stage's runner is handed from the build that runs it."""
+    season: int
+    season_ahead: int
+    league_size: int
+    live: bool
+
+
+Runner = Callable[[pl.DataFrame, BuildContext], "pl.DataFrame | None"]
+
+
+@dataclass(frozen=True)
+class Stage:
+    """One optional build stage, declared once.
+
+    `run` returns the new board, or None when the stage did not apply on this build -- the
+    market stage with no ADP in hand, which is the one path by which that stage is
+    legitimately absent -- and a stage that did not apply is not flagged and says nothing;
+    what it found is its own to print. A stage that only checks something returns the board
+    it was given.
+
+    `columns` is every column the stage leaves, **sentinel first**: the one column that
+    stands for the stage, which is a different question from the full set and is why it is
+    the first entry rather than a second list. A board read back off disk has no record of
+    which stages ran, so `BuildReport.of_served` asks one column per stage and takes its
+    presence as the answer; asking all nine would make a stage that half-wrote its columns
+    unanswerable, and there is nothing on a served board to break the tie with. So the
+    sentinel has to be a column the stage cannot finish without.
+
+    `correction` names the Correction term (ADR-0021: a shape, not a module) whose column
+    this stage leaves -- the sentinel is that column, since `_attach_market` reads it. It is
+    declared on the stage because the last arrangement was two dicts that had to agree and
+    did not: `CORRECTION_COLUMN` was consumed by nothing and `corrections_missing` named the
+    terms in its own body, so a third Correction would have reached no Gate. `ranks` marks
+    the stage whose arithmetic reads every Correction term and computes what THE PICK ranks
+    on; `corrections_missing` is empty until it has run.
+
+    `advisory` is the degradation policy's scope, and it is not the same for every stage.
+    An advisory stage reaches a source of its own and adds a signal the board is better for
+    having, so if that reach fails the board is thinner and still correct -- any exception
+    is the outage the policy was written for. A stage that reaches nothing has no outage
+    left to absorb, and a blanket handler over it would convert a defect into a board that
+    is not thinner but different; `_attach_market`'s docstring says why the draft-market stage
+    declares that. `live_only` marks a stage ESPN publishes for the current season only:
+    outside a live build it is announced and skipped rather than attempted and caught.
+    """
+    name: str
+    label: str
+    run: Runner
+    columns: tuple[str, ...] = ()
+    correction: str | None = None
+    advisory: bool = True
+    ranks: bool = False
+    live_only: str | None = None
+    on_fail: str = "board built without it."
+
+    @property
+    def sentinel(self) -> str | None:
+        return self.columns[0] if self.columns else None
+
+
+def _run_sos(b: pl.DataFrame, ctx: BuildContext) -> pl.DataFrame:
+    # Weeks 15-17 strength of schedule. A tiebreaker column, not a ranking: the fantasy
+    # playoffs are three known games against known defences and nobody drafting off the
+    # ESPN app prices them, but last season's defence is a noisy guide to this one.
+    return attach_sos(b, playoff_sos(season_ahead=ctx.season_ahead, dvp_season=ctx.season))
+
+
+def _run_td_luck(b: pl.DataFrame, ctx: BuildContext) -> pl.DataFrame:
+    # Touchdown luck from last season's actuals. Reaches nflverse, so it can fail on its own.
+    return td_regression.attach(b, td_regression.prior_season(ctx.season))
+
+
+def _run_scoring_check(b: pl.DataFrame, ctx: BuildContext) -> pl.DataFrame:
+    # The league owns the scoring weights, so check ours against them rather than assuming.
+    # Fantasy points are an aggregate of real stats; if the commissioner moves to half-PPR,
+    # every projection and every pick is silently mis-scored until someone notices.
+    _check_scoring(b)
+    return b
+
+
+def _run_roster_check(b: pl.DataFrame, ctx: BuildContext) -> pl.DataFrame:
+    # The league owns the roster shape too, and for a long time nothing checked it: the
+    # slots came back from `league_settings()` on every call and every caller discarded
+    # them. A second flex would move replacement level at every position.
+    _check_roster(b)
+    return b
+
+
+def _run_durability(b: pl.DataFrame, ctx: BuildContext) -> pl.DataFrame:
+    # Availability as a per-player trait. A player in last season's preseason consensus
+    # with no stats row at any position sat the season out, and is priced as such rather
+    # than as a rookie (#86); the consensus is read as of that season's start, the same
+    # archive `board_as_of` replays a past draft from.
+    return durability.attach(
+        b, durability.prior_season(ctx.season),
+        sat_out=durability.sat_out(consensus(f"{ctx.season}-09-01"),
+                                   durability.appearances(ctx.season)))
+
+
+def _run_bye(b: pl.DataFrame, ctx: BuildContext) -> pl.DataFrame:
+    # The week each player's team sits, off the season's schedule (#226). Reaches nflverse,
+    # so it can fail on its own; the simulator then reads "no bye" for everyone, which is
+    # the pre-#226 season and is reported as such. Not a Correction: it moves the simulated
+    # season, not Corrected ADP.
+    return attach_bye(b, bye_weeks(ctx.season_ahead))
+
+
+def _run_market(b: pl.DataFrame, ctx: BuildContext) -> pl.DataFrame | None:
+    # The one stage that is not advisory, and so the one stage whose guard absorbs nothing.
+    # Its *outage* is `espn_adp`'s to handle: that catches the fetch failure, prints
+    # ECR-only mode and returns None, so the stage does not apply and the board really is
+    # thinner. What reaches `_attach_market` is a frame whose schema
+    # `hub.fetch.espn._parse_market` pins -- a field ESPN stops sending arrives as a null,
+    # not as a missing column -- so every remaining failure in here is arithmetic failing,
+    # which is a defect. A defect must reach `build_or_last_good`, which serves the last
+    # good board and says so; degrading would hand back a board ranking on raw consensus
+    # with a line claiming that was the intent. ADR-0003, and issue #106. ESPN publishes
+    # ADP for the current season only, so a historical build has no market to read.
+    adp = espn_adp(ctx.league_size, ctx.season_ahead) if ctx.live else None
+    if adp is None:
+        return None
+    return _attach_market(b, adp, league_size=ctx.league_size, season=ctx.season,
+                          season_ahead=ctx.season_ahead)
+
+
+# The declaration. Order is the order `build` runs them and the order every report lists
+# them in. Only the stages with `columns` leave anything: the scoring and roster checks
+# compare the league's settings against this repo's and write nothing, which is why a
+# served board cannot claim them either way.
 #
-# **Touchdown luck was the second entry here until #48 and is not one now.** A Correction is
-# a term whose absence changes what THE PICK ranks on, and since `TD_LUCK_BETA` was emptied
-# (#186) the touchdown-luck stage leaves a column that no arithmetic reads. Leaving it here
-# would make `corrections_missing` print a warning about a ranking that did not move, and
-# would make `experiment.require_corrections` refuse a Gate season over a term worth nothing
-# -- the report saying more than it knows, which is the defect `BuildReport` exists against.
+# The ADP stage's nine are the ones no reader would guess. `injury_status` arrives in
+# ESPN's ADP payload (`hub.fetch.espn._parse_market`), so it belongs to this stage rather
+# than to durability, even though `durability.correct_projection` is what prices it --
+# absorb the ADP stage and today's designations leave with it. `proj_ppg` arrives the same
+# way, and it is what `proj_blend` is a blend *of*. The rest are this stage's own
+# arithmetic: `consensus_pick` and `edge` from `_attach_edge`, then `proj_blend`,
+# `proj_correction`, `adp_corrected` and `vor_proj` -- what THE PICK ranks on.
+#
+# **Touchdown luck was a Correction until #48 and is not one now.** A Correction is a term
+# whose absence changes what THE PICK ranks on, and since `TD_LUCK_BETA` was emptied (#186)
+# the touchdown-luck stage leaves a column that no arithmetic reads. Declaring it one would
+# make `corrections_missing` print a warning about a ranking that did not move, and would
+# make `experiment.require_corrections` refuse a Gate season over a term worth nothing --
+# the report saying more than it knows, which is the defect `BuildReport` exists against.
 # The stage itself stays: `td_luck` is still computed, attached and printed.
-CORRECTION_COLUMN = {"durability": "missed"}
+STAGES: tuple[Stage, ...] = (
+    Stage("sos", "weeks 15-17 SoS", _run_sos, ("wk15_17_sos", "sos_games")),
+    Stage("td_luck", "touchdown luck", _run_td_luck, ("td_luck",)),
+    Stage("scoring_checked", "scoring check", _run_scoring_check,
+          live_only="ESPN publishes settings for the current season only.",
+          on_fail="assuming full PPR."),
+    Stage("roster_checked", "roster check", _run_roster_check,
+          live_only="ESPN publishes slots for the current season only.",
+          on_fail=f"assuming {SLOTS}."),
+    Stage("durability", "durability", _run_durability, ("missed", "sat_out"),
+          correction="durability"),
+    Stage("bye", "bye weeks", _run_bye, ("bye_week",)),
+    Stage("adp", "market corrections", _run_market,
+          ("adp", "proj_ppg", "injury_status", "consensus_pick", "edge",
+           "proj_blend", "proj_correction", "adp_corrected", "vor_proj"),
+          advisory=False, ranks=True),
+)
+
+
+def stage_columns(stages: Sequence[Stage] = STAGES) -> dict[str, tuple[str, ...]]:
+    """Every column each column-leaving stage leaves, sentinel first."""
+    return {s.name: s.columns for s in stages if s.columns}
+
+
+def stage_column(stages: Sequence[Stage] = STAGES) -> dict[str, str]:
+    """The one column per stage that stands for it."""
+    return {s.name: s.columns[0] for s in stages if s.columns}
+
+
+def correction_stage(stages: Sequence[Stage] = STAGES) -> dict[str, str]:
+    """Correction term -> the stage that leaves the column it reads."""
+    return {s.correction: s.name for s in stages if s.correction}
+
+
+def correction_column(stages: Sequence[Stage] = STAGES) -> dict[str, str]:
+    """Correction term -> the board column it reads: its stage's sentinel."""
+    return {s.correction: s.columns[0] for s in stages if s.correction}
+
+
+# The four tables every consumer read before #252, derived from the declaration so a
+# reader of `hub.draft.report`, `hub.draft.durability` or a test finds them under the
+# names it knew -- and cannot find them disagreeing with the stages.
+STAGE_COLUMNS: dict[str, tuple[str, ...]] = stage_columns()
+STAGE_COLUMN: dict[str, str] = stage_column()
+CORRECTION_COLUMN: dict[str, str] = correction_column()
+CORRECTION_STAGE: dict[str, str] = correction_stage()
 
 # What each Correction's coefficients were found to be when they were refitted against the
 # column they correct (#47, docs/fitted-corrections.md), and what #48 decided about each.
-# Keyed by the term in `CORRECTION_COLUMN`, so a term that leaves the board takes its flag
+# Keyed by the term a stage declares, so a term that leaves the board takes its flag
 # with it and `hub.draft.report` cannot print a disposition for a correction that did not run.
 #
 # **Not beside the constants in `hub.draft.durability`, and that is not filing convenience.**
@@ -831,23 +988,9 @@ CORRECTION_FLAG: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# Term -> the report flag whose stage leaves the column that term reads, so the Corrections
-# are declared once and every consumer of the report sees all of them.
-#
-# It is derived because the last arrangement was two lists that had to agree and did not:
-# `CORRECTION_COLUMN` was consumed by nothing at all, and `corrections_missing` named
-# "touchdown luck" and "durability" itself. A third Correction -- ADR-0021 says what one
-# would cost, not that there will never be one -- would have been wired into a stage and a
-# column and stayed invisible to every Gate reading this report, while the flag beside it
-# said its stage had run. That is the same defect `BuildReport` was written for, one level up.
-CORRECTION_STAGE = {term: flag
-                    for term, col in CORRECTION_COLUMN.items()
-                    for flag, stage_col in STAGE_COLUMN.items() if stage_col == col}
 
-
-@dataclass
 class BuildReport:
-    """Which optional stages made it into the board, and whether the board was built at all.
+    """Which stages made it into the board, and whether the board was built at all.
 
     `build` degrades on purpose: a board that will not build because one advisory column is
     unavailable is the operator-dependence CLAUDE.md warns about. But the report layer used
@@ -860,6 +1003,12 @@ class BuildReport:
     returned an all-null column is indistinguishable from one that never ran, and the
     difference is exactly what an operator on the clock needs to know.
 
+    **Derived from the declarations, not a hand-kept dataclass (#252).** The flags are the
+    stages the report was built for -- `report.adp`, `report.sos` -- read off the run that
+    set them, and a seventh stage is a seventh entry in `STAGES` and nothing here. A report
+    can be built for a stubbed declaration, which is how `build`'s policy is tested through
+    `build` rather than through a helper.
+
     **`of_served` reads the columns, and that is not the same act.** A board recovered from
     disk was written by a run that is over; its columns are the only evidence of that run
     there is, so reading them is a derivation rather than a guess, and it is made once, here,
@@ -868,33 +1017,62 @@ class BuildReport:
     there, which is the reading that costs a reader the least: at worst a section renders
     thin, where the alternative suppressed three sections outright.
     """
-    sos: bool = False
-    td_luck: bool = False
-    durability: bool = False
-    bye: bool = False
-    adp: bool = False
-    scoring_checked: bool = False
-    roster_checked: bool = False
-    source: str = BUILT
+
+    def __init__(self, source: str = BUILT, *, stages: Sequence[Stage] = STAGES,
+                 **ran: bool) -> None:
+        names = tuple(s.name for s in stages)
+        unknown = sorted(set(ran) - set(names))
+        if unknown:
+            raise TypeError(f"{unknown} are not stages this board declares: {list(names)}")
+        self.stages: tuple[Stage, ...] = tuple(stages)
+        self.source = source
+        self._ran: dict[str, bool] = {n: bool(ran.get(n, False)) for n in names}
+
+    def __getattr__(self, name: str) -> bool:
+        ran = self.__dict__.get("_ran", {})
+        if name in ran:
+            return ran[name]
+        raise AttributeError(f"{type(self).__name__} has no stage {name!r}")
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """A stage flag set by name lands in the record, so `report.td_luck = True` -- what
+        a test says to describe a run -- is the same fact `carried` and `degraded` read."""
+        ran = self.__dict__.get("_ran")
+        if ran is not None and name in ran:
+            ran[name] = bool(value)
+        else:
+            object.__setattr__(self, name, value)
+
+    def __repr__(self) -> str:
+        flags = ", ".join(f"{k}={v}" for k, v in self._ran.items())
+        return f"BuildReport({flags}, source={self.source!r})"
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, BuildReport) and other._ran == self._ran
+                and other.source == self.source)
+
+    def _record(self, name: str) -> None:
+        """`build`'s alone: the stage `name` ran on this build."""
+        self._ran[name] = True
 
     @classmethod
-    def of_served(cls, board: pl.DataFrame) -> BuildReport:
+    def of_served(cls, board: pl.DataFrame, stages: Sequence[Stage] = STAGES) -> BuildReport:
         """What a board read back off disk carries, derived from that board.
 
-        **`STAGE_COLUMN`, not `STAGE_COLUMNS`, and the difference is the question.** A
-        consumer asking what an absorbed stage took with it wants every column that stage
-        leaves -- nine, for the ADP stage. This asks the opposite way round: given a frame
-        and no record of the run that wrote it, did the stage happen? One column per stage
-        answers that, and the full set does not, because a board carrying eight of the ADP
-        stage's nine columns has nothing on it to say whether the ninth was never written or
-        dropped by a reader in between. Reading the sentinel gives one answer where reading
-        all nine would give a report with no way to be right.
+        **The sentinel, not every column, and the difference is the question.** A consumer
+        asking what an absorbed stage took with it wants every column that stage leaves --
+        nine, for the ADP stage. This asks the opposite way round: given a frame and no
+        record of the run that wrote it, did the stage happen? One column per stage answers
+        that, and the full set does not, because a board carrying eight of the ADP stage's
+        nine columns has nothing on it to say whether the ninth was never written or dropped
+        by a reader in between. Reading the sentinel gives one answer where reading all nine
+        would give a report with no way to be right.
 
         The two checks stay false and mean what they say: nothing checked this league's
         scoring or roster shape on *this* run, because this run did not get that far.
         """
-        return cls(source=SERVED,
-                   **{flag: col in board.columns for flag, col in STAGE_COLUMN.items()})
+        return cls(source=SERVED, stages=stages,
+                   **{s.name: s.sentinel in board.columns for s in stages if s.sentinel})
 
     @property
     def served(self) -> bool:
@@ -904,11 +1082,11 @@ class BuildReport:
     def corrections_missing(self) -> tuple[str, ...]:
         """Correction terms Corrected ADP was computed *without*, when it was computed at all.
 
-        One of the five stages the ADR calls advisory leaves a column that the sixth stage's
-        arithmetic then reads, and `correct_projection` returns the frame untouched when that
-        column is absent. So absorbing a durability outage does not leave a thinner board --
-        it leaves a board whose Corrected ADP is a different ranking, computed from a subset
-        of the corrections, reported as having run.
+        One of the advisory stages leaves a column that the ranking stage's arithmetic then
+        reads, and `correct_projection` returns the frame untouched when that column is
+        absent. So absorbing a durability outage does not leave a thinner board -- it leaves
+        a board whose Corrected ADP is a different ranking, computed from a subset of the
+        corrections, reported as having run.
 
         Measured on the 457-player board of 2026-09-06, absorbing one stage each:
 
@@ -923,33 +1101,28 @@ class BuildReport:
 
         **The td_luck row is now the size of a change that already happened, not of one an
         outage could cause.** #48 emptied `TD_LUCK_BETA`, so that stage's column is read by no
-        arithmetic and touchdown luck is no longer in `CORRECTION_COLUMN`; the board this
+        arithmetic and touchdown luck is no longer a declared Correction; the board this
         function describes is the "absorbing td_luck" board above, permanently. It is left in
         the table because that is the one measurement of what the withdrawal cost, and
         deleting it would leave the removal's size published nowhere.
 
-        Derived rather than recorded, and the *terms* are derived too -- `CORRECTION_STAGE`,
-        so that adding a Correction is one declaration rather than three. The flags were
-        already right; nothing connected them to the ranking that consumed their absence,
-        which is the whole of issue #121.
+        Derived from the declarations: the terms are the stages that declare a
+        `correction`, the gate is the stage that `ranks`, so adding a Correction is one
+        declaration. The flags were already right before #121; nothing connected them to
+        the ranking that consumed their absence, which is the whole of that issue.
         """
-        if not self.adp:
+        if not all(self._ran[s.name] for s in self.stages if s.ranks):
             return ()
-        return tuple(term for term, flag in CORRECTION_STAGE.items()
-                     if not getattr(self, flag))
+        return tuple(s.correction for s in self.stages
+                     if s.correction and not self._ran[s.name])
 
     def degraded(self) -> tuple[str, ...]:
         """Stages that did not make it, in declaration order."""
-        return tuple(k for k, v in vars(self).items() if isinstance(v, bool) and not v)
+        return tuple(s.name for s in self.stages if not self._ran[s.name])
 
     def carried(self) -> tuple[str, ...]:
-        """Stages that did, in the same order. The complement of `degraded`.
-
-        Both read every *bool* on the report rather than a list of stage names kept beside
-        it, so a seventh stage is still one declaration -- which is the property `_stage`
-        was written for. `source` is a string precisely so it stays out of both.
-        """
-        return tuple(k for k, v in vars(self).items() if isinstance(v, bool) and v)
+        """Stages that did, in the same order. The complement of `degraded`."""
+        return tuple(s.name for s in self.stages if self._ran[s.name])
 
 
 def report_for(board: pl.DataFrame, report: BuildReport | None = None) -> BuildReport:
@@ -1006,55 +1179,6 @@ def _check_roster(board: pl.DataFrame) -> None:
         for k, (theirs, ours) in sorted(bad_slots.items()):
             print(f"    {k}: league {theirs}, this repo {ours}")
         print("  Replacement level and every VOR below assume this repo's shape.")
-
-
-def _stage(board: pl.DataFrame, report: BuildReport, flag: str, label: str,
-           run: Callable[[pl.DataFrame], pl.DataFrame | None], *, live: bool = True,
-           skip_note: str | None = None,
-           on_fail: str = "board built without it.",
-           absorbs: tuple[type[Exception], ...] = (Exception,)) -> pl.DataFrame:
-    """Run one optional build stage under the repo's degradation policy.
-
-    A board that will not build because one advisory column is unavailable is the
-    operator-dependence CLAUDE.md warns about, so every advisory stage fails soft: say what
-    broke, leave the flag false, carry on.
-
-    **`absorbs` is that policy's scope, and it is not the same for every stage.** An advisory
-    stage reaches a source of its own -- nflverse, ESPN's settings -- and adds a signal the
-    board is better for having, so if that reach fails the board is thinner and still
-    correct: any exception is the outage this policy was written for, which is the default
-    here and is unchanged. A stage that reaches nothing has no outage left to absorb, and a
-    blanket handler over it converts a defect into a board that is not thinner but different
-    -- `build`'s ADP stage says why it declares an empty set.
-
-    This was written out five times -- 48 lines, 31% of `build()` -- and the cost was not the
-    duplication. `BuildReport` exists because the *consumers* used to infer what had happened
-    by sniffing for columns, and with five producers and no shared shape the consumers' guards
-    drifted anyway: on 2026-08-27 one read `durability or adp` and another read `td_luck`, so a
-    board built without an ESPN key raised `ColumnNotFoundError` before printing THE PICK.
-
-    `run` returns the new board, or None when the stage only checks something.
-    `skip_note` marks a stage ESPN publishes for the current season only: outside a live
-    build it is announced and skipped rather than attempted and caught.
-    """
-    if skip_note is not None and not live:
-        print(f"  {label} skipped: {skip_note}")
-        return board
-    try:
-        out = run(board)
-        setattr(report, flag, True)
-        return board if out is None else out
-    except Exception as e:
-        # GUARD unabsorbed-stage-failure-is-raised [unit/test_board_build.py]: deleting it
-        # puts every failure back under one blanket handler, so a defect in a stage THE PICK
-        # ranks on degrades quietly into a board that ranks on something else.
-        if not isinstance(e, absorbs):
-            print(f"  {label} FAILED ({type(e).__name__}); this stage is not advisory, so "
-                  f"the board is not built without it.")
-            raise
-        # /GUARD
-        print(f"  {label} unavailable ({type(e).__name__}); {on_fail}")
-        return board
 
 
 def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
@@ -1126,8 +1250,13 @@ def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
 
 def build(league_size: int = 12, season: int = SEASON_COMPLETED, *,
           season_ahead: int = SEASON_AHEAD,
-          as_of: str | None = None) -> tuple[pl.DataFrame, BuildReport]:
+          as_of: str | None = None,
+          stages: Sequence[Stage] = STAGES) -> tuple[pl.DataFrame, BuildReport]:
     """The draft board. `season` is the season just gone; `season_ahead` is the one drafted for.
+
+    `stages` is the declaration the build runs, `STAGES` on every real build; a test hands a
+    stubbed one to drive the policy below through this function rather than through a
+    helper (#252).
 
     `as_of` reconstructs the board as it stood before an ISO date, for replaying a past
     draft. It is one parameter rather than two because the ESPN skip *follows* from it: ESPN
@@ -1157,69 +1286,34 @@ def build(league_size: int = 12, season: int = SEASON_COMPLETED, *,
         pl.col("ecr").rank().alias("consensus_rank"),
     )
 
-    # Every optional stage goes through `_stage`, which owns the degradation policy: try it,
-    # flag it if it worked, say what broke if it did not, and never let an advisory column
-    # stop the board building. That rule used to be written out five times, and the guards
-    # its consumers read had already drifted apart -- see `_stage`.
-    report = BuildReport()
-
-    # Weeks 15-17 strength of schedule. A tiebreaker column, not a ranking: the fantasy
-    # playoffs are three known games against known defences and nobody drafting off the
-    # ESPN app prices them, but last season's defence is a noisy guide to this one.
-    board = _stage(board, report, "sos", "weeks 15-17 SoS",
-                   lambda b: attach_sos(b, playoff_sos(season_ahead=season_ahead,
-                                                       dvp_season=season)))
-
-    # Touchdown luck from last season's actuals. Reaches nflverse, so it can fail on its own.
-    board = _stage(board, report, "td_luck", "touchdown luck",
-                   lambda b: td_regression.attach(b, td_regression.prior_season(season)))
-
-    # The league owns the scoring weights, so check ours against them rather than assuming.
-    # Fantasy points are an aggregate of real stats; if the commissioner moves to half-PPR,
-    # every projection and every pick is silently mis-scored until someone notices.
-    board = _stage(board, report, "scoring_checked", "scoring check", _check_scoring,
-                   live=live, skip_note="ESPN publishes settings for the current season only.",
-                   on_fail="assuming full PPR.")
-
-    # The league owns the roster shape too, and for a long time nothing checked it: the slots
-    # came back from `league_settings()` on every call and every caller discarded them. A
-    # second flex would move replacement level at every position.
-    board = _stage(board, report, "roster_checked", "roster check", _check_roster,
-                   live=live, skip_note="ESPN publishes slots for the current season only.",
-                   on_fail=f"assuming {SLOTS}.")
-
-    # Availability as a per-player trait. A player in last season's preseason consensus with
-    # no stats row at any position sat the season out, and is priced as such rather than as
-    # a rookie (#86); the consensus is read as of that season's start, the same archive
-    # `board_as_of` replays a past draft from.
-    board = _stage(board, report, "durability", "durability",
-                   lambda b: durability.attach(
-                       b, durability.prior_season(season),
-                       sat_out=durability.sat_out(consensus(f"{season}-09-01"),
-                                                  durability.appearances(season))))
-
-    # The week each player's team sits, off the season's schedule (#226). Reaches nflverse,
-    # so it can fail on its own; the simulator then reads "no bye" for everyone, which is
-    # the pre-#226 season and is reported as such. Not a Correction: it moves the simulated
-    # season, not Corrected ADP.
-    board = _stage(board, report, "bye", "bye weeks",
-                   lambda b: attach_bye(b, bye_weeks(season_ahead)))
-
-    # The one stage that is not advisory, and so the one stage whose guard absorbs nothing.
-    # Its *outage* is handled by the `espn_adp` call below, outside `_stage`: that catches
-    # the fetch failure, prints ECR-only mode and returns None, so the stage never runs and
-    # the board really is thinner. What reaches `_attach_market` is a frame whose schema
-    # `hub.fetch.espn._parse_market` pins -- a field ESPN stops sending arrives as a null,
-    # not as a missing column -- so every remaining failure in here is arithmetic failing,
-    # which is a defect. A defect must reach `build_or_last_good`, which serves the last
-    # good board and says so; degrading would hand back a board ranking on raw consensus
-    # with a line claiming that was the intent. ADR-0003, and issue #106.
-    adp = espn_adp(league_size, season_ahead) if live else None
-    if adp is not None:
-        board = _stage(board, report, "adp", "market corrections",
-                       lambda b: _attach_market(b, adp, league_size=league_size,
-                                                season=season, season_ahead=season_ahead),
-                       absorbs=())
+    # Every optional stage is one entry in `stages`, and this loop is the degradation
+    # policy: try it, record it if it ran, say what broke if it did not, and never let an
+    # advisory column stop the board building. That rule used to be written out five times,
+    # and the guards its consumers read had already drifted apart -- see `BuildReport`.
+    report = BuildReport(stages=stages)
+    ctx = BuildContext(season=season, season_ahead=season_ahead, league_size=league_size,
+                       live=live)
+    for stage in stages:
+        if stage.live_only is not None and not live:
+            print(f"  {stage.label} skipped: {stage.live_only}")
+            continue
+        try:
+            out = stage.run(board, ctx)
+        except Exception as e:
+            # GUARD unabsorbed-stage-failure-is-raised [unit/test_board_build.py]: deleting
+            # it puts every failure back under one blanket handler, so a defect in a stage
+            # THE PICK ranks on degrades quietly into a board that ranks on something else.
+            if not stage.advisory:
+                print(f"  {stage.label} FAILED ({type(e).__name__}); this stage is not "
+                      f"advisory, so the board is not built without it.")
+                raise
+            # /GUARD
+            print(f"  {stage.label} unavailable ({type(e).__name__}); {stage.on_fail}")
+            continue
+        if out is None:
+            continue                       # did not apply on this build; its own to say why
+        report._record(stage.name)
+        board = out
     # The board's columns are its interface -- roughly fourteen modules read them by name --
     # and this contract was declared in `hub.contracts` and applied to nothing at all. It
     # covers only what something downstream reads *unconditionally*; the optional columns

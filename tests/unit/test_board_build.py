@@ -399,82 +399,140 @@ def test_a_matching_roster_says_nothing(offline, capsys):
 # `durability or adp`, another read `td_luck`, and a board built without an ESPN key raised
 # ColumnNotFoundError before printing THE PICK.
 
-def _rep():
-    return board.BuildReport()
+def _spine(offline):
+    """Nothing but the spine: every declared stage stripped, so a stubbed declaration is
+    the whole of what `build` runs after the join."""
+    return offline
 
 
-def test_a_failing_stage_leaves_the_board_and_the_flag_alone(capsys):
-    b = pl.DataFrame({"player": ["A"]})
-    rep = _rep()
-
-    def _boom(_):
-        raise RuntimeError("nope")
-    out = board._stage(b, rep, "sos", "weeks 15-17 SoS", _boom)
-    assert out is b and rep.sos is False
-    assert capsys.readouterr().out == \
-        "  weeks 15-17 SoS unavailable (RuntimeError); board built without it.\n"
+def _stub(name, run, *, columns=(), **kw):
+    return board.Stage(name, name.replace("_", " "), run, columns, **kw)
 
 
-def test_a_succeeding_stage_returns_the_new_board_and_flags_it(capsys):
-    b = pl.DataFrame({"player": ["A"]})
-    rep = _rep()
-    out = board._stage(b, rep, "td_luck", "touchdown luck",
-                       lambda x: x.with_columns(pl.lit(1.0).alias("td_luck")))
-    assert "td_luck" in out.columns and rep.td_luck is True
-    assert capsys.readouterr().out == ""
+def _boom(_b, _ctx):
+    raise RuntimeError("nope")
 
 
-def test_a_check_stage_returns_none_and_keeps_the_board(capsys):
-    """The two league checks warn rather than transform, and must not blank the board."""
-    b = pl.DataFrame({"player": ["A"]})
-    rep = _rep()
-    out = board._stage(b, rep, "scoring_checked", "scoring check", lambda _: None)
-    assert out is b and rep.scoring_checked is True
+def test_a_failing_advisory_stage_leaves_the_board_and_the_flag_alone(offline, capsys):
+    """The absorb half of the policy, through `build` with a stubbed declaration."""
+    _, rep = board.build(stages=[_stub("sos", _boom)])
+    assert rep.sos is False and rep.degraded() == ("sos",)
+    assert "  sos unavailable (RuntimeError); board built without it.\n" in capsys.readouterr().out
 
 
-def test_a_historical_stage_is_announced_and_skipped(capsys):
+def test_a_succeeding_stage_leaves_its_columns_and_is_recorded(offline, capsys):
+    b, rep = board.build(stages=[_stub(
+        "td_luck", lambda x, _c: x.with_columns(pl.lit(1.0).alias("td_luck")),
+        columns=("td_luck",))])
+    assert "td_luck" in b.columns and rep.td_luck is True and rep.carried() == ("td_luck",)
+    assert "td_luck" not in capsys.readouterr().out
+
+
+def test_a_stage_that_did_not_apply_is_neither_recorded_nor_announced(offline, capsys):
+    """A runner that returns None did not apply on this build -- the market stage with no
+    ADP in hand -- so the board is kept, the flag stays false, and what happened is the
+    runner's own to have said."""
+    _, rep = board.build(stages=[_stub("adp", lambda x, _c: None, advisory=False)])
+    assert rep.adp is False and "adp" not in capsys.readouterr().out
+
+
+def test_a_check_stage_returns_the_board_it_was_given_and_is_recorded(offline):
+    """The two league checks warn rather than transform: the runner hands the board back."""
+    seen = []
+    _, rep = board.build(stages=[_stub("scoring_checked", lambda x, _c: (seen.append(x), x)[1])])
+    assert rep.scoring_checked is True and len(seen) == 1
+
+
+def test_a_live_only_stage_is_announced_and_skipped_off_a_live_build(offline, capsys):
     """ESPN publishes settings for the current season only. Outside a live build the stage is
     skipped rather than attempted and caught -- and the flag stays false either way, which is
     the correct record: it genuinely did not run."""
-    b = pl.DataFrame({"player": ["A"]})
-    rep = _rep()
     ran = []
-    out = board._stage(b, rep, "scoring_checked", "scoring check", lambda x: ran.append(1),
-                       live=False, skip_note="ESPN publishes settings for the current "
-                                             "season only.")
-    assert out is b and rep.scoring_checked is False and ran == []
-    assert capsys.readouterr().out == (
-        "  scoring check skipped: ESPN publishes settings for the current season only.\n")
+    _, rep = board.build(as_of="2024-08-31", stages=[_stub(
+        "scoring_checked", lambda x, _c: (ran.append(1), x)[1],
+        live_only="ESPN publishes settings for the current season only.")])
+    assert rep.scoring_checked is False and ran == []
+    assert "  scoring checked skipped: ESPN publishes settings for the current season only.\n" \
+        in capsys.readouterr().out
+    _, rep = board.build(stages=[_stub(
+        "scoring_checked", lambda x, _c: (ran.append(1), x)[1], live_only="anything")])
+    assert rep.scoring_checked is True and ran == [1]
 
 
-def test_the_same_stage_runs_on_a_live_build(capsys):
-    b = pl.DataFrame({"player": ["A"]})
-    rep = _rep()
-    board._stage(b, rep, "roster_checked", "roster check", lambda _: None,
-                 live=True, skip_note="anything", on_fail="assuming this repo's shape.")
-    assert rep.roster_checked is True
-
-
-def test_the_failure_note_is_the_caller_s(capsys):
+def test_the_failure_note_is_the_declaration_s(offline, capsys):
     """`assuming full PPR` and `board built without it` say different things to an operator
     on the clock, and the wording is draft-night output."""
-    b = pl.DataFrame({"player": ["A"]})
-
-    def _boom(_):
+    def _key(_b, _c):
         raise KeyError("k")
-    board._stage(b, _rep(), "scoring_checked", "scoring check", _boom,
-                 on_fail="assuming full PPR.")
-    assert capsys.readouterr().out == \
-        "  scoring check unavailable (KeyError); assuming full PPR.\n"
+    board.build(stages=[_stub("scoring_checked", _key, on_fail="assuming full PPR.")])
+    assert "  scoring checked unavailable (KeyError); assuming full PPR.\n" \
+        in capsys.readouterr().out
 
 
-def test_build_has_no_hand_rolled_degrade_blocks_left():
-    """The property, not the instance: a sixth stage should be a declaration, not a block."""
+def test_a_stage_that_half_wrote_its_columns_is_the_sentinel_s_call(offline):
+    """`of_served` reads one column per stage, the sentinel, so a stage that left every
+    column but its first reads as not having run, and one that left only its first reads as
+    having run -- there is nothing on a served board to break the tie with, and the
+    declaration's order is what decides it."""
+    half = _stub("durability", lambda x, _c: x.with_columns(pl.lit(False).alias("sat_out")),
+                 columns=("missed", "sat_out"))
+    b, _ = board.build(stages=[half])
+    assert board.BuildReport.of_served(b, stages=[half]).durability is False
+    first = _stub("durability", lambda x, _c: x.with_columns(pl.lit(0).alias("missed")),
+                  columns=("missed", "sat_out"))
+    b, _ = board.build(stages=[first])
+    assert board.BuildReport.of_served(b, stages=[first]).durability is True
+
+
+def test_a_correction_absent_from_corrected_adp_is_named_through_build(offline):
+    """The Correction shape (ADR-0021) under a stubbed declaration: the stage that leaves
+    the term's column fails, the ranking stage runs, and the report names the term --
+    and names nothing until the ranking stage has run."""
+    ranks = _stub("rank", lambda x, _c: x, advisory=False, ranks=True)
+    term = _stub("missed_stage", _boom, columns=("missed",), correction="durability")
+    _, rep = board.build(stages=[term, ranks])
+    assert rep.corrections_missing() == ("durability",)
+    _, rep = board.build(stages=[term, _stub("rank", lambda x, _c: None, advisory=False,
+                                             ranks=True)])
+    assert rep.corrections_missing() == ()
+
+
+def test_a_seventh_stage_is_one_edit(offline):
+    """The acceptance criterion: add one `Stage` and the columns table, the sentinel table,
+    the Correction tables and the report's flags all know it, with no second edit."""
+    seventh = board.Stage("snap_share", "snap share",
+                          lambda x, _c: x.with_columns(pl.lit(0.5).alias("snap_pct")),
+                          ("snap_pct", "snap_n"), correction="snap share")
+    stages = [*board.STAGES, seventh]
+    assert board.stage_columns(stages)["snap_share"] == ("snap_pct", "snap_n")
+    assert board.stage_column(stages)["snap_share"] == "snap_pct"
+    assert board.correction_stage(stages)["snap share"] == "snap_share"
+    assert board.correction_column(stages)["snap share"] == "snap_pct"
+    b, rep = board.build(stages=stages)
+    assert rep.snap_share is True and "snap_share" in rep.carried()
+    assert board.BuildReport.of_served(b, stages=stages).snap_share is True
+    with pytest.raises(TypeError, match="snap_share"):
+        board.BuildReport(snap_share=True)          # not declared for the real board
+
+
+def test_build_iterates_the_declaration_and_carries_one_policy():
+    """The property, not the instance: a stage is a declaration, not a block in `build`.
+    One `try` in the whole function -- the loop's -- and no flag set by name."""
     import ast
     import inspect
     fn = next(n for n in ast.walk(ast.parse(inspect.getsource(board)))
               if isinstance(n, ast.FunctionDef) and n.name == "build")
-    assert not [n for n in ast.walk(fn) if isinstance(n, ast.Try)]
+    assert len([n for n in ast.walk(fn) if isinstance(n, ast.Try)]) == 1
+    loops = [n for n in ast.walk(fn) if isinstance(n, ast.For)
+             and isinstance(n.iter, ast.Name) and n.iter.id == "stages"]
+    assert len(loops) == 1, "build runs the stages by iterating its declaration"
+    tree = ast.parse(inspect.getsource(board))
+    by_hand = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)
+               for t in n.targets
+               if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)
+               and t.value.id == "report"]
+    assert not by_hand, "a stage flag is being set outside the loop"
+    assert len(board.STAGES) == 7 and len({s.name for s in board.STAGES}) == 7
 
 
 # --- one policy, two kinds of failure --------------------------------------
@@ -582,27 +640,6 @@ def test_the_two_failures_are_two_different_nights(offline, tmp_path, capsys):
         "the last good board, not a board quietly missing Corrected ADP"
     assert "BUILD FAILED" in printed and "ColumnNotFoundError" in printed
     assert "SERVED BOARD" in reads and "built without" not in reads
-
-
-def test_every_optional_stage_goes_through_the_helper():
-    """Five did and the sixth did not, which is how the flag two renderers read ended up
-    being the one set by hand."""
-    import ast
-    import inspect
-    fn = next(n for n in ast.walk(ast.parse(inspect.getsource(board)))
-              if isinstance(n, ast.FunctionDef) and n.name == "build")
-    calls = [n for n in ast.walk(fn)
-             if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_stage"]
-    assert len(calls) == 7, f"expected seven staged stages, found {len(calls)}"
-
-    # The AST, not the prose: `_attach_market`'s docstring quotes `report.adp = True` while
-    # explaining why it no longer exists, and a string search matches the explanation.
-    tree = ast.parse(inspect.getsource(board))
-    by_hand = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)
-               for t in n.targets
-               if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)
-               and t.value.id == "report"]
-    assert not by_hand, "a stage flag is being set outside _stage"
 
 
 def test_the_board_is_reproducible():
@@ -851,7 +888,7 @@ def test_the_corrections_a_report_names_are_the_ones_declared():
         "a board that ran none of the correction stages is missing every declared term")
 
 
-def test_a_third_correction_needs_no_second_declaration_to_reach_a_gate(monkeypatch):
+def test_a_third_correction_needs_no_second_declaration_to_reach_a_gate():
     """A **Correction** is a shape and not a module (ADR-0021), so these two dicts are the
     only place the repo says how many there are.
 
@@ -863,10 +900,13 @@ def test_a_third_correction_needs_no_second_declaration_to_reach_a_gate(monkeypa
     than asserting the two the repo has today is what tells the derivation from the
     coincidence that the hand-written pair matched it.
     """
-    monkeypatch.setitem(board.CORRECTION_STAGE, "snap share", "sos")
-    named = board.BuildReport(adp=True, td_luck=True, durability=True, sos=False)
+    from dataclasses import replace
+    stages = [replace(s, correction="snap share") if s.name == "sos" else s
+              for s in board.STAGES]
+    assert board.correction_stage(stages) == {"snap share": "sos", "durability": "durability"}
+    named = board.BuildReport(stages=stages, adp=True, td_luck=True, durability=True, sos=False)
     assert named.corrections_missing() == ("snap share",)
-    ran = board.BuildReport(adp=True, td_luck=True, durability=True, sos=True)
+    ran = board.BuildReport(stages=stages, adp=True, td_luck=True, durability=True, sos=True)
     assert ran.corrections_missing() == ()
 
 
