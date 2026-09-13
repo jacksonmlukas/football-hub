@@ -352,6 +352,42 @@ def test_a_frozen_quote_is_rated_from_the_quarterback_state_and_the_row_says_so(
     assert by["c"]["qb_adjustment"] > 0, "the home side keeps its starter; the away side lost his"
 
 
+def test_the_model_string_on_an_adjusted_row_is_not_the_baselines(sched, tmp_path):
+    """#284: `model="market_baseline"` covered a row whose spread the betting market did
+    not set. The adjusted row carries its own name, the protected row the baseline's, so
+    the track record can tell them apart by the column that names the model and not only
+    by a suffix on the version."""
+    sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None, "KC", "LAC"), ("c", 2, 3.0, None, "KC", "LV")])
+    _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 12, 11))
+    _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
+    _qb_state(tmp_path / "cache")
+    got = ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
+                      cache=tmp_path / "cache")
+    by = {r["game_id"]: r for r in got.to_dicts()}
+    assert by["b"]["model"] == "market_baseline"
+    assert by["c"]["model"] == "market_baseline-qb"
+    assert by["c"]["model"] != by["b"]["model"]
+
+
+def test_the_run_line_says_passthrough_only_when_nothing_was_adjusted(sched, tmp_path, capsys):
+    """#284: every run printed `ratings (passthrough)`, adjusted runs included. The line
+    names how many games were adjusted, and says passthrough only when that count is
+    zero."""
+    sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None, "KC", "LAC"), ("c", 2, 3.0, None, "KC", "LV")])
+    _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 12, 11))
+    _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
+    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
+                cache=tmp_path / "cache")
+    plain = capsys.readouterr().out.splitlines()[0]
+    assert "ratings (passthrough): season 2026 week 2" in plain
+    _qb_state(tmp_path / "cache")
+    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
+                cache=tmp_path / "cache")
+    adjusted = capsys.readouterr().out.splitlines()[0]
+    assert "ratings: season 2026 week 2, 1 of 2 games quarterback-adjusted" in adjusted
+    assert "passthrough" not in adjusted
+
+
 def test_the_adjusted_rows_are_their_own_partition(sched, tmp_path):
     """A partition is homogeneous in what priced it, and an adjusted rating is not the
     same thing as the passthrough it was adjusted from."""

@@ -1,16 +1,19 @@
-"""Ratings: currently a passthrough that returns the market prior unchanged.
+"""Ratings: the betting market's prior where a live price exists, and that prior
+quarterback-adjusted where the staleness field marks none.
 
-This is a placeholder on purpose, and the plan says why: naive-but-real beats
+This began as a placeholder on purpose, and the plan says why: naive-but-real beats
 sophisticated-but-absent. `Makefile:12` has always called `hub.models.ratings --fit`, and
 until now that line dead-ended, which meant `make slate` could not run end to end and no
 part of the weekly pipeline had ever been exercised together. A module that returns the
-market prior makes the pipeline real, and makes every later improvement a diff against
-something that works rather than construction against a gap.
+betting market's prior makes the pipeline real, and makes every later improvement a diff
+against something that works rather than construction against a gap.
 
 **It has no edge and does not claim one.** Predictions written here carry
-`model="market_baseline"`, so they cannot be mistaken in the track record for output from
-a model that has learned something. Track A -- the Bayesian state-space ratings -- replaces
-what `forecaster()` returns and nothing else.
+`model="market_baseline"` where the betting market set the number, and
+`model="market_baseline-qb"` where the quarterback layer moved it (#284), so neither can be
+mistaken in the track record for output from a model that has learned something, and the
+two cannot be mistaken for each other. Track A -- the Bayesian state-space ratings --
+replaces what `forecaster()` returns and nothing else.
 
 **One exception, since #218, and it is narrow on purpose.** Where the staleness field (#210)
 marks a game as having no live price -- a snapshot quote that has stood untouched for more
@@ -271,7 +274,15 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
         store.write(_with_committed(part, season, wk, name, base), "preds", "nfl", season, wk,
                     base=base, name=name, replace=True)
 
-    print(f"  ratings (passthrough): season {season} week {wk}")
+    # The run line says what this run did (#284): how many of the slate's games the
+    # quarterback layer moved, and `passthrough` only when that count is zero. Off the
+    # slate that was predicted, the same rows `report_line` below describes.
+    moved = slate.filter(pl.col("adjusted_by").is_not_null()).height
+    if moved:
+        print(f"  ratings: season {season} week {wk}, {moved} of {slate.height} games "
+              f"quarterback-adjusted")
+    else:
+        print(f"  ratings (passthrough): season {season} week {wk}")
     if under_way:
         # Said out loud: a reader seeing thirteen of sixteen games should learn that the fit
         # ran late, not conclude the week was light.
@@ -296,7 +307,8 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.models.ratings",
-        description="Passthrough ratings: writes the market prior as versioned predictions.")
+        description="Ratings: writes the betting market's prior, quarterback-adjusted where no "
+                    "live price exists, as versioned predictions.")
     ap.add_argument("--fit", action="store_true", help="fit and write predictions")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD)
     ap.add_argument("--week", type=int, default=None,

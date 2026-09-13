@@ -527,7 +527,8 @@ OUTSTANDING: dict[tuple[str, str], tuple[int, str]] = {
     ("src/hub/models/predict.py", "the market"): (3, _BULK),
     ("src/hub/draft/adp_history.py", "the market"): (2, _BULK),
     ("src/hub/models/market.py", "the market"): (2, _BETTING),
-    ("src/hub/models/ratings.py", "the market"): (2, _BETTING),
+    # `ratings.py` was here until #284: both sites were the headline and the CLI description
+    # calling the module a passthrough of "the market prior", and went with that claim.
     ("src/hub/schedule.py", "the market"): (2, _BETTING),
     ("src/hub/season/weekly_gate_data.py", "the market"): (2, _BULK),
     ("src/hub/draft/cohort.py", "the market"): (1, _BULK),

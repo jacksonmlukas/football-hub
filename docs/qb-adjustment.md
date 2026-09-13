@@ -89,7 +89,9 @@ points minus the away side's, only when both teams are in the state.
 **What the row says.** `adjusted_by = "nfeloqb"` and `qb_adjustment` (points added to the
 home spread), null on every row the rule did not reach; the version string gains `-qb` on
 exactly those rows, so they file to their own partition and the track record can tell them
-from the passthrough.
+from the passthrough. *(Since #284 the model string moves the same way: `market_baseline-qb`
+on an adjusted row, `market_baseline` where the betting market set the number, and the run
+line says how many games were adjusted rather than `passthrough` on every run.)*
 
 **What the run says.** Once per run, `hub.models.ratings --fit` and `hub.season.survivor`
 print `quarterback adjustment: N of M priced games touched (no live price); mean |change| X

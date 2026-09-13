@@ -78,7 +78,9 @@ The number the weekly prediction and the survivor grid are built from, and the m
 writes the first (`hub.models.ratings`). A passthrough of the betting market's spread where a
 **Live price** exists, and where none does, since #218, that spread moved by the
 **Quarterback adjustment**; `rated_games` is the one seam both readers take, so they cannot
-disagree about a game. Not a model with an edge — rows carry `market_baseline`'s own name.
+disagree about a game. Not a model with an edge — rows carry `market_baseline`'s own name
+where the betting market set the number, and `market_baseline-qb` where the adjustment
+moved it (#284), so the two cannot be mistaken for each other or for a model.
 
 **Quarterback adjustment**:
 This quarterback minus what the team rating already embeds, in spread points: the source's own
