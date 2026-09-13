@@ -464,6 +464,32 @@ def test_a_comparison_runs_end_to_end_from_a_real_store(tmp_path):
     assert got["delta"] < 0, "every home team won; 0.6 beats 0.5"
 
 
+def test_an_adjusted_game_is_in_what_eval_scores(tmp_path):
+    """The same reader defect as conformal's, at the scorer: `--compare market_baseline,...`
+    read the exact string and dropped every `market_baseline-qb` row. The family is what is
+    scored -- the number the module published for every game -- and the label the report
+    names it by is the family's name."""
+    base = tmp_path / "processed"
+    _write_predictions(base, "market_baseline", [0.6] * 4, 1)
+    _write_predictions(base, "market_baseline-qb", [0.9], 2)
+    _write_predictions(base, "other", [0.5] * 4, 1)
+    _write_predictions(base, "other", [0.5], 2)
+    sched = _sched([(f"2026_01_g{i}", 7.0) for i in range(4)] + [("2026_02_g0", 7.0)])
+    got = me.load_predictions("market_baseline", base=base, schedules=sched)
+    assert got.height == 5 and "market_baseline-qb" in got["model"].to_list()
+    other = me.load_predictions("other", base=base, schedules=sched)
+    paired = me._paired(got, other, "market_baseline", "other")
+    assert paired.height == 5 and "2026_02_g0" in paired["game_id"].to_list()
+    scored = me.compare(got, other, split="temporal", holdout=0.5)
+    assert scored["n_scored"] == 1 and scored["holdout_window"] == [(2026, 2)], (
+        "the holdout week is the adjusted game, scored under the family's name")
+    assert me._labels(got, other, None) == ("market_baseline", "other")
+    # Two unrelated names are no family, and a column with no name at all is no label.
+    mixed = got.with_columns(pl.Series("model", ["a", "b", "a", "b", "b"]))
+    blank = got.with_columns(pl.lit(None, dtype=pl.Utf8).alias("model"))
+    assert me._labels(mixed, blank, None) == ("the first model", "the second model")
+
+
 def test_the_store_path_reaches_the_cli(capsys, tmp_path, monkeypatch):
     """`--compare` against a store, with only the schedules stubbed. The defect was that no
     real store could get this far, so the CLI's own store path needs driving too."""

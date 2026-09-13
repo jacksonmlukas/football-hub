@@ -740,6 +740,16 @@ POOL_STATE = Contract(
 # starters and no result, and that unplayed row is the one row the team layer most wants --
 # it is where a backup is first named. `season` is bounded from 1920 because 538's file ran
 # from there and nfeloqb's from 1999; the ceiling is the same one every season column has.
+#
+# The six quarterback columns are nullable too, since #283, and it is a claim about the
+# source rather than a loosening: a side with no quarterback, no prior or no adjustment is a
+# shape the file emits -- a rookie the source has no value for, or a side it has not named
+# -- and the reader (`hub.fetch.nfeloqb._long`) drops that *side* and keeps the opponent's
+# game. Declared non-null, one such row refused the whole eighteen-thousand-row file and
+# every team fell back to last-good. The both-sides-blank rows -- the Elo-only twin of a
+# played game, and every game before 1950 -- are dropped and counted by `parse` before the
+# contract sees them, so a frame arriving here still has a quarterback on at least one side
+# of every row.
 NFELOQB = Contract(
     name="nfeloqb_qb_elos",
     required={"date": pl.Utf8, "season": pl.Int64, "team1": pl.Utf8, "team2": pl.Utf8,
@@ -747,8 +757,7 @@ NFELOQB = Contract(
               "qb1_value_pre": pl.Float64, "qb2_value_pre": pl.Float64,
               "qb1_adj": pl.Float64, "qb2_adj": pl.Float64,
               "score1": pl.Int64, "score2": pl.Int64},
-    non_null=("date", "season", "team1", "team2", "qb1", "qb2",
-              "qb1_value_pre", "qb2_value_pre", "qb1_adj", "qb2_adj"),
+    non_null=("date", "season", "team1", "team2"),
     no_nan=("qb1_value_pre", "qb2_value_pre", "qb1_adj", "qb2_adj"),
     ranges={"season": (1920, 2100),
             "qb1_value_pre": (-200, 400), "qb2_value_pre": (-200, 400),

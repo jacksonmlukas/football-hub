@@ -94,7 +94,9 @@ nothing needs building, and only confidence points would require work.
 Where the staleness field marks a game as having no live price — a snapshot quote untouched
 for more than seven days, or the moving field — the spread it converts is quarterback-adjusted
 from `greerreNFL/nfeloqb`'s published ratings, relative to what the team rating already embeds
-and decaying at 10% a game of the starter's tenure. Where a live price exists nothing changes.
+and decaying at 10% a game of the starter's tenure *(restated 2026-09-12 under #268: the
+adjustment is the source's own `qb_adj` over 25, and the decay is the source's, not a factor
+applied here — [qb-adjustment.md](qb-adjustment.md))*. Where a live price exists nothing changes.
 The validation that licenses this and no more is [qb-adjustment.md](qb-adjustment.md): +0.0057
 Brier on 538's own two columns over 2013–2022, positive in 9 of 10 seasons. It is not a claim
 of an edge over the betting market; it is a claim about weeks the betting market has not

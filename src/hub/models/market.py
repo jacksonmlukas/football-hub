@@ -93,6 +93,7 @@ class MarketBaseline:
         # -- so the source lands in the version string rather than only in a column beside it.
         # Optional: a caller with one source and nothing to distinguish keeps the plain
         # version, which is what `store.verify` and every existing test do.
+        model: pl.Expr = pl.lit(self.name)
         if "price_source" in priced.columns:
             # One expression, used twice. Filling only the version would let a row say
             # "unknown" in the string and null in the column beside it, which is two answers
@@ -107,10 +108,14 @@ class MarketBaseline:
             # `-qb` is appended where `adjusted_by` names a source and nowhere else, so a
             # row a live price protected carries the string it always did. The two columns
             # ride along, null on the protected rows, which is how a reader tells "not
-            # adjusted" from "adjusted by nothing".
+            # adjusted" from "adjusted by nothing". The model string moves the same way
+            # (#284): `market_baseline` is a claim that the betting market set the number,
+            # and on an adjusted row it did not, so that row is named by the column that
+            # names the model and not only by a suffix on the version.
             if "adjusted_by" in priced.columns:
-                version = pl.when(pl.col("adjusted_by").is_not_null()) \
-                            .then(pl.format("{}-qb", version)).otherwise(version)
+                moved = pl.col("adjusted_by").is_not_null()
+                version = pl.when(moved).then(pl.format("{}-qb", version)).otherwise(version)
+                model = pl.when(moved).then(pl.lit(f"{self.name}-qb")).otherwise(pl.lit(self.name))
                 provenance += [pl.col("qb_adjustment").cast(pl.Float64),
                                pl.col("adjusted_by").cast(pl.Utf8)]
         else:
@@ -125,7 +130,7 @@ class MarketBaseline:
             pl.col("close_spread").cast(pl.Float64).alias("margin_mean"),
             (pl.col("close_spread") - half).cast(pl.Float64).alias("margin_lo"),
             (pl.col("close_spread") + half).cast(pl.Float64).alias("margin_hi"),
-            pl.lit(self.name).alias("model"),
+            model.alias("model"),
             version.alias("version"),
             *provenance,
             pl.lit(self._spec.through_week).cast(pl.Int32).alias("fit_through_week"),

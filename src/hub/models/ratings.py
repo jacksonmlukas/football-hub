@@ -1,16 +1,19 @@
-"""Ratings: currently a passthrough that returns the market prior unchanged.
+"""Ratings: the betting market's prior where a live price exists, and that prior
+quarterback-adjusted where the staleness field marks none.
 
-This is a placeholder on purpose, and the plan says why: naive-but-real beats
+This began as a placeholder on purpose, and the plan says why: naive-but-real beats
 sophisticated-but-absent. `Makefile:12` has always called `hub.models.ratings --fit`, and
 until now that line dead-ended, which meant `make slate` could not run end to end and no
 part of the weekly pipeline had ever been exercised together. A module that returns the
-market prior makes the pipeline real, and makes every later improvement a diff against
-something that works rather than construction against a gap.
+betting market's prior makes the pipeline real, and makes every later improvement a diff
+against something that works rather than construction against a gap.
 
 **It has no edge and does not claim one.** Predictions written here carry
-`model="market_baseline"`, so they cannot be mistaken in the track record for output from
-a model that has learned something. Track A -- the Bayesian state-space ratings -- replaces
-what `forecaster()` returns and nothing else.
+`model="market_baseline"` where the betting market set the number, and
+`model="market_baseline-qb"` where the quarterback layer moved it (#284), so neither can be
+mistaken in the track record for output from a model that has learned something, and the
+two cannot be mistaken for each other. Track A -- the Bayesian state-space ratings --
+replaces what `forecaster()` returns and nothing else.
 
 **One exception, since #218, and it is narrow on purpose.** Where the staleness field (#210)
 marks a game as having no live price -- a snapshot quote that has stood untouched for more
@@ -105,8 +108,8 @@ def forecaster() -> Forecaster:
     return MarketBaseline()
 
 
-def quarterback_state(cache: Path | None) -> tuple[pl.DataFrame | None, str]:
-    """`hub.fetch.nfeloqb`'s per-team state off its cache, and one sentence about it.
+def quarterback_rows(cache: Path | None) -> tuple[pl.DataFrame | None, str]:
+    """`hub.fetch.nfeloqb`'s rows off its cache, and one sentence about the state they build.
 
     `cache` is the nflverse cache root a fit was given, and the nfeloqb file is looked for
     under it -- `<cache>/nfeloqb/` -- so a test that redirects one redirects both and a
@@ -120,12 +123,23 @@ def quarterback_state(cache: Path | None) -> tuple[pl.DataFrame | None, str]:
     """
     where = None if cache is None else cache / "nfeloqb"
     try:
-        state = nfeloqb.read_state(where)
+        rows = nfeloqb.read_rows(where)
     except ContractViolation as e:
         return None, f"the cached nfeloqb file was refused, so no rating moved: {e}"
-    if state is None:
+    if rows is None:
         return None, "no nfeloqb file cached, so no rating moved (hub.fetch.nfeloqb --refresh)"
-    return state, f"nfeloqb state for {state.height} teams, pulled {nfeloqb.captured_at(where)}"
+    state = nfeloqb.state(rows)
+    # The pin (#271): which commit the file came from, and -- said again here, because the
+    # pull said it once on the day and this run may be days later -- whether its bytes
+    # matched the pin. A source change is served, and it is never served silently.
+    record = nfeloqb.stamp(where)
+    commit = record.get("commit")
+    at = (f"pulled {record.get('captured_at')} at commit "
+          f"{str(commit)[:12] if commit else 'none (unpinned, the default branch)'}")
+    said = f"nfeloqb state for {state.height} teams, {at}"
+    if (change := nfeloqb.source_change(where)):
+        said += f"; {change}"
+    return rows, said
 
 
 def rated_games(season: int, *, at: datetime | None = None, cache: Path | None = None,
@@ -140,16 +154,53 @@ def rated_games(season: int, *, at: datetime | None = None, cache: Path | None =
 
     `at` defaults to now, naive UTC, the way `priced_games` defaults it, and the same moment
     decides both which snapshot priced a game and how long that quote had stood.
+
+    **A week that has kicked off is rated from the quarterback state as of its first
+    kickoff (#272)**: `nfeloqb.state(rows, as_of=kickoff)` is built from rows strictly
+    before that kickoff's game day, so nothing about that week's games -- who actually
+    started, what the source wrote after the result -- reaches the rating of any game in
+    it. The weeks still ahead of `at` are rated from the latest state, which is what every
+    consumer read before #272 and where the coming week's expected starters are. One state
+    per played week rather than per game: the week's first kickoff is the strictest as-of
+    any of its games needs, and `docs/method.md` rule 2 is about the direction of the
+    boundary, not its tightness. This is the seam #291's backtest reads.
     """
     moment = at or datetime.now(UTC).replace(tzinfo=None)
     games = schedule.priced_games(season, at=moment, cache=cache, base=base)
-    state, said = quarterback_state(cache)
-    if state is not None and (unknown := nfeloqb.unknown_teams(state, games)):
+    rows, said = quarterback_rows(cache)
+    if rows is None:
+        return quarterback.apply(games, None, at=moment), said
+    latest = nfeloqb.state(rows)
+    if (unknown := nfeloqb.unknown_teams(latest, games)):
         # A spelling the source uses and nflverse does not is a team that never adjusts,
         # and nothing downstream would say so. See `nfeloqb.ABBREVIATIONS`.
         said += (f"; {len(unknown)} team(s) in the state match no game and never adjust: "
                  f"{', '.join(unknown)} -- a spelling nfeloqb.ABBREVIATIONS does not map?")
-    return quarterback.apply(games, state, at=moment), said
+    if (missing := nfeloqb.missing_teams(latest, games)):
+        # The other direction: a schedule team the source has no row for is a team whose
+        # games are left as priced, and nothing else on the run would say so.
+        said += (f"; {len(missing)} schedule team(s) have no row in the state and never "
+                 f"adjust: {', '.join(missing)}")
+    return _rated_by_week(games, rows, latest, moment), said
+
+
+def _rated_by_week(games: pl.DataFrame, rows: pl.DataFrame, latest: pl.DataFrame,
+                   moment: datetime) -> pl.DataFrame:
+    """`quarterback.apply` over the slate, one state per week that has kicked off by
+    `moment` (as of its first kickoff) and the latest state for the rest, in the slate's
+    own order. `priced_games` always carries `kickoff`, null where the schedule has no
+    times, and a week with no kickoff it can date is rated from the latest state."""
+    first = (games.group_by("week").agg(pl.col("kickoff").min().alias("first_kickoff"))
+                  .filter(pl.col("first_kickoff").is_not_null()
+                          & (pl.col("first_kickoff") <= pl.lit(moment))))
+    started = dict(zip(first["week"].to_list(), first["first_kickoff"].to_list(), strict=True))
+    ordered = games.with_row_index("_order")
+    parts = [quarterback.apply(ordered.filter(~pl.col("week").is_in(list(started))), latest,
+                               at=moment)]
+    for week, kickoff in started.items():
+        parts.append(quarterback.apply(ordered.filter(pl.col("week") == week),
+                                       nfeloqb.state(rows, as_of=kickoff), at=moment))
+    return pl.concat(parts).sort("_order").drop("_order")
 
 
 def _with_committed(part: pl.DataFrame, season: int, week: int, name: str,
@@ -228,7 +279,18 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
         store.write(_with_committed(part, season, wk, name, base), "preds", "nfl", season, wk,
                     base=base, name=name, replace=True)
 
-    print(f"  ratings (passthrough): season {season} week {wk}")
+    # The run line says what this run did (#284): how many of the slate's priced games the
+    # quarterback layer moved, and `passthrough` only when that count is zero. Off the
+    # slate that was predicted, and over the priced games -- the population the adjustment
+    # can touch, and the denominator `quarterback.report_line` below already uses, so the
+    # two adjacent lines cannot disagree about it when the slate carries an unpriced game.
+    moved = slate.filter(pl.col("adjusted_by").is_not_null()).height
+    priced = slate.filter(pl.col("close_spread").is_not_null()).height
+    if moved:
+        print(f"  ratings: season {season} week {wk}, {moved} of {priced} priced games "
+              f"quarterback-adjusted")
+    else:
+        print(f"  ratings (passthrough): season {season} week {wk}")
     if under_way:
         # Said out loud: a reader seeing thirteen of sixteen games should learn that the fit
         # ran late, not conclude the week was light.
@@ -253,7 +315,8 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.models.ratings",
-        description="Passthrough ratings: writes the market prior as versioned predictions.")
+        description="Ratings: writes the betting market's prior, quarterback-adjusted where no "
+                    "live price exists, as versioned predictions.")
     ap.add_argument("--fit", action="store_true", help="fit and write predictions")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD)
     ap.add_argument("--week", type=int, default=None,

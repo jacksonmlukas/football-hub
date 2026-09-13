@@ -51,7 +51,8 @@ It licenses building #218 as specified: a quarterback-adjusted team rating **onl
 staleness field says there is no live price**, consumed from `greerreNFL/nfeloqb` (538's
 method on nflfastR data, published twice weekly in season) through a fetch CLI with a
 contract, a cache and last-good, relative to what the team rating already embeds and
-decaying at 10% a game so a long-tenured backup is not double-counted. A game with a live
+decaying at 10% a game so a long-tenured backup is not double-counted *(the decay is the
+source's own, not this repo's — restated under #268 below)*. A game with a live
 price is unchanged: the best published quarterback-adjusted Elo is +0.01 MAE against the
 closing line after fifteen years, and its own method blends 65% market.
 
@@ -88,14 +89,65 @@ points minus the away side's, only when both teams are in the state.
 **What the row says.** `adjusted_by = "nfeloqb"` and `qb_adjustment` (points added to the
 home spread), null on every row the rule did not reach; the version string gains `-qb` on
 exactly those rows, so they file to their own partition and the track record can tell them
-from the passthrough.
+from the passthrough. *(Since #284 the model string moves the same way: `market_baseline-qb`
+on an adjusted row, `market_baseline` where the betting market set the number, and the run
+line says how many games were adjusted rather than `passthrough` on every run.)*
 
 **What the run says.** Once per run, `hub.models.ratings --fit` and `hub.season.survivor`
 print `quarterback adjustment: N of M priced games touched (no live price); mean |change| X
-points, Y home win probability`. On the fixture, one game of two: 4.98 points, 0.141 win probability. **The live
+points, Y home win probability`. On the fixture, one game of two: 4.98 points, 0.141 win probability
+*(superseded under #268 below: 4.80 points, 0.137)*. **The live
 figure is not recorded here** — no pull of nfeloqb has been made from this repo — and it is
 the maintainer's to run: `uv run python -m hub.fetch.nfeloqb --refresh`, then the two CLIs
 above against the store that holds the archive.
+
+## Restated 2026-09-12 (#268) — the construction is the source's, and the estimator above is withdrawn
+
+The construction under **As built** is superseded. It is kept as published, per
+[method.md](method.md) rule 13; what follows is what replaced it and why.
+
+**The defect.** The shipped estimator subtracted an *arrival-time* baseline from a *current*
+value and decayed the difference by tenure. The difference carries the starter's own value
+drift since he arrived — a quantity with nothing to do with the gap between this quarterback
+and what the team rating already embeds, which is what the module exists to price. The
+source's own `qbN_adj` is already that gap: already relative, already in Elo, already decayed
+by nfelo's own update rule. Rebuilding it from the arrival row was re-deriving a published
+column, wrongly.
+
+**Measured on the live cache, 2026-09-12**, reproduced independently on the 32 live teams:
+mean absolute error **0.4** spread points, worst **3.6**, four sign flips. The worst case is
+not a backup — it is Baltimore, an established starter with no quarterback change, at
+**+4.018** where the source says **+0.404**: roughly eleven points of home win probability,
+on a row the module selected precisely because the betting market had not moved. The error
+is exactly zero when tenure is zero, by algebra: when the arrival row *is* the latest row the
+formula collapses to the right one. Every fixture in the unit tests set that condition, so the
+suite was green and the estimator had never been exercised on the input it exists to handle —
+[method.md](method.md) rule 15, written on this incident.
+
+**The construction now.** Per team, from the latest row of `hub.fetch.nfeloqb`'s state:
+
+    points = qb_adj / 25
+
+Nothing else enters it. `qb_adj / 25` over the cached file reproduces the published 538 and
+nfelo magnitudes to the digit (n = 5,554: min −9.70, p1 −5.37, median +0.08, p95 +1.19,
+max +2.88). `POINTS_PER_VALUE`, `DECAY_PER_GAME`, `ELO_PER_VALUE`, `arrival_value`,
+`arrival_adj` are gone from the estimator and the state; `tenure` stays in the state as a
+reported field the estimator does not read. `config_digest` moved `08ceee28` → `fd28e5e5`.
+
+**What moves.** Every published prediction and survivor pick that carried the adjustment —
+every row with `adjusted_by = "nfeloqb"` — was rated from the withdrawn formula and is
+restated here, once: on the live teams the correction is under half a point for most and up
+to 3.6 for the worst, in either direction. The fixture figure the run line reports moves from
+4.98 points / 0.141 win probability to **4.80 / 0.137** — small on the fixture because its
+starters' values barely drifted, which is exactly the property that hid the defect. The
+week-six double-counting argument the module docstring made is withdrawn with the formula: it
+is true against a rating that updates and false against the frozen rows this module reaches.
+
+Every state fixture in `tests/unit/test_quarterback.py` now carries a tenure above zero and a
+starter whose value drifted, and `test_points_per_team_off_the_captured_file_are_the_sources_adjustment_over_25`
+holds all 32 teams of the frozen live capture to the source's column. **Not re-run from this
+repo:** the per-team check on the live cache itself, which is the maintainer's file; the
+capture is the last 300 rows of it.
 
 **What the first live pull must confirm** is listed in `hub.fetch.nfeloqb`'s docstring: the
 URL, the column names, that the coming week is listed with expected starters and null scores,

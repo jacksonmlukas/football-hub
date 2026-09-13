@@ -386,6 +386,14 @@ FITTED_EXTRA: tuple[str, ...] = (
     "hub.draft.optimize:DEFAULT_ROUNDS",
     "hub.draft.cohort:ROUNDS",
     "hub.draft.cohort:DRAFTS",
+    # The commit of `greerreNFL/nfeloqb` the quarterback adjustment reads (#271). Data, and
+    # `data_digest` argues that data belongs beside the model version and not in it -- but
+    # that argument is about an archive that moves under a refetch with no edit made. This
+    # is a *pin*: it moves only when someone edits `hub.fetch.nfeloqb.COMMIT`, which is the
+    # deliberate act that makes predictions under the new input a different version from
+    # predictions under the old. `None` -- unpinned, the default branch -- hashes as itself,
+    # so a pinned run and an unpinned one are distinguishable too.
+    "hub.fetch.nfeloqb:COMMIT",
 )
 
 # Modules that hold measured floats which nonetheless must NOT move a model version, and why.

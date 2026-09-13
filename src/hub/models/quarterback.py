@@ -1,4 +1,5 @@
-"""The quarterback adjustment: relative, decaying, and only where no live price exists (#218).
+"""The quarterback adjustment: the source's own, in spread points, only where no live price
+exists (#218; the construction restated under #268).
 
 The game layer had no quarterback awareness of any kind. Ratings pass the betting market's
 number through, and where the staleness field (#210) says that number has stood untouched
@@ -15,26 +16,30 @@ quarterback-adjusted Elo is +0.01 MAE against the close after fifteen years and 
 65% betting market, so where a live price exists this module changes nothing and a test holds
 the row byte for byte.
 
-**The construction is relative, and that is the design point that is easy to get wrong.**
-The adjustment is this quarterback *minus what the team rating already embeds*, not how good
-this quarterback is. It sits near zero for an established starter and goes sharply negative
-for a backup, and it decays at 10% per game of the new starter's tenure, because after three
-or four games the team rating has absorbed most of the downgrade. A model adding a full
-starter-versus-backup gap in week six of a backup's tenure is double-counting. The recipe is
-the research artifact's `qb_adjustment_recipe` (2026-09-07), and the numbers below are its.
+**The construction is the source's, and the design point is to add nothing to it.** The
+adjustment is this quarterback *minus what the team rating already embeds*, not how good
+this quarterback is -- near zero for an established starter, sharply negative for a backup
+-- and the source publishes exactly that quantity on every row as `qbN_adj`: relative
+already, in Elo, and already decayed by nfelo's own rolling update. The team layer reads it
+off the latest row and converts it to spread points.
+
+    points = qb_adj / ELO_PER_POINT
+
+Until #268 this module rebuilt the gap itself, subtracting an arrival-time baseline from the
+current value and decaying the difference by tenure. The difference carried the starter's
+own value drift since he arrived, which has nothing to do with the gap being priced, and it
+was right only when the arrival row *was* the latest row -- the one condition every fixture
+set. Measured on the 32 live teams, 2026-09-12: mean absolute error 0.4 spread points, worst
+3.6, four sign flips; Baltimore, an established starter with no quarterback change, at +4.018
+where the source says +0.404. `qb_adj / 25` over the cached file reproduces the published 538
+and nfelo magnitudes (n = 5,554: median +0.08, p1 -5.37, p95 +1.19).
 
 The quarterback layer itself is not built here. `hub.fetch.nfeloqb` consumes
 `greerreNFL/nfeloqb`'s published ratings -- 538's method on nflfastR data -- and hands over
-a per-team state: the starter, his value, the row he arrived on, and his tenure. This
-module is the team layer only: it turns that state into spread points and decides which
-rows may receive them.
-
-    points = POINTS_PER_VALUE x (qb_value - embedded) x DECAY_PER_GAME ** tenure
-    embedded = arrival_value - arrival_adj / ELO_PER_VALUE
-
-`embedded` is the team's rolling quarterback value on the row the starter arrived, recovered
-from the source's own adjustment on that row (3.3 x the gap, in Elo). A game's spread moves by
-the home side's points minus the away side's, and only when both sides are known.
+a per-team state: the starter, his value and adjustment on the latest row, and his tenure.
+This module is the team layer only: it turns that state into spread points and decides which
+rows may receive them. A game's spread moves by the home side's points minus the away side's,
+and only when both sides are known.
 """
 from __future__ import annotations
 
@@ -44,19 +49,12 @@ import polars as pl
 
 # STATED CHOICE, not a fitted constant, and in `FITTED_MODULES` because it is an input to a
 # published prediction and the digest is owed coverage of anything that is. Its provenance:
-# 538 converted a quarterback value to Elo at 3.3 per unit and Elo to spread points at 25 per
-# point, and 3.3 / 25 = 0.132. The recipe records that the other published conversion, Elway's
-# 21.5 Elo per point, disagrees with 538's by 16%, "which is a fair statement of the precision
-# available". No interval; this repo has not fitted it and does not claim to have.
-ELO_PER_VALUE = 3.3
+# 538 converted Elo to spread points at 25 per point. The recipe records that the other
+# published conversion, Elway's 21.5 Elo per point, disagrees with 538's by 16%, "which is a
+# fair statement of the precision available". No interval; this repo has not fitted it and
+# does not claim to have. The source's 3.3 Elo per value unit is inside `qb_adj` already and
+# is not restated here.
 ELO_PER_POINT = 25
-POINTS_PER_VALUE = 0.132
-
-# The share of the relative gap that survives each game the new starter plays. 538's rolling
-# quarterback value is 0.9 x previous + 0.1 x this game, so a tenth of the gap is absorbed
-# into the team rating per game and the remainder is what is still unpriced. Stated choice,
-# same provenance as above.
-DECAY_PER_GAME = 0.9
 
 # A snapshot quote that has stood still longer than this is not a live price. STATED CHOICE
 # from #210's measurement on 2026-09-11: the current week's median run was 1.8 days unmoved
@@ -76,10 +74,9 @@ SOURCE = "nfeloqb"
 
 def points(state: pl.DataFrame) -> pl.DataFrame:
     """Per team, the spread points its current starter is worth relative to what the team
-    rating embeds, decayed by his tenure. `team` and `points`."""
-    embedded = pl.col("arrival_value") - pl.col("arrival_adj") / ELO_PER_VALUE
-    decayed = (pl.col("qb_value") - embedded) * (pl.lit(DECAY_PER_GAME) ** pl.col("tenure"))
-    return state.select(pl.col("team"), (POINTS_PER_VALUE * decayed).alias("points"))
+    rating embeds: the source's adjustment on the latest row over `ELO_PER_POINT`, and
+    nothing else. `team` and `points`."""
+    return state.select(pl.col("team"), (pl.col("qb_adj") / ELO_PER_POINT).alias("points"))
 
 
 def no_live_price(games: pl.DataFrame, at: datetime) -> pl.Expr:

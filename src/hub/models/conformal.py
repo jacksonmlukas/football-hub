@@ -115,7 +115,12 @@ def load_scored(model: str, base: Path | None = None,
     # One row per game. The calibration quantile is a rank over the window, so counting each
     # residual once per fitted version does not merely inflate `n` -- it reweights the
     # quantile toward whichever games happen to have been re-fitted most often.
-    got = store.predictions(model=model, base=base)
+    #
+    # The family, not the exact name (#284): `market_baseline-qb` is the row the quarterback
+    # layer moved, and the interval being calibrated is the module's published number for
+    # every game. On the exact name the window would score the unadjusted subset -- every
+    # game but the backup-quarterback ones -- and call the coverage the model's.
+    got = store.predictions(model=model, base=base, family=True)
     if got.is_empty():
         return empty_shape
     preds = got.select("game_id", "week", "margin_mean")
