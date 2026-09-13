@@ -934,8 +934,14 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     default branch, which is what the URL always was -- so nothing any run computes is
     different on either side of this commit. The first move of this name to a commit will be
     the model change, and it is the maintainer's to make from the next pull's stamp.
+
+    **Moved 2026-09-13 (#271, the pin set): `a1e669b9` -> `8169e6c5`**, `fitted_digest`
+    `9be7844c` -> `01df92b8`. `COMMIT` went from `None` to `2c95e5fc`, the source's `main`
+    at the 2026-09-13 pull (16,088 rows, sha256 `9c7ec9f4...`), checked by hashing the file
+    at that commit. **A model change**: the input is now a fixed file, so a later pull that
+    differs is reported as a source change rather than silently becoming the input.
     """
-    assert config_digest(HubConfig()) == "a1e669b9"
+    assert config_digest(HubConfig()) == "8169e6c5"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

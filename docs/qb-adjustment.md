@@ -179,7 +179,7 @@ takes the moment and reads the label — a row is adjusted exactly when `price_s
 #281 asked for, and what #251 settles about the cut itself (the poll age rather than the
 quote's last move; what a change in book set does to the run) changes in that one
 expression. `STALE_AFTER_DAYS` stays in this module and in the digest: `config_digest`
-and `fitted_digest` are unmoved (`a1e669b9`, `9be7844c`).
+and `fitted_digest` are unmoved (`a1e669b9`, `9be7844c`). The pin was set on 2026-09-13 (`COMMIT` `2c95e5fc`), which moved them to `8169e6c5` / `01df92b8` — see the pin's paragraph in `tests/unit/test_config.py`.
 
 What this changes on a run: a game both sources price and whose snapshot is stale is now
 priced from the moving field — the same number where the two agree, which
