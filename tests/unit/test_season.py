@@ -859,3 +859,103 @@ def test_an_imputed_player_carries_a_wider_talent_spread_than_an_observed_one():
     assert got[2] == pytest.approx(np.hypot(TALENT_CV_BY_POS["WR"], IMPUTE_CV_BY_POS["WR"]))
     assert got[3] > plain[3], "an unfitted position still widens, by the pooled error"
     assert talent_cv_for(pos, imputed=None).tolist() == plain.tolist()
+
+
+# --- the season draws the rostered union, not the Board (#260) ---------------------------
+#
+# `simulate_weeks` drew correlated weekly points for every row it was handed -- the whole
+# Board, ~450 players -- and sliced to the ~168 rostered at the lineup read-back. The draw is
+# the largest single cost in a draft-gate run, and most of it was for players no roster held.
+# The last axis of the drawn array is now the sorted union of every roster's indices. This is
+# a total re-draw of the random pairing (`docs/gate-power.md`: any change to the drawn array's
+# width is), and the #197 pin was re-pinned with that cause.
+
+
+def _pool_of(n=20):
+    pos = np.array([("QB", "RB", "WR", "TE")[i % 4] for i in range(n)])
+    return np.full(n, 10.0), np.full(n, 3.0), pos
+
+
+def test_the_drawn_array_is_as_wide_as_the_rostered_union(monkeypatch):
+    """Pins the width. Two rosters over a 20-row pool hold five distinct players -- one of
+    them twice, which counts once -- so the correlated draw is asked for five columns and
+    not twenty."""
+    from hub.draft import season as S
+
+    asked = []
+    real = S._correlated_normal
+
+    def spy(rng, size, pos, nfl_team, *, report=None):
+        asked.append((size, len(pos)))
+        return real(rng, size, pos, nfl_team, report=report)
+
+    monkeypatch.setattr(S, "_correlated_normal", spy)
+    mu, sd, pos = _pool_of(20)
+    rosters = [np.array([3, 17, 8]), np.array([12, 3, 0])]
+    simulate_weeks(rosters, mu, sd, pos, n_sims=4, weeks=3)
+    assert asked == [((4, 3, 5), 5)], (
+        f"the season drew {asked}: the last axis must be the rostered union (5), not the "
+        f"Board's height (20)")
+
+
+def test_each_roster_reads_back_its_own_players_through_the_union():
+    """The index map. With no spread and no talent draw every player scores his own `mu`,
+    so a roster's weekly points are the sum of its lineup's means -- and a read-back that
+    indexed the narrowed draw by Board row rather than by position in the union would score
+    someone else's players, or fall off the end."""
+    mu = np.arange(20, dtype=float) + 1.0            # player i scores i + 1, exactly
+    sd = np.zeros(20)
+    pos = np.array(["RB"] * 20)
+    rosters = [np.array([19, 2]), np.array([7]), np.array([], dtype=int)]
+    got = simulate_weeks(rosters, mu, sd, pos, n_sims=2, weeks=2, talent_cv=0.0)
+    # Two RBs start (STARTERS["RB"] == 2) and no flex is filled by a third; team 1 starts one.
+    assert got[:, :, 0].tolist() == [[20.0 + 3.0] * 2] * 2
+    assert got[:, :, 1].tolist() == [[8.0] * 2] * 2
+    assert got[:, :, 2].tolist() == [[0.0] * 2] * 2
+
+
+def test_a_team_block_still_factors_over_its_rostered_members():
+    """The correlation is per NFL team and it has to survive the narrowing: a quarterback and
+    his receiver on two different rosters, with a third teammate nobody drafted, still move
+    together. The report counts one block, factored, for the one team with two rostered
+    players; the team whose only rostered player has no rostered teammate is no block."""
+    from hub.models.predict import CorrelationReport
+
+    mu = np.array([18.0, 13.0, 12.0, 11.0, 10.0])
+    sd = np.array([8.0, 7.0, 6.0, 6.0, 6.0])
+    pos = np.array(["QB", "WR", "TE", "WR", "RB"])
+    team = np.array(["KC", "KC", "KC", "DEN", "DEN"])
+    rosters = [np.array([0]), np.array([1]), np.array([4])]       # KC TE and DEN WR undrafted
+    report = CorrelationReport()
+    got = simulate_weeks(rosters, mu, sd, pos, n_sims=20000, weeks=1, talent_cv=0.0,
+                         nfl_team=team, report=report, rng=np.random.default_rng(2))
+    rho = np.corrcoef(got[:, 0, 0], got[:, 0, 1])[0, 1]
+    assert rho > 0.12, f"QB and WR on one team drew nearly independent ({rho:.3f})"
+    apart = np.corrcoef(got[:, 0, 0], got[:, 0, 2])[0, 1]
+    assert abs(apart) < 0.03, f"players on different teams are correlated ({apart:.3f})"
+    assert (report.blocks, report.independent) == (1, 0)
+
+
+def test_a_bye_is_read_through_the_union_not_the_board_row():
+    """Byes are per Board row and the draw is per union position, so the bye array has to be
+    narrowed with the rest. Player 0 sits in week 7 and nobody rosters him; player 2 has no
+    bye and is the only player drafted. His weeks are all non-zero, and week 7 is untouched --
+    a bye array left at Board width would either misalign or broadcast the wrong player's
+    week onto him."""
+    mu, sd, pos = np.array([10.0, 10.0, 10.0]), np.zeros(3), np.array(["RB"] * 3)
+    got = simulate_weeks([np.array([2])], mu, sd, pos, n_sims=3, weeks=14, talent_cv=0.0,
+                         bye_week=np.array([7, 0, 0]))
+    assert got.shape == (3, 14, 1)
+    assert (got > 0).all(), "the undrafted player's bye reached the drafted one"
+    on_bye = simulate_weeks([np.array([2])], mu, sd, pos, n_sims=3, weeks=14,
+                            talent_cv=0.0, bye_week=np.array([0, 0, 7]))
+    assert (on_bye[:, 6, 0] == 0).all() and (on_bye[:, [5, 7], 0] > 0).all()
+
+
+def test_a_season_with_nobody_rostered_is_a_shape_of_zeros_not_a_crash():
+    """The union is empty, so there is nothing to draw: every team scores zero every week,
+    and the shape is still (sims, weeks, teams) so a caller's `seed_table` reads it."""
+    mu, sd, pos = np.full(4, 10.0), np.full(4, 3.0), np.array(["RB"] * 4)
+    got = simulate_weeks([np.array([], dtype=int)] * 3, mu, sd, pos, n_sims=2, weeks=5)
+    assert got.shape == (2, 5, 3) and not got.any()
+    assert simulate_weeks([], mu, sd, pos, n_sims=2, weeks=5).shape == (2, 5, 0)

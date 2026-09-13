@@ -343,6 +343,20 @@ class CorrelationReport:
         self.repaired += 1
         self.repairs.setdefault(repair.team, repair)
 
+    def absorb(self, other: CorrelationReport) -> None:
+        """Fold another run's counts into this one (#261).
+
+        The draft gate plays its seasons in one worker each, and a worker's report cannot be
+        the caller's -- it lives in another process -- so each comes back and is summed
+        here. Counts add; the per-team repair record keeps the first record seen for a
+        team, as `record` does within one run.
+        """
+        self.blocks += other.blocks
+        self.independent += other.independent
+        self.repaired += other.repaired
+        for team, repair in other.repairs.items():
+            self.repairs.setdefault(team, repair)
+
     def repair_lines(self) -> list[str]:
         """The per-team repair record, published whenever anything was repaired.
 

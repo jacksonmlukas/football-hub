@@ -824,11 +824,12 @@ def frame_digest(frame: pl.DataFrame) -> str:
     can now identify.
 
     **Row order is in the digest, not sorted out of it, and that is the point rather than an
-    oversight.** Both stochastic quantities in this harness are drawn as arrays whose last
-    axis is the Board's height -- `optimize.simulate_remaining_draft` draws one pick-noise
-    normal per row, and `predict.correlated_normal` draws `(n_sims, weeks, mu.size)`. Position
-    in the frame is therefore what pairs a player with his draw, so two frames holding the same
-    players in a different order are two different experiments and must not compare equal.
+    oversight.** Both stochastic quantities in this harness are drawn as arrays ordered by
+    Board row -- `optimize.simulate_remaining_draft` draws one pick-noise normal per row, and
+    `season.simulate_weeks` draws `(n_sims, weeks, rostered union)` over the rostered players
+    in Board order (#260; it was every row until then). Position in the frame is therefore
+    what pairs a player with his draw, so two frames holding the same players in a different
+    order are two different experiments and must not compare equal.
 
     The column set is in it for the reason `correction_report` shows: which columns a frame
     carries decides which code path runs on it, so a frame that lost `adp` is a different frame
