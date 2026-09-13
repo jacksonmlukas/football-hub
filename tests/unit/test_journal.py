@@ -17,13 +17,12 @@ AT = dt.datetime(2026, 9, 7, 12, 0)
 
 
 class _Decision(TypedDict, total=False):
-    """`journal.record`'s keyword surface, so the helper below can be typed.
+    """The helper's keyword surface: a decision's fields flat, as the tests vary them.
 
-    Merging two plain dicts and splatting the result widens every value to a union of
-    everything either dict can hold, and the checker then reports one error per parameter --
-    thirteen of them, for calls that are correct. Declaring the shape keeps the helper's
-    ergonomics (twenty-one call sites pass only what they vary) while letting the checker see
-    what is actually being passed.
+    Declaring the shape keeps the helper's ergonomics (the call sites pass only what they
+    vary) while letting the checker see what is being passed. The helper folds them into
+    the value `journal.record` takes (#254): a `Pick` or a `BuybackDecision`, with the
+    provenance columns gathered into one `Rerun`.
     """
 
     season: int
@@ -34,12 +33,10 @@ class _Decision(TypedDict, total=False):
     fallback_note: str | None
     market_price: float | None
     fallback_price: float | None
-    week_cost: float | None
     price_note: str | None
     expected_dollars: float | None
     chose_survives: float | None
     fallback_survives: float | None
-    survival_given_up: float | None
     credits_before: float | None
     credits_after: float | None
     pool_digest: str | None
@@ -50,8 +47,30 @@ class _Decision(TypedDict, total=False):
     pot: float | None
     outlay: float | None
     plan_source: str | None
+    pool_state_digest: str | None
     at: dt.datetime | None
     base: Path
+
+
+def _value(call: _Decision) -> journal.Decision:
+    """The decision `journal.record` takes, off the flat keywords the tests vary."""
+    given = {k: call.get(k) for k in journal.Rerun._fields if k in call}
+    # Provenance is one value or none. A partial one is built with `None` in the holes so
+    # `record` can refuse it in its own words, which is what the whole-or-none tests read.
+    rerun = journal.Rerun._make(call.get(k) for k in journal.Rerun._fields) if given else None
+    common = {"week": call["week"], "chose": call["chose"],
+              "expected_dollars": call.get("expected_dollars"), "rerun": rerun,
+              "pool_state_digest": call.get("pool_state_digest"),
+              "credits_before": call.get("credits_before"),
+              "credits_after": call.get("credits_after")}
+    if call["kind"] == "buyback":
+        return journal.BuybackDecision(**common)
+    return journal.Pick(
+        fallback=call.get("fallback"), fallback_note=call.get("fallback_note"),
+        market_price=call.get("market_price"), fallback_price=call.get("fallback_price"),
+        price_note=call.get("price_note"), chose_survives=call.get("chose_survives"),
+        fallback_survives=call.get("fallback_survives"),
+        plan_source=call.get("plan_source"), **common)
 
 
 def _decide(tmp_path: Path, **kw: Unpack[_Decision]) -> str:
@@ -62,18 +81,19 @@ def _decide(tmp_path: Path, **kw: Unpack[_Decision]) -> str:
     # the fallback gets the case where we took it -- which is the one that owes nothing else.
     if call["kind"] in journal.FALLBACK_KINDS and "fallback" not in kw:
         call["fallback"] = call["chose"]
-    return journal.record(**call)
+    return journal.record(_value(call), season=call["season"], at=call["at"],
+                          base=call["base"])
 
 
 def _departure(tmp_path: Path, *, ours: float = 0.40, free: float = 0.42,
                price: float = 0.68, free_price: float = 0.70,
                **kw: Unpack[_Decision]) -> str:
     """A pick that left the free one, with the two survival figures its season cost is made
-    of and the two prices its week cost is made of (#209)."""
+    of and the two prices its week cost is made of (#209). The costs themselves are not
+    passed: they are the differences, by construction of `journal.Pick`."""
     call: _Decision = {"chose": "SF", "fallback": "KC", "chose_survives": ours,
-                       "fallback_survives": free, "survival_given_up": free - ours,
-                       "market_price": price, "fallback_price": free_price,
-                       "week_cost": free_price - price}
+                       "fallback_survives": free, "market_price": price,
+                       "fallback_price": free_price}
     call.update(kw)
     return _decide(tmp_path, **call)
 
@@ -219,7 +239,7 @@ def test_a_departure_from_the_free_pick_must_say_what_it_cost(tmp_path):
     chalk pick, ours, and the probability cost accepted -- so a journal that accepts the entry
     anyway records a decision taken in breach of its rule, and records it as complete."""
     with pytest.raises(ValueError, match="ADR-0014"):
-        _decide(tmp_path, chose="SF", fallback="KC", survival_given_up=None)
+        _decide(tmp_path, chose="SF", fallback="KC")
 
 
 def test_zero_is_an_answer_and_not_an_omission(tmp_path):
@@ -262,19 +282,33 @@ def test_a_decision_that_cost_no_credits_records_a_zero(tmp_path):
 # is checked against them.
 
 
-def test_a_zero_nobody_computed_is_refused(tmp_path):
+def test_a_zero_nobody_computed_cannot_be_built(tmp_path):
     """The escape the error message itself used to suggest. `0.0` alone says the two plans
     survive alike, which is a measurement -- and passing it with nothing behind it satisfied
-    the check while recording no measurement at all."""
+    the check while recording no measurement at all. Since #254 the cost is not a field:
+    it is the difference of the two figures, so a zero is only ever two equal figures, and
+    a departure carrying neither figure is refused for the silence."""
+    assert "survival_given_up" not in journal.Pick._fields
+    assert "week_cost" not in journal.Pick._fields
+    alike = journal.Pick(week=1, chose="SF", fallback="KC", chose_survives=0.41,
+                         fallback_survives=0.41, market_price=0.5, fallback_price=0.5)
+    assert alike.survival_given_up == 0.0 and alike.week_cost == 0.0
     with pytest.raises(ValueError, match="ADR-0014"):
-        _decide(tmp_path, chose="SF", fallback="KC", survival_given_up=0.0)
+        _decide(tmp_path, chose="SF", fallback="KC")
 
 
-def test_a_cost_that_disagrees_with_its_two_figures_is_refused(tmp_path):
-    """Consistency, not presence. A cost that does not follow from the figures it is the
-    difference of was not computed from them, whatever it is."""
-    with pytest.raises(ValueError, match="not what the two survival figures say"):
-        _departure(tmp_path, ours=0.40, free=0.42, survival_given_up=0.31)
+def test_a_cost_is_the_difference_of_its_two_figures_by_construction(tmp_path):
+    """Consistency, not presence. A cost that did not follow from the figures it is the
+    difference of was not computed from them; on the value it cannot be anything else, and
+    what the row reads back is what the two figures say."""
+    pick = journal.Pick(week=1, chose="SF", fallback="KC", chose_survives=0.40,
+                        fallback_survives=0.42, market_price=0.68, fallback_price=0.70)
+    assert pick.survival_given_up == pytest.approx(0.02)
+    assert pick.week_cost == pytest.approx(0.02)
+    _departure(tmp_path, ours=0.40, free=0.42)
+    got = journal.read(2026, base=tmp_path)
+    assert got["survival_given_up"][0] == pytest.approx(0.02)
+    assert got["week_cost"][0] == pytest.approx(0.02)
 
 
 def test_a_pick_that_names_no_free_alternative_at_all_is_refused(tmp_path):
@@ -285,12 +319,19 @@ def test_a_pick_that_names_no_free_alternative_at_all_is_refused(tmp_path):
         _decide(tmp_path, chose="SF", fallback=None)
 
 
-def test_a_kind_no_rule_has_heard_of_is_refused(tmp_path):
-    """`kind` decides which obligations a row carries, so free text is a row that owes
-    nothing: file the departure under a name nothing validates and the check never runs."""
-    with pytest.raises(ValueError, match="not a journal kind"):
-        _decide(tmp_path, kind="note", chose="SF", fallback="KC")
+def test_a_kind_is_a_type_and_there_is_one_per_kind(tmp_path):
+    """`kind` decides which obligations a row carries, so free text was a row that owed
+    nothing: file the departure under a name nothing validates and the check never ran.
+    Since #254 the kind is the type -- there is no keyword to misspell -- and the two
+    types are the closed set the column names."""
     assert set(journal.KINDS) == {"pick", "buyback"}
+    made = {journal.Pick(week=1, chose="SF", fallback="SF").kind,
+            journal.BuybackDecision(week=1, chose="buy back").kind}
+    assert made == set(journal.KINDS)
+    k = _decide(tmp_path, kind="buyback", chose="stay out", expected_dollars=-3.0)
+    row = journal.read(2026, base=tmp_path).filter(pl.col("key") == k).to_dicts()[0]
+    assert row["kind"] == "buyback" and row["fallback"] is None
+    assert row["matched_fallback"] is None and row["expected_dollars"] == -3.0
 
 
 def test_a_survival_figure_outside_zero_and_one_is_refused(tmp_path):
@@ -359,7 +400,7 @@ def test_a_market_price_outside_the_unit_interval_is_refused_on_every_row(tmp_pa
     with pytest.raises(ValueError, match=r"market_price=5\.0 is not a probability"):
         _decide(tmp_path, market_price=5.0)
     with pytest.raises(ValueError, match=r"market_price=5\.0 is not a probability"):
-        _departure(tmp_path, price=5.0, free_price=0.70, week_cost=0.70 - 5.0)
+        _departure(tmp_path, price=5.0, free_price=0.70)
     assert journal.read(2026, base=tmp_path).is_empty()
 
 
@@ -411,7 +452,7 @@ def _hoard() -> pl.DataFrame:
 
 
 def _weekly():
-    return pool.weekly(_hoard(), [1, 2], week=1, entries=12, pot=420.0, trials=400,
+    return pool.weekly(pool.Field(_hoard(), [1, 2]), week=1, entries=12, pot=420.0, trials=400,
                        rng=np.random.default_rng(0))
 
 
@@ -524,7 +565,7 @@ def test_a_row_carries_what_it_takes_to_run_its_figure_again(tmp_path):
     # A different generator on purpose: `_weekly` drew its seed from `default_rng(0)`, and a
     # re-run that happened to draw the same one would reproduce the figure with `seed`
     # ignored. Only the row's own seed may carry the trials across.
-    again = pool.weekly(_hoard(), [1, 2], week=row["week"], entries=row["entries"],
+    again = pool.weekly(pool.Field(_hoard(), [1, 2]), week=row["week"], entries=row["entries"],
                         pot=row["pot"], outlay=row["outlay"], trials=row["trials"],
                         rng=np.random.default_rng(999), seed=row["seed"])
     got = next(c for c in again.candidates if c.team == row["chose"])
@@ -539,7 +580,7 @@ def test_a_double_pick_week_is_recorded_with_both_teams_and_priced_as_their_prod
     probability on the week -- the product, the unit `week_cost` is stated in -- and an
     operator's `SF+KC` is the same pick as the priced `KC+SF`."""
     grid = _hoard().with_columns(pl.col("week") + 12)
-    w = pool.weekly(grid, [13, 14], week=13, entries=12, pot=420.0, trials=50, seed=7)
+    w = pool.weekly(pool.Field(grid, [13, 14]), week=13, entries=12, pot=420.0, trials=50, seed=7)
     assert len(pool.pick_teams(w.recommend)) == 2 and w.fallback == "KC+SF"
     k = journal.record_weekly(w, season=2026, chose="SF+KC", at=AT, base=tmp_path)
     row = journal.read(2026, base=tmp_path).filter(pl.col("key") == k).to_dicts()[0]
@@ -565,7 +606,7 @@ def test_a_row_names_the_field_it_was_priced_against_and_re_runs_against_the_arc
         fetch_pool.Entry(index=i, alive=True, used=()) for i in range(12)))
     fetch_pool.write_state(then, tmp_path, when=dt.datetime(2026, 9, 9, 9, 0, tzinfo=dt.UTC))
     digest = fetch_pool.state_digest(then)
-    w = pool.weekly(_hoard(), [1, 2], week=1, entries=then.alive, pot=then.pot,
+    w = pool.weekly(pool.Field(_hoard(), [1, 2]), week=1, entries=then.alive, pot=then.pot,
                     ledger=then.entries[0].used, trials=50, seed=11)
     k = journal.record_weekly(w, season=2026, at=AT, base=tmp_path, pool_state_digest=digest)
     row = journal.read(2026, base=tmp_path).filter(pl.col("key") == k).to_dicts()[0]
@@ -581,14 +622,15 @@ def test_a_row_names_the_field_it_was_priced_against_and_re_runs_against_the_arc
     field = fetch_pool.archived_state(row["pool_state_digest"], season=2026, base=tmp_path)
     assert field is not None and field == then and field != now
 
-    again = pool.weekly(_hoard(), [1, 2], week=row["week"], entries=field.alive, pot=field.pot,
-                        ledger=field.entries[0].used, outlay=row["outlay"],
+    again = pool.weekly(pool.Field(_hoard(), [1, 2]), week=row["week"], entries=field.alive,
+                        pot=field.pot, ledger=field.entries[0].used, outlay=row["outlay"],
                         trials=row["trials"], seed=row["seed"], rng=np.random.default_rng(3))
     got = next(c for c in again.candidates if c.team == row["chose"])
     assert got.expected_dollars == row["expected_dollars"]
     assert (again.entries, again.pot) == (row["entries"], row["pot"])
-    current = pool.weekly(_hoard(), [1, 2], week=row["week"], entries=now.alive, pot=now.pot,
-                          ledger=now.entries[0].used, trials=row["trials"], seed=row["seed"])
+    current = pool.weekly(pool.Field(_hoard(), [1, 2]), week=row["week"], entries=now.alive,
+                          pot=now.pot, ledger=now.entries[0].used, trials=row["trials"],
+                          seed=row["seed"])
     assert row["chose"] not in {c.team for c in current.candidates} or next(
         c for c in current.candidates if c.team == row["chose"]
     ).expected_dollars != row["expected_dollars"]
@@ -603,10 +645,10 @@ def test_two_rows_under_different_pool_rules_are_told_apart_by_the_journal_alone
     """Nothing outside the journal is read. The two rows carry the same week, the same pick
     and the same trials, and differ only in the digest of the rules they were priced under."""
     from hub.config import PoolConfig
-    split = pool.weekly(_hoard(), [1, 2], week=1, entries=12, pot=420.0, trials=50,
-                        pool=PoolConfig(co_survivor_rule="split"), seed=7)
-    roll = pool.weekly(_hoard(), [1, 2], week=1, entries=12, pot=420.0, trials=50,
-                       pool=PoolConfig(co_survivor_rule="rollover"), seed=7)
+    split = pool.weekly(pool.Field(_hoard(), [1, 2], PoolConfig(co_survivor_rule="split")), week=1,
+                        entries=12, pot=420.0, trials=50, seed=7)
+    roll = pool.weekly(pool.Field(_hoard(), [1, 2], PoolConfig(co_survivor_rule="rollover")),
+                       week=1, entries=12, pot=420.0, trials=50, seed=7)
     journal.record_weekly(split, season=2026, at=AT, base=tmp_path)
     journal.record_weekly(roll, season=2026, at=AT + dt.timedelta(hours=1), base=tmp_path)
     got = journal.read(2026, base=tmp_path)
@@ -638,7 +680,10 @@ def test_a_row_written_before_provenance_existed_reads_as_one_that_cannot_be_rer
 def test_provenance_comes_whole_or_not_at_all(tmp_path):
     """A row naming the rules and not the seed reads as reproducible to a query on
     `pool_digest` and is not. Either both are present or the row says it cannot be
-    re-derived."""
+    re-derived. Since #254 the provenance is one `Rerun` value: it takes every field to
+    build, and one built with a hole in it is refused by `record` in the same words."""
+    with pytest.raises(TypeError):
+        journal.Rerun(pool_digest="deadbeef")  # type: ignore[call-arg]
     with pytest.raises(ValueError, match="provenance has to come whole"):
         _decide(tmp_path, pool_digest="deadbeef", seed=None)
     with pytest.raises(ValueError, match="provenance has to come whole"):
@@ -649,7 +694,10 @@ def test_provenance_means_every_rerun_column_not_just_the_two(tmp_path):
     """Review finding on #162: the digest and the seed were the only pair checked, so a row
     carrying both and none of `grid_digest`, `trials`, `entries`, `pot` or `outlay` was
     written, and `report` then printed it as re-derivable. It cannot be re-run without the
-    board, the trial count or the stakes, so it is refused like any other partial row."""
+    board, the trial count or the stakes, so it is refused like any other partial row --
+    and `Rerun`'s fields are exactly the seven."""
+    assert set(journal.Rerun._fields) == {
+        "pool_digest", "grid_digest", "seed", "trials", "entries", "pot", "outlay"}
     def whole(**over):
         kw: dict = {"pool_digest": "deadbeef", "grid_digest": "cafe", "seed": 3,
                     "trials": 100, "entries": 21, "pot": 420.0, "outlay": 20.0}
@@ -673,16 +721,16 @@ def test_a_departure_without_the_weeks_cost_is_refused(tmp_path):
     with its own two survival numbers."""
     with pytest.raises(ValueError, match="without recording the week's cost"):
         _decide(tmp_path, chose="SF", fallback="KC", chose_survives=0.40,
-                fallback_survives=0.42, survival_given_up=0.02)
+                fallback_survives=0.42)
 
 
-def test_a_week_cost_that_disagrees_with_its_two_prices_is_refused(tmp_path):
-    """The same shape as the survival trio: a cost is a difference, both prices are on the
-    row, and the cost is checked against them."""
-    with pytest.raises(ValueError, match="not what the two prices say"):
-        _departure(tmp_path, price=0.68, free_price=0.70, week_cost=0.08)
+def test_a_week_cost_is_the_difference_of_its_two_prices_and_each_is_a_probability(tmp_path):
+    """The same shape as the survival pair: a cost is a difference, both prices are on the
+    row, and the cost is read off them rather than written beside them (#254)."""
+    _departure(tmp_path, price=0.68, free_price=0.70)
+    assert journal.read(2026, base=tmp_path)["week_cost"][0] == pytest.approx(0.02)
     with pytest.raises(ValueError, match=r"fallback_price=1\.7 is not a probability"):
-        _departure(tmp_path, price=0.68, free_price=1.7, week_cost=1.02)
+        _departure(tmp_path, price=0.68, free_price=1.7)
 
 
 def test_the_column_the_adr_names_as_its_threshold_is_the_one_the_journal_writes(tmp_path):

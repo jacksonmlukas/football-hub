@@ -87,6 +87,17 @@ output is the failure this repo has already caught twice.
    2.81 se; trailing-10 was better in 15 of 26 at 2.06 se. The rule picked the larger mean
    gain, which is the noisier of the two.
 
+> **Brought to the house rule 2026-09-12 (#285).** Both items above were the pre-registration
+> of this change. `verdict` now reads `experiment.gate` over a season-clustered bootstrap
+> (ADR-0019): a candidate is adopted only if it beats the incumbent in **every** held-out
+> season and the interval on its mean gain excludes zero. Under that rule the 2026-08-24
+> adoption would not have fired -- 15 of 26 seasons fails the every-season half, and so
+> would all-history's 19 of 26. **12.741 stands anyway**: it is the live incumbent, the rule
+> gates the next change to it rather than re-litigating this one, and a re-run today scores
+> the challengers against 12.741, not 13.5. Whether the constant should return to 13.5 on the
+> strength of a rule it never faced is a human decision, not one this change makes. No
+> published figure moves: `MARGIN_SD`, `hub.models.market` and `config_digest` are untouched.
+
 **And a trailing window goes stale.** All-history would not have. Re-run after each season:
 
 ```bash
@@ -172,6 +183,17 @@ earlier data, spine unchanged in both arms. A tie or a loss keeps the Gaussian.
 **KEEP the Gaussian.** The lumpy price is worse, at −2.9 standard errors, in 20 of 27 seasons.
 One of the seven it wins is 2026 at two games; without it the mean is −0.0011 and 6 of 26. It
 closes none of the ceiling — it moves away from it.
+
+> **Re-derived under the house rule 2026-09-12 (#285).** `shape_verdict` adopted on
+> `mean > 0`, the weakness the width section above had already named and this section then
+> repeated. It now reads `experiment.gate` the way every other gate in the tree does: every
+> held-out season and an interval excluding zero. The recorded verdict is unchanged and needs
+> no re-run to say so -- 7 of 27 fails the every-season half by itself, and a mean of −0.00094
+> at 0.00032 se fails the other. `test_the_recorded_shape_verdict_is_unchanged_under_the_house_rule`
+> holds that from the recorded constants. Note that with the season as the cluster, a sign
+> that holds in every season implies an interval above zero (every resample of positive
+> per-season gains is positive), so the every-season half is the binding one here as it is in
+> every gate that clusters on the season.
 
 Calibration by spread bucket, **held out** (the lumpy price for each season fitted on earlier
 seasons only), both sides of every game, seasons 2017–2026:

@@ -46,7 +46,14 @@ import numpy as np
 import polars as pl
 
 from hub.cli import unavailable
-from hub.models.experiment import expanding_seasons
+from hub.models.experiment import (
+    SEASON_CLUSTER,
+    Actions,
+    expanding_seasons,
+    gate,
+    per_season,
+    summarise,
+)
 
 # The incumbent. Imported rather than restated so the two cannot drift apart.
 from hub.models.market import MARGIN_SD
@@ -170,7 +177,8 @@ KEY_NUMBERS: tuple[int, ...] = (3, 6, 7, 10, 14)
 FITTED_KEY_EXCESS: dict[int, float] = {3: 1.751, 6: 0.296, 7: 0.671, 10: 0.121, 14: 0.499}
 FITTED_SHAPE_GAIN = -0.00094       # mean held-out log-loss, lumpy over gaussian, 27 seasons
 FITTED_SHAPE_SE = 0.00032          # se of that mean across seasons; negative at -2.9 se
-FITTED_SHAPE_SEASONS_BETTER = 7    # of 27, one of them 2026 at two games
+FITTED_SHAPE_SEASONS = 27          # held-out seasons in the walk-forward, 2000-2026
+FITTED_SHAPE_SEASONS_BETTER = 7    # of those, one of them 2026 at two games
 FITTED_SHAPE_CEILING = 0.0056      # in-sample gain of a perfect P(win | spread), per game
 FITTED_SHAPE_WINDOW = "trailing 10 seasons as of 2026-09-11 (2017-2026), spine at MARGIN_SD"
 
@@ -282,28 +290,56 @@ def walk_forward_shape(resid: pl.DataFrame, *, sd: float = MARGIN_SD,
     return pl.DataFrame(rows)
 
 
-def shape_verdict(wf: pl.DataFrame) -> tuple[str, str]:
-    """The pre-registered rule, fixed before the walk-forward ran. Returns (shape, sentence).
+# The house rule, ADR-0019, applied to a walk-forward's per-season gains (#285).
+#
+# Both gates in this module used to adopt on the sign of a mean: `docs/margin-sd.md` records
+# that the width fired on a 2.06 se gain at 15/26 seasons and says "a future gate of this
+# shape should require a margin, not just a sign", and the shape verdict then did not ask for
+# one either. Every other gate in the tree reads `experiment.gate`: the pooled interval must
+# exclude zero *and* the sign must hold in every held-out season. One season is one
+# independent observation here for the reason `SEASON_CLUSTER` gives, and a walk-forward
+# already scores one row per season, so the gain column is the paired difference as it stands.
+def _house_rule(paired: pl.DataFrame, actions: Actions) -> tuple[str, str, dict[str, float]]:
+    """`experiment.gate` over a season-clustered `summarise`. Returns (verdict, why, summary).
 
-    The lumpy distribution must beat the Gaussian on **mean held-out log-loss**. A tie or a
-    loss keeps the Gaussian: `docs/margin-sd.md` recorded that the width gate fired on a sign
-    alone and said a future gate of this shape should ask for more, so the sentence carries
-    the mean, its standard error across seasons and the season count either way -- and the
-    rule still selects on the mean, because changing the rule after the number is in is the
-    failure this repo has caught twice.
+    `paired` is one row per held-out season with the gain in `diff`, positive when the arm
+    under test scored the lower log-loss. Nothing is decided here that `gate` does not decide.
+    """
+    summary = summarise(paired, cluster=SEASON_CLUSTER)
+    verdict, why = gate(summary, per_season(paired), actions)
+    return verdict, why, summary
+
+
+SHAPE_ACTIONS = Actions(
+    adopt="ADOPT the key-number shape.",
+    remove="KEEP the Gaussian: mass on the key numbers is real and prices P(margin > 0) worse "
+           "than the spine alone.",
+    show="KEEP the Gaussian.",
+)
+
+
+def shape_verdict(wf: pl.DataFrame) -> tuple[str, str]:
+    """The pre-registered rule, now the house rule. Returns (shape, sentence).
+
+    The lumpy distribution is adopted only if it beats the Gaussian on held-out log-loss in
+    **every** season and the season-bootstrap interval on the mean gain excludes zero
+    (`_house_rule` above, #285). Until then it adopted on `mean > 0` alone, which is the
+    weakness the width gate's write-up had already named -- a shape ahead by 0.00002 on one
+    lucky season would have been adopted on a rule every other gate in the tree rejects. The
+    recorded verdict does not move: the lumpy price lost in 20 of 27 seasons, which fails the
+    every-season half on its own, and `FITTED_SHAPE_GAIN` is negative beyond two standard
+    errors, which fails the other. The sentence carries the mean, its interval and the season
+    count either way.
     """
     if wf.is_empty():
         return "gaussian", "no held-out seasons; the Gaussian stands by default."
-    g = wf["gain"].to_numpy().astype(float)
-    mean = float(g.mean())
-    se = float(g.std(ddof=1) / sqrt(g.size)) if g.size > 1 else float("nan")
-    better = int((g > 0).sum())
-    detail = (f"mean held-out log-loss gain {mean:+.5f} (se {se:.5f}), lumpy better in "
-              f"{better}/{g.size} seasons")
-    if mean > 0:
-        return "lumpy", f"ADOPT the key-number shape: {detail}."
-    return "gaussian", (f"KEEP the Gaussian: {detail}. Mass on the key numbers is real and "
-                        f"does not price P(margin > 0) better than the spine alone.")
+    paired = wf.select("season", pl.col("gain").alias("diff"))
+    verdict, why, s = _house_rule(paired, SHAPE_ACTIONS)
+    better = int((paired["diff"] > 0).sum())
+    detail = (f"Mean held-out log-loss gain {s['mean']:+.5f} (se {s['se']:.5f}, 95% "
+              f"[{s['lo']:+.5f}, {s['hi']:+.5f}]), lumpy better in {better}/{paired.height} "
+              f"seasons.")
+    return ("lumpy" if verdict == "ADOPT" else "gaussian"), f"{why} {detail}"
 
 
 def calibration_by_spread(resid: pl.DataFrame, *, sd: float = MARGIN_SD,
@@ -425,26 +461,49 @@ def _mean(df: pl.DataFrame, col: str) -> float:
     return float(v) if isinstance(v, (int, float)) else float("nan")
 
 
-def verdict(wf: pl.DataFrame) -> tuple[str, str]:
-    """The pre-registered rule. Returns (winning candidate, the sentence explaining it).
+WIDTH_ACTIONS = Actions(adopt="ADOPT", remove="REMOVE", show="KEEP")
 
-    A candidate must beat the incumbent on **mean held-out log-loss**. Ties go to the
-    incumbent: replacing a constant that is hashed into every model version, for no measured
-    gain, is churn rather than improvement.
+
+def verdict(wf: pl.DataFrame) -> tuple[str, str]:
+    """The pre-registered rule, now the house rule. Returns (winning candidate, sentence).
+
+    A candidate is adopted only if it beats the incumbent on held-out log-loss in **every**
+    season and the season-bootstrap interval on its mean gain excludes zero (`_house_rule`,
+    #285); where more than one clears both halves the larger mean gain wins. Ties and
+    everything short of both halves go to the incumbent: replacing a constant that is hashed
+    into every model version, for a gain one season could have carried, is churn rather than
+    improvement.
+
+    The 2026-08-24 adoption of 12.741 was reached on the mean alone, at 15/26 seasons, and
+    would not have cleared this rule; `docs/margin-sd.md` records both. The constant stands
+    because it is the live incumbent now -- this rule gates the *next* change to it, and a
+    re-run today scores the challengers against 12.741, not against 13.5.
     """
     if wf.is_empty():
         return "incumbent", "no held-out seasons; 13.5 stands by default."
     means = {c: _mean(wf, f"ll_{c}") for c in CANDIDATES}
     base = means["incumbent"]
     challengers = {c: m for c, m in means.items() if c != "incumbent"}
-    best = min(challengers, key=lambda c: challengers[c])
-    if challengers[best] < base:
-        gain = base - challengers[best]
+    lines, cleared = [], {}
+    for c in challengers:
+        paired = wf.select("season", (pl.col("ll_incumbent") - pl.col(f"ll_{c}")).alias("diff"))
+        v, _, s = _house_rule(paired, WIDTH_ACTIONS)
+        won = int((paired["diff"] > 0).sum())
+        lines.append(f"  {c}: mean gain {s['mean']:+.5f} [{s['lo']:+.5f}, {s['hi']:+.5f}], "
+                     f"wins {won}/{paired.height} seasons -> {v}")
+        if v == "ADOPT":
+            cleared[c] = s["mean"]
+    body = "\n".join(lines)
+    if cleared:
+        best = max(cleared, key=lambda c: cleared[c])
         return best, (f"ADOPT '{best}': mean held-out log-loss {challengers[best]:.5f} against "
-                      f"{base:.5f} for MARGIN_SD={MARGIN_SD}, an improvement of {gain:.5f}.")
-    return "incumbent", (f"KEEP {MARGIN_SD}: no candidate beat it on held-out log-loss "
-                         f"(best challenger {challengers[best]:.5f} against {base:.5f}). "
-                         f"An asserted number that survives a fit is no longer asserted.")
+                      f"{base:.5f} for MARGIN_SD={MARGIN_SD}, an improvement of "
+                      f"{cleared[best]:.5f} in every held-out season.\n{body}")
+    best = min(challengers, key=lambda c: challengers[c])
+    return "incumbent", (f"KEEP {MARGIN_SD}: no candidate cleared both halves of the gate "
+                         f"(every held-out season, and an interval excluding zero; best "
+                         f"challenger {challengers[best]:.5f} against {base:.5f}). "
+                         f"An asserted number that survives a fit is no longer asserted.\n{body}")
 
 
 def _report_shape(resid: pl.DataFrame, *, trailing: int = TRAILING) -> None:

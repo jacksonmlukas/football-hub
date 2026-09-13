@@ -16,6 +16,12 @@ from hub.config import PoolConfig
 from hub.season import pool
 
 
+def _sampled(rng, wk, ledger):
+    """What a member of the field draws for `wk` holding `ledger`: the sampler, reached
+    through the pick seam as `Field.trial` reaches it (#254)."""
+    return pool.Rival((wk,)).picks(rng, 0, ledger)
+
+
 def _grid(rows):
     """rows: (week, team_a, team_b, p_a) -- one row per fixture, expanded to two grid rows."""
     out = []
@@ -31,8 +37,7 @@ def test_a_team_and_its_opponent_cannot_both_win():
     fixture: exactly one survives, every trial, so the pool never ends in week 1. Drawn per
     team instead, both would lose a quarter of the time and the pool would end immediately."""
     g = _grid([(1, "KC", "LV", 0.5)])
-    out = pool.simulate(g, [1], entries=2, ledgers=[{"LV"}, {"KC"}], trials=400,
-                        rng=np.random.default_rng(0))
+    out = pool.Field(g, [1]).outcome(entries=2, ledgers=[{"LV"}, {"KC"}], trials=400, rng=np.random.default_rng(0))
     assert out.ending_week.get(1, 0.0) == 0.0
     assert out.alive_by_week[1] == 1.0
 
@@ -42,8 +47,7 @@ def test_two_entries_on_one_team_share_its_outcome():
     or die together, so the pool ends in week 1 exactly when KC loses -- about half the time.
     Independent draws would end it only when *both* lost, about a quarter."""
     g = _grid([(1, "KC", "LV", 0.5)])
-    out = pool.simulate(g, [1], entries=2, ledgers=[{"LV"}, {"LV"}], trials=800,
-                        rng=np.random.default_rng(0))
+    out = pool.Field(g, [1]).outcome(entries=2, ledgers=[{"LV"}, {"LV"}], trials=800, rng=np.random.default_rng(0))
     assert out.ending_week.get(1, 0.0) == pytest.approx(0.5, abs=0.06)
 
 
@@ -54,7 +58,7 @@ def test_the_field_thins_rather_than_dying_as_one_block():
     g = _grid([(w, a, b, p) for w in (1, 2, 3)
                for a, b, p in (("KC", "LV", 0.8), ("SF", "SEA", 0.7),
                                ("BUF", "NYJ", 0.75), ("DAL", "NYG", 0.6))])
-    out = pool.simulate(g, [1, 2, 3], entries=21, trials=300, rng=np.random.default_rng(1))
+    out = pool.Field(g, [1, 2, 3]).outcome(entries=21, trials=300, rng=np.random.default_rng(1))
     assert 0 < out.alive_by_week[1] < 21
     assert out.alive_by_week[3] < out.alive_by_week[1]
 
@@ -64,7 +68,7 @@ def test_an_entry_never_picks_a_team_it_has_already_used():
     wk = pool.weeks_from_grid(_grid([(1, "KC", "LV", 0.8), (1, "SF", "SEA", 0.7)]), [1])[0]
     rng = np.random.default_rng(0)
     for _ in range(50):
-        got = pool._pick(rng, wk, {"KC", "SF"}, 1)
+        got = _sampled(rng, wk, {"KC", "SF"})
         assert got is not None and got[0] in {"LV", "SEA"}
 
 
@@ -72,7 +76,7 @@ def test_an_entry_that_cannot_cover_the_week_is_eliminated():
     """Elimination by the ledger rather than by losing. With every team in this week already
     spent there is no legal pick, and that is the 24-distinct-team constraint biting."""
     wk = pool.weeks_from_grid(_grid([(1, "KC", "LV", 0.8)]), [1])[0]
-    assert pool._pick(np.random.default_rng(0), wk, {"KC", "LV"}, 1) is None
+    assert _sampled(np.random.default_rng(0), wk, {"KC", "LV"}) is None
 
 
 def test_co_survivors_is_a_distribution_not_a_single_bucket():
@@ -81,7 +85,7 @@ def test_co_survivors_is_a_distribution_not_a_single_bucket():
     g = _grid([(w, a, b, p) for w in (1, 2)
                for a, b, p in (("KC", "LV", 0.9), ("SF", "SEA", 0.85),
                                ("BUF", "NYJ", 0.8), ("DAL", "NYG", 0.8))])
-    out = pool.simulate(g, [1, 2], entries=12, trials=300, rng=np.random.default_rng(2))
+    out = pool.Field(g, [1, 2]).outcome(entries=12, trials=300, rng=np.random.default_rng(2))
     assert len(out.co_survivors) > 1
     assert sum(out.co_survivors.values()) + sum(out.ending_week.values()) == pytest.approx(1.0)
 
@@ -92,15 +96,14 @@ def test_a_bigger_field_lasts_longer():
     g = _grid([(w, a, b, p) for w in (1, 2, 3)
                for a, b, p in (("KC", "LV", 0.7), ("SF", "SEA", 0.65),
                                ("BUF", "NYJ", 0.6), ("DAL", "NYG", 0.55))])
-    small = pool.simulate(g, [1, 2, 3], entries=2, trials=400, rng=np.random.default_rng(3))
-    big = pool.simulate(g, [1, 2, 3], entries=25, trials=400, rng=np.random.default_rng(3))
+    small = pool.Field(g, [1, 2, 3]).outcome(entries=2, trials=400, rng=np.random.default_rng(3))
+    big = pool.Field(g, [1, 2, 3]).outcome(entries=25, trials=400, rng=np.random.default_rng(3))
     assert sum(big.ending_week.values()) < sum(small.ending_week.values())
 
 
 def test_a_pool_of_one_ends_when_that_entry_does():
     g = _grid([(1, "KC", "LV", 0.0)])          # KC cannot win, so the only entry must lose
-    out = pool.simulate(g, [1], entries=1, ledgers=[{"LV"}], trials=50,
-                        rng=np.random.default_rng(0))
+    out = pool.Field(g, [1]).outcome(entries=1, ledgers=[{"LV"}], trials=50, rng=np.random.default_rng(0))
     assert out.ending_week[1] == 1.0
     assert out.co_survivors == {}
 
@@ -111,8 +114,8 @@ def test_the_same_seed_reproduces_the_same_outcome():
     g = _grid([(w, a, b, p) for w in (1, 2)
                for a, b, p in (("KC", "LV", 0.8), ("SF", "SEA", 0.7))])
     kw = {"entries": 8, "trials": 200}
-    a = pool.simulate(g, [1, 2], rng=np.random.default_rng(7), **kw)
-    b = pool.simulate(g, [1, 2], rng=np.random.default_rng(7), **kw)
+    a = pool.Field(g, [1, 2]).outcome(rng=np.random.default_rng(7), **kw)
+    b = pool.Field(g, [1, 2]).outcome(rng=np.random.default_rng(7), **kw)
     assert a == b
 
 
@@ -131,7 +134,7 @@ def test_a_double_pick_week_takes_two_teams_from_two_fixtures():
     assert wk.picks == 2
     rng = np.random.default_rng(0)
     for _ in range(200):
-        got = pool._pick(rng, wk, set(), 2)
+        got = _sampled(rng, wk, set())
         assert got is not None and len(set(got)) == 2
         assert len({wk.fixture[t] for t in got}) == 2
 
@@ -149,10 +152,12 @@ def test_an_entry_that_cannot_field_two_fixtures_is_eliminated_rather_than_given
     wk = pool.weeks_from_grid(g, [13], PoolConfig(double_pick_weeks=(13,)))[0]
     avail = {t for t in wk.pickable if t not in {"SF", "SEA"}}
     assert avail == {"KC", "LV"}
-    assert pool._pick(np.random.default_rng(0), wk, {"SF", "SEA"}, 2) is None
+    assert _sampled(np.random.default_rng(0), wk, {"SF", "SEA"}) is None
     # And one pick from that same fixture is still perfectly legal, so this is a statement
-    # about covering two picks and not about the fixture being unusable.
-    assert pool._pick(np.random.default_rng(0), wk, {"SF", "SEA"}, 1) is not None
+    # about covering two picks and not about the fixture being unusable: the same week
+    # under rules that take one pick is covered.
+    single = pool.weeks_from_grid(g, [13], PoolConfig(double_pick_weeks=()))[0]
+    assert _sampled(np.random.default_rng(0), single, {"SF", "SEA"}) is not None
 
 
 def test_a_grid_without_a_game_key_is_refused():
@@ -185,14 +190,13 @@ def test_a_week_nothing_prices_is_refused_rather_than_read_as_the_pool_ending():
     played as the week the contest finished. Asserting only that something raises would not
     separate these, because before the guard *neither* raised and both returned 1.0."""
     ended = _grid([(1, "KC", "LV", 0.0)])       # KC cannot win, and our entry must hold KC
-    out = pool.simulate(ended, [1], entries=1, ledgers=[{"LV"}], trials=50,
-                        rng=np.random.default_rng(0))
+    out = pool.Field(ended, [1]).outcome(entries=1, ledgers=[{"LV"}], trials=50, rng=np.random.default_rng(0))
     assert out.ending_week[1] == 1.0
     assert out.co_survivors == {}
 
     unpriced = pl.concat([_half(1, "KC", 0.6, "1-a"), _half(1, "SF", 0.7, "1-b")])
     with pytest.raises(pool.UnpricedWeek, match="no completely priced fixture") as e:
-        pool.simulate(unpriced, [1], entries=1, trials=50, rng=np.random.default_rng(0))
+        pool.Field(unpriced, [1]).outcome(entries=1, trials=50, rng=np.random.default_rng(0))
     assert "2 fixtures priced on one side only" in str(e.value)
 
 
@@ -200,7 +204,7 @@ def test_a_double_pick_week_with_one_fixture_is_refused_rather_than_killing_the_
     """The same refusal as the week above, counted against the picks the week takes instead
     of against zero -- which is where the guard stopped and not where its reasoning did.
 
-    One priced fixture in a double-pick week gives `_pick` two teams and forces it to take
+    One priced fixture in a double-pick week gives `Rival.sample` two teams and forces it to take
     both sides of one game. One of them loses, so every entry in the field dies with
     certainty, and `ending_week` then names week 1 as the week the contest finished -- a week
     `survivor.coverage` calls missing and `survivor.solve` calls infeasible. Asserting only
@@ -212,8 +216,7 @@ def test_a_double_pick_week_with_one_fixture_is_refused_rather_than_killing_the_
 
     dbl = PoolConfig(double_pick_weeks=(1,))
     with pytest.raises(pool.UnpricedWeek, match="takes 2 picks") as e:
-        pool.simulate(g, [1], entries=4, pool=dbl, trials=50,
-                      rng=np.random.default_rng(0))
+        pool.Field(g, [1], dbl).outcome(entries=4, trials=50, rng=np.random.default_rng(0))
     assert "1 completely priced fixture" in str(e.value)
 
 
@@ -226,7 +229,7 @@ def test_a_team_below_the_floor_is_drawn_but_never_handed_to_an_entry():
     both refuse it, and our own entry was being valued over seasons in which it took teams
     the pick side would never have allowed.
 
-    Asserted at `_pick` rather than through `simulate`, because the two answers are
+    Asserted at `Rival.sample` rather than through `Field.outcome`, because the two answers are
     indistinguishable downstream: an entry handed LV loses with probability 1 - 1e-5, so
     "eliminated for having no legal pick" and "eliminated holding a team it should never have
     been offered" both read out as the same ending week. The difference is only visible where
@@ -239,9 +242,9 @@ def test_a_team_below_the_floor_is_drawn_but_never_handed_to_an_entry():
 
     rng = np.random.default_rng(0)
     # An entry holding everything but LV has no legal pick, rather than one it may not take.
-    assert pool._pick(rng, wk, {"KC", "SF", "SEA"}, 1) is None
+    assert _sampled(rng, wk, {"KC", "SF", "SEA"}) is None
     # And LV is never among the picks offered while other teams remain.
-    assert all(pool._pick(rng, wk, {"KC"}, 1) != ["LV"] for _ in range(50))
+    assert all(_sampled(rng, wk, {"KC"}) != ["LV"] for _ in range(50))
 
 
 def test_a_partially_priced_week_says_how_many_fixtures_it_dropped():
@@ -268,8 +271,7 @@ def test_fewer_starting_ledgers_than_entries_is_refused():
     outcome, so it is refused before any trial runs."""
     g = _grid([(1, "KC", "LV", 0.8), (1, "SF", "SEA", 0.7)])
     with pytest.raises(ValueError, match="every one of them"):
-        pool.simulate(g, [1], entries=3, ledgers=[{"KC"}], trials=10,
-                      rng=np.random.default_rng(0))
+        pool.Field(g, [1]).outcome(entries=3, ledgers=[{"KC"}], trials=10, rng=np.random.default_rng(0))
 
 
 # --- our own entry, carrying what it has already spent ------------------------
@@ -285,9 +287,8 @@ def test_a_fuller_ledger_is_worth_less():
     g = _grid([(w, a, b, p) for w in (1, 2, 3)
                for a, b, p in (("KC", "LV", 0.85), ("SF", "SEA", 0.8), ("BUF", "NYJ", 0.75))])
     kw = {"entries": 6, "trials": 600}
-    fresh = pool.entry_outcome(g, [1, 2, 3], rng=np.random.default_rng(4), **kw)
-    spent = pool.entry_outcome(g, [1, 2, 3], ledger=("KC", "SF", "BUF"),
-                               rng=np.random.default_rng(4), **kw)
+    fresh = pool.Field(g, [1, 2, 3]).entry(rng=np.random.default_rng(4), **kw)
+    spent = pool.Field(g, [1, 2, 3]).entry(ledger=("KC", "SF", "BUF"), rng=np.random.default_rng(4), **kw)
     assert spent.survives < fresh.survives
     assert spent.sole < fresh.sole
 
@@ -305,8 +306,7 @@ def test_the_entry_shares_outcomes_with_rivals_on_its_team():
     whole field is out in one week and the two eliminated last split it -- 0.9 * 0.1 * 1/2 =
     0.045, which the module priced at zero before. 0.14 in all."""
     g = _grid([(1, "KC", "LV", 0.9)])
-    out = pool.entry_outcome(g, [1], entries=2, ledger=("KC",), trials=4000,
-                             rng=np.random.default_rng(5))
+    out = pool.Field(g, [1]).entry(entries=2, ledger=("KC",), trials=4000, rng=np.random.default_rng(5))
     assert out.survives == pytest.approx(0.10, abs=0.02)
     assert out.sole == pytest.approx(0.09, abs=0.02)
     assert out.last_out == pytest.approx(0.09, abs=0.02)
@@ -322,7 +322,7 @@ def test_share_sits_between_sole_and_survival():
     exceed the two together."""
     g = _grid([(w, a, b, p) for w in (1, 2)
                for a, b, p in (("KC", "LV", 0.9), ("SF", "SEA", 0.85), ("BUF", "NYJ", 0.8))])
-    out = pool.entry_outcome(g, [1, 2], entries=9, trials=600, rng=np.random.default_rng(6))
+    out = pool.Field(g, [1, 2]).entry(entries=9, trials=600, rng=np.random.default_rng(6))
     assert 0 < out.sole <= out.share <= out.survives + out.last_out <= 1
     assert out.survives < 1 and out.last_out > 0
 
@@ -336,15 +336,12 @@ def test_an_entry_that_cannot_cover_the_week_does_not_survive_it():
     last then split the pot. Not surviving and being worth nothing are different claims,
     and only the first holds."""
     g = _grid([(1, "KC", "LV", 0.9)])
-    out = pool.entry_outcome(g, [1], entries=3, ledger=("KC", "LV"), trials=1000,
-                             rng=np.random.default_rng(0))
+    out = pool.Field(g, [1]).entry(entries=3, ledger=("KC", "LV"), trials=1000, rng=np.random.default_rng(0))
     assert out.survives == 0.0 and out.sole == 0.0
     assert out.last_out == pytest.approx(0.09, abs=0.02)
     assert out.share == pytest.approx(0.03, abs=0.01)
     # Under a rollover, three going out together pays nobody, and the figure is exactly zero.
-    roll = pool.entry_outcome(g, [1], entries=3, ledger=("KC", "LV"), trials=1000,
-                              pool=PoolConfig(co_elimination_rule="rollover"),
-                              rng=np.random.default_rng(0))
+    roll = pool.Field(g, [1], PoolConfig(co_elimination_rule="rollover")).entry(entries=3, ledger=("KC", "LV"), trials=1000, rng=np.random.default_rng(0))
     assert roll.last_out == out.last_out and roll.share == 0.0
 
 
@@ -352,8 +349,8 @@ def test_the_same_seed_and_ledger_reproduce_the_same_figure():
     g = _grid([(w, a, b, p) for w in (1, 2)
                for a, b, p in (("KC", "LV", 0.8), ("SF", "SEA", 0.7))])
     kw = {"entries": 5, "ledger": ("KC",), "trials": 300}
-    a = pool.entry_outcome(g, [1, 2], rng=np.random.default_rng(11), **kw)
-    b = pool.entry_outcome(g, [1, 2], rng=np.random.default_rng(11), **kw)
+    a = pool.Field(g, [1, 2]).entry(rng=np.random.default_rng(11), **kw)
+    b = pool.Field(g, [1, 2]).entry(rng=np.random.default_rng(11), **kw)
     assert a == b
 
 
@@ -373,8 +370,9 @@ def test_a_buyback_inherits_the_ledger_rather_than_starting_fresh():
     and a figure that does not move with the ledger is the tell that it was priced as fresh."""
     g = _season()
     kw = {"live_entries": 8, "pot": 420.0, "trials": 400}
-    early = pool.buyback(g, [1, 2, 3], week=1, ledger=(), rng=np.random.default_rng(3), **kw)
-    late = pool.buyback(g, [1, 2, 3], week=1, ledger=("KC", "SF", "BUF"),
+    early = pool.buyback(pool.Field(g, [1, 2, 3]), week=1, ledger=(), rng=np.random.default_rng(3),
+                         **kw)
+    late = pool.buyback(pool.Field(g, [1, 2, 3]), week=1, ledger=("KC", "SF", "BUF"),
                         rng=np.random.default_rng(3), **kw)
     assert late.spent == 3 and early.spent == 0
     assert late.equity < early.equity
@@ -382,7 +380,7 @@ def test_a_buyback_inherits_the_ledger_rather_than_starting_fresh():
 
 def test_equity_above_the_fee_recommends_buying_back():
     """A big pot and a thin field: the share is worth more than the $20 it costs."""
-    b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=(), live_entries=2, pot=420.0,
+    b = pool.buyback(pool.Field(_season(), [1, 2, 3]), week=1, ledger=(), live_entries=2, pot=420.0,
                      trials=400, rng=np.random.default_rng(8))
     assert b.available and b.recommend
     assert b.net > 0 and b.equity > b.fee
@@ -392,7 +390,7 @@ def test_equity_above_the_fee_recommends_buying_back():
 def test_equity_below_the_fee_recommends_against():
     """A small pot and a crowded field. The breakeven is still reported, because a decision
     without its margin is not a decision -- a net of -$0.40 and -$40 read the same otherwise."""
-    b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=("KC", "SF"), live_entries=60,
+    b = pool.buyback(pool.Field(_season(), [1, 2, 3]), week=1, ledger=("KC", "SF"), live_entries=60,
                      pot=40.0, trials=400, rng=np.random.default_rng(8))
     assert b.available and not b.recommend
     assert b.net < 0 and b.breakeven < b.fee
@@ -401,8 +399,8 @@ def test_equity_below_the_fee_recommends_against():
 def test_the_sign_of_net_is_the_recommendation():
     """Pinned so a negative figure can never be read as a positive one."""
     for pot, live in ((420.0, 2), (40.0, 60)):
-        b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=(), live_entries=live, pot=pot,
-                         trials=300, rng=np.random.default_rng(9))
+        b = pool.buyback(pool.Field(_season(), [1, 2, 3]), week=1, ledger=(), live_entries=live,
+                         pot=pot, trials=300, rng=np.random.default_rng(9))
         assert b.recommend == (b.net > 0)
         assert b.net == pytest.approx(b.equity - b.fee)
 
@@ -410,7 +408,7 @@ def test_the_sign_of_net_is_the_recommendation():
 def test_a_buyback_past_the_deadline_is_unavailable_not_priced():
     """Reported rather than returned as a zero, which would read as a live decision that came
     out badly instead of an option that does not exist."""
-    b = pool.buyback(_season(), [1, 2, 3], week=7, ledger=(), live_entries=8, pot=420.0,
+    b = pool.buyback(pool.Field(_season(), [1, 2, 3]), week=7, ledger=(), live_entries=8, pot=420.0,
                      trials=50, rng=np.random.default_rng(0))
     assert not b.available and not b.recommend
     assert "the last one that allows it" in b.reason
@@ -420,9 +418,9 @@ def test_rival_buybacks_move_the_pot_and_the_field_together():
     """Both sides, which is the point. Modelling only the fees would make every buyback look
     better than it is: the money they add comes with the people who added it."""
     kw = {"ledger": (), "live_entries": 8, "pot": 420.0, "trials": 300}
-    alone = pool.buyback(_season(), [1, 2, 3], week=1, rival_buybacks=0,
+    alone = pool.buyback(pool.Field(_season(), [1, 2, 3]), week=1, rival_buybacks=0,
                          rng=np.random.default_rng(10), **kw)
-    crowd = pool.buyback(_season(), [1, 2, 3], week=1, rival_buybacks=3,
+    crowd = pool.buyback(pool.Field(_season(), [1, 2, 3]), week=1, rival_buybacks=3,
                          rng=np.random.default_rng(10), **kw)
     assert crowd.pot > alone.pot
     assert crowd.field > alone.field
@@ -432,8 +430,8 @@ def test_rival_buybacks_move_the_pot_and_the_field_together():
 
 def test_a_cap_of_zero_means_no_buyback_and_no_growth():
     """Zero is a rule, not an absence. Nobody re-enters, so the pot is the pot."""
-    b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=(), live_entries=8, pot=420.0,
-                     rival_buybacks=5, pool=PoolConfig(buyback_cap=0), trials=50,
+    b = pool.buyback(pool.Field(_season(), [1, 2, 3], PoolConfig(buyback_cap=0)), week=1, ledger=(),
+                     live_entries=8, pot=420.0, rival_buybacks=5, trials=50,
                      rng=np.random.default_rng(0))
     assert not b.available
     assert b.pot == 420.0
@@ -445,8 +443,8 @@ def test_a_caller_stating_more_rival_re_entries_than_the_cap_is_priced_as_stated
     it was applied to the field's total: a caller stating six rival re-entries against a
     cap of four was priced at four, silently, while the docstring promised the figure moved
     with the assumption. The count now stands, and is carried back out so it can be read."""
-    b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=(), live_entries=8, pot=420.0,
-                     rival_buybacks=99, pool=PoolConfig(buyback_cap=2), trials=50,
+    b = pool.buyback(pool.Field(_season(), [1, 2, 3], PoolConfig(buyback_cap=2)), week=1, ledger=(),
+                     live_entries=8, pot=420.0, rival_buybacks=99, trials=50,
                      rng=np.random.default_rng(0))
     assert b.field == 8 + 1 + 99 and b.rivals == 99
     assert b.pot == pytest.approx(420.0 + 100 * b.fee)
@@ -456,21 +454,19 @@ def test_a_negative_rival_count_is_refused_rather_than_floored():
     """Zero was what a negative count silently became. It is not an assumption about the
     field, and a caller who typed it should be told rather than priced at nothing."""
     with pytest.raises(ValueError, match="negative count is not an assumption"):
-        pool.buyback(_season(), [1, 2, 3], week=1, ledger=(), live_entries=8, pot=420.0,
+        pool.buyback(pool.Field(_season(), [1, 2, 3]), week=1, ledger=(), live_entries=8, pot=420.0,
                      rival_buybacks=-1, trials=50, rng=np.random.default_rng(0))
 
 
 def test_the_cap_applies_to_our_own_entry_as_documented():
     """Where a per-entry cap is per-entry: the re-entries *this* entry has taken. At the
     cap the buyback is unavailable whatever the equity says, and one below it is priced."""
-    kw = {"ledger": (), "live_entries": 2, "pot": 420.0, "trials": 50,
-          "pool": PoolConfig(buyback_cap=2)}
-    spent = pool.buyback(_season(), [1, 2, 3], week=1, used=2, rng=np.random.default_rng(0),
-                         **kw)
+    kw = {"ledger": (), "live_entries": 2, "pot": 420.0, "trials": 50}
+    capped = pool.Field(_season(), [1, 2, 3], PoolConfig(buyback_cap=2))
+    spent = pool.buyback(capped, week=1, used=2, rng=np.random.default_rng(0), **kw)
     assert not spent.available and not spent.recommend
     assert "2 buybacks of the 2 the cap allows each entry" in spent.reason
-    one = pool.buyback(_season(), [1, 2, 3], week=1, used=1, rng=np.random.default_rng(0),
-                       **kw)
+    one = pool.buyback(capped, week=1, used=1, rng=np.random.default_rng(0), **kw)
     assert one.available
 
 
@@ -486,13 +482,13 @@ def test_the_breakeven_is_the_fee_at_which_net_is_zero_once_the_pot_has_grown_by
     the configured fee, and it is not the flip point: here it is low by the pot's growth."""
     kw = {"ledger": ("KC",), "live_entries": 8, "pot": 420.0, "rival_buybacks": 3,
           "trials": 300}
-    b = pool.buyback(_season(), [1, 2, 3], week=1, rng=np.random.default_rng(12), **kw)
+    b = pool.buyback(pool.Field(_season(), [1, 2, 3]), week=1, rng=np.random.default_rng(12), **kw)
     assert b.available and b.net > 0
     closed = b.share * 420.0 / (1.0 - b.share * (1 + 3))
     assert b.breakeven == pytest.approx(closed)
     assert b.breakeven != pytest.approx(b.equity)
     assert b.breakeven > b.equity, "a positive net has its flip point above the equity"
-    at = pool.buyback(_season(), [1, 2, 3], week=1, pool=PoolConfig(buyback_fee=b.breakeven),
+    at = pool.buyback(pool.Field(_season(), [1, 2, 3], PoolConfig(buyback_fee=b.breakeven)), week=1,
                       rng=np.random.default_rng(12), **kw)
     assert at.share == b.share, "same seed, same field: the fee cannot move the share"
     assert at.net == pytest.approx(0.0, abs=1e-9)
@@ -503,7 +499,7 @@ def test_a_share_that_outgrows_the_fee_has_no_breakeven_and_the_report_says_so()
     """When `share * (1 + rivals)` reaches one, every dollar of fee brings at least a dollar
     of pot to our side and the net rises with the fee: there is no fee that flips it. That
     is `inf` on the tuple and a sentence on the page, because `$inf` reads as a fault."""
-    b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=(), live_entries=2, pot=420.0,
+    b = pool.buyback(pool.Field(_season(), [1, 2, 3]), week=1, ledger=(), live_entries=2, pot=420.0,
                      rival_buybacks=20, trials=200, rng=np.random.default_rng(3))
     assert b.available and b.share * 21 >= 1.0, "the case has to be reached to be tested"
     assert b.breakeven == float("inf")
@@ -511,8 +507,8 @@ def test_a_share_that_outgrows_the_fee_has_no_breakeven_and_the_report_says_so()
     assert "no fee flips this verdict" in lines and "inf" not in lines
     assert "21 buybacks" in lines
     # And a finite one prints as a fee, over the weeks it was priced on.
-    fin = pool.buyback(_season(), [1, 2, 3], week=1, ledger=("KC", "SF"), live_entries=60,
-                       pot=40.0, trials=100, rng=np.random.default_rng(3))
+    fin = pool.buyback(pool.Field(_season(), [1, 2, 3]), week=1, ledger=("KC", "SF"),
+                       live_entries=60, pot=40.0, trials=100, rng=np.random.default_rng(3))
     fine = "\n".join(pool.report(fin))
     assert "breakeven fee $" in fine and "over weeks 2-3" in fine
 
@@ -521,38 +517,35 @@ def test_the_buyback_prices_only_the_weeks_still_ahead():
     """The third criterion. Eliminated in week 3, the re-entry plays from week 4; it used to
     replay weeks 1 to 3 against the ledger that had already spent them. The whole season
     and the weeks after the cut price identically on one seed, and both agree with
-    `entry_outcome` over the same slice -- which is the weekly path's own definition of
+    `Field.entry` over the same slice -- which is the weekly path's own definition of
     what is ahead, through the one `_ahead`."""
     g = _season(weeks=(1, 2, 3, 4, 5))
     kw = {"ledger": ("KC", "SF", "BUF"), "live_entries": 8, "pot": 420.0, "trials": 200}
-    whole = pool.buyback(g, [1, 2, 3, 4, 5], week=3, rng=np.random.default_rng(6), **kw)
-    cut = pool.buyback(g, [4, 5], week=3, rng=np.random.default_rng(6), **kw)
+    whole = pool.buyback(pool.Field(g, [1, 2, 3, 4, 5]), week=3, rng=np.random.default_rng(6), **kw)
+    cut = pool.buyback(pool.Field(g, [4, 5]), week=3, rng=np.random.default_rng(6), **kw)
     assert whole.ahead == cut.ahead == (4, 5)
     assert whole == cut
-    direct = pool.entry_outcome(g, [4, 5], entries=9, ledger=("KC", "SF", "BUF"), trials=200,
-                                rng=np.random.default_rng(6))
+    direct = pool.Field(g, [4, 5]).entry(entries=9, ledger=("KC", "SF", "BUF"), trials=200, rng=np.random.default_rng(6))
     assert whole.share == direct.share
     assert pool._ahead([1, 2, 3, 4, 5], 3) == [4, 5]
     # And replaying the spent weeks is a different, lower figure: the ledger binds there.
-    stale = pool.entry_outcome(g, [1, 2, 3, 4, 5], entries=9, ledger=("KC", "SF", "BUF"),
-                               trials=200, rng=np.random.default_rng(6))
+    stale = pool.Field(g, [1, 2, 3, 4, 5]).entry(entries=9, ledger=("KC", "SF", "BUF"), trials=200, rng=np.random.default_rng(6))
     assert stale.share < whole.share
 
 
 def test_a_week_with_nothing_priced_after_it_is_unavailable_not_a_tie():
     """An empty season prices to a share of one over the field -- a tie with everybody
     still standing -- which is not a re-entry anybody can buy. Reported as unavailable."""
-    b = pool.buyback(_season(), [1, 2, 3], week=3, ledger=(), live_entries=8, pot=420.0,
-                     pool=PoolConfig(buyback_cutoff_week=6), trials=50,
-                     rng=np.random.default_rng(0))
+    b = pool.buyback(pool.Field(_season(), [1, 2, 3], PoolConfig(buyback_cutoff_week=6)), week=3,
+                     ledger=(), live_entries=8, pot=420.0, trials=50, rng=np.random.default_rng(0))
     assert not b.available and "nothing is priced after week 3" in b.reason
 
 
 def test_the_decision_reports_as_lines_with_the_breakeven_on_the_page():
     """Lines rather than prints, the reason `paired_report` is shaped that way: a block that
     prints cannot be composed, capped, or asserted on."""
-    b = pool.buyback(_season(), [1, 2, 3], week=1, ledger=("KC",), live_entries=8, pot=420.0,
-                     trials=200, rng=np.random.default_rng(2))
+    b = pool.buyback(pool.Field(_season(), [1, 2, 3]), week=1, ledger=("KC",), live_entries=8,
+                     pot=420.0, trials=200, rng=np.random.default_rng(2))
     lines = pool.report(b)
     assert any("breakeven" in ln for ln in lines)
     assert any("$" in ln for ln in lines)
@@ -639,8 +632,9 @@ def test_our_entry_survives_materially_more_often_than_the_field_rule_gave_it():
 
     Two arms on the same board, the same field and the same seed: our entry playing the plan
     it would actually follow, and our entry under the rival sampling rule this module valued
-    it with until now. `pool._entry_trials` with no plan is that old rule exactly -- it is the
-    same trial loop and the same `_play`, with the one branch on index 0 not taken.
+    it with until now. `Field.entry` handed the field's own policy for entry 0 is that old
+    rule exactly -- the same trial loop and the same `Field.trial`, with `Rival` answering
+    at index 0 where `Replay` otherwise would.
 
     The arms are **not** paired trial by trial, and that is stated because it matters which
     way it cuts: replaying a plan consumes no draws from the generator while sampling consumes
@@ -654,10 +648,9 @@ def test_our_entry_survives_materially_more_often_than_the_field_rule_gave_it():
 
     g = _board(TEN, flat=(6,))
     kw = {"entries": 12, "trials": 400}
-    mine = pool.entry_outcome(g, TEN, rng=np.random.default_rng(0), **kw)
-    wks = pool.weeks_from_grid(g, TEN)
-    field = pool._entry_trials(np.random.default_rng(0), wks, TEN, ledger=set(), ours=None,
-                               **kw)
+    season = pool.Field(g, TEN)
+    mine = season.entry(rng=np.random.default_rng(0), **kw)
+    field = season.entry(rng=np.random.default_rng(0), ours=season.rival(), **kw)
 
     se = math.sqrt(mine.survives * (1 - mine.survives) / mine.trials
                    + field.survives * (1 - field.survives) / field.trials)
@@ -677,7 +670,7 @@ def test_the_picks_our_entry_plays_are_the_optimisers_and_not_the_free_ones():
     assignment problem, and it is the argument our entry was not getting the benefit of.
     """
     g = _board(TEN, flat=(6,))
-    out = pool.entry_outcome(g, TEN, entries=12, trials=50, rng=np.random.default_rng(0))
+    out = pool.Field(g, TEN).entry(entries=12, trials=50, rng=np.random.default_rng(0))
     plan, free = out.plan, _free_chain(g, TEN)
     assert plan is not None
     assert "optimiser" in plan.source
@@ -701,11 +694,11 @@ def test_two_candidate_plans_meet_the_same_season_and_the_better_one_wins():
     hoarded week, and the comparison says so on shared draws rather than on two seasons.
     """
     g = _board(TEN, flat=(6,))
-    best = pool.solve_plan(g, TEN)
+    best = pool.Field(g, TEN).plan()
     free = _free_chain(g, TEN)
     kw = {"entries": 12, "trials": 400}
-    a = pool.entry_outcome(g, TEN, plan=best, rng=np.random.default_rng(2), **kw)
-    b = pool.entry_outcome(g, TEN, plan=free, rng=np.random.default_rng(2), **kw)
+    a = pool.Field(g, TEN).entry(plan=best, rng=np.random.default_rng(2), **kw)
+    b = pool.Field(g, TEN).entry(plan=free, rng=np.random.default_rng(2), **kw)
     # Played as given, both of them: a plan handed in is not quietly re-solved.
     assert a.plan == best and b.plan == free
     assert a.replans == 0.0 and b.replans == 0.0
@@ -715,7 +708,7 @@ def test_two_candidate_plans_meet_the_same_season_and_the_better_one_wins():
 def test_two_candidate_plans_meet_the_identical_field(monkeypatch):
     """The pairing itself, asserted on the field rather than on the two figures (#159).
 
-    One seed was not one season. `_play` drew each week's games as it reached it and stopped
+    One seed was not one season. `Field.trial` drew each week's games as it reached it and stopped
     when the last live entry died, ours included -- so the first trial our entry outlasted the
     field under one plan and not the other consumed a different number of draws, the stream
     offset, and every later trial met a different season. That is not a subtle loss: the
@@ -727,17 +720,17 @@ def test_two_candidate_plans_meet_the_identical_field(monkeypatch):
     alive only because of games it won. A different draw anywhere shows up here.
     """
     g = _board(TEN, flat=(6,))
-    best, free = pool.solve_plan(g, TEN), _free_chain(g, TEN)
+    best, free = pool.Field(g, TEN).plan(), _free_chain(g, TEN)
     kw = {"entries": 12, "trials": 300}
 
     def _rivals(plan):
         seen = []
-        real = pool._pick
+        real = pool.Rival.picks
         monkeypatch.setattr(
-            pool, "_pick",
-            lambda rng, week, ledger, k: seen.append(
-                (tuple(sorted(ledger)), tuple(got := real(rng, week, ledger, k) or ()))) or got)
-        out = pool.entry_outcome(g, TEN, plan=plan, rng=np.random.default_rng(2), **kw)
+            pool.Rival, "picks",
+            lambda self, rng, at, ledger: seen.append(
+                (tuple(sorted(ledger)), tuple(got := real(self, rng, at, ledger) or ()))) or got)
+        out = pool.Field(g, TEN).entry(plan=plan, rng=np.random.default_rng(2), **kw)
         monkeypatch.undo()
         return out, seen
 
@@ -760,11 +753,11 @@ def test_two_plans_that_name_the_same_picks_give_exactly_the_same_figure():
     picks and nothing else.
     """
     g = _board(TEN, flat=(6,))
-    best = pool.solve_plan(g, TEN)
+    best = pool.Field(g, TEN).plan()
     twin = pool.Plan(dict(best.picks), "the same picks, arrived at by another road")
     kw = {"entries": 12, "trials": 300}
-    a = pool.entry_outcome(g, TEN, plan=best, rng=np.random.default_rng(2), **kw)
-    b = pool.entry_outcome(g, TEN, plan=twin, rng=np.random.default_rng(2), **kw)
+    a = pool.Field(g, TEN).entry(plan=best, rng=np.random.default_rng(2), **kw)
+    b = pool.Field(g, TEN).entry(plan=twin, rng=np.random.default_rng(2), **kw)
     assert a.plan is not None and b.plan is not None
     assert a.plan != b.plan and a.plan.picks == b.plan.picks
     assert (a.survives, a.sole, a.share, a.share_sd) == (b.survives, b.sole, b.share,
@@ -786,7 +779,7 @@ def test_every_reported_figure_derives_from_the_one_per_trial_record():
     them. The money is `trial_share` over the pair, and `share` is its mean exactly.
     """
     g = _board(TEN, flat=(6,))
-    out = pool.entry_outcome(g, TEN, entries=12, trials=200, rng=np.random.default_rng(0))
+    out = pool.Field(g, TEN).entry(entries=12, trials=200, rng=np.random.default_rng(0))
     ns, ms = out.survivors_each, out.last_out_each
     assert len(ns) == len(ms) == out.trials == 200
     assert sum(n > 0 for n in ns) / len(ns) == out.survives
@@ -822,8 +815,7 @@ def test_the_week_the_field_empties_pays_under_the_stated_rule_and_not_zero():
     third of the pot there, a tiebreak the same in expectation, and a rollover nothing."""
     g = _grid([(1, "KC", "LV", 0.9)])
     kw = {"entries": 3, "ledger": ("KC", "LV"), "trials": 1000}
-    by = {rule: pool.entry_outcome(g, [1], pool=PoolConfig(co_elimination_rule=rule),
-                                   rng=np.random.default_rng(0), **kw)
+    by = {rule: pool.Field(g, [1], PoolConfig(co_elimination_rule=rule)).entry(rng=np.random.default_rng(0), **kw)
           for rule in ("split", "tiebreak", "rollover")}
     assert by["split"].last_out == by["rollover"].last_out == pytest.approx(0.09, abs=0.02)
     assert by["split"].share == pytest.approx(by["split"].last_out / 3)
@@ -841,14 +833,12 @@ def test_going_out_strictly_before_the_last_survivor_still_pays_nothing():
     of either rule pays it. Week 1 is at 1.0 as well because at 0.8 ours could lose there
     beside every rival on the same side, and that is the field emptying with us in it."""
     g = _grid([(1, "SF", "SEA", 1.0), (2, "KC", "LV", 1.0), (3, "DAL", "NYG", 0.5)])
-    field = pool.simulate(g, [1, 2, 3], entries=3, trials=800, rng=np.random.default_rng(1))
+    field = pool.Field(g, [1, 2, 3]).outcome(entries=3, trials=800, rng=np.random.default_rng(1))
     assert field.ending_week.get(3, 0.0) == pytest.approx(0.125, abs=0.04), \
         "the field has to empty after ours is gone, or the test is about nothing"
     for rule in ("split", "rollover"):
-        out = pool.entry_outcome(g, [1, 2, 3], entries=4, ledger=("KC", "LV"), trials=300,
-                                 pool=PoolConfig(co_elimination_rule=rule,
-                                                 co_survivor_rule=rule),
-                                 rng=np.random.default_rng(1))
+        out = pool.Field(g, [1, 2, 3], PoolConfig(co_elimination_rule=rule,
+                                                 co_survivor_rule=rule)).entry(entries=4, ledger=("KC", "LV"), trials=300, rng=np.random.default_rng(1))
         assert out.survives == 0.0 and out.last_out == 0.0 and out.share == 0.0
         assert not any(out.last_out_each)
 
@@ -862,9 +852,7 @@ def test_outlasting_the_whole_field_and_then_losing_takes_the_pot():
     field emptied, ours takes the pot under every rule."""
     g = _grid([(1, "KC", "LV", 0.5), (2, "SF", "SEA", 0.5)])
     for rule in ("split", "rollover"):
-        out = pool.entry_outcome(g, [1, 2], entries=3, ledger=("KC",), trials=1000,
-                                 pool=PoolConfig(co_elimination_rule=rule),
-                                 rng=np.random.default_rng(2))
+        out = pool.Field(g, [1, 2], PoolConfig(co_elimination_rule=rule)).entry(entries=3, ledger=("KC",), trials=1000, rng=np.random.default_rng(2))
         alone = sum(m == 1 for m in out.last_out_each) / out.trials
         assert alone > 0.03, "the case has to occur for the claim to be about anything"
         # Every trial alone-last paid the whole pot, whatever the rule spells.
@@ -881,10 +869,8 @@ def test_the_published_share_moves_the_way_the_rule_implies():
     one trial in twenty at the default concentration, and more at a crowded one."""
     g = _board(TEN, flat=(6,))
     kw = {"entries": 12, "trials": 300}
-    split = pool.entry_outcome(g, TEN, pool=PoolConfig(co_elimination_rule="split"),
-                               rng=np.random.default_rng(0), **kw)
-    roll = pool.entry_outcome(g, TEN, pool=PoolConfig(co_elimination_rule="rollover"),
-                              rng=np.random.default_rng(0), **kw)
+    split = pool.Field(g, TEN, PoolConfig(co_elimination_rule="split")).entry(rng=np.random.default_rng(0), **kw)
+    roll = pool.Field(g, TEN, PoolConfig(co_elimination_rule="rollover")).entry(rng=np.random.default_rng(0), **kw)
     # The rule reads the record and does not write it: the trials are identical.
     assert split.survivors_each == roll.survivors_each
     assert split.last_out_each == roll.last_out_each
@@ -901,9 +887,9 @@ def test_the_co_elimination_rule_reaches_the_weekly_figure():
     share would disagree about one set of trials."""
     g = _board(TEN[:4], flat=(3,))
     kw = {"week": 1, "entries": 12, "pot": 420.0, "trials": 200}
-    split = pool.weekly(g, TEN[:4], pool=PoolConfig(co_elimination_rule="split"),
+    split = pool.weekly(pool.Field(g, TEN[:4], PoolConfig(co_elimination_rule="split")),
                         rng=np.random.default_rng(0), **kw)
-    roll = pool.weekly(g, TEN[:4], pool=PoolConfig(co_elimination_rule="rollover"),
+    roll = pool.weekly(pool.Field(g, TEN[:4], PoolConfig(co_elimination_rule="rollover")),
                        rng=np.random.default_rng(0), **kw)
     a = {c.team: c for c in split.candidates}
     b = {c.team: c for c in roll.candidates}
@@ -948,8 +934,8 @@ def test_a_plan_that_will_not_play_is_re_solved_into_the_one_we_would_have_solve
     stale = pool.Plan({w: ("T31",) if w % 2 else ("NOT_ON_THIS_BOARD",) for w in TEN},
                       "a team already spent, or one this week cannot offer")
     kw = {"entries": 12, "ledger": spent, "trials": 300}
-    fresh = pool.entry_outcome(g, TEN, rng=np.random.default_rng(3), **kw)
-    again = pool.entry_outcome(g, TEN, plan=stale, rng=np.random.default_rng(3), **kw)
+    fresh = pool.Field(g, TEN).entry(rng=np.random.default_rng(3), **kw)
+    again = pool.Field(g, TEN).entry(plan=stale, rng=np.random.default_rng(3), **kw)
     assert fresh.replans == 0.0 and again.replans >= 1.0
     assert again.survives == fresh.survives
     # What was handed in comes back unchanged, so a caller can still see what it asked for
@@ -960,7 +946,7 @@ def test_a_plan_that_will_not_play_is_re_solved_into_the_one_we_would_have_solve
 def test_our_branch_does_not_reach_a_rival():
     """Rivals are unaffected, asserted where a leak would be unmissable.
 
-    Two entries, ours and one rival, on the same board. If `_play`'s branch had been written
+    Two entries, ours and one rival, on the same board. If `Field.trial`'s branch had been written
     without the index test the rival would hold our teams every week, survive exactly when we
     do, and this ratio would be 1.0. It is a rival sampling near-chalk over six weeks instead.
 
@@ -969,8 +955,7 @@ def test_our_branch_does_not_reach_a_rival():
     ten, which is the sampling rule and not a plan.
     """
     six = list(range(1, 7))
-    out = pool.entry_outcome(_board(six), six, entries=2, trials=400,
-                             rng=np.random.default_rng(1))
+    out = pool.Field(_board(six), six).entry(entries=2, trials=400, rng=np.random.default_rng(1))
     assert out.survives > 0.4
     assert (out.survives - out.sole) / out.survives < 0.25
 
@@ -984,7 +969,7 @@ def test_a_double_pick_week_is_planned_as_two_teams_from_two_fixtures():
     """
     weeks = list(range(1, 19))
     g = _board(weeks)
-    plan = pool.solve_plan(g, weeks)
+    plan = pool.Field(g, weeks).plan()
     assert "optimiser" in plan.source
     assert sorted(plan.picks) == weeks
     for w in range(13, 19):
@@ -1000,12 +985,11 @@ def test_a_ledger_with_nothing_left_ends_the_entry_rather_than_repeating_a_team(
 
     Every one of the thirty-two teams is spent, so no assignment covers the weeks ahead. The
     optimiser says so, the fallback finds nothing either, and the entry is eliminated for want
-    of a legal pick -- which is what `_pick` returning None does to a rival, reached by a
+    of a legal pick -- which is what `Rival.sample` returning None does to a rival, reached by a
     different road. A plan with no week in it is the honest answer here; filling the gap with
     a repeat would be worth a great deal and is against the rules.
     """
-    out = pool.entry_outcome(_board([1, 2]), [1, 2], entries=4, ledger=_TEAMS, trials=20,
-                             rng=np.random.default_rng(0))
+    out = pool.Field(_board([1, 2]), [1, 2]).entry(entries=4, ledger=_TEAMS, trials=20, rng=np.random.default_rng(0))
     assert out.survives == 0.0 and out.share == 0.0
     assert out.plan is not None and out.plan.picks == {}
     assert "no assignment covers these weeks" in out.plan.source
@@ -1027,7 +1011,7 @@ def test_a_figure_computed_without_the_optimiser_says_so(monkeypatch):
 
     monkeypatch.setattr(pool, "solve", _no_solver)
     g = _board(TEN, flat=(6,))
-    out = pool.entry_outcome(g, TEN, entries=12, trials=300, rng=np.random.default_rng(0))
+    out = pool.Field(g, TEN).entry(entries=12, trials=300, rng=np.random.default_rng(0))
     assert out.plan is not None
     assert "the optimiser could not run" in out.plan.source
     assert "no CBC on this machine" in out.plan.source
@@ -1046,11 +1030,11 @@ def test_a_plan_naming_one_team_in_a_double_pick_week_is_not_a_plan_for_that_wee
     """
     weeks = [13, 14]
     g = _board(weeks)
-    best = pool.solve_plan(g, weeks)
+    best = pool.Field(g, weeks).plan()
     half = pool.Plan({w: ts[:1] for w, ts in best.picks.items()}, "half of a double-pick plan")
     kw = {"entries": 12, "trials": 200}
-    fresh = pool.entry_outcome(g, weeks, rng=np.random.default_rng(5), **kw)
-    given = pool.entry_outcome(g, weeks, plan=half, rng=np.random.default_rng(5), **kw)
+    fresh = pool.Field(g, weeks).entry(rng=np.random.default_rng(5), **kw)
+    given = pool.Field(g, weeks).entry(plan=half, rng=np.random.default_rng(5), **kw)
     assert all(len(ts) == 2 for ts in best.picks.values())
     assert given.replans >= 1.0 and fresh.replans == 0.0
     assert given.survives == fresh.survives
@@ -1075,9 +1059,8 @@ def test_a_double_week_with_one_fixture_left_eliminates_rather_than_taking_both_
     g = _board([13])
     wk = pool.weeks_from_grid(g, [13], PoolConfig())[0]
     intact = {wk.games[0][0], wk.games[0][1]}
-    out = pool.entry_outcome(g, [13], entries=6, ledger=tuple(t for t in _TEAMS
-                                                              if t not in intact),
-                             trials=20, rng=np.random.default_rng(0))
+    out = pool.Field(g, [13]).entry(entries=6, ledger=tuple(t for t in _TEAMS
+                                                              if t not in intact), trials=20, rng=np.random.default_rng(0))
     assert out.survives == 0.0
     assert out.plan is not None and out.plan.picks == {}
     assert "both sides of one fixture" in out.plan.source
@@ -1099,32 +1082,51 @@ def test_a_double_week_with_one_fixture_left_eliminates_rather_than_taking_both_
 def _watch_picks(monkeypatch) -> list[tuple[int, int]]:
     """Every set of picks any entry is handed, as (teams asked for, fixtures they span).
 
-    Both sides of `_play`'s branch, because #156 applies to our own entry as well as to
-    rivals: a rival reaches `pool._pick` and our entry reaches `pool._Ours.picks`, and the
-    two are the only ways a pick enters a trial.
+    Both adapters of the pick seam, because #156 applies to our own entry as well as to
+    rivals: a rival is `pool.Rival` and our entry is `pool.Replay`, and `Field.trial` asks
+    one or the other for every pick that enters a trial.
 
     Watched rather than reconstructed afterwards, because a self-inflicted elimination leaves
     no trace in `EntryOutcome`. The entry is simply gone, and being handed both sides of one
     game reads out identically to having picked two favourites and lost one.
     """
     seen: list[tuple[int, int]] = []
-    real_pick, real_ours = pool._pick, pool._Ours.picks
+    real_pick, real_ours = pool.Rival.picks, pool.Replay.picks
 
-    def watched_pick(rng, week, ledger, k):
-        got = real_pick(rng, week, ledger, k)
-        if got is not None:
-            seen.append((len(got), len({week.fixture[t] for t in got})))
-        return got
-
-    def watched_ours(self, at, ledger):
-        got = real_ours(self, at, ledger)
+    def watched_pick(self, rng, at, ledger):
+        got = real_pick(self, rng, at, ledger)
         if got is not None:
             seen.append((len(got), len({self.wks[at].fixture[t] for t in got})))
         return got
 
-    monkeypatch.setattr(pool, "_pick", watched_pick)
-    monkeypatch.setattr(pool._Ours, "picks", watched_ours)
+    def watched_ours(self, rng, at, ledger):
+        got = real_ours(self, rng, at, ledger)
+        if got is not None:
+            seen.append((len(got), len({self.wks[at].fixture[t] for t in got})))
+        return got
+
+    monkeypatch.setattr(pool.Rival, "picks", watched_pick)
+    monkeypatch.setattr(pool.Replay, "picks", watched_ours)
     return seen
+
+
+def test_a_plan_naming_both_sides_of_one_fixture_is_not_played_by_our_entry():
+    """#156 on our side of the pick seam. `Replay.plays` refuses a plan that spends both
+    sides of one game in a double-pick week -- one of them loses, so the week is lost at
+    entry -- and `Replay.picks` re-solves instead. Reached through the seam because it can
+    be reached no other way: a solved plan never names both sides, so before #254 this
+    check was held by nothing and a mutant returning True passed every test."""
+    g = _grid([(13, "KC", "LV", 0.8), (13, "SF", "SEA", 0.7)])
+    field = pool.Field(g, [13], PoolConfig(double_pick_weeks=(13,)))
+    ours = field.replay((), pool.Plan({13: ("KC", "LV")}, "both sides of one game"))
+    assert not ours.plays(0, ("KC", "LV"), set())
+    assert ours.plays(0, ("KC", "SF"), set())
+    got = ours.picks(np.random.default_rng(0), 0, set())
+    assert got is not None and len({field.wks[0].fixture[t] for t in got}) == 2
+    assert ours.replans == 1
+    # And a rival is held to the same rule by the other adapter, on the same week.
+    drawn = field.rival().picks(np.random.default_rng(0), 0, set())
+    assert drawn is not None and len({field.wks[0].fixture[t] for t in drawn}) == 2
 
 
 def test_the_self_inflicted_elimination_rate_in_a_double_pick_season_is_zero(monkeypatch):
@@ -1143,8 +1145,7 @@ def test_the_self_inflicted_elimination_rate_in_a_double_pick_season_is_zero(mon
     g = _board(weeks)
     cfg = PoolConfig(double_pick_weeks=tuple(weeks))
     seen = _watch_picks(monkeypatch)
-    out = pool.entry_outcome(g, weeks, entries=12, pool=cfg, trials=200,
-                             rng=np.random.default_rng(0))
+    out = pool.Field(g, weeks, cfg).entry(entries=12, trials=200, rng=np.random.default_rng(0))
     # The season has to have actually been played, or a rate of zero is a rate over nothing.
     assert out.survives > 0.0
     assert len(seen) > 4000
@@ -1157,7 +1158,7 @@ def test_the_self_inflicted_elimination_rate_in_a_double_pick_season_is_zero(mon
 def test_the_rule_reaches_our_own_entry_and_not_only_the_field(monkeypatch):
     """The same count with the field removed, so our arm cannot hide behind twenty rivals.
 
-    One entry, which is ours: every pick recorded came through `_Ours` and the plan it
+    One entry, which is ours: every pick recorded came through `Replay` and the plan it
     replays. Our side was already correct -- the optimiser's `one_side_wk` and
     `_best_available`'s one-per-fixture walk see to that -- and it is pinned here because
     "the rule applies to our own entry as well as rivals" is a claim about both arms, and a
@@ -1167,8 +1168,7 @@ def test_the_rule_reaches_our_own_entry_and_not_only_the_field(monkeypatch):
     g = _board(weeks)
     cfg = PoolConfig(double_pick_weeks=tuple(weeks))
     seen = _watch_picks(monkeypatch)
-    out = pool.entry_outcome(g, weeks, entries=1, pool=cfg, trials=50,
-                             rng=np.random.default_rng(0))
+    out = pool.Field(g, weeks, cfg).entry(entries=1, trials=50, rng=np.random.default_rng(0))
     assert out.plan is not None and "optimiser" in out.plan.source
     assert seen and all(n == 2 and f == 2 for n, f in seen)
 
@@ -1227,9 +1227,9 @@ def test_raising_the_concentration_raises_the_best_teams_ownership():
 
 
 def test_the_concentration_reaches_the_sampler_and_not_just_the_weight():
-    """That the knob is wired to `_pick` rather than only to the arithmetic beside it.
+    """That the knob is wired to `Rival.sample` rather than only to the arithmetic beside it.
 
-    `_chalk_share` reads `_Week.weight` too, so the test above would go on passing if `_pick`
+    `_chalk_share` reads `_Week.weight` too, so the test above would go on passing if `Rival.sample`
     quietly went back to reading `_Week.prob` -- the ownership it reported would be a number
     nobody drew with. This counts real draws instead, which is the only assertion here that
     can tell the sampler's weight from a weight computed near it.
@@ -1239,7 +1239,7 @@ def test_the_concentration_reaches_the_sampler_and_not_just_the_weight():
     for k in (1.0, 16.0):
         wk = pool.weeks_from_grid(g, [1], PoolConfig(field_concentration=k))[0]
         rng = np.random.default_rng(0)
-        drawn[k] = sum(pool._pick(rng, wk, set(), 1) == ["T31"] for _ in range(3000)) / 3000
+        drawn[k] = sum(_sampled(rng, wk, set()) == ["T31"] for _ in range(3000)) / 3000
     assert drawn[1.0] == pytest.approx(0.057, abs=0.02)
     assert drawn[16.0] == pytest.approx(0.270, abs=0.03)
     assert drawn[16.0] > 3 * drawn[1.0]
@@ -1263,7 +1263,7 @@ def test_a_concentration_that_inverts_the_rule_is_refused():
 
 
 def test_a_weight_vector_that_underflows_to_zero_is_refused_before_the_draw():
-    """#286. `_pick`'s docstring argued in the reals: a positive weight raised to a finite
+    """#286. `Rival.sample`'s docstring argued in the reals: a positive weight raised to a finite
     non-negative power is positive, so a non-empty `avail` cannot sum to zero. In float64
     `0.12 ** 400` is exactly zero, and with the two favourites already spent every team
     left to a rival underflows together: the weights sum to zero, the probability vector
@@ -1278,11 +1278,11 @@ def test_a_weight_vector_that_underflows_to_zero_is_refused_before_the_draw():
     assert wk.prob["LV"] > pool.MIN_PROB and wk.weight["LV"] == 0.0
     assert wk.weight["KC"] > 0.0, "the favourite still carries a weight, so the week is legal"
     with pytest.raises(ValueError, match=r"field_concentration.*400") as e:
-        pool._pick(np.random.default_rng(0), wk, {"KC", "SF"}, 1)
+        _sampled(np.random.default_rng(0), wk, {"KC", "SF"})
     assert str(pool.MIN_PROB) in str(e.value) and "NaN" not in str(e.value)
     # The same ledger under a concentration the axis sweeps draws as it always did.
     mild = pool.weeks_from_grid(g, [1], PoolConfig(field_concentration=16.0))[0]
-    assert pool._pick(np.random.default_rng(0), mild, {"KC", "SF"}, 1) in (["LV"], ["SEA"])
+    assert _sampled(np.random.default_rng(0), mild, {"KC", "SF"}) in (["LV"], ["SEA"])
     # `_chalk_share` divides by the same sum (review): with no ledger the favourites hold
     # it up until every side underflows, which `0.9 ** 8000` does. One rule, one sentence,
     # reached from `sensitivity` on an axis a caller supplies.
@@ -1292,7 +1292,7 @@ def test_a_weight_vector_that_underflows_to_zero_is_refused_before_the_draw():
         pool._chalk_share(deep)
     assert str(pool.MIN_PROB) in str(e.value)
     with pytest.raises(ValueError, match=r"field_concentration.*8000"):
-        pool.sensitivity(g, [1], entries=3, at=(8000.0,), trials=2)
+        pool.sensitivity(pool.Field(g, [1]), entries=3, at=(8000.0,), trials=2)
 
 
 def test_the_concentration_changes_the_field_our_plan_meets_and_not_our_picks():
@@ -1301,7 +1301,7 @@ def test_the_concentration_changes_the_field_our_plan_meets_and_not_our_picks():
 
     **The two halves are not equally hard to break, and saying which is which is the point.**
     That our own figures *move* is the falsifiable half: it fails the moment the exponent stops
-    reaching `_pick`, which is how a sweep would come to report a knob that does nothing.
+    reaching `Rival.sample`, which is how a sweep would come to report a knob that does nothing.
 
     That the *plan* does not move is a weaker claim than it looks, and it was worth finding out
     by trying to break it. An exponent is a monotone transform of every price, so feeding
@@ -1313,9 +1313,7 @@ def test_the_concentration_changes_the_field_our_plan_meets_and_not_our_picks():
     """
     weeks = [1, 2, 3, 4]
     g = _board(weeks)
-    lo, hi = (pool.entry_outcome(g, weeks, entries=21, trials=150,
-                                 pool=PoolConfig(field_concentration=k),
-                                 rng=np.random.default_rng(3))
+    lo, hi = (pool.Field(g, weeks, PoolConfig(field_concentration=k)).entry(entries=21, trials=150, rng=np.random.default_rng(3))
               for k in (1.0, 16.0))
     assert lo.plan is not None and hi.plan is not None
     assert lo.plan.picks == hi.plan.picks and lo.plan.source == hi.plan.source
@@ -1331,7 +1329,7 @@ def test_the_sweep_reports_a_range_over_the_knob_rather_than_a_point():
     stated parameter's figures to be published in.
     """
     g = _board([1, 2, 3, 4])
-    rows = pool.sensitivity(g, [1, 2, 3, 4], entries=21, at=(1.0, 4.0, 16.0), pot=420.0,
+    rows = pool.sensitivity(pool.Field(g, [1, 2, 3, 4]), entries=21, at=(1.0, 4.0, 16.0), pot=420.0,
                             trials=150, rng=np.random.default_rng(5))
     assert [r.concentration for r in rows] == [1.0, 4.0, 16.0]
     own = [r.chalk_share for r in rows]
@@ -1346,8 +1344,28 @@ def test_the_sweep_reports_a_range_over_the_knob_rather_than_a_point():
     assert pool.sensitivity_report([]) == ["\n  no concentrations swept"]
 
 
+def test_the_sensitivity_bar_is_the_leverage_bar_on_the_same_inputs():
+    """#276. Two rows of the sweep are separate runs, so a difference between them carries
+    both rows' noise: the bar is `DECISIVE_SIGMA * sqrt(2) * se`, which is what `leverage`
+    already builds with `hypot` -- and it was one row's `se` unmultiplied, a bar 2.83 times
+    too easy. One function, `unpaired_bar`, and both readers of it agree on the same inputs."""
+    g = _board([1, 2, 3])
+    r = pool.sensitivity(pool.Field(g, [1, 2, 3]), entries=21, at=(1.0,), trials=120, pot=420.0,
+                         rng=np.random.default_rng(5))[0]
+    se = r.entry.share_sd / np.sqrt(120) * 420.0
+    assert se > 0
+    assert r.resolution == pool.unpaired_bar(se, se) == pool.DECISIVE_SIGMA * np.hypot(se, se)
+    assert r.resolution == pytest.approx(pool.DECISIVE_SIGMA * np.sqrt(2) * se)
+    lev = pool.Leverage(concentration=1.0, team="SF", fallback="KC", unadvanced=0.0,
+                        unadvanced_se=se, advanced=r.resolution, advanced_se=se, trials=120)
+    assert pool.DECISIVE_SIGMA * lev.term_se == r.resolution
+    assert not lev.resolvable, "a term exactly at the bar is not past it"
+    assert lev._replace(advanced=r.resolution * 1.01).resolvable
+    assert not lev._replace(advanced=r.resolution * 0.99).resolvable
+
+
 def test_the_sweep_anchors_on_the_behaviour_already_in_the_tree():
-    """The row at 1.0 is not a new number, it is `simulate` at the default reseeded.
+    """The row at 1.0 is not a new number, it is `Field.outcome` at the default reseeded.
 
     This is what makes the table readable as a *sensitivity* rather than as five unrelated
     runs: one of the rows is the figure the module publishes today, and the reader can see
@@ -1355,11 +1373,10 @@ def test_the_sweep_anchors_on_the_behaviour_already_in_the_tree():
     sharing one generator across the axis.
     """
     g = _board([1, 2, 3])
-    rows = pool.sensitivity(g, [1, 2, 3], entries=21, at=(1.0,), trials=120,
+    rows = pool.sensitivity(pool.Field(g, [1, 2, 3]), entries=21, at=(1.0,), trials=120,
                             rng=np.random.default_rng(5))
     seed = int(np.random.default_rng(5).integers(2 ** 32))
-    direct = pool.simulate(g, [1, 2, 3], entries=21, trials=120,
-                           rng=np.random.default_rng(seed))
+    direct = pool.Field(g, [1, 2, 3]).outcome(entries=21, trials=120, rng=np.random.default_rng(seed))
     assert rows[0].field == direct
 
 

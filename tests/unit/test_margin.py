@@ -223,6 +223,16 @@ def test_a_worse_challenger_leaves_the_incumbent_standing():
     assert "no longer asserted" in text
 
 
+def test_a_challenger_better_on_average_but_not_every_season_is_not_adopted():
+    """The width gate is the same rule (#285): `docs/margin-sd.md` records that its first
+    verdict fired on a mean at 15/26 seasons and said a future gate should ask for more."""
+    wf = pl.DataFrame({"season": [2020, 2021, 2022], "n": [100] * 3,
+                       "ll_incumbent": [0.60, 0.60, 0.60], "ll_all": [0.50, 0.50, 0.61],
+                       "ll_trailing10": [0.59, 0.59, 0.59]})
+    winner, text = margin.verdict(wf)
+    assert winner == "trailing10" and "2/3" in text and "3/3" in text
+
+
 def test_no_held_out_seasons_defaults_to_the_incumbent():
     winner, _ = margin.verdict(pl.DataFrame(schema={"season": pl.Int32}))
     assert winner == "incumbent"
@@ -259,7 +269,7 @@ def test_the_fit_path_reports_and_gates(monkeypatch, capsys, tmp_path):
     """The whole reporting path, on synthetic seasons, with the fetch patched out. A gate
     whose CLI is only exercisable against the live API is one nobody re-runs."""
     import nflreadpy as nfl
-    sched = _synthetic(seasons=range(2010, 2021), per=200, sd=11.0)
+    sched = _synthetic(seasons=range(2010, 2021), per=400, sd=8.0)
     monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: sched)
 
     out = tmp_path / "wf.parquet"
@@ -267,7 +277,10 @@ def test_the_fit_path_reports_and_gates(monkeypatch, capsys, tmp_path):
     text = capsys.readouterr().out
     assert "full sample" in text
     assert "Walk-forward" in text
-    # true dispersion 11 against an incumbent of 13.5: a fitted candidate must win
+    # true dispersion 8 against an incumbent of 12.741, 400 games a season: a fitted
+    # candidate must win in every held-out season, which is what the house rule asks (#285).
+    # At 11 against 12.741 and 200 games the gain is real on average and lost in three
+    # seasons of ten -- the case the old rule adopted and this one must not.
     assert "ADOPT" in text
     assert "Value to adopt" in text
     assert out.exists()
@@ -412,8 +425,10 @@ def test_the_shape_walk_forward_fits_bumps_only_on_earlier_seasons():
 def test_a_lump_symmetric_about_the_spread_is_adopted():
     """When the extra mass at 3 sits on both sides of the spread, the bump model reproduces
     the flattening it causes and prices P(win) better than the spine: the rule must say
-    ADOPT -- the branch the real data did not take, held so the rule is known to fire."""
-    resid = margin.residuals(_lumpy_synthetic(share=0.4, symmetric=True))
+    ADOPT -- the branch the real data did not take, held so the rule is known to fire. Half
+    the games on the lump, because the house rule (#285) asks for every held-out season and
+    at 200 games a season a lump of 0.4 loses one of ten to noise."""
+    resid = margin.residuals(_lumpy_synthetic(share=0.5, symmetric=True))
     shape, sentence = margin.shape_verdict(margin.walk_forward_shape(resid))
     assert shape == "lumpy" and "ADOPT" in sentence
 
@@ -427,13 +442,46 @@ def test_a_lump_on_the_favourite_s_side_keeps_the_gaussian():
     assert shape == "gaussian" and "KEEP" in sentence
 
 
-def test_the_verdict_selects_on_the_mean_and_reports_the_rest():
-    wf = pl.DataFrame({"season": [1, 2, 3], "n": [1, 1, 1],
-                       "ll_gaussian": [0.6, 0.6, 0.6], "ll_lumpy": [0.61, 0.61, 0.5],
-                       "gain": [-0.01, -0.01, 0.1]})
-    shape, sentence = margin.shape_verdict(wf)
-    assert shape == "lumpy" and "1/3 seasons" in sentence
+def _shape_wf(gains):
+    seasons = list(range(2001, 2001 + len(gains)))
+    return pl.DataFrame({"season": seasons, "n": [100] * len(gains),
+                         "ll_gaussian": [0.6] * len(gains),
+                         "ll_lumpy": [0.6 - g for g in gains], "gain": gains})
+
+
+def test_the_verdict_needs_every_season_and_not_just_the_mean():
+    """The rule #285 replaced adopted on `mean > 0`: one big season could carry two losing
+    ones. The house rule (ADR-0019) asks for the sign in every held-out season and an
+    interval excluding zero, and the sentence still reports the count either way."""
+    shape, sentence = margin.shape_verdict(_shape_wf([-0.01, -0.01, 0.1]))
+    assert shape == "gaussian" and "1/3 seasons" in sentence
     assert margin.shape_verdict(pl.DataFrame({"gain": []}))[0] == "gaussian"
+
+
+def test_the_shape_verdict_is_the_house_rule():
+    """Same inputs, same answer as `experiment.gate` over a season-clustered `summarise`:
+    ADOPT is the only verdict that changes the shape, and both halves have to hold."""
+    from hub.models import experiment
+    for gains in ([0.02, 0.01, 0.03], [-0.01, -0.01, 0.1], [-0.02, -0.01, -0.03], [0.0, 0.01]):
+        wf = _shape_wf(gains)
+        paired = wf.select("season", pl.col("gain").alias("diff"))
+        house, _ = experiment.gate(
+            experiment.summarise(paired, cluster=experiment.SEASON_CLUSTER),
+            experiment.per_season(paired), margin.SHAPE_ACTIONS)
+        shape, sentence = margin.shape_verdict(wf)
+        assert (shape == "lumpy") == (house == "ADOPT"), gains
+        assert ("ADOPT" in sentence) == (house == "ADOPT"), gains
+
+
+def test_the_recorded_shape_verdict_is_unchanged_under_the_house_rule():
+    """Re-derived from the record: a walk-forward with the recorded mean, the recorded
+    seasons-better count and the recorded season count keeps the Gaussian under the house
+    rule as it did under the mean -- 7 of 27 fails the every-season half on its own."""
+    won, total = margin.FITTED_SHAPE_SEASONS_BETTER, margin.FITTED_SHAPE_SEASONS
+    assert won < total and margin.FITTED_SHAPE_GAIN < 0
+    lose = (margin.FITTED_SHAPE_GAIN * total - 0.001 * won) / (total - won)
+    shape, sentence = margin.shape_verdict(_shape_wf([0.001] * won + [lose] * (total - won)))
+    assert shape == "gaussian" and f"{won}/{total} seasons" in sentence
 
 
 def test_the_calibration_table_grades_the_favourite_side_of_every_held_out_game():

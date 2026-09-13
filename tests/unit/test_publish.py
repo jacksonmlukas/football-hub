@@ -1469,8 +1469,8 @@ def test_a_week_with_one_game_started_keeps_its_pick_in_the_artifact_and_the_jou
         (3, "KC", 0.80, far, None), (3, "SEA", 0.60, far, None),
     ])
     monkeypatch.setattr(sv, "grid_from_schedule", lambda season, cache=None: grid)
-    journal.record(season=2026, week=2, kind="pick", chose="SF", fallback="SF",
-                   market_price=0.70, at=dt.datetime(2026, 9, 9, 12, 0), base=base)
+    journal.record(journal.Pick(week=2, chose="SF", fallback="SF", market_price=0.70),
+                   season=2026, at=dt.datetime(2026, 9, 9, 12, 0), base=base)
     got = publish.survivor(2026, out=site)
     assert isinstance(got, dict)
     assert got["weeks_played"] == [2] and got["weeks_remaining"] == [3]

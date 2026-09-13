@@ -571,6 +571,8 @@ def grid_from_schedule(season: int, cache: Path | None = None, *,
     And since #218 each row carries the game's `close_spread` (the home side's, as rated),
     `qb_adjustment` and `adjusted_by`, so the CLI can say once what the adjustment did to
     the season it planned -- `hub.models.quarterback.report_line` reads exactly those three.
+    Since #281 it carries `price_source` too, `hub.schedule.priced_games`'s three-way label
+    (`live`, `stale`, `schedule`), so the grid says which source priced each row.
     """
     from hub.models import ratings
     from hub.models.market import MARGIN_SD, normal_cdf
@@ -581,10 +583,14 @@ def grid_from_schedule(season: int, cache: Path | None = None, *,
         # close_spread is positive when the home team is favoured, both sources alike.
         home_p = normal_cdf(float(r["close_spread"]) / MARGIN_SD)
         # Whether the schedule's own field *could* have priced this game, which is not the
-        # same as which source won. With the store covering every game, `price_source` reads
-        # "snapshot" everywhere and says nothing about what the fallback would have reached
-        # -- I reported all eighteen weeks as snapshot-only before the real data caught it.
+        # same as which source won. With the store covering every game, `price_source` used
+        # to read as the snapshot everywhere and said nothing about what the fallback would
+        # have reached -- I reported all eighteen weeks as snapshot-only before the real data
+        # caught it. Since #281 the label is three-way -- `live`, `stale`, `schedule` -- and
+        # it rides on the row beside this, so a reader of the grid can tell a live price from
+        # a lookahead; `moving_field` stays what the fallback *could* reach.
         moving = r["schedule_spread"] is not None
+        source = r["price_source"]
         # Kickoff and result ride along per row, so `schedule.forecastable` can ask the same
         # question of this grid that `ratings` asks of the games it was built from. Deriving them
         # again here from a week number would be the second implementation of one idea that
@@ -597,7 +603,8 @@ def grid_from_schedule(season: int, cache: Path | None = None, *,
         # rather than a key assembled here, because `hub.schedule` already carries it and a
         # second spelling of one identifier is the drift this module keeps being bitten by.
         gid = r["game_id"]
-        rated = (float(r["close_spread"]), r.get("qb_adjustment"), r.get("adjusted_by"))
+        rated = (float(r["close_spread"]), r.get("qb_adjustment"), r.get("adjusted_by"),
+                 source)
         rows.append((int(r["week"]), r["home_team"], home_p, moving, kick, res, gid, *rated))
         rows.append((int(r["week"]), r["away_team"], 1.0 - home_p, moving, kick, res, gid,
                      *rated))
@@ -609,12 +616,13 @@ def grid_from_schedule(season: int, cache: Path | None = None, *,
                          "game_id": [r[6] for r in rows],
                          "close_spread": [r[7] for r in rows],
                          "qb_adjustment": [r[8] for r in rows],
-                         "adjusted_by": [r[9] for r in rows]},
+                         "adjusted_by": [r[9] for r in rows],
+                         "price_source": [r[10] for r in rows]},
                         schema={"week": pl.Int64, "team": pl.Utf8, "win_prob": pl.Float64,
                                 "moving_field": pl.Boolean, "kickoff": pl.Datetime,
                                 "result": pl.Float64, "game_id": pl.Utf8,
                                 "close_spread": pl.Float64, "qb_adjustment": pl.Float64,
-                                "adjusted_by": pl.Utf8})
+                                "adjusted_by": pl.Utf8, "price_source": pl.Utf8})
 
 
 def main(argv: Sequence[str] | None = None) -> int:
