@@ -69,6 +69,7 @@ from typing import Any
 
 import polars as pl
 
+from hub import atomic
 from hub.cli import unavailable
 from hub.contracts import NFELOQB, ContractViolation
 from hub.paths import DATA
@@ -374,18 +375,18 @@ def refresh(*, cache: Path | None = None, now: datetime | None = None) -> pl.Dat
     body = _http_get(where)
     rows = parse(body)
     path, record = _paths(cache)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(body)
+    atomic.write_bytes(path, body)
     when = (now or datetime.now(UTC)).replace(tzinfo=None, microsecond=0)
     sha = hashlib.sha256(body).hexdigest()
     # Three answers, and the stamp carries which: matched the pin, did not, or there was no
     # pin to match. The second is a source change and is said here and again by every
     # reader of the stamp; the third is said with the two values that would end it.
     matches = None if PINNED_SHA256 is None else sha == PINNED_SHA256
-    record.write_text(json.dumps({"captured_at": when.isoformat(timespec="seconds"),
-                                  "url": where, "commit": COMMIT, "sha256": sha,
-                                  "pinned_sha256": PINNED_SHA256, "matches_pin": matches,
-                                  "rows": rows.height}, indent=2))
+    atomic.write_text(record, json.dumps({"captured_at": when.isoformat(timespec="seconds"),
+                                          "url": where, "commit": COMMIT, "sha256": sha,
+                                          "pinned_sha256": PINNED_SHA256,
+                                          "matches_pin": matches,
+                                          "rows": rows.height}, indent=2))
     if matches is False:
         print(f"{PROG}: {source_change(cache)}; served, because it validated -- advance "
               f"PINNED_SHA256 deliberately, or restore COMMIT", file=sys.stderr)

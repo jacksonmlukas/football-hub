@@ -94,7 +94,7 @@ from urllib.parse import quote, unquote
 
 import polars as pl
 
-from hub import store
+from hub import atomic, store
 from hub.cli import unavailable
 from hub.config import SEASON_AHEAD
 from hub.contracts import POOL_STATE, ContractViolation
@@ -446,8 +446,8 @@ def write_index_map(index_map: Mapping[str, int], base: Path | None = None) -> P
             f"append-only and an index is never reassigned.")
     merged = {**stored, **{k: int(v) for k, v in index_map.items()}}
     path = index_map_path(base)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(dict(sorted(merged.items(), key=lambda kv: kv[1])), indent=2))
+    atomic.write_text(path, json.dumps(dict(sorted(merged.items(), key=lambda kv: kv[1])),
+                                       indent=2))
     return path
 
 
@@ -473,7 +473,6 @@ def write_state(state: PoolState, base: Path | None = None, *,
     df = POOL_STATE.validate(to_frame(state))
     when = when or datetime.now(UTC)
     path = state_path(base)
-    path.parent.mkdir(parents=True, exist_ok=True)
     doc = {"captured_at": when.isoformat(timespec="seconds"),
            "season": state.season, "week": state.week,
            "field_size": state.field_size, "pot": state.pot,
@@ -489,7 +488,7 @@ def write_state(state: PoolState, base: Path | None = None, *,
     store.write(df.drop("season", "week").with_columns(pl.lit(moment).alias("captured_at")),
                 ARCHIVE_TABLE, LEAGUE, state.season, state.week, base=base,
                 name=f"snap-{moment:%Y%m%dT%H%M%S%f}")
-    path.write_text(json.dumps(doc, indent=2))
+    atomic.write_text(path, json.dumps(doc, indent=2))
     return path
 
 

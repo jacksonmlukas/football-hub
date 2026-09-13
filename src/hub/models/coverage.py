@@ -55,7 +55,7 @@ from typing import Any, Literal, cast
 import numpy as np
 import polars as pl
 
-from hub import jsonio
+from hub import atomic, jsonio
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.models import predict
@@ -375,10 +375,10 @@ def write_summary(result: dict[str, Any], path: Path | None = None) -> Path:
     block already in the file is kept (#273): one file, two verdicts, one reader.
     """
     p = path or ARTIFACT
-    p.parent.mkdir(parents=True, exist_ok=True)
     kept = _existing(p).get("survivor")
-    p.write_text(jsonio.dumps({"name": "interval_coverage", "generated_at": jsonio.stamp(),
-                               **result, **({"survivor": kept} if kept else {})}, indent=2))
+    atomic.write_text(p, jsonio.dumps({"name": "interval_coverage",
+                                       "generated_at": jsonio.stamp(), **result,
+                                       **({"survivor": kept} if kept else {})}, indent=2))
     return p
 
 
@@ -391,13 +391,13 @@ def write_survivor(result: dict[str, Any], path: Path | None = None) -> Path:
     --survivor --write` together, which is the order that leaves both.
     """
     p = path or ARTIFACT
-    p.parent.mkdir(parents=True, exist_ok=True)
     have = _existing(p)
     block = {k: result.get(k) for k in
              ("verdict", "favourite_spread", "favourite_predicted", "favourite_actual",
               "favourite_gap", "favourite_sigma", "favourite_n", "n_games", "margin_sd")}
     block["generated_at"] = jsonio.stamp()
-    p.write_text(jsonio.dumps({"name": "interval_coverage", **have, "survivor": block}, indent=2))
+    atomic.write_text(p, jsonio.dumps({"name": "interval_coverage", **have,
+                                       "survivor": block}, indent=2))
     return p
 
 

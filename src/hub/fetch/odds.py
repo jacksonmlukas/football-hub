@@ -75,7 +75,7 @@ from typing import Any
 
 import polars as pl
 
-from hub import store
+from hub import atomic, store
 from hub.cli import unavailable
 from hub.config import SEASON_AHEAD
 from hub.contracts import ODDS_SNAPSHOT, PROP_SNAPSHOT
@@ -245,10 +245,9 @@ def _write_state(path: Path | None, remaining: int | None, when: datetime, *,
     read as evidence that the billing model is what we think it is.
     """
     p = Path(path or STATE)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"remaining": remaining, "checked_at": when.isoformat(),
-                             "last_cost": cost, "declared_cost": declared,
-                             "asked_for": asked}, indent=2))
+    atomic.write_text(p, json.dumps({"remaining": remaining, "checked_at": when.isoformat(),
+                                     "last_cost": cost, "declared_cost": declared,
+                                     "asked_for": asked}, indent=2))
 
 
 def _budgeted(value: str, allowed: tuple[str, ...], kind: str) -> tuple[str, ...]:

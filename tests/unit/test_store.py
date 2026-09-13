@@ -10,6 +10,7 @@ it with a join on week is how lookahead gets into a backtest. So the central tes
 the case that breaks the naive join and shows both behaviours side by side.
 """
 import datetime as dt
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -660,3 +661,42 @@ def test_a_storage_failure_is_not_reported_as_nflverse(monkeypatch, capsys):
     assert "unavailable" not in err, "nflverse answered; the storage layer is what failed"
     assert "the storage layer failed verification" in err
     assert "duckdb catalog is missing a view" in err
+
+
+# --- a corrupt partition is named as one (#258) ---
+
+def test_an_unreadable_partition_is_named_as_corrupt_not_as_different(tmp_path):
+    """The write path used to collapse an unreadable existing partition into "differs from
+    what was written" and tell the operator to pass `replace=True` -- a data-loss
+    instruction for a corruption. What it found is what it says now."""
+    p = store.partition("player_stats", "nfl", 2025, 3, base=tmp_path)
+    p.parent.mkdir(parents=True)
+    p.write_bytes(b"PAR1\x00\x00")                       # a header and no footer
+    with pytest.raises(FileExistsError, match="unreadable") as got:
+        store.write(_part(50.0), "player_stats", "nfl", 2025, 3, base=tmp_path)
+    assert "different data" not in str(got.value)
+    assert "discard" in str(got.value), "replace=True is offered only as a discard, said so"
+    assert p.read_bytes() == b"PAR1\x00\x00", "refusing does not touch the bytes"
+
+
+def test_a_partition_write_is_crash_atomic(tmp_path, monkeypatch):
+    """A `store.write` that dies mid-write leaves the previous partition readable and no
+    partial file in the tree the catalog globs."""
+    from hub import atomic
+    store.write(_part(50.0), "player_stats", "nfl", 2025, 3, base=tmp_path)
+    p = store.partition("player_stats", "nfl", 2025, 3, base=tmp_path)
+
+    class Died(RuntimeError):
+        pass
+
+    def die(self, path, *a, **k):
+        Path(path).write_bytes(b"PAR1\x00\x00")
+        raise Died()
+
+    monkeypatch.setattr(pl.DataFrame, "write_parquet", die)
+    with pytest.raises(Died):
+        store.write(_part(72.0), "player_stats", "nfl", 2025, 3, base=tmp_path, replace=True)
+    monkeypatch.undo()
+    assert pl.read_parquet(p)["rec_yards"].to_list() == [50.0]
+    assert [q.name for q in p.parent.iterdir()] == ["part.parquet"]
+    assert not [q for q in tmp_path.rglob("*") if q.name.endswith(atomic.SUFFIX)]

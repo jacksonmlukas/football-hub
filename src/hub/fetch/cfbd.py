@@ -61,7 +61,7 @@ from typing import Any, NamedTuple
 
 import polars as pl
 
-from hub import jsonio
+from hub import atomic, jsonio
 from hub.config import SEASON_AHEAD
 from hub.contracts import CFBD_GAMES, CFBD_LINES, Contract
 from hub.paths import SITE, STATE_DIR
@@ -199,8 +199,7 @@ def _record_call(path: Path | None = None) -> None:
     except Exception:
         counts = {}
     counts[_month_key()] = int(counts.get(_month_key(), 0)) + 1
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(counts, indent=2, sort_keys=True))
+    atomic.write_text(p, json.dumps(counts, indent=2, sort_keys=True))
 
 
 def quota_report(path: Path | None = None) -> int:
@@ -300,7 +299,7 @@ def _record_capture(path: Path) -> None:
     """
     payload = {"captured_at": jsonio.stamp()}
     try:
-        _capture_path(path).write_text(jsonio.dumps(payload, indent=2))
+        atomic.write_text(_capture_path(path), jsonio.dumps(payload, indent=2))
     except OSError:
         pass
 
@@ -455,8 +454,7 @@ def bulk(endpoint: str, year: int, week: int | None = None, *,
         _record_call(quota_path)
 
     df = pl.DataFrame(payload, infer_schema_length=None) if payload else pl.DataFrame()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(path)
+    atomic.write_parquet(df, path)
     _record_capture(path)
     return df
 
@@ -698,8 +696,7 @@ def record_run(season: int, week_no: int | None, *,
                "limit": FREE_TIER_MONTHLY},
     )
     p = Path(path or STATUS)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(jsonio.dumps(got, indent=2))
+    atomic.write_text(p, jsonio.dumps(got, indent=2))
     # The reason already opens with what happened -- "nothing was fetched: ...", "week 2 of
     # 2026 was read and came back empty" -- so prefixing it with a verdict only stutters.
     print(f"  cfbd: {reason or f'week {week_no} fetched, ' + summary}; recorded in {p}")

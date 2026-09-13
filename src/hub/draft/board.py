@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import polars as pl
 
-from hub import jsonio, store
+from hub import atomic, jsonio, store
 from hub.config import (
     DRAFTED_POSITIONS,
     SEASON_AHEAD,
@@ -1372,9 +1372,7 @@ def _persist(board: pl.DataFrame, *, out: Path | None = None,
     # real board instead. That happened.
     out = out if out is not None else OUT
     path = path if path is not None else BOARD_PARQUET
-    path.parent.mkdir(parents=True, exist_ok=True)
-    out.mkdir(parents=True, exist_ok=True)
-    board.write_parquet(path)
+    atomic.write_parquet(board, path)
     # Beside the board, not at the store's default: a caller that redirected the board has
     # redirected its archive, or a test's synthetic frames pile up in the real one -- 906
     # of them did (#244). In production `path.parent` is `data/processed`, the store.
@@ -1389,7 +1387,7 @@ def _persist(board: pl.DataFrame, *, out: Path | None = None,
     # tidiness -- with no stamp the board panel was *never* stale and could not be aged, so a
     # board built four days ago and one built this morning looked identical to the page, on
     # the artifact whose freshness matters most on draft night (issue #107).
-    out.joinpath("draft_board.json").write_text(jsonio.dumps(
+    atomic.write_text(out / "draft_board.json", jsonio.dumps(
         jsonio.artifact("draft_board", "draft_board.parquet", board.head(300).to_dicts())))
 
 

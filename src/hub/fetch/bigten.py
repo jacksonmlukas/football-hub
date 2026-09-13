@@ -77,7 +77,7 @@ from urllib.parse import urljoin, urlparse
 
 import polars as pl
 
-from hub import jsonio
+from hub import atomic, jsonio
 from hub.config import SEASON_AHEAD
 from hub.contracts import BIGTEN_CAPTURES, CFBD_LINES
 from hub.fetch import cfbd
@@ -398,8 +398,7 @@ def read_index(path: Path | None = None) -> pl.DataFrame:
 
 def _write_index(df: pl.DataFrame, path: Path) -> None:
     df = BIGTEN_CAPTURES.validate(df)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(jsonio.dumps(df.to_dicts(), indent=1) + "\n")
+    atomic.write_text(path, jsonio.dumps(df.to_dicts(), indent=1) + "\n")
 
 
 @dataclass
@@ -442,8 +441,7 @@ def _keep(cap: Capture, *, kind: str, url: str, label: str | None,
     target = archive / rel
     new = digest not in seen
     if new:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
+        atomic.write_bytes(target, data)
         seen.add(digest)
     cap.rows.append({
         "deadline": deadline_id(cap.at), "deadline_name": cap.deadline.name,
@@ -576,8 +574,7 @@ def _snapshot_lines(cap: Capture, *, lines_dir: Path, quota_path: Path | None,
                          "cached week was served instead")
     # /GUARD
     target = lines_dir / str(cap.season) / f"w{cap.week:02d}" / f"{deadline_id(cap.at)}.parquet"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(target)
+    atomic.write_parquet(df, target)
     data = target.read_bytes()
     digest = _sha(data)
     cap.rows.append({
@@ -702,8 +699,7 @@ def record_run(cap: Capture | None, *, why: str | None = None, season: int = SEA
                "limit": cfbd.FREE_TIER_MONTHLY},
     )
     p = Path(path or STATUS)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(jsonio.dumps(got, indent=2))
+    atomic.write_text(p, jsonio.dumps(got, indent=2))
     said = reason or (f"deadline {deadline['id']} captured: {documents['seen']} documents, "
                       f"{documents['new']} new; lines {lines['rows']} rows")
     print(f"  bigten: {said}; {len(missed)} deadlines missed so far; recorded in {p}")
