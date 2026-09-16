@@ -137,10 +137,7 @@ LIMITATIONS = (
     "the simulator's constants are FITTED ON THE SEASONS THIS REPLAYS: the weekly spread "
     "law and skew (predict.WEEKLY_K, WEEKLY_SKEW; 2022-25), the teammate correlation "
     "(predict.TEAMMATE_RHO; 2022-25), the pick-noise line (availability.PICK_NOISE_*; this "
-    "league's 2022-25 drafts), the talent dispersion (predict.TALENT_CV; 2023-25) and, since "
-    "#298, the imputation error (predict.IMPUTE_CV; rookies on the 2021-25 boards -- read "
-    "by the championship-equity exhibit, not by arm B's season sims, which draw every row "
-    "at the observed spread) -- and "
+    "league's 2022-25 drafts) and the talent dispersion (predict.TALENT_CV; 2023-25) -- and "
     "the default --seasons is 2022,2023,2024,2025. Arm B's season sims therefore carry "
     "in-sample constants on every held-out season, which flatters the arm that lost: the "
     "headline is a lower bound on how badly it loses out of sample, not the out-of-sample "
@@ -149,7 +146,10 @@ LIMITATIONS = (
     "three companions read with them (IMPUTE_CV_BY_POS, WEEKLY_K_POOLED, "
     "WEEKLY_SKEW_POOLED; eleven keys in hub.holdout.HELD_OUT), that set refits -- the "
     "weekly law and the teammate correlation, as of 2026-09-13 -- and which it still reads "
-    "shipped, and why",
+    "shipped, and why. The imputation error (predict.IMPUTE_CV; rookies on the 2021-25 "
+    "boards, #298) is in HELD_OUT for completeness and is NOT one of the simulator's: arm "
+    "B's season sims draw every row at the observed spread and never read the imputed "
+    "flag; its one reader is the championship-equity exhibit",
 )
 
 def score_roster(names: Sequence[str], pos: Sequence[str], realised: pl.DataFrame,
