@@ -827,11 +827,14 @@ def test_a_grid_with_no_fixture_key_prices_teams_and_draws_nothing():
     assert survivor.coverage(g, [1]).covered == [1]
 
 
-# --- the grid is rated where no live price exists (#218) ----------------------------------
+# --- the grid is the betting market's number on every row (#299) ---------------------------
 #
-# The rule is `hub.models.quarterback`'s and the seam is `hub.models.ratings.rated_games`;
-# what is held here is that survivor reads the same seam, so a game the weekly prediction
-# adjusts is the same game, adjusted the same way, in the survivor plan.
+# From #218 to #299 the seam `hub.models.ratings.rated_games` quarterback-adjusted a game the
+# staleness field marked as having no live price, and the grid carried the adjustment. #299
+# pulled it. What is held here is that survivor still reads the one seam -- a game the weekly
+# prediction prices is the same game, priced the same way, in the survivor plan -- and that
+# nothing on the grid or in the CLI says anything about an adjustment, whatever nfeloqb file
+# is cached where the seam used to look.
 
 def _qb_state(cache):
     import json
@@ -847,11 +850,12 @@ def _qb_state(cache):
     (cache / "nfeloqb" / nfeloqb.FILE).write_text(text)
 
 
-def test_a_week_priced_only_by_the_moving_field_is_rated_from_the_quarterback_state(tmp_path,
-                                                                                    monkeypatch):
-    """LV's starter in the fixture is a fresh backup; the game is priced from the moving
-    field, which nothing polls. The away side is worse by 13.2 points less its own gap, and
-    KC's win probability rises to say so. The row carries the adjustment and its source."""
+def test_a_week_priced_only_by_the_moving_field_is_the_betting_markets_number(tmp_path,
+                                                                             monkeypatch):
+    """LV's starter in the cached fixture is a fresh backup and the game is priced from the
+    moving field, which nothing polls -- the row #218 moved. Since #299 KC's win probability
+    is the conversion of the moving field's own 3.0, and the grid carries no adjustment
+    column to say otherwise."""
     import hub.fetch.nflverse as nflverse
     from hub.models.market import MARGIN_SD, normal_cdf
     sched = pl.DataFrame({"game_id": ["2026_09_LV_KC"], "season": [2026], "week": [9],
@@ -862,14 +866,14 @@ def test_a_week_priced_only_by_the_moving_field_is_rated_from_the_quarterback_st
     grid = survivor.grid_from_schedule(2026, cache=tmp_path / "cache",
                                        at=dt.datetime(2026, 9, 12), base=tmp_path)
     p = dict(zip(grid["team"].to_list(), grid["win_prob"].to_list(), strict=True))
-    adj = grid.filter(pl.col("team") == "KC")["qb_adjustment"][0]
-    assert adj > 0
-    assert p["KC"] == pytest.approx(normal_cdf((3.0 + adj) / MARGIN_SD))
-    assert grid["adjusted_by"].to_list() == ["nfeloqb", "nfeloqb"]
+    assert p["KC"] == pytest.approx(normal_cdf(3.0 / MARGIN_SD))
+    assert "qb_adjustment" not in grid.columns and "adjusted_by" not in grid.columns
+    assert grid["close_spread"].to_list() == [3.0, 3.0]
 
 
-def test_survivor_and_the_weekly_prediction_adjust_a_game_the_same_way(tmp_path, monkeypatch):
-    """The claim the seam exists for, asserted across the two readers."""
+def test_survivor_and_the_weekly_prediction_agree_with_a_state_cached(tmp_path, monkeypatch):
+    """The claim the seam exists for, asserted across the two readers with the nfeloqb
+    fixture cached where #218's seam read it: neither reader reads it now."""
     import hub.fetch.nflverse as nflverse
     from hub.models import ratings
     sched = pl.DataFrame({"game_id": ["2026_09_LV_KC"], "season": [2026], "week": [9],
@@ -882,18 +886,19 @@ def test_survivor_and_the_weekly_prediction_adjust_a_game_the_same_way(tmp_path,
     preds = ratings.fit(2026, 9, at=at, base=tmp_path, cache=tmp_path / "cache")
     home = grid.filter(pl.col("team") == "KC")
     assert home["win_prob"][0] == pytest.approx(preds["home_win_prob"][0])
-    assert home["qb_adjustment"][0] == pytest.approx(preds["qb_adjustment"][0])
+    assert home["close_spread"][0] == preds["margin_mean"][0] == 3.0
 
 
-def test_the_survivor_cli_reports_the_change_once(capsys, monkeypatch):
+def test_the_survivor_cli_says_nothing_about_an_adjustment(capsys, monkeypatch):
+    """From #218 to #299 the CLI printed the adjustment's report line once per plan. A grid
+    carrying the two columns an older seam wrote is planned without comment."""
     g = _grid([(1, "A", 0.7), (1, "B", 0.3)]).with_columns(
         pl.lit("g1").alias("game_id"), pl.lit(3.0).alias("close_spread"),
         pl.lit(2.5).alias("qb_adjustment"), pl.lit("nfeloqb").alias("adjusted_by"))
     monkeypatch.setattr(survivor, "grid_from_schedule", lambda season, cache=None: g)
     assert survivor.main(["--season", "2026", "--weeks", "1"]) == 0
     out = capsys.readouterr().out
-    assert "quarterback adjustment: 1 of 1 priced games touched" in out
-    assert "2.50 points" in out
+    assert "quarterback" not in out and "adjust" not in out
 
 
 # --- the grid carries which source priced each row (#281) --------------------------------

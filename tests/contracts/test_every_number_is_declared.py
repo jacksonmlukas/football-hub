@@ -57,8 +57,7 @@ SIGNATURE_DEFAULTS: dict[str, str] = {
 # each is a declaration in the tree, held by name.
 SHAPES = ("config.REG_SEASON_WEEKS", "league.PLAYOFF_TEAMS", "league.PLAYOFF_ROUNDS",
           "optimize.DEFAULT_ROUNDS", "cohort.ROUNDS", "cohort.DRAFTS", "nfeloqb.COMMIT",
-          "board.MIN_GAMES", "regression.MIN_GAMES", "quarterback.ELO_PER_POINT",
-          "quarterback.STALE_AFTER_DAYS")
+          "board.MIN_GAMES", "regression.MIN_GAMES", "schedule.STALE_AFTER_DAYS")
 
 
 def _holds_a_float(node: ast.AST) -> bool:

@@ -1,13 +1,14 @@
 """The quarterback adjustment (#218, restated under #268): the source's own adjustment on
 the latest row, in spread points, applied only where `price_source` marks no live price.
+Since #299 it is read by `hub.models.starter_change` and by nothing the product ships; what
+is held here is the module's own behaviour, which the harness replays.
 
-Since #281 the label is `hub.schedule.priced_games`'s -- `live`, `stale` or `schedule`,
-decided there by `quarterback.live_price` -- and `apply` reads it rather than the clock.
-Since #297 the cut reads the age of the capture that priced the row, `priced_at`, not the
-quote's last move; the expression is held here (exactly the threshold, a second past it,
-a quote unmoved ten days but polled today) and again in `test_schedule.py`, where it is
-applied. The fixtures for `apply` arrive labelled, and what is held is that the label alone
-decides which rows move.
+Since #281 the label is `hub.schedule.priced_games`'s -- `live`, `stale` or `schedule` --
+and `apply` reads it rather than the clock. The cut that decides the label,
+`schedule.live_price` over the capture that priced the row (#297), was declared in this
+module until #299 and is held in `test_schedule.py`, where it is declared and applied. The
+fixtures for `apply` arrive labelled, and what is held is that the label alone decides
+which rows move.
 
 Three things are held one test each: a game with a live price is byte-identical before and
 after; the adjustment is `qb_adj / ELO_PER_POINT` and nothing else enters it; tenure does
@@ -169,43 +170,6 @@ def test_a_snapshot_labelled_stale_is_not_a_live_price():
     assert after["adjusted_by"][0] == "nfeloqb"
 
 
-def test_the_cut_is_one_expression_over_the_poll_age():
-    """`live_price` is what `hub.schedule.priced_games` applies (#281), and since #297 it
-    reads the age of the capture that priced the row -- `priced_at`, the last poll at or
-    before the moment -- not the quote's last move. A capture exactly the threshold old is
-    live, a second past it is not, and a row with no capture cannot be shown to be one."""
-    edge = AT - dt.timedelta(days=qb.STALE_AFTER_DAYS)
-    frame = pl.DataFrame({"priced_at": pl.Series(
-        [edge, edge - dt.timedelta(seconds=1), None], dtype=pl.Datetime)})
-    assert frame.select(qb.live_price(AT).alias("live"))["live"].to_list() == [
-        True, False, False]
-
-
-def test_a_quote_unmoved_for_ten_days_but_polled_today_is_live():
-    """#251's finding, the case that decided #297: a liquid line that has not moved in ten
-    days is still a live price when the poller returned it this morning. On the Actions
-    runner every quote is minutes old, so a cut over the quote's last move could never
-    fire there and fired on exactly these lines on the laptop."""
-    frame = pl.DataFrame({"priced_at": pl.Series([AT - dt.timedelta(hours=1)],
-                                                 dtype=pl.Datetime),
-                          "unmoved_since": pl.Series([AT - dt.timedelta(days=10)],
-                                                     dtype=pl.Datetime),
-                          "polls_unmoved": pl.Series([30], dtype=pl.Int64)})
-    assert frame.select(qb.live_price(AT).alias("live"))["live"].to_list() == [True]
-
-
-def test_a_quote_polled_eight_days_ago_is_stale_whatever_its_last_move():
-    """The other side of the same cut: a capture eight days old is past `STALE_AFTER_DAYS`,
-    and it is the poll age that says so. Its run of unchanged polls began at that same
-    capture, so a cut over the last move would agree here; the test holds the poll age."""
-    frame = pl.DataFrame({"priced_at": pl.Series([AT - dt.timedelta(days=8)],
-                                                 dtype=pl.Datetime),
-                          "unmoved_since": pl.Series([AT - dt.timedelta(days=8)],
-                                                     dtype=pl.Datetime),
-                          "polls_unmoved": pl.Series([1], dtype=pl.Int64)})
-    assert frame.select(qb.live_price(AT).alias("live"))["live"].to_list() == [False]
-
-
 def test_the_label_decides_and_the_clock_does_not():
     """Two rows with the same frozen `unmoved_since`, one labelled live and one stale: only
     the label moves. Re-deriving the cut here is how the two consumers would drift."""
@@ -299,11 +263,15 @@ def test_the_report_says_when_nothing_was_touched():
 
 # --- the stated constants --------------------------------------------------------------------
 
-def test_the_constants_identify_the_model_version():
-    """Two numbers, and no third: the conversion and the staleness threshold. The decay
-    and the value-unit scale left with the estimator under #268, and a digest that still
-    hashed them would be claiming a difference between two runs that compute the same
+def test_no_constant_here_identifies_the_model_version():
+    """Since #299 no published prediction reaches this module, so nothing it declares is in
+    the digest: `ELO_PER_POINT` is argued out by name as the harness's conversion, and
+    `STALE_AFTER_DAYS` -- the one number here a prediction still reads, through the label
+    -- is declared where the cut is applied, `hub.schedule`. A digest that still hashed a
+    number here would be claiming a difference between two runs that compute the same
     thing."""
+    from hub import declare
     from hub.config import fitted_constants
-    got = {k for k in fitted_constants() if k.startswith("quarterback.")}
-    assert got == {"quarterback.ELO_PER_POINT", "quarterback.STALE_AFTER_DAYS"}
+    assert not {k for k in fitted_constants() if k.startswith("quarterback.")}
+    assert "hub.models.starter_change" in declare.excluded()["quarterback.ELO_PER_POINT"]
+    assert "schedule.STALE_AFTER_DAYS" in fitted_constants()

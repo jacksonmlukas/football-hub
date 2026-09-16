@@ -65,8 +65,9 @@ def test_a_dated_snapshot_prices_the_game_rather_than_the_moving_field(sched, tm
 #
 # The coalesce used to rank any snapshot above the moving field, so a quote frozen for
 # twelve days outranked a field upstream still refreshes. The cut between live and stale is
-# `hub.models.quarterback.live_price` -- declared once, read here to label the row and by
-# the quarterback layer to decide which rows it may move, so the two cannot disagree. Since
+# `schedule.live_price` -- declared once and applied here to label the row; until #299 it
+# was declared in `hub.models.quarterback`, which reads the label to decide which rows it
+# may move, and it came here when the adjustment left the published path. Since
 # #297 it reads the age of the capture that priced the row, `priced_at`, and not how long
 # the quote had stood.
 
@@ -97,18 +98,29 @@ def test_a_stale_snapshot_with_no_moving_field_still_prices_the_game_and_says_st
     assert got["priced_at"].to_list() == [dt.datetime(2026, 8, 20)]
 
 
-def test_the_cut_between_live_and_stale_is_the_quarterback_layers(sched, tmp_path):
+def test_the_cut_between_live_and_stale_is_declared_once_here(sched, tmp_path):
     """A capture exactly `STALE_AFTER_DAYS` old is live; a second past it is not. The
-    number is `hub.models.quarterback.STALE_AFTER_DAYS` and nothing here restates it."""
-    from hub.models import quarterback
+    number is `schedule.STALE_AFTER_DAYS` and nothing here restates it."""
     at = dt.datetime(2026, 9, 12, 12)
-    edge = at - dt.timedelta(days=quarterback.STALE_AFTER_DAYS)
+    edge = at - dt.timedelta(days=schedule.STALE_AFTER_DAYS)
     sched([("a", 2, 3.0, None), ("b", 2, 3.0, None)])
     _snap(tmp_path, 2026, 2, [("a", 6.5)], edge)
     _snap(tmp_path, 2026, 2, [("b", 6.5)], edge - dt.timedelta(seconds=1))
     got = schedule.priced_games(2026, at=at, base=tmp_path).sort("game_id")
     assert got["price_source"].to_list() == ["live", "schedule"]
     assert got["close_spread"].to_list() == [6.5, 3.0]
+
+
+def test_the_cut_is_one_expression_over_the_poll_age():
+    """The expression itself, off any store: a capture exactly the threshold old is live, a
+    second past it is not, and a row with no capture cannot be shown to be one and is not.
+    Held in `test_quarterback.py` until #299, when the declaration moved here."""
+    at = dt.datetime(2026, 9, 12, 12)
+    edge = at - dt.timedelta(days=schedule.STALE_AFTER_DAYS)
+    frame = pl.DataFrame({"priced_at": pl.Series(
+        [edge, edge - dt.timedelta(seconds=1), None], dtype=pl.Datetime)})
+    assert frame.select(schedule.live_price(at).alias("live"))["live"].to_list() == [
+        True, False, False]
 
 
 def test_a_quote_unmoved_for_ten_days_but_polled_today_is_a_live_price(sched, tmp_path):
@@ -160,7 +172,8 @@ def test_a_book_joining_an_unmoved_quote_does_not_make_it_live(sched, tmp_path):
 
 
 def test_the_two_consumers_of_the_cut_agree_row_by_row(sched, tmp_path):
-    """The label this module writes and the rows `hub.models.quarterback` moves are one
+    """The label this module writes and the rows `hub.models.quarterback` -- the harness's
+    reader since #299, held here so the label stays one it can read -- moves are one
     decision: every row not labelled live is adjusted, every row labelled live is not.
     Since #297 the two rows the old and new cuts disagree on are held too: a quote unmoved
     ten days but polled this morning is live and untouched; one last polled eight days ago
@@ -460,7 +473,7 @@ def test_the_league_column_is_written_by_the_loader_and_not_by_the_argument():
 # --- how long the snapshot's quote has stood still (#210, carried for a reader) ---------
 #
 # `hub.fetch.odds.staleness` measures; this module carries the measurement onto the row.
-# Until #297 `hub.models.quarterback.live_price` read it; the cut now reads the capture
+# Until #297 `live_price` (then `hub.models.quarterback`'s) read it; the cut now reads the capture
 # itself, and these columns are a measurement on the row that decides nothing.
 
 def test_a_snapshot_priced_row_carries_how_long_its_quote_has_stood(sched, tmp_path):

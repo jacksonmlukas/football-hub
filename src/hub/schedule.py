@@ -40,9 +40,11 @@ measured the archive: every week from 2 out had returned the identical quote at 
 for the full twelve days it spanned. A quote no book has touched across a slate's worth of
 news is a posted lookahead, and ranking it above a field upstream still refreshes labelled
 it as though it were priced. So `price_source` is three-way -- `live`, `stale`, `schedule`
--- decided by the one cut `hub.models.quarterback.live_price` declares: a live snapshot
-prices the game; a stale one yields to the moving field where that field has a number and
-prices the game, labelled stale, where it does not.
+-- decided by the one cut `live_price` below declares: a live snapshot prices the game; a
+stale one yields to the moving field where that field has a number and prices the game,
+labelled stale, where it does not. Until #299 the cut was declared in
+`hub.models.quarterback`, the layer that read the label to decide which rows it could move;
+the adjustment left the published path and the cut came here, to the one place it is applied.
 
 **What the cut reads is the poll's age, since #297.** #281 read the staleness field -- how
 long the quote had stood -- and #251 found that wrong for this consumer on the runner's own
@@ -55,7 +57,7 @@ decide nothing.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
@@ -63,10 +65,49 @@ from zoneinfo import ZoneInfo
 import polars as pl
 
 from hub import store
+from hub.declare import chosen
 from hub.fetch import nflverse, odds
-from hub.models import quarterback
 
 ET = ZoneInfo("America/New_York")
+
+# A snapshot whose capture is older than this is not a live price: the poll age past which
+# a snapshot is `stale`. STATED CHOICE from #210's measurement on 2026-09-11: the current
+# week's median run was 1.8 days unmoved and every week from 2 out had stood the full 12.2
+# days of the archive, so a week separates the two populations with margin on both sides.
+# Until #297 the clock ran from the quote's last move; it now runs from the last capture
+# (#251: a liquid line nobody has had reason to move in a week is still a live price when
+# the poller returned it this morning, and on the Actions runner every capture is minutes
+# old). Declared in `hub.models.quarterback` from #218 to #299 and moved here with the cut
+# when the adjustment left the published path; the number is unchanged, its digest key is
+# now `schedule.STALE_AFTER_DAYS`. An unpriced game and one priced from the moving field,
+# which nothing polls, are not live prices either.
+STALE_AFTER_DAYS = chosen(7)
+
+
+def live_price(at: datetime) -> pl.Expr:
+    """Whether a snapshot is a live price at `at`: the capture that priced the row -- the
+    last poll at or before `at`, on the row as `priced_at` -- is within `STALE_AFTER_DAYS`.
+
+    The one declaration of the cut, applied in exactly one place -- `priced_games` below,
+    which labels every row `live`, `stale` or `schedule` and lets a stale snapshot lose to
+    the moving field (#281). Every consumer then reads the label rather than the clock.
+
+    **The clock is the poll's, not the quote's (#297, decided in #251).** Until #297 this
+    read `unmoved_since`, the start of the run of polls returning the same number. That
+    measured the wrong thing: a liquid line nobody has had reason to move in ten days is
+    still a live price when the poller returned it this morning, and on the Actions runner
+    every capture is minutes old, so the cut could never fire there and fired on exactly
+    those lines on the laptop. It also made the label depend on what
+    `hub.fetch.odds._quote_moved` counts as a move -- a book joining an otherwise frozen
+    quote restarted the run. The staleness columns still ride on the row for a reader;
+    nothing here reads them.
+
+    A row with no capture is not a snapshot -- every snapshot is dated -- and cannot be
+    shown to be a live price, so it is not one. `priced_games` never asks about such a
+    row: it applies this only where a snapshot priced the candidate.
+    """
+    captured = pl.col("priced_at")
+    return (captured >= pl.lit(at - timedelta(days=STALE_AFTER_DAYS))).fill_null(False)
 
 
 def _kickoff() -> pl.Expr:
@@ -161,13 +202,13 @@ def priced_games(season: int, *, at: datetime | None = None, cache: Path | None 
     keeps a null `close_spread` and a null source: absent from the plan rather than guessed
     at.
 
-    `price_source` is `live` (a snapshot captured within
-    `hub.models.quarterback.STALE_AFTER_DAYS` of `at` -- the poll's age, not the quote's
-    last move, since #297), `schedule` (the moving field: no snapshot, or a snapshot gone
-    stale), or `stale` (a stale snapshot and nothing else to price the game from -- used,
-    and said so). The staleness columns `polls_unmoved` and `unmoved_since` describe the
-    snapshot candidate whichever way it went, so a row the moving field priced over a
-    frozen snapshot still shows how long that quote had stood; they decide nothing.
+    `price_source` is `live` (a snapshot captured within `STALE_AFTER_DAYS` of `at` -- the
+    poll's age, not the quote's last move, since #297), `schedule` (the moving field: no
+    snapshot, or a snapshot gone stale), or `stale` (a stale snapshot and nothing else to
+    price the game from -- used, and said so). The staleness columns `polls_unmoved` and
+    `unmoved_since` describe the snapshot candidate whichever way it went, so a row the
+    moving field priced over a frozen snapshot still shows how long that quote had stood;
+    they decide nothing.
 
     `at` defaults to now, in UTC and naive, which is how `hub.fetch.odds` stamps
     `captured_at`. Passing a *local* `datetime.now()` silently asks the as-of question hours
@@ -215,14 +256,14 @@ def priced_games(season: int, *, at: datetime | None = None, cache: Path | None 
     stale = odds.staleness_as_of(moment, season, base)
     snaps = snaps.join(stale, left_on=["game_id", "priced_at"],
                        right_on=["game_id", "captured_at"], how="left")
-    # The cut is the quarterback layer's, applied here and read there (#281), over
+    # The cut is `live_price` above, declared once and applied here (#281), over
     # `priced_at` -- the last capture at or before `moment` (#297). The branch order is the
     # ranking: a live snapshot first, then the moving field, then a stale snapshot only
     # where the moving field has nothing -- which is what stops a frozen lookahead
     # outranking a field upstream still refreshes.
     snapshot = pl.col("snapshot_spread").is_not_null()
     moving = pl.col("schedule_spread").is_not_null()
-    source = (pl.when(snapshot & quarterback.live_price(moment)).then(pl.lit("live"))
+    source = (pl.when(snapshot & live_price(moment)).then(pl.lit("live"))
                 .when(moving).then(pl.lit("schedule"))
                 .when(snapshot).then(pl.lit("stale"))
                 .otherwise(None))

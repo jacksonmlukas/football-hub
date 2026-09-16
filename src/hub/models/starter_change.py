@@ -17,7 +17,10 @@ summer.
 over event games, log-loss of the frozen price moved by the shipped seam --
 `nfeloqb.state(rows, as_of=<the week's first game day>)` handed to
 `hub.models.quarterback.apply` on a row labelled as having no live price, exactly as
-`ratings._rated_by_week` rates a played week -- against the frozen price unmoved. That state
+`ratings._rated_by_week` rated a played week until #299 pulled the adjustment from the
+published path -- against the frozen price unmoved. Since #299 this module is the
+adjustment's only reader (`tests/contracts/test_the_quarterback_adjustment_is_not_a_dependency.py`),
+and the seam it replays is the one that would ship again if the gate cleared. That state
 holds every team's previous game, so it prices the departing starter: the source carries a
 new starter on the row of his first game and no earlier, and a replay cannot know him
 before it. An **oracle** arm with the arriving starter known is reported beside it as a
@@ -332,13 +335,14 @@ def _adjusted(frame: pl.DataFrame, rows: pl.DataFrame, tg: pl.DataFrame) -> pl.D
 
     **`adjusted` is the gate's arm and it is the shipped seam**: `nfeloqb.state(rows,
     as_of=<the week's first game day>)` -- rows strictly before that day (#272) -- handed
-    to `quarterback.apply`, exactly as `hub.models.ratings._rated_by_week` rates a week that
-    has kicked off. That state's latest row for every team is its *previous* game, so on an
-    event game the arm prices the departing starter's adjustment: the source's file carries
-    a new starter on the row of his first game and on no earlier row, and the replay cannot
-    know him before it. Until the review of 2026-09-13 this arm read the event game's own
-    row -- the arriving starter known with certainty -- which is a better estimator than the
-    one being gated, and a `diff` biased toward ADOPT.
+    to `quarterback.apply`, exactly as `hub.models.ratings._rated_by_week` rated a week that
+    had kicked off until #299 pulled the adjustment. That state's latest row for every team
+    is its *previous* game, so on an event game the arm prices the departing starter's
+    adjustment: the source's file carries a new starter on the row of his first game and on
+    no earlier row, and the replay cannot know him before it. Until the review of
+    2026-09-13 this arm read the event game's own row -- the arriving starter known with
+    certainty -- which is a better estimator than the one being gated, and a `diff` biased
+    toward ADOPT.
 
     **`oracle` is a diagnostic and not the gate**: the same estimator with the week's own
     rows as the state, the arriving starter known. It answers what the mechanism could do

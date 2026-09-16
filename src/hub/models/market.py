@@ -94,6 +94,12 @@ class MarketBaseline:
         # -- so the source lands in the version string rather than only in a column beside it.
         # Optional: a caller with one source and nothing to distinguish keeps the plain
         # version, which is what `store.verify` and every existing test do.
+        # The model string is the baseline's own name on every row. From #218 to #299 a row
+        # the quarterback layer had moved carried `market_baseline-qb` here and `-qb` on
+        # the version (#284), keyed off an `adjusted_by` column on the slate; #299 pulled
+        # the adjustment and this writer no longer spells the suffix. The rows already
+        # written under it stay in the track record, and `store.predictions(family=True)`
+        # still reads `name-<suffix>` as the family, so they are scored beside these.
         model: pl.Expr = pl.lit(self.name)
         if "price_source" in priced.columns:
             # One expression, used twice. Filling only the version would let a row say
@@ -104,21 +110,6 @@ class MarketBaseline:
             provenance = [source.alias("price_source")]
             if "priced_at" in priced.columns:
                 provenance.append(pl.col("priced_at").cast(pl.Datetime))
-            # A spread the quarterback layer moved (#218) is not the passthrough of the
-            # number it was moved from, and the version says so on exactly those rows:
-            # `-qb` is appended where `adjusted_by` names a source and nowhere else, so a
-            # row a live price protected carries the string it always did. The two columns
-            # ride along, null on the protected rows, which is how a reader tells "not
-            # adjusted" from "adjusted by nothing". The model string moves the same way
-            # (#284): `market_baseline` is a claim that the betting market set the number,
-            # and on an adjusted row it did not, so that row is named by the column that
-            # names the model and not only by a suffix on the version.
-            if "adjusted_by" in priced.columns:
-                moved = pl.col("adjusted_by").is_not_null()
-                version = pl.when(moved).then(pl.format("{}-qb", version)).otherwise(version)
-                model = pl.when(moved).then(pl.lit(f"{self.name}-qb")).otherwise(pl.lit(self.name))
-                provenance += [pl.col("qb_adjustment").cast(pl.Float64),
-                               pl.col("adjusted_by").cast(pl.Utf8)]
         else:
             version, provenance = pl.lit(self.version), []
 
