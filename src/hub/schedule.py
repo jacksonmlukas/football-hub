@@ -311,9 +311,10 @@ PROVENANCE: dict[str, Provenance] = {
     "live": Provenance(reader_can_obtain=False, why=_SNAPSHOT_WHY),
     "stale": Provenance(
         reader_can_obtain=False,
-        why=(_SNAPSHOT_WHY + " And this quote had stood unmoved past the cut that makes a "
-             "snapshot a live price; it priced the game because the moving field had no "
-             "number for it (#281).")),
+        why=(_SNAPSHOT_WHY + " And no poll had returned this game within the cut that "
+             "makes a snapshot a live price -- the capture was more than "
+             "`STALE_AFTER_DAYS` old, whether or not the quote had moved (#297); it "
+             "priced the game because the moving field had no number for it (#281).")),
     "schedule": Provenance(
         reader_can_obtain=False,
         why=("the source is public, but the value has moved. nflverse keeps one current "

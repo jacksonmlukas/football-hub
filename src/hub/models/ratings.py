@@ -16,8 +16,8 @@ two cannot be mistaken for each other. Track A -- the Bayesian state-space ratin
 replaces what `forecaster()` returns and nothing else.
 
 **One exception, since #218, and it is narrow on purpose.** Where `price_source` marks a
-game as having no live price -- `stale`, a snapshot quote that has stood untouched for more
-than `hub.models.quarterback.STALE_AFTER_DAYS` and has nothing else to yield to, or
+game as having no live price -- `stale`, a snapshot no poll has returned within
+`hub.models.quarterback.STALE_AFTER_DAYS` (#297) and that has nothing else to yield to, or
 `schedule`, the moving field that nothing polls (#281) -- the number handed to the
 forecaster is quarterback-adjusted from `hub.fetch.nfeloqb`'s published state, and the row
 says so: `adjusted_by` and `qb_adjustment` are filled, and the version string gains `-qb`.
