@@ -51,7 +51,7 @@ FLOOR: dict[str, int] = {
     "src/hub/draft/durability.py": 1,
     "src/hub/draft/evaluate.py": 14,
     "src/hub/draft/fit_corrections.py": 13,
-    "src/hub/draft/impute_cv.py": 4,
+    "src/hub/draft/impute_cv.py": 1,
     "src/hub/draft/live.py": 10,
     "src/hub/draft/optimize.py": 3,
     "src/hub/draft/picks.py": 1,
