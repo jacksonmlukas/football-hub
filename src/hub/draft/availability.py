@@ -487,6 +487,24 @@ def sweep_ceilings(df: pl.DataFrame, ceilings: Sequence[int] = PICK_NOISE_SWEEP_
     return out
 
 
+def sweep_lines(rows: Sequence[dict[str, Any]]) -> list[str]:
+    """The sweep as the table the constants' comment carries. A ceiling the fitter fell
+    back on prints `--` and `not established` in the fitted cells: the prior it returned is
+    not a fit, and a table that printed 2.00 / 0.180 there would read as one."""
+    out = [f"  {'ceiling':>7} {'applied':>7} {'n':>5} {'a':>6} {'slope':>6} "
+           f"{'95% CI':>16} {'sigma@100':>10}"]
+    for r in rows:
+        mark = "  <- shipped" if r["ceiling"] == PICK_NOISE_FIT_CEILING else ""
+        if r["ci"] is None:
+            out.append(f"  {r['ceiling']:>7} {r['applied']:>7.0f} {r['n']:>5} {'--':>6} "
+                       f"{'--':>6} {'not established':>16} {'--':>10}{mark}")
+            continue
+        ci = f"[{r['ci'][0]:.3f}, {r['ci'][1]:.3f}]"
+        out.append(f"  {r['ceiling']:>7} {r['applied']:>7.0f} {r['n']:>5} {r['a']:>6.2f} "
+                   f"{r['b']:>6.3f} {ci:>16} {r['sigma_100']:>10.1f}{mark}")
+    return out
+
+
 def fit_espn_weight(league_id: int, years: list[int]) -> float:
     """Not identifiable from available data. Returns the prior, loudly.
 

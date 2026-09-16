@@ -467,6 +467,19 @@ def test_the_ceiling_can_be_handed_in_and_the_sweep_runs_every_cell():
         assert r["sigma_100"] == pytest.approx(r["a"] + 100 * r["b"])
 
 
+def test_an_unfit_ceiling_prints_not_established_and_never_the_prior():
+    """A ceiling with too few picks makes the fitter return its prior; the table says so in
+    every fitted cell rather than printing 2.00 / 0.180 as if they were measured."""
+    from hub.draft.availability import sweep_ceilings, sweep_lines
+    df = (_picks(a_true=3.0, b_true=0.2, n=100, drafts=4, pool=204, seed=5)
+          .with_columns(pl.col("pick").clip(1.0, 204.0)))
+    rows = sweep_ceilings(df, (12, 168), draws=50)
+    assert rows[0]["ci"] is None and rows[1]["ci"] is not None
+    thin, fit = sweep_lines(rows)[1:]
+    assert "not established" in thin and "2.00" not in thin and "0.180" not in thin
+    assert "not established" not in fit and "<- shipped" in fit
+
+
 # --- one base dispersion, three readers (issue #41) ------------------------
 
 def test_all_three_readers_resolve_to_the_same_base_at_scale_one():

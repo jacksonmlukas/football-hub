@@ -142,9 +142,11 @@ LIMITATIONS = (
     "in-sample constants on every held-out season, which flatters the arm that lost: the "
     "headline is a lower bound on how badly it loses out of sample, not the out-of-sample "
     "number. A hold-out is #290; since #294 `--holdout` replays each season under "
-    "conf/holdout/<season>.json and says on its run line which of the eight that set "
-    "refits (the weekly law and the teammate correlation, as of 2026-09-13) and which "
-    "it still reads shipped, and why",
+    "conf/holdout/<season>.json and says on its run line which of these eight, and of the "
+    "three companions read with them (IMPUTE_CV_BY_POS, WEEKLY_K_POOLED, "
+    "WEEKLY_SKEW_POOLED; eleven keys in hub.holdout.HELD_OUT), that set refits -- the "
+    "weekly law and the teammate correlation, as of 2026-09-13 -- and which it still reads "
+    "shipped, and why",
 )
 
 def score_roster(names: Sequence[str], pos: Sequence[str], realised: pl.DataFrame,
@@ -359,11 +361,20 @@ def _season_rows(season: int, board: pl.DataFrame, real: pl.DataFrame, *, n_draf
 
     try:
         with applied(season) if holdout else nullcontext():
-            return _season_rows_unguarded(
+            # Read inside the block, in the process that plays the season: the digest of
+            # the constants this season's rows were actually played under. Shipped, it is
+            # the stamp's `fitted_digest`; under hold-out it is the set's, and a worker that
+            # never applied its set would write the shipped one here and be seen.
+            from hub.config import fitted_digest
+            played_under = fitted_digest()
+            rows, report = _season_rows_unguarded(
                 season, board, real, n_drafts=n_drafts, seed=seed, my_slot=my_slot,
                 teams=teams, rounds=rounds, n_draft_sims=n_draft_sims,
                 n_season_sims=n_season_sims, opp_noise=opp_noise,
                 carry_correlation=carry_correlation, on_draft=on_draft, progress=progress)
+        for row in rows:
+            row["constants_digest"] = played_under
+        return rows, report
     except Exception as exc:
         # A worker's exception comes back through `future.result()` with nothing saying
         # which season raised it, and the serial loop's index is not in a traceback either.

@@ -14,16 +14,20 @@ leave-one-season-out, in three parts:
   shipped values after -- so the shipped constants, and every digest on the default path,
   are untouched;
 * the run line says, per season, which constants were refitted and which stayed shipped
-  and why, so a hold-out replay that could only refit some of the eight is read as that.
+  and why, so a hold-out replay that could only refit some of the eleven is read as that.
 
-**What is held out is the list, not "everything fitted".** `HELD_OUT` names the eight the
-LIMITATIONS entry names, with the pooled and by-position companions they ship beside, and
-`record` refuses any other key: a set that quietly carried `MIN_SKEW` would be a second
-mechanism for the thing `hub.declare` made one.
+**What is held out is the list, not "everything fitted".** `HELD_OUT` holds eleven keys:
+the eight constants the LIMITATIONS entry names -- `TALENT_CV`, `TALENT_CV_BY_POS`,
+`IMPUTE_CV`, `WEEKLY_K`, `WEEKLY_SKEW`, `TEAMMATE_RHO`, `PICK_NOISE_INTERCEPT`,
+`PICK_NOISE_SLOPE` -- and the three companions they ship beside and are read with,
+`IMPUTE_CV_BY_POS`, `WEEKLY_K_POOLED` and `WEEKLY_SKEW_POOLED`, which a set that refits
+the constant refits in the same run. `record` refuses any other key: a set that quietly
+carried `MIN_SKEW` would be a second mechanism for the thing `hub.declare` made one.
 
-**A missing key is recorded, not assumed.** Two of the eight (`TALENT_CV`, `PICK_NOISE_*`)
-are fitted on this league's ESPN draft history and cannot be refitted without a session; a
-script that cannot run records `why_not` for the key and the run line carries it. A season
+**A missing key is recorded, not assumed.** Three of the eight (`TALENT_CV`,
+`PICK_NOISE_INTERCEPT`, `PICK_NOISE_SLOPE`) are fitted on this league's ESPN draft history
+and cannot be refitted without a session; a script that cannot run records `why_not` for
+the key and the run line carries it. A season
 with no file at all is refused: replaying "under hold-out" on a season nobody fitted for
 would be the shipped run wearing the hold-out's name.
 
@@ -34,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -45,10 +50,15 @@ from typing import Any
 from hub import atomic, declare
 from hub.paths import ROOT
 
-SETS = ROOT / "conf" / "holdout"
+# Where the sets live. `HUB_HOLDOUT_SETS` points a run at another directory -- a set fitted
+# elsewhere, or a test's -- and reaches a spawned worker, which imports this module afresh
+# and would not see a rebinding of the name in the parent.
+SETS = Path(os.environ["HUB_HOLDOUT_SETS"]) if os.environ.get("HUB_HOLDOUT_SETS") \
+    else ROOT / "conf" / "holdout"
 
-# The constants a hold-out set may carry: the eight `backtest.LIMITATIONS` names, each with
-# the companions it ships beside. A gate under hold-out reads these and nothing else.
+# The constants a hold-out set may carry: the eight `backtest.LIMITATIONS` names plus the
+# three companions (`IMPUTE_CV_BY_POS`, `WEEKLY_K_POOLED`, `WEEKLY_SKEW_POOLED`) -- eleven
+# keys. A gate under hold-out reads these and nothing else.
 HELD_OUT: tuple[str, ...] = (
     "predict.TALENT_CV", "predict.TALENT_CV_BY_POS",
     "predict.IMPUTE_CV", "predict.IMPUTE_CV_BY_POS",

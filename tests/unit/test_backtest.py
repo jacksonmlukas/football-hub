@@ -2089,6 +2089,39 @@ def test_a_season_played_under_holdout_reads_its_own_set_and_hands_the_shipped_v
     assert seen == {2024: shipped, 2025: shipped}
 
 
+def test_each_worker_plays_its_season_under_its_own_set_and_the_rows_say_so(tmp_path):
+    """With a worker per season, the set is applied inside the worker, and the proof is on
+    the rows: `constants_digest` is read in the process that played the season, under the
+    block, so each season's rows carry the digest of the constants it was actually played
+    under -- its own held-out TALENT_CV, not the other season's and not the shipped one.
+    The parent's intent is not the evidence; a worker that skipped its set would write the
+    shipped digest here."""
+    import os
+
+    from hub import holdout
+    from hub.config import fitted_constants, fitted_digest
+
+    sets = tmp_path / "sets"
+    holdout.record(2024, "predict.TALENT_CV", 0.91, command="x", root=sets)
+    holdout.record(2025, "predict.TALENT_CV", 0.92, command="x", root=sets)
+    boards, reals = _two_seasons()
+    kw = {"n_drafts": 1, "seed": 0, "rounds": 3, "n_draft_sims": 2, "n_season_sims": 5}
+    # Spawned workers import `hub.holdout` afresh, so the sets directory reaches them
+    # through the environment rather than a monkeypatch of this process.
+    os.environ["HUB_HOLDOUT_SETS"] = str(sets)
+    try:
+        paired = bt.compare(boards, reals, workers=2, holdout=True, **kw)
+        shipped = bt.compare(boards, reals, workers=2, **kw)
+    finally:
+        del os.environ["HUB_HOLDOUT_SETS"]
+    want = {yr: fitted_digest({**fitted_constants(), "predict.TALENT_CV": v})
+            for yr, v in ((2024, 0.91), (2025, 0.92))}
+    got = {r["season"]: r["constants_digest"] for r in paired.iter_rows(named=True)}
+    assert got == want, (got, want)
+    assert want[2024] != want[2025] != fitted_digest()
+    assert set(shipped["constants_digest"].to_list()) == {fitted_digest()}
+
+
 def test_the_holdout_flag_is_on_the_run_and_off_by_default(capsys):
     with pytest.raises(SystemExit):
         bt.main(["--help"])

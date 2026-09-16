@@ -98,6 +98,34 @@ def test_the_residual_cv_is_the_spread_of_realised_over_imputed_by_position_and_
     assert got["pooled"]["median"] == pytest.approx(0.0)
 
 
+def test_the_interval_is_clustered_on_the_season_with_a_t_reference():
+    """The season is the cluster: the pooled CV is measured once per season, the interval
+    is the mean of those under a t on k-1 degrees of freedom, and the distance from the
+    shipped value is read on that unit. A season with one rookie has no spread and is
+    dropped from the clusters rather than read as zero."""
+    from hub.models.experiment import t_quantile
+    rows = pl.DataFrame({
+        "season": [2023] * 3 + [2024] * 3 + [2025] * 3 + [2021],
+        "pos": ["WR"] * 10, "imputed": [10.0] * 10,
+        "ppg": [12.0, 8.0, 10.0, 15.0, 5.0, 10.0, 11.0, 9.0, 10.0, 30.0],
+    })
+    got = impute_cv.season_clustered(rows, "ppg", shipped=0.260)
+    assert got is not None
+    per = {2023: np.std([0.2, -0.2, 0.0], ddof=1), 2024: np.std([0.5, -0.5, 0.0], ddof=1),
+           2025: np.std([0.1, -0.1, 0.0], ddof=1)}
+    assert got["k"] == 3 and set(got["per_season"]) == {2023, 2024, 2025}
+    for s, cv in per.items():
+        assert got["per_season"][s]["cv"] == pytest.approx(cv) and got["per_season"][s]["n"] == 3
+    vals = np.array(list(per.values()))
+    mean, se = vals.mean(), vals.std(ddof=1) / np.sqrt(3)
+    assert got["mean"] == pytest.approx(mean) and got["se"] == pytest.approx(se)
+    half = t_quantile(0.975, 2) * se
+    assert got["lo"] == pytest.approx(mean - half) and got["hi"] == pytest.approx(mean + half)
+    assert got["t_vs_shipped"] == pytest.approx((mean - 0.260) / se)
+    assert got["clears"] == (abs(got["t_vs_shipped"]) >= t_quantile(0.975, 2))
+    assert impute_cv.season_clustered(rows.head(3), "ppg", shipped=0.260) is None  # one cluster
+
+
 def test_a_held_out_season_leaves_the_measurement_and_is_named():
     """`--exclude-season` (#294): the rows of that season are not in the fit, and the sentence
     says which season was held out and which remain."""

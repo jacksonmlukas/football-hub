@@ -939,7 +939,9 @@ shipped values after. Production reads nothing from `conf/holdout/`; the shipped
 every digest are unchanged, and the stamp on a hold-out run carries the shipped
 `fitted_digest` with the run line beside it saying what each season read.
 
-**What the four committed sets refit, and what they could not.** Each of 2022–2025:
+**What the four committed sets refit, and what they could not.** Eleven keys per set — the
+eight above and the three companions read with them (`IMPUTE_CV_BY_POS`, `WEEKLY_K_POOLED`,
+`WEEKLY_SKEW_POOLED`). Each of 2022–2025:
 
 | constant | refitted without the season? | why not |
 |---|---|---|

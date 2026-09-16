@@ -114,12 +114,18 @@ TALENT_CV_BY_POS = fitted({"QB": 0.20, "RB": 0.38, "WR": 0.31, "TE": 0.18})
 #
 #     residual CV        QB (8)   RB (36)   WR (42)   TE (6)   pooled (92)
 #     shipped, veterans  0.217    0.334     0.223     0.220    0.260
-#     rookies, vs PPG    0.186    0.423     0.379     0.378    0.395  (se 0.031 over players)
-#     rookies, vs xFP    0.164    0.359     0.288     0.319    0.324  (se 0.026)
+#     rookies, vs PPG    0.186    0.423     0.379     0.378    0.395
+#     rookies, vs xFP    0.164    0.359     0.288     0.319    0.324
 #
 # `vs xFP` is the like-for-like: the season's own xFP per game, the quantity the
-# curve imputes and what the veteran measurement compared against. Both read above the
-# shipped pooled value by two to four standard errors; QB and TE are eight and six players.
+# curve imputes and what the veteran measurement compared against. The interval is
+# clustered on the season (k = 5, t on 4 df): the mean of the per-season pooled CVs is
+# 0.315, se 0.037, 95% [0.213, 0.416], +1.5 t from the shipped 0.260 -- above it in four of
+# five seasons and NOT clearing the two-sided 95% bar at five clusters (vs PPG: 0.383
+# [0.241, 0.525], +2.4 t, also short of t(0.975, 4) = 2.78). Over players -- the unit the
+# shipped se was quoted on, which treats rows within a season as independent -- the se
+# would be 0.026, a secondary and not the interval. `>= 8 games` selects on survival and
+# biases the CV low (docs/impute-cv.md). QB and TE are eight and six players.
 # The constant keeps shipping meanwhile -- withdrawing to `TALENT_CV_BY_POS` would
 # under-state the risk further -- and moving it to the rookie number is a decision, not
 # this fit's side effect.

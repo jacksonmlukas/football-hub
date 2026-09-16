@@ -162,11 +162,44 @@ def hold_out(rows: pl.DataFrame, exclude: int | None) -> tuple[pl.DataFrame, str
     return kept, f"  season {exclude} held out; fitted on {remain}"
 
 
+def season_clustered(rows: pl.DataFrame, against: str, *,
+                     shipped: float) -> dict[str, Any] | None:
+    """The interval, on the unit that varies independently: the season.
+
+    Rookies inside one season share a board, a curve fitted on that year's veterans and one
+    realisation of the year, so the rows are not independent observations of the residual
+    and an interval over them reads too narrow -- the error `docs/gate-power.md` names.
+    The pooled CV is measured once per season, and the estimate is the mean of those `k`
+    readings with `se = sd / sqrt(k)` under a t on `k - 1` degrees of freedom, the form the
+    gates use. `t_vs_shipped` is the distance from the shipped constant on that unit and
+    `clears` says whether it passes the same two-sided 95% bar; a season with fewer than two
+    rookies has no spread and is not a cluster. None with fewer than two clusters.
+    """
+    from hub.models.experiment import t_quantile
+
+    per: dict[int, dict[str, Any]] = {}
+    for season in sorted(rows["season"].unique().to_list()):
+        sub = rows.filter(pl.col("season") == season)
+        r = sub.select((pl.col(against) / pl.col("imputed") - 1.0).alias("r"))["r"].to_numpy()
+        if r.size >= 2:
+            per[int(season)] = {"cv": float(np.std(r, ddof=1)), "n": int(r.size)}
+    k = len(per)
+    if k < 2:
+        return None
+    vals = np.array([v["cv"] for v in per.values()])
+    mean, se = float(vals.mean()), float(vals.std(ddof=1) / np.sqrt(k))
+    crit = t_quantile(0.975, k - 1)
+    t = (mean - shipped) / se if se > 0 else float("inf")
+    return {"k": k, "per_season": per, "mean": mean, "se": se, "t_crit": crit,
+            "lo": mean - crit * se, "hi": mean + crit * se,
+            "t_vs_shipped": t, "clears": abs(t) >= crit}
+
+
 def player_bootstrap_se(rows: pl.DataFrame, against: str, *, draws: int = 2000,
                         seed: int = 0) -> float | None:
-    """Standard error of the pooled CV over players, the way the shipped number quoted its
-    se (0.010 over players). Rookies are one season each, so the player is the row; the
-    seasons are the clusters and are counted rather than resampled at this n."""
+    """Standard error of the pooled CV over players -- the unit the shipped number quoted
+    its se on (0.010 over players), kept as a labelled secondary so the two read side by
+    side. It is not the interval: the season is the cluster (`season_clustered`)."""
     r = rows.select((pl.col(against) / pl.col("imputed") - 1.0).alias("r"))["r"].to_numpy()
     if r.size < 3:
         return None
@@ -212,7 +245,8 @@ def measure(seasons: Sequence[int], *, exclude: int | None = None, min_games: in
                            ("xfp_pg", "the season's own xFP per game")):
         cv = residual_cv(kept, against)
         se = player_bootstrap_se(kept, against)
-        result[against] = {"by_position": cv, "se": se}
+        clustered = season_clustered(kept, against, shipped=IMPUTE_CV)
+        result[against] = {"by_position": cv, "se": se, "clustered": clustered}
         lines.append(f"\n  residual CV against {label}: n = {kept.height} rookies over "
                      f"{result['clusters']} seasons (the clusters)")
         lines.append(f"  {'pos':>6} {'n':>4} {'rookie cv':>10} {'median':>8} {'shipped':>8}")
@@ -222,8 +256,23 @@ def measure(seasons: Sequence[int], *, exclude: int | None = None, min_games: in
             cv_s = f"{c['cv']:.3f}" if c["cv"] is not None else "n/a"
             md_s = f"{c['median']:+.2f}" if c["median"] is not None else "n/a"
             lines.append(f"  {pos:>6} {c['n']:>4} {cv_s:>10} {md_s:>8} {shipped:>8.3f}")
+        if clustered is not None:
+            c = clustered
+            seasons_s = ", ".join(f"{yr} {v['cv']:.3f} (n {v['n']})"
+                                  for yr, v in c["per_season"].items())
+            lines.append(f"  the interval, clustered on the season (k = {c['k']}, t on "
+                         f"{c['k'] - 1} df): mean of the per-season pooled CVs {c['mean']:.3f}, "
+                         f"se {c['se']:.3f}, 95% [{c['lo']:.3f}, {c['hi']:.3f}]; "
+                         f"{c['t_vs_shipped']:+.1f} t from the shipped {IMPUTE_CV:.3f}, which "
+                         f"{'clears' if c['clears'] else 'does not clear'} t(0.975, "
+                         f"{c['k'] - 1}) = {c['t_crit']:.2f}")
+            lines.append(f"    per season: {seasons_s}")
+        else:
+            lines.append("  no season-clustered interval: fewer than two seasons with a spread")
         if se is not None:
-            lines.append(f"  pooled se over players {se:.3f}")
+            lines.append(f"  secondary, not the interval: pooled se over players {se:.3f} "
+                         f"(the unit the shipped number quoted; rows within a season are not "
+                         f"independent)")
     return result, lines
 
 

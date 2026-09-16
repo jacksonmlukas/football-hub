@@ -37,23 +37,12 @@ from hub.draft.availability import (
     historical_picks,
     noise_from_picks,
     sweep_ceilings,
+    sweep_lines,
 )
 
 DEFAULT_SEASONS = (2022, 2023, 2024, 2025)
 SCRIPT = "scripts/fit_pick_noise.py"
 KEYS = ("availability.PICK_NOISE_INTERCEPT", "availability.PICK_NOISE_SLOPE")
-
-
-def sweep_lines(rows: Sequence[dict]) -> list[str]:
-    """The sweep as the table the module docstring carries."""
-    out = [f"  {'ceiling':>7} {'applied':>7} {'n':>5} {'a':>6} {'slope':>6} "
-           f"{'95% CI':>16} {'sigma@100':>10}"]
-    for r in rows:
-        ci = f"[{r['ci'][0]:.3f}, {r['ci'][1]:.3f}]" if r["ci"] else "fallback"
-        mark = "  <- shipped" if r["ceiling"] == PICK_NOISE_FIT_CEILING else ""
-        out.append(f"  {r['ceiling']:>7} {r['applied']:>7.0f} {r['n']:>5} {r['a']:>6.2f} "
-                   f"{r['b']:>6.3f} {ci:>16} {r['sigma_100']:>10.1f}{mark}")
-    return out
 
 
 def main(argv: Sequence[str] | None = None) -> int:
