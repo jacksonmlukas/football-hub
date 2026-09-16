@@ -1,9 +1,9 @@
 {
   "name": "track_record",
   "source": "preds+results",
-  "generated_at": "2026-09-12T16:54:36+00:00",
+  "generated_at": "2026-09-16T15:21:11+00:00",
   "shape": "summary",
-  "n_scored": 18,
+  "n_scored": 32,
   "n_tied": 0,
   "n_preregistered": 0,
   "is_backtest": true,
@@ -11,9 +11,9 @@
   "seasons": [
     {
       "season": 2026,
-      "n_scored": 2,
-      "log_loss": 0.7297555234945046,
-      "brier": 0.26776496363493907,
+      "n_scored": 16,
+      "log_loss": 0.6139351700286666,
+      "brier": 0.20998816026324824,
       "bins": [
         {
           "bin": "0.0-0.1",
@@ -45,31 +45,31 @@
         },
         {
           "bin": "0.4-0.5",
-          "n": 0,
-          "predicted": null,
-          "actual": null,
-          "gap": null
+          "n": 4,
+          "predicted": 0.4184794843531303,
+          "actual": 0.25,
+          "gap": -0.16847948435313032
         },
         {
           "bin": "0.5-0.6",
-          "n": 1,
-          "predicted": 0.593074265325531,
-          "actual": 1.0,
-          "gap": 0.406925734674469
+          "n": 5,
+          "predicted": 0.5684134373141365,
+          "actual": 0.8,
+          "gap": 0.23158656268586353
         },
         {
           "bin": "0.6-0.7",
-          "n": 1,
-          "predicted": 0.6082280606232515,
-          "actual": 0.0,
-          "gap": -0.6082280606232515
+          "n": 4,
+          "predicted": 0.6411548557614263,
+          "actual": 0.75,
+          "gap": 0.10884514423857372
         },
         {
           "bin": "0.7-0.8",
-          "n": 0,
-          "predicted": null,
-          "actual": null,
-          "gap": null
+          "n": 3,
+          "predicted": 0.746904751551312,
+          "actual": 0.6666666666666666,
+          "gap": -0.08023808488464534
         },
         {
           "bin": "0.8-0.9",
@@ -197,31 +197,31 @@
     },
     {
       "bin": "0.4-0.5",
-      "n": 0,
-      "predicted": null,
-      "actual": null,
-      "gap": null
+      "n": 4,
+      "predicted": 0.4184794843531303,
+      "actual": 0.25,
+      "gap": -0.16847948435313032
     },
     {
       "bin": "0.5-0.6",
-      "n": 1,
-      "predicted": 0.593074265325531,
-      "actual": 1.0,
-      "gap": 0.406925734674469
+      "n": 5,
+      "predicted": 0.5684134373141365,
+      "actual": 0.8,
+      "gap": 0.23158656268586353
     },
     {
       "bin": "0.6-0.7",
-      "n": 1,
-      "predicted": 0.6082280606232515,
-      "actual": 0.0,
-      "gap": -0.6082280606232515
+      "n": 4,
+      "predicted": 0.6411548557614263,
+      "actual": 0.75,
+      "gap": 0.10884514423857372
     },
     {
       "bin": "0.7-0.8",
-      "n": 0,
-      "predicted": null,
-      "actual": null,
-      "gap": null
+      "n": 3,
+      "predicted": 0.746904751551312,
+      "actual": 0.6666666666666666,
+      "gap": -0.08023808488464534
     },
     {
       "bin": "0.8-0.9",
@@ -238,7 +238,29 @@
       "gap": null
     }
   ],
-  "log_loss": 0.7297555234945046,
-  "brier": 0.26776496363493907,
-  "interval_coverage": null
+  "log_loss": 0.6139351700286666,
+  "brier": 0.20998816026324824,
+  "interval_coverage": {
+    "centre": "prior",
+    "lookahead": false,
+    "n": 16061,
+    "gate_subset": "unclipped",
+    "gate_n": 10536,
+    "gate_cov80": 0.7737281700835231,
+    "band": 0.02,
+    "verdict": "UNDER-COVERS",
+    "generated_at": "2026-09-12T23:31:50+00:00",
+    "survivor": {
+      "verdict": "HOLDS",
+      "favourite_spread": 7.0,
+      "favourite_predicted": 0.7748904847150568,
+      "favourite_actual": 0.7974683544303798,
+      "favourite_gap": 0.02257786971532294,
+      "favourite_sigma": 1.116550410798681,
+      "favourite_n": 395,
+      "n_games": 1420,
+      "margin_sd": 12.741,
+      "generated_at": "2026-09-12T23:31:50+00:00"
+    }
+  }
 }
