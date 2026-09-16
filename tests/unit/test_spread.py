@@ -75,6 +75,56 @@ def test_missing_columns_raise():
                                             "player_id": ["a"], "position": ["WR"]}))
 
 
+# --- the weekly law refitted, and refitted without a season (#294) --------
+
+def _law_rows(seed=0):
+    """Player-seasons drawn from sd = k * sqrt(mu) with a known k per position."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for season in (2023, 2024, 2025):
+        for i in range(30):
+            for pos, k in (("WR", 2.0), ("RB", 2.5)):
+                mu = float(rng.uniform(6.0, 20.0))
+                pts = rng.gamma(shape=mu / k**2, scale=k**2, size=16)
+                rows += _season(f"{pos}{season}{i}", list(pts), season=season, pos=pos)
+    return _stats(rows)
+
+
+def test_the_weekly_law_is_least_squares_of_sd_on_root_mean_per_position_and_pooled():
+    """`k` per position by least squares of sd on sqrt(mu) through the origin, the pooled
+    `k` the same over every row, and the within-player-season skew averaged per position;
+    each with its n. A position with no rows is absent rather than zero."""
+    ps = spread.player_seasons(_law_rows())
+    got = spread.fit_weekly_law(ps)
+    wr = ps.filter(pl.col("position") == "WR")
+    k_wr = float(np.sum(wr["sd"].to_numpy() * np.sqrt(wr["mu"].to_numpy())) / np.sum(wr["mu"].to_numpy()))
+    assert got["k"]["WR"] == pytest.approx(k_wr)
+    assert got["k"]["WR"] == pytest.approx(2.0, abs=0.2)
+    assert got["k"]["RB"] == pytest.approx(2.5, abs=0.25)
+    assert got["n"]["WR"] == wr.height and got["n"]["pooled"] == ps.height
+    assert "QB" not in got["k"] and "TE" not in got["k"]
+    assert got["skew"]["WR"] == pytest.approx(float(np.mean(wr["skew"].to_numpy())))
+    assert set(got["skew"]) == {"WR", "RB", "pooled"}
+    assert 0.0 < got["skew"]["pooled"] < 2.0
+    # Within one position the draw's exponent is the square root; pooled across two k's the
+    # log-log slope is not, which is why the fit reports it per position too.
+    assert got["exponent"]["WR"] == pytest.approx(0.5, abs=0.2)
+
+
+def test_a_held_out_season_is_not_in_the_law_and_the_shipped_shape_is_reproduced_in_form():
+    """`--exclude-season` drops that season's rows before the fit and nothing else; the
+    keys the constant ships under are the keys the fit returns."""
+    from hub.models.predict import WEEKLY_K, WEEKLY_SKEW
+    ps = spread.player_seasons(_law_rows())
+    full = spread.fit_weekly_law(ps)
+    held = spread.fit_weekly_law(spread.without_season(ps, 2025))
+    assert held["n"]["pooled"] == ps.filter(pl.col("season") != 2025).height
+    assert held["k"]["WR"] != full["k"]["WR"]
+    assert spread.without_season(ps, None).height == ps.height
+    assert set(WEEKLY_K) >= set(full["k"]) - {"pooled"}
+    assert set(WEEKLY_SKEW) >= set(full["skew"]) - {"pooled"}
+
+
 # --- snap share and the crosswalk ----------------------------------------
 
 def _snaps(rows):

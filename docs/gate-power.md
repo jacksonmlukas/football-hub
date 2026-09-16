@@ -590,3 +590,51 @@ five clusters and, on this evidence, the same MDE problem.
 **The deployed function does not change.** #289's claim (77 ± 2) stands against the function
 it was measured on. The `interval_shape` entry in `state/gate-width.json` is this run's
 season-clustered width, 0.0127, for the next run to compare against.
+
+## Hold-out constants: the draft gate can replay each season on constants fitted without it (#294)
+
+**Built 2026-09-13; not run.** The draft backtest's last `LIMITATIONS` entry (#279) names the
+defect: the simulator's constants — `TALENT_CV`, `TALENT_CV_BY_POS`, `IMPUTE_CV`, `WEEKLY_K`,
+`WEEKLY_SKEW`, `TEAMMATE_RHO`, `PICK_NOISE_INTERCEPT`, `PICK_NOISE_SLOPE` — were fitted on the
+seasons the gate replays, so arm B carries in-sample constants on every held-out season and the
+headline is a lower bound on how badly it loses out of sample. The hold-out *run* is the
+maintainer's (#290); this section is the machinery and what it could and could not fit.
+
+**The mechanism.** Every fitting script under `scripts/` takes `--exclude-season N` and, with
+`--record`, writes what it fitted into `conf/holdout/N.json` under the constant's digest key
+with the command that produced it (`hub.holdout`). `hub.draft.backtest --holdout` and
+`hub.season.weekly_gate --holdout` load every replayed season's set *before* a draft is played
+— a season with no set refuses the run rather than playing shipped under the hold-out's name —
+print one run line per season saying which constants were refitted and which stayed shipped
+and why, then rebind the module attributes to the set for that season's play and restore the
+shipped values after. Production reads nothing from `conf/holdout/`; the shipped constants and
+every digest are unchanged, and the stamp on a hold-out run carries the shipped
+`fitted_digest` with the run line beside it saying what each season read.
+
+**What the four committed sets refit, and what they could not.** Each of 2022–2025:
+
+| constant | refitted without the season? | why not |
+|---|---|---|
+| `WEEKLY_K`, `WEEKLY_K_POOLED` | **yes** — `scripts/fit_weekly_spread.py` reproduces the shipped values exactly with nothing excluded (1,174 player-seasons; 1.880 / 2.068 / 2.125 / 1.994, pooled 2.042; exponents 0.161 / 0.469 / 0.518 / 0.622, pooled 0.498) | |
+| `TEAMMATE_RHO` | **yes** — `scripts/fit_teammate_rho.py`, the `correlate` method on the Panel's cached slice | reproduces the shipped edges to within 0.02 (+0.222 / +0.205 / +0.052 against +0.232 / +0.225 / +0.054), inside two of its own standard errors; the shipped run's exact sample is not in the tree |
+| `WEEKLY_SKEW`, `WEEKLY_SKEW_POOLED` | no | the shipped estimator (a 760-player-season validation, [component-projection.md](component-projection.md)) is not in the tree; the script's own reads 0.68 pooled against 0.60 and a set carrying it would confound the estimator with the season |
+| `IMPUTE_CV`, `IMPUTE_CV_BY_POS` | no | the shipped estimator (veteran-blanked, 2026-09-11) is not in the tree; the rookie measurement (#277, [impute-cv.md](impute-cv.md)) is a different population and its adoption is an open decision |
+| `TALENT_CV`, `TALENT_CV_BY_POS` | no | `scripts/fit_talent_cv.py` needs an ESPN session (`calibrate.draft_outcomes`); none on 2026-09-13 |
+| `PICK_NOISE_INTERCEPT`, `PICK_NOISE_SLOPE` | no | `scripts/fit_pick_noise.py` needs an ESPN session (`availability.historical_picks`); none on 2026-09-13 |
+
+So a hold-out replay today moves the weekly law and the teammate correlation and nothing else,
+and says so on every season's line. The held-out `WEEKLY_K` values sit within 0.05 of the
+shipped at every position and season (QB 1.83–1.92, RB 2.04–2.10, WR 2.12–2.13, TE 1.98–2.01),
+and `TEAMMATE_RHO`'s QB–WR edge within 0.02 (0.212–0.232) — the two constants the archive can
+refit are the two that barely move when a season leaves, which is itself the first hold-out
+finding. Whether the four that could not be refitted move more is exactly what the sets do not
+yet say; the two ESPN-bound scripts record their reason into the set and re-run with a session
+(`--exclude-season N --record` overwrites the key), and the two estimator-bound ones wait on
+the decisions named.
+
+**What a run should print.** Per season, `season 2024: constants from conf/holdout/2024.json
+(fitted without 2024); refitted: predict.WEEKLY_K, predict.WEEKLY_K_POOLED,
+predict.TEAMMATE_RHO; shipped (not refitted): …` followed by the reasons; then the gate's own
+lines. Two runs are comparable only at an identical `board_digest`, as before, and a hold-out
+run is not the gate's width record — it is a sensitivity of the gate to its own constants,
+read the way the noise-scale sweep (#49) is.

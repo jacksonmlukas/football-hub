@@ -133,6 +133,29 @@ def test_position_pairs_are_unordered():
     assert (got["pos_a"][0], got["pos_b"][0]) == ("QB", "WR")
 
 
+def test_a_game_key_is_built_from_the_two_teams_whichever_side_a_row_is_on():
+    """The Panel's slice carries `team` and `opponent_team` and no `game_id` (#294); both
+    sides of one game get one key, two games in one week get two, and a frame that already
+    has the id is left alone."""
+    df = pl.DataFrame({"season": [2024, 2024, 2024], "week": [3, 3, 3],
+                       "team": ["KC", "LV", "SF"], "opponent_team": ["LV", "KC", "SEA"]})
+    got = correlate.with_game_key(df)["game_id"].to_list()
+    assert got[0] == got[1] and got[0] != got[2] and got[0] == "2024_3_KC_LV"
+    had = pl.DataFrame({"game_id": ["x"], "team": ["KC"], "opponent_team": ["LV"]})
+    assert correlate.with_game_key(had)["game_id"].to_list() == ["x"]
+
+
+def test_the_three_quarterback_edges_are_read_off_the_table_in_the_constants_key_order():
+    # One pair spelled the other way round: the constant's key is (QB, x) whichever way a
+    # table happens to spell it.
+    table = pl.DataFrame({"pos_a": ["QB", "TE", "RB", "QB"], "pos_b": ["WR", "QB", "WR", "RB"],
+                          "n": [10, 10, 10, 10], "rho": [0.2224, 0.2051, -0.011, 0.0524],
+                          "se": [0.01] * 4})
+    assert correlate.teammate_rho_from(table) == {("QB", "WR"): 0.222, ("QB", "TE"): 0.205,
+                                                  ("QB", "RB"): 0.052}
+    assert correlate.teammate_rho_from(table.head(1)) == {("QB", "WR"): 0.222}
+
+
 def test_thin_pairs_are_not_reported():
     """At n=200 the standard error is 0.071, wider than every teammate effect found."""
     z = correlate.standardised(_two_qbs(+1, n=20))

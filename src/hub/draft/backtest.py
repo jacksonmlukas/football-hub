@@ -147,7 +147,10 @@ LIMITATIONS = (
     "the default --seasons is 2022,2023,2024,2025. Arm B's season sims therefore carry "
     "in-sample constants on every held-out season, which flatters the arm that lost: the "
     "headline is a lower bound on how badly it loses out of sample, not the out-of-sample "
-    "number. A hold-out is #290",
+    "number. A hold-out is #290; since #294 `--holdout` replays each season under "
+    "conf/holdout/<season>.json and says on its run line which of the eight that set "
+    "refits (the weekly law and the teammate correlation, as of 2026-09-13) and which "
+    "it still reads shipped, and why",
 )
 
 def score_roster(names: Sequence[str], pos: Sequence[str], realised: pl.DataFrame,
@@ -335,7 +338,8 @@ def _season_rows(season: int, board: pl.DataFrame, real: pl.DataFrame, *, n_draf
                  seed: int, my_slot: int, teams: int, rounds: int, n_draft_sims: int,
                  n_season_sims: int, opp_noise: float, carry_correlation: bool,
                  on_draft: Callable[[int, int, int], None] | None = None,
-                 progress=None) -> tuple[list[dict], CorrelationReport | None]:
+                 progress=None,
+                 holdout: bool = False) -> tuple[list[dict], CorrelationReport | None]:
     """One season of `compare`: its paired rows and the correlation report they wrote into.
 
     The body of `compare`'s loop, at module level so a worker process can be handed it
@@ -349,13 +353,23 @@ def _season_rows(season: int, board: pl.DataFrame, real: pl.DataFrame, *, n_draf
     `None` here too, so each draw still keeps its own local count and refuses at the same
     floor it always did. `progress` is a queue for a worker to post `(season, k, of)` to;
     `on_draft` is the in-process callback. A season reports through exactly one of them.
+
+    `holdout` plays the season under `conf/holdout/{season}.json` -- the constants fitted
+    without it (#294) -- applied here, inside whichever process plays the season, and taken
+    off again before the rows leave. The shipped constants are what every other reader of
+    this process sees; the run line naming the set is `main`'s to print.
     """
+    from contextlib import nullcontext
+
+    from hub.holdout import applied
+
     try:
-        return _season_rows_unguarded(season, board, real, n_drafts=n_drafts, seed=seed,
-                                      my_slot=my_slot, teams=teams, rounds=rounds,
-                                      n_draft_sims=n_draft_sims, n_season_sims=n_season_sims,
-                                      opp_noise=opp_noise, carry_correlation=carry_correlation,
-                                      on_draft=on_draft, progress=progress)
+        with applied(season) if holdout else nullcontext():
+            return _season_rows_unguarded(
+                season, board, real, n_drafts=n_drafts, seed=seed, my_slot=my_slot,
+                teams=teams, rounds=rounds, n_draft_sims=n_draft_sims,
+                n_season_sims=n_season_sims, opp_noise=opp_noise,
+                carry_correlation=carry_correlation, on_draft=on_draft, progress=progress)
     except Exception as exc:
         # A worker's exception comes back through `future.result()` with nothing saying
         # which season raised it, and the serial loop's index is not in a traceback either.
@@ -421,8 +435,12 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
             n_draft_sims: int = 12, n_season_sims: int = 250,
             on_draft: Callable[[int, int, int], None] | None = None,
             correlation: CorrelationReport | None = None,
-            opp_noise: float = 1.0, workers: int = 1) -> pl.DataFrame:
+            opp_noise: float = 1.0, workers: int = 1, holdout: bool = False) -> pl.DataFrame:
     """Paired arm A against arm B, one row per (season, draft).
+
+    `holdout` plays each season under its own `conf/holdout/{season}.json` -- the constants
+    fitted without it (#294) -- see `_season_rows`. Off by default, and the default path is
+    the shipped run: nothing about it changes by this flag existing.
 
     **`workers` plays the seasons in parallel, one process each, and changes nothing a
     reader can see** (#261). The seeding tree makes every `(season, draft)` root a function
@@ -466,7 +484,7 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     per_season = {"n_drafts": n_drafts, "seed": seed, "my_slot": my_slot, "teams": teams,
                   "rounds": rounds, "n_draft_sims": n_draft_sims,
                   "n_season_sims": n_season_sims, "opp_noise": opp_noise,
-                  "carry_correlation": correlation is not None}
+                  "carry_correlation": correlation is not None, "holdout": holdout}
 
     rows: list[dict] = []
     if max(1, workers) == 1 or len(seasons) <= 1:
@@ -623,7 +641,7 @@ def noise_sensitivity(boards: dict[int, pl.DataFrame], realised: dict[int, pl.Da
                       on_draft: Callable[[int, int, int], None] | None = None,
                       on_scale: Callable[[float], None] | None = None,
                       correlation: CorrelationReport | None = None,
-                      workers: int = 1) -> pl.DataFrame:
+                      workers: int = 1, holdout: bool = False) -> pl.DataFrame:
     """One gate per scale, and one row per gate: the scale beside its interval.
 
     **Built through `run_gate`, so each row is the summary of one gate run** and not a
@@ -648,7 +666,7 @@ def noise_sensitivity(boards: dict[int, pl.DataFrame], realised: dict[int, pl.Da
         paired = compare(boards, realised, n_drafts=n_drafts, seed=seed, rounds=rounds,
                          n_draft_sims=n_draft_sims, n_season_sims=n_season_sims,
                          on_draft=on_draft, correlation=correlation, opp_noise=scale,
-                         workers=workers)
+                         workers=workers, holdout=holdout)
         bound = None
         if with_ceiling:
             top = ceiling(boards, realised, n_drafts=n_drafts, seed=seed, rounds=rounds,
@@ -1001,6 +1019,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                          "the sensitivity as a table, one row per scale (#49); e.g. "
                          f"{','.join(str(s) for s in NOISE_SCALES)}. 1.0 is the fitted law. "
                          "With --out the table is written instead of the paired rows")
+    ap.add_argument("--holdout", action="store_true",
+                    help="replay each season under conf/holdout/<season>.json, the constants "
+                         "fitted without it (#294); the run line says per season which of "
+                         "the eight were refitted and which stayed shipped. Off, the run "
+                         "is the shipped one")
     ap.add_argument("--out", default=None, help="write the paired rows to this parquet path")
     ap.add_argument("--board", default=None,
                     help="parquet snapshot of the board. Written if absent, reused if "
@@ -1141,8 +1164,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             return unavailable("hub.draft.backtest",
                                "the boards these seasons are drafted from", e)
 
+        # Under hold-out every season's set is loaded and named here, before a draft is
+        # played: a season with no set refuses the run rather than playing shipped under
+        # the hold-out's name, and the lines are the record of what each season read.
+        if a.holdout:
+            from hub.holdout import run_lines
+            try:
+                for line in run_lines(seasons):
+                    print(f"  {line}")
+            except FileNotFoundError as e:
+                return unavailable("hub.draft.backtest", "a hold-out constant set", e)
         print(f"  playing {a.drafts} drafts x {len(seasons)} seasons, "
-              f"{a.draft_sims} x {a.season_sims} sims per optimizer call ...")
+              f"{a.draft_sims} x {a.season_sims} sims per optimizer call"
+              + (" under hold-out constants" if a.holdout else "") + " ...")
         def _tick(label: str):
             """One line per draft, flushed. A run that says nothing is a run someone kills."""
             def say(season: int, k: int, of: int) -> None:
@@ -1171,6 +1205,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 boards, realised, scales=scales, n_drafts=a.drafts, seed=a.seed,
                 rounds=a.rounds, n_draft_sims=a.draft_sims, n_season_sims=a.season_sims,
                 with_ceiling=a.ceiling, correlation=correlation, workers=workers,
+                holdout=a.holdout,
                 on_draft=_tick("paired") if a.progress else None,
                 on_scale=lambda s: print(f"  scale x{s:g}: playing the room ...", flush=True))
             print(f"\n  {correlation.note()}")
@@ -1187,7 +1222,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         paired = compare(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
                          n_draft_sims=a.draft_sims, n_season_sims=a.season_sims,
                          on_draft=_tick("paired") if a.progress else None,
-                         correlation=correlation, workers=workers)
+                         correlation=correlation, workers=workers, holdout=a.holdout)
         print(f"\n  {correlation.note()}")
         for line in correlation.repair_lines():
             print(line)
@@ -1216,6 +1251,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                        ceiling=bound, seed=a.seed, boards=boards)
         for line in [*join_report(rates), *run.lines]:
             print(line)
+        if a.holdout:
+            print("  constants: HOLD-OUT -- each season played under conf/holdout/<season>.json "
+                  "(the lines above); the stamp's fitted_digest is the shipped one")
         print(f"\n  {run.verdict[1]}")
         print("\n  Limitations, fixed before the run:")
         for line in LIMITATIONS:

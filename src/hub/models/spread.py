@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -156,6 +157,9 @@ def player_seasons(stats: pl.DataFrame, snaps: pl.DataFrame | None = None,
         pl.len().alias("games"),
         pl.col("fantasy_points_ppr").mean().alias("mu"),
         pl.col("fantasy_points_ppr").std(ddof=1).alias("sd"),
+        # The population third moment, the definition `components.moments` uses and the one
+        # a gamma's `2/sqrt(shape)` is matched to; carried for `fit_weekly_law` (#294).
+        pl.col("fantasy_points_ppr").skew(bias=True).alias("skew"),
         pl.col("_tgt").mean().alias("tgt_share"),
         pl.col("_ay").mean().alias("ay_share"),
         pl.col("_td").mean().alias("td_pg"),
@@ -172,6 +176,37 @@ def player_seasons(stats: pl.DataFrame, snaps: pl.DataFrame | None = None,
         (pl.col("sd") / pl.col("mu").sqrt()).alias("k"),
         pl.col("mu").log().alias("log_mu"),
     ).sort(["season", "player_id"])
+
+
+def without_season(seasons: pl.DataFrame, exclude: int | None) -> pl.DataFrame:
+    """The rows with one season held out, for a leave-one-season-out fit (#294)."""
+    return seasons if exclude is None else seasons.filter(pl.col("season") != exclude)
+
+
+def fit_weekly_law(seasons: pl.DataFrame) -> dict[str, dict[str, Any]]:
+    """The weekly law `sd = k * sqrt(mu)` and the weekly skew, per position and pooled.
+
+    The committed form of the 2026-08-23 fit behind `predict.WEEKLY_K` / `WEEKLY_SKEW`
+    (docs/weekly-spread.md, docs/component-projection.md), which had no script in the tree
+    until #294. `k` is least squares of `sd` on `sqrt(mu)` through the origin over the
+    qualifying player-seasons `player_seasons` returns; the exponent is the log-log slope
+    the doc quotes as 0.498, reported beside it as the check that the square-root form
+    still holds; the skew is the mean within-player-season population skew. A position with
+    no qualifying row is absent from every dict rather than present as zero.
+
+    Returns `{"k": {pos: k, "pooled": k}, "exponent": {...}, "skew": {...}, "n": {...}}`.
+    """
+    out: dict[str, dict[str, Any]] = {"k": {}, "exponent": {}, "skew": {}, "n": {}}
+    for pos in (*DRAFTED_POSITIONS, "pooled"):
+        sub = seasons if pos == "pooled" else seasons.filter(pl.col("position") == pos)
+        if sub.height < 2:
+            continue
+        mu, sd = sub["mu"].to_numpy().astype(float), sub["sd"].to_numpy().astype(float)
+        out["k"][pos] = float(np.sum(sd * np.sqrt(mu)) / np.sum(mu))
+        out["exponent"][pos] = float(np.polyfit(np.log(mu), np.log(sd), 1)[0])
+        out["skew"][pos] = float(np.nanmean(sub["skew"].to_numpy().astype(float)))
+        out["n"][pos] = int(sub.height)
+    return out
 
 
 def pairs(seasons: pl.DataFrame) -> pl.DataFrame:

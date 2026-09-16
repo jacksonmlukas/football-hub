@@ -121,7 +121,8 @@ def _matrix(keys: Sequence[str], lookup: dict[tuple[str, int], float],
 
 
 def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0,
-                      shrink: str | None = None, expected: bool = False):
+                      shrink: str | None = None, expected: bool = False,
+                      holdout: bool = False):
     # pragma: no cover - network
     """Rosters, realised points and both arms' scores, over the whole board.
 
@@ -129,12 +130,20 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     waiver arm adds and drops, and a per-roster matrix cannot represent a player who was not
     on the roster when the matrix was built.
 
+    `holdout` drafts each season's Cohort under `conf/holdout/{season}.json`, the constants
+    fitted without that season (#294): the draft simulation is where the eight held-out
+    constants reach this gate, and the wrap is around that call and nothing else, so the
+    shipped values are back before the next season is read. The run line naming each set is
+    `weekly_gate.main`'s to print.
+
     Returns a `GateInputs`: ten aligned collections that used to be a positional tuple.
     """
     from collections.abc import Sequence as _Seq
+    from contextlib import nullcontext
 
     from hub.draft.board import board_as_of
     from hub.draft.cohort import cohort
+    from hub.holdout import applied
     from hub.models.experiment import PLAYER_STATS_COLS, expanding_seasons
     from hub.models.weekly import (
         fit_shrink,
@@ -240,7 +249,8 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         # derived a fresh one from the frame's columns instead. The two agree on a historical
         # board, which is why nothing ranked differently -- and why passing the recorded answer
         # rather than relying on the re-derivation agreeing is worth doing while they do.
-        made = cohort(board, yr, drafts=drafts, seed=seed, report=report)
+        with applied(yr) if holdout else nullcontext():
+            made = cohort(board, yr, drafts=drafts, seed=seed, report=report)
         # Positions come from the Cohort too, rather than being read off the board a second
         # time -- two readings of one frame is how they come to disagree.
         rosters[yr], pool[yr], pos[yr] = made.rosters, made.pool, made.pos

@@ -2054,3 +2054,43 @@ def test_a_season_that_fails_says_which_season_it_was(workers):
         f"the failure does not name its season: {type(caught.value).__name__}: "
         f"{caught.value}; notes {notes}")
     assert not any("season 2024" in n for n in notes)
+
+
+# --- replaying a season under hold-out constants (#294) ---------------------
+
+def test_a_season_played_under_holdout_reads_its_own_set_and_hands_the_shipped_value_back(
+        monkeypatch, tmp_path):
+    """`_season_rows` applies `conf/holdout/{season}.json` around the season and only there:
+    the arm sees the set's value while the season plays, the next season sees its own, and
+    the shipped constant is back before the rows leave. Without the flag nothing is
+    rebound. Probed through the unguarded body, which is what the constant reaches."""
+    from hub import holdout
+    from hub.models import predict
+
+    monkeypatch.setattr(holdout, "SETS", tmp_path)
+    holdout.record(2024, "predict.TALENT_CV", 0.91, command="x")
+    holdout.record(2025, "predict.TALENT_CV", 0.92, command="x")
+    shipped = predict.TALENT_CV
+    seen: dict[int, float] = {}
+
+    def probe(season, board, real, **kw):
+        seen[season] = predict.TALENT_CV
+        return [{"season": season, "draft": 0, "market": 1.0, "optimizer": 2.0,
+                 "market_failed": 0, "optimizer_failed": 0, "picks": 3}], None
+
+    monkeypatch.setattr(bt, "_season_rows_unguarded", probe)
+    boards, reals = _two_seasons()
+    kw = {"n_drafts": 1, "seed": 0, "rounds": 3, "n_draft_sims": 2, "n_season_sims": 5}
+    bt.compare(boards, reals, workers=1, holdout=True, **kw)
+    assert seen == {2024: 0.91, 2025: 0.92}
+    assert predict.TALENT_CV == shipped
+    seen.clear()
+    bt.compare(boards, reals, workers=1, **kw)
+    assert seen == {2024: shipped, 2025: shipped}
+
+
+def test_the_holdout_flag_is_on_the_run_and_off_by_default(capsys):
+    with pytest.raises(SystemExit):
+        bt.main(["--help"])
+    out = capsys.readouterr().out
+    assert "--holdout" in out and "fitted without it" in out

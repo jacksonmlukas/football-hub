@@ -1,0 +1,77 @@
+{
+  "constants": {
+    "availability.PICK_NOISE_INTERCEPT": {
+      "command": "uv run python scripts/fit_pick_noise.py --exclude-season 2023 --record",
+      "recorded": "2026-09-13",
+      "value": null,
+      "why_not": "not refitted: this league's draft history was unavailable on 2026-09-13; the fit needs an ESPN session (availability.historical_picks)"
+    },
+    "availability.PICK_NOISE_SLOPE": {
+      "command": "uv run python scripts/fit_pick_noise.py --exclude-season 2023 --record",
+      "recorded": "2026-09-13",
+      "value": null,
+      "why_not": "not refitted: this league's draft history was unavailable on 2026-09-13; the fit needs an ESPN session (availability.historical_picks)"
+    },
+    "predict.IMPUTE_CV": {
+      "command": "uv run python scripts/fit_impute_cv.py --exclude-season 2023 --record",
+      "recorded": "2026-09-13",
+      "value": null,
+      "why_not": "IMPUTE_CV is not refitted: the shipped estimator (veteran-blanked leave-one-out, 2026-09-11) is not in the tree, and the rookie measurement this script makes is a different population -- pooled 0.314 against the season's own xFP on n = 73 with [2021, 2022, 2023, 2024, 2025] minus the hold-out, against the shipped 0.260 -- whose adoption is #277's open decision"
+    },
+    "predict.IMPUTE_CV_BY_POS": {
+      "command": "uv run python scripts/fit_impute_cv.py --exclude-season 2023 --record",
+      "recorded": "2026-09-13",
+      "value": null,
+      "why_not": "IMPUTE_CV is not refitted: the shipped estimator (veteran-blanked leave-one-out, 2026-09-11) is not in the tree, and the rookie measurement this script makes is a different population -- pooled 0.314 against the season's own xFP on n = 73 with [2021, 2022, 2023, 2024, 2025] minus the hold-out, against the shipped 0.260 -- whose adoption is #277's open decision"
+    },
+    "predict.TALENT_CV": {
+      "command": "uv run python scripts/fit_talent_cv.py --exclude-season 2023 --record",
+      "recorded": "2026-09-13",
+      "value": null,
+      "why_not": "not refitted: this league's past drafts were unavailable on 2026-09-13; the fit needs an ESPN session (calibrate.draft_outcomes)"
+    },
+    "predict.TALENT_CV_BY_POS": {
+      "command": "uv run python scripts/fit_talent_cv.py --exclude-season 2023 --record",
+      "recorded": "2026-09-13",
+      "value": null,
+      "why_not": "not refitted: this league's past drafts were unavailable on 2026-09-13; the fit needs an ESPN session (calibrate.draft_outcomes)"
+    },
+    "predict.TEAMMATE_RHO": {
+      "command": "uv run python scripts/fit_teammate_rho.py --exclude-season 2023 --record",
+      "recorded": "2026-09-13",
+      "value": {
+        "QB|RB": 0.04,
+        "QB|TE": 0.19,
+        "QB|WR": 0.226
+      }
+    },
+    "predict.WEEKLY_K": {
+      "command": "uv run python scripts/fit_weekly_spread.py --exclude-season 2023 --record",
+      "recorded": "2026-09-13",
+      "value": {
+        "QB": 1.89,
+        "RB": 2.08,
+        "TE": 2.01,
+        "WR": 2.13
+      }
+    },
+    "predict.WEEKLY_K_POOLED": {
+      "command": "uv run python scripts/fit_weekly_spread.py --exclude-season 2023 --record",
+      "recorded": "2026-09-13",
+      "value": 2.05
+    },
+    "predict.WEEKLY_SKEW": {
+      "command": "uv run python scripts/fit_weekly_spread.py --exclude-season 2023 --record",
+      "recorded": "2026-09-13",
+      "value": null,
+      "why_not": "WEEKLY_SKEW is not refitted: the shipped estimator (a 760-player-season validation, docs/component-projection.md) is not in the tree, and this script's reads 0.68 pooled against the shipped 0.60 on the full sample, so a set carrying it would confound the estimator with the season"
+    },
+    "predict.WEEKLY_SKEW_POOLED": {
+      "command": "uv run python scripts/fit_weekly_spread.py --exclude-season 2023 --record",
+      "recorded": "2026-09-13",
+      "value": null,
+      "why_not": "WEEKLY_SKEW is not refitted: the shipped estimator (a 760-player-season validation, docs/component-projection.md) is not in the tree, and this script's reads 0.68 pooled against the shipped 0.60 on the full sample, so a set carrying it would confound the estimator with the season"
+    }
+  },
+  "excluded_season": 2023
+}

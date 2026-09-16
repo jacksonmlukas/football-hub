@@ -25,7 +25,10 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
+from hub import holdout
+from hub.cli import unavailable
 from hub.draft.availability import (
     PICK_NOISE_FIT_CEILING,
     PICK_NOISE_INTERCEPT,
@@ -37,6 +40,8 @@ from hub.draft.availability import (
 )
 
 DEFAULT_SEASONS = (2022, 2023, 2024, 2025)
+SCRIPT = "scripts/fit_pick_noise.py"
+KEYS = ("availability.PICK_NOISE_INTERCEPT", "availability.PICK_NOISE_SLOPE")
 
 
 def sweep_lines(rows: Sequence[dict]) -> list[str]:
@@ -61,24 +66,36 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="fit ceilings to sweep; each is min(pool, ceiling) when applied")
     ap.add_argument("--draws", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=0)
+    holdout.add_arguments(ap)
     a = ap.parse_args(argv)
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
+    if a.exclude_season is not None:
+        seasons = [s for s in seasons if s != a.exclude_season]
     ceilings = [int(c) for c in a.ceilings.split(",") if c.strip()]
+    note = holdout.recording(a, holdout.command_line(SCRIPT, a))
 
     from hub.fetch.espn import resolve_league_id
 
     try:
         df = historical_picks(resolve_league_id(), seasons)
-    except Exception as e:                                   # pragma: no cover - network
-        print(f"  fit_pick_noise: this league's draft history is unavailable "
-              f"({type(e).__name__}: {e}). It needs an ESPN session.", file=sys.stderr)
-        return 1
-    print(f"  {df.height} matched picks over {df['year'].n_unique()} drafts, seasons {seasons}")
+        if df.height == 0:
+            raise RuntimeError("no draft matched a rank")
+    except Exception as e:
+        why = (f"not refitted: this league's draft history was unavailable "
+               f"on {datetime.now(UTC).date().isoformat()}; the fit "
+               f"needs an ESPN session (availability.historical_picks)")
+        for key in KEYS:
+            note(key, None, why_not=why)
+        return unavailable(SCRIPT, "this league's draft history", e)
+    print(f"  {df.height} matched picks over {df['year'].n_unique()} drafts, seasons {seasons}"
+          + (f" (season {a.exclude_season} held out)" if a.exclude_season else ""))
 
     (a_fit, b_fit), said = noise_from_picks(df, draws=a.draws, seed=a.seed)
     print(said)
     print(f"  shipped: sigma = {PICK_NOISE_INTERCEPT:.2f} + {PICK_NOISE_SLOPE:.3f} * pick "
           f"(ceiling {PICK_NOISE_FIT_CEILING}); this run: {a_fit:.2f} + {b_fit:.3f}")
+    note("availability.PICK_NOISE_INTERCEPT", round(a_fit, 2))
+    note("availability.PICK_NOISE_SLOPE", round(b_fit, 3))
 
     print("\n  ceiling sweep (#287): the cut published as a sensitivity, not asserted")
     print("\n".join(sweep_lines(sweep_ceilings(df, ceilings, draws=a.draws, seed=a.seed))))

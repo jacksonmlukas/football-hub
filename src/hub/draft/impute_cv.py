@@ -49,6 +49,7 @@ from typing import Any
 import numpy as np
 import polars as pl
 
+from hub import holdout
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.declare import not_an_input
@@ -231,18 +232,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog="scripts/fit_impute_cv.py",
         description="Measure IMPUTE_CV on rookies -- the players the board imputes (#277).")
     ap.add_argument("--seasons", default=",".join(str(s) for s in DEFAULT_SEASONS))
-    ap.add_argument("--exclude-season", type=int, default=None,
-                    help="hold one season out of the measurement (#294)")
     ap.add_argument("--min-games", type=int, default=MIN_GAMES)
+    holdout.add_arguments(ap)
     a = ap.parse_args(argv)
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
+    note = holdout.recording(a, holdout.command_line("scripts/fit_impute_cv.py", a))
     try:
-        _result, lines = measure(seasons, exclude=a.exclude_season, min_games=a.min_games)
+        result, lines = measure(seasons, exclude=a.exclude_season, min_games=a.min_games)
     except Exception as e:
         return unavailable("scripts/fit_impute_cv.py", "the boards and seasons of the archive", e)
     print("\n".join(lines))
     print("\n  the shipped IMPUTE_CV was measured on blanked veterans and is unchanged by this "
           "run; moving it is a decision, not a script's side effect")
+    # Printed, and recorded as *not refitted* (#294). The shipped constant's estimator -- the
+    # veteran-blanked leave-one-out -- is not in the tree, and this one measures a different
+    # population; a hold-out set carrying the rookie number would move the constant inside
+    # the replay before the decision #277 left open has been taken. The run line carries the
+    # rookie number so the reader sees what the replay did not use.
+    pooled = result["xfp_pg"]["by_position"]["pooled"]["cv"]
+    why = (f"IMPUTE_CV is not refitted: the shipped estimator (veteran-blanked leave-one-out, "
+           f"2026-09-11) is not in the tree, and the rookie measurement this script makes is "
+           f"a different population -- pooled {pooled:.3f} against the season's own xFP on "
+           f"n = {result['n']} with {result['seasons']} minus the hold-out, against the "
+           f"shipped 0.260 -- whose adoption is #277's open decision"
+           if pooled is not None else "IMPUTE_CV is not refitted: too few rookies to measure")
+    for key in ("predict.IMPUTE_CV", "predict.IMPUTE_CV_BY_POS"):
+        note(key, None, why_not=why)
     return 0
 
 

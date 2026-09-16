@@ -45,6 +45,34 @@ MIN_WEEKS = 8
 MIN_PAIRS = 200
 
 
+def with_game_key(stats: pl.DataFrame) -> pl.DataFrame:
+    """A `game_id` built from (season, week, the two teams sorted), for a slice that carries
+    `team` and `opponent_team` and not nflverse's own id -- the Panel's `WEEK_STATS_COLS` is
+    that slice, and it is the one cache entry a hold-out refit reads (#294). Two rows of one
+    game get one key whichever side they are on; a frame that already has `game_id` is
+    returned as it is."""
+    if "game_id" in stats.columns:
+        return stats
+    home = pl.min_horizontal("team", "opponent_team")
+    away = pl.max_horizontal("team", "opponent_team")
+    return stats.with_columns(
+        pl.concat_str([pl.col("season").cast(pl.Utf8), pl.col("week").cast(pl.Utf8),
+                       home, away], separator="_").alias("game_id"))
+
+
+def teammate_rho_from(table: pl.DataFrame) -> dict[tuple[str, str], float]:
+    """The three quarterback edges `predict.TEAMMATE_RHO` carries, read off a teammate
+    table, keyed the way the constant is. Any pair the table does not hold is absent."""
+    want = {("QB", "WR"), ("QB", "TE"), ("QB", "RB")}
+    out: dict[tuple[str, str], float] = {}
+    for r in table.iter_rows(named=True):
+        key = (r["pos_a"], r["pos_b"])
+        for pair in want:
+            if set(key) == set(pair):
+                out[pair] = round(float(r["rho"]), 3)
+    return out
+
+
 def standardised(stats: pl.DataFrame, *, min_weeks: int = MIN_WEEKS) -> pl.DataFrame:
     """Weekly points as a z-score within each player-season.
 

@@ -732,17 +732,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="outcome seasons; each is scored against the one before it")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--fit", action="store_true", help="run the fits (needs nflverse)")
+    # The flag every fitting script takes (#294). The corrections' coefficients are
+    # `not_an_input` -- the recorded output of a fit a test guards, not a constant a hold-out
+    # set carries -- so this holds a season out of the panel and records nothing.
+    ap.add_argument("--exclude-season", type=int, default=None, metavar="N",
+                    help="hold outcome season N out of the panel (#294)")
     a = ap.parse_args(argv)
     if not a.fit:
         ap.print_help()
         return 0
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
+    seasons = [s for s in seasons if s != a.exclude_season]
     try:
         panel = build_panel(seasons)
     except Exception as e:                       # pragma: no cover - network
         return unavailable("hub.draft.fit_corrections",
                            "nflverse ff_opportunity, player stats and injuries", e)
-    print(f"  panel: {panel.height} player-seasons over {len(seasons)} outcome seasons")
+    print(f"  panel: {panel.height} player-seasons over {len(seasons)} outcome seasons"
+          + (f" (season {a.exclude_season} held out)" if a.exclude_season else ""))
     print("  target: points per team game (total/17), the rate hub.draft.season draws every "
           "week from")
     for line in report_lines(panel, seed=a.seed):

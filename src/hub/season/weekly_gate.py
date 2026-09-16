@@ -860,11 +860,22 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     # wrote nothing until #135; `docs/gate-power.md` names a frozen paired frame as what
     # stage 2 needs for the two network-built gates, and this is how one is made.
     ap.add_argument("--out", default=None, help="write the stamped paired rows to this parquet")
+    ap.add_argument("--holdout", action="store_true",
+                    help="draft each season's Cohort under conf/holdout/<season>.json, the "
+                         "constants fitted without it (#294); the run line says per season "
+                         "which of the eight were refitted and which stayed shipped")
     a = ap.parse_args(list(argv) if argv is not None else None)
     if not a.run:
         ap.print_help()
         return 0
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
+    if a.holdout:
+        from hub.holdout import run_lines
+        try:
+            for line in run_lines(seasons):
+                print(f"  {line}")
+        except FileNotFoundError as e:
+            return unavailable("hub.season.weekly_gate", "a hold-out constant set", e)
     # The gate's reads are the gate's own, whichever way it was invoked (#247, the same
     # change #192 made to the draft gate and the screen). Run as a process this changes
     # nothing: the scope opens on an empty set, exactly as the process-global one was. Called
@@ -879,7 +890,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         from hub.season.weekly_gate_data import assemble_universe
         try:
             inputs = assemble_universe(seasons, drafts=a.drafts, seed=a.seed, shrink=a.shrink,
-                                       expected=a.expected)
+                                       expected=a.expected, holdout=a.holdout)
         except Exception as e:
             return unavailable("hub.season.weekly_gate", "the gate's inputs", e)
         cover = coverage(inputs)
