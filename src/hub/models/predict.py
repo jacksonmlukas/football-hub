@@ -92,43 +92,42 @@ TALENT_CV_BY_POS = fitted({"QB": 0.20, "RB": 0.38, "WR": 0.31, "TE": 0.18})
 # How wrong the rank-based imputation is, as a share of the projection it invents (#87).
 # `board._impute_xfp` fills a missing prior-season xFP by interpolating on consensus rank
 # within position, and a player priced that way is a guess where his neighbour at the same
-# rank is a measurement. Measured 2026-09-11 leave-one-out on the served board: each of the
-# 165 observed skill players inside rank 200 was blanked and re-imputed from the rest, with
-# the 15 players who are themselves imputed excluded as anchors. Standard deviation of
-# `imputed / actual - 1`, by position (n): QB 0.217 (27), RB 0.334 (51), WR 0.223 (66),
-# TE 0.220 (21); pooled 0.260, median -0.03 (the smoothed curve sits a little low). Added
-# in quadrature to the talent spread, since the error of the mean and the spread around it
-# are independent by construction. ADR-0006: fitted, so it lives here beside its number
-# and moves the digest when it moves.
+# rank is a measurement. Added in quadrature to the talent spread, since the error of the
+# mean and the spread around it are independent by construction. ADR-0006: fitted, so it
+# lives here beside its number and moves the digest when it moves.
 #
-# **Measured on the wrong population, and superseded by a committed measurement on the right
-# one (#277, 2026-09-13).** The numbers below are a leave-one-out error on *blanked
-# veterans* -- players whose rank was set partly by the production the curve predicts. The
-# players the board imputes are *rookies*, whose rank carries no such information, so this
-# is a lower bound on the error the flag carries. The script that produced it was a
-# scratchpad file and is not in the tree; the committed successor is
-# `scripts/fit_impute_cv.py` (`hub.draft.impute_cv`), which measures rookies -- first
-# weekly line in nflverse player stats is the board season, inside the top 200 by consensus
-# on that season's board -- against the curve's own prediction. Run 2026-09-13 on the
-# 2021-25 boards, 92 rookies over 5 seasons (the clusters), >= 8 games:
+# **Measured on the players the board imputes -- rookies -- 2026-09-13 (#277), and adopted
+# 2026-09-16 (#298).** The population is the disposition's: no prior NFL season (first
+# weekly line in nflverse player stats is the board season), inside the top 200 by
+# consensus on that season's board, >= 8 games; the realised season is scored against the
+# curve's own prediction and the statistic is `sd(realised / imputed - 1)`. The script is
+# `scripts/fit_impute_cv.py` (`hub.draft.impute_cv`), run on the 2021-25 boards: 92
+# rookies over 5 seasons (the clusters), against the season's own xFP per game -- the
+# quantity the curve imputes:
 #
-#     residual CV        QB (8)   RB (36)   WR (42)   TE (6)   pooled (92)
-#     shipped, veterans  0.217    0.334     0.223     0.220    0.260
-#     rookies, vs PPG    0.186    0.423     0.379     0.378    0.395
-#     rookies, vs xFP    0.164    0.359     0.288     0.319    0.324
+#     residual CV, vs xFP   QB (8)   RB (36)   WR (42)   TE (6)   pooled (92)
+#     rookies               0.164    0.359     0.288     0.319    0.324
+#     shipped               0.315    0.359     0.288     0.315    0.315
 #
-# `vs xFP` is the like-for-like: the season's own xFP per game, the quantity the
-# curve imputes and what the veteran measurement compared against. The interval is
-# clustered on the season (k = 5, t on 4 df): the mean of the per-season pooled CVs is
-# 0.315, se 0.037, 95% [0.213, 0.416], +1.5 t from the shipped 0.260 -- above it in four of
-# five seasons and NOT clearing the two-sided 95% bar at five clusters (vs PPG: 0.383
-# [0.241, 0.525], +2.4 t, also short of t(0.975, 4) = 2.78). Over players -- the unit the
-# shipped se was quoted on, which treats rows within a season as independent -- the se
-# would be 0.026, a secondary and not the interval. `>= 8 games` selects on survival and
-# biases the CV low (docs/impute-cv.md). QB and TE are eight and six players.
-# The constant keeps shipping meanwhile -- withdrawing to `TALENT_CV_BY_POS` would
-# under-state the risk further -- and moving it to the rookie number is a decision, not
-# this fit's side effect.
+# The pooled constant is the season-clustered estimate, not the 0.324 over players:
+# rookies inside one season share a board, a curve and one realisation of the year, so the
+# interval is the mean of the five per-season pooled CVs under a t on 4 df -- 0.315, se
+# 0.037, 95% [0.213, 0.416] (per season 0.187, 0.310, 0.365, 0.405, 0.306). RB and WR carry
+# their own values; QB and TE are eight and six players, too thin to split, and take the
+# pooled value. `>= 8 games` selects on survival -- the rookies who lost the job by October
+# are the busts, and they are dropped -- so every number here is biased LOW: a lower bound
+# on the dispersion the flag carries (docs/impute-cv.md).
+#
+# What shipped before, 2026-09-11 to 2026-09-16: pooled 0.260 (QB 0.217, RB 0.334, WR
+# 0.223, TE 0.220), a leave-one-out error on *blanked veterans* inside the top 200 -- 165
+# observed skill players, each blanked and re-imputed from the rest. A veteran's rank was
+# set partly by the production the curve predicts, where a rookie's rank carries no such
+# information; nobody imputes a veteran, so that number had no standing as a measurement
+# of this error and was replaced with the right-population estimate rather than challenged
+# as an incumbent (the house rule for a challenger did not apply). The rookie number sat
+# +1.5 t above it, in four of five seasons, without clearing the two-sided 95% bar at five
+# clusters; the replacement is on population, not on that test. The scratchpad script
+# behind 0.260 is not in the tree.
 #
 # **A better imputation was tried and did not beat this, 2026-09-11 (#88).** The one input the
 # board carries that consensus rank does not is the draft market's disagreement with it, so
@@ -138,9 +137,15 @@ TALENT_CV_BY_POS = fitted({"QB": 0.20, "RB": 0.38, "WR": 0.31, "TE": 0.18})
 # worse by more than its own. Result: pooled 0.261 against 0.260, +0.001 with se 0.010, 95%
 # [-0.018, +0.020]; QB -0.013 (se 0.013), RB -0.001, WR +0.005, TE -0.001. Kept as the record
 # of a null (ADR-0007): the draft market's rank imputes a prior season no better than consensus
-# does. The rank transform stays, and the uncertainty it carries is the number above.
-IMPUTE_CV = fitted(0.260)
-IMPUTE_CV_BY_POS = fitted({"QB": 0.217, "RB": 0.334, "WR": 0.223, "TE": 0.220})
+# does. That run was on the veteran population, so its 0.260 is the pre-#298 number; the
+# null it records is about the transform, which is unchanged. The rank transform stays, and
+# the uncertainty it carries is the rookie number above.
+#
+# Fitted on the 2021-25 boards, which include the seasons the backtest replays; named in
+# `backtest.LIMITATIONS` with the others (#279), and held out per season under #294 as
+# *not refitted* -- the shipped value is the five-season decision.
+IMPUTE_CV = fitted(0.315)
+IMPUTE_CV_BY_POS = fitted({"QB": 0.315, "RB": 0.359, "WR": 0.288, "TE": 0.315})
 
 
 def talent_cv_for(pos: np.ndarray, imputed: np.ndarray | None = None) -> np.ndarray:

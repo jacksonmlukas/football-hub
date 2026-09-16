@@ -102,6 +102,18 @@ def test_the_numbers_are_pinned():
     assert got["skew"].to_list() == [0.15, 0.67, 0.66]
 
 
+def test_impute_cv_is_the_rookie_measurement_and_the_thin_positions_take_the_pool():
+    """#298. `IMPUTE_CV` is `hub.draft.impute_cv`'s measurement on the players the board
+    imputes -- rookies, against the season's own xFP per game, season-clustered over
+    2021-25 -- not the veteran-blanked 0.260 that shipped before it. RB and WR carry their
+    own values; QB and TE (eight and six rookies) are too thin to split and take the pooled
+    value, so a per-position read of either is the pooled read."""
+    assert predict.IMPUTE_CV == 0.315
+    assert predict.IMPUTE_CV_BY_POS == {"QB": 0.315, "RB": 0.359, "WR": 0.288, "TE": 0.315}
+    assert predict.IMPUTE_CV_BY_POS["QB"] == predict.IMPUTE_CV_BY_POS["TE"] == predict.IMPUTE_CV
+    assert predict.IMPUTE_CV_BY_POS["RB"] > predict.IMPUTE_CV > predict.IMPUTE_CV_BY_POS["WR"]
+
+
 def test_there_is_only_one_implementation_of_the_weekly_moments():
     """`predict.weekly_moments` was a dead twin of `predict.moments` -- same law, no skew,
     zero callers. Two functions for one quantity is how they drift, and the drift is silent

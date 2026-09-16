@@ -142,9 +142,10 @@ def test_a_held_out_season_leaves_the_measurement_and_is_named():
 def test_the_script_records_the_constant_as_not_refitted_with_the_rookie_number_in_the_reason(
         monkeypatch, tmp_path, capsys):
     """`--exclude-season N --record` (#294) writes IMPUTE_CV and IMPUTE_CV_BY_POS into the
-    season's set as *not refitted* -- the shipped estimator is not in the tree and the rookie
-    number is another population, whose adoption is #277's decision -- with the rookie
-    pooled value in the reason so the replay's run line shows what it did not use."""
+    season's set as *not refitted*. Since #298 the shipped constant *is* this script's
+    measurement on all five seasons, so the reason says that, carries the hold-out's own
+    pooled value so the replay's run line shows what it did not use, and no longer calls
+    the adoption an open decision or cites the veteran 0.260 as the shipped number."""
     from hub import holdout
 
     monkeypatch.setattr(holdout, "SETS", tmp_path)
@@ -155,9 +156,13 @@ def test_the_script_records_the_constant_as_not_refitted_with_the_rookie_number_
     got = holdout.load(2022)
     assert got.values == {}
     assert set(got.missing) == {"predict.IMPUTE_CV", "predict.IMPUTE_CV_BY_POS"}
-    assert "pooled 0.312" in got.missing["predict.IMPUTE_CV"]
-    assert "#277" in got.missing["predict.IMPUTE_CV"]
-    assert "unchanged by this run" in capsys.readouterr().out
+    why = got.missing["predict.IMPUTE_CV"]
+    assert "pooled 0.312" in why and "#298" in why
+    assert "0.260" not in why and "open decision" not in why
+    assert "0.315" in why, "the reason names the shipped value the hold-out is read against"
+    out = capsys.readouterr().out
+    assert "unchanged by this run" not in out, "the pre-#298 closing line: no longer true"
+    assert "#298" in out and "0.315" in out
 
 
 def test_the_measurement_reports_n_the_clusters_and_the_shipped_value_beside_each_rookie_cv():

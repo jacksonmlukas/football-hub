@@ -1,12 +1,14 @@
 """IMPUTE_CV measured on the players the board actually imputes: rookies (#277).
 
 `hub.models.predict.IMPUTE_CV` / `IMPUTE_CV_BY_POS` say how wrong `board._impute_xfp`'s
-rank curve is, as a share of the projection it invents. The shipped values were measured
-leave-one-out on observed **veterans** inside the top 200: each was blanked and re-imputed
-from the rest. That is a lower bound on the error the flag is carrying, because the players
-the board imputes are **rookies** -- no prior NFL season, so no prior-season xFP -- and a
-veteran's rank was set partly by the very production the curve predicts, where a rookie's
-rank carries no such information.
+rank curve is, as a share of the projection it invents. What shipped before 2026-09-16 was
+measured leave-one-out on observed **veterans** inside the top 200: each was blanked and
+re-imputed from the rest. That was a lower bound on the error the flag is carrying, because
+the players the board imputes are **rookies** -- no prior NFL season, so no prior-season
+xFP -- and a veteran's rank was set partly by the very production the curve predicts, where
+a rookie's rank carries no such information. Since #298 the constants **are this module's
+measurement**: pooled 0.315 season-clustered, RB 0.359, WR 0.288, and QB and TE at the
+pooled value because eight and six rookies are too thin to split.
 
 **The population, as #277's disposition fixed it.** Rookies are players with no prior NFL
 season who appear inside the top 200 by consensus on that season's board; the realised
@@ -31,9 +33,10 @@ imputes and the one the veteran measurement compared against). Both CVs are prin
 first is what the ticket asked for, the second is the like-for-like beside the shipped
 number.
 
-Nothing here writes a constant. The shipped values keep shipping until a decision moves
-them; this module and `scripts/fit_impute_cv.py` are the committed fitting code the
-constant's docstring names as its successor.
+Nothing here writes a constant. The decision that moved the values to this measurement was
+#298 (2026-09-16), taken on the five-season run; a re-run prints the numbers beside the
+shipped ones and, under `--exclude-season N --record`, records the constant as *not
+refitted* with the hold-out's own number in the reason (`main`).
 
     uv run python scripts/fit_impute_cv.py
     uv run python scripts/fit_impute_cv.py --seasons 2021,2022,2023,2024,2025 --min-games 8
@@ -284,6 +287,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--min-games", type=int, default=MIN_GAMES)
     holdout.add_arguments(ap)
     a = ap.parse_args(argv)
+    from hub.models.predict import IMPUTE_CV
+
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     note = holdout.recording(a, holdout.command_line("scripts/fit_impute_cv.py", a))
     try:
@@ -291,19 +296,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as e:
         return unavailable("scripts/fit_impute_cv.py", "the boards and seasons of the archive", e)
     print("\n".join(lines))
-    print("\n  the shipped IMPUTE_CV was measured on blanked veterans and is unchanged by this "
-          "run; moving it is a decision, not a script's side effect")
-    # Printed, and recorded as *not refitted* (#294). The shipped constant's estimator -- the
-    # veteran-blanked leave-one-out -- is not in the tree, and this one measures a different
-    # population; a hold-out set carrying the rookie number would move the constant inside
-    # the replay before the decision #277 left open has been taken. The run line carries the
-    # rookie number so the reader sees what the replay did not use.
+    print(f"\n  the shipped IMPUTE_CV {IMPUTE_CV:.3f} is this measurement on all five seasons "
+          f"(#298, 2026-09-16); a run prints beside it and does not rewrite it")
+    # Printed, and recorded as *not refitted* (#294). The shipped constant is this script's
+    # own measurement on all five seasons (#298), so a hold-out set carrying the four-season
+    # number would replay under an estimate whose interval -- four clusters on a t with 3 df
+    # -- is wider than the one the decision was taken on, with QB and TE pooled by that
+    # decision rather than by the run. The reason carries the hold-out's own pooled number
+    # so the run line shows what the replay did not use.
     pooled = result["xfp_pg"]["by_position"]["pooled"]["cv"]
-    why = (f"IMPUTE_CV is not refitted: the shipped estimator (veteran-blanked leave-one-out, "
-           f"2026-09-11) is not in the tree, and the rookie measurement this script makes is "
-           f"a different population -- pooled {pooled:.3f} against the season's own xFP on "
-           f"n = {result['n']} with {result['seasons']} minus the hold-out, against the "
-           f"shipped 0.260 -- whose adoption is #277's open decision"
+    why = (f"IMPUTE_CV is not refitted: the shipped {IMPUTE_CV:.3f} is this script's rookie "
+           f"measurement on all five seasons (#298, 2026-09-16), and with the hold-out the "
+           f"same measurement gives pooled {pooled:.3f} against the season's own xFP on "
+           f"n = {result['n']} with {result['seasons']} minus the hold-out -- "
+           f"{result['clusters']} clusters, fewer than the decision was taken on"
            if pooled is not None else "IMPUTE_CV is not refitted: too few rookies to measure")
     for key in ("predict.IMPUTE_CV", "predict.IMPUTE_CV_BY_POS"):
         note(key, None, why_not=why)

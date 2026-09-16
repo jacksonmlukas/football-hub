@@ -948,7 +948,7 @@ eight above and the three companions read with them (`IMPUTE_CV_BY_POS`, `WEEKLY
 | `WEEKLY_K`, `WEEKLY_K_POOLED` | **yes** — `scripts/fit_weekly_spread.py` reproduces the shipped values exactly with nothing excluded (1,174 player-seasons; 1.880 / 2.068 / 2.125 / 1.994, pooled 2.042; exponents 0.161 / 0.469 / 0.518 / 0.622, pooled 0.498) | |
 | `TEAMMATE_RHO` | **yes** — `scripts/fit_teammate_rho.py`, the `correlate` method on the Panel's cached slice | reproduces the shipped edges to within 0.02 (+0.222 / +0.205 / +0.052 against +0.232 / +0.225 / +0.054), inside two of its own standard errors; the shipped run's exact sample is not in the tree |
 | `WEEKLY_SKEW`, `WEEKLY_SKEW_POOLED` | no | the shipped estimator (a 760-player-season validation, [component-projection.md](component-projection.md)) is not in the tree; the script's own reads 0.68 pooled against 0.60 and a set carrying it would confound the estimator with the season |
-| `IMPUTE_CV`, `IMPUTE_CV_BY_POS` | no | the shipped estimator (veteran-blanked, 2026-09-11) is not in the tree; the rookie measurement (#277, [impute-cv.md](impute-cv.md)) is a different population and its adoption is an open decision |
+| `IMPUTE_CV`, `IMPUTE_CV_BY_POS` | no | since #298 (2026-09-16) the shipped value is the rookie measurement on all five seasons ([impute-cv.md](impute-cv.md)); a four-season refit has one cluster fewer than the decision was taken on, and the reason carries the hold-out's own number |
 | `TALENT_CV`, `TALENT_CV_BY_POS` | no | `scripts/fit_talent_cv.py` needs an ESPN session (`calibrate.draft_outcomes`); none on 2026-09-13 |
 | `PICK_NOISE_INTERCEPT`, `PICK_NOISE_SLOPE` | no | `scripts/fit_pick_noise.py` needs an ESPN session (`availability.historical_picks`); none on 2026-09-13 |
 

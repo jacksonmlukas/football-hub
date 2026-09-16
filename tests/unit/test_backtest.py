@@ -1873,12 +1873,14 @@ def test_the_limitations_name_the_constants_fitted_on_the_replayed_seasons():
     from hub.draft import availability
     from hub.models import predict
     entry = next(x for x in bt.LIMITATIONS if "FITTED ON THE SEASONS" in x)
-    for name in ("WEEKLY_K", "WEEKLY_SKEW", "TEAMMATE_RHO", "TALENT_CV", "PICK_NOISE_"):
+    for name in ("WEEKLY_K", "WEEKLY_SKEW", "TEAMMATE_RHO", "TALENT_CV", "PICK_NOISE_",
+                 "IMPUTE_CV"):      # #298: rookies on the 2021-25 boards
         assert name in entry, name
     assert "2022,2023,2024,2025" in entry
     assert "#290" in entry, "the hold-out is named"
     for mod, name in ((predict, "TALENT_CV"), (predict, "WEEKLY_K"), (predict, "WEEKLY_SKEW"),
-                      (predict, "TEAMMATE_RHO"), (availability, "PICK_NOISE_INTERCEPT")):
+                      (predict, "TEAMMATE_RHO"), (availability, "PICK_NOISE_INTERCEPT"),
+                      (predict, "IMPUTE_CV")):
         src = inspect.getsource(mod)
         i = src.index(f"\n{name}")
         assert "backtest.LIMITATIONS" in src[max(0, i - 400): i + 200], f"{name} does not point at the entry"

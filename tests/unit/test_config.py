@@ -952,8 +952,21 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     and not a model change**: no constant was refitted and nothing any run computes differs
     on either side of this commit. (Before the pin it read `a1e669b9` -> `432c6b3c`,
     `9be7844c` -> `429481db`.)
+
+    **Moved again 2026-09-16 (#298): `b1f69382` -> `8dbae43a`**, `fitted_digest` `04c2d997`
+    -> `983eb30f`. Two names moved: `predict.IMPUTE_CV` 0.260 -> 0.315 and
+    `predict.IMPUTE_CV_BY_POS` {QB 0.217, RB 0.334, WR 0.223, TE 0.220} -> {QB 0.315,
+    RB 0.359, WR 0.288, TE 0.315}. **A model change**: the values that shipped were a
+    leave-one-out error on blanked veterans, a population the board never imputes, and
+    the new ones are `hub.draft.impute_cv`'s measurement on rookies -- the imputed
+    population -- season-clustered over 2021-25 (n = 92, 95% [0.213, 0.416]), with QB and
+    TE too thin to split (eight and six) and reading the pooled value. Every imputed
+    player's talent spread widens, `hypot(TALENT_CV_BY_POS, IMPUTE_CV_BY_POS)`: QB 0.295
+    -> 0.373, RB 0.506 -> 0.523, WR 0.382 -> 0.423, TE 0.284 -> 0.363; an observed player
+    is unchanged. The #197 frozen-board pin does not move: that fixture carries no
+    `xfp_imputed` column, so both arms draft under the observed spread on every row.
     """
-    assert config_digest(HubConfig()) == "b1f69382"
+    assert config_digest(HubConfig()) == "8dbae43a"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

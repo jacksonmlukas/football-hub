@@ -14,15 +14,15 @@
     },
     "predict.IMPUTE_CV": {
       "command": "uv run python scripts/fit_impute_cv.py --exclude-season 2025 --record",
-      "recorded": "2026-09-13",
+      "recorded": "2026-09-16",
       "value": null,
-      "why_not": "IMPUTE_CV is not refitted: the shipped estimator (veteran-blanked leave-one-out, 2026-09-11) is not in the tree, and the rookie measurement this script makes is a different population -- pooled 0.327 against the season's own xFP on n = 70 with [2021, 2022, 2023, 2024, 2025] minus the hold-out, against the shipped 0.260 -- whose adoption is #277's open decision"
+      "why_not": "IMPUTE_CV is not refitted: the shipped 0.315 is this script's rookie measurement on all five seasons (#298, 2026-09-16), and with the hold-out the same measurement gives pooled 0.327 against the season's own xFP on n = 70 with [2021, 2022, 2023, 2024, 2025] minus the hold-out -- 4 clusters, fewer than the decision was taken on"
     },
     "predict.IMPUTE_CV_BY_POS": {
       "command": "uv run python scripts/fit_impute_cv.py --exclude-season 2025 --record",
-      "recorded": "2026-09-13",
+      "recorded": "2026-09-16",
       "value": null,
-      "why_not": "IMPUTE_CV is not refitted: the shipped estimator (veteran-blanked leave-one-out, 2026-09-11) is not in the tree, and the rookie measurement this script makes is a different population -- pooled 0.327 against the season's own xFP on n = 70 with [2021, 2022, 2023, 2024, 2025] minus the hold-out, against the shipped 0.260 -- whose adoption is #277's open decision"
+      "why_not": "IMPUTE_CV is not refitted: the shipped 0.315 is this script's rookie measurement on all five seasons (#298, 2026-09-16), and with the hold-out the same measurement gives pooled 0.327 against the season's own xFP on n = 70 with [2021, 2022, 2023, 2024, 2025] minus the hold-out -- 4 clusters, fewer than the decision was taken on"
     },
     "predict.TALENT_CV": {
       "command": "uv run python scripts/fit_talent_cv.py --exclude-season 2025 --record",

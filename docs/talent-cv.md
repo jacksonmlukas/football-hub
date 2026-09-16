@@ -290,6 +290,16 @@ TE rests on 51 players, which is why it is shrunk hard.
 **One league, three seasons, 460 players.** The CI is honest about sampling error within
 that, but this is one room's drafts, and a room that drafts unusually would move the number.
 
+**It is the spread of an *observed* player.** A player whose prior-season xFP the board
+imputed from rank (`board._impute_xfp`, `xfp_imputed`) is a guess where his neighbour at the
+same rank is a measurement, and `talent_cv_for` widens him by the imputation's own error in
+quadrature: `hypot(TALENT_CV_BY_POS, IMPUTE_CV_BY_POS)`. Since 2026-09-16 (#298) that error
+is measured on the players actually imputed — rookies, `IMPUTE_CV` 0.315 pooled, RB 0.359,
+WR 0.288, QB and TE at the pooled value — so an imputed QB carries 0.373, RB 0.523, WR 0.423,
+TE 0.363 against the observed 0.20 / 0.38 / 0.31 / 0.18 above. Before #298 the widening used
+a veteran-blanked 0.260 that under-stated it. [impute-cv.md](impute-cv.md) has the
+measurement; nothing in this document's fit changed.
+
 ## Effect on draft valuation
 
 Two rosters with identical projections and identical slot counts, one leaning on RBs and one
