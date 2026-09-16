@@ -16,7 +16,8 @@ import importlib
 
 import pytest
 
-GATES = ("hub.draft.backtest", "hub.season.weekly_gate", "hub.season.lineup_gate")
+GATES = ("hub.draft.backtest", "hub.season.weekly_gate", "hub.season.lineup_gate",
+         "hub.models.starter_change")
 
 
 @pytest.mark.parametrize("module", GATES)

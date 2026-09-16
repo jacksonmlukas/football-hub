@@ -435,6 +435,334 @@ and still not name the frames they were played on. `board_digest` now stamps tha
 paired output carries the commit that produced it. The rows above predate the stamp and cannot
 be given one retroactively; a re-run under #194 will carry all four.
 
+---
+
+# Pre-registered 2026-09-13: the quarterback adjustment's own gate (#291)
+
+**Written and committed before the harness was built or run**, in the form above: the bar
+first, the power arithmetic on the corrected reference distribution, then the run. The
+adjustment (`hub.models.quarterback`, #218/#268) reaches published predictions and survivor
+picks on a validation of *538's* adjustment against *538's* base Elo. #270 marks every row it
+touches and names this gate as the pull trigger. What follows is the gate.
+
+## The question
+
+Where the betting market has no live price, the adjustment moves a frozen quote by the
+source's `qb_adj / 25`. It matters only when the frozen quote predates a **starter change** —
+on every other game the adjustment is near zero and the frozen quote already embeds the
+starter. So the gate is asked on exactly those games:
+
+> Over games whose frozen price predates a starter change, is the quarterback-adjusted frozen
+> line a better forecast of the result than the unadjusted one?
+
+## The event set — shared with #221, built once
+
+A **starter-change event** is a team whose starting quarterback on game *g* differs from its
+starter on its previous game *g − 1* **of the same season**. The starter is observed, never
+reported: the source's own starter column on the row (`qb1`/`qb2` in `hub.fetch.nfeloqb`,
+the observed starter on a played row and the named one on the coming week's), or the passer
+of the first pass attempt in play-by-play where the cache carries that column. The injury
+report is not consulted — #221 records why (one row per player-week, timestamped Friday,
+fourteen quarterbacks out across all of 2024). A change across the offseason is not an event:
+the betting market priced it all summer. Postseason games are excluded, as in the rule that
+licensed the adjustment. The **event game** is *g*; a game where both teams changed is one
+event game with two changes on it. Event counts are reported per season beside every number.
+
+## The two arms, and the comparator
+
+* **Incumbent:** the **frozen price** — the last snapshot of the event game captured before
+  the Eastern game day of the changed team's previous game, which is before any change could
+  have been known. This is the price the adjustment would actually have replaced, and not the
+  close; a gate against the close would score the adjustment against the betting market's own
+  repricing and could only lose.
+* **Arm under test:** the same frozen price moved by `hub.models.quarterback.apply` — the
+  shipped estimator, called as `ratings` calls it, on a row labelled as having no live price —
+  with the state the live path would read on the morning of the game: both teams' starter and
+  `qb_adj` from the event game's own row, which the source publishes before kickoff.
+
+  > **Amended 2026-09-13, on review, before any row existed to score.** As first written the
+  > arm read the event game's *own* row — the arriving starter known with certainty. That is
+  > not the shipped path. `hub.models.ratings._rated_by_week` rates a week that has kicked
+  > off from `nfeloqb.state(rows, as_of=<its first kickoff>)`, rows strictly before that
+  > game day (#272), and says in its own docstring that this is the seam #291 reads. That
+  > state's latest row for every team is its previous game, so on an event game the shipped
+  > estimator prices the *departing* starter — the source's file carries a new starter on
+  > the row of his first game and on no earlier row, and a replay cannot know him before it.
+  > An arm reading the same-week row replays a better estimator than the one being gated and
+  > biases the difference toward ADOPT. **The arm is the shipped seam:** `nfeloqb.state(rows,
+  > as_of=<the week's first game day>)` handed to `quarterback.apply`, exactly as `ratings`
+  > does. The same-week-row arm is kept as an **oracle, a diagnostic and not the gate**,
+  > reported beside the shipped arm under its own column (`oracle_diff`) because it answers
+  > a different question #270's disposition needs — whether the mechanism could help *if*
+  > the state were timely — and it is never read by the rule
+  > (`tests/unit/test_starter_change.py::test_the_rule_reads_the_shipped_arm_and_never_the_oracle`).
+  > The wording above is left as written, per [method.md](method.md) rule 13.
+* Both arms convert a spread to a home win probability by `MarketBaseline`'s own conversion
+  (`normal_cdf(spread / MARGIN_SD)`), so the two arms differ in the spread and nothing else.
+
+**The unit** is one event game, scored by log-loss on the home result; ties score 0.5. The
+paired difference is `log-loss(unadjusted) − log-loss(adjusted)`, positive when the
+adjustment helped. **The cluster is the season** (`experiment.SEASON_CLUSTER`), and an
+*event-season* is a season in which the archive holds at least one scored event game.
+
+## The bar
+
+The house rule, `experiment.gate`, and nothing beside it:
+
+* **ADOPT** — the interval excludes zero on the positive side *and* the sign is positive in
+  every event-season. The adjustment has earned its place; the `-qb` suffix stays on the row
+  for the track record and the sentence *ungated in this repo* leaves
+  [qb-adjustment.md](qb-adjustment.md).
+* **Anything else that is a verdict** — REMOVE, or SHOW — fails the house rule, and that is
+  #270's pull trigger: the module leaves `ratings` and `survivor` that day and is reachable
+  only from the harness. The burden is on the arm: it is in the published path today on no
+  verdict of this repo's, and a null is not a pass.
+* **NOT-RUNNABLE, or VOID** — no verdict. The mark stands, and the run records what would
+  make it runnable.
+
+Two preconditions ahead of the verdict, both pre-registered here:
+
+1. **Fewer than three event-seasons is NOT-RUNNABLE.** ADR-0019: "no gate in the repo runs
+   at fewer than three, and one that did should say so rather than quietly inheriting a bar
+   built for four". At two seasons the every-season half is a coin flip.
+2. **Stage 2 as written above:** an MDE above the declared ceiling arm is NOT-RUNNABLE. The
+   ceiling arm is **the betting market's own repricing** — the last snapshot before the game
+   day, scored against the same frozen line. What the betting market recovered by the close
+   is the most an adjustment built to anticipate it could recover.
+
+## The MDE, on the corrected reference distribution
+
+`(t(0.975, k − 1) + z(0.80)) × SE`, `k` the number of event-seasons, `SE` the standard error of
+the season-clustered bootstrap that produces the interval (`experiment.summarise`), exactly as
+restated on 2026-09-07 above. `SE ≈ s / √k` where `s` is the between-season standard deviation
+of the per-season mean difference, so the multiplier on `s` is:
+
+| event-seasons k | t(0.975, k−1) | multiplier on s | MDE / s |
+|---|---|---|---|
+| 2 | 12.706 | 13.548 / √2 | **9.58** |
+| 3 | 4.303 | 5.144 / √3 | **2.97** |
+| 4 | 3.182 | 4.024 / √4 | **2.01** |
+| 5 | 2.776 | 3.618 / √5 | **1.62** |
+| 6 | 2.571 | 3.412 / √6 | **1.39** |
+| 8 | 2.365 | 3.206 / √8 | **1.13** |
+| 10 | 2.262 | 3.104 / √10 | **0.98** |
+
+**The number of event-seasons needed** is the smallest `k` at which that MDE is at or below
+the **target** — the effect there is to find if this estimator reproduces the source's own
+gain, which `qb_adj / 25` is built to do. Target and `s` are read from a **pilot** the pinned
+file supplies without a line of this repo's: the source publishes a base and a
+quarterback-adjusted probability on every row (`elo_prob1`, `qbelo_prob1`), so their paired
+log-loss difference over the same event games, 2022–2025, gives the per-season mean (the
+target is its absolute value across seasons) and the between-season `s`. The pilot is a power
+input and not a verdict: it is the source's arm on nflfastR outcomes, not this estimator on a
+frozen line. Both numbers are computed by the harness and recorded in the run below, with
+their `n` and season counts.
+
+## What the archive is expected to hold
+
+The lookahead archive's polls run 2026-08-25 to 2026-09-06 and the 2026 season's first
+kickoff is 2026-09-10, so **no in-season starter change can yet have a scored event game**;
+the expected run is zero rows, zero event-seasons, NOT-RUNNABLE under precondition 1, with
+the event-seasons needed stated from the pilot. If the poller keeps the archive through the
+season, 2026 becomes the first event-season in January; the third arrives no earlier than
+January 2029, and the number the pilot says is needed may be larger still. That is recorded as
+**not-runnable** (ADR-0014's category: an absence of evidence), never as a null.
+
+---
+
+# Pre-registered 2026-09-13: the line-move study's power (#221)
+
+Restating the MDE line #221's disposition of 2026-09-12 wrote with placeholder gap spreads,
+before the study runs and with the same event construction as the gate above.
+
+**The estimand** is points of home-spread movement per unit of ex-ante quality gap. For each
+event game: the move is the last snapshot before the game day minus the frozen price (the
+gate's comparator, the last snapshot before the changed team's previous game day), less the
+mean move over every other archived game of the same week between the same two poll days —
+the week fixed effect, written as the subtraction it is. The regressor is the **net gap**,
+home minus away, where a side's gap is the arriving starter's `qb_value_pre` on the event row
+minus the departing starter's on the previous row — both ex ante, both the pinned file's. A
+game where both quarterbacks changed is one row with both gaps on it. The benchmark is
+**0.132 points per value unit**, 538's 3.3 Elo per unit over 25 Elo per point: a coefficient
+that matches it says the betting market does what the source does and there is no edge by
+construction.
+
+**The noise floor is #214's** (`hub.fetch.odds --noise-floor`): sd 0.840 points per poll
+interval, 0.40 per root-day, over 34 intervals of 12 games. The study's window runs from the
+previous game day to the event's game day, about a week, so the floor per window is
+`0.40 × √days`; a move inside it is not a move, and the coefficient's standard error is taken
+from that floor rather than from a residual the event rows themselves could not resolve.
+
+**The MDE**, before the run: `(t(0.975, n − 1) + z(0.80)) × floor_window / (sd(gap) × √n)`,
+`n` the event games (the cluster is the game, as #214's is) — the 2.8 in the disposition's
+line, with the t in place of the normal. `sd(gap)` is read off the pinned file's 2022–2025
+events by the harness and the line is restated with it below. The disposition's own
+arithmetic at gap spreads of 10 / 20 / 30 stands as written there; the pinned file decides
+which spread is real.
+
+**Censoring and timing**, reported with the run: an event whose change predates the first
+snapshot cannot be seen and is counted, not dropped silently — every offseason change is of
+this kind against an archive that opens 2026-08-25. The change-point is the first poll day
+after the frozen one at which the event game's move clears the floor per root-day, reported
+in days from the previous game day; the depth-chart date that would place it against the
+report date is not cached here and is *not established* until it is.
+
+**Expected on this archive:** the same zero as the gate — no in-season event precedes the
+archive's last poll — so the run records the event construction's counts, the pilot gap
+spread, the restated MDE, and the censored count, and the coefficient is *not established*.
+
+---
+
+# Measured 2026-09-13: the quarterback gate is not-runnable, and the archive needs about 29 event-seasons (#291)
+
+Run against the pre-registration above, committed first in `8e4e502`, by
+`uv run python -m hub.models.starter_change --events --gate --ceiling` against the pinned
+nfeloqb file (`2c95e5fc`, 16,088 rows) and the 2026 lookahead archive (272 games, 8 polls,
+2026-08-25 to 2026-09-06). Nothing was fetched.
+
+## The event construction, on the pinned file
+
+Events off the source's starter column, a change between two regular-season games of one
+season; a team's first row in the window has nothing to differ from, so 2022's offseason
+count is not computable from a window that opens there.
+
+| season | changes | event games | gap sd (value units) | offseason changes, not events |
+|---|---|---|---|---|
+| 2022 | 62 | 57 | 80.4 (n=62) | — |
+| 2023 | 61 | 53 | 62.2 (n=61) | 15 |
+| 2024 | 51 | 48 | 69.2 (n=51) | 19 |
+| 2025 | 57 | 54 | 50.3 (n=57) | 19 |
+| 2026 | **0** | **0** | — | 13 |
+
+About fifty-five a season, which is the count #221's disposition assumed. **2026 holds no
+event yet**: the file's 2026 rows are week 1, two of them played, and every one of the 13
+changes it shows is a team whose week-1 starter differs from its last 2025 start — priced
+all summer, and censored against an archive that opens 2026-08-25 in any case.
+
+## The gate
+
+| | |
+|---|---|
+| scored event games in the archive | **0** |
+| event-seasons | **0** (pre-registered minimum 3) |
+| verdict | **NOT-RUNNABLE** — precondition 1 |
+| the mark | stands on every `-qb` row (#270); this is not a null |
+
+The archive's last poll (2026-09-06) precedes the season's first kickoff (2026-09-10), so no
+frozen price yet predates an in-season change. The harness is built and held on synthetic
+fixtures (`tests/unit/test_starter_change.py`): the frozen price is the last snapshot before
+the changed team's previous game day, the arm is `quarterback.apply` on a row labelled
+`stale`, the pair is log-loss on the home result, the ceiling arm is the last snapshot
+before the game day, and the precondition fires ahead of the house rule.
+
+**Re-run 2026-09-13 after the review amendment above, and nothing numerical moves.** The arm
+is now the shipped seam (`nfeloqb.state` as of the week's first game day) and the oracle is
+reported beside it as a diagnostic; the gate still has zero rows, so neither arm has a
+figure. The event counts do not depend on the arm and are unchanged. The pilot is scored on
+the source's own two probability columns and never touched either arm; it is unchanged to
+the fourth decimal (target 0.0180, s 0.0332, 29 event-seasons). Held by two mutants: the
+arm swapped back to the same-week row, and the as-of moved onto the game day, each fails
+`test_the_arm_is_the_shipped_seam_and_prices_the_departing_starter`.
+
+**What the seam implies for the gate's answer, said plainly.** On the shipped replay, an
+event game's adjustment is the departing starter's — near zero for an established starter
+— so the shipped arm on an event game is close to the frozen line, and the gate is asking
+whether a *stale* adjustment beats no adjustment. The oracle is the arm the module's
+docstring describes. The gap between the two, once rows exist, is the cost of the source's
+timing, and [qb-adjustment.md](qb-adjustment.md) records what that timing is.
+
+## The pilot, and the number of event-seasons needed
+
+The source's own two columns (`elo_prob1`, `qbelo_prob1`) on the same event games, log-loss
+base minus quarterback-adjusted, positive when the adjustment helped:
+
+| season | event games | mean | sd |
+|---|---|---|---|
+| 2022 | 57 | **+0.0248** | 0.224 |
+| 2023 | 53 | **−0.0466** | 0.207 |
+| 2024 | 48 | **−0.0417** | 0.216 |
+| 2025 | 54 | **−0.0085** | 0.216 |
+
+Over 212 event games and 4 seasons: mean of the season means **−0.0180**, between-season sd
+**0.0332**. The pre-registered target is the absolute value, 0.0180, and the smallest `k`
+whose MDE `(t(0.975, k−1) + 0.8416) × 0.0332 / √k` is at or below it is **k = 29
+event-seasons**. At one season a year that is the 2050s; at the three-season floor the MDE
+is 0.099, five times the target.
+
+**Two things the pilot says beside the power figure, neither a verdict on this gate.** The
+sign is negative in three seasons of four: on event games, on nflfastR outcomes, the
+source's quarterback-adjusted probability scored *worse* than its base in 2023, 2024 and
+2025, and the pooled figure is the wrong way for the arm. That is the source's arm and the
+source's base, not this estimator on a frozen line — the gate's question — and the per-game
+sd of 0.21 against per-season means of a few hundredths says a single season's sign is
+mostly noise. It is recorded because the licence in [qb-adjustment.md](qb-adjustment.md)
+rests on the *same* two columns of a different file (538's, 2013–2022, all games, Brier),
+and on the event games this repo's adjustment exists for, the nfeloqb file does not
+reproduce that gain. The second: the target is small against the noise because the
+adjustment's whole effect is a few hundredths of log-loss per event game, so a gate on it
+was always going to be a decades-scale question. That is the not-runnable finding, and it
+is what #270's mark is for.
+
+**Not established.** The gate's own effect, interval and ceiling — no row exists to compute
+them from. The run stamps `commit` as dirty because the harness was run before its own
+commit; the numbers above depend on the pinned file and the archive alone, both unchanged.
+
+---
+
+# Measured 2026-09-13: the line-move study's MDE is restated on the real gap spread, and its coefficient is not established (#221)
+
+Run against the pre-registration above by `uv run python -m hub.models.starter_change
+--events --study`, on the same pinned file and archive as the gate. The event construction
+is the gate's (its table above); what follows is the study's own.
+
+## The gap spread, and the MDE restated
+
+The disposition of 2026-09-12 stated the MDE at gap spreads of 10 / 20 / 30 value units and
+said the pinned file would decide. It has: the ex-ante gap between the departing and the
+arriving starter has a standard deviation of **66.3 value units over 231 in-season events,
+2022–2025** (per season 80.4 / 62.2 / 69.2 / 50.3, n = 62 / 61 / 51 / 57). A backup is not
+a slightly worse starter; on the source's scale he is a hundred units worse, which is why
+the source's adjustments run to −125 Elo.
+
+The noise floor, recomputed off this archive with frozen lookaheads excluded, is **0.404
+points per root-day over 12 live games** — #214's 0.40 on the same twelve, reproduced. Over a
+seven-day window that is 1.06 points per event.
+
+| | MDE, points per value unit |
+|---|---|
+| one season, n = 53 event games, 7-day window, t(0.975, 52) | **0.0063** |
+| two seasons, n = 106 | 0.0044 |
+
+Against the 0.132 benchmark, **one season resolves the benchmark twenty times over, and
+resolves 0.132 from 0.10 at five MDEs.** The disposition's "two-season question" was a
+question about the gap spread, and the gap spread answers it: what a second season buys is
+not power but a second cluster for the sign. The 2.8 in the disposition's line is 2.85 on the
+t at fifty-two clusters; the difference is in the third decimal.
+
+## The run
+
+| | |
+|---|---|
+| in-season events in 2026 | **0** |
+| offseason changes in 2026 | 13, every one before the first snapshot (2026-08-25): **censored by construction** |
+| event games with a frozen and a pre-game price | **0** |
+| coefficient | **not established** |
+| change-point against the report date | **not established** — depth charts are not cached, and the play-by-play cache carries no passer column, so the first-pass-attempt reader (`starters_from_pbp`) is held on a fixture and has not met live data |
+
+The harness runs end to end on a synthetic archive (`tests/unit/test_starter_change.py`):
+the week's mean move between the same two poll days is subtracted, the slope on the net gap
+recovers a manufactured 0.132, the standard error is the floor's, and the change-point is the
+first poll clearing the floor per root-day. On the real archive there is nothing for it to
+read until the poller has carried the season past its first in-season change, which the
+first table above says will be about the fourth week.
+
+**What the study cannot do on this archive, and says so.** An event whose change was known
+before the frozen snapshot — a benching announced midweek before the previous game — is
+priced in the frozen quote already, and the study would read a move of zero against a gap of
+a hundred: a censoring in the other direction that only the depth-chart timestamp can
+separate. It is the same limit as the timing criterion, and it closes when the depth charts
+are cached.
+
 
 ---
 

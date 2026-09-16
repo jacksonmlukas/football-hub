@@ -1,0 +1,463 @@
+"""Starter-change events and their two readers (#221, #291): the gate on the quarterback
+adjustment over a frozen line, and the line-move study.
+
+The event construction is held first, because both readers stand on it: an event is a team
+whose starter on one game differs from its starter on its previous game of the same season,
+observed off the source's own starter column or the first pass attempt in play-by-play, and
+never off the injury report. The gate is held to its pre-registration in
+`docs/gate-power.md` -- the frozen price is the comparator, the shipped estimator is the arm,
+fewer than three event-seasons is not-runnable -- and the study to its: the week's mean move
+is subtracted, the regressor is the net ex-ante gap, the floor sets the standard error.
+
+Every fixture is synthetic and every test runs with no `data/` and no network.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import math
+import statistics
+
+import polars as pl
+import pytest
+
+from hub.fetch import nfeloqb
+from hub.models import experiment, quarterback
+from hub.models import starter_change as sc
+from hub.models.market import MARGIN_SD, normal_cdf
+
+# --- fixtures ------------------------------------------------------------------------------
+
+
+def source_rows(games):
+    """nfeloqb-shaped rows. Each game: (date, season, week, home, away, home_qb, away_qb,
+    home_value, away_value, home_adj, away_adj, home_score | None, away_score | None,
+    elo_prob1 | None, qbelo_prob1 | None). Home is team1, the source's convention."""
+    cols = ("date", "season", "week", "team1", "team2", "qb1", "qb2", "qb1_value_pre",
+            "qb2_value_pre", "qb1_adj", "qb2_adj", "score1", "score2", "elo_prob1",
+            "qbelo_prob1")
+    frame = pl.DataFrame({c: [g[i] for g in games] for i, c in enumerate(cols)},
+                         schema={"date": pl.Utf8, "season": pl.Int64, "week": pl.Utf8,
+                                 "team1": pl.Utf8, "team2": pl.Utf8, "qb1": pl.Utf8,
+                                 "qb2": pl.Utf8, "qb1_value_pre": pl.Float64,
+                                 "qb2_value_pre": pl.Float64, "qb1_adj": pl.Float64,
+                                 "qb2_adj": pl.Float64, "score1": pl.Int64,
+                                 "score2": pl.Int64, "elo_prob1": pl.Float64,
+                                 "qbelo_prob1": pl.Float64})
+    return frame.with_columns(pl.lit("REG").alias("game_type"))
+
+
+def polls(rows):
+    """The archive as `hub.fetch.odds._archive` returns it: (game_id, close_spread,
+    captured_at, week). `captured_at` is naive UTC."""
+    return pl.DataFrame({"game_id": [r[0] for r in rows],
+                         "close_spread": [float(r[1]) for r in rows],
+                         "captured_at": [r[2] for r in rows],
+                         "week": [r[3] for r in rows]},
+                        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                                "captured_at": pl.Datetime("us"), "week": pl.Int64})
+
+
+def utc(day, hour=16):
+    return dt.datetime(2026, 9, day, hour)
+
+
+# A season for one team, KC: Mahomes starts weeks 1-2, a backup takes week 3, Mahomes is
+# back for week 4. The opponent DEN keeps one starter throughout; the Rams, spelled the
+# source's way, arrive in week 3 with a starter who differs from their last 2025 start --
+# an offseason change, flagged and not an event.
+SEASON = [
+    ("2026-09-13", 2026, "1.0", "KC", "DEN", "Mahomes", "Nix", 200.0, 120.0, 40.0, 2.0,
+     27, 20, 0.70, 0.75),
+    ("2026-09-20", 2026, "2.0", "DEN", "KC", "Nix", "Mahomes", 121.0, 205.0, 2.5, 42.0,
+     17, 24, 0.40, 0.35),
+    ("2026-09-27", 2026, "3.0", "KC", "LAR", "Gabbert", "Bethard", 60.0, 55.0, -110.0, -90.0,
+     10, 20, 0.65, 0.52),
+    ("2026-10-04", 2026, "4.0", "KC", "DEN", "Mahomes", "Nix", 199.0, 122.0, 38.0, 3.0,
+     None, None, 0.71, 0.76),
+]
+PRIOR = [("2025-12-28", 2025, "17.0", "KC", "DEN", "Mahomes", "Nix", 210.0, 100.0, 45.0,
+          -5.0, 30, 10, 0.8, 0.85),
+         ("2025-12-28", 2025, "17.0", "LAR", "SF", "Stafford", "Purdy", 150.0, 160.0, 10.0,
+          12.0, 21, 24, 0.5, 0.49)]
+
+
+@pytest.fixture
+def rows():
+    return source_rows(PRIOR + SEASON)
+
+
+# --- the event construction ----------------------------------------------------------------
+
+
+def test_team_games_key_every_side_by_nflverse_id_and_spelling(rows):
+    """One row per (team, game), the id rebuilt in nflverse's spelling from the source's own
+    columns -- the source spells the Rams LAR where the archive says LA -- with the side and
+    the ex-ante value and adjustment on it."""
+    tg = sc.team_games(rows)
+    week3 = tg.filter(pl.col("game_id") == "2026_03_LA_KC").sort("team")
+    assert week3["team"].to_list() == ["KC", "LA"]
+    assert week3["home"].to_list() == [True, False]
+    assert week3["qb"].to_list() == ["Gabbert", "Bethard"]
+    assert week3["value"].to_list() == [60.0, 55.0]
+    assert week3["adj"].to_list() == [-110.0, -90.0]
+    assert tg.filter(pl.col("team") == "LAR").is_empty()
+
+
+def test_events_are_starter_changes_between_consecutive_games_of_one_season(rows):
+    """KC changes twice in 2026 (Gabbert in, Mahomes back); LA once (Bethard, against its last
+    2025 start -- an offseason change, flagged and not an event); DEN never. A team's first
+    row has nothing to differ from."""
+    ev = sc.events(sc.team_games(rows))
+    kc = ev.filter(pl.col("team") == "KC").sort("week")
+    assert kc["week"].to_list() == [3, 4]
+    assert kc["departing"].to_list() == ["Mahomes", "Gabbert"]
+    assert kc["arriving"].to_list() == ["Gabbert", "Mahomes"]
+    assert kc["prev_game_id"].to_list() == ["2026_02_KC_DEN", "2026_03_LA_KC"]
+    assert kc["in_season"].all()
+    la = ev.filter(pl.col("team") == "LA")
+    assert la.height == 1 and not la["in_season"][0]
+    assert ev.filter(pl.col("team") == "DEN").is_empty()
+    # The 2025 -> 2026 Mahomes rows are the same starter: no event across the offseason.
+    assert ev.filter((pl.col("team") == "KC") & (pl.col("week") == 1)).is_empty()
+
+
+def test_values_are_ex_ante_for_both_quarterbacks(rows):
+    """The departing starter's value is read off his last start, the arriving starter's off
+    the event row -- both `qb_value_pre`, neither a post-game figure -- and the gap is the
+    arriving minus the departing. The arriving starter's adjustment rides on the row."""
+    ev = sc.in_season_events(sc.events(sc.team_games(rows)))
+    kc3 = ev.filter((pl.col("team") == "KC") & (pl.col("week") == 3)).row(0, named=True)
+    assert kc3["departing_value"] == 205.0        # Mahomes on the week-2 row
+    assert kc3["arriving_value"] == 60.0          # Gabbert on the week-3 row
+    assert kc3["gap"] == 60.0 - 205.0
+    assert kc3["arriving_adj"] == -110.0
+    assert kc3["prev_date"] == "2026-09-20" and kc3["date"] == "2026-09-27"
+
+
+def test_a_game_where_both_sides_changed_is_one_event_game_with_a_net_gap(rows):
+    """LV's change would make week 3 a two-change game; here it is LA's offseason change, so
+    week 3 is one change and week 4 one change. Built on a frame where both sides change in
+    one game, the game is one row and the net gap is home minus away."""
+    both = source_rows([
+        ("2026-09-13", 2026, "1.0", "A", "B", "a1", "b1", 100.0, 100.0, 0.0, 0.0, 20, 10, .5, .5),
+        ("2026-09-20", 2026, "2.0", "A", "B", "a2", "b2", 40.0, 70.0, -60.0, -30.0, 10, 20,
+         .5, .5)])
+    games = sc.event_games(sc.in_season_events(sc.events(sc.team_games(both))))
+    assert games.height == 1
+    row = games.row(0, named=True)
+    assert row["changes"] == 2
+    assert row["home_gap"] == -60.0 and row["away_gap"] == -30.0
+    assert row["net_gap"] == -30.0
+    assert row["frozen_before"] == "2026-09-13"
+
+
+def test_the_first_pass_attempt_names_the_starter_in_play_by_play():
+    """The passer on the earliest pass play of each (game, team) by play id -- a run-first
+    drive does not name him and a later relief appearance does not replace him. Without the
+    passer column the reader refuses by name rather than guessing off a column it has."""
+    pbp = pl.DataFrame({
+        "game_id": ["g1"] * 5, "season": [2026] * 5, "week": [1] * 5,
+        "play_id": [10, 20, 30, 40, 50],
+        "posteam": ["A", "A", "B", "A", "B"],
+        "play_type": ["run", "pass", "pass", "pass", "run"],
+        "passer_player_id": [None, "a-starter", "b-starter", "a-backup", None]})
+    got = sc.starters_from_pbp(pbp).sort("team")
+    assert got["qb"].to_list() == ["a-starter", "b-starter"]
+    assert got["game_id"].to_list() == ["g1", "g1"]
+    with pytest.raises(ValueError, match="passer_player_id"):
+        sc.starters_from_pbp(pbp.drop("passer_player_id"))
+
+
+# --- the gate ----------------------------------------------------------------------------
+
+
+ARCHIVE = polls([
+    # KC-LA (week 3): a lookahead frozen at +3 through the week-2 game day, then repriced
+    # after Gabbert is named. Game day 2026-09-27; the previous KC game day 2026-09-20.
+    ("2026_03_LA_KC", 3.0, utc(15), 3), ("2026_03_LA_KC", 3.0, utc(19), 3),
+    ("2026_03_LA_KC", 3.0, utc(20, 12), 3),    # still the week-2 game day: not before it
+    ("2026_03_LA_KC", -1.0, utc(23), 3), ("2026_03_LA_KC", -2.0, utc(26), 3),
+    # KC-DEN (week 4): Mahomes back; frozen before 2026-09-27, close before 2026-10-04.
+    ("2026_04_DEN_KC", -3.0, utc(24), 4), ("2026_04_DEN_KC", 4.0, utc(30), 4),
+    # Another week-3 game, no change: the week's mean move between the same two poll days.
+    ("2026_03_SF_DEN", 1.0, utc(19), 3), ("2026_03_SF_DEN", 2.0, utc(26), 3),
+])
+
+
+def test_the_frozen_price_predates_the_previous_game_day_and_the_close_the_game_day(rows):
+    """Strictly before, both: a poll on the previous game day could already carry an
+    in-game injury, and a poll on the game day is not a lookahead at all."""
+    games = sc.event_games(sc.in_season_events(sc.events(sc.team_games(rows))))
+    priced = sc.priced(ARCHIVE, games).sort("week")
+    assert priced["frozen"].to_list() == [3.0, -3.0]
+    assert priced["frozen_at"].to_list() == [utc(19), utc(24)]
+    assert priced["close"].to_list() == [-2.0, 4.0]
+
+
+def test_an_event_with_no_snapshot_before_its_previous_game_day_is_censored(rows):
+    """Seen only after it moved is not seen at all: the row is kept, marked and counted, so
+    the run says how many events the archive could not have caught."""
+    late = ARCHIVE.filter(pl.col("captured_at") >= utc(23))
+    games = sc.event_games(sc.in_season_events(sc.events(sc.team_games(rows))))
+    priced = sc.priced(late, games).sort("week")
+    assert priced["censored"].to_list() == [True, False]
+    assert priced.filter(pl.col("censored"))["frozen"].is_null().all()
+
+
+def test_the_arm_is_the_shipped_seam_and_prices_the_departing_starter(rows):
+    """The gate's arm is `nfeloqb.state(rows, as_of=<the week's first game day>)` handed to
+    `quarterback.apply` -- what `ratings._rated_by_week` does for a played week. Rows
+    strictly before 2026-09-27 hold KC's week-2 row (Mahomes, +42) and LA's last 2025 row
+    (Stafford, +10), so the frozen +3 moves by (42 - 10) / 25: the *departing* starter's
+    adjustment, because the file carries Gabbert on no row before his first start. Both
+    arms score the home result by `MarketBaseline`'s conversion; the difference is
+    unadjusted minus adjusted, positive when the adjustment helped."""
+    tg = sc.team_games(rows)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    paired = sc.gate_rows(ARCHIVE, games, tg, rows)
+    assert paired["game_id"].to_list() == ["2026_03_LA_KC"]      # week 4 has no result yet
+    row = paired.row(0, named=True)
+    shipped = nfeloqb.state(rows, as_of=dt.date(2026, 9, 27))
+    assert shipped.filter(pl.col("team") == "KC")["qb"][0] == "Mahomes"
+    assert row["adjusted_adjustment"] == pytest.approx((42.0 - 10.0) / quarterback.ELO_PER_POINT)
+    assert row["adjusted"] == pytest.approx(3.0 + row["adjusted_adjustment"])
+    # KC lost 10-20 at home: y = 0.
+    ll = lambda s: -math.log(1.0 - normal_cdf(s / MARGIN_SD))  # noqa: E731
+    assert row["diff"] == pytest.approx(ll(3.0) - ll(row["adjusted"]))
+    assert row["ceiling"] == pytest.approx(ll(3.0) - ll(-2.0))
+    assert row["season"] == 2026
+
+
+def test_the_oracle_arm_knows_the_arriving_starter_and_is_reported_beside_the_gate(rows):
+    """The diagnostic: the same estimator with the week's own rows as the state, so the
+    frozen +3 moves by (-110 - (-90)) / 25 -- Gabbert against Bethard. Its difference is a
+    separate column the rule never reads."""
+    tg = sc.team_games(rows)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    row = sc.gate_rows(ARCHIVE, games, tg, rows).row(0, named=True)
+    assert row["oracle_adjustment"] == pytest.approx((-110.0 + 90.0) / quarterback.ELO_PER_POINT)
+    assert row["oracle"] == pytest.approx(3.0 + row["oracle_adjustment"])
+    ll = lambda s: -math.log(1.0 - normal_cdf(s / MARGIN_SD))  # noqa: E731
+    assert row["oracle_diff"] == pytest.approx(ll(3.0) - ll(row["oracle"]))
+    assert row["oracle_diff"] != pytest.approx(row["diff"])
+
+
+def test_the_rule_reads_the_shipped_arm_and_never_the_oracle(tmp_path):
+    """Three seasons where the oracle would ADOPT and the shipped arm loses everywhere: the
+    verdict is the shipped arm's."""
+    paired = _paired([2026, 2027, 2028], diff=-0.05).with_columns(
+        pl.lit(0.05).alias("oracle_diff"))
+    run = sc.run(paired, needed=3, width_path=tmp_path / "w.json")
+    assert run.verdict[0] == "REMOVE"
+
+
+def test_the_pilot_reads_the_sources_own_two_columns_on_event_games_only(rows):
+    """The power input: the source's base and quarterback-adjusted probabilities, scored on
+    the same event games and nowhere else, per season; the target is the absolute mean of the
+    season means and `s` their spread. One season has a mean and no spread."""
+    tg = sc.team_games(rows)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    pilot = sc.pilot(tg, games)
+    assert pilot["seasons"] == 1 and pilot["n"] == 1        # week 4 is unplayed
+    ll = lambda p, y: -(y * math.log(p) + (1 - y) * math.log(1 - p))  # noqa: E731
+    assert pilot["target"] == pytest.approx(abs(ll(0.65, 0.0) - ll(0.52, 0.0)))
+    assert math.isnan(pilot["season_sd"])
+
+
+def test_event_seasons_needed_is_the_smallest_k_whose_mde_clears_the_target():
+    """On the t reference: at s = 1 the MDE is 9.58 s at two seasons, 2.97 at three, 2.01 at
+    four -- the table in the pre-registration -- so a target of 2.5 needs four and a target
+    of 10 needs two. A target no cap reaches is None, not a number."""
+    assert sc.mde_at(2, 1.0) == pytest.approx(9.58, abs=0.01)
+    assert sc.mde_at(3, 1.0) == pytest.approx(2.97, abs=0.01)
+    assert sc.mde_at(4, 1.0) == pytest.approx(2.01, abs=0.01)
+    assert sc.event_seasons_needed(2.5, 1.0) == 4
+    assert sc.event_seasons_needed(10.0, 1.0) == 2
+    assert sc.event_seasons_needed(0.0001, 1.0, cap=50) is None
+    assert sc.mde_at(4, 1.0) == pytest.approx(
+        experiment.minimum_detectable_effect(1.0 / math.sqrt(4), 4))
+
+
+def _paired(seasons, n=6, diff=0.05):
+    return pl.DataFrame({"season": [s for s in seasons for _ in range(n)],
+                         "diff": [diff] * (n * len(seasons)),
+                         "ceiling": [0.5] * (n * len(seasons))})
+
+
+def test_fewer_than_three_event_seasons_is_not_runnable_and_names_the_count_needed(tmp_path):
+    """The first pre-registered precondition. The house rule is never read: a frame that
+    would ADOPT at three seasons is NOT-RUNNABLE at two, and the sentence carries the
+    event-season count the pilot says is needed."""
+    run = sc.run(_paired([2026, 2027]), needed=31, width_path=tmp_path / "w.json")
+    assert run.verdict[0] == "NOT-RUNNABLE"
+    assert "2 event-season" in run.verdict[1] and "31" in run.verdict[1]
+    enough = sc.run(_paired([2026, 2027, 2028]), needed=3, width_path=tmp_path / "w.json")
+    assert enough.verdict[0] == "ADOPT"
+
+
+def test_the_verdict_names_the_pull_trigger_on_anything_but_adopt(tmp_path):
+    """SHOW is a failure of the house rule here, not a shrug: the arm is in the published
+    path on no verdict, so a null pulls it. The three sentences say so."""
+    mixed = pl.concat([_paired([2026, 2027], diff=0.05), _paired([2028], diff=-0.05)])
+    run = sc.run(mixed, needed=3, width_path=tmp_path / "w.json")
+    assert run.verdict[0] == "SHOW"
+    assert "leaves" in run.verdict[1] and "harness" in run.verdict[1]
+
+
+def test_no_rows_is_not_runnable_with_zero_event_seasons(tmp_path):
+    run = sc.run(pl.DataFrame(schema={"season": pl.Int64, "diff": pl.Float64}), needed=None,
+                 width_path=tmp_path / "w.json")
+    assert run.verdict[0] == "NOT-RUNNABLE" and "0 event-season" in run.verdict[1]
+
+
+# --- the study ---------------------------------------------------------------------------
+
+
+def test_the_study_subtracts_the_weeks_mean_move_and_regresses_on_the_net_gap(rows):
+    """Week 3: KC-LA moved 3 -> -2 (-5), the other week-3 game moved 1 -> 2 (+1) over the
+    same two poll days, so the week-adjusted move is -6 on a net gap of -145 (KC's change
+    alone; LA's is offseason and not an event). Week 4: -3 -> +4 with no other game to
+    subtract, on a net gap of +139."""
+    tg = sc.team_games(rows)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    study = sc.study_rows(ARCHIVE, games).sort("week")
+    assert study["move"].to_list() == [-5.0, 7.0]
+    assert study["week_mean"].to_list() == [1.0, 0.0]
+    assert study["adjusted_move"].to_list() == [-6.0, 7.0]
+    assert study["net_gap"].to_list() == [-145.0, 139.0]
+
+
+def test_the_change_point_is_the_first_poll_day_past_the_floor(rows):
+    """Days from the previous game day to the first poll whose move from the frozen price
+    clears `floor_per_root_day * sqrt(days since the frozen poll)`. KC-LA's first poll after
+    the frozen one (09-19) is 09-23 at -1: a move of 4 over 4 days clears 0.4 * 2 = 0.8, so
+    the change is seen 3 days after the 09-20 game day. A game whose polls never clear the
+    floor has no change-point."""
+    tg = sc.team_games(rows)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    study = sc.study_rows(ARCHIVE, games, floor_per_root_day=0.4).sort("week")
+    assert study["days_to_change"].to_list() == [3.0, 3.0]
+    quiet = sc.study_rows(ARCHIVE, games, floor_per_root_day=5.0).sort("week")
+    assert quiet["days_to_change"].is_null().all()
+
+
+def test_the_fit_recovers_the_slope_and_takes_its_error_from_the_floor():
+    """Moves manufactured at 0.132 points per unit of gap plus a week effect; after the
+    week's mean is subtracted the slope is the benchmark, and the standard error is the
+    floor per window over the gap's spread and root n, not the residual's."""
+    gaps = [-150.0, -80.0, -20.0, 30.0, 90.0, 140.0]
+    rows_ = pl.DataFrame({
+        "season": [2026] * 6, "week": [1, 1, 2, 2, 3, 3], "game_id": [f"g{i}" for i in range(6)],
+        "net_gap": gaps, "adjusted_move": [0.132 * g for g in gaps],
+        "window_days": [7.0] * 6})
+    fit = sc.study_fit(rows_, floor_per_root_day=0.4)
+    assert fit["beta"] == pytest.approx(0.132)
+    assert fit["n"] == 6
+    floor_window = 0.4 * math.sqrt(7.0)
+    sd_gap = statistics.stdev(gaps)
+    assert fit["se"] == pytest.approx(floor_window / (sd_gap * math.sqrt(6)))
+    assert fit["mde"] == pytest.approx(
+        (experiment.t_quantile(0.975, 5) + 0.8416) * fit["se"], abs=1e-3)
+    assert fit["benchmark"] == sc.BENCHMARK == pytest.approx(3.3 / 25)
+    assert fit["t_vs_benchmark"] == pytest.approx(0.0)
+
+
+def test_the_study_mde_before_the_run_is_stated_from_the_events_gap_spread():
+    """With no archived event the MDE line is still stated: the pinned file's gap spread,
+    the noise floor per window, and the event count a season carries."""
+    line = sc.study_mde(n=53, sd_gap=70.0, window_days=7.0, floor_per_root_day=0.4)
+    assert line == pytest.approx((experiment.t_quantile(0.975, 52) + 0.8416)
+                                 * 0.4 * math.sqrt(7.0) / (70.0 * math.sqrt(53)), abs=1e-4)
+
+
+# --- the entry point ---------------------------------------------------------------------
+
+
+def test_the_cli_reads_the_cache_and_the_store_and_reports_the_counts(tmp_path, capsys,
+                                                                       monkeypatch, rows):
+    """Driven end to end on the fixture: the nfeloqb cache under `--cache`, an empty store
+    under `--store`. The events are counted per season, the gate reports zero event-seasons
+    and NOT-RUNNABLE, and the study reports the censored count -- with n on every line."""
+    cache = tmp_path / "nfeloqb"
+    cache.mkdir()
+    rows.write_csv(cache / nfeloqb.FILE)
+    monkeypatch.setattr(experiment, "WIDTH_STATE", tmp_path / "w.json")
+    code = sc.main(["--events", "--gate", "--study", "--cache", str(cache),
+                    "--store", str(tmp_path / "store")])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "2026: 2 changes on 2 event games" in out
+    assert "NOT-RUNNABLE" in out and "0 event-season" in out
+    assert "no snapshot archive" in out
+
+
+def test_the_cli_without_a_cache_is_a_sentence_not_a_traceback(tmp_path, capsys):
+    code = sc.main(["--gate", "--cache", str(tmp_path / "none"), "--store", str(tmp_path)])
+    assert code != 0
+    assert "nfeloqb" in capsys.readouterr().err
+
+
+def test_events_found_in_play_by_play_price_off_the_pinned_file(rows):
+    """The other starter source: a change identified by passer id joins the source's values
+    by (team, game) and by (team, previous game), so the gap is the pinned file's whichever
+    source named the change."""
+    tg = sc.team_games(rows)
+    starters = tg.select("game_id", "season", "week", "team").with_columns(
+        pl.when((pl.col("team") == "KC") & (pl.col("week") == 3)).then(pl.lit("00-gabbert"))
+          .when(pl.col("team") == "KC").then(pl.lit("00-mahomes"))
+          .otherwise(pl.lit("00-other")).alias("qb"))
+    ev = sc.with_values(sc.in_season_events(sc.events(starters)), tg)
+    kc = ev.sort("week")
+    assert kc["departing"].to_list() == ["00-mahomes", "00-gabbert"]
+    assert kc["gap"].to_list() == [60.0 - 205.0, 199.0 - 60.0]
+    assert kc["prev_date"].to_list() == ["2026-09-20", "2026-09-27"]
+
+
+def test_no_event_at_all_yields_empty_frames_with_the_schema(rows):
+    """A season with no change: the readers get the empty frame in the declared shape, not
+    a traceback from a group_by over nothing."""
+    tg = sc.team_games(rows).filter(pl.col("team") == "DEN")
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    assert games.is_empty() and list(games.columns) == list(sc.EVENT_GAME_SCHEMA)
+    assert sc.gate_rows(ARCHIVE, games, tg, rows).is_empty()
+    assert sc.study_rows(ARCHIVE, games).is_empty()
+    assert math.isnan(sc.study_fit(sc.study_rows(ARCHIVE, games), floor_per_root_day=0.4)["beta"])
+    assert math.isnan(sc.study_mde(n=1, sd_gap=70.0, window_days=7.0, floor_per_root_day=0.4))
+
+
+def test_rows_without_a_week_are_refused_by_name():
+    with pytest.raises(ValueError, match="week"):
+        sc.team_games(source_rows(SEASON).drop("week"))
+
+
+def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, capsys,
+                                                                       monkeypatch, rows):
+    """Driven with the fixture archive written into a store: the archive line, the noise
+    floor off it, the pilot, the gate's zero and the study's coefficient with its n."""
+    from hub import store
+
+    cache = tmp_path / "nfeloqb"
+    cache.mkdir()
+    rows.write_csv(cache / nfeloqb.FILE)
+    base = tmp_path / "store"
+    lines = ARCHIVE.with_columns(pl.lit("nfl").alias("league"), pl.lit(2026).alias("season"))
+    for week, part in lines.group_by("week"):
+        store.write(part.drop("week"), "lines", "nfl", 2026, int(week[0]), name="t",
+                    base=base)
+    monkeypatch.setattr(experiment, "WIDTH_STATE", tmp_path / "w.json")
+    code = sc.main(["--gate", "--ceiling", "--study", "--cache", str(cache), "--store",
+                    str(base)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "archive: 3 games" in out
+    assert "2026: 2 event games; 0 censored" in out
+    assert "gate: 1 scored event games over 1 event-season(s)" in out
+    assert "diagnostic, not the gate -- the oracle arm" in out
+    assert "NOT-RUNNABLE" in out
+    assert "coefficient:" in out and "n=2 event games" in out
+    assert "change-point: seen on" in out
+
+
+def test_the_cli_with_no_reader_asked_for_prints_usage(capsys):
+    assert sc.main([]) == 2
+    assert "usage:" in capsys.readouterr().out

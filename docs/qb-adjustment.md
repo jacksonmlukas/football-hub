@@ -189,3 +189,52 @@ snapshot, M from a stale one, K from the moving field`. Weeks published before #
 `snapshot`, which `schedule.PROVENANCE` still classifies so the publisher can read them
 back. The survivor grid rates from the same seam and so reads the three-way label; carrying
 it onto the grid's own rows is the survivor lane's.
+
+## Disposition 2026-09-13 (#270) — marked, not pulled, and what the mark means
+
+The re-audit of 2026-09-12 (audit III, finding Q2) found this module in the published path with
+no gate of its own, and asked for one of two dispositions. **The decision is to mark**, recorded
+in [decisions.md](decisions.md) with its reasoning; this section says what the mark means to a
+reader of a row.
+
+**The mark.** A prediction or survivor pick whose `model` reads `market_baseline-qb` — and
+whose row carries `adjusted_by = "nfeloqb"` and a non-null `qb_adjustment` — is a number the
+betting market did not set. Its spread is a frozen quote or the moving field, moved by the
+source's `qb_adj / 25`. That adjustment is **ungated in this repo**: the validation above
+measured 538's adjustment against 538's base Elo, on 538's own data, and no measurement yet
+says what this estimator does to a frozen line. Readers of the store take the suffix as the
+model *family* (`store.predictions(family=True)`), so the adjusted rows are kept and scored
+beside the passthrough's and can be told from them; no adjusted row is filed under the
+baseline's own name (#284, which also retired `passthrough` from the headline and from every
+run line where the count of adjusted games is not zero).
+
+**The pull trigger.** #291 pre-registers the gate this module never had — log-loss of the
+adjusted against the unadjusted frozen line over starter-change event games, on the house
+rule, clustered on the season — in [gate-power.md](gate-power.md). If that gate runs and fails,
+the module leaves `ratings` and `survivor` the same day and is reachable only from the harness.
+A gate the archive cannot yet carry is recorded as *not-runnable* with the number of
+event-seasons it needs, and the mark stands until it can run. What the mark never becomes is a
+validation: a row marked `-qb` is published as what it is, and the sentence above travels with
+it into any write-up.
+
+**What the source's timing implies, found on review of #291's harness (2026-09-13).** The
+nfeloqb file carries a starter per *game row*: a played row names who started, and the
+coming week's unplayed row names who is expected to. It carries no date on which a starter
+was named. Two consequences for this module, one per path:
+
+* **On the replay** — `ratings._rated_by_week` rating a week that has kicked off from
+  `nfeloqb.state(rows, as_of=<its first kickoff>)`, rows strictly before the game day
+  (#272) — a new starter is on no row the state can see until his first game has been
+  played. On the shipped path **a starter change cannot move a line before that game is
+  played**; the replayed adjustment on an event game is the departing starter's. #291's gate
+  is built on exactly this seam and its arm is therefore a stale adjustment; the arm with
+  the arriving starter known is reported beside it as an oracle, a diagnostic and not the
+  gate ([gate-power.md](gate-power.md)).
+* **On the live path** — the weeks ahead, rated from the latest state — the coming week's
+  row names the expected starter, so a change *can* reach the line, but only through a file
+  pulled after the source wrote it. The pin (#271) fixes the file at commit `2c95e5fc`, so
+  until `COMMIT` is advanced the live state names the starters as they stood at the pin, and
+  a change after it reaches nothing.
+
+Neither is a defect in the estimator; both are what the mark means in practice, and both
+belong beside the pull trigger when #270 is next read.

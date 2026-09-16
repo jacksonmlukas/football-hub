@@ -61,7 +61,7 @@ CLI_MODULES = (
     "hub.models.conformal",
     "hub.models.coverage",
     "hub.models.correlate", "hub.models.eval", "hub.models.injury", "hub.models.margin",
-    "hub.models.ratings", "hub.models.spread",
+    "hub.models.ratings", "hub.models.spread", "hub.models.starter_change",
     "hub.models.component_error", "hub.models.props", "hub.models.weekly",
     "hub.models.weekly_screen", "hub.publish", "hub.season.lineup",
     "hub.season.lineup_gate", "hub.season.roster", "hub.season.weekly_gate",
@@ -104,6 +104,7 @@ def test_help_needs_no_network_and_no_data(name, capsys):
 
 GATES_WITH_A_CEILING = (
     "hub.draft.backtest", "hub.season.lineup_gate", "hub.season.weekly_gate",
+    "hub.models.starter_change",
 )
 
 
@@ -259,6 +260,10 @@ ABSENT_INPUT = [
     ("hub.models.props", ["--report", "--base", "{tmp}"]),
     ("hub.models.ratings", ["--fit"]),
     ("hub.models.spread", ["--fit"]),
+    # The starter-change readers (#221, #291). `--cache` keeps the nfeloqb read off the
+    # developer's `data/raw/` and `--store` the archive read off the developer's store, so a
+    # fresh clone meets no cached file and says so.
+    ("hub.models.starter_change", ["--gate", "--cache", "{tmp}/nfeloqb", "--store", "{tmp}"]),
     ("hub.models.weekly", ["--fit"]),
     ("hub.models.weekly_screen", ["--run"]),
     ("hub.publish", ["--live", "--out", "{tmp}"]),
