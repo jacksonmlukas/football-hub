@@ -113,22 +113,12 @@ import numpy as np
 import polars as pl
 
 from hub.config import PoolConfig, pool_digest
+from hub.declare import not_an_input
 from hub.schedule import forecastable
 from hub.season.survivor import MIN_PROB, Infeasible, solve, week_fixtures
 
 if TYPE_CHECKING:   # the fetch module is imported where the entry point reads it (#280)
     from hub.fetch.pool import PoolState
-
-NOT_FITTED_BECAUSE = (
-    "nothing here is measured. DEFAULT_TRIALS and WEEKLY_TRIALS buy resolution and are "
-    "traded against runtime; DEFAULT_CONCENTRATIONS is the axis `sensitivity` sweeps and not "
-    "a value any figure is computed at -- the concentration a run actually uses is "
-    "PoolConfig.field_concentration, which is a stated assumption covered by `pool_digest`. "
-    "DECISIVE_SIGMA is the evidential bar the rest of the repo's gates are stated at, which "
-    "is a convention rather than a quantity anybody measured. Moving any of the four changes "
-    "how finely, over what range, or at what confidence this module reports; none of them "
-    "changes a prediction, and none has a measurement behind it to move. "
-)
 
 # Enough that the ending-week distribution is stable to about a percentage point, which is
 # finer than any decision downstream reads it at. Callers wanting a tighter tail pass more.
@@ -147,7 +137,10 @@ DEFAULT_TRIALS = 2000
 # concentration real survivor fields show therefore lives near 12-16 on this axis and nowhere
 # near 2, so an axis stopping at 4 would have swept only the region where the answer does not
 # move and reported that the knob does not matter. A caller with a view passes its own.
-DEFAULT_CONCENTRATIONS = (1.0, 2.0, 4.0, 8.0, 16.0)
+DEFAULT_CONCENTRATIONS = not_an_input(
+    (1.0, 2.0, 4.0, 8.0, 16.0),
+    "the axis `sensitivity` sweeps, not a value any figure is computed at: the concentration "
+    "a run uses is PoolConfig.field_concentration, a stated assumption pool_digest covers")
 
 # `weekly` runs one simulation per candidate rather than one per call, so its real cost is
 # `top` times this -- 2400 trials at the default six, which is the same work as a single
@@ -163,7 +156,11 @@ WEEKLY_TRIALS = 400
 # across held-out seasons. Two is the bar those gates are stated at; a stricter one would
 # start refusing weeks the trials really can separate, and the alternative when a week is
 # refused is free rather than costly, so the error is cheap in one direction and not the other.
-DECISIVE_SIGMA = 2.0
+DECISIVE_SIGMA = not_an_input(
+    2.0,
+    "the evidential bar the repo's gates are stated at, a convention about which "
+    "differences are called decisive and not a quantity anybody measured or a number a "
+    "prediction reads")
 
 
 class PoolOutcome(NamedTuple):

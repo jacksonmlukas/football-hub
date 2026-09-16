@@ -34,17 +34,15 @@ import polars as pl
 from hub import schedule
 from hub.cli import unavailable
 from hub.config import SEASON_AHEAD, PoolConfig
+from hub.declare import not_an_input
 from hub.paths import SITE
-
-NOT_FITTED_BECAUSE = (
-    "MIN_PROB is a floor that keeps a zero out of a log, and THIN_ROWS a count of grid rows. "
-    "Both are settings; the win probabilities themselves come from hub.models.market at run "
-    "time. "
-)
 
 # Below this a team is treated as unpickable rather than fed to log(). A survivor pick at
 # 1% is never the answer, and log(0) is negative infinity.
-MIN_PROB = 1e-4
+MIN_PROB = not_an_input(
+    1e-4,
+    "a floor that keeps a zero out of a log: below it a team is unpickable rather than "
+    "priced, a setting, and the win probabilities themselves come from hub.models.market")
 
 # The row count below which a week is thin. Rows, not games and not weeks: the grid carries
 # one row per team per game, so 6 is three games. It was `THIN_WEEK`, which named neither the

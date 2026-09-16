@@ -46,6 +46,7 @@ import numpy as np
 import polars as pl
 
 from hub.cli import unavailable
+from hub.declare import not_an_input
 from hub.models.experiment import (
     SEASON_CLUSTER,
     Actions,
@@ -59,16 +60,16 @@ from hub.models.experiment import (
 from hub.models.market import MARGIN_SD
 from hub.models.scoring_rules import log_loss
 
-NOT_FITTED_BECAUSE = (
-    "the recorded output of the MARGIN_SD fit, used by a test to guard the live constant -- "
-    "an assertion about a prediction, not an input. The live number lives in "
-    "hub.models.market, which IS registered. "
-)
-
 # What the 2026-08-24 fit found, kept so a test can guard the live constant against it -- the
 # same pattern `hub.draft.calibrate.FITTED_CI95` uses for TALENT_CV. A refit updates both.
-FITTED_SD = 12.741
-FITTED_SE = 0.164
+FITTED_SD = not_an_input(
+    12.741,
+    "the recorded output of the MARGIN_SD fit, held by a test against the live constant "
+    "in hub.models.market: an assertion about a prediction, not an input to one")
+FITTED_SE = not_an_input(
+    0.164,
+    "the recorded output of the MARGIN_SD fit, held by a test against the live constant "
+    "in hub.models.market: an assertion about a prediction, not an input to one")
 FITTED_N = 3018
 FITTED_WINDOW = "trailing 10 seasons, as of 2025"
 
@@ -174,12 +175,27 @@ KEY_NUMBERS: tuple[int, ...] = (3, 6, 7, 10, 14)
 # therefore prices `P(margin > 0)` worse than the smooth spine does, held out, in 20 of 27
 # seasons, and the ceiling says what the calibration miss is instead: a *location* that moves
 # with the spread, which no shape symmetric about the spread can reach.
-FITTED_KEY_EXCESS: dict[int, float] = {3: 1.751, 6: 0.296, 7: 0.671, 10: 0.121, 14: 0.499}
-FITTED_SHAPE_GAIN = -0.00094       # mean held-out log-loss, lumpy over gaussian, 27 seasons
-FITTED_SHAPE_SE = 0.00032          # se of that mean across seasons; negative at -2.9 se
+FITTED_KEY_EXCESS: dict[int, float] = not_an_input(
+    {3: 1.751, 6: 0.296, 7: 0.671, 10: 0.121, 14: 0.499},
+    "the recorded output of the shape gate that kept the smooth spine, held by a test "
+    "against the live law: an assertion about a prediction, not an input to one")
+# The mean held-out log-loss, lumpy over gaussian, across 27 seasons, and the se of that
+# mean across seasons (negative at -2.9 se).
+FITTED_SHAPE_GAIN = not_an_input(
+    -0.00094,
+    "the recorded output of the shape gate that kept the smooth spine, held by a test "
+    "against the live law: an assertion about a prediction, not an input to one")
+FITTED_SHAPE_SE = not_an_input(
+    0.00032,
+    "the recorded output of the shape gate that kept the smooth spine, held by a test "
+    "against the live law: an assertion about a prediction, not an input to one")
 FITTED_SHAPE_SEASONS = 27          # held-out seasons in the walk-forward, 2000-2026
 FITTED_SHAPE_SEASONS_BETTER = 7    # of those, one of them 2026 at two games
-FITTED_SHAPE_CEILING = 0.0056      # in-sample gain of a perfect P(win | spread), per game
+# The in-sample gain of a perfect P(win | spread), per game.
+FITTED_SHAPE_CEILING = not_an_input(
+    0.0056,
+    "the recorded output of the shape gate that kept the smooth spine, held by a test "
+    "against the live law: an assertion about a prediction, not an input to one")
 FITTED_SHAPE_WINDOW = "trailing 10 seasons as of 2026-09-11 (2017-2026), spine at MARGIN_SD"
 
 

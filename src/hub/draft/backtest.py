@@ -52,6 +52,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import DraftConfig, RosterConfig, drafted_positions
+from hub.declare import not_an_input
 from hub.draft.board import BuildReport, board_as_of
 from hub.draft.cohort import DRAFTS
 from hub.draft.optimize import (
@@ -85,13 +86,6 @@ from hub.models.experiment import (
     walk_forward_inputs,
 )
 from hub.names import player_key, relaxed_key
-
-NOT_FITTED_BECAUSE = (
-    "the draft gate's harness. VOID_FLOOR is the share of drafted names lost to a join failure "
-    "above which a run is not reported at all -- a pre-registered guard, not a fitted quantity, "
-    "and the same shape as weekly_gate.VOID_FLOOR. Nothing here predicts; the arms and the "
-    "constants they draw on live in hub.draft.optimize and hub.models.predict. "
-)
 
 # Gaps between this harness and the tool it audits. Written here rather than in the result,
 # because a limitation discovered after the numbers is a rationalisation.
@@ -522,8 +516,14 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
 
 # How long the parent waits on the progress queue between checks that the seasons are
 # done, and how long it waits after they are for a tick that is still in flight. Seconds.
-PROGRESS_POLL = 0.2
-PROGRESS_GRACE = 1.0
+PROGRESS_POLL = not_an_input(
+    0.2,
+    "how long the parent waits between checks that the seasons are done: a wall-clock "
+    "setting of the harness, and nothing a season plays or a row carries")
+PROGRESS_GRACE = not_an_input(
+    1.0,
+    "how long the parent waits after the seasons are done for a progress tick still in "
+    "flight: a wall-clock setting of the harness, and nothing a season plays or a row carries")
 
 
 def _relay(progress, on_draft, *, grace: float) -> None:
@@ -626,7 +626,10 @@ def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
 #
 # Three scales, and the fitted law in the middle, so the published figure is one of the
 # rows and the other two say how much of it is the knob.
-NOISE_SCALES: tuple[float, ...] = (0.5, 1.0, 1.5)
+NOISE_SCALES: tuple[float, ...] = not_an_input(
+    (0.5, 1.0, 1.5),
+    "the axis the pick-noise sensitivity sweeps; the fitted law is the 1.0 row and no "
+    "published figure is computed at any other scale")
 
 # What a sensitivity row carries from its gate's stamp. The same four names
 # `stamped_for_publication` writes, so a row can be compared with a paired frame.
@@ -935,7 +938,11 @@ ACTIONS = Actions(
 # its own pre-registration about its own join, not one shared bar declared twice: `MIN_SE` is
 # one claim about significance, and this is a claim about what a drafted name is worth when
 # the stats source cannot find him.
-VOID_FLOOR = 0.02
+VOID_FLOOR = not_an_input(
+    0.02,
+    "the share of drafted names lost to a join failure above which a run is not reported "
+    "at all: a pre-registered guard deciding which runs are published, never what one says, "
+    "the same shape as weekly_gate.VOID_FLOOR")
 
 
 def join_failure_rates(paired: pl.DataFrame) -> dict[str, float]:

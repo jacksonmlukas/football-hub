@@ -14,17 +14,16 @@ no directory filter and no stem key. Widening to every `int` flags a hundred and
 names -- cache sizes, API tiers, print widths -- so the integers known to matter (the shape
 of a random draw, #201; the nfeloqb pin, #271) are held by name below rather than by breadth.
 
-**Two ratchets, both only shrinking.** `UNDECLARED` names the numbers in modules another
-lane owned the afternoon #253 landed, with their module's old opt-out reason carried until
-that lane declares them; a listed name that is declared or gone fails as stale, and a
-number outside the list fails as undeclared. `SIGNATURE_DEFAULTS` is the escape ADR-0006
-recorded and #253 restates: a function-signature default that sets the extent of a draw has
-no module-level name to declare, and each is named here until it is given one.
+**One ratchet, only shrinking.** `SIGNATURE_DEFAULTS` is the escape ADR-0006 recorded and
+#253 restates: a function-signature default that sets the extent of a draw has no
+module-level name to declare, and each is named here until it is given one. A second,
+`UNDECLARED`, named the fourteen numbers in modules another lane owned the afternoon #253
+landed; #296 declared them and emptied it, and the module-level opt-out string it carried
+their reasons from is gone from the tree.
 """
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
 import pytest
@@ -33,29 +32,6 @@ from hub import declare
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "hub"
-
-# Modules owned by another lane when #253 landed (2026-09-12); each still carries its
-# `NOT_FITTED_BECAUSE` string, read by nothing since #253. The reason is the module's own,
-# carried here so the exclusion stays on the record until the constant argues for itself.
-UNDECLARED: dict[str, str] = {
-    "draft/backtest.py:PROGRESS_POLL": "the draft gate's harness; nothing here predicts",
-    "draft/backtest.py:PROGRESS_GRACE": "the draft gate's harness; nothing here predicts",
-    "draft/backtest.py:NOISE_SCALES": "the draft gate's harness; nothing here predicts",
-    "draft/backtest.py:VOID_FLOOR":
-        "a pre-registered guard on which runs are reported, the same shape as weekly_gate.VOID_FLOOR",
-    "models/eval.py:DEFAULT_HOLDOUT": "model-comparison harness; it reads predictions, never makes them",
-    "models/margin.py:FITTED_SD": "the recorded output of the MARGIN_SD fit, held by a test",
-    "models/margin.py:FITTED_SE": "the recorded output of the MARGIN_SD fit, held by a test",
-    "models/margin.py:FITTED_KEY_EXCESS": "the recorded output of the MARGIN_SD fit, held by a test",
-    "models/margin.py:FITTED_SHAPE_GAIN": "the recorded output of the MARGIN_SD fit, held by a test",
-    "models/margin.py:FITTED_SHAPE_SE": "the recorded output of the MARGIN_SD fit, held by a test",
-    "models/margin.py:FITTED_SHAPE_CEILING": "the recorded output of the MARGIN_SD fit, held by a test",
-    "season/pool.py:DEFAULT_CONCENTRATIONS": "the axis `sensitivity` sweeps, not a value any figure is computed at",
-    "season/pool.py:DECISIVE_SIGMA": "the evidential bar the gates are stated at, a convention",
-    "season/survivor.py:MIN_PROB": "a floor that keeps a zero out of a log; a setting",
-}
-STILL_OPTED_OUT: frozenset[str] = frozenset(
-    {k.split(":")[0] for k in UNDECLARED})
 
 # The signature defaults that set the extent of a draw and have no name to declare (ADR-0006
 # and #201's open escape). `n_sims` in `availability` and `evaluate` set the precision of a
@@ -112,52 +88,28 @@ def _declared_keys() -> dict[str, declare.Declaration]:
             for d in declare.declarations()}
 
 
-def test_every_module_level_float_is_declared_or_named_as_undeclared():
+def test_every_module_level_float_is_declared():
     declared = _declared_keys()
-    undeclared, stale = [], []
+    undeclared = []
     for path in sorted(SRC.rglob("*.py")):
         rel = path.relative_to(SRC).as_posix()
         for name, _ in _module_level_floats(path):
             key = f"{rel}:{name}"
-            if key in declared:
-                if key in UNDECLARED:
-                    stale.append(key)
-            elif key not in UNDECLARED:
+            if key not in declared:
                 undeclared.append(key)
     assert not undeclared, (
         f"module-level numbers nobody has declared: {undeclared}. Say what each is where it "
         f"is written -- `fitted(v)`, `chosen(v)` or `not_an_input(v, why)` from `hub.declare` "
         f"-- so the digest can read it or the exclusion is on the record.")
-    assert not stale, f"declared now, so no longer undeclared; drop from UNDECLARED: {stale}"
 
 
-def test_the_undeclared_list_only_shrinks():
-    """A name that is gone from its module has left the ratchet with it."""
-    gone = []
-    for key in UNDECLARED:
-        rel, name = key.split(":")
-        if name not in {n for n, _ in _module_level_floats(SRC / rel)}:
-            gone.append(key)
-    assert not gone, f"UNDECLARED names constants that no longer exist: {gone}"
-
-
-def test_the_opt_out_string_is_read_by_nothing_and_survives_only_where_named():
-    """`NOT_FITTED_BECAUSE` was the fourth mechanism; since #253 no test and no digest reads
-    it. It survives only in the modules `UNDECLARED` names, until their lane declares."""
-    carrying = {p.relative_to(SRC).as_posix() for p in SRC.rglob("*.py")
-                if "NOT_FITTED_BECAUSE" in p.read_text()}
-    assert carrying == STILL_OPTED_OUT, (
-        f"NOT_FITTED_BECAUSE is read by nothing; new={sorted(carrying - STILL_OPTED_OUT)} "
-        f"gone={sorted(STILL_OPTED_OUT - carrying)}")
-    # And nothing reads it: no test, no digest. A reader would make the string a mechanism
-    # again, which is the state #253 collapsed.
-    # A read is an attribute access or a `getattr`; the name in a docstring recording what
-    # was retired is prose, and this file itself is the one place it is spelled by design.
-    here = Path(__file__)
-    reads = re.compile(r"\.NOT_FITTED_BECAUSE\b|getattr\([^)]*['\"]NOT_FITTED_BECAUSE['\"]")
-    readers = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "tests").rglob("*.py")
-                     if p != here and reads.search(p.read_text()))
-    assert readers == [], f"NOT_FITTED_BECAUSE is read again by {readers}"
+def test_the_opt_out_string_is_gone_from_the_tree():
+    """`NOT_FITTED_BECAUSE` was the fourth mechanism; #253 stopped reading it and #296
+    removed the last five copies. A module carrying it again would be a module-level
+    exclusion the walk cannot see -- the state #253 collapsed."""
+    carrying = sorted(p.relative_to(SRC).as_posix() for p in SRC.rglob("*.py")
+                      if "NOT_FITTED_BECAUSE" in p.read_text())
+    assert carrying == [], f"NOT_FITTED_BECAUSE is back in {carrying}; declare the numbers instead"
 
 
 @pytest.mark.parametrize("key", SHAPES)

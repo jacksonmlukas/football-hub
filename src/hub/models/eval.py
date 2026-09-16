@@ -27,15 +27,17 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from hub.declare import not_an_input
 from hub.models.experiment import BOOTSTRAP
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
 
-NOT_FITTED_BECAUSE = (
-    "model-comparison harness; it reads predictions, never makes them "
-)
-
-DEFAULT_HOLDOUT = 0.3
+# The share of games held out by default. A model-comparison harness's setting: it reads
+# predictions and never makes one, so no served number can reach it.
+DEFAULT_HOLDOUT = not_an_input(
+    0.3,
+    "the default hold-out share of a model-comparison harness that reads predictions and "
+    "never makes them; a setting of the comparison, not an input to any prediction")
 
 
 class NoOverlap(Exception):
