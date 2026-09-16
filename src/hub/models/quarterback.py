@@ -2,15 +2,16 @@
 exists (#218; the construction restated under #268).
 
 The game layer had no quarterback awareness of any kind. Ratings pass the betting market's
-number through, and where the staleness field (#210) says that number has stood untouched
-for weeks, a starting quarterback ruled out reaches survivor and the weekly prediction only
-through whatever the betting market has already done to it -- which, for most of the
-survivor horizon, is nothing the poller can see.
+number through, and where no poll has returned that number for a week, a starting
+quarterback ruled out reaches survivor and the weekly prediction only through whatever the
+betting market has already done to it -- which, for most of the survivor horizon, is
+nothing the poller can see.
 
 Since #281 the row arrives already labelled. `hub.schedule.priced_games` applies
 `live_price` below to write `price_source` as `live`, `stale` or `schedule`, and `apply`
 reads that label: the one cut, declared here and applied there, so the coalesce that
-chooses the number and the layer that may move it agree row by row.
+chooses the number and the layer that may move it agree row by row. Since #297 the cut
+reads the age of the capture that priced the row, not how long the quote has stood.
 
 **What licenses it, and how far.** `docs/qb-adjustment.md`: 538 shipped both a base and a
 quarterback-adjusted win probability for every game, and the Brier difference between the
@@ -63,12 +64,15 @@ from hub.declare import chosen, not_an_input
 # is not restated here.
 ELO_PER_POINT = chosen(25)
 
-# A snapshot quote that has stood still longer than this is not a live price. STATED CHOICE
-# from #210's measurement on 2026-09-11: the current week's median run was 1.8 days unmoved
-# and every week from 2 out had stood the full 12.2 days of the archive, so a week separates
-# the two populations with margin on both sides. A quote no book has touched across a whole
-# slate's worth of news is a posted lookahead, not a price responding to it. An unpriced
-# game and one priced from the moving field, which nothing polls, are not live prices either.
+# A snapshot whose capture is older than this is not a live price: the poll age past which
+# a snapshot is `stale`. STATED CHOICE from #210's measurement on 2026-09-11: the current
+# week's median run was 1.8 days unmoved and every week from 2 out had stood the full 12.2
+# days of the archive, so a week separates the two populations with margin on both sides.
+# Until #297 the clock ran from the quote's last move; it now runs from the last capture
+# (#251: a liquid line nobody has had reason to move in a week is still a live price when
+# the poller returned it this morning, and on the Actions runner every capture is minutes
+# old). The number is unchanged; what it is measured against is not. An unpriced game and
+# one priced from the moving field, which nothing polls, are not live prices either.
 STALE_AFTER_DAYS = chosen(7)
 
 # The two columns `apply` writes on a row it moved, and leaves null on one it did not.
@@ -94,22 +98,30 @@ def points(state: pl.DataFrame) -> pl.DataFrame:
 
 
 def live_price(at: datetime) -> pl.Expr:
-    """Whether a snapshot's quote is a live price at `at`: the run of polls returning it
-    began within `STALE_AFTER_DAYS`, read off `unmoved_since`.
+    """Whether a snapshot is a live price at `at`: the capture that priced the row -- the
+    last poll at or before `at`, on the row as `priced_at` -- is within `STALE_AFTER_DAYS`.
 
     The one declaration of the cut, and it is applied in exactly one place --
     `hub.schedule.priced_games`, which labels every row `live`, `stale` or `schedule` and
     lets a stale snapshot lose to the moving field (#281). This module then reads the label
-    rather than the clock, so the coalesce and the adjustment cannot disagree about a row;
-    when #251 settles what "live" should read (the poll age, what a change in book set does
-    to the run), it changes here and both consumers move together.
+    rather than the clock, so the coalesce and the adjustment cannot disagree about a row.
 
-    A snapshot the staleness field has no row for is not *marked* either way and reads as
-    live -- the rule reaches only what the field says, and that is how every snapshot read
-    before #210 existed.
+    **The clock is the poll's, not the quote's (#297, decided in #251).** Until #297 this
+    read `unmoved_since`, the start of the run of polls returning the same number. That
+    measured the wrong thing for this consumer: a liquid line nobody has had reason to move
+    in ten days is still a live price when the poller returned it this morning, and on the
+    Actions runner every capture is minutes old, so the cut could never fire there and fired
+    on exactly those lines on the laptop. It also made the label depend on what
+    `hub.fetch.odds._quote_moved` counts as a move -- a book joining an otherwise frozen
+    quote restarted the run and switched the adjustment off. The staleness columns still
+    ride on the row for a reader; nothing here reads them.
+
+    A row with no capture is not a snapshot -- every snapshot is dated -- and cannot be
+    shown to be a live price, so it is not one. `priced_games` never asks about such a
+    row: it applies this only where a snapshot priced the candidate.
     """
-    since = pl.col("unmoved_since")
-    return since.is_null() | (since >= pl.lit(at - timedelta(days=STALE_AFTER_DAYS)))
+    captured = pl.col("priced_at")
+    return (captured >= pl.lit(at - timedelta(days=STALE_AFTER_DAYS))).fill_null(False)
 
 
 def no_live_price(games: pl.DataFrame) -> pl.Expr:

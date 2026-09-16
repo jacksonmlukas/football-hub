@@ -66,7 +66,9 @@ def test_a_dated_snapshot_prices_the_game_rather_than_the_moving_field(sched, tm
 # The coalesce used to rank any snapshot above the moving field, so a quote frozen for
 # twelve days outranked a field upstream still refreshes. The cut between live and stale is
 # `hub.models.quarterback.live_price` -- declared once, read here to label the row and by
-# the quarterback layer to decide which rows it may move, so the two cannot disagree.
+# the quarterback layer to decide which rows it may move, so the two cannot disagree. Since
+# #297 it reads the age of the capture that priced the row, `priced_at`, and not how long
+# the quote had stood.
 
 def test_a_stale_snapshot_no_longer_outranks_the_moving_field(sched, tmp_path):
     """Both sources price the game; the snapshot's quote has stood three weeks. The moving
@@ -96,7 +98,7 @@ def test_a_stale_snapshot_with_no_moving_field_still_prices_the_game_and_says_st
 
 
 def test_the_cut_between_live_and_stale_is_the_quarterback_layers(sched, tmp_path):
-    """A quote unmoved for exactly `STALE_AFTER_DAYS` is live; a second past it is not. The
+    """A capture exactly `STALE_AFTER_DAYS` old is live; a second past it is not. The
     number is `hub.models.quarterback.STALE_AFTER_DAYS` and nothing here restates it."""
     from hub.models import quarterback
     at = dt.datetime(2026, 9, 12, 12)
@@ -109,16 +111,73 @@ def test_the_cut_between_live_and_stale_is_the_quarterback_layers(sched, tmp_pat
     assert got["close_spread"].to_list() == [6.5, 3.0]
 
 
+def test_a_quote_unmoved_for_ten_days_but_polled_today_is_a_live_price(sched, tmp_path):
+    """#297: the cut reads the poll age, not the quote's last move. Three polls returned
+    the same number over ten days and the last was an hour ago -- a liquid line nobody has
+    had reason to move, and a live price. The staleness columns still say the run is ten
+    days long; the label no longer reads them."""
+    at = dt.datetime(2026, 9, 12, 12)
+    sched([("a", 2, 3.0, None)])
+    for days in (10, 5, 0):
+        _snap(tmp_path, 2026, 2, [("a", 6.5)],
+              at - dt.timedelta(days=days, hours=1))
+    got = schedule.priced_games(2026, at=at, base=tmp_path)
+    assert got["price_source"].to_list() == ["live"]
+    assert got["close_spread"].to_list() == [6.5]
+    assert got["priced_at"].to_list() == [at - dt.timedelta(hours=1)]
+    assert got["polls_unmoved"].to_list() == [3]
+    assert got["unmoved_since"].to_list() == [at - dt.timedelta(days=10, hours=1)]
+
+
+def test_a_quote_last_polled_eight_days_ago_is_not_a_live_price(sched, tmp_path):
+    """The poller has not returned this game in eight days: whatever the quote did before
+    that, the snapshot is stale and the moving field prices the game."""
+    at = dt.datetime(2026, 9, 12, 12)
+    sched([("a", 2, 3.0, None)])
+    _snap(tmp_path, 2026, 2, [("a", 6.0)], at - dt.timedelta(days=20))
+    _snap(tmp_path, 2026, 2, [("a", 6.5)], at - dt.timedelta(days=8))
+    got = schedule.priced_games(2026, at=at, base=tmp_path)
+    assert got["price_source"].to_list() == ["schedule"]
+    assert got["close_spread"].to_list() == [3.0]
+    assert got["priced_at"].to_list() == [None]
+    assert got["snapshot_spread"].to_list() == [6.5]
+
+
+def test_a_book_joining_an_unmoved_quote_does_not_make_it_live(sched, tmp_path):
+    """#251's third finding: `_quote_moved` restarts the run when the set of quoting books
+    changes, which is honest for a movement study and was wrong for this consumer. Under
+    the poll-age cut the run's length is not read at all, so a restarted run on an old
+    capture cannot make the game read as live: the capture is eight days old, and that is
+    the whole of the decision."""
+    at = dt.datetime(2026, 9, 12, 12)
+    sched([("a", 2, 3.0, None)])
+    _snap(tmp_path, 2026, 2, [("a", 6.5)], at - dt.timedelta(days=12))
+    # A poll eight days ago returning the same number: the run may or may not have
+    # restarted on a book change, and the label must not depend on which.
+    _snap(tmp_path, 2026, 2, [("a", 6.5)], at - dt.timedelta(days=8))
+    got = schedule.priced_games(2026, at=at, base=tmp_path)
+    assert got["price_source"].to_list() == ["schedule"]
+
+
 def test_the_two_consumers_of_the_cut_agree_row_by_row(sched, tmp_path):
     """The label this module writes and the rows `hub.models.quarterback` moves are one
-    decision: every row not labelled live is adjusted, every row labelled live is not."""
+    decision: every row not labelled live is adjusted, every row labelled live is not.
+    Since #297 the two rows the old and new cuts disagree on are held too: a quote unmoved
+    ten days but polled this morning is live and untouched; one last polled eight days ago
+    yields to the moving field and is adjusted."""
     from hub.models import quarterback
     at = dt.datetime(2026, 9, 12, 12)
     sched([("live", 2, 3.0, None, "KC", "LAC"), ("stale", 18, None, None, "KC", "LV"),
-           ("moving", 3, 3.0, None, "LAC", "LV"), ("both", 4, 3.0, None, "LV", "KC")])
+           ("moving", 3, 3.0, None, "LAC", "LV"), ("both", 4, 3.0, None, "LV", "KC"),
+           ("frozen-fresh", 5, 3.0, None, "KC", "LV"),
+           ("polled-old", 6, 3.0, None, "LV", "LAC")])
     _snap(tmp_path, 2026, 2, [("live", 6.5)], dt.datetime(2026, 9, 12, 11))
     _snap(tmp_path, 2026, 18, [("stale", 6.5)], dt.datetime(2026, 8, 20))
     _snap(tmp_path, 2026, 4, [("both", 6.5)], dt.datetime(2026, 8, 20))
+    for days in (10, 5, 0):
+        _snap(tmp_path, 2026, 5, [("frozen-fresh", 6.5)],
+              at - dt.timedelta(days=days, hours=1))
+    _snap(tmp_path, 2026, 6, [("polled-old", 6.5)], at - dt.timedelta(days=8))
     games = schedule.priced_games(2026, at=at, base=tmp_path).sort("game_id")
     state = pl.DataFrame({"team": ["KC", "LAC", "LV"], "qb": ["a", "b", "c"],
                           "qb_value": [100.0, 100.0, 40.0], "qb_adj": [0.0, 0.0, -100.0],
@@ -126,7 +185,8 @@ def test_the_two_consumers_of_the_cut_agree_row_by_row(sched, tmp_path):
     after = quarterback.apply(games, state)
     by = dict(zip(after["game_id"].to_list(), after["adjusted_by"].to_list(), strict=True))
     src = dict(zip(games["game_id"].to_list(), games["price_source"].to_list(), strict=True))
-    assert src == {"live": "live", "stale": "stale", "moving": "schedule", "both": "schedule"}
+    assert src == {"live": "live", "stale": "stale", "moving": "schedule", "both": "schedule",
+                   "frozen-fresh": "live", "polled-old": "schedule"}
     assert {g for g, s in by.items() if s is not None} == {g for g, s in src.items()
                                                             if s != "live"}
 
@@ -397,11 +457,11 @@ def test_the_league_column_is_written_by_the_loader_and_not_by_the_argument():
         "fetched the rows, or it is the argument talking about the rows again -- issue #174.")
 
 
-# --- how long the snapshot's quote has stood still (#210, read here for #218) -----------
+# --- how long the snapshot's quote has stood still (#210, carried for a reader) ---------
 #
-# `hub.fetch.odds.staleness` measures; this module carries the measurement onto the row. The
-# threshold over it is `hub.models.quarterback.live_price`, applied here (#281) and nowhere
-# else.
+# `hub.fetch.odds.staleness` measures; this module carries the measurement onto the row.
+# Until #297 `hub.models.quarterback.live_price` read it; the cut now reads the capture
+# itself, and these columns are a measurement on the row that decides nothing.
 
 def test_a_snapshot_priced_row_carries_how_long_its_quote_has_stood(sched, tmp_path):
     sched([("a", 2, 3.0, None)])

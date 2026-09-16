@@ -3,9 +3,11 @@ the latest row, in spread points, applied only where `price_source` marks no liv
 
 Since #281 the label is `hub.schedule.priced_games`'s -- `live`, `stale` or `schedule`,
 decided there by `quarterback.live_price` -- and `apply` reads it rather than the clock.
-The cut itself (exactly the threshold, a second past it) is held in `test_schedule.py`,
-where it is applied; here the fixtures arrive labelled, and what is held is that the label
-alone decides which rows move.
+Since #297 the cut reads the age of the capture that priced the row, `priced_at`, not the
+quote's last move; the expression is held here (exactly the threshold, a second past it,
+a quote unmoved ten days but polled today) and again in `test_schedule.py`, where it is
+applied. The fixtures for `apply` arrive labelled, and what is held is that the label alone
+decides which rows move.
 
 Three things are held one test each: a game with a live price is byte-identical before and
 after; the adjustment is `qb_adj / ELO_PER_POINT` and nothing else enters it; tenure does
@@ -167,15 +169,41 @@ def test_a_snapshot_labelled_stale_is_not_a_live_price():
     assert after["adjusted_by"][0] == "nfeloqb"
 
 
-def test_the_cut_is_one_expression_over_the_staleness_column():
-    """`live_price` is what `hub.schedule.priced_games` applies (#281): a quote unmoved for
-    exactly the threshold is live, a second past it is not, and a snapshot the staleness
-    field has no row for is not marked and reads as live."""
+def test_the_cut_is_one_expression_over_the_poll_age():
+    """`live_price` is what `hub.schedule.priced_games` applies (#281), and since #297 it
+    reads the age of the capture that priced the row -- `priced_at`, the last poll at or
+    before the moment -- not the quote's last move. A capture exactly the threshold old is
+    live, a second past it is not, and a row with no capture cannot be shown to be one."""
     edge = AT - dt.timedelta(days=qb.STALE_AFTER_DAYS)
-    frame = pl.DataFrame({"unmoved_since": pl.Series(
+    frame = pl.DataFrame({"priced_at": pl.Series(
         [edge, edge - dt.timedelta(seconds=1), None], dtype=pl.Datetime)})
     assert frame.select(qb.live_price(AT).alias("live"))["live"].to_list() == [
-        True, False, True]
+        True, False, False]
+
+
+def test_a_quote_unmoved_for_ten_days_but_polled_today_is_live():
+    """#251's finding, the case that decided #297: a liquid line that has not moved in ten
+    days is still a live price when the poller returned it this morning. On the Actions
+    runner every quote is minutes old, so a cut over the quote's last move could never
+    fire there and fired on exactly these lines on the laptop."""
+    frame = pl.DataFrame({"priced_at": pl.Series([AT - dt.timedelta(hours=1)],
+                                                 dtype=pl.Datetime),
+                          "unmoved_since": pl.Series([AT - dt.timedelta(days=10)],
+                                                     dtype=pl.Datetime),
+                          "polls_unmoved": pl.Series([30], dtype=pl.Int64)})
+    assert frame.select(qb.live_price(AT).alias("live"))["live"].to_list() == [True]
+
+
+def test_a_quote_polled_eight_days_ago_is_stale_whatever_its_last_move():
+    """The other side of the same cut: a capture eight days old is past `STALE_AFTER_DAYS`,
+    and it is the poll age that says so. Its run of unchanged polls began at that same
+    capture, so a cut over the last move would agree here; the test holds the poll age."""
+    frame = pl.DataFrame({"priced_at": pl.Series([AT - dt.timedelta(days=8)],
+                                                 dtype=pl.Datetime),
+                          "unmoved_since": pl.Series([AT - dt.timedelta(days=8)],
+                                                     dtype=pl.Datetime),
+                          "polls_unmoved": pl.Series([1], dtype=pl.Int64)})
+    assert frame.select(qb.live_price(AT).alias("live"))["live"].to_list() == [False]
 
 
 def test_the_label_decides_and_the_clock_does_not():
