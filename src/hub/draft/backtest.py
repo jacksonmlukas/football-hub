@@ -1156,6 +1156,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     # paths above read the live board and stamp nothing, so they have no digest to protect.
     with reads_of_one_run():
         seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
+        # Under hold-out every season's set is loaded and named here, before a board is
+        # built or a draft played: a season with no set refuses the run rather than playing
+        # shipped under the hold-out's name, and the lines are the record of what each
+        # season read.
+        if a.holdout:
+            from hub.holdout import run_lines
+            try:
+                for line in run_lines(seasons):
+                    print(f"  {line}")
+            except FileNotFoundError as e:
+                return unavailable("hub.draft.backtest", "a hold-out constant set", e)
         try:
             boards, realised = walk_forward_inputs(
                 seasons, board_as_of,
@@ -1164,16 +1175,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             return unavailable("hub.draft.backtest",
                                "the boards these seasons are drafted from", e)
 
-        # Under hold-out every season's set is loaded and named here, before a draft is
-        # played: a season with no set refuses the run rather than playing shipped under
-        # the hold-out's name, and the lines are the record of what each season read.
-        if a.holdout:
-            from hub.holdout import run_lines
-            try:
-                for line in run_lines(seasons):
-                    print(f"  {line}")
-            except FileNotFoundError as e:
-                return unavailable("hub.draft.backtest", "a hold-out constant set", e)
         print(f"  playing {a.drafts} drafts x {len(seasons)} seasons, "
               f"{a.draft_sims} x {a.season_sims} sims per optimizer call"
               + (" under hold-out constants" if a.holdout else "") + " ...")

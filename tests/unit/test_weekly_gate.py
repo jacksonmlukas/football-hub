@@ -1106,7 +1106,7 @@ def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_pa
     # The enclosing run: something else in this process has read a source already.
     nv._remember(tmp_path / "the-enclosing-runs-entry.parquet", outer)
 
-    def assembles(seasons, *, drafts, seed, shrink, expected):
+    def assembles(seasons, *, drafts, seed, shrink, expected, holdout=False):
         nv._remember(tmp_path / "the-gates-own-entry.parquet", inner)
         return _inputs()
 

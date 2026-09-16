@@ -111,6 +111,27 @@ def test_a_held_out_season_leaves_the_measurement_and_is_named():
     assert same.height == 6 and "nothing held out" in said_none
 
 
+def test_the_script_records_the_constant_as_not_refitted_with_the_rookie_number_in_the_reason(
+        monkeypatch, tmp_path, capsys):
+    """`--exclude-season N --record` (#294) writes IMPUTE_CV and IMPUTE_CV_BY_POS into the
+    season's set as *not refitted* -- the shipped estimator is not in the tree and the rookie
+    number is another population, whose adoption is #277's decision -- with the rookie
+    pooled value in the reason so the replay's run line shows what it did not use."""
+    from hub import holdout
+
+    monkeypatch.setattr(holdout, "SETS", tmp_path)
+    result = {"n": 5, "seasons": [2021, 2022], "clusters": 1,
+              "xfp_pg": {"by_position": {"pooled": {"cv": 0.3125, "n": 5, "median": 0.0}}}}
+    monkeypatch.setattr(impute_cv, "measure", lambda *a, **k: (result, ["  a line"]))
+    assert impute_cv.main(["--exclude-season", "2022", "--record"]) == 0
+    got = holdout.load(2022)
+    assert got.values == {}
+    assert set(got.missing) == {"predict.IMPUTE_CV", "predict.IMPUTE_CV_BY_POS"}
+    assert "pooled 0.312" in got.missing["predict.IMPUTE_CV"]
+    assert "#277" in got.missing["predict.IMPUTE_CV"]
+    assert "unchanged by this run" in capsys.readouterr().out
+
+
 def test_the_measurement_reports_n_the_clusters_and_the_shipped_value_beside_each_rookie_cv():
     """The whole run on two synthetic boards through the three seams: every line a script
     prints carries n, the season count as the clusters, both realised quantities, and the

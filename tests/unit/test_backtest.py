@@ -2094,3 +2094,34 @@ def test_the_holdout_flag_is_on_the_run_and_off_by_default(capsys):
         bt.main(["--help"])
     out = capsys.readouterr().out
     assert "--holdout" in out and "fitted without it" in out
+
+
+def test_a_holdout_run_prints_each_seasons_set_and_says_the_stamp_is_the_shipped_digest(
+        monkeypatch, tmp_path, capsys):
+    """Through `main`: the run line per season comes first, the paired rows are written, and
+    the gate's own lines are followed by the sentence that the stamp's digest is shipped."""
+    from hub import holdout
+    from hub.fetch import nflverse as nv
+    monkeypatch.setattr(holdout, "SETS", tmp_path / "sets")
+    holdout.record(2024, "predict.WEEKLY_K_POOLED", 2.1, command="x")
+    inner = nv.Pin(source="ff_opportunity", as_of="2024-09-01", digest="1n51de01", rows=1,
+                   pinned_at=None)
+    _in_process_gate(monkeypatch, tmp_path, inner=inner, argv=["--holdout"])
+    out = capsys.readouterr().out
+    assert "season 2024: constants from" in out and "refitted: predict.WEEKLY_K_POOLED" in out
+    assert "shipped (not refitted): predict.TALENT_CV" in out
+    assert "constants: HOLD-OUT" in out and "fitted_digest is the shipped one" in out
+    assert out.index("season 2024: constants from") < out.index("playing 4 drafts")
+
+
+def test_a_holdout_run_on_a_season_with_no_set_refuses_before_building_a_board(
+        monkeypatch, tmp_path, capsys):
+    from hub import holdout
+    monkeypatch.setattr(holdout, "SETS", tmp_path / "sets")
+
+    def never(*a, **k):
+        raise AssertionError("a board was built before the hold-out set was checked")
+
+    monkeypatch.setattr(bt, "walk_forward_inputs", never)
+    assert bt.main(["--seasons", "2019", "--holdout"]) != 0
+    assert "no hold-out constant set for 2019" in capsys.readouterr().err
