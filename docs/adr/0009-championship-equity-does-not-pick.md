@@ -155,6 +155,39 @@ one that would have promoted equity back to the headline.
 > instrument where the union is 84% of the Board; the production Boards are ~450 rows and
 > the union the same 168, so the saving there is larger and is measured with the re-run.
 
+> **Run 2026-09-16 (#290, #260's re-run): under hold-out constants and the narrowed draw
+> the effect reads −13.21, and the incident #260 opened is closed.** One run at
+> `98559793` (main at #295 plus the pull of the quarterback adjustment pending), seed 0,
+> 20 drafts x 4 seasons, 12 x 250, `--holdout --workers 4`, 46 minutes on four cores:
+>
+> | | **shipped, 2026-09-12** | **hold-out, 2026-09-16** |
+> |---|---|---|
+> | optimizer − market | −11.07 | **−13.21** |
+> | 95% percentile CI | [−16.92, −5.22] | **[−18.76, −7.67]** |
+> | 95% t CI, 3 df | [−20.32, −1.82] | **[−22.04, −4.38]** |
+> | 2022 / 2023 / 2024 / 2025 | −17.52 / −5.07 / −5.38 / −16.31 | **−19.28 / −6.72 / −8.61 / −18.24** |
+> | join failures (market / optimizer) | 0.0% / 0.5% | 0.0% / 0.6%, floor 2% |
+> | MDE at 80% power | — | +11.17 |
+> | verdict | REMOVE, 4/4 | **REMOVE, 4/4** |
+>
+> Two things changed between the columns and they are not separated by one run: the draw
+> (#260) and the constants. **Which constants were held out**: each season replayed under
+> `conf/holdout/<season>.json`, refitting `WEEKLY_K` and `TEAMMATE_RHO` without that season
+> (#294); `TALENT_CV` and `PICK_NOISE_*` could not be refitted without an ESPN session,
+> `WEEKLY_SKEW`'s shipped estimator is not in the tree, and `IMPUTE_CV` is not a simulator
+> constant -- so this is a partial hold-out, and the in-sample flattery the eighth
+> `LIMITATIONS` entry names is removed for two of the five constants that carry it. The
+> movement is two points further from zero, every season worse, which is the direction
+> in-sample constants predicted: fitted on the season they replay, they flattered the arm
+> that lost. It sits at about four of #194's 0.5-point run-to-run standard errors, so the
+> re-pairing alone does not account for it and the hold-out is the other candidate; a run
+> at the new draw with the shipped constants would separate them and is not made, because
+> nothing the ADR rests on depends on the split. The `REQUIRES REVIEW` line fired: the
+> season-clustered interval narrowed 11.69 → 11.10 (ratio 0.95), inside the noise of four
+> clusters and the t interval is shown beside it. **What this ADR rests on has now held on
+> constants the replayed seasons did not fit**: worse in 4 of 4, an interval excluding
+> zero, `P(optimizer better)` 0.0%. Paired rows: `data/processed/gate/p290_holdout_seed0.txt`.
+
 ## Why this is surprising, which is why it is written down
 
 The repo contains a real season simulator: talent drawn once per season, a square-root weekly

@@ -229,6 +229,11 @@ exception.
 > under #52; the +0.215 blend gate was re-run to **−1.004** under #44 and the record restated
 > under #282; the pick-noise constants were refit under #150 and again under #155. The rule
 > stands as a rule; what it no longer has is an open incident.
+>
+> **Re-opened 2026-09-12 by #260 and discharged 2026-09-16 by #290:** the shipped-constants
+> figure in ADR-0009 (−11.07) was measured on the draw before #260 narrowed it, and the
+> re-run existed only as the maintainer's next action. The run was made under hold-out
+> constants: **−13.21 [−18.76, −7.67]**, REMOVE 4/4, and ADR-0009 carries the box.
 
 **A measurement that contradicts a published number is not finished until the published number
 moves.** Measuring is the cheap half. The published figure is what anyone reads, so a refutation
