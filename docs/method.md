@@ -388,6 +388,49 @@ five per-season *r* values on that page and can compute it. No table on
 threshold arrives with the next `--run`, and until then the page says what it will print rather
 than what it printed.
 
+> **Decided 2026-09-13, issue #274: the false-discovery threshold is a diagnostic, and CRPS
+> decides exactly one thing.** Audit III found both computed and neither deciding, and asked
+> which each is. The answer, for each, and where it is printed:
+>
+> **The false-discovery threshold is a diagnostic.** It was pre-registered before the numbers
+> (2026-09-11, #37), it makes the multiplicity visible on the same line as the verdict, and it
+> decides nothing -- the verdict is the rule above and only that. The report line now says so
+> in its own words: `(a diagnostic: the pre-registered rule decides; the threshold does not)`,
+> on every family `hub.models.weekly_screen` prints.
+>
+> **Re-scored at q = 0.10 for the record.** The table's four positives sit in one family --
+> the alone screen at the published anchor, week 8, on the settled basis -- and none had been
+> read against the threshold. `uv run python -m hub.models.weekly_screen --run
+> --trend-min-week 8`, 2026-09-13, cfg `b1f69382`, fitted `04c2d997`, data `a4050443` over
+> five pinned sources, 14,483 player-weeks and 849 players (the tables on
+> [weekly-screen.md](weekly-screen.md) were 14,370 and 847; the archive has grown since, and
+> every `t` below reproduces the published one within a tenth):
+>
+> | feature | t | p | BH-adjusted p | at q = 0.10 |
+> |---|---|---|---|---|
+> | implied team total | +12.43 | 0.000 | **0.002** | survives |
+> | own spread | +5.37 | 0.006 | **0.023** | survives |
+> | defence vs position | +3.76 | 0.020 | **0.053** | survives |
+> | injury severity | −3.10 | 0.036 | **0.072** | survives |
+>
+> Family of eight, threshold 0.0361, four below it; the other four rows (snap-share trend
+> 0.205, prior TD rate 0.113, rest 0.348, target-share trend 0.818) are above it and were
+> already killed by the rule. The joint family at the same anchor -- four tests, threshold
+> 0.0543 -- reads 0.054 / 0.054 / 0.072 for the three survivors and 0.484 for own spread.
+> **Nothing falls, so nothing is restated.** What the re-scoring adds is the thing the rule
+> could not say: the two weakest positives clear the rule at 3.8 and 3.1 se and clear the
+> family at 0.053 and 0.072 -- inside q, and not by much.
+>
+> **CRPS is a diagnostic beside MAE, except for one decision.** `hub.models.weekly` prints
+> CRPS of the published `(mu, sd, skew)` beside MAE (#177) and nothing reads it; the line now
+> says `A diagnostic: nothing here decides on it`. It is promoted to a **gate input for
+> exactly one decision**: the weekly interval's shape law -- keep the Cornish-Fisher skew or
+> drop it -- under #292, with the rule and the minimum detectable effect written in
+> [gate-power.md](gate-power.md) before the first run. The promotion is that narrow on
+> purpose: a score that decides one pre-registered question is a gate input there and a
+> diagnostic everywhere else, and a blanket promotion would be rule 1's incident -- the
+> scoring rule chosen after the verdicts it would re-score were known.
+
 ### 15. A fixture that sets the condition under which the estimator is trivially correct is not a test of the estimator
 
 **Plant the condition the estimator must handle, not the one it cannot get wrong.** A test's

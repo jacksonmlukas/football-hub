@@ -52,6 +52,7 @@
   tbody tr:last-child td { border-bottom: 0; }
   .scroll { overflow-x: auto; }
   .num { font-variant-numeric: tabular-nums; }
+  .thin { color: var(--muted); }
   .good { color: var(--good); } .bad { color: var(--bad); }
   .empty { color: var(--muted); font-size: 0.85rem; margin-top: 0.6rem; }
   footer { color: var(--muted); font-size: 0.78rem; margin-top: 1.5rem;
@@ -194,6 +195,10 @@ function trackRecordBody(tr) {
   const seasons = Array.isArray(tr.seasons) ? tr.seasons : [];
   const newest = seasons[0] ?? null;
   const chart = reliabilitySVG(tr.bins ?? []);
+  // The other half of the record (#289, #293): whether the weekly player interval covers
+  // what it claims, and where the survivor price holds by spread. Null when no measurement
+  // has been committed, and then the record renders without it rather than not at all.
+  const coverage = intervalCoverageBody(tr.interval_coverage);
 
   // The framing, which decides how everything under it is read and is the whole of what
   // this panel withholds. `n_preregistered` stays 0 until a prediction's commit predates
@@ -224,7 +229,7 @@ function trackRecordBody(tr) {
     ], [
       { k: "log loss", v: fmt(tr.log_loss, 4) },
       { k: "Brier", v: fmt(tr.brier, 4) },
-    ]) + chart;
+    ]) + chart + coverage;
   }
   // Whose curve the diagram is. `publish.track_record` groups rows carrying no season under
   // `season: null` and orders that group last, so it is the *newest* group only when every
@@ -242,7 +247,49 @@ function trackRecordBody(tr) {
     // The diagram draws one group's bins. Unlabelled, under a table of several seasons, it
     // reads as the pool -- which is the reading the split exists to prevent.
     (chart ? `<p class="legend">Calibration for ${esc(whose)}. Each season is
-       scored on its own curve.</p>` : "");
+       scored on its own curve.</p>` : "") + coverage;
+}
+
+// The weekly interval's coverage and the survivor price by spread bucket, under the
+// calibration curve (#289, #293). `ic` is `hub.models.coverage.published_summary` as the
+// publisher wrote it into `track_record.json`: the last *committed* measurement, not a
+// fresh one, and null when none has been made.
+//
+// Two claims are made on the page and both are read off the artifact rather than typed
+// here. The interval is served under the label 80% and the doc says it covers
+// `gate_claim`; the verdict was read against the claim, so the claim is what is printed
+// beside it -- `COVERS` beside `77.4%` with only the label on the line would read as the
+// label covering. An artifact written before the claim was carried is published with the
+// label as its claim, by `published_summary`, so `gate_claim` is always present.
+//
+// The bucket table keeps every bucket. One holding fewer than `min_bucket` games is shown
+// and marked thin, never dropped: four rows where five were expected read as a bucket that
+// vanished, and a gap over seven games looks exactly like a gap over seventy without the
+// count beside it.
+function intervalCoverageBody(ic) {
+  if (!ic) return "";
+  const weeks = (ic.gate_n ?? 0).toLocaleString();
+  const weekly = `<p class="legend">Weekly interval, labelled 80%: covers ${esc(pct(ic.gate_cov80))}
+    of ${esc(weeks)} unclipped player-weeks against the claimed ${esc(pct(ic.gate_claim))}
+    (±${esc(pct(ic.band))}) — ${esc(ic.verdict)}, measured ${esc(ic.generated_at)}.</p>`;
+  const s = ic.survivor;
+  if (!s) return weekly;
+  const floor = s.min_bucket ?? 50;
+  const buckets = Array.isArray(s.buckets) ? s.buckets : [];
+  const signed = v => (v === null || v === undefined) ? "—" : (v >= 0 ? "+" : "") + fmt(v, 3);
+  const headline = `<p class="legend">Survivor price, favourites of ${esc(s.favourite_spread)}+:
+    priced ${esc(fmt(s.favourite_predicted, 3))}, won ${esc(fmt(s.favourite_actual, 3))}
+    over ${esc(s.favourite_n)} games — ${esc(s.verdict)}. By closing spread, the favourite's
+    win rate against its price; a bucket under ${esc(floor)} games is marked, not dropped.</p>`;
+  const rows = buckets.length ? table([
+    { label: "spread", get: r => r.label ?? r.bin, cls: r => r.thin ? "thin" : "" },
+    { label: "games", get: r => (r.n ?? 0) + (r.thin ? " (under " + floor + ")" : ""),
+      cls: r => r.thin ? "thin" : "" },
+    { label: "priced", get: r => fmt(r.predicted, 3), cls: r => r.thin ? "thin" : "" },
+    { label: "won", get: r => fmt(r.actual, 3), cls: r => r.thin ? "thin" : "" },
+    { label: "gap", get: r => signed(r.gap), cls: r => r.thin ? "thin" : "" },
+  ], buckets) : "";
+  return weekly + headline + rows;
 }
 
 // The survivor panel's body: the remaining plan, and the scope that makes it readable.

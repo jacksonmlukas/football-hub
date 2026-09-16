@@ -210,6 +210,27 @@ def test_the_record_carries_the_weekly_interval_coverage(site, base, monkeypatch
     assert on_page["interval_coverage"]["gate_cov80"] == pytest.approx(0.774)
 
 
+def test_the_record_carries_the_survivor_buckets_beside_the_interval(site, base,
+                                                                     monkeypatch, tmp_path):
+    """#293: the survivor block, buckets included, reaches `track_record.json` untouched,
+    so the page can render where the price holds and where it is thin."""
+    from hub.models import coverage
+    art = tmp_path / "interval_coverage.json"
+    coverage.write_summary({"centre": "prior", "gate_cov80": 0.774, "gate_claim": 0.77,
+                            "verdict": "COVERS"}, art)
+    coverage.write_survivor({"verdict": "HOLDS", "favourite_gap": 0.023, "favourite_n": 395,
+                             "buckets": [{"label": "14+", "n": 52, "predicted": 0.879,
+                                          "actual": 0.942, "gap": 0.063, "thin": False}]},
+                            art)
+    monkeypatch.setattr(coverage, "ARTIFACT", art)
+    _scored_one(base, monkeypatch, site)
+    publish.track_record(base=base, out=site)
+    on_page = json.loads((site / "track_record.json").read_text())
+    got = on_page["interval_coverage"]["survivor"]
+    assert got["verdict"] == "HOLDS" and got["buckets"][0]["label"] == "14+"
+    assert got["buckets"][0]["thin"] is False
+
+
 def test_no_measurement_drops_the_field_rather_than_the_page(site, base, monkeypatch,
                                                              tmp_path):
     """A tree where the measurement was never written has no artifact. The record must

@@ -520,10 +520,18 @@ def distribution_report(errs: pl.DataFrame) -> list[str]:
                     pl.col("err_weekly").mean().alias("mae"),
                     pl.col("crps_weekly").mean().alias("crps"))
                .sort("season"))
+    # "diagnostic" is on the line by decision (#274). CRPS is a gate input for exactly one
+    # decision in this repo -- the weekly interval's shape law, #292, under a rule written
+    # before the run -- and nowhere else; here it sits beside MAE and decides nothing, and
+    # the line says so before the table so the ratio is not read as a verdict.
     lines = ["", "  The distribution, not just the centre (#177). CRPS of the published "
                  "(mu, sd, skew)",
              "  against MAE, which is the same rule applied to the same projection as a "
-             "point mass:", "",
+             "point mass.",
+             "  A diagnostic: nothing here decides on it. CRPS is a gate input for one "
+             "decision only,",
+             "  the weekly interval's shape law (#292), under its own pre-registered rule.",
+             "",
              f"  {'season':>7} {'n':>6} {'MAE':>8} {'CRPS':>8} {'crps/mae':>9}"]
     for r in per.iter_rows(named=True):
         ratio = r["crps"] / r["mae"] if r["mae"] else float("nan")
@@ -561,12 +569,17 @@ def _what_the_coverage_measurement_says() -> list[str]:
         return ["  Whether that gap is worth closing is what the interval measurement says: "
                 "run `uv run python -m\n  hub.models.coverage --measure --write` for it. "
                 "Nothing is published in this tree yet."]
-    nominal = 0.80
+    # The claim the verdict was read against travels with it (#289): the interval is
+    # labelled 80% and the doc says it covers 77%, and `COVERS` beside `77.4%` with only the
+    # label printed would read as the label covering. `published_summary` supplies the label
+    # as the claim for an artifact written before the claim was carried.
+    label = 0.80
+    claim = got["gate_claim"]
     return [f"  The published interval, measured on a centre that cannot see the week it "
-            f"scores: {got['verdict']}\n  at {got['gate_cov80']:.1%} against a nominal "
-            f"{nominal:.0%} over {got['gate_n']:,} {got['gate_subset']} weeks "
-            f"(+/- {got['band']:.0%}), measured\n  {got['generated_at']}. That is what the "
-            f"gap between this ratio and {CALIBRATED_RATIO:.3f} is made of."]
+            f"scores: {got['verdict']}\n  at {got['gate_cov80']:.1%} against the claimed "
+            f"{claim:.0%} (labelled {label:.0%}) over {got['gate_n']:,} {got['gate_subset']} "
+            f"weeks (+/- {got['band']:.0%}), measured\n  {got['generated_at']}. That is what "
+            f"the gap between this ratio and {CALIBRATED_RATIO:.3f} is made of."]
 
 
 def diagnostic(errs: pl.DataFrame) -> list[str]:

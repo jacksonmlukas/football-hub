@@ -954,6 +954,14 @@ every table under *The basis, decided* and the sweep, and this section is where 
 land. The `--permute` line's permutation p is a single feature's and carries no family; its
 family, if one is wanted, is the number of features permuted in that run.
 
+> **Printed 2026-09-13, at the published anchor, under #274.** The alone family at week 8 on
+> the settled basis: eight tests, threshold 0.0361 at q = 0.10, four below it -- the implied
+> team total (adjusted p 0.002), own spread (0.023), defence vs position (0.053) and injury
+> severity (0.072). The joint family: four tests, threshold 0.0543, three below it (0.054,
+> 0.054, 0.072; own spread 0.484). No verdict moves and nothing is restated. The full table,
+> with the run's digests and the decision that the threshold is a diagnostic, is under
+> [method.md rule 14](method.md); the sweep's other anchors have not been printed.
+
 ## Reproduce
 
 ```bash
