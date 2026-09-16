@@ -1,5 +1,10 @@
 # The quarterback adjustment, validated before it is built
 
+> **Disposition 2026-09-16 (#299): pulled from the published path.** The adjustment below
+> is not applied to any written prediction or survivor pick. `hub.models.quarterback` stays,
+> reachable only from `hub.models.starter_change`, the harness that gates it; the section
+> *Disposition 2026-09-16* at the end says why, and what would let it back.
+
 **Measured 2026-09-12** (#218). The game layer has no quarterback awareness: ratings pass the
 live price through, and where the staleness field says there is none, nothing adjusts. #218
 proposes a quarterback-adjusted team rating for exactly those games, consumed from a
@@ -280,3 +285,70 @@ that read `stale`/`schedule` under the old cut because their quote had stood a w
 `live` when the last poll is within a week; the adjustment reaches fewer rows there, and
 the rows it reaches are the ones no poll has returned in a week. `config_digest` and
 `fitted_digest` are unmoved (`b1f69382`, `04c2d997`): no declared number changed.
+
+## Disposition 2026-09-16 (#299) — pulled, and what would let it back
+
+The disposition of 2026-09-13 above was *marked, with a pull trigger*: #291's gate failing
+the house rule. The gate did not fail — it is not-runnable, 0 scored event games in the
+archive and 29 event-seasons needed ([gate-power.md](gate-power.md)) — and the pull fired
+anyway, on a fact that building the gate surfaced. **Recorded in
+[decisions.md](decisions.md); this section says what a reader of the tree and of the rows
+sees.**
+
+**The fact.** The nfeloqb file names a new starter only *after* his first game (the timing
+paragraph above, found on review of #291's harness), and since #297 the adjustment fires
+only on a stale poll — a capture more than `STALE_AFTER_DAYS` old — because that is the one
+label it reads. So when it fires it adds the current `qb_adj` to a line that already priced
+that same quarterback, and the one case it was built for, a starter change the frozen line
+predates, cannot reach it from this source. On the Actions runner it never fired (week 2: 16
+live, 0 adjusted). On the laptop it fired on exactly the rows where it is wrong in
+expectation. Marked-and-shipping was harmless where it did nothing and wrong where it did
+something.
+
+**What is pulled.**
+
+* `hub.models.ratings` and `hub.season.survivor` no longer call `quarterback.apply`.
+  `rated_games` is `hub.schedule.priced_games` and nothing else, kept as the one seam both
+  readers take. No written prediction or survivor pick carries `adjusted_by` or
+  `qb_adjustment`; no row is filed under `market_baseline-qb`; the run line prints no
+  adjustment count and no report line.
+* The live-price cut — `live_price(at)` and `STALE_AFTER_DAYS` — is declared in
+  `hub.schedule`, the one place it is applied, so the product's schedule does not import
+  the quarterback module to label a row. The number is unchanged (7 days, the poll's age);
+  its digest key is `schedule.STALE_AFTER_DAYS`.
+* `hub.models.quarterback` stays: `points`, `no_live_price`, `apply`, `report_line`,
+  `ELO_PER_POINT` (now `not_an_input`: the harness's conversion, read by no prediction).
+  `tests/contracts/test_the_quarterback_adjustment_is_not_a_dependency.py` walks the runtime
+  imports the way #257's exhibit contract does and refuses any product path — `ratings`,
+  `survivor`, `schedule`, `publish`, `pool` — that reaches it, transitively and inside
+  function bodies; the harness is held to still reach it, so the rule is a rule.
+* `store.predictions(family=True)`, `hub.models.conformal` and `hub.models.eval` keep
+  understanding the `-qb` suffix. The track record may hold rows written under the mark
+  (no production slate did; a laptop run could have), and they stay scored beside the
+  baseline's rather than dropped.
+* `config_digest` `8dbae43a` → `5750d8c1`, `fitted_digest` `983eb30f` → `aeaf1d76` (on main, after #298 landed the same day; measured on its own branch from `b1f69382`/`04c2d997` it read `ce7c7f8b`/`60300770`):
+  `quarterback.ELO_PER_POINT` left the digest's view, and `STALE_AFTER_DAYS` is re-keyed
+  under `schedule` at the same value. The old keys reproduce `04c2d997` exactly, so nothing
+  else moved. A model change on the rows the adjustment reached — a stale or moving-field
+  row is the betting market's number unmoved now — and a no-op on every row with a live
+  price, which is every row the runner has published.
+
+**What would let it back, in order.**
+
+1. **A starter source that is timely before kickoff.** The event the adjustment prices is a
+   change the frozen line predates, and the nfeloqb file cannot carry one until the line has
+   moved on it. #221's depth-chart construction, or the first pass attempt in play-by-play
+   (the pbp cache lacks `passer_player_id` today), would name the arriving starter before
+   his first game. The oracle arm in `hub.models.starter_change` — the arriving starter
+   known — is what that source would make the shipped arm; it is reported beside the gate
+   today as a diagnostic and read by nothing.
+2. **#291's gate clearing on this repo's harness over that source**: the house rule on
+   log-loss of the adjusted against the unadjusted frozen line over event games, clustered
+   on the season, every held-out season and an interval excluding zero, at or above the
+   pre-registered power ([gate-power.md](gate-power.md)). The pilot on the source's own
+   probabilities found its adjustment scoring *worse* than its base on event games in 3 of
+   4 seasons, so the bar is not a formality.
+
+Neither is a code change to `ratings`. Both are measurements, and the module is kept
+re-runnable so that the second can be made the day the first exists. Wiring the module back
+into a product path before then is what the contract test refuses.

@@ -147,6 +147,48 @@ logged horizon; the adjustment is a consumed published model with a validation o
 someone else's data. The mark is weaker than provisional adoption and says less: the number is
 published, labelled as what it is, and its own gate decides whether it stays.
 
+### The quarterback adjustment leaves the published path (#299)
+
+**Decided 2026-09-16 (Jackson), at the grilling session; recorded the same day.** The pull
+trigger above was #291's gate failing. It did not fail: it is *not-runnable* — 0 scored event
+games in the archive, 29 event-seasons needed ([gate-power.md](gate-power.md)). The pull fired
+early, on a timing fact the gate's construction surfaced rather than on its verdict, and the
+fact is decisive on its own.
+
+**Two facts, one week apart.** The nfeloqb file names a new starter only *after* his first
+game (#291, on review of the harness): a played row says who started, and no row says who
+*will*. And after #297 the adjustment fires only on a stale poll — a capture more than seven
+days old — because that is the one label it reads. Put together: when the adjustment fires it
+adds the current `qb_adj` to a line that already priced that same quarterback, and the one
+case it was built for — a starter change the frozen line predates — cannot reach it from this
+source, because the source does not carry the change until the line has moved on it. On the
+Actions runner it never fires (every capture is minutes old; week 2 was 16 live, 0 adjusted).
+On the laptop it fires on exactly the rows where it is wrong in expectation.
+
+**Pulled**, in the form #270 pre-committed to:
+
+| | |
+|---|---|
+| the writers | `hub.models.ratings` and `hub.season.survivor` no longer call `quarterback.apply`; `rated_games` is `hub.schedule.priced_games` and nothing else, and stays as the one seam both readers take |
+| the rows | no written prediction or survivor pick carries `adjusted_by` or `qb_adjustment`; no row is filed under `market_baseline-qb`; the run line counts no adjustment |
+| the module | `hub.models.quarterback` stays, reachable only from `hub.models.starter_change` — #291's gate and its oracle arm — and `tests/contracts/test_the_quarterback_adjustment_is_not_a_dependency.py` walks the runtime imports (#257's walk) and refuses any product path that reaches it |
+| the cut | `live_price` and `STALE_AFTER_DAYS` moved to `hub.schedule`, the one place the cut is applied, so the schedule does not import the module to label a row; the number is unchanged |
+| the record | `store.predictions(family=True)` and the readers keep understanding the `-qb` suffix: the track record holds rows written under the mark and they stay scored beside the baseline's |
+| the digest | `config_digest` `8dbae43a` → `5750d8c1` on main (#298 landed first that day; `b1f69382` → `ce7c7f8b` on the branch): `quarterback.ELO_PER_POINT` left its view (the harness's conversion now, read by no prediction) and `STALE_AFTER_DAYS` is re-keyed under `schedule` at the same value; the pin paragraph in `tests/unit/test_config.py` records both |
+
+**What would let it back, in order.** A starter source that is timely *before* kickoff —
+#221's depth-chart construction, or the first pass attempt in play-by-play, neither of which
+the file offers — so that the event the adjustment prices can reach a frozen line before the
+game is played; and then #291's gate clearing on this repo's harness over that source. Neither
+is a code change to `ratings`; both are measurements, and the module is kept re-runnable so
+the second can be made when the first exists. [qb-adjustment.md](qb-adjustment.md) carries the
+same in its disposition section.
+
+**What the mark bought.** Nothing was published wrongly under it: the only production slate
+written while it stood carried no adjusted row. What it bought was the harness — building
+#291's gate is what found the timing fact — and a record that can tell an adjusted row from
+the baseline's if a laptop run ever wrote one.
+
 ### The deep-simulation programme is objective 2, not objective 1
 
 The stated vision — simulate every fantasy-relevant statistic for every game, down to offensive

@@ -965,8 +965,34 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     -> 0.373, RB 0.506 -> 0.523, WR 0.382 -> 0.423, TE 0.284 -> 0.363; an observed player
     is unchanged. The #197 frozen-board pin does not move: that fixture carries no
     `xfp_imputed` column, so both arms draft under the observed spread on every row.
+
+    **Moved again 2026-09-16 (#299): `8dbae43a` -> `5750d8c1`**, `fitted_digest` `983eb30f`
+    -> `aeaf1d76`. (Measured on its own branch from `b1f69382`/`04c2d997` it read
+    `ce7c7f8b`/`60300770`; the two lanes landed the same day and this is the sequence.) The quarterback adjustment left the published path. Two names moved in
+    the walk, and the old keys reproduce `04c2d997` exactly, so nothing else did:
+
+      * `quarterback.ELO_PER_POINT` (25) **left the digest's view**: it is `not_an_input`
+        now, read by `hub.models.starter_change` -- the harness that gates the adjustment --
+        and by no published prediction, so it identifies no model version.
+      * `quarterback.STALE_AFTER_DAYS` (7) is **re-keyed as `schedule.STALE_AFTER_DAYS`** at
+        the same value: the live-price cut is applied in `hub.schedule.priced_games`, which
+        until #299 imported the quarterback module to read it, and the declaration moved to
+        the one place it is applied so the product's schedule does not reach the module.
+        Every row a prediction writes still reads this number through `price_source`, so it
+        stays covered.
+
+    **This one is a model change on the rows the adjustment reached**, and a no-op on the
+    rest. A game the staleness field marks as having no live price -- `stale`, or the
+    moving field -- was, from #218 to #299, the betting market's number moved by the
+    source's `qb_adj / 25`; it is now that number unmoved, so two runs either side of this
+    commit are not the same model on those rows and the digest says so. On every row with a
+    live price nothing any run computes differs, which is every row of the runner's week-2
+    artifact (16 live, 0 adjusted; `tests/contracts/test_live_price_relabels_the_published_week.py`).
+    `nfeloqb.COMMIT` stays covered: the pin is the harness's source now, and whether a pin
+    no prediction reads should identify a model version is the maintainer's to decide, not
+    this lane's.
     """
-    assert config_digest(HubConfig()) == "8dbae43a"
+    assert config_digest(HubConfig()) == "5750d8c1"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

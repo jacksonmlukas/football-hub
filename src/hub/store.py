@@ -303,10 +303,13 @@ def predictions(league: str | None = None, season: int | None = None,
 
     **`model` is exact, and `family=True` widens it to the name and every variant spelled
     `name-<suffix>`** -- `market_baseline` and `market_baseline-qb`, the row the quarterback
-    layer moved (#284), still one row per game. The distinction is the reader's to declare:
-    a reader scoring *what the module published* wants the family, because a game is
-    published once and the adjusted rows are exactly the backup-quarterback games, so a
-    reader on the exact name scores a subset biased by what left. `hub.models.conformal`
+    layer moved between #284 and #299, still one row per game. #299 pulled the adjustment
+    and nothing writes the suffix now; the rows already written under it stay in the track
+    record, which is why this reader keeps understanding it. The distinction is the
+    reader's to declare: a reader scoring *what the module published* wants the family,
+    because a game is published once and the adjusted rows were exactly the
+    backup-quarterback games, so a reader on the exact name scores a subset biased by what
+    left. `hub.models.conformal`
     and `hub.models.eval` read the family; a reader after one model's rows alone -- auditing
     what the adjustment did against what the baseline would have said -- asks for the exact
     name. The suffix convention is `hub.models.market`'s; a prefix match (`market_baseliner`)

@@ -1,17 +1,33 @@
-"""The quarterback adjustment: the source's own, in spread points, only where no live price
-exists (#218; the construction restated under #268).
+"""The quarterback adjustment: the source's own, in spread points, on rows labelled as
+having no live price (#218; the construction restated under #268). **Pulled from the
+published path under #299**; read by `hub.models.starter_change`, the harness that gates
+it, and by nothing the product ships.
 
-The game layer had no quarterback awareness of any kind. Ratings pass the betting market's
-number through, and where no poll has returned that number for a week, a starting
-quarterback ruled out reaches survivor and the weekly prediction only through whatever the
-betting market has already done to it -- which, for most of the survivor horizon, is
-nothing the poller can see.
+**Why it left (#299, decided 2026-09-16).** Two facts landed in one week. The nfeloqb file
+names a new starter only *after* his first game (#291), and after #297 the adjustment
+fires only on a stale poll -- so when it fires it adds the current `qb_adj` to a line that
+already priced that same quarterback. The one case it was built for, a starter change the
+frozen line predates, cannot reach it from this source. Marked-and-shipping (#270) was
+harmless on the Actions runner, where it never fires, and wrong in expectation on the
+laptop. `hub.models.ratings` and `hub.season.survivor` no longer call `apply`; no written
+prediction or survivor pick carries `adjusted_by` or `qb_adjustment`, and no row is filed
+under `market_baseline-qb`. `tests/contracts/test_the_quarterback_adjustment_is_not_a_dependency.py`
+holds that the harness is the only reader. The way back is a starter source that is timely
+before kickoff (#221's depth-chart construction) and #291's gate clearing;
+`docs/qb-adjustment.md` records both.
+
+**What it was, kept re-runnable.** The game layer had no quarterback awareness of any kind.
+Ratings pass the betting market's number through, and where no poll has returned that
+number for a week, a starting quarterback ruled out reaches survivor and the weekly
+prediction only through whatever the betting market has already done to it -- which, for
+most of the survivor horizon, is nothing the poller can see.
 
 Since #281 the row arrives already labelled. `hub.schedule.priced_games` applies
-`live_price` below to write `price_source` as `live`, `stale` or `schedule`, and `apply`
-reads that label: the one cut, declared here and applied there, so the coalesce that
-chooses the number and the layer that may move it agree row by row. Since #297 the cut
-reads the age of the capture that priced the row, not how long the quote has stood.
+`hub.schedule.live_price` to write `price_source` as `live`, `stale` or `schedule`, and
+`apply` reads that label: the one cut, declared and applied there, so the coalesce that
+chooses the number and the layer that may move it agree row by row. Until #299 the cut and
+`STALE_AFTER_DAYS` were declared here; they moved to `hub.schedule` with the pull, so the
+product's schedule does not import this module to label a row.
 
 **What licenses it, and how far.** `docs/qb-adjustment.md`: 538 shipped both a base and a
 quarterback-adjusted win probability for every game, and the Brier difference between the
@@ -20,7 +36,8 @@ two columns over 2013-2022 is +0.0057 with a 95% t interval excluding zero, posi
 licenses using one **only where the staleness field marks no live price**: the best published
 quarterback-adjusted Elo is +0.01 MAE against the close after fifteen years and blends
 65% betting market, so where a live price exists this module changes nothing and a test holds
-the row byte for byte.
+the row byte for byte. What it does not license is this estimator against a frozen line,
+which is what #291's gate measures and #299 pulled on.
 
 **The construction is the source's, and the design point is to add nothing to it.** The
 adjustment is this quarterback *minus what the team rating already embeds*, not how good
@@ -49,31 +66,22 @@ and only when both sides are known.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-
 import polars as pl
 
-from hub.declare import chosen, not_an_input
+from hub.declare import not_an_input
 
-# STATED CHOICE, not a fitted constant, and declared `chosen` because it is an input to a
-# published prediction and the digest is owed coverage of anything that is. Its provenance:
-# 538 converted Elo to spread points at 25 per point. The recipe records that the other
+# 538's conversion of Elo to spread points, 25 per point. The recipe records that the other
 # published conversion, Elway's 21.5 Elo per point, disagrees with 538's by 16%, "which is a
 # fair statement of the precision available". No interval; this repo has not fitted it and
 # does not claim to have. The source's 3.3 Elo per value unit is inside `qb_adj` already and
-# is not restated here.
-ELO_PER_POINT = chosen(25)
-
-# A snapshot whose capture is older than this is not a live price: the poll age past which
-# a snapshot is `stale`. STATED CHOICE from #210's measurement on 2026-09-11: the current
-# week's median run was 1.8 days unmoved and every week from 2 out had stood the full 12.2
-# days of the archive, so a week separates the two populations with margin on both sides.
-# Until #297 the clock ran from the quote's last move; it now runs from the last capture
-# (#251: a liquid line nobody has had reason to move in a week is still a live price when
-# the poller returned it this morning, and on the Actions runner every capture is minutes
-# old). The number is unchanged; what it is measured against is not. An unpriced game and
-# one priced from the moving field, which nothing polls, are not live prices either.
-STALE_AFTER_DAYS = chosen(7)
+# is not restated here. Declared `chosen` from #218 to #299, while a published prediction
+# read it; since #299 no product path reaches this module, so no prediction can, and a
+# digest that still hashed it would be claiming a difference between two runs that compute
+# the same thing.
+ELO_PER_POINT = not_an_input(
+    25,
+    "the harness's Elo-to-points conversion since #299: read by hub.models.starter_change "
+    "and by no published prediction, so it identifies no model version")
 
 # The two columns `apply` writes on a row it moved, and leaves null on one it did not.
 # `adjusted_by` names the source whose state moved it; `qb_adjustment` is the points added
@@ -97,38 +105,11 @@ def points(state: pl.DataFrame) -> pl.DataFrame:
     return state.select(pl.col("team"), (pl.col("qb_adj") / ELO_PER_POINT).alias("points"))
 
 
-def live_price(at: datetime) -> pl.Expr:
-    """Whether a snapshot is a live price at `at`: the capture that priced the row -- the
-    last poll at or before `at`, on the row as `priced_at` -- is within `STALE_AFTER_DAYS`.
-
-    The one declaration of the cut, and it is applied in exactly one place --
-    `hub.schedule.priced_games`, which labels every row `live`, `stale` or `schedule` and
-    lets a stale snapshot lose to the moving field (#281). This module then reads the label
-    rather than the clock, so the coalesce and the adjustment cannot disagree about a row.
-
-    **The clock is the poll's, not the quote's (#297, decided in #251).** Until #297 this
-    read `unmoved_since`, the start of the run of polls returning the same number. That
-    measured the wrong thing for this consumer: a liquid line nobody has had reason to move
-    in ten days is still a live price when the poller returned it this morning, and on the
-    Actions runner every capture is minutes old, so the cut could never fire there and fired
-    on exactly those lines on the laptop. It also made the label depend on what
-    `hub.fetch.odds._quote_moved` counts as a move -- a book joining an otherwise frozen
-    quote restarted the run and switched the adjustment off. The staleness columns still
-    ride on the row for a reader; nothing here reads them.
-
-    A row with no capture is not a snapshot -- every snapshot is dated -- and cannot be
-    shown to be a live price, so it is not one. `priced_games` never asks about such a
-    row: it applies this only where a snapshot priced the candidate.
-    """
-    captured = pl.col("priced_at")
-    return (captured >= pl.lit(at - timedelta(days=STALE_AFTER_DAYS))).fill_null(False)
-
-
 def no_live_price(games: pl.DataFrame) -> pl.Expr:
     """The rows `price_source` marks as having no live price, and that carry a number to
     adjust: a stale snapshot, or the moving field, which nothing polls. The label is
-    `hub.schedule.priced_games`'s, decided by `live_price` above; nothing here re-derives
-    it, which is what keeps the two consumers of the cut in agreement (#281).
+    `hub.schedule.priced_games`'s, decided by `hub.schedule.live_price`; nothing here
+    re-derives it, which is what keeps the consumers of the cut in agreement (#281).
     """
     priced = pl.col("close_spread").is_not_null()
     return priced & pl.col("price_source").is_in(["stale", "schedule"])

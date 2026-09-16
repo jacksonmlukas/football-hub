@@ -321,14 +321,20 @@ def test_the_later_run_still_refreshes_what_it_may(sched, tmp_path):
     assert is_["sun"] >= was["sun"], "an unstarted game is re-priced"
 
 
-# --- the quarterback adjustment reaches the row only where no live price exists (#218) ------
+# --- the number is the betting market's on every row (#299) --------------------------------
 #
-# The rule itself -- relative, decaying, which rows it may touch -- is `hub.models.quarterback`'s
-# and is tested beside it. What is asserted here is that the writer routes the slate through
-# it, that the row and the version say so, and that a live price is left as it was.
+# From #218 to #299 the writer routed the slate through `hub.models.quarterback.apply`, and a
+# row the staleness field marked as having no live price was moved from the nfeloqb state and
+# said so. #299 pulled it: the source names a new starter only after his first game (#291),
+# so the adjustment could only ever move a line that had already priced him. What is held
+# here is the pull itself -- the row a stale poll priced is written as the betting market's
+# number, under the baseline's own name, whatever nfeloqb file is cached -- and
+# `tests/contracts/test_the_quarterback_adjustment_is_not_a_dependency.py` holds that the
+# module is not on the writer's import path at all.
 
 def _qb_state(cache):
-    """The hand-built nfeloqb file, cached where the fit looks for it."""
+    """The hand-built nfeloqb file, cached where the fit used to look for it. Its presence
+    is the mutation the tests below are held against: a writer that read it would move `c`."""
     import json
     from pathlib import Path
 
@@ -342,216 +348,66 @@ def _qb_state(cache):
     (cache / "nfeloqb" / nfeloqb.FILE).write_text(text)
 
 
-def test_a_frozen_quote_is_rated_from_the_quarterback_state_and_the_row_says_so(sched,
-                                                                                tmp_path):
+def test_a_frozen_quote_is_written_as_the_betting_markets_number_whatever_state_is_cached(
+        sched, tmp_path):
     """Two games, one snapshot each. `b`'s quote was polled an hour before the fit and is
-    live; `c`'s has stood untouched for three weeks and is not -- since #281 it yields to
-    the moving field, which carries the same number, and the row says `schedule`. LV's
-    starter in the fixture is a fresh backup, so `c` moves and `b` does not."""
+    live; `c`'s has stood untouched for three weeks and yields to the moving field, which
+    carries the same number. LV's starter in the cached fixture is a fresh backup -- the
+    row #218 would have moved. Since #299 neither row moves, neither carries an
+    adjustment column, and both are the baseline's own name."""
     sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None, "KC", "LAC"), ("c", 2, 3.0, None, "KC", "LV")])
     _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 12, 11))
     _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
     _qb_state(tmp_path / "cache")
     got = ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
                       cache=tmp_path / "cache")
+    assert "adjusted_by" not in got.columns and "qb_adjustment" not in got.columns
     by = {r["game_id"]: r for r in got.to_dicts()}
-    assert by["b"]["adjusted_by"] is None and by["b"]["qb_adjustment"] is None
-    assert by["b"]["version"].endswith("-live")
-    assert by["b"]["margin_mean"] == 3.0
-    assert by["c"]["adjusted_by"] == "nfeloqb"
-    assert by["c"]["version"].endswith("-schedule-qb")
-    assert by["c"]["margin_mean"] == pytest.approx(3.0 + by["c"]["qb_adjustment"])
-    assert by["c"]["qb_adjustment"] > 0, "the home side keeps its starter; the away side lost his"
+    assert by["b"]["margin_mean"] == 3.0 and by["c"]["margin_mean"] == 3.0
+    assert by["b"]["version"].endswith("-live") and by["c"]["version"].endswith("-schedule")
+    assert by["b"]["model"] == by["c"]["model"] == "market_baseline"
+    assert not any("-qb" in v for v in got["version"].to_list())
 
 
-def test_the_model_string_on_an_adjusted_row_is_not_the_baselines(sched, tmp_path):
-    """#284: `model="market_baseline"` covered a row whose spread the betting market did
-    not set. The adjusted row carries its own name, the protected row the baseline's, so
-    the track record can tell them apart by the column that names the model and not only
-    by a suffix on the version."""
+def test_the_run_line_is_the_passthrough_and_counts_no_adjustment(sched, tmp_path, capsys):
+    """From #284 to #299 the first line counted the priced games the quarterback layer
+    moved and said `passthrough` only at zero; the count left with the layer, and no line
+    of the run mentions the adjustment or the nfeloqb file."""
     sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None, "KC", "LAC"), ("c", 2, 3.0, None, "KC", "LV")])
-    _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 12, 11))
-    _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
-    _qb_state(tmp_path / "cache")
-    got = ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
-                      cache=tmp_path / "cache")
-    by = {r["game_id"]: r for r in got.to_dicts()}
-    assert by["b"]["model"] == "market_baseline"
-    assert by["c"]["model"] == "market_baseline-qb"
-    assert by["c"]["model"] != by["b"]["model"]
-
-
-def test_the_run_line_says_passthrough_only_when_nothing_was_adjusted(sched, tmp_path, capsys):
-    """#284: every run printed `ratings (passthrough)`, adjusted runs included. The line
-    names how many games were adjusted, and says passthrough only when that count is
-    zero."""
-    sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None, "KC", "LAC"), ("c", 2, 3.0, None, "KC", "LV")])
-    _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 12, 11))
-    _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
-    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
-                cache=tmp_path / "cache")
-    plain = capsys.readouterr().out.splitlines()[0]
-    assert "ratings (passthrough): season 2026 week 2" in plain
-    _qb_state(tmp_path / "cache")
-    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
-                cache=tmp_path / "cache")
-    adjusted = capsys.readouterr().out.splitlines()[0]
-    assert "ratings: season 2026 week 2, 1 of 2 priced games quarterback-adjusted" in adjusted
-    assert "passthrough" not in adjusted
-
-
-def test_the_run_line_and_the_report_line_count_the_same_population(sched, tmp_path, capsys):
-    """An unpriced game on the slate: the run line's denominator is the priced count, the
-    population the adjustment can touch, which is what `quarterback.report_line` two lines
-    below already counts. With `slate.height` the two adjacent lines said 2 and 3."""
-    sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None, "KC", "LAC"), ("c", 2, 3.0, None, "KC", "LV"),
-           ("d", 2, None, None, "DEN", "WAS")])
     _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 12, 11))
     _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
     _qb_state(tmp_path / "cache")
     ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
                 cache=tmp_path / "cache")
     out = capsys.readouterr().out
-    lines = out.splitlines()
-    assert "1 of 2 priced games quarterback-adjusted" in lines[0]
-    assert any("quarterback adjustment: 1 of 2 priced games touched" in ln for ln in lines)
-    assert "2 of 3 games priced" in lines[1] and "1 unpriced" in lines[1], (
-        "the coverage line is about the whole slate, and says so")
+    assert "ratings (passthrough): season 2026 week 2" in out.splitlines()[0]
+    assert "quarterback" not in out and "nfeloqb" not in out
 
 
-def test_the_adjusted_rows_are_their_own_partition(sched, tmp_path):
-    """A partition is homogeneous in what priced it, and an adjusted rating is not the
-    same thing as the passthrough it was adjusted from."""
+def test_the_partition_of_a_stale_poll_is_the_schedule_partition_and_nothing_else(sched,
+                                                                                  tmp_path):
+    """A partition is homogeneous in what priced it, and since #299 the version names the
+    source alone: nothing is filed under `-qb`."""
     sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None, "KC", "LAC"), ("c", 2, 3.0, None, "KC", "LV")])
     _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 12, 11))
     _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
     _qb_state(tmp_path / "cache")
-    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
-                cache=tmp_path / "cache")
+    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path, cache=tmp_path / "cache")
     written = sorted(p.name for p in (tmp_path / "preds").rglob("*.parquet"))
     assert len(written) == 2, written
-    assert any("schedule-qb" in n for n in written)
+    assert not any("qb" in n for n in written)
 
 
-def test_the_fit_reports_the_change_once(sched, tmp_path, capsys):
-    sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None, "KC", "LAC"), ("c", 2, 3.0, None, "KC", "LV")])
-    _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 12, 11))
-    _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
-    _qb_state(tmp_path / "cache")
-    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
-                cache=tmp_path / "cache")
-    out = capsys.readouterr().out
-    assert "quarterback adjustment: 1 of 2 priced games touched" in out
-
-
-def test_no_quarterback_state_is_the_passthrough_and_says_so(sched, tmp_path, capsys):
-    """A fresh clone has no nfeloqb file. Every number is what the passthrough wrote
-    before #218, and the run says why nothing moved rather than saying nothing."""
-    sched([("a", 1, 3.0, 7), ("c", 2, 3.0, None, "KC", "LV")])
-    _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
-    got = ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
-                      cache=tmp_path / "cache")
-    assert got["adjusted_by"].to_list() == [None]
-    assert got["version"][0].endswith("-schedule")
-    assert "no nfeloqb file" in capsys.readouterr().out
-
-
-def test_a_team_the_state_spells_differently_is_named_rather_than_silently_unadjusted(
-        sched, tmp_path, capsys):
-    """The fixture carries six teams; a slate of one game names two of them. The other four
-    match no game, and the run says so -- the sentence a mis-spelled abbreviation would
-    otherwise never produce."""
-    sched([("a", 1, 3.0, 7), ("c", 2, 3.0, None, "KC", "LV")])
-    _qb_state(tmp_path / "cache")
-    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
-                cache=tmp_path / "cache")
-    out = capsys.readouterr().out
-    assert "4 team(s) in the state match no game" in out
-    assert "DEN, LA, LAC, WAS" in out
-
-
-def test_a_schedule_team_with_no_row_in_the_state_is_named_rather_than_silently_untouched(
-        sched, tmp_path, capsys):
-    """The other direction of the spelling check. `unknown_teams` names a state team the
-    schedule lacks; a schedule team the *state* lacks -- a team the source has no row for
-    -- was silently untouched, every one of its games left as priced with nothing saying
-    so. Counted and named on the same sentence."""
-    sched([("a", 1, 3.0, 7), ("c", 2, 3.0, None, "BUF", "LV"), ("e", 2, 3.0, None, "KC", "NYJ")])
-    _qb_state(tmp_path / "cache")
-    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
-                cache=tmp_path / "cache")
-    out = capsys.readouterr().out
-    assert "2 schedule team(s) have no row in the state and never adjust: BUF, NYJ" in out
-
-
-def test_a_drifted_quarterback_file_is_refused_and_the_fit_still_runs(sched, tmp_path, capsys):
-    from hub.fetch import nfeloqb
-    sched([("a", 1, 3.0, 7), ("c", 2, 3.0, None, "KC", "LV")])
-    _snap(tmp_path, 2026, 2, [("c", 3.0)], dt.datetime(2026, 8, 20))
-    (tmp_path / "cache" / "nfeloqb").mkdir(parents=True)
-    (tmp_path / "cache" / "nfeloqb" / nfeloqb.FILE).write_text(
-        "date,season,team1\n2026-09-01,2026,KC\n")
-    got = ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
-                      cache=tmp_path / "cache")
-    assert got["adjusted_by"].to_list() == [None]
-    assert "refused" in capsys.readouterr().out
-
-
-def test_the_fit_repeats_a_source_change_the_pull_reported(sched, tmp_path, capsys):
-    """#271: a pull whose bytes did not match the pin says so once, on the day; the fit runs
-    days later off the cached file and must not serve the change silently. The stamp
-    carries the answer and `quarterback_rows`'s sentence repeats it, with the commit."""
-    import json
-
-    from hub.fetch import nfeloqb
-    sched([("a", 1, 3.0, 7), ("c", 2, 3.0, None, "KC", "LV")])
-    _qb_state(tmp_path / "cache")
-    (tmp_path / "cache" / "nfeloqb" / nfeloqb.STAMP).write_text(json.dumps(
-        {"captured_at": "2026-09-12T12:00:00", "commit": "abcdef0123456789",
-         "sha256": "1" * 64, "pinned_sha256": "2" * 64, "matches_pin": False, "rows": 7}))
-    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12, 12), base=tmp_path,
-                cache=tmp_path / "cache")
-    out = capsys.readouterr().out
-    assert "source change" in out and "expects 222222222222" in out
-    assert "pulled 2026-09-12T12:00:00 at commit abcdef012345" in out
-
-
-# --- a played week is rated from the state as of its first kickoff (#272) -------------------
-#
-# `nfeloqb.state(rows, as_of=...)` is the split and is tested beside it. What is asserted
-# here is that the writer passes the kickoff: a week that has kicked off at `at` is rated
-# from rows strictly before its first kickoff's game day, and a week still ahead from the
-# latest state, so a backtest of the quarterback layer through this seam cannot leak.
-
-def test_a_played_week_is_rated_from_the_state_as_of_its_first_kickoff(sched, tmp_path):
-    """Week 1 is KC @ LV on Monday 09-14 (ET), played; week 2 is the same pair on 09-27,
-    ahead. The fixture's rows before 09-14 are KC's 09-10 (adj +12) and LV's 09-13 (Minshew,
-    adj -2): 0.48 - (-0.08) = 0.56 points. The latest state -- KC +10, O'Connell -110 --
-    is 4.80, and that is what week 2 gets. Both weeks are priced from the moving field, so
-    both are adjusted; only the state differs."""
+def test_the_seam_is_the_priced_slate_in_the_slates_own_order(sched, tmp_path):
+    """`rated_games` is `hub.schedule.priced_games` and nothing else: the same rows, the
+    same columns, the same order, with a played week and a week ahead on the slate and a
+    state cached that #272 would have rated the played week from."""
     sched([("w1", 1, 3.0, 7, "KC", "LV", "2026-09-14", "20:15"),
            ("w2", 2, 3.0, None, "KC", "LV", "2026-09-27", "13:00")])
     _qb_state(tmp_path / "cache")
-    games, _ = ratings.rated_games(2026, at=dt.datetime(2026, 9, 20, 12), cache=tmp_path / "cache",
-                                   base=tmp_path)
-    by = {r["game_id"]: r for r in games.to_dicts()}
-    assert by["w1"]["adjusted_by"] == "nfeloqb" and by["w2"]["adjusted_by"] == "nfeloqb"
-    assert by["w1"]["qb_adjustment"] == pytest.approx(0.56)
-    assert by["w2"]["qb_adjustment"] == pytest.approx(4.80)
-    assert games["game_id"].to_list() == ["w1", "w2"], "the slate's order is kept"
-
-
-def test_a_played_week_with_no_state_before_its_kickoff_is_not_adjusted(sched, tmp_path):
-    """A night game on 09-13, 20:15 ET, is 00:15 UTC on 09-14. LV's earliest row in the
-    fixture is dated 09-13 -- its own game day -- so as of that kickoff, read as the
-    Eastern day, LV is unknown and the game is left as priced. Read as the UTC day the
-    split would keep LV's 09-13 row and move the game by 0.56; the latest state would move
-    it by 4.80. A backdated adjustment is the leak this seam exists to refuse."""
-    sched([("night", 1, 3.0, 7, "KC", "LV", "2026-09-13", "20:15"),
-           ("w2", 2, 3.0, None, "KC", "LV", "2026-09-27", "13:00")])
-    _qb_state(tmp_path / "cache")
-    games, _ = ratings.rated_games(2026, at=dt.datetime(2026, 9, 15, 12), cache=tmp_path / "cache",
-                                   base=tmp_path)
-    by = {r["game_id"]: r for r in games.to_dicts()}
-    assert by["night"]["adjusted_by"] is None and by["night"]["close_spread"] == 3.0
-    assert by["w2"]["qb_adjustment"] == pytest.approx(4.80)
+    at = dt.datetime(2026, 9, 20, 12)
+    games = ratings.rated_games(2026, at=at, cache=tmp_path / "cache", base=tmp_path)
+    priced = schedule.priced_games(2026, at=at, cache=tmp_path / "cache", base=tmp_path)
+    assert games.equals(priced)
+    assert games["game_id"].to_list() == ["w1", "w2"]
+    assert games["close_spread"].to_list() == [3.0, 3.0]

@@ -69,14 +69,17 @@ _Avoid_: line source, provenance alone.
 
 **Live price**:
 A **Snapshot** whose capture — the last poll at or before the moment asked, `priced_at` on
-the row — is less than `hub.models.quarterback.STALE_AFTER_DAYS` old: seven days, the poll
-age past which a snapshot is `stale`. "Live" is the threshold `quarterback.live_price`
-declares, and `hub.schedule.priced_games` is the one place it is applied, writing the
-**Price source** that every consumer then reads (#281). What is not a live price: a snapshot
+the row — is less than `hub.schedule.STALE_AFTER_DAYS` old: seven days, the poll age past
+which a snapshot is `stale`. "Live" is the threshold `schedule.live_price` declares, and
+`hub.schedule.priced_games` is the one place it is applied, writing the **Price source**
+that every consumer then reads (#281). Declared in `hub.models.quarterback` from #218 to
+#299 and moved to the schedule when the **Quarterback adjustment** left the published
+path. What is not a live price: a snapshot
 no poll has returned in a week, the moving field (nothing polls it, so nothing can show it
 is), and an unpriced game. The two staleness columns `hub.fetch.odds` derives,
 `polls_unmoved` and `unmoved_since`, ride on the row as a measurement and decide nothing.
-**Ratings** change nothing where a live price exists.
+**Ratings** change nothing on any row since #299; before it, nothing where a live price
+existed.
 > **Restated 2026-09-16 (#297).** Until #297 this entry read *a snapshot whose quote has
 > stood unmoved for less than seven days*, and the cut read `unmoved_since`. #251 found that
 > wrong on the runner's own numbers: there every capture is minutes old and the cut could
@@ -86,12 +89,13 @@ is), and an unpriced game. The two staleness columns `hub.fetch.odds` derives,
 
 **Ratings**:
 The number the weekly prediction and the survivor grid are built from, and the module that
-writes the first (`hub.models.ratings`). A passthrough of the betting market's spread where a
-**Live price** exists, and where none does, since #218, that spread moved by the
-**Quarterback adjustment**; `rated_games` is the one seam both readers take, so they cannot
-disagree about a game. Not a model with an edge — rows carry `market_baseline`'s own name
-where the betting market set the number, and `market_baseline-qb` where the adjustment
-moved it (#284), so the two cannot be mistaken for each other or for a model.
+writes the first (`hub.models.ratings`). A passthrough of the betting market's spread on
+every row; `rated_games` is the one seam both readers take, so they cannot disagree about a
+game, and it is `hub.schedule.priced_games` and nothing else. Not a model with an edge —
+rows carry `market_baseline`'s own name, so they cannot be mistaken for a model. From #218
+to #299 a row with no **Live price** was moved by the **Quarterback adjustment** and carried
+`market_baseline-qb` (#284); #299 pulled it, and readers keep taking the suffix as the
+baseline's family for the rows already written under it.
 
 **Quarterback adjustment**:
 This quarterback minus what the team rating already embeds, in spread points: the source's own
@@ -99,10 +103,18 @@ adjustment on the latest row, `qb_adj`, over 25 Elo per point, and nothing else.
 zero for an established starter and goes sharply negative for a backup named this week, and
 the decay as the team rating absorbs him is the source's rolling update, not a factor applied
 here. Consumed from `greerreNFL/nfeloqb`'s published ratings through `hub.fetch.nfeloqb`,
-never refitted here; 25 Elo per point is a stated choice, not a fit. Applied only
-where there is no **Live price**, and the row says so: `adjusted_by`, `qb_adjustment`, and
-`-qb` on the version string. Validated before it was built:
-[qb-adjustment.md](docs/qb-adjustment.md), +0.0057 Brier on 538's own columns.
+never refitted here; 25 Elo per point is a stated choice, not a fit. **Not in the published
+path since #299**: `hub.models.quarterback` is read by `hub.models.starter_change`, the
+harness that gates it, and by nothing that writes a prediction or a survivor pick; a
+contract test refuses any product path that reaches it. From #218 to #299 it was applied
+where there was no **Live price**, and the row said so: `adjusted_by`, `qb_adjustment`, and
+`-qb` on the version string. Validated on the source's own data before it was built
+([qb-adjustment.md](docs/qb-adjustment.md), +0.0057 Brier on 538's own columns) and pulled
+because the source names a new starter only after his first game, so the adjustment could
+only ever move a line that had already priced him; the way back is a starter source timely
+before kickoff and #291's gate clearing.
+> **Pulled 2026-09-16 (#299).** Until #299 this entry read *applied only where there is no
+> Live price*. It is applied nowhere the product reads; the module and the gate stay.
 > **Restated 2026-09-12 (#268).** Until #268 this entry read *this quarterback's value minus
 > what the team rating already embeds, decaying at 10% per game of his tenure*, and the module
 > rebuilt that gap from an arrival-time baseline. The rebuilt gap carried the starter's own
