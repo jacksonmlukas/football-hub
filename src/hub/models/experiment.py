@@ -43,7 +43,7 @@ import statistics
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import NamedTuple, Protocol
+from typing import NamedTuple, Protocol, TypeVar
 
 import numpy as np
 import numpy.typing as npt
@@ -84,6 +84,33 @@ class CorrectionReport(Protocol):
     def corrections_missing(self) -> tuple[str, ...]:
         """Correction terms this Board's own ranking was computed without."""
         ...
+
+
+class ReportedFrame(Protocol):
+    """A Board as a Gate is handed one: the frame with its build report attached (#295).
+
+    Structural for the same reason `CorrectionReport` is -- `hub.draft.board.Board` satisfies
+    it without this module reaching into `hub.draft` -- and read-only, because the two are one
+    object and a Gate that could swap the report from under the frame would be the defect
+    the pair exists to end. `walk_forward_inputs` returns these rather than frames so that
+    every Gate reads the report off the Board it plays; the stamping half takes the frames
+    off them, once, in `stamped_for_publication`.
+    """
+
+    @property
+    def frame(self) -> pl.DataFrame:
+        """The frame every draft-night decision reads."""
+        ...
+
+    @property
+    def report(self) -> CorrectionReport:
+        """What built it."""
+        ...
+
+
+# The Board type a Gate is handed, so a Gate gets back the type it built rather than the
+# protocol: `hub.draft.board.Board` in, `dict[int, Board]` out.
+ReportedT = TypeVar("ReportedT", bound=ReportedFrame)
 
 
 class CorrectionMissing(RuntimeError):
@@ -140,11 +167,11 @@ def require_corrections(season: int, report: CorrectionReport) -> None:
 
 def walk_forward_inputs(
     seasons: Sequence[int],
-    build_board: Callable[[int], tuple[pl.DataFrame, CorrectionReport]],
+    build_board: Callable[[int], ReportedT],
     *,
     load_stats: Callable[[int], pl.DataFrame] | None = None,
     on_season: Callable[[int], None] | None = None,
-) -> tuple[dict[int, pl.DataFrame], dict[int, pl.DataFrame]]:
+) -> tuple[dict[int, ReportedT], dict[int, pl.DataFrame]]:
     """`(boards, realised)` per season. The two injectable seams are what make this testable.
 
     `build_board` is required rather than defaulted. It used to default to a `board_as_of`
@@ -152,24 +179,27 @@ def walk_forward_inputs(
     consistent direction -- and needed a function-local import to do it. That function now
     lives in `hub.draft.board`, beside the `build` whose rule it states.
 
-    **It returns a pair and this used to take `[0]`.** Every Gate in the repo reaches its
-    Boards through here, so that one subscript was where a Board built while a Correction
-    stage was absorbed became indistinguishable from a whole one. The report is now read
-    rather than dropped; `require_corrections` says what is done with it and why.
+    **`build_board` returns the Board with its report attached, and this used to take
+    `[0]`.** Every Gate in the repo reaches its Boards through here, so that one subscript
+    was where a Board built while a Correction stage was absorbed became indistinguishable
+    from a whole one. The report is read rather than dropped -- `require_corrections` says
+    what is done with it and why -- and since #295 it is returned *on* the Board rather
+    than kept beside it, so the Gate that drafts a Cohort from a season's frame reads the
+    same report this refused on, off the same object.
 
     `on_season` is a progress hook rather than a print, so a caller under a line cap can stay
     quiet and this module stays free of stdout.
     """
-    boards: dict[int, pl.DataFrame] = {}
+    boards: dict[int, ReportedT] = {}
     realised: dict[int, pl.DataFrame] = {}
     for yr in seasons:
         if on_season is not None:
             on_season(yr)
-        board, report = build_board(yr)
+        board = build_board(yr)
         # GUARD a-gate-refuses-a-season-short-a-correction: deleting it puts the season back
         # in the pool, and one season whose Corrected ADP came from a subset of the terms is
         # a second arm inside an interval published as one.
-        require_corrections(yr, report)
+        require_corrections(yr, board.report)
         # /GUARD
         boards[yr] = board
         realised[yr] = realised_ppg((load_stats or _stats)(yr))
@@ -962,7 +992,7 @@ def ceiling_check(summary: Mapping[str, float], *, places: int = 2) -> list[str]
 
 
 def stamped_for_publication(paired: pl.DataFrame,
-                            boards: Mapping[int, pl.DataFrame] | None = None,
+                            boards: Mapping[int, ReportedFrame] | None = None,
                             ) -> tuple[pl.DataFrame, str]:
     """The paired frame carrying what produced it, and the lines a reader gets.
 
@@ -985,7 +1015,9 @@ def stamped_for_publication(paired: pl.DataFrame,
 
     `boards` is optional and defaults to `NO_FRAMES`, which is a sentinel and not a hash, so a
     caller that did not hand its frames over says so rather than publishing eight
-    legitimate-looking characters that name nothing.
+    legitimate-looking characters that name nothing. They are the Boards the run played, as
+    `walk_forward_inputs` returned them; the digest is over their frames, taken off them
+    here, since the report is what built a frame and not part of what was played.
 
     `resolved_config()`, not `HubConfig()`: ADR-0007 keeps this file so a later reader can tell
     which configuration produced these rows, and the defaults are that only while `conf/`
@@ -1006,7 +1038,8 @@ def stamped_for_publication(paired: pl.DataFrame,
 
     pins = pins_this_run()
     data = data_digest(pins)
-    played = NO_FRAMES if boards is None else frames_digest(boards)
+    played = (NO_FRAMES if boards is None
+              else frames_digest({yr: b.frame for yr, b in boards.items()}))
     made_by = commit()
     stamped = paired.with_columns(
         pl.lit(config_digest(resolved_config())).alias("cfg_digest"),
@@ -1033,7 +1066,7 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, actions: Ac
              name: str, arm_a: str, arm_b: str, unit: str = "points per team game",
              places: int = 2, show_n: bool = True, void: str | None = None,
              ceiling: Ceiling | None = None, seed: int = 0, bootstrap: int = BOOTSTRAP,
-             boards: Mapping[int, pl.DataFrame] | None = None,
+             boards: Mapping[int, ReportedFrame] | None = None,
              width_path: Path = WIDTH_STATE, record_width: bool = True) -> GateRun:
     """One gate run: summarise, break out by season, take the verdict, render, stamp.
 

@@ -69,8 +69,8 @@ def snapshot(board: pl.DataFrame, *, on: date | None = None,
     four columns worth archiving, so it is asking which of them this frame *has* rather than
     which stage put them there.
     """
-    from hub.draft.board import report_for
-    if not report_for(board, report).adp:
+    from hub.draft.board import BuildReport
+    if not (BuildReport.of_served(board) if report is None else report).adp:
         return None
     keep = [c for c in KEEP if c in board.columns]
     rows = board.select(keep).filter(pl.col("adp").is_not_null())

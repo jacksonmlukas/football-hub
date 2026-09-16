@@ -579,9 +579,9 @@ def _in_process_gate(monkeypatch, tmp_path, *, inner):
 
     def loads(seasons, load, *, on_season=None):
         nv._remember(tmp_path / "the-gates-own-entry.parquet", inner)
-        # `load` is `main`'s own `_as_of_keeping_the_report`; calling it is what fills the
-        # report dict the Cohort is drafted with.
-        return ({yr: load(yr)[0] for yr in seasons},
+        # `load` is `board_as_of` as `main` hands it over; what comes back is the Board with
+        # its report, which is what the Cohort below is drafted under (#295).
+        return ({yr: load(yr) for yr in seasons},
                 {yr: _flat([("A", "QB", 20.0, 2.0), ("B", "RB", 15.0, 2.0)]) for yr in seasons})
 
     moments = pl.DataFrame({"player": ["A", "B"], "pos": ["QB", "RB"], "mu": [20.0, 15.0],
@@ -590,7 +590,8 @@ def _in_process_gate(monkeypatch, tmp_path, *, inner):
                            "projections": [10.0, 11.0, 9.0, 10.5],
                            "optimiser": [9.0, 10.0, 8.5, 9.0]})
     paired = paired.with_columns((pl.col("optimiser") - pl.col("projections")).alias("diff"))
-    monkeypatch.setattr(lg, "board_as_of", lambda yr: (board, None))
+    from hub.draft.board import Board
+    monkeypatch.setattr(lg, "board_as_of", lambda yr: Board.served(board))
     monkeypatch.setattr(lg, "walk_forward_inputs", loads)
     monkeypatch.setattr(predict, "moments", lambda board: moments)
     monkeypatch.setattr(cohort_mod, "cohort",

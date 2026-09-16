@@ -38,7 +38,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.declare import not_an_input
-from hub.draft.board import BuildReport, board_as_of
+from hub.draft.board import board_as_of
 from hub.fetch.nflverse import reads_of_one_run
 from hub.league import REG_SEASON_WEEKS, starting_lineup
 from hub.models.experiment import (
@@ -324,19 +324,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     rosters: dict[int, list] = {}
 
-    # The report `board_as_of` returns beside each board, kept rather than dropped (#231).
-    # `walk_forward_inputs` reads it -- `require_corrections` is the whole reason it takes the
-    # pair -- and then returns boards alone, so by the time the Cohort below is drafted the
-    # recorded answer is gone and `simulate_remaining_draft` derives a fresh one from the
-    # frame. Captured here rather than by widening that function's return, because the
-    # knowledge is this gate's: it is the caller that holds a report and has somewhere to put
-    # it. Nothing else reads this dict.
-    reports: dict[int, BuildReport] = {}
-
-    def _as_of_keeping_the_report(yr: int) -> tuple[pl.DataFrame, BuildReport]:
-        board, report = board_as_of(yr)
-        reports[yr] = report
-        return board, report
+    # The report `board_as_of` returns with each board is read by `walk_forward_inputs` --
+    # `require_corrections` is the whole reason it takes the Board -- and comes back *on*
+    # the Board (#295), so the Cohort below is drafted under the recorded answer rather than
+    # one `simulate_remaining_draft` re-derived from the frame. #231 kept it in a dict of
+    # this gate's own, filled by a wrapper around `board_as_of`, because that function
+    # returned the boards alone; the dict and the wrapper are gone with the reason for them.
 
     # The gate's reads are the gate's own, whichever way it was invoked (#247, the same
     # change #192 made to the draft gate and the screen). Run as a process this changes
@@ -351,13 +344,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     with reads_of_one_run():
         try:
             boards, realised = walk_forward_inputs(
-                seasons, _as_of_keeping_the_report,
+                seasons, board_as_of,
                 on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
         except Exception as e:
             return unavailable("hub.season.lineup_gate",
                                "the boards the rosters are drafted from", e)
         for yr in seasons:
-            board = boards[yr]
+            board, report = boards[yr]
             # mu and sd from the same object the simulator uses, so the optimiser is fed exactly
             # what it is fed live -- the fitted square-root spread law, per position.
             from hub.models.predict import moments
@@ -382,7 +375,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             # The same Cohort the weekly gate scores, from the same seeded recipe. Both used to
             # write it out, and a formula copied by hand into two places is one that eventually
             # differs in one.
-            drafted = cohort(board, yr, drafts=a.drafts, seed=a.seed, report=reports[yr])
+            drafted = cohort(board, yr, drafts=a.drafts, seed=a.seed, report=report)
             who_at = board["player"].to_list()
             made = [[(who_at[i], drafted.pos[i], proj_of.get(who_at[i], 0.0),
                       sd_of.get(who_at[i], 0.0)) for i in roster]

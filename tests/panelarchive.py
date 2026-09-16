@@ -138,9 +138,12 @@ def install(monkeypatch, tmp_path: Path, *, edits: dict[str, Edit] | None = None
 
     if board:
         import hub.draft.board as brd
-        from hub.draft.board import BuildReport
+        from hub.draft.board import Board
+        # The frozen frame under the report its columns derive (#295): what `board_as_of`
+        # returns is a Board, and the frame with an empty report beside it -- which is what
+        # this handed back before -- is a frame fuller than its report and no longer a Board.
         monkeypatch.setattr(brd, "board_as_of",
-                            lambda season: (frame("draft_board"), BuildReport()))
+                            lambda season: Board.served(frame("draft_board")))
 
 
 def play_derived_columns() -> set[str]:

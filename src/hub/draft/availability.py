@@ -47,8 +47,8 @@ def blended_adp(df: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT, *,
     drops `adp` entirely rather than nulling it, and a historical board never has it at all
     -- ESPN publishes ADP for the current season only -- so this function has to know which
     of those it is holding. It used to ask `df.columns`, which is one of the eleven private
-    answers issue #199 collected; `report.adp` is the recorded one, and `board.report_for`
-    derives it when a caller has only the frame.
+    answers issue #199 collected; `report.adp` is the recorded one, and
+    `BuildReport.of_served` derives it when a caller has only the frame.
 
     Note that a board with no draft market makes `w` a no-op: espn falls back to ecr, so
     `w*ecr + (1-w)*ecr` is ecr for every weight. That is the correct reading of "half the
@@ -56,8 +56,9 @@ def blended_adp(df: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT, *,
     """
     if not 0.0 <= w <= 1.0:
         raise ValueError(f"espn weight must be in [0, 1], got {w}")
-    from hub.draft.board import report_for
-    espn = (pl.col("adp").fill_null(pl.col("ecr")) if report_for(df, report).adp
+    from hub.draft.board import BuildReport
+    espn = (pl.col("adp").fill_null(pl.col("ecr"))
+            if (BuildReport.of_served(df) if report is None else report).adp
             else pl.col("ecr"))
     return df.with_columns((w * espn + (1 - w) * pl.col("ecr")).alias("mu_pick"))
 

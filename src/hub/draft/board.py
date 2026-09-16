@@ -20,7 +20,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 import polars as pl
@@ -684,7 +684,7 @@ def readable(path: Path | None = None,
 def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,
                        path: Path | None = None, now: float | None = None,
                        site: Path | None = None,
-                       ) -> tuple[pl.DataFrame, BuildReport, float | None]:
+                       ) -> tuple[Board, float | None]:
     """Build the board, and if the build cannot happen at all, serve the last good one.
 
     `build` degrades stage by stage, but only for *advisory* stages. The two spine fetches --
@@ -711,10 +711,10 @@ def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,
     hand back a `BuildReport()` on this path -- every flag false, for a board carrying its
     td-luck, injury, SoS and ADP columns -- so three renderers suppressed themselves and the
     operator relying on the fallback got *fewer* sections than on a normal night, with
-    nothing saying why. `BuildReport.of_served` derives it from the board instead.
+    nothing saying why. `Board.served` derives it from the board instead.
     """
     try:
-        board, report = build(league_size, season)
+        built = build(league_size, season)
     except Exception as exc:
         # Printed *before* the fallback is attempted, because the fallback can raise. On a
         # machine with no board on disk -- a fresh clone, and every CI runner, since
@@ -742,12 +742,12 @@ def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,
                 raise exc from gone
             print("  no board on disk; serving the published one "
                   "(top 300 by consensus, enough for all 192 picks).")
-            return board, BuildReport.of_served(board), None
+            return Board.served(board), None
         print(f"  serving the last good board instead, built {age:.1f}h ago.")
         print("  ADP is that old. Everything else on it is a season-long number "
               "and does not move.")
-        return board, BuildReport.of_served(board), age
-    return board, report, None
+        return Board.served(board), age
+    return built, None
 
 
 # Where this board came from: built by the run that is printing it, or served off disk by
@@ -1125,34 +1125,64 @@ class BuildReport:
         return tuple(s.name for s in self.stages if self._ran[s.name])
 
 
-def report_for(board: pl.DataFrame, report: BuildReport | None = None) -> BuildReport:
-    """The report that describes `board`, for a consumer handed a frame and maybe a report.
+class _Pair(NamedTuple):
+    frame: pl.DataFrame
+    report: BuildReport
 
-    **This is the seam issue #199 is about.** `build` returns a Board *and* a `BuildReport`,
-    but every function downstream took a bare `pl.DataFrame` -- `recommend(board, ...)`,
-    `simulate_remaining_draft(board, ...)`, `blended_adp(df, ...)` -- so the report could not
-    travel with the frame it describes. Eleven sites answered "what did that stage leave"
-    locally instead, by looking for a column, which is the arrangement `BuildReport`'s own
-    docstring says the report layer exists to end.
 
-    A consumer therefore takes `report` and passes it here. Two things come out of that, and
-    only the first is about plumbing:
+class Board(_Pair):
+    """The frame every draft-night decision reads, with the record of what built it.
 
-    * a caller **holding** a report hands over the recorded answer -- what the run that built
-      this frame actually did, including the all-null case no frame can show;
-    * a caller holding **only a frame** gets `BuildReport.of_served`, which is a derivation
-      and not a guess (read that classmethod's docstring for why the two differ), made in the
-      one place that owns it rather than restated at each site.
+    **The report travels on the Board, and this is the contract half of #252.** `build`
+    returned a frame and a `BuildReport` as two values, every reader downstream took the
+    frame alone, and so the report either rode beside it as a `report:` parameter through
+    ten signatures or was re-derived from the frame's columns at the site that needed it --
+    `report_for`, the seam #199 opened as the expand half of an expand-then-contract. This
+    is the contract: one object crosses the seam, and a reader asks it.
 
-    So the fallback is not the sniffing this replaces wearing a different hat. The sniffing
-    was eleven private answers that had already drifted apart; this is one, and a caller that
-    can do better than it says so by passing a report.
+    **A pair with names, not frame metadata, and polars decides that.** A `pl.DataFrame`
+    has no metadata slot: an attribute set on one is gone after the first `filter` or
+    `sort`, a subclass is gone after `with_columns`, and neither survives the pickle that
+    hands a season to a spawned worker (#261) -- so metadata would be a report that quietly
+    became a re-derivation somewhere between `build` and the reader, which is the defect
+    the report layer exists against. A wrapper is the deeper choice because it cannot be
+    lost by accident; it is a tuple so that `board, report = build()` -- the shape every
+    caller already unpacks -- is still true, and `.frame`/`.report` are the same two
+    values with names.
 
-    Deriving rather than requiring is also what keeps `hub.season`'s gates and every existing
-    test calling these functions unchanged -- the expand half of an expand-then-contract, and
-    the reason the tree stayed green while the eleven sites moved one at a time.
+    **A frame fuller than its report is refused where the pair is made.** A stage that did
+    not run leaves no column, so a frame carrying a stage's sentinel while the report says
+    that stage did not run is a pairing `build` cannot produce -- it is a frame under
+    another Board's report, and a reader asking that report would rank on consensus with
+    a draft market in hand. Refused as `ContractViolation` in `__new__`, which is also
+    what an unpickle runs, so a worker cannot receive one either. The other direction is
+    not an invariant and is not checked: `build` records a stage that returned a frame
+    whether or not the frame carries the stage's sentinel (the half-written stage
+    `tests/unit/test_board_build.py` holds), so a report fuller than its frame is `build`'s
+    own output under the sentinel rule.
+
+    `served` is the one way a frame read back off disk becomes a Board -- the committed
+    artifact, a `.pin` snapshot, the last good parquet -- and it derives rather than
+    refuses, because a served frame has no report but the one its columns can give.
     """
-    return BuildReport.of_served(board) if report is None else report
+    __slots__ = ()
+
+    def __new__(cls, frame: pl.DataFrame, report: BuildReport) -> Board:
+        disowned = [s.name for s in report.stages
+                    if s.sentinel is not None and s.sentinel in frame.columns
+                    and not getattr(report, s.name)]
+        if disowned:
+            raise ContractViolation(
+                f"the frame carries {', '.join(disowned)} and the report says that stage "
+                f"did not run: a stage that did not run leaves no column, so this is a "
+                f"frame under another Board's report. Pair a frame with the report of the "
+                f"build that made it, or `Board.served` it and take the derived one.")
+        return super().__new__(cls, frame, report)
+
+    @classmethod
+    def served(cls, frame: pl.DataFrame, stages: Sequence[Stage] = STAGES) -> Board:
+        """A frame read back off disk, with the report its columns derive."""
+        return cls(frame, BuildReport.of_served(frame, stages))
 
 
 def _check_scoring(board: pl.DataFrame) -> None:
@@ -1251,8 +1281,11 @@ def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
 def build(league_size: int = 12, season: int = SEASON_COMPLETED, *,
           season_ahead: int = SEASON_AHEAD,
           as_of: str | None = None,
-          stages: Sequence[Stage] = STAGES) -> tuple[pl.DataFrame, BuildReport]:
+          stages: Sequence[Stage] = STAGES) -> Board:
     """The draft board. `season` is the season just gone; `season_ahead` is the one drafted for.
+
+    Returns the `Board`: the frame with the `BuildReport` of this run attached (#295), so
+    what built the frame travels with it rather than beside it.
 
     `stages` is the declaration the build runs, `STAGES` on every real build; a test hands a
     stubbed one to drive the policy below through this function rather than through a
@@ -1323,10 +1356,10 @@ def build(league_size: int = 12, season: int = SEASON_COMPLETED, *,
     # board reproducible: two identical `board_as_of` calls returned the same 1,103 players in
     # a different row order, the draft indexes the board by row, and every measurement drafting
     # from it wobbled by ~0.04 points a team-week. improvements.md #18, the other half.
-    return DRAFT_BOARD.validate(board.sort(["ecr", "player"])), report
+    return Board(DRAFT_BOARD.validate(board.sort(["ecr", "player"])), report)
 
 
-def board_as_of(season: int) -> tuple[pl.DataFrame, BuildReport]:
+def board_as_of(season: int) -> Board:
     """The board for `season`, built from the last consensus scrape before it opened.
 
     Lives here rather than in `hub.models.experiment`, which is where it started. Every line
@@ -1364,10 +1397,9 @@ def board_as_of(season: int) -> tuple[pl.DataFrame, BuildReport]:
     return build(season=season - 1, season_ahead=season, as_of=f"{season}-08-31")
 
 
-def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
+def recommend(board: Board, current_pick: int, *, rounds: int = 16,
               w: float = DEFAULT_ESPN_WEIGHT, top: int = 10,
-              state: DraftState | None = None,
-              report: BuildReport | None = None) -> tuple[str, pl.DataFrame]:
+              state: DraftState | None = None) -> tuple[str, pl.DataFrame]:
     """Rank the board for one specific pick, under the rule that pick's wait implies.
 
     Slot 3 of 12 alternates a 19-pick wait and a 5-pick wait, and that alternation should
@@ -1381,26 +1413,29 @@ def recommend(board: pl.DataFrame, current_pick: int, *, rounds: int = 16,
     Ranking by `edge` is deliberately not offered. The largest edges sit on players
     consensus does not rate, so an edge-sorted board drafts replacement level.
 
-    **`report` travels down to `blended_adp`, and deleting a column is what it bought.** This
-    used to fabricate an all-null `adp` column on an ECR-only board, for one reason: the
-    availability model read `adp` unconditionally and would raise without it, and degrading
-    to consensus-only must still produce a board. So a frame was edited to carry a claim
-    ("this board has a draft market, and it says nothing") in order to answer a question
-    ("did the draft-market stage run") that the report already answered. `blended_adp` asks
-    the report now, so the fabrication is gone rather than moved -- and with it the one place
-    in this package where a board handed to a consumer had a column the build never wrote.
+    **The Board's report travels down to `blended_adp`, and deleting a column is what it
+    bought.** This used to fabricate an all-null `adp` column on an ECR-only board, for one
+    reason: the availability model read `adp` unconditionally and would raise without it,
+    and degrading to consensus-only must still produce a board. So a frame was edited to
+    carry a claim ("this board has a draft market, and it says nothing") in order to answer
+    a question ("did the draft-market stage run") that the report already answered.
+    `blended_adp` asks the report now, so the fabrication is gone rather than moved -- and
+    with it the one place in this package where a board handed to a consumer had a column
+    the build never wrote. Since #295 the report is the Board's own rather than a parameter
+    beside it, so there is no frame this can be handed without the report that describes it.
     """
+    frame, report = board
     if state is not None:
-        board = remaining(board, state)
+        frame = remaining(frame, state)
     picks = my_picks(rounds)
     now, nxt = next_two(picks, current_pick - 1)
     if now != current_pick:
         raise ValueError(f"{current_pick} is not one of your picks: {picks}")
     mode = draft_mode(now, rounds)
     if mode == "value":
-        ranked = board.filter(pl.col("vor").is_not_null()).sort("vor", descending=True)
+        ranked = frame.filter(pl.col("vor").is_not_null()).sort("vor", descending=True)
     else:
-        ranked = pick_value(board, now, nxt, w=w, report=report_for(board, report))
+        ranked = pick_value(frame, now, nxt, w=w, report=report)
     return mode, ranked.head(top)
 
 
@@ -1546,7 +1581,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                                draft_mode))
         return 0
 
-    board, report, stale_h = build_or_last_good(a.league_size, a.season)
+    built, stale_h = build_or_last_good(a.league_size, a.season)
+    board, report = built
     # Both paths, one renderer. This used to be `degraded()` under `if stale_h is None`, so
     # the night the fallback fired was the night the output said nothing about what the
     # board held -- see `report_mod.built_or_served`.
@@ -1595,7 +1631,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _emit(report_mod.unmatched(state_mod.unmatched(board, st)))
 
     if a.pick is not None:
-        mode, rec = recommend(board, a.pick, w=a.espn_weight, state=st, report=report)
+        mode, rec = recommend(built, a.pick, w=a.espn_weight, state=st)
         from hub.draft.optimize import the_pick
         _emit(report_mod.the_pick(the_pick(board, st, my_slot=MY_SLOT, teams=TEAMS)))
         _emit(report_mod.also_close(mode, rec))

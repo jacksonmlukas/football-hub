@@ -192,7 +192,7 @@ def _greedy_currency(pool: pl.DataFrame, report: BuildReport) -> np.ndarray:
     One seam is still open and is a season-side change rather than this one: `cohort.cohort`
     takes no report, so the two gates that call it -- `season.lineup_gate` and
     `season.weekly_gate_data`, both holding one from `board_as_of` -- have it re-derived by
-    `report_for`. Nothing ranks differently for it today (the cohort supplies its own
+    `Board.served`. Nothing ranks differently for it today (the cohort supplies its own
     `my_pick`, so this function never runs there, and a historical board's derived report
     matches the one it was built with), which is why it is recorded rather than fixed here.
     """
@@ -275,13 +275,14 @@ def prepare_room(board: pl.DataFrame, w: float = DEFAULT_ESPN_WEIGHT, *,
                  report: BuildReport | None = None) -> Room:
     """Everything `simulate_remaining_draft` needs from `board` that no rollout changes.
 
-    The report is resolved here, once, through `board.report_for` -- the same seam every
-    consumer of a frame-and-maybe-report goes through (#199) -- and travels inside the
-    room, so a rollout handed a prepared room ranks in the currency the room was prepared
-    with and never re-derives one from the frame.
+    The report is resolved here, once -- the one a caller holds, or `BuildReport.of_served`
+    when a caller has only the frame (#199; the `report_for` seam that did this went with
+    #295, which put the report on the Board for the callers that hold one) -- and travels
+    inside the room, so a rollout handed a prepared room ranks in the currency the room was
+    prepared with and never re-derives one from the frame.
     """
-    from hub.draft.board import report_for
-    report = report_for(board, report)
+    from hub.draft.board import BuildReport
+    report = BuildReport.of_served(board) if report is None else report
     pool = blended_adp(board, w, report=report)
     mu_pick = pool["mu_pick"].fill_null(999.0).to_numpy()
     names = pool["player"].to_list()

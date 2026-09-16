@@ -13,7 +13,7 @@ import json
 import math
 import re
 import statistics
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import polars as pl
@@ -55,15 +55,28 @@ class _Report:
         return self._missing
 
 
+class _Built(NamedTuple):
+    """A Board as a Gate is handed one -- the frame with its report attached (#295) --
+    stubbed structurally for the reason `_Report` is."""
+    frame: pl.DataFrame
+    report: _Report
+
+
+def _built(missing: tuple[str, ...] = ()) -> _Built:
+    return _Built(_board(), _Report(*missing))
+
+
 # --- the season loop --------------------------------------------------------
 
 def test_inputs_are_gathered_per_season():
     boards, realised = experiment.walk_forward_inputs(
         [2023, 2024],
-        lambda yr: (_board(), _Report()),
+        lambda yr: _built(),
         load_stats=_stats)
     assert set(boards) == {2023, 2024} and set(realised) == {2023, 2024}
-    assert boards[2023].height == 8 and realised[2024].height > 0
+    assert boards[2023].frame.height == 8 and realised[2024].height > 0
+    assert boards[2023].report.corrections_missing() == (), (
+        "the Board comes back with the report it was refused on, not the frame alone")
 
 
 def test_the_board_is_built_as_of_that_season_s_opening():
@@ -113,7 +126,7 @@ def test_a_gate_refuses_a_board_missing_a_correction_it_ranks_on():
     with pytest.raises(experiment.CorrectionMissing) as refused:
         experiment.walk_forward_inputs(
             [2023, 2024],
-            lambda yr: (_board(), _Report() if yr == 2023 else _Report("touchdown luck")),
+            lambda yr: _built() if yr == 2023 else _built(("touchdown luck",)),
             load_stats=_stats)
     said = str(refused.value)
     assert "2024" in said, "which season has to be in it; the other three are fine"
@@ -125,7 +138,7 @@ def test_a_gate_scores_a_board_that_carries_every_correction():
     """The other half, and the one that stops the guard being widened into a Gate that never
     runs. A whole Board is scored without comment."""
     boards, realised = experiment.walk_forward_inputs(
-        [2023, 2024], lambda yr: (_board(), _Report()), load_stats=_stats)
+        [2023, 2024], lambda yr: _built(), load_stats=_stats)
     assert set(boards) == {2023, 2024} and set(realised) == {2023, 2024}
 
 
@@ -153,14 +166,14 @@ def test_the_progress_hook_is_a_hook_not_a_print(capsys):
     """A caller under a line cap must be able to stay quiet, and this module must not own
     stdout -- the same reason `hub.draft.report` returns lines."""
     seen = []
-    experiment.walk_forward_inputs([2024], lambda yr: (_board(), _Report()),
+    experiment.walk_forward_inputs([2024], lambda yr: _built(),
                                    load_stats=_stats, on_season=seen.append)
     assert seen == [2024]
     assert capsys.readouterr().out == ""
 
 
 def test_no_hook_is_silent(capsys):
-    experiment.walk_forward_inputs([2024], lambda yr: (_board(), _Report()),
+    experiment.walk_forward_inputs([2024], lambda yr: _built(),
                                    load_stats=_stats)
     assert capsys.readouterr().out == ""
 

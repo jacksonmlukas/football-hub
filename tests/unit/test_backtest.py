@@ -12,7 +12,7 @@ import polars as pl
 import pytest
 
 from hub.draft import backtest as bt
-from hub.draft.board import BuildReport
+from hub.draft.board import Board, BuildReport
 from hub.names import player_key
 
 # --- the pre-registered decision rule, as executable code ------------------
@@ -491,18 +491,24 @@ def test_diagnose_asks_the_report_which_market_it_advances_by(monkeypatch):
 
     monkeypatch.setattr(bt, "market_pick", spy)
 
-    with_column = _board(60).with_columns(pl.col("ecr").alias("adp"))
-    bt.diagnose(with_column, BuildReport(adp=False), picks=(), rounds=2)
-    assert set(seen) == {"ecr"}, "the column is there and the report says the stage was not"
+    from hub.contracts import ContractViolation
 
-    seen.clear()
-    # An *empty* draft market rather than an absent one, since #199. The report now travels
+    # The column there and the report saying the stage was not: this used to be the first
+    # half of the test, driven through `diagnose(frame, report)`. Since #295 it is not a
+    # Board -- a frame fuller than its report is refused where the pair is made -- so a
+    # reader cannot be handed it, and what is held is that the refusal stands.
+    with_column = _board(60).with_columns(pl.col("ecr").alias("adp"))
+    with pytest.raises(ContractViolation, match="adp"):
+        bt.diagnose(Board(with_column, BuildReport(adp=False)), picks=(), rounds=2)
+    assert seen == [], "a refused Board advanced nothing"
+
+    # An *empty* draft market rather than an absent one, since #199. The report travels
     # into the room as well -- `blended_adp` blends the column the report names -- so this
     # direction is stated as a column with nothing in it, which is the strongest form of the
     # contradiction a frame `build` could actually hand over. What is held is unchanged: the
     # `by` this advances on is what the report recorded, never what the column contains.
-    bt.diagnose(_board(60).with_columns(pl.lit(None, pl.Float64).alias("adp")),
-                BuildReport(adp=True), picks=(), rounds=2)
+    bt.diagnose(Board(_board(60).with_columns(pl.lit(None, pl.Float64).alias("adp")),
+                      BuildReport(adp=True)), picks=(), rounds=2)
     assert set(seen) == {"adp"}, "the report is what is asked, not the column's contents"
 
 
@@ -514,7 +520,7 @@ def test_the_corrections_gate_says_when_it_could_not_run(monkeypatch, capsys):
     from hub.draft import board as board_mod
 
     monkeypatch.setattr(board_mod, "build",
-                        lambda *a, **k: (_board(8), board_mod.BuildReport(adp=False)))
+                        lambda *a, **k: board_mod.Board(_board(8), board_mod.BuildReport()))
     assert bt.main(["--diagnose-corrections"]) == 1
     said = capsys.readouterr().out
     assert "no draft market reached this board" in said
@@ -528,7 +534,7 @@ def test_the_corrections_gate_runs_on_a_board_that_has_a_corrected_ranking(monke
 
     b = _corrected([(10.0, 11.5, -0.5), (50.0, 50.0, 0.0)])
     monkeypatch.setattr(board_mod, "build",
-                        lambda *a, **k: (b, board_mod.BuildReport(adp=True)))
+                        lambda *a, **k: board_mod.Board(b, board_mod.BuildReport(adp=True)))
     assert bt.main(["--diagnose-corrections"]) == 0
     assert "tripwire clear" in capsys.readouterr().out
 
@@ -555,10 +561,10 @@ def _diagnose_seams(monkeypatch, rows, builds=None):
         calls["build"] += 1
         if isinstance(builds, Exception):
             raise builds
-        return _board(8), board_mod.BuildReport(adp=True)
+        return board_mod.Board(_board(8), board_mod.BuildReport(adp=True))
 
-    def diagnose(board, report, **kw):
-        calls["diagnosed"].append((board, report, kw))
+    def diagnose(board, **kw):
+        calls["diagnosed"].append((board, kw))
         return _diagnosed(rows) if rows else pl.DataFrame()
 
     monkeypatch.setattr(board_mod, "build", build)
@@ -582,9 +588,9 @@ def test_diagnose_pins_the_board_on_the_first_run_and_reuses_it_on_the_second(
     assert "board pinned from" in second and "snapshot written" not in second
     assert calls["build"] == 1, "the pin is what stops a second live fetch"
     live, pinned = calls["diagnosed"]
-    assert not live[1].served and pinned[1].served
-    assert pinned[0].columns == live[0].columns
-    assert pinned[2]["rounds"] == bt.DEFAULT_ROUNDS and pinned[2]["n_draft_sims"] == 12
+    assert not live[0].report.served and pinned[0].report.served
+    assert pinned[0].frame.columns == live[0].frame.columns
+    assert pinned[1]["rounds"] == bt.DEFAULT_ROUNDS and pinned[1]["n_draft_sims"] == 12
 
 
 def test_diagnose_without_a_pin_builds_live_and_writes_nothing(monkeypatch, tmp_path,
@@ -634,7 +640,7 @@ def test_diagnose_reports_the_tripwire_clear_and_the_correlation_note(monkeypatc
     assert "3 x 7 sims" in said
     assert "Championship equity at your first 1 turns" in said
     # the flags reach the sims, not only the sentence about them
-    (_, _, kw), = calls["diagnosed"]
+    (_, kw), = calls["diagnosed"]
     assert (kw["n_draft_sims"], kw["n_season_sims"], kw["rounds"], kw["seed"]) == (3, 7, 5, 9)
 
 
@@ -706,6 +712,13 @@ def test_a_board_without_the_columns_reports_nothing():
 # which is exactly the failure it exists to prevent: a harness nobody can run is a harness
 # nobody re-runs. All of this uses synthetic frames and tiny sim counts.
 
+def _served(frame: pl.DataFrame) -> Board:
+    """The Board a reader takes (#295): a fixture frame under the report its columns derive.
+    Every fixture here carries `adp` beside `vor_proj`, so that report says the draft-market
+    stage ran, which is what these tests were already written against."""
+    return Board.served(frame)
+
+
 def _full_board(n=80):
     """Everything `build()` emits that the harness reads."""
     return pl.DataFrame({
@@ -734,7 +747,7 @@ def _flat_realised(board, pts=10.0):
 
 def test_play_returns_my_roster_and_positions():
     board = _full_board()
-    names, pos = bt.play(board, bt.market_strategy(), my_slot=3, teams=12, rounds=4,
+    names, pos = bt.play(_served(board), bt.market_strategy(), my_slot=3, teams=12, rounds=4,
                          rng=np.random.default_rng(0))
     assert len(names) == len(pos) == 4
     assert set(names) <= set(board["player"].to_list())
@@ -751,7 +764,7 @@ def test_arm_a_takes_the_first_live_player_when_its_market_has_nothing_to_say():
 
 def test_the_draft_market_arm_fills_its_starting_slots_before_taking_depth():
     board = _full_board()
-    _, pos = bt.play(board, bt.market_strategy(), my_slot=3, teams=12, rounds=8,
+    _, pos = bt.play(_served(board), bt.market_strategy(), my_slot=3, teams=12, rounds=8,
                      rng=np.random.default_rng(0))
     assert "QB" in pos and "TE" in pos, "a lexicographic need gate must fill both"
 
@@ -759,7 +772,7 @@ def test_the_draft_market_arm_fills_its_starting_slots_before_taking_depth():
 def test_compare_produces_one_paired_row_per_draft():
     board = _full_board()
     real = _flat_realised(board)
-    got = bt.compare({2024: board}, {2024: real}, n_drafts=2, rounds=4,
+    got = bt.compare({2024: _served(board)}, {2024: real}, n_drafts=2, rounds=4,
                      n_draft_sims=2, n_season_sims=10)
     assert got.height == 2
     assert set(got.columns) >= {"season", "draft", "market", "optimizer", "diff"}
@@ -770,7 +783,7 @@ def test_the_optimizer_arm_returns_a_live_player():
     """It ranks `recommend()`'s shortlist by equity and breaks ties on consensus. The failure
     it must not have is returning someone already drafted."""
     board = _full_board()
-    strategy = bt.optimizer_strategy(board, my_slot=3, teams=12, rounds=4,
+    strategy = bt.optimizer_strategy(_served(board), my_slot=3, teams=12, rounds=4,
                                      n_draft_sims=2, n_season_sims=10, seed=0)
     live = np.arange(board.height)
     got = strategy(board, live, {}, [])
@@ -779,20 +792,19 @@ def test_the_optimizer_arm_returns_a_live_player():
 
 def test_diagnose_reports_one_row_per_requested_pick():
     board = _full_board(n=140)
-    got = bt.diagnose(board, BuildReport(adp=True), picks=(3, 22), my_slot=3, teams=12,
-                      rounds=3, n_draft_sims=2, n_season_sims=10)
+    got = bt.diagnose(Board(board, BuildReport(adp=True)), picks=(3, 22), my_slot=3,
+                      teams=12, rounds=3, n_draft_sims=2, n_season_sims=10)
     assert set(got["pick"].to_list()) <= {3, 22}
     assert {"leader", "lift", "co_leaders", "need_co_led"} <= set(got.columns)
 
 
 def test_diagnose_advances_by_the_draft_market_so_both_runs_share_a_path():
     """Two runs at two commits must walk the same draft, or the comparison is not one."""
-    board = _full_board(n=140)
-    rep = BuildReport(adp=True)
+    board = Board(_full_board(n=140), BuildReport(adp=True))
     kw = {"picks": (3, 22), "my_slot": 3, "teams": 12, "rounds": 3,
               "n_draft_sims": 2, "n_season_sims": 10, "seed": 0}
-    assert (bt.diagnose(board, rep, **kw)["held"].to_list()
-            == bt.diagnose(board, rep, **kw)["held"].to_list())
+    assert (bt.diagnose(board, **kw)["held"].to_list()
+            == bt.diagnose(board, **kw)["held"].to_list())
 
 
 # --- what produced these rows (issue #71) ---------------------------------
@@ -890,7 +902,7 @@ def test_the_ceiling_arm_never_loses_to_the_draft_market_in_any_season():
     boards, reals = {}, {}
     for season in (2023, 2024):
         b, r = _season()
-        boards[season], reals[season] = b, r
+        boards[season], reals[season] = _served(b), r
     got = ceiling(boards, reals, n_drafts=4, my_slot=1, teams=4, rounds=6)
     by_season = got.group_by("season").agg(pl.col("diff").mean().alias("gain"))
     assert (by_season["gain"] > 0).all(), (
@@ -903,6 +915,7 @@ def test_the_ceiling_is_recomputed_for_the_season_set_it_is_given():
     plausible size."""
     from hub.draft.backtest import ceiling
     b, r = _season()
+    b = _served(b)
     one = ceiling({2023: b}, {2023: r}, n_drafts=2, my_slot=1, teams=4, rounds=6)
     two = ceiling({2023: b, 2024: b}, {2023: r, 2024: r}, n_drafts=2, my_slot=1,
                   teams=4, rounds=6)
@@ -923,7 +936,7 @@ def test_the_ceiling_bounds_the_arm_under_test_on_the_same_frame():
     from hub.draft.backtest import ceiling, compare
     board = _full_board()
     real = _flat_realised(board)
-    boards, reals = {2024: board}, {2024: real}
+    boards, reals = {2024: _served(board)}, {2024: real}
     kw = {"n_drafts": 2, "rounds": 4, "seed": 0}
     gate = compare(boards, reals, n_draft_sims=2, n_season_sims=10, **kw)
     top = ceiling(boards, reals, **kw)
@@ -1063,7 +1076,7 @@ def test_no_evaluation_future_is_the_room_it_is_scored_in(monkeypatch):
     """
     board = _full_board()
     seen = _stream_spy(monkeypatch)
-    bt.compare({2024: board}, {2024: _flat_realised(board)}, n_drafts=1, seed=0, **_SMALL)
+    bt.compare({2024: _served(board)}, {2024: _flat_realised(board)}, n_drafts=1, seed=0, **_SMALL)
 
     assert seen["room"] and seen["rollout"], "the spy caught neither level"
     assert not set(seen["room"]) & set(seen["rollout"]), (
@@ -1082,7 +1095,7 @@ def test_a_seasons_rooms_are_not_the_next_seasons_simulated_seasons(monkeypatch)
     board = _full_board()
     real = _flat_realised(board)
     seen = _stream_spy(monkeypatch)
-    bt.compare({2024: board, 2025: board}, {2024: real, 2025: real},
+    bt.compare({2024: _served(board), 2025: _served(board)}, {2024: real, 2025: real},
                n_drafts=2, seed=0, **_SMALL)
 
     assert seen["season"], "the spy caught no season simulation"
@@ -1100,7 +1113,7 @@ def test_consecutive_drafts_share_no_evaluation_futures(monkeypatch):
     """
     board = _full_board()
     seen = _stream_spy(monkeypatch)
-    bt.compare({2024: board}, {2024: _flat_realised(board)}, n_drafts=2, seed=0, **_SMALL)
+    bt.compare({2024: _served(board)}, {2024: _flat_realised(board)}, n_drafts=2, seed=0, **_SMALL)
 
     first, second = _rollouts_by_draft(seen["log"])
     assert first and second, "a draft opened no futures of its own"
@@ -1117,7 +1130,7 @@ def test_both_arms_are_played_in_the_identical_room(monkeypatch):
     """
     board = _full_board()
     seen = _stream_spy(monkeypatch)
-    bt.compare({2024: board}, {2024: _flat_realised(board)}, n_drafts=2, seed=0, **_SMALL)
+    bt.compare({2024: _served(board)}, {2024: _flat_realised(board)}, n_drafts=2, seed=0, **_SMALL)
 
     assert len(seen["room"]) == 4, "two arms x two drafts is four plays of a room"
     assert len(set(seen["room"])) == 2, (
@@ -1138,8 +1151,8 @@ def test_the_ceiling_is_played_in_compares_own_rooms():
     # assertion holds for any two rooms whatever, which is an assertion about nothing.
     real = _varied_realised(board)
     kw = {"n_drafts": 2, "rounds": 6, "seed": 5}
-    paired = bt.compare({2024: board}, {2024: real}, n_draft_sims=2, n_season_sims=5, **kw)
-    bound = bt.ceiling({2024: board}, {2024: real}, **kw)
+    paired = bt.compare({2024: _served(board)}, {2024: real}, n_draft_sims=2, n_season_sims=5, **kw)
+    bound = bt.ceiling({2024: _served(board)}, {2024: real}, **kw)
     assert bound["market"].to_list() == pytest.approx(paired["market"].to_list())
 
 
@@ -1148,7 +1161,7 @@ def test_a_negative_seed_still_runs():
     place to start rejecting one -- `SeedSequence` refuses negative entropy, so the root
     folds rather than raises."""
     board = _full_board()
-    got = bt.compare({2024: board}, {2024: _flat_realised(board)}, n_drafts=1, seed=-7,
+    got = bt.compare({2024: _served(board)}, {2024: _flat_realised(board)}, n_drafts=1, seed=-7,
                      **_SMALL)
     assert got.height == 1
 
@@ -1281,8 +1294,9 @@ def test_the_paired_frame_names_the_board_it_was_measured_on(monkeypatch):
     paired = pl.DataFrame({"season": [2024], "effect": [1.0]})
     board = _full_board()
 
-    one, said = bt.stamped_for_publication(paired, {2024: board})
-    two, _ = bt.stamped_for_publication(paired, {2024: board.head(board.height - 1)})
+    one, said = bt.stamped_for_publication(paired, {2024: _served(board)})
+    two, _ = bt.stamped_for_publication(paired,
+                                        {2024: _served(board.head(board.height - 1))})
 
     assert {"board_digest", "commit"} <= set(one.columns)
     assert one["board_digest"][0] != two["board_digest"][0], (
@@ -1417,8 +1431,8 @@ def test_compare_carries_both_arms_failure_counts_and_the_rates_read_off_them(mo
     monkeypatch.setattr(bt, "optimizer_strategy",
                         lambda *a, **k: (lambda pool, live, counts, taken: int(live[-1])))
     kw = {"n_drafts": 2, "rounds": 4, "seed": 0, "n_draft_sims": 2, "n_season_sims": 10}
-    clean = bt.compare({2024: board}, {2024: real}, **kw)
-    dirty = bt.compare({2024: board}, {2024: corrupt}, **kw)
+    clean = bt.compare({2024: _served(board)}, {2024: real}, **kw)
+    dirty = bt.compare({2024: _served(board)}, {2024: corrupt}, **kw)
     for frame in (clean, dirty):
         assert {"market_failed", "optimizer_failed", "picks"} <= set(frame.columns)
         assert frame["picks"].to_list() == [4] * frame.height
@@ -1584,16 +1598,15 @@ def test_the_arm_under_test_is_pinned_on_the_frozen_board():
     assert frame_digest(board) == FROZEN_BOARD_DIGEST, (
         "the frozen Board moved, so nothing below is about the arm -- re-pin the fixture "
         "first (test_the_frozen_board_digests_to_a_pinned_value)")
-    report = BuildReport.of_served(board)
+    # The frozen Board is a frame off disk, so its report is the one its columns derive --
+    # what `BuildReport.of_served(board)` gave this test before #295 put it on the Board.
+    frozen = Board.served(board)
     root = bt.draft_root(FROZEN_SEED, FROZEN_SEASON, FROZEN_DRAFT)
-    a_names, _ = bt.play(board, bt.market_strategy(), my_slot=3, teams=12,
-                         rounds=FROZEN_BUDGET["rounds"], rng=stream(root, ROOM),
-                         report=report)
-    arm_b = bt.optimizer_strategy(board, my_slot=3, teams=12, seed=root, report=report,
-                                  **FROZEN_BUDGET)
-    b_names, _ = bt.play(board, arm_b, my_slot=3, teams=12,
-                         rounds=FROZEN_BUDGET["rounds"], rng=stream(root, ROOM),
-                         report=report)
+    a_names, _ = bt.play(frozen, bt.market_strategy(), my_slot=3, teams=12,
+                         rounds=FROZEN_BUDGET["rounds"], rng=stream(root, ROOM))
+    arm_b = bt.optimizer_strategy(frozen, my_slot=3, teams=12, seed=root, **FROZEN_BUDGET)
+    b_names, _ = bt.play(frozen, arm_b, my_slot=3, teams=12,
+                         rounds=FROZEN_BUDGET["rounds"], rng=stream(root, ROOM))
     assert a_names == FROZEN_ARM_A, (
         f"THE ROOM MOVED: arm A (the draft market, which the product ships) drafted a "
         f"different roster from the frozen Board at the same root. The simulator or the "
@@ -1617,7 +1630,7 @@ def test_compare_plays_the_pinned_draft():
     """
     board = _frozen_board()
     real = _frozen_realised(board)
-    got = bt.compare({FROZEN_SEASON: board}, {FROZEN_SEASON: real}, n_drafts=1,
+    got = bt.compare({FROZEN_SEASON: Board.served(board)}, {FROZEN_SEASON: real}, n_drafts=1,
                      seed=FROZEN_SEED, my_slot=3, teams=12, **FROZEN_BUDGET)
     assert got.height == 1
     row = got.row(0, named=True)
@@ -1656,7 +1669,7 @@ def _in_process_gate(monkeypatch, tmp_path, *, inner, argv=()):
 
     def loads(seasons, load, *, on_season=None):
         nv._remember(tmp_path / "the-gates-own-entry.parquet", inner)
-        return {2024: board}, {2024: real}
+        return {2024: _served(board)}, {2024: real}
 
     paired = pl.DataFrame({"season": [2024] * 4, "draft": [0, 1, 2, 3],
                            "market": [10.0, 11.0, 9.0, 10.5],
@@ -1727,7 +1740,7 @@ def test_at_scale_zero_the_room_follows_consensus_exactly():
     is no noise to draw, so two rooms opened on two different streams draft identically --
     which is the property that makes 0.5 and 1.5 halves and half-again of the fitted law
     rather than absolute numbers of picks."""
-    board = _full_board()
+    board = _served(_full_board())
     a, _ = bt.play(board, bt.market_strategy(), my_slot=3, teams=12, rounds=4,
                    rng=np.random.default_rng(0), opp_noise=0.0)
     b, _ = bt.play(board, bt.market_strategy(), my_slot=3, teams=12, rounds=4,
@@ -1754,7 +1767,7 @@ def test_the_sweep_runs_one_gate_per_scale_and_each_row_names_its_scale(monkeypa
 
     monkeypatch.setattr(bt, "compare", fake_compare)
     board = _full_board(24)
-    got = bt.noise_sensitivity({2024: board}, {2024: _flat_realised(board)},
+    got = bt.noise_sensitivity({2024: _served(board)}, {2024: _flat_realised(board)},
                                scales=(0.5, 1.0, 1.5), bootstrap=100)
     assert seen == [0.5, 1.0, 1.5], "the comparison did not run once per scale, in order"
     assert got["noise_scale"].to_list() == [0.5, 1.0, 1.5]
@@ -1788,7 +1801,7 @@ def test_the_sweep_measures_the_ceiling_in_each_scales_own_room(monkeypatch):
     monkeypatch.setattr(bt, "compare", fake_compare)
     monkeypatch.setattr(bt, "ceiling", fake_ceiling)
     board = _full_board(24)
-    got = bt.noise_sensitivity({2024: board}, {2024: _flat_realised(board)},
+    got = bt.noise_sensitivity({2024: _served(board)}, {2024: _flat_realised(board)},
                                scales=(0.5, 1.5), bootstrap=100, with_ceiling=True)
     assert seen == [0.5, 1.5], "the ceiling was not measured once per scale, in its room"
     assert got["ceiling"].to_list() == pytest.approx([1.5, 4.5])
@@ -1799,7 +1812,7 @@ def test_two_scales_give_different_paired_means_on_one_seed():
     half again produce different paired means."""
     board = _full_board()
     real = _varied_realised(board)
-    got = bt.noise_sensitivity({2024: board}, {2024: real}, scales=(0.5, 1.5), seed=0,
+    got = bt.noise_sensitivity({2024: _served(board)}, {2024: real}, scales=(0.5, 1.5), seed=0,
                                **_TINY)
     lo, hi = got["mean"].to_list()
     assert lo != hi, "two scales on one seed gave one paired mean: the scale reaches nothing"
@@ -1808,8 +1821,8 @@ def test_two_scales_give_different_paired_means_on_one_seed():
 def test_the_same_scale_on_the_same_seed_reproduces_exactly():
     board = _full_board()
     real = _varied_realised(board)
-    once = bt.noise_sensitivity({2024: board}, {2024: real}, scales=(1.5,), seed=0, **_TINY)
-    again = bt.noise_sensitivity({2024: board}, {2024: real}, scales=(1.5,), seed=0, **_TINY)
+    once = bt.noise_sensitivity({2024: _served(board)}, {2024: real}, scales=(1.5,), seed=0, **_TINY)
+    again = bt.noise_sensitivity({2024: _served(board)}, {2024: real}, scales=(1.5,), seed=0, **_TINY)
     assert once.drop("commit").equals(again.drop("commit")), (
         "the same scale on the same seed did not reproduce")
 
@@ -1824,7 +1837,8 @@ def test_the_sweep_is_reachable_from_the_command_line(monkeypatch, tmp_path):
     board = _full_board(24)
     real = _flat_realised(board)
     monkeypatch.setattr(bt, "walk_forward_inputs",
-                        lambda seasons, load, *, on_season=None: ({2024: board}, {2024: real}))
+                        lambda seasons, load, *, on_season=None: ({2024: _served(board)},
+                                                                  {2024: real}))
 
     def fake_compare(boards, realised, *, opp_noise=1.0, **kw):
         nv._remember(tmp_path / "entry.parquet", inner)
@@ -1886,7 +1900,7 @@ def _two_seasons():
     board = _full_board(48).with_columns(
         pl.Series("team", [f"T{i % 6}" for i in range(48)]))
     real = _varied_realised(board)
-    return {2024: board, 2025: board}, {2024: real, 2025: real}
+    return {2024: _served(board), 2025: _served(board)}, {2024: real, 2025: real}
 
 
 def test_serial_and_parallel_agree_on_every_paired_row():
@@ -1900,6 +1914,47 @@ def test_serial_and_parallel_agree_on_every_paired_row():
     assert parallel.height == serial.height == 4
     for row_s, row_p in zip(serial.rows(), parallel.rows(), strict=True):
         assert row_p == row_s, f"a paired row differs between serial and parallel:\n{row_s}\n{row_p}"
+
+
+def test_the_room_is_opened_on_the_boards_report_and_not_re_derived_from_its_frame():
+    """`play` reads the report off the Board it is handed (#295). A report fuller than its
+    frame is a Board -- the half-written stage `test_board_build.py` holds -- and it is the
+    one pairing where reading and re-deriving differ: the report says the draft market ran,
+    the frame has lost the column, so a room opened on the report reaches for `adp` and
+    fails on the missing column, while a room re-derived from the frame would quietly open
+    on consensus and say nothing. The failure is the evidence that the report was read."""
+    from polars.exceptions import ColumnNotFoundError
+
+    lost = Board(_full_board().drop("adp"), BuildReport(adp=True))
+    assert BuildReport.of_served(lost.frame).adp is False, "re-derived, the draft market is absent"
+    with pytest.raises(ColumnNotFoundError, match="adp"):
+        bt.play(lost, bt.market_strategy(), my_slot=3, teams=12, rounds=2,
+                rng=np.random.default_rng(0))
+
+
+def _report_seen_by_worker(board: Board) -> BuildReport:
+    """What a worker holds after the Board crossed the process boundary. Module-level so a
+    spawn-context pool can name it."""
+    return board.report
+
+
+def test_a_worker_receives_the_report_the_board_was_sent_with():
+    """The Board reaches a worker as a pickle (#261), and since #295 the report is on it. A
+    report re-derived on arrival would be indistinguishable from the sent one for every
+    stage that leaves a column, so the flag this holds is one no frame can show: the
+    scoring check, which writes nothing. It comes back set, and the report comes back equal,
+    which is what tells a carried report from a re-derived one across the same boundary
+    `compare` hands its seasons over."""
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    frame = _full_board(24)
+    sent = Board(frame, BuildReport(adp=True, scoring_checked=True))
+    assert BuildReport.of_served(frame).scoring_checked is False, "derivable, so proves nothing"
+    ctx = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=2, mp_context=ctx) as pool:
+        got = pool.submit(_report_seen_by_worker, sent).result()
+    assert got == sent.report and got.scoring_checked is True
 
 
 def test_the_correlation_report_and_the_join_failures_are_merged_across_workers():
@@ -1947,7 +2002,8 @@ def test_the_gate_cli_defaults_to_one_worker_per_season(monkeypatch, tmp_path):
     real = _flat_realised(board)
     monkeypatch.setattr(bt, "walk_forward_inputs",
                         lambda seasons, load, *, on_season=None: (
-                            {2024: board, 2025: board}, {2024: real, 2025: real}))
+                            {2024: _served(board), 2025: _served(board)},
+                            {2024: real, 2025: real}))
     monkeypatch.setattr(bt, "compare", fake_compare)
     monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, record_width=False, bootstrap=50))
     assert bt.main(["--seasons", "2024,2025", "--drafts", "1"]) == 0
@@ -1984,7 +2040,7 @@ def test_a_season_played_for_a_worker_posts_each_draft_to_the_queue_it_is_given(
     board = _full_board(24)
     real = _flat_realised(board)
     q: queue.Queue = queue.Queue()
-    rows, report = bt._season_rows(2024, board, real, n_drafts=2, seed=0, my_slot=3,
+    rows, report = bt._season_rows(2024, _served(board), real, n_drafts=2, seed=0, my_slot=3,
                                    teams=12, rounds=3, n_draft_sims=2, n_season_sims=5,
                                    opp_noise=1.0, carry_correlation=False, progress=q)
     assert [q.get_nowait() for _ in range(2)] == [(2024, 1, 2), (2024, 2, 2)]
@@ -2026,7 +2082,8 @@ def test_the_default_worker_count_never_exceeds_the_cores(monkeypatch, tmp_path)
     real = _flat_realised(board)
     monkeypatch.setattr(bt, "walk_forward_inputs",
                         lambda seasons, load, *, on_season=None: (
-                            dict.fromkeys(seasons, board), dict.fromkeys(seasons, real)))
+                            dict.fromkeys(seasons, _served(board)),
+                            dict.fromkeys(seasons, real)))
     monkeypatch.setattr(bt, "compare", fake_compare)
     from functools import partial
     monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, record_width=False, bootstrap=50))

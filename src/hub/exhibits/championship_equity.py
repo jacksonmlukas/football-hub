@@ -167,7 +167,7 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     # The room's board-invariant state, once (#259). A call makes candidates x draft-sims
     # rollouts, and each used to rebuild the blended ADP, the sigma over it, the currency,
     # and a `player_key` index of every row -- none of which a rollout changes. The report
-    # is resolved inside `prepare_room`, through the same `report_for` seam as before, and
+    # is resolved inside `prepare_room`, into a `board.Board` as `report_for` did before, and
     # the frame the season is scored on below is the room's pool: the same `blended_adp`
     # call this function used to make itself.
     room = prepare_room(board, w, report=report)

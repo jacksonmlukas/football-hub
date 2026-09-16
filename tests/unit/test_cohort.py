@@ -216,13 +216,16 @@ def test_the_cohort_is_what_the_gates_used_to_build_for_themselves():
     `backtest.play` is what the lineup gate called; it is still here, so the equality can be
     asserted directly rather than against a frozen list that would drift with the fixture."""
     from hub.draft.backtest import play
+    from hub.draft.board import Board
     from hub.draft.optimize import market_strategy
 
     board = _board()
     got = C.cohort(board, 2024, drafts=3, seed=0)
     names_at = board["player"].to_list()
     for k in range(3):
-        was, was_pos = play(board, market_strategy(), my_slot=C.SLOT, teams=C.TEAMS,
+        # `play` takes the Board with its report (#295); the Cohort took the frame and derived
+        # the same report, so the two still open one room.
+        was, was_pos = play(Board.served(board), market_strategy(), my_slot=C.SLOT, teams=C.TEAMS,
                             rounds=14, rng=np.random.default_rng(0 + 1000 * 2024 + k))
         assert [names_at[i] for i in got.rosters[k]] == was
         assert [got.pos[i] for i in got.rosters[k]] == was_pos

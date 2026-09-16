@@ -166,8 +166,8 @@ def test_every_site_that_asks_a_frame_what_a_stage_left_is_one_this_file_names()
     added = sorted(got - SURVIVORS.keys())
     assert not added, (
         f"new site(s) asking a frame what a build stage left: {added}. Either ask the "
-        f"`BuildReport` -- `board.report_for(frame, report)` resolves one from a frame and "
-        f"an optional report -- or add the site here with the reason it may not.")
+        f"`BuildReport` -- it travels on the `board.Board` since #295, and `Board.served` "
+        f"derives one for a frame off disk -- or add the site here with the reason it may not.")
     assert not missing, (
         f"{missing} no longer reads a stage column; remove it from SURVIVORS so the count "
         f"keeps meaning something.")

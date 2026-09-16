@@ -117,7 +117,7 @@ def _boom(exc=None):
 
 def test_a_failed_build_serves_the_last_good_board(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(board, "build", _boom())
-    got, _, age = board.build_or_last_good(path=_stub_board(tmp_path))
+    (got, _), age = board.build_or_last_good(path=_stub_board(tmp_path))
     assert got.height == 1
     assert age is not None and age >= 0.0
     out = capsys.readouterr().out
@@ -134,7 +134,7 @@ def test_the_served_report_describes_the_board_that_was_served(monkeypatch, tmp_
     A reader could not tell a degraded board from one whose signals had nothing to say.
     """
     monkeypatch.setattr(board, "build", _boom())
-    _got, report, age = board.build_or_last_good(path=_rich_board(tmp_path))
+    (_got, report), age = board.build_or_last_good(path=_rich_board(tmp_path))
     assert age is not None, "this is the served path"
     assert report.served is True
     assert set(report.carried()) == {"sos", "td_luck", "durability", "bye", "adp"}
@@ -146,7 +146,7 @@ def test_the_served_report_describes_the_board_that_was_served(monkeypatch, tmp_
 def test_a_served_board_does_not_claim_a_column_it_lacks(monkeypatch, tmp_path):
     """The derivation has to be able to say no, or it is just a different fabrication."""
     monkeypatch.setattr(board, "build", _boom())
-    _got, report, _age = board.build_or_last_good(path=_stub_board(tmp_path))
+    (_got, report), _age = board.build_or_last_good(path=_stub_board(tmp_path))
     assert report.served is True and report.carried() == ()
 
 
@@ -154,17 +154,29 @@ def test_a_built_board_keeps_what_build_said_rather_than_what_it_can_see(monkeyp
                                                                         tmp_path):
     """Deriving is for boards off disk only.
 
-    `build` knows the difference between a stage that ran and returned an all-null column
-    and one that never ran; the columns do not. So the built path must hand its own report
-    straight through, and this frame -- a `td_luck` column with no stage behind it -- is the
-    case where the two answers differ.
+    `build` knows things the columns do not: a stage that ran and returned an all-null
+    column against one that never ran, and the two checks that write no column at all. So
+    the built path must hand its own report straight through, and since #295 it cannot do
+    otherwise -- the report is on the Board `build` returns. This frame carries an all-null
+    `td_luck` under a report that says the stage ran, and no column at all under a report
+    that says the scoring was checked; both are what `build` said, and both survive.
+
+    The case this test used to state -- a `td_luck` column with no stage behind it, i.e. a
+    frame fuller than its report -- is not a Board any more, and the last assertion holds
+    that it is refused rather than served.
     """
+    from hub.contracts import ContractViolation
+
     fresh = pl.DataFrame({"player": ["B"], "pos": ["WR"],
                           "td_luck": pl.Series([None], dtype=pl.Float64)})
-    monkeypatch.setattr(board, "build", lambda *a, **k: (fresh, board.BuildReport()))
-    _got, report, age = board.build_or_last_good(path=_rich_board(tmp_path))
+    built = board.Board(fresh, board.BuildReport(td_luck=True, scoring_checked=True))
+    monkeypatch.setattr(board, "build", lambda *a, **k: built)
+    (_got, report), age = board.build_or_last_good(path=_rich_board(tmp_path))
     assert age is None and report.served is False
-    assert "td_luck" in report.degraded(), "the column is there and the stage never ran"
+    assert report is built.report, "the built path hands its own report through"
+    assert report.scoring_checked is True, "a flag no frame could derive"
+    with pytest.raises(ContractViolation, match="td_luck"):
+        board.Board(fresh, board.BuildReport())
 
 
 def test_where_the_board_came_from_is_not_one_of_the_stages():
@@ -178,8 +190,9 @@ def test_where_the_board_came_from_is_not_one_of_the_stages():
 def test_a_successful_build_reports_no_staleness(monkeypatch, tmp_path):
     """`age is None` is how the caller tells the two apart, so it has to mean fresh."""
     fresh = pl.DataFrame({"player": ["B"], "pos": ["WR"]})
-    monkeypatch.setattr(board, "build", lambda *a, **k: (fresh, board.BuildReport()))
-    got, _, age = board.build_or_last_good(path=_stub_board(tmp_path))
+    monkeypatch.setattr(board, "build",
+                        lambda *a, **k: board.Board(fresh, board.BuildReport()))
+    (got, _), age = board.build_or_last_good(path=_stub_board(tmp_path))
     assert age is None and got["player"].to_list() == ["B"]
 
 
@@ -284,7 +297,7 @@ def cli(monkeypatch, tmp_path):
     """`main` with the network, the state file and the output paths all redirected."""
     b = _full_board()
     monkeypatch.setattr(board, "build_or_last_good",
-                        lambda *a, **k: (b, board.BuildReport(adp=True), None))
+                        lambda *a, **k: (board.Board(b, board.BuildReport(adp=True)), None))
     monkeypatch.setattr(board, "BOARD_PARQUET", tmp_path / "board.parquet")
     monkeypatch.setattr(board, "OUT", tmp_path / "site")
     from hub.draft import adp_history
@@ -349,7 +362,7 @@ def test_the_sos_path_renders(cli, capsys):
     # both flags: `sos` needs the stage to have run AND ADP to be present, which is the
     # gate it was missing until 2026-08-27.
     mp.setattr(bm, "build_or_last_good",
-               lambda *a, **k: (b, bm.BuildReport(adp=True, sos=True), None))
+               lambda *a, **k: (bm.Board(b, bm.BuildReport(adp=True, sos=True)), None))
     assert board.main(["--sos"]) == 0
     assert "strength of schedule" in capsys.readouterr().out
     mp.undo()

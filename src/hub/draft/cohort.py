@@ -104,7 +104,8 @@ def cohort(board: pl.DataFrame, season: int, *, drafts: int = DRAFTS, seed: int 
     where a caller *held* one and dropped it. Both season-side gates unpack
     `board, report = board_as_of(yr)` -- they have to, `require_corrections` reads it -- and
     then handed the frame on alone, so `optimize.simulate_remaining_draft` sent it through
-    `board.report_for`, which derives a fresh one by looking at the frame's columns.
+    `board.report_for` (now `Board.served`), which derived a fresh one by looking at the
+    frame's columns.
 
     Nothing ranks differently for it today, and that is the reason to fix it rather than a
     reason not to. `BuildReport`'s own docstring says the report layer exists because consumers

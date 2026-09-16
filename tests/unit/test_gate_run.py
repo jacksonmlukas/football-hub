@@ -10,7 +10,7 @@ All offline. The frames here are synthetic; nothing reaches a board or the netwo
 """
 import inspect
 import math
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import polars as pl
@@ -20,6 +20,11 @@ from hypothesis import strategies as st
 
 from hub.models import experiment
 from hub.models.experiment import SEASON_CLUSTER, Actions, Ceiling, run_gate
+
+
+class _Played(NamedTuple):
+    frame: pl.DataFrame
+    report: Any
 
 _ACTIONS = Actions(adopt="ADOPT: ship it.", remove="REMOVE: delete it.",
                    show="SHOW: beside the incumbent.")
@@ -260,7 +265,9 @@ def _frames(draw):
 def test_every_gate_stamps_the_data_it_scored_against(paired, site, boards):
     from hub.config import NO_FRAMES
 
-    played = {2024: paired} if boards else None
+    # The Boards a run played, as `walk_forward_inputs` returns them: the frame with a report
+    # attached (#295). Structural, like `ReportedFrame`; the digest is over the frame.
+    played = {2024: _Played(paired, None)} if boards else None
     got = run_gate(paired, actions=_ACTIONS, name="p", arm_a="a", arm_b="b",
                    bootstrap=50, record_width=False, boards=played, **site)
     assert got.stamped.height == paired.height

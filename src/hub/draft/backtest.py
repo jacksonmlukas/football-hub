@@ -53,7 +53,7 @@ import polars as pl
 from hub.cli import unavailable
 from hub.config import DraftConfig, RosterConfig, drafted_positions
 from hub.declare import not_an_input
-from hub.draft.board import BuildReport, board_as_of
+from hub.draft.board import Board, board_as_of
 from hub.draft.cohort import DRAFTS
 from hub.draft.optimize import (
     DEFAULT_ROUNDS,
@@ -267,11 +267,10 @@ def draft_root(seed: int, season: int, k: int) -> np.random.SeedSequence:
     return root_seed(seed, season, k)
 
 
-def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds: int,
+def optimizer_strategy(board: Board, *, my_slot: int, teams: int, rounds: int,
                        n_draft_sims: int, n_season_sims: int,
                        seed: int | np.random.SeedSequence,
                        tiebreak: str = "ecr",
-                       report: BuildReport | None = None,
                        correlation: CorrelationReport | None = None,
                        opp_noise: float = 1.0):
     """Arm B. Top of `win_probability` over `recommend()`'s shortlist, ties broken by `by`.
@@ -285,14 +284,20 @@ def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds:
 
     `opp_noise` reaches the objective's rollouts, so the room arm B imagines is the room it
     is played in -- see `NOISE_SCALES`.
+
+    Takes the `Board` -- the frame with its report attached (#295) -- and hands the report
+    the Board carries to the room and the objective, so the arm ranks in the currency the
+    build recorded and never one re-derived from the frame.
     """
     from hub.draft.board import recommend
+
+    frame, report = board
 
     def pick(pool, live, counts, taken):
         state = DraftState(taken=list(taken))
         overall = len(taken) + 1
         try:
-            _, rec = recommend(board, overall, rounds=rounds, state=state, report=report)
+            _, rec = recommend(board, overall, rounds=rounds, state=state)
         except ValueError:
             rec = pool[[int(i) for i in live]].head(10)
         names = [n for n in rec["player"].to_list()
@@ -301,36 +306,42 @@ def optimizer_strategy(board: pl.DataFrame, *, my_slot: int, teams: int, rounds:
             return int(live[0])
         if len(names) == 1:
             return _pool_index(pool, names[0])
-        wp = win_probability(board, state, names, my_slot=my_slot, teams=teams,
+        wp = win_probability(frame, state, names, my_slot=my_slot, teams=teams,
                              rounds=rounds, n_draft_sims=n_draft_sims,
                              n_season_sims=n_season_sims, seed=seed,
                              report=report, correlation=correlation, opp_noise=opp_noise)
         leaders = rank_tiers(wp).filter(pl.col("co_leader"))["player"].to_list()
-        ranked = (board.filter(pl.col("player").is_in(leaders))
+        ranked = (frame.filter(pl.col("player").is_in(leaders))
                        .sort(tiebreak, nulls_last=True))
         return _pool_index(pool, ranked["player"][0] if ranked.height else leaders[0])
     return pick
 
 
-def play(board: pl.DataFrame, strategy, *, my_slot: int, teams: int, rounds: int,
+def play(board: Board, strategy, *, my_slot: int, teams: int, rounds: int,
          rng: np.random.Generator,
-         report: BuildReport | None = None,
          opp_noise: float = 1.0) -> tuple[list[str], list[str]]:
     """Play one draft with `strategy` in my seat. Returns (my player names, my positions).
 
     `opp_noise` is the room's scale over the fitted pick noise; 1.0 is the fitted law itself
     and the only value any published figure was played at. See `NOISE_SCALES`.
+
+    The room is opened on the report the `Board` carries (#295). Before that this took a
+    frame and an optional report, and `compare` -- the one caller that plays every
+    published figure -- passed no report, so every gate room was opened on a report
+    re-derived from the frame's columns. For every Board a gate plays today the two agree;
+    the Board makes that a fact about the object rather than about today's stages.
     """
-    rosters = simulate_remaining_draft(board, DraftState(taken=[]), my_slot=my_slot,
+    frame, report = board
+    rosters = simulate_remaining_draft(frame, DraftState(taken=[]), my_slot=my_slot,
                                        teams=teams, rounds=rounds, rng=rng,
                                        my_pick=strategy, report=report, opp_noise=opp_noise)
     mine = rosters[my_slot - 1]
-    names = [board["player"][int(i)] for i in mine]
-    pos = [board["pos"][int(i)] or "NA" for i in mine]
+    names = [frame["player"][int(i)] for i in mine]
+    pos = [frame["pos"][int(i)] or "NA" for i in mine]
     return names, pos
 
 
-def _season_rows(season: int, board: pl.DataFrame, real: pl.DataFrame, *, n_drafts: int,
+def _season_rows(season: int, board: Board, real: pl.DataFrame, *, n_drafts: int,
                  seed: int, my_slot: int, teams: int, rounds: int, n_draft_sims: int,
                  n_season_sims: int, opp_noise: float, carry_correlation: bool,
                  on_draft: Callable[[int, int, int], None] | None = None,
@@ -383,7 +394,7 @@ def _season_rows(season: int, board: pl.DataFrame, real: pl.DataFrame, *, n_draf
         raise
 
 
-def _season_rows_unguarded(season: int, board: pl.DataFrame, real: pl.DataFrame, *,
+def _season_rows_unguarded(season: int, board: Board, real: pl.DataFrame, *,
                            n_drafts: int, seed: int, my_slot: int, teams: int, rounds: int,
                            n_draft_sims: int, n_season_sims: int, opp_noise: float,
                            carry_correlation: bool,
@@ -434,7 +445,7 @@ def _season_rows_unguarded(season: int, board: pl.DataFrame, real: pl.DataFrame,
     return rows, correlation
 
 
-def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], *,
+def compare(boards: dict[int, Board], realised: dict[int, pl.DataFrame], *,
             n_drafts: int = 20, seed: int = 0, my_slot: int | None = None,
             teams: int | None = None, rounds: int = DEFAULT_ROUNDS,
             n_draft_sims: int = 12, n_season_sims: int = 250,
@@ -452,7 +463,9 @@ def compare(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     of its own coordinates with no cross-iteration state, so the seasons are independent
     work: the rows come back in the same order with the same values, the caller's
     `correlation` absorbs each worker's count, and the join-failure counts ride on the rows
-    as they always did. The default is serial and in-process -- this is a pure function,
+    as they always did. A season's `Board` reaches its worker as a pickle, and the report
+    reaches it on the Board (#295) -- carried, not re-derived on arrival. The default is
+    serial and in-process -- this is a pure function,
     and a test that patches the room or the season sees its patch only in this process --
     and `main` asks for one worker per season. A spawn context, whichever platform: a fork
     under numpy and polars threads is not safe, and the seasons are big enough that the
@@ -562,7 +575,7 @@ def _relay(progress, on_draft, *, grace: float) -> None:
 CEILING_ARM = "perfect foresight -- the season known in advance"
 
 
-def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], *,
+def ceiling(boards: dict[int, Board], realised: dict[int, pl.DataFrame], *,
             n_drafts: int = 20, seed: int = 0, my_slot: int | None = None,
             teams: int | None = None, rounds: int = DEFAULT_ROUNDS,
             on_draft: Callable[[int, int, int], None] | None = None,
@@ -601,7 +614,8 @@ def ceiling(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], 
     rows = []
     for season in sorted(boards):
         board, real = boards[season], realised[season]
-        seeing = with_foresight(board, real)
+        # The same Board plus a ranking column no stage leaves, under the same report.
+        seeing = Board(with_foresight(board.frame, real), board.report)
         arm_a, arm_c = market_strategy(), market_strategy(by=FORESIGHT)
         for k in range(n_drafts):
             root = draft_root(seed, season, k)
@@ -647,7 +661,7 @@ NOISE_SCALES: tuple[float, ...] = not_an_input(
 STAMPS: tuple[str, ...] = ("cfg_digest", "data_digest", "board_digest", "commit")
 
 
-def noise_sensitivity(boards: dict[int, pl.DataFrame], realised: dict[int, pl.DataFrame], *,
+def noise_sensitivity(boards: dict[int, Board], realised: dict[int, pl.DataFrame], *,
                       scales: Sequence[float] = NOISE_SCALES, n_drafts: int = 20,
                       seed: int = 0, rounds: int = DEFAULT_ROUNDS, n_draft_sims: int = 12,
                       n_season_sims: int = 250, bootstrap: int = BOOTSTRAP,
@@ -725,7 +739,7 @@ def sensitivity_report(table: pl.DataFrame, *, unit: str = "points per team game
 DIAGNOSE_PICKS = (3, 22, 27, 46, 51, 70)
 
 
-def diagnose(board: pl.DataFrame, report: BuildReport, *,
+def diagnose(board: Board, *,
              picks: Sequence[int] = DIAGNOSE_PICKS,
              my_slot: int | None = None, teams: int | None = None,
              rounds: int = DEFAULT_ROUNDS, n_draft_sims: int = 12,
@@ -739,14 +753,16 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
 
     Returns one row per pick: what you hold, who equity names, and by how much.
 
-    **`report` says which market that is, and it is required rather than defaulted for the
-    same reason `board_as_of` stopped letting a caller drop one.** Which market to advance by
-    is a question about what `build` did -- did the stage that leaves `adp` run -- and this
-    site used to answer it a second time, privately, by looking for the column. Issue #131
-    gave that question one owner; this site was left out of that change because the file was
-    owned elsewhere at the time, and what it was left holding is its own copy of the answer
-    and of the string `"adp"` -- which is `board.STAGE_COLUMN["adp"]` restated somewhere
-    nothing would ever update it.
+    **The Board's report says which market that is, and it cannot be dropped or swapped
+    for the same reason `board_as_of` stopped letting a caller drop one.** Which market to
+    advance by is a question about what `build` did -- did the stage that leaves `adp` run
+    -- and this site used to answer it a second time, privately, by looking for the column.
+    Issue #131 gave that question one owner; this site was left out of that change because
+    the file was owned elsewhere at the time, and what it was left holding is its own copy
+    of the answer and of the string `"adp"` -- which is `board.STAGE_COLUMN["adp"]` restated
+    somewhere nothing would ever update it. The report then rode beside the frame as a
+    required parameter; since #295 it is the Board's own, so a frame cannot arrive here
+    under another Board's report.
 
     No board changes hands differently for this. On every board reachable today the column
     and the flag agree -- a stage that leaves no column is one the report already calls
@@ -775,25 +791,26 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
 
     from hub.draft.board import recommend
 
+    frame, report = board
+
     def pick(pool, live, counts, taken):
         overall = len(taken) + 1
         avail = pool[[int(i) for i in live]]
         if overall in want:
             state = DraftState(taken=list(taken))
             try:
-                _, rec = recommend(board, overall, rounds=rounds, state=state,
-                                   report=report)
+                _, rec = recommend(board, overall, rounds=rounds, state=state)
                 names = [n for n in rec["player"].to_list()
                          if n in set(avail["player"].to_list())]
             except ValueError:
                 names = []
             if len(names) >= 2:
                 wp = rank_tiers(win_probability(
-                    board, state, names, my_slot=my_slot, teams=teams, rounds=rounds,
+                    frame, state, names, my_slot=my_slot, teams=teams, rounds=rounds,
                     n_draft_sims=n_draft_sims, n_season_sims=n_season_sims, seed=root,
                     report=report, correlation=correlation))
                 top = wp.row(0, named=True)
-                pos_of = dict(zip(board["player"].to_list(), board["pos"].to_list(), strict=True))
+                pos_of = dict(zip(frame["player"].to_list(), frame["pos"].to_list(), strict=True))
                 # Does any co-leader fill a slot you cannot currently start? The tripwire
                 # needs this: a need-filling candidate the simulation cannot separate from
                 # the leader means the objective has not *rejected* need, it has declined
@@ -824,7 +841,7 @@ def diagnose(board: pl.DataFrame, report: BuildReport, *,
         name = market_pick(avail, counts, by="adp" if report.adp else "ecr")
         return _pool_index(pool, name) if name else int(live[0])
 
-    simulate_remaining_draft(board, DraftState(taken=[]), my_slot=my_slot, teams=teams,
+    simulate_remaining_draft(frame, DraftState(taken=[]), my_slot=my_slot, teams=teams,
                              rounds=rounds, rng=stream(root, ROOM), my_pick=pick,
                              report=report)
     return pl.DataFrame(rows)
@@ -1107,27 +1124,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         # reuse it, so the only thing that differs between them is the code.
         snap = Path(a.board) if a.board else None
         if snap and snap.exists():
-            board = pl.read_parquet(snap)
-            # A pinned board is a board off disk, which is what `of_served` is for: the run
-            # that wrote it is over and its columns are the only evidence of it there is. It
-            # also keeps the pin intact -- the report is a function of the pinned board, so
-            # two runs at two commits get the same one, which a second `build()` would not.
-            report = BuildReport.of_served(board)
+            # A pinned board is a board off disk, which is what `Board.served` is for: the
+            # run that wrote it is over and its columns are the only evidence of it there
+            # is. It also keeps the pin intact -- the report is a function of the pinned
+            # board, so two runs at two commits get the same one, which a second `build()`
+            # would not.
+            board = Board.served(pl.read_parquet(snap))
             print(f"  board pinned from {snap}")
         else:
             print("  building the live board ...")
             try:
-                board, report = build()
+                board = build()
             except Exception as e:
                 return unavailable("hub.draft.backtest", "the live board", e)
             if snap:
-                board.write_parquet(snap)
+                board.frame.write_parquet(snap)
                 print(f"  board snapshot written to {snap}")
         # Owned here rather than inside `diagnose`, so the count survives the call. Every
         # simulated season below writes into it; `note()` is said whether or not anything
         # failed, because a line that appears only on a bad run reads the same as no line.
         correlation = CorrelationReport()
-        got = diagnose(board, report, rounds=a.rounds, n_draft_sims=a.draft_sims,
+        got = diagnose(board, rounds=a.rounds, n_draft_sims=a.draft_sims,
                        n_season_sims=a.season_sims, seed=a.seed, correlation=correlation)
         if got.is_empty():
             print("  no pick produced a rankable shortlist; nothing to compare.")
@@ -1148,7 +1165,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # moved, which is the figure that decides whether a repair mattered.
         for line in correlation.repair_lines():
             print(line)
-        bad = tripwire(board, got)
+        bad = tripwire(board.frame, got)
         print()
         if bad:
             print("  TRIPWIRE TRIPPED -- equity named a filled position over an empty one:")

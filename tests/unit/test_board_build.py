@@ -623,7 +623,7 @@ def test_the_two_failures_are_two_different_nights(offline, tmp_path, capsys):
     offline.setattr(board, "espn_adp", lambda *a, **k: _live_adp())
     offline.setattr(board, "playoff_sos", _source_is_down)
 
-    built, outage_report, fresh = board.build_or_last_good(path=last_good)
+    (built, outage_report), fresh = board.build_or_last_good(path=last_good)
     printed = capsys.readouterr().out
     reads = "\n".join(report_mod.built_or_served(outage_report, fresh))
     assert fresh is None and outage_report.served is False
@@ -632,7 +632,7 @@ def test_the_two_failures_are_two_different_nights(offline, tmp_path, capsys):
     assert "built without: sos" in reads and "SERVED BOARD" not in reads
 
     offline.setattr(board, "_attach_market", _a_refactor_renamed_a_column)
-    served, defect_report, age = board.build_or_last_good(path=last_good)
+    (served, defect_report), age = board.build_or_last_good(path=last_good)
     printed = capsys.readouterr().out
     reads = "\n".join(report_mod.built_or_served(defect_report, age))
     assert age is not None and defect_report.served is True
@@ -782,7 +782,7 @@ def test_a_build_failure_with_no_parquet_falls_back_to_the_published_board(
     offline.setattr(board, "espn_adp", lambda *a, **k: _live_adp())
     offline.setattr(board, "_attach_market", _a_refactor_renamed_a_column)
 
-    served, report, age = board.build_or_last_good(
+    (served, report), age = board.build_or_last_good(
         path=tmp_path / "nothing.parquet", site=site)
     printed = capsys.readouterr().out
 
@@ -826,7 +826,7 @@ def test_a_served_published_board_is_not_written_to_the_parquet(tmp_path, offlin
     offline.setattr(board, "_attach_market", _a_refactor_renamed_a_column)
 
     parquet = tmp_path / "nothing.parquet"
-    _served, report, _age = board.build_or_last_good(path=parquet, site=site)
+    (_served, report), _age = board.build_or_last_good(path=parquet, site=site)
     assert report.served, "the guard `main` reads is the report, not the age"
     assert not parquet.exists(), "the published board must not become the built one"
 
@@ -1014,3 +1014,81 @@ def test_a_report_answers_only_for_the_stages_it_was_built_for():
     assert rep == board.BuildReport(adp=True) and rep != board.BuildReport()
     assert rep != board.BuildReport(adp=True, source=board.SERVED)
     assert repr(rep).startswith("BuildReport(sos=False, td_luck=False, ") and "adp=True" in repr(rep)
+
+
+# --- the report travels on the Board (#295) ------------------------------------------------
+#
+# `build` returned a frame and a report as two values, and every reader downstream took the
+# frame alone -- so the report either rode along as a `report:` parameter or was re-derived
+# from the frame's columns at the site that needed it. One object now crosses the seam.
+
+
+def test_build_returns_the_board_with_its_report_attached(offline):
+    """`Board` is the pair `build` always returned, named: `.frame` and `.report`, and still
+    a pair, so a caller that unpacks it as one is unchanged."""
+    built = board.build()
+    assert isinstance(built, board.Board)
+    frame, report = built
+    assert frame is built.frame and report is built.report
+    assert built[0] is built.frame
+    assert isinstance(built.report, board.BuildReport) and built.report.served is False
+
+
+def test_a_served_board_derives_its_report_from_the_frame(offline):
+    """`Board.served` is `BuildReport.of_served` with the frame it describes attached: the
+    one way a frame read back off disk becomes a Board, and never a refusal."""
+    frame, _ = board.build()
+    served = board.Board.served(frame.with_columns(pl.lit(1.0).alias("adp")))
+    assert served.report.served is True and served.report.adp is True
+    assert served.report == board.BuildReport.of_served(served.frame)
+
+
+def test_a_frame_fuller_than_its_report_is_refused():
+    """The mutation this exists to catch: a reader handed a Board built from one frame and
+    another Board's report. A frame carrying a stage's sentinel while the report says that
+    stage did not run is a pairing `build` cannot produce -- a stage that did not run leaves
+    no column -- so it is refused where the pair is made, not discovered at the reader."""
+    from hub.contracts import ContractViolation
+
+    frame = pl.DataFrame({"player": ["A"], "pos": ["RB"], "ecr": [1.0], "adp": [2.0]})
+    with pytest.raises(ContractViolation, match="adp"):
+        board.Board(frame, board.BuildReport(adp=False))
+    with pytest.raises(ContractViolation, match="adp"):
+        board.Board(frame, board.BuildReport())
+    # The same frame with the report that describes it, and with a report that says more
+    # than the frame shows -- a stage that ran and left an all-null column reads the same
+    # way -- are both Boards.
+    assert board.Board(frame, board.BuildReport(adp=True)).report.adp is True
+    assert board.Board(frame, board.BuildReport(adp=True, sos=True)).report.sos is True
+
+
+def test_a_thinner_frame_under_a_fuller_report_is_the_sentinel_s_call(offline):
+    """The other direction is not refused, and the reason is the half-written stage above:
+    `build` records a stage that returned a frame, whether or not the frame carries the
+    stage's sentinel, so a report fuller than its frame is `build`'s own output under the
+    sentinel rule and not a foreign report."""
+    half = _stub("durability", lambda x, _c: x.with_columns(pl.lit(False).alias("sat_out")),
+                 columns=("missed", "sat_out"))
+    built = board.build(stages=[half])
+    assert built.report.durability is True and "missed" not in built.frame.columns
+
+
+def test_the_report_survives_a_round_trip_through_pickle(offline):
+    """`backtest.compare` hands each season's Board to a spawned worker (#261), which is a
+    pickle. The pair comes back whole and the report is the one that was sent -- including a
+    flag no frame could derive, which is what tells a carried report from a re-derived one."""
+    import pickle
+
+    offline.setattr(board, "_check_scoring", lambda b: None)
+    built = board.build()
+    assert built.report.scoring_checked is True, "the flag a frame cannot show"
+    back = pickle.loads(pickle.dumps(built))
+    assert isinstance(back, board.Board)
+    assert back.report == built.report and back.report.scoring_checked is True
+    assert back.frame.equals(built.frame)
+
+
+def test_report_for_is_gone():
+    """The seam #199 opened -- `report_for(frame, report)` resolving a report from a frame
+    and an optional report -- closed with the report on the Board (#295)."""
+    assert not hasattr(board, "report_for")

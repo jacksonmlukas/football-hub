@@ -116,7 +116,7 @@ def market(joined: pl.DataFrame) -> pl.DataFrame:
     to compute, so the frame is refused rather than the run. `espn_avg` is not a stage column
     at all and no report answers for it, so a report could satisfy at most half the test. And
     the frame is an ESPN roster joined to a board, not a Board: no `BuildReport` describes it,
-    and `report_for` would derive one from the wrong frame's columns.
+    and `Board.served` would derive one from the wrong frame's columns.
     """
     if "espn_avg" not in joined.columns or "proj_ppg" not in joined.columns:
         return joined
