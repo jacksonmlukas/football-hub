@@ -68,15 +68,21 @@ artifacts. `snapshot` is the two-way name every week published before #281 carri
 _Avoid_: line source, provenance alone.
 
 **Live price**:
-A **Snapshot** whose quote has stood unmoved for less than
-`hub.models.quarterback.STALE_AFTER_DAYS` — seven days — at the moment asked. The two
-staleness columns `hub.fetch.odds` derives, `polls_unmoved` and `unmoved_since`, measure;
-"live" is the threshold `quarterback.live_price` declares over them, and
-`hub.schedule.priced_games` is the one place it is applied, writing the **Price source**
-that every consumer then reads (#281). What is not a live price: a snapshot that has stood
-longer (#210 measured every week from 2 out at the full twelve days of the archive), the
-moving field (nothing polls it, so nothing can show it is), and an unpriced game. **Ratings**
-change nothing where a live price exists.
+A **Snapshot** whose capture — the last poll at or before the moment asked, `priced_at` on
+the row — is less than `hub.models.quarterback.STALE_AFTER_DAYS` old: seven days, the poll
+age past which a snapshot is `stale`. "Live" is the threshold `quarterback.live_price`
+declares, and `hub.schedule.priced_games` is the one place it is applied, writing the
+**Price source** that every consumer then reads (#281). What is not a live price: a snapshot
+no poll has returned in a week, the moving field (nothing polls it, so nothing can show it
+is), and an unpriced game. The two staleness columns `hub.fetch.odds` derives,
+`polls_unmoved` and `unmoved_since`, ride on the row as a measurement and decide nothing.
+**Ratings** change nothing where a live price exists.
+> **Restated 2026-09-16 (#297).** Until #297 this entry read *a snapshot whose quote has
+> stood unmoved for less than seven days*, and the cut read `unmoved_since`. #251 found that
+> wrong on the runner's own numbers: there every capture is minutes old and the cut could
+> never fire; on the laptop it fired on liquid lines nobody had reason to move, which are
+> live prices; and a book joining a frozen quote restarted the run and switched the
+> adjustment off. The clock is the poll's, and the number is unchanged.
 
 **Ratings**:
 The number the weekly prediction and the survivor grid are built from, and the module that

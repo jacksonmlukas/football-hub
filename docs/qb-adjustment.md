@@ -238,3 +238,45 @@ was named. Two consequences for this module, one per path:
 
 Neither is a defect in the estimator; both are what the mark means in practice, and both
 belong beside the pull trigger when #270 is next read.
+
+## Restated 2026-09-16 (#297) — the cut reads the poll's age, not the quote's last move
+
+**Established first, on the runner (#251).** `site/data/preds_2026_wk02.json`, the Actions
+runner's first slate after #218: 16 rows, all `market_baseline`, all `price_source = live`,
+**0 of 16 adjusted**. #218's second criterion — a game with a live price is unchanged —
+holds in production, and that artifact is the pinned case the change below is held to.
+
+**The defect in the cut.** `live_price` read `unmoved_since`, the start of the run of polls
+returning the same number. That is the right measure for a movement study and the wrong one
+for this consumer, for three reasons #251 collected. On the runner every capture is minutes
+old, so a cut over the run length could never fire there; on the laptop it fired on liquid
+lines that simply had not moved in a week, which are live prices; and `_quote_moved`
+restarts the run when the set of quoting books changes, so one book joining an otherwise
+frozen quote switched the adjustment off on a number nobody moved.
+
+**The cut now.** A snapshot is live when the capture that priced the row — `priced_at`, the
+last poll at or before the moment asked — is within `STALE_AFTER_DAYS` of it:
+
+    live  ⇔  priced_at ≥ at − STALE_AFTER_DAYS
+
+`STALE_AFTER_DAYS` keeps its name, its value (7) and its place in the digest; what changed is
+what it is measured against. The staleness columns `polls_unmoved` and `unmoved_since` still
+ride on every snapshot-priced row for a reader, and decide nothing. A row with no capture is
+not a snapshot and is not a live price; `priced_games` never asks the cut about one.
+
+**What it holds.** `tests/unit/test_quarterback.py` holds the expression: a capture exactly
+the threshold old is live, a second past it is not, a quote unmoved ten days but polled an
+hour ago is live, one last polled eight days ago is stale. `tests/unit/test_schedule.py`
+holds the same at the seam where it is applied, and the row-by-row agreement test now
+carries both rows the two cuts disagree on. `tests/contracts/test_live_price_relabels_the_published_week.py`
+re-derives the runner's sixteen labels from the committed artifact's own `priced_at` and
+`predicted_at` and holds them to what was published: 16 live, 0 adjusted. Mutants tried and
+killed: the cut swapped back to `unmoved_since` (five tests fail, including the contract),
+every snapshot read as live (nine), a null capture read as live (one).
+
+**What moves on a run.** On the runner, nothing: every capture is fresh under either cut,
+which the artifact shows. On a laptop whose archive is polled less often than weekly, games
+that read `stale`/`schedule` under the old cut because their quote had stood a week now read
+`live` when the last poll is within a week; the adjustment reaches fewer rows there, and
+the rows it reaches are the ones no poll has returned in a week. `config_digest` and
+`fitted_digest` are unmoved (`b1f69382`, `04c2d997`): no declared number changed.
