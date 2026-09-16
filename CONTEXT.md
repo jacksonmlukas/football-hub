@@ -140,7 +140,9 @@ _Avoid_: normalised name, `_norm` — it was private and lived in `hub.draft.sta
 
 **Board**:
 One row per drafted-position player, carrying every signal joined onto a consensus ranking. It
-is the frame every draft-night decision reads.
+is the frame every draft-night decision reads, and it travels with its **build report** — which
+stages ran and which were absorbed — so a reader never has to re-derive from the frame what
+the build already knew (#295).
 
 **xFP**:
 Expected fantasy points — what a player's opportunity was worth, separating volume from
