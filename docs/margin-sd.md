@@ -97,6 +97,13 @@ output is the failure this repo has already caught twice.
 > the challengers against 12.741, not 13.5. Whether the constant should return to 13.5 on the
 > strength of a rule it never faced is a human decision, not one this change makes. No
 > published figure moves: `MARGIN_SD`, `hub.models.market` and `config_digest` are untouched.
+>
+> **Decided 2026-09-16: 12.741 is grandfathered for the 2026 season.** It was adopted under
+> the standard in force on 2026-08-24, and the published survivor plan and its journal rows
+> were priced on it; changing the pricing under a pre-registered plan mid-season is the larger
+> fault. It is re-decided in the offseason under the house rule, scored against 13.5 as the
+> incumbent that rule would have kept -- and if it does not clear then, it reverts. Until that
+> run, nothing here adopts a challenger against 12.741 on the old standard.
 
 **And a trailing window goes stale.** All-history would not have. Re-run after each season:
 
