@@ -103,6 +103,73 @@ def test_team_games_key_every_side_by_nflverse_id_and_spelling(rows):
     assert tg.filter(pl.col("team") == "LAR").is_empty()
 
 
+# KC's week-2 game (at DEN) is blank on KC's own side only -- the source has no starter for
+# them that week, DEN's side is fully populated. Week 1 (Mahomes) and week 3 (Gabbert, a
+# genuine change) are both readable, so week 2's hole sits between two known rows.
+ONE_SIDED_BLANK = [
+    ("2026-09-13", 2026, "1.0", "KC", "DEN", "Mahomes", "Nix", 200.0, 120.0, 40.0, 2.0,
+     27, 20, 0.70, 0.75),
+    ("2026-09-20", 2026, "2.0", "DEN", "KC", "Nix", None, 121.0, None, 2.5, None,
+     17, 24, 0.40, 0.35),
+    ("2026-09-27", 2026, "3.0", "KC", "LAR", "Gabbert", "Bethard", 60.0, 55.0, -110.0, -90.0,
+     10, 20, 0.65, 0.52),
+]
+
+
+def test_a_one_sided_blank_does_not_move_the_previous_game_link():
+    """The previous-game link is built off the full schedule, not off whichever row survives
+    the blank: KC's week-3 change reads its ancestor as week 2 (the game a one-sided blank
+    dropped), not week 1 -- two games and fourteen days too early, the bug this test used to
+    catch when the link was a shift over the filtered rows."""
+    rows = source_rows(ONE_SIDED_BLANK)
+    tg = sc.team_games(rows)
+    assert tg.filter(pl.col("team") == "KC")["week"].to_list() == [1, 3]     # week 2 dropped
+    ev = sc.events(tg)
+    kc = ev.filter(pl.col("team") == "KC")
+    assert kc.height == 1
+    row = kc.row(0, named=True)
+    assert row["departing"] == "Mahomes" and row["arriving"] == "Gabbert"    # last known starter
+    assert row["prev_game_id"] == "2026_02_KC_DEN"                          # week 2, not week 1
+    assert row["prev_date"] == "2026-09-20"                                  # not "2026-09-13"
+    games = sc.event_games(sc.in_season_events(ev))
+    assert games.row(0, named=True)["frozen_before"] == "2026-09-20"
+    assert sc.unreadable_games(rows) == 1                                    # KC's week-2 side
+
+
+# KC 2025 week 18 (Mahomes, known); 2026 week 1 (at DEN) is blank on KC's own side; 2026
+# week 2 (Gabbert) is readable. The hole spans the season boundary: #301's link correctly
+# names week 1 as the ancestor, but the departing starter's own last known game is week 18
+# of 2025, not week 1 -- so this change is unattributable to a season, not an in-season one.
+OFFSEASON_BEHIND_BLANK = [
+    ("2025-12-28", 2025, "18.0", "KC", "DEN", "Mahomes", "Nix", 210.0, 100.0, 45.0, -5.0,
+     30, 10, 0.8, 0.85),
+    ("2026-09-06", 2026, "1.0", "DEN", "KC", "Nix", None, 121.0, None, 2.5, None,
+     17, 24, 0.40, 0.35),
+    ("2026-09-13", 2026, "2.0", "KC", "LAR", "Gabbert", "Bethard", 60.0, 55.0, -110.0, -90.0,
+     10, 20, 0.65, 0.52),
+]
+
+
+def test_a_hole_spanning_the_season_boundary_is_not_an_in_season_event():
+    """#328: `in_season` used to read the *link's* season (2026, week 1's -- correct as an
+    ancestor) instead of the departing starter's own last known game's season (2025, off
+    Mahomes' week-18 start), manufacturing an in-season event across the boundary the blank
+    week spans. `departing_game_id`/`departing_season` carry that game explicitly, `in_season`
+    reads off them, and #301's link (`prev_game_id`) is unchanged."""
+    rows = source_rows(OFFSEASON_BEHIND_BLANK)
+    tg = sc.team_games(rows)
+    ev = sc.events(tg)
+    kc = ev.filter(pl.col("team") == "KC")
+    assert kc.height == 1
+    row = kc.row(0, named=True)
+    assert row["departing"] == "Mahomes" and row["arriving"] == "Gabbert"
+    assert row["prev_game_id"] == "2026_01_KC_DEN"           # #301's link: week 1, unchanged
+    assert row["departing_game_id"] == "2025_18_DEN_KC"      # Mahomes' own last known game
+    assert row["departing_season"] == 2025
+    assert row["in_season"] is False                         # not week 1's season, 2026
+    assert sc.in_season_events(ev).filter(pl.col("team") == "KC").is_empty()
+
+
 def test_events_are_starter_changes_between_consecutive_games_of_one_season(rows):
     """KC changes twice in 2026 (Gabbert in, Mahomes back); LA once (Bethard, against its last
     2025 start -- an offseason change, flagged and not an event); DEN never. A team's first

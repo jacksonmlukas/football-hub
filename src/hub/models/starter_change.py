@@ -125,6 +125,24 @@ TEAM_GAME_SCHEMA: dict[str, Any] = {
 
 # --- the event construction ---------------------------------------------------------------
 
+def _schedule(rows: pl.DataFrame) -> pl.DataFrame:
+    """Every (team, game) the source has a row for, home and away, before either side is
+    filtered for a one-sided blank -- the full row set `team_games`'s previous-game link and
+    `unreadable_games`'s count are both built off, never the rows a one-sided blank drops
+    (#301). Postseason rows are dropped the same way `team_games` drops them."""
+    if "game_type" in rows.columns:
+        rows = rows.filter(pl.col("game_type") == REGULAR_SEASON)
+    week = pl.col("week").cast(pl.Utf8).cast(pl.Float64).cast(pl.Int64)
+    gid = (pl.col("season").cast(pl.Utf8) + "_" + week.cast(pl.Utf8).str.zfill(2) + "_"
+           + pl.col("team2").replace(nfeloqb.ABBREVIATIONS) + "_"
+           + pl.col("team1").replace(nfeloqb.ABBREVIATIONS))
+    return pl.concat([
+        rows.select(gid.alias("game_id"), pl.col("season").cast(pl.Int64), week.alias("week"),
+                    pl.col("date").cast(pl.Utf8),
+                    pl.col(f"team{n}").replace(nfeloqb.ABBREVIATIONS).alias("team"))
+        for n in ("1", "2")]).sort("team", "season", "week")
+
+
 def team_games(rows: pl.DataFrame) -> pl.DataFrame:
     """One row per (team, game) off the source's rows, keyed by nflverse's game id.
 
@@ -136,6 +154,13 @@ def team_games(rows: pl.DataFrame) -> pl.DataFrame:
     probabilities, base and quarterback-adjusted, carried for the pilot and null where the
     file does not carry them. Postseason rows are dropped where the file says which they
     are; a side blank in any of the three the team layer reads is dropped alone (#283).
+
+    `prev_game_id`, `prev_season` and `prev_date` name each row's *actual* previous game --
+    the team's last entry in `_schedule`'s full row set, both sides, before either is
+    filtered for blanks -- so a one-sided blank drops that side's own row above without
+    moving its neighbours a game closer together or losing a game from the team's sequence
+    (#301). `events` reads these three straight off this frame instead of re-deriving a
+    previous game from whichever rows happen to survive.
     """
     if "week" not in rows.columns:
         raise ValueError("the rows carry no 'week' column, and the nflverse game id the "
@@ -163,7 +188,22 @@ def team_games(rows: pl.DataFrame) -> pl.DataFrame:
             pl.col(own).cast(pl.Int64).alias("score"),
             pl.col(opp).cast(pl.Int64).alias("opp_score"),
             *probs))
-    return pl.concat(sides).select(*TEAM_GAME_SCHEMA).sort("team", "season", "week")
+    tg = pl.concat(sides).select(*TEAM_GAME_SCHEMA).sort("team", "season", "week")
+    link = _schedule(rows).with_columns(
+        pl.col("game_id").shift(1).over("team").alias("prev_game_id"),
+        pl.col("season").shift(1).over("team").alias("prev_season"),
+        pl.col("date").shift(1).over("team").alias("prev_date"),
+    ).select("team", "game_id", "prev_game_id", "prev_season", "prev_date")
+    return tg.join(link, on=["team", "game_id"], how="left")
+
+
+def unreadable_games(rows: pl.DataFrame) -> int:
+    """Team-games a blank side made unreadable: entries `_schedule`'s full row set carries
+    for a team that `team_games` has no row for, because that side's qb, value or adjustment
+    was null. Counts both sides of a two-sided blank, one each, alongside every one-sided
+    blank's single side (#328). Reported on the run line so a hole is counted, not silently
+    closed over the way the previous-game link used to close it (#301)."""
+    return _schedule(rows).height - team_games(rows).height
 
 
 def starters_from_pbp(pbp: pl.DataFrame) -> pl.DataFrame:
@@ -186,27 +226,50 @@ def starters_from_pbp(pbp: pl.DataFrame) -> pl.DataFrame:
 
 
 def events(starters: pl.DataFrame) -> pl.DataFrame:
-    """Every game where a team's starter differs from its starter on its previous game.
+    """Every game where a team's starter differs from its starter on its previous known game.
 
     `starters` is one row per (team, game) with `game_id`, `season`, `week`, `team`, `qb` --
     `team_games` or `starters_from_pbp` -- ordered within a team by season and week. The
-    departing starter is the previous row's, the arriving one this row's; `in_season` is
-    whether the previous game was the same season, and a change across the offseason is
-    flagged rather than dropped so it can be counted as censored. A team's first row has
-    nothing to differ from and is never an event. Where the frame carries `value`, `adj`
-    and `date` (the source's rows do), the ex-ante values ride along: the departing
-    starter's value off his last start, the arriving starter's value and adjustment off
-    the event row, and `gap`, arriving minus departing.
+    departing starter is the last row with a known starter, the arriving one this row's; a
+    team's first known row has nothing to differ from and is never an event. `departing_game_id`
+    and `departing_season` name *that* row -- the departing starter's own last known game, not
+    necessarily the team's immediately previous one -- so `in_season` and any other reader can
+    be stated on it without re-deriving it. Where the frame carries `value`, `adj` and `date`
+    (the source's rows do), the ex-ante values ride along: the departing starter's value off
+    his last known start, the arriving starter's value and adjustment off the event row, and
+    `gap`, arriving minus departing.
+
+    `prev_game_id`, `prev_season` and `prev_date` -- the ancestor `frozen_before` prices off
+    -- are the team's *actual* previous game, never the previous row that happens to survive
+    a one-sided blank (#301): where the frame already carries them (`team_games` builds them
+    off the full schedule, both sides, before either is filtered for blanks), they are read
+    straight off it rather than re-derived from whichever rows survived. A frame with no such
+    columns (`starters_from_pbp`'s, which has no one-sided blanks to lose a game to) falls
+    back to the previous surviving row -- the same row `departing_game_id` names there, since
+    with no full-schedule link the two coincide.
+
+    `in_season` is whether the *departing starter's own* last known game was the same season
+    as this one -- not whether the team's immediately previous game (`prev_season`) was,
+    which can differ across a one-sided blank that itself spans the season boundary (#328): a
+    blank week-1 row behind an offseason starter is still an ancestor of week 2 for pricing,
+    but it is not evidence the change happened in-season, and the data cannot say whether it
+    did. Such a change is flagged rather than counted, the same way an ordinary offseason
+    change is.
     """
+    has_link = {"prev_game_id", "prev_season", "prev_date"}.issubset(starters.columns)
     carried = [c for c in ("date", "value", "adj") if c in starters.columns]
-    prev = {c: pl.col(c).shift(1).over("team") for c in ("qb", "game_id", "season", *carried)}
+    shift_cols = ["qb", "game_id", "season", *carried]
     # Every shifted column in one pass, *before* the rows that are not events are dropped:
     # shifted after the filter, "the previous row" is the previous event and not the
     # previous game, and the departing starter's value is another change's.
+    prev = {c: pl.col(c).shift(1).over("team") for c in shift_cols}
     shifted = [prev["qb"].alias("departing"), pl.col("qb").alias("arriving"),
-               prev["game_id"].alias("prev_game_id"), prev["season"].alias("prev_season")]
-    if "date" in carried:
-        shifted.append(prev["date"].alias("prev_date"))
+               prev["game_id"].alias("departing_game_id"),
+               prev["season"].alias("departing_season")]
+    if not has_link:
+        shifted += [prev["game_id"].alias("prev_game_id"), prev["season"].alias("prev_season")]
+        if "date" in carried:
+            shifted.append(prev["date"].alias("prev_date"))
     if "value" in carried:
         shifted += [prev["value"].alias("departing_value"), pl.col("value").alias("arriving_value"),
                     (pl.col("value") - prev["value"]).alias("gap")]
@@ -216,9 +279,10 @@ def events(starters: pl.DataFrame) -> pl.DataFrame:
                    .with_columns(shifted)
                    .filter(pl.col("departing").is_not_null()
                            & (pl.col("arriving") != pl.col("departing")))
-                   .with_columns((pl.col("season") == pl.col("prev_season")).alias("in_season")))
-    keep = ["game_id", "season", "week", "team", "departing", "arriving", "prev_game_id",
-            "prev_season", "in_season"]
+                   .with_columns(
+                       (pl.col("season") == pl.col("departing_season")).alias("in_season")))
+    keep = ["game_id", "season", "week", "team", "departing", "arriving", "departing_game_id",
+            "departing_season", "prev_game_id", "prev_season", "in_season"]
     keep += [c for c in ("date", "prev_date", "departing_value", "arriving_value", "gap",
                          "arriving_adj") if c in out.columns]
     return out.select(keep)
@@ -673,11 +737,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if rows is None:
         return unavailable(PROG, "the cached nfeloqb file",
                            FileNotFoundError("nothing cached; run hub.fetch.nfeloqb --refresh"))
-    tg = team_games(rows.filter(pl.col("season") >= a.since))
+    since_rows = rows.filter(pl.col("season") >= a.since)
+    tg = team_games(since_rows)
     ev = events(tg)
     games = event_games(in_season_events(ev))
     for line in _event_lines(ev, games, a.since):
         print(line)
+    unreadable = unreadable_games(since_rows)
+    print(f"  {unreadable} team-game(s) since {a.since} a blank side made unreadable (that "
+          f"side dropped; the previous-game link is still built off the full schedule)")
 
     polls = archive(a.season, a.store)
     if polls.is_empty():
