@@ -5,6 +5,68 @@
 > is kept whole; the restatement of 2026-09-07 sits directly above the result table it
 > supersedes, and the restatement of 2026-09-13 -- what the interval is now *claimed* to
 > cover, and what the gate holds it to -- sits directly below this note.
+>
+> **Pre-registered 2026-09-17 (#310), ahead of #309's measurement:** what the claim becomes
+> once the interval is conformalised, and what the gate becomes. It sits directly below this
+> note, above the 2026-09-13 restatement it will supersede when #309 lands. Nothing in
+> the 2026-09-13 section is edited.
+
+## Pre-registered 2026-09-17: after #309 the claim is the nominal 80%, marginal, and the verdict is taken at audits
+
+Under [method.md rule 1](method.md) and issue #310 -- the maintainer's `ADOPTED:` comment of
+2026-09-17, written before #309 has produced a number. This is the rule the number will be
+read against; it does not change anything published today, and the 2026-09-13 restatement
+below stands until #309 lands.
+
+**The claim.** Once `hub.models.predict.moments`'s interval is conformalised against the
+rolling window (#309), `CLAIMED_COV80` returns to **0.80**, stated as a **marginal** claim the
+construction asserts. The 2026-09-13 decision -- *the claim is what it covers* -- was right for
+a parametric interval nothing made cover 80; conformalisation changes the kind, and a gate that
+can only restate its own label is not a decision ([ADR-0015](adr/0015-the-weekly-gate-is-a-decision-not-an-accuracy-test.md)).
+
+**Why marginal is not the whole claim.** On the artifact of 2026-09-13 the full board of
+16,061 player-weeks covers **0.798** -- a restored marginal 80 passes *today* -- while the
+smallest position group (QB, n = 1,862) covers **0.757**, 3.3 standard errors under 0.80 at the
+honest SE below. Conformal coverage is marginal; the audit's finding is conditional. So #309
+calibrates within position (Mondrian), and a conditional bar is stated beside the marginal one.
+
+**The gate.**
+
+- **The verdict is the full-history gate, 2021 to the current season, taken once per audit.**
+  A gate read weekly on accumulating rows is a sequential test -- eighteen looks a season on
+  one hypothesis -- and "went red in week 6" is then the most likely outcome whether or not
+  anything is wrong. **Three looks per claim-life, alpha spent across them** (0.0167 a look,
+  z = 2.394). A claim that outlives its three looks is a restatement trigger.
+- **Marginal: 80 +/- 2 on the whole board.** Runnable: MDE 0.014 on 16,061.
+- **Per position: the 95% interval at sqrt(2) x the binomial SE contains 0.80.** The sqrt(2)
+  is the calibration draw's share: with the window re-made each step, the walk's ~90/W
+  independent calibration draws of size rW contribute variance 0.16/N, equal to the test
+  binomial's, whatever the window. The MDE is printed beside each group. **A group returns a
+  verdict only at N >= 8,377 player-weeks** -- Delta = 0.02, the band itself: the smallest
+  miss the bar must be able to see is one just large enough to be unacceptable, so Delta is
+  derived from the rule and not from the miss that was found; (2.394 + 0.8416)^2 x 0.32 /
+  0.02^2 = 8,377, group-independent because the variance is taken under p = 0.80. Below it
+  the group **reports its deviation and its sigma** and says it cannot yet rule. In year one
+  that is every position group; QB at ~372 a season is decades out.
+- **This NOT-RUNNABLE is not the harmful case rule 16 was written on.** Nothing ships on the
+  conditional verdict: the marginal gate is runnable and binds, and QB's 3.3 sigma is printed
+  regardless. NOT-RUNNABLE means no verdict, not invisible. If that reads as too weak, the
+  remedy is a better-powered conditional estimand, never a wider Delta.
+- **The weekly run reports and never gates.** This supersedes **#273's statistical role, not
+  its purpose**: #273 made the slate step fail the run so the verdict could not go unread; a
+  verdict read weekly is a sequential test. What stays in the weekly step is a **smoke alarm**
+  the run still fails on -- marginal coverage outside +/- 10 points (eight MDEs; it cannot fire
+  on drift or noise, only on a broken pipeline) or any group reporting zero calibration rows.
+- **Exchangeability.** Conformal's guarantee holds under exchangeability, which weekly
+  football violates -- injuries, role changes, shift across a season -- so rolling conformal
+  gives approximate coverage. *A miss is evidence about the shift before it is evidence about
+  the construction.* A group below #309's calibration floor (n_cal >= 200) runs on pooled
+  calibration and is not testing the conditional claim; the report says so.
+
+**What this outcome is.** After all of it, the marginal claim is the only thing in the coverage
+layer that gets a verdict this season, and the conditional bar's job is to report QB honestly
+and say it cannot yet rule. That is thinner than #310 set out to build, and **the thinness was
+chosen**: the alternative was a bar that fires on calibration luck and is read as a finding.
 
 ## Restated 2026-09-13: the interval labelled 80% covers 77%, and that is now the claim
 
