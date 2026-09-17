@@ -181,10 +181,11 @@ def team_games(rows: pl.DataFrame) -> pl.DataFrame:
 
 
 def unreadable_games(rows: pl.DataFrame) -> int:
-    """Team-games a one-sided blank made unreadable: entries `_schedule`'s full row set
-    carries for a team that `team_games` has no row for, because that side's qb, value or
-    adjustment was null. Reported on the run line so a hole is counted, not silently closed
-    over the way the previous-game link used to close it (#301)."""
+    """Team-games a blank side made unreadable: entries `_schedule`'s full row set carries
+    for a team that `team_games` has no row for, because that side's qb, value or adjustment
+    was null. Counts both sides of a two-sided blank, one each, alongside every one-sided
+    blank's single side (#328). Reported on the run line so a hole is counted, not silently
+    closed over the way the previous-game link used to close it (#301)."""
     return _schedule(rows).height - team_games(rows).height
 
 
@@ -213,10 +214,13 @@ def events(starters: pl.DataFrame) -> pl.DataFrame:
     `starters` is one row per (team, game) with `game_id`, `season`, `week`, `team`, `qb` --
     `team_games` or `starters_from_pbp` -- ordered within a team by season and week. The
     departing starter is the last row with a known starter, the arriving one this row's; a
-    team's first known row has nothing to differ from and is never an event. Where the frame
-    carries `value`, `adj` and `date` (the source's rows do), the ex-ante values ride along:
-    the departing starter's value off his last known start, the arriving starter's value and
-    adjustment off the event row, and `gap`, arriving minus departing.
+    team's first known row has nothing to differ from and is never an event. `departing_game_id`
+    and `departing_season` name *that* row -- the departing starter's own last known game, not
+    necessarily the team's immediately previous one -- so `in_season` and any other reader can
+    be stated on it without re-deriving it. Where the frame carries `value`, `adj` and `date`
+    (the source's rows do), the ex-ante values ride along: the departing starter's value off
+    his last known start, the arriving starter's value and adjustment off the event row, and
+    `gap`, arriving minus departing.
 
     `prev_game_id`, `prev_season` and `prev_date` -- the ancestor `frozen_before` prices off
     -- are the team's *actual* previous game, never the previous row that happens to survive
@@ -224,18 +228,27 @@ def events(starters: pl.DataFrame) -> pl.DataFrame:
     off the full schedule, both sides, before either is filtered for blanks), they are read
     straight off it rather than re-derived from whichever rows survived. A frame with no such
     columns (`starters_from_pbp`'s, which has no one-sided blanks to lose a game to) falls
-    back to the previous surviving row, the way this function derived them for every caller
-    before #301. `in_season` is whether that previous game was the same season, and a change
-    across the offseason is flagged rather than dropped so it can be counted as censored.
+    back to the previous surviving row -- the same row `departing_game_id` names there, since
+    with no full-schedule link the two coincide.
+
+    `in_season` is whether the *departing starter's own* last known game was the same season
+    as this one -- not whether the team's immediately previous game (`prev_season`) was,
+    which can differ across a one-sided blank that itself spans the season boundary (#328): a
+    blank week-1 row behind an offseason starter is still an ancestor of week 2 for pricing,
+    but it is not evidence the change happened in-season, and the data cannot say whether it
+    did. Such a change is flagged rather than counted, the same way an ordinary offseason
+    change is.
     """
     has_link = {"prev_game_id", "prev_season", "prev_date"}.issubset(starters.columns)
     carried = [c for c in ("date", "value", "adj") if c in starters.columns]
-    shift_cols = ["qb", *carried] if has_link else ["qb", "game_id", "season", *carried]
+    shift_cols = ["qb", "game_id", "season", *carried]
     # Every shifted column in one pass, *before* the rows that are not events are dropped:
     # shifted after the filter, "the previous row" is the previous event and not the
     # previous game, and the departing starter's value is another change's.
     prev = {c: pl.col(c).shift(1).over("team") for c in shift_cols}
-    shifted = [prev["qb"].alias("departing"), pl.col("qb").alias("arriving")]
+    shifted = [prev["qb"].alias("departing"), pl.col("qb").alias("arriving"),
+               prev["game_id"].alias("departing_game_id"),
+               prev["season"].alias("departing_season")]
     if not has_link:
         shifted += [prev["game_id"].alias("prev_game_id"), prev["season"].alias("prev_season")]
         if "date" in carried:
@@ -249,9 +262,10 @@ def events(starters: pl.DataFrame) -> pl.DataFrame:
                    .with_columns(shifted)
                    .filter(pl.col("departing").is_not_null()
                            & (pl.col("arriving") != pl.col("departing")))
-                   .with_columns((pl.col("season") == pl.col("prev_season")).alias("in_season")))
-    keep = ["game_id", "season", "week", "team", "departing", "arriving", "prev_game_id",
-            "prev_season", "in_season"]
+                   .with_columns(
+                       (pl.col("season") == pl.col("departing_season")).alias("in_season")))
+    keep = ["game_id", "season", "week", "team", "departing", "arriving", "departing_game_id",
+            "departing_season", "prev_game_id", "prev_season", "in_season"]
     keep += [c for c in ("date", "prev_date", "departing_value", "arriving_value", "gap",
                          "arriving_adj") if c in out.columns]
     return out.select(keep)
@@ -711,8 +725,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     for line in _event_lines(ev, games, a.since):
         print(line)
     unreadable = unreadable_games(since_rows)
-    print(f"  {unreadable} team-game(s) since {a.since} a one-sided blank made unreadable "
-          f"(that side dropped; the previous-game link is still built off the full schedule)")
+    print(f"  {unreadable} team-game(s) since {a.since} a blank side made unreadable (that "
+          f"side dropped; the previous-game link is still built off the full schedule)")
 
     polls = archive(a.season, a.store)
     if polls.is_empty():
