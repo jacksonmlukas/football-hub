@@ -466,6 +466,59 @@ the code; this rule is about a test that proves the code on nothing.
 fixture contain it? If the answer is a special case where the code is right by construction,
 the test is coverage, not evidence.
 
+> **Discharged 2026-09-16, in `quarterback.py`, and not generalised (audit IV).** The incident
+> above is fixed — `hub.models.quarterback` no longer collapses to the right answer by algebra
+> on the fixture's one input — but the rule was applied to the module that failed it and no
+> further. Mutation testing the same afternoon, run against an unmodified copy of the tree,
+> found the identical failure shape in the modules next to it: **seven of fourteen mutants
+> survive in `starter_change.py`** and **three of ten survive in `pool.py`**, and every
+> surviving mutant is a fixture that never constructs the case the mutation needs — the
+> Eastern-conversion mutant with every captured game on the same calendar date in both zones,
+> the NOT-RUNNABLE guard mutant with `_paired` held constant so the bootstrap never has width,
+> `share_sd` scaled without a fixture at more than one trial count catching it. Rule 15 stands
+> as a rule; it has one module where it is evidence and two more where it is still a claim.
+
+### 16. A gate that cannot return a verdict is not a bar, it is an exemption — and it must be named as one in the pre-registration that created it
+
+**A NOT-RUNNABLE branch that can never leave NOT-RUNNABLE is not a bar with an edge case; it is
+a standing licence, and a pre-registration that does not say so is granting the licence by
+omission.** Writing a gate down before the numbers only does its job if every branch the gate
+can actually reach is named — including the branch that, at this project's pace, is every
+branch it will ever reach.
+
+**The incident (#291, #300).** The quarterback adjustment's log-loss gate was pre-registered
+on 2026-09-13 with four branches — ADOPT, REMOVE, SHOW, NOT-RUNNABLE — and its own power
+calculation, run the same day, put a verdict in the 2050s: **29 event-seasons at 80% power**
+against the pilot's target, at a pace of one event-season a year. The pre-registration pulled
+the component out of `ratings` and `survivor` on every branch the gate could reach except the
+one branch it was actually going to take. A NOT-RUNNABLE print every season for three decades
+is not an absence of evidence the way rule 12 means it; it is the only outcome the gate was
+ever going to produce, and nothing in the pre-registration said so — the module stayed
+published on a branch nobody had named as the reason it could.
+
+**The fix.** #300 did not lower the bar or invent a shortcut around the power calculation. It
+moved the ADOPT condition to the estimand one season of this poller can already resolve — the
+line-move coefficient from #221's study, sign and magnitude against 0.132, season-clustered
+once two seasons exist, both already built and already pre-registered — and demoted the
+log-loss gate to a diagnostic beside it. The NOT-RUNNABLE branch is unchanged; what changed is
+that the amendment names it: the precondition *"was never, and is not now, a condition on the
+module's ADOPT or REMOVE status"* — a branch this gate cannot leave decides neither
+(`docs/gate-power.md`, *Amended 2026-09-17 (#300) — demoted to a diagnostic, and NOT-RUNNABLE
+is named an exemption*).
+
+**Where the rule lives in code.** `hub.models.experiment.gate` itself did not move — its
+NOT-RUNNABLE branch was already correct per rule 12, printing no verdict where none is earned.
+What moved is the pre-registration text around it: the amendment in `docs/gate-power.md` now
+states, next to the branch, which decisions it is and is not allowed to make, instead of
+leaving a reader to infer the exemption from watching the branch never change for thirty
+seasons.
+
+**What to ask before a gate ships.** Run the gate's own power calculation before the
+pre-registration is written down, not after the first NOT-RUNNABLE print. If the answer puts a
+verdict past a horizon this project will see, the pre-registration must say which branch is
+actually reachable and name the rest exemptions — not leave a module's published status resting
+on a branch that was never going anywhere else.
+
 ---
 
 ## The record
