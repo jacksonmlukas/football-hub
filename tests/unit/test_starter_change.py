@@ -309,6 +309,31 @@ def test_the_oracle_arm_knows_the_arriving_starter_and_is_reported_beside_the_ga
     assert row["oracle_diff"] != pytest.approx(row["diff"])
 
 
+def test_a_game_whose_opponent_has_no_prior_state_is_excluded_not_zeroed():
+    """The gate guards on `adjusted_by`, the adjustment's own marker, never on the moved
+    spread column: `quarterback.apply` leaves that column at the frozen price -- unmoved,
+    and therefore never null -- on a game it did not touch. A's week-2 change is a genuine
+    in-season event, but its opponent Z has no row anywhere before that week, so the shipped
+    state has nothing to price Z with and `apply` needs both sides: the whole game goes
+    untouched. The old not-null filter on the spread column let a game like this through at
+    a manufactured zero difference and inflated n; guarding on the marker excludes it."""
+    rows_ = source_rows([
+        ("2026-09-06", 2026, "1.0", "A", "B", "a1", "b1", 100.0, 90.0, 5.0, 3.0,
+         20, 10, .55, .58),
+        ("2026-09-13", 2026, "2.0", "A", "Z", "a2", "z1", 130.0, 95.0, 40.0, 4.0,
+         17, 24, .60, .70),
+    ])
+    tg = sc.team_games(rows_)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    assert games.height == 1                                   # A's week-2 change: the only event
+    store_archive = polls([
+        ("2026_02_Z_A", 2.0, utc(5), 2),      # before frozen_before (09-06): the frozen price
+        ("2026_02_Z_A", -1.0, utc(10), 2),    # before the game day (09-13): the close
+    ])
+    paired = sc.gate_rows(store_archive, games, tg, rows_)
+    assert paired.is_empty()
+
+
 def test_the_rule_reads_the_shipped_arm_and_never_the_oracle(tmp_path):
     """Three seasons where the oracle would ADOPT and the shipped arm loses everywhere: the
     verdict is the shipped arm's."""
@@ -389,6 +414,19 @@ def test_no_rows_is_not_runnable_with_zero_event_seasons(tmp_path):
     assert run.verdict[0] == "NOT-RUNNABLE" and "0 event-season" in run.verdict[1]
 
 
+def test_not_runnable_publishes_no_interval_and_records_no_width(tmp_path):
+    """The three-season floor is applied before the summary, the house verdict, the width
+    history and the rendered lines -- not applied to the house verdict alone after they have
+    already run. An underpowered run's `lines` are empty (no CI, no MDE, no ceiling check,
+    no stamp) and nothing is written to the width file even though this call asks to record
+    one, because a run that publishes no interval has no width to keep."""
+    width_path = tmp_path / "w.json"
+    run = sc.run(_paired([2026, 2027]), needed=31, width_path=width_path, record_width=True)
+    assert run.verdict[0] == "NOT-RUNNABLE"
+    assert run.lines == []
+    assert not width_path.exists()
+
+
 # --- the study ---------------------------------------------------------------------------
 
 
@@ -449,6 +487,36 @@ def test_the_study_mde_before_the_run_is_stated_from_the_events_gap_spread():
                                  * 0.4 * math.sqrt(7.0) / (70.0 * math.sqrt(53)), abs=1e-4)
 
 
+def test_the_noise_floor_excludes_quarterback_change_intervals_like_214():
+    """#214's own floor (`hub.fetch.odds.noise_floor_report`'s "floor" line) excludes frozen
+    lookaheads and quarterback-change intervals, both computed off a starters frame handed
+    to `odds.line_moves`. The study rebuilt the frozen exclusion but not the second one, so
+    an interval a starter change moved was counted as noise. `noise_floor_per_root_day`
+    builds that same starters frame off this module's own team-game rows -- `date`, `team`,
+    `qb` -- and hands it to the same call #214's report makes, rather than re-deriving what
+    "changed" means. DAL-PHI's only interval spans a real chart change and drops out; KC-LAC
+    and SF-SEA do not change and survive."""
+    tue = dt.datetime(2026, 8, 25, 4, 58)
+    thu = dt.datetime(2026, 8, 28, 2, 1)
+    g1, g2, g3 = "2026_01_DAL_PHI", "2026_01_KC_LAC", "2026_01_SF_SEA"
+    tg = pl.DataFrame({
+        "date": ["2026-08-01"] * 6 + ["2026-08-26"],
+        "team": ["PHI", "DAL", "KC", "LAC", "SF", "SEA", "DAL"],
+        "qb": ["qb-phi", "qb-dal-1", "qb-kc", "qb-lac", "qb-sf", "qb-sea", "qb-dal-2"]})
+    polls_ = pl.DataFrame({
+        "game_id": [g1, g1, g2, g2, g3, g3],
+        "close_spread": [-3.0, -3.5, -3.0, -3.5, 1.0, 1.5],
+        "captured_at": [tue, thu, tue, thu, tue, thu],
+        "week": [1, 1, 1, 1, 1, 1]},
+        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                "captured_at": pl.Datetime("us"), "week": pl.Int64})
+    floor, floor_games = sc.noise_floor_per_root_day(polls_, tg)
+    assert floor_games == 2                            # DAL-PHI's interval spans the change
+    assert math.isfinite(floor)
+    _unconditioned, unconditioned_games = sc.noise_floor_per_root_day(polls_, None)
+    assert unconditioned_games == 3                     # the condition not applied at all
+
+
 # --- the entry point ---------------------------------------------------------------------
 
 
@@ -468,6 +536,30 @@ def test_the_cli_reads_the_cache_and_the_store_and_reports_the_counts(tmp_path, 
     assert "2026: 2 changes on 2 event games" in out
     assert "NOT-RUNNABLE" in out and "0 event-season" in out
     assert "no snapshot archive" in out
+
+
+def test_the_cli_ceiling_flag_defaults_on_and_no_ceiling_turns_it_off(tmp_path, monkeypatch,
+                                                                        rows):
+    """`run()`'s own keyword default is `ceiling=True` -- stage 2 on -- but until #302 the
+    CLI's own `--ceiling` was `store_true` and defaulted to False, so the documented
+    invocation (`--events --gate --study`, with no `--ceiling`) shipped with stage 2 off no
+    matter what `run` itself defaulted to: the tested configuration was never the shipped
+    one. `--ceiling` is a `BooleanOptionalAction` now, on unless `--no-ceiling` is given, so
+    the flag that reaches `run` is what the usage line's absence of `--ceiling` implies."""
+    cache = tmp_path / "nfeloqb"
+    cache.mkdir()
+    rows.write_csv(cache / nfeloqb.FILE)
+    seen: list[bool] = []
+
+    def fake_run(paired, *, needed, ceiling=True, width_path=None, record_width=False):
+        seen.append(ceiling)
+        return experiment.GateRun({}, pl.DataFrame(), ("SHOW", "stub"), [], pl.DataFrame())
+
+    monkeypatch.setattr(sc, "run", fake_run)
+    store_path = str(tmp_path / "store")
+    assert sc.main(["--gate", "--cache", str(cache), "--store", store_path]) == 0
+    assert sc.main(["--gate", "--no-ceiling", "--cache", str(cache), "--store", store_path]) == 0
+    assert seen == [True, False]
 
 
 def test_the_cli_without_a_cache_is_a_sentence_not_a_traceback(tmp_path, capsys):
@@ -524,8 +616,10 @@ def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, c
         store.write(part.drop("week"), "lines", "nfl", 2026, int(week[0]), name="t",
                     base=base)
     monkeypatch.setattr(experiment, "WIDTH_STATE", tmp_path / "w.json")
-    code = sc.main(["--gate", "--ceiling", "--study", "--cache", str(cache), "--store",
-                    str(base)])
+    # --ceiling is on by default since #302; passed explicitly here only because this test
+    # also pins --since to collapse the assembled range to the one season the fixture has.
+    code = sc.main(["--gate", "--ceiling", "--study", "--since", "2026", "--cache", str(cache),
+                    "--store", str(base)])
     out = capsys.readouterr().out
     assert code == 0
     assert "archive: 3 games" in out
@@ -535,6 +629,52 @@ def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, c
     assert "NOT-RUNNABLE" in out
     assert "coefficient:" in out and "n=2 event games" in out
     assert "change-point: seen on" in out
+
+
+def test_the_cli_assembles_every_season_from_since_through_season(tmp_path, capsys,
+                                                                    monkeypatch, rows):
+    """Until #302 `main` read a single season's archive (`--season` alone) and filtered
+    `games` to it, so the gate could never see more than one event-season no matter how many
+    the caches held (`docs/gate-power.md`'s three-season floor was unreachable through the
+    CLI). `--since` through `--season` is now the range `main` assembles: a second season's
+    archive, disjoint from the fixture's 2026 one, folds into the same run's polls."""
+    from hub import store
+
+    cache = tmp_path / "nfeloqb"
+    cache.mkdir()
+    rows.write_csv(cache / nfeloqb.FILE)
+    base = tmp_path / "store"
+    lines = ARCHIVE.with_columns(pl.lit("nfl").alias("league"), pl.lit(2026).alias("season"))
+    for week, part in lines.group_by("week"):
+        store.write(part.drop("week"), "lines", "nfl", 2026, int(week[0]), name="t", base=base)
+    extra = pl.DataFrame({
+        "game_id": ["2025_01_BB_AA"], "close_spread": [1.0],
+        "captured_at": [dt.datetime(2025, 9, 1, 16)], "week": [1]},
+        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                "captured_at": pl.Datetime("us"), "week": pl.Int64}
+    ).with_columns(pl.lit("nfl").alias("league"), pl.lit(2025).alias("season"))
+    store.write(extra.drop("week"), "lines", "nfl", 2025, 1, name="t", base=base)
+    monkeypatch.setattr(experiment, "WIDTH_STATE", tmp_path / "w.json")
+    code = sc.main(["--gate", "--since", "2025", "--season", "2026", "--cache", str(cache),
+                    "--store", str(base)])
+    out = capsys.readouterr().out
+    assert code == 0
+    # 3 game ids from the 2026 archive plus the one from 2025's: both seasons folded in.
+    assert "archive: 4 games" in out
+    assert "2025" in out and "2026" in out
+
+
+def test_the_cli_refuses_when_season_is_before_since(tmp_path, capsys, rows):
+    """A range with nothing in it -- `--season` behind `--since` -- is refused with the
+    reason stated, not silently run on an empty or inverted range."""
+    cache = tmp_path / "nfeloqb"
+    cache.mkdir()
+    rows.write_csv(cache / nfeloqb.FILE)
+    code = sc.main(["--gate", "--since", "2027", "--season", "2026", "--cache", str(cache),
+                    "--store", str(tmp_path / "store")])
+    assert code != 0
+    err = capsys.readouterr().err
+    assert "--since" in err and "--season" in err
 
 
 def test_the_cli_with_no_reader_asked_for_prints_usage(capsys):

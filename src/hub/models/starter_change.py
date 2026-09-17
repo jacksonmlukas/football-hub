@@ -400,14 +400,19 @@ def _results(tg: pl.DataFrame) -> pl.DataFrame:
 
 def _moved(part: pl.DataFrame, state: pl.DataFrame, name: str) -> pl.DataFrame:
     """`quarterback.apply` over one week's event games, labelled `stale`, priced from the
-    frozen line, with `state`; the moved spread comes back as `<name>` and the points added
-    as `<name>_adjustment`."""
+    frozen line, with `state`; the moved spread comes back as `<name>`, the points added as
+    `<name>_adjustment`, and `apply`'s own marker as `<name>_by` -- null on a game `apply`
+    did not touch (either side missing from `state`) and the source's name on one it did.
+    `<name>` itself is never null either way: `apply` leaves it at the frozen price, unmoved,
+    on a game it did not touch, which is why a reader asking "did this move" reads the
+    marker and not the spread."""
     games = part.select(pl.col("game_id"), pl.col("home_team"), pl.col("away_team"),
                         pl.col("frozen").alias("close_spread"),
                         pl.lit("stale").alias("price_source"))
     moved = quarterback.apply(games, state)
     return part.join(moved.select(pl.col("game_id"), pl.col("close_spread").alias(name),
-                                  pl.col("qb_adjustment").alias(f"{name}_adjustment")),
+                                  pl.col("qb_adjustment").alias(f"{name}_adjustment"),
+                                  pl.col("adjusted_by").alias(f"{name}_by")),
                      on="game_id", how="left")
 
 
@@ -462,13 +467,22 @@ def gate_rows(polls: pl.DataFrame, games: pl.DataFrame, tg: pl.DataFrame,
     before the game day -- what the betting market's own repricing recovered, the declared
     ceiling arm. All on the home result, ties 0.5, through `MarketBaseline`'s conversion.
     `rows` are the source's rows the shipped seam builds its state from.
+
+    **The not-null guard is on `adjusted_by` and `oracle_by`, the adjustment's own markers,
+    never on `adjusted` or `oracle` themselves.** `quarterback.apply` leaves the spread
+    column at the frozen price -- unmoved, and therefore never null -- on a game it did not
+    touch, so a game whose team has no prior row in the state (a debut, or a name the source
+    never carries before this week) used to survive this filter and enter at a manufactured
+    zero difference, inflating n and shrinking both the mean and the clustered sd. The
+    marker is null exactly where `apply` did not touch the row, on either arm, so excluding
+    on it drops the game rather than counting it as no effect.
     """
     have = priced(polls, games).filter(~pl.col("censored") & pl.col("close").is_not_null())
     have = have.join(_results(tg).select("game_id", "y"), on="game_id", how="inner")
     if have.is_empty():
         return pl.DataFrame(schema=PAIRED_SCHEMA)
-    have = _adjusted(have, rows, tg).filter(pl.col("adjusted").is_not_null()
-                                            & pl.col("oracle").is_not_null())
+    have = _adjusted(have, rows, tg).filter(pl.col("adjusted_by").is_not_null()
+                                            & pl.col("oracle_by").is_not_null())
     diff, oracle, ceiling = [], [], []
     for r in have.iter_rows(named=True):
         base = _log_loss(_home_prob(r["frozen"]), r["y"])
@@ -525,32 +539,44 @@ def event_seasons_needed(target: float, season_sd: float, *, cap: int = 100) -> 
 
 def run(paired: pl.DataFrame, *, needed: int | None, ceiling: bool = True,
         width_path: Path | None = None, record_width: bool = False) -> experiment.GateRun:
-    """One gate run through `experiment.run_gate`, then the pre-registered precondition:
-    fewer than `EVENT_SEASONS_MINIMUM` event-seasons is NOT-RUNNABLE ahead of the house
-    rule, and the sentence names the count the pilot says is needed. `ceiling` hands the
-    declared arm's rows to the rule so stage 2 can fire."""
-    arm = (experiment.Ceiling(CEILING_ARM, paired["ceiling"].to_numpy())
-           if ceiling and "ceiling" in paired.columns and paired.height else None)
-    got = run_gate(
-        paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="quarterback_gate",
-        arm_a="the frozen line", arm_b="quarterback-adjusted", unit="log-loss per event game",
-        places=4, ceiling=arm,
-        width_path=width_path if width_path is not None else experiment.WIDTH_STATE,
-        record_width=record_width)
+    """The pre-registered precondition first, then -- only if it clears -- one gate run
+    through `experiment.run_gate`. `ceiling` hands the declared arm's rows to the rule so
+    stage 2 can fire.
+
+    **Fewer than `EVENT_SEASONS_MINIMUM` event-seasons is NOT-RUNNABLE ahead of the summary,
+    the house verdict, the width history and the rendered lines -- not a verdict string
+    swapped in after they have already run.** `run_gate` bootstraps an interval, decides
+    ADOPT/REMOVE/SHOW, renders the CI and the stamp, and writes this run's width into
+    `width_path` as a side effect of being called at all; computing any of that from an
+    underpowered frame and then only replacing the verdict sentence would publish the
+    interval it exists to keep unpublished and record a width history entry for a run with
+    no license to have one. So the count is read directly off `paired` and, below the
+    minimum, `run_gate` is never called: the verdict is NOT-RUNNABLE, `lines` is empty, and
+    nothing is written to `width_path`.
+    """
     k = paired["season"].n_unique() if paired.height else 0
-    if got.verdict[0] not in ("VOID", "NOT-RUNNABLE") and k < EVENT_SEASONS_MINIMUM:
+    if k < EVENT_SEASONS_MINIMUM:
         need = (f"the pilot says {needed} event-seasons are needed at 80% power"
                 if needed is not None else "the pilot cannot say how many event-seasons are "
                                            "needed (no spread across seasons yet)")
-        got = got._replace(verdict=(
+        verdict = (
             "NOT-RUNNABLE",
             f"NOT RUNNABLE: {k} event-season(s) in the archive against a pre-registered "
             f"minimum of {EVENT_SEASONS_MINIMUM} (ADR-0019: no gate runs at fewer than three "
             f"seasons); {need}. No verdict is read. Since #300 this diagnostic's NOT-RUNNABLE "
             f"is an exemption from firing below the minimum, not a bar to the module's ADOPT "
             f"condition, which is #221's line-move coefficient (docs/qb-adjustment.md); this "
-            f"is not-runnable, not a null."))
-    return got
+            f"is not-runnable, not a null.")
+        return experiment.GateRun(summary={}, seasons=pl.DataFrame(), verdict=verdict,
+                                  lines=[], stamped=paired)
+    arm = (experiment.Ceiling(CEILING_ARM, paired["ceiling"].to_numpy())
+           if ceiling and "ceiling" in paired.columns and paired.height else None)
+    return run_gate(
+        paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="quarterback_gate",
+        arm_a="the frozen line", arm_b="quarterback-adjusted", unit="log-loss per event game",
+        places=4, ceiling=arm,
+        width_path=width_path if width_path is not None else experiment.WIDTH_STATE,
+        record_width=record_width)
 
 
 # --- the study --------------------------------------------------------------------------------
@@ -680,13 +706,31 @@ def archive(season: int, base: Path | None) -> pl.DataFrame:
     return got.with_columns(pl.col("week").cast(pl.Utf8).cast(pl.Int64)).select(*schema)
 
 
-def noise_floor_per_root_day(polls: pl.DataFrame) -> tuple[float, int]:
-    """#214's floor per root-day off this archive, frozen lookaheads excluded, and the games
-    it rests on; NaN and zero with nothing to measure."""
+def noise_floor_per_root_day(polls: pl.DataFrame,
+                             tg: pl.DataFrame | None = None) -> tuple[float, int]:
+    """#214's own same-quarterback floor per root-day, computed the way
+    `hub.fetch.odds.noise_floor_report` computes its "floor" line -- not re-derived: frozen
+    lookaheads excluded first, then intervals `odds.line_moves` marks `same_qb` false or
+    unknown, off a starters frame (`dt`, `team`, `qb`) handed to that same call. The
+    starters frame here is built off `tg` -- this module's own team-game rows, `date` as
+    `dt` -- rather than a fetched depth chart, so the condition applies with no network and
+    nothing here re-derives what "changed" means. With no `tg` (or an empty one) the
+    condition is not applied, the same degradation `noise_floor_report` prints when its own
+    chart fetch fails, and the floor is over every live interval regardless of the
+    quarterback. NaN and zero with nothing left to measure either way.
+    """
     if polls.is_empty():
         return float("nan"), 0
-    moves = odds.line_moves(odds.staleness(polls))
+    starters = None
+    if tg is not None and not tg.is_empty():
+        starters = (tg.select(pl.col("date").str.to_datetime("%Y-%m-%d").alias("dt"),
+                              pl.col("team"), pl.col("qb"))
+                      .drop_nulls()
+                      .sort("dt"))
+    moves = odds.line_moves(odds.staleness(polls), starters)
     live = moves.filter(~pl.col("frozen"))
+    if starters is not None:
+        live = live.filter(pl.col("same_qb"))
     if live.is_empty():
         return float("nan"), 0
     floor = odds.noise_floor(live, bootstrap=1)
@@ -719,18 +763,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--events", action="store_true", help="count the events per season")
     ap.add_argument("--gate", action="store_true",
                     help="run the pre-registered gate on the archive's event games")
-    ap.add_argument("--ceiling", action="store_true",
-                    help=f"hand the rule the declared ceiling arm ({CEILING_ARM})")
+    ap.add_argument("--ceiling", action=argparse.BooleanOptionalAction, default=True,
+                    help=f"hand the rule the declared ceiling arm ({CEILING_ARM}); on by "
+                         f"default, the shipped configuration -- pass --no-ceiling to turn "
+                         f"stage 2 off (#302)")
     ap.add_argument("--study", action="store_true", help="run the line-move study")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD,
-                    help="the season whose snapshot archive is read (default SEASON_AHEAD)")
+                    help="the last season whose snapshot archive is read; every season from "
+                         "--since through this one is assembled into one run (default "
+                         "SEASON_AHEAD)")
     ap.add_argument("--since", type=int, default=2022,
-                    help="the first season the event counts and the pilot cover")
+                    help="the first season the event counts, the pilot cover, and the "
+                         "gate's archive assembles from")
     ap.add_argument("--cache", type=Path, default=None, help="the nfeloqb cache directory")
     ap.add_argument("--store", type=Path, default=None, help="the processed store")
     a = ap.parse_args(argv)
     if not (a.events or a.gate or a.study):
         ap.print_usage()
+        return 2
+    if a.season < a.since:
+        print(f"{PROG}: --season {a.season} is before --since {a.since}, so there is no "
+              f"season for the gate's archive to assemble", file=sys.stderr)
         return 2
 
     rows = nfeloqb.read_rows(a.cache)
@@ -747,17 +800,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  {unreadable} team-game(s) since {a.since} a blank side made unreadable (that "
           f"side dropped; the previous-game link is still built off the full schedule)")
 
-    polls = archive(a.season, a.store)
+    # #302: read every season's archive from --since through --season and concatenate,
+    # rather than only --season's -- with `games` filtered to match. A gate over one
+    # season's polls can never reach the three-season floor no matter how many the caches
+    # hold; assembling the whole asked-for range is what lets it.
+    seasons = list(range(a.since, a.season + 1))
+    parts = [archive(s, a.store) for s in seasons]
+    have_seasons = [s for s, p in zip(seasons, parts, strict=True) if not p.is_empty()]
+    polls = pl.concat(parts)
+    span = str(a.season) if a.since == a.season else f"{a.since}-{a.season}"
     if polls.is_empty():
-        print(f"  no snapshot archive for {a.season} here: the gate and the study have no "
+        print(f"  no snapshot archive for {span} here: the gate and the study have no "
               f"frozen price to read, and both are not established")
     else:
         print(f"  archive: {polls['game_id'].n_unique()} games, "
               f"{polls['captured_at'].n_unique()} polls, "
-              f"{polls['captured_at'].min():%Y-%m-%d} to {polls['captured_at'].max():%Y-%m-%d}")
-    season_games = games.filter(pl.col("season") == a.season)
+              f"{polls['captured_at'].min():%Y-%m-%d} to {polls['captured_at'].max():%Y-%m-%d}, "
+              f"{len(have_seasons)} of {len(seasons)} season(s) asked for have polls "
+              f"({', '.join(str(s) for s in have_seasons)})")
+    season_games = games.filter(pl.col("season").is_in(seasons))
     seen = priced(polls, season_games)
-    print(f"  {a.season}: {season_games.height} event games; "
+    print(f"  {span}: {season_games.height} event games; "
           f"{int(seen['censored'].sum())} censored (no snapshot before the change could be "
           f"known), {seen.filter(~pl.col('censored') & pl.col('close').is_not_null()).height} "
           f"with a frozen price and a pre-game one")
@@ -787,7 +850,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  {got.verdict[0]}: {got.verdict[1]}")
 
     if a.study:
-        floor, floor_games = noise_floor_per_root_day(polls)
+        floor, floor_games = noise_floor_per_root_day(polls, tg)
         used = floor if math.isfinite(floor) else 0.40
         gaps = in_season_events(ev)["gap"].drop_nulls().to_list()
         sd_gap = statistics.stdev(gaps) if len(gaps) > 1 else float("nan")
@@ -804,7 +867,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         fit = study_fit(rows_, floor_per_root_day=used)
         if rows_.is_empty():
             print(f"  coefficient: not established -- no uncensored event game with a frozen "
-                  f"and a pre-game price in the {a.season} archive")
+                  f"and a pre-game price in the {span} archive")
         else:
             seen_change = rows_["days_to_change"].drop_nulls()
             print(f"  coefficient: {fit['beta']:+.4f} points per value unit (se {fit['se']:.4f} "
