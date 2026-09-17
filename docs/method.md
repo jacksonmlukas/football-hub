@@ -501,9 +501,10 @@ moved the ADOPT condition to the estimand one season of this poller can already 
 line-move coefficient from #221's study, sign and magnitude against 0.132, season-clustered
 once two seasons exist, both already built and already pre-registered — and demoted the
 log-loss gate to a diagnostic beside it. The NOT-RUNNABLE branch is unchanged; what changed is
-that the amendment names it: *"the module's ADOPT or REMOVE status was never, and is not now,"*
-decided by a branch this gate cannot leave (`docs/gate-power.md`, *Amended 2026-09-17 (#300) —
-demoted to a diagnostic, and NOT-RUNNABLE is named an exemption*).
+that the amendment names it: the precondition *"was never, and is not now, a condition on the
+module's ADOPT or REMOVE status"* — a branch this gate cannot leave decides neither
+(`docs/gate-power.md`, *Amended 2026-09-17 (#300) — demoted to a diagnostic, and NOT-RUNNABLE
+is named an exemption*).
 
 **Where the rule lives in code.** `hub.models.experiment.gate` itself did not move — its
 NOT-RUNNABLE branch was already correct per rule 12, printing no verdict where none is earned.
