@@ -285,23 +285,35 @@ def _paired(seasons, n=6, diff=0.05):
 
 
 def test_fewer_than_three_event_seasons_is_not_runnable_and_names_the_count_needed(tmp_path):
-    """The first pre-registered precondition. The house rule is never read: a frame that
-    would ADOPT at three seasons is NOT-RUNNABLE at two, and the sentence carries the
-    event-season count the pilot says is needed."""
+    """The first pre-registered precondition, since #300 an exemption from this diagnostic
+    firing rather than a bar to the module's ADOPT condition (#221's coefficient). The house
+    rule is never read: a frame that would ADOPT at three seasons is NOT-RUNNABLE at two, and
+    the sentence carries the event-season count the pilot says is needed."""
     run = sc.run(_paired([2026, 2027]), needed=31, width_path=tmp_path / "w.json")
     assert run.verdict[0] == "NOT-RUNNABLE"
     assert "2 event-season" in run.verdict[1] and "31" in run.verdict[1]
+    assert "exemption" in run.verdict[1] and "#221" in run.verdict[1]
     enough = sc.run(_paired([2026, 2027, 2028]), needed=3, width_path=tmp_path / "w.json")
     assert enough.verdict[0] == "ADOPT"
 
 
-def test_the_verdict_names_the_pull_trigger_on_anything_but_adopt(tmp_path):
-    """SHOW is a failure of the house rule here, not a shrug: the arm is in the published
-    path on no verdict, so a null pulls it. The three sentences say so."""
+def test_the_verdict_names_itself_a_diagnostic_on_every_branch(tmp_path):
+    """Amended 2026-09-17 (#300): none of the gate's own branches license ADOPT or pull the
+    module -- #221's line-move coefficient does, and this gate is read beside it. The three
+    sentences say so, on ADOPT as much as on SHOW or REMOVE."""
     mixed = pl.concat([_paired([2026, 2027], diff=0.05), _paired([2028], diff=-0.05)])
-    run = sc.run(mixed, needed=3, width_path=tmp_path / "w.json")
-    assert run.verdict[0] == "SHOW"
-    assert "leaves" in run.verdict[1] and "harness" in run.verdict[1]
+    show = sc.run(mixed, needed=3, width_path=tmp_path / "w.json")
+    assert show.verdict[0] == "SHOW"
+    assert "Diagnostic only" in show.verdict[1] and "#221" in show.verdict[1]
+
+    adopt = sc.run(_paired([2026, 2027, 2028]), needed=3, width_path=tmp_path / "w.json")
+    assert adopt.verdict[0] == "ADOPT"
+    assert "Diagnostic only" in adopt.verdict[1] and "#221" in adopt.verdict[1]
+
+    remove = sc.run(_paired([2026, 2027, 2028], diff=-0.05), needed=3,
+                    width_path=tmp_path / "w.json")
+    assert remove.verdict[0] == "REMOVE"
+    assert "Diagnostic only" in remove.verdict[1] and "#221" in remove.verdict[1]
 
 
 def test_no_rows_is_not_runnable_with_zero_event_seasons(tmp_path):
