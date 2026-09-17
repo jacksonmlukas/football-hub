@@ -674,6 +674,49 @@ to the season at two seasons), and it does not touch `study_fit`, `study_mde` or
 estimator in `hub.models.starter_change` — #221 and #303 own the computation this section
 names a rule for.
 
+### Restated 2026-09-17 (#329) — the decidable rule
+
+The paragraph above is kept as written, per [method.md](method.md) rule 13. "Magnitude sits
+within reach of 0.132" was never decidable — a fitted coefficient of 0.09 on an interval of
+[0.02, 0.16]: within reach or not, and two readers answer differently — and that is method
+rule 1's incident, a rule documented but not implemented. #329 replaces it with the rule the
+maintainer's `ADOPTED:` comment names, implemented and unit-tested (every branch, including
+the losing ones) as `hub.models.starter_change.verdict()`.
+
+**The rule is non-inferiority against a lower bound, DELTA = 0.0075 points per value unit** —
+one half-point tick (the betting market's own resolution) on a one-sd starter change, gap sd 66.3
+value units over 231 in-season events 2022–2025 (the per-season table above: 80.4 / 62.2 /
+69.2 / 50.3 on n=62/61/51/57, summing to 231). DELTA is a constant, pre-registered here, never
+re-derived from the events under test — the containment form first drafted for #329 ("interval
+contains 0.132") is withdrawn: at one season the interval's half-width is narrow enough that
+containing 0.132 would mean a ±3% window around a constant borrowed from another construction,
+which a correct, useful coefficient would miss almost always and which rewards a *wider*
+interval.
+
+| branch | condition | consequence |
+|---|---|---|
+| **ADOPT** | the interval's lower bound exceeds DELTA | the route back opens: a ticket restores `quarterback.apply` to the published path with the `-qb` mark, the separate partition and the track-record split kept. |
+| **SHOW** | the interval excludes zero positively but its lower bound is at or below DELTA | a real effect too small to price (rule 8's gap below the ceiling). Stays harness-only; the run names what a second event-season's season-clustered MDE would resolve. |
+| **REMOVE** | the interval excludes zero on the negative side | a refutation: the route back closes, the module becomes an **Exhibit** under `hub.exhibits` per ADR-0007, the refuting measurement re-runnable, the module gone from `hub.models`. |
+| **NOT-RUNNABLE** | the MDE exceeds DELTA | no branch is read; the run names how many event games DELTA needs (`study_events_needed`). |
+
+**Restatement trigger, pre-registered:** the run prints the test events' own gap sd beside
+DELTA; per-season values to date are 80.4 / 62.2 / 69.2 / 50.3, and a value outside **50–85**
+flags the derivation for restatement — a print (`gap_sd_restatement_flag`), never a branch.
+Inside the band nobody decides anything.
+
+**0.132 is reported, never gated on:** printed beside the fitted coefficient as replication
+(the interval contains it), below, or above (`benchmark_reading`) — called from `main`, never
+from `verdict`, and it appears in none of the four branches above.
+
+**The NOT-RUNNABLE precondition is the same one *The MDE* above states:** an event count whose
+MDE exceeds DELTA reads no branch, the same stage-2 shape `experiment.gate` already uses
+(precondition 2 under *The bar*, above). Against DELTA, one event-season resolves it at the
+pilot's own numbers (MDE ≈ 0.0063, `docs/gate-power.md`'s *Pre-registered 2026-09-13* section);
+`study_events_needed` states the count for whatever spread the run at hand has, off the same
+`sd_gap` and `floor_window` `study_fit` produces, so the number the sentence names and the
+number that triggered NOT-RUNNABLE cannot be two numbers.
+
 ---
 
 # Measured 2026-09-13: the quarterback gate is not-runnable, and the archive needs about 29 event-seasons (#291)
