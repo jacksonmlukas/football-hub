@@ -487,6 +487,114 @@ def test_the_study_mde_before_the_run_is_stated_from_the_events_gap_spread():
                                  * 0.4 * math.sqrt(7.0) / (70.0 * math.sqrt(53)), abs=1e-4)
 
 
+def _fit(*, beta, se, n, sd_gap=float("nan"), floor_window=float("nan")):
+    """A `study_fit`-shaped summary built directly -- rule 15's fixture for a function whose
+    own input is a summary dict, not a frame `study_fit` would have to be driven through."""
+    return {"n": float(n), "beta": beta, "se": se,
+            "mde": experiment.minimum_detectable_effect(se, n), "benchmark": sc.BENCHMARK,
+            "t_vs_benchmark": (beta - sc.BENCHMARK) / se if se else float("nan"),
+            "sd_gap": sd_gap, "floor_window": floor_window}
+
+
+def test_verdict_adopts_when_the_lower_bound_clears_delta():
+    """n=10, se=0.002: the MDE clears delta (about 0.0062 against 0.0075) and beta=0.02 puts
+    the interval's lower bound, not the point estimate, above delta -- ADOPT reads the bound."""
+    fit = _fit(beta=0.02, se=0.002, n=10)
+    assert fit["mde"] < sc.DELTA
+    lo, _hi = sc.study_interval(fit)
+    assert lo > sc.DELTA
+    label, sentence = sc.verdict(fit)
+    assert label == "ADOPT"
+    assert f"{lo:+.4f}" in sentence
+    assert "route back opens" in sentence and "-qb mark" in sentence
+
+
+def test_verdict_shows_when_positive_but_the_lower_bound_does_not_clear_delta():
+    """Same n and se as the ADOPT fixture, beta lowered so the lower bound is positive but at
+    or below delta -- 'a real effect too small to price', the ADOPTED comment's own words."""
+    fit = _fit(beta=0.009, se=0.002, n=10)
+    assert fit["mde"] < sc.DELTA
+    lo, _hi = sc.study_interval(fit)
+    assert 0 < lo <= sc.DELTA
+    label, sentence = sc.verdict(fit)
+    assert label == "SHOW"
+    assert "too small to price" in sentence and "harness-only" in sentence
+
+
+def test_verdict_removes_when_the_interval_excludes_zero_negatively():
+    """Same n and se, beta negative enough that the whole interval sits below zero -- the
+    market moving the wrong way on a downgrade, REMOVE's own condition."""
+    fit = _fit(beta=-0.02, se=0.002, n=10)
+    assert fit["mde"] < sc.DELTA
+    _lo, hi = sc.study_interval(fit)
+    assert hi < 0
+    label, sentence = sc.verdict(fit)
+    assert label == "REMOVE"
+    assert "Exhibit" in sentence and "ADR-0007" in sentence and "hub.models" in sentence
+
+
+def test_verdict_is_not_runnable_when_the_mde_exceeds_delta_and_names_the_events_needed():
+    """A wide se (0.01 against 0.002 above) pushes the MDE above delta regardless of the point
+    estimate -- no branch reads the interval, and the sentence names the event games delta
+    needs, off the same sd_gap/floor_window `study_events_needed` itself reads."""
+    fit = _fit(beta=0.132, se=0.01, n=10, sd_gap=66.3, floor_window=0.4 * math.sqrt(7.0))
+    assert fit["mde"] > sc.DELTA
+    needed = sc.study_events_needed(fit["sd_gap"], fit["floor_window"])
+    assert needed is not None
+    label, sentence = sc.verdict(fit)
+    assert label == "NOT-RUNNABLE"
+    assert "No branch below is read" in sentence
+    assert str(needed) in sentence
+
+
+def test_verdict_is_not_runnable_with_no_usable_spread_and_says_so():
+    """No rows at all -- `study_fit`'s own n<2 shape, sd_gap and floor_window both NaN. The
+    sentence says the event count cannot be stated rather than printing a stale or NaN one."""
+    fit = _fit(beta=float("nan"), se=float("nan"), n=0)
+    label, sentence = sc.verdict(fit)
+    assert label == "NOT-RUNNABLE"
+    assert "cannot be stated from these inputs" in sentence
+
+
+def test_the_gap_sd_restatement_flag_is_silent_inside_the_band_and_fires_outside_it():
+    """50-85 inclusive, the band the per-season gap sds (50.3-80.4) DELTA was derived from
+    round out to; a value the pre-registration's own worked example would have flagged."""
+    assert sc.gap_sd_restatement_flag(66.3) is None
+    assert sc.gap_sd_restatement_flag(50.0) is None
+    assert sc.gap_sd_restatement_flag(85.0) is None
+    below = sc.gap_sd_restatement_flag(49.9)
+    above = sc.gap_sd_restatement_flag(85.1)
+    assert below is not None and "derivation flagged for restatement" in below
+    assert above is not None and "derivation flagged for restatement" in above
+
+
+def test_the_benchmark_reading_is_replication_below_or_above():
+    """Three fitted intervals against 0.132 -- containing it, entirely below, entirely above.
+    None of the three verdict sentences above (ADOPT/SHOW/REMOVE) mention 0.132: the reading
+    is informational and never part of the rule."""
+    assert (sc.benchmark_reading(0.132, 0.10, 0.16)
+            == "replication (the interval contains 0.132)")
+    assert sc.benchmark_reading(0.05, 0.02, 0.09) == "below 0.132"
+    assert sc.benchmark_reading(0.20, 0.15, 0.25) == "above 0.132"
+
+
+def test_study_events_needed_matches_the_mde_search_it_runs():
+    """Constructed against the search itself rather than a hardcoded n: the returned count's
+    own MDE clears delta and one fewer event game's does not."""
+    sd_gap, floor_window = 66.3, 0.4 * math.sqrt(7.0)
+    n = sc.study_events_needed(sd_gap, floor_window)
+    assert n is not None
+    se_n = floor_window / (sd_gap * math.sqrt(n))
+    se_prev = floor_window / (sd_gap * math.sqrt(n - 1))
+    assert experiment.minimum_detectable_effect(se_n, n) <= sc.DELTA
+    assert experiment.minimum_detectable_effect(se_prev, n - 1) > sc.DELTA
+
+
+def test_study_events_needed_is_none_with_no_usable_spread():
+    assert sc.study_events_needed(float("nan"), float("nan")) is None
+    assert sc.study_events_needed(0.0, 1.0) is None
+
+
 def test_the_noise_floor_excludes_a_change_the_chart_dates_between_the_polls():
     """#330: `starters` is the depth-chart frame `odds._qb_starters` returns -- `dt` the
     chart's own timestamp, published day by day through the week -- and never this module's
@@ -611,6 +719,12 @@ def test_the_cli_reads_the_cache_and_the_store_and_reports_the_counts(tmp_path, 
     assert "2026: 2 changes on 2 event games" in out
     assert "NOT-RUNNABLE" in out and "0 event-season" in out
     assert "no snapshot archive" in out
+    # #329: the study's own verdict, wired into the NOT-RUNNABLE path when it has no rows --
+    # `study_fit` on an empty frame hands `verdict` an MDE that is not finite, which is
+    # `verdict`'s own NOT-RUNNABLE condition rather than a case special-cased around it.
+    assert "coefficient: not established" in out
+    assert "NOT-RUNNABLE: NOT RUNNABLE:" in out
+    assert "cannot be stated from these inputs" in out
 
 
 def test_the_cli_ceiling_flag_defaults_on_and_no_ceiling_turns_it_off(tmp_path, monkeypatch,
@@ -714,6 +828,10 @@ def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, c
     assert "same-quarterback NOT applied for 2026" in out and "ConnectionError" in out
     assert "all-games floor, SAME-QUARTERBACK NOT APPLIED" in out
     assert "coefficient:" in out and "n=2 event games" in out
+    # #329: the study's verdict, wired in after the coefficient line -- two rows have almost
+    # no power, so the MDE exceeds delta and the branch is NOT-RUNNABLE, never the interval.
+    assert "0.132:" in out
+    assert "NOT-RUNNABLE: NOT RUNNABLE:" in out and "No branch below is read" in out
     assert "change-point: seen on" in out
 
 

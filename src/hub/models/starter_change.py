@@ -697,6 +697,160 @@ def study_fit(rows: pl.DataFrame, *, floor_per_root_day: float) -> dict[str, flo
             "sd_gap": sd_gap, "floor_window": floor_window}
 
 
+# --- the study's verdict (#329) -----------------------------------------------------------------
+
+# ADOPTED 2026-09-17 (#329; the maintainer's `ADOPTED:` comment on #300;
+# docs/gate-power.md's *Amended 2026-09-17 (#300) -- the ADOPT condition*). **Derivation**: the
+# smallest line-move coefficient worth pricing is one half-point tick (the betting market's own
+# resolution) on a one-sd starter change -- gap sd 66.3 value units over 231 in-season events
+# 2022-2025 (docs/gate-power.md's per-season table: 80.4 / 62.2 / 69.2 / 50.3 on n=62/61/51/57,
+# 62+61+51+57=231). 0.5 / 66.3 = 0.0075. DELTA is a constant, pre-registered here, never
+# re-derived from the events under test -- the restatement trigger below is what would move
+# it, and moving it is a print, never a silent recomputation.
+DELTA = not_an_input(
+    0.0075,
+    "the smallest line-move coefficient worth pricing (#329): one half-point tick on a "
+    "one-sd starter change, gap sd 66.3 value units over 231 in-season events 2022-2025 "
+    "(docs/gate-power.md)")
+
+# The band the per-season gap sds DELTA was derived from span, 50.3 to 80.4 (rounded out to
+# 50-85). A test archive's own gap sd outside it flags the derivation for restatement; inside
+# it nobody decides anything -- a print `main` makes beside DELTA, never a branch `verdict`
+# reads.
+GAP_SD_RESTATEMENT_BAND = not_an_input(
+    (50.0, 85.0),
+    "the restatement-trigger band DELTA's own per-season gap sds (50.3-80.4) were derived "
+    "from, rounded out (#329); a print beside DELTA, never a number a prediction reads")
+
+
+def gap_sd_restatement_flag(sd_gap: float) -> str | None:
+    """None when `sd_gap` falls inside `GAP_SD_RESTATEMENT_BAND`; otherwise the sentence
+    naming that DELTA's derivation should be restated (#329's pre-registered trigger). A
+    print the run makes beside DELTA and never a branch `verdict` reads."""
+    lo, hi = GAP_SD_RESTATEMENT_BAND
+    if not math.isfinite(sd_gap) or lo <= sd_gap <= hi:
+        return None
+    return (f"gap sd {sd_gap:.1f} value units is outside the {lo:.0f}-{hi:.0f} band delta "
+            f"was derived from -- derivation flagged for restatement")
+
+
+def study_events_needed(sd_gap: float, floor_window: float, *, cap: int = 500) -> int | None:
+    """The smallest n (event games) at which the coefficient's MDE is at or below DELTA -- the
+    same search `event_seasons_needed` runs for the gate's own seasons, here over event games
+    and off `study_fit`'s own `sd_gap` and `floor_window`, so the number `verdict`'s
+    NOT-RUNNABLE sentence names and the number this computes cannot be two numbers. None when
+    the inputs cannot support the search, or no n up to `cap` clears DELTA."""
+    if not (math.isfinite(sd_gap) and math.isfinite(floor_window)) or sd_gap <= 0:
+        return None
+    for n in range(2, cap + 1):
+        se = floor_window / (sd_gap * math.sqrt(n))
+        if experiment.minimum_detectable_effect(se, n) <= DELTA:
+            return n
+    return None
+
+
+def study_interval(fit: dict[str, float]) -> tuple[float, float]:
+    """The coefficient's interval at the season count `study_fit` was given: a t interval,
+    `t_quantile(0.975, n - 1)` margins on `fit['se']` -- the same reference
+    `minimum_detectable_effect` reads, so the interval and the MDE cannot disagree about what
+    distribution they are drawn from.
+
+    **At one event-season this is the game-level, floor-based SE `study_fit` returns.** The
+    season cluster once two event-seasons exist (docs/gate-power.md's *Amended
+    2026-09-17*): `study_fit` does not yet expose a season-clustered SE, so this function does
+    not build that clustering here -- it is named, not implemented; #221/#303 own the day it
+    is. NaN, NaN where the inputs cannot support a t interval (fewer than two rows).
+    """
+    n, se, beta = fit["n"], fit["se"], fit["beta"]
+    if n < 2 or not (math.isfinite(se) and math.isfinite(beta)):
+        return float("nan"), float("nan")
+    margin = experiment.t_quantile(0.975, int(n) - 1) * se
+    return beta - margin, beta + margin
+
+
+def benchmark_reading(beta: float, lo: float, hi: float) -> str:
+    """0.132 (`BENCHMARK`) read beside the fitted coefficient -- **reported, never gated on**
+    (docs/gate-power.md: *0.132 is reported, never gated on*): replication if the interval
+    contains it, otherwise below or above. Called from `main`, printed beside the coefficient
+    -- never read by `verdict`, and it appears in none of that function's branches."""
+    if math.isfinite(lo) and math.isfinite(hi) and lo <= BENCHMARK <= hi:
+        return "replication (the interval contains 0.132)"
+    if not math.isfinite(beta):
+        return "not established"
+    return "below 0.132" if beta < BENCHMARK else "above 0.132"
+
+
+def verdict(fit: dict[str, float]) -> tuple[str, str]:
+    """The study's own rule over `study_fit`'s coefficient (#329) -- **non-inferiority against
+    DELTA**, the machinery stage 2 (`experiment.gate`'s NOT-RUNNABLE precondition) already
+    uses. The *statistic* is shared (`study_fit`, `study_mde`); the *rule* is this function's
+    own (method.md rule 1, *Where the rule lives in code*) -- a verdict separate from the
+    log-loss gate's `run()` above, which has been a diagnostic since #300 and decides neither
+    ADOPT nor REMOVE for this module.
+
+    **NOT-RUNNABLE comes first, ahead of every branch**, exactly as `experiment.gate`'s stage 2
+    orders its own precondition: `fit['mde']` not finite (fewer than two rows) or exceeding
+    DELTA means the interval below is not read at all, and the sentence names how many event
+    games DELTA needs (`study_events_needed`, off `study_fit`'s own `sd_gap` and
+    `floor_window`, so it never disagrees with the MDE that triggered it).
+
+    Past that gate, `study_interval` decides among three:
+
+    * **ADOPT** -- the interval's lower bound exceeds DELTA. The route back opens: a ticket
+      restores `quarterback.apply` to the published path with the `-qb` mark, the separate
+      partition and the track-record split kept.
+    * **REMOVE** -- the interval excludes zero on the negative side. The route back closes:
+      the module becomes an Exhibit under `hub.exhibits` per ADR-0007, the refuting
+      measurement re-runnable, the module gone from `hub.models`.
+    * **SHOW** -- anything else: excludes zero positively but the lower bound does not clear
+      DELTA (a real effect too small to price), or does not exclude zero at all. Stays
+      harness-only either way; the sentence names what a second event-season's
+      season-clustered MDE would resolve.
+
+    0.132 never appears here. `benchmark_reading` is a separate, informational read, called
+    from `main` beside the coefficient and not from this function.
+    """
+    mde = fit["mde"]
+    if not math.isfinite(mde) or mde > DELTA:
+        needed = study_events_needed(fit.get("sd_gap", float("nan")),
+                                     fit.get("floor_window", float("nan")))
+        need = (f"the pilot says {needed} event games are needed to clear delta at 80% power"
+                if needed is not None
+                else "the event games delta needs cannot be stated from these inputs (no "
+                     "usable spread across games yet)")
+        mde_text = f"{mde:.4f}" if math.isfinite(mde) else "not established"
+        return "NOT-RUNNABLE", (
+            f"NOT RUNNABLE: the smallest coefficient this run could resolve at 80% power is "
+            f"{mde_text} points per value unit against delta = {DELTA:.4f} -- the study "
+            f"cannot tell a real, price-worthy effect from noise at this n. No branch below "
+            f"is read; {need}.")
+    lo, hi = study_interval(fit)
+    if lo > DELTA:
+        return "ADOPT", (
+            f"ADOPT: the interval's lower bound ({lo:+.4f}) exceeds delta ({DELTA:.4f} points "
+            f"per value unit). The route back opens: a ticket restores quarterback.apply to "
+            f"the published path with the -qb mark, the separate partition and the "
+            f"track-record split kept -- the study shows the betting market moves by the "
+            f"coefficient per value unit; the mark leaves only on direct evidence about the "
+            f"module's own predictions.")
+    if hi < 0:
+        return "REMOVE", (
+            f"REMOVE: the interval excludes zero on the negative side ([{lo:+.4f}, "
+            f"{hi:+.4f}]) -- the betting market moving the wrong way on a quarterback "
+            f"downgrade is a refutation. The route back closes: the module becomes an "
+            f"Exhibit under hub.exhibits per ADR-0007, the refuting measurement re-runnable, "
+            f"the module gone from hub.models.")
+    if lo > 0:
+        return "SHOW", (
+            f"SHOW: the interval [{lo:+.4f}, {hi:+.4f}] excludes zero on the positive side "
+            f"but its lower bound does not clear delta ({DELTA:.4f}) -- a real effect too "
+            f"small to price. Stays harness-only; a second event-season's season-clustered "
+            f"MDE is what would resolve it.")
+    return "SHOW", (
+        f"SHOW: the interval [{lo:+.4f}, {hi:+.4f}] does not exclude zero. Stays harness-only; "
+        f"a second event-season's season-clustered MDE is what would resolve it.")
+
+
 # --- the entry point --------------------------------------------------------------------------
 
 def archive(season: int, base: Path | None) -> pl.DataFrame:
@@ -913,7 +1067,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         n_typical = int(statistics.median(per_season)) if per_season else 0
         print(f"  study: {label} {floor:.3f} points per root-day off {floor_games} live "
               f"games of this archive{qb_note} (#214 recorded 0.40 on 12; used {used:.2f}); "
-              f"gap sd {sd_gap:.1f} value units over {len(gaps)} events since {a.since}")
+              f"gap sd {sd_gap:.1f} value units over {len(gaps)} events since {a.since} "
+              f"against delta = {DELTA:.4f} points per value unit")
+        # #329's pre-registered restatement trigger: a print beside delta, never a branch.
+        flag = gap_sd_restatement_flag(sd_gap)
+        if flag is not None:
+            print(f"  {flag}")
         mde = study_mde(n=n_typical, sd_gap=sd_gap, window_days=7.0, floor_per_root_day=used)
         print(f"  MDE before the run at a season of {n_typical} event games, a 7-day window: "
               f"{mde:.4f} points per value unit against a benchmark of {BENCHMARK:.3f}")
@@ -923,11 +1082,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         if rows_.is_empty():
             print(f"  coefficient: not established -- no uncensored event game with a frozen "
                   f"and a pre-game price in the {span} archive")
+            # #329: the NOT-RUNNABLE path still reads through `verdict` -- `study_fit` on no
+            # rows hands back an MDE that is not finite, which is `verdict`'s own
+            # NOT-RUNNABLE condition, not a special case wired around it here.
+            label_, sentence = verdict(fit)
+            print(f"  {label_}: {sentence}")
         else:
             seen_change = rows_["days_to_change"].drop_nulls()
             print(f"  coefficient: {fit['beta']:+.4f} points per value unit (se {fit['se']:.4f} "
                   f"from the floor, MDE {fit['mde']:.4f}) over n={int(fit['n'])} event games "
                   f"(cluster = game); t against {BENCHMARK:.3f}: {fit['t_vs_benchmark']:+.2f}")
+            lo, hi = study_interval(fit)
+            print(f"  0.132: {benchmark_reading(fit['beta'], lo, hi)}")
+            label_, sentence = verdict(fit)
+            print(f"  {label_}: {sentence}")
             print(f"  change-point: seen on {seen_change.len()} of {rows_.height} games, median "
                   f"{seen_change.median() if seen_change.len() else float('nan')} days after "
                   f"the previous game day; the depth-chart date is not cached, so timing "
