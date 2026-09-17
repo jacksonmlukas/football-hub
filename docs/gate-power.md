@@ -638,6 +638,13 @@ events by the harness and the line is restated with it below. The disposition's 
 arithmetic at gap spreads of 10 / 20 / 30 stands as written there; the pinned file decides
 which spread is real.
 
+> **Restated 2026-09-17 (#303): the denominator is `√(n − 1)`, OLS's own.** The formula
+> above is kept as written; `study_fit`, `study_mde` and `study_events_needed` all divide by
+> `sd(gap) × √(n − 1)` since #303, one formula in three places. Immaterial at n = 53 (about
+> 1%; the 0.0063 below becomes 0.0064) and 41% at n = 2, which is the regime the first
+> in-season rows arrive in. The *Measured 2026-09-13* table below is a record under the old
+> denominator and is re-taken, not edited, when real event rows exist.
+
 **Censoring and timing**, reported with the run: an event whose change predates the first
 snapshot cannot be seen and is counted, not dropped silently — every offseason change is of
 this kind against an archive that opens 2026-08-25. The change-point is the first poll day

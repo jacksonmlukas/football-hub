@@ -433,35 +433,232 @@ def test_not_runnable_publishes_no_interval_and_records_no_width(tmp_path):
 def test_the_study_subtracts_the_weeks_mean_move_and_regresses_on_the_net_gap(rows):
     """Week 3: KC-LA moved 3 -> -2 (-5), the other week-3 game moved 1 -> 2 (+1) over the
     same two poll days, so the week-adjusted move is -6 on a net gap of -145 (KC's change
-    alone; LA's is offseason and not an event). Week 4: -3 -> +4 with no other game to
-    subtract, on a net gap of +139."""
+    alone; LA's is offseason and not an event). Week 4 (KC-DEN) has no result yet -- the
+    fixture's own unplayed game (#303) -- and does not enter the study at all."""
     tg = sc.team_games(rows)
     games = sc.event_games(sc.in_season_events(sc.events(tg)))
-    study = sc.study_rows(ARCHIVE, games).sort("week")
-    assert study["move"].to_list() == [-5.0, 7.0]
-    assert study["week_mean"].to_list() == [1.0, 0.0]
-    assert study["adjusted_move"].to_list() == [-6.0, 7.0]
-    assert study["net_gap"].to_list() == [-145.0, 139.0]
+    study = sc.study_rows(ARCHIVE, games, tg).sort("week")
+    assert study["game_id"].to_list() == ["2026_03_LA_KC"]
+    assert study["move"].to_list() == [-5.0]
+    assert study["week_mean"].to_list() == [1.0]
+    assert study["adjusted_move"].to_list() == [-6.0]
+    assert study["net_gap"].to_list() == [-145.0]
 
 
-def test_the_change_point_is_the_first_poll_day_past_the_floor(rows):
-    """Days from the previous game day to the first poll whose move from the frozen price
-    clears `floor_per_root_day * sqrt(days since the frozen poll)`. KC-LA's first poll after
-    the frozen one (09-19) is 09-23 at -1: a move of 4 over 4 days clears 0.4 * 2 = 0.8, so
-    the change is seen 3 days after the 09-20 game day. A game whose polls never clear the
-    floor has no change-point."""
+def test_an_in_flight_game_with_polls_after_kickoff_is_excluded_and_counted(rows):
+    """#303, defect 1: week 4 (KC-DEN) is a genuine in-season event -- Mahomes returns -- but
+    the fixture gives it no score, an in-flight game whose archive polls (utc(24), utc(30))
+    straddle its own kickoff. Before the fix, `study_rows` had never joined results, so its
+    'last snapshot before the game day' was just the latest snapshot of a game still being
+    played, and the move it fed the regression was truncated with nothing marking the row.
+    Excluded here, and `unplayed_study_games` reports the one game the exclusion dropped,
+    off the same uncensored/priced frame `study_rows` itself filters."""
     tg = sc.team_games(rows)
     games = sc.event_games(sc.in_season_events(sc.events(tg)))
-    study = sc.study_rows(ARCHIVE, games, floor_per_root_day=0.4).sort("week")
-    assert study["days_to_change"].to_list() == [3.0, 3.0]
-    quiet = sc.study_rows(ARCHIVE, games, floor_per_root_day=5.0).sort("week")
-    assert quiet["days_to_change"].is_null().all()
+    assert games.height == 2                                    # both KC changes are events
+    study = sc.study_rows(ARCHIVE, games, tg)
+    assert "2026_04_DEN_KC" not in study["game_id"].to_list()
+    assert sc.unplayed_study_games(ARCHIVE, games, tg) == 1
+
+
+def test_the_change_point_compares_eastern_days_not_utc_ones():
+    """#303, defect 2: every other date comparison in this module goes through the poll-day
+    conversion; the change-point's own arithmetic didn't, comparing a poll's raw UTC calendar
+    date against `frozen_before`, an Eastern one. A capture at 2026-09-08T02:00 UTC is
+    2026-09-07, 22:00 Eastern -- the previous *Eastern* day -- so the correct change-point is
+    one day after the previous game day (09-06), not two: the UTC date alone would have
+    counted a day the poll never saw."""
+    rows_ = source_rows([
+        ("2026-09-06", 2026, "1.0", "AA", "BB", "a1", "b1", 100.0, 90.0, 5.0, 3.0,
+         20, 10, .55, .58),
+        ("2026-09-13", 2026, "2.0", "AA", "CC", "a2", "c1", 150.0, 95.0, 40.0, 4.0,
+         17, 24, .60, .70),
+        ("2026-09-06", 2026, "1.0", "DD", "EE", "d1", "e1", 100.0, 100.0, 0.0, 0.0,
+         14, 14, .5, .5),
+        ("2026-09-13", 2026, "2.0", "DD", "EE", "d1", "e1", 100.0, 100.0, 0.0, 0.0,
+         21, 21, .5, .5),
+    ])
+    tg = sc.team_games(rows_)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    assert games["game_id"].to_list() == ["2026_02_CC_AA"]
+    archive = polls([
+        # AA-CC: frozen before the previous game day (09-06); the 02:00 UTC capture on 09-08
+        # is 09-07 Eastern; close before the game day (09-13).
+        ("2026_02_CC_AA", 0.0, dt.datetime(2026, 9, 4, 20, 0), 2),
+        ("2026_02_CC_AA", 5.0, dt.datetime(2026, 9, 8, 2, 0), 2),
+        ("2026_02_CC_AA", 6.0, dt.datetime(2026, 9, 12, 16, 0), 2),
+        # DD-EE: not an event, polled the same two poll days as the control this week.
+        ("2026_02_EE_DD", 2.0, dt.datetime(2026, 9, 4, 20, 0), 2),
+        ("2026_02_EE_DD", 2.5, dt.datetime(2026, 9, 12, 16, 0), 2),
+    ])
+    study = sc.study_rows(archive, games, tg, floor_per_root_day=0.4)
+    assert study["days_to_change"].to_list() == pytest.approx([1.0])
+
+
+def test_the_change_point_scans_poll_days_and_is_bounded_at_the_game_day():
+    """#303, defect 3: two sub-cases of one defect.
+
+    **Several captures in one day** -- 09-09 carries an early spike (10.0, clears the floor
+    on its own) and a later same-day poll back near the frozen price (0.5, does not); the
+    Eastern-date convention (`hub.fetch.odds`: the last poll of a date stands for it) means
+    the day's own value is 0.5 and the threshold does not fire on 09-09 at all -- it fires
+    two days later, on 09-11, the first day whose own representative value clears it.
+
+    **Bounded at the game day** -- FF-HH's game day is 09-13; a poll on 09-15, after kickoff,
+    would clear the floor on its own, but no poll before the game day for GG-HH does, so the
+    scan -- which `priced`'s own `close` never reads past the game day either -- reports no
+    change-point rather than reading a lookahead nothing before kickoff could have seen.
+    """
+    rows_ = source_rows([
+        ("2026-09-06", 2026, "1.0", "FF", "GG", "f1", "g1", 100.0, 90.0, 5.0, 3.0,
+         20, 10, .55, .58),
+        ("2026-09-13", 2026, "2.0", "FF", "HH", "f2", "h1", 150.0, 95.0, 40.0, 4.0,
+         17, 24, .60, .70),
+        ("2026-09-06", 2026, "1.0", "II", "JJ", "i1", "j1", 100.0, 100.0, 0.0, 0.0,
+         14, 14, .5, .5),
+        ("2026-09-13", 2026, "2.0", "II", "JJ", "i1", "j1", 100.0, 100.0, 0.0, 0.0,
+         21, 21, .5, .5),
+    ])
+    tg = sc.team_games(rows_)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    assert games["game_id"].to_list() == ["2026_02_HH_FF"]
+    archive = polls([
+        ("2026_02_HH_FF", 0.0, dt.datetime(2026, 9, 4, 16, 0), 2),     # frozen
+        ("2026_02_HH_FF", 10.0, dt.datetime(2026, 9, 9, 14, 0), 2),    # 09-09 early: a spike
+        ("2026_02_HH_FF", 0.5, dt.datetime(2026, 9, 9, 22, 0), 2),     # 09-09 late: the day's value
+        ("2026_02_HH_FF", 6.0, dt.datetime(2026, 9, 11, 16, 0), 2),    # 09-11: really clears it
+        ("2026_02_HH_FF", 6.5, dt.datetime(2026, 9, 12, 16, 0), 2),    # close, before the game day
+        ("2026_02_HH_FF", 50.0, dt.datetime(2026, 9, 15, 16, 0), 2),   # after kickoff: unseen
+        ("2026_02_JJ_II", 1.0, dt.datetime(2026, 9, 4, 16, 0), 2),
+        ("2026_02_JJ_II", 1.5, dt.datetime(2026, 9, 12, 16, 0), 2),
+    ])
+    study = sc.study_rows(archive, games, tg, floor_per_root_day=0.4)
+    # frozen_before is FF's previous game day, 09-06; the change is seen 09-11, 5 days later.
+    assert study["days_to_change"].to_list() == pytest.approx([5.0])
+
+    # A second game whose only poll clearing the floor falls after its own game day: bounded
+    # scan finds nothing, where an unbounded one would have read the lookahead.
+    late_only = source_rows([
+        ("2026-09-06", 2026, "1.0", "KK", "LL", "k1", "l1", 100.0, 90.0, 5.0, 3.0,
+         20, 10, .55, .58),
+        ("2026-09-13", 2026, "2.0", "KK", "MM", "k2", "m1", 150.0, 95.0, 40.0, 4.0,
+         17, 24, .60, .70),
+        ("2026-09-06", 2026, "1.0", "NN", "OO", "n1", "o1", 100.0, 100.0, 0.0, 0.0,
+         14, 14, .5, .5),
+        ("2026-09-13", 2026, "2.0", "NN", "OO", "n1", "o1", 100.0, 100.0, 0.0, 0.0,
+         21, 21, .5, .5),
+    ])
+    tg2 = sc.team_games(late_only)
+    games2 = sc.event_games(sc.in_season_events(sc.events(tg2)))
+    assert games2["game_id"].to_list() == ["2026_02_MM_KK"]
+    archive2 = polls([
+        ("2026_02_MM_KK", 0.0, dt.datetime(2026, 9, 4, 16, 0), 2),
+        ("2026_02_MM_KK", 0.1, dt.datetime(2026, 9, 12, 16, 0), 2),    # close: never clears
+        ("2026_02_MM_KK", 50.0, dt.datetime(2026, 9, 15, 16, 0), 2),   # after kickoff: unseen
+        ("2026_02_OO_NN", 1.0, dt.datetime(2026, 9, 4, 16, 0), 2),
+        ("2026_02_OO_NN", 1.2, dt.datetime(2026, 9, 12, 16, 0), 2),
+    ])
+    study2 = sc.study_rows(archive2, games2, tg2, floor_per_root_day=0.4)
+    assert study2["days_to_change"].is_null().all()
+
+
+def test_a_weeks_control_set_excludes_every_other_event_game(rows):
+    """#303, defect 4, part one: a week with two starter changes never uses one treated game
+    as the other's control. AA and BB both change starters in week 2, and CC-DD, the week's
+    only other game, is the sole legitimate control -- if BB were left in AA's control set
+    (the pre-fix behaviour, which excluded only the row's own game_id), AA's week_mean would
+    read BB's own treated move instead."""
+    rows_ = source_rows([
+        ("2026-09-06", 2026, "1.0", "AA", "PP", "a1", "p1", 100.0, 90.0, 5.0, 3.0,
+         20, 10, .55, .58),
+        ("2026-09-13", 2026, "2.0", "AA", "QQ", "a2", "q1", 150.0, 95.0, 40.0, 4.0,
+         17, 24, .60, .70),
+        ("2026-09-06", 2026, "1.0", "BB", "RR", "b1", "r1", 100.0, 90.0, 5.0, 3.0,
+         20, 10, .55, .58),
+        ("2026-09-13", 2026, "2.0", "BB", "SS", "b2", "s1", 150.0, 95.0, 40.0, 4.0,
+         17, 24, .60, .70),
+        ("2026-09-06", 2026, "1.0", "CC", "DD", "c1", "d1", 100.0, 100.0, 0.0, 0.0,
+         14, 14, .5, .5),
+        ("2026-09-13", 2026, "2.0", "CC", "DD", "c1", "d1", 100.0, 100.0, 0.0, 0.0,
+         21, 21, .5, .5),
+    ])
+    tg = sc.team_games(rows_)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    # CC-DD keeps the same starters both weeks -- not an event, and the week's only control.
+    assert sorted(games["game_id"].to_list()) == ["2026_02_QQ_AA", "2026_02_SS_BB"]
+    archive = polls([
+        ("2026_02_QQ_AA", 0.0, dt.datetime(2026, 9, 4, 16, 0), 2),
+        ("2026_02_QQ_AA", 7.0, dt.datetime(2026, 9, 12, 16, 0), 2),      # AA moves 7
+        ("2026_02_SS_BB", 0.0, dt.datetime(2026, 9, 4, 16, 0), 2),
+        ("2026_02_SS_BB", -20.0, dt.datetime(2026, 9, 12, 16, 0), 2),    # BB moves -20
+        ("2026_02_DD_CC", 1.0, dt.datetime(2026, 9, 4, 16, 0), 2),
+        ("2026_02_DD_CC", 2.0, dt.datetime(2026, 9, 12, 16, 0), 2),      # CC-DD moves 1
+    ])
+    study = sc.study_rows(archive, games, tg).sort("game_id")
+    aa = study.filter(pl.col("game_id") == "2026_02_QQ_AA").row(0, named=True)
+    assert aa["week_mean"] == pytest.approx(1.0)                # CC-DD only, BB excluded
+    assert aa["adjusted_move"] == pytest.approx(6.0)
+
+
+def test_a_row_with_no_control_left_is_refused_not_fitted_as_a_zero_week_mean(rows):
+    """#303, defect 4, part two: a week where the only two archived games are both event
+    games has no control for either -- `week_mean` cannot be a genuine zero, since there was
+    nothing to average, and the row is dropped from the study rather than fitted as though
+    the week moved by nothing."""
+    rows_ = source_rows([
+        ("2026-09-06", 2026, "1.0", "AA", "PP", "a1", "p1", 100.0, 90.0, 5.0, 3.0,
+         20, 10, .55, .58),
+        ("2026-09-13", 2026, "2.0", "AA", "QQ", "a2", "q1", 150.0, 95.0, 40.0, 4.0,
+         17, 24, .60, .70),
+        ("2026-09-06", 2026, "1.0", "BB", "RR", "b1", "r1", 100.0, 90.0, 5.0, 3.0,
+         20, 10, .55, .58),
+        ("2026-09-13", 2026, "2.0", "BB", "SS", "b2", "s1", 150.0, 95.0, 40.0, 4.0,
+         17, 24, .60, .70),
+    ])
+    tg = sc.team_games(rows_)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    assert sorted(games["game_id"].to_list()) == ["2026_02_QQ_AA", "2026_02_SS_BB"]
+    archive = polls([
+        ("2026_02_QQ_AA", 0.0, dt.datetime(2026, 9, 4, 16, 0), 2),
+        ("2026_02_QQ_AA", 7.0, dt.datetime(2026, 9, 12, 16, 0), 2),
+        ("2026_02_SS_BB", 0.0, dt.datetime(2026, 9, 4, 16, 0), 2),
+        ("2026_02_SS_BB", -20.0, dt.datetime(2026, 9, 12, 16, 0), 2),
+    ])
+    study = sc.study_rows(archive, games, tg)
+    assert study.is_empty()
+
+
+def test_censored_separates_never_polled_from_polled_after_the_change(rows):
+    """#303, defect 5: `censored` alone cannot tell "the archive holds nothing for this game"
+    from "the archive polled it, just not before the change" -- two different facts a run
+    reporting one number conflates. One event game the archive never polled at all, one it
+    polled only the day after the change (both censored), and one properly frozen."""
+    tg = sc.team_games(rows)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    kc_la = games.filter(pl.col("game_id") == "2026_03_LA_KC")
+    never = kc_la.with_columns(pl.lit("2099_01_ZZ_ZZ").alias("game_id"))
+    late = kc_la.with_columns(pl.lit("2099_02_YY_YY").alias("game_id"))
+    both = pl.concat([kc_la, never, late])
+    archive = pl.concat([
+        ARCHIVE,
+        # "2099_02_YY_YY": polled, but only after the change (frozen_before is 09-20).
+        polls([("2099_02_YY_YY", 1.0, utc(21), 3), ("2099_02_YY_YY", 1.5, utc(26), 3)]),
+        # "2099_01_ZZ_ZZ" is never polled at all.
+    ])
+    priced = sc.priced(archive, both).sort("game_id")
+    never_row = priced.filter(pl.col("game_id") == "2099_01_ZZ_ZZ").row(0, named=True)
+    late_row = priced.filter(pl.col("game_id") == "2099_02_YY_YY").row(0, named=True)
+    kc_row = priced.filter(pl.col("game_id") == "2026_03_LA_KC").row(0, named=True)
+    assert never_row["censored"] and never_row["never_polled"]
+    assert late_row["censored"] and not late_row["never_polled"]
+    assert not kc_row["censored"] and not kc_row["never_polled"]
 
 
 def test_the_fit_recovers_the_slope_and_takes_its_error_from_the_floor():
     """Moves manufactured at 0.132 points per unit of gap plus a week effect; after the
     week's mean is subtracted the slope is the benchmark, and the standard error is the
-    floor per window over the gap's spread and root n, not the residual's."""
+    floor per window over the gap's spread and root n - 1 (OLS's own denominator, #303),
+    not the residual's."""
     gaps = [-150.0, -80.0, -20.0, 30.0, 90.0, 140.0]
     rows_ = pl.DataFrame({
         "season": [2026] * 6, "week": [1, 1, 2, 2, 3, 3], "game_id": [f"g{i}" for i in range(6)],
@@ -472,19 +669,56 @@ def test_the_fit_recovers_the_slope_and_takes_its_error_from_the_floor():
     assert fit["n"] == 6
     floor_window = 0.4 * math.sqrt(7.0)
     sd_gap = statistics.stdev(gaps)
-    assert fit["se"] == pytest.approx(floor_window / (sd_gap * math.sqrt(6)))
+    assert fit["se"] == pytest.approx(floor_window / (sd_gap * math.sqrt(5)))
     assert fit["mde"] == pytest.approx(
         (experiment.t_quantile(0.975, 5) + 0.8416) * fit["se"], abs=1e-3)
     assert fit["benchmark"] == sc.BENCHMARK == pytest.approx(3.3 / 25)
     assert fit["t_vs_benchmark"] == pytest.approx(0.0)
 
 
+def test_the_slope_se_at_n_equals_2_differs_from_the_old_root_n_formula_by_41_percent():
+    """#303, defect 6, the n=2 case named in the ticket: dividing by root n instead of root
+    (n - 1) understates the standard error, and at n=2 the gap between the two denominators
+    (root 1 vs root 2) is its largest relative size, about 41%."""
+    gaps = [-60.0, 60.0]
+    rows_ = pl.DataFrame({
+        "season": [2026, 2026], "week": [1, 1], "game_id": ["g0", "g1"],
+        "net_gap": gaps, "adjusted_move": [0.132 * g for g in gaps], "window_days": [7.0, 7.0]})
+    fit = sc.study_fit(rows_, floor_per_root_day=0.4)
+    floor_window = 0.4 * math.sqrt(7.0)
+    sd_gap = statistics.stdev(gaps)
+    correct_se = floor_window / (sd_gap * math.sqrt(1))          # n - 1 = 1
+    old_wrong_se = floor_window / (sd_gap * math.sqrt(2))        # the bug's n
+    assert fit["se"] == pytest.approx(correct_se)
+    relative_gap = (correct_se - old_wrong_se) / old_wrong_se
+    assert relative_gap == pytest.approx(math.sqrt(2) - 1.0, rel=1e-9)
+    assert relative_gap > 0.4                                    # "41% at 2" (#303's ticket)
+
+
+def test_the_slope_se_at_n_equals_53_is_immaterially_different_from_root_n():
+    """#303, defect 6, the n=53 case named in the ticket: at a season's worth of events the
+    root n and root (n - 1) denominators are close, so the fix moves `se` by about 1%."""
+    gaps = [float(i - 26) * 5.0 for i in range(53)]               # 53 distinct, mean-zero-ish
+    rows_ = pl.DataFrame({
+        "season": [2026] * 53, "week": [1] * 53, "game_id": [f"g{i}" for i in range(53)],
+        "net_gap": gaps, "adjusted_move": [0.132 * g for g in gaps], "window_days": [7.0] * 53})
+    fit = sc.study_fit(rows_, floor_per_root_day=0.4)
+    floor_window = 0.4 * math.sqrt(7.0)
+    sd_gap = statistics.stdev(gaps)
+    correct_se = floor_window / (sd_gap * math.sqrt(52))
+    old_wrong_se = floor_window / (sd_gap * math.sqrt(53))
+    assert fit["se"] == pytest.approx(correct_se)
+    relative_gap = abs(correct_se - old_wrong_se) / old_wrong_se
+    assert relative_gap < 0.02                                    # "immaterial at 53"
+
+
 def test_the_study_mde_before_the_run_is_stated_from_the_events_gap_spread():
     """With no archived event the MDE line is still stated: the pinned file's gap spread,
-    the noise floor per window, and the event count a season carries."""
+    the noise floor per window, and the event count a season carries -- over root (n - 1),
+    matching `study_fit`'s own denominator (#303)."""
     line = sc.study_mde(n=53, sd_gap=70.0, window_days=7.0, floor_per_root_day=0.4)
     assert line == pytest.approx((experiment.t_quantile(0.975, 52) + 0.8416)
-                                 * 0.4 * math.sqrt(7.0) / (70.0 * math.sqrt(53)), abs=1e-4)
+                                 * 0.4 * math.sqrt(7.0) / (70.0 * math.sqrt(52)), abs=1e-4)
 
 
 def _fit(*, beta, se, n, sd_gap=float("nan"), floor_window=float("nan")):
@@ -580,12 +814,13 @@ def test_the_benchmark_reading_is_replication_below_or_above():
 
 def test_study_events_needed_matches_the_mde_search_it_runs():
     """Constructed against the search itself rather than a hardcoded n: the returned count's
-    own MDE clears delta and one fewer event game's does not."""
+    own MDE clears delta and one fewer event game's does not. The denominator is n - 1,
+    matching `study_fit`'s own (#303)."""
     sd_gap, floor_window = 66.3, 0.4 * math.sqrt(7.0)
     n = sc.study_events_needed(sd_gap, floor_window)
     assert n is not None
-    se_n = floor_window / (sd_gap * math.sqrt(n))
-    se_prev = floor_window / (sd_gap * math.sqrt(n - 1))
+    se_n = floor_window / (sd_gap * math.sqrt(n - 1))
+    se_prev = floor_window / (sd_gap * math.sqrt(n - 2))
     assert experiment.minimum_detectable_effect(se_n, n) <= sc.DELTA
     assert experiment.minimum_detectable_effect(se_prev, n - 1) > sc.DELTA
 
@@ -780,8 +1015,9 @@ def test_no_event_at_all_yields_empty_frames_with_the_schema(rows):
     games = sc.event_games(sc.in_season_events(sc.events(tg)))
     assert games.is_empty() and list(games.columns) == list(sc.EVENT_GAME_SCHEMA)
     assert sc.gate_rows(ARCHIVE, games, tg, rows).is_empty()
-    assert sc.study_rows(ARCHIVE, games).is_empty()
-    assert math.isnan(sc.study_fit(sc.study_rows(ARCHIVE, games), floor_per_root_day=0.4)["beta"])
+    assert sc.study_rows(ARCHIVE, games, tg).is_empty()
+    assert math.isnan(
+        sc.study_fit(sc.study_rows(ARCHIVE, games, tg), floor_per_root_day=0.4)["beta"])
     assert math.isnan(sc.study_mde(n=1, sd_gap=70.0, window_days=7.0, floor_per_root_day=0.4))
 
 
@@ -793,7 +1029,9 @@ def test_rows_without_a_week_are_refused_by_name():
 def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, capsys,
                                                                        monkeypatch, rows):
     """Driven with the fixture archive written into a store: the archive line, the noise
-    floor off it, the pilot, the gate's zero and the study's coefficient with its n."""
+    floor off it, the pilot, the gate's zero and the study's coefficient with its n. Week 4
+    (KC-DEN) has no result yet in this fixture, so #303's fix excludes it from the study --
+    only the played KC-LA event reaches `study_rows`, one game rather than two."""
     from hub import store
 
     cache = tmp_path / "nfeloqb"
@@ -827,7 +1065,8 @@ def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, c
     assert "NOT-RUNNABLE" in out
     assert "same-quarterback NOT applied for 2026" in out and "ConnectionError" in out
     assert "all-games floor, SAME-QUARTERBACK NOT APPLIED" in out
-    assert "coefficient:" in out and "n=2 event games" in out
+    assert "1 uncensored, priced event game(s) excluded as unplayed" in out
+    assert "coefficient:" in out and "n=1 event games" in out
     # #329: the study's verdict, wired in after the coefficient line -- two rows have almost
     # no power, so the MDE exceeds delta and the branch is NOT-RUNNABLE, never the interval.
     assert "0.132:" in out
