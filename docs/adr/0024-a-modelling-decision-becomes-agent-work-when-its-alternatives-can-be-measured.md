@@ -66,6 +66,12 @@ label. The nine that prompted this were mislabelled precisely because the body w
 the opposite; a label that disagrees with its own body is worse than an untriaged one, because
 it reads as settled.
 
+**Added 2026-09-16.** The procedure that applies this test — the one-axis check first, the
+split, the maintainer's `ADOPTED:` line for the different-objects class, the body block, and
+ordering as native edges — is written once, in `docs/agents/triage-labels.md` under *Adoption is
+a write, not a state*. That section also records that this ADR and the drafted-decision
+convention of 2026-09-07 were one rule stated twice, not two rules with a tiebreak.
+
 ## What would reopen this
 
 A sensitivity that a reader cannot act on — a table of alternatives that leaves the choice

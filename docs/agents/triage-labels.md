@@ -35,15 +35,25 @@ vocabulary:
 | -------------------------- | ------ | ---------------------- | ------------------------- |
 | The work landed            | closed | `completed`            | whichever it was routed by |
 | Will not be actioned       | closed | `not planned`          | `wontfix`                 |
+| Answered elsewhere         | closed | `not planned`          | whichever it was routed by |
 | Already filed elsewhere    | closed | `duplicate` (API only) | `duplicate`               |
 
-Those three are the whole enum, checked against this tracker's live schema on 2026-09-05 rather
-than assumed:
+The close reasons are the whole enum, checked against this tracker's live schema on 2026-09-05
+rather than assumed (the fourth row reuses the second's reason — see below):
 
 ```sh
 gh api graphql -f query='{ __type(name: "IssueClosedStateReason") { enumValues { name } } }'
 # {"COMPLETED","NOT_PLANNED","DUPLICATE"}
 ```
+
+**The fourth row was added 2026-09-16, from #222 and #223.** The table originally bound
+`not planned` to `wontfix` as if they were one fact. They are two: `wontfix` is a *routing*
+decision ("nobody picks this up"), `not planned` is an *outcome* ("this ticket's work did not
+land"). #222 was declined on its merits — routing, and it carries `wontfix`. #223 was not declined:
+its pre-registered bar was relocated into ADR-0025, so its own work (a regression run) never landed
+while the question it existed to ask was answered elsewhere. That is `not planned` with no
+`wontfix`, and the close comment names where the answer went. Without the row, a `not planned`
+close without `wontfix` reads as a mistake, and the next reader "fixes" it.
 
 **Why not a sixth label.** A `done` label would be a second copy of a fact the tracker already
 holds, and two copies drift: someone closes without adding it, or adds it to something still open,
@@ -131,6 +141,10 @@ the drift this whole section is avoiding. During that window the tracker genuine
 
 ## `ready-for-human` carries a drafted decision (adopted 2026-09-07)
 
+> **Amended 2026-09-16** — see [*Adoption is a write, not a state*](#adoption-is-a-write-not-a-state)
+> below. Nothing here is withdrawn; the section below says what actually happened to the two
+> tickets this one names as permanently human, and states the rule that describes it.
+
 A ticket earns `ready-for-human` when it contains an unmade decision, not when nobody has
 picked it up. The failure mode the label had developed was the second one: #136 and #138 sat
 labelled for weeks while several others were labelled for a choice among three named options
@@ -161,3 +175,56 @@ are:
 
 For both, the decision-free half is split out where one exists — #205 and #207 are those
 splits — so the ticket that stays human is only the part that has to.
+
+## Adoption is a write, not a state (2026-09-16)
+
+The section above says two kinds of ticket "stay human however they are drafted", and names
+#138 and #136. Both are closed `COMPLETED` and both carry `ready-for-agent`. That is not a
+mislabel. #138's actual life was: a drafted decision → the maintainer commented *"Option 1"* →
+an agent amended the document *before any run* and closed the ticket. #136 went the same way
+once the modelling programme supplied the evidence it was waiting on. Neither *never converted*;
+each converted **after one human write**, and everything downstream of that write was agent work.
+So the rule the two examples demonstrate is not the one the section states, and this section
+states the one they demonstrate.
+
+**One rule, stated twice.** [ADR-0024](../adr/0024-a-modelling-decision-becomes-agent-work-when-its-alternatives-can-be-measured.md)
+asks *can the alternatives be placed on one axis and reported in one table?* — yes is agent work
+and the table is the deliverable; different objects is a decision. The section above's two
+permanent-human kinds are exactly ADR-0024's exclusion classes: #138 was *amending a
+pre-registered rule after the effect sizes are known* and #136 was *waiting on evidence, not on
+a person*. The drafted-decision convention was always scoped to the different-objects class; the
+section above just did not say so. These were never two rules that could disagree.
+
+**The procedure**, applied to the audit-IV queue on 2026-09-16 and to every `ready-for-human`
+ticket after it:
+
+1. **Apply ADR-0024's test first.** One axis → the ticket converts now, no human write needed;
+   the drafted recommendation becomes the arm the table is read against, not a choice to make.
+   Different objects → it is a decision, and it needs the write in step 3.
+2. **Split the decision-free half** where one exists (#206 → #207, #322 → #327): a new
+   `ready-for-agent` ticket for the measurement, the human ticket `blocked_by` it, so the
+   ticket that stays human is the smallest one that has to.
+3. **Adoption is one line, and it is the maintainer's.** A comment beginning `ADOPTED:` naming
+   the option (or the number, for a re-taken constant). It is grep-able — a sweep can find
+   adopted-but-unconverted tickets — and it is the write that carries the authority, so it is
+   written by the maintainer, not recorded on their behalf. The attributed-AI form (*"Recorded by
+   AI during a grilling session; the disposition is the maintainer's"*) is for closes and
+   dispositions quoted from a session the maintainer was in; it is not the `ADOPTED:` line.
+4. **Everything after the write is agent work:** the body edit, the label flip, the amendment
+   or the run. Converting a ticket without updating its body is the defect ADR-0024 was written
+   about; the body block is: *converted <date> under ADR-0024; the axis (or the pre-registered
+   gate, where there is one option and a gate); the deliverable; what would reopen it as a
+   decision.* Prior wording stays visible. **No calendar line** ("do not start before …") goes in
+   a body — that is a second copy of a fact that goes stale and that nobody sweeps.
+5. **Ordering is an edge.** Anything that must land before something else is a native
+   `blocked_by`, never a prose obligation on a ticket that will be closed by the time the
+   obligation is actionable. A freeze is a ticket that everything frozen is `blocked_by`, closed
+   once by a human; a restatement obligation sits on the open ticket whose work discharges it.
+   (`issue-tracker.md` makes the same trade for `Blocked by:` lines; the sixth-state section
+   above makes it for `done`.)
+
+**What stays human, then, is one thing:** a ticket whose alternatives are different objects
+*and* whose `ADOPTED:` line has not been written. Both the audit-IV examples of that class —
+#300 (which estimand licenses a shipped component) and #310 (a claim re-decided once #309's
+measurement exists) — are on the tracker with their drafts, waiting on the line, not on a
+person to start writing from scratch.

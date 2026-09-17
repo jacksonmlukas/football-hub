@@ -1,0 +1,1476 @@
+{
+  "schema": {
+    "name": "football-hub-audit",
+    "version": "4.0",
+    "supersedes": "football-hub-audit v3.0 (2026-09-12)",
+    "generated": "2026-09-16",
+    "generated_by": "Independent re-audit (Claude Opus 5), read-only pass over the working tree",
+    "subject_repo": "~/code/football-hub",
+    "baseline_commit": "7bffe2b",
+    "head_commit": "f8e7534",
+    "commits_since_baseline": 108,
+    "lines_added_since_baseline": 15300,
+    "lines_removed_since_baseline": 3571,
+    "intended_consumer": "an autonomous coding agent working in this repo",
+    "companions": {
+      "football-hub-audit v1.0": "2026-09-05, 28 findings (A/B/C/D series)",
+      "football-hub-audit v2.0": "2026-09-07, 15 new (N series)",
+      "football-hub-research v1.0": "2026-09-07, 8 findings (G series)",
+      "football-hub-audit v3.0": "2026-09-12, 16 new (Q series)"
+    },
+    "finding_prefix": "R",
+    "finding_prefix_note": "R = this round. No collision with A/B/C/D, N, G or Q.",
+    "instructions_for_consumer": [
+      "This round has NO blocking defect. R6 is a DISPOSITION - a decision about whether a component may ship - not a bug. Treat it as the highest-priority item anyway.",
+      "`prior_findings` carries the Q series and the still-open backlog, re-verified at HEAD. Act only on OPEN or PARTIAL.",
+      "`new_findings` R1-R18. Severity `decision` means a judgement call for the owner, not something to patch.",
+      "`measurements_by_reviewer` holds numbers computed first-hand this round, each with a reproduce snippet. M-R1 through M-R5 are load-bearing for R6, R7, R8, R10 and R13 - do not re-derive them, and do not present them as the repo's own figures except where noted.",
+      "`prediction_evaluation` is the substantive modelling review the owner asked for: what is strong, what is weak, and the specific technique that attaches where. It is the half of this document that is about football rather than about code.",
+      "Line numbers are from the tree at f8e7534. Re-locate by symbol name if they have drifted.",
+      "`plan` is dependency-ordered. Phase 1 before the poller reaches week 4 of 2026, because phase 1 fixes what the study will measure."
+    ]
+  },
+  "verdict": {
+    "headline": "The bug is fixed. The model still cannot see the game.",
+    "summary": [
+      "Q1 is fixed correctly: quarterback.points() is now `qb_adj / ELO_PER_POINT`, the four dead constants are gone, and the incident is written into the module docstring with the reviewer's measured error retained.",
+      "14 of the 16 Q-series findings are closed and 2 are partial. No blocking finding is outstanding. Three prior backlog items closed as well (B4 coverage wiring, B6 hold-out machinery, G1 price_source three ways).",
+      "The best work in the diff is a verdict against the owner's own component: the QB adjustment's gate was pre-registered on 2026-09-13 BEFORE the module that runs it existed, run, and published NOT-RUNNABLE with the power requirement stated (~29 event-seasons).",
+      "The finding of this audit is R6, a disposition rather than a defect: the pre-registration pulls the component on any verdict but ADOPT and exempts the no-verdict branch - on a gate whose own power calculation returns that branch for twenty-five more years. Meanwhile the estimand that IS resolvable (the line-move study, MDE 0.0063 against a 0.132 benchmark on one season) decides nothing.",
+      "With the plumbing now stronger than almost anything of its size, the accuracy is sitting in the football: no pre-kickoff information in the weekly projection, no share constraint, a fixed TD rate justified by an un-disattenuated near-zero correlation, tails amputated at both ends, and an interval that omits estimation error the repo already computes."
+    ],
+    "counts": {
+      "prior_q_series": 16,
+      "q_fixed": 14,
+      "q_partial": 2,
+      "blocking_open": 0,
+      "new_findings": 18,
+      "new_blocking": 0,
+      "new_decision_items": 1
+    }
+  },
+  "measurements_by_reviewer": [
+    {
+      "id": "M-R1",
+      "title": "The QB pilot reproduces to four decimals, independently",
+      "verified": "direct",
+      "source_data": "data/raw/nfeloqb/qb_elos.csv on the user's machine, 18,252 rows; sha256 matches PINNED_SHA256 exactly",
+      "method": "Event set rebuilt from scratch (a team whose starter differs from its own previous regular-season game of the same season), then log-loss of elo_prob1 minus log-loss of qbelo_prob1 on the home result, positive when the adjustment helped. stdlib csv + statistics only.",
+      "by_season": [
+        {
+          "season": 2022,
+          "event_games": 57,
+          "mean": 0.0248,
+          "sd": 0.222
+        },
+        {
+          "season": 2023,
+          "event_games": 53,
+          "mean": -0.0466,
+          "sd": 0.205
+        },
+        {
+          "season": 2024,
+          "event_games": 48,
+          "mean": -0.0417,
+          "sd": 0.213
+        },
+        {
+          "season": 2025,
+          "event_games": 54,
+          "mean": -0.0085,
+          "sd": 0.214
+        }
+      ],
+      "pooled": {
+        "event_games": 212,
+        "mean_of_season_means": -0.018,
+        "between_season_sd": 0.0332
+      },
+      "power": {
+        "k_needed": 29,
+        "mde_at_k3": 0.0986,
+        "target": 0.018,
+        "formula": "(t(0.975, k-1) + 0.8416) * 0.0332 / sqrt(k)"
+      },
+      "conclusion": "The repo's own table is correct to the digit, event counts included. On the population the module actually fires on, the source's QB-adjusted probability scored WORSE than its base in three seasons of four.",
+      "caveats_the_repo_states_and_the_reviewer_endorses": [
+        "It is the source's arm against the source's base, not this repo's estimator against a frozen line.",
+        "Per-game sd of ~0.21 against season means of a few hundredths means one season's sign is mostly noise.",
+        "The licence in docs/qb-adjustment.md is a different file (538's) over a different decade, on all games, scored by Brier.",
+        "None of these makes the pilot absent. It is the only measurement anyone has on the target population and it is negative."
+      ],
+      "reproduce": "import csv, math, statistics\nfrom collections import defaultdict\nrows = list(csv.DictReader(open('data/raw/nfeloqb/qb_elos.csv')))\nlong = []\nfor r in rows:\n    if r.get('game_type') and r['game_type'] != 'REG': continue\n    season, week = int(r['season']), int(float(r['week']))   # week is '1.0'\n    if not 2022 <= season <= 2025: continue\n    for n in (1, 2):\n        if r[f'qb{n}']:\n            long.append(dict(season=season, week=week, team=r[f'team{n}'], qb=r[f'qb{n}'],\n                             date=r['date'], gid=(season, week, r['team1'], r['team2'])))\nby = defaultdict(list)\nfor g in long: by[(g['season'], g['team'])].append(g)\nevents = set()\nfor gs in by.values():\n    gs.sort(key=lambda g: (g['week'], g['date']))\n    for a, b in zip(gs, gs[1:]):\n        if a['qb'] != b['qb']: events.add(b['gid'])\nper = defaultdict(list)\nfor r in rows:\n    if r.get('game_type') and r['game_type'] != 'REG': continue\n    season, week = int(r['season']), int(float(r['week']))\n    if not 2022 <= season <= 2025: continue\n    if (season, week, r['team1'], r['team2']) not in events: continue\n    p0, p1 = float(r['elo_prob1']), float(r['qbelo_prob1'])\n    s1, s2 = float(r['score1']), float(r['score2'])\n    y = 0.5 if s1 == s2 else float(s1 > s2)\n    ll = lambda p: -(y*math.log(p) + (1-y)*math.log(1-p))\n    per[season].append(ll(p0) - ll(p1))\nmeans = [statistics.mean(per[s]) for s in sorted(per)]\nprint(statistics.mean(means), statistics.stdev(means))   # -0.0180  0.0332\n"
+    },
+    {
+      "id": "M-R2",
+      "title": "The line-move study's power, re-derived",
+      "verified": "direct",
+      "inputs": {
+        "gap_sd_value_units": 66.3,
+        "noise_floor_points_per_root_day": 0.404,
+        "window_days": 7,
+        "window_noise_points": 1.06,
+        "n_event_games_one_season": 53
+      },
+      "derivation": "SE(slope) = residual_sd / (sd_x * sqrt(n)) = 1.06 / (66.3 * sqrt(53)) = 0.00220; MDE = (t(0.975,52) + 0.8416) * SE = 2.848 * 0.00220 = 0.0063",
+      "conclusion": "0.0063 points per value unit against a 0.132 benchmark: ONE season resolves the benchmark about twenty times over, against the log-loss gate's 29 event-seasons. This is the estimand the disposition should be tied to (R6). The repo's own figure is 0.0063; this confirms it.",
+      "note": "The repo's SE divides by sqrt(n) where the OLS slope wants sqrt(n-1) (R5); immaterial at n=53, 41% at n=2."
+    },
+    {
+      "id": "M-R3",
+      "title": "predict.skewed's zero clip biases the mean up and pins the published p10 at zero",
+      "verified": "direct",
+      "constants": {
+        "WEEKLY_K": {
+          "QB": 1.88,
+          "RB": 2.07,
+          "WR": 2.13,
+          "TE": 1.99
+        },
+        "WEEKLY_SKEW": {
+          "QB": 0.15,
+          "RB": 0.67,
+          "WR": 0.66,
+          "TE": 0.72
+        },
+        "MIN_SKEW": 0.05
+      },
+      "rows": [
+        {
+          "pos": "WR",
+          "mu_asked": 3.0,
+          "sd_asked": 3.69,
+          "mu_realised": 3.33,
+          "sd_realised": 3.28,
+          "p_clipped": 0.217,
+          "q10": 0.0
+        },
+        {
+          "pos": "WR",
+          "mu_asked": 6.0,
+          "sd_asked": 5.22,
+          "mu_realised": 6.18,
+          "sd_realised": 4.96,
+          "p_clipped": 0.111,
+          "q10": 0.0
+        },
+        {
+          "pos": "WR",
+          "mu_asked": 10.0,
+          "sd_asked": 6.74,
+          "mu_realised": 10.07,
+          "sd_realised": 6.62,
+          "p_clipped": 0.043,
+          "q10": 1.95
+        },
+        {
+          "pos": "RB",
+          "mu_asked": 3.0,
+          "sd_asked": 3.59,
+          "mu_realised": 3.3,
+          "sd_realised": 3.21,
+          "p_clipped": 0.209,
+          "q10": 0.0
+        },
+        {
+          "pos": "QB",
+          "mu_asked": 3.0,
+          "sd_asked": 3.26,
+          "mu_realised": 3.3,
+          "sd_realised": 2.82,
+          "p_clipped": 0.179,
+          "q10": 0.0
+        },
+        {
+          "pos": "TE",
+          "mu_asked": 3.0,
+          "sd_asked": 3.45,
+          "mu_realised": 3.26,
+          "sd_realised": 3.12,
+          "p_clipped": 0.197,
+          "q10": 0.0
+        }
+      ],
+      "conclusion": "The docstring claims 'mean and spread come out exactly as asked'. At mu=3 the realised mean is ~+11% and the sd ~-11%, and q10 is pinned at 0.00 for every RB and WR at mu<=6. coverage.GATE_SUBSET='unclipped' excludes 5,525 of 16,061 player-weeks, so the gated 77.4% describes high-mu players only.",
+      "why_it_matters": "The draft simulator scores a roster with a weekly max over starters, so an upward mean bias concentrated on low-mu players is free points off the end of the bench - the exact failure moments() removed floor_sd to avoid.",
+      "reproduce": "import numpy as np\nMIN_SKEW = 0.05\ndef skewed(mean, sd, skew, z):\n    a = max(skew, MIN_SKEW) / 6.0\n    y = (z + a*(z**2 - 1.0)) / np.sqrt(1.0 + 2.0*a**2)\n    return np.clip(mean + sd*y, 0.0, None)\nz = np.random.default_rng(1).standard_normal(2_000_000)\nmu, k, skew = 3.0, 2.13, 0.66              # WR\nx = skewed(mu, k*np.sqrt(mu), skew, z)\nprint(x.mean(), x.std(), (x <= 0).mean(), np.quantile(x, 0.10))\n"
+    },
+    {
+      "id": "M-R4",
+      "title": "components._counts has a hard support ceiling on touchdowns",
+      "verified": "direct",
+      "constants": {
+        "TD_DISPERSION": {
+          "pass": 0.85,
+          "rush": 0.86,
+          "rec": 0.83
+        }
+      },
+      "rows": [
+        {
+          "mu": 0.15,
+          "max_possible": 1,
+          "p_3plus": 0.0,
+          "poisson_p_3plus": 0.0005,
+          "realised_var_over_mean": 0.85
+        },
+        {
+          "mu": 0.25,
+          "max_possible": 1,
+          "p_3plus": 0.0,
+          "poisson_p_3plus": 0.00216,
+          "realised_var_over_mean": 0.749
+        },
+        {
+          "mu": 0.363,
+          "max_possible": 2,
+          "p_3plus": 0.0,
+          "poisson_p_3plus": 0.00609,
+          "realised_var_over_mean": 0.817,
+          "note": "a typical WR1's receiving TDs per week"
+        },
+        {
+          "mu": 0.5,
+          "max_possible": 3,
+          "p_3plus": 0.00456,
+          "poisson_p_3plus": 0.01439,
+          "realised_var_over_mean": 0.833
+        },
+        {
+          "mu": 1.0,
+          "max_possible": 6,
+          "p_3plus": 0.06175,
+          "poisson_p_3plus": 0.0803,
+          "realised_var_over_mean": 0.831
+        }
+      ],
+      "conclusion": "trials = round(mean / (1 - phi)) caps the support. A WR1 cannot score a third receiving TD in this simulator; below mu=0.3 he cannot score a second. The rounding also drifts the dispersion the constant was fitted to hold (0.749 against 0.83 at mu=0.25). TDs are additionally drawn independently of the yards draw, truncating the same tail again.",
+      "reproduce": "import numpy as np\nrng = np.random.default_rng(0)\ndef counts(mean, phi, n):\n    if phi < 1.0:\n        p = 1.0 - phi; trials = round(mean / p)\n        return rng.binomial(max(trials, 1), min(mean/max(trials,1), 1.0), n)\n    return rng.poisson(mean, n)\nx = counts(0.363, 0.83, 400_000)\nprint(x.max(), (x >= 3).mean(), x.var()/x.mean())   # 2  0.0  0.817\n"
+    },
+    {
+      "id": "M-R5",
+      "title": "The screen's two-sigma bar is p = 0.12-0.14, not 0.05",
+      "verified": "direct",
+      "rows": [
+        {
+          "df": 3,
+          "t": 2.0,
+          "two_sided_p": 0.1393
+        },
+        {
+          "df": 3,
+          "t": 2.49,
+          "two_sided_p": 0.0885
+        },
+        {
+          "df": 3,
+          "t": 2.8,
+          "two_sided_p": 0.0679
+        },
+        {
+          "df": 4,
+          "t": 2.0,
+          "two_sided_p": 0.1161
+        },
+        {
+          "df": 4,
+          "t": 2.49,
+          "two_sided_p": 0.0675
+        },
+        {
+          "df": 4,
+          "t": 2.8,
+          "two_sided_p": 0.0488
+        }
+      ],
+      "conclusion": "weekly_screen.verdict kills on abs(t) < MIN_SE=2.0 where t is built from 4-5 season means (3-4 df). The headline td_rate_prior figure quoted as '-2.49 se' is p = 0.089 unadjusted, and fails BH q=0.10 at rank 1 over the eight-test family. two_sided_p(r['t'], r['seasons']-1) exists eleven lines away and verdict does not read it.",
+      "fix": "Compare p against alpha, or raise min_se to experiment.t_quantile(0.975, seasons-1) - 3.182 at 3 df, 2.776 at 4 df."
+    },
+    {
+      "id": "M-R6",
+      "title": "Rival ledgers: the cost of the empty-ledger assumption",
+      "verified": "reported",
+      "setup": "synthetic 32-team board, weeks 11-18, our ledger 10 deep, 21 entries, concentration k=4.0, 500 trials, $420 pot",
+      "result": {
+        "share_clean_rivals": 0.0417,
+        "share_ten_deep_rivals": 0.0311,
+        "equity_clean": 17.53,
+        "equity_ten_deep": 13.06,
+        "move": "25%"
+      },
+      "conclusion": "Every dollar figure in season/pool.py is computed with every rival holding an empty ledger in every week. The real ledgers are fetched, validated and archived; fetch.pool.ledgers() returns them in the exact shape Field.outcome takes and has zero callers in src/."
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "Q1",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "quarterback.points() computed the wrong quantity",
+      "note": "points() is now `state.select(team, (qb_adj / ELO_PER_POINT).alias('points'))`. arrival_value, arrival_adj, tenure and DECAY_PER_GAME are gone. The module docstring records the incident and keeps the reviewer's measured error (mean |err| 0.4, worst 3.6, four sign flips, Baltimore +4.018 against +0.404).",
+      "verified": "direct"
+    },
+    {
+      "id": "Q2",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "Ungated estimator in the published path",
+      "note": "A gate now exists and has been run: docs/gate-power.md pre-registered 2026-09-13 in 8e4e502, models/starter_change.py built after it, verdict NOT-RUNNABLE. See R6 - the fix is real and the DISPOSITION is the open question.",
+      "verified": "direct"
+    },
+    {
+      "id": "Q3",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "OAK unmapped",
+      "note": "ABBREVIATIONS = {'WSH':'WAS','LAR':'LA','OAK':'LV'}.",
+      "verified": "direct"
+    },
+    {
+      "id": "Q4",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "External CSV unpinned",
+      "note": "URL now names a COMMIT; PINNED_SHA256 set 2026-09-13; a mismatch prints a source-change sentence naming both hashes. verified_against_live=True is now backed by a frozen 300-row live capture. RESIDUAL: the stamp on disk predates the pin (commit:null, pinned_sha256:null, matches_pin:null), so the drift check is vacuous against the cached stamp until the next --refresh. The reviewer hashed the file directly and it matches.",
+      "verified": "direct"
+    },
+    {
+      "id": "Q5",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "No as-of state reconstruction",
+      "note": "state(rows, as_of) with before() filtering on game_day(as_of), converting UTC to GAME_DAY_ZONE first so the cut lands on the football day.",
+      "verified": "direct"
+    },
+    {
+      "id": "Q6",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "Three hazards in the QB layer",
+      "note": "non_null narrowed to (date, season, team1, team2) so one null rookie no longer refuses the file. The staleness clock now runs from the capture (priced_at), not the quote's last move (#297), which kills the book-set-churn hazard. The duplicate-row rule is re-described.",
+      "verified": "direct"
+    },
+    {
+      "id": "Q7",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "ratings.py called itself a passthrough while the number moved",
+      "note": "model='market_baseline-qb' on adjusted rows; the run line prints 'passthrough' only when the adjusted count is zero; the docstring is rewritten.",
+      "verified": "direct"
+    },
+    {
+      "id": "Q8",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "bigten green stamp on zero captures",
+      "note": "Document floor added.",
+      "verified": "direct"
+    },
+    {
+      "id": "Q9",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "Coverage gate red, uncommitted, wired to nothing",
+      "note": "state/interval_coverage.json committed; .github/workflows/slate.yml runs --measure --survivor --write and --gate; publish.py reads published_summary(). NOTE: the gate passes because CLAIMED_COV80 was restated to 0.77 and the measured unclipped figure is 0.7737 - honest labelling, and the site prints both ('labelled 80%: covers X'). Position-level misses are not gated (QB 0.757). See R7.",
+      "verified": "direct"
+    },
+    {
+      "id": "Q10",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "B6 not even a stated limitation",
+      "note": "hub/holdout.py plus conf/holdout/2022-2025.json; backtest --holdout and weekly_gate --holdout; LIMITATIONS names it. Two caveats carried forward as R17: the sets refit 3 of 11 keys (TALENT_CV is not one), and no document reports a hold-out RUN result.",
+      "verified": "direct"
+    },
+    {
+      "id": "Q11",
+      "series": "audit-iii",
+      "status": "PARTIAL",
+      "title": "IMPUTE_CV fitted with no committed code, on the wrong population",
+      "note": "draft/impute_cv.py measures it on rookies (the right population) and docs/impute-cv.md publishes 0.324 pooled with a season-clustered interval and the survivorship bias named. The shipped constant is still the veteran 0.260 and its fitting script is still not in the tree; adoption is an open decision (#277). See R18 - the rookie measurement has a one-season comparability defect of its own.",
+      "verified": "direct"
+    },
+    {
+      "id": "Q12",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "Props CLV could not see a point move",
+      "note": "The close is translated onto the decision point through the repo's own distribution (#275); edge is signed toward the Over rather than folded; clustering coalesces to game_id with player as the fallback.",
+      "verified": "direct"
+    },
+    {
+      "id": "Q13",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "Sensitivity.resolution was the wrong bar",
+      "note": "resolution = unpaired_bar(se, se) = DECISIVE_SIGMA * hypot(se, se). NOTE: the test asserts only against the implementation's own expression - a mutation making share_sd 20x too small passes the whole suite (R15 family).",
+      "verified": "direct"
+    },
+    {
+      "id": "Q14",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "Pool state overwritten",
+      "note": "Dated partitions under pool_state/league=/season=/week=/snap-<moment>, journal.pool_state_digest on the row, and a test that re-prices a decision against its archived field AND the current one and shows they differ.",
+      "verified": "direct"
+    },
+    {
+      "id": "Q15",
+      "series": "audit-iii",
+      "status": "FIXED",
+      "title": "Adoption rules weaker than the house standard; a float claim argued in the reals",
+      "note": "margin.shape_verdict routes through _house_rule (#285): every season plus a bootstrap interval excluding zero. _weight_total raises on underflow before rng.choice, on both vectors, with a genuinely underflowing fixture. survival_beside is labelled an independence bound with n carried. RESIDUAL: it defaults to NFL_WEEKS=18 while the pool takes 24 picks in a double-pick season, so p^18 sits beside a p^24 product.",
+      "verified": "direct"
+    },
+    {
+      "id": "Q16",
+      "series": "audit-iii",
+      "status": "PARTIAL",
+      "title": "Record residuals and the pick-noise interval",
+      "note": "The docs half is closed: every bare +0.711 now carries a local restatement marker, weekly-blend-gate.md:472 closes on the corrected figure, the ADR index is complete. STILL OPEN: the fourteen/fifteen measurement-count split across five files, and PICK_NOISE_SLOPE_CI's four nested clusters sharing ~91% of their rows, on which a data-chosen ceiling of 168 still rests.",
+      "verified": "direct"
+    },
+    {
+      "id": "B2",
+      "series": "carried",
+      "status": "PARTIAL",
+      "title": "Multiplicity",
+      "note": "BH computed and printed; explicitly advisory. The family is scoped per call, so sweep's five anchors and BASES' three control bases are never adjusted across. See R10.",
+      "verified": "reported"
+    },
+    {
+      "id": "B3",
+      "series": "carried",
+      "status": "PARTIAL",
+      "title": "CRPS",
+      "note": "A CRPS gate on the interval's shape law was pre-registered 2026-09-13 and measured NOT-RUNNABLE on five seasons (MDE +0.0117 against a ceiling of +0.0081). Pre-registration discharged; the gate still decides nothing.",
+      "verified": "direct"
+    },
+    {
+      "id": "B4",
+      "series": "carried",
+      "status": "FIXED",
+      "title": "Coverage harness unwired",
+      "note": "See Q9.",
+      "verified": "direct"
+    },
+    {
+      "id": "B6",
+      "series": "carried",
+      "status": "PARTIAL",
+      "title": "Constants fitted on the replayed seasons",
+      "note": "Machinery built (Q10). Not discharged: 3 of 11 keys refit, TALENT_CV excluded, and no hold-out replay has been run or published.",
+      "verified": "direct"
+    },
+    {
+      "id": "C2",
+      "series": "carried",
+      "status": "PARTIAL",
+      "title": "Replacement level / streaming",
+      "note": "Populations declared, shares still hand-set.",
+      "verified": "direct"
+    },
+    {
+      "id": "C5",
+      "series": "carried",
+      "status": "OPEN",
+      "title": "TD regression unattenuated",
+      "note": "components.td_rate is still a single constant per (position, phase); regress_touchdowns is still a full swap at w=1 justified by an un-disattenuated year-over-year r of ~0. No red-zone or goal-line feature exists anywhere in src/. See R8 and prediction_evaluation.",
+      "verified": "direct"
+    },
+    {
+      "id": "C6",
+      "series": "carried",
+      "status": "PARTIAL",
+      "title": "Teammate correlation cannot express negative rho",
+      "note": "teammate_rho defaults to 0.0 so a negative value is representable, but the fitted table is three non-negative QB edges. See R12 - the marginal WR-WR estimate of +0.014 is the wrong estimand; the conditional-on-team-output correlation is what a lineup optimiser needs.",
+      "verified": "direct"
+    },
+    {
+      "id": "C7",
+      "series": "carried",
+      "status": "PARTIAL",
+      "title": "Opponent-noise sensitivity",
+      "note": "Built, still not run - no doc reports a result.",
+      "verified": "direct"
+    },
+    {
+      "id": "D3",
+      "series": "carried",
+      "status": "FIXED",
+      "title": "Record reconciliation",
+      "note": "Closed but for Q16's two residuals.",
+      "verified": "direct"
+    },
+    {
+      "id": "G1",
+      "series": "carried",
+      "status": "FIXED",
+      "title": "price_source two ways",
+      "note": "schedule.priced_games now labels every row live / stale / schedule (#281), the one cut declared in quarterback.live_price and applied in one place, and a stale snapshot loses to the moving field.",
+      "verified": "direct"
+    },
+    {
+      "id": "G4",
+      "series": "carried",
+      "status": "OPEN",
+      "title": "No share-coherence constraint",
+      "note": "Nothing in the tree normalises a team's target or carry shares. Now the highest-value modelling item in the repo: it is also the generator of the negative teammate correlation (C6) and of injury substitution, and props.py should be sitting on it.",
+      "verified": "direct"
+    },
+    {
+      "id": "G5",
+      "series": "carried",
+      "status": "OPEN",
+      "title": "Drive/scoring layer",
+      "note": "Correctly NOT built. The research gate has not passed.",
+      "verified": "direct"
+    },
+    {
+      "id": "N15",
+      "series": "carried",
+      "status": "PARTIAL",
+      "title": "Lookahead prices treated as informative",
+      "note": "Two of three legs landed. moving_field rides on the grid but no second MARGIN_SD is fitted on lookahead-versus-result. Still the last one-directional bias in the survivor grid.",
+      "verified": "direct"
+    }
+  ],
+  "new_finding_groups": {
+    "R-A": "The quarterback programme (starter_change, the gate and the study)",
+    "R-B": "The football and the statistics (predict, components, weekly, weekly_screen, panel, spread)",
+    "R-C": "The money layer and the new infrastructure (pool, declare, holdout, impute_cv)"
+  },
+  "new_findings": [
+    {
+      "id": "R6",
+      "group": "R-A",
+      "severity": "decision",
+      "title": "NOT-RUNNABLE is a permanent licence, written by the one branch the gate can reach",
+      "evidence": [
+        "The pre-registration says: 'Anything else that is a verdict - REMOVE, or SHOW - fails the house rule, and that is #270's pull trigger.' And immediately after: 'NOT-RUNNABLE, or VOID - no verdict. The mark stands.'",
+        "Both sentences are defensible alone. Together, on a gate whose own power calculation says it returns NOT-RUNNABLE for ~25 more years (M-R1: k=29 event-seasons needed, MDE 0.0986 at the three-season floor against a target of 0.0180), they amount to a permanent licence to ship written by the only branch the gate can reach.",
+        "This is not a technicality because the pilot is evidence and it points the other way (M-R1): on the population the module fires on, the source's QB-adjusted probability scored worse than its base in three seasons of four, pooled -0.0180.",
+        "Meanwhile the estimand that IS resolvable decides nothing. The line-move study's MDE is 0.0063 points per value unit against a 0.132 benchmark on ONE season (M-R2) - roughly twenty times the power of the log-loss gate, and it is already pre-registered and already built. It is short about four weeks of poller history; the event table says the first in-season 2026 event arrives around week 4.",
+        "Exposure today is narrow: site/data/preds_2026_wk01.json and wk02.json are all `market_baseline` (weeks 1-2 have live prices), and on the Actions runner every capture is minutes old so the module never fires there. The exposure is the survivor grid, whose distant weeks are exactly the stale/schedule rows."
+      ],
+      "refs": [
+        {
+          "path": "docs/gate-power.md",
+          "lines": "508-531",
+          "note": "the two preconditions and the pull trigger"
+        },
+        {
+          "path": "docs/gate-power.md",
+          "lines": "616-712",
+          "note": "the measured run and the pilot"
+        },
+        {
+          "path": "src/hub/models/starter_change.py",
+          "lines": "26-30"
+        }
+      ],
+      "verified": "direct",
+      "blocking": false,
+      "fix": "Amend the pre-registration to make the line-move coefficient the ADOPT condition (sign and magnitude against 0.132, season-clustered once two seasons exist) and demote the log-loss gate to the diagnostic it can actually be. Until the study has rows, mark the -qb rows on the site itself, not only in the version string."
+    },
+    {
+      "id": "R1",
+      "group": "R-A",
+      "severity": "high",
+      "title": "A row blank on one side deletes a game from the team's sequence, so the commonest change is invisible",
+      "evidence": [
+        "nfeloqb.parse deliberately keeps a row blank on one side and expects the long form to drop that side alone (#283). starter_change.events then defines the previous game as shift(1).over('team') over whatever survives, so the hole closes up.",
+        "Demonstrated on a four-week fixture where a team benches its starter in week 3 and the week-3 row is blank on that side: BOTH changes vanish and nothing counts them.",
+        "Where the event does survive it carries the wrong ancestor: prev_game_id points two weeks back and frozen_before is set 14 days before the event game - not 'the price the adjustment would actually have replaced', which is what the pre-registration says the frozen price is.",
+        "The events docstring says 'its previous game'; the code means 'its previous game the source could be read for', and nothing reports the difference."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/models/starter_change.py",
+          "lines": "135, 169, 182, 253"
+        },
+        {
+          "path": "src/hub/fetch/nfeloqb.py",
+          "lines": "202-207"
+        }
+      ],
+      "verified": "reported",
+      "blocking": false,
+      "fix": "Build the previous-game link off the full row set rather than the surviving sides, and report the count of games a one-sided blank made unreadable. Do this BEFORE the study has rows - it changes what the study measures."
+    },
+    {
+      "id": "R2",
+      "group": "R-A",
+      "severity": "high",
+      "title": "The gate's not-null filter cannot remove a row, so unpriceable games enter as exact zeros",
+      "evidence": [
+        "`.filter(pl.col('adjusted').is_not_null() & pl.col('oracle').is_not_null())` is a no-op: quarterback.apply returns close_spread UNCHANGED on a row it did not move, so `adjusted` is never null - it is the frozen price.",
+        "A game whose team has no prior row in the state survives the filter, contributes diff = 0.0 exactly, inflates n, and shrinks both the mean and the clustered sd.",
+        "Deleting the filter entirely leaves all 26 tests green."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/models/starter_change.py",
+          "lines": "385-386"
+        },
+        {
+          "path": "src/hub/models/quarterback.py",
+          "lines": "165-167"
+        }
+      ],
+      "verified": "reported",
+      "blocking": false,
+      "fix": "Guard on adjusted_by (or qb_adjustment) rather than on the spread column, and add a fixture where a team is absent from the state."
+    },
+    {
+      "id": "R3",
+      "group": "R-A",
+      "severity": "high",
+      "title": "Stage 2 is opt-in and the documented command turns it off; the three-season floor fires after the verdict",
+      "evidence": [
+        "run(paired, *, needed, ceiling: bool = True) but the CLI flag is --ceiling with action='store_true', and the module's own usage line is `--events --gate --study`. The documented invocation runs the gate with a pre-registered precondition unable to fire.",
+        "Every unit test calls sc.run without the kwarg, so the tested configuration is not the shipped one.",
+        "The three-season floor is applied at `if got.verdict[0] not in ('VOID','NOT-RUNNABLE') and k < EVENT_SEASONS_MINIMUM` - after run_gate has summarised, taken the house verdict, written the width history and rendered got.lines, and main prints those lines regardless. An underpowered run still publishes its interval; only the verdict string is replaced. The docstring says 'NOT-RUNNABLE ahead of every branch'.",
+        "Structurally the gate can also never reach three event-seasons through main: archive() reads one season (WHERE season = ?) and main filters games to a.season, so paired['season'].n_unique() <= 1 always."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/models/starter_change.py",
+          "lines": "28, 44, 441, 456, 633-636, 659, 667, 686"
+        }
+      ],
+      "verified": "reported",
+      "blocking": false
+    },
+    {
+      "id": "R4",
+      "group": "R-A",
+      "severity": "high",
+      "title": "The study's standard error is not the noise floor it cites - it is measured on the moves being measured",
+      "evidence": [
+        "#214's floor comes from odds.noise_floor_report, which additionally filters `live = live.filter(pl.col('same_qb'))` - quarterback-change intervals excluded, which is the entire point of a noise floor for this study.",
+        "starter_change.main rebuilds it as odds.noise_floor(odds.line_moves(...).filter(~frozen)) without that condition, so the sample includes exactly the moves the study exists to detect.",
+        "The printed line then sets it beside '#214 recorded 0.40 on 12' as though the two were the same quantity. Effect: SE inflated, t_vs_benchmark deflated - conservative, but not the number the pre-registration names."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/models/starter_change.py",
+          "lines": "596-606, 705-707"
+        },
+        {
+          "path": "src/hub/fetch/odds.py",
+          "lines": "940"
+        }
+      ],
+      "verified": "reported",
+      "blocking": false
+    },
+    {
+      "id": "R5",
+      "group": "R-A",
+      "severity": "medium",
+      "title": "Four things in the study that will bite when rows arrive",
+      "evidence": [
+        "UNPLAYED GAMES ENTER THE REGRESSION. study_rows filters only on `~censored & close.is_not_null()` and never joins results, where gate_rows inner-joins them. For an in-flight game 'the last snapshot before the game day' is just the latest snapshot, so the move is truncated and the coefficient attenuated, with nothing marking the row.",
+        "THE CHANGE-POINT MIXES UTC AND EASTERN. _change_points differences captured_at.date() (naive UTC) against frozen_before (an Eastern game day), where every other date in the module goes through _poll_day. A capture at 02:00 UTC reports one day too many.",
+        "IT SCANS POLLS, NOT POLL DAYS. The local is named `days` but is polls.sort(...); the pre-registration says 'the first poll DAY'. With several captures a day the threshold can fire intraday. The scan is also unbounded above - nothing stops it at the close or the game day.",
+        "THE WEEK CONTROL SET INCLUDES OTHER EVENT GAMES. Only the event game itself is excluded, so a week with two starter changes uses one treated game as the other's control. week_others is computed, declared in STUDY_SCHEMA, and read nowhere; a row with zero controls gets week_mean = 0.0 and is fitted like any other.",
+        "CENSORED CONFLATES TWO FACTS. frozen.is_null() cannot distinguish a game the archive never polled from one first polled after the change, and the run line reports the count as the latter.",
+        "The slope SE divides by sqrt(n) where the OLS slope wants sqrt(n-1) - immaterial at n=53, 41% at n=2."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/models/starter_change.py",
+          "lines": "291, 482-490, 498-510, 530, 575"
+        }
+      ],
+      "verified": "reported",
+      "blocking": false
+    },
+    {
+      "id": "R7",
+      "group": "R-B",
+      "severity": "high",
+      "title": "The zero clip biases the mean up 11% and pins the published p10 at zero for most of the board",
+      "evidence": [
+        "MEASURED (M-R3) on the shipped constants: at mu=3.0 a WR clips in 21.7% of draws, realised mean +11%, realised sd -11%. q10 = 0.00 for every RB and WR at mu <= 6.",
+        "The docstring asserts the opposite: 'mean and spread come out exactly as asked'.",
+        "coverage.GATE_SUBSET = 'unclipped' excludes 5,525 of 16,061 player-weeks, so the gated 77.4% is a statement about high-mu players and the degenerate part of the board is not measured at all.",
+        "Direction matters: the draft simulator scores a roster with a weekly max over starters, so an upward mean bias concentrated on low-mu players is free points off the end of the bench - the exact failure moments() removed floor_sd to avoid, reintroduced through the mean instead of the spread.",
+        "Separately: weekly.standard_error computes the estimation error in mu (+36% at one game played against twelve) and has exactly one caller, which is not the forecast. shipped_quantiles builds the interval from moments alone. That is almost certainly most of the 80% -> 77.4% gap, and the response was to restate CLAIMED_COV80 to 0.77."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/models/predict.py",
+          "lines": "204-217, 663, 687"
+        },
+        {
+          "path": "src/hub/models/coverage.py",
+          "lines": "141"
+        },
+        {
+          "path": "src/hub/models/weekly.py",
+          "lines": "388, 404"
+        }
+      ],
+      "verified": "direct",
+      "blocking": false,
+      "fix": "sd^2 = (K*sqrt(mu))^2 + se^2 at predict.py:687, or draw from a t on games_before-1 df. Then conformalise shipped_quantiles against the rolling window conformal.py already builds - an empirical lower quantile is not a clipped parametric one. Re-run the coverage gate on the FULL population and retire the 0.77 claim."
+    },
+    {
+      "id": "R8",
+      "group": "R-B",
+      "severity": "high",
+      "title": "The touchdown sampler has a hard support ceiling; a WR1 can never score three",
+      "evidence": [
+        "MEASURED (M-R4): trials = round(mean / (1 - phi)) at phi=0.83 gives a maximum of 2 TDs at the typical WR1 receiving rate of 0.363 and 1 below mu=0.3. P(3+) is exactly 0.0 where Poisson gives 0.0061 - an 18-point event.",
+        "The rounding also drifts the dispersion the constant was fitted to hold: 0.749 against a target of 0.83 at mu=0.25.",
+        "TDs are drawn independently of the yards draw in sample_weeks, truncating the same upper tail a second time - the big week is big because both happened.",
+        "Every ceiling-based decision reads this distribution: the draft backtest scores a roster with a weekly max over starters."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/models/components.py",
+          "lines": "171-178, 281, 302, 316"
+        }
+      ],
+      "verified": "direct",
+      "blocking": false,
+      "fix": "A Conway-Maxwell-Poisson or a Katz family, which admits under-dispersion without a support ceiling; and draw TDs conditionally on the yards draw (a copula, or td | yards ~ Binomial(n_opps(yards), p))."
+    },
+    {
+      "id": "R9",
+      "group": "R-B",
+      "severity": "high",
+      "title": "paired_gain is unclustered over ~30,000 player-weeks, in three shipped gates",
+      "evidence": [
+        "experiment.paired_gain computes `se = d.std(ddof=1) / sqrt(len(d))` where len(d) is the number of player-weeks. It has no cluster argument.",
+        "Read by weekly._contrast, spread.verdict and injury - three gates that decide.",
+        "The repo names this as its own worst error: 'getting it wrong is the most expensive mistake in this repo's record - repeated measures once turned noise into an apparent 4-sigma result'. SEASON_CLUSTER declares the season the unit for 'every gate in this repo'; run_gate takes cluster with no default and a contract test asserts on the call site.",
+        "Every t in docs/weekly-projection.md is on this basis: +0.0634 MAE at +5.3 se, +0.0103 at +2.8 se. On four seasons as the unit those are t's on 3 df, and a +2.8 that wins 4 of 4 is plausibly under 2."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/models/experiment.py",
+          "lines": "467-486"
+        },
+        {
+          "path": "src/hub/models/weekly.py",
+          "lines": "475-480"
+        },
+        {
+          "path": "src/hub/models/spread.py",
+          "lines": "362"
+        },
+        {
+          "path": "src/hub/models/injury.py",
+          "lines": "305"
+        }
+      ],
+      "verified": "direct",
+      "blocking": false,
+      "fix": "Give paired_gain a cluster argument with no default, the same fix run_gate already has, then re-run and restate every figure in docs/weekly-projection.md."
+    },
+    {
+      "id": "R10",
+      "group": "R-B",
+      "severity": "high",
+      "title": "The screen's two-sigma bar is p = 0.12-0.14, and the module computes the right p and ignores it",
+      "evidence": [
+        "MEASURED (M-R5): weekly_screen.verdict kills on abs(t) < MIN_SE = 2.0, where t is built from 4-5 season means (3-4 df). Two-sided p at t=2.0 is 0.139 at 3 df and 0.116 at 4 df.",
+        "two_sided_p(r['t'], r['seasons'] - 1) exists eleven lines away, and the comment at experiment.py:308 explains it is two-sided BECAUSE the screen's bar is abs(t) < MIN_SE. verdict reads abs(t).",
+        "The headline td_rate_prior figure quoted throughout the tree as '-2.49 se' is p = 0.089 unadjusted, and at BH q=0.10 over the eight-test family it already fails at rank 1.",
+        "The every-season half partially compensates (P(5/5 same sign under the null) = 6.25%) and every_season_null is a genuinely good permutation placebo - but the two halves are correlated and their joint size has never been computed, though the permutation harness could produce it directly.",
+        "The BH family is scoped per call: sweep runs the whole screen at five anchors and adjusts within each anchor separately; BASES offers three control bases each a re-run; screen_usage is 8 features x 5 counts. The printed family size is honest about what it counted and systematically smaller than what was run."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/models/weekly_screen.py",
+          "lines": "438-466, 479, 490, 588, 797"
+        },
+        {
+          "path": "src/hub/models/experiment.py",
+          "lines": "214, 308, 327"
+        }
+      ],
+      "verified": "direct",
+      "blocking": false,
+      "fix": "Compare p against alpha, or raise min_se to experiment.t_quantile(0.975, seasons-1) - 3.182 at 3 df, 2.776 at 4 df. Then decide once whether BH decides anything."
+    },
+    {
+      "id": "R11",
+      "group": "R-B",
+      "severity": "medium",
+      "title": "Three leakage surfaces that are real and undisclosed",
+      "evidence": [
+        "FF_OPPORTUNITY EXPECTATIONS ARE NOT POINT-IN-TIME. The _exp columns are the output of a model nflverse fits over its whole history, so board_as_of(2022) reading 2021 xFP is reading a number produced with sight of 2022-2025. The weeks averaged are point-in-time; the values are not. Everything downstream of xfp_per_game inherits it and nothing in the tree names it.",
+        "THE SPREAD LAW IS FITTED ON SURVIVORS. WEEKLY_K is fitted on player-seasons filtered to games >= MIN_GAMES (8) and mu > MIN_PPG (3.0) - both conditions on the realised outcome - then applied to every player at prediction time including the sub-3-ppg bench. The excluded population is the high-variance tail, so k is biased low exactly where it is most often applied.",
+        "THE PANEL'S INNER JOIN ON CONSENSUS IS A COLLIDER. Every screen figure is conditional on being ranked by FantasyPros that week, which conditions on a collider between talent and opportunity and attenuates any feature whose effect runs through 'he became relevant'. Acknowledged as a spec choice, never as a bias.",
+        "Minor, and already named by the repo: assign_weeks' Friday scrape has seen Thursday night. It is conservative for the arm under test but NOT for ecr as a control - a control with one game of hindsight over-absorbs signal and biases every partial correlation toward zero, so every null is slightly weaker than it looks."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/models/panel.py",
+          "lines": "286, 696, 1228"
+        },
+        {
+          "path": "src/hub/draft/board.py",
+          "lines": "107"
+        },
+        {
+          "path": "src/hub/models/spread.py",
+          "lines": "138, 163"
+        }
+      ],
+      "verified": "reported",
+      "blocking": false
+    },
+    {
+      "id": "R12",
+      "group": "R-B",
+      "severity": "medium",
+      "title": "The correlation structure is missing its two most valuable terms, and the one it has is attenuated by the transform",
+      "evidence": [
+        "NO OPPONENT CORRELATION. correlated_normal builds blocks per team, never per game. A shootout lifts both offenses; a defensive game sinks both. On standardised weekly points that is a real positive of roughly 0.1-0.2, and it is what makes a stack-plus-bring-back the standard construction.",
+        "NO SEASON-LEVEL CORRELATION. season.py draws true_mu = mu * (1 + rng.normal(0, talent_cv)) INDEPENDENTLY PER PLAYER; only the weekly z is correlated. For a fourteen-week season-total P(win) - which is what the draft gate scores - the season-level term dominates the weekly one and it is zero.",
+        "THE CORRELATION IS APPLIED PRE-TRANSFORM, so the realised output correlation is attenuated by the Cornish-Fisher quadratic and the zero clip (roughly 2-3% at these skews). The published 80.4% coverage was measured through the simulator so the headline is safe, but the 0.232 in the table is not the 0.232 the draws exhibit.",
+        "THE WR-WR ESTIMAND IS WRONG. The table reports two receivers on the same team at +0.014 with the comment 'which is not what the folklore says'. The folklore is right: the marginal correlation is a shared positive game-environment shock plus a negative share-competition shock and nets to zero. The quantity a lineup optimiser needs is the correlation CONDITIONAL on team output, which is strongly negative. Residualise each player's week on team total points (or pass attempts) and correlate the residuals."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/models/predict.py",
+          "lines": "534, 549, 600-611"
+        },
+        {
+          "path": "src/hub/draft/season.py",
+          "lines": "323, 351"
+        }
+      ],
+      "verified": "reported",
+      "blocking": false
+    },
+    {
+      "id": "R13",
+      "group": "R-C",
+      "severity": "high",
+      "title": "Every rival gets an empty ledger in every dollar figure - and the real ones are fetched, archived and dropped",
+      "evidence": [
+        "Field._trials: `led = [set(ledger)] + [set() for _ in range(entries - 1)]`. Field.entry has no parameter for rival ledgers at all.",
+        "In a week-12 run our entry carries eleven spent teams over the remaining weeks while all twenty rivals arrive with the full 32-team board, can never be eliminated by the no-repeat rule, and may re-use a team they spent in week 2. Every figure in the module - weekly, buyback, sensitivity, leverage - is built on that.",
+        "The module docstring says the opposite: 'Ledgers are reconstructed, not observed, under the same sampling rule - so the model is exactly degenerate in week 1, where every ledger is empty and it knows nothing about the field at all.' No reconstruction happens; they are empty in EVERY week.",
+        "The data is on disk. fetch.pool.ledgers returns 'every entry's Ledger in index order, ours first -- the ledgers that hub.season.pool.Field.outcome takes' and has ZERO callers in src/. survivor.prior_rows reads state.entries[OUR_INDEX].used out of the same PoolState and discards entries[1:].",
+        "MEASURED (M-R6): synthetic 32-team board, weeks 11-18, our ledger 10 deep, 21 entries, k=4.0, 500 trials - share 0.0417 with clean rivals against 0.0311 with ten-deep rivals: $17.53 against $13.06 of equity on a $420 pot, a 25% move."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/season/pool.py",
+          "lines": "69, 1227"
+        },
+        {
+          "path": "src/hub/fetch/pool.py",
+          "lines": "379"
+        }
+      ],
+      "verified": "reported",
+      "blocking": false,
+      "fix": "Pass the real ledgers into Field._trials - fetch.pool.ledgers already returns them in the shape Field.outcome takes - and correct the docstring, which describes a reconstruction that does not happen."
+    },
+    {
+      "id": "R14",
+      "group": "R-C",
+      "severity": "high",
+      "title": "The buyback - the only figure attached to a real payment - is the one printed without an interval",
+      "evidence": [
+        "Buyback carries no standard error field; buyback() discards out.share_sd (available in scope); recommend is a bare sign test on `net > 0`.",
+        "Eight seeds on the same board, ledger and field at the CLI default of 400 trials: equity $17.90 to $30.16, net -2.10 to +10.16, four BUY and four stay.",
+        "The module's own bar on that equity is DECISIVE_SIGMA * share_sd/sqrt(trials) * pot = +/-$9.74.",
+        "main then prints 'net $X to $Y across the axis -- the verdict holds at every point', attributing to the concentration assumption a stability that Monte Carlo noise alone destroys.",
+        "Every other reader in this module refuses to call a difference inside its own resolution. This one has no resolution."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/season/pool.py",
+          "lines": "1417-1429, 2571-2576"
+        }
+      ],
+      "verified": "reported",
+      "blocking": false,
+      "fix": "Give Buyback a standard error and a three-state verdict - Weekly already has unresolved vs decisive, and the buyback is the decision that most needs it."
+    },
+    {
+      "id": "R15",
+      "group": "R-C",
+      "severity": "medium",
+      "title": "Two bars in the weekly report that are the wrong comparison, and a closed-form week that claims the pot",
+      "evidence": [
+        "AXIS_REPORT COMPARES AN UNPAIRED RANGE AGAINST A PAIRED BAR. `res = max(w.resolution for w in by_k.values())` where Weekly.resolution is the paired bar on pick-versus-free-pick INSIDE ONE RUN, and the range lo..hi is the same candidate at two DIFFERENT concentrations - two runs whose samplers consume the stream differently. This is the #276 error in the function main prints on every weekly run.",
+        "Worse: when the recommendation equals the free pick, `matched` is true and resolution is 0.0 - the common case. Real output: '$24.59 to $32.75 across the axis against $0.00 these trials resolve'. The candidates' own dollars_se are ~$4.00 each, so the honest bar is ~$11.2 and the range is NOT resolvable. One line: unpaired_bar of the two extreme candidates' dollars_se.",
+        "THE CLOSED-FORM FINAL WEEK CLAIMS THE WHOLE POT AND REPORTS ZERO ERROR. With 21 live entries and a $420 pot it prints '$357.00 KC win 85% survives 85.0%' with dollars_se == 0.0 and decisive == True, identical under co_survivor_rule 'split' and 'rollover'. The module's central thesis - a chalk field finishes together and splits - discarded by assumption, in the branch that declares itself exact. Reachable whenever drawable_weeks returns a single week, and a test pins the assumption as the expected result.",
+        "GIVEN_UP_SE omits the two win_prob factors. given_up = fb.survives - best.survives and Candidate.survives is p * mean(live), so the SE needs the p factors - exactly as the code twelve lines above argues for resolution ('win_prob is inside it rather than left out ... dropping the factor inflated the bar by roughly 1/p and called that conservatism'). Adding them passes the entire suite."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/season/pool.py",
+          "lines": "1707-1713, 1734-1735, 2333"
+        }
+      ],
+      "verified": "reported",
+      "blocking": false
+    },
+    {
+      "id": "R16",
+      "group": "R-C",
+      "severity": "medium",
+      "title": "declare and its contract test share the same blind spot, so four spellings escape silently",
+      "evidence": [
+        "Both walk only top-level ast.Assign statements (declare.py:118, test_every_number_is_declared.py:72). Of eight non-canonical spellings tested, one is seen.",
+        "FAIL LOUDLY (right direction, though the message points the author at a spelling the walk also refuses): aliased import (`from hub.declare import fitted as F`), a fitted() inside a dict literal (FLEX_SHARES = {'WR': fitted(0.62)} - the very example declare.py:20 names as the motivating case), chained targets (D1 = D2 = fitted(0.4)).",
+        "FAIL SILENTLY: a module-level float assigned inside if / try / with; a dataclass field default; a function-signature default. SIGNATURE_DEFAULTS only matches names ending '_sims', so draws=2000, alpha=0.05, k=... are unratcheted.",
+        "TWO MORE EXEMPTIONS BY CONSTRUCTION: any underscore-prefixed module-level float (predict._EIG_FLOOR declares voluntarily; nothing requires the next one to), and any float with no float LITERAL (X = 1/3, np.float64(...), sum(TABLE.values())).",
+        "ONE LIVE MIS-CLASSIFICATION: weekly.MIN_UNITS is not_an_input on the argument that the Weekly projection 'is shown and never ranked on', but it is read at weekly.py:296 in the SHIPPED estimator branch and decides which players get their own yards-per-target and which get the pooled rate. By declare.py:20's own rule - coverage is owed by anything that changes a prediction - that is `chosen`.",
+        "TWO LATENT: _spelling matches a NAME, not a binding, so a module that bound its own `fitted` at module level would have a bogus declaration hashed into the version (calibrate.py:193 already defines an unrelated `def fitted(cv)`, function-local today). And a declaration in any __init__.py is attributed to 'hub' rather than the subpackage, which would raise AttributeError at digest time."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/declare.py",
+          "lines": "102, 118, 142-145, 152"
+        },
+        {
+          "path": "tests/contracts/test_every_number_is_declared.py",
+          "lines": "72, 80, 87, 136"
+        },
+        {
+          "path": "src/hub/models/weekly.py",
+          "lines": "97, 296"
+        }
+      ],
+      "verified": "reported",
+      "blocking": false
+    },
+    {
+      "id": "R17",
+      "group": "R-C",
+      "severity": "high",
+      "title": "The hold-out rebinds the declaring module only, and three readers hold their own copy",
+      "evidence": [
+        "applied -> _target resolves the module from declare.declarations() - the module that DECLARES the constant. Three readers took a binding at import:",
+        "  spread.py:54 `from hub.models.predict import WEEKLY_K, WEEKLY_K_POOLED`, used at :81;",
+        "  calibrate.py:61 `from hub.draft.season import WEEKLY_K, WEEKLY_K_POOLED` (season.py re-exports from predict, so a copy of a copy) and calibrate.py:146 freezes one into a SIGNATURE DEFAULT, `k: float = WEEKLY_K_POOLED`, which no setattr can ever move;",
+        "  exhibits/leverage.py:75 computes it into an array at import.",
+        "Which value they hold depends on IMPORT ORDER: a module imported lazily inside the block picks up the held-out value, one imported at process start keeps the shipped one, and a spawned worker rebuilds the graph from scratch.",
+        "Meanwhile the digest DOES move, because covered() reads hub.models.predict.WEEKLY_K - so backtest.played_under stamps 'played under the hold-out constants' on rows a stale reader played under shipped ones. That is the silent digest move the design exists to prevent, inverted.",
+        "record is a read-modify-write and only the write is atomic: two fitting scripts recording into one season's file lose a key with no error. test_holdout.py:20 asserts 'a later record must not erase an earlier script's' and tests only the serial case.",
+        "load accepts a file that omits a held-out key entirely - it lands in neither values nor missing, and describe lists it as 'shipped (not refitted)' with NO reason. The docstring's 'a missing key is recorded, not assumed' is enforced by a test over committed data, not by the loader.",
+        "For the run line: all four committed sets refit 3 of 11 keys (TEAMMATE_RHO, WEEKLY_K, WEEKLY_K_POOLED). TALENT_CV - which predict.py calls 'the single most important number in the model' - is why_not in every season. And predict.WEEKLY_K_POOLED in the 2022 and 2024 sets is identical to the shipped value.",
+        "AND: no document reports a hold-out RUN result. The sets are committed and the machinery is built; docs/gate-power.md's section is 'What a run should print'. This is audit II's 'scaffolded ahead of the producer' pattern, recurring."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/holdout.py",
+          "lines": "121-134, 174-175, 221-226, 242"
+        },
+        {
+          "path": "src/hub/models/spread.py",
+          "lines": "54, 81"
+        },
+        {
+          "path": "src/hub/draft/calibrate.py",
+          "lines": "61, 146"
+        },
+        {
+          "path": "src/hub/exhibits/leverage.py",
+          "lines": "75"
+        }
+      ],
+      "verified": "reported",
+      "blocking": false,
+      "fix": "A contract test forbidding `from hub.models.predict import <held-out name>`; calibrate.py's signature default removed; load requiring all eleven keys accounted for. Then RUN the replay and publish the verdict. Also add a test that calls a FUNCTION which reads the constant inside and outside the block - test_holdout.py currently asserts only on the attribute and the digest, so it would pass unchanged if every consumer held a stale copy."
+    },
+    {
+      "id": "R18",
+      "group": "R-C",
+      "severity": "medium",
+      "title": "The rookie CV compares across a one-season gap, so it carries a year of drift",
+      "evidence": [
+        "board_as_of(season) builds with `season = season - 1` and build()'s xp = expected_points(season), so a 2024 board carries 2023 xFP and _impute_xfp interpolates a rookie on the 2023 curve.",
+        "measure() then compares that against expected_points(yr) - the 2024 season. So ratio = realised_2024 / imputed_from_the_2023_curve - 1, with a full year of season-over-season drift on top of the interpolation error.",
+        "The module asserts the opposite: 'xfp_pg, the quantity the curve imputes and the one the veteran measurement compared against'. The curve imputes the PRIOR season's xFP.",
+        "This matters because IMPUTE_CV is combined in quadrature with TALENT_CV, which already carries season-to-season dispersion - so the confound double-counts. The measured 0.324 against the shipped 0.260 is in exactly the direction it would produce, and #277's adoption decision is currently being taken on a number not comparable to the one it would replace.",
+        "THREE SMALLER, SAME FILE: first_seasons keys on a normalised NAME rather than player_id, so a collision ('Marvin Harrison Jr.' -> 'marvin harrison' is the designed behaviour of names.player_key) takes the min first_season across both and silently reclassifies a rookie as a veteran - and the collisions counter catches a different thing, so it is invisible in the tallies. It is the only reader of player_stats in the tree that does not filter to season_type == 'REG'. And .unique(subset=['player'], keep='first') without maintain_order makes the surviving row order-dependent, in a figure reported to three decimals.",
+        "ALSO: a rookie who records no line in his draft year and debuts the next is in no tally at all - not in rookies, not in no_line - and is counted as the next season's rookie. Same direction as the survivorship bias the doc does name.",
+        "residual_cv is np.std(ratio, ddof=1) - the sd around the sample MEAN, not the RMS relative error - while the doc reports a median residual of -0.07 to -0.11, i.e. a materially biased curve. The bias is discussed and never folded into the number that would replace the constant."
+      ],
+      "refs": [
+        {
+          "path": "src/hub/draft/impute_cv.py",
+          "lines": "28-31, 83-85, 109, 118, 143-149, 219-229, 306"
+        },
+        {
+          "path": "src/hub/draft/board.py",
+          "lines": "564-608, 1281-1304, 1397"
+        }
+      ],
+      "verified": "reported",
+      "blocking": false
+    }
+  ],
+  "prediction_evaluation": {
+    "framing": "The owner asked for a full read as a data scientist / ML engineer / football expert, not only a diff review. This section is that read.",
+    "what_is_strong": [
+      "The leakage machinery. expanding_weeks / expanding_seasons are a single statement of the point-in-time rule every derived feature routes through; _on_calendar_grid reindexes onto a complete week grid so a missed week is a counted null rather than a silently-shifted row; _served / column_role is a genuine default-deny classifier that refuses an unclassified column; _design carries TRAINING means for null-filling.",
+      "nearest_correlation is a proper Higham alternating-projection with Dykstra correction, not an eigenvalue clip, and the repair cost is published per team.",
+      "The gate discipline: run_gate takes cluster with no default and a contract test asserts on the call site; ADR-0019's two-part adoption rule (bootstrap CI excluding zero AND positive sign in every held-out season); foresight ceilings in two harnesses; three gates pre-registered before their measurements in one week.",
+      "The provenance discipline: declare.py, content digests, the nfeloqb commit pin, atomic writes, the pool-state archive that round-trips onto the journal row.",
+      "The willingness to publish against oneself: the +0.215 re-run to -1.004 REMOVE, the key-number margin study that lost and was kept out with a mechanism-level explanation, and the QB pilot published beside the licence it undermines."
+    ],
+    "where_the_accuracy_is": [
+      {
+        "rank": 1,
+        "title": "The weekly projection uses no pre-kickoff information at all",
+        "detail": "weekly.project is season-to-date usage x own efficiency x a positional constant. No opponent, no total, no spread, no home/away, no rest, no injury status. implied_total is on the panel and is the strongest thing the repo's own screen has ever found (+0.055 across all five seasons); it is read by panel.py and weekly_screen.py and by nothing that projects.",
+        "technique": "Attach as a multiplicative scaler on volume and TD rate in weekly.project, fitted as a Poisson/Gamma GLM with log(implied_total / league_mean) as an offset.",
+        "attaches_at": "src/hub/models/weekly.py:322-346"
+      },
+      {
+        "rank": 2,
+        "title": "Nothing constrains a team's shares to sum to one",
+        "detail": "Each pass-catcher's targets are projected independently from his own prior. Three consequences that are one fact: additivity fails (team attempts and receiver targets are unrelated numbers); substitution is inexpressible (nothing makes WR2's targets rise when WR1 is out, and panel.py states the injury retention term CANNOT be fitted on this panel because the panel only holds weeks a player took a snap); and the negative teammate correlation has nowhere to live - the simplex constraint IS its generator, which is why the marginal WR-WR estimate comes back at +0.014.",
+        "technique": "Hierarchical share model: team volume from implied total and pace; player shares via Dirichlet-multinomial over the depth chart, with an injury-conditional redistribution term; multiply.",
+        "attaches_at": "replaces the independent prior('targets') / prior('carries') calls at src/hub/models/weekly.py:334-336",
+        "finding": "G4"
+      },
+      {
+        "rank": 3,
+        "title": "Touchdowns are yards times a constant, fully shrunk on an attenuated correlation, with no red-zone feature",
+        "detail": "Two backs projected for 60 rushing yards both get 60 x 0.00707 = 0.424 rushing TDs; one has four carries a game inside the five. No red-zone or goal-line feature exists anywhere in src/. The full swap (w=1) is justified by a year-over-year r of a player's own TD-per-yard rate at ~0 (-0.004 rec, -0.030 rush) - an ATTENUATED correlation that nothing disattenuates. A season's TD-per-yard is roughly Binomial(n,p)/yards with n~5-10; an observed r of 0 between two such estimates is consistent with a true signal-to-noise ratio of 0.1-0.2, i.e. an optimal shrink weight of 0.1-0.2, not 1.0. Worth ~2.5 points a week on a goal-line back - the RB1/RB2 gap.",
+        "technique": "Beta-Binomial (empirical-Bayes) on TDs per SCORING OPPORTUNITY, where the binomial sampling variance is known analytically and subtracts out of the observed between-player variance to recover the true one; red-zone opportunity share as the rate modifier.",
+        "attaches_at": "src/hub/models/weekly.py:341 and src/hub/models/components.py:296",
+        "finding": "C5, R8"
+      },
+      {
+        "rank": 4,
+        "title": "The tails are amputated at both ends and the gate is measured on the half that is not",
+        "detail": "See M-R3 and M-R4. Upward through the zero clip in the published interval; downward through the binomial support ceiling in the season simulator; and the coverage gate excludes exactly the clipped third.",
+        "technique": "Conway-Maxwell-Poisson or Katz for the counts, TDs drawn conditionally on yards, and split-conformal / conformalised quantile regression on weekly points for the interval.",
+        "attaches_at": "src/hub/models/components.py:171-178 and src/hub/models/weekly.py:404 (conformal.py already exists and is wired only for game margins)",
+        "finding": "R7, R8"
+      },
+      {
+        "rank": 5,
+        "title": "The interval omits estimation error the repo already computes",
+        "detail": "weekly.standard_error returns sigma/sqrt(n) - 'how well we know his mean, not how much his weeks vary', measured at +36% at one game played against twelve - and has one caller, which is not the forecast. shipped_quantiles builds the interval from moments alone. This is almost certainly most of the 80% -> 77.4% gap, and the response was to restate the claim to 0.77.",
+        "technique": "sd^2 = (K*sqrt(mu))^2 + se^2, or a t on games_before-1 df.",
+        "attaches_at": "src/hub/models/predict.py:687",
+        "finding": "R7"
+      },
+      {
+        "rank": 6,
+        "title": "Two statistical standards in one repo",
+        "detail": "weekly_screen clusters on the season and says so loudly; paired_gain - read by weekly, spread and injury - does not cluster at all, over ~30,000 correlated player-weeks. And the screen's own 'two standard errors' bar is p = 0.12-0.14 on 3-4 df, while the module computes the correct p eleven lines away.",
+        "technique": "A cluster argument on paired_gain with no default; verdict reading the p it computes.",
+        "attaches_at": "src/hub/models/experiment.py:467, src/hub/models/weekly_screen.py:452",
+        "finding": "R9, R10"
+      },
+      {
+        "rank": 7,
+        "title": "The correlation structure is missing opponent and season-level terms",
+        "detail": "Blocks are per team, never per game, so no shootout correlation. season.py draws true_mu independently per player, so for a season-total P(win) - which is what the draft gate scores - the dominant correlation is zero. And the WR-WR estimand is marginal where the optimiser needs conditional-on-team-output.",
+        "technique": "Per-game blocks; a team-level season shock in the talent draw; residualise on team total points before correlating teammates.",
+        "attaches_at": "src/hub/models/predict.py:549, src/hub/draft/season.py:323",
+        "finding": "R12, C6"
+      },
+      {
+        "rank": 8,
+        "title": "Four arithmetic items that move published numbers",
+        "detail": "season._absence_factor scales the whole draw by 1/f where the sd should scale by 1/sqrt(f) - weekly sd too large by 1/sqrt(f), about +10% for a player expected to miss 3 of 17. consensus_target uses expm1 of an OLS on log1p with no smearing correction, so the shrinkage target is biased low (spread.py discusses exactly this and correctly declines it because its loss is MAE; weekly.py uses the target as a mean and should correct). _impute_xfp uses np.minimum.accumulate - a greedy monotone projection that sits at or below the smoothed value everywhere, which is the direct cause of the 'median -0.03, the curve sits a little low' already noted; PAVA is the unbiased least-squares monotone fit. dvp is a raw sum of points allowed divided by a league mean, with no adjustment for the strength of the offenses faced; a ridge-penalised two-way points ~ offense + defense would make the column mean what its name claims.",
+        "attaches_at": "src/hub/draft/season.py:174, src/hub/models/weekly.py:172, src/hub/draft/board.py:603, src/hub/models/panel.py:1186-1193"
+      },
+      {
+        "rank": 9,
+        "title": "MARGIN_SD is a constant and the margin is not normal",
+        "detail": "market.py converts a spread with a single normal sd. NFL margins have large point masses at 3, 6, 7, 10 and 14, and margin variance scales with the game total. The repo's key-number study tested a lumpy SHAPE against a Gaussian of the SAME width and correctly lost; the VARIANCE question is separate and untested, and total_line is already on the schedule frame.",
+        "attaches_at": "src/hub/models/market.py:88"
+      },
+      {
+        "rank": 10,
+        "title": "The blend weights are assumed",
+        "detail": "predict.blend() is (proj_ppg + xfp_per_game) / 2. An inverse-variance or stacked weight fitted walk-forward is strictly better and costs nothing.",
+        "attaches_at": "src/hub/models/predict.py:640"
+      }
+    ],
+    "what_the_track_record_says": {
+      "n_scored": 32,
+      "n_preregistered": 0,
+      "is_backtest": true,
+      "note": "As of 2026-09-16 the repo has scored 32 games across 2025 and 2026 and has ZERO pre-registered predictions - a prediction counts only once its commit predates kickoff. Log-loss 0.614 (2026) and 0.556 (2025) on a market passthrough, which is what a market passthrough should score. The honest reading is that no claim about this repo's predictive accuracy is testable yet, and the repo says so itself."
+    }
+  },
+  "mutation_testing": {
+    "note": "Run by the reviewer in a /tmp copy of the tree; the repo was not modified.",
+    "starter_change": {
+      "mutants": 14,
+      "survived": 7,
+      "survivors": [
+        "_poll_day with the Eastern conversion deleted - every capture in the fixture archive falls on the same calendar date in both zones",
+        "frozen_before .min() -> .max() - the only two-changed-side fixture has both sides sharing the same previous game, so min and max are the same value",
+        "team_games postseason filter deleted - source_rows hard-codes pl.lit('REG') on every row; the string POST appears nowhere in the file",
+        "pilot abs() deleted - the single fixture game is already positive, so abs() is the identity",
+        "gate_rows not-null filter deleted - it cannot remove a row (R2)",
+        "run()'s NOT-RUNNABLE guard deleted - _paired is a constant, so the bootstrap has ZERO width, mde ~ 0 never exceeds the ceiling and stage 2 can never fire in any test",
+        "events() .sort() deleted - team_games already ends sorted and every caller in the suite feeds it from there"
+      ],
+      "killed": [
+        "arms swapped in _adjusted",
+        "_last_before < -> <=",
+        "net_gap sign flipped",
+        "study_fit residual SE instead of the floor",
+        "_change_points measured from the frozen poll"
+      ]
+    },
+    "pool": {
+      "mutants": 10,
+      "survived": 3,
+      "survivors": [
+        "share_sd -> share_sd / sqrt(trials), making the sweep's published bar 20x too tight at 400 trials - all 137 tests pass",
+        "dropping * p from Candidate.survives_se, and adding the missing p factors to Weekly.given_up_se - both pass everything; the only assertion on given_up_se in the repo is '> 0'",
+        "axis_report's resolution claim - the CLI test hand-sets resolution=0.5 and asserts only on the range text"
+      ],
+      "killed": [
+        "rival fixture exclusion",
+        "per-week draws",
+        "breakeven formula",
+        "res dropping win_prob",
+        "the m fallback",
+        "live_entries + 1 + rivals",
+        "hypot -> max"
+      ]
+    },
+    "conclusion": "Audit III's rule - a fixture that sets the condition under which the estimator is trivially correct is not a test of the estimator - is discharged in quarterback.py and has NOT generalised. Every survivor above is a fixture that never constructs the case."
+  },
+  "best_work": [
+    {
+      "title": "A gate pre-registered before the module that runs it",
+      "detail": "docs/gate-power.md's quarterback section was committed in 8e4e502 on 2026-09-13 and starter_change.py did not exist yet. The event set, the two arms, the comparator, the cluster, the floor and both preconditions were fixed before anything could be measured. Then the run published NOT-RUNNABLE against the owner's own component.",
+      "refs": [
+        {
+          "path": "docs/gate-power.md",
+          "lines": "440-616"
+        }
+      ]
+    },
+    {
+      "title": "declare.py - four mechanisms replaced by one question at the line",
+      "detail": "A wholesale module list, an extras list, an exclusion list and an opt-out string copied into twenty-six modules, replaced by fitted() / chosen() / not_an_input(value, why) at the assignment. The exclusion carries its argument 'because an exclusion is a decision on the record and not a module quietly falling off a list'. Values read live rather than captured, so rebinding an attribute still moves the digest. The single best structural change in the repo's history.",
+      "refs": [
+        {
+          "path": "src/hub/declare.py",
+          "lines": null
+        }
+      ]
+    },
+    {
+      "title": "predict._FACTORS' exclusion argument",
+      "detail": "'It is empty at import and fills during a draw, so hashing it by content would move the model version as a process runs.' A subtle failure mode found and argued rather than waved at, and the strongest evidence the not_an_input(value, why) design is doing its job.",
+      "refs": [
+        {
+          "path": "src/hub/models/predict.py",
+          "lines": "464-470"
+        }
+      ]
+    },
+    {
+      "title": "The pairing test asserts on the draws, not the outputs",
+      "detail": "test_two_candidate_plans_meet_the_identical_field records the rivals' (ledger, picks) sequence through a monkeypatched Rival.picks and asserts the two arms produce byte-identical sequences of 1000+ entries - an assertion downstream of every draw both arms share, much stronger than comparing the two figures.",
+      "refs": [
+        {
+          "path": "tests/unit/test_pool.py",
+          "lines": null
+        }
+      ]
+    },
+    {
+      "title": "The pool-state archive round-trips",
+      "detail": "test_a_row_names_the_field_it_was_priced_against_and_re_runs_against_the_archive re-prices a recorded decision against its archived field AND against the current one and shows they differ. The best-verified of the Q-series fixes.",
+      "refs": [
+        {
+          "path": "tests/unit/test_journal.py",
+          "lines": null
+        }
+      ]
+    },
+    {
+      "title": "The breakeven test is a fixed-point test",
+      "detail": "It does not check the algebra against the algebra: it re-prices the same seed with buyback_fee set to the reported breakeven and asserts net ~ 0 and at.share == b.share.",
+      "refs": [
+        {
+          "path": "tests/unit/test_pool_weekly.py",
+          "lines": null
+        }
+      ]
+    },
+    {
+      "title": "The as-of state fix carries a timezone",
+      "detail": "nfeloqb.before filters on game_day(as_of), converting UTC to GAME_DAY_ZONE first - because a replay's cut has to land on the football day, not the calendar day of whoever is running it.",
+      "refs": [
+        {
+          "path": "src/hub/fetch/nfeloqb.py",
+          "lines": "245-261"
+        }
+      ]
+    },
+    {
+      "title": "_weight_total refuses before rng.choice sees a NaN",
+      "detail": "The underflow guard names the concentration and MIN_PROB in the message, is called on both vectors, and the test uses a genuinely underflowing fixture (0.12 ** 400) rather than a contrived one.",
+      "refs": [
+        {
+          "path": "src/hub/season/pool.py",
+          "lines": "640-657, 682, 889"
+        }
+      ]
+    },
+    {
+      "title": "impute_cv clusters on the season and returns None below two clusters",
+      "detail": "Rather than quoting the player-level standard error that would have read as 2.5 sigma. The temptation to use the unit that gives the answer you want was right there and was refused in code, not just in prose.",
+      "refs": [
+        {
+          "path": "src/hub/draft/impute_cv.py",
+          "lines": "165-195"
+        }
+      ]
+    },
+    {
+      "title": "The conformal walk is over (season, week) in time order",
+      "detail": "#262 found a within-season split wearing a temporal split's name - week 6 of an earlier season calibrating on weeks 1-5 of EVERY season. Fixed, with the sibling incident (eval._holdout_window, #168) named as the same class, and its own test rather than a comment.",
+      "refs": [
+        {
+          "path": "src/hub/models/conformal.py",
+          "lines": "1-28"
+        }
+      ]
+    },
+    {
+      "title": "The pilot is published against its own licence",
+      "detail": "The sentence most likely to cost the component its place - that the nfeloqb file does not reproduce 538's gain on the event games the adjustment exists for - is in the same document as the licence.",
+      "refs": [
+        {
+          "path": "docs/gate-power.md",
+          "lines": "674-712"
+        }
+      ]
+    },
+    {
+      "title": "refuse_live_call",
+      "detail": "Erring toward refusal when the node id does not match, one environment read per request, and a message naming the function to patch and the file that shows how. 'The guarantee has to hold for the test nobody remembered to patch' is the right framing for a property like this.",
+      "refs": [
+        {
+          "path": "src/hub/fetch/cached.py",
+          "lines": "62-81"
+        }
+      ]
+    },
+    {
+      "title": "config._canonical sorts dict items by repr of the key",
+      "detail": "So tuple-keyed TEAMMATE_RHO hashes stably, and list and tuple render identically so holdout's list->tuple round-trip cannot move a digest. And fitted_constants RAISES on a non-canonicalisable value instead of dropping it: 'skipping it silently is what #187, #199 and #201 each were.'",
+      "refs": [
+        {
+          "path": "src/hub/config.py",
+          "lines": "332-349, 380-386"
+        }
+      ]
+    }
+  ],
+  "plan": [
+    {
+      "phase": 1,
+      "title": "Settle the quarterback disposition on the estimand you can resolve",
+      "cost": "days, then wait for week 4",
+      "note": "Do this before the poller reaches the season's first in-season starter change - steps 2 and 5 change what the study measures.",
+      "steps": [
+        {
+          "n": 1,
+          "action": "Re-target the ADOPT condition onto the line-move study.",
+          "detail": "The coefficient against 0.132 with a sign, at an MDE of 0.0063 on one season, is a licence. A log-loss gate needing 29 event-seasons is not a bar. Amend the pre-registration to say so explicitly rather than leaving the exemption implicit in a precondition.",
+          "findings": [
+            "R6"
+          ]
+        },
+        {
+          "n": 2,
+          "action": "Fix the event construction.",
+          "detail": "Build the previous-game link off the full row set, not the survivors, so a one-sided blank cannot delete a game from a team's sequence or move frozen_before two weeks early.",
+          "findings": [
+            "R1"
+          ]
+        },
+        {
+          "n": 3,
+          "action": "Fix the gate's three mechanical defects.",
+          "detail": "Guard on adjusted_by; make --ceiling the default and move the three-season floor ahead of run_gate; restore the same_qb filter to the study's noise floor.",
+          "findings": [
+            "R2",
+            "R3",
+            "R4"
+          ]
+        },
+        {
+          "n": 4,
+          "action": "Mark the -qb rows on the site, not only in the version string.",
+          "detail": "They are an experiment; the reader of a prediction should be told which ones. The partition already separates them, so this is a display change.",
+          "findings": [
+            "R6"
+          ]
+        },
+        {
+          "n": 5,
+          "action": "Fix the study's four.",
+          "detail": "Unplayed games excluded, Eastern poll days, other event games out of the control set, sqrt(n-1).",
+          "findings": [
+            "R5"
+          ]
+        }
+      ],
+      "acceptance": "The shipping decision for the quarterback adjustment is tied to an estimand one season of this poller can resolve, and the harness that will resolve it measures what the pre-registration says it measures."
+    },
+    {
+      "phase": 2,
+      "title": "Make the projection see the game",
+      "cost": "4-8 weeks",
+      "note": "This is where the accuracy is. Every item is a modelling change, not a bug fix.",
+      "steps": [
+        {
+          "n": 1,
+          "action": "implied_total into weekly.project.",
+          "detail": "A multiplicative scaler on volume and TD rate, fitted as a GLM with log(implied_total / league_mean) as an offset. The repo's own screen says it is the strongest signal found; no projection reads it. Gate it the usual way - this one should pass.",
+          "findings": []
+        },
+        {
+          "n": 2,
+          "action": "The Dirichlet-multinomial share layer.",
+          "detail": "Team volume from implied total and pace, player shares over the depth chart, multiply. Delivers additivity, injury substitution and the negative teammate correlation from one structure - and it is what props.py should be sitting on.",
+          "findings": [
+            "G4",
+            "C6"
+          ]
+        },
+        {
+          "n": 3,
+          "action": "Red-zone opportunity share as the TD-rate modifier, fitted Beta-Binomial.",
+          "detail": "TDs per scoring opportunity with the binomial sampling variance subtracted out to recover the true between-player variance - the disattenuation the full swap was justified without. Replace the count sampler's binomial branch with a Conway-Maxwell-Poisson so the tail has no ceiling, and draw TDs conditionally on yards.",
+          "findings": [
+            "C5",
+            "R8"
+          ]
+        },
+        {
+          "n": 4,
+          "action": "Parameter uncertainty into the interval, then conformalise.",
+          "detail": "sd^2 = (K*sqrt(mu))^2 + se^2, one line, then conformalise shipped_quantiles against the rolling window conformal.py already builds. Re-run the coverage gate on the FULL population and retire the 0.77 claim.",
+          "findings": [
+            "R7"
+          ]
+        },
+        {
+          "n": 5,
+          "action": "Give paired_gain a cluster argument with no default.",
+          "detail": "The same fix run_gate already has; the two should not be different functions. Re-run every figure in docs/weekly-projection.md and restate.",
+          "findings": [
+            "R9"
+          ]
+        },
+        {
+          "n": 6,
+          "action": "Make verdict read the p it computes.",
+          "detail": "And decide once whether BH decides anything. A bar that reads as 0.05 and is 0.12 will eventually publish a finding you have to withdraw.",
+          "findings": [
+            "R10",
+            "B2"
+          ]
+        }
+      ],
+      "acceptance": "The weekly projection reads at least one pre-kickoff signal; a team's projected shares sum to its projected volume; the published interval's coverage is measured on the whole board; and every gate in the tree uses one clustering standard."
+    },
+    {
+      "phase": 3,
+      "title": "The money layer and the ledger",
+      "cost": "2-3 weeks",
+      "steps": [
+        {
+          "n": 1,
+          "action": "Pass the real rival ledgers into Field._trials.",
+          "detail": "fetch.pool.ledgers already returns them in the shape Field.outcome takes, and the gap is a quarter of the equity figure. Then correct the docstring, which describes a reconstruction that does not happen.",
+          "findings": [
+            "R13"
+          ]
+        },
+        {
+          "n": 2,
+          "action": "Give Buyback a standard error and a three-state verdict.",
+          "detail": "At 400 trials the recommendation flips on the seed inside a +/-$9.74 bar. Weekly already has unresolved vs decisive; the buyback is the decision that most needs it.",
+          "findings": [
+            "R14"
+          ]
+        },
+        {
+          "n": 3,
+          "action": "unpaired_bar in axis_report, and price the final week.",
+          "detail": "Rather than claiming the pot outright with zero error under either co-survivor rule. Also add the win_prob factors to given_up_se.",
+          "findings": [
+            "R15"
+          ]
+        },
+        {
+          "n": 4,
+          "action": "Close the hold-out's rebind and RUN the replay.",
+          "detail": "A contract test forbidding a direct import of a held-out name; calibrate.py's signature default removed; load requiring all eleven keys accounted for; a test that calls a function reading the constant inside and outside the block. Then run it and publish the verdict - the sets are committed, the machinery is built, and no document reports a result.",
+          "findings": [
+            "R17",
+            "B6"
+          ]
+        },
+        {
+          "n": 5,
+          "action": "Widen declare's walk to the four silent spellings and reclassify MIN_UNITS.",
+          "findings": [
+            "R16"
+          ]
+        },
+        {
+          "n": 6,
+          "action": "Re-measure the rookie CV on a like-for-like season, then take #277's decision.",
+          "detail": "Shipping a known lower bound on rookie risk understates draft variance on exactly the players who carry most of it.",
+          "findings": [
+            "R18",
+            "Q11"
+          ]
+        },
+        {
+          "n": 7,
+          "action": "The residue.",
+          "detail": "The lookahead MARGIN_SD (N15's third leg), the opponent-noise sweep (C7), negative rho (C6), the pick-noise interval's four nested clusters and the fourteen/fifteen split (Q16), and survival_beside's 18 against the pool's 24 picks (Q15 residual).",
+          "findings": [
+            "N15",
+            "C7",
+            "C6",
+            "Q16",
+            "Q15"
+          ]
+        }
+      ],
+      "acceptance": "Every published dollar figure is computed against the field that was actually observed and carries an interval; the hold-out has a published verdict; no constant reaches a prediction without declaring."
+    }
+  ],
+  "method_rule_to_add": {
+    "carried_from_v3": "A fixture that sets the condition under which the estimator is trivially correct is not a test of the estimator.",
+    "status": "DISCHARGED in quarterback.py; NOT GENERALISED. Seven of fourteen mutants survive in starter_change.py and three of ten in pool.py, and every survivor is a fixture that never constructs the case - see mutation_testing.",
+    "new_clause": "A gate that cannot return a verdict is not a bar, it is an exemption - and it must be named as one in the pre-registration that created it.",
+    "rationale": "The quarterback gate's own power calculation puts a verdict in the 2050s, and the pre-registration pulls the component on every branch except the one the gate can reach. The fix is not to lower the bar; it is to gate on the estimand one season of this poller can resolve - which is already built and already pre-registered.",
+    "where": "docs/method.md, beside the rules added after audits II and III."
+  },
+  "artifact_source": {
+    "audit_iv": "https://claude.ai/artifact/P6ZkPrmBNb7JqPm9xHa1C2",
+    "audit_iii": "https://claude.ai/code/artifact/812c68a2-de63-451c-8942-685edfeadd54",
+    "audit_ii": "https://claude.ai/code/artifact/b331060c-621f-464f-b64c-6128e3e4f10c",
+    "audit_i": "https://claude.ai/code/artifact/778ddcad-61b1-4d75-9033-a918d4bec473"
+  }
+}

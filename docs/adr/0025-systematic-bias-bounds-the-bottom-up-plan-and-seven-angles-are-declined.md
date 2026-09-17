@@ -1,7 +1,8 @@
 # Systematic bias bounds the bottom-up plan, and seven angles are declined
 
 **Status:** accepted 2026-09-10, recording seven declines made **2026-09-07**. From the
-research artifact of that date — `plan.do_not_build` and finding G6 — filed as issue #216.
+research artifact of that date — `plan.do_not_build` and finding G6 — filed as issue #216. **Amended 2026-09-16** (issue #223): the programme's pre-registered stop
+condition now lives here, and #223 is closed.
 
 **Decision.** Seven angles are declined, each on a stated reason rather than a hunch, and each
 with the condition that would reopen it. Alongside them, the arithmetic that **bounds** the
@@ -116,3 +117,56 @@ The arithmetic moving. It rests on three numbers — 3% bias in Usage, ≈350 te
 per point — and on the band being about a point. A measured bound on Usage bias materially
 below 3%, or a band materially above a point, changes what the table says and reopens angles 6
 and 7 with it. The other five stand or fall on their own rows.
+
+# Amendment, 2026-09-16: the encompassing bar lives here, and #223 is closed
+
+Issue #223, closed `not planned` on 2026-09-16 with a comment that supersedes its 2026-09-11
+keep-open. That keep-open had a reason — *the stop condition is already written and the MDE
+arithmetic already committed; that is what pre-registration is for* — and this amendment is
+what discharges it: the bar is moved, not deleted. An ADR outlives a ticket body that only
+exists while someone remembers the ticket is open, and a `ready-for-human` label on a ticket
+nobody will ever pick up had no true answer to the question the label asks.
+
+**Amended rather than replaced.** Nothing above is withdrawn. The seven declines stand, the
+arithmetic stands, and *What would reopen this record as a whole* stands. What is added is the
+bar that arithmetic implies, written as a rule so that reopening is a measurement and not a
+sentiment.
+
+## The bar
+
+One regression, run only if a bottom-up object ever exists to put in it:
+
+```
+actual_margin = a + b * market_spread + c * (model - market_spread)
+```
+
+**Rule, fixed before any run.** If `c` is not distinguishable from zero, the object adds nothing
+beyond the market regardless of its standalone error, and the drive-and-scoring layer is not
+built. The verdict is published whichever way it falls.
+
+**Reference distribution and MDE.** The MDE is computed *before* the run, on the t quantile at
+the cluster count — not a normal quantile — in the form `docs/gate-power.md` established and
+ADR-0019 requires. A result the run was underpowered to detect is recorded as not-runnable, not
+as a null (ADR-0014, and method rule 12).
+
+**Clustering unit: the season.** Stated here because the two numbers in this record are on
+different scales and a reader who conflates them will reopen on noise. The ceiling — a 3%
+usage bias ≈ **0.75 points a team-game** against an available edge band of about one point,
+verbatim from #222's close of 2026-09-11, tighter than the research note's "consumes the
+entire edge" — is a *per-team-game* quantity. The MDE that would reopen it is a season-clustered
+interval on `c` and is not.
+
+## Why it is a bar and not a null
+
+"No usage signal makes the bottom-up object worth building" (#223, 2026-09-12) is a statement
+about the **ceiling**, not a finding of no effect. Method rule 8 — compute the ceiling before
+chasing the gap — is what makes it reopenable on the right evidence rather than closed: the
+bound above is the ceiling, and nothing below it is worth a run.
+
+## What reopens it
+
+A usage signal with bias demonstrably **below the band** — a measured number against 0.75 of a
+~1-point band, not an argument that one might exist. That is the same condition as *What would
+reopen this record as a whole* above, restated on the quantity that would have to move. If it
+moves, the regression above is the first thing that runs, and its rule and reference
+distribution are already fixed.
