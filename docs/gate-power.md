@@ -541,7 +541,9 @@ Two preconditions ahead of the verdict, both pre-registered here:
 [method.md](method.md) rule 13; what follows is what replaced it and why. The maintainer's
 `ADOPTED:` comment on #300 (2026-09-17) names the line-move coefficient — sign and magnitude
 against 0.132, season-clustered once two seasons exist — as the ADOPT condition, and names
-this gate's NOT-RUNNABLE branch an exemption rather than a bar.
+this gate's NOT-RUNNABLE branch an exemption rather than a bar, under
+[method.md rule 16](method.md): a gate that cannot return a verdict is not a bar, it is an
+exemption, and it must be named as one in the pre-registration that created it.
 
 **ADOPT no longer comes from this gate.** The ADOPT condition for the module is #221's
 line-move coefficient, below (*Amended 2026-09-17 (#300) — the ADOPT condition*, under
@@ -562,7 +564,9 @@ NOT-RUNNABLE" excuses this diagnostic from firing before it has enough seasons t
 anything about the log-loss question; it was never, and is not now, a condition on the
 module's ADOPT or REMOVE status. A NOT-RUNNABLE verdict here — which is what this archive
 prints today, and will keep printing for decades at the season-a-year rate the pilot implies —
-changes nothing about what #221's coefficient is free to decide.
+changes nothing about what #221's coefficient is free to decide. This is [method.md rule
+16](method.md) applied: a branch this gate cannot leave is named an exemption here rather than
+left to be discovered from thirty seasons of the same print.
 
 ## The MDE, on the corrected reference distribution
 
