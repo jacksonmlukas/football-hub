@@ -4,6 +4,11 @@
 > is not applied to any written prediction or survivor pick. `hub.models.quarterback` stays,
 > reachable only from `hub.models.starter_change`, the harness that gates it; the section
 > *Disposition 2026-09-16* at the end says why, and what would let it back.
+>
+> **Amended 2026-09-17 (#300): what would let it back, item 2, is restated.** The ADOPT
+> condition is #221's line-move coefficient, not #291's gate; #291 is a diagnostic. See the
+> amendment inside *Disposition 2026-09-16* below, and [gate-power.md](gate-power.md)'s own
+> amendment of the same date.
 
 **Measured 2026-09-12** (#218). The game layer has no quarterback awareness: ratings pass the
 live price through, and where the staleness field says there is none, nothing adjusts. #218
@@ -352,3 +357,17 @@ something.
 Neither is a code change to `ratings`. Both are measurements, and the module is kept
 re-runnable so that the second can be made the day the first exists. Wiring the module back
 into a product path before then is what the contract test refuses.
+
+> **Amended 2026-09-17 (#300).** Item 2 above is superseded: kept as written, per
+> [method.md](method.md) rule 13. The pre-registration ([gate-power.md](gate-power.md)) now
+> names the line-move coefficient — #221's, sign and magnitude against 538's 0.132 points per
+> value unit, season-clustered once two seasons exist — as the ADOPT condition, and names
+> #291's gate's NOT-RUNNABLE branch an exemption rather than a bar: the maintainer's
+> `ADOPTED:` comment on #300. **Item 2 is now:** #221's line-move coefficient resolving as
+> pre-registered, in [gate-power.md](gate-power.md)'s own amendment of the same date. #291's
+> gate is demoted to a diagnostic, read beside the coefficient and deciding neither ADOPT nor
+> REMOVE; its own power requirement is stated beside it there — **29 event-seasons at 80%
+> power** against the pilot's target — because a diagnostic licensing ADOPT with no power
+> requirement attached, reachable only through its own NOT-RUNNABLE branch, is exactly what
+> #300 closes. Item 1 is unchanged and still gates both: neither the coefficient nor the
+> diagnostic has a row to read until a starter source that is timely before kickoff exists.

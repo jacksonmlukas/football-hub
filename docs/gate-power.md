@@ -445,6 +445,11 @@ adjustment (`hub.models.quarterback`, #218/#268) reaches published predictions a
 picks on a validation of *538's* adjustment against *538's* base Elo. #270 marks every row it
 touches and names this gate as the pull trigger. What follows is the gate.
 
+> **Amended 2026-09-17 (#300).** #270's pull trigger, above, is superseded: this gate is
+> demoted to a diagnostic and decides neither ADOPT nor REMOVE for the module. See *Amended
+> 2026-09-17 (#300)* at the end of **The bar**, below, for what replaced it and why, and
+> [qb-adjustment.md](qb-adjustment.md) for what it means to a reader of a row.
+
 ## The question
 
 Where the betting market has no live price, the adjustment moves a frozen quote by the
@@ -530,6 +535,35 @@ Two preconditions ahead of the verdict, both pre-registered here:
    day, scored against the same frozen line. What the betting market recovered by the close
    is the most an adjustment built to anticipate it could recover.
 
+### Amended 2026-09-17 (#300) — demoted to a diagnostic, and NOT-RUNNABLE is named an exemption
+
+**The bar above is superseded as the module's ADOPT condition.** It is kept as written, per
+[method.md](method.md) rule 13; what follows is what replaced it and why. The maintainer's
+`ADOPTED:` comment on #300 (2026-09-17) names the line-move coefficient — sign and magnitude
+against 0.132, season-clustered once two seasons exist — as the ADOPT condition, and names
+this gate's NOT-RUNNABLE branch an exemption rather than a bar.
+
+**ADOPT no longer comes from this gate.** The ADOPT condition for the module is #221's
+line-move coefficient, below (*Amended 2026-09-17 (#300) — the ADOPT condition*, under
+*Pre-registered 2026-09-13: the line-move study's power (#221)*). This gate's four branches
+above still run on every archive and still print — ADOPT, REMOVE, SHOW and NOT-RUNNABLE keep
+their meanings as answers to the log-loss question stated here — but no branch of this gate
+licenses shipping the module or pulls it from `ratings` and `survivor`; #270's pull trigger,
+named in the branches above and in this section's own intro, is superseded with them. The
+gate is read beside the coefficient as a **diagnostic**, its power requirement stated beside
+it exactly because a diagnostic that decided ADOPT with no power requirement attached — able
+to fire only from its own NOT-RUNNABLE branch — is the permanent licence this amendment
+closes: **29 event-seasons at 80% power**, against the pilot's target of 0.0180 log-loss and
+between-season sd of 0.0332 (*Measured 2026-09-13*, below), a bar this gate will not clear in
+this project's lifetime at one event-season a year.
+
+**Precondition 1 is an exemption, not a bar.** "Fewer than three event-seasons is
+NOT-RUNNABLE" excuses this diagnostic from firing before it has enough seasons to say
+anything about the log-loss question; it was never, and is not now, a condition on the
+module's ADOPT or REMOVE status. A NOT-RUNNABLE verdict here — which is what this archive
+prints today, and will keep printing for decades at the season-a-year rate the pilot implies —
+changes nothing about what #221's coefficient is free to decide.
+
 ## The MDE, on the corrected reference distribution
 
 `(t(0.975, k − 1) + z(0.80)) × SE`, `k` the number of event-seasons, `SE` the standard error of
@@ -610,6 +644,31 @@ report date is not cached here and is *not established* until it is.
 **Expected on this archive:** the same zero as the gate — no in-season event precedes the
 archive's last poll — so the run records the event construction's counts, the pilot gap
 spread, the restated MDE, and the censored count, and the coefficient is *not established*.
+
+## Amended 2026-09-17 (#300) — the ADOPT condition
+
+Nothing above is edited; per [method.md](method.md) rule 13 a superseded decision keeps its
+original text, and this pre-registration named an estimand and its power but never said what a
+reader was to do with the fitted coefficient once one existed — the gap #300 closes, converting
+the maintainer's `ADOPTED:` comment of 2026-09-17 into the rule this document was missing.
+
+**ADOPT** — the fitted coefficient's sign matches the benchmark's (positive: the arriving
+starter's side gains) and its magnitude sits within reach of **0.132**, the benchmark stated
+above, on an interval excluding zero on the benchmark's side. **Season-clustered once two
+seasons exist**: with one event-season in the archive the coefficient is scored at the
+game-level standard error above (`study_fit`'s floor-based SE, `n` the event games, exactly as
+restated below); the day a second event-season is scored, the cluster becomes the season,
+matching every other gate in this repo (ADR-0019) rather than staying at the game level by
+default. Anything else — a null interval, a wrong sign, or a magnitude that never approaches
+0.132 as seasons accumulate — leaves the module exactly where #299 put it: reachable only from
+`hub.models.starter_change`, the harness. #291's gate, demoted above, is read beside the
+coefficient for the log-loss question and decides neither outcome.
+
+**What this does not do.** It does not add to the interval's construction beyond what *The
+MDE* above already fixes (the t-reference, the floor-based standard error, the cluster moving
+to the season at two seasons), and it does not touch `study_fit`, `study_mde` or any other
+estimator in `hub.models.starter_change` — #221 and #303 own the computation this section
+names a rule for.
 
 ---
 
