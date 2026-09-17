@@ -29,8 +29,14 @@ price is the last snapshot captured before the Eastern game day of the changed t
 previous game: the price the adjustment would actually have replaced, and not the close.
 The cluster is the season; the rule is the house rule and nothing beside it; fewer than
 three event-seasons is NOT-RUNNABLE ahead of every branch (ADR-0019's floor), and the
-verdict sentence names the event-seasons the pilot says are needed. Anything but ADOPT is
-#270's pull trigger.
+verdict sentence names the event-seasons the pilot says are needed.
+
+**Amended 2026-09-17 (#300): this gate is a diagnostic.** No branch of it licenses ADOPT or
+pulls the module any longer -- #270's pull trigger above is superseded. The ADOPT condition
+is the study's coefficient, below, read against 0.132; this gate is reported beside it, its
+own power requirement stated beside it (29 event-seasons at 80% power against the pilot's
+target), and its NOT-RUNNABLE branch is an exemption from firing below that power, not a bar
+to the coefficient's own verdict (`docs/gate-power.md`, `docs/qb-adjustment.md`).
 
 **The study**: the home-spread move from the frozen price to the last snapshot before the
 game day, less the mean move of the week's other games between the same two poll days,
@@ -39,7 +45,9 @@ minus away, both off the pinned file -- against 538's 0.132 points per value uni
 standard error is #214's noise floor per window over the gap's spread and root n, because
 the event rows alone cannot resolve their own residual. Censored events (no snapshot before
 the change could be known) and the change-point in days from the previous game day are
-reported beside the coefficient.
+reported beside the coefficient. **Since 2026-09-17 (#300) this coefficient is the module's
+ADOPT condition**: sign and magnitude against the 0.132 benchmark, season-clustered once two
+seasons exist (`docs/gate-power.md`).
 
 Nothing here fetches. The nfeloqb cache and the snapshot archive are what is read, and a
 season the caches do not hold is reported as not established.
@@ -86,14 +94,23 @@ EVENT_SEASONS_MINIMUM = 3
 # repricing, scored against the same frozen line.
 CEILING_ARM = "the betting market's own repricing, the last snapshot before the game day"
 
+# Amended 2026-09-17 (#300): this gate is a diagnostic. None of its three branches license
+# ADOPT or pull the module any longer -- the sentences below said so until this amendment,
+# kept as written per docs/method.md rule 13 at docs/qb-adjustment.md and docs/gate-power.md,
+# which carry what replaced them and why. The ADOPT condition is #221's line-move coefficient.
 ACTIONS = experiment.Actions(
-    adopt="The quarterback adjustment has earned its place: the sentence 'ungated in this "
-          "repo' leaves docs/qb-adjustment.md and the -qb suffix stays for the record.",
-    remove="The quarterback adjustment leaves ratings and survivor today and is reachable "
-           "only from this harness (#270's pull trigger).",
-    show="The quarterback adjustment leaves ratings and survivor today and is reachable "
-         "only from this harness (#270's pull trigger): a null is not a pass for an arm "
-         "that is in the published path on no verdict.")
+    adopt="Diagnostic only, since #300: this branch does not license shipping the module. "
+          "The ADOPT condition is #221's line-move coefficient, sign and magnitude against "
+          "0.132 (docs/qb-adjustment.md, docs/gate-power.md); this log-loss picture is read "
+          "beside it.",
+    remove="Diagnostic only, since #300: this branch does not pull the module. The ADOPT "
+           "condition is #221's line-move coefficient, sign and magnitude against 0.132 "
+           "(docs/qb-adjustment.md, docs/gate-power.md); this log-loss picture is read "
+           "beside it.",
+    show="Diagnostic only, since #300: this branch decides nothing about the module. The "
+         "ADOPT condition is #221's line-move coefficient, sign and magnitude against 0.132 "
+         "(docs/qb-adjustment.md, docs/gate-power.md); this log-loss picture is read beside "
+         "it.")
 
 REGULAR_SEASON = "REG"
 PASSER = "passer_player_id"
@@ -529,8 +546,10 @@ def run(paired: pl.DataFrame, *, needed: int | None, ceiling: bool = True,
             "NOT-RUNNABLE",
             f"NOT RUNNABLE: {k} event-season(s) in the archive against a pre-registered "
             f"minimum of {EVENT_SEASONS_MINIMUM} (ADR-0019: no gate runs at fewer than three "
-            f"seasons); {need}. No verdict is read, the mark on every -qb row stands (#270), "
-            f"and this is not-runnable, not a null."))
+            f"seasons); {need}. No verdict is read. Since #300 this diagnostic's NOT-RUNNABLE "
+            f"is an exemption from firing below the minimum, not a bar to the module's ADOPT "
+            f"condition, which is #221's line-move coefficient (docs/qb-adjustment.md); this "
+            f"is not-runnable, not a null."))
     return got
 
 
