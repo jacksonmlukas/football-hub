@@ -42,12 +42,18 @@ to the coefficient's own verdict (`docs/gate-power.md`, `docs/qb-adjustment.md`)
 game day, less the mean move of the week's other games between the same two poll days,
 regressed on the net ex-ante quality gap -- arriving starter's value minus departing, home
 minus away, both off the pinned file -- against 538's 0.132 points per value unit. The
-standard error is #214's noise floor per window over the gap's spread and root n, because
-the event rows alone cannot resolve their own residual. Censored events (no snapshot before
-the change could be known) and the change-point in days from the previous game day are
-reported beside the coefficient. **Since 2026-09-17 (#300) this coefficient is the module's
-ADOPT condition**: sign and magnitude against the 0.132 benchmark, season-clustered once two
-seasons exist (`docs/gate-power.md`).
+standard error is #214's noise floor per window over the gap's spread and root n - 1 (OLS's
+own denominator, #303), because the event rows alone cannot resolve their own residual. An
+event game with no result yet is excluded rather than priced off a truncated in-flight
+snapshot, and the count is reported; a week whose only other archived games are themselves
+event games has no control and is refused rather than fitted at a manufactured zero
+week-mean. Censored events (no snapshot before the change could be known) are split on the
+run line into never-polled and polled-only-after-the-change, two different facts a single
+count used to conflate, and the change-point -- scanned over poll days, bounded at the game
+day, every date compared through the poll-day conversion -- is reported in days from the
+previous game day, beside the coefficient. **Since 2026-09-17 (#300) this coefficient is the
+module's ADOPT condition**: sign and magnitude against the 0.132 benchmark, season-clustered
+once two seasons exist (`docs/gate-power.md`).
 
 Nothing here fetches but one guarded call: `--study` asks `hub.fetch.odds._qb_starters` for
 the depth chart #214's own floor conditions on, exactly as `odds.noise_floor_report` does,
@@ -373,11 +379,21 @@ def priced(polls: pl.DataFrame, games: pl.DataFrame) -> pl.DataFrame:
     `frozen_before` (the comparator both readers use), and `close`, the last before the game
     day. A game with no snapshot before its `frozen_before` is `censored`: the archive
     could only have seen it after it moved, and the row is kept and marked rather than
-    dropped, so the readers can count what they could not see."""
+    dropped, so the readers can count what they could not see.
+
+    `censored` conflates two different facts and always has (#303): a game the archive holds
+    no poll for at all, and a game it polled only after the change had already happened.
+    `never_polled` tells the two apart -- true when the game's id appears nowhere in `polls`,
+    false when it does (whether or not any of those polls precede `frozen_before`) -- so a
+    caller can report "never polled" and "polled only after the change" as the separate
+    counts they are rather than one number that could be either."""
     days = polls.with_columns(_poll_day().alias("poll_day"))
     out = _last_before(days, games, "frozen_before", "frozen")
     out = _last_before(days, out, "date", "close")
-    return out.with_columns(pl.col("frozen").is_null().alias("censored"))
+    polled_ids = polls["game_id"].unique().to_list()
+    return out.with_columns(
+        pl.col("frozen").is_null().alias("censored"),
+        (~pl.col("game_id").is_in(polled_ids)).alias("never_polled"))
 
 
 def _log_loss(prob: float, y: float, eps: float = 1e-15) -> float:
@@ -399,6 +415,27 @@ def _results(tg: pl.DataFrame) -> pl.DataFrame:
           .when(pl.col("score") < pl.col("opp_score")).then(0.0)
           .otherwise(0.5).alias("y"),
         pl.col("base_prob"), pl.col("qb_prob"))
+
+
+def _exclude_unplayed(have: pl.DataFrame, tg: pl.DataFrame) -> pl.DataFrame:
+    """`have` (uncensored, priced event games) with no result yet dropped. `gate_rows` has
+    always joined `_results` before scoring an arm; the study never did (#303), so an
+    in-flight game's `close` -- the last snapshot before its own game day -- was just its
+    latest snapshot, not the last one before a move that had finished happening, and the
+    move it fed into the regression was truncated with nothing marking the row. A semi join
+    on `_results(tg)` keeps exactly the rows the gate would keep."""
+    return have.join(_results(tg).select("game_id"), on="game_id", how="semi")
+
+
+def unplayed_study_games(polls: pl.DataFrame, games: pl.DataFrame, tg: pl.DataFrame) -> int:
+    """How many uncensored, priced event games `study_rows` excludes as unplayed (#303) --
+    off the same `priced` frame `study_rows` itself filters, so the count and the exclusion
+    can never disagree about which games they mean. Reported on the run line rather than
+    left to shrink `n` silently."""
+    have = priced(polls, games).filter(~pl.col("censored") & pl.col("close").is_not_null())
+    if have.is_empty():
+        return 0
+    return have.height - _exclude_unplayed(have, tg).height
 
 
 # --- the gate ---------------------------------------------------------------------------------
@@ -586,10 +623,16 @@ def run(paired: pl.DataFrame, *, needed: int | None, ceiling: bool = True,
 
 # --- the study --------------------------------------------------------------------------------
 
-def _week_means(polls: pl.DataFrame, rows: pl.DataFrame) -> pl.DataFrame:
+def _week_means(polls: pl.DataFrame, rows: pl.DataFrame,
+                event_ids: Sequence[str]) -> pl.DataFrame:
     """Per event game, the mean move over every *other* archived game of the same week
-    between the same two poll days -- the week fixed effect as the subtraction it is; zero
-    where no other game was polled on both days."""
+    between the same two poll days -- the week fixed effect as the subtraction it is --
+    excluding every game in `event_ids`, not just the row's own (#303): `event_ids` is every
+    event game in the span under study, so a week with two starter changes never uses one
+    treated game as the other's control. `week_mean` is null, and `week_others` zero, where
+    no untreated game was polled on both days; `study_rows` refuses such a row rather than
+    fitting it as though the week's mean move were zero."""
+    excluded = set(event_ids)
     days = (polls.with_columns(_poll_day().alias("poll_day"))
                  .sort("game_id", "captured_at")
                  .group_by("game_id", "week", "poll_day", maintain_order=True)
@@ -597,7 +640,8 @@ def _week_means(polls: pl.DataFrame, rows: pl.DataFrame) -> pl.DataFrame:
     out = []
     for r in rows.iter_rows(named=True):
         f_day, c_day = r["frozen_day"], r["close_day"]
-        others = days.filter((pl.col("week") == r["week"]) & (pl.col("game_id") != r["game_id"])
+        others = days.filter((pl.col("week") == r["week"])
+                             & ~pl.col("game_id").is_in(list(excluded))
                              & pl.col("poll_day").is_in([f_day, c_day]))
         pivot = (others.group_by("game_id").agg(
             pl.col("close_spread").filter(pl.col("poll_day") == f_day).first().alias("a"),
@@ -605,26 +649,42 @@ def _week_means(polls: pl.DataFrame, rows: pl.DataFrame) -> pl.DataFrame:
                        .drop_nulls())
         moves = (pivot["b"] - pivot["a"]).to_list()
         out.append({"game_id": r["game_id"],
-                    "week_mean": statistics.fmean(moves) if moves else 0.0,
+                    "week_mean": statistics.fmean(moves) if moves else None,
                     "week_others": len(moves)})
     return pl.DataFrame(out, schema={"game_id": pl.Utf8, "week_mean": pl.Float64,
                                      "week_others": pl.Int64})
 
 
 def _change_points(polls: pl.DataFrame, rows: pl.DataFrame, floor: float) -> list[float | None]:
-    """Per event game, days from the previous game day to the first poll after the frozen
-    one whose move from the frozen price clears `floor * sqrt(days since the frozen poll)`;
-    None where no poll does."""
-    days = polls.sort("game_id", "captured_at")
+    """Per event game, days from the previous game day to the first poll *day* -- the last
+    poll of an Eastern date standing for the date, exactly as every other date comparison in
+    this module goes through `_poll_day` -- strictly after the frozen poll's day and
+    strictly before the game day, whose move from the frozen price clears
+    `floor * sqrt(days since the frozen poll)`. None where no such poll day does.
+
+    Before #303 this scanned individual polls rather than poll days, so several captures on
+    one Eastern date could fire the threshold intraday rather than at the day the archive's
+    own "one poll per Eastern date" convention (`hub.fetch.odds`) means; it also had no
+    upper bound, so a poll captured after the game's own kickoff -- which `priced`'s `close`
+    never reads either -- could set a change-point no poll before kickoff had seen. And the
+    date arithmetic itself compared the poll's raw UTC calendar date against `frozen_before`,
+    an Eastern one; a capture in the small hours UTC is the previous Eastern day, and the old
+    line counted it a day too many."""
+    days = (polls.with_columns(_poll_day().alias("poll_day"))
+                 .sort("game_id", "captured_at")
+                 .group_by("game_id", "poll_day", maintain_order=True)
+                 .agg(pl.col("close_spread").last(), pl.col("captured_at").last()))
     out: list[float | None] = []
     for r in rows.iter_rows(named=True):
-        later = days.filter((pl.col("game_id") == r["game_id"])
-                            & (pl.col("captured_at") > r["frozen_at"]))
+        later = (days.filter((pl.col("game_id") == r["game_id"])
+                             & (pl.col("poll_day") > r["frozen_day"])
+                             & (pl.col("poll_day") < r["date"]))
+                     .sort("poll_day"))
         seen: float | None = None
         for p in later.iter_rows(named=True):
             elapsed = (p["captured_at"] - r["frozen_at"]).total_seconds() / 86400.0
             if abs(p["close_spread"] - r["frozen"]) > floor * math.sqrt(max(elapsed, 0.0)):
-                seen = float((p["captured_at"].date()
+                seen = float((dt.date.fromisoformat(p["poll_day"])
                               - dt.date.fromisoformat(r["frozen_before"])).days)
                 break
         out.append(seen)
@@ -639,13 +699,24 @@ STUDY_SCHEMA: dict[str, Any] = {
 }
 
 
-def study_rows(polls: pl.DataFrame, games: pl.DataFrame,
+def study_rows(polls: pl.DataFrame, games: pl.DataFrame, tg: pl.DataFrame,
                floor_per_root_day: float | None = None) -> pl.DataFrame:
-    """One row per uncensored event game: the move from the frozen price to the last
-    snapshot before the game day, the week's mean move over the same two poll days, the
-    week-adjusted move, the net gap, the window in days, and -- given a floor per root-day
-    -- the change-point in days from the previous game day."""
+    """One row per uncensored, played event game: the move from the frozen price to the last
+    snapshot before the game day, the week's mean move over the same two poll days --
+    excluding every other event game of the week, not just this one -- the week-adjusted
+    move, the net gap, the window in days, and -- given a floor per root-day -- the
+    change-point in days from the previous game day.
+
+    **An event game with no result yet is excluded (#303)**, the same way `gate_rows` has
+    always excluded one: an in-flight game's `close` is just its latest snapshot, not the
+    last one before a move that has finished happening, and reading it as the move would
+    truncate the regressor. `unplayed_study_games` reports how many, off the same frame this
+    filters. **A row whose week has no game left to serve as a control is refused**, not
+    fitted at a manufactured zero week-mean (`_week_means`'s own null `week_mean`)."""
     have = priced(polls, games).filter(~pl.col("censored") & pl.col("close").is_not_null())
+    if have.is_empty():
+        return pl.DataFrame(schema=STUDY_SCHEMA)
+    have = _exclude_unplayed(have, tg)
     if have.is_empty():
         return pl.DataFrame(schema=STUDY_SCHEMA)
     have = have.with_columns(_poll_day("frozen_at").alias("frozen_day"),
@@ -653,7 +724,11 @@ def study_rows(polls: pl.DataFrame, games: pl.DataFrame,
                              (pl.col("close") - pl.col("frozen")).alias("move"),
                              ((pl.col("close_at") - pl.col("frozen_at")).dt.total_seconds()
                               / 86400.0).alias("window_days"))
-    have = have.join(_week_means(polls, have), on="game_id", how="left")
+    have = have.join(_week_means(polls, have, games["game_id"].to_list()),
+                     on="game_id", how="left")
+    have = have.filter(pl.col("week_mean").is_not_null())
+    if have.is_empty():
+        return pl.DataFrame(schema=STUDY_SCHEMA)
     changes = (_change_points(polls, have, floor_per_root_day)
                if floor_per_root_day is not None else [None] * have.height)
     return (have.with_columns((pl.col("move") - pl.col("week_mean")).alias("adjusted_move"),
@@ -663,11 +738,13 @@ def study_rows(polls: pl.DataFrame, games: pl.DataFrame,
 
 def study_mde(*, n: int, sd_gap: float, window_days: float, floor_per_root_day: float) -> float:
     """The coefficient's MDE before the run, as pre-registered: `(t(0.975, n-1) + z(0.80))
-    * floor_window / (sd(gap) * sqrt(n))`, the floor per window `floor_per_root_day *
-    sqrt(window_days)`; the cluster is the game."""
+    * floor_window / (sd(gap) * sqrt(n - 1))`, the floor per window `floor_per_root_day *
+    sqrt(window_days)`; the cluster is the game. The denominator is `n - 1`, OLS's own
+    (#303), matching `study_fit`'s `se` so the MDE stated here and the one a fitted run
+    reports are never two formulas."""
     if n < 2 or not (sd_gap > 0):
         return float("nan")
-    se = floor_per_root_day * math.sqrt(window_days) / (sd_gap * math.sqrt(n))
+    se = floor_per_root_day * math.sqrt(window_days) / (sd_gap * math.sqrt(n - 1))
     return experiment.minimum_detectable_effect(se, n)
 
 
@@ -675,9 +752,11 @@ def study_fit(rows: pl.DataFrame, *, floor_per_root_day: float) -> dict[str, flo
     """The slope of the week-adjusted move on the net gap, with its error from the floor.
 
     Ordinary least squares with an intercept; the standard error is the noise floor per
-    window over the gap's spread and root n rather than the residual's, because a season of
-    events cannot resolve its own residual against a floor measured on twelve games. `t`
-    against the benchmark says whether the betting market moved as the source would.
+    window over the gap's spread and root n - 1 rather than the residual's, because a season
+    of events cannot resolve its own residual against a floor measured on twelve games --
+    OLS's own denominator (#303: dividing by root n instead undercounted the error by 41% at
+    n=2 and about 1% at n=53). `t` against the benchmark says whether the betting market
+    moved as the source would.
     """
     n = rows.height
     nan = float("nan")
@@ -690,7 +769,7 @@ def study_fit(rows: pl.DataFrame, *, floor_per_root_day: float) -> dict[str, flo
     beta = float(np.polyfit(x, y, 1)[0]) if sd_gap > 0 else nan
     window = rows["window_days"].to_numpy().astype(float).mean()
     floor_window = floor_per_root_day * math.sqrt(float(window))
-    se = floor_window / (sd_gap * math.sqrt(n)) if sd_gap > 0 else nan
+    se = floor_window / (sd_gap * math.sqrt(n - 1)) if sd_gap > 0 else nan
     return {"n": float(n), "beta": beta, "se": se,
             "mde": experiment.minimum_detectable_effect(se, n), "benchmark": BENCHMARK,
             "t_vs_benchmark": (beta - BENCHMARK) / se if se and math.isfinite(se) else nan,
@@ -739,11 +818,12 @@ def study_events_needed(sd_gap: float, floor_window: float, *, cap: int = 500) -
     same search `event_seasons_needed` runs for the gate's own seasons, here over event games
     and off `study_fit`'s own `sd_gap` and `floor_window`, so the number `verdict`'s
     NOT-RUNNABLE sentence names and the number this computes cannot be two numbers. None when
-    the inputs cannot support the search, or no n up to `cap` clears DELTA."""
+    the inputs cannot support the search, or no n up to `cap` clears DELTA. The denominator
+    is `n - 1`, matching `study_fit`'s `se` (#303)."""
     if not (math.isfinite(sd_gap) and math.isfinite(floor_window)) or sd_gap <= 0:
         return None
     for n in range(2, cap + 1):
-        se = floor_window / (sd_gap * math.sqrt(n))
+        se = floor_window / (sd_gap * math.sqrt(n - 1))
         if experiment.minimum_detectable_effect(se, n) <= DELTA:
             return n
     return None
@@ -1001,9 +1081,12 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"({', '.join(str(s) for s in have_seasons)})")
     season_games = games.filter(pl.col("season").is_in(seasons))
     seen = priced(polls, season_games)
+    never_polled = int(seen["never_polled"].sum())
+    polled_after = int((seen["censored"] & ~seen["never_polled"]).sum())
     print(f"  {span}: {season_games.height} event games; "
           f"{int(seen['censored'].sum())} censored (no snapshot before the change could be "
-          f"known), {seen.filter(~pl.col('censored') & pl.col('close').is_not_null()).height} "
+          f"known: {never_polled} never polled at all, {polled_after} polled only after the "
+          f"change), {seen.filter(~pl.col('censored') & pl.col('close').is_not_null()).height} "
           f"with a frozen price and a pre-game one")
 
     if a.gate:
@@ -1076,7 +1159,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         mde = study_mde(n=n_typical, sd_gap=sd_gap, window_days=7.0, floor_per_root_day=used)
         print(f"  MDE before the run at a season of {n_typical} event games, a 7-day window: "
               f"{mde:.4f} points per value unit against a benchmark of {BENCHMARK:.3f}")
-        rows_ = study_rows(polls, season_games,
+        unplayed = unplayed_study_games(polls, season_games, tg)
+        print(f"  {unplayed} uncensored, priced event game(s) excluded as unplayed -- an "
+              f"in-flight game's last snapshot before its own game day is not the last one "
+              f"before a move that has finished happening")
+        rows_ = study_rows(polls, season_games, tg,
                            floor_per_root_day=floor if math.isfinite(floor) else None)
         fit = study_fit(rows_, floor_per_root_day=used)
         if rows_.is_empty():
