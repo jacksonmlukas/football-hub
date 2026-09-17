@@ -20,7 +20,7 @@ import statistics
 import polars as pl
 import pytest
 
-from hub.fetch import nfeloqb
+from hub.fetch import nfeloqb, odds
 from hub.models import experiment, quarterback
 from hub.models import starter_change as sc
 from hub.models.market import MARGIN_SD, normal_cdf
@@ -487,22 +487,23 @@ def test_the_study_mde_before_the_run_is_stated_from_the_events_gap_spread():
                                  * 0.4 * math.sqrt(7.0) / (70.0 * math.sqrt(53)), abs=1e-4)
 
 
-def test_the_noise_floor_excludes_quarterback_change_intervals_like_214():
-    """#214's own floor (`hub.fetch.odds.noise_floor_report`'s "floor" line) excludes frozen
-    lookaheads and quarterback-change intervals, both computed off a starters frame handed
-    to `odds.line_moves`. The study rebuilt the frozen exclusion but not the second one, so
-    an interval a starter change moved was counted as noise. `noise_floor_per_root_day`
-    builds that same starters frame off this module's own team-game rows -- `date`, `team`,
-    `qb` -- and hands it to the same call #214's report makes, rather than re-deriving what
-    "changed" means. DAL-PHI's only interval spans a real chart change and drops out; KC-LAC
-    and SF-SEA do not change and survive."""
+def test_the_noise_floor_excludes_a_change_the_chart_dates_between_the_polls():
+    """#330: `starters` is the depth-chart frame `odds._qb_starters` returns -- `dt` the
+    chart's own timestamp, published day by day through the week -- and never this module's
+    own team-game rows, whose `date` is *kickoff*. A real archive's polls of a game all
+    precede that game's own kickoff, so a change dated at kickoff is invisible to every one
+    of them and a starters frame built off kickoff dates can never exclude the interval it
+    exists to exclude -- which is exactly the shape the superseded fixture missed, dating a
+    team's *other* game between two polls of this one, a shape no real archive has.
+
+    Same three pre-kickoff polls of DAL-PHI, KC-LAC and SF-SEA throughout: a chart entry
+    dated *between* the DAL-PHI polls excludes that interval (KC-LAC and SF-SEA are the two
+    left); the identical chart dating the same change *at* kickoff -- after both polls --
+    does not, because neither poll's as-of lookup ever sees it."""
+    g1, g2, g3 = "2026_01_DAL_PHI", "2026_01_KC_LAC", "2026_01_SF_SEA"
     tue = dt.datetime(2026, 8, 25, 4, 58)
     thu = dt.datetime(2026, 8, 28, 2, 1)
-    g1, g2, g3 = "2026_01_DAL_PHI", "2026_01_KC_LAC", "2026_01_SF_SEA"
-    tg = pl.DataFrame({
-        "date": ["2026-08-01"] * 6 + ["2026-08-26"],
-        "team": ["PHI", "DAL", "KC", "LAC", "SF", "SEA", "DAL"],
-        "qb": ["qb-phi", "qb-dal-1", "qb-kc", "qb-lac", "qb-sf", "qb-sea", "qb-dal-2"]})
+    kickoff = dt.datetime(2026, 9, 13, 17, 0)                    # well after both polls
     polls_ = pl.DataFrame({
         "game_id": [g1, g1, g2, g2, g3, g3],
         "close_spread": [-3.0, -3.5, -3.0, -3.5, 1.0, 1.5],
@@ -510,11 +511,41 @@ def test_the_noise_floor_excludes_quarterback_change_intervals_like_214():
         "week": [1, 1, 1, 1, 1, 1]},
         schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
                 "captured_at": pl.Datetime("us"), "week": pl.Int64})
-    floor, floor_games = sc.noise_floor_per_root_day(polls_, tg)
-    assert floor_games == 2                            # DAL-PHI's interval spans the change
-    assert math.isfinite(floor)
-    _unconditioned, unconditioned_games = sc.noise_floor_per_root_day(polls_, None)
-    assert unconditioned_games == 3                     # the condition not applied at all
+    base = [(dt.datetime(2026, 8, 1), "PHI", "qb-phi"), (dt.datetime(2026, 8, 1), "DAL", "qb-dal-1"),
+            (dt.datetime(2026, 8, 1), "KC", "qb-kc"), (dt.datetime(2026, 8, 1), "LAC", "qb-lac"),
+            (dt.datetime(2026, 8, 1), "SF", "qb-sf"), (dt.datetime(2026, 8, 1), "SEA", "qb-sea")]
+
+    def _chart(extra):
+        rows_ = [*base, extra]
+        return pl.DataFrame({"dt": [r[0] for r in rows_], "team": [r[1] for r in rows_],
+                             "qb": [r[2] for r in rows_]})
+
+    mid_week = _chart((dt.datetime(2026, 8, 26), "DAL", "qb-dal-2"))
+    floor, floor_games, applied = sc.noise_floor_per_root_day(polls_, mid_week)
+    assert applied
+    assert floor_games == 2 and math.isfinite(floor)      # KC-LAC and SF-SEA survive
+
+    at_kickoff = _chart((kickoff, "DAL", "qb-dal-2"))
+    floor2, floor_games2, applied2 = sc.noise_floor_per_root_day(polls_, at_kickoff)
+    assert applied2
+    assert floor_games2 == 3 and math.isfinite(floor2)    # neither poll sees the change
+
+
+def test_the_noise_floor_with_no_starters_says_the_condition_was_not_applied():
+    """The degradation `noise_floor_per_root_day` shares with `noise_floor_report`: with no
+    chart the floor is still returned, over every live interval, and the third element says
+    the condition was not applied rather than letting a caller print an unconditioned number
+    under the same-quarterback label."""
+    polls_ = pl.DataFrame({
+        "game_id": ["2026_01_DAL_PHI", "2026_01_DAL_PHI"],
+        "close_spread": [-3.0, -3.5],
+        "captured_at": [dt.datetime(2026, 8, 25, 4, 58), dt.datetime(2026, 8, 28, 2, 1)],
+        "week": [1, 1]},
+        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                "captured_at": pl.Datetime("us"), "week": pl.Int64})
+    _floor, floor_games, applied = sc.noise_floor_per_root_day(polls_, None)
+    assert not applied
+    assert floor_games == 1
 
 
 # --- the entry point ---------------------------------------------------------------------
@@ -616,6 +647,15 @@ def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, c
         store.write(part.drop("week"), "lines", "nfl", 2026, int(week[0]), name="t",
                     base=base)
     monkeypatch.setattr(experiment, "WIDTH_STATE", tmp_path / "w.json")
+
+    # #330: --study reaches for the depth chart the same-quarterback floor conditions on;
+    # this fixture has no chart to give it, so it is stubbed exactly the way the unit suite
+    # stubs `odds.noise_floor_report`'s own fetch (tests/unit/test_fetch_odds.py) rather than
+    # let it reach the network.
+    def _no_chart(season):
+        raise ConnectionError("no network")
+    monkeypatch.setattr(odds, "_qb_starters", _no_chart)
+
     # --ceiling is on by default since #302; passed explicitly here only because this test
     # also pins --since to collapse the assembled range to the one season the fixture has.
     code = sc.main(["--gate", "--ceiling", "--study", "--since", "2026", "--cache", str(cache),
@@ -627,6 +667,8 @@ def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, c
     assert "gate: 1 scored event games over 1 event-season(s)" in out
     assert "diagnostic, not the gate -- the oracle arm" in out
     assert "NOT-RUNNABLE" in out
+    assert "same-quarterback condition NOT applied: ConnectionError" in out
+    assert "all-games floor, SAME-QUARTERBACK NOT APPLIED" in out
     assert "coefficient:" in out and "n=2 event games" in out
     assert "change-point: seen on" in out
 

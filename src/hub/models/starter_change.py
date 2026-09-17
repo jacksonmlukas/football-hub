@@ -49,8 +49,13 @@ reported beside the coefficient. **Since 2026-09-17 (#300) this coefficient is t
 ADOPT condition**: sign and magnitude against the 0.132 benchmark, season-clustered once two
 seasons exist (`docs/gate-power.md`).
 
-Nothing here fetches. The nfeloqb cache and the snapshot archive are what is read, and a
-season the caches do not hold is reported as not established.
+Nothing here fetches but one guarded call: `--study` asks `hub.fetch.odds._qb_starters` for
+the depth chart #214's own floor conditions on, exactly as `odds.noise_floor_report` does,
+and degrades the same way that report does when the chart is unavailable -- the floor is
+still printed, over every live interval, and the line says the same-quarterback condition
+was not applied rather than printing an unconditioned number under that label (#330). The
+nfeloqb cache and the snapshot archive are everything else that is read, and a season either
+caches does not hold is reported as not established.
 
     uv run python -m hub.models.starter_change --events --gate --study
 """
@@ -707,34 +712,39 @@ def archive(season: int, base: Path | None) -> pl.DataFrame:
 
 
 def noise_floor_per_root_day(polls: pl.DataFrame,
-                             tg: pl.DataFrame | None = None) -> tuple[float, int]:
+                             starters: pl.DataFrame | None = None) -> tuple[float, int, bool]:
     """#214's own same-quarterback floor per root-day, computed the way
     `hub.fetch.odds.noise_floor_report` computes its "floor" line -- not re-derived: frozen
     lookaheads excluded first, then intervals `odds.line_moves` marks `same_qb` false or
-    unknown, off a starters frame (`dt`, `team`, `qb`) handed to that same call. The
-    starters frame here is built off `tg` -- this module's own team-game rows, `date` as
-    `dt` -- rather than a fetched depth chart, so the condition applies with no network and
-    nothing here re-derives what "changed" means. With no `tg` (or an empty one) the
-    condition is not applied, the same degradation `noise_floor_report` prints when its own
-    chart fetch fails, and the floor is over every live interval regardless of the
-    quarterback. NaN and zero with nothing left to measure either way.
+    unknown, off a starters frame handed to that same call.
+
+    **`starters` is the depth-chart frame `odds._qb_starters` returns -- `dt`, `team`, `qb`,
+    the chart's own timestamp -- and never this module's own team-game rows.** `apply`'s as-of
+    join (`odds._starter_at`) reads "who was listed from this moment on"; this module's
+    `date` is *kickoff*, so a change dated at kickoff is invisible to every poll of that
+    game, which by construction all precede its own kickoff (#330). A starters frame built
+    off kickoff dates therefore never excludes the interval it exists to exclude -- the
+    defect this module was filed against, in a new shape -- where a real depth chart, dated
+    through the week the polls were taken, does.
+
+    The third element of the return is whether the condition was applied at all: with no
+    `starters` (or an empty one) it is not, the same degradation `noise_floor_report` takes
+    when its own chart fetch fails, and the floor returned is over every live interval
+    regardless of the quarterback -- a caller reports which floor it printed rather than
+    labelling an unconditioned number same-quarterback. NaN and zero with nothing left to
+    measure either way.
     """
     if polls.is_empty():
-        return float("nan"), 0
-    starters = None
-    if tg is not None and not tg.is_empty():
-        starters = (tg.select(pl.col("date").str.to_datetime("%Y-%m-%d").alias("dt"),
-                              pl.col("team"), pl.col("qb"))
-                      .drop_nulls()
-                      .sort("dt"))
-    moves = odds.line_moves(odds.staleness(polls), starters)
+        return float("nan"), 0, False
+    have_starters = starters is not None and not starters.is_empty()
+    moves = odds.line_moves(odds.staleness(polls), starters if have_starters else None)
     live = moves.filter(~pl.col("frozen"))
-    if starters is not None:
+    if have_starters:
         live = live.filter(pl.col("same_qb"))
     if live.is_empty():
-        return float("nan"), 0
+        return float("nan"), 0, have_starters
     floor = odds.noise_floor(live, bootstrap=1)
-    return float(floor["sd_per_root_day"]), int(floor["games"])
+    return float(floor["sd_per_root_day"]), int(floor["games"]), have_starters
 
 
 def _event_lines(ev: pl.DataFrame, games: pl.DataFrame, since: int) -> list[str]:
@@ -850,15 +860,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  {got.verdict[0]}: {got.verdict[1]}")
 
     if a.study:
-        floor, floor_games = noise_floor_per_root_day(polls, tg)
+        # #330: the depth chart #214's own floor conditions on -- never this module's own
+        # kickoff-dated rows, which a change can never be seen through (a game's polls all
+        # precede its own kickoff). Guarded exactly as `odds.noise_floor_report` guards its
+        # own fetch: a chart that cannot be read does not take the floor down with it. Asked
+        # for only when there is an archive to condition -- `noise_floor_report` never fetches
+        # on a fresh clone either, because there is nothing yet for a chart to matter to.
+        starters, qb_note = None, ""
+        if not polls.is_empty():
+            try:
+                starters = odds._qb_starters(a.season)
+            except Exception as exc:                         # pragma: no cover - network
+                qb_note = (f" (same-quarterback condition NOT applied: "
+                          f"{type(exc).__name__}: {exc})")
+        floor, floor_games, floor_applied = noise_floor_per_root_day(polls, starters)
+        label = ("same-quarterback floor" if floor_applied
+                 else "all-games floor, SAME-QUARTERBACK NOT APPLIED")
         used = floor if math.isfinite(floor) else 0.40
         gaps = in_season_events(ev)["gap"].drop_nulls().to_list()
         sd_gap = statistics.stdev(gaps) if len(gaps) > 1 else float("nan")
         per_season = games.group_by("season").len()["len"].to_list()
         n_typical = int(statistics.median(per_season)) if per_season else 0
-        print(f"  study: noise floor {floor:.3f} points per root-day off {floor_games} live "
-              f"games of this archive (#214 recorded 0.40 on 12; used {used:.2f}); gap sd "
-              f"{sd_gap:.1f} value units over {len(gaps)} events since {a.since}")
+        print(f"  study: {label} {floor:.3f} points per root-day off {floor_games} live "
+              f"games of this archive{qb_note} (#214 recorded 0.40 on 12; used {used:.2f}); "
+              f"gap sd {sd_gap:.1f} value units over {len(gaps)} events since {a.since}")
         mde = study_mde(n=n_typical, sd_gap=sd_gap, window_days=7.0, floor_per_root_day=used)
         print(f"  MDE before the run at a season of {n_typical} event games, a 7-day window: "
               f"{mde:.4f} points per value unit against a benchmark of {BENCHMARK:.3f}")
