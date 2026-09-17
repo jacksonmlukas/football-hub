@@ -20,7 +20,7 @@ import statistics
 import polars as pl
 import pytest
 
-from hub.fetch import nfeloqb
+from hub.fetch import nfeloqb, odds
 from hub.models import experiment, quarterback
 from hub.models import starter_change as sc
 from hub.models.market import MARGIN_SD, normal_cdf
@@ -309,6 +309,31 @@ def test_the_oracle_arm_knows_the_arriving_starter_and_is_reported_beside_the_ga
     assert row["oracle_diff"] != pytest.approx(row["diff"])
 
 
+def test_a_game_whose_opponent_has_no_prior_state_is_excluded_not_zeroed():
+    """The gate guards on `adjusted_by`, the adjustment's own marker, never on the moved
+    spread column: `quarterback.apply` leaves that column at the frozen price -- unmoved,
+    and therefore never null -- on a game it did not touch. A's week-2 change is a genuine
+    in-season event, but its opponent Z has no row anywhere before that week, so the shipped
+    state has nothing to price Z with and `apply` needs both sides: the whole game goes
+    untouched. The old not-null filter on the spread column let a game like this through at
+    a manufactured zero difference and inflated n; guarding on the marker excludes it."""
+    rows_ = source_rows([
+        ("2026-09-06", 2026, "1.0", "A", "B", "a1", "b1", 100.0, 90.0, 5.0, 3.0,
+         20, 10, .55, .58),
+        ("2026-09-13", 2026, "2.0", "A", "Z", "a2", "z1", 130.0, 95.0, 40.0, 4.0,
+         17, 24, .60, .70),
+    ])
+    tg = sc.team_games(rows_)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    assert games.height == 1                                   # A's week-2 change: the only event
+    store_archive = polls([
+        ("2026_02_Z_A", 2.0, utc(5), 2),      # before frozen_before (09-06): the frozen price
+        ("2026_02_Z_A", -1.0, utc(10), 2),    # before the game day (09-13): the close
+    ])
+    paired = sc.gate_rows(store_archive, games, tg, rows_)
+    assert paired.is_empty()
+
+
 def test_the_rule_reads_the_shipped_arm_and_never_the_oracle(tmp_path):
     """Three seasons where the oracle would ADOPT and the shipped arm loses everywhere: the
     verdict is the shipped arm's."""
@@ -389,6 +414,19 @@ def test_no_rows_is_not_runnable_with_zero_event_seasons(tmp_path):
     assert run.verdict[0] == "NOT-RUNNABLE" and "0 event-season" in run.verdict[1]
 
 
+def test_not_runnable_publishes_no_interval_and_records_no_width(tmp_path):
+    """The three-season floor is applied before the summary, the house verdict, the width
+    history and the rendered lines -- not applied to the house verdict alone after they have
+    already run. An underpowered run's `lines` are empty (no CI, no MDE, no ceiling check,
+    no stamp) and nothing is written to the width file even though this call asks to record
+    one, because a run that publishes no interval has no width to keep."""
+    width_path = tmp_path / "w.json"
+    run = sc.run(_paired([2026, 2027]), needed=31, width_path=width_path, record_width=True)
+    assert run.verdict[0] == "NOT-RUNNABLE"
+    assert run.lines == []
+    assert not width_path.exists()
+
+
 # --- the study ---------------------------------------------------------------------------
 
 
@@ -449,6 +487,111 @@ def test_the_study_mde_before_the_run_is_stated_from_the_events_gap_spread():
                                  * 0.4 * math.sqrt(7.0) / (70.0 * math.sqrt(53)), abs=1e-4)
 
 
+def test_the_noise_floor_excludes_a_change_the_chart_dates_between_the_polls():
+    """#330: `starters` is the depth-chart frame `odds._qb_starters` returns -- `dt` the
+    chart's own timestamp, published day by day through the week -- and never this module's
+    own team-game rows, whose `date` is *kickoff*. A real archive's polls of a game all
+    precede that game's own kickoff, so a change dated at kickoff is invisible to every one
+    of them and a starters frame built off kickoff dates can never exclude the interval it
+    exists to exclude -- which is exactly the shape the superseded fixture missed, dating a
+    team's *other* game between two polls of this one, a shape no real archive has.
+
+    Same three pre-kickoff polls of DAL-PHI, KC-LAC and SF-SEA throughout: a chart entry
+    dated *between* the DAL-PHI polls excludes that interval (KC-LAC and SF-SEA are the two
+    left); the identical chart dating the same change *at* kickoff -- after both polls --
+    does not, because neither poll's as-of lookup ever sees it."""
+    g1, g2, g3 = "2026_01_DAL_PHI", "2026_01_KC_LAC", "2026_01_SF_SEA"
+    tue = dt.datetime(2026, 8, 25, 4, 58)
+    thu = dt.datetime(2026, 8, 28, 2, 1)
+    kickoff = dt.datetime(2026, 9, 13, 17, 0)                    # well after both polls
+    polls_ = pl.DataFrame({
+        "game_id": [g1, g1, g2, g2, g3, g3],
+        "close_spread": [-3.0, -3.5, -3.0, -3.5, 1.0, 1.5],
+        "captured_at": [tue, thu, tue, thu, tue, thu],
+        "week": [1, 1, 1, 1, 1, 1]},
+        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                "captured_at": pl.Datetime("us"), "week": pl.Int64})
+    base = [(dt.datetime(2026, 8, 1), "PHI", "qb-phi"), (dt.datetime(2026, 8, 1), "DAL", "qb-dal-1"),
+            (dt.datetime(2026, 8, 1), "KC", "qb-kc"), (dt.datetime(2026, 8, 1), "LAC", "qb-lac"),
+            (dt.datetime(2026, 8, 1), "SF", "qb-sf"), (dt.datetime(2026, 8, 1), "SEA", "qb-sea")]
+
+    def _chart(extra):
+        rows_ = [*base, extra]
+        return pl.DataFrame({"dt": [r[0] for r in rows_], "team": [r[1] for r in rows_],
+                             "qb": [r[2] for r in rows_]})
+
+    mid_week = _chart((dt.datetime(2026, 8, 26), "DAL", "qb-dal-2"))
+    floor, floor_games, not_applied = sc.noise_floor_per_root_day([(2026, polls_, mid_week)])
+    assert not_applied == ()
+    assert floor_games == 2 and math.isfinite(floor)      # KC-LAC and SF-SEA survive
+
+    at_kickoff = _chart((kickoff, "DAL", "qb-dal-2"))
+    floor2, floor_games2, not_applied2 = sc.noise_floor_per_root_day([(2026, polls_, at_kickoff)])
+    assert not_applied2 == ()
+    assert floor_games2 == 3 and math.isfinite(floor2)    # neither poll sees the change
+
+
+def test_the_noise_floor_with_no_starters_names_the_season_not_applied():
+    """The degradation `noise_floor_per_root_day` shares with `noise_floor_report`: with no
+    chart for a season, that season's live intervals are still counted -- not dropped as
+    unknown -- and the season is named in the returned `not_applied` tuple rather than
+    letting a caller print an unconditioned number under the same-quarterback label."""
+    polls_ = pl.DataFrame({
+        "game_id": ["2026_01_DAL_PHI", "2026_01_DAL_PHI"],
+        "close_spread": [-3.0, -3.5],
+        "captured_at": [dt.datetime(2026, 8, 25, 4, 58), dt.datetime(2026, 8, 28, 2, 1)],
+        "week": [1, 1]},
+        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                "captured_at": pl.Datetime("us"), "week": pl.Int64})
+    _floor, floor_games, not_applied = sc.noise_floor_per_root_day([(2026, polls_, None)])
+    assert not_applied == (2026,)
+    assert floor_games == 1
+
+
+def test_the_noise_floor_covers_every_season_with_its_own_chart():
+    """#331: `odds._starter_at` is a backward as-of join, so a chart fetched for one season
+    cannot condition another season's polls -- fetching once for the last season only left
+    every earlier season's intervals with `same_qb` null, dropped as unknown, and the run
+    line still called the result same-quarterback. One `(season, polls, starters)` triple
+    per season: with a chart for both 2025 and 2026, both seasons' games reach `floor_games`
+    -- neither silently drops out for lacking the other season's chart; with a chart for
+    2026 only, 2025's game is still counted (unconditioned rather than dropped) and 2025 is
+    the one named in `not_applied`."""
+    g2025, g2026_stable, g2026_change = "2025_01_AA_BB", "2026_01_KC_LAC", "2026_01_DAL_PHI"
+    tue, thu = dt.datetime(2026, 8, 25, 4, 58), dt.datetime(2026, 8, 28, 2, 1)
+    polls_2025 = pl.DataFrame({
+        "game_id": [g2025, g2025], "close_spread": [1.0, 1.5],
+        "captured_at": [dt.datetime(2025, 8, 25, 4, 58), dt.datetime(2025, 8, 28, 2, 1)],
+        "week": [1, 1]},
+        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                "captured_at": pl.Datetime("us"), "week": pl.Int64})
+    polls_2026 = pl.DataFrame({
+        "game_id": [g2026_stable, g2026_stable, g2026_change, g2026_change],
+        "close_spread": [-3.0, -3.5, 2.0, 2.5], "captured_at": [tue, thu, tue, thu],
+        "week": [1, 1, 1, 1]},
+        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                "captured_at": pl.Datetime("us"), "week": pl.Int64})
+    chart_2025 = pl.DataFrame({
+        "dt": [dt.datetime(2025, 8, 1), dt.datetime(2025, 8, 1)], "team": ["AA", "BB"],
+        "qb": ["qb-aa", "qb-bb"]})
+    chart_2026 = pl.DataFrame({
+        "dt": [dt.datetime(2026, 8, 1)] * 4 + [dt.datetime(2026, 8, 26)],
+        "team": ["KC", "LAC", "PHI", "DAL", "DAL"],
+        "qb": ["qb-kc", "qb-lac", "qb-phi", "qb-dal-1", "qb-dal-2"]})
+
+    both = sc.noise_floor_per_root_day(
+        [(2025, polls_2025, chart_2025), (2026, polls_2026, chart_2026)])
+    floor, floor_games, not_applied = both
+    assert not_applied == ()
+    assert floor_games == 2 and math.isfinite(floor)      # 2025's game and KC-LAC both count
+
+    one = sc.noise_floor_per_root_day(
+        [(2025, polls_2025, None), (2026, polls_2026, chart_2026)])
+    floor2, floor_games2, not_applied2 = one
+    assert not_applied2 == (2025,)
+    assert floor_games2 == 2 and math.isfinite(floor2)    # 2025's game still counted
+
+
 # --- the entry point ---------------------------------------------------------------------
 
 
@@ -468,6 +611,30 @@ def test_the_cli_reads_the_cache_and_the_store_and_reports_the_counts(tmp_path, 
     assert "2026: 2 changes on 2 event games" in out
     assert "NOT-RUNNABLE" in out and "0 event-season" in out
     assert "no snapshot archive" in out
+
+
+def test_the_cli_ceiling_flag_defaults_on_and_no_ceiling_turns_it_off(tmp_path, monkeypatch,
+                                                                        rows):
+    """`run()`'s own keyword default is `ceiling=True` -- stage 2 on -- but until #302 the
+    CLI's own `--ceiling` was `store_true` and defaulted to False, so the documented
+    invocation (`--events --gate --study`, with no `--ceiling`) shipped with stage 2 off no
+    matter what `run` itself defaulted to: the tested configuration was never the shipped
+    one. `--ceiling` is a `BooleanOptionalAction` now, on unless `--no-ceiling` is given, so
+    the flag that reaches `run` is what the usage line's absence of `--ceiling` implies."""
+    cache = tmp_path / "nfeloqb"
+    cache.mkdir()
+    rows.write_csv(cache / nfeloqb.FILE)
+    seen: list[bool] = []
+
+    def fake_run(paired, *, needed, ceiling=True, width_path=None, record_width=False):
+        seen.append(ceiling)
+        return experiment.GateRun({}, pl.DataFrame(), ("SHOW", "stub"), [], pl.DataFrame())
+
+    monkeypatch.setattr(sc, "run", fake_run)
+    store_path = str(tmp_path / "store")
+    assert sc.main(["--gate", "--cache", str(cache), "--store", store_path]) == 0
+    assert sc.main(["--gate", "--no-ceiling", "--cache", str(cache), "--store", store_path]) == 0
+    assert seen == [True, False]
 
 
 def test_the_cli_without_a_cache_is_a_sentence_not_a_traceback(tmp_path, capsys):
@@ -524,8 +691,19 @@ def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, c
         store.write(part.drop("week"), "lines", "nfl", 2026, int(week[0]), name="t",
                     base=base)
     monkeypatch.setattr(experiment, "WIDTH_STATE", tmp_path / "w.json")
-    code = sc.main(["--gate", "--ceiling", "--study", "--cache", str(cache), "--store",
-                    str(base)])
+
+    # #330: --study reaches for the depth chart the same-quarterback floor conditions on;
+    # this fixture has no chart to give it, so it is stubbed exactly the way the unit suite
+    # stubs `odds.noise_floor_report`'s own fetch (tests/unit/test_fetch_odds.py) rather than
+    # let it reach the network.
+    def _no_chart(season):
+        raise ConnectionError("no network")
+    monkeypatch.setattr(odds, "_qb_starters", _no_chart)
+
+    # --ceiling is on by default since #302; passed explicitly here only because this test
+    # also pins --since to collapse the assembled range to the one season the fixture has.
+    code = sc.main(["--gate", "--ceiling", "--study", "--since", "2026", "--cache", str(cache),
+                    "--store", str(base)])
     out = capsys.readouterr().out
     assert code == 0
     assert "archive: 3 games" in out
@@ -533,8 +711,99 @@ def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, c
     assert "gate: 1 scored event games over 1 event-season(s)" in out
     assert "diagnostic, not the gate -- the oracle arm" in out
     assert "NOT-RUNNABLE" in out
+    assert "same-quarterback NOT applied for 2026" in out and "ConnectionError" in out
+    assert "all-games floor, SAME-QUARTERBACK NOT APPLIED" in out
     assert "coefficient:" in out and "n=2 event games" in out
     assert "change-point: seen on" in out
+
+
+def test_the_cli_assembles_every_season_from_since_through_season(tmp_path, capsys,
+                                                                    monkeypatch, rows):
+    """Until #302 `main` read a single season's archive (`--season` alone) and filtered
+    `games` to it, so the gate could never see more than one event-season no matter how many
+    the caches held (`docs/gate-power.md`'s three-season floor was unreachable through the
+    CLI). `--since` through `--season` is now the range `main` assembles: a second season's
+    archive, disjoint from the fixture's 2026 one, folds into the same run's polls."""
+    from hub import store
+
+    cache = tmp_path / "nfeloqb"
+    cache.mkdir()
+    rows.write_csv(cache / nfeloqb.FILE)
+    base = tmp_path / "store"
+    lines = ARCHIVE.with_columns(pl.lit("nfl").alias("league"), pl.lit(2026).alias("season"))
+    for week, part in lines.group_by("week"):
+        store.write(part.drop("week"), "lines", "nfl", 2026, int(week[0]), name="t", base=base)
+    extra = pl.DataFrame({
+        "game_id": ["2025_01_BB_AA"], "close_spread": [1.0],
+        "captured_at": [dt.datetime(2025, 9, 1, 16)], "week": [1]},
+        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                "captured_at": pl.Datetime("us"), "week": pl.Int64}
+    ).with_columns(pl.lit("nfl").alias("league"), pl.lit(2025).alias("season"))
+    store.write(extra.drop("week"), "lines", "nfl", 2025, 1, name="t", base=base)
+    monkeypatch.setattr(experiment, "WIDTH_STATE", tmp_path / "w.json")
+    code = sc.main(["--gate", "--since", "2025", "--season", "2026", "--cache", str(cache),
+                    "--store", str(base)])
+    out = capsys.readouterr().out
+    assert code == 0
+    # 3 game ids from the 2026 archive plus the one from 2025's: both seasons folded in.
+    assert "archive: 4 games" in out
+    assert "2025" in out and "2026" in out
+
+
+def test_the_cli_study_line_names_the_season_whose_chart_is_not_applied(tmp_path, capsys,
+                                                                          monkeypatch, rows):
+    """#331: one depth-chart fetch per season in the assembled range, not one for the last
+    season handed to every season's polls -- `odds._starter_at`'s as-of join means a chart
+    fetched for 2026 cannot condition a 2025 poll, so the old single fetch left 2025's
+    intervals with `same_qb` null and silently dropped them as unknown. Two seasons' worth
+    of archive, one poll pair each; the chart succeeds for 2026 and fails for 2025, and the
+    run line names 2025, not 2026, as the one not applied."""
+    from hub import store
+
+    cache = tmp_path / "nfeloqb"
+    cache.mkdir()
+    rows.write_csv(cache / nfeloqb.FILE)
+    base = tmp_path / "store"
+    lines = ARCHIVE.with_columns(pl.lit("nfl").alias("league"), pl.lit(2026).alias("season"))
+    for week, part in lines.group_by("week"):
+        store.write(part.drop("week"), "lines", "nfl", 2026, int(week[0]), name="t", base=base)
+    extra = pl.DataFrame({
+        "game_id": ["2025_01_BB_AA", "2025_01_BB_AA"], "close_spread": [1.0, 1.5],
+        "captured_at": [dt.datetime(2025, 8, 25, 16), dt.datetime(2025, 8, 28, 16)],
+        "week": [1, 1]},
+        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
+                "captured_at": pl.Datetime("us"), "week": pl.Int64}
+    ).with_columns(pl.lit("nfl").alias("league"), pl.lit(2025).alias("season"))
+    store.write(extra.drop("week"), "lines", "nfl", 2025, 1, name="t", base=base)
+
+    def _chart(season):
+        if season == 2026:
+            return pl.DataFrame({"dt": [dt.datetime(2026, 8, 1)], "team": ["KC"], "qb": ["x"]})
+        raise ConnectionError("no chart for 2025")
+    monkeypatch.setattr(odds, "_qb_starters", _chart)
+    monkeypatch.setattr(experiment, "WIDTH_STATE", tmp_path / "w.json")
+
+    code = sc.main(["--study", "--since", "2025", "--season", "2026", "--cache", str(cache),
+                    "--store", str(base)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "same-quarterback NOT applied for 2025" in out
+    assert "NOT applied for 2026" not in out
+    assert "ConnectionError" in out
+    assert "same-quarterback floor, PARTIAL" in out
+
+
+def test_the_cli_refuses_when_season_is_before_since(tmp_path, capsys, rows):
+    """A range with nothing in it -- `--season` behind `--since` -- is refused with the
+    reason stated, not silently run on an empty or inverted range."""
+    cache = tmp_path / "nfeloqb"
+    cache.mkdir()
+    rows.write_csv(cache / nfeloqb.FILE)
+    code = sc.main(["--gate", "--since", "2027", "--season", "2026", "--cache", str(cache),
+                    "--store", str(tmp_path / "store")])
+    assert code != 0
+    err = capsys.readouterr().err
+    assert "--since" in err and "--season" in err
 
 
 def test_the_cli_with_no_reader_asked_for_prints_usage(capsys):
