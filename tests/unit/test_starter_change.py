@@ -103,6 +103,29 @@ def test_team_games_key_every_side_by_nflverse_id_and_spelling(rows):
     assert tg.filter(pl.col("team") == "LAR").is_empty()
 
 
+POSTSEASON_AND_REGULAR = [
+    ("2026-09-06", 2026, "1.0", "A", "B", "a1", "b1", 100.0, 90.0, 5.0, 3.0, 20, 10, .55, .58),
+    ("2027-01-10", 2026, "19.0", "A", "B", "a2", "b2", 120.0, 95.0, 6.0, 3.5, 24, 17, .60, .62),
+]
+
+
+def test_team_games_drops_postseason_rows_from_itself_and_the_schedule():
+    """#304 (rule 15): `source_rows` hard-codes `game_type='REG'` on every row, so every other
+    fixture in this file has nothing to drop and the postseason filter -- in `team_games` and
+    the identical one in `_schedule`, the full row set the previous-game link is built off --
+    could be deleted with nothing to notice. Week 19 here is marked 'POST'; both readers must
+    drop it entirely, not merely fail to count it as an event."""
+    rows_ = source_rows(POSTSEASON_AND_REGULAR).with_columns(
+        pl.when(pl.col("week") == "19.0").then(pl.lit("POST")).otherwise(pl.lit("REG"))
+          .alias("game_type"))
+    tg = sc.team_games(rows_)
+    assert tg["week"].to_list() == [1, 1]                       # both sides of week 1 only
+    assert 19 not in tg["week"].to_list()
+    sched = sc._schedule(rows_)
+    assert sched["week"].to_list() == [1, 1]
+    assert 19 not in sched["week"].to_list()
+
+
 # KC's week-2 game (at DEN) is blank on KC's own side only -- the source has no starter for
 # them that week, DEN's side is fully populated. Week 1 (Mahomes) and week 3 (Gabbert, a
 # genuine change) are both readable, so week 2's hole sits between two known rows.
@@ -188,6 +211,27 @@ def test_events_are_starter_changes_between_consecutive_games_of_one_season(rows
     assert ev.filter((pl.col("team") == "KC") & (pl.col("week") == 1)).is_empty()
 
 
+def test_events_sorts_before_shifting_so_row_order_never_matters():
+    """#304 (rule 15): every caller in this file feeds `events()` rows that already end
+    sorted (off `team_games`, itself sorted, or a fixture built in order), so deleting the
+    function's own `.sort("team", "season", "week")` is invisible to the whole suite. The
+    same three games fed out of order must still find the one real change -- game 3, where
+    the starter differs from the team's second game -- and not a spurious one manufactured
+    from whichever row happened to arrive first."""
+    ordered = pl.DataFrame({
+        "game_id": ["g1", "g2", "g3"], "season": [2026, 2026, 2026], "week": [1, 2, 3],
+        "team": ["T", "T", "T"], "qb": ["q1", "q1", "q2"]})
+    shuffled = pl.DataFrame({
+        "game_id": ["g3", "g1", "g2"], "season": [2026, 2026, 2026], "week": [3, 1, 2],
+        "team": ["T", "T", "T"], "qb": ["q2", "q1", "q1"]})
+    got = sc.events(shuffled)
+    assert got.height == 1
+    row = got.row(0, named=True)
+    assert row["game_id"] == "g3"
+    assert row["departing"] == "q1" and row["arriving"] == "q2"
+    assert got.equals(sc.events(ordered))
+
+
 def test_values_are_ex_ante_for_both_quarterbacks(rows):
     """The departing starter's value is read off his last start, the arriving starter's off
     the event row -- both `qb_value_pre`, neither a post-game figure -- and the gap is the
@@ -216,6 +260,29 @@ def test_a_game_where_both_sides_changed_is_one_event_game_with_a_net_gap(rows):
     assert row["home_gap"] == -60.0 and row["away_gap"] == -30.0
     assert row["net_gap"] == -30.0
     assert row["frozen_before"] == "2026-09-13"
+
+
+TWO_SIDED_CHANGE_DIFFERENT_PREVIOUS_GAMES = [
+    ("2026-09-06", 2026, "1.0", "A", "X", "a1", "x1", 100.0, 90.0, 5.0, 3.0, 20, 10, .55, .58),
+    ("2026-09-08", 2026, "1.0", "B", "Y", "b1", "y1", 100.0, 90.0, 5.0, 3.0, 20, 10, .55, .58),
+    ("2026-09-13", 2026, "2.0", "A", "B", "a2", "b2", 150.0, 160.0, 40.0, 45.0, 17, 24, .60, .65),
+]
+
+
+def test_frozen_before_is_the_earlier_of_two_different_previous_game_days():
+    """#304 (rule 15): the suite's only other two-changed-side fixture, above, has both sides
+    sharing the *same* previous game (A and B played each other in week 1), so `.min()` and
+    `.max()` over `prev_date` agree there and a swap to `.max()` is invisible. Here A's
+    previous game (against X, 09-06) is two days earlier than B's (against Y, 09-08), so
+    `frozen_before` -- the earliest previous game day, before which no change could have been
+    known -- must be A's 09-06, not B's 09-08."""
+    rows_ = source_rows(TWO_SIDED_CHANGE_DIFFERENT_PREVIOUS_GAMES)
+    tg = sc.team_games(rows_)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    assert games.height == 1
+    row = games.row(0, named=True)
+    assert row["changes"] == 2
+    assert row["frozen_before"] == "2026-09-06"                 # A's, the earlier of the two
 
 
 def test_the_first_pass_attempt_names_the_starter_in_play_by_play():
@@ -249,6 +316,21 @@ ARCHIVE = polls([
     # Another week-3 game, no change: the week's mean move between the same two poll days.
     ("2026_03_SF_DEN", 1.0, utc(19), 3), ("2026_03_SF_DEN", 2.0, utc(26), 3),
 ])
+
+
+def test_poll_day_converts_the_utc_capture_to_its_eastern_calendar_date():
+    """#304 (rule 15): `_last_before` and `_change_points` both read `_poll_day` through
+    several layers of joins and filters, so a test built through them can kill the
+    Eastern-conversion mutant without ever proving the function itself is what does it -- and
+    the archive fixtures above all capture in the afternoon UTC, where the Eastern date
+    already happens to agree with the UTC one. A capture at 2026-01-01T03:00 UTC is
+    2025-12-31, 22:00 Eastern (EST is UTC-5) -- the previous calendar date in the zone every
+    date comparison in this module goes through -- so the poll day is '2025-12-31', never the
+    UTC date '2026-01-01'."""
+    frame = pl.DataFrame({"captured_at": [dt.datetime(2026, 1, 1, 3, 0)]},
+                         schema={"captured_at": pl.Datetime("us")})
+    got = frame.select(sc._poll_day().alias("poll_day"))
+    assert got["poll_day"].to_list() == ["2025-12-31"]
 
 
 def test_the_frozen_price_predates_the_previous_game_day_and_the_close_the_game_day(rows):
@@ -356,6 +438,31 @@ def test_the_pilot_reads_the_sources_own_two_columns_on_event_games_only(rows):
     assert math.isnan(pilot["season_sd"])
 
 
+NEGATIVE_PILOT_GAME = [
+    ("2026-09-06", 2026, "1.0", "A", "X", "a1", "x1", 100.0, 90.0, 5.0, 3.0, 20, 10, .30, .20),
+    ("2026-09-13", 2026, "2.0", "A", "Y", "a2", "y1", 120.0, 95.0, 6.0, 3.5, 24, 17, .30, .20),
+]
+
+
+def test_the_pilot_target_is_the_absolute_mean_not_the_signed_one():
+    """#304 (rule 15): the fixture above has one event game and its diff is already positive,
+    so `abs()` is the identity there and its deletion is invisible. Here the source's
+    quarterback-adjusted column (0.20) is the *worse* predictor of the home win the home team
+    goes on to get (y=1) than the base column (0.30) -- a genuine loss, so the mean of season
+    means is negative -- and `target` must still be its absolute value, not the signed mean
+    itself."""
+    rows_ = source_rows(NEGATIVE_PILOT_GAME)
+    tg = sc.team_games(rows_)
+    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    assert games.height == 1
+    pilot = sc.pilot(tg, games)
+    ll = lambda p, y: -(y * math.log(p) + (1 - y) * math.log(1 - p))  # noqa: E731
+    signed = ll(0.30, 1.0) - ll(0.20, 1.0)
+    assert signed < 0
+    assert pilot["per_season"][0]["mean"] == pytest.approx(signed)
+    assert pilot["target"] == pytest.approx(abs(signed))
+
+
 def test_event_seasons_needed_is_the_smallest_k_whose_mde_clears_the_target():
     """On the t reference: at s = 1 the MDE is 9.58 s at two seasons, 2.97 at three, 2.01 at
     four -- the table in the pre-registration -- so a target of 2.5 needs four and a target
@@ -425,6 +532,26 @@ def test_not_runnable_publishes_no_interval_and_records_no_width(tmp_path):
     assert run.verdict[0] == "NOT-RUNNABLE"
     assert run.lines == []
     assert not width_path.exists()
+
+
+def test_the_ceiling_arm_can_make_stage_2_fire(tmp_path):
+    """#304 (rule 15): every `_paired` fixture in this file gives every row of a season the
+    same `diff` and the same `ceiling`, so the bootstrap has zero width, the MDE is ~0, and
+    `experiment.gate`'s own NOT-RUNNABLE branch -- an MDE exceeding the measured ceiling,
+    `docs/gate-power.md`'s stage 2 -- can never fire in any of them, guard deleted or not.
+    Three seasons (past this module's own `EVENT_SEASONS_MINIMUM` guard) with a `diff` that
+    swings widely within and across seasons and a `ceiling` pinned near zero: the bootstrap
+    interval is wide, the measured ceiling is tiny, and the MDE exceeds it -- stage 2's own
+    sentence, not the count-of-event-seasons one the guard above prints."""
+    paired = pl.DataFrame({
+        "season": [2026, 2026, 2027, 2027, 2028, 2028],
+        "diff": [0.30, 0.28, -0.25, -0.30, 0.05, -0.05],
+        "ceiling": [0.001] * 6,
+    })
+    run = sc.run(paired, needed=3, width_path=tmp_path / "w.json")
+    assert run.verdict[0] == "NOT-RUNNABLE"
+    assert "stage 2" in run.verdict[1]
+    assert "event-season" not in run.verdict[1]              # not this module's own guard
 
 
 # --- the study ---------------------------------------------------------------------------
