@@ -711,40 +711,57 @@ def archive(season: int, base: Path | None) -> pl.DataFrame:
     return got.with_columns(pl.col("week").cast(pl.Utf8).cast(pl.Int64)).select(*schema)
 
 
-def noise_floor_per_root_day(polls: pl.DataFrame,
-                             starters: pl.DataFrame | None = None) -> tuple[float, int, bool]:
+def noise_floor_per_root_day(
+        parts: Sequence[tuple[int, pl.DataFrame, pl.DataFrame | None]],
+) -> tuple[float, int, tuple[int, ...]]:
     """#214's own same-quarterback floor per root-day, computed the way
     `hub.fetch.odds.noise_floor_report` computes its "floor" line -- not re-derived: frozen
     lookaheads excluded first, then intervals `odds.line_moves` marks `same_qb` false or
     unknown, off a starters frame handed to that same call.
 
-    **`starters` is the depth-chart frame `odds._qb_starters` returns -- `dt`, `team`, `qb`,
-    the chart's own timestamp -- and never this module's own team-game rows.** `apply`'s as-of
-    join (`odds._starter_at`) reads "who was listed from this moment on"; this module's
-    `date` is *kickoff*, so a change dated at kickoff is invisible to every poll of that
-    game, which by construction all precede its own kickoff (#330). A starters frame built
-    off kickoff dates therefore never excludes the interval it exists to exclude -- the
-    defect this module was filed against, in a new shape -- where a real depth chart, dated
-    through the week the polls were taken, does.
+    **One `(season, polls, starters)` triple per season, because the chart is per season
+    too.** `odds._starter_at` is a backward as-of join, so a poll needs a chart *of its own
+    season* before it to be conditioned at all -- a chart fetched for one season and handed
+    to every season's polls (#331) leaves every other season's `same_qb` null, which
+    `odds.line_moves` cannot tell apart from a genuine unknown and this function used to
+    drop the same way: silently, off the floor, with the run line still calling it
+    same-quarterback. `polls` is a season's own slice of the archive (`archive`'s shape);
+    `starters` is the depth-chart frame `odds._qb_starters` returns for that season, or
+    `None` where the chart could not be read. Each season's live intervals are filtered on
+    `same_qb` only when that season has a chart; a season with none contributes its live
+    intervals unconditioned -- not dropped -- and is named in the returned `not_applied`
+    tuple rather than silently counted as though excluded.
 
-    The third element of the return is whether the condition was applied at all: with no
-    `starters` (or an empty one) it is not, the same degradation `noise_floor_report` takes
-    when its own chart fetch fails, and the floor returned is over every live interval
-    regardless of the quarterback -- a caller reports which floor it printed rather than
-    labelling an unconditioned number same-quarterback. NaN and zero with nothing left to
-    measure either way.
+    **`starters` is never this module's own team-game rows.** `apply`'s as-of join reads
+    "who was listed from this moment on"; this module's `date` is *kickoff*, so a change
+    dated at kickoff is invisible to every poll of that game, which by construction all
+    precede its own kickoff (#330). A starters frame built off kickoff dates therefore never
+    excludes the interval it exists to exclude.
+
+    NaN and zero with nothing left to measure across every season; `not_applied` names every
+    season handed no chart (or an empty one), in the order given, whether or not it had any
+    live intervals to contribute.
     """
-    if polls.is_empty():
-        return float("nan"), 0, False
-    have_starters = starters is not None and not starters.is_empty()
-    moves = odds.line_moves(odds.staleness(polls), starters if have_starters else None)
-    live = moves.filter(~pl.col("frozen"))
-    if have_starters:
-        live = live.filter(pl.col("same_qb"))
-    if live.is_empty():
-        return float("nan"), 0, have_starters
-    floor = odds.noise_floor(live, bootstrap=1)
-    return float(floor["sd_per_root_day"]), int(floor["games"]), have_starters
+    live_parts: list[pl.DataFrame] = []
+    not_applied: list[int] = []
+    for season, polls, starters in parts:
+        if polls.is_empty():
+            continue
+        have = starters is not None and not starters.is_empty()
+        moves = odds.line_moves(odds.staleness(polls), starters if have else None)
+        live = moves.filter(~pl.col("frozen"))
+        if have:
+            live = live.filter(pl.col("same_qb"))
+        else:
+            not_applied.append(season)
+        live_parts.append(live)
+    if not live_parts:
+        return float("nan"), 0, tuple(not_applied)
+    combined = pl.concat(live_parts)
+    if combined.is_empty():
+        return float("nan"), 0, tuple(not_applied)
+    floor = odds.noise_floor(combined, bootstrap=1)
+    return float(floor["sd_per_root_day"]), int(floor["games"]), tuple(not_applied)
 
 
 def _event_lines(ev: pl.DataFrame, games: pl.DataFrame, since: int) -> list[str]:
@@ -862,20 +879,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.study:
         # #330: the depth chart #214's own floor conditions on -- never this module's own
         # kickoff-dated rows, which a change can never be seen through (a game's polls all
-        # precede its own kickoff). Guarded exactly as `odds.noise_floor_report` guards its
-        # own fetch: a chart that cannot be read does not take the floor down with it. Asked
-        # for only when there is an archive to condition -- `noise_floor_report` never fetches
-        # on a fresh clone either, because there is nothing yet for a chart to matter to.
-        starters, qb_note = None, ""
-        if not polls.is_empty():
+        # precede its own kickoff). #331: one chart per season in the assembled range, a
+        # bounded loop over `seasons` (never over teams or games) -- `odds._starter_at`'s
+        # as-of join means a chart fetched for one season cannot condition another season's
+        # polls, so the last season's chart alone left every earlier season's intervals
+        # silently unconditioned. Each fetch is guarded exactly as `odds.noise_floor_report`
+        # guards its own, and skipped for a season with no polls to condition.
+        study_parts: list[tuple[int, pl.DataFrame, pl.DataFrame | None]] = []
+        qb_notes: list[str] = []
+        for s, p in zip(seasons, parts, strict=True):
+            if p.is_empty():
+                continue
+            chart: pl.DataFrame | None = None
             try:
-                starters = odds._qb_starters(a.season)
+                chart = odds._qb_starters(s)
             except Exception as exc:                         # pragma: no cover - network
-                qb_note = (f" (same-quarterback condition NOT applied: "
-                          f"{type(exc).__name__}: {exc})")
-        floor, floor_games, floor_applied = noise_floor_per_root_day(polls, starters)
-        label = ("same-quarterback floor" if floor_applied
-                 else "all-games floor, SAME-QUARTERBACK NOT APPLIED")
+                qb_notes.append(f"{s} ({type(exc).__name__}: {exc})")
+            study_parts.append((s, p, chart))
+        floor, floor_games, not_applied = noise_floor_per_root_day(study_parts)
+        if not study_parts or not not_applied:
+            label = "same-quarterback floor"
+        elif len(not_applied) == len(study_parts):
+            label = "all-games floor, SAME-QUARTERBACK NOT APPLIED"
+        else:
+            label = "same-quarterback floor, PARTIAL"
+        qb_note = (f" (same-quarterback NOT applied for "
+                  f"{', '.join(str(s) for s in not_applied)}: {'; '.join(qb_notes)})"
+                  if not_applied else "")
         used = floor if math.isfinite(floor) else 0.40
         gaps = in_season_events(ev)["gap"].drop_nulls().to_list()
         sd_gap = statistics.stdev(gaps) if len(gaps) > 1 else float("nan")
