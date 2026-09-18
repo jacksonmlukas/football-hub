@@ -513,6 +513,12 @@ states, next to the branch, which decisions it is and is not allowed to make, in
 leaving a reader to infer the exemption from watching the branch never change for thirty
 seasons.
 
+**The sibling rule, for the document rather than the branch.** A pre-registration may be
+edited *before its estimand has data* — that is rule 1 working, and it is why #300, #303 and
+#329 amended `docs/gate-power.md` freely on 2026-09-17: the study had zero rows. The identical
+edit after the study has rows is rule 1 laundered, whatever its size. The test is never how
+small the change is; it is whether a number the change could favour exists yet.
+
 **What to ask before a gate ships.** Run the gate's own power calculation before the
 pre-registration is written down, not after the first NOT-RUNNABLE print. If the answer puts a
 verdict past a horizon this project will see, the pre-registration must say which branch is

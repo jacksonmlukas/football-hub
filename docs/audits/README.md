@@ -18,3 +18,10 @@ the milestones and in the tickets' own bodies, never here.** Known divergences f
 - Findings R11 and R12 (#313, #314) and evaluation ranks 8 and 10 (#315, #316) appear in no plan
   step. #313–#315 are placed in Phase 2 on 2026-09-16 with reasons in their bodies; #316 sits in the
   **Audit IV — unplaced** milestone until Audit V places it.
+- `mutation_testing.starter_change` counts 14 mutants and 7 survivors but names only 12 by
+  text (the 7 survivors and 5 of the killed); the other two came from a run in a `/tmp` copy
+  that is not reproducible, so there is nothing to recover. **The live record from 2026-09-17
+  is `scripts/mutate_starter_change.py`**: it carries the 12 the file names, applies each to
+  the module and re-takes the count (12/12 killed on `333e59a`, #304). The count of 14 is not
+  verifiable from this file and is not carried forward. `mutation_testing.pool` is complete at
+  10/10 and needs no successor.
