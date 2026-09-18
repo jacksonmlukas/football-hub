@@ -1,7 +1,10 @@
 {
   "extraKnownMarketplaces": {
     "football-hub-local": {
-      "source": { "source": "directory", "path": "." }
+      "source": {
+        "source": "directory",
+        "path": "."
+      }
     }
   },
   "enabledPlugins": {
@@ -11,17 +14,41 @@
     "PreToolUse": [
       {
         "matcher": "Read|Bash",
-        "hooks": [{ "type": "command", "command": ".claude/hooks/guard_data_reads.py" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/guard_data_reads.py"
+          }
+        ]
       },
       {
         "matcher": "Read|Bash|Edit|Write",
-        "hooks": [{ "type": "command", "command": ".claude/hooks/worktree_base.sh" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/worktree_base.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/push_gate.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
-        "hooks": [{ "type": "command", "command": ".claude/hooks/tdd_gate.sh" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/tdd_gate.sh"
+          }
+        ]
       }
     ]
   }
