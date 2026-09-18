@@ -306,6 +306,11 @@ UNCHECKED: dict[str, str] = {
              "it only where it bounds an as-of",
     "stating an as-of anywhere but at the fetch boundary": (
         "an architectural rule about where a comparison lives, not a word to grep for"),
+    # **Pool rule** (2026-09-18): the entry forbids reading `unconfirmed` as a missing value.
+    "default": "a dataclass default, a CLI default and a default branch are all this word; "
+               "the entry forbids it only as a reading of the `unconfirmed` flag",
+    "assumption": "the repo names assumptions everywhere it should (a payload shape, a "
+                  "fixture's premise); the entry forbids it only for a stated Pool rule",
 }
 
 # Headwords are a different class from `_Avoid_` terms: using **Board** for the draft board
