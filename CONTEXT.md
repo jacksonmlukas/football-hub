@@ -362,6 +362,18 @@ until #80 was specified, which is the collision this entry exists to stop.
 _Avoid_: decision ledger — a Ledger is the set of teams an entry has spent, and it is that in
 shipped code (`hub.season.pool`, `buyback_restores_ledger`) rather than only in prose.
 
+**Pool rule**:
+A rule of the survivor pool as the commissioner states it — how the pot pays when more than
+one entry survives, how it pays when the last entries go out together, how many buybacks an
+entry may use. The code always runs on a *stated* value; **unconfirmed** marks that no
+commissioner statement backs it yet, and the survivor panel says which rules those are. The
+flag is provenance, not absence: a reader who follows it into the configuration finds a value
+there, and the flag says only that nobody with authority over the pool has said it is the
+right one. It leaves by a confirmation with a source — the commissioner's word, or the pool's
+own settings page quoted pool-specifically — never by an edit.
+_Avoid_: default, assumption — both read the flag as a missing value rather than a missing
+statement.
+
 ### What the page publishes
 
 **Kept**:
