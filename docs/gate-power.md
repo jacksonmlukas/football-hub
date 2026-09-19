@@ -1143,20 +1143,36 @@ multiplicative scaler on volume and on the touchdown rate.
    the arms. Without it there is no stage 2 and no way to tell a small win from a gap below
    the ceiling (rule 8).
 
-**The MDE, before the run — and the regime it implies.** The run's own bootstrap sets the
-MDE; what can be said now is the noise scale of a paired MAE gain on *these rows with this
-clustering*, read off the incumbent's own contrast (rebuild vs flat, computed 2026-09-19,
-no model changed): per-season gains **+0.0944 / +0.0528 / +0.0000 / +0.1020**, mean +0.0623,
-season-clustered SE **0.0234**, so a proxy MDE of **(3.18 + 0.84) × 0.0234 ≈ 0.094 MAE per
-player-week**. That is larger than the entire rebuild effect. Two things follow and both are
-written now: (i) the paired difference between two arms that differ only by a scaler is
-expected to be *less* noisy across seasons than the rebuild-vs-flat difference, so 0.094 is
-an upper-ish proxy, not the number; (ii) if the run's MDE lands near it, **NOT-RUNNABLE is
-the likely verdict on four seasons**, and that is the honest output — the ceiling arm is
-what says whether the question was ever answerable here, and a ceiling gain below the MDE
-closes it as *not resolvable at this n* rather than as a null. The same figures say the
-published rebuild reads **t = 2.66 on 3 df** once clustered, which is #311's restatement to
-make, not this document's.
+**The MDE, before the run — measured, not guessed (pilot of 2026-09-19, no model changed).**
+Two noise scales exist on these rows and they differ by an order of magnitude. The
+incumbent's own contrast (rebuild vs flat) has per-season gains **+0.0944 / +0.0528 /
++0.0000 / +0.1020**, clustered SE 0.0234, proxy MDE ≈ 0.094 — but two arms that differ only
+by a scaler are far less noisy across seasons than two arms that differ in structure, so that
+proxy is an over-estimate and it is recorded only because it was the first number written.
+The pilot that bounds the effect itself: regress the incumbent's residual `y − μ` on
+`log(implied_total / mean)` per held-out season, and fit a single multiplicative scaler
+`μ · exp(b · log ratio)` in-sample (an upper bound for any one-parameter scaler) and
+cross-fit on strictly earlier seasons (what a walk-forward would actually earn):
+
+| season | corr(residual, log ratio) | b in-sample | MAE gain, in-sample bound | b cross-fit | MAE gain, cross-fit |
+|---|---|---|---|---|---|
+| 2022 | +0.025 | +0.19 | +0.0064 | — | — |
+| 2023 | +0.028 | +0.22 | +0.0065 | +0.19 | +0.0065 |
+| 2024 | +0.031 | +0.35 | +0.0132 | +0.20 | +0.0108 |
+| 2025 | +0.051 | +0.37 | +0.0208 | +0.25 | +0.0187 |
+
+In-sample bound: mean **+0.0117**, clustered SE **0.0034**, k = 4, **MDE ≈ 0.014**, t ≈ 3.4.
+Cross-fit: mean **+0.0120**, SE 0.0036, k = 3, MDE ≈ 0.018. So, written before the run: the
+effect is **real in sign** (positive residual correlation in all four seasons, rising), of
+size **about +0.01 MAE per player-week** — a fifth of the rebuild's effect — and it sits
+**at the four-season MDE**, not clearly above or below it. That is neither "likely
+NOT-RUNNABLE" nor "should pass": on four clusters stage 2 is roughly a coin flip and a fifth
+season resolves it, and the ceiling arm (the realised total) is what says how much of the
+recoverable error a *knowable* total can reach. The rising 2024–2025 figures are noted and
+not read as a trend: two points are not a trend (rule 4's shape, in reverse). The same
+incumbent figures put the published rebuild at **t = 2.66 on 3 df, p = 0.076** once
+clustered — it passes `|t| ≥ 2` and fails `p < 0.05`, which is #312's corrected verdict —
+and that is #311's and #312's restatement to make, not this document's.
 
 ## The bar, set now
 
@@ -1168,8 +1184,8 @@ In `experiment.gate`'s order, and nothing is added to it:
   and licenses nothing.
 - **ADOPT the scaled projection** only if the interval on `diff` excludes zero on the
   positive side **and** the scaled arm has the lower MAE in **every one of the four**
-  held-out seasons — a tie (a season gain inside ±0.0005, the 2024 shape above) is not a
-  win. Which of A₁/A₂ ships is the one with the larger clustered gain; if they disagree in
+  held-out seasons — a tie is not a win, where a tie is a season whose gain does not clear
+  its own player-clustered noise (the rule #335 drafts; 2024's +0.00005 above is the case). Which of A₁/A₂ ships is the one with the larger clustered gain; if they disagree in
   sign, the ticket reopens as a decision (its own clause). What follows is a change to what
   the site publishes under ADR-0016, and #309/#310's interval is re-measured on the new
   mean before its claim is read again.
@@ -1188,16 +1204,36 @@ larger than expected and needs its own explanation before it is believed (rule 9
 
 `tests/contracts/test_the_weekly_model_is_market_free.py` asserts that `models/weekly.py`
 and `models/components.py` reference no betting-market column. #305 fails it by
-construction. The guard's own stated purpose is narrower than its assertion: *"so a future
+construction. The guard's own stated purpose is narrower than its assertion — *"so a future
 feature addition cannot silently invalidate any team-level aggregate built on top of it"* —
-conditioning players on the market and summing them back into a team total launders the
-market's number. **Proposed:** the guard is re-registered on its purpose — *no team-level
-aggregate is built from the weekly projection* — as a test that walks the callers of
-`weekly.project` and refuses a summation to team level, while the module itself may read
-the market. Under ADR-0025 no such aggregate exists (#222, #223 declined), so the
-re-registered guard holds today and keeps holding by construction. The alternative,
-keeping the column-level assertion, is a decision that #305 never lands; that is a real
-option and it is the maintainer's, not this document's.
+and the property that made #222/#223 need it is narrower still and is the one to
+re-register on: **what an object is scored against.**
+
+- **Permitted:** the betting market as an *input* to a player-level projection whose gate
+  is against a non-market benchmark — the incumbent projection, consensus. #305 is this.
+- **Forbidden:** any object *compared to* the market, or any gate whose *benchmark is* the
+  market, reading the market. You cannot test whether you beat the close with a number that
+  read the close; that is the laundering #212 named, and it is tighter than the column-level
+  assertion while permitting #305.
+
+**Consumers that inherit the condition — named now, not discovered.** The one place this
+repo scores itself against a market is `hub.models.props`: `edge`, `clv_prob`, the hit rate
+all compare our number to a book's, and books price props substantially off the game
+environment, so a market-informed statline agreeing with a prop book is partly agreement
+with itself, in a direction that flatters every props figure. **Checked 2026-09-19:**
+`props.py` prices from `predict.components`, and neither it nor `predict.py` reads
+`weekly.project`, so nothing on the props path is market-conditioned today. The
+re-registered guard keeps it that way by construction: a test that walks the callers of
+`weekly.project` and refuses (a) any summation to team level and (b) any path into
+`props.py`'s statline or into any column scored against the market (`edge`, `clv_prob`,
+`clv_points`). If a later ticket wants the weekly projection under props, it owes props a
+**market-free arm** for its CLV measurement or an explicit restatement that its edge is no
+longer a clean market test — decided then, in that ticket's pre-registration, and never by
+an import.
+
+Under ADR-0025 no team aggregate exists (#222, #223 declined), so the re-registered guard
+holds today. The alternative — keep the column-level assertion, and #305 never lands — is a
+real option and it is the maintainer's, not this document's.
 
 ## What this measurement cannot do
 
