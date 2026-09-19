@@ -1081,3 +1081,139 @@ predict.TEAMMATE_RHO; shipped (not refitted): …` followed by the reasons; then
 lines. Two runs are comparable only at an identical `board_digest`, as before, and a hold-out
 run is not the gate's width record — it is a sensitivity of the gate to its own constants,
 read the way the noise-scale sweep (#49) is.
+
+# Pre-registered 2026-09-19 — PROPOSED: the implied-total gate (#305)
+
+**Status: PROPOSED.** Drafted during the operate-mode freeze (#326), which blocks a modelling
+change *landing* and does not block writing the rule before the number — #329 is the
+precedent, pre-registered on 2026-09-13 before the module that would run it existed. This
+becomes the rule on the maintainer's `ADOPTED:` comment on #305; until then it decides
+nothing and #305's build does not start against it. Parent decisions: ADR-0016 (the weekly
+projection is shown and never ranked on — a gate here changes what is *published*, not what
+picks), ADR-0017 (a market–usage blend is a model, not a shrinkage), and #212 (the guard,
+below), whose disposition is the one genuine choice in this document.
+
+## The question
+
+`hub.models.weekly.project` is season-to-date Usage × own efficiency × a positional
+constant: no opponent, no total, no spread, no venue, no rest. The implied team total is on
+the panel already (`implied_total = total_line/2 + own_spread/2`, on every one of the
+24,677 player-weeks), and it is the strongest signal the repo's own screen has found —
++0.055 partial correlation across all five seasons. #305 lets it into the projection as a
+multiplicative scaler on volume and on the touchdown rate.
+
+> **Does a projection that scales volume and touchdown rate by the implied team total beat
+> the incumbent projection on absolute error per player-week, under the house rule with the
+> season as the unit of replication — and by more than four seasons can resolve?**
+
+## What is measured
+
+1. **The rows.** The screen panel `hub.models.panel.build_panel(SEASONS, SCREEN_SPEC)` —
+   2021–2025, the four drafted positions, `MIN_GAMES_BEFORE = 3` — walked forward by
+   `experiment.expanding_seasons` exactly as `weekly.walk_forward` does today, so the held-out
+   seasons are **2022, 2023, 2024, 2025** with 4,928 / 5,034 / 4,343 / 5,147 player-weeks.
+   These are the rows the published rebuild figure was taken on; fixed here so they cannot
+   be chosen after the sign is seen.
+2. **Arm B, the incumbent: `project` as shipped.** `f = 1`, the `weekly` arm of
+   `walk_forward` — the identity multiplier on season-to-date Usage, `components.td_rate` on
+   the projected yards, byte for byte what the site publishes.
+3. **Arms A₁ and A₂, under test — one axis, both reported.** The same `project` with a
+   multiplicative scaler `s = exp(β · log(implied_total / league mean implied total))` on
+   the volume counts (`targets`, `carries`, `attempts`) and on the touchdown rate, with β
+   fitted **walk-forward on strictly earlier seasons** as (A₁) a Poisson GLM with the log
+   ratio as offset, (A₂) a Gamma GLM on the same regressor. Nothing else moves: efficiency
+   stays the player's own, `sd = k√μ` stays, the zero clip stays. The two arms are ADR-0024's
+   table, not two decisions; the ticket's own reopen clause (sign disagreement between them)
+   stands.
+4. **The paired difference** per player-week is `diff = |err_B| − |err_A|`, in fantasy points
+   of MAE, positive when the scaled arm is closer. MAE, not CRPS: #274's promotion of CRPS
+   was for #292's shape decision and nothing else, and this is a question about the mean.
+5. **The statistic — and the dependency it surfaces.** `experiment.paired_gain` through
+   `weekly._contrast`, with **`cluster = SEASON_CLUSTER`**. Today `_contrast` calls
+   `paired_gain` unclustered over ~20,000 player-weeks, which is what #311 fixes and why
+   **#311 is first out of the freeze and #305 is `blocked_by` it**: this gate is not runnable
+   as pre-registered until the cluster argument exists. The percentile bootstrap at
+   `BOOTSTRAP = 4000`, `seed = 0`; interval and standard error from the same draws;
+   **MDE `(t(0.975, 3) + z(0.80)) × SE`** on the t reference, four clusters.
+6. **The ceiling arm, declared: *the same scaler reading the realised team total.*** Arm A₁
+   with `implied_total` replaced by the team's actual points in that game (joined from the
+   schedule's `result`; the panel does not carry it and the join is part of the build).
+   Perfect information on the one quantity the arm reads, on the same rows, so it bounds what
+   *any* scaler on the team total could earn. Declared as the ceiling by name, distinct from
+   the arms. Without it there is no stage 2 and no way to tell a small win from a gap below
+   the ceiling (rule 8).
+
+**The MDE, before the run — and the regime it implies.** The run's own bootstrap sets the
+MDE; what can be said now is the noise scale of a paired MAE gain on *these rows with this
+clustering*, read off the incumbent's own contrast (rebuild vs flat, computed 2026-09-19,
+no model changed): per-season gains **+0.0944 / +0.0528 / +0.0000 / +0.1020**, mean +0.0623,
+season-clustered SE **0.0234**, so a proxy MDE of **(3.18 + 0.84) × 0.0234 ≈ 0.094 MAE per
+player-week**. That is larger than the entire rebuild effect. Two things follow and both are
+written now: (i) the paired difference between two arms that differ only by a scaler is
+expected to be *less* noisy across seasons than the rebuild-vs-flat difference, so 0.094 is
+an upper-ish proxy, not the number; (ii) if the run's MDE lands near it, **NOT-RUNNABLE is
+the likely verdict on four seasons**, and that is the honest output — the ceiling arm is
+what says whether the question was ever answerable here, and a ceiling gain below the MDE
+closes it as *not resolvable at this n* rather than as a null. The same figures say the
+published rebuild reads **t = 2.66 on 3 df** once clustered, which is #311's restatement to
+make, not this document's.
+
+## The bar, set now
+
+In `experiment.gate`'s order, and nothing is added to it:
+
+- **NOT-RUNNABLE** if the season-clustered MDE exceeds the ceiling arm's gain (stage 2,
+  ADR-0019 as amended). No verdict; the incumbent stays; this document says four seasons
+  could not resolve it, and prints beside that how many seasons would. Stage 1 is printed
+  and licenses nothing.
+- **ADOPT the scaled projection** only if the interval on `diff` excludes zero on the
+  positive side **and** the scaled arm has the lower MAE in **every one of the four**
+  held-out seasons — a tie (a season gain inside ±0.0005, the 2024 shape above) is not a
+  win. Which of A₁/A₂ ships is the one with the larger clustered gain; if they disagree in
+  sign, the ticket reopens as a decision (its own clause). What follows is a change to what
+  the site publishes under ADR-0016, and #309/#310's interval is re-measured on the new
+  mean before its claim is read again.
+- **REMOVE** — the incumbent wins every season and the interval is entirely negative: the
+  implied total does not enter, with evidence.
+- **SHOW** otherwise: the incumbent stays and this document says the comparison could not
+  move it. Absence of evidence, not equivalence.
+
+**Expectation, written before the number.** The screen's +0.055 partial correlation on the
+total does not convert to MAE; the honest guess is a gain of a few hundredths of a point per
+player-week on a mean MAE of about 4.5, concentrated on the weeks where the implied total
+sits furthest from the league mean. A gain of the rebuild's own size (+0.06) or more would be
+larger than expected and needs its own explanation before it is believed (rule 9).
+
+## The #212 guard — PROPOSED disposition, the one choice here
+
+`tests/contracts/test_the_weekly_model_is_market_free.py` asserts that `models/weekly.py`
+and `models/components.py` reference no betting-market column. #305 fails it by
+construction. The guard's own stated purpose is narrower than its assertion: *"so a future
+feature addition cannot silently invalidate any team-level aggregate built on top of it"* —
+conditioning players on the market and summing them back into a team total launders the
+market's number. **Proposed:** the guard is re-registered on its purpose — *no team-level
+aggregate is built from the weekly projection* — as a test that walks the callers of
+`weekly.project` and refuses a summation to team level, while the module itself may read
+the market. Under ADR-0025 no such aggregate exists (#222, #223 declined), so the
+re-registered guard holds today and keeps holding by construction. The alternative,
+keeping the column-level assertion, is a decision that #305 never lands; that is a real
+option and it is the maintainer's, not this document's.
+
+## What this measurement cannot do
+
+- It cannot pick the clustering, the seed, the rows, or the metric after the sign is seen.
+- It cannot license a change to `sd`, the skew, the clip, or efficiency; only the scaler on
+  volume and touchdown rate is on trial.
+- It cannot say the implied total is *causal*; it is a market number and the projection is
+  a fantasy projection, which #212's re-reading permits and the team aggregate does not.
+- It cannot run before #311 lands, and it cannot be read weekly: like #310's, its verdict is
+  taken once, at the run pre-registered here.
+
+## What happens either way
+
+If the gate cannot run, the incumbent is published unchanged and this section plus the
+numbers is the output — with the seasons-needed figure beside it, which is the number Phase
+2's re-plan reads. If it runs and the scaled arm does not win every season with an interval
+clear of zero, the incumbent stays. If it runs and the scaled arm wins, the published
+projection changes under ADR-0016, #212's guard stands in its re-registered form, and
+#309/#310 re-measure on the new mean before any coverage claim is read against it.
