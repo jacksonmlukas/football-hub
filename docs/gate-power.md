@@ -1135,13 +1135,21 @@ multiplicative scaler on volume and on the touchdown rate.
    as pre-registered until the cluster argument exists. The percentile bootstrap at
    `BOOTSTRAP = 4000`, `seed = 0`; interval and standard error from the same draws;
    **MDE `(t(0.975, 3) + z(0.80)) × SE`** on the t reference, four clusters.
-6. **The ceiling arm, declared: *the same scaler reading the realised team total.*** Arm A₁
-   with `implied_total` replaced by the team's actual points in that game (joined from the
-   schedule's `result`; the panel does not carry it and the join is part of the build).
-   Perfect information on the one quantity the arm reads, on the same rows, so it bounds what
-   *any* scaler on the team total could earn. Declared as the ceiling by name, distinct from
-   the arms. Without it there is no stage 2 and no way to tell a small win from a gap below
-   the ceiling (rule 8).
+6. **The ceiling arm, declared: *the best one-parameter scaler on the implied total, fitted
+   in-sample on these rows.*** `μ · exp(b · log ratio)` with `b` chosen per season to minimise
+   MAE on that season — in-sample by construction, so it bounds what any walk-forward fit of
+   the same form can earn on this input. Declared by name, distinct from the arms. **Why not
+   the realised team total** (the first draft's ceiling, withdrawn 2026-09-19 after measuring
+   it): a scaler reading the team's *actual* points recovers **+0.228** MAE per player-week
+   (per season +0.232 / +0.252 / +0.207 / +0.221, SE 0.0095) against the implied total's
+   +0.012 — but the realised total is the outcome of the same game the player scored in, not
+   a better estimate of it, so that 0.228 is overwhelmingly in-game variance no pre-kickoff
+   number can reach. As a ceiling it passes stage 2 by construction (0.23 against any MDE) and
+   answers nothing rule 8 asks. It is kept here as the measurement of how large the game
+   environment is as a lever — and that it is not a *forecasting* lever: the market's total is
+   the best public forecast of it, and the forecastable share is about the 0.012. Under the
+   corrected ceiling, stage 2 asks the right question: is the run's MDE below what this input
+   can give at all.
 
 **The MDE, before the run — measured, not guessed (pilot of 2026-09-19, no model changed).**
 Two noise scales exist on these rows and they differ by an order of magnitude. The
@@ -1173,6 +1181,14 @@ not read as a trend: two points are not a trend (rule 4's shape, in reverse). Th
 incumbent figures put the published rebuild at **t = 2.66 on 3 df, p = 0.076** once
 clustered — it passes `|t| ≥ 2` and fails `p < 0.05`, which is #312's corrected verdict —
 and that is #311's and #312's restatement to make, not this document's.
+
+**The incumbent's own standing, named so the two figures are not stacked.** This gate is
+paired against the projection that *ships*, which is correct whatever that projection's
+provenance. But the two numbers will sit near each other in the record — the implied total
+at about +0.012 over the incumbent, the incumbent at +0.0623 over flat at p = 0.076 once
+clustered — and a reader can add them into a significance neither leg has. The comparison
+here is against what is published, not against a validated baseline; #311/#312 restate the
+incumbent's own verdict separately, and nothing in this document depends on it.
 
 ## The bar, set now
 
@@ -1253,3 +1269,39 @@ numbers is the output — with the seasons-needed figure beside it, which is the
 clear of zero, the incumbent stays. If it runs and the scaled arm wins, the published
 projection changes under ADR-0016, #212's guard stands in its re-registered form, and
 #309/#310 re-measure on the new mean before any coverage claim is read against it.
+
+# Pilot 2026-09-19: red-zone opportunity share as a touchdown-rate modifier (#308)
+
+Run inside the freeze beside #305's pilot, in the same shape, so Phase 2's order rests on a
+measurement rather than on the plan's guess. No model changed. Recorded here under ADR-0007
+because it steers the milestone.
+
+**What was measured.** From play-by-play (`yardline_100 ≤ 20`, run and pass plays, regular
+season), each player's share of his team's red-zone opportunities (rushes + targets) and of
+its opportunities overall, per week; the **prior** form is the season-to-date mean over
+strictly earlier weeks, which is the forecastable one. The feature is
+`log((rz_share + 0.01) / (opp_share + 0.01))` — red-zone share *relative to* opportunity
+share, the "holding yards fixed" proxy — applied as a multiplicative modifier on the
+incumbent's touchdown component only (`μ + 6 · tds_hat · (e^{b·x} − 1)`), `b` fitted per
+season in-sample as a bound. RB, WR and TE; 14,879 player-weeks with a prior.
+
+| season | gain, prior share (bound) | gain, same-week share (ceiling) |
+|---|---|---|
+| 2022 | +0.0171 | +0.1173 |
+| 2023 | +0.0237 | +0.1098 |
+| 2024 | +0.0102 | +0.1202 |
+| 2025 | +0.0275 | +0.1163 |
+
+Prior form: mean **+0.0196** MAE per player-week, clustered SE 0.0038, **MDE 0.0153 at four
+clusters** — the bound clears the MDE. Same-week form: +0.116, which like the realised total
+above is outcome, not forecast.
+
+**What it says about Phase 2's order.** #308's forecastable bound (+0.020, clearing its MDE)
+is above #305's (+0.012, at its MDE). The plan of 2026-09-16 put #308 at step 3 behind the
+implied total and the share layer on the reasoning that the total is the strongest screened
+signal; converted into the metric that decides, the red-zone modifier is worth more and is
+resolvable on four seasons where the total is marginal. The current model gives two backs
+with identical yards identical touchdown expectations, and red-zone share is the single
+largest thing it cannot see. Audit V re-plans Phase 2; this is the evidence it reads.
+Both bounds are one-parameter in-sample fits, and a fitted Beta-Binomial shrink (#308's
+own form) is the thing the build measures.
