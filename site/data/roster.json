@@ -1,7 +1,7 @@
 {
   "name": "roster",
   "source": "roster.parquet",
-  "generated_at": "2026-09-16T15:21:10+00:00",
+  "generated_at": "2026-09-19T17:08:17+00:00",
   "shape": "rows",
   "n": 16,
   "rows": [
@@ -20,11 +20,11 @@
       "missing_games": 0
     },
     {
-      "player": "Rashee Rice",
+      "player": "Drake London",
       "pos": "WR",
-      "nfl_team": "KC",
-      "mu": 16.79875,
-      "sd": 8.73007725481281,
+      "nfl_team": "ATL",
+      "mu": 16.24125,
+      "sd": 8.583992493298208,
       "projected": true,
       "starting": true,
       "best_start": true,
@@ -68,19 +68,19 @@
       "mu": 14.7025,
       "sd": 8.167237736836121,
       "projected": true,
-      "starting": true,
+      "starting": false,
       "best_start": true,
-      "injury_status": "ACTIVE",
+      "injury_status": "OUT",
       "available": true,
       "can_start": true,
       "missing_games": 0
     },
     {
-      "player": "Terry McLaurin",
-      "pos": "WR",
-      "nfl_team": "WSH",
-      "mu": 11.529,
-      "sd": 7.232283187209969,
+      "player": "J.K. Dobbins",
+      "pos": "RB",
+      "nfl_team": "DEN",
+      "mu": 10.661999999999999,
+      "sd": 6.759112648861534,
       "projected": true,
       "starting": true,
       "best_start": true,
@@ -111,7 +111,7 @@
       "sd": 6.612154943738084,
       "projected": true,
       "starting": false,
-      "best_start": false,
+      "best_start": true,
       "injury_status": "ACTIVE",
       "available": true,
       "can_start": true,
@@ -139,7 +139,7 @@
       "sd": 6.208685575178418,
       "projected": true,
       "starting": true,
-      "best_start": true,
+      "best_start": false,
       "injury_status": "ACTIVE",
       "available": true,
       "can_start": true,
@@ -180,21 +180,7 @@
       "mu": 8.565333333333333,
       "sd": 6.233783826858291,
       "projected": true,
-      "starting": false,
-      "best_start": false,
-      "injury_status": "ACTIVE",
-      "available": true,
-      "can_start": true,
-      "missing_games": 0
-    },
-    {
-      "player": "Chris Rodriguez Jr.",
-      "pos": "RB",
-      "nfl_team": "JAX",
-      "mu": 6.0375,
-      "sd": 5.086264223376524,
-      "projected": true,
-      "starting": false,
+      "starting": true,
       "best_start": false,
       "injury_status": "ACTIVE",
       "available": true,
@@ -210,7 +196,7 @@
       "projected": true,
       "starting": false,
       "best_start": false,
-      "injury_status": "ACTIVE",
+      "injury_status": "QUESTIONABLE",
       "available": true,
       "can_start": true,
       "missing_games": 0
@@ -224,22 +210,40 @@
       "projected": false,
       "starting": true,
       "best_start": false,
-      "injury_status": "ACTIVE",
+      "injury_status": "QUESTIONABLE",
+      "available": true,
+      "can_start": true,
+      "missing_games": 0
+    },
+    {
+      "player": "Packers D/ST",
+      "pos": "D/ST",
+      "nfl_team": "GB",
+      "mu": null,
+      "sd": null,
+      "projected": false,
+      "starting": true,
+      "best_start": false,
+      "injury_status": "NORMAL",
       "available": true,
       "can_start": true,
       "missing_games": 0
     }
   ],
-  "set_total": 105.68548459383753,
-  "optimal_total": 106.84542507002801,
-  "gain": 1.159940476190485,
+  "set_total": 98.12381792717086,
+  "optimal_total": 106.06140126050421,
+  "gain": 7.93758333333335,
   "withheld": [
     "Josh Jacobs"
   ],
   "start": [
-    "Jonathon Brooks"
+    "Jonathon Brooks",
+    "KC Concepcion",
+    "Nico Collins"
   ],
   "sit": [
-    "Bhayshul Tuten"
+    "Bhayshul Tuten",
+    "MarShawn Lloyd",
+    "Matthew Golden"
   ]
 }
