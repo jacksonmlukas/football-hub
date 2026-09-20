@@ -1,9 +1,9 @@
 {
   "name": "track_record",
   "source": "preds+results",
-  "generated_at": "2026-09-16T15:21:11+00:00",
+  "generated_at": "2026-09-19T17:08:18+00:00",
   "shape": "summary",
-  "n_scored": 32,
+  "n_scored": 33,
   "n_tied": 0,
   "n_preregistered": 0,
   "is_backtest": true,
@@ -11,9 +11,9 @@
   "seasons": [
     {
       "season": 2026,
-      "n_scored": 16,
-      "log_loss": 0.6139351700286666,
-      "brier": 0.20998816026324824,
+      "n_scored": 17,
+      "log_loss": 0.6029238737764184,
+      "brier": 0.20473386285452025,
       "bins": [
         {
           "bin": "0.0-0.1",
@@ -59,10 +59,10 @@
         },
         {
           "bin": "0.6-0.7",
-          "n": 4,
-          "predicted": 0.6411548557614263,
-          "actual": 0.75,
-          "gap": 0.10884514423857372
+          "n": 5,
+          "predicted": 0.6434501185344932,
+          "actual": 0.8,
+          "gap": 0.15654988146550686
         },
         {
           "bin": "0.7-0.8",
@@ -211,10 +211,10 @@
     },
     {
       "bin": "0.6-0.7",
-      "n": 4,
-      "predicted": 0.6411548557614263,
-      "actual": 0.75,
-      "gap": 0.10884514423857372
+      "n": 5,
+      "predicted": 0.6434501185344932,
+      "actual": 0.8,
+      "gap": 0.15654988146550686
     },
     {
       "bin": "0.7-0.8",
@@ -238,8 +238,8 @@
       "gap": null
     }
   ],
-  "log_loss": 0.6139351700286666,
-  "brier": 0.20998816026324824,
+  "log_loss": 0.6029238737764184,
+  "brier": 0.20473386285452025,
   "interval_coverage": {
     "centre": "prior",
     "lookahead": false,
@@ -247,9 +247,10 @@
     "gate_subset": "unclipped",
     "gate_n": 10536,
     "gate_cov80": 0.7737281700835231,
+    "gate_claim": 0.77,
     "band": 0.02,
-    "verdict": "UNDER-COVERS",
-    "generated_at": "2026-09-12T23:31:50+00:00",
+    "verdict": "COVERS",
+    "generated_at": "2026-09-13T05:51:17+00:00",
     "survivor": {
       "verdict": "HOLDS",
       "favourite_spread": 7.0,
@@ -260,7 +261,55 @@
       "favourite_n": 395,
       "n_games": 1420,
       "margin_sd": 12.741,
-      "generated_at": "2026-09-12T23:31:50+00:00"
+      "buckets": [
+        {
+          "bin": "0.0-3.0",
+          "n": 344,
+          "predicted": 0.5599610539401713,
+          "actual": 0.5348837209302325,
+          "gap": -0.02507733300993875,
+          "label": "<3",
+          "thin": false
+        },
+        {
+          "bin": "3.0-7.0",
+          "n": 681,
+          "predicted": 0.6303005195359249,
+          "actual": 0.6534508076358296,
+          "gap": 0.023150288099904714,
+          "label": "3-7",
+          "thin": false
+        },
+        {
+          "bin": "7.0-10.0",
+          "n": 219,
+          "predicted": 0.7296743133288868,
+          "actual": 0.7351598173515982,
+          "gap": 0.005485504022711418,
+          "label": "7-10",
+          "thin": false
+        },
+        {
+          "bin": "10.0-14.0",
+          "n": 124,
+          "predicted": 0.8109418802651471,
+          "actual": 0.8467741935483871,
+          "gap": 0.03583231328323999,
+          "label": "10-14",
+          "thin": false
+        },
+        {
+          "bin": "14.0-30.0",
+          "n": 52,
+          "predicted": 0.8793514171258275,
+          "actual": 0.9423076923076923,
+          "gap": 0.06295627518186475,
+          "label": "14+",
+          "thin": false
+        }
+      ],
+      "min_bucket": 50,
+      "generated_at": "2026-09-13T05:51:17+00:00"
     }
   }
 }

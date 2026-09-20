@@ -1,19 +1,14 @@
 {
   "name": "survivor",
   "source": "hub.season.survivor",
-  "generated_at": "2026-09-16T15:21:11+00:00",
+  "generated_at": "2026-09-19T17:08:19+00:00",
   "shape": "rows",
-  "n": 2,
+  "n": 1,
   "rows": [
-    {
-      "week": 2,
-      "team": "SF",
-      "win_prob": 0.8462135536090971
-    },
     {
       "week": 3,
       "team": "KC",
-      "win_prob": 0.7538827833629747
+      "win_prob": 0.7476578734980865
     }
   ],
   "unconfirmed": [
@@ -23,7 +18,7 @@
   ],
   "pool_digest": "b3365833",
   "season": 2026,
-  "survival": 0.6379458291142999,
+  "survival": 0.7476578734980865,
   "unpriced_weeks": [
     4,
     5,
@@ -42,14 +37,15 @@
     18
   ],
   "weeks_remaining": [
-    2,
     3
   ],
   "weeks_played": [
-    1
+    1,
+    2
   ],
   "spent": [
-    "JAX"
+    "JAX",
+    "SF"
   ],
   "snapshot_only_weeks": []
 }
