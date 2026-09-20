@@ -1226,31 +1226,65 @@ couple of points of cumulative MAE against head-to-head margins in the tens. Tha
 argument against Phase 2; it is the argument for #306 moving up — the share layer is
 structural, not a feature, and a structural change is not bounded by a residual correlation.
 
-**What the −0.304 says about Phase 2 as a whole (2026-09-20).** The lineup gate's standing
-figure is −0.304 points per roster-week against consensus rank, 2 of 3 seasons lost. Grant
-the features a one-for-one translation from MAE per player-week to roster points — generous,
-since a lineup is a selection rule and not a mean — and nine starters:
+**What the −0.304 says about Phase 2 as a whole (2026-09-20; arithmetic restated the same
+day).** The load-bearing claim needs no arithmetic: **consensus rank is a crowd of analysts
+who already see the implied total, the depth chart, the beat reports and who is getting
+goal-line work. `implied_total` and red-zone share are information the benchmark already
+prices. Adding them closes distance; it cannot create edge, because it is catching up to
+what the projection is scored against.** An edge has to come from what a rank does not
+produce at all. A rank is a point estimate — no distribution, no correlation structure, no
+coherence constraint — which is exactly #306 (additivity, injury substitution, the negative
+teammate correlation), #314 (opponent and season-level correlation, which an optimiser reads
+and a rank cannot supply) and #309 (a calibrated interval, so the optimiser has a
+distribution rather than a mean). Those change what the projection can *say*, not how much
+it knows; they are the three nobody has bounded; and #306's bound cannot come from a
+residual correlation, which is why it is a grilling and not a pilot.
 
-    #305 implied total      +0.012 × 9  ≈ +0.11
-    #308 red-zone TD rate   +0.020 × 9  ≈ +0.18
-                                          ≈ +0.29   against a gap of 0.304
+*The magnitude check, with its caveat, beneath that.* The lineup gate's standing figure is
+−0.304 points per roster-week, 2 of 3 seasons lost. The two features are the same order of
+magnitude as that gap under any plausible translation from MAE per player-week to roster
+points — nine starters at a one-for-one rate gives ≈ +0.29; weighting by where the μ-tier
+table puts the gain gives several times that — **and the translation itself is unmeasured.**
+Lineup value does not live at μ ≥ 15: the gate scores the realised points of the *chosen*
+lineup, so accuracy on a player whose start/sit status does not change contributes exactly
+zero, and the gain comes only from changed selections — the flex spot, the WR3-vs-WR4 call —
+which are mid-μ by construction because the marginal starter is the replacement-level one.
+The top and the bottom of the μ table are both worth nothing to the gate; the value is in
+the band that decides, and the μ-tier table does not cut there. So the first draft's
+"parity, not past it" was a number doing work its derivation did not license — the same
+shape as the containment rule and Δ = 0.05 earlier in this document. What the evidence
+supports is: same order of magnitude, direction unknown until the selection-flip rate is
+measured, and **the only thing that settles sufficiency is `weekly_gate` on the built
+arms.** The structural argument above does not depend on it and stands.
 
-Neither figure is precise (the gate has three seasons; the translation is a scaling
-argument) but the magnitudes are the same, and that comparison is robust to both. **Phase
-2's two measured features land the projection at parity with consensus rank, not past it;
-as constituted they do not flip ADR-0016.** The reason is structural and it says which
-tickets matter. Consensus rank is a crowd of analysts who already see the implied total, the
-depth chart, the beat reports and who is getting goal-line work: `implied_total` and
-red-zone share are things the benchmark *already knows*. Adding them closes distance; it
-cannot create edge, because it is catching up to information priced into the thing the
-projection is scored against. An edge has to come from what a rank does not produce at all.
-A rank is a point estimate — no distribution, no correlation structure, no coherence
-constraint — which is exactly #306 (additivity, injury substitution, the negative teammate
-correlation), #314 (opponent and season-level correlation, which an optimiser reads and a
-rank cannot supply) and #309 (a calibrated interval, so the optimiser has a distribution
-rather than a mean). Those change what the projection can *say*, not how much it knows; they
-are the three nobody has bounded; and #306's bound cannot come from a residual correlation,
-which is why it is a grilling and not a pilot.
+**The decision-boundary cut (2026-09-20), which is the first number here that bounds lineup
+value rather than proxies it.** The gate's own universe — `weekly_gate_data.assemble_universe`,
+the drafted cohorts, weeks 1–14, both arms restricted to `priced_by_both` — built twice with
+the same seed: once as shipped and once with `project`'s μ scaled by
+`exp(0.25 · log(implied_total / mean))` (0.25 a middle value of the pilot's fitted b; a
+diagnostic, not the arm). Lineups under the gate's own `starting_lineup` in both. The
+**margin band** is, per roster-week and position group, the lowest-μ starter and the
+highest-μ bench player under the baseline — about six of eleven fieldable rows.
+
+| season | roster-weeks | selection flips | gain on the band | elsewhere on the roster |
+|---|---|---|---|---|
+| 2022 | 229 | 14.0% | +0.0253 | −0.0395 |
+| 2023 | 229 | 17.5% | +0.0319 | −0.0554 |
+| 2024 | 192 | 9.4% | +0.0190 | +0.0336 |
+| 2025 | 239 | 11.7% | +0.0184 | −0.0364 |
+| all | | **13.1%** | **+0.0236** (SE 0.0032, 4 of 4) | −0.0244 |
+
+Three things. The scaler changes a lineup in about **one roster-week in eight**, so the
+selections do move and the translation is no longer unmeasured in kind. On the rows that
+decide, the mean improves in every season. And off the band, on drafted rosters, the scaler
+is *negative* in three seasons of four: the panel-wide +0.012 was a gain where decisions are
+made averaged against a loss where they are not, which is one more reason the per-player-week
+MAE is the wrong deciding statistic. What this does **not** measure is the value of a flip —
+the realised points of the changed lineup against the unchanged one — because that is
+`weekly_gate`'s own statistic on an arm that does not yet exist, and putting that number on
+the table before the arm is built is the thing this document exists to prevent. #308's
+band cut is the same computation with its modifier injected and is owed when its
+pre-registration is written.
 The same
 incumbent figures put the published rebuild at **t = 2.66 on 3 df, p = 0.076** once
 clustered — it passes `|t| ≥ 2` and fails `p < 0.05`, which is #312's corrected verdict —
