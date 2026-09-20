@@ -1102,9 +1102,20 @@ the panel already (`implied_total = total_line/2 + own_spread/2`, on every one o
 +0.055 partial correlation across all five seasons. #305 lets it into the projection as a
 multiplicative scaler on volume and on the touchdown rate.
 
-> **Does a projection that scales volume and touchdown rate by the implied team total beat
-> the incumbent projection on absolute error per player-week, under the house rule with the
-> season as the unit of replication — and by more than four seasons can resolve?**
+> **Does a lineup set off the projection that scales volume and touchdown rate by the implied
+> team total beat one set off weekly consensus rank, in realised points per roster-week, under
+> `hub.season.weekly_gate`'s pre-registered rules — and, as the diagnostic beneath it, does that
+> projection beat the incumbent projection on absolute error per player-week?**
+
+**Restated 2026-09-20 — the deciding statistic is the lineup, not the MAE.** The first draft
+gated on MAE per player-week. MAE is not the objective of any product this repo ships: the
+lineup is a max over starters, the draft a season simulation, survivor a game outcome. A
+gain concentrated on high-μ starters is worth real lineup wins; the same gain spread over the
+bench is worth nothing, because a max never reads it — and the pilots below show both #305's
+and #308's gains sit on the starters. And the weekly projection is **shown and never ranked
+on** (ADR-0016): its own lineup gate read −0.304 points per roster-week, 2 of 3 seasons lost.
+So a change to it changes no lineup until *that* gate flips, and that gate is where the
+decision lives. The MAE contrast stays, as the diagnostic that says the mean moved and where.
 
 ## What is measured
 
@@ -1125,9 +1136,19 @@ multiplicative scaler on volume and on the touchdown rate.
    stays the player's own, `sd = k√μ` stays, the zero clip stays. The two arms are ADR-0024's
    table, not two decisions; the ticket's own reopen clause (sign disagreement between them)
    stands.
-4. **The paired difference** per player-week is `diff = |err_B| − |err_A|`, in fantasy points
-   of MAE, positive when the scaled arm is closer. MAE, not CRPS: #274's promotion of CRPS
-   was for #292's shape decision and nothing else, and this is a question about the mean.
+4. **The deciding gate: `hub.season.weekly_gate`, its rules unchanged.** Arm A's projection
+   sets a lineup by *start your highest*; the incumbent sets one by weekly consensus rank
+   (`weekly-op` ECR), which is what ranks today. Realised points per roster-week, weeks 1–14,
+   paired by roster-week, the cluster bootstrap by roster, both arms scoring only the
+   roster-weeks both can price, inactive weeks scoring zero — every rule as
+   `docs/weekly-projection-plan.md` pre-registered them and #206/#207 amended them, with its
+   own foresight ceiling (#138: the declared ceiling arm) and stage 2 ahead of every branch.
+   A₁ and A₂ each run it; the incumbent projection (`f = 1`) is run beside them so the
+   table shows whether the scaler moved the lineup, not only whether it beat consensus.
+   **The diagnostic beneath it** is the paired MAE difference `diff = |err_B| − |err_A|` per
+   player-week through `_contrast`, positive when the scaled arm is closer, **reported by μ
+   tier** (< 6, 6–10, 10–15, 15+) so a reader sees where the mean moved. MAE, not CRPS:
+   #274's promotion of CRPS was for #292's shape decision and nothing else.
 5. **The statistic — and the dependency it surfaces.** `experiment.paired_gain` through
    `weekly._contrast`, with **`cluster = SEASON_CLUSTER`**. Today `_contrast` calls
    `paired_gain` unclustered over ~20,000 player-weeks, which is what #311 fixes and why
@@ -1177,7 +1198,34 @@ size **about +0.01 MAE per player-week** — a fifth of the rebuild's effect —
 NOT-RUNNABLE" nor "should pass": on four clusters stage 2 is roughly a coin flip and a fifth
 season resolves it, and the ceiling arm (the realised total) is what says how much of the
 recoverable error a *knowable* total can reach. The rising 2024–2025 figures are noted and
-not read as a trend: two points are not a trend (rule 4's shape, in reverse). The same
+not read as a trend: two points are not a trend (rule 4's shape, in reverse). **Where the gain lands (2026-09-20), which is what makes the lineup the right gate.** The
+same pilot, in-sample scaler applied, broken by the incumbent's μ:
+
+| μ tier | share of rows | #305 gain | #308 gain (RB/WR/TE) |
+|---|---|---|---|
+| < 6 (bench) | 48% | **−0.0015** | +0.0007 |
+| 6–10 (flex) | 19% | +0.0130 | +0.0213 |
+| 10–15 (starter) | 19% | +0.0255 | +0.0133 |
+| 15+ (star) | 14% | +0.0286 | **+0.1109** |
+
+Neither gain is on the bench; #305's is flat-to-negative there and rises with μ, and
+three-quarters of #308's whole effect sits on the 14% of rows at μ ≥ 15 — exactly the rows
+a lineup max reads. A per-player-week MAE hides this, and a gate on it could pass on a
+statistic no product optimises. Cross-fit and ceiling are consistent on the same seasons
+(2023–2025: in-sample +0.0135, cross-fit +0.0120); the earlier "+0.012 against +0.0117"
+compared a three-season cross-fit to a four-season ceiling.
+
+**Calibration, written down because it is uncomfortable.** #305's effect (+0.012) is its own
+ceiling (+0.0117): whatever is built on the implied total earns about a hundredth of a point
+per player-week, with no better specification behind it. #308's +0.020 is a *floor from a
+crude instrument* — a residual correlation — and a properly specified count model on
+touchdowns per scoring opportunity should do at least as well. So the comparison is a floor
+that may rise against a ceiling that will not. Together the best-known and best-measured
+features are worth a few tenths of a point per lineup per week; over a season that is a
+couple of points of cumulative MAE against head-to-head margins in the tens. That is not an
+argument against Phase 2; it is the argument for #306 moving up — the share layer is
+structural, not a feature, and a structural change is not bounded by a residual correlation.
+The same
 incumbent figures put the published rebuild at **t = 2.66 on 3 df, p = 0.076** once
 clustered — it passes `|t| ≥ 2` and fails `p < 0.05`, which is #312's corrected verdict —
 and that is #311's and #312's restatement to make, not this document's.
@@ -1198,9 +1246,11 @@ In `experiment.gate`'s order, and nothing is added to it:
   ADR-0019 as amended). No verdict; the incumbent stays; this document says four seasons
   could not resolve it, and prints beside that how many seasons would. Stage 1 is printed
   and licenses nothing.
-- **ADOPT the scaled projection** only if the interval on `diff` excludes zero on the
-  positive side **and** the scaled arm has the lower MAE in **every one of the four**
-  held-out seasons — a tie is not a win, where a tie is a season whose gain does not clear
+- **ADOPT the scaled projection** only if `weekly_gate`'s interval on points per roster-week
+  excludes zero on the positive side against consensus **and** the scaled arm wins **every**
+  held-out season of that gate — which reopens ADR-0016 by its own gate, and is the only
+  route by which the weekly projection comes to rank. The MAE diagnostic must also be
+  positive with the scaled arm closer in **every one of the four** held-out seasons — a tie is not a win, where a tie is a season whose gain does not clear
   its own player-clustered noise (the rule #335 drafts; 2024's +0.00005 above is the case). Which of A₁/A₂ ships is the one with the larger clustered gain; if they disagree in
   sign, the ticket reopens as a decision (its own clause). What follows is a change to what
   the site publishes under ADR-0016, and #309/#310's interval is re-measured on the new
@@ -1305,3 +1355,8 @@ with identical yards identical touchdown expectations, and red-zone share is the
 largest thing it cannot see. Audit V re-plans Phase 2; this is the evidence it reads.
 Both bounds are one-parameter in-sample fits, and a fitted Beta-Binomial shrink (#308's
 own form) is the thing the build measures.
+
+**Its pre-registration, when written, gates where #305's now does:** `hub.season.weekly_gate`
+against consensus rank as the deciding statistic, the MAE contrast by μ tier as the
+diagnostic. Three-quarters of this effect is on the 14% of rows at μ ≥ 15 (the table in
+#305's section), which is the strongest reason of the three to gate on the lineup.
