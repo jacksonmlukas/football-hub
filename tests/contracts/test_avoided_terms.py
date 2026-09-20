@@ -311,6 +311,19 @@ UNCHECKED: dict[str, str] = {
                "the entry forbids it only as a reading of the `unconfirmed` flag",
     "assumption": "the repo names assumptions everywhere it should (a payload shape, a "
                   "fixture's premise); the entry forbids it only for a stated Pool rule",
+    # **Share**, **Active set**, **Team volume** (2026-09-21, #306's pre-registration).
+    "usage rate": "Usage is a headword and `rate` follows it legitimately elsewhere (a TD "
+                  "rate, a snap rate); the entry forbids the compound only as a name for Share",
+    "target share alone as if it were the whole": (
+        "a reading of a column, not a token: `target_share` is a real panel column and is "
+        "correctly one Share of several"),
+    "depth chart": "the QB study reads a real depth chart (`odds._qb_starters`) and names it "
+                   "correctly; the entry forbids it only as a name for the Active set",
+    "lineup": "the Lineup is its own object across `hub.season`; the entry forbids it only "
+              "as a name for the Active set",
+    "pace": "a real quantity the repo may one day model; the entry forbids it only as a "
+            "name for Team volume, which it is not",
+    "tempo": "same entry, same distinction: a rate, not a count",
 }
 
 # Headwords are a different class from `_Avoid_` terms: using **Board** for the draft board

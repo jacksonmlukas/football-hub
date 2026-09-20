@@ -527,6 +527,21 @@ on a branch that was never going anywhere else.
 
 ---
 
+### Noted twice, not yet a rule: a dispersion fitted on observed variance absorbs the sampling noise of the thing it is fitted on
+
+Recorded 2026-09-21 so a third instance is recognised as a pattern rather than a coincidence,
+and promoted to a rule then. **Instance one (C5, audit IV):** the touchdown rate's
+year-over-year correlation came out at zero because the estimate's own sampling variance
+swamped the signal — the fix (#308) subtracts the binomial variance at the known count before
+the rate is shrunk. **Instance two (#306's pre-registration):** a Dirichlet-multinomial
+concentration fitted on observed share variance comes out too low, because a share built on
+~5 events carries multinomial sampling noise the concentration would read as volatility; the
+disattenuation (`p(1 − p)/n` subtracted from the observed between-week variance) is part of
+the estimator, pre-registered. The shape both share: **any constant that is a dispersion, a
+correlation or a reliability, fitted on quantities measured from few events, is attenuated
+by the events' own sampling variance, and the correction is analytic when the count is
+known.** Two is a coincidence; three is rule 16's successor.
+
 ## The record
 
 Fifteen things have been measured properly. **Two came back positive** — and one of those two

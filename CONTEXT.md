@@ -316,6 +316,32 @@ to consensus rank at −0.304 points a team-week, see
 _Avoid_: projection unqualified — say weekly projection or xFP, since the whole open question
 is whether the week adds anything.
 
+**Share**:
+A player's fraction of his **Team volume** of one count type — targets, carries, attempts —
+over the **Active set**, the shares summing to one. Measured week to week it is the stable
+part of a player's opportunity: near-constant for targets once the sampling noise of a share
+built on a handful of events is removed, strongly persistent for carries. A player's
+projected count is Team volume × Share; the incumbent's season-to-date count averages the
+two together and cannot tell them apart.
+_Avoid_: usage rate, target share alone as if it were the whole — Usage is the count, a Share
+is the fraction, and the difference is the object #306 introduces.
+
+**Active set**:
+The players a team's Shares of one count type are distributed over in a week. **Per count
+type** — the carry set is not the target set. A player leaves it by being OUT or IR on the
+week's injury report, or by having no stat row in the last three weeks — and **status wins**
+over recency, because the opposite precedence keeps an absent player on the simplex and
+dilutes every teammate in the weeks the structure exists for. The set is latent, built from
+the team's own history; a depth chart is the input it may one day come from, not the object.
+_Avoid_: depth chart (the input, not the set), roster (the fantasy team's), lineup.
+
+**Team volume**:
+A team's count of one type in a week — pass attempts, rush attempts. The noisy part of the
+decomposition: barely predictable before kickoff by persistence or by the betting market,
+driven by game script once the game is played, and **common to every player on the team** —
+which is why a Share model's error on it is shared across teammates rather than independent.
+_Avoid_: pace (plays per unit time, a different quantity), tempo.
+
 ### Season simulation
 
 **Championship equity**:

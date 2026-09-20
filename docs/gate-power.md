@@ -1461,3 +1461,143 @@ own form) is the thing the build measures.
 against consensus rank as the deciding statistic, the MAE contrast by μ tier as the
 diagnostic. Three-quarters of this effect is on the 14% of rows at μ ≥ 15 (the table in
 #305's section), which is the strongest reason of the three to gate on the lineup.
+
+# Pre-registered 2026-09-21 — PROPOSED: the share layer and additivity's gate (#306)
+
+**Status: PROPOSED.** Drafted in the grilling of 2026-09-20/21, inside the freeze (#326), in
+#305's form. It becomes the rule on the maintainer's `ADOPTED:` comment on #306. Parent
+decisions: ADR-0016 (the weekly projection is shown, never ranked on), ADR-0006 (a fitted
+constant lives with its provenance), #314 (the teammate estimand is conditional on team
+output), and the three pilots in #305's section above, which this document argues from.
+
+## The object: one structure, two consumers
+
+**Additivity** — a team's projected volume of each count type is distributed over its **active
+set** as **shares** that sum to one, and a player's projected count is team volume × his
+share — is the structure. **Substitution** (a starter out, the mass moves) and the **teammate
+correlation** the simplex induces are consumers of it: neither exists without shares, and each
+has its own gate. So the decision is the *form* of the share model, and the consumers follow.
+
+**The form: a Dirichlet-multinomial over each count type's active set**, with a fitted
+concentration — a real constant under ADR-0006, provenance and hold-out. Not a mechanical
+rescale: that buys additivity and nothing else, and both reasons to build this live in the
+parameter it lacks. **Per count type**: the carry set and the target set are different
+populations with different dynamics (below), and one simplex would be two processes wearing
+one name.
+
+**The estimator's disattenuation, pre-registered as part of the estimator.** A DM's
+concentration is a dispersion, and fitted on observed share variance it absorbs the
+multinomial sampling noise of a share computed from ~5 events — the concentration comes out
+too low for the reason the TD rate's year-over-year correlation once came out at zero (C5).
+The sampling variance of a share at a known count is analytic, `p(1 − p)/n`, and is
+subtracted from the observed between-week variance before the concentration is fitted.
+Second instance of this correction in Phase 2 (#308 is the first); `method.md` notes it.
+
+**The active set, and how a player leaves it — the structure's weakest link, stated.** The set
+is latent: the players with a stat row for that team in strictly earlier weeks, recency-
+weighted, per count type. A player leaves it when he is **OUT or IR on the week's injury
+report, or has no stat row in the last k = 3 weeks (`MIN_GAMES_BEFORE`)**. **Status wins**:
+a player OUT this week with three recent rows is *out* — the opposite precedence is the hole
+that silently keeps an absent player on the simplex and dilutes every teammate in exactly the
+weeks additivity exists for. The gating source is the one #221 characterised as weak (one
+Friday-stamped row per player-week; fourteen quarterbacks OUT across all of 2024), so **a
+null on this gate is first a claim about the active set and only then about the share
+model**, and the report says which. A cached depth chart is the input substitution wants and
+is its own ticket; #306 does not wait on it.
+
+**Which volume**: team attempts and carries from the panel's own history — the incumbent's
+estimator lifted one level — with no dependency on #305. The implied total enters, if it
+ever does, as a term on team volume *after* shares.
+
+## The hypothesis, as three measurements say it (2026-09-20/21, no model changed)
+
+*Lag-1 autocorrelation within season, consecutive weeks, unfiltered:*
+
+| quantity | observed r | reliability | disattenuated r |
+|---|---|---|---|
+| team pass attempts | +0.18 | — | — |
+| team rush attempts | +0.13 | — | — |
+| player targets | +0.51 | | |
+| player **target share** | +0.55 [0.52, 0.57] | 0.56 [0.53, 0.59] | **0.97 [0.95, 1.00]** |
+| player carries | +0.67 | | |
+| player **carry share** | +0.77 [0.75, 0.80] | 0.88 [0.87, 0.90] | **0.88 [0.85, 0.89]** |
+
+(773 / 469 players, 500 player-cluster bootstraps; the correction assumes binomial dispersion,
+so under overdispersion the true r is lower.) *And whether volume is predictable before
+kickoff:* team pass attempts on a within-season walk, n = 2,238 team-weeks — R² on the
+season-to-date mean **0.058**; adding spread and total **0.075**; residual sd 8.0 of 35
+attempts either way; the total's coefficient +0.24 attempts per point, the spread's −0.03.
+
+> **Share is predicted by persistence — near-perfectly for targets once sampling noise is
+> removed, strongly for carries. Volume is not predictable before kickoff by anything this
+> repo has — not persistence, not the market — and it is common to every player on the team.**
+> So the decomposition's value is not a better mean per player: the incumbent's season-to-date
+> count already averages share × volume. Its value is that the volume error becomes
+> **common-mode across teammates** — the positive environment shock #314 says the marginal
+> +0.014 hides, the exposure of a lineup holding two players from one team, the thing
+> substitution redistributes over. **The structure pays at the joint distribution, and its own
+> per-player gate is the least of the three.**
+
+Two earlier forms of this hypothesis were withdrawn on measurement: "team volume is the
+stable base" (it is the least stable quantity in the table) and "volume is predicted by the
+market" (R² +0.017). Both are kept here as the record of what the numbers refused.
+
+**The primary prediction, falsifiable, written before any number:** **roster-total coverage
+improves with no change in per-player MAE.** The scale it should move on is the L1 gate's
+own: 72.9% → 80.4% for a lineup holding a quarterback and his pass-catchers when
+`TEAMMATE_RHO` was added (`docs/correlation.md`). A near-null on additivity's MAE gate is the
+*predicted* outcome, not an excuse available afterwards.
+
+**The sign, per count type — and the double-count risk, pre-registered.** With target share
+near-constant, the negative "one up, others down" channel is nearly closed for pass-catchers,
+and what the target simplex induces is the **positive** volume term. For the backfield,
+0.88 leaves a real share-variation channel open and the induced correlation is a mix.
+`TEAMMATE_RHO` is already positive (QB–WR +0.232) and may be partly measuring the same
+volume channel. **If the simplex adds positive correlation on top of it, roster-total coverage
+can pass 80% from below — too wide, not too narrow — and the two-sided coverage gate would
+fail in the unexpected direction.** Written now so that outcome is read as double-counting
+to be resolved (the simplex's term replacing, not adding to, the part of `TEAMMATE_RHO` that
+is volume), not as the structure failing. #314's section carries the same sentence.
+
+## The gate
+
+1. **Coherence is a VOID condition, not a diagnostic.** Per team-week and count type, projected
+   shares over the active set sum to one within floating tolerance and the player projections
+   sum to projected team volume *by construction*. Anything else is an implementation failure
+   and the run VOIDs, in the shape of the join-failure VOID. Team-volume accuracy (projected
+   vs realised attempts) is printed as a diagnostic and decides nothing.
+2. **The deciding statistic is `hub.season.weekly_gate`**, exactly as #305's: the share-layer
+   projection sets a lineup by *start your highest* against one set by consensus rank, on the
+   drafted universe, rules unchanged, with its foresight ceiling and stage 2 first. A coherence
+   constraint plausibly moves the decision band most (a WR3's share *is* the margin); that is
+   the hypothesis this gate tests rather than assumes.
+3. **Do-no-harm, as #305's:** the off-band paired MAE interval must not exclude zero on the
+   negative side, and the concentration is fitted by the stated procedure on strictly earlier
+   seasons and is not free after any of these is seen.
+4. **Diagnostics:** the MAE contrast by μ tier; **share error** — the projected share against
+   the realised share, per count type, against the incumbent's implied share
+   (`count_prior / team_prior`) — which is where the hypothesis says the gain lives if there
+   is one; and roster-total coverage on the L1 harness, printed here and *decided* in #314.
+5. **The bar, in `experiment.gate`'s order:** NOT-RUNNABLE if the clustered MDE exceeds the
+   ceiling; ADOPT only on a positive interval and a win in every held-out season (ties not
+   wins, per #335) *and* do-no-harm; REMOVE on the mirror; SHOW otherwise — and **a SHOW with
+   the primary prediction met** (coverage moved, MAE did not) is the structure working, and
+   the record says so.
+
+## What this measurement cannot do
+
+- It cannot gate substitution: the redistribution needs an expected active set a depth chart
+  supplies, and that loader does not exist. Substitution is its own ticket behind it.
+- It cannot decide the teammate correlation: that is #314's coverage gate, reading the
+  simplex's term.
+- It cannot fix the volume leg: R² 0.075 is what the repo has before kickoff, and the
+  game-script term (a spread effect on volume) is its own ticket.
+
+## What happens either way
+
+If the gate cannot run, the incumbent is published unchanged and this section plus the tables
+is the output. If it runs and the primary prediction holds — coverage moves, the mean does
+not — the simplex stays as the object the consumers read and its per-player verdict is
+reported as the null it predicted. If the lineup gate adopts, ADR-0016 reopens by its own
+gate and the do-no-harm branch decides scope. If coverage overshoots, the double-count is
+the finding and `TEAMMATE_RHO` is re-fitted conditional on the simplex before anything ships.
