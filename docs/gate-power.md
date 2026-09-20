@@ -1302,6 +1302,17 @@ from "a split under an average", and it is what the pre-registration below has t
 against. The mechanism is sizing: the band gain and the off-band loss scale together with b,
 because the b that reorders the margin most also moves the locked starters most — the
 do-no-harm case in its cleanest form.
+
+**The 0.12 row is a sensitivity of the mechanism and not a candidate, and b is not free.**
+"Halve b and the net turns positive in every season" is a threshold read off four seasons of
+outcomes, and if the do-no-harm clause could be satisfied by moving b until it is, the clause
+would not be a bar — the adoption rule and the parameter it is evaluated at would be chosen
+together, which is the hazard this document has already caught three times. So, fixed here:
+**b is fitted by the stated procedure — the GLM of arm A₁/A₂, walk-forward on strictly earlier
+seasons, on the screen panel — and the gate, the band diagnostic and the do-no-harm clause are
+all evaluated at that b and at no other.** b does not move after any of the three is seen. A
+run that would only pass at a smaller b reports that as SHOW with the sensitivity printed
+beside it, and a differently sized scaler is a new pre-registration, not a re-run.
 The same
 incumbent figures put the published rebuild at **t = 2.66 on 3 df, p = 0.076** once
 clustered — it passes `|t| ≥ 2` and fails `p < 0.05`, which is #312's corrected verdict —
