@@ -1225,6 +1225,32 @@ features are worth a few tenths of a point per lineup per week; over a season th
 couple of points of cumulative MAE against head-to-head margins in the tens. That is not an
 argument against Phase 2; it is the argument for #306 moving up — the share layer is
 structural, not a feature, and a structural change is not bounded by a residual correlation.
+
+**What the −0.304 says about Phase 2 as a whole (2026-09-20).** The lineup gate's standing
+figure is −0.304 points per roster-week against consensus rank, 2 of 3 seasons lost. Grant
+the features a one-for-one translation from MAE per player-week to roster points — generous,
+since a lineup is a selection rule and not a mean — and nine starters:
+
+    #305 implied total      +0.012 × 9  ≈ +0.11
+    #308 red-zone TD rate   +0.020 × 9  ≈ +0.18
+                                          ≈ +0.29   against a gap of 0.304
+
+Neither figure is precise (the gate has three seasons; the translation is a scaling
+argument) but the magnitudes are the same, and that comparison is robust to both. **Phase
+2's two measured features land the projection at parity with consensus rank, not past it;
+as constituted they do not flip ADR-0016.** The reason is structural and it says which
+tickets matter. Consensus rank is a crowd of analysts who already see the implied total, the
+depth chart, the beat reports and who is getting goal-line work: `implied_total` and
+red-zone share are things the benchmark *already knows*. Adding them closes distance; it
+cannot create edge, because it is catching up to information priced into the thing the
+projection is scored against. An edge has to come from what a rank does not produce at all.
+A rank is a point estimate — no distribution, no correlation structure, no coherence
+constraint — which is exactly #306 (additivity, injury substitution, the negative teammate
+correlation), #314 (opponent and season-level correlation, which an optimiser reads and a
+rank cannot supply) and #309 (a calibrated interval, so the optimiser has a distribution
+rather than a mean). Those change what the projection can *say*, not how much it knows; they
+are the three nobody has bounded; and #306's bound cannot come from a residual correlation,
+which is why it is a grilling and not a pilot.
 The same
 incumbent figures put the published rebuild at **t = 2.66 on 3 df, p = 0.076** once
 clustered — it passes `|t| ≥ 2` and fails `p < 0.05`, which is #312's corrected verdict —
