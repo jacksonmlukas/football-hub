@@ -1493,6 +1493,23 @@ The sampling variance of a share at a known count is analytic, `p(1 − p)/n`, a
 subtracted from the observed between-week variance before the concentration is fitted.
 Second instance of this correction in Phase 2 (#308 is the first); `method.md` notes it.
 
+**Boundary-running is a pre-registered result, not a fit failure.** Target share's
+disattenuated lag-1 is **[0.95, 1.00]** — the data cannot distinguish *very sticky* from
+*literally fixed*. That is informative, and it has a mechanical consequence: a DM's
+concentration is unbounded above as the share becomes deterministic; the likelihood flattens
+toward infinity and the fit runs to a bound or needs a cap or prior to terminate. A fitted
+constant sitting at its own boundary has a provenance that reads "the data wanted more than
+the parameterisation allows", which is not what ADR-0006 means by a fitted value. So, fixed
+now rather than at fit time: **if the target-side concentration runs to its bound, the finding
+is that targets are effectively fixed-share — the DM collapses to a multinomial with a
+deterministic share vector — while carries, at 0.88 [0.85, 0.89], clearly do not.** The two
+count types may want different *models*, not only different parameters, which is the cleaner
+form of the per-count-type argument. The degenerate case is a measurement, not a bug to
+work around, and a target-side concentration at its bound is evidence about targets, not
+evidence the estimator failed — which protects the null reading of the gate the same way the
+active-set caveat does. Neither a cap recorded as a choice nor a weakly-informative prior is
+used; both would convert that measurement into a number chosen to make the fit terminate.
+
 **The active set, and how a player leaves it — the structure's weakest link, stated.** The set
 is latent: the players with a stat row for that team in strictly earlier weeks, recency-
 weighted, per count type. A player leaves it when he is **OUT or IR on the week's injury
