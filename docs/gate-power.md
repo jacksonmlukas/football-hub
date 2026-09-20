@@ -1285,6 +1285,23 @@ the realised points of the changed lineup against the unchanged one — because 
 the table before the arm is built is the thing this document exists to prevent. #308's
 band cut is the same computation with its modifier injected and is owed when its
 pre-registration is written.
+
+**Which population, and what the net is (2026-09-20, same build).** The +0.012 is on the
+screen panel — every consensus-ranked player — and does not decompose into the two figures
+above, which are on drafted rosters; "the average was masking a split" does not follow across
+populations. On the drafted rosters themselves, with the counts:
+
+| b | band n / off-band n (per season) | band gain | off-band | **net on drafted rosters** | positive seasons |
+|---|---|---|---|---|---|
+| 0.25 (the pilot's panel fit) | ≈ 1,400 / 1,170 | +0.0236 | −0.0244 | **+0.0017** (SE 0.0080) | 1 of 4 |
+| 0.12 (half) | same rows | +0.0150 | −0.0065 | **+0.0052** (SE 0.0037) | 4 of 4 |
+
+So on the population that actually forms lineups, the scaler as fitted is **MAE-neutral and
+negative in three seasons of four; only its ranking improves.** That reads very differently
+from "a split under an average", and it is what the pre-registration below has to be written
+against. The mechanism is sizing: the band gain and the off-band loss scale together with b,
+because the b that reorders the margin most also moves the locked starters most — the
+do-no-harm case in its cleanest form.
 The same
 incumbent figures put the published rebuild at **t = 2.66 on 3 df, p = 0.076** once
 clustered — it passes `|t| ≥ 2` and fails `p < 0.05`, which is #312's corrected verdict —
@@ -1309,8 +1326,21 @@ In `experiment.gate`'s order, and nothing is added to it:
 - **ADOPT the scaled projection** only if `weekly_gate`'s interval on points per roster-week
   excludes zero on the positive side against consensus **and** the scaled arm wins **every**
   held-out season of that gate — which reopens ADR-0016 by its own gate, and is the only
-  route by which the weekly projection comes to rank. The MAE diagnostic must also be
-  positive with the scaled arm closer in **every one of the four** held-out seasons — a tie is not a win, where a tie is a season whose gain does not clear
+  route by which the weekly projection comes to rank — **and the do-no-harm condition
+  holds.** The gate reads a ranking; every other consumer reads the *number*: the draft
+  board's VOR and season simulation, the published `p10/p90` through `shipped_quantiles`,
+  and `props.py` should it ever reach `weekly.project`. An accuracy loss on a locked starter
+  or the deep bench changes no realised lineup point and is invisible to the gate, and the
+  pilot shows the scaler produces exactly that loss (−0.024 off-band at the panel's b). So:
+  **the paired MAE difference on the off-band rows of the gate's own universe — locked
+  starters and bench, the rows the band excludes — must not have a season-clustered interval
+  that excludes zero on the negative side.** A scaler that helps the ranking and hurts the
+  number does not adopt whole; its pre-registered resolution is a **scoped adoption** —
+  the scaled μ for the lineup rule, the unscaled μ for the published figure and every
+  consumer of the number — which the code can express because `_contrast` and
+  `shipped_quantiles` are separable, and which this document names now rather than after a
+  built arm has a verdict in hand. The MAE diagnostic on the band must also be positive with
+  the scaled arm closer in **every one of the four** held-out seasons — a tie is not a win, where a tie is a season whose gain does not clear
   its own player-clustered noise (the rule #335 drafts; 2024's +0.00005 above is the case). Which of A₁/A₂ ships is the one with the larger clustered gain; if they disagree in
   sign, the ticket reopens as a decision (its own clause). What follows is a change to what
   the site publishes under ADR-0016, and #309/#310's interval is re-measured on the new
