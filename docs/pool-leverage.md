@@ -106,3 +106,32 @@ term is still unresolved, not zero, on both counts.
 **Not adopted, not acted on.** No published survivor figure moves off this page. If a future
 session wants `LEVERAGE`'s text itself to carry the 2026-09-21 finding, or wants a true pinned
 replication, that is a follow-up ticket, not a rerun of this one.
+
+## 2026-09-21, restated the same morning: what the second run does and does not say
+
+Read back by the maintainer after the run above landed. Two corrections, both under
+[rule 13](method.md), dated beside the text they correct rather than over it.
+
+**S10 (`docs/audits/2026-09-20-method-audit.json`) was wrong in two ways, and the run proved
+both.** The audit named `WEEKLY_TRIALS = 400` as the study's trial count; the study spent
+**1600** per arm -- `WEEKLY_TRIALS` is the weekly path's number, and the first section above
+already says so. And the audit's actionable claim -- *unresolved for want of CPU, resolvable by
+an afternoon* -- is refuted: 4,000 trials per arm did not resolve it. The mechanism the audit
+described (nobody had raised the study's own trial count) was real; the constant was wrong; the
+conclusion drawn from it was wrong. The audit file is never edited; `docs/audits/README.md`
+carries the dated pointer here.
+
+**The 24/25 → 5/25 reversal is not a finding about leverage.** The section above says the free
+pick moved **T31 → T30** on the same board, seed and week, because intervening commits changed
+the ranking. So the two runs do not share an arm, a baseline, or necessarily a candidate set --
+the comparison is confounded, and *"the direction-consistency finding does not reproduce"*
+claims more than it can. The right disposition is [#167](https://github.com/jacksonmlukas/football-hub/issues/167)'s:
+**the 24-of-25 figure is superseded and unestablished**, because no re-run of it is possible --
+not because a re-run contradicted it. The 5/25 figure is a property of this run alone and is
+not evidence about the first.
+
+**Before any third run, pin the board.** #167's root cause applies verbatim: *a measurement whose
+inputs are not pinned can be contradicted and never corrected.* The free pick and the candidate
+set are to be committed as a fixture, the way `rank_tiers`' docstring was rebuilt onto one, so
+that a third run disagreeing with the second is information and not the same lesson a third
+time. That is a ticket, not this page.

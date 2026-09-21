@@ -58,3 +58,9 @@ Phase 2/3 re-plan. Its own `schema.relation_to_audit_v` says the same; filed as 
   posterior, `plan[2].steps[0]`) and #376 (S6's NOT-RUNNABLE remedy -- measure the
   draft/weekly gate ceilings) were filed. Adopted: #363 option 1, #335 (A)+(i) with
   `TIE_MIN_CLUSTERS = 12`, #364 option 3, #358 option 1, #349 (a), #372 as drafted.
+- **S10, restated 2026-09-21 (rule 13):** the finding named `WEEKLY_TRIALS = 400` as the
+  leverage study's trial count; the study spent 1600 per arm. Its actionable claim -- resolvable
+  for want of CPU -- was refuted by the 4,000-trial re-run under #368. The mechanism was real,
+  the constant wrong, the conclusion wrong. `docs/pool-leverage.md` carries the restatement and
+  the disposition of the first run's 24-of-25 figure (superseded and unestablished, #167's
+  form). The JSON is not edited.
