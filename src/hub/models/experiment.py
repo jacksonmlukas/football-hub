@@ -890,12 +890,30 @@ def review_width(name: str, summary: Mapping[str, float], *, verdict: str,
     """
     width = float(summary["hi"]) - float(summary["lo"])
     entries = _width_state(path)
+    # **Comparable only at an identical config and data digest** (2026-09-21). The ledger
+    # recorded both digests from #362 and this lookup matched on the gate's name alone, so a
+    # `--holdout` run of the draft gate was compared with a non-holdout one -- different
+    # constants, a "6% narrowing" that meant nothing, and a REQUIRES REVIEW that cost a
+    # diagnosis to close. `docs/gate-power.md` already says two runs are comparable only at
+    # an identical digest; the row carried the digests; the check did not read them. It does
+    # now. An earlier run at another digest -- or a pre-#362 entry, which has none -- is
+    # counted and named, never compared: a width against a different model is not a
+    # narrowing, and a flag that cannot tell the two apart is not a guard.
     previous = None
+    elsewhere = 0
     for e in reversed(entries):
-        if e.get("gate") == name and isinstance(e.get("width"), int | float):
+        if e.get("gate") != name or not isinstance(e.get("width"), int | float):
+            continue
+        if e.get("config_digest") == config_digest and e.get("data_digest") == data_digest:
             previous = float(e["width"])
             break
+        elsewhere += 1
     said = narrowing(width, previous, places=places)
+    lines = list(said.lines)
+    if previous is None and elsewhere:
+        lines.append(f"  interval width {width:.{places}f}; {elsewhere} earlier run(s) of this "
+                     f"gate at another config or data digest, not compared -- two runs are "
+                     f"comparable only at an identical digest (docs/gate-power.md)")
     if write:
         entries.append({
             "gate": name,
@@ -913,7 +931,7 @@ def review_width(name: str, summary: Mapping[str, float], *, verdict: str,
             path.write_text(json.dumps({"entries": entries}, indent=2, sort_keys=True) + "\n")
         except OSError:
             pass
-    return said.lines
+    return lines
 
 
 def realised_ppg(stats: pl.DataFrame) -> pl.DataFrame:
