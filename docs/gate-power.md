@@ -3033,6 +3033,16 @@ ceiling-qualified seasons exist.
 > the plan, not a surprise, and it names #383. Meanwhile the fit records the walk-forward
 > log-loss gap per season *without a verdict word*, so #375's posterior has rows the day it
 > lands.
+>
+> **Three seasons is permission to run, not a reading to act on.** At k = 3 the interval half
+> is a t on two degrees of freedom — multiplier 4.30, against 3.18 at k = 4 and 2.78 at k = 5 —
+> so the first runnable gate's interval swallows almost anything, and the sign half's null size
+> is 2⁻³ = 12.5%, one run in eight. The conjunction still protects; what it cannot do at k = 3
+> is say anything a reader would act on. The honest sequence: stage 2 *unblocks* at three
+> seasons; the verdict word becomes *informative* at many more; and #375's posterior is what
+> makes a three-season fit worth looking at, because a posterior over an effect says something
+> at k = 3 where a verdict word does not — the same argument that made #375 load-bearing for
+> this section, applied one level down.
 
 ## Exclusions (rule 11)
 
