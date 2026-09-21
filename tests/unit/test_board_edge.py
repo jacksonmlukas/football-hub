@@ -14,7 +14,7 @@ from typing import cast
 
 import polars as pl
 
-from hub.draft.board import _adp_saturation_cutoff, _attach_edge
+from hub.draft.board import _adp_join_failure_rate, _adp_saturation_cutoff, _attach_edge
 
 
 def _board(players, ecrs):
@@ -114,3 +114,65 @@ def test_players_without_adp_survive_the_join():
     out = _attach_edge(board, adp, teams=12)
     assert out.height == 2
     assert out.filter(pl.col("player") == "B")["edge"].is_null().all()
+
+
+# --- #370 (S12): the ESPN-ADP-to-board join-failure rate --------------------
+
+def test_an_exact_match_is_not_a_failure():
+    board = _board(["A.J. Brown"], [1])
+    adp = _adp(["A.J. Brown"], [1.0])
+    assert _adp_join_failure_rate(adp, board) == (0, 1)
+
+
+def test_a_spelling_variant_recoverable_only_under_relaxed_key_is_counted():
+    """`_attach_edge` joins on the raw string, so `Mike Thomas` fails that join even though
+    it is the same player as `Michael Thomas` -- and `player_key` does not collapse a
+    nickname the way it collapses punctuation, so `michael thomas` and `mike thomas` are two
+    keys. `relaxed_key` (first initial, surname) is the looser comparison that still catches
+    it: `m thomas` either way."""
+    board = _board(["Michael Thomas"], [1])
+    adp = _adp(["Mike Thomas"], [1.0])
+    assert _adp_join_failure_rate(adp, board) == (1, 1)
+
+
+def test_a_name_the_board_never_ranks_is_not_counted():
+    """Kickers and defenses: ESPN prices them, FantasyPros' consensus board this repo builds
+    from does not by design, and a name matching nothing even loosely is that, not a spelling
+    failure."""
+    board = _board(["A.J. Brown"], [1])
+    adp = _adp(["San Francisco D/ST"], [150.0])
+    assert _adp_join_failure_rate(adp, board) == (0, 1)
+
+
+def test_the_rate_is_reported_against_every_adp_name_not_only_the_failures():
+    board = _board(["A", "Bobby Smith"], [1, 2])
+    adp = _adp(["A", "Bob Smith", "Kicker Guy"], [1.0, 2.0, 150.0])
+    # "A" matches exactly; "Bob Smith" relaxes to "b smith", the same as "Bobby Smith";
+    # "Kicker Guy" relaxes to "k guy", which nothing on the board carries.
+    assert _adp_join_failure_rate(adp, board) == (1, 3)
+
+
+def test_no_adp_names_reports_zero_over_zero_rather_than_dividing_by_it():
+    board = _board(["A"], [1])
+    adp = _adp([], [])
+    assert _adp_join_failure_rate(adp, board) == (0, 0)
+
+
+def test_attach_market_prints_the_join_failure_rate(monkeypatch, capsys):
+    from hub.draft import board as board_mod
+
+    b = pl.DataFrame({
+        "player": ["A", "Bobby Smith"], "pos": ["WR", "RB"], "ecr": [1.0, 2.0],
+        "games": [17, 17], "xfp_per_game": [10.0, 8.0],
+    })
+    adp = _adp(["A", "Bob Smith"], [1.0, 2.0])
+    monkeypatch.setattr(board_mod, "replacement_levels", lambda *a, **k: {"WR": 0.0, "RB": 0.0})
+    monkeypatch.setattr(board_mod.durability, "correct_projection", lambda df: df)
+    monkeypatch.setattr(board_mod, "blend", lambda: pl.col("ecr").alias("proj_blend"))
+    # `corrected_adp` is imported inside `_attach_market`'s own body, so the patch has to
+    # land on the module it is imported *from*, not on `board_mod`.
+    monkeypatch.setattr("hub.draft.optimize.corrected_adp", lambda df: pl.col("ecr"))
+
+    board_mod._attach_market(b, adp, league_size=12, season=2025, season_ahead=2026)
+    out = capsys.readouterr().out
+    assert "join failures 1/2" in out

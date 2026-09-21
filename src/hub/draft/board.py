@@ -50,7 +50,7 @@ from hub.fetch.nflverse import RANKINGS_COLS, load_rankings
 from hub.league import preseason_start
 from hub.models import components
 from hub.models.predict import blend
-from hub.names import player_key
+from hub.names import player_key, relaxed_key
 from hub.paths import BOARD_JSON, BOARD_PARQUET, ROOT
 
 if TYPE_CHECKING:                      # `optimize` imports from here, so runtime would cycle
@@ -1211,6 +1211,33 @@ def _check_roster(board: pl.DataFrame) -> None:
         print("  Replacement level and every VOR below assume this repo's shape.")
 
 
+def _adp_join_failure_rate(adp: pl.DataFrame, board: pl.DataFrame) -> tuple[int, int]:
+    """How many of ESPN's ADP names failed to join the board, and out of how many (#370 / S12).
+
+    `_attach_edge` joins on the raw `player` string, so a name a normalisation would recover
+    -- `A.J. Brown` against `AJ Brown` -- fails that join exactly as any other mismatch does.
+    Classified the way `hub.draft.backtest.join_failures` already classifies a drafted name
+    against a season's realised rows, the one place in this repo `relaxed_key` was reachable
+    before this: absent from the board under `player_key` but present under `relaxed_key`
+    (first initial, surname) is a probable spelling mismatch and is counted; absent under
+    both is a name the board's own source (FantasyPros, via `consensus`) tracks nothing about
+    at all -- a kicker, a defense/special-teams unit, a player outside the ranked pool -- and
+    is not counted, because `relaxed_key`'s own docstring is that it classifies a failure
+    rather than repairs one, and a defense unit is not a join failure however ESPN spells it.
+
+    Returns `(failures, candidates)` rather than a bare rate, so a caller can print "0/0"
+    honestly when ESPN's ADP carried no names at all, instead of a division by zero standing
+    in for "nothing to report".
+    """
+    board_names = board["player"].drop_nulls().to_list()
+    exact = frozenset(player_key(p) for p in board_names)
+    relaxed = frozenset(relaxed_key(p) for p in board_names)
+    names = adp["player"].drop_nulls().to_list()
+    failures = sum(1 for n in names
+                  if player_key(n) not in exact and relaxed_key(n) in relaxed)
+    return failures, len(names)
+
+
 def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
                    season: int, season_ahead: int) -> pl.DataFrame:
     """Everything the market contributes once ADP is in hand.
@@ -1273,7 +1300,9 @@ def _attach_market(board: pl.DataFrame, adp: pl.DataFrame, *, league_size: int,
         (pl.col("proj_blend")
          - pl.col("pos").replace_strict(pb, default=0.0)).alias("vor_proj"))
     n = int(board["edge"].is_not_null().sum())
-    print(f"  ESPN ADP: {n} drafted players priced; edge on a common scale")
+    failures, candidates = _adp_join_failure_rate(adp, board)
+    print(f"  ESPN ADP: {n} drafted players priced; edge on a common scale; "
+          f"join failures {failures}/{candidates}")
 
     return board
 
