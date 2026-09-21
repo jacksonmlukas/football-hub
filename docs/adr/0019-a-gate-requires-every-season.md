@@ -313,7 +313,7 @@ At one in four each that is one in sixteen jointly — probably coincidence — 
 systematically wider *within-season* spread in both, the tie rule is abstaining on noisy
 seasons rather than on small effects, which is a different property from "a tie means the
 effect is small" and would need saying. Neither run recorded its per-season SE beside the
-gain; #382 makes every run record it, and re-runs the weekly harness once to read 2024's.
+gain; #382 makes every run record it, and re-ran the weekly harness once to read 2024's: SEs 0.409 / 0.447 / **0.543** / 0.546 for 2022–2025, so 2024's is wider than two seasons and equal to the third, and its gain (−0.259) sits below every season's threshold (the narrowest, 0.82, by a factor of three) — in this gate the tie reads as about the effect, not the season. One season in one gate: a hint written down, not a finding; the draft's SE waits for its next run, and #381's release condition is three entries for this reason.
 
 **The draft gate's ADOPT branch is a named exemption, not a bar (2026-09-21).** At δ=2.0 the
 combined rule's power for the draft gate is **0.0324** against unanimity-alone's 0.136 — an
