@@ -20,6 +20,27 @@ from hub.models.weekly import Shrink, fit_shrink, positional_sd, project, standa
 from hub.names import player_key
 from hub.season.weekly_gate import UNRANKED, GateInputs
 
+
+class SeasonDropped(RuntimeError):
+    """A requested season produced no scored row, and it is not the walk-forward buffer.
+
+    `assemble_universe` walk-forwards on `expanding_seasons`, which needs a season strictly
+    *before* the one it scores to train on -- so the earliest season in `seasons` is always
+    consumed as training only and never itself scored. That drop is expected and every caller
+    of this module has to be able to tell it apart from a real one: a partition missing on
+    disk, a `VOID` condition upstream, or a join that silently lost a season's rows.
+
+    #378: a `--ceiling` run named four seasons, `docs/weekly-blend-gate.md` and the ADR-0019
+    amendment's rule-16 table both read this gate at k=4, and the run came back with three
+    clusters and no indication anything had gone missing -- season 2022 was simply not in the
+    per-season table it printed. The run was not naming the walk-forward buffer; it was
+    reusing `weekly_gate`'s own `--seasons` default, which named four seasons with none of
+    them set aside to train the first one on, so `expanding_seasons` dropped the earliest of
+    the four rather than a fifth season nobody asked it to score. This exception is what turns
+    that into a refusal instead of a quietly thinner table.
+    """
+
+
 # No cycle: `hub.models.weekly` reaches `hub.cli`, `hub.config`, `hub.declare` and three
 # sibling `hub.models` modules and nothing under `hub.season` or `hub.draft`, so this import
 # was never lazy for a cycle -- it was lazy because it sat inside `assemble_universe` beside
@@ -291,6 +312,25 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
         # Positions come from the Cohort too, rather than being read off the board a second
         # time -- two readings of one frame is how they come to disagree.
         rosters[yr], pool[yr], pos[yr] = made.rosters, made.pool, made.pos
+
+    # #378: loud rather than silent. Exactly one season -- the earliest requested -- is
+    # supposed to vanish here, consumed by `expanding_seasons` as the walk-forward buffer for
+    # the one after it; anything else missing is a real drop and would otherwise surface only
+    # as a per-season table one row short, the way #376's `--ceiling` run did. Requested and
+    # scored are compared as sets because `seasons` is not required to arrive sorted or deduped
+    # and dict keys already collapsed duplicates on the scored side.
+    requested = sorted({int(s) for s in seasons})
+    scored = sorted(rosters)
+    buffer_season = requested[0] if requested else None
+    unexpected = [s for s in requested if s not in rosters and s != buffer_season]
+    if unexpected:
+        raise SeasonDropped(
+            f"requested seasons {requested}, scored {scored} -- season(s) {unexpected} "
+            f"produced no row and {'is' if len(unexpected) == 1 else 'are'} not the "
+            f"walk-forward buffer ({buffer_season}). A partition missing on disk, a VOID "
+            f"condition, or a join dropping the season -- find out which before trusting "
+            f"anything scored on the seasons that did come back.")
+
     return GateInputs(rosters, pos, realised, consensus, weekly, pool, addable, se,
                       covered_weeks(ecr), priced)
 
