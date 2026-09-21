@@ -1094,6 +1094,92 @@ def test_the_noise_floor_covers_every_season_with_its_own_chart():
     assert floor_games2 == 2 and math.isfinite(floor2)    # 2025's game still counted
 
 
+# --- typed results (#345): the CLI's own computation, extracted so a test can assert on
+# values instead of driving `main` and parsing sentences.
+
+
+def test_same_quarterback_floor_label_applied_when_every_season_with_polls_has_a_chart():
+    label, note = sc.same_quarterback_floor_label(2, (), [])
+    assert label == "same-quarterback floor" and note == ""
+
+
+def test_same_quarterback_floor_label_applied_when_no_season_has_polls_to_condition():
+    """`n_seasons == 0` reads the same as `not not_applied`: nothing to try is not a failure
+    to try, and the label says nothing failed rather than naming an empty list."""
+    label, note = sc.same_quarterback_floor_label(0, (), [])
+    assert label == "same-quarterback floor" and note == ""
+
+
+def test_same_quarterback_floor_label_is_partial_when_some_seasons_charts_fail():
+    label, note = sc.same_quarterback_floor_label(
+        2, (2025,), ["2025 (ConnectionError: no network)"])
+    assert label == "same-quarterback floor, PARTIAL"
+    assert "same-quarterback NOT applied for 2025" in note and "ConnectionError" in note
+
+
+def test_same_quarterback_floor_label_is_not_applied_when_every_seasons_chart_fails():
+    label, note = sc.same_quarterback_floor_label(
+        2, (2025, 2026), ["2025 (ConnectionError: a)", "2026 (ConnectionError: b)"])
+    assert label == "all-games floor, SAME-QUARTERBACK NOT APPLIED"
+    assert "2025" in note and "2026" in note
+
+
+def test_season_event_summaries_returns_one_typed_record_per_season(rows):
+    """KC's two in-season changes (Gabbert in, Mahomes back) and LA's one offseason change
+    (flagged, not an event) are all dated season 2026 -- the fixture `SEASON`'s own comment
+    names the Rams' change as the offseason one. Cross-checked against `_event_lines`'
+    sentence, built from the same inputs, so a divergence between the typed record and the
+    printed line cannot land unnoticed."""
+    tg = sc.team_games(rows)
+    ev = sc.events(tg)
+    games = sc.event_games(sc.in_season_events(ev))
+    got = sc.season_event_summaries(ev, games)
+    assert [s.season for s in got] == [2026]
+    s = got[0]
+    assert isinstance(s, sc.SeasonEventSummary)
+    assert s.changes == 2 and s.games == 2 and s.n_gaps == 2 and s.offseason == 1
+    line = f"    {s.season}: {s.changes} changes on {s.games} event games, gap sd {s.gap_sd:.1f} " \
+           f"value units (n={s.n_gaps}); {s.offseason} offseason change(s) not events"
+    assert line in sc._event_lines(ev, games, since=2022)
+
+
+def test_study_report_returns_typed_results_matching_its_own_components(rows):
+    """Built the same way `main`'s `--study` block builds its inputs, with no depth chart for
+    the fixture's one season. Calling `study_report`'s own components by hand on the same
+    inputs is the check that the typed result computes nothing differently from what `main`
+    used to compute inline before #345."""
+    tg = sc.team_games(rows)
+    ev = sc.events(tg)
+    games = sc.event_games(sc.in_season_events(ev))
+    season_games = games
+    study_parts: list[tuple[int, pl.DataFrame, pl.DataFrame | None]] = [(2026, ARCHIVE, None)]
+    qb_notes = ["2026 (ConnectionError: no chart)"]
+
+    rep = sc.study_report(study_parts, qb_notes, ev, games, ARCHIVE, season_games, tg)
+    assert isinstance(rep, sc.StudyReport)
+
+    floor, floor_games, not_applied = sc.noise_floor_per_root_day(study_parts)
+    label, qb_note = sc.same_quarterback_floor_label(len(study_parts), not_applied, qb_notes)
+    assert rep.floor == floor and rep.floor_games == floor_games
+    assert rep.label == label and rep.qb_note == qb_note
+    assert rep.unplayed == sc.unplayed_study_games(ARCHIVE, season_games, tg)
+
+    rows_ = sc.study_rows(ARCHIVE, season_games, tg,
+                          floor_per_root_day=floor if math.isfinite(floor) else None)
+    assert rep.established == (not rows_.is_empty())
+    assert rep.n_events == rows_.height
+    fit = sc.study_fit(rows_, floor_per_root_day=rep.used)
+    for key, want in fit.items():
+        got = rep.fit[key]
+        assert got == pytest.approx(want, nan_ok=True), key
+    assert (rep.verdict_label, rep.verdict_sentence) == sc.verdict(fit)
+    if rep.established:
+        lo, hi = sc.study_interval(fit)
+        assert rep.benchmark_sentence == sc.benchmark_reading(fit["beta"], lo, hi)
+    else:
+        assert rep.benchmark_sentence is None
+
+
 # --- the entry point ---------------------------------------------------------------------
 
 
