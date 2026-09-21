@@ -841,14 +841,49 @@ def test_a_third_run_of_the_same_gate_compares_against_the_most_recent_one(tmp_p
     assert "wider" in "\n".join(said), "3 against the most recent 2, not the oldest 4"
 
 
-def test_the_pre_362_dict_shape_still_reads(tmp_path):
+def test_the_pre_362_dict_shape_still_reads_but_is_not_compared(tmp_path):
     """A file this function has not yet rewritten -- the one-record-per-gate shape #362
-    replaces -- does not read as empty, so an old file's history is not silently dropped."""
+    replaces -- does not read as empty, so an old file's history is not silently dropped.
+    But an old entry carries no digest, so it is of *unknown* digest and is not compared
+    against: read into the ledger and named, not read as a narrowing (2026-09-21)."""
     path = tmp_path / "gate-width.json"
     path.write_text(json.dumps({"draft": {"width": 4.0, "clusters": 4.0, "lo": -2.0, "hi": 2.0,
                                           "requires_review": False}}))
     said = _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path)
-    assert "REQUIRES REVIEW" in "\n".join(said), "must have read the old width (4.0) as 4.0"
+    text = "\n".join(said)
+    assert "REQUIRES REVIEW" not in text
+    assert "1 earlier run(s) of this gate at another config or data digest" in text
+    entries = json.loads(path.read_text())["entries"]
+    assert len(entries) == 2 and entries[0]["width"] == pytest.approx(4.0), "the old row is kept"
+
+
+def test_two_runs_at_different_digests_are_not_compared(tmp_path):
+    """Rule 18's positive control for the digest condition: the same gate, the same width
+    halving, at a different config digest -- the case that produced a meaningless REQUIRES
+    REVIEW on 2026-09-21 (a --holdout draft run against a non-holdout one). It must not
+    compare, and it must say why."""
+    path = tmp_path / "gate-width.json"
+    _review_width("draft", {"lo": -2.0, "hi": 2.0, "clusters": 4.0}, path=path,
+                  config_digest="holdout-2022")
+    said = _review_width("draft", {"lo": -0.5, "hi": 0.5, "clusters": 4.0}, path=path,
+                         config_digest="shipped")
+    text = "\n".join(said)
+    assert "REQUIRES REVIEW" not in text
+    assert "1 earlier run(s) of this gate at another config or data digest" in text
+    entries = json.loads(path.read_text())["entries"]
+    assert entries[-1]["requires_review"] is False
+
+
+def test_the_same_digest_still_compares_and_a_data_digest_alone_is_enough_to_block(tmp_path):
+    """Both halves of the condition: identical digests compare (the flag can still fire), and
+    a changed *data* digest alone -- same constants, a different board -- blocks it too."""
+    path = tmp_path / "gate-width.json"
+    _review_width("draft", {"lo": -2.0, "hi": 2.0, "clusters": 4.0}, path=path)
+    same = _review_width("draft", {"lo": -0.5, "hi": 0.5, "clusters": 4.0}, path=path)
+    assert "REQUIRES REVIEW" in "\n".join(same)
+    other = _review_width("draft", {"lo": -0.25, "hi": 0.25, "clusters": 4.0}, path=path,
+                          data_digest="another-board")
+    assert "REQUIRES REVIEW" not in "\n".join(other)
 
 
 def test_an_unreadable_history_costs_a_line_and_not_the_run(tmp_path):

@@ -11,7 +11,9 @@ test that plants its condition, and a check that each named test exists.
 **What counts as a check.** A top-level function in `src/hub` named `verdict`, `*_verdict`,
 `gate`, `run_gate`, `screen` or `*_screen` -- the names this repo gives the functions that
 turn a measurement into a disposition. That naming is the discovery rule; a decision function
-named otherwise escapes this file, and the fix is to name it what it is.
+named otherwise escapes this file, and the fix is to name it what it is -- or, for a guard
+whose name is its job (`review_width`), to list it in `EXPLICIT_GUARDS`, which is a deliberate
+act with a control beside it.
 
 **What counts as a control.** A test that constructs the case the decision exists to detect
 -- a challenger that clears the bar, a gain inside the noise, a ceiling below the MDE, a
@@ -40,6 +42,12 @@ TESTS = ROOT / "tests"
 
 _DECISION_NAME = re.compile(r"^(verdict|[a-z_]+_verdict|gate|run_gate|screen|[a-z_]+_screen)$")
 
+# Guards that decide something without carrying a decision name. Named here so the naming
+# rule stays the discovery rule for everything else, and so a guard added to this list is a
+# deliberate act with a control beside it. `review_width` flags a narrowing interval; on
+# 2026-09-21 it compared a --holdout run against a non-holdout one and flagged nothing real.
+EXPLICIT_GUARDS: tuple[str, ...] = ("hub.models.experiment.review_width",)
+
 # module.function -> (test file, the control tests). Each named test plants the condition
 # its decision exists to detect. Where a decision has two directions, both are named.
 CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -49,6 +57,11 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_a_tie_blocks_adopt_even_when_every_other_season_won",
         "test_a_tie_blocks_remove_even_when_every_other_season_lost",
         "test_no_ceiling_measured_is_not_runnable_in_both_directions",
+    )),
+    "hub.models.experiment.review_width": ("tests/unit/test_experiment.py", (
+        "test_the_width_is_recorded_for_the_next_run_and_carries_the_review_flag",
+        "test_two_runs_at_different_digests_are_not_compared",
+        "test_the_same_digest_still_compares_and_a_data_digest_alone_is_enough_to_block",
     )),
     "hub.models.experiment.run_gate": ("tests/unit/test_gate_run.py", (
         "test_a_void_condition_preempts_every_branch_and_is_the_caller_s_sentence",
@@ -115,8 +128,11 @@ def _decisions(src: Path) -> dict[str, Path]:
         if module.endswith(".__init__"):
             module = module[: -len(".__init__")]
         for node in tree.body:
-            if isinstance(node, ast.FunctionDef) and _DECISION_NAME.match(node.name):
-                found[f"{module}.{node.name}"] = path
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            qualified = f"{module}.{node.name}"
+            if _DECISION_NAME.match(node.name) or qualified in EXPLICIT_GUARDS:
+                found[qualified] = path
     return found
 
 

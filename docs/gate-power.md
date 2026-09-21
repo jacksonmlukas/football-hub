@@ -510,6 +510,17 @@ implementation detail. The mechanism takes it as a parameter and declares nothin
 >
 > Both halves of #376 are now recorded -- weekly above, draft here.
 
+> **And the guard is fixed, not just explained (2026-09-21).** The ledger had recorded both
+> digests since #362 and `review_width` matched on the gate's name alone -- the data needed to
+> make the comparison meaningful was in the row and the check did not read it, the same shape
+> as `two_sided_p` eleven lines from the verdict that ignored it. `review_width` now compares
+> only against a previous entry at an identical `config_digest` **and** `data_digest`; an
+> earlier run at another digest, or a pre-#362 entry with none, is counted and named, never
+> compared. Positive control (rule 18): two runs at different digests must not compare
+> (`tests/unit/test_experiment.py::test_two_runs_at_different_digests_are_not_compared`), and
+> the same digest still must. Registered in the rule-18 contract as an explicit guard.
+
+
 # Restated 2026-09-07: every number above was measured on a harness with a foresight leak
 
 Under [method.md rule 13](method.md). **Nothing in the tables above is edited.** They record
