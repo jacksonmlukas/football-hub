@@ -69,6 +69,7 @@ import os
 import statistics
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -116,6 +117,49 @@ OVER = "Over"
 # Refuse the next pull below this. Sized to leave room for a full week of Sunday-morning
 # snapshots after the balance is noticed, rather than stopping dead at zero.
 CREDIT_FLOOR = 50
+
+
+@dataclass(frozen=True)
+class Poll:
+    """One scheduled snapshot: a name, and when it fires each week, in UTC.
+
+    `weekday` is cron's numbering -- Sunday 0 -- the same convention `hub.fetch.bigten.Deadline`
+    uses and for the same reason: the workflow's crons are what this is compared against, and
+    the comparison should not have to translate.
+    """
+    name: str
+    weekday: int
+    hour: int
+    minute: int
+
+    def cron(self) -> str:
+        return f"{self.minute} {self.hour} * * {self.weekday}"
+
+
+# #370 (S12): by the repo's own 2026-09-11 count, 260 of 272 games never moved across the
+# whole polling window Wed 11:00 / Sat 14:00 UTC covers, and neither poll is a distinct
+# opening capture -- two polls a week cannot see a market move. Six now, all at 11:00 UTC
+# (07:00 ET, before that day's line has had a chance to move on the day's own news) except
+# the two gameday-adjacent ones: Saturday stays at 14:00 UTC ahead of Sunday's slate, and
+# Sunday itself moves to a *morning* capture -- 13:00 UTC, four hours ahead of the 17:00 UTC
+# early kickoffs -- rather than reusing the same reading Saturday already took. Wednesday and
+# Saturday are the original two; Thursday, Friday, Sunday-morning and Monday are the new
+# ones, and Thursday and Sunday-morning are the two #370 names by name.
+#
+# Cost is `len(MARKETS) * len(REGIONS)` a poll -- two credits today -- so six polls is 12 a
+# week, and a year runs 52.18 weeks to twelve months: 12 x 52.18 / 12 is about 52 credits a
+# month against the 500 free tier; `CREDIT_FLOOR` above still refuses the next pull below 50
+# regardless of how it got there. The maintainer approved the spend. `tests/contracts/
+# test_odds_schedule.py` holds `slate.yml`'s odds-polling crons to exactly this tuple, the
+# way `test_bigten_schedule.py` holds `bigten.yml` to `hub.fetch.bigten.DEADLINES`.
+POLL_SCHEDULE: tuple[Poll, ...] = (
+    Poll("wednesday", 3, 11, 0),
+    Poll("thursday", 4, 11, 0),
+    Poll("friday", 5, 11, 0),
+    Poll("saturday", 6, 14, 0),
+    Poll("sunday-morning", 0, 13, 0),
+    Poll("monday", 1, 11, 0),
+)
 
 
 class MultiplierRefused(Exception):

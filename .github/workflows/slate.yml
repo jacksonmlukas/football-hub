@@ -16,7 +16,7 @@ name: slate
 on:
   # Wednesday 11:00 UTC (07:00 ET), before the week's first kickoff; and Saturday 14:00 UTC,
   # for the roster, because waivers clear midweek and the Wednesday roster is stale by the
-  # weekend.
+  # weekend. These two run the full slate, below (the `refresh` job's `if:`).
   #
   # **The Saturday run is safe by construction rather than by timing.** It fires after Thursday
   # night, so it cannot predict those games -- `ratings.forecastable` withholds them -- and it
@@ -24,11 +24,25 @@ on:
   # lives in the code; the cron only chooses when to be useful. A cron that has to be right for
   # the record to hold is one bad retry away from a wrong record.
   #
-  # Two runs a week is two odds credits, about 9 a month against 500. `hub.fetch.odds` refuses
-  # below a floor of 50 before spending one, so an over-eager cadence cannot drain the month.
+  # **Four more (#370 / S12), and they run only `poll_odds` below, not the full slate.** By
+  # the repo's own 2026-09-11 count, 260 of 272 games never moved across the whole window the
+  # two crons above cover -- two polls a week cannot see a market move, and neither is a
+  # distinct opening capture. Thursday, Friday and Monday at 11:00 UTC, plus Sunday at 13:00
+  # UTC -- a morning capture, ahead of the 17:00 UTC early kickoffs rather than reusing
+  # Saturday's reading. `hub.fetch.odds.POLL_SCHEDULE` is the one list this is checked
+  # against; `tests/contracts/test_odds_schedule.py` holds the two to each other, the way
+  # `test_bigten_schedule.py` holds `bigten.yml` to `hub.fetch.bigten.DEADLINES`.
+  #
+  # Six polls a week is twelve odds credits (two markets x one region a poll), about 52 a
+  # month against 500 -- `hub.fetch.odds` refuses below a floor of 50 before spending one, so
+  # an over-eager cadence cannot drain the month. The maintainer approved the spend.
   schedule:
     - cron: "0 11 * * 3"
+    - cron: "0 11 * * 4"
+    - cron: "0 11 * * 5"
     - cron: "0 14 * * 6"
+    - cron: "0 13 * * 0"
+    - cron: "0 11 * * 1"
   workflow_dispatch:
 
 # Contents write, because the whole design is that this commits. Nothing else.
@@ -42,6 +56,9 @@ concurrency:
 
 jobs:
   refresh:
+    # Only the two full-slate crons, or a manual dispatch -- the four #370 added below run
+    # `poll_odds` instead, which is nothing more than an odds credit.
+    if: github.event_name != 'schedule' || contains(fromJSON('["0 11 * * 3", "0 14 * * 6"]'), github.event.schedule)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -200,3 +217,40 @@ jobs:
       # so the slate still lands; the run goes red and stays red until #289 is decided.
       - name: Gate the interval against its band
         run: uv run python -m hub.models.coverage --gate
+
+  # #370 (S12): the four extra polls a week. This is not a second `refresh` -- it spends one
+  # odds credit and nothing else: no nflverse refresh, no CFBD call, no roster pull, no
+  # publish. That is the whole point of splitting it out rather than adding four more crons to
+  # the job above, which would have quadrupled every other source's call rate to buy line
+  # movement nobody asked to see more often.
+  poll_odds:
+    if: github.event_name == 'schedule' && contains(fromJSON('["0 11 * * 4", "0 11 * * 5", "0 13 * * 0", "0 11 * * 1"]'), github.event.schedule)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+
+      - name: Poll the odds market
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: uv run python -m hub.fetch.odds --snapshot
+
+      # `state/odds.json` alone -- the credit balance `CREDIT_FLOOR` reads back. The snapshot
+      # itself lands in the gitignored `data/processed` store the same way `refresh`'s does;
+      # nothing here writes `site/data`, so there is nothing else to commit.
+      - name: Commit the credit balance
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state
+          if git diff --cached --quiet; then
+            echo "nothing changed; no commit"
+            exit 0
+          fi
+          git commit -m "odds: scheduled poll ($(date -u +%A))
+
+          Captured by the scheduled odds-only poll -- see docs/track-record.md rule 1."
+          git pull --rebase origin main
+          git push

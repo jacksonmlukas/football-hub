@@ -889,6 +889,20 @@ as a fantasy aggregate. But 64 credits/week against a 500/month plan covers abou
 month before the spread snapshots are counted, so weekly full-slate prop pulls do not fit the
 free tier. Pulling only the players on your roster and your opponent's would.
 
+**Cadence raised 2026-09-21 (#370 / S12).** Two polls a week -- Wednesday 11:00 UTC, Saturday
+14:00 UTC -- could not see a market move: by the repo's own 2026-09-11 count, 260 of 272
+games never moved across the whole window, and neither poll was a distinct opening capture.
+Now six: the original two, plus Thursday, Friday and Monday at 11:00 UTC and a Sunday
+*morning* capture at 13:00 UTC (ahead of the 17:00 UTC early kickoffs, rather than reusing
+Saturday's reading). `hub.fetch.odds.POLL_SCHEDULE` is the declaration; `slate.yml`'s
+`poll_odds` job runs the four new ones and spends one odds credit each, nothing else --
+`tests/contracts/test_odds_schedule.py` holds the workflow's crons to that constant.
+
+Cost: two credits a poll (spreads + totals, one region) times six polls a week is twelve a
+week, about 52 a month against the 500 free tier -- against the ~9/month the two-poll cadence
+spent. `CREDIT_FLOOR` (50) still refuses the next pull below it regardless of how the balance
+got there. The maintainer approved the spend.
+
 ## Draft-night pick feed: what ESPN actually publishes
 
 **Tested 2026-08-24 against a live practice draft**, because the whole live path had never
