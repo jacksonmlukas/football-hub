@@ -322,6 +322,35 @@ function unconfirmedNote(surv) {
 }
 
 
+// The eliminated state (#380): the week it happened, the team, and whether a buyback is
+// still open -- rendered instead of a plan and a survival figure, neither of which an out
+// entry has. `surv.eliminated_week`/`surv.eliminated_team` are `null` on a state that names
+// our entry as out without ever recording a pick for it -- not a shape a parsed pool
+// payload produces, but said honestly rather than guessed at.
+function eliminatedBody(surv) {
+  const week = surv.eliminated_week;
+  const team = surv.eliminated_team;
+  const buybackThrough = surv.buyback_cutoff_week;
+  const when = (week === null || week === undefined)
+    ? "an unrecorded week"
+    : `week ${esc(week)}` + (team ? ` on ${esc(team)}` : "");
+  const buyback = surv.buyback_open
+    ? `A buyback is still open, through week ${esc(buybackThrough)}.`
+    : `The buyback window is closed (it ran through week ${esc(buybackThrough)}).`;
+  return `<p class="empty">Eliminated in ${when}. No remaining plan and no survival figure
+          while this entry is out. ${buyback}</p>`;
+}
+
+// The no-pool-state caveat (#380): a remaining plan is still published when no pool record
+// has ever been read, but it is this repository's own -- not verified against what the
+// pool says -- and a reader should not mistake it for the pool's record the way the
+// artifact this ticket was filed against did.
+function unreadStateNote(surv) {
+  if (!surv || surv.status !== "unread-state") return "";
+  return `<p class="warn">No pool state has been read for this entry: the remaining plan
+          above is this repository's own, not the pool's record.</p>`;
+}
+
 function survivorBody(surv) {
   const rows = Array.isArray(surv?.rows) ? surv.rows : [];
   // Absent and empty are different claims, and both arrive here. `[]` says no week has been
@@ -679,7 +708,15 @@ async function render() {
   const sArt = findArt(man, "survivor");
   const surv = await load("survivor");
   const sRows = Array.isArray(surv?.rows) ? surv.rows : [];
-  if (sRows.length) {
+  if (surv && surv.status === "eliminated") {
+    // No plan and no survival figure to caption the panel by (#380) -- the fact that
+    // stands in their place is the elimination itself.
+    panel("p-survivor", {
+      age: "eliminated",
+      warn: sArt?.stale ? `Stale: ${sArt.reason ?? "unknown"}` : null,
+      html: eliminatedBody(surv),
+    });
+  } else if (sRows.length) {
     // The unpriced weeks matter more than the plan does. In August the board runs a few
     // weeks deep, so a plan covering 12 of 18 is the honest answer and a plan that did not
     // say so would read as a season. A week here is the entrant's to fill, which is why it
@@ -698,7 +735,7 @@ async function render() {
           : (missing.length
              ? `Weeks ${missing.join(", ")} have no posted spread yet and still need a pick.`
              : null),
-      html: survivorBody(surv) + unconfirmedNote(surv),
+      html: survivorBody(surv) + unconfirmedNote(surv) + unreadStateNote(surv),
     });
   } else {
     panel("p-survivor", {

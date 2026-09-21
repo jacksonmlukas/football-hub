@@ -161,6 +161,15 @@ class Entry(NamedTuple):
     index: int
     alive: bool
     used: tuple[str, ...]        # its Ledger: the teams spent in weeks that are final, sorted
+    # The entry's most recent final-week pick(s) -- `None`/`()` when it has made none. Not
+    # a guess: a knockout pool takes no further pick from an entry once it is out, so an
+    # entry's last recorded final-week pick *is* the pick it lost on when `alive` is False.
+    # Carried for exactly that reading (#380): `used` is a sorted set with the week thrown
+    # away, and reports an eliminated entry only as *which* teams are gone, never which
+    # week it happened in or which of them was the loss. `last_teams` is a tuple rather
+    # than one team because a double-pick week (`PoolConfig.double_pick_weeks`) spends two.
+    last_week: int | None = None
+    last_teams: tuple[str, ...] = ()
 
 
 class PoolState(NamedTuple):
@@ -346,12 +355,15 @@ def parse_payload(payload: Any, *, ours: str, season: int | None = None,
     if not raw:
         raise EmptyPool("the pool host answered with no entries in the pool")
 
-    keyed: list[tuple[str, bool, set[str]]] = []
+    keyed: list[tuple[str, bool, set[str], dict[int, set[str]]]] = []
     for i, e in enumerate(raw):
         where = f"entries[{i}]"
         ident = str(_need(e, "id", where, (str, int)))
         alive = _need(e, "alive", where, (bool,))
         used: set[str] = set()
+        # Every final week's team(s), kept apart from `used` so the *last* one is still
+        # findable once the set below has thrown the weeks away.
+        by_week: dict[int, set[str]] = {}
         for j, p in enumerate(_need(e, "picks", where, (list,))):
             wk = _need(p, "week", f"{where}.picks[{j}]", (int,))
             if wk not in statuses:
@@ -369,7 +381,8 @@ def parse_payload(payload: Any, *, ours: str, season: int | None = None,
                 continue
             # /GUARD
             used.add(team)
-        keyed.append((ident, alive, used))
+            by_week.setdefault(wk, set()).add(team)
+        keyed.append((ident, alive, used, by_week))
 
     idents = [k[0] for k in keyed]
     if len(set(idents)) != len(idents):
@@ -377,9 +390,14 @@ def parse_payload(payload: Any, *, ours: str, season: int | None = None,
     # The map decides the number, then the id is dropped: from here an entry is its index
     # and nothing else. Index order, so ours is first and the store reads back the same.
     numbered = assign_indices(idents, ours=ours, index_map=index_map)
-    entries = tuple(sorted(
-        (Entry(index=numbered[entry_key(ident)], alive=alive, used=tuple(sorted(used)))
-         for ident, alive, used in keyed), key=lambda e: e.index))
+    entries = []
+    for ident, alive, used, by_week in keyed:
+        last_week = max(by_week) if by_week else None
+        last_teams = tuple(sorted(by_week[last_week])) if last_week is not None else ()
+        entries.append(Entry(index=numbered[entry_key(ident)], alive=alive,
+                             used=tuple(sorted(used)), last_week=last_week,
+                             last_teams=last_teams))
+    entries = tuple(sorted(entries, key=lambda e: e.index))
     return PoolState(season=got_season, week=week, field_size=field_size, pot=pot,
                      entries=entries), numbered
 
@@ -393,6 +411,7 @@ def ledgers(state: PoolState) -> list[set[str]]:
 # --- the store --------------------------------------------------------------------------
 
 _SCHEMA = {"entry": pl.Int64, "alive": pl.Boolean, "used": pl.List(pl.Utf8),
+           "last_week": pl.Int64, "last_teams": pl.List(pl.Utf8),
            "season": pl.Int64, "week": pl.Int64, "field_size": pl.Int64, "pot": pl.Float64}
 
 
@@ -402,6 +421,8 @@ def to_frame(state: PoolState) -> pl.DataFrame:
         "entry": [e.index for e in state.entries],
         "alive": [e.alive for e in state.entries],
         "used": [list(e.used) for e in state.entries],
+        "last_week": [e.last_week for e in state.entries],
+        "last_teams": [list(e.last_teams) for e in state.entries],
         "season": [state.season] * len(state.entries),
         "week": [state.week] * len(state.entries),
         "field_size": [state.field_size] * len(state.entries),
@@ -416,7 +437,11 @@ def _from_frame(df: pl.DataFrame) -> PoolState:
         season=int(first["season"]), week=int(first["week"]),
         field_size=int(first["field_size"]), pot=float(first["pot"]),
         entries=tuple(Entry(index=int(r["entry"]), alive=bool(r["alive"]),
-                            used=tuple(r["used"])) for r in rows))
+                            used=tuple(r["used"]),
+                            last_week=(int(r["last_week"])
+                                      if r.get("last_week") is not None else None),
+                            last_teams=tuple(r.get("last_teams") or ()))
+                     for r in rows))
 
 
 def state_path(base: Path | None = None) -> Path:
@@ -488,7 +513,7 @@ def write_state(state: PoolState, base: Path | None = None, *,
     return cached.write_stamp(
         path, when.isoformat(timespec="seconds"),
         season=state.season, week=state.week, field_size=state.field_size, pot=state.pot,
-        entries=df.select("entry", "alive", "used").to_dicts())
+        entries=df.select("entry", "alive", "used", "last_week", "last_teams").to_dicts())
 
 
 def state_digest(state: PoolState) -> str:
@@ -500,7 +525,8 @@ def state_digest(state: PoolState) -> str:
     found the identical field are the identical field, and a journal row naming this digest
     is re-run against that field whichever read is resolved to.
     """
-    canon = to_frame(state).sort("entry").with_columns(pl.col("used").list.join(","))
+    canon = to_frame(state).sort("entry").with_columns(
+        pl.col("used").list.join(","), pl.col("last_teams").list.join(","))
     head = ",".join(f"{c}:{canon.schema[c]}" for c in canon.columns)
     return hashlib.sha256((head + "\n").encode()
                           + canon.write_csv().encode()).hexdigest()[:8]

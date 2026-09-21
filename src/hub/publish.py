@@ -21,17 +21,28 @@ import json
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import polars as pl
 
 from hub import atomic, jsonio, schedule, store
-from hub.config import SEASON_AHEAD, UNCONFIRMED_POOL_RULES, pool_digest, resolved_config
+from hub.config import (
+    SEASON_AHEAD,
+    UNCONFIRMED_POOL_RULES,
+    PoolConfig,
+    pool_digest,
+    resolved_config,
+)
 from hub.models import coverage
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
 from hub.paths import ROSTER_PARQUET
 from hub.season.roster import lock
+
+if TYPE_CHECKING:
+    # Typing only. `survivor` imports the real module locally, the way every other
+    # network-adjacent source in this file does -- see its own docstring for why.
+    from hub.fetch.pool import Entry
 
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "site" / "data"
@@ -819,9 +830,55 @@ def publish_all(season: int, week: int, base: Path | None = None,
     return man
 
 
+# The `status` a survivor artifact carries (#380). Not a fourth spelling of #347's
+# frozen/live/stale/unconfirmed grammar -- that names how *sure* a rendered number is, and
+# none of these three name a number's confidence. This names which of three different
+# *things* the artifact is: a live plan, the same plan published with no pool record behind
+# it, or no plan at all because the pool says the entry is out. The panel prints the
+# sentence; there is no page-wide CSS state for it.
+STATUS_ELIMINATED = "eliminated"    # ours.alive is False: no plan, no survival figure
+STATUS_UNREAD_STATE = "unread-state"  # no pool state on disk: the remaining plan is the
+                                      # code's own, not verified against a pool record
+STATUS_PLAN = "plan"                # a pool state was read and ours is alive (or absent)
+
+
+def _eliminated(season: int, out: Path, pool: PoolConfig, ours: Entry) -> dict[str, Any]:
+    """The eliminated artifact: the week it happened, the team, and the buyback line --
+    no plan, no survival figure (#380).
+
+    Written straight through `_write` rather than `_publish`. `_publish`'s last-good guard
+    treats a payload with no rows as *nothing to report* and, with something already
+    published, keeps that instead of writing the empty one -- exactly right for a run that
+    found nothing new, and exactly wrong here: an eliminated entry has no rows to report by
+    definition, and what it replaces is not "nothing new" but a plan the pool no longer
+    backs. Keeping the old one is the bug this function exists to fix.
+
+    `ours.last_week`/`ours.last_teams` are `Entry`'s reading of the payload's own picks
+    (#380): a knockout pool takes no further pick from an entry once it is out, so the last
+    final-week pick on record *is* the pick it lost on. Both are `None`/`()` for a state
+    that says an entry is out without ever having recorded a pick for it -- not a shape a
+    parsed payload produces, but the accessor's contract holds regardless -- and the
+    sentence says so rather than guessing at a week.
+    """
+    week, teams = ours.last_week, ours.last_teams
+    open_ = week is not None and week <= pool.buyback_cutoff_week
+    art = jsonio.artifact(
+        "survivor", "hub.season.survivor", [],
+        status=STATUS_ELIMINATED, season=season,
+        eliminated_week=week,
+        eliminated_team=", ".join(teams) if teams else None,
+        buyback_open=open_,
+        buyback_cutoff_week=pool.buyback_cutoff_week)
+    _write(out, "survivor", art)
+    print(f"  survivor: eliminated week {week} ({art['eliminated_team'] or 'unrecorded'}), "
+          f"buyback {'open' if open_ else 'closed'}"[:160])
+    return art
+
+
 def survivor(season: int, out: Path | None = None,
              store: Path | None = None) -> dict[str, Any] | Kept | None:
-    """The survivor plan, as its own artifact.
+    """The survivor plan, as its own artifact -- or, when the pool says our entry is out,
+    the elimination instead (#380).
 
     Wrapped rather than inlined because it reaches the network for a schedule. A failing
     source marks the panel stale and leaves the last good plan in place -- taking the whole
@@ -829,7 +886,15 @@ def survivor(season: int, out: Path | None = None,
 
     `store` is the processed store the pool host's last-known state is read from for the
     Ledger (#280); the default is the real one, and a test passes its own.
+
+    **Read once, gated on before any plan is built.** `sv.plan_remaining` has no idea our
+    entry is out -- it plans against a Ledger, not a liveness bit -- so a caller that ran it
+    first and only *then* asked whether to publish would compute a full remaining plan every
+    week for an entry that cannot use it. `ours.alive` is checked here, ahead of the solve,
+    and the eliminated branch below never calls `sv.plan_remaining` or `sv.prior_rows` at
+    all: there is no remaining plan for an out entry to have a Ledger against.
     """
+    from hub.fetch import pool as fetch_pool
     from hub.season import survivor as sv
     out = out or SITE
     # The pool's rules as a run actually resolves them -- `conf/` applied -- and not a bare
@@ -839,6 +904,18 @@ def survivor(season: int, out: Path | None = None,
     # That falsified the survivor plan's own commitment that pool rules are configuration: a
     # rule correction was a re-run everywhere except the place a reader sees.
     pool = resolved_config().pool
+
+    # The one place `ours.alive` is read before a plan is built (#380). `state` is `None` on
+    # this checkout -- no pool state has ever been read here (#379) -- and on any fresh clone;
+    # `ours` is `None` when a state exists but does not carry our own entry (an id entered
+    # after `POOL_ENTRY_ID` last changed, or a state read before we were entered). Neither is
+    # an elimination: only a state that names our entry and says it is not alive is.
+    state = fetch_pool.read_state(store)
+    ours = state.ours if state is not None else None
+    if ours is not None and not ours.alive:
+        return _eliminated(season, out, pool, ours)
+    status = STATUS_PLAN if state is not None else STATUS_UNREAD_STATE
+
     try:
         # The remaining plan *and its scope*, from `hub.season.survivor` rather than
         # assembled here. This function used to make nine `sv.*` calls orchestrating
@@ -883,6 +960,12 @@ def survivor(season: int, out: Path | None = None,
                           # different rules produced identical artifacts *and* identical
                           # provenance.
                           pool_digest=pool_digest(pool),
+                    # Which of the three things this artifact is (#380). `status` is not a
+                    # rules-driven figure and so does not wait for `read` to decode it the
+                    # way `Kept`/`None`/a payload do -- both `plan` and `unread-state` are
+                    # *this* branch's payload, differing only in whether a pool record backed
+                    # it, and the panel is what turns the difference into a sentence.
+                    status=status,
                     season=season,
                     survival=got.survival, unpriced_weeks=got.coverage.missing,
                     # The remaining plan's own scope, said out loud. A survival probability means
