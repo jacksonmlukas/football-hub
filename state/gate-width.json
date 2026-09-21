@@ -1,52 +1,94 @@
 {
   "entries": [
     {
+      "clusters": 4.0,
+      "config_digest": "unknown (pre-#362, not recorded by the overwritten single-record shape)",
+      "data_digest": "unknown (pre-#362, not recorded by the overwritten single-record shape)",
       "gate": "draft",
-      "config_digest": "unknown (pre-#362, not recorded by the overwritten single-record shape)",
-      "data_digest": "unknown (pre-#362, not recorded by the overwritten single-record shape)",
-      "timestamp": "2026-09-12 (commit fb68c4e; no time-of-day recorded pre-#362)",
-      "width": 11.692464285714289,
-      "clusters": 4.0,
-      "lo": -16.916142857142862,
       "hi": -5.223678571428573,
+      "lo": -16.916142857142862,
+      "requires_review": false,
+      "timestamp": "2026-09-12 (commit fb68c4e; no time-of-day recorded pre-#362)",
       "verdict": "REMOVE",
-      "requires_review": false
+      "width": 11.692464285714289
     },
     {
-      "gate": "weekly",
+      "clusters": 4.0,
       "config_digest": "unknown (pre-#362, not recorded by the overwritten single-record shape)",
       "data_digest": "unknown (pre-#362, not recorded by the overwritten single-record shape)",
-      "timestamp": "2026-09-12 (commit fb68c4e; no time-of-day recorded pre-#362)",
-      "width": 0.6112071678321671,
-      "clusters": 4.0,
-      "lo": -1.1518653846153843,
+      "gate": "weekly",
       "hi": -0.5406582167832172,
+      "lo": -1.1518653846153843,
+      "requires_review": true,
+      "timestamp": "2026-09-12 (commit fb68c4e; no time-of-day recorded pre-#362)",
       "verdict": "REMOVE",
-      "requires_review": true
+      "width": 0.6112071678321671
     },
     {
-      "gate": "interval_shape",
+      "clusters": 5.0,
       "config_digest": "unknown (pre-#362, not recorded by the overwritten single-record shape)",
       "data_digest": "b1a14540",
-      "timestamp": "2026-09-13 (commit 2f7501d; no time-of-day recorded pre-#362)",
-      "width": 0.0127197900430981,
-      "clusters": 5.0,
-      "lo": -0.042331431540016895,
+      "gate": "interval_shape",
       "hi": -0.029611641496918795,
+      "lo": -0.042331431540016895,
+      "requires_review": false,
+      "timestamp": "2026-09-13 (commit 2f7501d; no time-of-day recorded pre-#362)",
       "verdict": "NOT-RUNNABLE",
-      "requires_review": false
+      "width": 0.0127197900430981
     },
     {
-      "gate": "draft",
+      "clusters": 4.0,
       "config_digest": "unknown (pre-#362, not recorded by the overwritten single-record shape)",
       "data_digest": "unknown (pre-#362, not recorded by the overwritten single-record shape)",
-      "timestamp": "2026-09-16 (commit 7e6625f; no time-of-day recorded pre-#362)",
-      "width": 11.096,
-      "clusters": 4.0,
-      "lo": -18.761178571428573,
+      "gate": "draft",
       "hi": -7.665178571428573,
+      "lo": -18.761178571428573,
+      "requires_review": true,
+      "timestamp": "2026-09-16 (commit 7e6625f; no time-of-day recorded pre-#362)",
       "verdict": "REMOVE",
-      "requires_review": true
+      "width": 11.096
+    },
+    {
+      "clusters": 4.0,
+      "config_digest": "c4606f91",
+      "data_digest": "01465e05",
+      "gate": "weekly",
+      "hi": -0.5560262237762241,
+      "lo": -1.604653846153846,
+      "requires_review": false,
+      "seasons": [
+        {
+          "disposition": "loss",
+          "gain": -1.119769230769231,
+          "m": 20,
+          "se": 0.4088479112937116,
+          "season": 2022
+        },
+        {
+          "disposition": "loss",
+          "gain": -1.4479230769230762,
+          "m": 20,
+          "se": 0.44738202810661887,
+          "season": 2023
+        },
+        {
+          "disposition": "tie",
+          "gain": -0.2587272727272733,
+          "m": 20,
+          "se": 0.5428066491511976,
+          "season": 2024
+        },
+        {
+          "disposition": "loss",
+          "gain": -1.7613846153846153,
+          "m": 20,
+          "se": 0.5456916529523149,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-09-21T19:39:54+00:00",
+      "verdict": "SHOW",
+      "width": 1.0486276223776219
     }
   ]
 }
