@@ -1,0 +1,23 @@
+{
+  "draft": {
+    "clusters": 4.0,
+    "hi": -7.665178571428573,
+    "lo": -18.761178571428573,
+    "requires_review": true,
+    "width": 11.096
+  },
+  "interval_shape": {
+    "clusters": 5.0,
+    "hi": -0.029611641496918795,
+    "lo": -0.042331431540016895,
+    "requires_review": false,
+    "width": 0.0127197900430981
+  },
+  "weekly": {
+    "clusters": 4.0,
+    "hi": -0.5406582167832172,
+    "lo": -1.1518653846153843,
+    "requires_review": true,
+    "width": 0.6112071678321671
+  }
+}
