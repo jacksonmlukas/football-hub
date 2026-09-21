@@ -754,6 +754,9 @@ BIGTEN_CAPTURES = Contract(
 POOL_STATE = Contract(
     name="pool_state",
     required={"entry": pl.Int64, "alive": pl.Boolean, "used": pl.List(pl.Utf8),
+              # `last_week`/`last_teams` are the entry's most recent final-week pick(s) --
+              # nullable/empty by construction for an entry that has made none yet (#380).
+              "last_week": pl.Int64, "last_teams": pl.List(pl.Utf8),
               "season": pl.Int64, "week": pl.Int64, "field_size": pl.Int64,
               "pot": pl.Float64},
     non_null=("entry", "alive", "used", "season", "week", "field_size", "pot"),
