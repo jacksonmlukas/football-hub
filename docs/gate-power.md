@@ -1900,3 +1900,147 @@ the joint-size figure is the more interesting output — the first honest answer
 correlated the two-part screen's halves are. If it changes others, each is restated in place
 with the superseded figure kept beside it per rule 13, and the false-discovery table is
 re-printed at the same run so a reader sees the diagnostic and the corrected rule together.
+
+# Pre-registered 2026-09-21 — PROPOSED: four arithmetic items that move published numbers
+(#315)
+
+**Status: PROPOSED.** Drafted under the #326 freeze. **A restatement, four times over, not a
+gate**: none of the four items compares a candidate to an incumbent under ADR-0019 — each
+corrects a closed-form step inside an existing estimator, and this section names the location,
+the correction, and the published figure each moves. Parent decisions: rule 9 (a result too
+large to believe is a bug), rule 13 (restatement protocol), ADR-0006 (a fitted constant lives
+with its provenance — relevant to item 4, below, which borrows a constant that already has
+one). Located by reading the code the audit finding (`prediction_evaluation` rank 8) names,
+not by re-deriving each closed form from scratch in this document.
+
+## Item 1 — the absence factor scales the draw by `1/f`, not `1/√f`
+
+**Location.** `hub.draft.season._absence_factor` (`src/hub/draft/season.py:110-174`). The
+mean-preserving scale at the function's last line, `played / play_frac[None, None, :]`, divides
+every drawn weekly value — for a played week — by the play fraction `f`. That is the correct
+transform for the **mean** (it is the "definitional conversion" the function's own docstring
+argues for, and that argument is not in question): `mu` arriving here is already a per-scheduled-game
+average net of expected absence, so dividing a played week's draw by `f` recovers the
+*healthy* per-game rate. **The same division also scales that week's simulated *spread* by
+`1/f`**, when the closed form for a mean-preserving rescale of a played-week's *noise* term —
+holding the season-total variance to what an unbiased absence model implies — is `1/√f`,
+one square root short of what the code does. The audit's own estimate: **about +10% too wide**
+in weekly sd for a player expected to miss three of seventeen (`f ≈ 14/17 ≈ 0.824`,
+`1/f ≈ 1.214` against `1/√f ≈ 1.102`).
+**What moves.** Every season-simulation figure downstream of `_absence_factor` for a player
+with nonzero `missed` — win probabilities, VOR, the draft board's ranking sensitivity to
+injury history — inherits an overstated variance for exactly the players durability already
+flags. `docs/durability.md` cites the function and is the doc to restate first.
+
+## Item 2 — the consensus target is biased low by an uncorrected log transform
+
+**Location.** `hub.models.weekly.fit_consensus_prior`/`consensus_target`
+(`src/hub/models/weekly.py:127-173`). The OLS is fit on `log(1 + count)` (`np.log1p`) against
+`log(rank)`, and the prediction is `expm1(a + b·log(rank))` — a back-transform with **no
+smearing correction**. `E[exp(X)] > exp(E[X])` under any residual spread, so a naive
+`expm1` of a log-scale linear prediction is a biased-low estimate of the level-scale mean,
+by a factor Duan's smearing estimator (`mean(exp(residuals))` in place of `exp(0)` in the
+back-transform) corrects for. `hub.models.spread` already carries this exact argument in its
+own docstring and *declines* the correction there, for a stated reason: its loss is MAE, and
+Duan's correction targets a mean-loss estimator, not a median-loss one. `hub.models.weekly`
+uses the target as a **shrinkage mean** (`Shrink.consensus_prior`, feeding a mean, not a
+median), so the same argument that excuses `spread` obligates `weekly`. **What moves.** Every
+figure the consensus-prior shrinkage feeds — the imputed/thin-sample projections it pulls
+toward — moves up by the smearing factor, concentrated on the thin-sample players the prior
+exists for. No doc currently quotes `consensus_target`'s own bias by number; the restatement's
+first job is to measure the smearing factor once fit, which is new information rather than a
+correction of a published figure, and the *downstream* projections it moves are what rule 13
+obligates.
+
+## Item 3 — the imputation is a greedy projection, not the unbiased monotone fit
+
+**Location.** `hub.draft.board._impute_xfp` (`src/hub/draft/board.py:564-606`), specifically
+`sm = np.minimum.accumulate(sm)` at line 603. A running minimum forces monotone decline by
+clamping every point down to the smallest value seen so far — which sits **at or below** the
+smoothed curve everywhere a violation existed, never above — rather than the least-squares
+monotone fit, which moves the *violating neighbours* toward each other (pooling their
+average) and can move either up or down. **`docs/impute-cv.md:87` already names the symptom**
+— "the curve also sits low for rookies" — without identifying the mechanical cause; this item
+is that cause. PAVA (pool-adjacent-violators) is the closed-form unbiased least-squares
+monotone regression and replaces the rolling-median-then-clamp construction; the acceptance
+criterion is stated as a direction ("the median residual moves toward zero"), not a target
+value, because the fitted curve moving is the finding.
+**What moves.** Every imputed `xfp_per_game` for a rookie or thin-sample player — `#87`'s own
+`talent_cv_for` widening logic reads the imputation's *measured error*, so a less-biased
+imputation changes that widened spread too, not only the point estimate. `docs/impute-cv.md`,
+`docs/talent-cv.md` and `docs/decisions.md` cite the imputation and are the restatement's
+targets, in roughly that order (impute-cv.md names the mechanism, the other two cite its
+output).
+
+## Item 4 — defence-versus-position has no opponent-strength adjustment
+
+**Location.** `hub.models.panel`'s `dvp` column (`src/hub/models/panel.py:~1180-1194`),
+`dvp = allowed_prior / lg` — a raw sum of points allowed over a league mean, with no term for
+the strength of the offences that produced `allowed_prior`. The identical problem, for the
+identical reason, was already solved once in this repo: `hub.draft.playoff_sos._dvp_from_stats`
+and `_ridge_defence_effects` (`src/hub/draft/playoff_sos.py:67-149`) fit a ridge-penalised
+two-way (offence, defence) effects model for exactly the strength-of-schedule question #180
+built for the playoff slate, with the penalty itself a stated choice
+(`RIDGE_PENALTIES`/`DraftConfig.sos_ridge`, `not_an_input` per ADR-0006's own provenance rule).
+**What "shares the ridge" means, precisely, and the one place this is not purely mechanical.**
+`_ridge_defence_effects` is fit per-position on a season's worth of games with `TEAM_GAMES`-scale
+counts; the weekly panel's `dvp` is read week-by-week, strictly before the outcome (rule 2), so
+the ridge would need to be **refit walk-forward on strictly earlier games within the season**
+rather than reused from the playoff module's own season-level fit — a different estimation
+window on the same functional form, not a different form. That is an implementation detail
+the ticket's acceptance criterion ("opponent-adjusted, sharing the playoff-schedule ridge")
+does not resolve by itself, and this document does not resolve it either: it is the one place
+in this ticket closest to a modelling choice (which games are "strictly earlier" for a
+week-*w* `dvp` — the current season only, or prior seasons pooled in), and per ADR-0024's own
+test it stays a candidates-named question rather than a silent pick, below.
+**What moves.** `dvp` is a screened, surviving feature (rule 14's table: `t = +3.76`, adjusted
+`p = 0.053`, one of the four that "survives" at the published anchor) and feeds
+`hub.models.weekly`'s components directly — an opponent-adjusted `dvp` changes the screen's own
+`t` (a new number, not a restatement of the old one, since the feature itself changes) and
+every downstream weekly figure that reads it. `docs/weekly-screen.md`, `docs/method.md`
+(rule 14's table) and `docs/weekly-projection-plan.md` are the restatement's targets.
+
+## The restatement order
+
+1. Item 1 (absence factor) first — narrowest blast radius (the draft season simulator alone),
+   no dependency on the other three, and the closed form is the least contestable of the four.
+2. Item 3 (imputation) second — same reasoning, contained to `board.py`'s imputed rows, and
+   `docs/impute-cv.md`'s own text already anticipates the direction the fix moves.
+3. Item 2 (consensus target) third — touches `hub.models.weekly`'s shrinkage machinery, which
+   #311's restatement also touches (a different statistic, the same module); landing this
+   before #311's re-run means the smearing-corrected target is what #311's restated weekly
+   figures are computed against, not a target that moves a second time under them.
+4. Item 4 (defence-vs-position) last — the one item with an open estimation-window choice
+   (below) and the one whose restated feature changes what the weekly screen measures rather
+   than only how accurately it is reported, so it should not be rushed ahead of the other three
+   to avoid a second screen re-run.
+
+## What this measurement cannot do
+
+- It cannot fit item 4's ridge penalty or its estimation window here; both are chosen at
+  implementation time, and the window choice is named as an open question rather than decided.
+- It cannot quantify items 2 and 4's exact movement without running the corrected code — no
+  smearing factor or opponent-adjustment coefficient is fabricated in this section.
+- It cannot say whether item 4 changes `dvp`'s screen status (survives vs. does not); the
+  screen's own re-run, not this document, answers that.
+
+## What happens either way
+
+Items 1 and 3 restate cleanly regardless of any other decision in this document. Item 2's
+restated figures depend on nothing else landing first (spread's own decision not to correct is
+unaffected — it is a stated exception, not an oversight). Item 4 either resolves the estimation
+window as a stated choice at implementation time or is split into its own decision ticket if
+the maintainer reads the window as ADR-0024's "different objects" rather than a detail — the
+candidates are named below for that reading.
+
+**Closing, item 4 only — the other three have no candidates to choose between.** Candidates:
+(a) refit the ridge walk-forward, within-season, on strictly earlier weeks of the *same*
+season (consistent with rule 2, and with a thin early-season sample); (b) refit it once per
+season on the *prior* season's full game log, the way `playoff_sos` itself is computed (a
+stabler fit, available from week 1, but not rule 2's "strictly earlier" window in the sense
+`expanding_seasons` means it — a game log a season old rather than a season boundary).
+Recommendation: none — the choice changes what `dvp` *is* (in-season current-form signal vs.
+last-season baseline), not only how well it is estimated, which is exactly ADR-0024's line
+between a sensitivity and a decision. What would reopen this: either candidate measured
+against the other and reported as a sensitivity, per ADR-0024's own default, if the maintainer
+reads it as one axis rather than two objects.
