@@ -32,3 +32,29 @@ the milestones and in the tickets' own bodies, never here.** Known divergences f
   the module and re-takes the count (12/12 killed on `333e59a`, #304). The count of 14 is not
   verifiable from this file and is not carried forward. `mutation_testing.pool` is complete at
   10/10 and needs no successor.
+
+## 2026-09-20 method audit
+
+`2026-09-20-method-audit.json` is indexed as a **separate method audit, not Audit V** (#373)
+-- the "Audit V is #325" line above stays true, and #325 still owes the artifact read and the
+Phase 2/3 re-plan. Its own `schema.relation_to_audit_v` says the same; filed as the milestone
+"Method audit 2026-09-20". Known divergences from `plan` as written:
+
+- S1 (#357) and S4 (#361) were confirmed against the repo's real code before filing, not left
+  at the JSON's own `verified: read` / faithful-reimplementation caveat: S1 re-run against the
+  real `summarise`/`per_season` on `bb334e0`, 0 disagreements in 2,000 draws, null ADOPT rate
+  0.061 vs 2^-4 = 0.0625; S4 confirmed by direct read of
+  `injury.observations`/`walk_forward`.
+- `plan` phase 0 is in-season and dated; its steps are re-ordered as weeks pass, and
+  re-orderings live in the tracker, never here.
+- `overlap_with_audit_iv` lists 15 items this round found independently that are already on
+  the tracker from audits I-IV. No S ticket was filed for any of them; if one of those
+  R/B/C/G tickets is later closed as a duplicate of an S ticket, that is a divergence worth
+  recording here.
+- 2026-09-20 grilling session: the freeze (#326) was restated on its own axis ("blocks a
+  modelling change landing") and #360, #361, #365, #366, #367, #369, #371 were given
+  `blocked_by #326` edges; #357 is exempt as the freeze's own release condition -- a finding
+  cannot be blocked by the freeze it is the release condition for. #375 (the phase-2
+  posterior, `plan[2].steps[0]`) and #376 (S6's NOT-RUNNABLE remedy -- measure the
+  draft/weekly gate ceilings) were filed. Adopted: #363 option 1, #335 (A)+(i) with
+  `TIE_MIN_CLUSTERS = 12`, #364 option 3, #358 option 1, #349 (a), #372 as drafted.
