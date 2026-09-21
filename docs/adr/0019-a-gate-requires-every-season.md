@@ -287,6 +287,34 @@ of evidence — and at these SEs and cluster counts, that strictness measurably 
 a realistic delta. The alternative is the defect this amendment closes: a rule with less
 power is a rule that is actually testing what it claims to.
 
+**The mechanism behind the number (2026-09-21, after the first two runs).** The power figures
+above say how often; this says why, because without it the next reader of 0.032 reaches for
+the threshold, and the threshold is not the lever. **One tie vetoes every verdict, in both
+directions.** ADOPT needs a win in every season and a tie is not a win; REMOVE needs a loss in
+every season and a tie is not a loss. So a single unresolvable season forces SHOW however large
+or consistent the effect is elsewhere. With k held-out seasons and a per-season tie
+probability p, the chance that at least one season abstains is 1 − (1 − p)^k: at k = 4 and
+p = 0.25 that is 0.68 — SHOW roughly two runs in three, before the effect size enters at all.
+The first two gates run under this rule did exactly that: the draft gate (#376: 2022 −15.35,
+2023 −8.41, **2024 −5.99 tie**, 2025 −19.86) and the weekly gate (#378: 2022 −1.120, 2023
+−1.448, **2024 −0.259 tie**, 2025 −1.761) both read SHOW at won 0, tied 1, lost 3 of 4, by the
+same mechanism. That is (A) working as adopted, and the pre-registered disposition holds.
+
+**The open question this leaves, stated now and not decided now.** What a gate should do with
+an unresolvable season has three coherent answers, and the adoption chose one: **(A)
+abstain-and-veto** (this rule: a tie blocks both halves); **(B) evaluate over resolved seasons
+only** (rejected above: fewer seasons license); and a third nobody listed — **(C) report the
+verdict over resolved seasons *with the abstention count beside it***, which keeps (B)'s power
+without (B)'s licensing problem, because a reader sees "ADOPT on 3 resolved of 4, 1 abstained"
+and not "ADOPT". Re-deciding after two SHOWs is what rule 1 forbids, so this is recorded as the
+question the first three runs under the rule will inform, and the decision waits for them
+(#381). One sub-question those runs should answer on the way: 2024 tied in both harnesses.
+At one in four each that is one in sixteen jointly — probably coincidence — but if 2024 has
+systematically wider *within-season* spread in both, the tie rule is abstaining on noisy
+seasons rather than on small effects, which is a different property from "a tie means the
+effect is small" and would need saying. Neither run recorded its per-season SE beside the
+gain; #382 makes every run record it, and re-runs the weekly harness once to read 2024's.
+
 **The draft gate's ADOPT branch is a named exemption, not a bar (2026-09-21).** At δ=2.0 the
 combined rule's power for the draft gate is **0.0324** against unanimity-alone's 0.136 — an
 ADOPT that is reachable in principle but not at any effect size this project would plausibly
