@@ -2004,3 +2004,175 @@ being quietly assumed to have moved the day this section reads ADOPT.
 begins, per the order stated at the top: pre-register → fit as an unwired exhibit → gate in
 October, after Audit V (#325).
 
+---
+
+# Pre-registered 2026-09-21 — PROPOSED: the state-space team rating on CFB (#366)
+
+**Status: PROPOSED.** Drafted from `docs/audits/2026-09-20-method-audit.json` finding **S8a**,
+`blocked_by` #365 (S8) on the tracker and by this pre-registration's own order: the CFB
+extension reuses #365's model and gate machinery and this section states only where it
+differs. Parent decisions: the same four as #365's section, plus `docs/cfbd-quota.md` (the
+quota budget below is read against it) and `hub.schedule.LeagueUnavailable` /
+`hub.schedule.SLATES` (`src/hub/schedule.py:150-192`), which is the mechanism #366's serving
+change touches.
+
+**#366 was `blocked_by` #326 for the same stated reason as #365 and it is withdrawn for the
+same reason: this design declares every fitted constant `not_an_input` while unwired.** What
+remains frozen is the *gate*, for the *same* instrument-change reason as #365 — S1 landed
+2026-09-21 and no CFB record has been scored under it — and, separately, for a *serving* change
+named below that is frozen on its own terms regardless of the gate.
+
+## The question
+
+> Over FBS games — including and especially G5 and non-conference games a sharp market does not
+> price closely, where an independent rating plausibly has edge a second opinion on a good price
+> does not — does the CFB extension of #365's state-space rating beat the close on walk-forward
+> log-loss, under the same fixed rule, where a close exists; and, where none does, what does the
+> rating cover that today serves nothing at all?
+
+## The model — #365's, with two differences
+
+**Same state-space form** (Normal margin, a per-week Gaussian random walk, a between-season
+shrink, home advantage a scalar), fitted on CFBD's own game results rather than nflverse's, over
+whatever seasons CFBD's `/games` and `/lines` endpoints return.
+
+**Difference 1 — priors from `/ratings/sp` and `/player/returning`.** 136 FBS teams a season
+against a random walk with no burn-in comparable to the NFL's 26 spare seasons (CFBD's
+useful coverage does not reach back to 1999) means a flat, uninformative starting prior is a
+real cost here in a way it is not for the NFL. `/ratings/sp` (SP+, a full-team composite
+already published preseason) and `/player/returning` (returning production, a decomposable
+proxy for how much of last season's team survives) are both already in the CFBD quota budget
+and read by no model (the ticket's own finding). **Both enter as a `chosen` linear combination
+weighting the preseason prior mean, not a `fitted` one**: `PRIOR_SP_WEIGHT` and
+`PRIOR_RETURNING_WEIGHT`, `chosen` rather than `fitted` because setting their *relative* weight
+from the same walk-forward log-loss this gate exists to run would be circular — the prior would
+be tuned on the estimand — and a `chosen` weight is exactly ADR-0006's category for that case.
+`WEEK_STEP_SD`, `SEASON_SHRINK`, `HOME_ADV` and `RATING_MARGIN_SD` stay `fitted`, on CFB's own
+data, as separate constants from #365's NFL fit — a shared name across two different
+populations is exactly the stem-collision `hub.declare.declarations()` refuses, so this module
+declares its own (`CFB_WEEK_STEP_SD`, etc.), not a re-use of #365's. **Every constant here,
+`fitted` or `chosen`, is spelled `not_an_input` while the exhibit is unwired, for the identical
+reason #365's are.**
+
+**Difference 2 — the CFBD quota, stated against the budget.** `docs/cfbd-quota.md`'s own
+weekly in-season budget is ~12–15 calls (~60/month) already spent by the slate, with roughly
+940/month of headroom; the ticket's own estimate for this fit is **~56–90 calls a month**, and
+**the one-time historical backfill is the larger one-off cost** — `docs/cfbd-quota.md`'s own
+"Historical backfill" section prices 2015–2025 across games, lines, box scores and SP+ at
+**roughly 250–350 calls**, to be spent in the first week of a billing month exactly as that
+section already instructs, and never inside a loop over teams or games (`CLAUDE.md` hard rule
+3; `/ratings/sp?year` and `/player/returning` are both already season-bulk, one call per year,
+so nothing about this fit is the per-team pattern the quota architecture exists to forbid). In
+the billing month that carries the backfill, the two together run **roughly 306–440 calls**
+(250–350 backfill plus 56–90 that month's fit) against the 1,000/month free tier — inside it
+with margin even alongside the slate's own ~60/month and the Big Ten archive's ~30, but not so
+much margin that the backfill belongs anywhere but its own scheduled week, exactly as
+`docs/cfbd-quota.md`'s own "Historical backfill" section instructs.
+
+## The population
+
+**136 FBS teams**, not the NFL's 32 — the ticket's own argument for why this is worth building
+at all: *"G5 and non-conference games are not priced by a sharp market… the one place an
+independent rating plausibly has edge, rather than a second opinion on a price that is already
+good."* A Power-conference game against a Power-conference opponent, priced tightly, is closer
+in kind to #365's NFL question — a second opinion on a good price. A G5 team's non-conference
+game against a team CFBD prices thinly or not at all is a different question this gate has to
+answer separately, which is exactly why the arms below split on whether a price exists.
+
+## The arms
+
+* **Where a price exists: Arm A the close, Arm B the rating** — identical in form to #365,
+  `normal_cdf(close_spread / MARGIN_SD)` against `normal_cdf(margin_hat / CFB_RATING_MARGIN_SD)`,
+  scored by the same walk-forward log-loss, paired by game, clustered the same way (between:
+  season; within: game — the same "not a no-op" reasoning as #365, and a CFB season holds
+  roughly 800 FBS-vs-FBS games before exclusions, 136 teams × ~12 games / 2).
+* **Where no price exists: reported as unpriced coverage, not scored against anything.** This is
+  the population the ticket's own argument is about, and rule 6 forbids inventing a comparator
+  for it — there is no incumbent to beat on a game nothing prices. What this gate reports for
+  that population is **coverage**: the count and share of FBS games each season with no
+  `close_spread`, split by whether both teams are FBS (in scope) or one is FCS (excluded,
+  below), and the rating's own predicted win probability on those games, published as a
+  descriptive number and never gated — the same status the market-free guard on
+  `hub.models.weekly` (#212's re-registration, above) already gives a number that has nothing to
+  be scored against: shown, not ranked on, until a benchmark exists.
+
+## Pairing, clusters, ceiling — #365's, on the priced population only
+
+Pairing by game, clusters `SEASON_CLUSTER` between and the game within, exactly as #365. **The
+ceiling arm is the same declared quantity — the market's own repricing, the last pre-kickoff
+poll `data/processed/lines` holds, distinct from whatever `close_spread` resolved to
+earlier** — and it inherits #365's own finding about where that arm is thin: CFBD's `/lines`
+endpoint and this repo's own live-polled archive both start with the 2026 season (the Big Ten
+availability archive under `docs/cfbd-quota.md` is the same infrastructure this ceiling would
+read), so **every season before 2026 has no measured ceiling and is NOT-RUNNABLE under S6 by
+the identical reasoning #365 states for 1999–2025** — here total, since CFB has no analogue of
+the NFL's `spread_line`-as-historical-close column already in the tree. The gate as
+pre-registered here cannot produce anything but NOT-RUNNABLE until the 2026 season's own poll
+archive has accumulated the three seasons ADR-0019's own floor requires — **no sooner than
+2028**, the same date #365 names for the NFL side, for the same reason.
+
+## Power at the seasons CFBD returns
+
+The same borrowed `s = 0.0332` and `δ = 0.0090`/`0.0180` as #365 (no CFB-specific pilot exists
+either, and inventing a different stand-in for a population this repo has never scored would be
+choosing a number to make the arithmetic prettier, not measuring anything), at `k` bounded by
+what a ceiling-qualified archive could ever hold: **the earliest possible k is 1 (2026), and it
+does not clear ADR-0019's three-season floor until 2028 — the same non-runnable regime as
+#365's finding**, so the power table is the same one: ADOPT is a named exemption on this gate
+too, for the identical structural reason (unanimity across k independently-drawn seasons
+against a between-season noise the size of the only pilot sd this repo has). REMOVE and SHOW
+stay reachable on the priced population once three ceiling-qualified seasons exist; the unpriced
+coverage report is not gated at all and needs no power calculation, because rule 16 is about a
+gate that returns a verdict and the coverage number returns none.
+
+## `LeagueUnavailable` degrading to the rating — a serving change, named and kept separate
+
+`hub.schedule.priced_games(league="cfb")` raises `LeagueUnavailable` today because `SLATES`
+holds only `{"nfl": _nfl_slate}` (`schedule.py:192`) — there is no CFB loader at all, so the
+refusal is not about pricing, it is about there being no schedule to price. The ticket's
+acceptance criterion — *"`LeagueUnavailable` degrades to the rating instead of refusing"* —
+presupposes a CFB `Slate` loader exists (reading `hub.fetch.cfbd`'s `/games`, which the ticket
+notes is already fetched and priced by nothing) and, once one does, changes what a caller
+receives on a league CFBD cannot price at all: today, a raise naming the league (`schedule.py`'s
+own `LeagueUnavailable` docstring: *"a caller's only way to tell 'no college schedule' from 'no
+games this week'"*); after, the rating's own number where the close has none.
+
+**This is graceful degradation in `CLAUDE.md`'s own sense** ("every module must produce a
+usable answer with zero attention… serve last-good state rather than erroring"), and it is also,
+precisely because of that, **a change to what the serving path does on a refusal it currently
+recognises as a refusal** — which is a *landing*, not a fit, under the freeze's own axis
+(`docs/gate-power.md`'s quote of #326: *"blocks a modelling change landing"*). **So it is named
+here and frozen on its own terms, separate from the gate above**: adding a CFB `Slate` loader
+and wiring a degrade path is its own commit, behind its own flag, and does not land ahead of
+#365's gate resolving — a CFB rating degrading `LeagueUnavailable` before the NFL rating has
+even been fitted would serve an unvalidated number to the one caller (`hub.season.survivor`, if
+it is ever asked for `league="cfb"`; nothing in `src/` asks today) with no gate behind it at
+all, which is a stronger version of rule 1's incident than either #365 or #366's own gate risks
+being. **What this pre-registration authorizes today is naming the change and its precondition
+— not building it.**
+
+## Exclusions
+
+* **FCS opponents.** An FBS-vs-FCS game is not this population — CFBD's own SP+ and returning
+  production are computed for FBS programs, an FCS opponent has no comparable rating input, and
+  the result is dominated by a talent gap this model was never built to price. Excluded from
+  both the priced and the unpriced-coverage counts; noted, not silently dropped, in the coverage
+  report's own denominator.
+* **Bowl games?** — an open question, named as one rather than decided by default. The
+  quarterback gate and #365 both exclude the postseason on the argument that stakes and roster
+  usage change (`margin.py:94`'s "a handful; dropping them is cleaner than inventing a
+  convention," reapplied). CFB's bowl season is a larger share of its slate than the NFL's
+  playoffs are of its regular season, opt-outs and transfer-portal departures move rosters
+  between the regular season and a bowl in a way the NFL's do not, and a walk-forward rating
+  fitted through the regular season is answering a different question about a bowl roster than
+  about the team that earned the bid. **This document does not decide it** — a bowl-inclusion
+  choice changes what the estimand *is*, which is ADR-0024's line between a sensitivity an agent
+  reports and a decision that stays with the maintainer, and it is filed here as the latter,
+  for the `ADOPTED:` comment to resolve alongside the rest of this section.
+
+## Closing
+
+**PROPOSED.** Awaiting the maintainer's `ADOPTED:` comment, in the same order #365 states:
+pre-register → fit as an unwired exhibit, `blocked_by` #365's own `ADOPTED:` line → gate in
+October alongside #365, after Audit V. The `LeagueUnavailable` degrade path is a separate,
+later, named landing and is not authorized by this comment alone.
