@@ -3081,3 +3081,287 @@ being. **What this pre-registration authorizes today is naming the change and it
 pre-register → fit as an unwired exhibit, `blocked_by` #365's own `ADOPTED:` line → gate in
 October alongside #365, after Audit V. The `LeagueUnavailable` degrade path is a separate,
 later, named landing and is not authorized by this comment alone.
+
+# Pre-registered 2026-09-21 — PROPOSED: the game-level betting bar (#364)
+
+**Status: PROPOSED.** Drafted under the operate-mode freeze (#326), which blocks a modelling
+change *landing* and not writing the rule before the number — #329 and #305 are the
+precedent, and this section follows #305's form (below), per the maintainer's own instruction
+on #364. It becomes the rule on a maintainer `ADOPTED:` comment on *this section*; until then
+it decides nothing and no game-level model is gated against it. Parent decisions: the S7
+finding (`docs/audits/2026-09-20-method-audit.json`) that raised the question — the house
+rule, built for constant refits where a false negative costs nothing, applied unmodified to a
+betting edge where a false negative costs the whole enterprise; ADR-0024 (a modelling decision
+becomes agent work only when its alternatives sit on one axis — S7's three options changed what
+the bar *is*, not a parameter on it, so #364 stayed a decision and was converted under that
+ADR's step 4 once the maintainer chose one); ADR-0019 as amended by #357 (S1, the t-interval
+half) and #335 (the tie-aware every-season half) and by #363 (S6, the ceiling precondition),
+all three read into this bar rather than restated; and `docs/method.md` rules 6, 7, 11 and 16,
+each applied below rather than only cited. Decided together with #375 (the phase-2 posterior),
+whose utility this bar's linear EV *is* — #375's own pre-registration is a separate ticket and
+is not written here.
+
+**The maintainer's `ADOPTED:` comment on #364 (2026-09-21), restated rather than repeated:**
+option 3 — a decision-theoretic bar, linear EV at a flat unit stake, the form pre-registered
+now and the dollar figure named later. Indifferent to ruin: a bar for whether a model is
+*better*, never a staking rule. Utility and prior are `chosen`, not fitted, declared in
+`hub.declare`. Decided together with #375. No model is built by this ticket.
+
+## The estimand
+
+> Over held-out seasons, does a game-level model's picks — staked flat at one unit against the
+> closing line — clear the standard −110 break-even (52.38%) in expected value, and is that
+> gain distinguishable from the noise of ~285 games a season?
+
+A **pick** is a side (favorite/underdog against the closing spread, or over/under against the
+closing total) the model names for a game, at a flat one-unit stake, priced at the close —
+`hub.fetch.odds`' last snapshot before kickoff, the `Snapshot`/`Live price` vocabulary
+`CONTEXT.md` already defines and this section reads rather than re-derives. A graded pick's
+realised profit is **+100/110 unit** if the side covers, **−1 unit** if it does not, and is
+excluded from `n` on a push. **A season's EV is the mean realised profit per graded pick over
+that season's games** — the repeated measure is the game, per `docs/method.md` rule 3, never
+a season total standing in for one observation. Break-even at −110 is **p = 52.38%**, exactly
+where EV = 0; "does EV clear zero" and "does the hit rate clear break-even" are the same
+question in two units, and this section reads EV throughout because that is the unit the
+ceiling arm (below) is stated in.
+
+## The arms
+
+**Rule 6 (`docs/method.md`): both arms must have the same information.** The model's pick is
+made from information available strictly before kickoff — the cut `hub.schedule.priced_games`
+already enforces for every prediction in this repo — and is priced at a close the pick
+predates; a "pick" read off the closing line itself, or off a line captured after the pick was
+notionally made, is scored against a number it already saw, which rule 6 forbids on either
+arm. There is no second, more complicated incumbent the way `weekly_gate` compares two
+projections: **the comparator is the flat one-unit stake itself — "do not bet" — whose EV is
+identically zero by construction.** So the gate's `gain` is the model's own realised profit
+per graded pick, and the pooled test is against zero rather than a paired two-model
+difference — `docs/method.md` rule 5 (gate against the simplest thing that works) taken to its
+floor: nothing is simpler than not staking, and its EV needs no measurement.
+
+**Rule 7 (`docs/method.md`): pair the comparison.** The unit is one graded pick on one game;
+gains are never aggregated to a season before the season-level statistic is computed, so a
+season's `n` and its own within-season spread are read off the games it actually graded.
+
+## Clusters
+
+**Between:** `SEASON_CLUSTER` (`hub.models.experiment.SEASON_CLUSTER`, `("season",)`), the
+unit every gate in this repo resamples on and the one rule 3 requires for a repeated measure
+within a season.
+
+**Within-season: the game — not a no-op.** ADR-0019's per-gate table marks three within-season
+units **no-op** (quarterback's event, margin's season, injury type's season) because each of
+those paired frames is already one row per season, so every season's own cluster count sits
+below `TIE_MIN_CLUSTERS = 12` by construction and #335's tie test falls back to the sign
+alone. A game-level betting season carries on the order of 285 graded picks — the floor is
+cleared roughly 24× over — so here the within-season unit does real work: a season's gain is a
+**win** only if it clears `2 × se` over its own ~285 games, a **tie** otherwise, never a raw
+sign read the way a one-row-per-season gate must settle for.
+
+**Checked for degeneracy against its own inputs (rule 17), before this is pre-registered.**
+The interval half here is the same `t_interval` #357 fixed — a distributional claim on the
+season-clustered mean, not a resample of the seasons' own signs — so the defect rule 17 found
+(the interval half silently restating the sign half under the old percentile bootstrap) does
+not recur; `gate()` is read unaltered, not re-derived. What is specific to this gate is
+whether the *tie* test collapses back into a sign test at this scale, and it does not: at
+m ≈ 285, `_disposition` reads each season's real `2 × se` band rather than falling back to the
+sign, so the every-season half is doing work the interval half does not already do. The rule-16
+simulation below checks the conjunction's power rather than arguing it, the same way #357's own
+planted-rule test does for the interval half.
+
+## The gate, as it now stands
+
+`hub.models.experiment.gate`, unaltered — this ticket adds no branch and moves no threshold:
+
+- **NOT-RUNNABLE** — first, per #363 (S6) — if no ceiling was measured, in either direction,
+  or (second) if the season-clustered MDE exceeds a measured ceiling (stage 2, ADR-0019).
+- **ADOPT** — the t interval on per-game EV excludes zero on the positive side **and** the
+  model wins every held-out season (ties are not wins, #335).
+- **REMOVE** — the mirror: the interval excludes zero on the negative side and the model loses
+  every held-out season (ties are not losses).
+- **SHOW** — otherwise: absence of evidence, not evidence of equivalence.
+
+**What REMOVE means for a model that does not exist yet.** Every other REMOVE in this repo
+retires a shipped module to `hub.exhibits` (`championship_equity`, `leverage`, under #363's
+own amendment). No game-level model is built or published by this ticket, so there is nothing
+here for REMOVE to retire — it means **the bar was cleared in the losing direction: a
+candidate that reaches this gate loses money against the close, with evidence, and does not
+ship.** ADOPT, symmetrically, is not "keep a thing already live" but "this is the first
+game-level model to earn a place." The branches are unchanged; what is new today, and for as
+long as no such model exists, is that the gate has no rows to read and prints exactly what an
+empty frame prints — `SHOW`, "nothing measured — no paired observation" — `docs/method.md`
+rule 12's category, an absence of evidence, never a verdict on any model.
+
+**Indifferent to ruin, restated as `gate` actually reads it.** Nothing in `experiment.gate`'s
+branches sizes a bet, compounds a bankroll, or bounds variance — the flat one-unit stake
+(declared below) is chosen precisely so EV is linear and a season's mean is a season's mean,
+with no path-dependence for the gate to reward or punish by accident. A model that clears
+ADOPT here is not thereby shown safe to stake at any particular size; sizing is #375's
+question and everything downstream of "how much," never this gate's.
+
+## The ceiling arm, declared
+
+#363 (S6) makes a declared ceiling mandatory before any branch below NOT-RUNNABLE is read, in
+both directions. The precedent for a market-facing gate is already set in this document, for
+#291's quarterback gate: **the ceiling arm is the betting market's own repricing — the last
+snapshot before the game, scored the same way the candidate is, against the price the
+candidate's own pick predates.** In that section's own words: "What the betting market
+recovered by the close is the most an adjustment built to anticipate it could recover." #364's
+ceiling is the same construction, in EV units at the same flat unit stake and vig: what a
+bettor earns from nothing but the market's own subsequent movement — no forecast of their own,
+only the market's later, better-informed price — is the most a *forecasting* model, built to
+anticipate that movement ahead of time, could earn. This is also why the ceiling is not the
+game's own final result: #305's section above tried and withdrew exactly that shape of
+ceiling — a scaler reading the realised team total "recovers +0.228... but the realised total
+is the outcome of the same game the player scored in, not a better estimate of it," so it
+answers nothing rule 8 asks and fails rule 6 by construction (it is information no pre-kickoff
+model has). The market's own repricing is a forecasting ceiling in the same units the
+candidate is scored in; the game's own result is not a ceiling at all.
+
+**Declared, not yet measured.** No ceiling exists until a #375-shaped model states its own
+action time and an archive of closing-line snapshots exists to compute the repricing against
+it, so today's gate is NOT-RUNNABLE on the ceiling branch alone — independent of, and prior
+to, the power question below.
+
+## Power before the run (rule 16)
+
+Computed with `scripts/rule16_combined_power.py`'s own harness — `numpy`/`polars` and the
+shipped `experiment.summarise`/`per_season`/`gate`, nothing reimplemented — extended by a cell
+built from this ticket's own pre-registered figures, since no gate has run and there is no
+measured table to read a cell from: **k = 10** seasons, **m ≈ 285** games/season, at −110.
+
+**A wrinkle, checked rather than assumed.** `scripts/rule16_combined_power.py`'s existing
+cells (draft, weekly) call `summarise()` with no `ceiling=`. Run unmodified against `main`
+today, both report **0.0000/0.0000**, not the 0.0113/0.0324 and 0.0186/0.1925 ADR-0019's own
+condition-2 table publishes — because `gate()` now carries #363 (S6) and returns NOT-RUNNABLE
+whenever no ceiling is supplied, before the interval or every-season half is read at all. That
+table was computed, by the script's own docstring, before the #335 amendment — and, it turns
+out, before S6 as well — so it no longer reproduces against the `gate()` it calls today. That
+is `docs/method.md` rule 13's situation and this ticket does not own the fix; flagged
+separately rather than silently worked around here. What this cell needs is the **combined
+rule's own** null size and power — the #357 interval half and #335 tie-aware half, the
+conjunction this amendment is actually about — independent of the (separately declared, above)
+S6 ceiling precondition, so `summarise()` below is called with a large placeholder
+`ceiling=1e6` solely to hold that branch open and let the interval+tie-aware conjunction be
+what the numbers measure.
+
+**Converting the ticket's own hit-rate SE to EV units.** EV(p) = p·(100/110) − (1 − p) =
+1.90909·p − 1, so d(EV)/dp = 1.90909 at any p — the constant conversion factor at this vig.
+At the break-even null p = 0.5238, a single game's win/loss standard deviation is
+`sqrt(0.5238 × 0.4762) ≈ 0.4995` in probability units, **s ≈ 0.9535** in EV units — matching
+the ticket's own **per-season SE ≈ 2.96pp** (`sqrt(0.25/285) × 100`, the same figure near
+p ≈ 0.5) converted the same way: `0.0296 × 1.90909 ≈ 0.0565` EV units of season-level sampling
+noise. Unlike the draft/weekly cells' own `s` — a between-season figure reused as a stated,
+conservative stand-in for an unmeasured within-season spread — this cell's `s` is not a
+stand-in: under the null, a game's outcome really is close to Bernoulli(0.5238) and its
+per-game standard deviation is what the formula above gives directly, so using the same `s` at
+both the between- and within-season scale is the correct model here, not merely the script's
+usual simplification. At a **realistic edge — a 53% model** — the detectable delta is
+`EV(0.53) − EV(0.5238) ≈ 0.01184` EV units per game, about 1.18 points of ROI, sitting just
+under the ticket's own stated MDE (≈2.9pp ≈ 0.0554 EV units).
+
+**Result, 500 trials, bootstrap 200, seeds 0 (size) / 1 (power) — `ceiling=1e6` throughout so
+only the interval+tie-aware conjunction is read.** Reduced from the script's usual 10,000
+trials because of sustained system load (load average in the 40s–50s) during this run; the
+same qualitative result — zero adoptions at both the null and the edge — held at 100 and at
+500 trials, the two counts actually run after the ceiling correction above, so the reduction
+costs precision on the exact rate, not the direction of the finding:
+
+| rule | k | s | m | δ (53% model) | null size | power at δ |
+|---|---|---|---|---|---|---|
+| combined (t-interval + tie-aware every-season, #357+#335) | 10 | 0.9535 | 285 | 0.01184 | **0/500 (<0.2%)** | **0/500 (<0.2%)** |
+| unanimity-alone (interval + raw sign, pre-#335) | 10 | 0.9535 | 285 | 0.01184 | **1/500 (0.2%)** | **0/500 (<0.2%)** |
+
+**Reading the table.** Both null sizes sit comfortably under `ALPHA` (0.05) — consistent with
+#335's own finding that a tie-aware rule can only be *stricter* than the interval alone, never
+more permissive, so the combined rule is not the source of any excess false-adopt risk here.
+The power figures are the finding: at k = 10 seasons the combined rule adopts on **at most a
+few tenths of a percent** of runs where a true 53%-edge model exists, and the same is true of
+unanimity-alone. That is markedly lower than the ticket's own every-season-alone figure —
+`P(positive in all 10) ≈ 0.12` — because unanimity-alone here still carries the interval's own
+exclusion requirement, and the interval's MDE (≈2.9pp ≈ 0.0554 EV units) is **more than four
+times** the 53%-model's own edge (0.62pp ≈ 0.01184 EV units): **the interval half, not the
+every-season half, is what starves power at this k.** Ten seasons resolves an edge roughly
+4–5× larger than a 53% model's before the interval alone will even exclude zero; #335's tie
+test then narrows the reachable band further on top of that.
+
+**ADOPT is unreachable at a realistic edge — named as a rule-16 exemption, not a bar
+(2026-09-21).** A 53% game-level model — a strong edge, by any description this repo would
+give a betting model — clears this gate's ADOPT branch on well under 1% of runs at k = 10
+seasons of ~285 games. Per rule 16 and #300's precedent (the draft gate's own ADOPT branch,
+named an exemption in this document for the identical reason: reachable in principle, not at
+any effect size this project's data can plausibly produce), **ADOPT under this bar is named an
+exemption rather than a bar for as long as k stays near ten:** the interval half alone needs
+roughly a 4–5× larger edge than a 53% model carries before it will exclude zero at this k, and
+closing that gap by season count rather than edge size needs on the order of `4.5² ≈ 20×` the
+clusters — decades at one season a year, the same shape #291's quarterback diagnostic already
+lives with. This does not weaken the bar: a model that cannot clear the interval's own MDE has
+not been shown to lose money either, and **SHOW remains the honest, expected reading for a
+plausible edge at a realistic k** — not a defect in the gate, and not evidence the model is
+bad. What the exemption changes is only how that SHOW is read when it arrives: as ten seasons
+being, on their own, too few to resolve a realistic edge, not as this bar failing to notice a
+good model.
+
+## Exclusions (rule 11)
+
+- No live/in-game betting, no parlays or correlated same-game combinations, no alternate lines
+  or reduced juice — one closing line per game, one flat unit, one side.
+- No staking rule is in scope. Kelly, fractional bankroll, confidence-weighted sizing are all
+  #375's question, not this bar's — the same `ADOPTED:` comment that created both tickets
+  together keeps them apart.
+- No claim that a model's edge is causal, or that the closing line is inefficient in a way this
+  gate can itself demonstrate a mechanism for — `CONTEXT.md`'s own definition of the betting
+  market ("treated as already-efficient... the repo backtests against it to audit itself,
+  never to beat it") is read literally: this bar tests whether a model beats the close
+  *empirically*, once, on held-out seasons, and a pass is evidence, not an explanation.
+- Not read before a game-level model and a closing-line archive both exist — no `--ceiling` or
+  interim number is published from this section before then.
+- The dollar value of the flat unit stays out of scope, per the `ADOPTED:` comment: "the
+  dollar figure is named later, the form is pre-registered now."
+
+## The `hub.declare` entries
+
+The unit stake form and the utility are **chosen, not fitted** — the maintainer's `ADOPTED:`
+comment on #364 says so directly, and `hub.declare`'s own vocabulary (`src/hub/declare.py`)
+reserves `chosen` for exactly this: "a stated choice a prediction reads... the shape of a
+random draw, a pin, a threshold chosen from data," which a flat stake and a linear utility are.
+
+**No line is added to `src/` by this ticket.** `declare.declarations()` walks module-level
+assignments in real source files — a declaration exists where a constant is *used*, not where
+it is discussed — and #305's PROPOSED section, the template this one follows, declared no
+constant either, for the same reason: nothing in `src/` yet reads a stake size or a utility
+function to declare. What is pre-registered now is the *form* the eventual declarations must
+take, written here so a later implementer does not have to re-derive it from the `ADOPTED:`
+comment alone:
+
+- the stake is **flat**, one unit, unconditional on the model's own confidence — the form is
+  chosen now; the dollar value is deferred by the `ADOPTED:` comment itself;
+- the utility is **linear in profit**, `u(profit) = profit` — the identity, which is what
+  makes a season's mean EV additive across its games and indifferent to bet order or bankroll;
+- the prior over a model's true edge that #375 reads is **chosen, not fitted**, and is #375's
+  own declaration — named here only because the `ADOPTED:` comment ties the two tickets
+  together, not because this section owns it.
+
+When #375's model and this bar's own call site exist, `STAKE_UNIT = chosen(...)` (or its
+eventual name) and the utility function are where `hub.declare` actually reads them; nothing
+about that is pre-empted here.
+
+## PROPOSED — what is already decided, and what would reopen it
+
+**Restated, not repeated:** the maintainer's `ADOPTED:` comment on #364 (2026-09-21) chose
+option 3 — a decision-theoretic bar, linear EV at a flat unit stake, the form pre-registered
+now and the dollar figure named later. Indifferent to ruin: a bar for whether a model is
+*better*, never a staking rule, and every branch above is written so that reading holds.
+Utility and prior are `chosen`, not fitted, declared in `hub.declare` at call sites that do
+not exist yet. Decided together with #375, whose utility this bar's linear EV supplies.
+
+**What this section still needs before it decides anything.** The option was adopted; the
+mechanics were not — the estimand, the arms, the declared ceiling and the power table above
+are new in this section and have not been reviewed. This becomes the rule on its own
+maintainer `ADOPTED:` comment, the same two-step #305 went through: the choice first, the
+detailed pre-registration drafted and adopted second.
+
+**What would reopen the decision already made.** A stake form other than flat-unit — Kelly,
+fractional bankroll, anything that sizes a bet on the model's own confidence — which the
+`ADOPTED:` comment names as "a different object," not a parameter on this one. A change to
+that form is a new ADR-0024 decision, not an amendment to this section.
