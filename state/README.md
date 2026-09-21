@@ -7,12 +7,43 @@ What this repo has spent against two metered third-party accounts:
   reading is from an earlier month than the pull -- the quota resets monthly, so that one
   is unknown and one pull may re-read it (#264).
 - `cfbd-quota.json` — CFBD calls made, by billing month, against the 1,000-a-month free tier.
-- `gate-width.json` — the last season-clustered interval width each backtest gate produced,
-  keyed by gate. `hub.models.experiment.review_width` flags the next run's interval as
-  needing review when it narrows against this by more than the interval could honestly
-  narrow. The `draft` row is the shipped-constants run (−11.07 [−16.92, −5.22]) and the
-  `weekly` row the post-#248 run (−0.825 [−1.152, −0.541]), both from 2026-09-12 and both
-  written up in `docs/gate-power.md`.
+- `gate-width.json` — **an append-only ledger, since #362 (S5)**, of every season-clustered
+  interval width a backtest gate has produced. `hub.models.experiment.review_width` appends
+  one entry per gate run, never overwrites one, keyed by `(gate, config_digest, data_digest,
+  timestamp)`, with the run's own verdict recorded alongside the width and `requires_review`
+  set when the interval narrowed against that gate's *most recent* previous entry by more
+  than the interval could honestly narrow (#45's clustering argument predicts widening).
+
+  **Why it moved off one record per gate.** The dict shape it replaced held exactly one row
+  per gate name, overwritten on every run — so the file could never say how many times a gate
+  had been run, and two runs whose numbers disagreed left only the second one behind. #362
+  found this as the mechanism behind #B2's forking paths: not only across anchors and bases,
+  but across re-runs nothing could count.
+
+  **The two `requires_review: true` flags this ledger inherited, discharged.** Both predate
+  #362 and are carried forward as the ledger's first entries, read off `git log --follow` on
+  the old file (the pre-#362 shape recorded no `config_digest`/`data_digest`/timestamp, so
+  those three fields on the pre-#362 entries below say so rather than guess):
+
+  - **`draft`, commit `7e6625f` (2026-09-16).** The hold-out re-run of ADR-0009's figure:
+    −13.21 [−18.76, −7.67], narrowed from the prior entry's 11.69 to 11.10 (ratio 0.95).
+    **Published and reviewed**: ADR-0009 quotes both the before and after intervals side by
+    side and its own text acknowledges the narrowing explicitly ("inside the noise of four
+    ...") — the review this flag asks for was already done in prose on 2026-09-16, just never
+    reflected by clearing the flag, because nothing before #362 could clear one without
+    overwriting the record the review was about.
+  - **`weekly`, commit `fb68c4e` (2026-09-12), never re-run since.** −0.825 [−1.152, −0.541].
+    `fb68c4e`'s own message says `WIDTH_STATE` "was sitting untracked" before that commit --
+    the file already existed locally, so this entry's `requires_review: true` most likely
+    reflects a narrowing against an earlier, untracked local run this ledger never recorded
+    (git holds no earlier commit for the file, so there is no way to recover what that run
+    was). Carried forward as recorded on disk rather than reconstructed, per `docs/method.md`
+    rule 13: what cannot be re-run is restated as unestablished, not guessed at. **Published**:
+    `docs/weekly-blend-gate.md` quotes the identical interval and its REMOVE, 0-of-4 verdict --
+    the number stands regardless of what its own `requires_review` flag was reacting to.
+
+  Both historical entries' numbers are unchanged from what shipped before #362; this ledger
+  only changes how many rows hold them and what each row can now say about itself.
 - `interval_coverage.json` — what `hub.models.coverage --measure --survivor --write` last
   measured: whether the weekly player interval covers at nominal, and the survivor
   favourite's price. `hub.publish` carries it into `track_record.json` and the slate commits

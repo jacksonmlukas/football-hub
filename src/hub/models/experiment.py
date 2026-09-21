@@ -58,6 +58,7 @@ from hub.config import (
     resolved_config,
 )
 from hub.declare import chosen, not_an_input
+from hub.jsonio import stamp as _now
 from hub.names import player_key
 from hub.paths import STATE_DIR
 
@@ -844,44 +845,72 @@ def narrowing(width: float, previous: float | None, *, places: int = 2) -> Narro
         "intervals doing this unnoticed. Read it before quoting the interval."])
 
 
-def _width_state(path: Path) -> dict:
-    """Whatever is on disk, or nothing. Never raises -- CLAUDE.md's degradation rule.
+def _width_state(path: Path) -> list[dict]:
+    """Every entry on disk, oldest first, or nothing. Never raises -- CLAUDE.md's degradation
+    rule: a gate that could not read its own history still has a verdict to report; what it
+    loses is one comparison line, and losing that is strictly better than a harness that dies
+    because a JSON file is half-written.
 
-    A gate that could not read its own history still has a verdict to report; what it loses is
-    one comparison line, and losing that is strictly better than a harness that dies because a
-    JSON file is half-written.
+    **#362 (S5): a list under `"entries"`, not a `{gate: record}` dict.** The dict shape was
+    overwritten on every run -- one record per gate, no matter how many times it had been run
+    -- so nothing on disk could say which run produced a number or whether a run had ever
+    happened between two published figures. Reads the pre-#362 dict shape too, as a single
+    entry per gate with no `config_digest`/`data_digest`/`timestamp`/`verdict`, so a file this
+    function has not yet rewritten does not read as empty.
     """
     try:
         got = json.loads(path.read_text())
     except (OSError, ValueError):
-        return {}
-    return got if isinstance(got, dict) else {}
+        return []
+    if isinstance(got, dict) and isinstance(got.get("entries"), list):
+        return [e for e in got["entries"] if isinstance(e, dict)]
+    if isinstance(got, dict):
+        # The shape before #362: `{gate: {width, clusters, lo, hi, requires_review}}`.
+        return [{"gate": gate, **rec} for gate, rec in got.items() if isinstance(rec, dict)]
+    return []
 
 
-def review_width(name: str, summary: Mapping[str, float], *,
-                 path: Path = WIDTH_STATE, places: int = 2,
-                 write: bool = True) -> list[str]:
-    """Compare this run's interval width with the last one under `name`, and record this one.
+def review_width(name: str, summary: Mapping[str, float], *, verdict: str,
+                 config_digest: str, data_digest: str, path: Path = WIDTH_STATE,
+                 places: int = 2, write: bool = True) -> list[str]:
+    """Compare this run's interval width with the last one under `name`, and append this one.
 
-    The comparison is against the *previous run of this gate*, keyed by name, so three gates
-    do not overwrite each other's history. `requires_review` is written into the record as
-    well as printed, because the printed line scrolls past and the record is what a later
-    reader has.
+    The comparison is against the *most recent previous entry for this gate*, read back to
+    front so three gates' histories interleaved in one file do not confuse each other.
+    `requires_review` is written into the record as well as printed, because the printed line
+    scrolls past and the record is what a later reader has.
+
+    **Append-only, since #362 (S5).** Every call that writes adds one entry rather than
+    overwriting the one this gate already had -- keyed by `(gate, config_digest, data_digest,
+    timestamp)`, with the verdict recorded alongside the width, so two runs of the same gate
+    are two rows a later reader can tell apart rather than one row silently replaced by the
+    other. `config_digest`/`data_digest` are the caller's -- `run_gate` reads them off the
+    same `stamped_for_publication` call every other stamp comes from, so this ledger's digests
+    cannot disagree with the row's own.
     """
     width = float(summary["hi"]) - float(summary["lo"])
-    state = _width_state(path)
-    entry = state.get(name)
+    entries = _width_state(path)
     previous = None
-    if isinstance(entry, dict) and isinstance(entry.get("width"), int | float):
-        previous = float(entry["width"])
+    for e in reversed(entries):
+        if e.get("gate") == name and isinstance(e.get("width"), int | float):
+            previous = float(e["width"])
+            break
     said = narrowing(width, previous, places=places)
     if write:
-        state[name] = {"width": width, "clusters": float(summary.get("clusters", 0)),
-                       "lo": float(summary["lo"]), "hi": float(summary["hi"]),
-                       "requires_review": said.requires_review}
+        entries.append({
+            "gate": name,
+            "config_digest": config_digest,
+            "data_digest": data_digest,
+            "timestamp": _now(),
+            "width": width,
+            "clusters": float(summary.get("clusters", 0)),
+            "lo": float(summary["lo"]), "hi": float(summary["hi"]),
+            "verdict": verdict,
+            "requires_review": said.requires_review,
+        })
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
+            path.write_text(json.dumps({"entries": entries}, indent=2, sort_keys=True) + "\n")
         except OSError:
             pass
     return said.lines
@@ -1374,11 +1403,25 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
     seasons = per_season(paired, within=within, bootstrap=bootstrap, seed=seed)
     verdict = gate(summary, seasons, actions, void=void)
     stamped, stamp = stamped_for_publication(paired, boards)
+    # The ledger's own digests come off the same stamp every other row in `stamped` carries,
+    # so `review_width`'s record cannot name a config or a data byte this run did not read.
+    # `stamped` is cleared to no rows on an empty `paired` (`stamped_for_publication`'s own
+    # empty-frame rule), so the columns exist but there is no row to read them off; the
+    # digests are recomputed the same way in that one case.
+    if stamped.height:
+        row = stamped.row(0, named=True)
+        cfg_dig, data_dig = row["cfg_digest"], row["data_digest"]
+    else:
+        from hub.fetch.nflverse import pins_this_run
+        cfg_dig = config_digest(resolved_config())
+        data_dig = data_digest(pins_this_run())
     lines = [
         *paired_report(summary, arm_a=arm_a, arm_b=arm_b, unit=unit, places=places,
                        show_n=show_n, ceiling_arm=None if ceiling is None else ceiling.arm),
         *small_sample_report(summary, seasons, unit=unit, places=places),
-        *review_width(name, summary, path=width_path, places=places, write=record_width),
+        *review_width(name, summary, verdict=verdict[0], config_digest=cfg_dig,
+                      data_digest=data_dig, path=width_path, places=places,
+                      write=record_width),
         *ceiling_check(summary, places=places),
         "",
         *stamp.split("\n"),

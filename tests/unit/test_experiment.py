@@ -791,29 +791,64 @@ def test_a_first_run_has_nothing_to_compare_and_says_nothing():
     assert got.lines == [] and not got.requires_review
 
 
+def _review_width(name, summary, *, path, verdict="SHOW", config_digest="cfg", data_digest="dat",
+                  write=True):
+    return experiment.review_width(name, summary, verdict=verdict, config_digest=config_digest,
+                                   data_digest=data_digest, path=path, write=write)
+
+
 def test_the_width_is_recorded_for_the_next_run_and_carries_the_review_flag(tmp_path):
     """Printed lines scroll past; the record is what a later reader has. Two runs of the same
     gate: the first has nothing to compare against, the second compares against the first."""
     path = tmp_path / "gate-width.json"
     first = {"lo": -2.0, "hi": 2.0, "clusters": 4.0}
-    assert experiment.review_width("draft", first, path=path) == []
-    assert json.loads(path.read_text())["draft"]["width"] == pytest.approx(4.0)
+    assert _review_width("draft", first, path=path) == []
+    entries = json.loads(path.read_text())["entries"]
+    assert len(entries) == 1 and entries[0]["width"] == pytest.approx(4.0)
 
     second = {"lo": -0.5, "hi": 0.5, "clusters": 4.0}
-    said = experiment.review_width("draft", second, path=path)
+    said = _review_width("draft", second, path=path, verdict="REMOVE")
     assert "REQUIRES REVIEW" in "\n".join(said)
-    entry = json.loads(path.read_text())["draft"]
+    entries = json.loads(path.read_text())["entries"]
+    # Append-only (#362): the first run's row is still there, unmodified.
+    assert len(entries) == 2
+    assert entries[0]["width"] == pytest.approx(4.0)
+    entry = entries[1]
     assert entry["requires_review"] is True and entry["width"] == pytest.approx(1.0)
+    assert entry["verdict"] == "REMOVE"
+    assert entry["gate"] == "draft"
+    assert entry["config_digest"] == "cfg" and entry["data_digest"] == "dat"
+    assert isinstance(entry["timestamp"], str) and entry["timestamp"]
 
 
 def test_one_gate_s_history_is_not_another_s(tmp_path):
-    """Keyed by name, so three gates do not overwrite each other and read a narrowing that is
-    really a different gate's interval."""
+    """Keyed by name (among the other keys #362 adds), so three gates do not overwrite each
+    other and read a narrowing that is really a different gate's interval."""
     path = tmp_path / "gate-width.json"
-    experiment.review_width("draft", {"lo": -2.0, "hi": 2.0, "clusters": 4.0}, path=path)
-    assert experiment.review_width("weekly", {"lo": -0.5, "hi": 0.5, "clusters": 4.0},
-                                   path=path) == []
-    assert set(json.loads(path.read_text())) == {"draft", "weekly"}
+    _review_width("draft", {"lo": -2.0, "hi": 2.0, "clusters": 4.0}, path=path)
+    assert _review_width("weekly", {"lo": -0.5, "hi": 0.5, "clusters": 4.0}, path=path) == []
+    entries = json.loads(path.read_text())["entries"]
+    assert {e["gate"] for e in entries} == {"draft", "weekly"}
+
+
+def test_a_third_run_of_the_same_gate_compares_against_the_most_recent_one(tmp_path):
+    """Not the first entry ever written for a gate -- the last one -- so a gate run three
+    times reads its own second run's width, not its first."""
+    path = tmp_path / "gate-width.json"
+    _review_width("draft", {"lo": -2.0, "hi": 2.0, "clusters": 4.0}, path=path)  # width 4
+    _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path)  # width 2
+    said = _review_width("draft", {"lo": -1.5, "hi": 1.5, "clusters": 4.0}, path=path)  # 3
+    assert "wider" in "\n".join(said), "3 against the most recent 2, not the oldest 4"
+
+
+def test_the_pre_362_dict_shape_still_reads(tmp_path):
+    """A file this function has not yet rewritten -- the one-record-per-gate shape #362
+    replaces -- does not read as empty, so an old file's history is not silently dropped."""
+    path = tmp_path / "gate-width.json"
+    path.write_text(json.dumps({"draft": {"width": 4.0, "clusters": 4.0, "lo": -2.0, "hi": 2.0,
+                                          "requires_review": False}}))
+    said = _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path)
+    assert "REQUIRES REVIEW" in "\n".join(said), "must have read the old width (4.0) as 4.0"
 
 
 def test_an_unreadable_history_costs_a_line_and_not_the_run(tmp_path):
@@ -821,8 +856,7 @@ def test_an_unreadable_history_costs_a_line_and_not_the_run(tmp_path):
     verdict; a harness that dies because a JSON file is half-written does not."""
     path = tmp_path / "gate-width.json"
     path.write_text("{ this is not json")
-    assert experiment.review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0},
-                                   path=path) == []
+    assert _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path) == []
 
 
 # --- the Gate, which was a rule three modules each remembered --------------------
@@ -1765,7 +1799,7 @@ def test_a_width_state_that_cannot_be_written_does_not_take_the_gate_down(tmp_pa
     path = d / "gate-width.json"
     d.chmod(0o500)                                  # writable no longer
     try:
-        got = experiment.review_width("draft", {"lo": -2.0, "hi": -1.0, "clusters": 4.0}, path=path)
+        got = _review_width("draft", {"lo": -2.0, "hi": -1.0, "clusters": 4.0}, path=path)
         assert got is not None, "a gate lost its verdict to a state file it could not write"
         assert not path.exists(), "the fixture did not actually make the write fail"
     finally:

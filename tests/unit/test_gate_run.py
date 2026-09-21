@@ -223,7 +223,8 @@ def test_the_width_history_is_keyed_by_the_gate_s_name(tmp_path):
     path = tmp_path / "gate-width.json"
     _run(_paired(), name="draft", record_width=True, width_path=path)
     _run(_paired(), name="lineup", record_width=True, width_path=path)
-    assert set(json.loads(path.read_text())) == {"draft", "lineup"}
+    entries = json.loads(path.read_text())["entries"]
+    assert {e["gate"] for e in entries} == {"draft", "lineup"}
 
 
 def test_an_empty_frame_runs_and_says_nothing_was_measured():
