@@ -588,11 +588,11 @@ def _disposition(gain: float, se: float, m: int) -> str:
     alone**: win if strictly positive, loss if strictly negative, tie at exactly zero (the
     same three-way split, read off the sign rather than the bootstrap).
     """
-    # `se <= 0` joins the fallback (review of 2026-09-21): a season whose paired diffs
-    # are all identical has a bootstrap SE of exactly zero, and `gain >= 2 * 0` counted an
-    # arm that changed *nothing* in that season as a win -- more permissive than the sign
-    # test it replaced, on the one boundary the tie rule was written for. Read off the sign,
-    # a no-op season is a tie under both readings.
+    # `se <= 0` joins the fallback (review of 2026-09-21; amendment PROPOSED on #335): a
+    # season whose paired diffs are all identical has a bootstrap SE of exactly zero, and
+    # `gain >= 2 * 0` counted a gain of *exactly zero* -- an arm that changed nothing in that
+    # season -- as a win. Read off the sign, exactly zero is a tie; a strictly positive gain
+    # at zero SE was a win before and still is. That is the whole delta.
     if not math.isfinite(se) or se <= 0.0 or m < TIE_MIN_CLUSTERS:
         return "win" if gain > 0 else "loss" if gain < 0 else "tie"
     if gain >= 2.0 * se:

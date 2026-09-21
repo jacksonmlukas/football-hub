@@ -210,13 +210,18 @@ one gate's own default, so an off-by-one in an unrelated flag cannot flip the ru
 for every gate at once) **the tie test falls back to the sign alone**, and says so: `m` is
 printed beside the threshold, per season, in every verdict sentence.
 
-> **Clarified 2026-09-21 (code review, same day).** A season whose paired diffs are all
-> identical has a bootstrap SE of exactly zero, and `gain >= 2 * se` read `0 >= 0` as a
-> **win**: three real wins plus one season in which the arm changed nothing adopted 4/4 —
-> more permissive than the sign test on the one boundary this rule was written for. A zero
-> SE now takes the sign-alone branch, where exactly zero is a tie, so a no-op season is a tie
-> under both readings. The rule-16 table above is unaffected (a zero SE has probability zero
-> under its simulation); the control is `test_a_no_op_season_is_a_tie_and_cannot_carry_an_adopt`.
+> **Amendment PROPOSED 2026-09-21 (code review, same day) — awaiting the maintainer's
+> `ADOPTED:` line on #335.** The delta is one point, stated exactly: at a bootstrap SE of
+> exactly zero — every paired diff in the season identical — the adopted test `gain >= 2 * se`
+> read a gain of **exactly zero** as a win (`0 >= 0`), so three real wins plus one season in
+> which the arm changed nothing adopted 4/4. A zero SE now takes the sign-alone branch, where
+> exactly zero is a tie; a strictly positive gain at zero SE was a win before and is a win
+> still. Strictly stricter on ADOPT, unchanged on REMOVE, and the rule-16 table above is
+> unaffected (a zero SE has probability zero under its simulation). It is nonetheless an edit
+> to a rule adopted the same morning, after two gates ran under it, so it is not adopted by
+> this note: the code carries it because the fix is right and harmless, the record says
+> PROPOSED until the line is written. Control:
+> `test_a_no_op_season_is_a_tie_and_cannot_carry_an_adopt`.
 
 The quarterback gate (`hub.models.starter_change`) is a no-op, named as one: its paired frame
 is already one row per event-season, so its within-season unit is the event, and the
