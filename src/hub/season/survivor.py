@@ -129,7 +129,7 @@ def prior_rows(season: int, path: Path | None = None, store: Path | None = None)
         return rows
     if state is None or state.season != season:
         return rows
-    ours = next((e for e in state.entries if e.index == fetch_pool.OUR_INDEX), None)
+    ours = state.ours
     if ours is None:
         return rows
     return rows + [{"week": 0, "team": t, "ledger": True, "season": season} for t in ours.used]

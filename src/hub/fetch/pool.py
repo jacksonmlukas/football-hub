@@ -174,6 +174,14 @@ class PoolState(NamedTuple):
     def alive(self) -> int:
         return sum(1 for e in self.entries if e.alive)
 
+    @property
+    def ours(self) -> Entry | None:
+        """Our own entry, found by `OUR_INDEX` -- not by position -- so every reader of the
+        state finds it the same way. `None` if the field does not include us (an entry
+        gone from a payload after `OUR_INDEX` was assigned, or a state read before we were
+        entered)."""
+        return next((e for e in self.entries if e.index == OUR_INDEX), None)
+
 
 # --- the environment --------------------------------------------------------------------
 
@@ -630,9 +638,10 @@ def report(state: PoolState, *, captured: str | None = None) -> list[str]:
     lines = [f"  survivor pool, {state.season} as of week {state.week}: {state.field_size} "
              f"entries, {state.alive} alive, pot ${state.pot:.2f}"
              + (f" (read {captured})" if captured else "")]
+    ours = state.ours
     for e in state.entries:
         spent = ", ".join(e.used) if e.used else "nothing spent"
-        who = " (ours)" if e.index == OUR_INDEX else ""
+        who = " (ours)" if e is ours else ""
         lines.append(f"  entry {e.index}{who}: {'alive' if e.alive else 'out'}, {spent}")
     # What the money layer reads from this state by default (#280); stated here so an
     # operator overriding it knows what the figures were read as.

@@ -2443,7 +2443,6 @@ def _unrecorded(prior: Sequence[Mapping[str, Any]], behind: Sequence[int], seaso
 def main(argv: Sequence[str] | None = None) -> int:
     from hub.cli import unavailable
     from hub.config import SEASON_AHEAD, resolved_config
-    from hub.fetch import pool as fetch_pool
     from hub.season import journal
     from hub.season import survivor as sv
 
@@ -2518,8 +2517,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.entries is not None:
         entries = a.entries
     elif field is not None:
-        # Ours by its index, as every reader of the state finds it, not by position.
-        ours = next((e for e in field.entries if e.index == fetch_pool.OUR_INDEX), None)
+        ours = field.ours
         entries = field.alive - (1 if a.eliminated and ours is not None and ours.alive else 0)
     else:
         entries = cfg.field_size - (1 if a.eliminated else 0)

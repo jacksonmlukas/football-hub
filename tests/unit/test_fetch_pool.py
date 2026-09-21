@@ -164,6 +164,38 @@ def test_a_team_is_upper_cased_and_an_empty_one_is_refused():
         parse(p)
 
 
+# --- 2b. `PoolState.ours` (#340) -------------------------------------------------------
+
+def test_ours_is_the_entry_at_our_index():
+    """`PoolState.ours` is the accessor every reader now shares instead of re-deriving the
+    same scan: on a parsed payload it is our own entry, at `OUR_INDEX`."""
+    state = parse(payload())
+    assert state.ours is not None
+    assert state.ours.index == pool.OUR_INDEX
+    assert state.ours == state.entries[pool.OUR_INDEX]
+
+
+def test_ours_is_none_when_our_index_is_not_among_the_entries():
+    """No entry carries `OUR_INDEX` -- not a shape `parse_payload` ever produces, but the
+    accessor's own contract -- so `ours` answers `None` rather than raising or guessing at
+    another entry."""
+    state = pool.PoolState(season=2026, week=3, field_size=2, pot=0.0,
+                           entries=(pool.Entry(index=1, alive=True, used=()),
+                                    pool.Entry(index=2, alive=True, used=())))
+    assert state.ours is None
+
+
+def test_ours_is_found_by_index_not_by_position():
+    """The scan is by `index`, not by position in the tuple: entries out of index order
+    still resolve to the one whose `index` is `OUR_INDEX`, not to `entries[0]`."""
+    out_of_order = pool.Entry(index=1, alive=True, used=("KC",))
+    is_ours = pool.Entry(index=pool.OUR_INDEX, alive=False, used=("BUF",))
+    state = pool.PoolState(season=2026, week=3, field_size=2, pot=0.0,
+                           entries=(out_of_order, is_ours))
+    assert state.entries[0] is not is_ours
+    assert state.ours is is_ours
+
+
 # --- 3. an unauthenticated response is an auth failure, distinct from an empty pool --------
 
 def test_an_unauthenticated_response_is_an_auth_failure_and_not_an_empty_pool(
