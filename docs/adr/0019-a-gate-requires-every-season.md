@@ -272,7 +272,7 @@ for it (see the script's docstring):
 | gate | k | s | m | δ | combined null size | combined power at δ | unanimity-alone power at δ (#357's table) |
 |---|---|---|---|---|---|---|---|
 | draft | 4 | 7.34 | 20 | 2.0 | **0.0113** | **0.0324** | 0.136 |
-| weekly blend | 4 | 0.382 | 40 | 0.3 | **0.0186** | **0.1925** | 0.378 |
+| weekly blend (**withheld pending #378**) | ~~4~~ | ~~0.382~~ | ~~40~~ | ~~0.3~~ | ~~**0.0186**~~ | ~~**0.1925**~~ | ~~0.378~~ |
 
 **Both null sizes sit comfortably under `ALPHA` (0.05)** — the tie requirement can only make
 the conjunction rarer than the interval-alone test, never more permissive, and the simulation
@@ -293,6 +293,13 @@ ADOPT that is reachable in principle but not at any effect size this project wou
 observe. Per rule 16 and #300, a branch a gate cannot practically reach is not a strict bar on
 that gate; it is an exemption, and this pre-registration names it as one rather than leaving a
 reader to infer it from the branch never firing.
+
+**The weekly row above is withheld pending #378 (2026-09-21).** #376's weekly `--ceiling` run
+produced **3** clusters, with season 2022 silently absent, while this row was computed at
+**k = 4** — one of the two is wrong, and k is the axis that sets this row's null size, MDE, and
+every power figure in it, so the row cannot be read as established until #378 resolves which k
+is correct. It is struck rather than removed so the original computation stays visible, and
+will be recomputed at the corrected k when #378 lands.
 
 ## What it does not move, checked rather than hoped
 
