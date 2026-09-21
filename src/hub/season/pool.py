@@ -148,6 +148,16 @@ DEFAULT_CONCENTRATIONS = not_an_input(
 # needs a finer verdict than a week returns can raise this and watch the figure move.
 WEEKLY_TRIALS = 400
 
+# `leverage`'s own trial count (#368, S10), separate from `WEEKLY_TRIALS` so the weekly path
+# -- run every week, by an operator waiting on it -- stays fast whatever the study needs.
+# `leverage`'s own arithmetic (see its docstring, "the resolution is the advanced arm's")
+# puts resolving a +$3 term at concentration 16 at roughly 4,000 trials per arm; the module
+# was unresolved at 1600 for want of this number, not for want of evidence.
+# `scripts/leverage_study.py` is the harness ADR-0007 asks for: the study is cited as a
+# reason (it decides whether `LEVERAGE` below states a resolved term or an unresolved one),
+# so it runs from committed code rather than a one-off snippet.
+LEVERAGE_STUDY_TRIALS = 4000
+
 # How many standard errors of the paired difference a week has to clear before `weekly` calls
 # its recommendation distinguishable from the free pick. It was one, which is a two-sided
 # false positive rate of about one in three -- so roughly a third of the weeks where the two
@@ -2108,6 +2118,11 @@ def resolvable_on_the_axis(rows: Sequence[Leverage]) -> bool:
 # The statement the published figure carries beside `pool_digest` (#161): what the first
 # run of `leverage` found, so a reader of a weekly figure is told whether the term it omits
 # has been seen. Re-measured, this line moves with it (`docs/method.md` rule 13).
+#
+# Re-run 2026-09-21 at `LEVERAGE_STUDY_TRIALS` (4,000/arm, #368, S10): still not resolvable,
+# and the 24-of-25-positive direction below did not reproduce (5 of 25 positive). This
+# string's own text is kept as the 2026-09-11 record; `docs/pool-leverage.md` carries the
+# 2026-09-21 result beside it, dated, and is the place a future rewrite of this string reads.
 LEVERAGE = (
     "this week's rival attrition is not priced into these figures (#161). Measured "
     "2026-09-11 on the synthetic 32-team board over weeks 1-14, week 1 decided, 21 entries, "

@@ -423,6 +423,18 @@ CROWD = _grid({1: [("KC", "LV", 0.70), ("SF", "SEA", 0.65), ("BUF", "NYJ", 0.60)
                2: [("KC", "LV", 0.90), ("SF", "SEA", 0.85), ("BUF", "NYJ", 0.80)]})
 
 
+def test_leverage_study_trials_is_separate_from_the_weekly_default():
+    """#368: `WEEKLY_TRIALS` stays the weekly path's fast default -- the operator waiting on
+    it every week -- and `LEVERAGE_STUDY_TRIALS` is the study's own count, big enough (the
+    module's own arithmetic, in `leverage`'s docstring) to resolve what 1600 could not.
+    Raising one must not raise the other: `leverage`'s own `trials` default is still
+    `WEEKLY_TRIALS`, and a caller wanting the study's count states it, as
+    `scripts/leverage_study.py` does."""
+    import inspect
+    assert pool.LEVERAGE_STUDY_TRIALS > pool.WEEKLY_TRIALS
+    assert inspect.signature(pool.leverage).parameters["trials"].default == pool.WEEKLY_TRIALS
+
+
 def test_the_leverage_term_is_the_advanced_difference_less_the_unadvanced_one():
     """The shape of the instrument. One row per candidate per concentration, against the
     free pick; the unadvanced arm is exactly what `weekly` prices on the same seed, so the
