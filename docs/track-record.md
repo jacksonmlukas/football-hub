@@ -60,6 +60,16 @@ This is what separates evaluation infrastructure from a picks account:
   noise, and showing that you know it is the credibility signal.
 - **A wrong-predictions section**, not buried. The biggest misses, with what the model saw.
 
+> **Restated 2026-09-21 (#358).** The discipline above — no point estimate without an interval
+> wide enough to show what it does and does not rule out — applies to the internal record too.
+> `docs/method.md`'s fifteen-measurement table and `README.md`'s conclusions table had published
+> thirteen of those measurements as closures with no equivalence bound (*"the programme is
+> closed"*, *"age adds nothing to ECR"*, *"a structural zero"*). Each of the thirteen now carries,
+> dated beside the original text, the effect its design could have detected at 80% power: the
+> four all-season losses keep their verdict and gain the bound; the rest read as a bounded null,
+> or — where the design's own inputs could not be rebuilt — say that a bound could not be
+> computed, rather than estimate one. See [detectable-effects.md](detectable-effects.md).
+
 ## The honest risk
 
 A market-anchored model will mostly track the market. The record will look unexciting, and there
