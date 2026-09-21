@@ -287,6 +287,13 @@ of evidence — and at these SEs and cluster counts, that strictness measurably 
 a realistic delta. The alternative is the defect this amendment closes: a rule with less
 power is a rule that is actually testing what it claims to.
 
+**The draft gate's ADOPT branch is a named exemption, not a bar (2026-09-21).** At δ=2.0 the
+combined rule's power for the draft gate is **0.0324** against unanimity-alone's 0.136 — an
+ADOPT that is reachable in principle but not at any effect size this project would plausibly
+observe. Per rule 16 and #300, a branch a gate cannot practically reach is not a strict bar on
+that gate; it is an exemption, and this pre-registration names it as one rather than leaving a
+reader to infer it from the branch never firing.
+
 ## What it does not move, checked rather than hoped
 
 `tests/unit/test_experiment.py::test_the_eighty_gate_verdicts_are_unmoved` is a regression
