@@ -37,8 +37,11 @@ def _yrs(gains):
 
 
 def _sum(lo, hi):
+    # `t_lo`/`t_hi` mirror the percentile bounds: #357 (S1) moved `gate`'s decision onto the
+    # t interval, and this double is testing the branch logic rather than the interval math,
+    # so it hands the rule the same bounds under both names.
     return {"n": 80.0, "clusters": 80.0, "mean": (lo + hi) / 2, "lo": lo, "hi": hi,
-            "p_better": 0.5}
+            "t_lo": lo, "t_hi": hi, "p_better": 0.5}
 
 
 def test_an_interval_above_zero_in_every_season_promotes_equity():

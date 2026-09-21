@@ -401,6 +401,64 @@ def minimum_detectable_effect(se: float, clusters: int) -> float:
             + statistics.NormalDist().inv_cdf(POWER)) * se
 
 
+def t_interval(mean: float, se: float, clusters: int) -> tuple[float, float]:
+    """The t-based interval `mean +/- t(1 - alpha/2, clusters - 1) * se`.
+
+    **Issue #357 (S1).** `gate`'s ADOPT half used to read the *percentile* bootstrap's `lo`
+    -- the 2.5th percentile of resampled cluster means. Under `SEASON_CLUSTER` a nonparametric
+    percentile bootstrap can only resample the `k` cluster means it was handed: if all `k` are
+    positive, every resample is a convex combination of positive numbers, so `lo > 0` follows
+    from `all(gain > 0)` **by construction**, with no reference to how large the gains are
+    relative to their spread. `won == total` and `lo > 0` were, on that half, the same
+    condition twice -- a sign test of size `2**-k`, not the two-part rule ADR-0019 documents.
+
+    This interval is not implied by the sign the same way. It is a **distributional**
+    assumption -- that the cluster means are drawn from something close enough to normal for
+    a t reference to apply -- rather than a **resampling** one, and whether it excludes zero
+    depends on the *magnitude* of `mean` relative to `se`, not merely on every cluster's sign
+    agreeing. `k` seasons that are all barely positive, with a `se` that swamps their mean,
+    produce a percentile `lo` above zero every time (rule construction) and a `t_lo` below
+    zero most of the time (the classic textbook remedy for `k=4`; `gate-power.md`'s own
+    docstring on `minimum_detectable_effect` already renders this exact interval for small
+    cluster counts, computed and printed and never read by the rule -- this is that
+    computation, now read).
+
+    NaN both, matching `minimum_detectable_effect`'s guard: a t interval needs a degrees of
+    freedom to have a shape, and there is none below two clusters.
+    """
+    if clusters < 2 or not math.isfinite(se):
+        return float("nan"), float("nan")
+    half = t_quantile(1.0 - ALPHA / 2.0, clusters - 1) * se
+    return mean - half, mean + half
+
+
+def achieved_power(mean: float, se: float, clusters: int) -> float:
+    """The power this run's design achieved against the effect actually observed.
+
+    **Issue #357 (S1), acceptance (b).** `minimum_detectable_effect` fixes power at `POWER`
+    (0.80) and solves for the effect: `delta = (t_crit + z(power)) * se`. This inverts it --
+    fixes the effect at `abs(mean)`, the one this run actually saw, and solves for power:
+    `power = Phi(abs(mean) / se - t_crit)`. Same construction, same `t_crit`, same `se` the
+    interval and the MDE were drawn from, so the three numbers cannot disagree about which
+    bootstrap produced them.
+
+    **A diagnostic, not a rule -- the same status `docs/method.md` gives the FDR threshold
+    and CRPS.** It says what this design's power was against what it happened to see, which
+    is not the same claim as power against a pre-registered effect and is not read by `gate`.
+    Its purpose is narrower and specific to S1: a SHOW is a null, and a null from an
+    underpowered design and a null from a well-powered one look identical on the page unless
+    the power sits beside them -- "a SHOW that does not say what it could have detected is not
+    a result."
+
+    NaN under the same conditions `t_interval` returns NaN, plus a non-positive `se`, which
+    would make `abs(mean) / se` either undefined or a direction-free infinity.
+    """
+    if clusters < 2 or not math.isfinite(se) or se <= 0:
+        return float("nan")
+    z = abs(mean) / se - t_quantile(1.0 - ALPHA / 2.0, clusters - 1)
+    return statistics.NormalDist().cdf(z)
+
+
 def expanding_seasons(
     df: pl.DataFrame, *, min_past: int = 1, season_col: str = "season",
 ) -> Iterator[tuple[int, pl.DataFrame, pl.DataFrame]]:
@@ -565,8 +623,14 @@ def paired_report(s: dict, *, arm_a: str, arm_b: str,
     not a line reading `nan`. A field with a slot and no data prints nothing either:
     `nan` set against a unit is the watchdog's 56.7 years, and silence is the honest render of
     a number that was not computed. Order is deliberate: the effect, the interval around it,
-    the smallest effect the run could have resolved, and then how much there was to resolve.
-    Each line is read against the one above it.
+    the smallest effect the run could have resolved, how much power the run actually achieved
+    against what it saw, and then how much there was to resolve. Each line is read against the
+    one above it.
+
+    **`power`, since #357 (S1).** A SHOW is a null, and a null from an underpowered run and a
+    null from a well-powered one render identically unless the power sits beside them --
+    printed here rather than only inside `gate`, because every verdict shares this block and
+    a SHOW is the one that most needs it read.
     """
     head = f"n={int(s['n'])}  " if show_n else ""
     lines = [
@@ -581,6 +645,9 @@ def paired_report(s: dict, *, arm_a: str, arm_b: str,
     # rather than a predicate that folds them together.
     if reading(s, "mde") is Field.VALUE:
         lines.append(f"  MDE at 80% power {s['mde']:+.{places}f} {unit}")
+    if reading(s, "power") is Field.VALUE:
+        lines.append(f"  achieved power against the observed effect {s['power'] * 100:.1f}% "
+                     f"(a diagnostic: `gate` does not read it)")
     # `ceiling_arm` is the caller's, for the same reason `unit` is. Two of the three gates
     # bound *perfect foresight* and the lineup gate bounds a *perfect spread*, and a line that
     # called the second one foresight would be the exact confusion
@@ -799,7 +866,8 @@ def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
     if paired.is_empty():
         return {"n": 0, "clusters": 0, "mean": float("nan"), "lo": float("nan"),
                 "hi": float("nan"), "p_better": float("nan"), "se": float("nan"),
-                "mde": float("nan")} | carried
+                "mde": float("nan"), "t_lo": float("nan"), "t_hi": float("nan"),
+                "power": float("nan")} | carried
     if cluster:
         keys = list(cluster)
         units = (paired.group_by(keys).agg(pl.col("diff").mean().alias("_unit"))
@@ -815,13 +883,20 @@ def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
     # construction the one the interval above it was drawn from, which is the half of
     # `docs/gate-power.md`'s rule that a second bootstrap agreeing by luck would fake.
     se = float(draws.std(ddof=1)) if len(draws) > 1 else float("nan")
+    mean = float(units.mean())
+    t_lo, t_hi = t_interval(mean, se, len(units))
     return {"n": float(paired.height), "clusters": float(len(units)),
-            "mean": float(units.mean()),
+            "mean": mean,
             "lo": float(np.percentile(draws, 2.5)),
             "hi": float(np.percentile(draws, 97.5)),
             "p_better": float((draws > 0).mean()),
             "se": se,
-            "mde": minimum_detectable_effect(se, len(units))} | carried
+            "mde": minimum_detectable_effect(se, len(units)),
+            # #357 (S1): the t interval and the achieved power, off the same `mean`/`se`/
+            # `clusters` triple the MDE reads -- see `t_interval` and `achieved_power`.
+            "t_lo": t_lo,
+            "t_hi": t_hi,
+            "power": achieved_power(mean, se, len(units))} | carried
 
 
 # --- the Gate ---------------------------------------------------------------
@@ -896,6 +971,20 @@ def gate(summary: dict, seasons: pl.DataFrame, actions: Actions,
     The comparison is signed rather than absolute. A ceiling of zero -- a perfect-foresight
     arm gaining nothing over the incumbent -- is the strongest finding a ceiling can carry,
     and any positive MDE exceeds it, which is the correct reading and not an edge case.
+
+    **The interval half reads `t_lo`/`t_hi`, not `lo`/`hi`, since #357 (S1).** Every gate here
+    clusters on the season (`SEASON_CLUSTER`), so `summarise`'s bootstrap resamples exactly
+    the `k` season means `seasons["gain"]` also holds. A *percentile* bootstrap over `k`
+    clusters can only resample the `k` numbers it was handed: when every one is positive,
+    every resample is a convex combination of positive numbers, so its `lo > 0` follows from
+    `won == total` **by construction**, independent of how large the gains are next to their
+    spread. The ADOPT conjunction was, on that half, `won == total` read twice -- a one-sided
+    sign test of size `2**-k` wearing two names. `t_lo`/`t_hi` (`t_interval`) is a
+    distributional claim rather than a resampling one and is not implied by the seasons'
+    signs the same way: see `t_interval`'s own docstring for the full argument and
+    `tests/unit/test_experiment.py::test_the_fixed_rule_s_null_size_is_not_degenerate` (and
+    its sibling planted against the *old* rule) for the simulation that checks it rather than
+    arguing it.
     """
     if void:
         return "VOID", void
@@ -913,14 +1002,21 @@ def gate(summary: dict, seasons: pl.DataFrame, actions: Actions,
         return "SHOW", f"{actions.show} Nothing measured -- no paired observation."
     won = int((seasons["gain"] > 0).sum())
     total = seasons.height
-    if summary["lo"] > 0 and won == total:
+    t_lo = summary.get("t_lo", float("nan"))
+    t_hi = summary.get("t_hi", float("nan"))
+    has_interval = reading(summary, "t_lo") is Field.VALUE
+    if has_interval and t_lo > 0 and won == total:
         return "ADOPT", (f"{actions.adopt} It won in every held-out season ({won}/{total}) "
-                         f"and the interval excludes zero.")
-    if summary["hi"] < 0 and won == 0:
+                         f"and the t interval [{t_lo:+.3f}, {t_hi:+.3f}] excludes zero.")
+    if has_interval and t_hi < 0 and won == 0:
         return "REMOVE", (f"{actions.remove} Worse in every held-out season ({total}/{total}) "
-                          f"and the interval excludes zero.")
-    why = ("the interval contains zero" if summary["lo"] <= 0 <= summary["hi"]
-           else "the interval excludes zero but the sign is not consistent across seasons")
+                          f"and the t interval [{t_lo:+.3f}, {t_hi:+.3f}] excludes zero.")
+    if not has_interval:
+        why = "too few clusters for a t interval"
+    elif t_lo <= 0 <= t_hi:
+        why = "the interval contains zero"
+    else:
+        why = "the interval excludes zero but the sign is not consistent across seasons"
     return "SHOW", (f"{actions.show} Won {won}/{total} seasons and {why} -- absence of "
                     f"evidence, not evidence of equivalence.")
 
