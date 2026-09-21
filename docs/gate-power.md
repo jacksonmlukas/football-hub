@@ -1656,3 +1656,327 @@ not — the simplex stays as the object the consumers read and its per-player ve
 reported as the null it predicted. If the lineup gate adopts, ADR-0016 reopens by its own
 gate and the do-no-harm branch decides scope. If coverage overshoots, the double-count is
 the finding and `TEAMMATE_RHO` is re-fitted conditional on the simplex before anything ships.
+
+# Pre-registered 2026-09-21 — PROPOSED: the state-space team rating (#365)
+
+**Status: PROPOSED.** Drafted from `docs/audits/2026-09-20-method-audit.json` finding **S8**,
+in #305's form: this becomes the rule on the maintainer's `ADOPTED:` comment on #365 and
+decides nothing until then, per the precedent #329 set — pre-registered before the module that
+would run it exists. Parent decisions: [ADR-0019](adr/0019-a-gate-requires-every-season.md) as
+amended by #357 (S1, the t-interval half) and #363 (S6, the ceiling precondition, both
+directions), [ADR-0006](adr/0006-fitted-constants-live-with-their-provenance.md) (a fitted
+constant lives with its provenance), and
+[ADR-0007](adr/0007-measurements-that-steer-the-product-are-committed-code.md) — *"a measurement
+that steers the product must be committed code"* — which `hub.exhibits.championship_equity`'s
+own docstring cites for the reason a removed model's harness stays in the tree, re-runnable,
+rather than leaving with the model: an exhibit's whole point is that its measurement can be
+checked again, and the same requirement is why an *unwired* fit belongs in `hub.exhibits` from
+its first commit rather than arriving there only on REMOVE. `hub.declare` (#253:
+`fitted`/`chosen`/`not_an_input`, and `covered()`, which walks exactly the declarations below)
+is the other load-bearing piece.
+
+**#365 was `blocked_by` #326 on 2026-09-21** for a stated reason — quoting the maintainer's own
+comment on #326: *"a Glickman-Stern rating declares fitted constants, `config_digest` is walked
+off those declarations, so landing it moves the model version stamped on every published
+prediction — for a model nothing reads."* **That reason is withdrawn as of this
+pre-registration, not the edge itself** (the edge is the maintainer's write, not this
+document's): the design below declares every constant `not_an_input` while the module is
+unwired, precisely so the digest does not move, which is what the paragraph immediately below
+states in full. What the freeze still holds is the *gate*, and for a different reason — see
+"The gate," below.
+
+## The maintainer's framing (2026-09-21), stated here because this document is what a future reader checks it against
+
+The freeze (#326) is about the **serving path**. A rating fitted on 1999–2025 schedules changes
+nothing that serves Sunday *as long as nothing imports it*: it lives as an **exhibit** in
+`hub.exhibits`, exactly where `championship_equity` and `leverage` already live under
+ADR-0007, with its constants declared `not_an_input` so the config digest stamped on every
+published prediction does not move, and `ratings.forecaster()` keeps returning
+`MarketBaseline()` until the gate below adopts. The real reason to wait on the *gate* — not the
+fit — is that the instrument the gate reads changed on 2026-09-21 (S1, the t-interval half; S6,
+the ceiling precondition) and no record has been re-run under it yet: this gate runs in October,
+under the fixed rule, after Audit V (#325).
+
+**Order: pre-register (this document) → fit as an unwired exhibit (after the maintainer's
+`ADOPTED:` line on this section) → gate in October.** Pre-registering first is what makes the
+middle step safe. `docs/method.md` rule 1's incident — a rating fitted and *seen* to beat the
+close before its gate is written — is exactly what an unwired exhibit with `not_an_input`
+constants cannot produce: nothing reads it, so nothing it does can be seen by a published
+number before the gate says so.
+
+## The model
+
+A **Glickman–Stern** state-space rating (Glickman & Stern 1998, the standard NFL state-space
+form this repo has cited nowhere until now): a Normal observation model on the game margin,
+team strengths a Gaussian random walk **across weeks**, a **between-season shrink** pulling
+every team's strength toward the league mean at the season boundary, and home advantage a
+single scalar parameter. Fitted on `nflverse.load("schedules")` back to 1999 — the same source
+and the same `spread_line`/`result` columns `hub.models.margin` already fits against
+(`docs/margin-sd.md`), so no new fetch and no new source enters the repo.
+
+    θ[i, w] = θ[i, w-1] + ε[i, w],  ε ~ N(0, WEEK_STEP_SD²)             (within a season)
+    θ[i, season+1, week 1] = (1 - SEASON_SHRINK) · θ[i, last] + SEASON_SHRINK · 0 + η
+    margin_hat[g] = θ[home, w] - θ[away, w] + HOME_ADV
+    result[g] ~ N(margin_hat[g], RATING_MARGIN_SD²)
+
+**Every constant named, and its spelling while the exhibit is unwired:**
+
+| constant | what it is | fitted or chosen | spelling today |
+|---|---|---|---|
+| `WEEK_STEP_SD` | the random walk's per-week innovation sd — how fast a team's strength can move inside a season | **fitted** (maximum likelihood / Kalman variance estimation on the walk-forward training fold) | `not_an_input`, "an exhibit's own constant, unwired from every prediction and excluded until the gate below adopts" |
+| `SEASON_SHRINK` | the fraction of a team's rating that regresses to the league mean between seasons | **fitted** | `not_an_input`, same reason |
+| `HOME_ADV` | the single home-advantage points parameter | **fitted** | `not_an_input`, same reason |
+| `RATING_MARGIN_SD` | the residual sd converting a strength gap into a win probability, this model's own analogue of `market.MARGIN_SD` — a different number for a different model, not a reuse of the market's | **fitted** | `not_an_input`, same reason |
+| `INITIAL_STRENGTH_VAR` | the prior variance on a team's strength at its first-ever observed game (1999 for an original-32/expansion team, its first season for a later expansion team) | **chosen** (a weakly-informative prior width, not a measurement — no data exists to measure a team's variance before its first game) | `not_an_input`, same reason |
+
+**Every one of the five is `covered()` by `hub.declare` the moment it is spelled `fitted` or
+`chosen` on landing — that is the whole mechanism #253 built, and it is exactly what must
+*not* happen before the gate below has a maintainer's `ADOPTED:` line.** `not_an_input` is not
+a weaker claim about these numbers — two of them plainly are measurements — it is the
+mechanism's *only* lever for keeping a real measurement out of a digest that must not move yet,
+and `hub.declare.declared_in`'s own eight-word minimum on the reason is what stops that from
+being silence. `tests/contracts/test_the_exhibit_is_not_a_dependency.py`, extended to this
+module alongside `championship_equity` and `leverage`, is what holds nothing in `hub.models` or
+`hub.season` importing it while it is spelled this way.
+
+## The estimand
+
+Walk-forward log-loss on the home result, one season held out at a time, the rating fitted on
+strictly earlier seasons only (`docs/method.md` rule 2 — `hub.models.experiment.expanding_seasons`
+is the one place in `src/` allowed to write the `<` this needs, and this gate calls it rather
+than writing its own).
+
+    per game: -[y · log(p_home) + (1-y) · log(1 - p_home)],  y = 1 if home won
+
+`p_home` for the rating is `normal_cdf(margin_hat[g] / RATING_MARGIN_SD)`, the same conversion
+form `MarketBaseline` uses on the close — the two arms differ in what produces the margin, not
+in how a margin becomes a probability (rule 6, below).
+
+## The arms
+
+* **Arm A, the incumbent: the close.** `normal_cdf(close_spread / MARGIN_SD)` exactly as
+  `hub.season.survivor.grid_from_schedule` builds it (`hub/season/survivor.py:578-584`, which
+  imports `MARGIN_SD` and `normal_cdf` from `hub.models.market` directly rather than through
+  `ratings.forecaster()` — a fact this document returns to under "What published number moves,"
+  below, because it means adopting this gate does not, by itself, move that computation).
+* **Arm B, under test: the rating.** `normal_cdf(margin_hat[g] / RATING_MARGIN_SD)` from the
+  state-space model above, walk-forward.
+* **Rule 6 — both arms must have the same information.** The rating sees results and closing
+  spreads strictly before the held-out week; the close is, definitionally, the market's own
+  number as of the same moment. Neither arm reads anything the other does not have access to as
+  of kickoff of the game being scored — in particular the rating does **not** read
+  `close_spread` as a feature (that would make Arm B partly Arm A, the laundering rule 6's own
+  incident describes), and the close does not read any rating output. Held by
+  `tests/unit/test_ratings_gate.py::test_the_rating_arm_never_reads_the_close_as_a_feature`
+  (to be written with the fit, named here so the test that must exist is on the record before
+  the code is).
+
+## Pairing
+
+**By game** (rule 7) — common random numbers do no work here because neither arm is stochastic
+at inference time (both are deterministic functions of their inputs once fitted), so pairing is
+just: the same game, scored by both arms, differenced. `diff = logloss(A) - logloss(B)`,
+positive when the rating helps.
+
+## Clusters
+
+**Between-season: `SEASON_CLUSTER`** (`("season",)`), the cluster every gate in this repo
+resamples on since ADR-0019.
+
+**Within-season: the game.** Stated explicitly because #335's table (`docs/adr/0019-…md`,
+"Per-gate within-season units") does not yet carry this gate, and because the answer here is
+the opposite of the quarterback gate's: `starter_change`'s within-season unit is a **no-op**
+because that gate's paired frame is already one row per event-season — there is nothing finer
+to cluster on. **This gate's frame is not that shape.** A season holds one row per game (~267
+for a 32-team, 17-game NFL season, before exclusions), so `within=("game_id",)` is a real
+degree of freedom distinct from the season cluster itself, and #335's tie test
+(`gain >= 2 * SE` over the within-season clusters, `TIE_MIN_CLUSTERS = 12`) reads real
+within-season variation rather than falling back to the bare sign the way `starter_change` and
+`injury.type_verdict` do. `tests/contracts/test_gates_tie_test_names_its_within_season_unit.py`
+gains this gate's `within` argument alongside the five it already holds.
+
+## The ceiling arm, declared
+
+S6 (#363) makes this mandatory before either half of the bar is read: *"A gate that measured no
+ceiling returns NOT-RUNNABLE, full stop… the same way a `void` condition does."* The precedent
+this document follows is the quarterback gate's own (`docs/gate-power.md`, "Two preconditions
+ahead of the verdict"): *"The ceiling arm is **the betting market's own repricing** — the last
+snapshot before the game day, scored against the same frozen line. What the betting market
+recovered by the close is the most an adjustment built to anticipate it could recover."*
+
+**For this gate, Arm A already *is* the close** — unlike the quarterback gate, whose incumbent
+is a stale pre-change snapshot with the close still ahead of it, there is no later market number
+this repo's own current archive holds beyond the close for a game already played. So the
+ceiling has to be read season by season, and the two eras of this repo's data are not the same
+shape:
+
+* **2026 onward — a real ceiling exists.** `data/processed/lines` (`hub.fetch.odds`, live
+  polling) holds more than one snapshot per game, so a genuine "last pre-kickoff poll" distinct
+  from whatever `close_spread` resolves to at an earlier `at` is on disk, exactly the shape
+  `hub.schedule.priced_games`'s own `live`/`stale`/`schedule` source ladder already
+  distinguishes. The ceiling for a 2026-onward season is the gain of scoring against that last
+  poll instead of Arm A's close, on this same harness — declared as `RATING_CEILING_ARM =
+  "the market's last pre-kickoff poll"`, distinct by name from the quarterback gate's own
+  ceiling and the other three gates' declared arms per
+  `tests/contracts/test_each_gate_declares_its_ceiling_arm.py`, extended to this one.
+* **1999–2025 — no ceiling exists, and that is the finding, not a gap to paper over.**
+  `nflverse`'s `spread_line` is, by its own documentation and by `hub.models.margin`'s own
+  usage of it, already the historical closing line — there is no later, more-repriced number
+  this repo holds underneath it for a game played in 2011. **Per S6, a season with no measured
+  ceiling reports NOT-RUNNABLE in both directions, before the pooled interval or the
+  every-season half is read at all — the same way a `void` condition does, one rung below it.**
+  That is not a caveat on 26 of the walk-forward's 27 possible seasons (2000–2025, one season
+  short of the archive's own 1999 start, which the random walk needs as a burn-in year with no
+  prior season to walk forward from — the same reasoning `margin.py`'s own
+  `FITTED_SHAPE_SEASONS = 27` walk-forward already uses). **It is what the run for those seasons
+  actually reports**, and it is reported that way rather than silently scored against a ceiling
+  of zero or omitted from the table.
+
+**What this means for the gate as a whole.** A single `experiment.gate()` call reads one
+pooled, season-clustered summary — it does not read season-by-season NOT-RUNNABLE. So the
+practical shape is: **the walk-forward gate as pre-registered here is NOT-RUNNABLE against
+1999–2025 in full**, because the pooled run's ceiling has nothing to average over 26 of its 27
+seasons; **a second, smaller run restricted to 2026-onward seasons is the only shape that can
+ever produce a ceiling-qualified verdict**, and it inherits ADR-0019's own three-season floor
+(below three seasons the every-season half is close to a coin flip) — meaning the earliest this
+gate can report anything but NOT-RUNNABLE is **no sooner than the 2028 season**, three years of
+this repo's own live poll archive existing at all. This is named here, before the first run,
+rather than discovered from watching NOT-RUNNABLE print for two years with no explanation on
+the page (rule 16's own incident, restated).
+
+## The gate
+
+`experiment.gate`, under S1's t-interval and S6's ceiling precondition, exactly as every other
+gate in the repo reads it — nothing added, nothing loosened:
+
+* **NOT-RUNNABLE** — no ceiling measured (all of 1999–2025 today; see above), or a ceiling
+  measured but the season-clustered MDE exceeds it. No verdict; the exhibit stays unwired and
+  unfitted-as-shipped; this section records why and what would change it.
+* **ADOPT** — the t-interval excludes zero on the positive side **and** the sign holds (win, not
+  a tie, per #335) in every held-out season with a ceiling. **What it publishes:** the route
+  back into the served path opens — `ratings.forecaster()` is switched from `MarketBaseline()`
+  to the rating, behind the flag the ticket's own acceptance criteria name, and the constants
+  above are re-spelled `fitted`/`chosen` in the same commit that flips the flag, which is the
+  commit that moves `config_digest` and every published prediction's provenance. Track A, named
+  in `ratings.py`'s own docstring as the seam this module exists for, arrives here. **What it
+  does not publish by itself:** the six `win_prob` consumers the ticket names — see "What
+  published number moves," below.
+* **REMOVE** — the interval excludes zero on the negative side and the every-season loss is
+  unanimous. **What it publishes:** exactly what the ticket's acceptance criteria call
+  publishable on this branch — *"you have a calibrated second opinion and a residual to
+  study."* The module moves fully into `hub.exhibits`, alongside `championship_equity` and
+  `leverage`, re-runnable under ADR-0007, its constants staying `not_an_input` for the reason
+  every other exhibit's do (`tests/contracts/test_the_exhibit_is_not_a_dependency.py` covers
+  it the same way). Nothing about a REMOVE here is a failure this repo hides — thirteen of
+  fifteen prior measurements ended this way (`docs/method.md`, "The record"), and a calibrated
+  loser is exactly the "residual to study" the ticket asks a REMOVE to leave behind.
+* **SHOW** — otherwise. `ratings.forecaster()` stays `MarketBaseline()`; the flag stays off;
+  this section says the comparison could not move it. Absence of evidence, not equivalence.
+
+## Power before the run (rule 16)
+
+No pilot exists for this estimand — unlike the quarterback gate (#291), which had the source's
+own two probability columns to read a pilot mean and sd from, nothing in this repo has ever
+scored a state-space rating's log-loss against the NFL close. So both the between-season sd and
+a plausible effect size are **stated, conservative stand-ins**, by the same convention
+`scripts/rule16_combined_power.py` already uses for its own within-season sd:
+
+* **`s` (between-season sd of the log-loss gain), stood in at 0.0332** — the only
+  log-loss-against-a-frozen-line pilot sd this repo has ever measured, the quarterback gate's
+  own (`docs/gate-power.md`, "Measured 2026-09-13": target 0.0180, between-season sd 0.0332).
+  Borrowed rather than invented, on the same order of magnitude a log-loss gate on this repo's
+  own spreads is going to produce, and flagged as borrowed rather than presented as measured.
+* **`δ`, tested at 0.0090 and 0.0180** — half and the whole of that same pilot's target.
+* **`k`, tested at 10 and 26** — a trailing-decade window (the same convention
+  `hub.models.margin`'s own `MARGIN_SD` fit uses, "a trailing window beat all-history on
+  held-out log-loss," `docs/margin-sd.md`) and the archive's largest fully-realized walk-forward
+  count today. `margin.py`'s own `FITTED_SHAPE_SEASONS = 27` names "2000-2026," but 2026 is
+  this pre-registration's own in-progress season and is not yet a *completed* held-out season
+  to score a log-loss against — so 26 (2000-2025) is what "the archive's own ceiling" means
+  here, and 27 becomes reachable only once 2026 closes. **Both k values are moot against the
+  ceiling finding above**, since neither window has a measured ceiling under today's archive,
+  but computed anyway because the question rule 16 asks — *is ADOPT reachable at any plausible
+  δ* — is a property of the combined rule and not of whether a ceiling happens to exist yet.
+
+**Run against `hub.models.experiment.summarise`/`per_season`/`gate` directly** (the shipped
+harness, not a reimplementation — the same discipline `scripts/rule16_combined_power.py`
+follows), at `m = 50` within-season clusters (a tractable stand-in; the real per-season game
+count, ~267 for the NFL, only shrinks the within-season SE further and makes ties *rarer*, so
+`m = 50` is not an inflated power estimate — see the run's own docstring for the argument in
+full), 10,000-trial-scale simulation:
+
+| k | δ | combined-rule null size | combined-rule power |
+|---|---|---|---|
+| 10 | 0.0090 | 0.0000 | 0.0000 |
+| 26 | 0.0090 | 0.0000 | 0.0000 |
+| 10 | 0.0180 | 0.0000 | 0.0000 |
+| 26 | 0.0180 | 0.0000 | 0.0000 |
+| 29 | 0.0180 | 0.0000 | 0.0000 |
+
+**Every cell reads ADOPT power indistinguishable from its own null size, at k up to the
+archive's own ceiling and δ up to twice the only pilot this repo has to scale by.** The reason
+is structural rather than a matter of trial count: ADOPT needs a **win in every one of k
+independently-drawn seasons**, and at `s = 0.0332` against `δ = 0.0090`–`0.0180`, the
+between-season noise is 1.8×–3.7× the mean effect — so a large share of individual seasons draw
+a losing or tied sign by chance alone, and the probability that all k do not falls
+geometrically in k. This is the same shape #357/#335 found for the draft gate at δ=2.0 (power
+0.0324 against unanimity-alone's 0.136) — here it is more extreme, because the borrowed `s` is
+large relative to the borrowed `δ`.
+
+**The rule-16 exemption, named.** **ADOPT is not reachable at any plausible δ tested, at any k
+this archive could ever support**, for the same reason rule 16 names an exemption rather than a
+bar: a branch a gate cannot practically reach is not a strict bar on that gate. **Unless the
+rating's true edge over the close is large relative to its own season-to-season variance — a
+stronger and more falsifiable claim than "beats the close by a few hundredths of a nat" — ADOPT
+is this gate's named exemption, not its expectation.** This is written down now, before the
+first row is fitted, so a future reader sees the same three seasons of a printed NOT-RUNNABLE
+this document itself criticises rule 16's incident for, and knows why. REMOVE and SHOW are not
+exempted by this finding — an interval that excludes zero on the negative side, or a null, needs
+no unanimity in the same brittle way and both remain fully reachable outcomes on 2026-onward
+data once three ceiling-qualified seasons exist.
+
+## Exclusions (rule 11)
+
+* **Unpriced games** — `close_spread` null (`hub.schedule.priced_games`'s own `unpriced`
+  source). Neither arm scores a game the incumbent could not price; scoring the rating alone on
+  those rows would hand Arm B information Arm A never had a chance on (rule 6 in reverse).
+* **Postseason games** — excluded, as `hub.models.margin`'s own gate already does over the same
+  1999–2025 archive ("1999-2025 has a handful; dropping them is cleaner than inventing a
+  convention," `margin.py:94`). A playoff game's stakes and roster usage are not what a
+  regular-season walk-forward log-loss is built to price, and the postseason bracket is what
+  `hub.exhibits.championship_equity` already exists to reason about separately.
+* **Ties** — excluded, not scored at 0.5 the way the quarterback gate's rarer event games are.
+  An NFL tie is a genuinely different outcome from either team winning, `y` has no natural value
+  in the log-loss formula above without inventing one, and the population is small enough
+  (roughly one every few seasons) that excluding them changes no season's sample size
+  materially.
+
+## What published number moves if it adopts (rule 13)
+
+The ticket names six: *"The survivor IP, `pool.Field`, `weekly`, `leverage`, `buyback` and
+`sensitivity` all read it [win_prob]."* Read literally against the code as it stands today,
+**none of the six moves on this gate's ADOPT alone**, and that is worth stating precisely
+rather than assuming the obvious wiring:
+
+`ratings.forecaster()` is read by `hub.models.ratings.fit()` — the predictions the site
+publishes (`site/data/preds_*.json`), which is what actually moves on ADOPT: every `win_prob`,
+margin and provenance stamp `fit()` writes. **`hub.season.survivor.grid_from_schedule` does not
+call `ratings.forecaster()` at all** — it imports `MARGIN_SD` and `normal_cdf` from
+`hub.models.market` directly and recomputes the conversion by hand
+(`survivor.py:578-584`, and its own docstring: *"The spread-to-probability conversion is
+`MarketBaseline`'s, so a survivor pick and a [game prediction] agree"* — an intentional
+agreement enforced by duplication, not by a shared call). The six consumers the ticket lists —
+survivor's own IP, `pool.Field`, `weekly`, `leverage`, `buyback`, `sensitivity` — all sit
+downstream of `grid_from_schedule`, not of `ratings.forecaster()`. **So an ADOPT on this gate
+moves the published game predictions and moves none of the six**, until a second, separate,
+later ticket rewires `grid_from_schedule` onto the rating — which is itself a serving-path
+change and belongs behind its own pre-registration under this same discipline, not something
+this gate's ADOPT branch licenses by implication. Naming this now is what stops the six from
+being quietly assumed to have moved the day this section reads ADOPT.
+
+## Closing
+
+**PROPOSED.** Awaiting the maintainer's `ADOPTED:` comment on this section before the fit
+begins, per the order stated at the top: pre-register → fit as an unwired exhibit → gate in
+October, after Audit V (#325).
+
