@@ -294,6 +294,24 @@ observe. Per rule 16 and #300, a branch a gate cannot practically reach is not a
 that gate; it is an exemption, and this pre-registration names it as one rather than leaving a
 reader to infer it from the branch never firing.
 
+**Runnable and able to adopt are two different questions, and #376 answers only the first
+(2026-09-21).** The row above is about *power to adopt a given effect size*, computed without a
+ceiling. `docs/gate-power.md`'s dated restatement, same day, is about *whether the design can
+resolve a real effect at all*: the draft gate's own `--ceiling` run (`hub.draft.backtest
+--seasons 2022,2023,2024,2025 --drafts 20 --ceiling`, `n_drafts=20`, the module's documented
+default) measured a season-clustered MDE of **11.01** against a foresight ceiling of **+21.90**
+— the stage-2 guard (this ADR's 2026-09-07 amendment; widened by #363/S6 above) passes, at about
+**1.99x**, a much thinner margin than the weekly gate's 9.7x. `experiment.gate`'s NOT-RUNNABLE
+branch therefore does not fire for the draft gate either, closing what the S6 amendment below
+names as owed to #376. **Both facts are true at once, and neither implies the other:** the
+draft gate is *runnable* — its MDE sits below its measured ceiling, so a real effect of a
+plausible size would show up rather than being lost to noise — and its ADOPT branch is
+separately *unreachable by power* at the row's own δ=2.0, a property of the combined rule's
+size at k=4 that a ceiling does not change. A gate can clear the stage-2 guard and still never
+practically adopt; this is that gate. Full numbers and the run's other caveats:
+`docs/gate-power.md`'s dated 2026-09-21 restatement, beside this same section's #376 note for
+the weekly half.
+
 **The weekly row above is withheld pending #378 (2026-09-21).** #376's weekly `--ceiling` run
 produced **3** clusters, with season 2022 silently absent, while this row was computed at
 **k = 4** — one of the two is wrong, and k is the axis that sets this row's null size, MDE, and
@@ -406,6 +424,16 @@ unnamed permanent NOT-RUNNABLE state. The **lineup** gate carries its own open q
 (`interval_shape`) always hands in a ceiling at its own call site and is unaffected. The
 **quarterback** diagnostic (`starter_change`) is unaffected in the same way when run with
 `--ceiling`, and continues to read its own `EVENT_SEASONS_MINIMUM` exemption first regardless.
+
+**Resolved 2026-09-21: the draft half closed under #376.** Measured the same day as the weekly
+half, same recipe shape (`hub.draft.backtest --seasons 2022,2023,2024,2025 --drafts 20
+--ceiling`, `n_drafts=20` the module's own default): MDE **11.01** against a ceiling of
+**+21.90**, stage 2 passing at about **1.99x** — thinner than the weekly gate's 9.7x but still
+clear. Both season gates this amendment named are therefore NOT-RUNNABLE no longer, and #376's
+own acceptance criteria are both discharged. Full numbers, the run's own SHOW verdict and why it
+is not the published one, and the pre-registered rule-16 ADOPT-power finding read together with
+this stage-2 result, are in this document's own rule-16 section above and
+`docs/gate-power.md`'s dated 2026-09-21 restatement beside the weekly note.
 
 ## What it does not move, checked rather than hoped
 

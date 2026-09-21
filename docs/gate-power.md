@@ -390,6 +390,71 @@ implementation detail. The mechanism takes it as a parameter and declares nothin
 > ADR-0019's rule-16 weekly row is unstruck with this: the row was computed at k=4 all along
 > and the number that briefly contradicted it was reading a different, accidental k.
 
+> **The draft gate's ceiling, measured 2026-09-21 -- #376's second, owed half.** A measurement,
+> not a modelling change: it moves no model, no constant, no published effect.
+>
+>     uv run python -m hub.draft.backtest --seasons 2022,2023,2024,2025 --drafts 20 --seed 0 --ceiling
+>
+> the module's own documented recipe (its docstring's example command, plus `--ceiling`) at the
+> default `n_drafts=20`. `--shrink` does not exist on this gate -- that flag belongs to
+> `weekly_gate`, not `backtest`, so there is no published-recipe choice to make here the way
+> there was for the weekly half:
+>
+> | | this run |
+> |---|---|
+> | optimizer − market | −12.40 |
+> | 95% CI, percentile | [−17.60, −7.20] |
+> | 95% CI, t | [−21.11, −3.69] |
+> | clusters | 4 |
+> | season-clustered MDE (80% power) | 11.01 |
+> | **ceiling (perfect foresight)** | **+21.90** |
+> | **ceiling / MDE** | **≈1.99x** |
+> | verdict, this run | SHOW (tie-aware rule: won 0, tied 1, lost 3 of 4 seasons) |
+>
+> **Stage 2 passes, but by a much thinner margin than the weekly half.** The ceiling (21.90)
+> clears the MDE (11.01) by about 1.99x -- against the weekly gate's 9.7x above. `experiment.gate`'s
+> NOT-RUNNABLE branch does not fire for the draft gate either: both season gates ADR-0019's
+> #363 (S6) amendment named NOT-RUNNABLE pending this ticket now carry a measured ceiling, and
+> neither MDE exceeds it. That is what #376 asks this ticket to end for the draft half, the same
+> way the note above ended it for the weekly half.
+>
+> **This run's own verdict is not the published one and is not read as such** -- the same
+> caveat the weekly half carried. `n_drafts=20`, no `--shrink` (there is none to give): this
+> run's per-season gains (2022 −15.35, 2023 −8.41, 2024 −5.99, 2025 −19.86) read **SHOW** under
+> the post-S1 tie-aware rule (won 0, tied 1, lost 3 of 4) because 2024's small loss reads as a
+> tie rather than a fourth loss, not the **REMOVE**
+> [ADR-0009](adr/0009-championship-equity-does-not-pick.md) recorded (championship equity is
+> already out of the draft-night output, in `hub.exhibits`). This run's own point effect
+> (−12.40) also does not resolve the attribution question this document's own 2026-09-07
+> re-measurement section opened (−19.66 published, −12.48 / −11.59 re-run, #190 still open on
+> which commit owns the movement) -- it is one more data point in that range, not a fourth
+> measurement offered to settle it. Neither the ADR-0009 disposition nor #190 moves.
+>
+> **Runnable is not the same as able to adopt.** Passing stage 2 means this design has the
+> power to resolve a real effect of about this size at 80% power; it says nothing about which
+> branch it could resolve one *into*. ADR-0019's rule-16 section separately measured the draft
+> gate's ADOPT branch at 0.0324 combined power against δ=2.0 -- against 0.136 for the sign test
+> alone -- and named it a rule-16 exemption: reachable in principle, not at any effect size this
+> project would plausibly observe. Both facts hold together and neither substitutes for the
+> other: the stage-2 guard is now satisfied (MDE below ceiling, ~1.99x), and the ADOPT branch it
+> guards remains practically unreachable by power regardless. See that section's own dated
+> addition for the combined statement.
+>
+> Flagged in passing, not chased down here (out of #376's scope): this run also printed
+> `REQUIRES REVIEW` -- its season-clustered interval (width 10.40) is narrower than the
+> previously recorded one (11.10, ratio 0.94), the shape #169 found unnoticed in five of nine
+> cases. Worth a look before this table is treated as settled.
+>
+> `state/gate-width.json` is restored after this run the same way both weekly runs were:
+> `git checkout -- state/gate-width.json` once the numbers above were recorded, so #362's
+> evidence -- the `requires_review` entries the live file already carries -- stays exactly what
+> it was before tonight. The run's own write, reverted, was `draft`, clusters 4, width
+> **10.403535714285717**, verdict SHOW, timestamp 2026-09-21T18:24:02+00:00.
+> `state/gate-width.2026-09-20.pre-ceiling.json` is the byte-identical pre-run copy, unchanged,
+> predating both halves of this ticket.
+>
+> Both halves of #376 are now recorded -- weekly above, draft here.
+
 # Restated 2026-09-07: every number above was measured on a harness with a foresight leak
 
 Under [method.md rule 13](method.md). **Nothing in the tables above is edited.** They record
