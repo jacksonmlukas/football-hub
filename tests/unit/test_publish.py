@@ -1550,11 +1550,74 @@ def test_the_published_plan_spends_what_the_pool_host_says_our_entry_spent(site,
     fetch_pool.write_state(state, base, when=dt.datetime(2026, 9, 16, 9, 0, tzinfo=dt.UTC))
     got = publish.survivor(2026, out=site, store=base)
     assert isinstance(got, dict)
+    assert got["status"] == "plan", "a state was read and our entry is alive"
     assert got["spent"] == ["KC"]
     assert "KC" not in [r["team"] for r in got["rows"]]
     assert [r["team"] for r in got["rows"]] == ["SF", "SEA"]
     alone = publish.survivor(2026, out=site / "elsewhere", store=base / "nothing")
     assert isinstance(alone, dict) and alone["spent"] == []
+    assert alone["status"] == "unread-state", "no state exists under this store"
+
+
+def test_an_eliminated_entry_publishes_no_plan(site, base, monkeypatch):
+    """#380's first criterion, built from the fixture the ticket named. `ent-8843` (Member C
+    in `pool_payload.synthetic.json`) is `alive: false`, and its one recorded pick is week
+    1's NYG -- a loss. Published as ours, the artifact carries the elimination and nothing
+    that looks like a plan: no `rows`, no `spent`, no `survival`.
+
+    `sv.grid_from_schedule` is deliberately left unstubbed here, unlike every other test in
+    this file: if the eliminated gate above `sv.plan_remaining` ever stopped short-circuiting,
+    this would reach for a live schedule through the `offline` fixture's empty stub and come
+    back `Infeasible`, not a plan that happens to look right -- so a broken gate fails loudly
+    rather than by coincidence passing.
+
+    It also overwrites a plan already published. That is the bug #380 was filed against:
+    `spent = [JAX, SF], alive` stayed published over a real elimination because nothing
+    checked `ours.alive` before republishing the solver's own guess. An artifact this
+    dict-shaped and this empty is not "nothing to report", so it must not be dropped by
+    `_publish`'s last-good guard the way an empty run would be -- `_eliminated` writes
+    straight through `_write` for exactly that reason.
+    """
+    import json
+
+    from hub.fetch import pool as fetch_pool
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "survivor.json").write_text(json.dumps(
+        {"name": "survivor", "season": 2026, "n": 1, "spent": ["JAX", "SF"],
+         "rows": [{"week": 2, "team": "KC", "win_prob": 0.9}]}))
+    fixture = json.loads((pathlib.Path(__file__).resolve().parents[1] / "golden"
+                          / "fixtures" / "pool_payload.synthetic.json").read_text())
+    state, _ = fetch_pool.parse_payload(fixture, ours="ent-8843")
+    fetch_pool.write_state(state, base)
+    got = publish.survivor(2026, out=site, store=base)
+    assert isinstance(got, dict)
+    assert got["status"] == "eliminated"
+    assert got["rows"] == [] and got["n"] == 0
+    assert "spent" not in got and "survival" not in got
+    assert got["eliminated_week"] == 1
+    assert got["eliminated_team"] == "NYG"
+    assert got["buyback_cutoff_week"] == 6
+    assert got["buyback_open"] is True, "week 1 is inside the buyback window"
+    on_disk = json.loads((site / "survivor.json").read_text())
+    assert on_disk["status"] == "eliminated", (
+        "a stale alive-looking plan must not survive an eliminated read")
+
+
+def test_no_pool_state_read_says_the_remaining_plan_is_not_verified(site, base, monkeypatch):
+    """#380's second criterion: this checkout's actual situation (#379). No
+    `pool_state.json` exists under `base`, so there is nothing to check `ours.alive`
+    against -- the remaining plan is still published, because there is no reason to
+    withhold a plan the code can still compute, but `status` says `unread-state` rather
+    than `plan` so a reader cannot mistake the code's own guess for the pool's record.
+    """
+    import hub.season.survivor as sv
+    monkeypatch.setattr(sv, "grid_from_schedule",
+                        lambda season, cache=None: _mid_season_grid())
+    _pin_schedule_clock(monkeypatch, MID_SEASON_NOW)
+    got = publish.survivor(2026, out=site, store=base / "nothing")
+    assert isinstance(got, dict)
+    assert got["status"] == "unread-state"
+    assert got["rows"], "a remaining plan is still published, only flagged as unverified"
 
 
 def test_the_published_survival_covers_the_remaining_weeks_only(site, base, monkeypatch):

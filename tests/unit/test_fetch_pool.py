@@ -483,7 +483,8 @@ def test_the_state_file_is_written_byte_for_byte_as_it_was_before_the_shared_fet
     assert list(doc) == ["captured_at", "season", "week", "field_size", "pot", "entries"]
     assert doc["captured_at"] == "2026-09-12T12:00:07+00:00"
     assert pool.captured_at(store) == "2026-09-12T12:00:07+00:00"
-    assert doc["entries"][0] == {"entry": 0, "alive": True, "used": ["DAL", "KC"]}
+    assert doc["entries"][0] == {"entry": 0, "alive": True, "used": ["DAL", "KC"],
+                                 "last_week": 2, "last_teams": ["KC"]}
     assert pool.state_path(store).read_text().startswith('{\n  "captured_at": ')
 
 
@@ -564,7 +565,8 @@ def test_the_archive_carries_an_index_and_never_a_name(store, session, transport
     assert files
     for p in files:
         df = pl.read_parquet(p)
-        assert set(df.columns) == {"entry", "alive", "used", "field_size", "pot", "captured_at"}
+        assert set(df.columns) == {"entry", "alive", "used", "last_week", "last_teams",
+                                   "field_size", "pot", "captured_at"}
         text = df.write_json()
         for member in ("ent-884", "Member", "Survivor 2026", "pool-0001"):
             assert member not in text, f"{member!r} reached the archive"
