@@ -135,3 +135,22 @@ inputs are not pinned can be contradicted and never corrected.* The free pick an
 set are to be committed as a fixture, the way `rank_tiers`' docstring was rebuilt onto one, so
 that a third run disagreeing with the second is information and not the same lesson a third
 time. That is a ticket, not this page.
+
+## 2026-09-21: the board is pinned (#377) -- still no third run
+
+`tests/golden/fixtures/pool_leverage_candidates.json` is that fixture: the free pick (**T30**)
+and the five candidates (T28, T27, T26, T25, T24) `pool.candidate_ranking` returns for this
+board, week and rules today, dated. `scripts/leverage_study.py` reads it and studies those six
+teams on every run rather than re-ranking the board live, so a future run compares against this
+page's two runs on the same arms instead of drifting the way the free pick drifted between them.
+A ranking change is now a fixture diff, caught by
+`test_the_committed_leverage_fixture_matches_todays_ranking` in `tests/unit/test_pool.py` before
+it can confound a study -- the test this page's two runs above did not have. `--refit`
+regenerates the fixture from today's ranking and prints the diff against the committed one; it
+spends no trials.
+
+**No third run is made here.** This section pins the board a third run would need; it does not
+run one. `LEVERAGE_STUDY_TRIALS = 4000` and the verdict above -- unresolved, both runs -- stand
+untouched. A future session that wants a true pinned replication runs
+`uv run python scripts/leverage_study.py` against this fixture and restates this page under
+[rule 13](method.md), the way the two runs above did.

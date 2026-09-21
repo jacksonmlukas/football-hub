@@ -1982,11 +1982,33 @@ def _shares(cfg: PoolConfig, out: EntryOutcome) -> np.ndarray:
                     dtype=float)
 
 
+def candidate_ranking(grid: pl.DataFrame, week: int, cfg: PoolConfig | None = None,
+                      ledger: Sequence[str] = (), now: datetime | None = None,
+                      top: int = 6) -> tuple[str, list[tuple[str, float, tuple[str, ...]]]]:
+    """The free pick and the `top` ranked candidates for `week`, on `grid` as it stands today.
+
+    `auto_pick` and `_ranked` behind one name, pulled out of `leverage` for #377: a caller
+    that wants to know what today's ranking says -- without spending a single trial -- needs
+    exactly this pair and nothing else. `leverage` calls it too, so the live weekly path and
+    a caller checking that path against a committed fixture read the same ranking and cannot
+    drift from each other by accident. The free pick is always the first of the candidates
+    returned, since `auto_pick` is the same filter and the same ranking.
+    """
+    spent = set(ledger)
+    candidates = _ranked(_legal(grid, week, spent, now), week, _picks_in(week, cfg), top)
+    free = auto_pick(grid, week, ledger, pool=cfg, now=now)
+    if free is None:
+        raise ValueError(f"week {week} has no legal pick left: {len(spent)} teams are spent")
+    return free, candidates
+
+
 def leverage(field: Field, *, week: int, ledger: Sequence[str] = (), entries: int,
              pot: float, at: Sequence[float] = DEFAULT_CONCENTRATIONS,
              top: int = 6, trials: int = WEEKLY_TRIALS,
              rng: np.random.Generator | None = None,
-             now: datetime | None = None) -> list[Leverage]:
+             now: datetime | None = None,
+             ranking: tuple[str, Sequence[tuple[str, float, tuple[str, ...]]]] | None = None
+             ) -> list[Leverage]:
     """The leverage term for every candidate this week, at every concentration in `at`.
 
     The measurement #161 was re-scoped to. Two arms per candidate per concentration, on one
@@ -2028,6 +2050,15 @@ def leverage(field: Field, *, week: int, ledger: Sequence[str] = (), entries: in
     Costs twice what `weekly` costs: `top` candidates, two simulations each, per point on
     the axis. It is a measurement and not the weekly path, and `hub.season.pool --leverage`
     is how an operator asks for it on a real week.
+
+    **`ranking`, for a caller that wants a pinned board rather than today's** (#377).
+    `scripts/leverage_study.py` used to re-rank the live board on every run, so the free
+    pick and the five candidates it compared -- T31, then T30 after intervening commits
+    reordered the board -- moved out from under a study meant to be a re-run of the last
+    one, and the two runs shared no arm. Handed `(free, candidates)`, the same shape
+    `candidate_ranking` returns, this skips the ranking and prices exactly those teams
+    instead; handed nothing, it calls `candidate_ranking` itself, which is every other
+    caller -- `hub.season.pool --leverage` re-ranks live on a real week, as it has to.
     """
     cfg, grid = field.cfg, field.grid
     rng = rng or np.random.default_rng(0)
@@ -2039,18 +2070,21 @@ def leverage(field: Field, *, week: int, ledger: Sequence[str] = (), entries: in
             "field's attrition this week is worth something *in*, so with no weeks ahead "
             "there is no term to measure. `weekly` prices such a week in closed form.")
     spent = set(ledger)
-    # The candidates before the free pick, so a double week the grid cannot pair -- a
-    # `game_id` missing on a row -- is refused with that sentence rather than read as a
-    # week with no legal pick. In a double-pick week each is a pair from two fixtures
-    # priced as the product (#256), and `takes` is what it spends. `now` is the clock the
-    # week is read against (#263): `at` here is the concentration axis, so the moment
-    # carries the other name.
-    teams = _ranked(_legal(grid, week, spent, now), week, _picks_in(week, cfg), top)
-    free = auto_pick(grid, week, ledger, pool=cfg, now=now)
-    if free is None:
-        raise ValueError(f"week {week} has no legal pick left: {len(spent)} teams are spent")
-    # The free pick is always the first of these: `auto_pick` is the same filter and the
-    # same ranking, so a guard appending it when absent would be a guard that cannot fire.
+    if ranking is not None:
+        free, teams = ranking[0], list(ranking[1])
+    else:
+        # The candidates before the free pick, so a double week the grid cannot pair -- a
+        # `game_id` missing on a row -- is refused with that sentence rather than read as a
+        # week with no legal pick. In a double-pick week each is a pair from two fixtures
+        # priced as the product (#256), and `takes` is what it spends. `now` is the clock
+        # the week is read against (#263): `at` here is the concentration axis, so the
+        # moment carries the other name.
+        free, teams = candidate_ranking(grid, week, cfg, ledger, now, top)
+    if free not in {t for t, _, _ in teams}:
+        raise ValueError(
+            f"the free pick {free!r} is not among the {len(teams)} candidates handed to "
+            "`leverage`: every other candidate is compared against its own figure, so its "
+            "tuple has to be one of them.")
     root = np.sqrt(trials)
     rows: list[Leverage] = []
     for k in at:

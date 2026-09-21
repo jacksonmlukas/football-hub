@@ -6,7 +6,9 @@ game and eliminations become independent, the field thins smoothly, and the cont
 past anything real. Most of what follows is that one property, tested from angles that would
 each fail differently if it broke.
 """
+import json
 import math
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -1418,3 +1420,55 @@ def test_co_eliminated_reads_the_record_and_is_zero_without_one():
     got = pool.EntryOutcome(trials=5, survives=0.0, sole=0.0, share=0.0,
                             last_out_each=(1, 3, 0, 2, 1))
     assert got.co_eliminated == pytest.approx(0.4)
+
+
+# --- the leverage study's board is pinned as a fixture, not re-ranked (#377) ------
+
+_LEVERAGE_FIXTURE = (Path(__file__).resolve().parents[1] / "golden" / "fixtures"
+                     / "pool_leverage_candidates.json")
+
+
+def test_the_committed_leverage_fixture_matches_todays_ranking():
+    """The test #377 exists to build. `tests/golden/fixtures/pool_leverage_candidates.json`
+    is the free pick and five candidates `pool.candidate_ranking` returned for this board
+    and week the day the fixture was written, and `scripts/leverage_study.py` studies those
+    six teams on every run instead of re-ranking the board live -- so a re-run compares
+    against the last one on the same arms.
+
+    That pinning is only honest if a ranking change is caught. #377 was opened because one
+    was not: the free pick moved T31 -> T30 on an identical board, seed and week between the
+    study's two runs, so they shared no arm and the second could not be compared with the
+    first. This is the test that would have caught it -- it rebuilds the exact board `_board`
+    builds (`scripts/leverage_study.py`'s own copy of that formula, kept identical to this
+    one by hand, per that script's module docstring) and fails the day today's
+    `candidate_ranking` disagrees with what is committed, rather than letting the next study
+    run absorb a ranking change as if it were a leverage finding. `grid_digest` and
+    `pool_digest` are checked first and named in the failure, so a board or rules drift reads
+    as that and not as a same-board ranking change -- the two the fixture cannot tell apart
+    on its own.
+    """
+    fixture = json.loads(_LEVERAGE_FIXTURE.read_text())
+    board = fixture["board"]
+    cfg = PoolConfig(co_elimination_rule=board["co_elimination_rule"],
+                     co_survivor_rule=board["co_survivor_rule"])
+    grid = _board(range(board["weeks"][0], board["weeks"][1] + 1))
+
+    assert pool.grid_digest(grid) == board["grid_digest"], (
+        "the board `_board` builds no longer digests to what the leverage fixture was "
+        "written against -- `scripts/leverage_study.py`'s hand-copied formula has drifted "
+        "from this one, which the fixture cannot fix; correct the copy by hand first")
+    assert pool.pool_digest(cfg) == board["pool_digest"], (
+        "the pool rules the fixture names no longer digest to what it was written against")
+
+    free, ranked = pool.candidate_ranking(grid, board["week"], cfg, top=6)
+    assert free == fixture["free_pick"]["team"] and ranked[0][0] == free
+    got_teams = [t for t, _, _ in ranked]
+    want_teams = [fixture["free_pick"]["team"], *(c["team"] for c in fixture["candidates"])]
+    assert got_teams == want_teams, (
+        f"today's ranking is {got_teams}, not the {want_teams} committed to the fixture -- "
+        "run `scripts/leverage_study.py --refit` to see the diff and pin the new ranking "
+        "deliberately, the way #377 asks")
+    want_probs = [fixture["free_pick"]["win_prob"],
+                 *(c["win_prob"] for c in fixture["candidates"])]
+    for (_, got_p, _), want_p in zip(ranked, want_probs, strict=True):
+        assert got_p == pytest.approx(want_p)
