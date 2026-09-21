@@ -201,21 +201,27 @@ def test_a_fitted_candidate_wins_when_the_incumbent_is_plainly_wrong():
 
 # --- the pre-registered rule ---------------------------------------------
 
-def _wf(inc, all_, tr):
-    return pl.DataFrame({"season": [2020, 2021], "n": [100, 100],
-                         "ll_incumbent": inc, "ll_all": all_, "ll_trailing10": tr})
+def _wf(inc, all_, tr, ceiling_gain=None):
+    """`ceiling_gain` defaults to a generous, non-binding per-season ceiling (#363, S6) --
+    large enough that no MDE these tiny fixtures produce could exceed it, so these tests
+    exercise the every-season/interval halves `gate` actually decides on rather than the
+    stage-2 precondition ahead of them."""
+    n = len(inc)
+    if ceiling_gain is None:
+        ceiling_gain = [0.5] * n
+    return pl.DataFrame({"season": [2020, 2021][:n], "n": [100] * n,
+                         "ll_incumbent": inc, "ll_all": all_, "ll_trailing10": tr,
+                         "ceiling_gain": ceiling_gain})
 
 
 def test_a_better_challenger_is_adopted():
-    """#363 (S6): `gate` is NOT-RUNNABLE with no ceiling, and `hub.models.margin` has never
-    built one -- a real, significant consequence flagged in this lane's final report rather
-    than papered over here. `margin.verdict` reads the shared `gate` directly (its own
-    docstring's "not unified" claim notwithstanding), so ADOPT is unreachable through it
-    until margin either gets a ceiling mechanism or is exempted from stage 2; `winner` falls
-    back to `incumbent` on every branch that is not ADOPT, which is every branch now."""
+    """#363 (S6): `verdict` now wires the width gate's own ceiling (`CEILING_ARM`, built from
+    `walk_forward`'s `ceiling_gain` column) into the shared `gate`'s stage-2 precondition, so
+    a challenger that clears both halves of the house rule reaches ADOPT again -- the ceiling
+    only turns NOT-RUNNABLE when a design's MDE exceeds it, which a constant +0.05 gain over
+    two seasons does not."""
     winner, text = margin.verdict(_wf([0.60, 0.60], [0.55, 0.55], [0.58, 0.58]))
-    assert winner == "incumbent" and text.startswith("KEEP")
-    assert "-> NOT-RUNNABLE" in text
+    assert winner == "all" and text.startswith("ADOPT")
 
 
 def test_the_incumbent_wins_a_tie():
@@ -234,15 +240,15 @@ def test_a_challenger_better_on_average_but_not_every_season_is_not_adopted():
     """The width gate is the same rule (#285): `docs/margin-sd.md` records that its first
     verdict fired on a mean at 15/26 seasons and said a future gate should ask for more.
 
-    #363 (S6): with no ceiling `gate` is NOT-RUNNABLE regardless (see
-    `test_a_better_challenger_is_adopted`'s note), so `trailing10` -- which used to clear
-    both halves here -- no longer reaches ADOPT either; the per-season win counts this test
-    was written to check are still printed on each candidate's line."""
+    #363 (S6): the ceiling is wired and present (a generous, non-binding `ceiling_gain`
+    below) but does not save `all` -- it loses one of three held-out seasons, which fails
+    the every-season half regardless of what stage 2 says. `trailing10` wins every season
+    and its interval excludes zero, so it clears both halves and is ADOPT once more."""
     wf = pl.DataFrame({"season": [2020, 2021, 2022], "n": [100] * 3,
                        "ll_incumbent": [0.60, 0.60, 0.60], "ll_all": [0.50, 0.50, 0.61],
-                       "ll_trailing10": [0.59, 0.59, 0.59]})
+                       "ll_trailing10": [0.59, 0.59, 0.59], "ceiling_gain": [0.5, 0.5, 0.5]})
     winner, text = margin.verdict(wf)
-    assert winner == "incumbent" and "2/3" in text and "3/3" in text
+    assert winner == "trailing10" and "2/3" in text and "3/3" in text
 
 
 def test_no_held_out_seasons_defaults_to_the_incumbent():
@@ -294,12 +300,11 @@ def test_the_fit_path_reports_and_gates(monkeypatch, capsys, tmp_path):
     # At 11 against 12.741 and 200 games the gain is real on average and lost in three
     # seasons of ten -- the case the old rule adopted and this one must not.
     #
-    # #363 (S6): `gate` is NOT-RUNNABLE with no ceiling, and `hub.models.margin` has never
-    # built one, so ADOPT is unreachable through it now -- a real consequence flagged in this
-    # lane's final report rather than papered over here. The per-season win count this test
-    # was written to check is still printed on the candidate's line.
-    assert "NOT-RUNNABLE" in text
-    assert "wins" in text
+    # #363 (S6): `verdict` now wires `walk_forward`'s per-season `ceiling_gain` into the
+    # house rule, so a real, wide gap between an incumbent fit to the wrong dispersion and
+    # the oracle clears stage 2 and ADOPT is reachable again through the live CLI path.
+    assert "ADOPT" in text
+    assert "Value to adopt" in text
     assert out.exists()
     assert out.exists()
 
