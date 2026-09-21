@@ -646,6 +646,13 @@ the check notices.* It is cheap — each of the three took minutes — and it is
 that a check which "only ever passes" cannot pass. A check that has never been seen to fail
 has not been seen to work.
 
+**Where the rule fires.** `tests/contracts/test_every_check_has_a_positive_control.py`: every
+top-level `verdict`, `*_verdict`, `gate`, `run_gate`, `screen` or `*_screen` in `src/hub` must
+appear in its registry naming the test that plants its condition, or the ticket that will;
+a control renamed or deleted fails it; and its last test plants a `verdict` in a temporary
+tree and asserts the contract sees it. A rule that lives only in this file is rule 1's
+incident — documented, not implemented, and quoted in the write-up — so this one has a hook.
+
 **Promoted 2026-09-21** from the "noted, not yet a rule" form after the fourth instance, on
 the maintainer's reading that four levels in three days plus three independent rediscoveries
 of the same procedure is the signal that it belongs in the rule rather than in the tests.
