@@ -679,8 +679,12 @@ def test_no_team_whose_game_has_kicked_off_is_offered_for_the_week(monkeypatch):
     # kickoff at all is read as entirely ahead -- the preseason shape every other test uses.
     assert pool.auto_pick(grid, 1, now=dt.datetime(2026, 9, 17, 12, 0)) == "KC"
     assert pool.auto_pick(HOARD, 1, now=friday) == "KC"
-    # And the clock defaults to now: a game with a result is over whatever the hour.
-    assert "BUF" not in {c.team for c in _weekly(grid, [1, 2], week=1, trials=20).candidates}
+    # A game with a result is over whatever the hour -- even an hour long before its own
+    # kickoff, which is `now` pinned here rather than left to default and read the wall
+    # clock (#356).
+    long_before = dt.datetime(2020, 1, 1, 0, 0)
+    assert "BUF" not in {c.team for c in
+                         _weekly(grid, [1, 2], week=1, now=long_before, trials=20).candidates}
 
 
 def test_a_pick_name_spells_a_pair_once_and_reads_it_back():
