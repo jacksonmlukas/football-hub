@@ -540,6 +540,15 @@ resample is a convex combination of positive numbers and `lo > 0` follows from `
 size `2**-k` — 12.5% at k=3, 6.25% at k=4, 3.1% at k=5 — wearing two names and quoted as a
 stricter rule than either alone.
 
+**It was on the page before the audit found it.** `docs/weekly-blend-gate.md` (2026-09-07),
+under *"The verdict does not move"*: *all four season means are negative, so no resample of
+them can reach zero; the interval excludes zero in the same direction, 0 of 4 seasons still
+lose.* That is this rule's defect written out in prose, in the REMOVE direction, two weeks
+before M-S1 — correctly derived, and published as reassurance that the verdict was robust.
+Whoever wrote it saw that the sign half implies the interval half and read the result as
+doubly confirmed rather than singly. The degeneracy was never hidden; it was read as a
+strength.
+
 **What made it invisible.** Every safeguard this repo had was pointed at whether the rule was
 *followed* — argued in the ADR, spelled out in `gate()`'s own docstring, unit-tested branch by
 branch, held by a contract test asserting every gate clusters on the season. None of them asked
@@ -586,51 +595,61 @@ correlation or a reliability, fitted on quantities measured from few events, is 
 by the events' own sampling variance, and the correction is analytic when the count is
 known.** Two is a coincidence; three is rule 16's successor.
 
-### Noted four times in 24 hours, not yet a rule: an assertion whose outcome cannot vary with the thing it asserts about
+### 18. Every check gets a positive control: plant the condition it exists to detect, and confirm it fires, before the check is trusted
 
-Recorded 2026-09-21. Rule 17 above covers the first instance and only the first: it is about
-a *decision rule*, checked *before pre-registration*. The second and third were neither, so
-rule 17 as written would not have caught them. They are filed here so the generalisation, if
-it comes, is written from three dated cases and not reconstructed later.
+**An assertion whose outcome cannot vary with the thing it asserts about is not a check. It
+is a sentence with a pass mark.** Before any check is trusted — a decision rule, a test, an
+operational query, a simulation harness, a "verify with" command — plant the condition it
+exists to detect and watch it fire. If the planted failure passes, the check is decorative,
+whatever it says about the code.
 
-**Instance one (M-S1, #357, a decision rule).** `lo > 0 and won == total`, where the first
-term is implied by the second under the cluster every gate uses. The conjunction's outcome
-could not vary with the interval — it was the sign half read twice. Rule 17.
+**The incidents.** Four in three days, at four levels, and one from two weeks earlier that
+was published as reassurance:
 
-**Instance two (#363's wiring, `03d119f`, a test).** `margin.verdict()`'s stage-2 guard fires
-on `mde > ceiling`. The tests covered a present non-binding ceiling (ADOPT) and no ceiling at
-all (NOT-RUNNABLE), and the firing condition itself lived in a docstring — *"a constant +0.05
-gain over three seasons does not exceed it"* — with no fixture that reached it. The first
-fixture written to reach it did not: two identical held-out seasons give an MDE of exactly
-zero, which no ceiling can be smaller than, so the "binding ceiling" case could not bind. The
-outcome could not vary with the guard.
+- **A decision rule (M-S1, #357).** `lo > 0 and won == total`, where the first term is
+  implied by the second under the cluster every gate uses — the sign half read twice. Rule
+  17's own incident. And `docs/weekly-blend-gate.md` had stated the same implication in
+  prose on 2026-09-07 (*"all four season means are negative, so no resample of them can reach
+  zero"*), in the REMOVE direction, as evidence the verdict was robust. The positive control
+  — simulate the rule under the null and confirm its size — is what neither the code nor the
+  page had.
+- **A test fixture (#363's wiring, `03d119f`).** `margin.verdict()`'s stage-2 guard fires on
+  `mde > ceiling`. The tests covered a present non-binding ceiling and no ceiling at all; the
+  firing condition lived in a docstring with no fixture that reached it. The first fixture
+  written to reach it could not: two identical held-out seasons give an MDE of exactly zero,
+  which no ceiling can be smaller than. The positive control is `ceiling_gain=[0.001, 0.001]`
+  on two *differing* seasons, and it took two attempts to plant.
+- **An operational query (#326's release condition, 2026-09-21).** The freeze's first drafted
+  ending test was `gh issue list --state open --label blocking`; there is no `blocking` label
+  in this tracker. The query returns empty whether or not a hold exists, and empty reads as
+  clearance. The positive control — a label that exists, or a check on the audit record that
+  does — was one lookup away.
+- **A harness (`scripts/rule16_combined_power.py`, found by two lanes independently,
+  2026-09-21).** The script behind ADR-0019's rule-16 table passed `summarise` no `ceiling`;
+  once #363 landed behind it in the same lane, every trial was NOT-RUNNABLE and the ADOPT rate
+  read 0 at every δ. The published table was right and could no longer be re-derived. The
+  positive control is `tests/unit/test_rule16_combined_power.py`: an effect a hundred
+  standard errors wide must ADOPT on essentially every trial, or the harness — not the rule —
+  is what returned zero.
 
-**Instance three (#326's release condition, comment of 2026-09-21, an operational check).**
-The first draft of the freeze's ending test was `gh issue list --state open --label blocking`
-— and there is no `blocking` label in this tracker; the tag lives in the audit JSON. The query
-returns empty whether or not a hold exists. An empty result would have read as clearance. The
-outcome could not vary with the hold.
+**The shape.** Different levels, one defect: *the thing checked is not connected to the thing
+the check is about, so the check passes regardless.* Rule 15 is this rule's test-shaped
+special case (a fixture that sets the condition under which the estimator is trivially
+correct); rule 17 is its rule-shaped one (a conjunction whose second term is implied by its
+first). Both stay, because each names a shape worth recognising on sight. This rule is what
+they are instances of.
 
-**Instance four (`scripts/rule16_combined_power.py`, found 2026-09-21 by two lanes
-independently, a harness).** The script that produced the rule-16 table in ADR-0019's
-amendment called `summarise` with no `ceiling`. It was run before #363 landed behind it in the
-same lane; after #363, a gate with no ceiling is NOT-RUNNABLE in both directions, so the
-harness returned an ADOPT rate of 0 at every δ. The published table was right and could no
-longer be re-derived from the tree. Fixed by handing the simulation a ceiling that cannot bind
-and saying why, and by a test that plants an effect the harness cannot miss and asserts it
-adopts — the outcome must vary with δ before any rate it reports means anything.
+**The procedure, which was rediscovered three times in one week before it was written
+down.** S1's null-size simulation, margin's binding-ceiling fixture and the harness's
+adopt-at-enormous-δ assertion are one move: *make the failure happen on purpose and confirm
+the check notices.* It is cheap — each of the three took minutes — and it is the only check
+that a check which "only ever passes" cannot pass. A check that has never been seen to fail
+has not been seen to work.
 
-**The shape all four share.** Different levels — a rule, a test, a query, a harness — and one
-defect:
-**the thing checked is not connected to the thing the check is about, so the check passes
-regardless.** Rule 15 is the test-shaped special case (a fixture that sets the condition under
-which the estimator is trivially correct); rule 17 is the rule-shaped one. What is not yet
-written is the general instruction — *before trusting any assertion, ask what observation
-would make it come out the other way, and confirm that observation is reachable* — and the
-check that would have caught all four is the same one each time: plant the failure and watch
-the assertion notice. Four at four levels in one day is more than a coincidence; it is
-recorded rather than promoted because the general form has not yet been tested against a
-case it was written for.
+**Promoted 2026-09-21** from the "noted, not yet a rule" form after the fourth instance, on
+the maintainer's reading that four levels in three days plus three independent rediscoveries
+of the same procedure is the signal that it belongs in the rule rather than in the tests.
+Prior form: *noted four times in 24 hours, not yet a rule*, recorded the same day.
 
 ## The record
 
