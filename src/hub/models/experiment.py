@@ -49,6 +49,7 @@ import numpy as np
 import numpy.typing as npt
 import polars as pl
 
+from hub import atomic
 from hub.config import (
     NO_FRAMES,
     commit,
@@ -587,7 +588,12 @@ def _disposition(gain: float, se: float, m: int) -> str:
     alone**: win if strictly positive, loss if strictly negative, tie at exactly zero (the
     same three-way split, read off the sign rather than the bootstrap).
     """
-    if not math.isfinite(se) or m < TIE_MIN_CLUSTERS:
+    # `se <= 0` joins the fallback (review of 2026-09-21): a season whose paired diffs
+    # are all identical has a bootstrap SE of exactly zero, and `gain >= 2 * 0` counted an
+    # arm that changed *nothing* in that season as a win -- more permissive than the sign
+    # test it replaced, on the one boundary the tie rule was written for. Read off the sign,
+    # a no-op season is a tie under both readings.
+    if not math.isfinite(se) or se <= 0.0 or m < TIE_MIN_CLUSTERS:
         return "win" if gain > 0 else "loss" if gain < 0 else "tie"
     if gain >= 2.0 * se:
         return "win"
@@ -845,7 +851,7 @@ def narrowing(width: float, previous: float | None, *, places: int = 2) -> Narro
         "intervals doing this unnoticed. Read it before quoting the interval."])
 
 
-def _width_state(path: Path) -> list[dict]:
+def _width_state(path: Path) -> list[dict] | None:
     """Every entry on disk, oldest first, or nothing. Never raises -- CLAUDE.md's degradation
     rule: a gate that could not read its own history still has a verdict to report; what it
     loses is one comparison line, and losing that is strictly better than a harness that dies
@@ -858,10 +864,15 @@ def _width_state(path: Path) -> list[dict]:
     entry per gate with no `config_digest`/`data_digest`/`timestamp`/`verdict`, so a file this
     function has not yet rewritten does not read as empty.
     """
+    if not path.exists():
+        return []
     try:
         got = json.loads(path.read_text())
     except (OSError, ValueError):
-        return []
+        # Present and unreadable is not the same fact as absent (review of 2026-09-21): an
+        # absent ledger has no history to lose, an unreadable one has history nobody can
+        # see. `None` tells the writer to leave the bytes alone rather than replace them.
+        return None
     if isinstance(got, dict) and isinstance(got.get("entries"), list):
         return [e for e in got["entries"] if isinstance(e, dict)]
     if isinstance(got, dict):
@@ -900,6 +911,14 @@ def review_width(name: str, summary: Mapping[str, float], *, verdict: str,
     """
     width = float(summary["hi"]) - float(summary["lo"])
     entries = _width_state(path)
+    if entries is None:
+        # The ledger is on disk and will not parse. Before 2026-09-21 this read as "no
+        # history", the run appended its one row to nothing and wrote the file back -- an
+        # append-only ledger replaced by a one-entry file that then looked valid. The
+        # comparison line is lost either way; the history is not, because nothing writes.
+        return [f"  interval width {width:.{places}f}; {path.name} is on disk and does not "
+                f"parse, so this run is not recorded and nothing is compared -- the ledger "
+                f"is left as it is for a reader to recover, not replaced"]
     # **Comparable only at an identical config and data digest** (2026-09-21). The ledger
     # recorded both digests from #362 and this lookup matched on the gate's name alone, so a
     # `--holdout` run of the draft gate was compared with a non-holdout one -- different
@@ -941,7 +960,10 @@ def review_width(name: str, summary: Mapping[str, float], *, verdict: str,
         entries.append(entry)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({"entries": entries}, indent=2, sort_keys=True) + "\n")
+            # Landing whole: a process killed mid-write used to leave exactly the truncated
+            # file the branch above now refuses to write over.
+            atomic.write_text(path, json.dumps({"entries": entries}, indent=2,
+                                               sort_keys=True) + "\n")
         except OSError:
             pass
     return lines
@@ -1162,16 +1184,8 @@ def _seasons_won_tied_lost(seasons: pl.DataFrame) -> tuple[int, int, int]:
     boundary the old rule folded into "not won" -- is a tie under both the old and new
     reading, which is why it was never a REMOVE-blocking case before either.
     """
-    has_se = "se" in seasons.columns and "m" in seasons.columns
-    won = tied = lost = 0
-    for r in seasons.iter_rows(named=True):
-        se = r["se"] if has_se else float("nan")
-        m = int(r["m"]) if has_se else 0
-        disp = _disposition(float(r["gain"]), se, m)
-        won += disp == "win"
-        tied += disp == "tie"
-        lost += disp == "loss"
-    return won, tied, lost
+    disps = [r["disposition"] for r in _season_records(seasons)]
+    return disps.count("win"), disps.count("tie"), disps.count("loss")
 
 
 def gate(summary: dict, seasons: pl.DataFrame, actions: Actions,

@@ -240,6 +240,10 @@ def _publish(out: Path, name: str, payload: dict[str, Any],
     the one artifact whose job is to move, and a live score is someone else's fact relayed
     rather than a claim this repo makes.
 
+    **One deliberate bypass since #380: `_eliminated`** writes through `_write` directly,
+    because an eliminated entry is not "nothing new to publish" -- it is the one state change
+    the guard must not keep the old plan over. Counted here so the sentence above stays true.
+
     Two more things in this module are not covered by that sentence and neither is a bypass.
     `predictions` writes through here when it has rows and asks `_keeping` -- the same
     question, one implementation -- when it has none, because it must answer before the
@@ -910,7 +914,25 @@ def survivor(season: int, out: Path | None = None,
     # `ours` is `None` when a state exists but does not carry our own entry (an id entered
     # after `POOL_ENTRY_ID` last changed, or a state read before we were entered). Neither is
     # an elimination: only a state that names our entry and says it is not alive is.
-    state = fetch_pool.read_state(store)
+    # Two guards the other two readers of this state already carry and this one did not
+    # (review of 2026-09-21). `read_state` refuses a drifted cache with `ContractViolation`,
+    # and this call sat above the `try` below, so one panel's cache would have taken the
+    # whole publish down -- the exact failure this docstring names; `season/survivor.py`'s
+    # `prior_rows` and `season/pool.py`'s `_field` both wrap it. And a state from another
+    # season is not this season's elimination: the first publish of a new season, before
+    # any refresh, would otherwise read last year's `alive: false` as this year's, and write
+    # straight through the last-good guard. Both fall through to "no state read".
+    from hub.contracts import ContractViolation
+    try:
+        state = fetch_pool.read_state(store)
+    except ContractViolation as e:
+        print(f"  survivor: the last-known pool state is not read ({e}); planning "
+              f"without it"[:160])
+        state = None
+    if state is not None and state.season != season:
+        print(f"  survivor: the pool state on disk is season {state.season}'s; no state "
+              f"read for {season}")
+        state = None
     ours = state.ours if state is not None else None
     if ours is not None and not ours.alive:
         return _eliminated(season, out, pool, ours)

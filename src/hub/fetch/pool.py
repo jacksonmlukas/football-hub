@@ -525,8 +525,14 @@ def state_digest(state: PoolState) -> str:
     found the identical field are the identical field, and a journal row naming this digest
     is re-run against that field whichever read is resolved to.
     """
-    canon = to_frame(state).sort("entry").with_columns(
-        pl.col("used").list.join(","), pl.col("last_teams").list.join(","))
+    # `last_week`/`last_teams` are bookkeeping for the eliminated caption (#380), not part
+    # of the field a decision is priced against (`ledgers()` reads `used` and `alive`), and
+    # hashing them reformulated every digest recorded before they existed (review of
+    # 2026-09-21): the same field, a different hash, and every archived `pool_state_digest`
+    # silently resolving to nothing. The canon is the priced columns, named -- so a column
+    # added for a caption cannot move the digest again.
+    canon = (to_frame(state).drop("last_week", "last_teams").sort("entry")
+             .with_columns(pl.col("used").list.join(",")))
     head = ",".join(f"{c}:{canon.schema[c]}" for c in canon.columns)
     return hashlib.sha256((head + "\n").encode()
                           + canon.write_csv().encode()).hexdigest()[:8]

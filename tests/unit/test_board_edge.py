@@ -124,6 +124,17 @@ def test_an_exact_match_is_not_a_failure():
     assert _adp_join_failure_rate(adp, board) == (0, 1)
 
 
+def test_a_punctuation_variant_the_raw_join_loses_is_counted(monkeypatch):
+    """Review of 2026-09-21. `_attach_edge` joins on the raw string, so `AJ Brown` fails
+    against a board that spells him `A.J. Brown` -- the function's own docstring example --
+    and `player_key` recovers it. The count only asked whether `player_key` *failed*, so the
+    one class of failure it was named for read as a success. Planted the way the docstring
+    describes it, and a second name the raw join keeps is not counted."""
+    board = _board(["A.J. Brown", "Bobby Smith"], [1, 2])
+    adp = _adp(["AJ Brown", "Bobby Smith"], [1.0, 2.0])
+    assert _adp_join_failure_rate(adp, board) == (1, 2)
+
+
 def test_a_spelling_variant_recoverable_only_under_relaxed_key_is_counted():
     """`_attach_edge` joins on the raw string, so `Mike Thomas` fails that join even though
     it is the same player as `Michael Thomas` -- and `player_key` does not collapse a

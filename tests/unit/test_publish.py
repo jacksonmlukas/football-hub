@@ -1620,6 +1620,54 @@ def test_no_pool_state_read_says_the_remaining_plan_is_not_verified(site, base, 
     assert got["rows"], "a remaining plan is still published, only flagged as unverified"
 
 
+def test_a_drifted_pool_state_costs_the_panel_its_verification_and_not_the_publish(
+        site, base, monkeypatch):
+    """Review of 2026-09-21. `read_state` refuses a cached state that has drifted from the
+    declared shape with `ContractViolation`; that call sat above `survivor`'s own `try`, so
+    one panel's cache would have taken `hub.publish --all` down -- the failure the function's
+    docstring names. The two sibling readers wrap it; now this one does: the plan is still
+    published, flagged `unread-state`."""
+    import json
+
+    import hub.season.survivor as sv
+    from hub.fetch import pool as fetch_pool
+    monkeypatch.setattr(sv, "grid_from_schedule",
+                        lambda season, cache=None: _mid_season_grid())
+    _pin_schedule_clock(monkeypatch, MID_SEASON_NOW)
+    drifted = fetch_pool.state_path(base)
+    drifted.parent.mkdir(parents=True, exist_ok=True)
+    drifted.write_text(json.dumps({"season": 2026, "week": 2, "field_size": 2, "pot": 40.0,
+                                   "entries": [{"entry": 0, "alive": "yes", "used": ["KC"]}]}))
+    got = publish.survivor(2026, out=site, store=base)
+    assert isinstance(got, dict), "a refused cache is not a crashed publish"
+    assert got["status"] == "unread-state"
+    assert got["rows"], "the plan is still published"
+
+
+def test_last_season_s_elimination_is_not_this_season_s(site, base, monkeypatch):
+    """Review of 2026-09-21. A state on disk from a season in which our entry went out is
+    not an elimination for the season being published: the first publish of a new season,
+    before any refresh, would otherwise hide the plan for a pool we are alive in -- and
+    `_eliminated` writes through the last-good guard. `prior_rows` and `pool._field` both
+    scope a state to its season first; so does this."""
+    import datetime as dt
+
+    import hub.season.survivor as sv
+    from hub.fetch import pool as fetch_pool
+    monkeypatch.setattr(sv, "grid_from_schedule",
+                        lambda season, cache=None: _mid_season_grid())
+    _pin_schedule_clock(monkeypatch, MID_SEASON_NOW)
+    # The contract's season range starts at 2026, so "last season" is a 2026 state read by
+    # a 2027 publish -- the first one of that year, before any refresh.
+    last_year = fetch_pool.PoolState(season=2026, week=14, field_size=2, pot=40.0, entries=(
+        fetch_pool.Entry(0, False, ("KC",), 14, ("KC",)), fetch_pool.Entry(1, True, ("SF",))))
+    fetch_pool.write_state(last_year, base, when=dt.datetime(2026, 12, 10, 9, 0, tzinfo=dt.UTC))
+    got = publish.survivor(2027, out=site, store=base)
+    assert isinstance(got, dict)
+    assert got["status"] == "unread-state", "another season's state is no state for this one"
+    assert got["rows"], "the plan is published, not withheld"
+
+
 def test_the_published_survival_covers_the_remaining_weeks_only(site, base, monkeypatch):
     """It was the product over games already won or lost, which says nothing about whether
     the entry survives from here."""

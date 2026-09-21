@@ -210,6 +210,14 @@ one gate's own default, so an off-by-one in an unrelated flag cannot flip the ru
 for every gate at once) **the tie test falls back to the sign alone**, and says so: `m` is
 printed beside the threshold, per season, in every verdict sentence.
 
+> **Clarified 2026-09-21 (code review, same day).** A season whose paired diffs are all
+> identical has a bootstrap SE of exactly zero, and `gain >= 2 * se` read `0 >= 0` as a
+> **win**: three real wins plus one season in which the arm changed nothing adopted 4/4 —
+> more permissive than the sign test on the one boundary this rule was written for. A zero
+> SE now takes the sign-alone branch, where exactly zero is a tie, so a no-op season is a tie
+> under both readings. The rule-16 table above is unaffected (a zero SE has probability zero
+> under its simulation); the control is `test_a_no_op_season_is_a_tie_and_cannot_carry_an_adopt`.
+
 The quarterback gate (`hub.models.starter_change`) is a no-op, named as one: its paired frame
 is already one row per event-season, so its within-season unit is the event, and the
 within-season SE this computes is over rows — exactly what it would do anyway.

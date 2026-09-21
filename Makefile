@@ -24,8 +24,11 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 # refuses the season in progress until nflverse ships it), `archive` already tries each source
 # independently and reports one that fails rather than aborting the other three, and the
 # leading `-` is the same belt this file already uses for a source that may legitimately not
-# answer this week.
-	-uv run python -m hub.fetch.nflverse --archive
+# answer this week. **Not on CI** (review of 2026-09-21): the Actions runner starts with an
+# empty `data/raw` and discards it at the end of the job, so an archive pulled there is minutes
+# of download that persist nothing -- the as-of archive is durable only where this target
+# runs with a store that outlives the run. `CI` is the variable Actions sets on every job.
+	$(if $(CI),@echo "  nflverse --archive skipped under CI: data/raw does not outlive the job",-uv run python -m hub.fetch.nflverse --archive)
 # CFB_WEEK, not WEEK, and it is normally unset. WEEK is the *NFL* week -- a different
 # calendar with a different week-1 date and three more weeks in it -- so passing it here
 # would have fetched a confidently wrong college week. Left unset, `hub.fetch.cfbd` counts

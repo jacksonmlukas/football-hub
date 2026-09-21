@@ -467,28 +467,25 @@ def test_a_lump_symmetric_about_the_spread_is_adopted():
     the games on the lump, because the house rule (#285) asks for every held-out season and
     at 200 games a season a lump of 0.4 loses one of ten to noise.
 
-    #363 (S6): `gate` is NOT-RUNNABLE with no ceiling, and `hub.models.margin` has never
-    built one, so ADOPT is unreachable through `shape_verdict` too -- flagged in this lane's
-    final report. `shape_verdict` maps anything short of ADOPT to "gaussian", so this is the
-    one branch #363 makes structurally unreachable rather than merely untested here.
+    #363 (S6) made this branch unreachable for a day -- no ceiling, NOT-RUNNABLE both ways --
+    and the review of 2026-09-21 found this test rewritten to assert that while the rule-18
+    registry still named it as the ADOPT control. `walk_forward_shape` now carries the
+    shape gate's ceiling per season, so the control is a control again.
     """
     resid = margin.residuals(_lumpy_synthetic(share=0.5, symmetric=True))
     shape, sentence = margin.shape_verdict(margin.walk_forward_shape(resid))
-    assert shape == "gaussian" and "NOT RUNNABLE" in sentence
+    assert shape == "lumpy" and "ADOPT" in sentence
 
 
 def test_a_lump_on_the_favourite_s_side_keeps_the_gaussian():
     """The real data's mechanism, as a synthetic: the excess at 3 is pooled over both signs,
     so a lump that lives on the favourite's side is fitted as a symmetric one and pulls the
-    favourite the wrong way. The rule keeps the Gaussian and says so.
-
-    #363 (S6): with no ceiling `gate` is NOT-RUNNABLE rather than KEEP now, but
-    `shape_verdict` still maps it to "gaussian" (anything short of ADOPT does) -- the shape
-    is unchanged, only the sentence's first word.
+    favourite the wrong way. The rule keeps the Gaussian and says so -- KEEP, reached
+    through a measured ceiling (review of 2026-09-21), not NOT-RUNNABLE for want of one.
     """
     resid = margin.residuals(_lumpy_synthetic(share=0.4, symmetric=False))
     shape, sentence = margin.shape_verdict(margin.walk_forward_shape(resid))
-    assert shape == "gaussian" and "NOT RUNNABLE" in sentence
+    assert shape == "gaussian" and "KEEP" in sentence and "NOT RUNNABLE" not in sentence
 
 
 def _shape_wf(gains):
@@ -496,6 +493,16 @@ def _shape_wf(gains):
     return pl.DataFrame({"season": seasons, "n": [100] * len(gains),
                          "ll_gaussian": [0.6] * len(gains),
                          "ll_lumpy": [0.6 - g for g in gains], "gain": gains})
+
+
+def test_a_binding_ceiling_makes_the_shape_gate_not_runnable():
+    """The shape gate's third branch (review of 2026-09-21), mirroring the width gate's
+    `test_a_binding_ceiling_makes_the_same_challenger_not_runnable`: a ceiling present and
+    smaller than the design's MDE. Differing gains so the MDE is not zero -- identical
+    seasons give an MDE no ceiling can be smaller than."""
+    wf = _shape_wf([0.02, 0.05, 0.03]).with_columns(pl.lit(0.0001).alias("ceiling_gain"))
+    shape, sentence = margin.shape_verdict(wf)
+    assert shape == "gaussian" and "NOT RUNNABLE" in sentence
 
 
 def test_the_verdict_needs_every_season_and_not_just_the_mean():
@@ -584,19 +591,16 @@ def test_the_live_shape_is_the_one_the_record_supports():
 
 def test_the_shape_path_reports_the_ceiling_first_and_keeps_the_gaussian(monkeypatch, capsys):
     """Rule 8 in the printed order: the ceiling before the histogram before the verdict. On
-    the favourite-side lump, the verdict is the one the real data gave.
-
-    #363 (S6): `gate` is NOT-RUNNABLE with no ceiling (`hub.models.margin` has never built
-    one), so the verdict's own first word is "NOT" now rather than "KEEP" -- flagged in this
-    lane's final report. The print order this test exists to hold is unaffected.
-    """
+    the favourite-side lump, the verdict is the one the real data gave -- KEEP, through a
+    measured ceiling (#363 left it NOT-RUNNABLE for a day; review of 2026-09-21)."""
     import nflreadpy as nfl
     sched = _lumpy_synthetic(seasons=range(2010, 2021), share=0.4, symmetric=False)
     monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: sched)
     assert margin.main(["--shape"]) == 0
     text = capsys.readouterr().out
     assert (text.index("Ceiling") < text.index("Mass on the key numbers")
-            < text.index("NOT RUNNABLE"))
+            < text.index("KEEP"))
+    assert "NOT RUNNABLE" not in text
     assert "Survival over 18" in text
 
 

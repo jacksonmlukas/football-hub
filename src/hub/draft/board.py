@@ -1230,11 +1230,16 @@ def _adp_join_failure_rate(adp: pl.DataFrame, board: pl.DataFrame) -> tuple[int,
     in for "nothing to report".
     """
     board_names = board["player"].drop_nulls().to_list()
+    raw = frozenset(board_names)
     exact = frozenset(player_key(p) for p in board_names)
     relaxed = frozenset(relaxed_key(p) for p in board_names)
     names = adp["player"].drop_nulls().to_list()
+    # A failure is a name the raw join lost that a key would have recovered -- under either
+    # key (review of 2026-09-21: counting only the `relaxed_key`-recoverable names missed the
+    # docstring's own `A.J. Brown` / `AJ Brown`, which `player_key` recovers and the raw join
+    # still loses). A name no key recovers is not counted, for the reason above.
     failures = sum(1 for n in names
-                  if player_key(n) not in exact and relaxed_key(n) in relaxed)
+                  if n not in raw and (player_key(n) in exact or relaxed_key(n) in relaxed))
     return failures, len(names)
 
 

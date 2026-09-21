@@ -554,6 +554,25 @@ def test_a_state_digest_names_one_field_and_finds_it_in_the_archive(store):
     assert pool.read_state(store) == later != first
 
 
+def test_the_state_digest_is_pinned_and_a_caption_field_does_not_move_it():
+    """Review of 2026-09-21. #380 added `last_week`/`last_teams` to `Entry`, and the digest
+    hashed them: the same field, a different hash, every journal `pool_state_digest`
+    recorded before them silently resolving to nothing. The digest is over the priced
+    columns -- `used`, `alive`, the pool's numbers -- so a caption field must not move it,
+    and the value is pinned to what the pre-#380 code produced for this state (`5bee22ae`,
+    computed from `f481e71`'s `state_digest`) so the next added column fails here instead of
+    orphaning an archive."""
+    bare = pool.PoolState(season=2026, week=2, field_size=2, pot=40.0, entries=(
+        pool.Entry(0, True, ("KC",)), pool.Entry(1, True, ("SF",))))
+    captioned = bare._replace(entries=(
+        pool.Entry(0, True, ("KC",), 1, ("KC",)), pool.Entry(1, True, ("SF",), 1, ("SF",))))
+    assert pool.state_digest(bare) == "5bee22ae"
+    assert pool.state_digest(captioned) == "5bee22ae"
+    assert pool.state_digest(bare._replace(entries=(
+        pool.Entry(0, False, ("KC",)), pool.Entry(1, True, ("SF",))))) != "5bee22ae", (
+        "liveness is priced, so it moves the digest")
+
+
 def test_the_archive_carries_an_index_and_never_a_name(store, session, transport):
     """The privacy design, kept: a partition holds exactly what the contract validated plus
     the capture time, so nothing a member could be recognised by is on disk in the archive

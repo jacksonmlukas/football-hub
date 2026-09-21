@@ -309,8 +309,13 @@ def walk_forward_shape(resid: pl.DataFrame, *, sd: float = MARGIN_SD,
         won = now["home_won"].to_numpy().astype(float)
         ll_g = log_loss(home_win_prob(spread, sd), won)
         ll_l = log_loss(lumpy_home_win_prob(spread, sd, bumps), won)
+        # The shape gate's ceiling, per season, the same quantity `walk_forward` carries for
+        # the width gate (review of 2026-09-21): a perfect P(win | spread) in sample on the
+        # held-out season's own games. Without it, #363 left `shape_verdict` NOT-RUNNABLE in
+        # both directions and its two controls asserting exactly that -- the rule-18 shape,
+        # inside the file that enforces rule 18.
         rows.append({"season": yr, "n": now.height, "ll_gaussian": ll_g, "ll_lumpy": ll_l,
-                     "gain": ll_g - ll_l})
+                     "gain": ll_g - ll_l, "ceiling_gain": ceiling(now, sd=sd)["gain"]})
     return pl.DataFrame(rows)
 
 
@@ -372,7 +377,11 @@ def shape_verdict(wf: pl.DataFrame) -> tuple[str, str]:
     if wf.is_empty():
         return "gaussian", "no held-out seasons; the Gaussian stands by default."
     paired = wf.select("season", pl.col("gain").alias("diff"))
-    verdict, why, s = _house_rule(paired, SHAPE_ACTIONS)
+    # `walk_forward_shape`'s per-season ceiling, handed to the same stage-2 precondition the
+    # width gate reads (#363); a hand-built frame without it is NOT-RUNNABLE, as `verdict`'s is.
+    top = (Ceiling(CEILING_ARM, wf["ceiling_gain"].to_numpy())
+           if "ceiling_gain" in wf.columns else None)
+    verdict, why, s = _house_rule(paired, SHAPE_ACTIONS, ceiling=top)
     better = int((paired["diff"] > 0).sum())
     detail = (f"Mean held-out log-loss gain {s['mean']:+.5f} (se {s['se']:.5f}, 95% "
               f"[{s['lo']:+.5f}, {s['hi']:+.5f}]), lumpy better in {better}/{paired.height} "

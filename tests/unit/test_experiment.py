@@ -886,12 +886,32 @@ def test_the_same_digest_still_compares_and_a_data_digest_alone_is_enough_to_blo
     assert "REQUIRES REVIEW" not in "\n".join(other)
 
 
-def test_an_unreadable_history_costs_a_line_and_not_the_run(tmp_path):
+def test_an_unreadable_history_costs_a_line_and_not_the_run_and_is_not_replaced(tmp_path):
     """CLAUDE.md's degradation rule. A gate that cannot read its own history still has a
-    verdict; a harness that dies because a JSON file is half-written does not."""
+    verdict; a harness that dies because a JSON file is half-written does not. **And the
+    history is not destroyed** (review of 2026-09-21): before it, an unreadable ledger read
+    as no history, the run appended its one row to nothing and wrote the file back -- an
+    append-only ledger replaced by a one-entry file that then looked valid. The positive
+    control is the bytes: plant an unparsable file, run with `write=True`, and the bytes
+    are what they were."""
     path = tmp_path / "gate-width.json"
-    path.write_text("{ this is not json")
-    assert _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path) == []
+    planted = "{ this is not json"
+    path.write_text(planted)
+    said = _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path)
+    assert path.read_text() == planted, "the unreadable ledger was replaced"
+    assert len(said) == 1 and "does not parse" in said[0] and "not replaced" in said[0]
+    assert "REQUIRES REVIEW" not in said[0]
+
+
+def test_a_missing_ledger_is_created_and_a_present_one_is_appended_atomically(tmp_path):
+    """The other side of the same fix: absent is not unreadable -- a first run creates the
+    file, a second appends, and no scratch file is left beside it."""
+    path = tmp_path / "gate-width.json"
+    _review_width("draft", {"lo": -2.0, "hi": 2.0, "clusters": 4.0}, path=path)
+    _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path)
+    entries = json.loads(path.read_text())["entries"]
+    assert len(entries) == 2
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["gate-width.json"]
 
 
 # --- #382: the ledger's `seasons` field ---------------------------------------------------
@@ -1226,6 +1246,23 @@ def test_below_tie_min_clusters_the_disposition_falls_back_to_the_sign():
     assert experiment._disposition(0.0, se=100.0, m=11) == "tie"
     # And at or above the floor, a huge se against a tiny gain is read as a genuine tie.
     assert experiment._disposition(0.01, se=100.0, m=12) == "tie"
+
+
+def test_a_no_op_season_is_a_tie_and_cannot_carry_an_adopt(tmp_path):
+    """Review of 2026-09-21. A season whose paired diffs are all identical -- the arm changed
+    nothing there -- has gain 0 and bootstrap SE 0, and `gain >= 2 * se` read `0 >= 0` as a
+    win: three real wins plus one no-op season adopted 4/4. The sign fallback already called
+    exactly zero a tie; a zero SE now takes that branch too. Planted both ways: the
+    disposition alone, and the tally that decides the gate."""
+    assert experiment._disposition(0.0, 0.0, experiment.TIE_MIN_CLUSTERS) == "tie"
+    assert experiment._disposition(0.0, 0.0, 3) == "tie"
+    assert experiment._disposition(1.0, 0.0, experiment.TIE_MIN_CLUSTERS) == "win", (
+        "a strictly positive gain at zero SE is still a win -- only the no-op is a tie")
+    seasons = pl.DataFrame({"season": [2022, 2023, 2024, 2025],
+                            "gain": [1.0, 1.2, 0.9, 0.0],
+                            "se": [0.1, 0.1, 0.1, 0.0],
+                            "m": [experiment.TIE_MIN_CLUSTERS] * 4})
+    assert experiment._seasons_won_tied_lost(seasons) == (3, 1, 0)
 
 
 def test_a_win_is_exactly_at_the_boundary_gain_equal_to_two_se():
