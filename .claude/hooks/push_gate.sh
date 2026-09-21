@@ -45,7 +45,7 @@ EVENT="$(cat 2>/dev/null || true)"
 
 # Two refusals, worded apart (see the header): `failed` is about the tree, `could_not_run`
 # is about the environment and names the command it tried.
-failed        () { printf 'push gate -- FAILED (the push would go red in CI; fix the tree, then push):\n%s\n' "$1" >&2; exit 2; }
+failed        () { printf 'push gate -- FAILED (fix the tree, then push):\n%s\n' "$1" >&2; exit 2; }
 could_not_run () { printf 'push gate -- COULD NOT RUN (this is the environment, not the tree; the push is refused rather than passed unchecked):\n  tried: %s\n  %s\n' "$1" "$2" >&2; exit 2; }
 
 printf '%s' "$EVENT" | grep -Eq '"tool_name"[[:space:]]*:[[:space:]]*"Bash"' || exit 0
@@ -58,10 +58,23 @@ cd "$ROOT" || could_not_run "cd $ROOT" "cannot enter the repository root"
 [ -d tests/contracts ] || could_not_run "ls $ROOT/tests/contracts" "the contracts directory does not exist in this checkout"
 command -v uv >/dev/null 2>&1 || could_not_run "uv" "uv is not on PATH; the contracts run under uv and nothing else"
 
+# The contracts scan the working tree, not the commit being pushed. When the two differ --
+# an untracked file from another session, a tracked file edited and not committed -- a
+# contract failure here is about the tree and says nothing about whether CI goes red on the
+# push. On 2026-09-21 an untracked seed script from a parallel session failed the glossary
+# scan and this gate reported "the push would go red in CI", which was false. So the
+# difference is named before anything runs: the refusal then says what it is testing.
+# `.serena/project.yml` is excluded: the Serena MCP rewrites its own comment block on every
+# connect, and a gate that refused every push for that would be ignored within a day.
+DIRTY="$(git status --porcelain --untracked-files=all 2>/dev/null | grep -v -E '^\?\? \.serena/|^ M \.serena/' || true)"
+if [ -n "$DIRTY" ]; then
+  printf 'push gate -- NOTE: the working tree differs from HEAD, so the contracts below test the tree, not the push:\n%s\n' "$DIRTY" >&2
+fi
+
 OUT="$(uv run ruff check src tests 2>&1)"; RC=$?
 if [ "$RC" -ne 0 ]; then
   # ruff exits 1 on findings and 2 on its own failure to run; only the first is about the tree.
-  if [ "$RC" -eq 1 ]; then failed "ruff (exit 1):
+  if [ "$RC" -eq 1 ]; then failed "ruff (exit 1) on the tree${DIRTY:+ -- which differs from HEAD, see the note above}:
 $(printf '%s\n' "$OUT" | tail -20)"; else could_not_run "uv run ruff check src tests" "ruff exited $RC before checking anything:
 $(printf '%s\n' "$OUT" | tail -10)"; fi
 fi
@@ -69,7 +82,9 @@ fi
 OUT="$(uv run pytest tests/contracts -q -p no:cacheprovider 2>&1)"; RC=$?
 case "$RC" in
   0) exit 0 ;;
-  1) failed "the contracts (pytest exit 1). Fix-up as a new commit -- main is never amended -- then push:
+  1) if [ -n "$DIRTY" ]; then failed "the contracts (pytest exit 1) ON THE WORKING TREE, which differs from HEAD (see the note above). If the failure is in an uncommitted or untracked file, this push is not what would go red -- commit, fix or move that file, then push:
+$(printf '%s\n' "$OUT" | grep -E 'FAILED|Error|assert|passed|failed' | tail -20)"; fi
+     failed "the contracts (pytest exit 1), so this push would go red in CI. Fix-up as a new commit -- main is never amended -- then push:
 $(printf '%s\n' "$OUT" | grep -E 'FAILED|Error|assert|passed|failed' | tail -20)" ;;
   # pytest: 2 interrupted, 3 internal error, 4 usage error, 5 no tests collected -- none is a
   # verdict on the tree. A ModuleNotFoundError on a first-party import is the venv, not the code.
