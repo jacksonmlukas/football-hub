@@ -20,6 +20,7 @@ tree re-runs to its own number while the archive it scored against is refetched 
 time. A pinned load answers with the same rows, or with a digest that says it could not.
 
     uv run python -m hub.fetch.nflverse --refresh --season 2025
+    uv run python -m hub.fetch.nflverse --backfill
 """
 from __future__ import annotations
 
@@ -48,10 +49,12 @@ from hub.config import (
     resolved_config,
 )
 from hub.contracts import (
+    DEPTH_CHARTS,
     FF_OPPORTUNITY,
     FF_RANKINGS,
     FTN_CHARTING,
     INJURIES,
+    NEXTGEN_STATS,
     PARTICIPATION,
     PBP,
     PLAYER_STATS,
@@ -220,6 +223,37 @@ def _raw_snap_counts(seasons: Sequence[int]) -> pl.DataFrame:
     return nfl.load_snap_counts(seasons=list(seasons))
 
 
+def _raw_nextgen(stat_type: str, seasons: Sequence[int]) -> pl.DataFrame:
+    import nflreadpy as nfl
+    # nflreadpy types `stat_type` as a `Literal["passing", "receiving", "rushing"]`; the
+    # three wrappers below are the only callers and each passes one of those three literally,
+    # so the narrowing lives at the call sites rather than in a runtime check here -- the
+    # same shape `_raw_ff_rankings` takes for `load_ff_rankings`'s page-type literal.
+    return nfl.load_nextgen_stats(stat_type=stat_type, seasons=list(seasons))  # type: ignore[bad-argument-type]
+
+
+# `load_nextgen_stats` takes a `stat_type` this module's `_fetch(source, keys)` dispatch has
+# no slot for -- `keys` is the partition key and is seasons for every source but
+# `ff_rankings`. Rather than thread a second parameter through `_fetch` for one source, the
+# three shapes are three sources, each a `functools.partial` closing over its own stat_type
+# so the fetcher registry stays a plain `Callable[[Sequence[int]], pl.DataFrame]`.
+def _raw_nextgen_passing(seasons: Sequence[int]) -> pl.DataFrame:
+    return _raw_nextgen("passing", seasons)
+
+
+def _raw_nextgen_rushing(seasons: Sequence[int]) -> pl.DataFrame:
+    return _raw_nextgen("rushing", seasons)
+
+
+def _raw_nextgen_receiving(seasons: Sequence[int]) -> pl.DataFrame:
+    return _raw_nextgen("receiving", seasons)
+
+
+def _raw_depth_charts(seasons: Sequence[int]) -> pl.DataFrame:
+    import nflreadpy as nfl
+    return nfl.load_depth_charts(seasons=list(seasons))
+
+
 def _raw_ff_rankings(pages: Sequence[str]) -> pl.DataFrame:
     """The one source keyed by a page type instead of a season.
 
@@ -254,6 +288,14 @@ SOURCES: dict[str, Contract | None] = {
     "ff_rankings": FF_RANKINGS,
     "injuries": INJURIES,
     "snap_counts": SNAP_COUNTS,
+    # #370 (S12): free nflverse sources nothing in this repo ever called. Next Gen Stats
+    # ships three shapes under one nflreadpy function, keyed by stat_type -- see
+    # `_raw_nextgen` -- so it is three sources here rather than one with a parameter `load`
+    # has no slot for.
+    "nextgen_passing": NEXTGEN_STATS,
+    "nextgen_rushing": NEXTGEN_STATS,
+    "nextgen_receiving": NEXTGEN_STATS,
+    "depth_charts": DEPTH_CHARTS,
 }
 
 
@@ -280,6 +322,10 @@ def _fetch(source: str, keys: Sequence[int | str]) -> pl.DataFrame:
         "injuries": _raw_injuries,
         "snap_counts": _raw_snap_counts,
         "ff_rankings": _raw_ff_rankings,
+        "nextgen_passing": _raw_nextgen_passing,
+        "nextgen_rushing": _raw_nextgen_rushing,
+        "nextgen_receiving": _raw_nextgen_receiving,
+        "depth_charts": _raw_depth_charts,
     }
     return fetchers[source](keys)
 
@@ -816,14 +862,49 @@ def refresh(season: int = SEASON_COMPLETED, cache: Path | None = None,
     return 0
 
 
+# Every season nflverse retains for the two scheme-layer sources, measured 2026-09-21 against
+# a live pull rather than against documentation: `load_participation` refuses seasons outside
+# [2016, 2025] and `load_ftn_charting` outside [2022, 2026] -- FTN's charting starts six years
+# later than participation tracking and, unlike it, already covers the season in progress.
+# #370 (S12) found both on disk for 2024 only, which left aDOT, air-yards share and route
+# participation historically incomplete by accident rather than by decision.
+BACKFILL_SEASONS: dict[str, range] = {
+    "participation": range(2016, 2026),
+    "ftn_charting": range(2022, 2027),
+}
+
+
+def backfill(cache: Path | None = None) -> int:
+    """Pull `participation` and `ftn_charting` for every season nflverse retains.
+
+    A one-time catch-up rather than something a weekly refresh repeats: the archive is
+    complete once this has run once, and `load`'s ordinary undated cache entry serves each
+    season after that without refetching. Prints row counts only, one line per season.
+    """
+    for source, seasons in BACKFILL_SEASONS.items():
+        print(f"  nflverse backfill: {source}, seasons {seasons.start}-{seasons.stop - 1}")
+        for season in seasons:
+            df = load(source, seasons=[season], cache=cache)
+            print(f"    {season} {df.height:>7,} rows | {len(df.columns):>3} cols")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.fetch.nflverse",
         description="Fetch nflverse data, narrowed at the boundary and contract-checked.")
     ap.add_argument("--refresh", action="store_true",
                     help="pull this season's pbp and ff_opportunity into the store")
+    ap.add_argument("--backfill", action="store_true",
+                    help="pull participation and ftn_charting for every season nflverse "
+                         "retains (a one-time catch-up, not a weekly step)")
     ap.add_argument("--season", type=int, default=SEASON_COMPLETED)
     a = ap.parse_args(argv)
+    if a.backfill:
+        try:
+            return backfill(cache=RAW)
+        except Exception as e:
+            return unavailable("hub.fetch.nflverse", "the backfill sources", e)
     if not a.refresh:
         ap.print_help()
         return 0

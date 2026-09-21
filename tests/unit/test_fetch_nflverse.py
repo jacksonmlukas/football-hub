@@ -1104,14 +1104,45 @@ def fake_rankings(monkeypatch):
 # survives the rescaling -- a hundredth of it is 5.0, which is not a snap share however it
 # was published -- so this row still asks the question the others ask. The unit change gets
 # its own test below, because "accepted here" is now a fact worth pinning.
+def _nextgen_frame(rows: int = 4, **over) -> pl.DataFrame:
+    """The columns common to all three `stat_type`s -- passing, rushing, receiving each add
+    their own stat columns beyond this, and `NEXTGEN_STATS` declares only what all three
+    carry, since all three validate against it (#370 / S12)."""
+    return pl.DataFrame({
+        "season": pl.Series([2024] * rows, dtype=pl.Int32),
+        "week": pl.Series([1] * rows, dtype=pl.Int32),
+        "season_type": ["REG"] * rows,
+        "player_gsis_id": [f"00-00{i:05d}" for i in range(rows)],
+        "player_display_name": [f"Player {i}" for i in range(rows)],
+        "player_position": ["WR"] * rows,
+        "team_abbr": ["PHI"] * rows,
+    } | dict(over))
+
+
+def _depth_chart_frame(rows: int = 4, **over) -> pl.DataFrame:
+    """The 2025-on shape -- see `DEPTH_CHARTS`'s docstring for the shape it replaced."""
+    return pl.DataFrame({
+        "dt": ["2025-08-03T10:09:07Z"] * rows,
+        "team": ["PHI"] * rows,
+        "player_name": [f"Player {i}" for i in range(rows)],
+        "gsis_id": [f"00-00{i:05d}" for i in range(rows)],
+        "pos_grp": ["3WR 1TE"] * rows,
+        "pos_slot": pl.Series([1] * rows, dtype=pl.Int32),
+        "pos_rank": pl.Series([1] * rows, dtype=pl.Int32),
+    } | dict(over))
+
+
 BREAKAGES = {
     "ff_rankings": (_rankings_frame, "ecr", "scrape_date", "ecr", 5000.0),
     "injuries": (_injuries_frame, "report_status", "gsis_id", "week", 99),
     "snap_counts": (_snaps_frame, "offense_pct", "game_id", "offense_pct", 500.0),
+    "nextgen_passing": (_nextgen_frame, "player_display_name", "player_gsis_id", "week", 99),
+    "depth_charts": (_depth_chart_frame, "player_name", "team", "pos_slot", 99),
 }
 
 RAW_FETCHER = {"ff_rankings": "_raw_ff_rankings", "injuries": "_raw_injuries",
-               "snap_counts": "_raw_snap_counts"}
+               "snap_counts": "_raw_snap_counts", "nextgen_passing": "_raw_nextgen_passing",
+               "depth_charts": "_raw_depth_charts"}
 
 
 def _load(source: str, frame: pl.DataFrame, monkeypatch, tmp_path) -> pl.DataFrame:
@@ -1596,3 +1627,37 @@ def test_reading_the_same_entry_twice_does_not_double_the_digest(fake_rankings, 
     nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
     assert data_digest(nv.pins_this_run()) == once
     assert len(nv.pins_this_run()) == 1
+
+
+# --- #370 (S12): the backfill -----------------------------------------------
+
+def test_backfill_pulls_every_retained_season_of_both_sources(monkeypatch, tmp_path):
+    seen: dict[str, list[int]] = {"participation": [], "ftn_charting": []}
+    n = 1200
+
+    def _part(seasons):
+        seen["participation"] += list(seasons)
+        return pl.DataFrame({
+            "nflverse_game_id": ["2024_01_A_B"] * n,
+            "play_id": pl.Series(range(n), dtype=pl.Float64),
+            "offense_personnel": ["11"] * n, "defense_personnel": ["41"] * n,
+            "defenders_in_box": pl.Series([6] * n, dtype=pl.Int32),
+            "offense_formation": ["SHOTGUN"] * n,
+        })
+
+    def _ftn(seasons):
+        seen["ftn_charting"] += list(seasons)
+        return pl.DataFrame({
+            "nflverse_game_id": ["2024_01_A_B"] * n,
+            "nflverse_play_id": pl.Series(range(n), dtype=pl.Int32),
+            "season": pl.Series([2024] * n, dtype=pl.Int32),
+            "week": pl.Series([1] * n, dtype=pl.Int32),
+            "is_play_action": [False] * n, "is_motion": [True] * n,
+            "n_defense_box": pl.Series([6] * n, dtype=pl.Int32),
+        })
+
+    monkeypatch.setattr(nv, "_raw_participation", _part)
+    monkeypatch.setattr(nv, "_raw_ftn_charting", _ftn)
+    assert nv.backfill(cache=tmp_path) == 0
+    assert seen["participation"] == list(nv.BACKFILL_SEASONS["participation"])
+    assert seen["ftn_charting"] == list(nv.BACKFILL_SEASONS["ftn_charting"])

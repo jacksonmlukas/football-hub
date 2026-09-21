@@ -584,6 +584,63 @@ FTN_CHARTING = Contract(
     min_rows=1000,
 )
 
+# NFL's own Next Gen Stats -- aDOT, time to throw, separation, rush yards over expected --
+# tracking-derived and free through nflreadpy, and #370 (S12) is that nothing in this repo
+# ever called `load_nextgen_stats`. It ships three shapes under one function, keyed by
+# `stat_type` (passing/rushing/receiving), each with its own stat columns and none of them
+# the same width -- 29, 22 and 23 measured 2026-09-21. This declares the columns common to
+# all three rather than the union of every stat, because `hub.fetch.nflverse` registers each
+# stat_type as its own source (`nextgen_passing`, `nextgen_rushing`, `nextgen_receiving`) and
+# validates all three against this one contract; a column only one of the three carries
+# would either be optional everywhere or required somewhere it cannot arrive.
+#
+# `week` is 0 for a season aggregate row (measured: 43 of 614 in the 2024 passing file) and
+# runs to 23 in the postseason, so the range is `(0, 23)` rather than PBP's `(1, 22)`.
+NEXTGEN_STATS = Contract(
+    name="nflverse_nextgen_stats",
+    required={"season": pl.Int32, "week": pl.Int32, "season_type": pl.Utf8,
+              "player_gsis_id": pl.Utf8, "player_display_name": pl.Utf8,
+              "player_position": pl.Utf8, "team_abbr": pl.Utf8},
+    non_null=("season", "week", "season_type", "player_gsis_id", "player_display_name",
+              "team_abbr"),
+    ranges={"week": (0, 23)},
+    min_rows=1,
+)
+
+# Depth-chart position, from the club's own reporting. `docs/depth-chart-signal.md` screened
+# depth-chart movement as a draft and a waiver signal and found nothing -- twice, after
+# catching its own lookahead bug -- but the source was never wired into `hub.fetch`, so every
+# read of it went around the fetch layer's caching, contract and pin. This is that wiring;
+# the screen's null result is unaffected, since a null result was never about whether the
+# source was reachable.
+#
+# **The shape below is 2025-on, and it is not the shape a season before it returns.**
+# Measured 2026-09-21 pulling both live: 2024 and earlier come back `season`/`week`/
+# `club_code`/`game_type`/`depth_team`/`full_name`, weekly; 2025 and 2026 come back `dt` (an
+# ISO scrape timestamp, 221 distinct values across the 2025 season -- this source is now
+# scraped far more often than once a week), `team`, `player_name`, `pos_grp`, `pos_slot` and
+# `pos_rank`, with no `season` or `week` column at all. nflverse renamed the whole thing
+# between seasons, which is exactly the failure this file exists to catch, and it was found
+# by pulling rather than by reading documentation: a `seasons=[2025, 2026]` call against the
+# old declaration below failed every required column at once. Declared against the current
+# shape because that is the one a caller fetching "this season's depth chart" will get; a
+# consumer that needs 2024-and-earlier reads it unvalidated by this contract until someone
+# needs it enough to declare the older shape too.
+#
+# `player_name` and `gsis_id` are deliberately NOT non_null -- 445 of 554,215 and 5,577 of
+# 554,215 respectively in the 2025 pull, entries the source carries before it has resolved a
+# roster spot to a person. `pos_slot` and `pos_rank` ran 1-12 and 1-15 across that pull;
+# widened per the data-contracts skill's rule (from history, not theory) to leave room for a
+# deeper chart without admitting a units change.
+DEPTH_CHARTS = Contract(
+    name="nflverse_depth_charts",
+    required={"dt": pl.Utf8, "team": pl.Utf8, "player_name": pl.Utf8, "gsis_id": pl.Utf8,
+              "pos_grp": pl.Utf8, "pos_slot": pl.Int32, "pos_rank": pl.Int32},
+    non_null=("dt", "team", "pos_grp", "pos_slot", "pos_rank"),
+    ranges={"pos_slot": (1, 20), "pos_rank": (1, 20)},
+    min_rows=1,
+)
+
 PLAYER_STATS = Contract(
     name="nflverse_player_stats",
     required={"player_id": pl.Utf8, "position": pl.Utf8, "season": pl.Int32,

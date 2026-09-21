@@ -970,6 +970,34 @@ A name matching nothing gets no guess, because kickers and defences are drafted 
 two and the board excludes them by design -- guessing at those would train the reader to
 ignore the warning.
 
+## Free nflverse data that was never wired in (#370 / S12)
+
+**2026-09-21.** `load_nextgen_stats` and `load_depth_charts` exist in `nflreadpy` and were
+called nowhere in `hub.fetch.nflverse`. Both are now sources: `nextgen_passing`,
+`nextgen_rushing` and `nextgen_receiving` (Next Gen Stats ships three shapes under one
+function, keyed by `stat_type`, so each is registered separately against one `NEXTGEN_STATS`
+contract) and `depth_charts`.
+
+**Pulling `depth_charts` live found a shape change the documentation does not mention.**
+2024-and-earlier is the weekly table its name suggests (`season`, `week`, `club_code`,
+`depth_team`, ...); 2025-on is a different table entirely -- `dt` (an ISO scrape timestamp,
+221 distinct values across the 2025 season, so this source is now captured far more often
+than weekly), `team`, `player_name`, `pos_grp`, `pos_slot`, `pos_rank`, and no `season` or
+`week` column at all. `DEPTH_CHARTS` in `hub.contracts` is declared against the current
+shape, found by pulling both seasons together and watching every required column of the old
+declaration fail at once.
+
+`participation` and `ftn_charting` were on disk for 2024 only -- one season, by accident
+rather than by decision. Backfilled 2026-09-21 for every season each retains, measured
+against a live pull rather than documentation: `participation` 2016-2025 (nflreadpy's own
+floor; 2026 is not yet available), `ftn_charting` 2022-2026 (starts later, already covers the
+season in progress). `uv run python -m hub.fetch.nflverse --backfill` reproduces it.
+
+**No weather fetch.** `wind` was correctly withdrawn as RECORDED (#170), and #370 named a
+pre-kickoff *forecast* as the free replacement. Not built tonight -- it is a new source
+(a weather API, not another nflverse table) and out of this ticket's scope, which was the
+four pieces already on disk under `hub.fetch.nflverse` and `hub.store`.
+
 ## Open questions
 
 1. **Pool configuration** — entries, payout, rebuys. Under ~20 entries play near max win
