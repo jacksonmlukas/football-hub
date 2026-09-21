@@ -1,0 +1,996 @@
+{
+ "schema": {
+  "name": "football-hub-audit",
+  "version": "5.0",
+  "supersedes": "football-hub-audit v4.0 (2026-09-16)",
+  "generated": "2026-09-20",
+  "generated_by": "Independent review (Claude Opus 5), read-only pass over the working tree. No file in the repo was modified and nothing was run inside the repo's venv.",
+  "relation_to_audit_v": "Not Audit V. #325 pre-commits that Audit V runs only after week 4 is played and scored; this pass ran 2026-09-20 with weeks_played [1, 2] and read no in-season artifacts. It is filed as a separate method audit (milestone 'Method audit 2026-09-20'); #325 is unchanged and still owes the artifact read and the phase re-plan.",
+  "subject_repo": "~/code/football-hub",
+  "baseline_commit": "f8e7534",
+  "head_commit": "e0071e2",
+  "commits_since_baseline": 47,
+  "lines_added_since_baseline": 5379,
+  "lines_removed_since_baseline": 1034,
+  "intended_consumer": "an autonomous coding agent working in this repo",
+  "finding_prefix": "S",
+  "finding_prefix_note": "S = this round. No collision with A/B/C/D, N, G, Q or R.",
+  "requested_scope": "The owner asked for a full read as a data scientist / ML engineer / football expert: what is strong, what is weak, what modern research technique attaches where, and a plan. Weighted, at the owner's direction, toward weekly player projections, game-level forecasting (spreads, survivor, pickem), and the evaluation methodology itself.",
+  "instructions_for_consumer": [
+   "S1 IS BLOCKING AND IT IS UPSTREAM OF THE RECORD. It is not a bug in a model; it is a defect in the rule that judged every model. Nothing that re-runs a gate should land before S1 does, for the same reason nine gate tickets were blocked_by #311.",
+   "READ `overlap_with_audit_iv` FIRST. A third of what an independent reader notices in this tree was already found in audit IV and is on the tracker. Those items are listed there with their R/B/C/G ids and are NOT re-filed as S findings. Filing them again would inflate the count and re-point work that already has a ticket.",
+   "`verified` is honest and narrow. `direct` means this reviewer computed it. `read` means this reviewer read the code path and is asserting what it does, without running it. `reported` means it came from a delegated read that the reviewer did not independently re-check. Treat `read` and `reported` as claims to confirm in the ticket, not as measurements.",
+   "`measurements_by_reviewer` holds M-S1 only. Everything else in this round is a reading of code or a re-derivation from numbers the repo already published; where a figure is the repo's own it says so.",
+   "Line numbers are from the tree at e0071e2. Re-locate by symbol name if they have drifted.",
+   "`plan` is dependency-ordered and phase 0 is in-season. It is a proposal. Per docs/audits/README.md, re-ordering and supersession live in the tracker and in ticket bodies, never in this file."
+  ]
+ },
+ "verdict": {
+  "headline": "The instrument that removed thirteen of fifteen models is a sign test with 14% power.",
+  "summary": [
+   "experiment.gate adopts on `summary['lo'] > 0 and won == total`. Every call site passes cluster=SEASON_CLUSTER, so summarise's bootstrap units are per-season means of 'diff' -- the identical vector per_season returns as seasons['gain']. A nonparametric bootstrap resamples only observed units, so every resample mean is a convex combination of those k numbers. If all k are positive, every draw is positive and lo > 0 follows by construction. `won == total` implies `lo > 0`. The conjunction IS `won == total`.",
+   "ADR-0019's 'both halves are required' is one half. The gate is a one-sided sign test of size 2^-k: 12.5% at k=3, 6.25% at k=4, 3.1% at k=5. Simulated at 20,000 trials per cell, the ADOPT rate matches 2^-k and Phi(delta/s)^k to three decimals, and (all-positive) never once disagreed with (lo>0). See M-S1.",
+   "Consequences at the realized n: the draft gate needs ~11.8 pts/team-game for 80% power and gives a true 2-point effect 14%; the weekly blend gate needs ~0.61 pts/team-week and gives a true 0.3 effect 38%. The printed MDE, the t-interval small_sample_report renders, and p_better are all decorative with respect to the decision.",
+   "The asymmetry is worse than low power. The NOT-RUNNABLE guard fires only when a ceiling was measured (`reading(summary,'ceiling') is Field.VALUE`), and only the adopting direction has an incentive to measure one. Two of three gates have never measured a ceiling. An underpowered design is blocked from ADOPT and SHOW and waved through to REMOVE -- where REMOVE means deletion to hub.exhibits.",
+   "And the one model that was adopted did not face this bar. injury.verdict is `best = argmin(mean MAE)` over four candidates, with no interval and no every-season half. The '0.170 MAE at 3.8 se' quoted in README.md is not computed by that verdict(); the module's other bar, type_verdict, reads paired_gain, which audit IV already found (R9) to be unclustered over player-weeks.",
+   "The second finding of this round is structural rather than defective: the measurement apparatus is now approximately the entire system. ratings.forecaster() returns MarketBaseline(); schedule.SLATES is {'nfl': _nfl_slate} and priced_games(league='cfb') raises LeagueUnavailable, so of 136 FBS teams in scope zero are modelled; the served weekly projection is ESPN's season-long number plus sd = k*sqrt(mu). Audit IV said 'the model still cannot see the game.' It still cannot, and the reason is that there is no model -- there is a market, a transform of a market, and a very good auditor.",
+   "Nothing in this round argues for loosening the pre-registration discipline. The gate is broken in the direction of being a blunt instrument, not a permissive one. A hierarchical posterior with a skeptical prior is often stricter than a 2-se rule on a pooled mean."
+  ],
+  "not_found": [
+   "No leakage in expanding_seasons or expanding_weeks. Both were read at e0071e2 and are correct: `past = season < yr`, `now = season == yr`, no `<=`. The AST guard test_the_split_is_written_once holds.",
+   "No defect in the provenance layer. config_digest is walked off field declarations, data_digest is separate, declare refuses an undeclared constant.",
+   "No CFBD quota risk. The architectural refusal of per-team loops in bulk() is unit-tested and golden-tested; ~56-90 calls a month against 1,000. The constraint on CFB is that nothing models it.",
+   "The key-number diagnosis in margin.py is correct and should not be revisited. The bumps are near-symmetric about the spread and pull every favourite toward 0.5; the defect is location, not shape. See S9."
+  ]
+ },
+ "overlap_with_audit_iv": {
+  "note": "Found independently this round and ALREADY ON THE TRACKER from audit IV or earlier. Not re-filed. Listed so the owner can see what an independent reader converges on, and so no ticket is opened twice.",
+  "items": [
+   {
+    "this_round_saw": "The served weekly projection uses none of the Panel's PRE_KICKOFF features (implied_total, own_spread, dvp, rest, is_home, injury columns).",
+    "already": "audit-iv prediction_evaluation rank 1"
+   },
+   {
+    "this_round_saw": "paired_gain's se is unclustered over player-weeks and is read by three shipped gates.",
+    "already": "R9 (OPEN)"
+   },
+   {
+    "this_round_saw": "MIN_SE = 2.0 is p = 0.116-0.139 on 3-4 df, and two_sided_p sits eleven lines from the verdict that ignores it.",
+    "already": "R10 (OPEN)"
+   },
+   {
+    "this_round_saw": "components._counts has a hard support ceiling; a WR cannot score three TDs.",
+    "already": "R8 (OPEN)"
+   },
+   {
+    "this_round_saw": "The zero clip biases the served mean up and the coverage gate excludes the clipped population.",
+    "already": "R7 (OPEN)"
+   },
+   {
+    "this_round_saw": "No opponent/game correlation, no season-level correlation, WR-WR estimand marginal where the decision needs conditional.",
+    "already": "R12, C6 (OPEN/PARTIAL)"
+   },
+   {
+    "this_round_saw": "Nothing constrains a team's target shares to sum to one.",
+    "already": "G4 (OPEN), audit-iv rank 2"
+   },
+   {
+    "this_round_saw": "TDs are yards times a positional constant with no red-zone or goal-line feature.",
+    "already": "C5 (OPEN), audit-iv rank 3"
+   },
+   {
+    "this_round_saw": "MARGIN_SD is a single constant and margin variance should scale with the total.",
+    "already": "audit-iv rank 9, G5 (OPEN)"
+   },
+   {
+    "this_round_saw": "Forking paths across anchors, bases and screens are uncounted.",
+    "already": "B2 (PARTIAL)"
+   },
+   {
+    "this_round_saw": "CRPS computed and not used for model comparison.",
+    "already": "B3 (PARTIAL)"
+   },
+   {
+    "this_round_saw": "Draft-gate constants fitted on the replayed seasons; hold-out machinery built and not run.",
+    "already": "B6 (PARTIAL), R17"
+   },
+   {
+    "this_round_saw": "impute_cv's rookie classification drifts with the cache's start year.",
+    "already": "R18, Q11 (PARTIAL)"
+   },
+   {
+    "this_round_saw": "weekly.standard_error computes estimation error and has one caller that is not the forecast.",
+    "already": "R7, audit-iv rank 5"
+   },
+   {
+    "this_round_saw": "WEEKLY_K is fitted on a survivor-filtered population (MIN_GAMES, MIN_PPG) and applied to everyone.",
+    "already": "R11"
+   }
+  ]
+ },
+ "measurements_by_reviewer": [
+  {
+   "id": "M-S1",
+   "title": "The gate's interval half is implied by its sign half, and the ADOPT rate is exactly 2^-k",
+   "verified": "direct",
+   "important_caveat": "Computed against a FAITHFUL REIMPLEMENTATION of summarise(cluster=SEASON_CLUSTER) + gate(), not against the repo's own functions. The repo's venv could not be rebuilt in the reviewer's sandbox. The reimplementation is the four lines below and the reproduce snippet runs it against the real functions in three lines; do that before quoting this as the repo's own number.",
+   "the_argument": [
+    "summarise(cluster=('season',)) computes units = paired.group_by(['season']).agg(mean('diff')).sort(...)['_unit'].",
+    "per_season computes paired.group_by('season').agg(mean('diff').alias('gain')).sort('season').",
+    "These are the same vector. Every run_gate call site in src/ passes cluster=SEASON_CLUSTER (backtest x2, starter_change, coverage, margin, weekly_gate, lineup_gate), and tests/contracts/test_gates_cluster_on_the_season.py enforces it.",
+    "idx = rng.integers(0, len(units), size=(B, len(units))); draws = units[idx].mean(axis=1). Every draw is a convex combination of units.",
+    "If min(units) > 0 then min(draws) > 0, so np.percentile(draws, 2.5) > 0. Therefore won == total implies lo > 0, and the ADOPT conjunction reduces to won == total.",
+    "The converse does NOT hold: lo > 0 does not imply won == total, since at k=4 an all-one-negative-unit resample has probability 4^-4 = 0.0039 < 0.025. So the interval half is strictly implied by, and never binding against, the sign half."
+   ],
+   "simulation": {
+    "trials_per_cell": 20000,
+    "disagreements_all_positive_vs_lo_gt_0": 0,
+    "null_adopt_rate": {
+     "k=3": 0.1268,
+     "k=4": 0.0622,
+     "k=5": 0.0328
+    },
+    "null_expected_2_to_the_minus_k": {
+     "k=3": 0.125,
+     "k=4": 0.0625,
+     "k=5": 0.03125
+    },
+    "power_at_k4": [
+     {
+      "delta_over_s": 0.2,
+      "simulated": 0.111,
+      "phi_to_the_k": 0.113
+     },
+     {
+      "delta_over_s": 0.3,
+      "simulated": 0.146,
+      "phi_to_the_k": 0.146
+     },
+     {
+      "delta_over_s": 0.5,
+      "simulated": 0.23,
+      "phi_to_the_k": 0.229
+     },
+     {
+      "delta_over_s": 1.0,
+      "simulated": 0.489,
+      "phi_to_the_k": 0.501
+     },
+     {
+      "delta_over_s": 1.6,
+      "simulated": 0.803,
+      "phi_to_the_k": 0.798
+     }
+    ]
+   },
+   "applied_to_the_published_gates": {
+    "note": "s is the between-season sd, recovered as the repo's own published se times sqrt(k). Both se values are the repo's, not the reviewer's.",
+    "draft": {
+     "published_se": 3.67,
+     "k": 4,
+     "s": 7.34,
+     "delta_at_80pct_power": 11.78,
+     "power_at_true_effect": {
+      "1.0": 0.094,
+      "2.0": 0.136,
+      "3.0": 0.188
+     },
+     "units": "pts/team-game",
+     "repo_printed_mde": 14.77
+    },
+    "weekly_blend": {
+     "published_se": 0.191,
+     "k": 4,
+     "s": 0.382,
+     "delta_at_80pct_power": 0.613,
+     "power_at_true_effect": {
+      "0.15": 0.182,
+      "0.3": 0.378,
+      "0.5": 0.67
+     },
+     "units": "pts/team-week",
+     "repo_printed_mde": 0.768
+    }
+   },
+   "reproduce": "uv run python -c \"import numpy as np,polars as pl;from hub.models.experiment import summarise,per_season,SEASON_CLUSTER as C;r=np.random.default_rng(0);bad=0\\nfor _ in range(2000):\\n    m=r.normal(0,1,4);df=pl.DataFrame({'season':np.repeat(np.arange(4),50),'diff':np.repeat(m,50)});s=summarise(df,cluster=C);p=per_season(df);bad+= int(((p['gain']>0).sum()==4) and not (s['lo']>0))\\nprint('disagreements',bad)\"",
+   "conclusion": "ADR-0019 describes a two-part rule. The code implements a one-part rule. The second part is not weaker than advertised; it is inert."
+  }
+ ],
+ "new_finding_groups": {
+  "S-A": "The decision rule and the record it produced (experiment.gate, injury.verdict, the exhibits, the published nulls)",
+  "S-B": "The game layer and the money layer (ratings, margin, survivor, pool, CFB)",
+  "S-C": "Data provenance and the weekly stack's remaining seams"
+ },
+ "new_findings": [
+  {
+   "id": "S1",
+   "group": "S-A",
+   "severity": "high",
+   "blocking": true,
+   "verified": "direct",
+   "title": "The gate's two halves are one half: `won == total` implies `lo > 0` by construction",
+   "evidence": [
+    "See M-S1 for the argument and the simulation. The interval half is strictly implied by the sign half and never binds against it.",
+    "Size under the null is 2^-k: 12.5% at k=3, 6.25% at k=4, 3.1% at k=5. A bar whose size varies fourfold with how many seasons happen to exist is not a fixed bar.",
+    "Power is Phi(delta/s)^k. At the draft gate's own published se (3.67, k=4) a true 2 pts/team-game effect is adopted 14% of the time.",
+    "ADR-0019 is the document that states the rule, and its own docstring in gate() argues the two halves measure different things: 'An interval excluding zero says the pooled effect is unlikely to be noise; it says nothing about whether one lucky season carried it.' The first clause is true of an interval computed on something else. It is not true of this one.",
+    "This is upstream of R9 and R10. Those are about the WRONG standard error and the WRONG bar; this is about a conjunction that reduces to one term whatever standard error you give it."
+   ],
+   "refs": [
+    {
+     "path": "src/hub/models/experiment.py",
+     "lines": "803-825, 841-853, 912-925",
+     "note": "summarise's unit construction, per_season, and the ADOPT/REMOVE branches"
+    },
+    {
+     "path": "docs/adr/0019-a-gate-requires-every-season.md",
+     "note": "the rule this implements"
+    },
+    {
+     "path": "tests/contracts/test_gates_cluster_on_the_season.py",
+     "note": "enforces the cluster that makes the two vectors identical"
+    }
+   ],
+   "fix": "Compute the interval half on something the sign half does not determine. Three options, in ascending cost: (a) read the t-interval small_sample_report already renders from t_quantile -- implemented, printed, unread; (b) a wild cluster bootstrap, the textbook k=4 remedy; (c) a hierarchical posterior over season effects, which is S-A's phase-2 item. Whichever is chosen, add a `power` field computed BEFORE the verdict and make SHOW print it: a SHOW that does not say what it could have detected is not a result."
+  },
+  {
+   "id": "S2",
+   "group": "S-A",
+   "severity": "high",
+   "blocking": false,
+   "verified": "direct",
+   "title": "Thirteen of fifteen recorded measurements are failures to detect, published as closures",
+   "evidence": [
+    "Classifying method.md's fifteen rows by whether ADOPT was reachable at the realized n: #6, #7, #10 and #15 were all-season losses, where ADOPT is unreachable by construction. #1-5, #9 and #11 were screens whose 80%-power detectable effect sits above any plausible signal (the age screen's detectable r is about 0.075 against a measured +0.0076). #13 died on the unanimity half at k=3, where the null takes that half one time in eight. #8 was unmeasurable by its own account.",
+    "That leaves two designs of fifteen where ADOPT was reachable -- and one of those two, the injury table, reached it through the missing cluster (R9) and through a verdict() with no bar at all (S3).",
+    "The closures are written as equivalence claims: 'the programme is closed' and 'age adds nothing to ECR' in signal-screens.md; '+0.00 -- a structural zero' for the lineup optimiser in method.md, a point null asserted from a design whose MDE was never computed. None carries an equivalence bound.",
+    "gate()'s SHOW text says 'absence of evidence, not evidence of equivalence' and is correct. The prose downstream of it does not keep that distinction."
+   ],
+   "refs": [
+    {
+     "path": "docs/method.md",
+     "note": "the fifteen-row record"
+    },
+    {
+     "path": "docs/signal-screens.md",
+     "lines": "41, 93, 96"
+    },
+    {
+     "path": "README.md",
+     "note": "the conclusions table, which is the version anyone reads"
+    }
+   ],
+   "fix": "Under rule 13, this is a measurement that contradicts published numbers, so the published numbers must move. No re-run is needed for the first pass: the verdict text changes from a closure to a bounded null, and each row gains the effect it could have detected. The re-run is S-A phase 2."
+  },
+  {
+   "id": "S3",
+   "group": "S-A",
+   "severity": "high",
+   "blocking": false,
+   "verified": "read",
+   "title": "The one adopted model faced the lowest bar in the repo: injury.verdict is an argmin",
+   "evidence": [
+    "injury.verdict computes m = {c: mean(mae_c)}, takes best = min(m, key=...), and returns ADOPT if best is 'table' or 'retention'. No interval, no every-season requirement, no significance test of any kind. Four candidates, argmin, adopt.",
+    "The '0.170 MAE at 3.8 se, n=3687' in README.md is therefore not produced by the pre-registered verdict() that decided the adoption. The module's other bar, type_verdict, does read paired_gain -- which audit IV found unclustered (R9).",
+    "This is method.md rule 1's incident in reverse. Rule 1's case was a verdict() that documented two halves and implemented one. Here the verdict() documents and implements no halves, while the write-up quotes a t computed elsewhere.",
+    "Consequence: the repo's single ADOPT, the one cited in README.md as 'the one that cleared its gate', cleared a different and weaker gate than everything that was removed."
+   ],
+   "refs": [
+    {
+     "path": "src/hub/models/injury.py",
+     "lines": "349-372",
+     "note": "verdict(): argmin over CANDIDATES"
+    },
+    {
+     "path": "src/hub/models/injury.py",
+     "lines": "297-313",
+     "note": "type_verdict(): the bar that does exist, reading paired_gain"
+    },
+    {
+     "path": "docs/weekly-injury.md",
+     "lines": "82",
+     "note": "where 0.170 at 3.8 se is stated"
+    }
+   ],
+   "fix": "Give verdict() the same two halves everything else faces, computed on the fixed rule from S1, and re-run. Then restate README.md and weekly-injury.md with whatever comes back. If it no longer clears, that is the finding."
+  },
+  {
+   "id": "S4",
+   "group": "S-A",
+   "severity": "high",
+   "blocking": false,
+   "verified": "read",
+   "title": "The injury retention baseline is a within-season lookahead, and the adopted number is not an achievable live error",
+   "evidence": [
+    "injury.observations computes `baseline` as the player's mean over the healthy weeks of THAT season -- including weeks after the designated week being predicted.",
+    "walk_forward fits the retention table on strictly earlier seasons (correct) and then predicts now['baseline'] * retention. The held-out arm is handed the player's realised in-season healthy level.",
+    "All four arms share the column, so the CONTRAST is not invalidated. What is invalidated is the magnitude as a statement about live error, and the deployability: at prediction time on a Sunday there is no such column, and the production path does not compute one -- roster.availability uses ESPN's projected_total/projected_avg ratio, which is season-level and explicitly says nothing about which games are missed.",
+    "Secondary: the healthy-week population is the player's healthier-and-better subset, so retention is measured against an inflated denominator.",
+    "NOT among the three leakage surfaces R11 names (ff_opportunity expectations, the survivor-filtered spread law, the consensus collider). Believed new; confirm before acting."
+   ],
+   "refs": [
+    {
+     "path": "src/hub/models/injury.py",
+     "lines": "~121-124",
+     "note": "observations(): baseline over the season's healthy weeks"
+    },
+    {
+     "path": "src/hub/models/injury.py",
+     "lines": "~342",
+     "note": "walk_forward: now['baseline'] * retention"
+    },
+    {
+     "path": "src/hub/season/roster.py",
+     "lines": "57-85",
+     "note": "what production actually has instead"
+    }
+   ],
+   "fix": "Replace the season-wide healthy mean with a strictly-prior-weeks expanding mean, re-run, and restate. The gain will shrink and may vanish; either answer is publishable and the current one is not. Then wire the table to a consumer -- grep finds no caller of retention_table or predict_retention outside injury.py, so the one adopted model is not in the lineup path."
+  },
+  {
+   "id": "S5",
+   "group": "S-A",
+   "severity": "medium",
+   "blocking": false,
+   "verified": "direct",
+   "title": "state/gate-width.json holds two gate intervals that appear in no published document, and the ledger overwrites",
+   "evidence": [
+    "Read at e0071e2: draft {lo: -18.761, hi: -7.665, clusters: 4, requires_review: true}; weekly {lo: -1.152, hi: -0.541, clusters: 4, requires_review: true}.",
+    "Neither matches any figure in gate-power.md or weekly-blend-gate.md. The published draft widths are -19.66, -15.65, -12.48, -11.59, -12.19, -11.88; the published weekly interval is [-1.347, -0.640].",
+    "So runs exist whose numbers reached no page, and both entries have carried requires_review: true unaddressed.",
+    "review_width writes state[name] = {...}: one record per gate name, overwritten on the next run. The repo's entire cross-run memory of how many times a gate has been run is a dict with three keys.",
+    "This is the mechanism behind B2. The forking paths are not only across anchors and bases; they are across re-runs, and nothing could count them even if someone wanted to."
+   ],
+   "refs": [
+    {
+     "path": "state/gate-width.json",
+     "note": "read 2026-09-20"
+    },
+    {
+     "path": "src/hub/models/experiment.py",
+     "note": "review_width"
+    },
+    {
+     "path": "docs/gate-power.md",
+     "note": "the published draft widths"
+    }
+   ],
+   "fix": "Make the ledger append-only, keyed by (gate, config_digest, data_digest, timestamp), and have it record the verdict alongside the width. Then discharge the two requires_review flags by saying which run produced each and whether its number was ever published. Anytime-valid inference (S-A phase 2) needs this ledger to exist first."
+  },
+  {
+   "id": "S6",
+   "group": "S-A",
+   "severity": "decision",
+   "blocking": false,
+   "verified": "read",
+   "title": "The NOT-RUNNABLE guard is conditioned on a measurement only the ADOPT direction has an incentive to produce",
+   "evidence": [
+    "gate() fires NOT-RUNNABLE only when `reading(summary,'mde') is Field.VALUE and reading(summary,'ceiling') is Field.VALUE and mde > ceiling`. A ceiling appears only when a caller hands one in.",
+    "By gate-power.md's own account and weekly-blend-gate.md's, two of three gates have never measured a ceiling, so for them the branch 'does not fire and cannot'.",
+    "The docstring's reasoning for requiring both is sound in isolation: 'A gate that measured no ceiling has not shown that it cannot run; it has shown nothing.' The asymmetry is in who bears that. An underpowered design is protected from publishing a null (SHOW) and from adopting, and is NOT protected from REMOVE.",
+    "REMOVE is not a label. Per gate-power.md's own table it means the module moves to hub.exhibits. championship_equity and leverage are there now, removed on evidence from an instrument S1 shows to be a 14%-power sign test.",
+    "This is the mirror of R6. R6: a branch the gate cannot leave granted a standing licence to ship. S6: a branch the gate cannot reach withholds a protection from one direction only."
+   ],
+   "refs": [
+    {
+     "path": "src/hub/models/experiment.py",
+     "lines": "902-911"
+    },
+    {
+     "path": "docs/gate-power.md",
+     "lines": "208-218, 684"
+    },
+    {
+     "path": "src/hub/exhibits/",
+     "note": "what REMOVE means in practice"
+    }
+   ],
+   "fix": "A decision, not a patch, and it is ADR-0024 different-objects: either (a) require a ceiling before any verdict, so a gate that measured none returns NOT-RUNNABLE in both directions; or (b) keep the current guard and state in the pre-registration that REMOVE is reachable without a ceiling, naming it an exemption the way #300 named NOT-RUNNABLE one. Do not delete anything further from hub.exhibits until this is decided and S1 is fixed."
+  },
+  {
+   "id": "S7",
+   "group": "S-B",
+   "severity": "decision",
+   "blocking": false,
+   "verified": "direct",
+   "title": "The house rule applied to betting is a guarantee of never adopting",
+   "evidence": [
+    "holdout.py is entirely fantasy-draft: eleven keys, all predict.* and availability.*. MARGIN_SD is not among them. There is no leave-one-season-out machinery for any game-level constant.",
+    "Effective n at game level is seasons, not games. For an ATS gate at k=10 seasons of ~285 games: per-season SE ~= sqrt(0.25/285) = 2.96pp, SE of the mean ~= 0.94pp, MDE ~= (2.262+0.842)*0.94 = 2.9pp. Break-even at -110 is 52.38%. The interval half is blind to every profitable-but-realistic edge.",
+    "The binding half is unanimity. A true 53% model has P(season hit rate > 50%) = Phi(2.62/2.96) ~= 0.81, so P(positive in all 10 seasons) ~= 0.81^10 ~= 0.12.",
+    "The rule is calibrated for CONSTANT REFITS, where rejecting churn is correct and a false negative costs nothing. Applied to a betting edge, a false negative costs the entire enterprise. Same rule, opposite loss function.",
+    "Not currently binding, because no ATS or cover model exists. It becomes binding the moment one does, which makes this the right time to decide."
+   ],
+   "refs": [
+    {
+     "path": "src/hub/holdout.py",
+     "note": "HELD_OUT, eleven fantasy keys"
+    },
+    {
+     "path": "docs/adr/0019-a-gate-requires-every-season.md"
+    },
+    {
+     "path": "docs/gate-power.md",
+     "note": "the MDE formula used above"
+    }
+   ],
+   "fix": "Decide, before a game-level model exists, what bar it faces. Candidates on one axis: the house rule as-is; the house rule with k raised by using more seasons; a decision-theoretic bar on expected value at a stated stake. This is ADR-0024 different-objects and needs an ADOPTED: line."
+  },
+  {
+   "id": "S8",
+   "group": "S-B",
+   "severity": "high",
+   "blocking": false,
+   "verified": "reported",
+   "title": "ratings.py is a passthrough and six consumers rest on one transform of one market number",
+   "evidence": [
+    "ratings.forecaster() returns MarketBaseline(); rated_games() is schedule.priced_games with nothing applied since #299 pulled the QB layer. No Elo, no state-space rating, no margin regression exists anywhere in src/.",
+    "survivor.grid_from_schedule builds win_prob as normal_cdf(close_spread / MARGIN_SD). The survivor IP, pool.Field, weekly, leverage, buyback and sensitivity all read it.",
+    "Unpriced games are dropped (priced = games.filter(close_spread.is_not_null())), so a coverage hole shrinks the slate rather than degrading it, because there is nothing to fill it with.",
+    "market.py states the falsifiability argument correctly and never builds the challenger. props.py says the game-level spread was skipped precisely BECAUSE it is both the input and the thing being scored -- the asymmetry was identified and then used as a reason not to do the work.",
+    "CFB: schedule.SLATES = {'nfl': _nfl_slate}; priced_games(league='cfb') raises LeagueUnavailable. /ratings/sp and /player/returning are in the quota budget and read by no model. 136 FBS teams in scope, zero modelled -- and G5 games are where a rating plausibly has edge, because no sharp market prices them."
+   ],
+   "refs": [
+    {
+     "path": "src/hub/models/ratings.py",
+     "lines": "107, 113"
+    },
+    {
+     "path": "src/hub/models/market.py",
+     "lines": "1-13"
+    },
+    {
+     "path": "src/hub/schedule.py",
+     "lines": "186"
+    },
+    {
+     "path": "src/hub/fetch/cfbd.py",
+     "note": "SP+ and returning production, fetched by budget, read by nothing"
+    }
+   ],
+   "fix": "Build a state-space team rating (Glickman-Stern: Normal margin, team strengths as a random walk, home advantage a parameter) on schedules back to 1999. ratings.forecaster() is already the seam. Score it against the closing line on log-loss, walk-forward, under the FIXED gate. Then run the same model on CFB, where it has somewhere to be right."
+  },
+  {
+   "id": "S9",
+   "group": "S-B",
+   "severity": "high",
+   "blocking": false,
+   "verified": "reported",
+   "title": "The favourite-longshot location bias is measured, published, and consumed by nothing -- including by survivor",
+   "evidence": [
+    "The repo's own residuals by bucket: pick'ems -1.56 pts (se 0.53, n=569), 6-9 point favourites +0.78, 9-14 +0.91. In probability: 7+ favourites priced 0.771 and win 0.803, +3.2pp at 2.4 se on n=859; 10-14 +0.036; 14+ +0.063.",
+    "docs/weekly-coverage.md: 'Nothing is refit on this.'",
+    "7+ favourites are exactly the population survivor picks from. margin.survival_beside puts the priced 18-pick survival product at 0.0099 against a realised 0.0206 -- biased low by roughly a factor of two.",
+    "Direction matters differently for the two consumers. For survival it is conservative. For the pool's dollar figures it is not: those are P(survive)-weighted shares of a pot, so a systematically wrong survival probability corrupts every expected_dollars figure the module prints.",
+    "Audit IV rank 9 names MARGIN_SD and non-normality. This is the LOCATION half, which the same study measured and which is separately actionable without touching the shape."
+   ],
+   "refs": [
+    {
+     "path": "src/hub/models/margin.py",
+     "lines": "170-186"
+    },
+    {
+     "path": "docs/margin-sd.md",
+     "note": "the residual-by-bucket table"
+    },
+    {
+     "path": "docs/weekly-coverage.md",
+     "lines": "~302"
+    }
+   ],
+   "fix": "Fit a spread-dependent location correction, shrunk, and apply it in grid_from_schedule. It cannot be gated at this n under the current rule (S7), so adopt it as a PROVISIONAL RULE under ADR-0014 with a stated horizon and a log of every application -- this is precisely the case that mechanism exists for, and the ADR counts its members."
+  },
+  {
+   "id": "S10",
+   "group": "S-B",
+   "severity": "medium",
+   "blocking": false,
+   "verified": "reported",
+   "title": "The leverage term is unresolved for want of CPU, and is reported as though it were unresolved for want of evidence",
+   "evidence": [
+    "pool.leverage: 2 of 25 comparisons clear 2 sigma where chance gives ~1.1, with 24 of 25 positive in sign and the magnitude growing with concentration. The module reports this honestly and pools nothing.",
+    "The module's own arithmetic says resolving a +$3 term at concentration 16 needs ~4,000 trials per arm. WEEKLY_TRIALS = 400, over 6 candidates.",
+    "So the finding 'unresolved' is a statement about a constant in the config, not about the world. Everything else this repo closes for want of a resource is closed for want of SEASONS, which is honest because seasons cannot be bought. Trials can.",
+    "This matters because the leverage term is the entire economic case for contrarian survivor play, and the pool is live now.",
+    "Related but separate from R13 (empty rival ledgers) and R14 (the buyback interval), both of which remain open."
+   ],
+   "refs": [
+    {
+     "path": "src/hub/season/pool.py",
+     "lines": "1975-2075",
+     "note": "leverage"
+    },
+    {
+     "path": "src/hub/season/pool.py",
+     "note": "WEEKLY_TRIALS, PoolConfig.field_concentration"
+    }
+   ],
+   "fix": "Run the leverage study at 4,000 trials per arm overnight and publish whatever it says. Separately: field_concentration is the module's central knob, is unfitted, and is swept 1 to 16 (chalk share 5.7% to 27.0%). Public weekly pick percentages are published free by several sources and would replace the sweep with a measurement; there is no fetcher for them anywhere in fetch/."
+  },
+  {
+   "id": "S11",
+   "group": "S-C",
+   "severity": "medium",
+   "blocking": false,
+   "verified": "read",
+   "title": "One correlation constant, two incompatible semantics, and the lineup objective is built on the weaker one",
+   "evidence": [
+    "TEAMMATE_RHO is estimated in correlate.pair_correlations as Pearson r on within-player-season z-scores of realised PPR -- i.e. measured on POINTS.",
+    "correlated_normal applies it via Cholesky to the LATENT NORMAL, before skewed(). That is the right layer for a copula, and it means the realised points correlation is not 0.232. R12 already names this attenuation.",
+    "predict.group_sd applies the SAME constant directly to the POINTS variance as 2*rho*sd_i*sd_j, and season/lineup.py:135 builds the whole lineup objective on group_sd.",
+    "So the two consumers disagree about what the number is. They cannot both be right, and R12's attenuation finding is about only one of them.",
+    "Also: teammate_rho returns 0 for unmeasured pairs, so WR-WR is exactly zero in the shipped matrix, while docs/correlation.md describes an implied +0.05 between catchers from a star topology the matrix does not build. Doc and code disagree."
+   ],
+   "refs": [
+    {
+     "path": "src/hub/models/predict.py",
+     "lines": "583, 611-618, 621-636"
+    },
+    {
+     "path": "src/hub/season/lineup.py",
+     "lines": "135"
+    },
+    {
+     "path": "docs/correlation.md",
+     "lines": "11-13, 78-84"
+    }
+   ],
+   "fix": "Decide which layer the constant belongs to, convert for the other consumer, and pin both with a test that would fail if they drift apart again. Reconcile docs/correlation.md with the shipped matrix in the same commit."
+  },
+  {
+   "id": "S12",
+   "group": "S-C",
+   "severity": "medium",
+   "blocking": false,
+   "verified": "reported",
+   "title": "Free nflverse data that would answer three open findings is not pulled, and four sources have no as-of archive",
+   "evidence": [
+    "load_nextgen_stats and load_depth_charts exist in nflreadpy and are called nowhere in fetch/nflverse.py.",
+    "participation and ftn_charting are on disk for 2024 ONLY -- one season -- so aDOT, air-yards share and route participation are historically incomplete by accident rather than by decision. These are the inputs C5, G4 and audit-iv ranks 2 and 3 need.",
+    "No weather fetch of any kind. wind was correctly withdrawn as RECORDED (#170) and nothing replaced it with a pre-kickoff FORECAST, which is a legitimate PRE_KICKOFF feature and is free.",
+    "injuries, snap_counts, participation and ftn_charting are pulled as bulk multi-season files with no as-of snapshotting, so a later nflverse revision silently overwrites the historical record. store.py's own docstring records the earlier version of this bug. Any measurement resting on those four is not reproducible at the vintage it was taken. ADP, odds and ff_rankings ARE properly snapshotted.",
+    "The odds archive is mostly a static line: by the repo's own 2026-09-11 count, 260 of 272 games never moved across the polling window. Two polls a week cannot see a market move, and there is no distinct opening capture. Budget is not the constraint: ~56 credits a month against 500.",
+    "Cross-source joins are exact-match after normalization plus a hardcoded ALIASES dict of six manually-discovered pairs. relaxed_key exists only to CLASSIFY a probable join failure for bias auditing, not to repair one. There is no measured join-failure rate for the ESPN or CFBD crosswalks."
+   ],
+   "refs": [
+    {
+     "path": "src/hub/fetch/nflverse.py"
+    },
+    {
+     "path": "src/hub/names.py"
+    },
+    {
+     "path": "src/hub/store.py"
+    },
+    {
+     "path": "data/raw/nflverse/",
+     "note": "participation and ftn_charting: 2024 only"
+    }
+   ],
+   "fix": "Four separable tickets: (1) pull nextgen and depth charts, backfill participation and ftn_charting for every season nflverse retains; (2) add as-of snapshotting for injuries, snaps, participation and ftn_charting; (3) raise the odds poll cadence to 4-6/week with a Thursday and a Sunday-morning capture, ~50 credits/month; (4) count unmatched rows per source per season and put the rate on the board's status line."
+  },
+  {
+   "id": "S13",
+   "group": "S-C",
+   "severity": "medium",
+   "blocking": false,
+   "verified": "read",
+   "title": "The conformal interval's finite-sample correction is partially undone by a polars default",
+   "evidence": [
+    "conformal.interval computes k = min(1, (1-alpha)*(n+1)/n) and then residuals.abs().quantile(k).",
+    "polars defaults to interpolation='nearest', which rounds the order statistic DOWN as often as up. Split conformal requires the ceil((1-alpha)(n+1))-th order statistic, i.e. interpolation='higher'.",
+    "So the carefully-argued (n+1)/n correction in the line above is negated about half the time by the line below it.",
+    "Scope note: conformal.py is wired to GAME MARGIN only -- load_scored joins margin_mean to schedules.result, and base.Conformalized rewrites margin_lo/hi. No player projection is conformalised anywhere; the weekly interval is the parametric skewed() and nothing else. That larger gap is audit-iv rank 4 and is already on the tracker."
+   ],
+   "refs": [
+    {
+     "path": "src/hub/models/conformal.py",
+     "lines": "49-58, 135-173"
+    },
+    {
+     "path": "src/hub/models/base.py",
+     "lines": "192-201"
+    }
+   ],
+   "fix": "interpolation='higher'. One line, plus a test that plants a residual set where nearest and higher differ."
+  }
+ ],
+ "prediction_evaluation": {
+  "framing": "Audit IV's prediction_evaluation is not superseded and should be read first; its ten ranks still stand at e0071e2 and most are open tickets. This section says only what is new or what this round would re-rank.",
+  "what_is_strong": [
+   "The leakage discipline, re-verified at e0071e2. expanding_seasons and expanding_weeks are correct, the AST guard holds, panel._served default-denies, require_features refuses OUTCOMES and RECORDED. The wind incident -- catching a NULL that was null for the wrong reason, and separately catching that a dome and a missing reading were both coded 0.0 -- is a class of audit almost nobody runs, because nulls are the results nobody re-reads.",
+   "Ceilings before gaps. player-spread.md closes a question by bounding it: the outcome is a realised sd from ~14 games carrying 1.0113 MAE of its own sampling error against a model's 1.0965, leaving 0.085 of headroom for every future model combined. That is a much stronger 'no' than any candidate's failure and is the correct response to a small-n domain.",
+   "The margin diagnosis. The key-number study fitted the excess (15.0% of games on exactly 3, 2.75x Gaussian), tested a lumpy win-probability model, and correctly concluded it loses BECAUSE the bumps are near-symmetric about the spread and pull every favourite toward 0.5. Diagnosing a failure at the mechanism level is rarer than fixing it.",
+   "The compound sampler's form. components.sample_weeks draws counts then Gamma(units/cv^2, per_unit*cv^2), so E[yards] = units*per_unit and Var scales with units. It DERIVES sd proportional to sqrt(mu) from structure rather than asserting it -- which is the correct way round, and makes the per-position exponent evidence (QB 0.161, TE 0.622) a finding about the structure rather than a curve-fitting detail.",
+   "The engineering. Atomic writes enforced by static analysis, a per-module coverage ratchet added because a global floor let one module fall 98% to 22%, a push gate that intercepts the tool call so --no-verify cannot bypass it, and graceful degradation as a stated requirement. 3,408 test functions across 93 unit and 35 contract files."
+  ],
+  "what_this_round_would_re_rank": [
+   {
+    "item": "Audit IV rank 1 (the weekly projection uses no pre-kickoff information)",
+    "note": "Still rank 1, and with one correction to how it should be priced. #305 pre-registered implied_total at about +0.01 MAE as a MEAN effect. That is the wrong estimand. Its value is that it makes teammates' and opponents' outcomes covary with the game, which is what a lineup decision consumes and what a MAE gate cannot see. Price it in the joint, against a decision loss, or it will fail a gate while being right."
+   },
+   {
+    "item": "Audit IV rank 6 (two statistical standards in one repo)",
+    "note": "Promote. S1 shows there are not two standards but one broken one plus an unclustered shortcut. Fix S1 first; R9 and R10 become restatements under it rather than independent repairs."
+   },
+   {
+    "item": "The distributional stack generally",
+    "note": "The machinery is sophisticated and the conditional mean is ESPN's. In weekly fantasy the mean carries nearly all the value. Ranking the distributional items above the mean items inverts the return on effort."
+   }
+  ],
+  "techniques_that_attach": [
+   {
+    "technique": "Bayesian decision analysis over binary verdicts",
+    "attaches_at": "src/hub/models/experiment.py gate()/summarise()",
+    "detail": "Hierarchical normal over season effects (delta_s ~ N(delta, tau), delta ~ N(0, prior)) in Stan or NumPyro. Report a posterior mean, a credible interval, P(delta>0) and the action maximising expected utility against a pre-registered switching cost. Preserves rule 1 -- you pre-register the utility and the boundary instead of the branches -- and is often STRICTER than a 2-se rule on a pooled mean.",
+    "findings": [
+     "S1",
+     "S2",
+     "S6",
+     "S7"
+    ]
+   },
+   {
+    "technique": "Hierarchical shrinkage with a measurement-error layer",
+    "attaches_at": "injury.retention_table, predict.TEAMMATE_RHO, WEEKLY_K, WEEKLY_SKEW, the dvp adjustments",
+    "detail": "Five unshrunk small-sample group estimates, one model. This also subsumes the 'noted twice, not yet a rule' entry in method.md: a random-effects layer estimates between-group variance NET of sampling noise by construction, so a bespoke analytic disattenuation per constant is not needed.",
+    "findings": [
+     "S3",
+     "S11"
+    ]
+   },
+   {
+    "technique": "State-space paired-comparison ratings (Glickman-Stern 1998; Glickman 1999)",
+    "attaches_at": "src/hub/models/ratings.py forecaster()",
+    "detail": "Random-walk team strengths plus home advantage, Kalman or MCMC. The prerequisite for having any residual to score. Two outcomes, both valuable: it loses to the market and you have a calibrated second opinion; or it does not and you have something the record has never contained. Then the same model on CFB, where most G5 games have no sharp price.",
+    "findings": [
+     "S8"
+    ]
+   },
+   {
+    "technique": "Bayesian hierarchical score model (bivariate-Poisson family)",
+    "attaches_at": "src/hub/models/market.py, margin.py",
+    "detail": "Model the score-generating process, and margin, total, key-number mass, cover probability and moneyline fall out jointly. The right answer to the key-number problem the bump model correctly failed to solve: a model generating integer scores produces P(margin=3) in the right proportion without a renormalisation hack. Supersedes carried finding G5.",
+    "findings": [
+     "S9"
+    ]
+   },
+   {
+    "technique": "Distributional regression (NGBoost / distributional GBM / GAMLSS)",
+    "attaches_at": "src/hub/models/predict.py moments(), weekly.py project()",
+    "detail": "Hurdle component for P(usable) then a gamma or log-normal body with mean, dispersion AND shape all regressed on the same covariates. Dissolves the zero clip (R7), the per-position skew constant and the fitted-exponent mismatch at once, and produces the PIT histogram #292's skew question actually needs.",
+    "findings": []
+   },
+   {
+    "technique": "Mondrian (group-conditional) split conformal",
+    "attaches_at": "src/hub/models/conformal.py, applied to weekly points",
+    "detail": "Conditional coverage by construction, per group, with a finite-sample guarantee that does not require a gate. The per-group GATE needs N >= 8,377 and is decades out; the METHOD does not. Ship on the guarantee and measure later. Condition on position first, mu decile second.",
+    "findings": [
+     "S13"
+    ]
+   },
+   {
+    "technique": "Diebold-Mariano with a HAC or cluster-robust variance",
+    "attaches_at": "src/hub/models/experiment.py paired_gain()",
+    "detail": "paired_gain IS Diebold-Mariano with exactly the naive variance DM exists to replace, on autocorrelated player-week losses. A cluster argument with no default is R9's fix; a HAC variance is the more general one.",
+    "findings": [
+     "S1"
+    ]
+   },
+   {
+    "technique": "Anytime-valid inference (e-values, confidence sequences)",
+    "attaches_at": "a rebuilt state/gate-width ledger",
+    "detail": "The refit-and-re-run pattern is documented and uncounted. E-values let you look as often as you like without inflating error rates, which is the regime this project is actually in. Needs an append-only run ledger first.",
+    "findings": [
+     "S5"
+    ]
+   },
+   {
+    "technique": "Pool equilibrium as best response to a measured field (Clair & Letscher 2007; Metrick 1996)",
+    "attaches_at": "src/hub/season/pool.py, survivor.py",
+    "detail": "pool.py already has the simulator and the payout rules and substitutes an unfitted power law for the field. Fit field_concentration on published pick percentages, then solve the season as a best response rather than as survival-max with a one-week EV deviation.",
+    "findings": [
+     "S10"
+    ]
+   }
+  ],
+  "explicitly_not_recommended": [
+   {
+    "technique": "Deep sequence models over play-by-play",
+    "why": "n is ~285 games a season and the gate cannot resolve 12 pts/team-game. It will overfit and the instrument cannot tell you. Revisit only with a reason to model within-game dynamics."
+   },
+   {
+    "technique": "Vine or t-copulas for roster correlation",
+    "why": "The topology is a star with rho ~0.23 over a handful of players. A Gaussian copula is adequate. Fix S11's two semantics instead."
+   },
+   {
+    "technique": "More projection sources in the blend",
+    "why": "The marginal source adds almost nothing and the difference is below what can be measured here."
+   },
+   {
+    "technique": "RL for draft strategy",
+    "why": "Championship equity already lost this fight for the right reason -- the simulator's own noise exceeded the effect. RL widens that gap."
+   }
+  ],
+  "what_the_track_record_says": {
+   "note": "Unchanged in kind from audit IV and worth restating with S1 in hand: the repo's predictive claims remain untestable, and the record of REMOVALS -- which README.md calls the most useful artifact here -- is now known to have been produced by a 14%-power sign test. The honest reading after S1 is that the repo does not yet know which of its thirteen removals were findings."
+  }
+ },
+ "plan": [
+  {
+   "phase": 0,
+   "title": "In-season, weeks 3-5: fix what is deciding things now",
+   "cost": "days",
+   "note": "Everything here affects a decision the owner is making this month or repairs a number already published. None of it needs a research cycle.",
+   "steps": [
+    {
+     "n": 1,
+     "action": "Fix the gate's interval half and add a power field.",
+     "detail": "Read the t-interval small_sample_report already renders, or a wild cluster bootstrap. Make SHOW print what the design could have detected. This is the root blocker; every gate re-run is blocked_by it.",
+     "findings": [
+      "S1"
+     ]
+    },
+    {
+     "n": 2,
+     "action": "Fix paired_gain's cluster and re-quote every t it produced.",
+     "detail": "Already R9's fix. Sequence it immediately after step 1 so the restatement happens once.",
+     "findings": [
+      "S1"
+     ],
+     "carries": [
+      "R9",
+      "R10"
+     ]
+    },
+    {
+     "n": 3,
+     "action": "Fix the injury baseline lookahead and re-run.",
+     "detail": "Strictly-prior-weeks expanding mean. The gain will shrink and may vanish; publish whichever.",
+     "findings": [
+      "S4"
+     ]
+    },
+    {
+     "n": 4,
+     "action": "Give injury.verdict the bar everything else faces.",
+     "detail": "argmin over four candidates is not a gate. Re-run under step 1's rule and restate README.md and weekly-injury.md.",
+     "findings": [
+      "S3"
+     ]
+    },
+    {
+     "n": 5,
+     "action": "Run the leverage study at 4,000 trials per arm.",
+     "detail": "Overnight. Converts the one term that is the economic case for contrarian survivor play from a caveat string into a number.",
+     "findings": [
+      "S10"
+     ]
+    },
+    {
+     "n": 6,
+     "action": "Apply a shrunk favourite-longshot location correction to the survivor grid, as a provisional rule under ADR-0014.",
+     "detail": "It cannot be gated at this n. Log every application and state a horizon; the ADR counts its members and this would be the second.",
+     "findings": [
+      "S9"
+     ]
+    },
+    {
+     "n": 7,
+     "action": "Confirm the pool's co-survivor and co-elimination rules.",
+     "detail": "Both are unconfirmed defaults of 'split', where rollover pays 0 and split pays 1/n. Every dollar figure is conditional on them.",
+     "findings": [
+      "S10"
+     ]
+    },
+    {
+     "n": 8,
+     "action": "Raise the odds poll cadence to 4-6 per week.",
+     "detail": "~50 credits a month against 500. Do it now so the archive has depth by January.",
+     "findings": [
+      "S12"
+     ]
+    },
+    {
+     "n": 9,
+     "action": "interpolation='higher' in conformal.interval.",
+     "detail": "One line plus a test.",
+     "findings": [
+      "S13"
+     ]
+    },
+    {
+     "n": 10,
+     "action": "Decide which layer TEAMMATE_RHO belongs to and pin both consumers.",
+     "detail": "group_sd on points and correlated_normal on the latent cannot both be right, and the lineup objective reads the first.",
+     "findings": [
+      "S11"
+     ]
+    }
+   ]
+  },
+  {
+   "phase": 1,
+   "title": "Rest of the season: stop auditing the market and have an opinion",
+   "cost": "weeks",
+   "note": "Nothing here touches the draft machinery, which is frozen until August 2027.",
+   "steps": [
+    {
+     "n": 1,
+     "action": "Wire the Panel's PRE_KICKOFF features into the served projection.",
+     "detail": "Highest-value model work available; the features exist, classified and contract-checked. Price it in the JOINT against a decision loss, not as a mean effect.",
+     "findings": [],
+     "carries": [
+      "audit-iv rank 1"
+     ]
+    },
+    {
+     "n": 2,
+     "action": "Pull nextgen stats and depth charts; backfill participation and ftn_charting; add as-of snapshotting for the four unarchived sources.",
+     "detail": "Unlocks the inputs C5, G4 and audit-iv ranks 2 and 3 need, and stops four sources silently rotting.",
+     "findings": [
+      "S12"
+     ],
+     "carries": [
+      "C5",
+      "G4"
+     ]
+    },
+    {
+     "n": 3,
+     "action": "Add red-zone and goal-line opportunity to the TD model.",
+     "detail": "Screen first, per protocol.",
+     "findings": [],
+     "carries": [
+      "C5"
+     ]
+    },
+    {
+     "n": 4,
+     "action": "Build the state-space team rating and score it against the closing line.",
+     "detail": "ratings.forecaster() is the seam. Walk-forward log-loss under the fixed gate.",
+     "findings": [
+      "S8"
+     ]
+    },
+    {
+     "n": 5,
+     "action": "Extend the rating to CFB.",
+     "detail": "Where it has somewhere to be right. Also makes LeagueUnavailable degrade instead of refuse.",
+     "findings": [
+      "S8"
+     ]
+    },
+    {
+     "n": 6,
+     "action": "Find a public pick-percentage source and fit field_concentration.",
+     "detail": "One fetcher; turns the pool's central unfitted knob into a measurement.",
+     "findings": [
+      "S10"
+     ]
+    },
+    {
+     "n": 7,
+     "action": "Rebuild state/gate-width as an append-only ledger keyed by (gate, config_digest, data_digest, timestamp), recording the verdict.",
+     "detail": "Prerequisite for anytime-valid inference and for ever counting the re-runs.",
+     "findings": [
+      "S5"
+     ]
+    },
+    {
+     "n": 8,
+     "action": "Run the hold-out backtest that is built and has never been run.",
+     "detail": "Fill the six null keys in conf/holdout/*.json or state which cannot be filled and what that does to the draft-gate magnitudes.",
+     "findings": [],
+     "carries": [
+      "B6",
+      "R17"
+     ]
+    },
+    {
+     "n": 9,
+     "action": "Measure and publish the cross-source join-failure rate.",
+     "detail": "Six hardcoded aliases guarding every join, with no instrument on them.",
+     "findings": [
+      "S12"
+     ]
+    },
+    {
+     "n": 10,
+     "action": "Mondrian conformal on weekly points.",
+     "detail": "Ship on the per-group guarantee; condition on position, then mu decile.",
+     "findings": [
+      "S13"
+     ]
+    }
+   ]
+  },
+  {
+   "phase": 2,
+   "title": "Offseason: replace the instrument, then re-run the record",
+   "cost": "months",
+   "note": "Sequencing matters. Do step 1 before steps 4 and 5: a score model or a distributional projection gated by a 14%-power sign test will be deleted.",
+   "steps": [
+    {
+     "n": 1,
+     "action": "Replace the verdict with a posterior.",
+     "detail": "Hierarchical model over season effects, a pre-registered utility and decision boundary, and a gate() that reports posterior mean, credible interval, P(positive) and the expected-utility-maximising action. Keep every pre-registration discipline; change only what gets pre-registered.",
+     "findings": [
+      "S1",
+      "S2",
+      "S6",
+      "S7"
+     ]
+    },
+    {
+     "n": 2,
+     "action": "Re-run the entire record under the new rule and restate docs/track-record.md.",
+     "detail": "Thirteen removals measured with an instrument that could not see them. Some stay removed with an honest bound; some return as SHOW. Do not delete anything further from hub.exhibits before this.",
+     "findings": [
+      "S2",
+      "S6"
+     ]
+    },
+    {
+     "n": 3,
+     "action": "Hierarchical shrinkage pass over every shipped small-sample constant.",
+     "detail": "One model replacing five ad-hoc tables. Promote the 'noted twice' entry to a rule and note the random-effects layer is its general solution.",
+     "findings": [
+      "S3",
+      "S11"
+     ]
+    },
+    {
+     "n": 4,
+     "action": "Bayesian hierarchical score model.",
+     "detail": "Margin, total, key-number mass, cover probability and moneyline jointly. Supersedes G5.",
+     "findings": [
+      "S9"
+     ],
+     "carries": [
+      "G5"
+     ]
+    },
+    {
+     "n": 5,
+     "action": "Distributional regression for weekly points.",
+     "detail": "Hurdle plus a gamma body with mean, dispersion and shape regressed together. Dissolves R7 and the constant-skew problem at once.",
+     "findings": [],
+     "carries": [
+      "R7"
+     ]
+    },
+    {
+     "n": 6,
+     "action": "Anytime-valid inference over the new ledger.",
+     "detail": "E-values and confidence sequences so refit-and-re-run stops being an uncounted forking path.",
+     "findings": [
+      "S5"
+     ]
+    },
+    {
+     "n": 7,
+     "action": "Pool equilibrium against the measured field.",
+     "detail": "Best response over the season rather than survival-max with a one-week EV deviation. Closes the seam between survivor.solve and pool.weekly.",
+     "findings": [
+      "S10"
+     ]
+    }
+   ]
+  }
+ ],
+ "method_rule_to_add": {
+  "carried_from_v4": "A gate that cannot return a verdict is not a bar, it is an exemption -- and it must be named as one in the pre-registration that created it.",
+  "status": "Stands. S6 is its mirror image and is not covered by it: a branch the gate cannot REACH withholds a protection from one direction only, which is an exemption granted to REMOVE rather than to ADOPT.",
+  "new_clause": "A decision rule must be checked for degeneracy against its own inputs before it is pre-registered. A conjunction whose second term is implied by its first is one term, and writing it down as two is how a rule comes to be trusted for a strictness it does not have.",
+  "rationale": "ADR-0019 was argued, documented, unit-tested and enforced by a contract test, and its second half has been inert since it was written. Every safeguard in this repo was pointed at whether the rule was FOLLOWED. None was pointed at whether the rule, as written, said anything. The check is cheap -- simulate the rule under the null and confirm the size is what you intended -- and it is the one check that would have caught this.",
+  "proposed_home": "docs/method.md, as rule 17, with M-S1 as the incident."
+ },
+ "artifact_source": {
+  "method_audit_2026_09_20": "https://claude.ai/code/artifact/ce5bffc0-020c-4285-af70-7438d3dcd12e",
+  "audit_iv": "https://claude.ai/artifact/P6ZkPrmBNb7JqPm9xHa1C2",
+  "audit_iii": "https://claude.ai/code/artifact/812c68a2-de63-451c-8942-685edfeadd54",
+  "audit_ii": "https://claude.ai/code/artifact/b331060c-621f-464f-b64c-6128e3e4f10c",
+  "audit_i": "https://claude.ai/code/artifact/778ddcad-61b1-4d75-9033-a918d4bec473"
+ }
+}
