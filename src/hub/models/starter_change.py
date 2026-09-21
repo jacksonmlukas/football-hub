@@ -74,7 +74,7 @@ import statistics
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import polars as pl
@@ -135,19 +135,17 @@ TEAM_GAME_SCHEMA: dict[str, Any] = {
 
 # --- the event construction ---------------------------------------------------------------
 #
-# #339: the transform below used to be hand-built here -- `_schedule` plus a duplicate of
-# `team_games`'s own per-side unpivot -- reaching past `hub.fetch.nfeloqb`'s public surface
-# six times (`nfeloqb.ABBREVIATIONS` three times over, `nfeloqb._blank`) to rebuild what
-# `nfeloqb.team_games` now does once, for both this module and the fetch module's own state
-# path. Everything here reads that public function; nothing computes the schema-level
-# transform itself.
-
-def _schedule(rows: pl.DataFrame) -> pl.DataFrame:
-    """Kept because `tests/unit/test_starter_change.py` calls it directly. The full
-    (team, game) row set it returns -- before either side is filtered for a one-sided blank
-    -- is `hub.fetch.nfeloqb.schedule`'s now (#339); this computes none of it itself."""
-    return nfeloqb.schedule(rows)
-
+# #339: the transform below used to be hand-built here -- a private `_schedule` plus a
+# duplicate of `team_games`'s own per-side unpivot -- reaching past `hub.fetch.nfeloqb`'s
+# public surface six times (`nfeloqb.ABBREVIATIONS` three times over, `nfeloqb._blank`) to
+# rebuild what `nfeloqb.team_games` now does once, for both this module and the fetch
+# module's own state path. Everything here reads that public function; nothing computes the
+# schema-level transform itself.
+#
+# #374: `nfeloqb.schedule`/`nfeloqb.team_games` take `regular_season_only` explicitly, with
+# no default that would hide the choice. This module's question is regular-season by
+# pre-registration, so every call below passes `True`; `nfeloqb.state` is the other reader,
+# and passes `False` so a team's tenure run can reach back across the postseason boundary.
 
 def team_games(rows: pl.DataFrame) -> pl.DataFrame:
     """One row per (team, game) off the source's rows, keyed by nflverse's game id, with the
@@ -156,9 +154,10 @@ def team_games(rows: pl.DataFrame) -> pl.DataFrame:
     blank convention, the abbreviation map -- and builds this frame for its own state path
     too (#339); this keeps only the columns both of this module's readers need
     (`TEAM_GAME_SCHEMA`, plus `prev_game_id`/`prev_season`/`prev_date`) and computes none of
-    the schema-level transform itself."""
-    return nfeloqb.team_games(rows).select(*TEAM_GAME_SCHEMA, "prev_game_id", "prev_season",
-                                           "prev_date")
+    the schema-level transform itself. Regular season only (#374): the line-move study is
+    regular-season by pre-registration."""
+    return nfeloqb.team_games(rows, regular_season_only=True).select(
+        *TEAM_GAME_SCHEMA, "prev_game_id", "prev_season", "prev_date")
 
 
 def unreadable_games(rows: pl.DataFrame) -> int:
@@ -167,8 +166,8 @@ def unreadable_games(rows: pl.DataFrame) -> int:
     value or adjustment was null. Counts both sides of a two-sided blank, one each, alongside
     every one-sided blank's single side (#328). Reported on the run line so a hole is
     counted, not silently closed over the way the previous-game link used to close it
-    (#301)."""
-    return nfeloqb.schedule(rows).height - team_games(rows).height
+    (#301). Regular season only (#374), matching `team_games`."""
+    return nfeloqb.schedule(rows, regular_season_only=True).height - team_games(rows).height
 
 
 def starters_from_pbp(pbp: pl.DataFrame) -> pl.DataFrame:
@@ -952,10 +951,24 @@ def noise_floor_per_root_day(
     return float(floor["sd_per_root_day"]), int(floor["games"]), tuple(not_applied)
 
 
-def _event_lines(ev: pl.DataFrame, games: pl.DataFrame, since: int) -> list[str]:
-    lines = [f"  starter changes since {since}, observed off the source's starter column "
-             f"(never the injury report); an event is a change between two games of one "
-             f"season:"]
+class SeasonEventSummary(NamedTuple):
+    """One season's line in the event-count report (#345): the in-season changes, the event
+    games `games` carries for the season, the gap sd (`nan` under two gaps) and how many
+    gaps it is over, and the offseason changes `in_season` flagged out and did not count."""
+
+    season: int
+    changes: int
+    games: int
+    gap_sd: float
+    n_gaps: int
+    offseason: int
+
+
+def season_event_summaries(ev: pl.DataFrame, games: pl.DataFrame) -> list[SeasonEventSummary]:
+    """One `SeasonEventSummary` per season `ev` carries, in season order -- the computation
+    `_event_lines` used to do inline (#345), split out so a test can assert on the numbers
+    rather than parsing the sentence they are printed into."""
+    out = []
     for season in sorted(set(ev["season"].to_list())):
         part = ev.filter(pl.col("season") == season)
         ins = part.filter(pl.col("in_season"))
@@ -963,10 +976,115 @@ def _event_lines(ev: pl.DataFrame, games: pl.DataFrame, since: int) -> list[str]
         gaps = ins["gap"].drop_nulls().to_list()
         sd = statistics.stdev(gaps) if len(gaps) > 1 else float("nan")
         n_games = games.filter(pl.col("season") == season).height
-        lines.append(f"    {season}: {ins.height} changes on {n_games} event games, "
-                     f"gap sd {sd:.1f} value units (n={len(gaps)}); {off} offseason "
-                     f"change(s) not events")
+        out.append(SeasonEventSummary(season=season, changes=ins.height, games=n_games,
+                                       gap_sd=sd, n_gaps=len(gaps), offseason=off))
+    return out
+
+
+def _event_lines(ev: pl.DataFrame, games: pl.DataFrame, since: int) -> list[str]:
+    lines = [f"  starter changes since {since}, observed off the source's starter column "
+             f"(never the injury report); an event is a change between two games of one "
+             f"season:"]
+    for s in season_event_summaries(ev, games):
+        lines.append(f"    {s.season}: {s.changes} changes on {s.games} event games, "
+                     f"gap sd {s.gap_sd:.1f} value units (n={s.n_gaps}); {s.offseason} "
+                     f"offseason change(s) not events")
     return lines
+
+
+def same_quarterback_floor_label(n_seasons: int, not_applied: Sequence[int],
+                                  qb_notes: Sequence[str]) -> tuple[str, str]:
+    """The same-quarterback floor's label and the parenthetical naming which seasons its
+    chart failed for and why (#345). `n_seasons` is how many seasons had polls to condition
+    at all (`len(study_parts)`); `not_applied` and `qb_notes` are `noise_floor_per_root_day`'s
+    own and the depth-chart fetch loop's, paired by position (season order).
+
+    Three branches: *applied* -- `"same-quarterback floor"` -- where every season with polls
+    also had a usable chart, or where there was nothing to try (`n_seasons == 0`); *partial*
+    where some seasons' charts resolved and others did not; *not applied* --
+    `"all-games floor, SAME-QUARTERBACK NOT APPLIED"` -- where none did. The parenthetical is
+    empty on the first branch and names every failed season and why on the other two."""
+    if n_seasons == 0 or not not_applied:
+        label = "same-quarterback floor"
+    elif len(not_applied) == n_seasons:
+        label = "all-games floor, SAME-QUARTERBACK NOT APPLIED"
+    else:
+        label = "same-quarterback floor, PARTIAL"
+    qb_note = (f" (same-quarterback NOT applied for "
+              f"{', '.join(str(s) for s in not_applied)}: {'; '.join(qb_notes)})"
+              if not_applied else "")
+    return label, qb_note
+
+
+class StudyReport(NamedTuple):
+    """Every value the `--study` line group prints (#345), computed once so `main`'s
+    `--study` block is dispatch and printing over it and nothing more. `established` is
+    whether `study_rows` found an uncensored event game with both a frozen and a pre-game
+    price; `fit`, `benchmark_sentence`, `n_change_seen` and `change_point_median` are only
+    meaningful when it is, exactly as `rows_.is_empty()` gated them before this was a typed
+    result rather than inline branches in `main`."""
+
+    label: str
+    qb_note: str
+    floor: float
+    floor_games: int
+    used: float
+    sd_gap: float
+    n_gaps: int
+    restatement_flag: str | None
+    n_typical: int
+    mde: float
+    unplayed: int
+    fit: dict[str, float]
+    established: bool
+    n_events: int
+    verdict_label: str
+    verdict_sentence: str
+    benchmark_sentence: str | None
+    n_change_seen: int
+    change_point_median: Any
+
+
+def study_report(study_parts: Sequence[tuple[int, pl.DataFrame, pl.DataFrame | None]],
+                  qb_notes: Sequence[str], ev: pl.DataFrame, games: pl.DataFrame,
+                  polls: pl.DataFrame, season_games: pl.DataFrame,
+                  tg: pl.DataFrame) -> StudyReport:
+    """The line-move study's report (#221), computed once as a typed result (#345) rather
+    than as local variables `main`'s `--study` block built and printed from inline.
+    `study_parts` and `qb_notes` are the depth-chart fetch loop's own -- the one network call
+    `--study` makes, and the one thing this function does not do itself, so a season whose
+    chart failed is named here without reaching the network to find out."""
+    floor, floor_games, not_applied = noise_floor_per_root_day(study_parts)
+    label, qb_note = same_quarterback_floor_label(len(study_parts), not_applied, qb_notes)
+    used = floor if math.isfinite(floor) else 0.40
+    gaps = in_season_events(ev)["gap"].drop_nulls().to_list()
+    sd_gap = statistics.stdev(gaps) if len(gaps) > 1 else float("nan")
+    per_season = games.group_by("season").len()["len"].to_list()
+    n_typical = int(statistics.median(per_season)) if per_season else 0
+    restatement_flag = gap_sd_restatement_flag(sd_gap)
+    mde = study_mde(n=n_typical, sd_gap=sd_gap, window_days=7.0, floor_per_root_day=used)
+    unplayed = unplayed_study_games(polls, season_games, tg)
+    rows_ = study_rows(polls, season_games, tg,
+                       floor_per_root_day=floor if math.isfinite(floor) else None)
+    fit = study_fit(rows_, floor_per_root_day=used)
+    established = not rows_.is_empty()
+    verdict_label, verdict_sentence = verdict(fit)
+    benchmark_sentence: str | None = None
+    n_change_seen = 0
+    change_point_median: Any = None
+    if established:
+        seen_change = rows_["days_to_change"].drop_nulls()
+        n_change_seen = seen_change.len()
+        change_point_median = seen_change.median() if seen_change.len() else float("nan")
+        lo, hi = study_interval(fit)
+        benchmark_sentence = benchmark_reading(fit["beta"], lo, hi)
+    return StudyReport(label=label, qb_note=qb_note, floor=floor, floor_games=floor_games,
+                       used=used, sd_gap=sd_gap, n_gaps=len(gaps),
+                       restatement_flag=restatement_flag, n_typical=n_typical, mde=mde,
+                       unplayed=unplayed, fit=fit, established=established,
+                       n_events=rows_.height, verdict_label=verdict_label,
+                       verdict_sentence=verdict_sentence, benchmark_sentence=benchmark_sentence,
+                       n_change_seen=n_change_seen, change_point_median=change_point_median)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1087,60 +1205,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             except Exception as exc:                         # pragma: no cover - network
                 qb_notes.append(f"{s} ({type(exc).__name__}: {exc})")
             study_parts.append((s, p, chart))
-        floor, floor_games, not_applied = noise_floor_per_root_day(study_parts)
-        if not study_parts or not not_applied:
-            label = "same-quarterback floor"
-        elif len(not_applied) == len(study_parts):
-            label = "all-games floor, SAME-QUARTERBACK NOT APPLIED"
-        else:
-            label = "same-quarterback floor, PARTIAL"
-        qb_note = (f" (same-quarterback NOT applied for "
-                  f"{', '.join(str(s) for s in not_applied)}: {'; '.join(qb_notes)})"
-                  if not_applied else "")
-        used = floor if math.isfinite(floor) else 0.40
-        gaps = in_season_events(ev)["gap"].drop_nulls().to_list()
-        sd_gap = statistics.stdev(gaps) if len(gaps) > 1 else float("nan")
-        per_season = games.group_by("season").len()["len"].to_list()
-        n_typical = int(statistics.median(per_season)) if per_season else 0
-        print(f"  study: {label} {floor:.3f} points per root-day off {floor_games} live "
-              f"games of this archive{qb_note} (#214 recorded 0.40 on 12; used {used:.2f}); "
-              f"gap sd {sd_gap:.1f} value units over {len(gaps)} events since {a.since} "
-              f"against delta = {DELTA:.4f} points per value unit")
+        rep = study_report(study_parts, qb_notes, ev, games, polls, season_games, tg)
+        print(f"  study: {rep.label} {rep.floor:.3f} points per root-day off {rep.floor_games} "
+              f"live games of this archive{rep.qb_note} (#214 recorded 0.40 on 12; used "
+              f"{rep.used:.2f}); gap sd {rep.sd_gap:.1f} value units over {rep.n_gaps} events "
+              f"since {a.since} against delta = {DELTA:.4f} points per value unit")
         # #329's pre-registered restatement trigger: a print beside delta, never a branch.
-        flag = gap_sd_restatement_flag(sd_gap)
-        if flag is not None:
-            print(f"  {flag}")
-        mde = study_mde(n=n_typical, sd_gap=sd_gap, window_days=7.0, floor_per_root_day=used)
-        print(f"  MDE before the run at a season of {n_typical} event games, a 7-day window: "
-              f"{mde:.4f} points per value unit against a benchmark of {BENCHMARK:.3f}")
-        unplayed = unplayed_study_games(polls, season_games, tg)
-        print(f"  {unplayed} uncensored, priced event game(s) excluded as unplayed -- an "
+        if rep.restatement_flag is not None:
+            print(f"  {rep.restatement_flag}")
+        print(f"  MDE before the run at a season of {rep.n_typical} event games, a 7-day "
+              f"window: {rep.mde:.4f} points per value unit against a benchmark of "
+              f"{BENCHMARK:.3f}")
+        print(f"  {rep.unplayed} uncensored, priced event game(s) excluded as unplayed -- an "
               f"in-flight game's last snapshot before its own game day is not the last one "
               f"before a move that has finished happening")
-        rows_ = study_rows(polls, season_games, tg,
-                           floor_per_root_day=floor if math.isfinite(floor) else None)
-        fit = study_fit(rows_, floor_per_root_day=used)
-        if rows_.is_empty():
+        if not rep.established:
             print(f"  coefficient: not established -- no uncensored event game with a frozen "
                   f"and a pre-game price in the {span} archive")
             # #329: the NOT-RUNNABLE path still reads through `verdict` -- `study_fit` on no
             # rows hands back an MDE that is not finite, which is `verdict`'s own
             # NOT-RUNNABLE condition, not a special case wired around it here.
-            label_, sentence = verdict(fit)
-            print(f"  {label_}: {sentence}")
+            print(f"  {rep.verdict_label}: {rep.verdict_sentence}")
         else:
-            seen_change = rows_["days_to_change"].drop_nulls()
+            fit = rep.fit
             print(f"  coefficient: {fit['beta']:+.4f} points per value unit (se {fit['se']:.4f} "
                   f"from the floor, MDE {fit['mde']:.4f}) over n={int(fit['n'])} event games "
                   f"(cluster = game); t against {BENCHMARK:.3f}: {fit['t_vs_benchmark']:+.2f}")
-            lo, hi = study_interval(fit)
-            print(f"  0.132: {benchmark_reading(fit['beta'], lo, hi)}")
-            label_, sentence = verdict(fit)
-            print(f"  {label_}: {sentence}")
-            print(f"  change-point: seen on {seen_change.len()} of {rows_.height} games, median "
-                  f"{seen_change.median() if seen_change.len() else float('nan')} days after "
-                  f"the previous game day; the depth-chart date is not cached, so timing "
-                  f"against the report date is not established")
+            print(f"  0.132: {rep.benchmark_sentence}")
+            print(f"  {rep.verdict_label}: {rep.verdict_sentence}")
+            print(f"  change-point: seen on {rep.n_change_seen} of {rep.n_events} games, "
+                  f"median {rep.change_point_median} days after the previous game day; the "
+                  f"depth-chart date is not cached, so timing against the report date is not "
+                  f"established")
     return 0
 
 

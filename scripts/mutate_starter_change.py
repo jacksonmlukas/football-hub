@@ -79,12 +79,14 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
         # #339: this mutant's code moved from `starter_change.team_games` to
         # `nfeloqb.team_games`, so the target and the text both moved with it -- the
         # `nfeloqb.` prefix on `ABBREVIATIONS` is dropped because the code now lives inside
-        # the module that owns the name.
+        # the module that owns the name. #374: `regular_season_only` became an explicit,
+        # no-default argument, so the filter's guard condition grew the parameter name; the
+        # mutant still deletes the same filter line, on its new text.
         "team_games: the postseason filter deleted",
         "survived",
         '    if "week" not in rows.columns:\n'
         + _WEEK_GUARD_RAISE +
-        '    if "game_type" in rows.columns:\n'
+        '    if regular_season_only and "game_type" in rows.columns:\n'
         '        rows = rows.filter(pl.col("game_type") == REGULAR_SEASON)\n'
         '    week = pl.col("week").cast(pl.Utf8).cast(pl.Float64).cast(pl.Int64)\n'
         '    home = pl.col("team1").replace(ABBREVIATIONS)\n',
