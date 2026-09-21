@@ -143,7 +143,9 @@ def test_a_played_week_with_no_pick_of_record_is_said_loudly_rather_than_skipped
     Thursday deadline vanished silently -- nothing spent, nothing said. The default stays;
     what changes is that every played week with no pick of record, in the journal or the
     published plan, is named on stderr. Week 1 here is over and nothing recorded a pick
-    for it; week 2's Thursday game is over and the plan holds SF for it."""
+    for it; week 2's Thursday game is over and the plan holds SF for it. The three sources
+    `_unrecorded` reads against are covered directly, and exhaustively, below; this is the
+    one end-to-end check that `main` prints what it finds."""
     grid = _grid().with_columns(
         pl.when((pl.col("week") == 2) & pl.col("team").is_in(["KC", "LV"]))
         .then(pl.lit(1.0)).otherwise(pl.col("result")).alias("result"))
@@ -152,17 +154,71 @@ def test_a_played_week_with_no_pick_of_record_is_said_loudly_rather_than_skipped
     assert pool.main(_run(tmp_path)) == 0
     err = capsys.readouterr().err
     assert "week 1" in err and "no pick of record" in err and "week 2" not in err
-    # A journal row is a pick of record too: recorded, week 1 is no longer named.
+
+
+def test_entries_for_week_defaults_the_field_less_one_when_eliminated():
+    """The named function `_entries_for_week` extracts: `--entries` stated by hand always
+    wins; off a read field state, the host's live count, less one when eliminated and the
+    host still lists ours as live -- review 2026-09-12's off-by-one, the case this pins so
+    it cannot come back silently; off no field at all, the configured field size, same
+    adjustment."""
+    from hub.fetch.pool import Entry, PoolState
+
+    field = PoolState(season=2026, week=2, field_size=9, pot=180.0, entries=(
+        Entry(0, True, ()), Entry(1, True, ()), Entry(2, False, ())))
+    # Stated by hand: wins over everything else.
+    assert pool._entries_for_week(12, field, eliminated=True, field_size=20) == 12
+    # Off the field: 2 alive, not eliminated -- the live count, ours included.
+    assert pool._entries_for_week(None, field, eliminated=False, field_size=20) == 2
+    # Off the field, eliminated, and the host still lists ours (index 0) as alive: one less
+    # than the live count -- this is the 2026-09-12 review's case.
+    assert pool._entries_for_week(None, field, eliminated=True, field_size=20) == 1
+    # Off the field, eliminated, but the host has already dropped ours: no adjustment, the
+    # live count already excludes us.
+    no_ours = field._replace(entries=(Entry(1, True, ()), Entry(2, False, ())))
+    assert pool._entries_for_week(None, no_ours, eliminated=True, field_size=20) == 1
+    # No field read at all (fresh clone): the configured field size, same adjustment.
+    assert pool._entries_for_week(None, None, eliminated=False, field_size=20) == 20
+    assert pool._entries_for_week(None, None, eliminated=True, field_size=20) == 19
+
+
+def test_resolve_ledger_reads_the_flag_or_the_prior_rows(monkeypatch):
+    """`--ledger` stated by hand always wins, comma-split and stripped; off it, whatever
+    `survivor.spent_teams` reads off the prior rows for the weeks already played."""
+    from hub.season import survivor as sv
+
+    assert pool._resolve_ledger(" KC, SF ,", [], [], 2026) == ["KC", "SF"]
+    assert pool._resolve_ledger("", [], [], 2026) == []
+
+    seen = {}
+
+    def fake_spent(prior, weeks, *, season):
+        seen["args"] = (prior, weeks, season)
+        return ["DAL"]
+    monkeypatch.setattr(sv, "spent_teams", fake_spent)
+    prior = [{"week": 1, "team": "DAL"}]
+    assert pool._resolve_ledger(None, prior, [1], 2026) == ["DAL"]
+    assert seen["args"] == (prior, [1], 2026)
+
+
+def test_unrecorded_names_a_played_week_with_no_pick_of_record(tmp_path, monkeypatch):
+    """The silent-skip case (review of #263), pinned directly: a week behind with no
+    journal row and no published row for it is named; a journal row or a published row
+    clears it; a journal that cannot be read vouches for nothing, which errs toward the
+    warning rather than swallowing it."""
+    from hub.season import journal
+
+    prior = [{"week": 2, "team": "SF", "season": 2026, "ledger": False}]
+    assert pool._unrecorded(prior, [1, 2], 2026, tmp_path) == [1]
+
     journal.record(journal.Pick(week=1, chose="DAL", fallback="DAL"), season=2026,
                    at=dt.datetime(2026, 9, 9, 12, 0), base=tmp_path)
-    assert pool.main(_run(tmp_path)) == 0
-    assert "no pick of record" not in capsys.readouterr().err
-    # A journal that cannot be read vouches for nothing: the warning errs toward firing.
+    assert pool._unrecorded(prior, [1, 2], 2026, tmp_path) == []
+
     def _broken(season, base=None):
         raise OSError("journal unreadable")
     monkeypatch.setattr(journal, "read", _broken)
-    assert pool.main(_run(tmp_path)) == 0
-    assert "week 1" in capsys.readouterr().err
+    assert pool._unrecorded([], [1, 2], 2026, tmp_path) == [1, 2]
 
 
 def test_the_field_is_read_from_the_pool_host_and_named_on_the_journal_row(
@@ -220,10 +276,10 @@ def test_the_field_is_read_from_the_pool_host_and_named_on_the_journal_row(
     assert f"{PoolConfig().field_size} entries" in out and "is refused" in out
 
 
-def test_the_eliminated_path_does_not_count_us_among_the_live_entries(board, tmp_path, capsys):
-    """Review 2026-09-12: `--entries` is live entries *ours included*, and `buyback` adds
-    ours back in -- so the default `--eliminated` run priced a field one larger than the
-    pool. Eliminated, we are not among the live, and the default is the field less one."""
+def test_the_eliminated_default_entries_reads_off_the_field(board, tmp_path, capsys):
+    """A thin end-to-end check that `main` wires `--eliminated` through to the field: the
+    off-by-one itself (review 2026-09-12) is `_entries_for_week`'s, covered directly and
+    exhaustively below."""
     args = _run(tmp_path, "--eliminated", "--week", "2")
     i = args.index("--entries")
     del args[i:i + 2]                                       # take the default
@@ -232,7 +288,6 @@ def test_the_eliminated_path_does_not_count_us_among_the_live_entries(board, tmp
     assert code == 0
     field = pool.PoolConfig().field_size
     assert f"across {field} entries" in out, out[:600]
-    assert f"across {field + 1} entries" not in out
 
 
 def test_the_buyback_has_a_production_caller_and_records_its_verdict(board, tmp_path,
