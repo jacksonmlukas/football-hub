@@ -430,6 +430,17 @@ implementation detail. The mechanism takes it as a parameter and declares nothin
 > which commit owns the movement) -- it is one more data point in that range, not a fourth
 > measurement offered to settle it. Neither the ADR-0009 disposition nor #190 moves.
 >
+> **Corrected the same day.** "Neither moves" was half right. The *disposition* — championship
+> equity does not pick — does not move; it is a decision, and ADR-0014 keeps decisions and
+> their evidence apart. The *verdict word* does: a measured SHOW against a published REMOVE is
+> rule 13's exact case, and #167's escape (inputs gone, no re-run possible) does not apply to a
+> run that just happened. `README.md`'s first row, `docs/method.md`'s row 6 and ADR-0009 carry
+> the dated restatement — REMOVE under the superseded rule, SHOW under the tie-aware one at won
+> 0, tied 1, lost 3 of 4 — and say which of the two stands on what. This is the first published
+> removal to weaken under the fixed gate; the record of removals was always going to get
+> weaker, not different, and the flagship row going first is what the most seasons and the
+> most attention predict.
+>
 > **Runnable is not the same as able to adopt.** Passing stage 2 means this design has the
 > power to resolve a real effect of about this size at 80% power; it says nothing about which
 > branch it could resolve one *into*. ADR-0019's rule-16 section separately measured the draft

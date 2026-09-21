@@ -257,3 +257,20 @@ accurate enough to beat following consensus and filling your starting slots.
 > re-run: a move of code is not a re-measurement. What *has* moved the arm since, and says so,
 > is #235's `TALENT_CV` refit; `tests/unit/test_backtest.py`'s frozen-Board pin (#197)
 > records the roster before and after.
+
+> **Restated 2026-09-21 (#376, under ADR-0019's 2026-09-21 amendment): the decision stands;
+> the verdict word is downgraded.** The gate this ADR quotes was a conjunction whose interval
+> half was implied by its sign half (S1, #357), and "lost in 4 of 4 held-out seasons" was read
+> under it. Under the fixed rule — a t interval, and a season counts as a loss only if its own
+> within-season noise resolves it (#335) — the same recipe re-run for #376's ceiling measurement
+> reads **SHOW: won 0, tied 1, lost 3 of 4** (2022 −15.35, 2023 −8.41, **2024 −5.99, a tie at
+> 20 rooms**, 2025 −19.86; mean −12.40, t interval [−21.11, −3.69], season-clustered MDE 11.01
+> against a measured foresight ceiling of +21.90). Rule 13: a measurement that contradicts a
+> published number is not finished until the number moves, and this one just ran, so #167's
+> escape does not apply. What moves is the *evidence word*, not the *decision*: ADR-0014 keeps
+> the two apart, and the action this ADR took — the market picks, equity does not — stands on
+> judgment and on three losses of four. What no longer stands is *"worse in every season"*; the
+> honest claim is *worse in most, and the instrument cannot resolve the rest.* Not a
+> rehabilitation, and not a re-run of the published recipe (that is #311's list); the first
+> published removal to weaken under the fixed gate, arriving on the row with the most seasons
+> and the most attention, which is where S1's cost was always going to land first.
