@@ -148,6 +148,16 @@ DEFAULT_CONCENTRATIONS = not_an_input(
 # needs a finer verdict than a week returns can raise this and watch the figure move.
 WEEKLY_TRIALS = 400
 
+# `leverage`'s own trial count (#368, S10), separate from `WEEKLY_TRIALS` so the weekly path
+# -- run every week, by an operator waiting on it -- stays fast whatever the study needs.
+# `leverage`'s own arithmetic (see its docstring, "the resolution is the advanced arm's")
+# puts resolving a +$3 term at concentration 16 at roughly 4,000 trials per arm; the module
+# was unresolved at 1600 for want of this number, not for want of evidence.
+# `scripts/leverage_study.py` is the harness ADR-0007 asks for: the study is cited as a
+# reason (it decides whether `LEVERAGE` below states a resolved term or an unresolved one),
+# so it runs from committed code rather than a one-off snippet.
+LEVERAGE_STUDY_TRIALS = 4000
+
 # How many standard errors of the paired difference a week has to clear before `weekly` calls
 # its recommendation distinguishable from the free pick. It was one, which is a two-sided
 # false positive rate of about one in three -- so roughly a third of the weeks where the two
@@ -2108,6 +2118,11 @@ def resolvable_on_the_axis(rows: Sequence[Leverage]) -> bool:
 # The statement the published figure carries beside `pool_digest` (#161): what the first
 # run of `leverage` found, so a reader of a weekly figure is told whether the term it omits
 # has been seen. Re-measured, this line moves with it (`docs/method.md` rule 13).
+#
+# Re-run 2026-09-21 at `LEVERAGE_STUDY_TRIALS` (4,000/arm, #368, S10): still not resolvable,
+# and the 24-of-25-positive direction below did not reproduce (5 of 25 positive). This
+# string's own text is kept as the 2026-09-11 record; `docs/pool-leverage.md` carries the
+# 2026-09-21 result beside it, dated, and is the place a future rewrite of this string reads.
 LEVERAGE = (
     "this week's rival attrition is not priced into these figures (#161). Measured "
     "2026-09-11 on the synthetic 32-team board over weeks 1-14, week 1 decided, 21 entries, "
@@ -2419,6 +2434,35 @@ def _field(store: Path | None, season: int) -> tuple[PoolState | None, str | Non
                            f"${state.pot:.2f}, state {digest}")
 
 
+def _entries_for_week(explicit: int | None, field: PoolState | None, *, eliminated: bool,
+                      field_size: int) -> int:
+    """Live entries, ours included, for the field this week is priced against.
+
+    `--entries` stated by hand always wins. Off it: the pool host's live count where a state
+    was read, or the configured field size for a fresh clone. Eliminated, we are not among
+    the live -- `buyback` counts ours back in itself -- so the default there is one smaller,
+    off the host's state where it still lists ours as live. Review 2026-09-12: before this
+    read the eliminated default priced a field one larger than the pool.
+    """
+    if explicit is not None:
+        return explicit
+    if field is not None:
+        ours = field.ours
+        return field.alive - (1 if eliminated and ours is not None and ours.alive else 0)
+    return field_size - (1 if eliminated else 0)
+
+
+def _resolve_ledger(explicit: str | None, prior: Sequence[Mapping[str, Any]],
+                    behind: Sequence[int], season: int) -> list[str]:
+    """Teams already spent: `--ledger` stated by hand, or what the published plan and the
+    host's state spent in the weeks already played (the one reading `survivor.prior_rows`
+    gives, so this and the published plan cannot spend different teams)."""
+    if explicit is not None:
+        return [t.strip() for t in explicit.split(",") if t.strip()]
+    from hub.season import survivor as sv
+    return sv.spent_teams(prior, behind, season=season)
+
+
 def _unrecorded(prior: Sequence[Mapping[str, Any]], behind: Sequence[int], season: int,
                 base: Path | None) -> list[int]:
     """The weeks behind us that neither the journal nor the published plan holds a pick for.
@@ -2514,21 +2558,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     # default field there is one smaller, or the default run priced a field one larger
     # than the pool (review 2026-09-12). Off the host's state that is the live count less
     # ours where the host still lists ours as live.
-    if a.entries is not None:
-        entries = a.entries
-    elif field is not None:
-        ours = field.ours
-        entries = field.alive - (1 if a.eliminated and ours is not None and ours.alive else 0)
-    else:
-        entries = cfg.field_size - (1 if a.eliminated else 0)
+    entries = _entries_for_week(a.entries, field, eliminated=a.eliminated,
+                                field_size=cfg.field_size)
     pot = a.pot if a.pot is not None else (
         field.pot if field is not None else cfg.entry_fee * cfg.field_size)
     outlay = a.outlay if a.outlay is not None else cfg.entry_fee
     # The one reading of the Ledger: the published plan and the host's state through
     # `survivor.prior_rows`, so this and the published plan cannot spend different teams.
     prior = sv.prior_rows(a.season, store=a.store)
-    ledger = ([t.strip() for t in a.ledger.split(",") if t.strip()] if a.ledger is not None
-              else sv.spent_teams(prior, behind, season=a.season))
+    ledger = _resolve_ledger(a.ledger, prior, behind, a.season)
     # A week the clock has entered is behind and not decided by default (#263), which is
     # right for a locked pick and silent for a missed deadline: the run moved on to the
     # next week with nothing spent and nothing said (review 2026-09-12). Every week behind
