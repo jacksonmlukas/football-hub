@@ -1133,11 +1133,31 @@ def gate(summary: dict, seasons: pl.DataFrame, actions: Actions,
     the sign alone otherwise or below `TIE_MIN_CLUSTERS`); a *tie* is neither a win nor a loss
     and blocks **both** directions, symmetrically -- it is not a win ADOPT needs in every
     season, and it is not a loss REMOVE needs in every season either.
+
+    **A gate that measured no ceiling is NOT-RUNNABLE in both directions, since #363 (S6),
+    option 1.** Before this, the precondition fired only when *both* the MDE and the ceiling
+    were present as values, so a gate that never measured a ceiling reached the verdict it
+    would have reached anyway -- protected from publishing a null (SHOW) or from adopting,
+    and not protected from REMOVE, because the two excluding branches are self-limiting (an
+    underpowered gate rarely produces an interval that excludes zero) and REMOVE is one of
+    them. That asymmetry is S6's own finding: an underpowered design was never shown *safe*
+    to REMOVE on, only never *caught* removing on. Requiring the ceiling first closes it, at
+    the cost every reachable branch now pays: nothing below this line runs without one.
+    `docs/adr/0019-a-gate-requires-every-season.md`'s dated amendment names which gates that
+    leaves NOT-RUNNABLE today, and #376 by number as what ends it.
     """
     if void:
         return "VOID", void
-    if reading(summary, "mde") is Field.VALUE and reading(summary, "ceiling") is Field.VALUE \
-            and summary["mde"] > summary["ceiling"]:
+    has_data = bool(summary.get("clusters"))
+    if has_data and reading(summary, "ceiling") is not Field.VALUE:
+        return "NOT-RUNNABLE", (
+            "NOT RUNNABLE: this gate has not measured a ceiling. Per ADR-0019's #363 (S6) "
+            "amendment, a gate that measured no ceiling is NOT-RUNNABLE in both directions -- "
+            "not only when its MDE happens to exceed one, since REMOVE was never shown safe "
+            "on an unmeasured design, only never caught. Run with the ceiling this gate "
+            "declares, or read `docs/gate-power.md` for which ceilings are measured and "
+            "#376 for what ends this for the rest.")
+    if has_data and reading(summary, "mde") is Field.VALUE and summary["mde"] > summary["ceiling"]:
         return "NOT-RUNNABLE", (
             f"NOT RUNNABLE: the smallest effect this gate could resolve at 80% power is "
             f"{summary['mde']:+.3f}, against a ceiling of {summary['ceiling']:+.3f} -- the "
@@ -1146,7 +1166,7 @@ def gate(summary: dict, seasons: pl.DataFrame, actions: Actions,
             f"so no verdict below is reported. `docs/gate-power.md` stage 2: this is *not "
             f"planned*, not *failed* -- the arm did not lose, the question cannot be answered "
             f"with the data that exists.")
-    if not summary.get("clusters"):
+    if not has_data:
         return "SHOW", f"{actions.show} Nothing measured -- no paired observation."
     won, tied, lost = _seasons_won_tied_lost(seasons)
     total = seasons.height

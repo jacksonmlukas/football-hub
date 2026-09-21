@@ -321,3 +321,72 @@ would have caught the original defect are in `hub.models.experiment.t_interval`'
 verdict moves: the eighty-verdict sweep's boolean decisions are unchanged (only the rendered
 sentence's wording moved, checked against the pre-#357 `gate` on the same grid), and the three
 recorded-verdict regression cases (ADR-0009, ADR-0012, the frozen weekly gate) reproduce.
+
+---
+
+# Amendment, 2026-09-21: NOT-RUNNABLE requires a ceiling, in both directions (#363, S6)
+
+From `docs/audits/2026-09-20-method-audit.json`, finding **S6** (severity: decision).
+**ADOPTED, option 1**, by the maintainer.
+
+**Amended rather than replaced.** The precondition this ADR's first amendment (2026-09-07)
+added is not withdrawn — a gate whose MDE exceeds its ceiling is still NOT-RUNNABLE — this
+widens *when the precondition is even asked*.
+
+## The asymmetry S6 found
+
+The precondition used to fire only when *both* the MDE and a measured ceiling were present as
+values. A gate that never measured one had not shown it cannot run — true, and quoted from
+this ADR's own prior text — but what that protected turned out to be one-sided: SHOW (a null)
+and ADOPT are both excluding branches, and an underpowered design rarely produces an interval
+that excludes zero, so they are self-limiting even unprotected. REMOVE is not different in
+kind, but per `docs/gate-power.md`'s own account **two of the three season gates have never
+measured a ceiling**, so for them REMOVE was reachable with no protection at all — and REMOVE
+is not a label: a removed module moves to `hub.exhibits`. `championship_equity` and `leverage`
+are there now, removed on evidence S1 (#357) separately showed was a 14%-power sign test.
+
+This is the mirror of the amendment above (R6/#300): that one found a branch the gate could
+never *leave* granted a standing licence; this one finds a branch the gate could never *reach*
+withholding a protection from only one direction.
+
+## The rule
+
+**A gate that measured no ceiling returns NOT-RUNNABLE, full stop — before the pooled interval
+or the every-season half is read at all — the same way a `void` condition does, one rung
+below it.** `reading(summary, "ceiling")` at anything other than `Field.VALUE` — no slot,
+because the caller never measured one, or no data, because it tried and got nothing — trips
+it. The prior precondition (MDE exceeding a *measured* ceiling) still applies below this one,
+for the case where a ceiling exists but is too small; it is now unreachable except when a
+ceiling is already present, which is the only state that makes reading it meaningful.
+
+**Guarded behind `has_data` — the one thing this does not touch.** A gate with no rows at all
+still reports "nothing measured" rather than a sentence about a ceiling there was no chance to
+measure; `clusters` gates this branch exactly as it already gated the old one.
+
+## What this makes NOT-RUNNABLE today, and what ends it
+
+As of this amendment: the **weekly** gate's ceiling was measured 2026-09-21 under #376 (stage
+2 passes, ~5.6x — see this document's own #376 note, above) and is unaffected. The **draft**
+gate's ceiling is not yet measured and is NOT-RUNNABLE, in both directions, until #376's
+second half closes it — cited by number, per rule 16, so this does not become a second
+unnamed permanent NOT-RUNNABLE state. The **lineup** gate carries its own open question
+(#138, which arm its ceiling should be) independent of this amendment. The **coverage** gate
+(`interval_shape`) always hands in a ceiling at its own call site and is unaffected. The
+**quarterback** diagnostic (`starter_change`) is unaffected in the same way when run with
+`--ceiling`, and continues to read its own `EVENT_SEASONS_MINIMUM` exemption first regardless.
+
+## What it does not move, checked rather than hoped
+
+No published verdict is known to have been read from a gate run with no ceiling and a REMOVE
+or ADOPT that a measured ceiling would have overturned — the point of this amendment is that
+nothing before it could have told the difference. `tests/unit/test_experiment.py`'s
+`test_no_ceiling_measured_is_not_runnable_in_both_directions`,
+`test_a_ceiling_measured_as_no_data_is_also_not_runnable` and
+`test_an_empty_frame_with_no_ceiling_still_says_nothing_measured` pin the new branch
+structure; `test_the_restated_weekly_gate_figures_reproduce` holds the one place a published
+figure now needs the ceiling handed in explicitly to reproduce at all (#376's +10.799), and
+still reproduces.
+
+**Not planned, not failed, in both directions now.** The distinction the first amendment drew
+— a gate that cannot run has not been shown to have lost the arm — was already the correct
+reading for ADOPT and SHOW. It is now the reading for REMOVE as well.

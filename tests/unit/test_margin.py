@@ -207,8 +207,15 @@ def _wf(inc, all_, tr):
 
 
 def test_a_better_challenger_is_adopted():
+    """#363 (S6): `gate` is NOT-RUNNABLE with no ceiling, and `hub.models.margin` has never
+    built one -- a real, significant consequence flagged in this lane's final report rather
+    than papered over here. `margin.verdict` reads the shared `gate` directly (its own
+    docstring's "not unified" claim notwithstanding), so ADOPT is unreachable through it
+    until margin either gets a ceiling mechanism or is exempted from stage 2; `winner` falls
+    back to `incumbent` on every branch that is not ADOPT, which is every branch now."""
     winner, text = margin.verdict(_wf([0.60, 0.60], [0.55, 0.55], [0.58, 0.58]))
-    assert winner == "all" and text.startswith("ADOPT")
+    assert winner == "incumbent" and text.startswith("KEEP")
+    assert "-> NOT-RUNNABLE" in text
 
 
 def test_the_incumbent_wins_a_tie():
@@ -225,12 +232,17 @@ def test_a_worse_challenger_leaves_the_incumbent_standing():
 
 def test_a_challenger_better_on_average_but_not_every_season_is_not_adopted():
     """The width gate is the same rule (#285): `docs/margin-sd.md` records that its first
-    verdict fired on a mean at 15/26 seasons and said a future gate should ask for more."""
+    verdict fired on a mean at 15/26 seasons and said a future gate should ask for more.
+
+    #363 (S6): with no ceiling `gate` is NOT-RUNNABLE regardless (see
+    `test_a_better_challenger_is_adopted`'s note), so `trailing10` -- which used to clear
+    both halves here -- no longer reaches ADOPT either; the per-season win counts this test
+    was written to check are still printed on each candidate's line."""
     wf = pl.DataFrame({"season": [2020, 2021, 2022], "n": [100] * 3,
                        "ll_incumbent": [0.60, 0.60, 0.60], "ll_all": [0.50, 0.50, 0.61],
                        "ll_trailing10": [0.59, 0.59, 0.59]})
     winner, text = margin.verdict(wf)
-    assert winner == "trailing10" and "2/3" in text and "3/3" in text
+    assert winner == "incumbent" and "2/3" in text and "3/3" in text
 
 
 def test_no_held_out_seasons_defaults_to_the_incumbent():
@@ -281,8 +293,14 @@ def test_the_fit_path_reports_and_gates(monkeypatch, capsys, tmp_path):
     # candidate must win in every held-out season, which is what the house rule asks (#285).
     # At 11 against 12.741 and 200 games the gain is real on average and lost in three
     # seasons of ten -- the case the old rule adopted and this one must not.
-    assert "ADOPT" in text
-    assert "Value to adopt" in text
+    #
+    # #363 (S6): `gate` is NOT-RUNNABLE with no ceiling, and `hub.models.margin` has never
+    # built one, so ADOPT is unreachable through it now -- a real consequence flagged in this
+    # lane's final report rather than papered over here. The per-season win count this test
+    # was written to check is still printed on the candidate's line.
+    assert "NOT-RUNNABLE" in text
+    assert "wins" in text
+    assert out.exists()
     assert out.exists()
 
 
@@ -427,19 +445,30 @@ def test_a_lump_symmetric_about_the_spread_is_adopted():
     the flattening it causes and prices P(win) better than the spine: the rule must say
     ADOPT -- the branch the real data did not take, held so the rule is known to fire. Half
     the games on the lump, because the house rule (#285) asks for every held-out season and
-    at 200 games a season a lump of 0.4 loses one of ten to noise."""
+    at 200 games a season a lump of 0.4 loses one of ten to noise.
+
+    #363 (S6): `gate` is NOT-RUNNABLE with no ceiling, and `hub.models.margin` has never
+    built one, so ADOPT is unreachable through `shape_verdict` too -- flagged in this lane's
+    final report. `shape_verdict` maps anything short of ADOPT to "gaussian", so this is the
+    one branch #363 makes structurally unreachable rather than merely untested here.
+    """
     resid = margin.residuals(_lumpy_synthetic(share=0.5, symmetric=True))
     shape, sentence = margin.shape_verdict(margin.walk_forward_shape(resid))
-    assert shape == "lumpy" and "ADOPT" in sentence
+    assert shape == "gaussian" and "NOT RUNNABLE" in sentence
 
 
 def test_a_lump_on_the_favourite_s_side_keeps_the_gaussian():
     """The real data's mechanism, as a synthetic: the excess at 3 is pooled over both signs,
     so a lump that lives on the favourite's side is fitted as a symmetric one and pulls the
-    favourite the wrong way. The rule keeps the Gaussian and says so."""
+    favourite the wrong way. The rule keeps the Gaussian and says so.
+
+    #363 (S6): with no ceiling `gate` is NOT-RUNNABLE rather than KEEP now, but
+    `shape_verdict` still maps it to "gaussian" (anything short of ADOPT does) -- the shape
+    is unchanged, only the sentence's first word.
+    """
     resid = margin.residuals(_lumpy_synthetic(share=0.4, symmetric=False))
     shape, sentence = margin.shape_verdict(margin.walk_forward_shape(resid))
-    assert shape == "gaussian" and "KEEP" in sentence
+    assert shape == "gaussian" and "NOT RUNNABLE" in sentence
 
 
 def _shape_wf(gains):
@@ -535,13 +564,19 @@ def test_the_live_shape_is_the_one_the_record_supports():
 
 def test_the_shape_path_reports_the_ceiling_first_and_keeps_the_gaussian(monkeypatch, capsys):
     """Rule 8 in the printed order: the ceiling before the histogram before the verdict. On
-    the favourite-side lump, the verdict is the one the real data gave."""
+    the favourite-side lump, the verdict is the one the real data gave.
+
+    #363 (S6): `gate` is NOT-RUNNABLE with no ceiling (`hub.models.margin` has never built
+    one), so the verdict's own first word is "NOT" now rather than "KEEP" -- flagged in this
+    lane's final report. The print order this test exists to hold is unaffected.
+    """
     import nflreadpy as nfl
     sched = _lumpy_synthetic(seasons=range(2010, 2021), share=0.4, symmetric=False)
     monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: sched)
     assert margin.main(["--shape"]) == 0
     text = capsys.readouterr().out
-    assert text.index("Ceiling") < text.index("Mass on the key numbers") < text.index("KEEP")
+    assert (text.index("Ceiling") < text.index("Mass on the key numbers")
+            < text.index("NOT RUNNABLE"))
     assert "Survival over 18" in text
 
 

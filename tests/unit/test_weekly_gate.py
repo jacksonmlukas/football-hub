@@ -126,9 +126,11 @@ def _gate_run(paired, **kw):
 def _summary(mean, lo, hi, clusters=60):
     # `t_lo`/`t_hi` mirror the percentile bounds: #357 (S1) moved `gate`'s decision onto the
     # t interval, and this double is testing the branch logic rather than the interval math,
-    # so it hands the rule the same bounds under both names.
+    # so it hands the rule the same bounds under both names. `ceiling` is huge and positive:
+    # #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling at all, and this double is testing
+    # ADOPT/REMOVE/SHOW, not stage 2.
     return {"n": 800.0, "clusters": float(clusters), "mean": mean, "lo": lo, "hi": hi,
-            "t_lo": lo, "t_hi": hi, "p_better": 1.0 if lo > 0 else 0.0}
+            "t_lo": lo, "t_hi": hi, "p_better": 1.0 if lo > 0 else 0.0, "ceiling": 1e6}
 
 
 def _seasons(gains):
