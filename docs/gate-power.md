@@ -297,6 +297,44 @@ questions, and which one this gate declares is **#138** — a pre-registration q
 implementation detail. The mechanism takes it as a parameter and declares nothing:
 `hub.season.lineup_gate.DECLARED_CEILING_ARM` is the single line #138 sets.
 
+> **The weekly gate's ceiling, measured 2026-09-21 under #376.** A measurement, not a
+> modelling change: it moves no model, no constant, no published effect. `hub.season.weekly_gate
+> --run --ceiling` (seasons 2022-2025, drafts=20, seed 0, frozen rosters, restricted, mask_pool):
+>
+> | | this run |
+> |---|---|
+> | weekly − consensus | −1.156 |
+> | 95% CI, percentile | [−1.761, −0.259] |
+> | clusters | **3**, not 4 |
+> | season-clustered MDE (80% power) | 1.926 |
+> | **ceiling (perfect foresight)** | **+10.799** |
+> | verdict | REMOVE |
+>
+> **Stage 2 passes, and passes by a wide margin: the ceiling (10.799) clears the MDE (1.926)
+> roughly 5.6x over,** so `experiment.gate`'s NOT-RUNNABLE branch does not fire -- the weekly
+> gate is not the underpowered one, whatever its verdict says about the arm. That is what #376
+> asks this ticket to end: "NOT-RUNNABLE until this ticket measures the ceilings" no longer
+> describes the weekly half.
+>
+> **Flagged, not chased down:** this run scored **3** clusters where the gate's default
+> `--seasons` names four -- season 2022 produced no row in the per-season breakdown the run
+> printed, so it silently dropped rather than erroring. That is why this run's own MDE (1.926)
+> reads wider than the 0.768 this page restated 2026-09-07 on four seasons, and it is a
+> question about this run's coverage, not about the ceiling: whatever the true 4-season MDE
+> is, it sits between 0.768 and 1.926 and the ceiling clears either end by several times over.
+> Chasing the missing season is out of this ticket's scope (S6/#376 asks for the ceiling, not
+> a coverage audit); worth a look before this table is treated as the last word on the MDE.
+>
+> `state/gate-width.json` is untouched by this run: `run_gate`'s `record_width=True` wrote a
+> `weekly` entry with `clusters: 3` and `width: 1.503` to it, and that write was reverted
+> (`git checkout -- state/gate-width.json`) immediately after, so #362's evidence -- the
+> `requires_review` entries the live file already carries -- stays exactly what it was before
+> tonight. `state/gate-width.2026-09-20.pre-ceiling.json` is the byte-identical pre-run copy.
+>
+> The draft gate's ceiling (#42, "n_drafts=20") is not run tonight: it contends for CPU with
+> #368's leverage study and #376's own acceptance criteria say it may land in a separate
+> commit. Still owed.
+
 # Restated 2026-09-07: every number above was measured on a harness with a foresight leak
 
 Under [method.md rule 13](method.md). **Nothing in the tables above is edited.** They record
