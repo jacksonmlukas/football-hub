@@ -1263,7 +1263,7 @@ def noise_scales_mode(boards: dict[int, Board], realised: dict[int, pl.DataFrame
     return NoiseSweep(exit_code=0, table=table, lines=tuple(report) + stamp_lines)
 
 
-class GateRun(NamedTuple):
+class DefaultGateMode(NamedTuple):
     """One default (single-gate) run: the paired frame and the gate's own verdict."""
     exit_code: int
     paired: pl.DataFrame
@@ -1274,7 +1274,7 @@ def default_gate_mode(boards: dict[int, Board], realised: dict[int, pl.DataFrame
                       n_drafts: int, seed: int, rounds: int, n_draft_sims: int,
                       n_season_sims: int, progress: bool, correlation: CorrelationReport,
                       workers: int, holdout: bool, ceiling_flag: bool,
-                      out: str | None) -> GateRun:
+                      out: str | None) -> DefaultGateMode:
     """Championship equity against the draft market: `compare` the two arms, optionally
     bound them with `ceiling`, and hand the paired frame to `run_gate` for the
     pre-registered verdict.
@@ -1328,7 +1328,7 @@ def default_gate_mode(boards: dict[int, Board], realised: dict[int, pl.DataFrame
     if out:
         run.stamped.write_parquet(out)
         print(f"\n  wrote {run.stamped.height} paired rows to {out}")
-    return GateRun(exit_code=0, paired=paired, lines=tuple(lines))
+    return DefaultGateMode(exit_code=0, paired=paired, lines=tuple(lines))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
