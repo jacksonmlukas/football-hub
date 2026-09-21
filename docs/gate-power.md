@@ -3430,3 +3430,351 @@ detailed pre-registration drafted and adopted second.
 fractional bankroll, anything that sizes a bet on the model's own confidence — which the
 `ADOPTED:` comment names as "a different object," not a parameter on this one. A change to
 that form is a new ADR-0024 decision, not an amendment to this section.
+
+# Pre-registered 2026-09-21 — PROPOSED: the posterior gate (#375)
+
+**Status: PROPOSED.** Drafted under the operate-mode freeze (#326), which blocks a modelling
+change *landing* and not writing the rule before the number — #329, #305 and #364 (above) are
+the precedent. It becomes the rule on a maintainer `ADOPTED:` comment on this section; until
+then it decides nothing and no gate reads it. Parent decisions: `docs/audits/2026-09-20-method-
+audit.json`'s Q9 finding, which named the model in the form reproduced below; ADR-0019 as
+amended by #357 (S1, the t-interval half), #335 (the tie-aware every-season half) and #363
+(S6, the ceiling precondition) — this section changes what the gate *reports*, not the
+mechanics those three already fixed; ADR-0024 (a modelling decision becomes agent work only
+when its alternatives sit on one axis — the prior scale, the switching cost's form and the
+fitting engine are three separate axes with no single measurement that closes all three, so
+this stays a `PROPOSED` decision needing a maintainer `ADOPTED:` line, exactly as #364 did
+before it); ADR-0006 (`fitted`/`chosen`, `hub.declare`); and `docs/method.md` rules 1, 3, 11,
+13, 16, 17 and 18, each applied below rather than only cited. The utility this ticket reads is
+**#364's own, by heading** ("The gate, as it now stands" → "Indifferent to ruin" in that
+section, above) — linear EV at a flat unit stake — and is not restated or re-decided here.
+Blocked by #357, which closed 2026-09-21: the edge is discharged and nothing below is waiting
+on it.
+
+## What this replaces, and what it keeps
+
+**It replaces the verdict word — the `ADOPT`/`REMOVE`/`SHOW`/`NOT-RUNNABLE` string
+`experiment.gate` prints — with a posterior over the effect and the action that posterior's
+expected utility recommends.** S1 and #335 made the existing two-part rule strict again; they
+did not change what a gate *says*, which is still one of four words with no notion of how
+confident the word is or what it would cost to act on it differently. At k = 3–5 seasons —
+every gate in this repo — "is the sign distinguishable from zero in every held-out season" and
+"given the evidence, what do I believe about the effect, and which action maximises expected
+utility under that belief" are different questions, and only the second uses the graded
+information a t-statistic and a season count both throw away the moment they cross a
+threshold.
+
+**It keeps everything else.** Every discipline this document already enforces — the decision
+rule fixed and tested before the numbers (rule 1), the season as the unit of repeated measures
+and never pooled (rule 3), both arms reading the same information (rule 6), the comparison
+paired (rule 7), a ceiling computed before any gap is chased (rule 8), exclusions named (rule
+11), a measurement that contradicts a published number not finished until the number moves
+(rule 13), power and calibration computed before the run (rule 16), a decision rule checked for
+degeneracy against its own inputs before it is pre-registered (rule 17), and a positive control
+for every check (rule 18) — applies to the posterior gate exactly as it applies to the sign-
+and-interval one. **Only what gets pre-registered changes: a prior, a fitting procedure and a
+utility threshold, in place of a significance bar and a season count.** This is not a
+loosening — #375's own issue body says so, and the "shrinks a 2-se effect by half" prior below
+is the concrete argument for why not.
+
+## The model, and its constants
+
+```
+delta_s ~ Normal(delta, tau)      # s = 1..k held-out seasons, one per gate's own paired frame
+delta   ~ Normal(0, prior_sd)     # the population-level effect; skeptical, pre-registered
+tau     ~ HalfNormal(tau_scale)   # season-to-season heterogeneity; pre-registered
+```
+
+`delta_s` is read off exactly the vector `per_season` already returns for that gate —
+`seasons["gain"]`, the per-season paired mean `paired.group_by(["season"]).agg(mean("diff"))`
+computes today — with its own within-season SE (`per_season`'s `se`/`m` columns, #335's own
+addition) supplying the observation-level noise around each `delta_s`. Nothing about what is
+*measured* changes; see "The ceiling arm," below.
+
+Three constants, each `chosen` — not `fitted`, because none of the three is a measurement with
+a confidence interval, and ADR-0006 is explicit that a stated choice a prediction reads is
+`chosen` whatever its provenance:
+
+- **`prior_sd`.** Proposed **per gate**, not as one repo-wide number, because "skeptical" only
+  means something in a gate's own units. Set to that gate's own **season-clustered pooled SE**
+  — `se = s / sqrt(k)`, the same `s` #357's (S1) table and ADR-0019's rule-16 section publish —
+  so that a pooled point estimate sitting exactly at `experiment.MIN_SE`'s bar (2 SE, "the
+  repo's usual bar," rule 1) shrinks under a simple normal–normal update to **1 SE**: a
+  concrete, checkable statement of what "skeptical" costs, in the gate's own units, rather than
+  an off-the-shelf number like `prior_sd = 1`. At #357's own published figures: **draft**
+  `s = 7.34` pts/team-game, `k = 4` → `se = 3.67`, so `prior_sd = 3.67` pts/team-game; **weekly
+  blend** `s = 0.382` pts/team-week, `k = 4` → `se = 0.191`, so `prior_sd = 0.191`
+  pts/team-week. Every other gate declares its own the same way, off its own `s` and `k`, the
+  day this lands in code.
+- **`tau_scale`.** Set to that gate's own **observed between-season scatter**, `s` itself —
+  **draft** `tau_scale = 7.34`, **weekly blend** `tau_scale = 0.382` — so the prior on how much
+  the true effect could vary season to season starts at exactly what the current small sample
+  already shows, rather than an unrelated default that lets `tau` float to an arbitrary
+  multiple of the effect it is meant to explain. `HalfNormal`'s mode sits at zero, so `tau` is
+  free to collapse toward full pooling (`tau → 0`) if the seasons agree — the quantity rule 4's
+  sign-flip diagnostic was reaching for without a parameter to read.
+- **The switching cost.** Proposed as **`chosen(0.0)`**, in the utility's own EV units, as the
+  pre-registered default until #364 names its dollar figure: the strictest transition test
+  available without it — any posterior edge whose expected utility is positive switches. This
+  is a placeholder pinned to #364's own unresolved number, not a claim about the true
+  operational cost of shipping a new model over an incumbent (#305's scoped-adoption clause is
+  evidence that cost is real and nonzero); it is named as one of the closing candidates below
+  rather than settled here.
+
+All three are declared `chosen` in `hub.declare` at the call site that reads them — see "The
+`hub.declare` entries," below — so the digest moves the day any of the three moves, per rule
+11's own argument: an exclusion or a choice is a decision on the record, never a number that
+quietly drifts off a list.
+
+**Checked against rule 17, briefly, because it was named for reading first.** Rule 17's defect
+was a *conjunction* whose second term was implied by its first. The posterior gate is not a
+conjunction of two independently-branching halves the way the pre-#357 sign-and-interval rule
+was — there is one statistic, the posterior expected utility, and one threshold, the switching
+cost — so that specific failure shape has no second term to collapse into the first. What
+still needs checking, because nothing about a single statistic is automatically well-behaved,
+is whether the *decision rule built on it* has the size it claims, which is exactly what the
+rule-16 section below is for.
+
+## The fitting
+
+**NumPyro, not Stan — and it needs no new dependency.** `pyproject.toml` already declares
+`numpyro`, `jax` and `arviz` under `[project.optional-dependencies]` as the `bayes` extra, with
+its own comment recording why: "nothing in `src/` or `tests/` imports torch, numpyro, jax or
+arviz, so an environment without them still runs every gate." **This section corrects the
+issue body's own framing rather than restating it**, per rule 13's spirit — the model is not a
+*new* dependency group; it is the first thing under `src/` that would actually import an
+*existing, deliberately optional* extra. It stays an extra and not a `[dependency-groups]`
+group for the same reason `bayes` was written that way in the first place: a group is
+installed on every `uv sync` and every `uv run` (the toolchain's own hard-won lesson, `CLAUDE.md`'s
+Worktrees section), and this repo's other thirty-odd gates must keep running, unmodified, in an
+environment that has never installed JAX. NumPyro over Stan for the same reason the extra was
+written the way it was: it is pure Python plus JAX, so `uv sync --extra bayes` is the whole
+setup step — no `cmdstanpy` install, no compiled model binary to cache per ephemeral worktree,
+which is exactly the kind of hidden setup step `CLAUDE.md`'s Worktrees section (`"there is no
+setup step"`) exists to keep out of this repo. It also composes with the existing harness
+style (`scripts/rule16_combined_power.py`, `experiment.summarise`/`per_season`): numpy arrays
+in, numpy arrays out, nothing reimplemented twice.
+
+## The transition
+
+**The new outputs are printed alongside the existing verdict word, never instead of it, for as
+long as this section says PROPOSED and for some time after it is adopted.** The first landing
+adds a posterior mean, a credible interval, `P(delta > 0)` and the expected-utility action to
+every gate's `SHOW`/`ADOPT`/`REMOVE`/`NOT-RUNNABLE` sentence — printed beside that word, not
+substituted for it — so a reader sees both readings on the same line while the new rule is
+unproven in production. **The old word is retired by a dated decision, not by silent
+disuse**, once two things have happened: the record is re-run under #358 (the detectable-
+effect restatement already `ADOPTED:` option 1 and closed) and #311 (the missing `cluster`
+argument on `paired_gain`'s pooled half, still open and blocking #305), so the posterior gate's
+first production reading is taken on inputs that are themselves no longer under an open
+rule-13 incident. Until that dated decision, `docs/track-record.md` and every ADR keep
+publishing the verdict word exactly as they do today — see "What published number moves,"
+below.
+
+## The decision rule
+
+**NOT-RUNNABLE (S6, #363) stays ahead of everything below it, unchanged.** A gate that
+measured no ceiling, in either direction, returns `NOT-RUNNABLE` before the posterior is even
+read — the same ordering S6 gave the sign-and-interval rule, because a gate with no ceiling
+has nothing to compare a posterior's expected utility against either. The posterior gate adds
+no new way to become runnable; it only changes what happens once a gate already is.
+
+Below that precondition, the four words become:
+
+- **ADOPT** — the posterior's expected utility of switching to the candidate, under #364's
+  linear-EV form, exceeds the switching cost: `E[utility(delta) | data] > switching_cost`.
+- **REMOVE** — the mirror in the losing direction: `E[utility(delta) | data] < -switching_cost`.
+  For a module that already ships, this retires it to `hub.exhibits` exactly as it does today
+  (#363's own restatement of what REMOVE means for a model that does not yet exist applies
+  unchanged to #364's own gate).
+- **SHOW** — the expected utility sits inside the switching-cost band: `-switching_cost ≤
+  E[utility(delta) | data] ≤ switching_cost`. Neither adopting nor removing is utility-
+  maximising given the cost of moving off the current default, which is a *different* reading
+  from "absence of evidence" — it says the decision-maker is rationally indifferent given
+  frictions, not merely that the interval failed to exclude zero — and the pre-registration
+  says so explicitly rather than leaving `SHOW` to carry two meanings under one word.
+
+`P(delta > 0)` is reported beside the action on every branch as a sign-only diagnostic — it
+decides nothing, the same way the false-discovery threshold decides nothing beside a screen's
+verdict (`docs/method.md` rule 14) — because a reader comparing the posterior gate's action to
+the sign-and-interval word during the transition needs the number that tracks the old rule's
+own intuition most closely, without it being read as a second decision rule.
+
+## Rule 16 before the run: calibration and size
+
+Two checks, pre-registered now, computed before any gate is asked to fit real data — the same
+"before the first `NOT-RUNNABLE` print" discipline rule 16 states in general and #357's and
+#364's own rule-16 sections both apply to their instruments:
+
+**1. Simulation-based calibration on the fitted model.** Draw `(delta, tau)` from the priors
+above; draw `delta_s` for `s = 1..k`; draw each season's observed mean around `delta_s` with
+that season's own within-season SE (`s / sqrt(m)` at the gate's own `m`, the within-season
+cluster count #335's table already names per gate); fit the model on the simulated data; record
+the rank of the true `(delta, tau)` among the posterior draws. Repeat at least 1,000 times and
+confirm the rank histogram is uniform (a standard SBC diagnostic, not a bespoke one). Run at
+**both** ends of this repo's own scale rather than one generic cell: the draft/weekly cells
+(`k = 4`, `s = 7.34` / `0.382`, from #357's table) where heterogeneity is large relative to `k`,
+and #364's own game-level cell (`k = 10`, `m ≈ 285`) where within-season noise is small and `k`
+is larger — a model calibrated at one end and silently miscalibrated at the other is exactly
+the gap a single test cell would hide.
+
+**2. A null-size check of the decision rule, in S1's own shape (#357).** Simulate `k` season
+means under the null, at each gate's own `k`/`s`/`m`, twice — once at `tau = 0` (no true
+heterogeneity at all) and once at `tau = tau_scale` (the null with as much heterogeneity as the
+prior itself allows) — fit the model, apply the full decision rule (posterior, expected
+utility, switching-cost threshold) and tabulate the realised `ADOPT` rate across 10,000 trials
+per cell, the same trial count `scripts/rule16_combined_power.py` uses. The pre-registered
+target is `experiment.ALPHA` (0.05), the bar every other size check in this repo reads —
+stated here as a ceiling rather than an assumption, because a Bayesian decision rule's
+frequentist size is not automatically controlled by the prior being proper; this check is what
+establishes it, not what confirms something already guaranteed. This is S1's own lesson
+generalised past the conjunction it was found in: rule 17 asked whether a *conjunction*
+degenerates; a single expected-utility statistic cannot degenerate that way, but it can still
+have the wrong size, and only a simulation says which.
+
+**The positive control rule 18 requires.** Neither check above is trusted until it has been
+shown to fail on purpose. Plant `delta_true` at an effect this repo has never measured and
+never will by accident — `20 × tau_scale` (≈ 73 pts/team-game for the draft cell, ≈ 7.6
+pts/team-week for weekly blend, both roughly the "a hundred standard errors" shape
+`test_rule16_combined_power.py`'s own positive control already uses) — and confirm the decision
+rule reaches `ADOPT` on essentially every trial (≥ 99%, matching that test's own bar). A
+planted effect this large that fails to `ADOPT` means the harness is broken, not that the rule
+is strict — exactly the reading `test_rule16_combined_power.py`'s own docstring gives its
+enormous-δ assertion. The eventual test module owes rule 18's registry
+(`tests/contracts/test_every_check_has_a_positive_control.py`) two names the day this code
+exists: `test_the_posterior_rule_s_null_size_is_controlled` and
+`test_a_planted_enormous_effect_always_adopts`, on the naming pattern
+`test_experiment.py`'s `#357 (S1)` section already set.
+
+## Prior sensitivity
+
+**Required output, not an optional robustness note.** Every run reports the decision — the
+posterior mean, the credible interval, `P(delta > 0)` and the expected-utility action — under
+**at least two** skeptical priors, so a reader sees whether the conclusion is the evidence's or
+the prior's: (a) `prior_sd = se` as proposed above (shrinks a 2-SE effect to 1 SE), and (b) a
+stricter `prior_sd = se / 2` (shrinks the same 2-SE effect to 0.5 SE — half again as skeptical).
+Both are printed side by side on the same run, at the same gate's own `s` and `k`; a decision
+that flips between (a) and (b) is not published as settled during the transition (see
+"Transition," above), and is itself the finding rule 13 would then require restating.
+
+## The ceiling arm — unchanged per gate
+
+**The posterior model reads exactly the same paired frame every gate reads today.** Nothing
+about what is *measured* changes — `paired.group_by(["season"]).agg(mean("diff"))`, the same
+vector `per_season` returns as `seasons["gain"]`, is the input to `delta_s` above precisely as
+it is the input to `summarise`'s sign-and-interval statistics now. Each gate's own declared
+ceiling arm stays whatever ADR-0019 and S6 already name it — the foresight ceiling for the
+draft and weekly gates, the market's own repricing for #364's game-level bar (declared,
+"The ceiling arm, declared," above) — and NOT-RUNNABLE still fires on a missing or
+insufficient ceiling ahead of the posterior exactly as it fires ahead of the sign-and-interval
+rule today. This ticket changes how the k season numbers are turned into a decision; it does
+not change what produces them, what bounds them, or which arm bounds them.
+
+## Exclusions (rule 11)
+
+- No change to what counts as a season, an arm, a cluster, or any exclusion a gate's own
+  pre-registration already names — #364's exclusions on parlays, alternate lines and staking
+  rules; #305's on choosing the clustering, seed, rows or metric after the sign is seen — all
+  carry over unmodified. This ticket adds no new estimand to any gate; it changes how an
+  existing estimand's evidence is read.
+- **The switching cost is not a staking rule**, restated for this ticket's own action mapping
+  exactly as #364's own exclusions state it for the utility it supplies: it sizes a decision
+  between publishing and not publishing a model, never a bet.
+- **No claim of calibration is implied by using a posterior.** A Bayesian model is not exempt
+  from being wrong about its own uncertainty; the SBC and null-size checks above are the
+  precondition for trusting any number this section produces, not a formality after the fact —
+  a model that fails either is excluded from deciding anything until it is fixed, named here so
+  a future run cannot skip the check because the model "is Bayesian."
+- Not read before a candidate gate's own ceiling is measured (S6, unchanged) and not read
+  before the SBC and null-size checks above have themselves been run and passed — a `NOT-
+  RUNNABLE`-shaped exclusion for the method itself, distinct from any one gate's data.
+
+## The `hub.declare` entries
+
+**No line is added to `src/` by this ticket**, for the same reason #364's own section states:
+`declare.declarations()` walks module-level assignments in real source, and a declaration
+exists where a constant is *used*, not where it is discussed. What is pre-registered now is
+the form the eventual declarations take, so an implementer does not have to re-derive it from
+this section or from the audit finding alone:
+
+- `PRIOR_SD` (or its eventual per-gate name) is **`chosen`**, set per gate to `s / sqrt(k)` at
+  that gate's own published season-clustered figures;
+- `TAU_SCALE` is **`chosen`**, set per gate to that gate's own `s`;
+- `SWITCHING_COST` is **`chosen`**, proposed at `0.0` pending #364's own dollar figure, in the
+  EV units #364's utility declares.
+
+All three read as `chosen`, never `fitted`: none carries a confidence interval or a write-up
+of a measurement, per ADR-0006's own line between the two — a `prior_sd` derived from a
+published `s` is still a decision about how skeptical to be, not a measurement of skepticism.
+When the call site exists, moving any of the three moves `fitted_digest`, exactly as moving
+`TALENT_CV` or `FLEX_SHARES` does today.
+
+## What published number moves (rule 13)
+
+**None, until the transition ends.** During the transition (above), the posterior's outputs
+are additive — printed beside the existing verdict word — and nothing in `README.md`, any ADR,
+or `docs/track-record.md` is edited by this section landing. **When the transition ends** —
+the record re-run under #358 and #311, the old word retired by its own dated decision — **every
+verdict this repo currently publishes as a sign-and-interval word moves to an expected-utility
+action**, and `docs/track-record.md`'s own weekly-published verdicts move with it. Naming that
+now, before the transition starts, is what lets the eventual retirement ticket know what it
+owes rule 13 rather than discovering the scope of the restatement after the fact — the same
+mistake rule 13's own incidents were about.
+
+## Sequencing
+
+**Before phase-2 steps 4 and 5** (the score model, the distributional projection) — #375's own
+issue body states this, and it is restated here because this document is what a future reader
+checks sequencing against: a model gated by the rule S1 already fixed gets deleted, which
+`hub.exhibits` already holds two instances of, and gating the next two phase-2 steps by a rule
+this section is about to replace would be building on ground already known to move.
+**Blocked by #357 — closed 2026-09-21, so the edge is discharged.** Nothing in this section is
+waiting on it; the block existed only because the posterior gate reads the t-interval S1
+installed, and that landed before this section was written. **Re-running the record under the
+new rule is #358's and #311's work joined, not this ticket's** — this section pre-registers the
+rule; it does not run it.
+
+## PROPOSED — what is already decided, and what would reopen it
+
+**Nothing is adopted yet.** Unlike #364, no maintainer `ADOPTED:` comment has chosen among the
+model's own open axes, because ADR-0024's own test — can the alternatives be placed on one axis
+and reported in one table? — fails here for the same reason it failed #364's three options:
+the prior scale, the switching cost's form and the fitting engine are three separate objects,
+not three points on one axis, so a maintainer decision is owed on each rather than a
+sensitivity table across all three at once.
+
+**Candidate 1 — the prior scale (`prior_sd`, and with it `tau_scale`).**
+(a) *Recommended.* `prior_sd = s / sqrt(k)`, `tau_scale = s`, both off each gate's own
+`s`/`k` — grounded in this repo's own published noise, no free parameter to tune, and the
+"shrinks a 2-SE effect by half" property is checkable by anyone reading the number.
+(b) A single fixed value across every gate (e.g. `prior_sd = 1`, in whatever unit) — rejected:
+arbitrary across gates whose `s` differ by an order of magnitude (7.34 vs 0.382), and "skeptical"
+would stop meaning anything a reader could check.
+(c) A prior fit from the cross-gate spread of measured effects — rejected under rule 1: choosing
+a prior's scale from the very data distribution the prior will judge is rule 1's incident in a
+new instrument, peeking at the answer before writing the rule.
+
+**Candidate 2 — the switching cost's form.**
+(a) *Recommended, as the pre-registered default until #364 resolves.* `chosen(0.0)` — the
+strictest possible transition test, and the one that needs no further decision to start
+computing sensible numbers the day #375's model exists.
+(b) Pegged directly to #364's own eventual dollar figure, converted into these EV units —
+correct once that figure exists, and the natural successor to (a).
+(c) A data-free operational estimate of what re-deploying a model actually costs (engineering
+time, the scoped-adoption overhead #305's own pre-registration names) — plausible, but nobody
+has priced it, and pricing it is its own measurement this ticket does not do.
+
+**Candidate 3 — Stan vs NumPyro.**
+*Recommended:* NumPyro, for the reasons in "The fitting" above — it is already the repo's own
+declared (if unused) `bayes` extra, needs no compiled binary in an ephemeral worktree, and
+composes with the existing numpy-based harness style. Stan is not rejected on any technical
+ground; it is the road not taken because this repo already chose the other one and never used
+it.
+
+**What would reopen this.** Evidence that the SBC or the null-size check (rule 16, above) fails
+at the constants proposed here — a mis-ranked SBC histogram, or a null `ADOPT` rate that clears
+`ALPHA` — would force revisiting `prior_sd`/`tau_scale` before anything built on this section is
+trusted, whatever the maintainer's `ADOPTED:` comment says. Short of that, a maintainer
+`ADOPTED:` comment naming a different choice among the three candidates above reopens exactly
+the axis it names and none of the others, the same granularity #364's own closing section
+used.
