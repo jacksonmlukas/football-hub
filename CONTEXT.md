@@ -400,6 +400,17 @@ own settings page quoted pool-specifically — never by an edit.
 _Avoid_: default, assumption — both read the flag as a missing value rather than a missing
 statement.
 
+**Eliminated**:
+An entry that lost a week's pick and is out of the pool — the host's `alive` is false for it.
+A pool fact, not a page state: it is what the pool says about the entry, and a buyback
+(through `buyback_cutoff_week`) is the only thing that reverses it. The published artifact
+reports an eliminated entry as such and publishes no plan for it. Our 2026 entry was
+eliminated in week 1 (LAC), with no buyback taken.
+_Avoid_: retired, dormant — the first is a page artifact superseded by a newer one (the draft
+board when a newer slate exists), which nothing does to an elimination; the second is the
+tracker's state for work that has no consumer this season, a ticket with edges (the 2026
+survivor dormancy ticket) and not a fact about the entry.
+
 ### What the page publishes
 
 **Kept**:
