@@ -1388,6 +1388,32 @@ def _mid_season_grid():
     ])
 
 
+# Any hour between week 1's Thursday kickoff (already `result`-bearing, so behind whatever
+# the clock says) and week 2's (2026-09-17 20:15) -- the instant `_mid_season_grid` is
+# "week 1 played, weeks 2-3 ahead" against, on any day the suite happens to run (#356).
+MID_SEASON_NOW = dt.datetime(2026, 9, 15, 12, 0)
+
+
+def _pin_schedule_clock(monkeypatch, when: dt.datetime) -> None:
+    """Freeze `hub.schedule.forecastable`'s wall-clock read at `when`.
+
+    `publish.survivor` threads no `now`/`at` of its own down to `schedule.forecastable` the
+    way `pool.weekly` and friends do -- and #356's acceptance is that nothing under `src/`
+    grows one just to give a test a seam. The seam that already exists is the name
+    `forecastable` calls, `datetime.now(UTC)`, bound into `hub.schedule`'s own namespace by
+    its `from datetime import ... datetime` -- replacing that binding is the same trick
+    `freezegun` automates, done by hand because `faketime` is not installed here.
+    """
+    from hub import schedule as sched
+
+    class _Frozen(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(when.year, when.month, when.day, when.hour, when.minute,
+                       when.second, when.microsecond, tzinfo=tz)
+    monkeypatch.setattr(sched, "datetime", _Frozen)
+
+
 def test_the_published_plan_covers_only_the_weeks_that_remain(site, base, monkeypatch):
     """Week 1 has been played. A plan that still prices it spends its strongest team on a
     game that is over, and every remaining pick comes from a pool degraded by picks that
@@ -1395,6 +1421,7 @@ def test_the_published_plan_covers_only_the_weeks_that_remain(site, base, monkey
     import hub.season.survivor as sv
     monkeypatch.setattr(sv, "grid_from_schedule",
                         lambda season, cache=None: _mid_season_grid())
+    _pin_schedule_clock(monkeypatch, MID_SEASON_NOW)
     publish.survivor(2026, out=site)
     got = json.loads((site / "survivor.json").read_text())
     assert [r["week"] for r in got["rows"]] == [2, 3]
@@ -1416,6 +1443,7 @@ def test_every_field_the_survivor_artifact_publishes_is_read_by_the_page(site, m
     import hub.season.survivor as sv
     monkeypatch.setattr(sv, "grid_from_schedule",
                         lambda season, cache=None: _mid_season_grid())
+    _pin_schedule_clock(monkeypatch, MID_SEASON_NOW)
     got = publish.survivor(2026, out=site)
     assert isinstance(got, dict)
     envelope = set(jsonio.artifact("survivor", "hub.season.survivor", []))
@@ -1439,6 +1467,7 @@ def test_a_team_spent_in_a_played_week_is_gone_from_the_next_plan(site, base, mo
                                               {"week": 3, "team": "SEA", "win_prob": 0.6}]}))
     monkeypatch.setattr(sv, "grid_from_schedule",
                         lambda season, cache=None: _mid_season_grid())
+    _pin_schedule_clock(monkeypatch, MID_SEASON_NOW)
     got = publish.survivor(2026, out=site)
     assert isinstance(got, dict)
     assert got["spent"] == ["KC"]
@@ -1459,6 +1488,7 @@ def test_a_spent_team_stays_spent_across_a_second_publish(site, base, monkeypatc
                                               {"week": 3, "team": "SEA", "win_prob": 0.6}]}))
     monkeypatch.setattr(sv, "grid_from_schedule",
                         lambda season, cache=None: _mid_season_grid())
+    _pin_schedule_clock(monkeypatch, MID_SEASON_NOW)
     first = publish.survivor(2026, out=site)
     assert isinstance(first, dict) and first["spent"] == ["KC"]
     second = publish.survivor(2026, out=site)
@@ -1514,6 +1544,7 @@ def test_the_published_plan_spends_what_the_pool_host_says_our_entry_spent(site,
     from hub.fetch import pool as fetch_pool
     monkeypatch.setattr(sv, "grid_from_schedule",
                         lambda season, cache=None: _mid_season_grid())
+    _pin_schedule_clock(monkeypatch, MID_SEASON_NOW)
     state = fetch_pool.PoolState(season=2026, week=2, field_size=2, pot=40.0, entries=(
         fetch_pool.Entry(0, True, ("KC",)), fetch_pool.Entry(1, True, ("SF",))))
     fetch_pool.write_state(state, base, when=dt.datetime(2026, 9, 16, 9, 0, tzinfo=dt.UTC))
@@ -1532,6 +1563,7 @@ def test_the_published_survival_covers_the_remaining_weeks_only(site, base, monk
     import hub.season.survivor as sv
     monkeypatch.setattr(sv, "grid_from_schedule",
                         lambda season, cache=None: _mid_season_grid())
+    _pin_schedule_clock(monkeypatch, MID_SEASON_NOW)
     got = publish.survivor(2026, out=site)
     assert isinstance(got, dict)
     assert got["survival"] == pytest.approx(0.70 * 0.80), (
@@ -1552,6 +1584,7 @@ def test_the_panel_and_the_cli_plan_the_same_weeks_and_teams(site, capsys, monke
     monkeypatch.setattr(sv, "SITE", site)
     monkeypatch.setattr(sv, "grid_from_schedule",
                         lambda season, cache=None: _mid_season_grid())
+    _pin_schedule_clock(monkeypatch, MID_SEASON_NOW)
     panel = publish.survivor(2026, out=site)
     assert isinstance(panel, dict) and panel["rows"]
 
@@ -1573,6 +1606,7 @@ def test_a_survivor_plan_from_another_season_spends_nothing(site, base, monkeypa
          "rows": [{"week": 1, "team": "KC", "win_prob": 0.9}]}))
     monkeypatch.setattr(sv, "grid_from_schedule",
                         lambda season, cache=None: _mid_season_grid())
+    _pin_schedule_clock(monkeypatch, MID_SEASON_NOW)
     got = publish.survivor(2026, out=site)
     assert isinstance(got, dict)
     assert got["spent"] == [], "2025's week 1 pick is not 2026's, and nor is its ledger"
