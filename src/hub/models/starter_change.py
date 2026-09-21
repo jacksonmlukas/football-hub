@@ -135,19 +135,17 @@ TEAM_GAME_SCHEMA: dict[str, Any] = {
 
 # --- the event construction ---------------------------------------------------------------
 #
-# #339: the transform below used to be hand-built here -- `_schedule` plus a duplicate of
-# `team_games`'s own per-side unpivot -- reaching past `hub.fetch.nfeloqb`'s public surface
-# six times (`nfeloqb.ABBREVIATIONS` three times over, `nfeloqb._blank`) to rebuild what
-# `nfeloqb.team_games` now does once, for both this module and the fetch module's own state
-# path. Everything here reads that public function; nothing computes the schema-level
-# transform itself.
-
-def _schedule(rows: pl.DataFrame) -> pl.DataFrame:
-    """Kept because `tests/unit/test_starter_change.py` calls it directly. The full
-    (team, game) row set it returns -- before either side is filtered for a one-sided blank
-    -- is `hub.fetch.nfeloqb.schedule`'s now (#339); this computes none of it itself."""
-    return nfeloqb.schedule(rows)
-
+# #339: the transform below used to be hand-built here -- a private `_schedule` plus a
+# duplicate of `team_games`'s own per-side unpivot -- reaching past `hub.fetch.nfeloqb`'s
+# public surface six times (`nfeloqb.ABBREVIATIONS` three times over, `nfeloqb._blank`) to
+# rebuild what `nfeloqb.team_games` now does once, for both this module and the fetch
+# module's own state path. Everything here reads that public function; nothing computes the
+# schema-level transform itself.
+#
+# #374: `nfeloqb.schedule`/`nfeloqb.team_games` take `regular_season_only` explicitly, with
+# no default that would hide the choice. This module's question is regular-season by
+# pre-registration, so every call below passes `True`; `nfeloqb.state` is the other reader,
+# and passes `False` so a team's tenure run can reach back across the postseason boundary.
 
 def team_games(rows: pl.DataFrame) -> pl.DataFrame:
     """One row per (team, game) off the source's rows, keyed by nflverse's game id, with the
@@ -156,9 +154,10 @@ def team_games(rows: pl.DataFrame) -> pl.DataFrame:
     blank convention, the abbreviation map -- and builds this frame for its own state path
     too (#339); this keeps only the columns both of this module's readers need
     (`TEAM_GAME_SCHEMA`, plus `prev_game_id`/`prev_season`/`prev_date`) and computes none of
-    the schema-level transform itself."""
-    return nfeloqb.team_games(rows).select(*TEAM_GAME_SCHEMA, "prev_game_id", "prev_season",
-                                           "prev_date")
+    the schema-level transform itself. Regular season only (#374): the line-move study is
+    regular-season by pre-registration."""
+    return nfeloqb.team_games(rows, regular_season_only=True).select(
+        *TEAM_GAME_SCHEMA, "prev_game_id", "prev_season", "prev_date")
 
 
 def unreadable_games(rows: pl.DataFrame) -> int:
@@ -167,8 +166,8 @@ def unreadable_games(rows: pl.DataFrame) -> int:
     value or adjustment was null. Counts both sides of a two-sided blank, one each, alongside
     every one-sided blank's single side (#328). Reported on the run line so a hole is
     counted, not silently closed over the way the previous-game link used to close it
-    (#301)."""
-    return nfeloqb.schedule(rows).height - team_games(rows).height
+    (#301). Regular season only (#374), matching `team_games`."""
+    return nfeloqb.schedule(rows, regular_season_only=True).height - team_games(rows).height
 
 
 def starters_from_pbp(pbp: pl.DataFrame) -> pl.DataFrame:

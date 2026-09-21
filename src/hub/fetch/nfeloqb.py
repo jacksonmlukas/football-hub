@@ -124,10 +124,6 @@ ABBREVIATIONS = {"WSH": "WAS", "LAR": "LA", "OAK": "LV"}
 
 USER_AGENT = "football-hub/0.1 (+https://github.com/jacksonmlukas/football-hub)"
 
-# The columns the team layer reads off one game row, per side. `_long` unpivots the
-# two-sided row into one row per (team, game) under the unsuffixed names.
-_SIDE = ("team", "qb", "value", "adj", "score")
-
 STATE_SCHEMA = {"team": pl.Utf8, "qb": pl.Utf8, "qb_value": pl.Float64,
                 "qb_adj": pl.Float64, "tenure": pl.Int64, "as_of": pl.Utf8}
 
@@ -165,7 +161,8 @@ def parse(body: bytes) -> pl.DataFrame:
     1950 where the source's quarterback Elo has not begun. Unplayed games arrive as one row
     with both starters and no score, and played games of earlier weeks as one row -- the
     capture's 2025 rows carry no twins -- so the twin is how the current week's results land.
-    A row blank on one side only is kept, said by team and date, and `_long` drops that side.
+    A row blank on one side only is kept, said by team and date, and `team_games` drops that
+    side (#374).
 
     Cast before the check rather than trusting inference: a short file whose values happen
     to be whole numbers infers `qb1_adj` as an integer column, and the contract would refuse
@@ -195,10 +192,11 @@ def parse(body: bytes) -> pl.DataFrame:
               f"({this} of them this season, the Elo-only twin of a played game)")
         got = got.filter(~both)
     # A row blank on *one* side -- a quarterback the source has no prior for, a side it has
-    # not named -- is kept, and `_long` drops that side alone (#283). The filter used to be
-    # two-sided, so one team's blank dropped the opponent's game with it, and before that the
-    # contract's null check refused the whole file for one such row. Said here by team and
-    # date, because a starter this reader cannot see is a rating that will not move.
+    # not named -- is kept, and `team_games` drops that side alone (#283, #374). The filter
+    # used to be two-sided, so one team's blank dropped the opponent's game with it, and
+    # before that the contract's null check refused the whole file for one such row. Said
+    # here by team and date, because a starter this reader cannot see is a rating that will
+    # not move.
     half = got.filter(_blank("1") | _blank("2"))
     if half.height:
         named = [f"{r[f'team{n}']} {r['date']}" for r in half.iter_rows(named=True)
@@ -219,22 +217,6 @@ _SIDE_COLUMNS = (*_side_columns("1"), *_side_columns("2"))
 def _blank(n: str) -> pl.Expr:
     """Side `n` of a row is blank: any of the three the team layer reads is null."""
     return pl.any_horizontal([pl.col(c).is_null() for c in _side_columns(n)])
-
-
-def _long(rows: pl.DataFrame) -> pl.DataFrame:
-    """One row per (team, game), every side that carries a quarterback, his value and his
-    adjustment, in nflverse's spellings. A side blank in any of the three is dropped alone
-    (#283); the other side of the row is a game the team layer can read."""
-    sides = []
-    for n in ("1", "2"):
-        sides.append(rows.filter(~_blank(n)).select(
-            pl.col("date"), pl.col("season"),
-            pl.col(f"team{n}").replace(ABBREVIATIONS).alias("team"),
-            pl.col(f"qb{n}").alias("qb"),
-            pl.col(f"qb{n}_value_pre").alias("value"),
-            pl.col(f"qb{n}_adj").alias("adj"),
-            pl.col(f"score{n}").alias("score")))
-    return pl.concat(sides).sort("team", "date")
 
 
 # The source dates a row by the game's Eastern day, the way nflverse's `gameday` does;
@@ -284,10 +266,15 @@ def state(rows: pl.DataFrame, as_of: date | datetime | None = None) -> pl.DataFr
     latest and decayed the difference by `tenure` -- a quantity carrying the starter's own
     value drift, which is not the gap the module prices. Nothing reads an arrival row now.
 
-    Rows are not filtered to a season on purpose. A run that began late last season is
-    one run, and the tenure reported for it should say so.
+    Rows are not filtered to a season on purpose, nor to the regular season (#374): a run
+    that began late last season is one run, and a team whose latest rows are its playoff
+    games has a tenure that counts them, not one shortened to its last regular-season row.
+    `team_games(..., regular_season_only=False)` is the per-team-game frame this reads --
+    the postseason is this function's own choice and not a default hidden inside the frame;
+    `hub.models.starter_change`'s event construction reads the same frame with the
+    postseason excluded, because its question is regular-season by pre-registration.
     """
-    long = _long(rows if as_of is None else before(rows, as_of))
+    long = team_games(rows if as_of is None else before(rows, as_of), regular_season_only=False)
     out = []
     for team, games in long.group_by("team", maintain_order=True):
         latest = games.row(-1, named=True)
@@ -301,36 +288,40 @@ def state(rows: pl.DataFrame, as_of: date | datetime | None = None) -> pl.DataFr
     return pl.DataFrame(out, schema=STATE_SCHEMA).sort("team")
 
 
-# --- the per-team-game frame (#339) ------------------------------------------------------
+# --- the per-team-game frame (#339, #374) -------------------------------------------------
 #
-# `state`'s own per-team path above is `_long`: the two-sided row unpivoted, a side blank in
-# `qb`, `value` or `adj` dropped alone, the team spelled nflverse's way. Before this section
-# existed, `hub.models.starter_change` needed more than that -- a game id, which side is
-# home, the source's own win probabilities, and a previous-game link a one-sided blank must
-# not move -- and got it by reaching past this module's public surface six times to rebuild
-# the same transform by hand (`nfeloqb.ABBREVIATIONS`, `nfeloqb._blank`): three of an
-# architecture review's findings (#301, #328, #304's mutants) lived in that copy. `schedule`
-# and `team_games` below are that transform, published once.
+# `state` reads its per-team path off `team_games`: the two-sided row unpivoted, a side
+# blank in `qb`, `value` or `adj` dropped alone, the team spelled nflverse's way. Before
+# `team_games` existed, `hub.models.starter_change` needed more than that -- a game id,
+# which side is home, the source's own win probabilities, and a previous-game link a
+# one-sided blank must not move -- and got it by reaching past this module's public surface
+# six times to rebuild the same transform by hand (`nfeloqb.ABBREVIATIONS`, `nfeloqb._blank`):
+# three of an architecture review's findings (#301, #328, #304's mutants) lived in that
+# copy. `schedule` and `team_games` below are that transform, published once.
 #
-# `_long`/`state` are unchanged by this section and do not filter to the regular season the
-# way `team_games` does: a team's tenure run is allowed to reach back across the postseason
-# boundary (a Super Bowl participant's latest row is its playoff game, not its last regular-
-# season one), and filtering here would silently move what `state` reports for it.
+# **The postseason is the caller's choice, not the frame's (#374).** `schedule` and
+# `team_games` used to hard-code a regular-season filter, which `state` could not use
+# without shortening `tenure` for a team whose latest rows are its playoff games -- a Super
+# Bowl participant's latest row is its playoff game, not its last regular-season one.
+# `regular_season_only` is now required at every call: `state` reads `team_games` with it
+# `False` (every game the source has), and `hub.models.starter_change`'s event construction
+# reads it `True`, because the line-move study is regular-season by pre-registration. Neither
+# reader gets a default that would hide which one it asked for.
 
 REGULAR_SEASON = "REG"
 
 
-def schedule(rows: pl.DataFrame) -> pl.DataFrame:
+def schedule(rows: pl.DataFrame, *, regular_season_only: bool) -> pl.DataFrame:
     """Every (team, game) `rows` carries an entry for, home and away, before either side is
     filtered for a one-sided blank -- `team_games`'s previous-game link and
     `hub.models.starter_change.unreadable_games`'s count are both built off this, never off
-    the rows a one-sided blank drops (#301). Regular season only where `game_type` exists;
-    the source's own team spellings mapped through `ABBREVIATIONS`; keyed by nflverse's game
-    id -- season, the week zero-padded, away, home -- rebuilt rather than read off the
-    source's own `game_id`, which spells the Rams `LAR` and the Raiders `OAK` where nflverse
-    says `LA` and `LV`.
+    the rows a one-sided blank drops (#301). Regular season only when `regular_season_only`
+    is set and `game_type` exists -- no default hides the choice (#374); the source's own
+    team spellings mapped through `ABBREVIATIONS`; keyed by nflverse's game id -- season, the
+    week zero-padded, away, home -- rebuilt rather than read off the source's own `game_id`,
+    which spells the Rams `LAR` and the Raiders `OAK` where nflverse says `LA` and `LV`.
     """
-    if "game_type" in rows.columns:
+    if regular_season_only and "game_type" in rows.columns:
         rows = rows.filter(pl.col("game_type") == REGULAR_SEASON)
     week = pl.col("week").cast(pl.Utf8).cast(pl.Float64).cast(pl.Int64)
     gid = (pl.col("season").cast(pl.Utf8) + "_" + week.cast(pl.Utf8).str.zfill(2) + "_"
@@ -351,14 +342,16 @@ _TEAM_GAME_COLUMNS: dict[str, Any] = {
 }
 
 
-def team_games(rows: pl.DataFrame) -> pl.DataFrame:
+def team_games(rows: pl.DataFrame, *, regular_season_only: bool) -> pl.DataFrame:
     """One row per (team, game) off the source's two-sided row, in nflverse's spellings and
     keyed by `schedule`'s game id. `team1` is the home side (the source's convention);
     `home`, `score`/`opp_score` and the source's own win probabilities (`elo_prob1` the base
     Elo, `qbelo_prob1` the quarterback-adjusted one, aliased `base_prob`/`qb_prob`, null
     where the file does not carry them) ride along per side. A side null in `qb`, `value` or
-    `adj` is dropped alone (#283); the other side's row is kept. Regular season only where
-    `game_type` exists.
+    `adj` is dropped alone (#283); the other side's row is kept. Regular season only when
+    `regular_season_only` is set and `game_type` exists -- no default hides the choice
+    (#374): `state` reads this with it `False`, so a team's tenure run can reach back across
+    the postseason boundary; `hub.models.starter_change`'s event construction reads it `True`.
 
     `prev_game_id`, `prev_season` and `prev_date` name each row's *actual* previous game --
     the team's last entry in `schedule`'s full row set, both sides, before either is
@@ -376,7 +369,7 @@ def team_games(rows: pl.DataFrame) -> pl.DataFrame:
     if "week" not in rows.columns:
         raise ValueError("the rows carry no 'week' column, and the nflverse game id the "
                          "archive is keyed by cannot be rebuilt without it")
-    if "game_type" in rows.columns:
+    if regular_season_only and "game_type" in rows.columns:
         rows = rows.filter(pl.col("game_type") == REGULAR_SEASON)
     week = pl.col("week").cast(pl.Utf8).cast(pl.Float64).cast(pl.Int64)
     home = pl.col("team1").replace(ABBREVIATIONS)
@@ -400,7 +393,7 @@ def team_games(rows: pl.DataFrame) -> pl.DataFrame:
             pl.col(opp).cast(pl.Int64).alias("opp_score"),
             *probs))
     tg = pl.concat(sides).select(*_TEAM_GAME_COLUMNS).sort("team", "season", "week")
-    link = schedule(rows).with_columns(
+    link = schedule(rows, regular_season_only=regular_season_only).with_columns(
         pl.col("game_id").shift(1).over("team").alias("prev_game_id"),
         pl.col("season").shift(1).over("team").alias("prev_season"),
         pl.col("date").shift(1).over("team").alias("prev_date"),

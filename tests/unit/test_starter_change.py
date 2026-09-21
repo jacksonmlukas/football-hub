@@ -111,19 +111,51 @@ POSTSEASON_AND_REGULAR = [
 
 def test_team_games_drops_postseason_rows_from_itself_and_the_schedule():
     """#304 (rule 15): `source_rows` hard-codes `game_type='REG'` on every row, so every other
-    fixture in this file has nothing to drop and the postseason filter -- in `team_games` and
-    the identical one in `_schedule`, the full row set the previous-game link is built off --
-    could be deleted with nothing to notice. Week 19 here is marked 'POST'; both readers must
-    drop it entirely, not merely fail to count it as an event."""
+    fixture in this file has nothing to drop and the postseason filter -- in `sc.team_games`,
+    which reads `nfeloqb.team_games(..., regular_season_only=True)` (#374), and in
+    `nfeloqb.schedule`, the full row set the previous-game link is built off -- could be
+    deleted with nothing to notice. Week 19 here is marked 'POST'; both readers must drop it
+    entirely, not merely fail to count it as an event."""
     rows_ = source_rows(POSTSEASON_AND_REGULAR).with_columns(
         pl.when(pl.col("week") == "19.0").then(pl.lit("POST")).otherwise(pl.lit("REG"))
           .alias("game_type"))
     tg = sc.team_games(rows_)
     assert tg["week"].to_list() == [1, 1]                       # both sides of week 1 only
     assert 19 not in tg["week"].to_list()
-    sched = sc._schedule(rows_)
+    sched = nfeloqb.schedule(rows_, regular_season_only=True)
     assert sched["week"].to_list() == [1, 1]
     assert 19 not in sched["week"].to_list()
+
+
+# Same starter, week 1 (REG) and week 19 (POST): the two readers of #374's shared frame
+# legitimately disagree about whether the second row exists at all.
+PLAYOFF_TENURE = [
+    ("2026-09-06", 2026, "1.0", "A", "B", "a1", "b1", 100.0, 90.0, 5.0, 3.0, 20, 10, .55, .58),
+    ("2027-01-10", 2026, "19.0", "A", "B", "a1", "b1", 102.0, 92.0, 6.0, 3.5, 24, 17, .60, .62),
+]
+
+
+def test_tenure_counts_a_playoff_start_the_event_construction_excludes():
+    """#374: `nfeloqb.state` does not filter to the regular season -- a team's tenure run
+    reaches back across the postseason boundary, because a Super Bowl participant's latest
+    row is its playoff game and not its last regular-season one -- while this module's event
+    construction reads `nfeloqb.team_games(..., regular_season_only=True)`, because the
+    line-move study is regular-season by pre-registration. Same starter both games, so the
+    only thing that can be disagreeing is whether the postseason row is read at all: it is,
+    for tenure, and it is not, for the event construction, which never sees a second row for
+    A to differ against."""
+    rows_ = source_rows(PLAYOFF_TENURE).with_columns(
+        pl.when(pl.col("week") == "19.0").then(pl.lit("POST")).otherwise(pl.lit("REG"))
+          .alias("game_type"))
+
+    st = nfeloqb.state(rows_)
+    a = st.filter(pl.col("team") == "A").row(0, named=True)
+    assert a["qb"] == "a1" and a["tenure"] == 2, "both starts, the playoff one included"
+    assert a["as_of"] == "2027-01-10", "the playoff row is the latest"
+
+    tg = sc.team_games(rows_)
+    assert tg.filter(pl.col("team") == "A")["week"].to_list() == [1], "week 19 never arrives"
+    assert sc.events(tg).filter(pl.col("team") == "A").is_empty(), "nothing to diff it against"
 
 
 # KC's week-2 game (at DEN) is blank on KC's own side only -- the source has no starter for
