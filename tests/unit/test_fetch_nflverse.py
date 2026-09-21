@@ -1629,7 +1629,125 @@ def test_reading_the_same_entry_twice_does_not_double_the_digest(fake_rankings, 
     assert len(nv.pins_this_run()) == 1
 
 
-# --- #370 (S12): the backfill -----------------------------------------------
+# --- #370 (S12): the as-of archive and the backfill ------------------------
+#
+# `archive` is not a new mechanism -- it is `load(as_of=...)`, which `ff_rankings` already
+# exercises, called on the four sources that had never been given an as-of at all. These tests
+# hold the new call site to the same as-of guarantee `test_an_as_of_writes_a_dated_cache_path`
+# already proves of `load` itself: a distinct file per day, none of them overwriting an
+# earlier one.
+
+@pytest.fixture
+def fake_archived_sources(monkeypatch):
+    """All four `ARCHIVED_SOURCES`, faked onto their real fetchers at once."""
+    frames = {
+        "injuries": _injuries_frame(),
+        "snap_counts": _snaps_frame(),
+        "participation": pl.DataFrame({
+            "nflverse_game_id": ["2024_01_A_B"] * 1200,
+            "play_id": pl.Series(range(1200), dtype=pl.Float64),
+            "offense_personnel": ["11"] * 1200,
+            "defense_personnel": ["41"] * 1200,
+            "defenders_in_box": pl.Series([6] * 1200, dtype=pl.Int32),
+            "offense_formation": ["SHOTGUN"] * 1200,
+        }),
+        "ftn_charting": pl.DataFrame({
+            "nflverse_game_id": ["2024_01_A_B"] * 1200,
+            "nflverse_play_id": pl.Series(range(1200), dtype=pl.Int32),
+            "season": pl.Series([2024] * 1200, dtype=pl.Int32),
+            "week": pl.Series([1] * 1200, dtype=pl.Int32),
+            "is_play_action": [False] * 1200,
+            "is_motion": [True] * 1200,
+            "n_defense_box": pl.Series([6] * 1200, dtype=pl.Int32),
+        }),
+    }
+    for source, fetcher in (("injuries", "_raw_injuries"), ("snap_counts", "_raw_snap_counts"),
+                            ("participation", "_raw_participation"),
+                            ("ftn_charting", "_raw_ftn_charting")):
+        monkeypatch.setattr(nv, fetcher, lambda seasons, f=frames[source]: f)
+    return frames
+
+
+def test_archive_writes_one_dated_entry_per_source(fake_archived_sources, tmp_path):
+    n = nv.archive(seasons=[2024], as_of="2026-09-21", cache=tmp_path)
+    assert n == 0
+    for source in nv.ARCHIVED_SOURCES:
+        entries = list((tmp_path / source).glob("*-asof-2026-09-21.parquet"))
+        assert len(entries) == 1, f"{source}: expected one dated entry, found {entries}"
+
+
+def test_archive_on_two_different_days_leaves_both(fake_archived_sources, tmp_path):
+    nv.archive(seasons=[2024], as_of="2026-09-21", cache=tmp_path)
+    nv.archive(seasons=[2024], as_of="2026-09-22", cache=tmp_path)
+    for source in nv.ARCHIVED_SOURCES:
+        entries = sorted(p.name for p in (tmp_path / source).glob("*-asof-*.parquet"))
+        assert len(entries) == 2, f"{source}: a later archive overwrote an earlier one: {entries}"
+
+
+def test_archive_stamps_pinned_at_rather_than_filtering(fake_archived_sources, tmp_path):
+    """None of the four is `APPEND_ONLY`, so the pin records *when* the snapshot was taken
+    rather than claiming the rows reproduce from the as-of alone."""
+    nv.archive(seasons=[2024], as_of="2026-09-21", cache=tmp_path)
+    for source in nv.ARCHIVED_SOURCES:
+        pin = nv.data_pin(source, seasons=[2024], cache=tmp_path, as_of="2026-09-21")
+        assert pin is not None and pin.pinned_at is not None, (
+            f"{source}: expected a stamped pin, since a revise-in-place source cannot "
+            f"reproduce from its as-of alone")
+
+
+def test_archive_defaults_to_the_completed_and_the_ahead_season(fake_archived_sources,
+                                                                  tmp_path, capsys):
+    from hub.config import SEASON_AHEAD, SEASON_COMPLETED
+    nv.archive(as_of="2026-09-21", cache=tmp_path)
+    out = capsys.readouterr().out
+    assert str(SEASON_COMPLETED) in out and str(SEASON_AHEAD) in out
+
+
+def test_archive_prints_a_summary_not_a_frame(fake_archived_sources, tmp_path, capsys):
+    nv.archive(seasons=[2024], as_of="2026-09-21", cache=tmp_path)
+    out = capsys.readouterr().out
+    assert "rows" in out and "pinned_at" in out
+    assert len(out.splitlines()) < 10
+
+
+def test_a_second_archive_call_the_same_day_is_a_cache_hit(fake_archived_sources, tmp_path,
+                                                            monkeypatch):
+    nv.archive(seasons=[2024], as_of="2026-09-21", cache=tmp_path)
+    calls = []
+    monkeypatch.setattr(nv, "_raw_injuries", lambda seasons: calls.append(seasons) or
+                        fake_archived_sources["injuries"])
+    nv.archive(seasons=[2024], as_of="2026-09-21", cache=tmp_path)
+    assert calls == [], "the second call on the same day should be served from the dated entry"
+
+
+def test_one_source_failing_does_not_take_the_others_down(fake_archived_sources, tmp_path,
+                                                            monkeypatch, capsys):
+    """`participation` lags the other three -- nflreadpy refuses it for the season in
+    progress until nflverse actually ships it -- so the loop must not abort on the first
+    failure. Real behaviour found running `--archive` against 2026 (issue #370)."""
+    def _broken(seasons):
+        raise ValueError("Season must be between 2016 and 2025")
+    monkeypatch.setattr(nv, "_raw_participation", _broken)
+
+    rc = nv.archive(seasons=[2024], as_of="2026-09-21", cache=tmp_path)
+    assert rc == 0, "three of four sources answered; that is not a total failure"
+    out = capsys.readouterr().out
+    assert "participation" in out and "unavailable" in out
+    for source in ("injuries", "snap_counts", "ftn_charting"):
+        assert list((tmp_path / source).glob("*-asof-2026-09-21.parquet")), (
+            f"{source} should still have been archived despite participation failing")
+    assert not (tmp_path / "participation").exists()
+
+
+def test_every_source_failing_is_reported_as_failure(fake_archived_sources, tmp_path,
+                                                       monkeypatch):
+    def _broken(seasons):
+        raise ValueError("nope")
+    for fetcher in ("_raw_injuries", "_raw_snap_counts", "_raw_participation",
+                   "_raw_ftn_charting"):
+        monkeypatch.setattr(nv, fetcher, _broken)
+    assert nv.archive(seasons=[2024], as_of="2026-09-21", cache=tmp_path) == 1
+
 
 def test_backfill_pulls_every_retained_season_of_both_sources(monkeypatch, tmp_path):
     seen: dict[str, list[int]] = {"participation": [], "ftn_charting": []}

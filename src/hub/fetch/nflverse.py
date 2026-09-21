@@ -20,6 +20,7 @@ tree re-runs to its own number while the archive it scored against is refetched 
 time. A pinned load answers with the same rows, or with a digest that says it could not.
 
     uv run python -m hub.fetch.nflverse --refresh --season 2025
+    uv run python -m hub.fetch.nflverse --archive
     uv run python -m hub.fetch.nflverse --backfill
 """
 from __future__ import annotations
@@ -41,6 +42,7 @@ import polars as pl
 from hub import atomic, store
 from hub.cli import unavailable
 from hub.config import (
+    SEASON_AHEAD,
     SEASON_COMPLETED,
     DataPin,
     UnpinnedRead,
@@ -862,6 +864,58 @@ def refresh(season: int = SEASON_COMPLETED, cache: Path | None = None,
     return 0
 
 
+# The four sources #370 (S12) found with no as-of archive: pulled as bulk multi-season files
+# and silently overwritten by the next refresh, with nothing recording what an earlier one
+# held. `hub.store.write`'s own docstring records the identical bug for the week partitions
+# this module writes -- fixed there by requiring a caller to say `replace=True` before an
+# existing partition is discarded. This is the sibling bug in the *raw* cache `load` above
+# already knows how to avoid: its `as_of` argument gives any source its own dated cache entry
+# and a `Pin` beside it. `ff_rankings` uses the filtering half of that (`APPEND_ONLY`); these
+# four want the labelling half `Pin.pinned_at` was written for -- a source that revises in
+# place, stamped rather than assumed reproducible. Nothing below is a new mechanism. It is
+# `load(as_of=...)`, called on sources that had never been given one, the same way ADP, odds
+# and `ff_rankings` are already snapshotted rather than overwritten.
+ARCHIVED_SOURCES: tuple[str, ...] = ("injuries", "snap_counts", "participation", "ftn_charting")
+
+
+def archive(seasons: Sequence[int] = (), as_of: str | date | None = None,
+           cache: Path | None = None) -> int:
+    """Snapshot the four as-of-blind sources at today's date, one dated cache entry each.
+
+    `seasons` defaults to the completed season and the one in progress -- the two a weekly
+    refresh cares about -- and is a parameter rather than a constant so a caller wanting an
+    older season does not have to restate the loop. `as_of` defaults to today and exists so a
+    backfill of past days can be driven the same way; ordinary callers omit it.
+
+    Re-running on the same day is a cache hit and writes nothing new -- `_cache_path` keys on
+    the as-of, so today's entry either does not exist yet or already holds today's pull.
+    Prints row counts and each source's `pinned_at` only, never a frame.
+
+    **One source failing must not take the other three down with it (CLAUDE.md's graceful
+    degradation rule).** `participation` lags the other three -- nflreadpy refuses it for the
+    season in progress until nflverse actually ships it, which the default `seasons` reaches
+    every year between kickoff and whenever that season's file appears -- so a bare exception
+    here would archive nothing at all for the three sources that *did* answer, on every one
+    of those weeks. Each source is tried independently and a failure is reported and skipped.
+    """
+    stamp = _as_of_date(as_of) or datetime.now(UTC).date()
+    seasons = tuple(seasons) or (SEASON_COMPLETED, SEASON_AHEAD)
+    print(f"  nflverse archive: as of {stamp}, seasons {list(seasons)}")
+    failed = 0
+    for source in ARCHIVED_SOURCES:
+        try:
+            df = load(source, seasons=list(seasons), as_of=stamp, cache=cache)
+        except Exception as e:
+            failed += 1
+            print(f"    {source:<12} unavailable ({type(e).__name__}: {e})")
+            continue
+        pin = data_pin(source, seasons=list(seasons), cache=cache, as_of=stamp)
+        stamped = pin.pinned_at if pin is not None else "?"
+        print(f"    {source:<12} {df.height:>7,} rows | {len(df.columns):>3} cols | "
+              f"pinned_at {stamped}")
+    return 1 if failed == len(ARCHIVED_SOURCES) else 0
+
+
 # Every season nflverse retains for the two scheme-layer sources, measured 2026-09-21 against
 # a live pull rather than against documentation: `load_participation` refuses seasons outside
 # [2016, 2025] and `load_ftn_charting` outside [2022, 2026] -- FTN's charting starts six years
@@ -895,11 +949,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="Fetch nflverse data, narrowed at the boundary and contract-checked.")
     ap.add_argument("--refresh", action="store_true",
                     help="pull this season's pbp and ff_opportunity into the store")
+    ap.add_argument("--archive", action="store_true",
+                    help="snapshot injuries, snap_counts, participation and ftn_charting at "
+                         "today's date, so a later revision cannot overwrite what today held")
     ap.add_argument("--backfill", action="store_true",
                     help="pull participation and ftn_charting for every season nflverse "
                          "retains (a one-time catch-up, not a weekly step)")
     ap.add_argument("--season", type=int, default=SEASON_COMPLETED)
     a = ap.parse_args(argv)
+    if a.archive:
+        try:
+            return archive(cache=RAW)
+        except Exception as e:
+            return unavailable("hub.fetch.nflverse", "the as-of archive sources", e)
     if a.backfill:
         try:
             return backfill(cache=RAW)

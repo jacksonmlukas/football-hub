@@ -17,6 +17,15 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 # would exit 2, which is how `make slate` came to fail on a clean checkout. The same `$(if
 # $(strip ...))` guard is why CFB_WEEK below is written the way it is.
 	uv run python -m hub.fetch.nflverse --refresh
+# #370 (S12): injuries, snap_counts, participation and ftn_charting had no as-of archive, so
+# a later nflverse revision silently overwrote the historical record -- store.py's own `write`
+# docstring records the identical bug for the week partitions this Makefile's line above
+# writes. Optional like the sources below it: `participation` lags the other three (nflreadpy
+# refuses the season in progress until nflverse ships it), `archive` already tries each source
+# independently and reports one that fails rather than aborting the other three, and the
+# leading `-` is the same belt this file already uses for a source that may legitimately not
+# answer this week.
+	-uv run python -m hub.fetch.nflverse --archive
 # CFB_WEEK, not WEEK, and it is normally unset. WEEK is the *NFL* week -- a different
 # calendar with a different week-1 date and three more weeks in it -- so passing it here
 # would have fetched a confidently wrong college week. Left unset, `hub.fetch.cfbd` counts
