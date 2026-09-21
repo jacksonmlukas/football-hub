@@ -42,6 +42,8 @@ projection on accuracy and lost the lineup decision to a free consensus ranking,
 waivers than without. A market/Usage blend finally beat consensus on average — **+0.711 points
 a team-week, interval excluding zero** — and lost the every-season half, with the gain decaying
 to negative in the most recent season. **Shown, never ranked on; the programme is closed.**
+*(Restated 2026-09-21, #358: the verdict stands; this design could detect effects down to 0.768
+pts/team-week at 80% power, k=4 seasons; the measured value was −1.004; [detectable-effects.md](detectable-effects.md) row 15.)*
 *(As written 2026-08-29. The +0.711 was superseded the next day by +0.215 under a reproducible
 board, and that by **−1.004**, REMOVE, when the treatment arm was scored on one scale (#44,
 2026-09-07); whether the weekly model itself is REMOVEd is pending #206. The chain is in
@@ -96,6 +98,9 @@ are still good remain on it at all, so raw age-versus-rank says little about pri
 What the screen does establish is the actionable part: **age adds nothing to ECR.** Why is
 a separate question it was not designed to answer, and after getting a mechanism wrong on
 the depth-chart signal, asserting one here would be repeating that.
+
+*(Restated 2026-09-21, #358: no effect larger than partial r 0.103 detectable at 80% power,
+k=5 seasons; the measured pooled value was r=+0.0076; [detectable-effects.md](detectable-effects.md) row 5.)*
 
 ## What was built
 

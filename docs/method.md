@@ -641,19 +641,19 @@ count belonging to the table beneath this line — corrected 2026-09-07 under #5
 
 | # | attempt | result |
 |---|---|---|
-| 1–2 | Expected-vs-actual points; recency-weighted | null — r = 0.21 self-persistence |
-| 3–4 | Depth-chart climb, two horizons | null — +0.008 beyond consensus |
-| 5 | Age | null |
-| 6 | Championship equity as the objective | **REMOVE** — lost 4 of 4 seasons; −19.66 pts/team-game as first measured, magnitude not quotable ([ADR-0009](adr/0009-championship-equity-does-not-pick.md)) |
-| 7 | VOR ordering | **−5.06** pts/team-game |
-| 8 | `edge`, the repo's original signal | unvalidatable — needs ADP nobody retains |
-| 9 | Volume model beating the market's mean | null |
-| 10 | Lineup optimiser | **+0.00** — a structural zero |
-| 11 | Per-player weekly spread | null — 0.085 MAE of headroom exists at all |
+| 1–2 | Expected-vs-actual points; recency-weighted | null — r = 0.21 self-persistence *(Restated 2026-09-21, #358: no effect larger than partial r 0.092 detectable at 80% power for the uniform-weighting screen, k=4 seasons — the measured pooled value was r=+0.21; the recency-weighted variant's bound could not be computed, no per-season breakdown was published to derive s from; [detectable-effects.md](detectable-effects.md) rows 1–2.)* |
+| 3–4 | Depth-chart climb, two horizons | null — +0.008 beyond consensus *(Restated 2026-09-21, #358: no effect larger than partial r 0.122 (next season; measured +0.008) or 0.209 (rest-of-season, published se; no single pooled r published, per-season values ran −0.040 to +0.100) detectable at 80% power, k=4 seasons each; [detectable-effects.md](detectable-effects.md) rows 3–4.)* |
+| 5 | Age | null *(Restated 2026-09-21, #358: no effect larger than partial r 0.103 detectable at 80% power, k=5 seasons; the measured pooled value was r=+0.0076; [detectable-effects.md](detectable-effects.md) row 5.)* |
+| 6 | Championship equity as the objective | **REMOVE** — lost 4 of 4 seasons; −19.66 pts/team-game as first measured, magnitude not quotable ([ADR-0009](adr/0009-championship-equity-does-not-pick.md)) *(Restated 2026-09-21, #358: the verdict stands; this design could detect effects down to 11.17 pts/team-game at 80% power, k=4 seasons; [detectable-effects.md](detectable-effects.md) row 6.)* |
+| 7 | VOR ordering | **−5.06** pts/team-game *(Restated 2026-09-21, #358: the verdict stands; this design's detectable effect could not be computed — only a pooled figure across 3 seasons × 40 drafts is published, no per-season breakdown to derive a between-season s from; [detectable-effects.md](detectable-effects.md) row 7.)* |
+| 8 | `edge`, the repo's original signal | unvalidatable — needs ADP nobody retains *(Restated 2026-09-21, #358: confirmed — no detectable-effect bound exists for this row; no historical ADP source exists to build one and backtest boards carry no adp/edge column at all; [detectable-effects.md](detectable-effects.md) row 8. Not estimated.)* |
+| 9 | Volume model beating the market's mean | null *(Restated 2026-09-21, #358: no detectable-effect bound could be computed — fit on 2022-23 and evaluated pooled on 2024-25 only, one evaluation window rather than multiple held-out seasons to cluster on; [detectable-effects.md](detectable-effects.md) row 9.)* |
+| 10 | Lineup optimiser | **+0.00** — a structural zero *(Restated 2026-09-21, #358: the verdict stands; this design's detectable-effect bound could not be computed — the gate builds its paired frame from the network at run time and persists nothing, so a season-clustered s cannot be measured offline; [detectable-effects.md](detectable-effects.md) row 10.)* |
+| 11 | Per-player weekly spread | null — 0.085 MAE of headroom exists at all *(Restated 2026-09-21, #358: no effect larger than 0.0054 MAE detectable at 80% power, k=5 seasons; the measured per-season gains were +0.0033, +0.0081, +0.0078, +0.0106, +0.0029; [detectable-effects.md](detectable-effects.md) row 11.)* |
 | 12 | **Weekly injury retention** | **adopted** — +0.170 MAE at 3.8 se |
-| 13 | Injury type on top of it | null by the gate — 3.1 se but 2/3 seasons |
+| 13 | Injury type on top of it | null by the gate — 3.1 se but 2/3 seasons *(Restated 2026-09-21, #358: no effect larger than 0.122 MAE detectable at 80% power, k=3 seasons; the measured per-season gains were +0.0507, +0.0602, −0.0150; [detectable-effects.md](detectable-effects.md) row 13.)* |
 | 14 | **Snap-share trend** | **screen positive** — +0.236 beyond consensus |
-| 15 | Weekly projection vs weekly consensus rank, at setting a lineup | **shown, never ranked on** — −0.304 pts/team-week, 2 of 3 seasons lost; the market/Usage blend it closed on re-scored to −1.004, REMOVE, pending #206 ([weekly-blend-gate.md](weekly-blend-gate.md)) |
+| 15 | Weekly projection vs weekly consensus rank, at setting a lineup | **shown, never ranked on** — −0.304 pts/team-week, 2 of 3 seasons lost; the market/Usage blend it closed on re-scored to −1.004, REMOVE, pending #206 ([weekly-blend-gate.md](weekly-blend-gate.md)) *(Restated 2026-09-21, #358: the verdict stands; this design could detect effects down to 0.768 pts/team-week at 80% power, k=4 seasons; [detectable-effects.md](detectable-effects.md) row 15.)* |
 
 What separates #12 and #14 from the other thirteen is not sophistication — #12 is a nine-cell
 lookup table of ratios. It is *what information they use*. The first twelve failures all tried
