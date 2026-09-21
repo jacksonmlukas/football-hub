@@ -105,6 +105,11 @@ GATE_WEEKS = FANTASY_WEEKS
 # seasons, and the interval that says so is much wider than the one this gate published.
 CLUSTER: tuple[str, ...] = SEASON_CLUSTER
 
+# #335, ADR-0019's amendment: this gate's within-season repeated-measure unit is the roster --
+# `compare`'s paired frame carries one row per (season, roster, week), and a season's own tie
+# test bootstraps over rosters, the same unit `CLUSTER` promoted it to above.
+WITHIN: tuple[str, ...] = ("roster",)
+
 # A player the consensus page does not list is ranked behind every player it does.
 UNRANKED = not_an_input(
     -1e9,
@@ -762,7 +767,7 @@ def treatment_effects(g: GateInputs, *, weeks: Sequence[int] = GATE_WEEKS,
                   else compare(under_treatment(g, t.name), weeks=weeks, churn=churn, z=z,
                                mask_pool=mask_pool, restrict=restrict))
         out.append(TreatmentEffect(t, summarise(paired, cluster=CLUSTER, seed=seed),
-                                   per_season(paired)))
+                                   per_season(paired, within=WITHIN, seed=seed)))
     return out
 
 
@@ -900,9 +905,10 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
                          ceiling=a.ceiling, restrict=restrict)
         # `SEASON_CLUSTER`, stated at this gate's own call site: the run has no default for it.
-        run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="weekly",
-                       arm_a="weekly", arm_b="consensus", unit=UNIT, places=PLACES, show_n=False,
-                       void=void_condition(cover), ceiling=declared_ceiling(paired), seed=a.seed)
+        run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS,
+                       name="weekly", arm_a="weekly", arm_b="consensus", unit=UNIT,
+                       places=PLACES, show_n=False, void=void_condition(cover),
+                       ceiling=declared_ceiling(paired), seed=a.seed)
         s, seasons_tbl = run.summary, run.seasons
         # The assembled column's frame is handed back rather than rebuilt, so this is two extra
         # scorings and not three, and the row it fills is the one the verdict is read off. No

@@ -320,9 +320,15 @@ def _house_rule(paired: pl.DataFrame, actions: Actions) -> tuple[str, str, dict[
 
     `paired` is one row per held-out season with the gain in `diff`, positive when the arm
     under test scored the lower log-loss. Nothing is decided here that `gate` does not decide.
+
+    **`within=("season",)`, a declared no-op (#335).** `paired` already carries one row per
+    season -- there is no finer within-season unit to name, unlike the walk-forward gates
+    this rule was unified with -- so grouping a season's single row by its own `season` value
+    gives exactly one cluster, always below `TIE_MIN_CLUSTERS`. `_disposition` falls back to
+    the sign, which is what `gate`'s every-season half read here before #335 in any case.
     """
     summary = summarise(paired, cluster=SEASON_CLUSTER)
-    verdict, why = gate(summary, per_season(paired), actions)
+    verdict, why = gate(summary, per_season(paired, within=("season",)), actions)
     return verdict, why, summary
 
 

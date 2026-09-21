@@ -38,8 +38,9 @@ def _verdict(summary, seasons):
 def _gate_run(paired, *, ceiling_arm=lg.DECLARED_CEILING_ARM, **kw):
     """This gate's call, as `main` spells it, with the width history pointed nowhere."""
     from hub.models.experiment import SEASON_CLUSTER, run_gate
-    return run_gate(paired, cluster=SEASON_CLUSTER, actions=lg.ACTIONS, name="lineup",
-                    arm_a="optimiser", arm_b="projections", unit=lg.UNIT, bootstrap=200,
+    return run_gate(paired, cluster=SEASON_CLUSTER, within=lg.WITHIN, actions=lg.ACTIONS,
+                    name="lineup", arm_a="optimiser", arm_b="projections", unit=lg.UNIT,
+                    bootstrap=200,
                     ceiling=lg.declared_ceiling(paired, ceiling_arm=ceiling_arm),
                     record_width=False, **kw)
 

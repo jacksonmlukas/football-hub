@@ -1048,8 +1048,8 @@ def test_the_ceiling_bounds_the_arm_under_test_on_the_same_frame():
 def _gate_run(paired, bound):
     """This gate's call, as `main` spells it, with the width history pointed nowhere."""
     from hub.models.experiment import SEASON_CLUSTER, Ceiling, run_gate
-    return run_gate(paired, cluster=SEASON_CLUSTER, actions=bt.ACTIONS, name="draft",
-                    arm_a="optimizer", arm_b="market", bootstrap=200,
+    return run_gate(paired, cluster=SEASON_CLUSTER, within=bt.WITHIN, actions=bt.ACTIONS,
+                    name="draft", arm_a="optimizer", arm_b="market", bootstrap=200,
                     ceiling=Ceiling(bt.CEILING_ARM, bound["diff"]), record_width=False)
 
 
@@ -1580,7 +1580,7 @@ def test_below_the_floor_the_verdict_is_unchanged_from_today_for_the_same_inputs
                            "diff": [-19.66 + 0.4 * i for i in range(8)]})
     rates = {"picks": 128.0, "market": 0.01, "optimizer": 0.005}
     assert bt.void_condition(rates) is None
-    kw = {"cluster": SEASON_CLUSTER, "actions": bt.ACTIONS, "name": "draft",
+    kw = {"cluster": SEASON_CLUSTER, "within": bt.WITHIN, "actions": bt.ACTIONS, "name": "draft",
           "arm_a": "optimizer", "arm_b": "market", "bootstrap": 200, "record_width": False}
     with_void = run_gate(paired, void=bt.void_condition(rates), **kw)
     before = run_gate(paired, **kw)

@@ -991,8 +991,20 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     `nfeloqb.COMMIT` stays covered: the pin is the harness's source now, and whether a pin
     no prediction reads should identify a model version is the maintainer's to decide, not
     this lane's.
+
+    **Moved again 2026-09-21 (#335): `5750d8c1` -> `c4606f91`**, `fitted_digest` `aeaf1d76`
+    -> `5024dd03`. `hub.models.experiment.TIE_MIN_CLUSTERS` is new, declared `chosen(12)` --
+    the floor below which a season's win/tie/loss test falls back to the sign alone rather
+    than trusting a bootstrap SE over too few within-season clusters. Spelled `chosen` rather
+    than `not_an_input` like its neighbour `MIN_SE`, and deliberately: `MIN_SE` is excluded
+    because a significance bar is a decision about which runs are published, not a model
+    input, but this floor governs which seasons count as wins in the every-season half of
+    `experiment.gate`, and that half decides whether a component ships -- closer to
+    `FLEX_SHARES` (#184, covered because a setting nothing fits still changes a prediction)
+    than to a harness's own threshold. Nothing else moved: every other declared constant
+    reproduces its prior value.
     """
-    assert config_digest(HubConfig()) == "5750d8c1"
+    assert config_digest(HubConfig()) == "c4606f91"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

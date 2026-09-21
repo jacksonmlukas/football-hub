@@ -704,7 +704,7 @@ def noise_sensitivity(boards: dict[int, Board], realised: dict[int, pl.DataFrame
                           on_draft=on_draft, opp_noise=scale)
             bound = Ceiling(CEILING_ARM, top["diff"])
         rates = join_failure_rates(paired)
-        run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS,
+        run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS,
                        name=f"draft noise x{scale:g}", arm_a="optimizer", arm_b="market",
                        void=void_condition(rates), ceiling=bound, seed=seed,
                        bootstrap=bootstrap, boards=boards, record_width=False)
@@ -948,6 +948,11 @@ def correction_tripwire(board: pl.DataFrame, clamp_frac: float | None = None) ->
                        f"{clamp_frac:.0%} clamp of {clamp_frac * abs(r['adp']):.2f}")
     return bad
 
+
+# #335, ADR-0019's amendment: this gate's within-season repeated-measure unit is the draft
+# room -- twenty rooms drawn against a season's board, `paired["draft"]` -- so a season's own
+# tie test bootstraps over rooms rather than trusting the sign of its mean alone.
+WITHIN: tuple[str, ...] = ("draft",)
 
 # The pre-registered actions, fixed before the numbers. The rule that chooses between them
 # is `experiment.gate` -- one implementation, ADR-0019 -- and these are the three sentences
@@ -1301,7 +1306,7 @@ def default_gate_mode(boards: dict[int, Board], realised: dict[int, pl.DataFrame
         bound = Ceiling(CEILING_ARM, top["diff"])
 
     rates = join_failure_rates(paired)
-    run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="draft",
+    run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS, name="draft",
                    arm_a="optimizer", arm_b="market", void=void_condition(rates),
                    ceiling=bound, seed=seed, boards=boards)
     lines = [*join_report(rates), *run.lines]

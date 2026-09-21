@@ -334,16 +334,17 @@ def test_the_split_is_written_once():
 def test_gain_is_positive_when_the_arm_has_the_smaller_error():
     """Sign convention: the difference is base minus arm, so positive favours the arm."""
     g = experiment.paired_gain([3.0, 3.0, 3.0], [1.0, 1.0, 1.0],
-                               base_mae=[3.0], arm_mae=[1.0])
+                               season=[0, 0, 0], within=[0, 1, 2])
     assert g.mean == 2.0
     assert g.wins == 1
 
 
 def test_the_standard_error_is_of_the_difference():
-    """Hand-computed: d = [1, 2, 3], sd(ddof=1) = 1, se = 1/sqrt(3)."""
+    """Hand-computed: d = [1, 2, 3], sd(ddof=1) = 1, se = 1/sqrt(3). `season`/`within` do not
+    enter `se`/`t` -- those are pooled over every row, unaffected by the every-season half."""
     import math
     g = experiment.paired_gain([2.0, 4.0, 6.0], [1.0, 2.0, 3.0],
-                               base_mae=[4.0], arm_mae=[2.0])
+                               season=[0, 0, 0], within=[0, 1, 2])
     assert g.mean == 2.0
     assert math.isclose(g.se, 1.0 / math.sqrt(3))
     assert math.isclose(g.t, 2.0 / (1.0 / math.sqrt(3)))
@@ -351,25 +352,48 @@ def test_the_standard_error_is_of_the_difference():
 
 def test_a_constant_difference_is_not_significant_by_division_by_zero():
     """Zero variance means zero standard error, and a t of 0 rather than an infinity."""
-    g = experiment.paired_gain([2.0, 2.0], [1.0, 1.0], base_mae=[2.0], arm_mae=[1.0])
+    g = experiment.paired_gain([2.0, 2.0], [1.0, 1.0], season=[0, 0], within=[0, 1])
     assert g.se == 0.0 and g.t == 0.0
 
 
 def test_one_observation_cannot_clear_a_significance_bar():
-    g = experiment.paired_gain([5.0], [1.0], base_mae=[5.0], arm_mae=[1.0])
+    g = experiment.paired_gain([5.0], [1.0], season=[0], within=[0])
     assert g.se == 0.0 and g.t == 0.0
 
 
 def test_seasons_won_counts_seasons_not_observations():
-    """The every-season half of the gate. Two of three seasons won is not all three."""
-    g = experiment.paired_gain([1.0] * 30, [1.0] * 30,
-                               base_mae=[2.0, 2.0, 1.0], arm_mae=[1.0, 1.0, 3.0])
+    """The every-season half of the gate. Two of three seasons won is not all three. Below
+    `TIE_MIN_CLUSTERS` every season falls back to the sign of its own mean gain."""
+    g = experiment.paired_gain(
+        [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 3.0, 3.0, 3.0],
+        season=[0, 0, 0, 1, 1, 1, 2, 2, 2], within=[0, 1, 2, 0, 1, 2, 0, 1, 2])
     assert (g.wins, g.seasons) == (2, 3)
+    assert (g.ties, g.losses) == (0, 1)
 
 
 def test_a_tie_is_not_a_win():
-    g = experiment.paired_gain([1.0, 1.0], [1.0, 1.0], base_mae=[1.0], arm_mae=[1.0])
+    g = experiment.paired_gain([1.0, 1.0], [1.0, 1.0], season=[0, 0], within=[0, 1])
     assert g.wins == 0
+    assert g.ties == 1
+
+
+def test_paired_gain_reads_a_season_s_own_within_cluster_se_above_the_floor():
+    """Above `TIE_MIN_CLUSTERS`, a season is a tie rather than a win when its gain sits
+    inside +/- 2 SE of its own within-season bootstrap -- the same rule `_disposition` gives
+    `per_season`, read here for the callers that bypass `gate`."""
+    rng = np.random.default_rng(0)
+    # One season, 20 within-season clusters (units) of 5 rows each -- above the floor -- with
+    # real row-to-row noise on the difference and a small positive mean: a tie under the
+    # bootstrap (the noise swamps the mean), a win under sign alone (the mean is positive).
+    within = np.repeat(np.arange(20), 5)
+    diff = 0.02 + rng.normal(0.0, 1.0, 100)
+    base, arm = np.zeros(100), -diff
+    g = experiment.paired_gain(base, arm, season=[0] * 100, within=within.tolist(),
+                               bootstrap=500, seed=0)
+    assert g.seasons == 1
+    assert (g.wins, g.ties, g.losses) == (0, 1, 0), (
+        "a season this noisy should tie, not win, once enough clusters exist to say so")
 
 
 def test_the_bar_is_declared_once():
@@ -593,7 +617,9 @@ def test_the_t_interval_is_not_implied_by_every_cluster_s_sign():
     """
     df = pl.DataFrame({"season": [0, 1, 2, 3], "diff": [0.01, 0.01, 0.01, 4.0]})
     s = experiment.summarise(df, cluster=experiment.SEASON_CLUSTER, bootstrap=8000, seed=0)
-    per = experiment.per_season(df)
+    # `within=("season",)`: this fixture has no finer unit and is not testing #335's tie
+    # logic, so a season's own group is a no-op (one row, one cluster).
+    per = experiment.per_season(df, within=("season",))
     assert (per["gain"] > 0).all(), "every season is positive by construction"
     assert s["lo"] > 0, "the percentile bootstrap is degenerate on all-positive clusters"
     assert not (s["t_lo"] > 0), "the t interval does not share that degeneracy"
@@ -837,7 +863,7 @@ def test_an_interval_above_zero_in_every_season_adopts():
     status, said = experiment.gate(_gate_summary(0.4, 1.2), _gate_seasons([0.3, 0.5, 0.9]), _ACTIONS)
     assert status == "ADOPT"
     assert said.startswith("ADOPT: the arm ships.")
-    assert "3/3" in said
+    assert "won 3, tied 0, lost 0 of 3" in said
 
 
 def test_an_interval_above_zero_that_loses_a_season_does_not_adopt():
@@ -846,7 +872,7 @@ def test_an_interval_above_zero_that_loses_a_season_does_not_adopt():
     `hub.models.spread` was corrected for."""
     status, said = experiment.gate(_gate_summary(0.1, 1.2), _gate_seasons([0.3, -0.2, 0.9]), _ACTIONS)
     assert status == "SHOW"
-    assert "2/3" in said
+    assert "won 2, tied 0, lost 1 of 3" in said
 
 
 def test_an_interval_below_zero_in_every_season_removes():
@@ -921,7 +947,9 @@ def _null_adopt_rate(rule, *, trials: int, k: int = 4, n_per_season: int = 50,
                            "diff": np.repeat(m, n_per_season)})
         s = experiment.summarise(df, cluster=experiment.SEASON_CLUSTER, bootstrap=bootstrap,
                                  seed=seed)
-        seasons = experiment.per_season(df)
+        # `within=("season",)`: S1's own size check is about the interval half in isolation,
+        # not #335's tie logic, so a season's own group is a no-op here too.
+        seasons = experiment.per_season(df, within=("season",))
         adopts += rule(s, seasons) == "ADOPT"
     return adopts / trials
 
@@ -972,6 +1000,95 @@ def test_the_fixed_rule_s_null_size_is_not_degenerate():
     rate = _null_adopt_rate(_fixed_rule, trials=4000)
     assert rate < 0.05, (rate, "not clearly under the planted rule's degenerate 2**-4 = 0.0625")
     assert rate < 2 * experiment.ALPHA, (rate, "not bounded by twice the t half's own alpha")
+
+
+# --- #335: the tie-aware every-season half, ADOPTED (A) with (i) --------------------------
+
+def _tied_season(season, base_gain, *, m=20, n_per_cluster=4, noise=1.0, seed):
+    """`m` within-season clusters, each with `n_per_cluster` rows, `base_gain` plus noise
+    large enough that the *season's* mean sits within +/- 2 SE of its own within-season
+    bootstrap -- a tie -- while still being unambiguously signed by its raw mean."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for k in range(m):
+        cluster_gain = base_gain + rng.normal(0.0, noise)
+        for _ in range(n_per_cluster):
+            rows.append({"season": season, "unit": k,
+                         "diff": cluster_gain + rng.normal(0.0, noise * 0.2)})
+    return pl.DataFrame(rows)
+
+
+def _confident_season(season, gain, *, m=20, n_per_cluster=4):
+    """`m` within-season clusters, every one carrying exactly `gain` -- zero within-season
+    noise, so its bootstrap SE is ~0 and any nonzero `gain` is an unambiguous win or loss."""
+    rows = [{"season": season, "unit": k, "diff": gain}
+            for k in range(m) for _ in range(n_per_cluster)]
+    return pl.DataFrame(rows)
+
+
+def test_a_tie_blocks_adopt_even_when_every_other_season_won():
+    """Three confident wins and one tie: ADOPT needs a win in *every* season, and a tie is not
+    one -- (A), the maintainer's ADOPTED rule, symmetric and conservative."""
+    seasons = pl.concat([
+        _confident_season(2022, 3.0), _confident_season(2023, 3.0),
+        _confident_season(2024, 3.0),
+        _tied_season(2025, 0.05, seed=0),
+    ])
+    summary = experiment.summarise(seasons, cluster=experiment.SEASON_CLUSTER, bootstrap=2000)
+    per = experiment.per_season(seasons, within=("unit",), bootstrap=2000)
+    status, said = experiment.gate(summary, per, _ACTIONS)
+    disp = per.sort("season")
+    assert list((disp["gain"] >= 2 * disp["se"]).to_list())[:3] == [True, True, True], (
+        "the fixture must actually win its first three seasons, or this proves nothing")
+    assert status == "SHOW", (status, said)
+    assert "won 3, tied 1, lost 0 of 4" in said
+
+
+def test_a_tie_blocks_remove_even_when_every_other_season_lost():
+    """The symmetric side: three confident losses and one tie. REMOVE needs a loss in every
+    season, and a tie is not a loss either -- a tie is absence of evidence in that season, on
+    both directions at once."""
+    seasons = pl.concat([
+        _confident_season(2022, -3.0), _confident_season(2023, -3.0),
+        _confident_season(2024, -3.0),
+        _tied_season(2025, -0.05, seed=1),
+    ])
+    summary = experiment.summarise(seasons, cluster=experiment.SEASON_CLUSTER, bootstrap=2000)
+    per = experiment.per_season(seasons, within=("unit",), bootstrap=2000)
+    status, said = experiment.gate(summary, per, _ACTIONS)
+    assert status == "SHOW", (status, said)
+    assert "won 0, tied 1, lost 3 of 4" in said
+
+
+def test_four_confident_wins_still_adopts_with_the_tie_aware_rule():
+    """The rule is not stricter than it needs to be: four seasons that all clear `2 * se`
+    still ADOPT, exactly as four confident sign-wins always did."""
+    seasons = pl.concat([_confident_season(y, 3.0) for y in (2022, 2023, 2024, 2025)])
+    summary = experiment.summarise(seasons, cluster=experiment.SEASON_CLUSTER, bootstrap=2000)
+    per = experiment.per_season(seasons, within=("unit",), bootstrap=2000)
+    status, said = experiment.gate(summary, per, _ACTIONS)
+    assert status == "ADOPT", (status, said)
+    assert "won 4, tied 0, lost 0 of 4" in said
+
+
+def test_below_tie_min_clusters_the_disposition_falls_back_to_the_sign():
+    """Fewer than `TIE_MIN_CLUSTERS` within-season units and `_disposition` reads the sign
+    alone, whatever the bootstrap SE would have said -- the documented fallback, held rather
+    than only asserted in prose."""
+    assert experiment.TIE_MIN_CLUSTERS == 12
+    assert experiment._disposition(0.01, se=100.0, m=11) == "win"
+    assert experiment._disposition(-0.01, se=100.0, m=11) == "loss"
+    assert experiment._disposition(0.0, se=100.0, m=11) == "tie"
+    # And at or above the floor, a huge se against a tiny gain is read as a genuine tie.
+    assert experiment._disposition(0.01, se=100.0, m=12) == "tie"
+
+
+def test_a_win_is_exactly_at_the_boundary_gain_equal_to_two_se():
+    """The stated boundary: `gain >= 2 * se` is a win, not `>`."""
+    assert experiment._disposition(2.0, se=1.0, m=20) == "win"
+    assert experiment._disposition(-2.0, se=1.0, m=20) == "loss"
+    assert experiment._disposition(1.999, se=1.0, m=20) == "tie"
+    assert experiment._disposition(-1.999, se=1.0, m=20) == "tie"
 
 
 # --- the published verdicts must still fall out of the unified rule ------------
@@ -1154,12 +1271,20 @@ BLOCK_SWEEP_DIGEST = "ccd649a3bb41755a"
 
 # **Moved by #357 (S1), 2026-09-21 -- wording only, checked rather than assumed.** `gate` now
 # reads `t_lo`/`t_hi` rather than `lo`/`hi`, and `_gate_summary` sets `t_lo = lo`, `t_hi = hi`
-# by default, so every one of the 80 boolean decisions is unchanged (verified against the
-# pre-#357 `gate` on this exact grid: 4 ADOPT, 9 REMOVE, 67 SHOW, both before and after). What
-# moved is the sentence: ADOPT and REMOVE now quote the interval as "the t interval [...]"
-# rather than "the interval". `_gate_sweep({})` still hands in neither an `mde` nor a
-# `ceiling`, so the NOT-RUNNABLE branch still cannot fire.
-GATE_SWEEP_DIGEST = "21705831f8b46aee"
+# by default, so every one of the 80 boolean decisions was unchanged at that point (verified
+# against the pre-#357 `gate` on this exact grid: 4 ADOPT, 9 REMOVE, 67 SHOW, both before and
+# after). What moved was the sentence: ADOPT and REMOVE quoted the interval as "the t interval
+# [...]" rather than "the interval". `21705831f8b46aee`.
+#
+# **Moved again by #335, 2026-09-21 -- three verdicts, not only wording.** `_gate_seasons`
+# carries no `se`/`m` columns, so every season here reads the sign alone (`_disposition`'s own
+# fallback) -- but a tie is no longer folded into "not won" silently: the `(0.0, 0.0, 0.0)`
+# gains row is now three *ties*, and a tie blocks REMOVE exactly as it blocks ADOPT. The three
+# REMOVE-eligible intervals paired with that gains row -- `(-1.2, -0.4)`, `(-1.2, -0.1)`,
+# `(-23.16, -16.20)` -- move to SHOW: **4 ADOPT, 6 REMOVE, 70 SHOW.** Nothing else in the grid
+# has an exact-zero season gain, so nothing else moves; the wording also grew `tied`/`lost`
+# beside `won`, which the digest already had to move for.
+GATE_SWEEP_DIGEST = "aacfc9608b427b20"
 
 
 def test_the_whole_rendered_sweep_is_byte_identical():
@@ -1314,7 +1439,7 @@ def test_a_runnable_gate_still_does_not_adopt_at_two_of_three_seasons():
     summary = _gate_summary(0.1, 1.2) | {"mde": 0.44, "ceiling": 1.2}
     status, said = experiment.gate(summary, _gate_seasons([0.4, 0.3, -0.2]), _ACTIONS)
     assert status == "SHOW"
-    assert "Won 2/3 seasons" in said
+    assert "won 2, tied 0, lost 1 of 3 seasons" in said
     assert "the sign is not consistent across seasons" in said
 
 

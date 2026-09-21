@@ -511,6 +511,7 @@ def test_event_seasons_needed_is_the_smallest_k_whose_mde_clears_the_target():
 
 def _paired(seasons, n=6, diff=0.05):
     return pl.DataFrame({"season": [s for s in seasons for _ in range(n)],
+                         "game_id": [f"g{s}_{i}" for s in seasons for i in range(n)],
                          "diff": [diff] * (n * len(seasons)),
                          "ceiling": [0.5] * (n * len(seasons))})
 
@@ -577,6 +578,7 @@ def test_the_ceiling_arm_can_make_stage_2_fire(tmp_path):
     sentence, not the count-of-event-seasons one the guard above prints."""
     paired = pl.DataFrame({
         "season": [2026, 2026, 2027, 2027, 2028, 2028],
+        "game_id": ["a", "b", "c", "d", "e", "f"],
         "diff": [0.30, 0.28, -0.25, -0.30, 0.05, -0.05],
         "ceiling": [0.001] * 6,
     })

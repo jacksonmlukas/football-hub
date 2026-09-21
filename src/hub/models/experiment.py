@@ -57,7 +57,7 @@ from hub.config import (
     frames_digest,
     resolved_config,
 )
-from hub.declare import not_an_input
+from hub.declare import chosen, not_an_input
 from hub.names import player_key
 from hub.paths import STATE_DIR
 
@@ -216,6 +216,18 @@ MIN_SE = not_an_input(
     "the significance bar every gate reads: a setting, declared here so it is "
     "declared once, and a decision about which runs are published rather than what "
     "one says")
+
+# #335 -- below this many within-season clusters, a season's win/tie/loss test falls back to
+# the sign alone rather than trusting a bootstrap SE built on too few units to mean anything.
+# Chosen, not fitted: the relative error of a sample standard deviation is approximately
+# `1 / sqrt(2 * (m - 1))` under normality, and 12 puts that near 20% -- a stated choice, the
+# way `hub.declare.chosen` marks it, and never placed on any one gate's default so an
+# off-by-one in an unrelated flag cannot flip the rule's shape for every gate at once.
+TIE_MIN_CLUSTERS = chosen(12)
+
+# The paired bootstrap, matching `hub.models.eval.compare`. Declared here, ahead of
+# `paired_gain`, `summarise` and `_cluster_se`, which all default to it.
+BOOTSTRAP = 4000
 
 
 # What one independent observation is, for every gate in this repo. One name, declared once,
@@ -514,34 +526,115 @@ def expanding_weeks(
 
 
 class Gain(NamedTuple):
-    """The four numbers a two-half gate reads. Numbers only -- it decides nothing."""
+    """The numbers a two-half gate reads. Numbers only -- it decides nothing.
+
+    `wins`, `ties` and `losses` since #335: a season is a *tie* rather than a win or a loss
+    when its gain does not clear its own within-season noise (`_disposition`), and a tie
+    blocks both directions -- it is not a win for ADOPT and not a loss for REMOVE. `wins +
+    ties + losses == seasons` always.
+    """
     mean: float
     se: float
     t: float
     wins: int
     seasons: int
+    ties: int = 0
+    losses: int = 0
+
+
+def _bootstrap_se(units: npt.NDArray[np.float64], *, bootstrap: int, seed: int) -> float:
+    """The nonparametric percentile bootstrap's own by-product: the standard deviation of the
+    resampled means of `units`. NaN below two units -- no spread to resample a shape from.
+
+    The one piece `_cluster_se` (row-array callers) and `per_season` (frame callers, which
+    already have their own grouped units) share, so clustering a DataFrame by column names and
+    clustering a raw array by a parallel label array do not duplicate the resampling itself.
+    """
+    m = len(units)
+    if m < 2:
+        return float("nan")
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, m, size=(bootstrap, m))
+    draws = units[idx].mean(axis=1)
+    return float(draws.std(ddof=1)) if len(draws) > 1 else float("nan")
+
+
+def _cluster_se(diff: npt.NDArray[np.float64], within: npt.NDArray, *,
+                bootstrap: int, seed: int) -> tuple[float, int]:
+    """Bootstrap SE of `diff`'s mean, clustered on `within`, over these rows alone.
+
+    Used by `paired_gain`, whose `within` is a row-parallel array of labels rather than a
+    DataFrame's column names (`per_season` groups its own frame directly and calls
+    `_bootstrap_se` on the result) -- one computation for "how much does this season's own
+    repeated-measure unit say the mean could have moved", read the two ways each caller's
+    data already arrives in. Returns `(se, m)`: `m` is the cluster count the SE was computed
+    over, and is always returned even when `se` comes back NaN, because `TIE_MIN_CLUSTERS`
+    reads `m` on its own.
+    """
+    keys = pl.DataFrame({"within": within, "diff": diff})
+    units = (keys.group_by("within").agg(pl.col("diff").mean().alias("_u"))
+                 ["_u"].to_numpy().astype(float))
+    return _bootstrap_se(units, bootstrap=bootstrap, seed=seed), len(units)
+
+
+def _disposition(gain: float, se: float, m: int) -> str:
+    """`"win"`, `"tie"` or `"loss"` for one season, per ADR-0019's #335 amendment.
+
+    **The rule.** A season is a win if `gain >= 2 * se` over its within-season clusters, a
+    loss if `gain <= -2 * se`, a tie between. **Below `TIE_MIN_CLUSTERS`** -- too few clusters
+    for a bootstrap SE to mean anything, `m` included -- **the test falls back to the sign
+    alone**: win if strictly positive, loss if strictly negative, tie at exactly zero (the
+    same three-way split, read off the sign rather than the bootstrap).
+    """
+    if not math.isfinite(se) or m < TIE_MIN_CLUSTERS:
+        return "win" if gain > 0 else "loss" if gain < 0 else "tie"
+    if gain >= 2.0 * se:
+        return "win"
+    if gain <= -2.0 * se:
+        return "loss"
+    return "tie"
 
 
 def paired_gain(base_err: npt.ArrayLike, arm_err: npt.ArrayLike, *,
-                base_mae: npt.ArrayLike, arm_mae: npt.ArrayLike) -> Gain:
-    """Mean paired gain of `arm` over `base`, its standard error, t, and seasons won.
+                season: npt.ArrayLike, within: npt.ArrayLike,
+                bootstrap: int = BOOTSTRAP, seed: int = 0) -> Gain:
+    """Mean paired gain of `arm` over `base`, its standard error, t, and the every-season half.
 
     Both halves of the repo's usual gate come from here: `t` for the significance half and
-    `wins`/`seasons` for the every-season half. Positive `mean` means the arm has the smaller
-    error, since the difference is taken as base minus arm.
+    `wins`/`ties`/`losses` for the every-season half. Positive `mean` means the arm has the
+    smaller error, since the difference is taken as base minus arm.
 
     The errors are *per observation* and paired -- the same player-week scored by both arms --
     which is why the standard error is of the difference rather than of either arm, and why
-    the two arms' seasonal composition cannot contaminate the comparison. The per-season means
-    come in separately rather than being regrouped here, because each caller already has them
-    for its own printing.
+    the two arms' seasonal composition cannot contaminate the comparison.
+
+    **`season` and `within`, since #335, row-parallel to `base_err`/`arm_err` and required --
+    no default, for the reason `summarise`'s `cluster` and `per_season`'s `within` have none:
+    guessing the repeated-measure unit is the mistake, not a convenience a caller can skip.**
+    `season` is which held-out season a row belongs to; `within` is that gate's own
+    repeated-measure unit inside a season (`docs/method.md` rule 3), the same one its
+    `run_gate` call declares. A season's disposition is `_disposition` on its own mean gain
+    and its own within-season bootstrap SE (`_cluster_se`) -- exactly what `per_season`
+    computes for the gates that go through `gate`, so a verdict that bypasses `gate` (this
+    module's three callers) reads the seasons the same way one that does not would.
     """
     d = np.asarray(base_err, dtype=float) - np.asarray(arm_err, dtype=float)
     se = float(d.std(ddof=1) / np.sqrt(len(d))) if len(d) > 1 else 0.0
     t = float(d.mean() / se) if se > 0 else 0.0
-    per = np.asarray(arm_mae, dtype=float)
-    wins = int((per < np.asarray(base_mae, dtype=float)).sum())
-    return Gain(float(d.mean()) if len(d) else 0.0, se, t, wins, len(per))
+    season_arr = np.asarray(season)
+    within_arr = np.asarray(within)
+    wins = ties = losses = 0
+    for yr in sorted(set(season_arr.tolist())):
+        mask = season_arr == yr
+        d_s = d[mask]
+        gain_s = float(d_s.mean()) if len(d_s) else 0.0
+        se_s, m_s = _cluster_se(d_s, within_arr[mask], bootstrap=bootstrap, seed=seed)
+        disp = _disposition(gain_s, se_s, m_s)
+        wins += disp == "win"
+        ties += disp == "tie"
+        losses += disp == "loss"
+    return Gain(float(d.mean()) if len(d) else 0.0, se, t, wins, wins + ties + losses,
+               ties, losses)
 
 def _stats(season: int) -> pl.DataFrame:                        # pragma: no cover - network
     from hub.fetch import nflverse
@@ -794,10 +887,6 @@ def review_width(name: str, summary: Mapping[str, float], *,
     return said.lines
 
 
-# The paired bootstrap, matching `hub.models.eval.compare`.
-BOOTSTRAP = 4000
-
-
 def realised_ppg(stats: pl.DataFrame) -> pl.DataFrame:
     """Realised fantasy points per player per week, from nflverse weekly player stats.
 
@@ -913,19 +1002,71 @@ class Actions(NamedTuple):
     show: str
 
 
-def per_season(paired: pl.DataFrame) -> pl.DataFrame:
+def per_season(paired: pl.DataFrame, *, within: Sequence[str],
+               bootstrap: int = BOOTSTRAP, seed: int = 0) -> pl.DataFrame:
     """Mean paired difference per held-out season -- the every-season half of the bar.
 
     An empty frame answers with the empty table. `weekly_gate.compare` returns a frame with
     no rows *and no columns* when nothing is covered, and a `group_by` on a season column
     that is not there is a traceback where the verdict already knows what to say -- nothing
     was measured.
+
+    **`within`, since #335, no default -- for the reason `summarise`'s `cluster` has none.**
+    ADR-0019's amendment: a season only counts as a *win* if its gain clears its own noise,
+    and "its own noise" is a bootstrap over the within-season repeated-measure unit --
+    `docs/method.md` rule 3's unit, named per gate in `run_gate`'s own call site. Adds `se`
+    (`_bootstrap_se` over that season's own `within`-clustered unit means) and `m` (the
+    cluster count it was computed over) beside `gain` and `n`; `gate` reads both through
+    `_disposition` rather than `gain`'s sign alone. `se` is NaN when a season has fewer than
+    two `within` clusters -- `_bootstrap_se`'s own guard -- and `_disposition` reads `m`
+    regardless of whether `se` is a number, since `m < TIE_MIN_CLUSTERS` is its own reason to
+    fall back to the sign.
     """
+    schema = {"season": pl.Int64, "gain": pl.Float64, "n": pl.UInt32,
+             "se": pl.Float64, "m": pl.Int64}
     if paired.is_empty():
-        return pl.DataFrame(schema={"season": pl.Int64, "gain": pl.Float64, "n": pl.UInt32})
-    return (paired.group_by("season")
+        return pl.DataFrame(schema=schema)
+    base = (paired.group_by("season")
                   .agg(pl.col("diff").mean().alias("gain"), pl.len().alias("n"))
                   .sort("season"))
+    keys = list(within)
+    se_col, m_col = [], []
+    for yr in base["season"].to_list():
+        rows = paired.filter(pl.col("season") == yr)
+        # **Sorted**, the same fix `summarise` already carries (issue #45's second bug): a
+        # `group_by` without `maintain_order` arrives in an order that can vary call to call,
+        # and the bootstrap indexes into that order positionally, so a permutation of `units`
+        # with the same seed draws a different resample -- silently, and it moved
+        # `docs/weekly-blend-gate.md`'s own CI once. `.sort(keys)` makes this deterministic.
+        units = (rows.group_by(keys).agg(pl.col("diff").mean().alias("_u"))
+                     .sort(keys)["_u"].to_numpy().astype(float))
+        se_col.append(_bootstrap_se(units, bootstrap=bootstrap, seed=seed))
+        m_col.append(len(units))
+    return base.with_columns(pl.Series("se", se_col, dtype=pl.Float64),
+                             pl.Series("m", m_col, dtype=pl.Int64))
+
+
+def _seasons_won_tied_lost(seasons: pl.DataFrame) -> tuple[int, int, int]:
+    """`(won, tied, lost)` over every row of `seasons`, per `_disposition`.
+
+    **Backward compatible with a `seasons` frame that has no `se`/`m` columns**, which every
+    hand-built summary in this repo's test suite is -- `_disposition` itself falls back to the
+    sign alone when `m < TIE_MIN_CLUSTERS`, and a frame with no `m` column at all is read as
+    `m = 0`, which is always below the floor. So a caller that has not adopted `per_season`'s
+    `within` yet reads exactly the pre-#335 sign test, and a `seasons["gain"] == 0` row -- the
+    boundary the old rule folded into "not won" -- is a tie under both the old and new
+    reading, which is why it was never a REMOVE-blocking case before either.
+    """
+    has_se = "se" in seasons.columns and "m" in seasons.columns
+    won = tied = lost = 0
+    for r in seasons.iter_rows(named=True):
+        se = r["se"] if has_se else float("nan")
+        m = int(r["m"]) if has_se else 0
+        disp = _disposition(float(r["gain"]), se, m)
+        won += disp == "win"
+        tied += disp == "tie"
+        lost += disp == "loss"
+    return won, tied, lost
 
 
 def gate(summary: dict, seasons: pl.DataFrame, actions: Actions,
@@ -985,6 +1126,13 @@ def gate(summary: dict, seasons: pl.DataFrame, actions: Actions,
     `tests/unit/test_experiment.py::test_the_fixed_rule_s_null_size_is_not_degenerate` (and
     its sibling planted against the *old* rule) for the simulation that checks it rather than
     arguing it.
+
+    **The every-season half is tie-aware, since #335.** ADOPTED (A) with (i): a season is a
+    *win* only if its gain clears `2 * se` over its own within-season clusters (`_disposition`,
+    reading `seasons["se"]`/`seasons["m"]` when `per_season` computed them, falling back to
+    the sign alone otherwise or below `TIE_MIN_CLUSTERS`); a *tie* is neither a win nor a loss
+    and blocks **both** directions, symmetrically -- it is not a win ADOPT needs in every
+    season, and it is not a loss REMOVE needs in every season either.
     """
     if void:
         return "VOID", void
@@ -1000,16 +1148,17 @@ def gate(summary: dict, seasons: pl.DataFrame, actions: Actions,
             f"with the data that exists.")
     if not summary.get("clusters"):
         return "SHOW", f"{actions.show} Nothing measured -- no paired observation."
-    won = int((seasons["gain"] > 0).sum())
+    won, tied, lost = _seasons_won_tied_lost(seasons)
     total = seasons.height
     t_lo = summary.get("t_lo", float("nan"))
     t_hi = summary.get("t_hi", float("nan"))
     has_interval = reading(summary, "t_lo") is Field.VALUE
+    tally = f"won {won}, tied {tied}, lost {lost} of {total} seasons"
     if has_interval and t_lo > 0 and won == total:
-        return "ADOPT", (f"{actions.adopt} It won in every held-out season ({won}/{total}) "
+        return "ADOPT", (f"{actions.adopt} It won in every held-out season ({tally}) "
                          f"and the t interval [{t_lo:+.3f}, {t_hi:+.3f}] excludes zero.")
-    if has_interval and t_hi < 0 and won == 0:
-        return "REMOVE", (f"{actions.remove} Worse in every held-out season ({total}/{total}) "
+    if has_interval and t_hi < 0 and lost == total:
+        return "REMOVE", (f"{actions.remove} Worse in every held-out season ({tally}) "
                           f"and the t interval [{t_lo:+.3f}, {t_hi:+.3f}] excludes zero.")
     if not has_interval:
         why = "too few clusters for a t interval"
@@ -1017,8 +1166,8 @@ def gate(summary: dict, seasons: pl.DataFrame, actions: Actions,
         why = "the interval contains zero"
     else:
         why = "the interval excludes zero but the sign is not consistent across seasons"
-    return "SHOW", (f"{actions.show} Won {won}/{total} seasons and {why} -- absence of "
-                    f"evidence, not evidence of equivalence.")
+    return "SHOW", (f"{actions.show} {tally} and {why} -- absence of evidence, not evidence "
+                    f"of equivalence.")
 
 
 # --- one gate run: the sequence around the rule, written once (issue #135) -----------------
@@ -1158,11 +1307,11 @@ def stamped_for_publication(paired: pl.DataFrame,
     return stamped, said
 
 
-def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, actions: Actions,
-             name: str, arm_a: str, arm_b: str, unit: str = "points per team game",
-             places: int = 2, show_n: bool = True, void: str | None = None,
-             ceiling: Ceiling | None = None, seed: int = 0, bootstrap: int = BOOTSTRAP,
-             boards: Mapping[int, ReportedFrame] | None = None,
+def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Sequence[str],
+             actions: Actions, name: str, arm_a: str, arm_b: str,
+             unit: str = "points per team game", places: int = 2, show_n: bool = True,
+             void: str | None = None, ceiling: Ceiling | None = None, seed: int = 0,
+             bootstrap: int = BOOTSTRAP, boards: Mapping[int, ReportedFrame] | None = None,
              width_path: Path = WIDTH_STATE, record_width: bool = True) -> GateRun:
     """One gate run: summarise, break out by season, take the verdict, render, stamp.
 
@@ -1172,6 +1321,12 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, actions: Ac
     that guessed one would make that mistake in every gate at once, silently, with the same
     interval shape a correct run produces. So each gate states its own at its own call site,
     and `tests/contracts/test_gates_cluster_on_the_season.py` reads the argument off the call.
+
+    **`within` has no default either, since #335, for the same reason.** It is
+    `per_season`'s own repeated-measure unit -- `docs/method.md` rule 3's unit, named per gate:
+    `draft` for the draft backtest, `roster` for the weekly and lineup gates, `player_id` for
+    the coverage gate, the event (a declared no-op) for the quarterback gate. See
+    `tests/contracts/test_gates_tie_test_names_its_within_season_unit.py`.
 
     `name` keys the interval-width history in `WIDTH_STATE`, so three gates do not overwrite
     each other's; `record_width=False` is for a test, which has no history to keep.
@@ -1196,7 +1351,7 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, actions: Ac
     """
     top = None if ceiling is None else float(np.asarray(ceiling.diff, dtype=float).mean())
     summary = summarise(paired, cluster=cluster, bootstrap=bootstrap, seed=seed, ceiling=top)
-    seasons = per_season(paired)
+    seasons = per_season(paired, within=within, bootstrap=bootstrap, seed=seed)
     verdict = gate(summary, seasons, actions, void=void)
     stamped, stamp = stamped_for_publication(paired, boards)
     lines = [

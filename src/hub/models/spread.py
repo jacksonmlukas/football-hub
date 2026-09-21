@@ -317,6 +317,11 @@ def walk_forward(pr: pl.DataFrame) -> pl.DataFrame:
     test. The same player-season is scored by every candidate, so the comparison is not
     contaminated by which players happened to land in which season -- and the standard
     error is of the difference, which is far tighter than the error of either arm.
+
+    `player_id` rides along (#335): nothing about a row's error is computed from it, it is
+    carried through from `test` so `verdict`'s every-season half can bootstrap a season's own
+    within-season SE over players -- `docs/method.md` rule 3's repeated-measure unit -- rather
+    than only reading the season's sign.
     """
     frames = []
     for season, train, test in expanding_seasons(pr):
@@ -326,6 +331,7 @@ def walk_forward(pr: pl.DataFrame) -> pl.DataFrame:
         actual = test["sd_next"].to_numpy().astype(float)
         frames.append(pl.DataFrame(
             {"season": [season] * test.height, "w": [w] * test.height,
+             "player_id": test["player_id"],
              **{f"err_{c}": np.abs(_predict(test, c, w=w, coef=coef) - actual)
                 for c in CANDIDATES}}))
     return pl.concat(frames) if frames else pl.DataFrame()
@@ -359,11 +365,14 @@ def verdict(errs: pl.DataFrame) -> tuple[str, str]:
     for c in CANDIDATES:
         if c == "positional":
             continue
+        # `within="player_id"` (#335): the every-season half now asks whether a season's gain
+        # clears its own within-season noise, and `player_id` -- rule 3's repeated-measure
+        # unit -- rides along on `walk_forward`'s output rows for exactly this. A tie already
+        # fails `g.wins == seasons` on its own, since `wins + ties + losses == seasons`.
         g = paired_gain(base, errs[f"err_{c}"].to_numpy(),
-                        base_mae=per["mae_positional"].to_numpy(),
-                        arm_mae=per[f"mae_{c}"].to_numpy())
+                        season=errs["season"].to_numpy(), within=errs["player_id"].to_numpy())
         lines.append(f"  {c}: mean gain {g.mean:+.4f} MAE at {g.t:.1f} se, "
-                     f"wins {g.wins}/{seasons} seasons")
+                     f"wins {g.wins}, ties {g.ties}, losses {g.losses} of {seasons} seasons")
         if g.wins == seasons and g.t >= MIN_SE and g.mean > best:
             winner, best = c, g.mean
     body = "\n".join(lines)

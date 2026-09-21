@@ -168,3 +168,156 @@ That is a pre-registration question — whether a pre-registration may be re-rea
 it names was built — and it is open as **#138**. The mechanism here takes the arm as a
 parameter and never inspects which arm produced the number it was handed;
 `hub.season.lineup_gate.DECLARED_CEILING_ARM` is the one line #138 changes.
+
+---
+
+# Amendment, 2026-09-21: the every-season half says what a tie is (#335)
+
+Filed 2026-09-19 in the pilot for #305's pre-registration; **ADOPTED 2026-09-20** by the
+maintainer: **(A) with (i)**, below. Landed in S1's lane (#357) per the maintainer's own
+disposition on #357, exempt from the #326 freeze as the finding that holds it open.
+
+**Amended rather than replaced.** Nothing above is withdrawn. The pooled-interval half is
+exactly what it was before this amendment — see the 2026-09-21 note at the end of this
+section for the one thing that changed about it, under a different issue — and the
+every-season half is still "the sign must hold in every held-out season." What changes is
+what *counts* as holding: a season is no longer read on its raw sign alone.
+
+## The defect
+
+`experiment.paired_gain`'s `wins` was `(arm_mae < base_mae).sum()` — a strict inequality on
+the point estimate, with no notion of resolution. Found 2026-09-19 while pre-registering
+#305's MDE: the published rebuild-vs-flat contrast reads `wins 4/4`, and its 2024 gain is
+**+0.00005** MAE per player-week — the two arms differ on 4,089 of 4,343 rows and net to
+zero. That season is counted as a win. "4/4" was doing the work "3 wins and a tie" would not,
+and nothing in this ADR or the code said which it was.
+
+## The rule
+
+**(A) A tie is not a win, and ADOPT requires a win in every season; a tie is not a loss for
+REMOVE, which needs a loss in every season.** A tie is absence of evidence in that season,
+and both directions need evidence in *every* season — symmetric, conservative both ways. This
+is option (A) from the pilot; option (B), skipping ties and reading only the resolved
+seasons, was rejected as a way for fewer seasons to license a verdict, and option (C), a tie
+counting as whatever its sign says, is the defect made explicit.
+
+**(i) A season is a win if `gain >= 2 * SE` over its within-season clusters, a loss if
+`gain <= -2 * SE`, a tie between.** The within-season unit is rule 3's (`docs/method.md`) —
+never the row — and is named per gate, below. **Below `TIE_MIN_CLUSTERS = 12`** (chosen,
+`hub.models.experiment.TIE_MIN_CLUSTERS`; the relative error of a sample SD is approximately
+`1 / sqrt(2 * (m - 1))` under normality, and 12 puts that near 20% — never placed on any
+one gate's own default, so an off-by-one in an unrelated flag cannot flip the rule's shape
+for every gate at once) **the tie test falls back to the sign alone**, and says so: `m` is
+printed beside the threshold, per season, in every verdict sentence.
+
+The quarterback gate (`hub.models.starter_change`) is a no-op, named as one: its paired frame
+is already one row per event-season, so its within-season unit is the event, and the
+within-season SE this computes is over rows — exactly what it would do anyway.
+
+## Per-gate within-season units
+
+| gate | within-season unit | why |
+|---|---|---|
+| draft (`hub.draft.backtest`) | `draft` | the room a season's rosters were drafted in |
+| weekly (`hub.season.weekly_gate`) | `roster` | one row per (season, roster, week) |
+| lineup (`hub.season.lineup_gate`) | `roster` | one row per (season, roster) |
+| coverage (`hub.models.coverage`) | `player_id` | rule 3's own unit |
+| quarterback (`hub.models.starter_change`) | the event (`game_id`) — **a no-op** | already one row per event-season |
+| the margin/shape house rule (`hub.models.margin`) | `season` — **a declared no-op** | `paired` is already one row per season; no finer unit exists |
+| injury type (`hub.models.injury`) | `season` — **a declared no-op, and deliberately so** | `#360` is frozen; see below |
+
+`injury.type_verdict` is frozen by #326/#360 (S3) — this amendment's own lane is not, so the
+statistics function it calls changed signature under it, but the module's *decision* does
+not move. Its `within` is set to its own `season` column, which makes every season's group
+size exactly 1 by construction — always below `TIE_MIN_CLUSTERS` — so `_disposition` falls
+back to the sign unconditionally, reading exactly `arm_mae < base_mae` in every season, the
+same condition this line read before #335 (`gain_s`, the mean of `err_retention - err_type`
+over a season, is `mae_retention - mae_type` by construction). Nothing about the frozen
+verdict moves; only the printed line grows `ties`/`losses`, both always 0 there.
+
+## Where it lives in code
+
+`experiment.per_season` and `experiment.paired_gain` both take `within` with **no default**,
+for the reason `summarise`'s `cluster` has none: guessing the repeated-measure unit is the
+mistake, not a convenience a caller can skip. `per_season` gains `se` and `m` columns;
+`experiment.gate`'s every-season half reads them through `_disposition` rather than
+`seasons["gain"]`'s sign, falling back to the sign alone when a `seasons` frame carries
+neither column (every hand-built summary in this repo's own test suite, so the pre-#335
+branch-logic tests are unaffected) or when a season's own `m` is below the floor.
+`paired_gain` returns `wins`, `ties` and `losses`, computed the same way, for the three
+verdicts that bypass `gate` (`hub.models.weekly`, `hub.models.injury`, `hub.models.spread`).
+Every verdict sentence prints all three counts.
+`tests/contracts/test_gates_tie_test_names_its_within_season_unit.py` holds the five
+`run_gate` call sites' `within` argument against the table above.
+
+## Pre-registered condition 1: the size test proven against a planted degenerate rule
+
+Landed with #357 (S1), the ticket that also fixed the interval half: `docs/method.md` rule
+15's shape — a size test that only ever passes is not evidence the check works. Two
+permanent tests, `tests/unit/test_experiment.py::test_the_size_check_flags_a_planted_degenerate_rule`
+and `::test_the_fixed_rule_s_null_size_is_not_degenerate`, simulate the pre-#357 rule
+(planted, expected degenerate at `~2**-k`) and the fixed rule (expected well under it) under
+the same null, through the same `_null_adopt_rate` harness.
+
+## Pre-registered condition 2 (rule 16): the combined rule's null size and power
+
+Computed **before** this amendment was written, per `scripts/rule16_combined_power.py` —
+numpy and the shipped `experiment.summarise`/`per_season`/`gate`, nothing reimplemented.
+10,000 trials per cell, bootstrap 200, at the repo's own published season-clustered figures
+from #357's (S1) table, with within-season cluster counts `m=20` (draft) and `m=40` (weekly)
+as this condition's own pre-registration — neither gate's real within-season SD is published,
+so both simulations use the gate's own between-season `s` as a stated, conservative stand-in
+for it (see the script's docstring):
+
+| gate | k | s | m | δ | combined null size | combined power at δ | unanimity-alone power at δ (#357's table) |
+|---|---|---|---|---|---|---|---|
+| draft | 4 | 7.34 | 20 | 2.0 | **0.0113** | **0.0324** | 0.136 |
+| weekly blend | 4 | 0.382 | 40 | 0.3 | **0.0186** | **0.1925** | 0.378 |
+
+**Both null sizes sit comfortably under `ALPHA` (0.05)** — the tie requirement can only make
+the conjunction rarer than the interval-alone test, never more permissive, and the simulation
+confirms it rather than assuming it.
+
+**Combined power is below unanimity-alone power at both cells, and the rule lands anyway.**
+This is the pre-registered disposition, stated before the numbers were known: if combined
+power came in lower, the cost is the finding, not a reason to re-choose `TIE_MIN_CLUSTERS` or
+the `2 * SE` threshold after seeing this table. A tie-aware rule is stricter by construction —
+a season that would have counted as a win under the sign alone can now cost a season's worth
+of evidence — and at these SEs and cluster counts, that strictness measurably lowers power at
+a realistic delta. The alternative is the defect this amendment closes: a rule with less
+power is a rule that is actually testing what it claims to.
+
+## What it does not move, checked rather than hoped
+
+`tests/unit/test_experiment.py::test_the_eighty_gate_verdicts_are_unmoved` is a regression
+pin over a synthetic grid, not over a published headline figure — recomputed and the move
+documented at the test (three verdicts flip, all `(0.0, 0.0, 0.0)`-gains rows moving from
+REMOVE to SHOW, since an exact-zero season is now a tie rather than silently "not a win"). No
+published verdict in this repo is known to rest on a tie; #311's restatement work reads every
+published `wins k/k` under the new rule and says which, if any, do.
+
+---
+
+# Note, 2026-09-21 (#357): the interval half no longer reduces to the sign half
+
+Filed as its own ticket (S1, from the 2026-09-20 method audit) and landed first in this same
+lane, immediately ahead of #335 above — the pooled-interval half both amendments describe is
+the *same* half, and #335's "combined rule" (its own pre-registered condition 2) means the two
+landed together.
+
+`gate`'s ADOPT/REMOVE conjunction used to read the *percentile* bootstrap's `lo`/`hi`. Under
+`SEASON_CLUSTER`, a nonparametric percentile bootstrap over `k` clusters can only resample the
+`k` numbers it was handed, so when every season's gain is positive, every resample is a convex
+combination of positive numbers and `lo > 0` follows from `won == total` **by construction** —
+the interval half was the sign half, read twice, and the whole rule was a one-sided sign test
+of size `2**-k`. `gate` now reads a **t interval** (`t_lo`/`t_hi`, `experiment.t_interval`,
+computed from `mean`/`se`/`clusters`) instead — a distributional claim rather than a resampling
+one, not implied by the seasons' signs the same way. `summarise` also now computes `power`
+(`experiment.achieved_power`, the MDE relation inverted: power against the effect actually
+observed), which `paired_report` prints beside the MDE so a SHOW says what the design could
+detect. Full detail, the proof this is no longer degenerate, and the planted-rule test that
+would have caught the original defect are in `hub.models.experiment.t_interval`'s and
+`gate`'s own docstrings and `tests/unit/test_experiment.py`'s `#357 (S1)` section. No published
+verdict moves: the eighty-verdict sweep's boolean decisions are unchanged (only the rendered
+sentence's wording moved, checked against the pre-#357 `gate` on the same grid), and the three
+recorded-verdict regression cases (ADR-0009, ADR-0012, the frozen weekly gate) reproduce.

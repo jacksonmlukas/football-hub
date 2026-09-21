@@ -467,7 +467,7 @@ def test_the_shape_verdict_is_the_house_rule():
         paired = wf.select("season", pl.col("gain").alias("diff"))
         house, _ = experiment.gate(
             experiment.summarise(paired, cluster=experiment.SEASON_CLUSTER),
-            experiment.per_season(paired), margin.SHAPE_ACTIONS)
+            experiment.per_season(paired, within=("season",)), margin.SHAPE_ACTIONS)
         shape, sentence = margin.shape_verdict(wf)
         assert (shape == "lumpy") == (house == "ADOPT"), gains
         assert ("ADOPT" in sentence) == (house == "ADOPT"), gains

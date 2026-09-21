@@ -123,6 +123,15 @@ ACTIONS = experiment.Actions(
          "(docs/qb-adjustment.md, docs/gate-power.md); this log-loss picture is read beside "
          "it.")
 
+# #335, ADR-0019's amendment: this gate's paired frame is already one row per event-season
+# (`gate_rows`) -- so its within-season unit, the event, is a declared no-op: grouping by
+# `game_id` clusters one row per group, which is exactly the row-level bootstrap `per_season`
+# would run with no clustering at all. Named as a no-op per the ticket rather than left
+# implicit. A quarterback change is a rare event, so most seasons will sit under
+# `TIE_MIN_CLUSTERS` on event count alone and fall back to the sign -- not by construction the
+# way the frozen injury gate's choice is, but in practice for the same reason.
+WITHIN: tuple[str, ...] = ("game_id",)
+
 PASSER = "passer_player_id"
 
 TEAM_GAME_SCHEMA: dict[str, Any] = {
@@ -567,7 +576,7 @@ def run(paired: pl.DataFrame, *, needed: int | None, ceiling: bool = True,
     arm = (experiment.Ceiling(CEILING_ARM, paired["ceiling"].to_numpy())
            if ceiling and "ceiling" in paired.columns and paired.height else None)
     return run_gate(
-        paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="quarterback_gate",
+        paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS, name="quarterback_gate",
         arm_a="the frozen line", arm_b="quarterback-adjusted", unit="log-loss per event game",
         places=4, ceiling=arm,
         width_path=width_path if width_path is not None else experiment.WIDTH_STATE,

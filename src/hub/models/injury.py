@@ -295,18 +295,26 @@ def walk_forward_type(obs: pl.DataFrame, *, min_cell: int = MIN_CELL) -> pl.Data
 
 
 def type_verdict(errs: pl.DataFrame) -> tuple[str, str]:
-    """The gate declared above: every held-out season, and 2 se on the paired difference."""
+    """The gate declared above: every held-out season, and 2 se on the paired difference.
+
+    **`within=errs["season"]`, a declared no-op, and deliberately so (#335).** This module is
+    frozen by #326/#360 (S3): the module this ADR amendment applies to is on this ticket's own
+    lane, and #360 is not -- the freeze holds injury's *decision* still, not the shared
+    statistics function it calls, which changed signature under it. Passing the season column
+    itself as `within` makes every season's own within-season group size exactly 1 by
+    construction, which is always below `TIE_MIN_CLUSTERS`: `_disposition` falls back to the
+    sign alone unconditionally, so `g.wins == g.seasons` reads exactly `arm_mae < base_mae` in
+    every season, the same condition this line read before #335 -- `gain_s`, the mean of
+    `err_retention - err_type` over a season, is `mae_retention - mae_type` by construction,
+    so its sign is unchanged. Nothing about the frozen verdict moves; only the printed line
+    grows `ties`/`losses`, both always 0 here.
+    """
     if errs.is_empty() or "err_type" not in errs.columns:
         return "retention", "nothing measured -- no held-out season"
-    per = (errs.group_by("season")
-               .agg(pl.len().alias("n"), pl.col("err_retention").mean().alias("mae_retention"),
-                    pl.col("err_type").mean().alias("mae_type"))
-               .sort("season"))
     g = paired_gain(errs["err_retention"].to_numpy(), errs["err_type"].to_numpy(),
-                    base_mae=per["mae_retention"].to_numpy(),
-                    arm_mae=per["mae_type"].to_numpy())
+                    season=errs["season"].to_numpy(), within=errs["season"].to_numpy())
     line = (f"  type-adjusted: mean gain {g.mean:+.4f} MAE at {g.t:.1f} se, "
-            f"wins {g.wins}/{g.seasons} seasons")
+            f"wins {g.wins}, ties {g.ties}, losses {g.losses} of {g.seasons} seasons")
     if g.wins == g.seasons and g.t >= MIN_SE:
         return "type", (f"ADOPT 'type': the injury type adds to (status, practice).\n{line}")
     return "retention", (f"KEEP 'retention': what is wrong with him adds nothing measurable "
