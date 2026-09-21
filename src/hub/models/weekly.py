@@ -472,15 +472,19 @@ def walk_forward(panel: pl.DataFrame) -> pl.DataFrame:
 
 
 def _contrast(errs: pl.DataFrame, base: str, arm: str, label: str) -> list[str]:
+    """One line: mean gain, its t, and the tie-aware every-season count (#335).
+
+    `within="week"` -- the finest repeated-measure unit `errs` still carries. Rule 3's own
+    unit is the player, but `walk_forward` drops player identity from its output frame, so
+    week is what is available here without widening this ticket into a change to that frame's
+    shape; it still separates the within-season scatter from the between-season one, which is
+    the property the tie test needs.
+    """
     from hub.models.experiment import paired_gain
-    per = (errs.group_by("season")
-               .agg(pl.col(f"err_{base}").mean().alias("b"),
-                    pl.col(f"err_{arm}").mean().alias("a"))
-               .sort("season"))
     g = paired_gain(errs[f"err_{base}"].to_numpy(), errs[f"err_{arm}"].to_numpy(),
-                    base_mae=per["b"].to_numpy(), arm_mae=per["a"].to_numpy())
+                    season=errs["season"].to_numpy(), within=errs["week"].to_numpy())
     return [f"  {label:34} {g.mean:+.4f} MAE at {g.t:+5.1f} se, "
-            f"wins {g.wins}/{g.seasons} seasons"]
+            f"wins {g.wins}, ties {g.ties}, losses {g.losses} of {g.seasons} seasons"]
 
 
 # What `crps_weekly / err_weekly` would be if the published distribution were exactly right.

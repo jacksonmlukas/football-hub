@@ -38,8 +38,9 @@ def _verdict(summary, seasons):
 def _gate_run(paired, *, ceiling_arm=lg.DECLARED_CEILING_ARM, **kw):
     """This gate's call, as `main` spells it, with the width history pointed nowhere."""
     from hub.models.experiment import SEASON_CLUSTER, run_gate
-    return run_gate(paired, cluster=SEASON_CLUSTER, actions=lg.ACTIONS, name="lineup",
-                    arm_a="optimiser", arm_b="projections", unit=lg.UNIT, bootstrap=200,
+    return run_gate(paired, cluster=SEASON_CLUSTER, within=lg.WITHIN, actions=lg.ACTIONS,
+                    name="lineup", arm_a="optimiser", arm_b="projections", unit=lg.UNIT,
+                    bootstrap=200,
                     ceiling=lg.declared_ceiling(paired, ceiling_arm=ceiling_arm),
                     record_width=False, **kw)
 
@@ -50,8 +51,13 @@ def _yrs(gains):
 
 
 def _sum(lo, hi):
+    # `t_lo`/`t_hi` mirror the percentile bounds: #357 (S1) moved `gate`'s decision onto the
+    # t interval, and this double is testing the branch logic rather than the interval math,
+    # so it hands the rule the same bounds under both names. `ceiling` is huge and positive:
+    # #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling at all, and this double is testing
+    # ADOPT/REMOVE/SHOW, not stage 2.
     return {"n": 80.0, "clusters": 80.0, "mean": (lo + hi) / 2, "lo": lo, "hi": hi,
-            "p_better": 0.5}
+            "t_lo": lo, "t_hi": hi, "p_better": 0.5, "ceiling": 1e6}
 
 
 def test_an_interval_above_zero_in_every_season_trusts_the_optimiser():

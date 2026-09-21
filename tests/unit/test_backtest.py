@@ -37,8 +37,16 @@ def _yrs(gains):
 
 
 def _sum(lo, hi):
-    return {"n": 80.0, "clusters": 80.0, "mean": (lo + hi) / 2, "lo": lo, "hi": hi,
-            "p_better": 0.5}
+    # `t_lo`/`t_hi` mirror the percentile bounds: #357 (S1) moved `gate`'s decision onto the
+    # t interval, and this double is testing the branch logic rather than the interval math,
+    # so it hands the rule the same bounds under both names. `ceiling` is huge and
+    # same-signed as the mean: #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling at all, and
+    # this double is testing the ADOPT/REMOVE/SHOW branches, not stage 2 -- a ceiling this far
+    # from any MDE these tests produce never binds.
+    mean = (lo + hi) / 2
+    return {"n": 80.0, "clusters": 80.0, "mean": mean, "lo": lo, "hi": hi,
+            "t_lo": lo, "t_hi": hi, "p_better": 0.5,
+            "ceiling": 1e6 if mean >= 0 else -1e6}
 
 
 def test_an_interval_above_zero_in_every_season_promotes_equity():
@@ -1045,8 +1053,8 @@ def test_the_ceiling_bounds_the_arm_under_test_on_the_same_frame():
 def _gate_run(paired, bound):
     """This gate's call, as `main` spells it, with the width history pointed nowhere."""
     from hub.models.experiment import SEASON_CLUSTER, Ceiling, run_gate
-    return run_gate(paired, cluster=SEASON_CLUSTER, actions=bt.ACTIONS, name="draft",
-                    arm_a="optimizer", arm_b="market", bootstrap=200,
+    return run_gate(paired, cluster=SEASON_CLUSTER, within=bt.WITHIN, actions=bt.ACTIONS,
+                    name="draft", arm_a="optimizer", arm_b="market", bootstrap=200,
                     ceiling=Ceiling(bt.CEILING_ARM, bound["diff"]), record_width=False)
 
 
@@ -1569,16 +1577,24 @@ def test_the_floor_itself_and_an_empty_run_are_not_a_void():
 
 def test_below_the_floor_the_verdict_is_unchanged_from_today_for_the_same_inputs():
     """The acceptance criterion: a clean join hands the run no void, and the run with no void
-    is the run there was. Asserted on the summary, the season table and the verdict."""
-    from hub.models.experiment import SEASON_CLUSTER, run_gate
+    is the run there was. Asserted on the summary, the season table and the verdict.
+
+    A ceiling is handed in explicitly: #363 (S6) makes `gate` NOT-RUNNABLE with none at all,
+    and this test is about `void`, not about stage 2 -- a ceiling far above any MDE this
+    frame produces (the comparison is signed, so it must be a large *positive* number
+    regardless of this REMOVE frame's own negative effect) keeps REMOVE reachable.
+    """
+    from hub.models.experiment import SEASON_CLUSTER, Ceiling, run_gate
 
     paired = pl.DataFrame({"season": [2022, 2022, 2023, 2023, 2024, 2024, 2025, 2025],
                            "draft": [0, 1] * 4,
                            "diff": [-19.66 + 0.4 * i for i in range(8)]})
     rates = {"picks": 128.0, "market": 0.01, "optimizer": 0.005}
     assert bt.void_condition(rates) is None
-    kw = {"cluster": SEASON_CLUSTER, "actions": bt.ACTIONS, "name": "draft",
-          "arm_a": "optimizer", "arm_b": "market", "bootstrap": 200, "record_width": False}
+    ceiling = Ceiling("foresight", pl.Series([1e6] * paired.height))
+    kw = {"cluster": SEASON_CLUSTER, "within": bt.WITHIN, "actions": bt.ACTIONS, "name": "draft",
+          "arm_a": "optimizer", "arm_b": "market", "bootstrap": 200, "record_width": False,
+          "ceiling": ceiling}
     with_void = run_gate(paired, void=bt.void_condition(rates), **kw)
     before = run_gate(paired, **kw)
     assert with_void.summary == before.summary

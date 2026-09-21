@@ -117,15 +117,20 @@ def _verdict(summary, seasons, cover):
 def _gate_run(paired, **kw):
     """This gate's call, as `main` spells it, with the width history pointed nowhere."""
     from hub.models.experiment import SEASON_CLUSTER, run_gate
-    return run_gate(paired, cluster=SEASON_CLUSTER, actions=G.ACTIONS, name="weekly",
-                    arm_a="weekly", arm_b="consensus", unit=G.UNIT, places=G.PLACES,
-                    show_n=False, bootstrap=200, ceiling=G.declared_ceiling(paired),
-                    record_width=False, **kw)
+    return run_gate(paired, cluster=SEASON_CLUSTER, within=G.WITHIN, actions=G.ACTIONS,
+                    name="weekly", arm_a="weekly", arm_b="consensus", unit=G.UNIT,
+                    places=G.PLACES, show_n=False, bootstrap=200,
+                    ceiling=G.declared_ceiling(paired), record_width=False, **kw)
 
 
 def _summary(mean, lo, hi, clusters=60):
+    # `t_lo`/`t_hi` mirror the percentile bounds: #357 (S1) moved `gate`'s decision onto the
+    # t interval, and this double is testing the branch logic rather than the interval math,
+    # so it hands the rule the same bounds under both names. `ceiling` is huge and positive:
+    # #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling at all, and this double is testing
+    # ADOPT/REMOVE/SHOW, not stage 2.
     return {"n": 800.0, "clusters": float(clusters), "mean": mean, "lo": lo, "hi": hi,
-            "p_better": 1.0 if lo > 0 else 0.0}
+            "t_lo": lo, "t_hi": hi, "p_better": 1.0 if lo > 0 else 0.0, "ceiling": 1e6}
 
 
 def _seasons(gains):
@@ -163,7 +168,7 @@ def test_the_floor_itself_is_not_a_void():
 
 def test_adopt_needs_every_season_as_well_as_the_interval():
     status, note = _verdict(_summary(0.9, 0.3, 1.5), _seasons([-0.2, 1.4, 1.5]), None)
-    assert status == "SHOW" and "2/3" in note
+    assert status == "SHOW" and "won 2, tied 0, lost 1 of 3" in note
 
 
 def test_losing_in_every_season_removes_the_module():

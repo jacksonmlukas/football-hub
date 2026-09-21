@@ -525,6 +525,50 @@ verdict past a horizon this project will see, the pre-registration must say whic
 actually reachable and name the rest exemptions — not leave a module's published status resting
 on a branch that was never going anywhere else.
 
+### 17. A decision rule must be checked for degeneracy against its own inputs before it is pre-registered
+
+**A conjunction whose second term is implied by its first is one term, and writing it down as
+two is how a rule comes to be trusted for a strictness it does not have.**
+
+**The incident (M-S1, #357).** ADR-0019's Gate reads two halves as independent: the pooled
+interval excludes zero, and the sign holds in every held-out season. Under `SEASON_CLUSTER`,
+the cluster every gate in this repo resamples on, the bootstrap draws exactly the `k` season
+means the every-season half also reads — and a nonparametric percentile bootstrap over `k`
+clusters can only resample the `k` numbers it was handed, so when every one is positive, every
+resample is a convex combination of positive numbers and `lo > 0` follows from `won == total`
+**by construction**. The interval half was the sign half, read twice: a one-sided sign test of
+size `2**-k` — 12.5% at k=3, 6.25% at k=4, 3.1% at k=5 — wearing two names and quoted as a
+stricter rule than either alone.
+
+**What made it invisible.** Every safeguard this repo had was pointed at whether the rule was
+*followed* — argued in the ADR, spelled out in `gate()`'s own docstring, unit-tested branch by
+branch, held by a contract test asserting every gate clusters on the season. None of them asked
+whether the rule, followed exactly as written, decided anything a single term did not already
+decide on its own. A rule that is followed to the letter and still degenerate passes every test
+built to catch drift from the letter, because the letter is exactly what it is drifting inside.
+
+**The check, and why it is cheap.** Simulate the rule under the null — draw `k` season means
+with a true effect of zero, at a realistic `k` and cluster count — and confirm the realised
+ADOPT rate is the size the rule claims, not the sign test's `2**-k` it may have silently
+become. `docs/method.md` rule 15's shape applies here too: a size check that only ever passes
+is not evidence the check works, so `_null_adopt_rate`
+(`tests/unit/test_experiment.py::test_the_size_check_flags_a_planted_degenerate_rule`) is
+proven first against a *planted* degenerate rule — the pre-#357 rule itself, held permanently
+rather than as a one-off mutation — before it is trusted against the rule that replaced it
+(`::test_the_fixed_rule_s_null_size_is_not_degenerate`).
+
+**Where the rule lives in code.** `experiment.gate`'s interval half now reads a t interval
+(`t_interval`, off `mean`/`se`/`clusters`) rather than the percentile bootstrap's `lo`/`hi` — a
+distributional claim rather than a resampling one, not implied by the seasons' signs the same
+way (`t_interval`'s own docstring has the argument in full). The fix closes the incident; this
+rule is the diagnostic that should have run *before* the two-part rule was ever pre-registered,
+not only after a finding located the defect by hand.
+
+**What to ask before any conjunction is pre-registered.** Does the second term ever fail when
+the first term already holds? If every case that satisfies the first term also satisfies the
+second, the conjunction is one term with an extra clause, and simulating the rule under the
+null — not arguing about it — is what tells the two apart.
+
 ---
 
 ### Noted twice, not yet a rule: a dispersion fitted on observed variance absorbs the sampling noise of the thing it is fitted on
@@ -613,3 +657,4 @@ The most useful artifact in this repo is the record of what was measured and the
 | Why the ceiling closed a question | [player-spread.md](player-spread.md) |
 | Twenty-five decisions, with their trade-offs | [`docs/adr/`](adr/), indexed in [architecture.md](architecture.md) |
 | Objectives, and how objective 1 is judged | [decisions.md](decisions.md) |
+| What each of the fifteen measurements could detect, at 80% power | [detectable-effects.md](detectable-effects.md) |

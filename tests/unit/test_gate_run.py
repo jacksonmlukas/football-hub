@@ -43,8 +43,13 @@ def _paired(seed=0, seasons=4, per=6, shift=0.0):
 
 
 def _run(paired, **kw: Any):
-    """The shared call with the state file pointed nowhere, so a test writes no history."""
-    base: dict[str, Any] = {"cluster": SEASON_CLUSTER, "actions": _ACTIONS, "name": "test",
+    """The shared call with the state file pointed nowhere, so a test writes no history.
+
+    `within` defaults to `"draft"`, this module's own fixture column, and is overridden by
+    callers whose frame renamed it to `"roster"` -- the same rename `_paired` itself takes.
+    """
+    base: dict[str, Any] = {"cluster": SEASON_CLUSTER, "within": ("draft",),
+                            "actions": _ACTIONS, "name": "test",
                             "arm_a": "a", "arm_b": "b", "bootstrap": 200,
                             "record_width": False}
     return run_gate(paired, **(base | kw))
@@ -85,7 +90,7 @@ def _old_draft(paired, bound, seed):
     if bound is not None:
         top = float(np.asarray(bound["diff"].to_numpy()).mean())
         s = dict(s, ceiling=top)
-    seasons = experiment.per_season(paired)
+    seasons = experiment.per_season(paired, within=("draft",), bootstrap=200, seed=seed)
     return s, seasons, experiment.gate(s, seasons, _ACTIONS)
 
 
@@ -94,13 +99,13 @@ def _old_lineup(paired, seed):
            if "ceiling_diff" in paired.columns else None)
     s = experiment.summarise(paired, cluster=SEASON_CLUSTER, seed=seed, bootstrap=200,
                              ceiling=top)
-    seasons = experiment.per_season(paired)
+    seasons = experiment.per_season(paired, within=("roster",), bootstrap=200, seed=seed)
     return s, seasons, experiment.gate(s, seasons, _ACTIONS)
 
 
 def _old_weekly(paired, seed, void):
     s = experiment.summarise(paired, cluster=SEASON_CLUSTER, seed=seed, bootstrap=200)
-    seasons = experiment.per_season(paired)
+    seasons = experiment.per_season(paired, within=("roster",), bootstrap=200, seed=seed)
     return s, seasons, experiment.gate(s, seasons, _ACTIONS, void=void)
 
 
@@ -126,9 +131,10 @@ def test_the_draft_gate_s_numbers_are_the_old_path_s(seed, shift):
 def test_the_lineup_gate_s_numbers_are_the_old_path_s(seed, shift):
     paired = _paired(seed=seed, shift=shift).rename({"draft": "roster"})
     with_c = paired.with_columns((pl.col("diff") + 4.0).alias("ceiling_diff"))
-    _same(_old_lineup(paired, seed), _run(paired, seed=seed, unit="points per game"))
+    _same(_old_lineup(paired, seed),
+          _run(paired, seed=seed, within=("roster",), unit="points per game"))
     _same(_old_lineup(with_c, seed),
-          _run(with_c, seed=seed, unit="points per game",
+          _run(with_c, seed=seed, within=("roster",), unit="points per game",
                ceiling=Ceiling("a perfect spread", with_c["ceiling_diff"])))
 
 
@@ -137,8 +143,8 @@ def test_the_lineup_gate_s_numbers_are_the_old_path_s(seed, shift):
 def test_the_weekly_gate_s_numbers_are_the_old_path_s(seed, void):
     paired = _paired(seed=seed).rename({"draft": "roster"}).with_columns(pl.lit(5).alias("week"))
     _same(_old_weekly(paired, seed, void),
-          _run(paired, seed=seed, unit="points per team-week", places=3, show_n=False,
-               void=void))
+          _run(paired, seed=seed, within=("roster",), unit="points per team-week", places=3,
+               show_n=False, void=void))
 
 
 def test_the_weekly_gate_s_ceiling_now_reaches_the_rule_and_that_is_the_one_departure():
@@ -150,8 +156,8 @@ def test_the_weekly_gate_s_ceiling_now_reaches_the_rule_and_that_is_the_one_depa
     paired = _paired(seed=1).rename({"draft": "roster"})
     # A ceiling far below this frame's MDE: the rule must now see it.
     c = pl.Series("ceiling_diff", [0.001] * paired.height)
-    got = _run(paired, seed=1, unit="points per team-week", places=3, show_n=False,
-               ceiling=Ceiling("perfect foresight", c))
+    got = _run(paired, seed=1, within=("roster",), unit="points per team-week", places=3,
+               show_n=False, ceiling=Ceiling("perfect foresight", c))
     assert experiment.reading(got.summary, "ceiling") is experiment.Field.VALUE
     assert got.summary["mde"] > got.summary["ceiling"]
     assert got.verdict[0] == "NOT-RUNNABLE"
@@ -217,7 +223,8 @@ def test_the_width_history_is_keyed_by_the_gate_s_name(tmp_path):
     path = tmp_path / "gate-width.json"
     _run(_paired(), name="draft", record_width=True, width_path=path)
     _run(_paired(), name="lineup", record_width=True, width_path=path)
-    assert set(json.loads(path.read_text())) == {"draft", "lineup"}
+    entries = json.loads(path.read_text())["entries"]
+    assert {e["gate"] for e in entries} == {"draft", "lineup"}
 
 
 def test_an_empty_frame_runs_and_says_nothing_was_measured():
@@ -226,7 +233,8 @@ def test_an_empty_frame_runs_and_says_nothing_was_measured():
     not there."""
     got = _run(pl.DataFrame())
     assert got.verdict[0] == "SHOW" and "Nothing measured" in got.verdict[1]
-    assert got.seasons.is_empty() and got.seasons.columns == ["season", "gain", "n"]
+    assert got.seasons.is_empty()
+    assert got.seasons.columns == ["season", "gain", "n", "se", "m"]
     assert got.stamped.is_empty(), "a literal must not broadcast one row onto no rows"
     assert math.isnan(got.summary["mean"])
 
@@ -240,10 +248,14 @@ def test_an_empty_frame_runs_and_says_nothing_was_measured():
 STAMPS = ("cfg_digest", "data_digest", "board_digest", "commit")
 
 _SITES = st.sampled_from([
-    {"cluster": SEASON_CLUSTER, "unit": "points per team game", "places": 2, "show_n": True},
-    {"cluster": SEASON_CLUSTER, "unit": "points per game", "places": 2, "show_n": True},
-    {"cluster": SEASON_CLUSTER, "unit": "points per team-week", "places": 3, "show_n": False},
-    {"cluster": None, "unit": "points per team game", "places": 2, "show_n": True},
+    {"cluster": SEASON_CLUSTER, "within": ("roster",), "unit": "points per team game",
+     "places": 2, "show_n": True},
+    {"cluster": SEASON_CLUSTER, "within": ("roster",), "unit": "points per game",
+     "places": 2, "show_n": True},
+    {"cluster": SEASON_CLUSTER, "within": ("roster",), "unit": "points per team-week",
+     "places": 3, "show_n": False},
+    {"cluster": None, "within": ("roster",), "unit": "points per team game",
+     "places": 2, "show_n": True},
 ])
 
 

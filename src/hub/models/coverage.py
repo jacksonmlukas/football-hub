@@ -487,6 +487,10 @@ SKEW_GRID: tuple[float, ...] = not_an_input(
     "the candidate skews the ceiling arm is chosen from, a grading harness's search grid "
     "that no prediction reads")
 
+# #335, ADR-0019's amendment: this gate's within-season repeated-measure unit is the player --
+# `docs/method.md` rule 3's own unit, `paired["player_id"]`.
+WITHIN: tuple[str, ...] = ("player_id",)
+
 SHAPE_ACTIONS = Actions(
     adopt="The skew-free interval scores better under CRPS: the deployed function is the "
           "maintainer's to change, and #289's claim is re-registered against it first.",
@@ -546,7 +550,7 @@ def shape_law(stats: pl.DataFrame, *, min_weeks: int = MIN_WEEKS, min_prior: int
     scored = shape_scores(g)
     paired = scored.filter(pl.col("p10_raw") > 0.0)
     pooled = {"n": int(scored.height), "mean": float(cast(float, scored["diff"].mean()))}
-    run = run_gate(paired, cluster=SEASON_CLUSTER, actions=SHAPE_ACTIONS,
+    run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=SHAPE_ACTIONS,
                    name="interval_shape", arm_a="skew-free", arm_b="deployed skew",
                    unit="CRPS points per player-week", places=4, seed=seed,
                    ceiling=Ceiling(CEILING_ARM, paired["ceiling_diff"].to_numpy()),

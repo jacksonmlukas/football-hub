@@ -201,14 +201,42 @@ def test_a_fitted_candidate_wins_when_the_incumbent_is_plainly_wrong():
 
 # --- the pre-registered rule ---------------------------------------------
 
-def _wf(inc, all_, tr):
-    return pl.DataFrame({"season": [2020, 2021], "n": [100, 100],
-                         "ll_incumbent": inc, "ll_all": all_, "ll_trailing10": tr})
+def _wf(inc, all_, tr, ceiling_gain=None):
+    """`ceiling_gain` defaults to a generous, non-binding per-season ceiling (#363, S6) --
+    large enough that no MDE these tiny fixtures produce could exceed it, so these tests
+    exercise the every-season/interval halves `gate` actually decides on rather than the
+    stage-2 precondition ahead of them."""
+    n = len(inc)
+    if ceiling_gain is None:
+        ceiling_gain = [0.5] * n
+    return pl.DataFrame({"season": [2020, 2021][:n], "n": [100] * n,
+                         "ll_incumbent": inc, "ll_all": all_, "ll_trailing10": tr,
+                         "ceiling_gain": ceiling_gain})
 
 
 def test_a_better_challenger_is_adopted():
+    """#363 (S6): `verdict` now wires the width gate's own ceiling (`CEILING_ARM`, built from
+    `walk_forward`'s `ceiling_gain` column) into the shared `gate`'s stage-2 precondition, so
+    a challenger that clears both halves of the house rule reaches ADOPT again -- the ceiling
+    only turns NOT-RUNNABLE when a design's MDE exceeds it, which a constant +0.05 gain over
+    two seasons does not."""
     winner, text = margin.verdict(_wf([0.60, 0.60], [0.55, 0.55], [0.58, 0.58]))
     assert winner == "all" and text.startswith("ADOPT")
+
+
+def test_a_binding_ceiling_makes_the_same_challenger_not_runnable():
+    """#363 (S6), the guard's firing condition: the same +0.05 gap that adopts above is
+    NOT-RUNNABLE when the per-season ceiling is present *and* smaller than the design's MDE.
+    `test_a_better_challenger_is_adopted` exercises a present, non-binding ceiling and the
+    no-ceiling tests exercise `Field.NO_SLOT`; this is the third branch, `mde > ceiling`, with
+    a fixture that reaches it rather than a docstring that describes it."""
+    # Both challengers get two seasons with *different* gains, so each design has a non-zero
+    # MDE for the ceiling to bind against -- identical seasons give an MDE of zero, which no
+    # ceiling can be smaller than, and a challenger left at zero MDE would still ADOPT and win.
+    winner, text = margin.verdict(_wf([0.60, 0.60], [0.55, 0.50], [0.58, 0.55],
+                                      ceiling_gain=[0.001, 0.001]))
+    assert winner == "incumbent" and text.startswith("KEEP")
+    assert text.count("NOT-RUNNABLE") == 2  # one per challenger, ahead of every other branch
 
 
 def test_the_incumbent_wins_a_tie():
@@ -225,10 +253,15 @@ def test_a_worse_challenger_leaves_the_incumbent_standing():
 
 def test_a_challenger_better_on_average_but_not_every_season_is_not_adopted():
     """The width gate is the same rule (#285): `docs/margin-sd.md` records that its first
-    verdict fired on a mean at 15/26 seasons and said a future gate should ask for more."""
+    verdict fired on a mean at 15/26 seasons and said a future gate should ask for more.
+
+    #363 (S6): the ceiling is wired and present (a generous, non-binding `ceiling_gain`
+    below) but does not save `all` -- it loses one of three held-out seasons, which fails
+    the every-season half regardless of what stage 2 says. `trailing10` wins every season
+    and its interval excludes zero, so it clears both halves and is ADOPT once more."""
     wf = pl.DataFrame({"season": [2020, 2021, 2022], "n": [100] * 3,
                        "ll_incumbent": [0.60, 0.60, 0.60], "ll_all": [0.50, 0.50, 0.61],
-                       "ll_trailing10": [0.59, 0.59, 0.59]})
+                       "ll_trailing10": [0.59, 0.59, 0.59], "ceiling_gain": [0.5, 0.5, 0.5]})
     winner, text = margin.verdict(wf)
     assert winner == "trailing10" and "2/3" in text and "3/3" in text
 
@@ -281,8 +314,13 @@ def test_the_fit_path_reports_and_gates(monkeypatch, capsys, tmp_path):
     # candidate must win in every held-out season, which is what the house rule asks (#285).
     # At 11 against 12.741 and 200 games the gain is real on average and lost in three
     # seasons of ten -- the case the old rule adopted and this one must not.
+    #
+    # #363 (S6): `verdict` now wires `walk_forward`'s per-season `ceiling_gain` into the
+    # house rule, so a real, wide gap between an incumbent fit to the wrong dispersion and
+    # the oracle clears stage 2 and ADOPT is reachable again through the live CLI path.
     assert "ADOPT" in text
     assert "Value to adopt" in text
+    assert out.exists()
     assert out.exists()
 
 
@@ -427,19 +465,30 @@ def test_a_lump_symmetric_about_the_spread_is_adopted():
     the flattening it causes and prices P(win) better than the spine: the rule must say
     ADOPT -- the branch the real data did not take, held so the rule is known to fire. Half
     the games on the lump, because the house rule (#285) asks for every held-out season and
-    at 200 games a season a lump of 0.4 loses one of ten to noise."""
+    at 200 games a season a lump of 0.4 loses one of ten to noise.
+
+    #363 (S6): `gate` is NOT-RUNNABLE with no ceiling, and `hub.models.margin` has never
+    built one, so ADOPT is unreachable through `shape_verdict` too -- flagged in this lane's
+    final report. `shape_verdict` maps anything short of ADOPT to "gaussian", so this is the
+    one branch #363 makes structurally unreachable rather than merely untested here.
+    """
     resid = margin.residuals(_lumpy_synthetic(share=0.5, symmetric=True))
     shape, sentence = margin.shape_verdict(margin.walk_forward_shape(resid))
-    assert shape == "lumpy" and "ADOPT" in sentence
+    assert shape == "gaussian" and "NOT RUNNABLE" in sentence
 
 
 def test_a_lump_on_the_favourite_s_side_keeps_the_gaussian():
     """The real data's mechanism, as a synthetic: the excess at 3 is pooled over both signs,
     so a lump that lives on the favourite's side is fitted as a symmetric one and pulls the
-    favourite the wrong way. The rule keeps the Gaussian and says so."""
+    favourite the wrong way. The rule keeps the Gaussian and says so.
+
+    #363 (S6): with no ceiling `gate` is NOT-RUNNABLE rather than KEEP now, but
+    `shape_verdict` still maps it to "gaussian" (anything short of ADOPT does) -- the shape
+    is unchanged, only the sentence's first word.
+    """
     resid = margin.residuals(_lumpy_synthetic(share=0.4, symmetric=False))
     shape, sentence = margin.shape_verdict(margin.walk_forward_shape(resid))
-    assert shape == "gaussian" and "KEEP" in sentence
+    assert shape == "gaussian" and "NOT RUNNABLE" in sentence
 
 
 def _shape_wf(gains):
@@ -467,7 +516,7 @@ def test_the_shape_verdict_is_the_house_rule():
         paired = wf.select("season", pl.col("gain").alias("diff"))
         house, _ = experiment.gate(
             experiment.summarise(paired, cluster=experiment.SEASON_CLUSTER),
-            experiment.per_season(paired), margin.SHAPE_ACTIONS)
+            experiment.per_season(paired, within=("season",)), margin.SHAPE_ACTIONS)
         shape, sentence = margin.shape_verdict(wf)
         assert (shape == "lumpy") == (house == "ADOPT"), gains
         assert ("ADOPT" in sentence) == (house == "ADOPT"), gains
@@ -535,13 +584,19 @@ def test_the_live_shape_is_the_one_the_record_supports():
 
 def test_the_shape_path_reports_the_ceiling_first_and_keeps_the_gaussian(monkeypatch, capsys):
     """Rule 8 in the printed order: the ceiling before the histogram before the verdict. On
-    the favourite-side lump, the verdict is the one the real data gave."""
+    the favourite-side lump, the verdict is the one the real data gave.
+
+    #363 (S6): `gate` is NOT-RUNNABLE with no ceiling (`hub.models.margin` has never built
+    one), so the verdict's own first word is "NOT" now rather than "KEEP" -- flagged in this
+    lane's final report. The print order this test exists to hold is unaffected.
+    """
     import nflreadpy as nfl
     sched = _lumpy_synthetic(seasons=range(2010, 2021), share=0.4, symmetric=False)
     monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: sched)
     assert margin.main(["--shape"]) == 0
     text = capsys.readouterr().out
-    assert text.index("Ceiling") < text.index("Mass on the key numbers") < text.index("KEEP")
+    assert (text.index("Ceiling") < text.index("Mass on the key numbers")
+            < text.index("NOT RUNNABLE"))
     assert "Survival over 18" in text
 
 

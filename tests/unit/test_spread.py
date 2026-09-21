@@ -321,13 +321,13 @@ def _errs(gain, noise, seasons=(2024, 2025), n=400, seed=0):
     rows = []
     for si, season in enumerate(seasons):
         e = rng.normal(0, noise, n // 2)
-        for d in np.concatenate([e, -e]):
+        for i, d in enumerate(np.concatenate([e, -e])):
             base = 5.0
-            rows.append((season, base, base - gain[si] + float(d), base + 0.1))
+            rows.append((season, base, base - gain[si] + float(d), base + 0.1, f"p{i}"))
     return pl.DataFrame(
         {"season": [r[0] for r in rows], "w": [0.5] * len(rows),
          "err_positional": [r[1] for r in rows], "err_own_k": [r[2] for r in rows],
-         "err_usage": [r[3] for r in rows]})
+         "err_usage": [r[3] for r in rows], "player_id": [r[4] for r in rows]})
 
 
 def test_a_candidate_that_wins_every_season_and_clears_two_se_is_adopted():

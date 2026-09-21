@@ -50,6 +50,7 @@ from hub.declare import not_an_input
 from hub.models.experiment import (
     SEASON_CLUSTER,
     Actions,
+    Ceiling,
     expanding_seasons,
     gate,
     per_season,
@@ -81,6 +82,13 @@ FITTED_WINDOW = "trailing 10 seasons, as of 2025"
 # churn in a constant that is hashed into every model version.
 CANDIDATES = ("incumbent", "all", "trailing10")
 TRAILING = 10
+
+# The width gate's declared ceiling arm (#363, S6), named the way `coverage.CEILING_ARM` and
+# `lineup_gate.DECLARED_CEILING_ARM` are: a module constant beside the function that plays it,
+# not invented at the call site. Unlike those two, this arm never has to be drafted or
+# simulated -- it is `ceiling`'s own oracle, already computed rule-8-first for the shape gate,
+# read one held-out season at a time instead of pooled over a trailing window.
+CEILING_ARM = "a perfect P(win | spread), in sample within the held-out season"
 
 # A tie is neither a home win nor an away win, and there is no sensible probability to score it
 # against. 1999-2025 has a handful; dropping them is cleaner than inventing a convention.
@@ -315,14 +323,28 @@ def walk_forward_shape(resid: pl.DataFrame, *, sd: float = MARGIN_SD,
 # exclude zero *and* the sign must hold in every held-out season. One season is one
 # independent observation here for the reason `SEASON_CLUSTER` gives, and a walk-forward
 # already scores one row per season, so the gain column is the paired difference as it stands.
-def _house_rule(paired: pl.DataFrame, actions: Actions) -> tuple[str, str, dict[str, float]]:
+def _house_rule(paired: pl.DataFrame, actions: Actions,
+                *, ceiling: Ceiling | None = None) -> tuple[str, str, dict[str, float]]:
     """`experiment.gate` over a season-clustered `summarise`. Returns (verdict, why, summary).
 
     `paired` is one row per held-out season with the gain in `diff`, positive when the arm
     under test scored the lower log-loss. Nothing is decided here that `gate` does not decide.
+
+    **`within=("season",)`, a declared no-op (#335).** `paired` already carries one row per
+    season -- there is no finer within-season unit to name, unlike the walk-forward gates
+    this rule was unified with -- so grouping a season's single row by its own `season` value
+    gives exactly one cluster, always below `TIE_MIN_CLUSTERS`. `_disposition` falls back to
+    the sign, which is what `gate`'s every-season half read here before #335 in any case.
+
+    **`ceiling`, optional (#363, S6).** `None` for `shape_verdict`, which this module has
+    never measured one for; `verdict` hands in the width gate's own (`CEILING_ARM`), built
+    from `walk_forward`'s `ceiling_gain` column on the same rows `paired` scores. Its mean
+    is the scalar `summarise` reads -- the run takes the mean, not the caller, so the number
+    the rule reads and the number a report would print cannot be two numbers.
     """
-    summary = summarise(paired, cluster=SEASON_CLUSTER)
-    verdict, why = gate(summary, per_season(paired), actions)
+    top = None if ceiling is None else float(np.asarray(ceiling.diff, dtype=float).mean())
+    summary = summarise(paired, cluster=SEASON_CLUSTER, ceiling=top)
+    verdict, why = gate(summary, per_season(paired, within=("season",)), actions)
     return verdict, why, summary
 
 
@@ -451,6 +473,13 @@ def walk_forward(resid: pl.DataFrame, *, trailing: int = TRAILING) -> pl.DataFra
     Expanding window, one season at a time, never peeking. The first season with any history
     is the first that can be scored, so the earliest season on record is used only for fitting.
     `min_past=2` because `fit` needs two residuals before it has a standard deviation.
+
+    **`ceiling_gain` (#363, S6).** One extra column, off `now` alone: `ceiling(now,
+    sd=MARGIN_SD)["gain"]` -- the same oracle-minus-Gaussian log-loss `ceiling()` reports
+    pooled over a trailing window for the shape gate, read here per held-out season so it
+    lines up one-to-one with `ll_incumbent` and every candidate's row. `verdict` turns this
+    column into the `Ceiling` its house rule reads; nothing else consumes it, and no existing
+    caller's schema expectations narrow enough to break on a column they never asked for.
     """
     rows = []
     for yr, past, now in expanding_seasons(resid, min_past=2):
@@ -467,6 +496,7 @@ def walk_forward(resid: pl.DataFrame, *, trailing: int = TRAILING) -> pl.DataFra
         for name, sd in sds.items():
             row[f"sd_{name}"] = sd
             row[f"ll_{name}"] = log_loss(home_win_prob(spread, sd), won)
+        row["ceiling_gain"] = ceiling(now, sd=MARGIN_SD)["gain"]
         rows.append(row)
     return pl.DataFrame(rows)
 
@@ -494,16 +524,25 @@ def verdict(wf: pl.DataFrame) -> tuple[str, str]:
     would not have cleared this rule; `docs/margin-sd.md` records both. The constant stands
     because it is the live incumbent now -- this rule gates the *next* change to it, and a
     re-run today scores the challengers against 12.741, not against 13.5.
+
+    **The ceiling, wired (#363, S6).** `gate` is NOT-RUNNABLE with no measured ceiling, and
+    this rule used to hand in none -- `ceiling()` already computes one (rule 8, in sample) and
+    `_report_shape` already prints it, but `verdict` never read it. `wf["ceiling_gain"]`, when
+    `walk_forward` built it, is `CEILING_ARM`'s per-season oracle-minus-Gaussian log-loss on
+    the exact rows each `paired` here scores; every challenger is compared against the same
+    incumbent, so every challenger shares it.
     """
     if wf.is_empty():
         return "incumbent", "no held-out seasons; 13.5 stands by default."
     means = {c: _mean(wf, f"ll_{c}") for c in CANDIDATES}
     base = means["incumbent"]
     challengers = {c: m for c, m in means.items() if c != "incumbent"}
+    top = (Ceiling(CEILING_ARM, wf["ceiling_gain"].to_numpy())
+           if "ceiling_gain" in wf.columns else None)
     lines, cleared = [], {}
     for c in challengers:
         paired = wf.select("season", (pl.col("ll_incumbent") - pl.col(f"ll_{c}")).alias("diff"))
-        v, _, s = _house_rule(paired, WIDTH_ACTIONS)
+        v, _, s = _house_rule(paired, WIDTH_ACTIONS, ceiling=top)
         won = int((paired["diff"] > 0).sum())
         lines.append(f"  {c}: mean gain {s['mean']:+.5f} [{s['lo']:+.5f}, {s['hi']:+.5f}], "
                      f"wins {won}/{paired.height} seasons -> {v}")

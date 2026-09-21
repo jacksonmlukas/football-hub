@@ -284,6 +284,11 @@ def declared_ceiling(paired: pl.DataFrame, *,
     return Ceiling(CEILING_ARM_NAMES[ceiling_arm], paired["ceiling_diff"])
 
 
+# #335, ADR-0019's amendment: this gate's within-season repeated-measure unit is the roster --
+# `compare`'s paired frame carries one row per (season, roster), the same grain `experiment.
+# gate`'s own `won`/`tied`/`lost` used to read purely off the season's sign.
+WITHIN: tuple[str, ...] = ("roster",)
+
 # The pre-registered actions, fixed before the numbers and quoted in this module's own
 # docstring above. The rule choosing between them is `experiment.gate` -- ADR-0019.
 ACTIONS = Actions(
@@ -383,7 +388,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             rosters[yr] = made
 
         paired = compare(rosters, realised, ceiling=a.ceiling, ceiling_arm=a.ceiling_arm)
-        run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="lineup",
+        run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS,
+                       name="lineup",
                        arm_a="optimiser", arm_b="projections", unit=UNIT,
                        ceiling=declared_ceiling(paired, ceiling_arm=a.ceiling_arm), seed=a.seed,
                        boards=boards)
