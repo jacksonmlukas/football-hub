@@ -272,7 +272,7 @@ for it (see the script's docstring):
 | gate | k | s | m | δ | combined null size | combined power at δ | unanimity-alone power at δ (#357's table) |
 |---|---|---|---|---|---|---|---|
 | draft | 4 | 7.34 | 20 | 2.0 | **0.0113** | **0.0324** | 0.136 |
-| weekly blend (**withheld pending #378**) | ~~4~~ | ~~0.382~~ | ~~40~~ | ~~0.3~~ | ~~**0.0186**~~ | ~~**0.1925**~~ | ~~0.378~~ |
+| weekly blend (**confirmed 2026-09-21 under #378**) | 4 | 0.382 | 40 | 0.3 | **0.0186** | **0.1925** | 0.378 |
 
 **Both null sizes sit comfortably under `ALPHA` (0.05)** — the tie requirement can only make
 the conjunction rarer than the interval-alone test, never more permissive, and the simulation
@@ -300,6 +300,24 @@ produced **3** clusters, with season 2022 silently absent, while this row was co
 every power figure in it, so the row cannot be read as established until #378 resolves which k
 is correct. It is struck rather than removed so the original computation stays visible, and
 will be recomputed at the corrected k when #378 lands.
+
+**Resolved 2026-09-21 (#378): k = 4 was always correct, and the strike is lifted rather than
+the row recomputed.** `weekly_gate.compare`'s walk-forward split (`experiment.expanding_seasons`)
+always consumes the earliest season it is handed as training data for the one after it —
+`docs/weekly-blend-gate.md`'s Reproduce section names five seasons for exactly this reason, the
+first a sacrificial buffer so the four held-out seasons (2022-2025) all score. #376's ceiling
+run used `weekly_gate`'s own `--seasons` default instead, which named only the four held-out
+seasons with no buffer ahead of them — so `expanding_seasons` dropped 2022, the earliest of
+*those four*, silently, and the run scored three. Nothing was wrong with `k = 4` or with this
+row's numbers; the run that appeared to contradict them was reading a different, accidental k.
+Fixed by widening `weekly_gate`'s `--seasons` default to include the buffer season and by
+`weekly_gate_data.SeasonDropped`, which now refuses a run whose scored seasons fall short of
+what it was asked for by more than that one expected buffer season. Re-run at the corrected
+default (`uv run python -m hub.season.weekly_gate --run --ceiling`, drafts=20, seed 0, frozen
+rosters, restricted, mask_pool — the same recipe #376 used): **4** clusters, ceiling **+10.873**
+against an MDE of **1.119** (9.7x over, wider than #376's mistaken 5.6x). Full before/after is
+`docs/gate-power.md`'s dated restatement under this same date. The table row above is therefore
+unstruck rather than recomputed — the k it was always computed at is the k the gate reads.
 
 ## What it does not move, checked rather than hoped
 

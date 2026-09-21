@@ -1,0 +1,44 @@
+{
+  "date": "2026-09-21",
+  "note": "Free pick and top-5 candidates for the leverage study board (#377), computed once by candidate_ranking() from today's ranking. scripts/leverage_study.py reads this rather than re-ranking on every run, so a re-run studies the same arms as the last one until --refit explicitly regenerates this file. See docs/pool-leverage.md.",
+  "board": {
+    "weeks": [
+      1,
+      14
+    ],
+    "week": 2,
+    "entries": 21,
+    "pot": 420.0,
+    "seed": 0,
+    "co_elimination_rule": "split",
+    "co_survivor_rule": "split",
+    "grid_digest": "ac0b80b7",
+    "pool_digest": "b3365833"
+  },
+  "free_pick": {
+    "team": "T30",
+    "win_prob": 0.9087832606533687
+  },
+  "candidates": [
+    {
+      "team": "T28",
+      "win_prob": 0.8868491490878956
+    },
+    {
+      "team": "T27",
+      "win_prob": 0.8733137592386115
+    },
+    {
+      "team": "T26",
+      "win_prob": 0.8589815349739565
+    },
+    {
+      "team": "T25",
+      "win_prob": 0.8400079722488867
+    },
+    {
+      "team": "T24",
+      "win_prob": 0.8144111063899547
+    }
+  ]
+}

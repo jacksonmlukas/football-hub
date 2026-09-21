@@ -235,6 +235,48 @@ def test_the_assembly_refuses_a_board_whose_corrected_ranking_lost_a_term(monkey
         wgd.assemble_universe(arc.SEASONS)
 
 
+# --- #378: a season dropping from the paired frame is loud, not silent ----------------
+#
+# `expanding_seasons` always drops the earliest season in what it is handed -- there is
+# nothing to train the first fold on -- and that drop is the walk-forward buffer, expected on
+# every call. `assemble_universe(arc.SEASONS)` above already exercises exactly that case
+# without raising: `test_the_gate_inputs_are_assembled_end_to_end_with_no_network` asserts
+# `sorted(universe.realised) == [2024]`, i.e. 2023 (the earliest of the two archived seasons)
+# is the buffer and is never itself scored. What #378 found is a *second* kind of drop this
+# gate had no way to tell apart from that one: a season that goes missing for a real reason --
+# a partition absent on disk, a VOID condition, a join failure -- and was silently absorbed by
+# the same `set(...) & set(seasons)` intersection. The archive only ever covers
+# `panelarchive.SEASONS`, so asking for a season outside it reproduces that failure mode
+# offline: every source `panelarchive.install` patches filters to the requested seasons, and a
+# season the archive holds nothing for comes back with zero rows rather than an error.
+
+
+def test_a_season_that_produces_no_row_and_is_not_the_buffer_is_refused(monkeypatch, tmp_path):
+    """The #378 bug, reproduced: a season beyond the walk-forward buffer that never scores.
+
+    `2025` is not in `panelarchive.SEASONS` (2023, 2024), so every archived source filters it
+    to nothing and it never reaches `expanding_seasons`' `now`. Before #378 this season was
+    simply absent from every dict `assemble_universe` returns, indistinguishable from having
+    never been asked for -- which is exactly how a `--ceiling` run silently scored three
+    seasons where its own `--seasons` named four.
+    """
+    arc.install(monkeypatch, tmp_path, board=True)
+    with pytest.raises(wgd.SeasonDropped, match=r"2025.*not the walk-forward buffer"):
+        wgd.assemble_universe([*arc.SEASONS, 2025])
+
+
+def test_the_walk_forward_buffer_alone_is_not_mistaken_for_the_bug(monkeypatch, tmp_path):
+    """The one season `expanding_seasons` is *supposed* to drop must not itself be refused.
+
+    `arc.SEASONS` is `(2023, 2024)` and only 2024 is ever scored -- 2023 trains it. That is
+    the expected shape of every call this module ever makes and `SeasonDropped` has to leave
+    it alone, or the fix for #378 would refuse the gate's own ordinary runs.
+    """
+    arc.install(monkeypatch, tmp_path, board=True)
+    universe = wgd.assemble_universe(arc.SEASONS)
+    assert sorted(universe.realised) == [2024]
+
+
 def test_the_preseason_ranks_refuse_the_same_board(monkeypatch, tmp_path):
     """This one reads `ecr` alone, which no Correction moves, and it refuses anyway.
 
