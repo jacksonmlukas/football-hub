@@ -27,6 +27,7 @@ import pytest
 
 from hub.league import REG_SEASON_WEEKS
 from hub.models import experiment
+from hub.models.weekly import Shrink, project
 from hub.names import player_key
 from hub.season import weekly_gate as G
 from hub.season import weekly_gate_data as wgd
@@ -424,3 +425,60 @@ def test_the_fallback_reaches_no_result_on_a_real_assembly(universe):
     assert loose == [pytest.approx(0.075)] * 3, (
         "the pre-#206 universe separates the arms on this capture, so the forced zero above "
         "is the restriction and not a trim where nothing could ever separate")
+
+
+# --- the projection arm is accepted, not created (issue #342) ---------------
+#
+# Before this, `assemble_universe` imported `hub.models.weekly.project` inside its own body
+# and called it directly, so an arm other than the shipped one could only reach this function
+# by monkeypatching that module attribute from outside -- and a patch landed on the wrong
+# module once scored the shipped arm twice and printed zero flips. `arm` is now a parameter,
+# `project` its default, and this is the seam: a second value for that one parameter.
+
+
+def test_a_second_arm_moves_the_universe_only_where_its_mu_differs(monkeypatch, tmp_path):
+    """The seam #342 opens, proven rather than merely typed.
+
+    The second arm is the shipped projection with `mu` scaled by a constant -- the smallest
+    change that guarantees a real difference in every model-priced cell and none anywhere
+    else, since `_one_scale` and every other input the arm does not touch read nothing but
+    `mu`. Two assemblies of the identical archive, one per arm, same seed and same drafts, so
+    any difference in `weekly` is the arm and nothing about the draw.
+    """
+    arc.install(monkeypatch, tmp_path, board=True)
+    scale = 2.0
+
+    def doubled(now: pl.DataFrame, *, shrink: Shrink | None = None) -> pl.DataFrame:
+        return project(now, shrink=shrink).with_columns((pl.col("mu") * scale).alias("mu"))
+
+    shipped = wgd.assemble_universe(arc.SEASONS)
+    scaled = wgd.assemble_universe(arc.SEASONS, arm=doubled)
+
+    yr = 2024
+    weekly0, weekly1 = shipped.weekly[yr], scaled.weekly[yr]
+    # `_one_scale`'s fallback interpolates an unprojected-but-ranked cell from its *paired*
+    # neighbours' `mu`, so it is linear in `mu` too and scales right along with the projected
+    # cells -- only a cell with no projection and nothing to interpolate from, the sentinel
+    # `UNRANKED`, never reads `mu` at all.
+    unscoreable = weekly0 == UNRANKED
+    assert unscoreable.any() and (~unscoreable).any(), \
+        "both halves have to exist for this to check anything"
+
+    assert np.array_equal(weekly1[unscoreable], weekly0[unscoreable]), (
+        "a cell `_one_scale` never reads `mu` for is untouched by an arm that only rescales "
+        "`mu`")
+    assert np.allclose(weekly1[~unscoreable], weekly0[~unscoreable] * scale), (
+        "every other cell is linear in `mu` -- the model's own number directly, or "
+        "interpolated between paired ones -- so it moves by exactly the arm's scale")
+    assert not np.array_equal(weekly1[~unscoreable], weekly0[~unscoreable])
+
+    # Nothing else in the universe is the arm's to move. `realised` and `consensus` are read
+    # off nflverse and the consensus page, `rosters`/`pool`/`pos` off the Cohort draft, none of
+    # which the projection arm touches.
+    for season in shipped.realised:
+        assert np.array_equal(shipped.realised[season], scaled.realised[season])
+        assert np.array_equal(shipped.consensus[season], scaled.consensus[season])
+        assert np.array_equal(shipped.pos[season], scaled.pos[season])
+    assert shipped.rosters == scaled.rosters
+    assert shipped.pool == scaled.pool
+    assert shipped.covered == scaled.covered

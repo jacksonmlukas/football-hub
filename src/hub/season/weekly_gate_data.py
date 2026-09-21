@@ -7,6 +7,7 @@ nflverse is one nobody re-runs.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Protocol
 
 import numpy as np
 import polars as pl
@@ -15,8 +16,19 @@ from hub.fetch import nflverse
 from hub.league import REG_SEASON_WEEKS
 from hub.models.experiment import realised_ppg, require_corrections
 from hub.models.panel import PanelSpec, build_panel, weekly_consensus
+from hub.models.weekly import Shrink, fit_shrink, positional_sd, project, standard_error
 from hub.names import player_key
 from hub.season.weekly_gate import UNRANKED, GateInputs
+
+# No cycle: `hub.models.weekly` reaches `hub.cli`, `hub.config`, `hub.declare` and three
+# sibling `hub.models` modules and nothing under `hub.season` or `hub.draft`, so this import
+# was never lazy for a cycle -- it was lazy because it sat inside `assemble_universe` beside
+# `board_as_of`, `cohort` and `applied`, which *are* fold-of-a-different-kind lazy (see the
+# in-body imports still in `assemble_universe`: none of those has a cycle back here either, on
+# the same check, but moving them is not this ticket -- #342 is the projection arm only). This
+# one has to be a top-level import regardless of the cycle question, because `project` is now
+# a default *argument value*, and a default is evaluated when the module loads, not when the
+# function runs -- an in-body import cannot supply one.
 
 
 def preseason_ranks(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
@@ -47,6 +59,27 @@ def preseason_ranks(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover
 
 
 WEEKS = REG_SEASON_WEEKS
+
+
+class ProjectionArm(Protocol):
+    """The projection arm `assemble_universe` scores, over one fold.
+
+    Structural rather than a subclass relationship -- the same reason
+    `hub.models.experiment.CorrectionReport` is a `Protocol` -- so a test's second arm has to
+    match only this call shape, not inherit from anything. `hub.models.weekly.project` already
+    has exactly this signature and is the default without `assemble_universe` doing anything
+    to adapt it.
+
+    The return only has to carry `now`'s columns plus `mu`, which is what `project` returns
+    (`now.with_columns(...)`) and what the loop below already assumed of whatever `project`
+    returned before this was a parameter: it reads `key`, `season`, `week` and `mu` off the
+    result and adds `se` itself. `se` is not this callable's to supply -- it is
+    `positional_sd(past)` and `standard_error(now, sigma)`, read from the fold's *training*
+    half, which a callable handed only `now` has no way to reach. It stayed assembled outside
+    the arm rather than being threaded in as a third parameter no test needs to vary.
+    """
+
+    def __call__(self, now: pl.DataFrame, *, shrink: Shrink | None = None) -> pl.DataFrame: ...
 
 
 def _one_scale(cons: np.ndarray, mu: np.ndarray) -> np.ndarray:
@@ -121,8 +154,8 @@ def _matrix(keys: Sequence[str], lookup: dict[tuple[str, int], float],
 
 
 def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0,
-                      shrink: str | None = None, expected: bool = False,
-                      holdout: bool = False):
+                      shrink: str | None = None, arm: ProjectionArm = project,
+                      expected: bool = False, holdout: bool = False):
     # pragma: no cover - network
     """Rosters, realised points and both arms' scores, over the whole board.
 
@@ -136,6 +169,16 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     shipped values are back before the next season is read. The run line naming each set is
     `weekly_gate.main`'s to print.
 
+    `arm` is the projection under test, accepted rather than created (#342). Every fold calls
+    it the same way `weekly_gate.main` always called `hub.models.weekly.project` -- `now` and
+    the `shrink` already fit on that fold's `past` -- so `project` is the default and every
+    existing caller sees the identical byte-for-byte universe it always did. Before this the
+    import sat inside this function's body and the arm under test was a name only this module
+    bound, so scoring anything else meant monkeypatching `hub.models.weekly.project` from
+    outside and hoping the patch landed on the module this file actually reads from -- which
+    it once did not, and scored the shipped arm twice with zero flips to show for it. A second
+    adapter now just is a second value for this parameter.
+
     Returns a `GateInputs`: ten aligned collections that used to be a positional tuple.
     """
     from collections.abc import Sequence as _Seq
@@ -145,12 +188,6 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     from hub.draft.cohort import cohort
     from hub.holdout import applied
     from hub.models.experiment import PLAYER_STATS_COLS, expanding_seasons
-    from hub.models.weekly import (
-        fit_shrink,
-        positional_sd,
-        project,
-        standard_error,
-    )
     want_ranks = shrink is not None and "market" in shrink
     panel = build_panel(seasons, PanelSpec(
         consensus=False, expected=expected,
@@ -168,7 +205,7 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
             past, objective=shrink.split("-")[0],
             target=("market-only" if shrink == "market-only"
                     else "market" if shrink is not None and "market" in shrink else "position"))
-        projected.append(project(now, shrink=sh)
+        projected.append(arm(now, shrink=sh)
                          .with_columns(pl.Series("se", standard_error(now, sigma)))
                          .select("key", "season", "week", "mu", "se"))
     proj = pl.concat(projected) if projected else pl.DataFrame(
