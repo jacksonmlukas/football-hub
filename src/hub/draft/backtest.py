@@ -1034,6 +1034,303 @@ def join_report(rates: dict[str, float]) -> list[str]:
     return lines
 
 
+# --- the CLI, as five typed modes plus a dispatcher (#341) --------------------------------
+#
+# Argv and stdout used to be the only interface to what each mode decided: table formatting
+# and the tripwire calls were inlined into `main` itself, across some 270 lines, so
+# `tests/unit/test_backtest.py` drove `main([...])` and scraped the sentences it printed.
+# Below, each mode is a function with a typed result -- the numbers and verdicts it
+# produced, plus the exact lines it rendered -- and `main` parses, calls one, and returns
+# its exit code: the shape `hub.publish.main` and `hub.fetch.cached.run` already have.
+# What decides is unmoved: `tripwire` and `correction_tripwire` are the same two functions
+# `main` called before, called the same way, which is what docs/method.md rule 1 asks of a
+# pre-registered rule that changes address.
+
+
+def _tick(label: str) -> Callable[[int, int, int], None]:
+    """One line per draft, flushed. A run that says nothing is a run someone kills."""
+    def say(season: int, k: int, of: int) -> None:
+        print(f"    {label} {season}: draft {k}/{of}", flush=True)
+    return say
+
+
+class DiagnoseCorrections(NamedTuple):
+    """One `--diagnose-corrections` run."""
+    exit_code: int
+    moved: int = 0
+    total: int = 0
+    tripped: tuple[str, ...] = ()
+    lines: tuple[str, ...] = ()
+
+
+def diagnose_corrections(*, out: Path | None = None) -> DiagnoseCorrections:
+    """ADR-0011's gate: which players Corrected ADP moved, by how much, and whether
+    `correction_tripwire` trips. Builds the live board itself.
+
+    Why the board has no Corrected ADP is the report's to answer, and it has to be
+    answered *here*, before anything below reads the frame. `correction_report` is honest
+    about its own frame -- no corrected column, no moves -- but zero moves rendered by the
+    lines below is "the corrections are clean", and on a board whose market stage never ran
+    that is a gate reporting a pass it did not run. Same shape as issue #121 one level
+    down: an absent stage arriving indistinguishable from a stage that had nothing to say.
+    """
+    from hub.draft.board import build
+
+    print("  building the live board ...")
+    try:
+        board, report = build()
+    except Exception as e:
+        return DiagnoseCorrections(
+            exit_code=unavailable("hub.draft.backtest", "the live board", e))
+    if not report.adp:
+        line = ("\n  no draft market reached this board, so it carries no ADP and no "
+                "Corrected ADP for ADR-0011 to gate.\n  Nothing moved because nothing was "
+                "computed -- which is not the same as nothing needing to move.")
+        print(line)
+        return DiagnoseCorrections(exit_code=1, lines=(line,))
+
+    rep = correction_report(board)
+    lines = [
+        f"\n  Corrected ADP moves {rep.height} of {board.height} players.",
+        f"  Clamp: {DraftConfig().correction_clamp_frac:.0%} of each player's own ADP.\n",
+        f"  {'player':<24} {'pos':<4} {'ADP':>6} {'->':>2} {'corrected':>9} "
+        f"{'move':>7} {'ppg corr':>9}",
+    ]
+    for r in rep.head(20).iter_rows(named=True):
+        lines.append(f"  {str(r['player'])[:24]:<24} {r['pos'] or ''!s:<4} "
+                     f"{r['adp']:>6.1f} {'->':>2} {r['adp_corrected']:>9.1f} "
+                     f"{r['move']:>+7.1f} {r['proj_correction']:>+9.2f}")
+    if rep.height > 20:
+        lines.append(f"  ... and {rep.height - 20} more")
+    for line in lines:
+        print(line)
+
+    bad = correction_tripwire(board)
+    print()
+    if bad:
+        print("  TRIPWIRE TRIPPED -- these are impossible if the code is right:")
+        for line in bad:
+            print(f"    {line}")
+        return DiagnoseCorrections(exit_code=1, moved=rep.height, total=board.height,
+                                   tripped=tuple(bad), lines=tuple(lines))
+    print("  tripwire clear: every move is a function of a real correction, "
+          "and none exceeds the clamp.")
+    if out:
+        rep.write_parquet(out)
+        print(f"  wrote {rep.height} rows to {out}")
+    return DiagnoseCorrections(exit_code=0, moved=rep.height, total=board.height,
+                               lines=tuple(lines))
+
+
+class DiagnoseRun(NamedTuple):
+    """One `--diagnose` run."""
+    exit_code: int
+    picks: int = 0
+    tripped: tuple[str, ...] = ()
+    lines: tuple[str, ...] = ()
+
+
+def diagnose_mode(*, board_path: Path | None, rounds: int, n_draft_sims: int,
+                  n_season_sims: int, seed: int, out: Path | None) -> DiagnoseRun:
+    """What equity recommends at each of your first turns, on a board pinned across two
+    commits.
+
+    `board_path` pins the board. `--diagnose` is run twice at two commits to gate a change,
+    and `build()` refetches live ESPN ADP every time -- ADP moves, so two runs minutes apart
+    are not the same experiment. First run writes the snapshot (`Board.frame`); later runs
+    reuse it through `Board.served`, so the only thing that differs between them is the
+    code.
+    """
+    from hub.draft.board import build
+
+    if board_path and board_path.exists():
+        board = Board.served(pl.read_parquet(board_path))
+        print(f"  board pinned from {board_path}")
+    else:
+        print("  building the live board ...")
+        try:
+            board = build()
+        except Exception as e:
+            return DiagnoseRun(
+                exit_code=unavailable("hub.draft.backtest", "the live board", e))
+        if board_path:
+            board.frame.write_parquet(board_path)
+            print(f"  board snapshot written to {board_path}")
+
+    # Owned here rather than inside `diagnose`, so the count survives the call. `note()` is
+    # said whether or not anything failed, because a line that appears only on a bad run
+    # reads the same as no line.
+    correlation = CorrelationReport()
+    got = diagnose(board, rounds=rounds, n_draft_sims=n_draft_sims,
+                   n_season_sims=n_season_sims, seed=seed, correlation=correlation)
+    if got.is_empty():
+        print("  no pick produced a rankable shortlist; nothing to compare.")
+        return DiagnoseRun(exit_code=1)
+
+    lines = [
+        f"\n  Championship equity at your first {got.height} turns."
+        f"  {n_draft_sims} x {n_season_sims} sims.",
+        "  The draft is advanced by the market, so the path is identical across runs\n"
+        "  and the only thing that can differ is what equity says.\n",
+        f"  {'pick':>4}  {'held':<16} {'leader':<24} {'pos':<4} "
+        f"{'lift':>7}  {'co-led':>6}  {'cands':>5}",
+    ]
+    for r in got.iter_rows(named=True):
+        lines.append(f"  {r['pick']:>4}  {r['held']:<16} {str(r['leader'])[:24]:<24} "
+                     f"{r['leader_pos'] or ''!s:<4} {r['lift']*100:>+6.2f}%  "
+                     f"{r['co_leaders']:>6}  {r['candidates']:>5}")
+    for line in lines:
+        print(line)
+    print(f"\n  {correlation.note()}")
+    # The per-team repair record (#187). Printed beside the note rather than folded into
+    # it: the note says how many blocks were repaired and this says how far each one
+    # moved, which is the figure that decides whether a repair mattered.
+    for line in correlation.repair_lines():
+        print(line)
+
+    bad = tripwire(board.frame, got)
+    print()
+    if bad:
+        print("  TRIPWIRE TRIPPED -- equity named a filled position over an empty one:")
+        for line in bad:
+            print(f"    {line}")
+    else:
+        print("  tripwire clear: no pick named a filled required position "
+              "over an unfilled one.")
+    if out:
+        got.write_parquet(out)
+        print(f"  wrote {got.height} rows to {out}")
+    return DiagnoseRun(exit_code=0, picks=got.height, tripped=tuple(bad), lines=tuple(lines))
+
+
+class HoldoutPreamble(NamedTuple):
+    """The per-season hold-out lines `--holdout` prints before anything is built, or the
+    refusal when a season has no set. `exit_code` is `None` when the run should continue --
+    the flag is off, or every season's set was read."""
+    exit_code: int | None
+    lines: tuple[str, ...] = ()
+
+
+def holdout_preamble(seasons: Sequence[int], *, holdout: bool) -> HoldoutPreamble:
+    """Every season's hold-out set, named before a board is built or a draft played (#294):
+    a season with no set refuses the run rather than playing shipped under the hold-out's
+    name."""
+    if not holdout:
+        return HoldoutPreamble(exit_code=None)
+    from hub.holdout import run_lines
+    try:
+        lines = tuple(f"  {line}" for line in run_lines(seasons))
+    except FileNotFoundError as e:
+        return HoldoutPreamble(
+            exit_code=unavailable("hub.draft.backtest", "a hold-out constant set", e))
+    for line in lines:
+        print(line)
+    return HoldoutPreamble(exit_code=None, lines=lines)
+
+
+class NoiseSweep(NamedTuple):
+    """One `--noise-scales` run: the sensitivity table, one row per scale (#49)."""
+    exit_code: int
+    table: pl.DataFrame
+    lines: tuple[str, ...] = ()
+
+
+def noise_scales_mode(boards: dict[int, Board], realised: dict[int, pl.DataFrame], *,
+                      scales: Sequence[float], n_drafts: int, seed: int, rounds: int,
+                      n_draft_sims: int, n_season_sims: int, with_ceiling: bool,
+                      correlation: CorrelationReport, workers: int, holdout: bool,
+                      progress: bool, out: str | None) -> NoiseSweep:
+    """One gate per scale of the room's fitted pick noise, reported as a table -- not the
+    gate itself: its width history is left alone and its verdict is not restated here."""
+    table = noise_sensitivity(
+        boards, realised, scales=scales, n_drafts=n_drafts, seed=seed,
+        rounds=rounds, n_draft_sims=n_draft_sims, n_season_sims=n_season_sims,
+        with_ceiling=with_ceiling, correlation=correlation, workers=workers,
+        holdout=holdout,
+        on_draft=_tick("paired") if progress else None,
+        on_scale=lambda s: print(f"  scale x{s:g}: playing the room ...", flush=True))
+    print(f"\n  {correlation.note()}")
+    report = sensitivity_report(table)
+    for line in report:
+        print(line)
+    stamp = table.select(STAMPS).row(0, named=True) if table.height else {}
+    stamp_lines = tuple(f"  {k}: {v}" for k, v in stamp.items())
+    for line in stamp_lines:
+        print(line)
+    if out:
+        table.write_parquet(out)
+        print(f"\n  wrote {table.height} sensitivity rows to {out}")
+    return NoiseSweep(exit_code=0, table=table, lines=tuple(report) + stamp_lines)
+
+
+class DefaultGateMode(NamedTuple):
+    """One default (single-gate) run: the paired frame and the gate's own verdict."""
+    exit_code: int
+    paired: pl.DataFrame
+    lines: tuple[str, ...] = ()
+
+
+def default_gate_mode(boards: dict[int, Board], realised: dict[int, pl.DataFrame], *,
+                      n_drafts: int, seed: int, rounds: int, n_draft_sims: int,
+                      n_season_sims: int, progress: bool, correlation: CorrelationReport,
+                      workers: int, holdout: bool, ceiling_flag: bool,
+                      out: str | None) -> DefaultGateMode:
+    """Championship equity against the draft market: `compare` the two arms, optionally
+    bound them with `ceiling`, and hand the paired frame to `run_gate` for the
+    pre-registered verdict.
+
+    `SEASON_CLUSTER`, not the row this gate used to take: the eighty (season, draft) rows
+    are twenty rooms drawn against four boards, and what varies independently between them
+    is the season (#45; #195). The join, reported on every run and voided above the floor
+    (#46): voiding is the run's, what a join failure is and what share of one this gate
+    tolerates is this gate's.
+    """
+    paired = compare(boards, realised, n_drafts=n_drafts, seed=seed, rounds=rounds,
+                     n_draft_sims=n_draft_sims, n_season_sims=n_season_sims,
+                     on_draft=_tick("paired") if progress else None,
+                     correlation=correlation, workers=workers, holdout=holdout)
+    print(f"\n  {correlation.note()}")
+    for line in correlation.repair_lines():
+        print(line)
+
+    bound = None
+    if ceiling_flag:
+        print("  measuring the ceiling: the same arm, given the season in advance ...")
+        top = ceiling(boards, realised, n_drafts=n_drafts, seed=seed, rounds=rounds,
+                      on_draft=_tick("ceiling") if progress else None)
+        bound = Ceiling(CEILING_ARM, top["diff"])
+
+    rates = join_failure_rates(paired)
+    run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="draft",
+                   arm_a="optimizer", arm_b="market", void=void_condition(rates),
+                   ceiling=bound, seed=seed, boards=boards)
+    lines = [*join_report(rates), *run.lines]
+    for line in lines:
+        print(line)
+
+    if holdout:
+        holdout_line = ("  constants: HOLD-OUT -- each season played under "
+                        "conf/holdout/<season>.json (the lines above); the stamp's "
+                        "fitted_digest is the shipped one")
+        print(holdout_line)
+        lines.append(holdout_line)
+
+    verdict_line = f"\n  {run.verdict[1]}"
+    print(verdict_line)
+    lines.append(verdict_line)
+    limitations_header = "\n  Limitations, fixed before the run:"
+    print(limitations_header)
+    limitation_lines = [f"    - {line}" for line in LIMITATIONS]
+    for line in limitation_lines:
+        print(line)
+    lines += [limitations_header, *limitation_lines]
+
+    if out:
+        run.stamped.write_parquet(out)
+        print(f"\n  wrote {run.stamped.height} paired rows to {out}")
+    return DefaultGateMode(exit_code=0, paired=paired, lines=tuple(lines))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.draft.backtest",
@@ -1075,112 +1372,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                          "board. Run before and after a change to the objective and diff.")
     a = ap.parse_args(argv)
 
-    from hub.draft.board import build
-
     if a.diagnose_corrections:
-        print("  building the live board ...")
-        try:
-            board, report = build()
-        except Exception as e:
-            return unavailable("hub.draft.backtest", "the live board", e)
-        # Why the board has no Corrected ADP is the report's to answer, and it has to be
-        # answered *here*, before anything below reads the frame. `correction_report` is
-        # honest about its own frame -- no corrected column, no moves -- but zero moves
-        # rendered by the lines below is "the corrections are clean", and on a board whose
-        # market stage never ran that is a gate reporting a pass it did not run. Same shape
-        # as issue #121 one level down: an absent stage arriving indistinguishable from a
-        # stage that had nothing to say.
-        if not report.adp:
-            print("\n  no draft market reached this board, so it carries no ADP and no "
-                  "Corrected ADP for ADR-0011 to gate.\n  Nothing moved because nothing was "
-                  "computed -- which is not the same as nothing needing to move.")
-            return 1
-        rep = correction_report(board)
-        print(f"\n  Corrected ADP moves {rep.height} of {board.height} players.")
-        print(f"  Clamp: {DraftConfig().correction_clamp_frac:.0%} of each player's own ADP.\n")
-        print(f"  {'player':<24} {'pos':<4} {'ADP':>6} {'->':>2} {'corrected':>9} "
-              f"{'move':>7} {'ppg corr':>9}")
-        for r in rep.head(20).iter_rows(named=True):
-            print(f"  {str(r['player'])[:24]:<24} {r['pos'] or ''!s:<4} "
-                  f"{r['adp']:>6.1f} {'->':>2} {r['adp_corrected']:>9.1f} "
-                  f"{r['move']:>+7.1f} {r['proj_correction']:>+9.2f}")
-        if rep.height > 20:
-            print(f"  ... and {rep.height - 20} more")
-        bad = correction_tripwire(board)
-        print()
-        if bad:
-            print("  TRIPWIRE TRIPPED -- these are impossible if the code is right:")
-            for line in bad:
-                print(f"    {line}")
-            return 1
-        print("  tripwire clear: every move is a function of a real correction, "
-              "and none exceeds the clamp.")
-        if a.out:
-            rep.write_parquet(a.out)
-            print(f"  wrote {rep.height} rows to {a.out}")
-        return 0
+        return diagnose_corrections(out=a.out).exit_code
 
     if a.diagnose:
-        # Pin the board. `--diagnose` is run twice at two commits to gate a change, and
-        # `build()` refetches live ESPN ADP every time -- ADP moves, so two runs minutes
-        # apart are not the same experiment. First run writes the snapshot, later runs
-        # reuse it, so the only thing that differs between them is the code.
-        snap = Path(a.board) if a.board else None
-        if snap and snap.exists():
-            # A pinned board is a board off disk, which is what `Board.served` is for: the
-            # run that wrote it is over and its columns are the only evidence of it there
-            # is. It also keeps the pin intact -- the report is a function of the pinned
-            # board, so two runs at two commits get the same one, which a second `build()`
-            # would not.
-            board = Board.served(pl.read_parquet(snap))
-            print(f"  board pinned from {snap}")
-        else:
-            print("  building the live board ...")
-            try:
-                board = build()
-            except Exception as e:
-                return unavailable("hub.draft.backtest", "the live board", e)
-            if snap:
-                board.frame.write_parquet(snap)
-                print(f"  board snapshot written to {snap}")
-        # Owned here rather than inside `diagnose`, so the count survives the call. Every
-        # simulated season below writes into it; `note()` is said whether or not anything
-        # failed, because a line that appears only on a bad run reads the same as no line.
-        correlation = CorrelationReport()
-        got = diagnose(board, rounds=a.rounds, n_draft_sims=a.draft_sims,
-                       n_season_sims=a.season_sims, seed=a.seed, correlation=correlation)
-        if got.is_empty():
-            print("  no pick produced a rankable shortlist; nothing to compare.")
-            return 1
-        print(f"\n  Championship equity at your first {got.height} turns."
-              f"  {a.draft_sims} x {a.season_sims} sims.")
-        print("  The draft is advanced by the market, so the path is identical across runs\n"
-              "  and the only thing that can differ is what equity says.\n")
-        print(f"  {'pick':>4}  {'held':<16} {'leader':<24} {'pos':<4} "
-              f"{'lift':>7}  {'co-led':>6}  {'cands':>5}")
-        for r in got.iter_rows(named=True):
-            print(f"  {r['pick']:>4}  {r['held']:<16} {str(r['leader'])[:24]:<24} "
-                  f"{r['leader_pos'] or ''!s:<4} {r['lift']*100:>+6.2f}%  "
-                  f"{r['co_leaders']:>6}  {r['candidates']:>5}")
-        print(f"\n  {correlation.note()}")
-        # The per-team repair record (#187). Printed beside the note rather than folded into
-        # it: the note says how many blocks were repaired and this says how far each one
-        # moved, which is the figure that decides whether a repair mattered.
-        for line in correlation.repair_lines():
-            print(line)
-        bad = tripwire(board.frame, got)
-        print()
-        if bad:
-            print("  TRIPWIRE TRIPPED -- equity named a filled position over an empty one:")
-            for line in bad:
-                print(f"    {line}")
-        else:
-            print("  tripwire clear: no pick named a filled required position "
-                  "over an unfilled one.")
-        if a.out:
-            got.write_parquet(a.out)
-            print(f"  wrote {got.height} rows to {a.out}")
-        return 0
+        return diagnose_mode(
+            board_path=Path(a.board) if a.board else None, rounds=a.rounds,
+            n_draft_sims=a.draft_sims, n_season_sims=a.season_sims, seed=a.seed,
+            out=a.out).exit_code
 
     # The gate's reads are the gate's own, whichever way it was invoked (#192). Run as a
     # process this changes nothing: the scope opens on an empty set, exactly as the
@@ -1198,13 +1397,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # built or a draft played: a season with no set refuses the run rather than playing
         # shipped under the hold-out's name, and the lines are the record of what each
         # season read.
-        if a.holdout:
-            from hub.holdout import run_lines
-            try:
-                for line in run_lines(seasons):
-                    print(f"  {line}")
-            except FileNotFoundError as e:
-                return unavailable("hub.draft.backtest", "a hold-out constant set", e)
+        pre = holdout_preamble(seasons, holdout=a.holdout)
+        if pre.exit_code is not None:
+            return pre.exit_code
         try:
             boards, realised = walk_forward_inputs(
                 seasons, board_as_of,
@@ -1216,15 +1411,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  playing {a.drafts} drafts x {len(seasons)} seasons, "
               f"{a.draft_sims} x {a.season_sims} sims per optimizer call"
               + (" under hold-out constants" if a.holdout else "") + " ...")
-        def _tick(label: str):
-            """One line per draft, flushed. A run that says nothing is a run someone kills."""
-            def say(season: int, k: int, of: int) -> None:
-                print(f"    {label} {season}: draft {k}/{of}", flush=True)
-            return say
 
         # Owned here for the same reason `diagnose`'s is: every simulated season inside
-        # `compare` writes into it, and a count that lives inside the call dies with its
-        # stack frame. With workers, each season's count comes back and is absorbed.
+        # `compare` or `noise_sensitivity` writes into it, and a count that lives inside the
+        # call dies with its stack frame. With workers, each season's count comes back and
+        # is absorbed.
         correlation = CorrelationReport()
         # One worker per season, capped at the cores. Each worker is a spawned process
         # holding its own season's frames and running its sims flat out, so more of them
@@ -1240,68 +1431,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             # the gate -- its width history is left alone and its verdict is not restated
             # here -- so the single-gate path below is untouched by this branch existing.
             scales = [float(s) for s in a.noise_scales.split(",") if s.strip()]
-            table = noise_sensitivity(
+            return noise_scales_mode(
                 boards, realised, scales=scales, n_drafts=a.drafts, seed=a.seed,
                 rounds=a.rounds, n_draft_sims=a.draft_sims, n_season_sims=a.season_sims,
                 with_ceiling=a.ceiling, correlation=correlation, workers=workers,
-                holdout=a.holdout,
-                on_draft=_tick("paired") if a.progress else None,
-                on_scale=lambda s: print(f"  scale x{s:g}: playing the room ...", flush=True))
-            print(f"\n  {correlation.note()}")
-            for line in sensitivity_report(table):
-                print(line)
-            stamp = table.select(STAMPS).row(0, named=True) if table.height else {}
-            for k, v in stamp.items():
-                print(f"  {k}: {v}")
-            if a.out:
-                table.write_parquet(a.out)
-                print(f"\n  wrote {table.height} sensitivity rows to {a.out}")
-            return 0
+                holdout=a.holdout, progress=a.progress, out=a.out).exit_code
 
-        paired = compare(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
-                         n_draft_sims=a.draft_sims, n_season_sims=a.season_sims,
-                         on_draft=_tick("paired") if a.progress else None,
-                         correlation=correlation, workers=workers, holdout=a.holdout)
-        print(f"\n  {correlation.note()}")
-        for line in correlation.repair_lines():
-            print(line)
-        bound = None
-        if a.ceiling:
-            print("  measuring the ceiling: the same arm, given the season in advance ...")
-            top = ceiling(boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
-                          on_draft=_tick("ceiling") if a.progress else None)
-            bound = Ceiling(CEILING_ARM, top["diff"])
-
-        # `SEASON_CLUSTER`, not the row this gate used to take: the eighty (season, draft)
-        # rows are twenty rooms drawn against four boards, and what varies independently
-        # between them is the season. Issue #45; the effect is unmoved and the interval
-        # widens.
-        #
-        # Re-examined under #195, which removed a second and undeclared source of dependence
-        # between the rows, and left unchanged: see `compare`'s docstring for why the
-        # surviving reason is sufficient on its own. Stated here, at this gate's own call
-        # site, because the run has no default for it (#135).
-        # The join, reported on every run and voided above the floor (#46). Voiding is the
-        # run's; what a join failure is, and what share of one this gate tolerates, is this
-        # gate's.
-        rates = join_failure_rates(paired)
-        run = run_gate(paired, cluster=SEASON_CLUSTER, actions=ACTIONS, name="draft",
-                       arm_a="optimizer", arm_b="market", void=void_condition(rates),
-                       ceiling=bound, seed=a.seed, boards=boards)
-        for line in [*join_report(rates), *run.lines]:
-            print(line)
-        if a.holdout:
-            print("  constants: HOLD-OUT -- each season played under conf/holdout/<season>.json "
-                  "(the lines above); the stamp's fitted_digest is the shipped one")
-        print(f"\n  {run.verdict[1]}")
-        print("\n  Limitations, fixed before the run:")
-        for line in LIMITATIONS:
-            print(f"    - {line}")
-
-        if a.out:
-            run.stamped.write_parquet(a.out)
-            print(f"\n  wrote {run.stamped.height} paired rows to {a.out}")
-        return 0
+        return default_gate_mode(
+            boards, realised, n_drafts=a.drafts, seed=a.seed, rounds=a.rounds,
+            n_draft_sims=a.draft_sims, n_season_sims=a.season_sims, progress=a.progress,
+            correlation=correlation, workers=workers, holdout=a.holdout,
+            ceiling_flag=a.ceiling, out=a.out).exit_code
 
 
 if __name__ == "__main__":

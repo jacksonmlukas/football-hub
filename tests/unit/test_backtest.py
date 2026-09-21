@@ -539,6 +539,62 @@ def test_the_corrections_gate_runs_on_a_board_that_has_a_corrected_ranking(monke
     assert "tripwire clear" in capsys.readouterr().out
 
 
+# --- `diagnose_corrections`, called directly (#341) -----------------------------------
+#
+# `main`'s `--diagnose-corrections` branch is now a thin dispatch onto this function; the
+# two tests above hold the CLI's own words unchanged, and these hold the typed result the
+# function hands back, without scraping stdout for it.
+
+def test_diagnose_corrections_reports_the_typed_result_on_a_clean_board(monkeypatch):
+    from hub.draft import board as board_mod
+
+    b = _corrected([(10.0, 11.5, -0.5), (50.0, 50.0, 0.0)])
+    monkeypatch.setattr(board_mod, "build",
+                        lambda *a, **k: board_mod.Board(b, board_mod.BuildReport(adp=True)))
+    got = bt.diagnose_corrections(out=None)
+    assert got.exit_code == 0
+    # Only the first row moved; the second's `move` is exactly zero and `correction_report`
+    # filters it out.
+    assert got.moved == 1 and got.total == b.height
+    assert got.tripped == ()
+    assert any("Corrected ADP moves 1 of" in line for line in got.lines)
+
+
+def test_diagnose_corrections_reports_the_typed_result_when_the_tripwire_trips(monkeypatch):
+    """A move past the clamp is impossible if the code is right; the typed result carries
+    which player and why, the same sentence the CLI prints."""
+    from hub.draft import board as board_mod
+
+    b = _corrected([(10.0, 40.0, -0.5)])   # far past any clamp
+    monkeypatch.setattr(board_mod, "build",
+                        lambda *a, **k: board_mod.Board(b, board_mod.BuildReport(adp=True)))
+    got = bt.diagnose_corrections(out=None)
+    assert got.exit_code == 1
+    assert len(got.tripped) == 1 and "past the" in got.tripped[0]
+
+
+def test_diagnose_corrections_says_it_could_not_run_without_scraping_stdout(monkeypatch):
+    from hub.draft import board as board_mod
+
+    monkeypatch.setattr(board_mod, "build",
+                        lambda *a, **k: board_mod.Board(_board(8), board_mod.BuildReport()))
+    got = bt.diagnose_corrections(out=None)
+    assert got.exit_code == 1 and got.moved == 0
+    assert any("no draft market reached this board" in line for line in got.lines)
+
+
+def test_diagnose_corrections_writes_out_only_when_asked(monkeypatch, tmp_path):
+    from hub.draft import board as board_mod
+
+    b = _corrected([(10.0, 11.5, -0.5)])
+    monkeypatch.setattr(board_mod, "build",
+                        lambda *a, **k: board_mod.Board(b, board_mod.BuildReport(adp=True)))
+    out = tmp_path / "corrections.parquet"
+    got = bt.diagnose_corrections(out=out)
+    assert got.exit_code == 0
+    assert pl.read_parquet(out).height == got.moved == 1
+
+
 # --- `--diagnose`, driven through main() (#266) ---------------------------------------
 #
 # The path a coverage run measured as never reached: the board pin, its error path, and the
@@ -642,6 +698,45 @@ def test_diagnose_reports_the_tripwire_clear_and_the_correlation_note(monkeypatc
     # the flags reach the sims, not only the sentence about them
     (_, kw), = calls["diagnosed"]
     assert (kw["n_draft_sims"], kw["n_season_sims"], kw["rounds"], kw["seed"]) == (3, 7, 5, 9)
+
+
+# --- `diagnose_mode`, called directly (#341) -------------------------------------------
+#
+# `main`'s `--diagnose` branch is now a thin dispatch onto this function; the CLI tests
+# above hold the sentences unchanged, and these hold the typed result without capsys.
+
+def test_diagnose_mode_returns_the_typed_result_on_a_clean_run(monkeypatch):
+    _diagnose_seams(monkeypatch, [_CLEAR])
+    got = bt.diagnose_mode(board_path=None, rounds=bt.DEFAULT_ROUNDS, n_draft_sims=12,
+                           n_season_sims=250, seed=0, out=None)
+    assert got.exit_code == 0
+    assert got.picks == 1
+    assert got.tripped == ()
+    assert any("Championship equity at your first 1 turns" in line for line in got.lines)
+
+
+def test_diagnose_mode_returns_the_tripwire_in_the_typed_result(monkeypatch):
+    _diagnose_seams(monkeypatch, [_TRIPPED])
+    got = bt.diagnose_mode(board_path=None, rounds=bt.DEFAULT_ROUNDS, n_draft_sims=12,
+                           n_season_sims=250, seed=0, out=None)
+    assert got.exit_code == 0, "the tripwire is a sentence, not the exit code"
+    assert len(got.tripped) == 1 and "QB is full" in got.tripped[0]
+
+
+def test_diagnose_mode_exits_one_with_nothing_rankable(monkeypatch):
+    _diagnose_seams(monkeypatch, [])
+    got = bt.diagnose_mode(board_path=None, rounds=bt.DEFAULT_ROUNDS, n_draft_sims=12,
+                           n_season_sims=250, seed=0, out=None)
+    assert got.exit_code == 1 and got.picks == 0 and got.lines == ()
+
+
+def test_diagnose_mode_says_the_live_board_is_unavailable(monkeypatch, capsys):
+    calls = _diagnose_seams(monkeypatch, [_CLEAR], builds=RuntimeError("ESPN 503"))
+    got = bt.diagnose_mode(board_path=None, rounds=bt.DEFAULT_ROUNDS, n_draft_sims=12,
+                           n_season_sims=250, seed=0, out=None)
+    assert got.exit_code == 1
+    assert calls["diagnosed"] == []
+    assert "the live board unavailable" in capsys.readouterr().err
 
 
 # --- the corrected-ADP gate (ADR-0011) ------------------------------------
@@ -1864,6 +1959,38 @@ def test_the_sweep_is_reachable_from_the_command_line(monkeypatch, tmp_path):
         "a sensitivity row does not say which bytes its gate was scored against")
 
 
+# --- `noise_scales_mode`, called directly (#341) ---------------------------------------
+#
+# `main`'s `--noise-scales` branch is now a thin dispatch onto this function, called after
+# the boards are already loaded; the CLI test above holds the written table unchanged, and
+# this holds the typed result without going through `main` or a written file.
+
+def test_noise_scales_mode_returns_the_table_in_the_typed_result(monkeypatch):
+    board = _full_board(24)
+    real = _flat_realised(board)
+
+    def fake_compare(boards, realised, *, opp_noise=1.0, **kw):
+        rows = [{"season": 2024, "draft": k, "market": 10.0, "optimizer": 10.0 - opp_noise,
+                 "market_failed": 0, "optimizer_failed": 0, "picks": 4} for k in range(3)]
+        out = pl.DataFrame(rows)
+        return out.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
+
+    monkeypatch.setattr(bt, "compare", fake_compare)
+    from functools import partial
+
+    from hub.models.experiment import run_gate
+    monkeypatch.setattr(bt, "run_gate", partial(run_gate, record_width=False))
+    got = bt.noise_scales_mode(
+        {2024: _served(board)}, {2024: real}, scales=[0.5, 1.5], n_drafts=3, seed=0,
+        rounds=3, n_draft_sims=2, n_season_sims=5, with_ceiling=False,
+        correlation=bt.CorrelationReport(), workers=1, holdout=False, progress=False,
+        out=None)
+    assert got.exit_code == 0
+    assert got.table["noise_scale"].to_list() == [0.5, 1.5]
+    assert got.table["mean"].to_list() == pytest.approx([-0.5, -1.5])
+    assert any("Opponent noise, as a sensitivity" in line for line in got.lines)
+
+
 def test_the_limitations_name_the_constants_fitted_on_the_replayed_seasons():
     """#279. The simulator arm's constants were fitted on the seasons the backtest replays,
     and the list of limitations did not say so. The entry names each one and the default
@@ -2012,6 +2139,57 @@ def test_the_gate_cli_defaults_to_one_worker_per_season(monkeypatch, tmp_path):
     assert got["workers"] == 2
     assert bt.main(["--seasons", "2024,2025", "--drafts", "1", "--workers", "1"]) == 0
     assert got["workers"] == 1
+
+
+# --- `default_gate_mode`, called directly (#341) ---------------------------------------
+#
+# `main`'s default (no `--noise-scales`) branch is now a thin dispatch onto this function,
+# called after the boards are already loaded; the CLI tests above and `_in_process_gate`
+# hold the printed sentences and written file unchanged, and this holds the typed result.
+
+def test_default_gate_mode_returns_the_paired_frame_and_the_verdict(monkeypatch):
+    from functools import partial
+
+    paired = pl.DataFrame({"season": [2024] * 4, "draft": [0, 1, 2, 3],
+                           "market": [10.0, 11.0, 9.0, 10.5],
+                           "optimizer": [9.0, 10.0, 8.5, 9.0],
+                           "market_failed": [0] * 4, "optimizer_failed": [0] * 4,
+                           "picks": [4] * 4})
+    paired = paired.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
+    monkeypatch.setattr(bt, "compare", lambda *a, **k: paired)
+    monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, record_width=False, bootstrap=50))
+
+    board = _full_board(24)
+    real = _flat_realised(board)
+    got = bt.default_gate_mode(
+        {2024: _served(board)}, {2024: real}, n_drafts=4, seed=0, rounds=3, n_draft_sims=2,
+        n_season_sims=5, progress=False, correlation=bt.CorrelationReport(), workers=1,
+        holdout=False, ceiling_flag=False, out=None)
+    assert got.exit_code == 0
+    assert got.paired.equals(paired)
+    assert any("Limitations, fixed before the run" in line for line in got.lines)
+    assert not any(line.startswith("  constants: HOLD-OUT") for line in got.lines)
+
+
+def test_default_gate_mode_names_the_hold_out_constants_when_asked(monkeypatch):
+    from functools import partial
+
+    paired = pl.DataFrame({"season": [2024] * 4, "draft": [0, 1, 2, 3],
+                           "market": [10.0, 11.0, 9.0, 10.5],
+                           "optimizer": [9.0, 10.0, 8.5, 9.0],
+                           "market_failed": [0] * 4, "optimizer_failed": [0] * 4,
+                           "picks": [4] * 4})
+    paired = paired.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
+    monkeypatch.setattr(bt, "compare", lambda *a, **k: paired)
+    monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, record_width=False, bootstrap=50))
+
+    board = _full_board(24)
+    real = _flat_realised(board)
+    got = bt.default_gate_mode(
+        {2024: _served(board)}, {2024: real}, n_drafts=4, seed=0, rounds=3, n_draft_sims=2,
+        n_season_sims=5, progress=False, correlation=bt.CorrelationReport(), workers=1,
+        holdout=True, ceiling_flag=False, out=None)
+    assert any(line.startswith("  constants: HOLD-OUT") for line in got.lines)
 
 
 def test_a_report_absorbs_another_count_for_count_and_keeps_the_first_repair_per_team():
@@ -2216,4 +2394,35 @@ def test_a_holdout_run_on_a_season_with_no_set_refuses_before_building_a_board(
 
     monkeypatch.setattr(bt, "walk_forward_inputs", never)
     assert bt.main(["--seasons", "2019", "--holdout"]) != 0
+    assert "no hold-out constant set for 2019" in capsys.readouterr().err
+
+
+# --- `holdout_preamble`, called directly (#341) ----------------------------------------
+#
+# The `if a.holdout: ...` block `main` used to inline before building any board is now this
+# function; `main` calls it unconditionally and reads `exit_code` to decide whether to
+# continue. These hold its typed result without going through `main` or capsys.
+
+def test_holdout_preamble_does_nothing_when_the_flag_is_off():
+    got = bt.holdout_preamble([2024], holdout=False)
+    assert got.exit_code is None and got.lines == ()
+
+
+def test_holdout_preamble_reads_and_prints_every_seasons_set(monkeypatch, tmp_path):
+    from hub import holdout
+
+    monkeypatch.setattr(holdout, "SETS", tmp_path)
+    holdout.record(2024, "predict.WEEKLY_K_POOLED", 2.1, command="x")
+    got = bt.holdout_preamble([2024], holdout=True)
+    assert got.exit_code is None
+    assert any("season 2024: constants from" in line for line in got.lines)
+    assert any("refitted: predict.WEEKLY_K_POOLED" in line for line in got.lines)
+
+
+def test_holdout_preamble_refuses_a_season_with_no_set(monkeypatch, tmp_path, capsys):
+    from hub import holdout
+
+    monkeypatch.setattr(holdout, "SETS", tmp_path / "sets")
+    got = bt.holdout_preamble([2019], holdout=True)
+    assert got.exit_code == 1 and got.lines == ()
     assert "no hold-out constant set for 2019" in capsys.readouterr().err
