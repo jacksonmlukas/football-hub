@@ -123,7 +123,6 @@ ACTIONS = experiment.Actions(
          "(docs/qb-adjustment.md, docs/gate-power.md); this log-loss picture is read beside "
          "it.")
 
-REGULAR_SEASON = "REG"
 PASSER = "passer_player_id"
 
 TEAM_GAME_SCHEMA: dict[str, Any] = {
@@ -135,86 +134,41 @@ TEAM_GAME_SCHEMA: dict[str, Any] = {
 
 
 # --- the event construction ---------------------------------------------------------------
+#
+# #339: the transform below used to be hand-built here -- `_schedule` plus a duplicate of
+# `team_games`'s own per-side unpivot -- reaching past `hub.fetch.nfeloqb`'s public surface
+# six times (`nfeloqb.ABBREVIATIONS` three times over, `nfeloqb._blank`) to rebuild what
+# `nfeloqb.team_games` now does once, for both this module and the fetch module's own state
+# path. Everything here reads that public function; nothing computes the schema-level
+# transform itself.
 
 def _schedule(rows: pl.DataFrame) -> pl.DataFrame:
-    """Every (team, game) the source has a row for, home and away, before either side is
-    filtered for a one-sided blank -- the full row set `team_games`'s previous-game link and
-    `unreadable_games`'s count are both built off, never the rows a one-sided blank drops
-    (#301). Postseason rows are dropped the same way `team_games` drops them."""
-    if "game_type" in rows.columns:
-        rows = rows.filter(pl.col("game_type") == REGULAR_SEASON)
-    week = pl.col("week").cast(pl.Utf8).cast(pl.Float64).cast(pl.Int64)
-    gid = (pl.col("season").cast(pl.Utf8) + "_" + week.cast(pl.Utf8).str.zfill(2) + "_"
-           + pl.col("team2").replace(nfeloqb.ABBREVIATIONS) + "_"
-           + pl.col("team1").replace(nfeloqb.ABBREVIATIONS))
-    return pl.concat([
-        rows.select(gid.alias("game_id"), pl.col("season").cast(pl.Int64), week.alias("week"),
-                    pl.col("date").cast(pl.Utf8),
-                    pl.col(f"team{n}").replace(nfeloqb.ABBREVIATIONS).alias("team"))
-        for n in ("1", "2")]).sort("team", "season", "week")
+    """Kept because `tests/unit/test_starter_change.py` calls it directly. The full
+    (team, game) row set it returns -- before either side is filtered for a one-sided blank
+    -- is `hub.fetch.nfeloqb.schedule`'s now (#339); this computes none of it itself."""
+    return nfeloqb.schedule(rows)
 
 
 def team_games(rows: pl.DataFrame) -> pl.DataFrame:
-    """One row per (team, game) off the source's rows, keyed by nflverse's game id.
-
-    The id is rebuilt from the season, the week and the two teams in nflverse's spellings
-    rather than read off the source's own `game_id`, which spells the Rams `LAR` and the
-    Raiders `OAK` where the snapshot archive says `LA` and `LV` (2026-09-13: 6% of the
-    source's 2022+ ids differ from the archive's, every one a spelling). `team1` is the home
-    side, the source's convention. `base_prob` and `qb_prob` are the source's own home win
-    probabilities, base and quarterback-adjusted, carried for the pilot and null where the
-    file does not carry them. Postseason rows are dropped where the file says which they
-    are; a side blank in any of the three the team layer reads is dropped alone (#283).
-
-    `prev_game_id`, `prev_season` and `prev_date` name each row's *actual* previous game --
-    the team's last entry in `_schedule`'s full row set, both sides, before either is
-    filtered for blanks -- so a one-sided blank drops that side's own row above without
-    moving its neighbours a game closer together or losing a game from the team's sequence
-    (#301). `events` reads these three straight off this frame instead of re-deriving a
-    previous game from whichever rows happen to survive.
-    """
-    if "week" not in rows.columns:
-        raise ValueError("the rows carry no 'week' column, and the nflverse game id the "
-                         "archive is keyed by cannot be rebuilt without it")
-    if "game_type" in rows.columns:
-        rows = rows.filter(pl.col("game_type") == REGULAR_SEASON)
-    week = pl.col("week").cast(pl.Utf8).cast(pl.Float64).cast(pl.Int64)
-    home = pl.col("team1").replace(nfeloqb.ABBREVIATIONS)
-    away = pl.col("team2").replace(nfeloqb.ABBREVIATIONS)
-    gid = (pl.col("season").cast(pl.Utf8) + "_" + week.cast(pl.Utf8).str.zfill(2)
-           + "_" + away + "_" + home)
-    probs = [(pl.col(c).cast(pl.Float64) if c in rows.columns
-              else pl.lit(None, dtype=pl.Float64)).alias(a)
-             for c, a in (("elo_prob1", "base_prob"), ("qbelo_prob1", "qb_prob"))]
-    sides = []
-    for n, side, own, opp in (("1", True, "score1", "score2"), ("2", False, "score2", "score1")):
-        sides.append(rows.filter(~nfeloqb._blank(n)).select(
-            gid.alias("game_id"), pl.col("season").cast(pl.Int64), week.alias("week"),
-            pl.col("date").cast(pl.Utf8),
-            pl.col(f"team{n}").replace(nfeloqb.ABBREVIATIONS).alias("team"),
-            pl.lit(side).alias("home"),
-            pl.col(f"qb{n}").alias("qb"),
-            pl.col(f"qb{n}_value_pre").cast(pl.Float64).alias("value"),
-            pl.col(f"qb{n}_adj").cast(pl.Float64).alias("adj"),
-            pl.col(own).cast(pl.Int64).alias("score"),
-            pl.col(opp).cast(pl.Int64).alias("opp_score"),
-            *probs))
-    tg = pl.concat(sides).select(*TEAM_GAME_SCHEMA).sort("team", "season", "week")
-    link = _schedule(rows).with_columns(
-        pl.col("game_id").shift(1).over("team").alias("prev_game_id"),
-        pl.col("season").shift(1).over("team").alias("prev_season"),
-        pl.col("date").shift(1).over("team").alias("prev_date"),
-    ).select("team", "game_id", "prev_game_id", "prev_season", "prev_date")
-    return tg.join(link, on=["team", "game_id"], how="left")
+    """One row per (team, game) off the source's rows, keyed by nflverse's game id, with the
+    previous-game link (#301) `events` reads straight off. Read off
+    `hub.fetch.nfeloqb.team_games`, which owns the source's schema -- the two-sided row, the
+    blank convention, the abbreviation map -- and builds this frame for its own state path
+    too (#339); this keeps only the columns both of this module's readers need
+    (`TEAM_GAME_SCHEMA`, plus `prev_game_id`/`prev_season`/`prev_date`) and computes none of
+    the schema-level transform itself."""
+    return nfeloqb.team_games(rows).select(*TEAM_GAME_SCHEMA, "prev_game_id", "prev_season",
+                                           "prev_date")
 
 
 def unreadable_games(rows: pl.DataFrame) -> int:
-    """Team-games a blank side made unreadable: entries `_schedule`'s full row set carries
-    for a team that `team_games` has no row for, because that side's qb, value or adjustment
-    was null. Counts both sides of a two-sided blank, one each, alongside every one-sided
-    blank's single side (#328). Reported on the run line so a hole is counted, not silently
-    closed over the way the previous-game link used to close it (#301)."""
-    return _schedule(rows).height - team_games(rows).height
+    """Team-games a blank side made unreadable: entries `hub.fetch.nfeloqb.schedule`'s full
+    row set carries for a team that `team_games` has no row for, because that side's qb,
+    value or adjustment was null. Counts both sides of a two-sided blank, one each, alongside
+    every one-sided blank's single side (#328). Reported on the run line so a hole is
+    counted, not silently closed over the way the previous-game link used to close it
+    (#301)."""
+    return nfeloqb.schedule(rows).height - team_games(rows).height
 
 
 def starters_from_pbp(pbp: pl.DataFrame) -> pl.DataFrame:

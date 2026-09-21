@@ -301,6 +301,113 @@ def state(rows: pl.DataFrame, as_of: date | datetime | None = None) -> pl.DataFr
     return pl.DataFrame(out, schema=STATE_SCHEMA).sort("team")
 
 
+# --- the per-team-game frame (#339) ------------------------------------------------------
+#
+# `state`'s own per-team path above is `_long`: the two-sided row unpivoted, a side blank in
+# `qb`, `value` or `adj` dropped alone, the team spelled nflverse's way. Before this section
+# existed, `hub.models.starter_change` needed more than that -- a game id, which side is
+# home, the source's own win probabilities, and a previous-game link a one-sided blank must
+# not move -- and got it by reaching past this module's public surface six times to rebuild
+# the same transform by hand (`nfeloqb.ABBREVIATIONS`, `nfeloqb._blank`): three of an
+# architecture review's findings (#301, #328, #304's mutants) lived in that copy. `schedule`
+# and `team_games` below are that transform, published once.
+#
+# `_long`/`state` are unchanged by this section and do not filter to the regular season the
+# way `team_games` does: a team's tenure run is allowed to reach back across the postseason
+# boundary (a Super Bowl participant's latest row is its playoff game, not its last regular-
+# season one), and filtering here would silently move what `state` reports for it.
+
+REGULAR_SEASON = "REG"
+
+
+def schedule(rows: pl.DataFrame) -> pl.DataFrame:
+    """Every (team, game) `rows` carries an entry for, home and away, before either side is
+    filtered for a one-sided blank -- `team_games`'s previous-game link and
+    `hub.models.starter_change.unreadable_games`'s count are both built off this, never off
+    the rows a one-sided blank drops (#301). Regular season only where `game_type` exists;
+    the source's own team spellings mapped through `ABBREVIATIONS`; keyed by nflverse's game
+    id -- season, the week zero-padded, away, home -- rebuilt rather than read off the
+    source's own `game_id`, which spells the Rams `LAR` and the Raiders `OAK` where nflverse
+    says `LA` and `LV`.
+    """
+    if "game_type" in rows.columns:
+        rows = rows.filter(pl.col("game_type") == REGULAR_SEASON)
+    week = pl.col("week").cast(pl.Utf8).cast(pl.Float64).cast(pl.Int64)
+    gid = (pl.col("season").cast(pl.Utf8) + "_" + week.cast(pl.Utf8).str.zfill(2) + "_"
+           + pl.col("team2").replace(ABBREVIATIONS) + "_"
+           + pl.col("team1").replace(ABBREVIATIONS))
+    return pl.concat([
+        rows.select(gid.alias("game_id"), pl.col("season").cast(pl.Int64), week.alias("week"),
+                    pl.col("date").cast(pl.Utf8),
+                    pl.col(f"team{n}").replace(ABBREVIATIONS).alias("team"))
+        for n in ("1", "2")]).sort("team", "season", "week")
+
+
+_TEAM_GAME_COLUMNS: dict[str, Any] = {
+    "game_id": pl.Utf8, "season": pl.Int64, "week": pl.Int64, "date": pl.Utf8,
+    "team": pl.Utf8, "home": pl.Boolean, "qb": pl.Utf8, "value": pl.Float64,
+    "adj": pl.Float64, "score": pl.Int64, "opp_score": pl.Int64,
+    "base_prob": pl.Float64, "qb_prob": pl.Float64,
+}
+
+
+def team_games(rows: pl.DataFrame) -> pl.DataFrame:
+    """One row per (team, game) off the source's two-sided row, in nflverse's spellings and
+    keyed by `schedule`'s game id. `team1` is the home side (the source's convention);
+    `home`, `score`/`opp_score` and the source's own win probabilities (`elo_prob1` the base
+    Elo, `qbelo_prob1` the quarterback-adjusted one, aliased `base_prob`/`qb_prob`, null
+    where the file does not carry them) ride along per side. A side null in `qb`, `value` or
+    `adj` is dropped alone (#283); the other side's row is kept. Regular season only where
+    `game_type` exists.
+
+    `prev_game_id`, `prev_season` and `prev_date` name each row's *actual* previous game --
+    the team's last entry in `schedule`'s full row set, both sides, before either is
+    filtered for a one-sided blank -- so a one-sided blank drops that side's own row without
+    moving its neighbours a game closer together or losing a game from the team's sequence
+    (#301). `hub.models.starter_change.events` reads these three straight off this frame
+    instead of re-deriving a previous game from whichever rows happen to survive.
+
+    **What this hides** (#339): the source's two-sided row (`team1`/`team2`, `qb{n}_*`,
+    `score{n}`), the blank convention (a side null in any of the three the team layer reads
+    is dropped, `_blank`), and the spelling reconciliation (`ABBREVIATIONS`) that keeps a
+    Rams or Raiders game from becoming unadjustable on both sides. Raises if `rows` carries
+    no `week` column: the nflverse game id this is keyed by cannot be rebuilt without it.
+    """
+    if "week" not in rows.columns:
+        raise ValueError("the rows carry no 'week' column, and the nflverse game id the "
+                         "archive is keyed by cannot be rebuilt without it")
+    if "game_type" in rows.columns:
+        rows = rows.filter(pl.col("game_type") == REGULAR_SEASON)
+    week = pl.col("week").cast(pl.Utf8).cast(pl.Float64).cast(pl.Int64)
+    home = pl.col("team1").replace(ABBREVIATIONS)
+    away = pl.col("team2").replace(ABBREVIATIONS)
+    gid = (pl.col("season").cast(pl.Utf8) + "_" + week.cast(pl.Utf8).str.zfill(2)
+           + "_" + away + "_" + home)
+    probs = [(pl.col(c).cast(pl.Float64) if c in rows.columns
+              else pl.lit(None, dtype=pl.Float64)).alias(a)
+             for c, a in (("elo_prob1", "base_prob"), ("qbelo_prob1", "qb_prob"))]
+    sides = []
+    for n, side, own, opp in (("1", True, "score1", "score2"), ("2", False, "score2", "score1")):
+        sides.append(rows.filter(~_blank(n)).select(
+            gid.alias("game_id"), pl.col("season").cast(pl.Int64), week.alias("week"),
+            pl.col("date").cast(pl.Utf8),
+            pl.col(f"team{n}").replace(ABBREVIATIONS).alias("team"),
+            pl.lit(side).alias("home"),
+            pl.col(f"qb{n}").alias("qb"),
+            pl.col(f"qb{n}_value_pre").cast(pl.Float64).alias("value"),
+            pl.col(f"qb{n}_adj").cast(pl.Float64).alias("adj"),
+            pl.col(own).cast(pl.Int64).alias("score"),
+            pl.col(opp).cast(pl.Int64).alias("opp_score"),
+            *probs))
+    tg = pl.concat(sides).select(*_TEAM_GAME_COLUMNS).sort("team", "season", "week")
+    link = schedule(rows).with_columns(
+        pl.col("game_id").shift(1).over("team").alias("prev_game_id"),
+        pl.col("season").shift(1).over("team").alias("prev_season"),
+        pl.col("date").shift(1).over("team").alias("prev_date"),
+    ).select("team", "game_id", "prev_game_id", "prev_season", "prev_date")
+    return tg.join(link, on=["team", "game_id"], how="left")
+
+
 # --- the cache --------------------------------------------------------------------------
 
 def _paths(cache: Path | None) -> tuple[Path, Path]:
