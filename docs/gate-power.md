@@ -1622,6 +1622,14 @@ re-registered guard keeps it that way by construction: a test that walks the cal
 longer a clean market test — decided then, in that ticket's pre-registration, and never by
 an import.
 
+> **Amended 2026-09-21, at adoption: the caller-walk test gets its own positive control
+> before it is trusted.** A guard that walks a call graph is rule 18's shape — an assertion
+> that can pass because it cannot see. An AST walk is blind to dynamic dispatch, `getattr`,
+> and config-driven paths, and the test says so in its docstring. Before the guard is relied
+> on, a path from a market input into a market-scored object is planted and the test is seen
+> to catch it; the test is registered in `tests/contracts/test_every_check_has_a_positive_control.py`
+> beside the other guards, so a renamed or narrowed extractor fails there.
+
 Under ADR-0025 no team aggregate exists (#222, #223 declined), so the re-registered guard
 holds today. The alternative — keep the column-level assertion, and #305 never lands — is a
 real option and it is the maintainer's, not this document's.
@@ -2231,6 +2239,15 @@ between a sensitivity and a decision. What would reopen this: either candidate m
 against the other and reported as a sensitivity, per ADR-0024's own default, if the maintainer
 reads it as one axis rather than two objects.
 
+> **Adopted 2026-09-21: (a), and the reason is corrected on the way.** The parenthetical
+> above — that (b) is "not rule 2's window" — is wrong and is withdrawn. **Both windows satisfy
+> rule 2:** a prior season's full game log lies entirely outside the outcome window, which is
+> point-in-time correct, not a leakage risk. The trade is thin-early against stale — a football
+> question, not a methodology one. (a) is chosen as **current form over a season-old baseline,
+> accepting four thin weeks at the start of a season**. (b) is not disqualified: it stays
+> available as a *separate feature* with its own screen, and a reader who finds it excluded on
+> leakage grounds has been misled by the sentence this note corrects.
+
 # Pre-registered 2026-09-21 — PROPOSED: spread and injury route through the one Gate rule
 (#343)
 
@@ -2410,6 +2427,16 @@ already published in `docs/player-spread.md` (itself `fitted`, per that page's o
 provenance). Injury type's ceiling (the in-sample per-type multiplier) is **to be fitted**
 at implementation time — declared here by construction, not by value, the same way #305's and
 #306's ceiling arms were declared before their numbers existed.
+
+> **Amended 2026-09-21, at adoption: the *method* is pre-registered, not only the fact.** "To
+> be fitted at implementation" left how open, which is a degree of freedom chosen after the
+> arm is known. The ceiling arm for injury type is the `hub.models.margin.ceiling` analogue:
+> for each held-out season, a per-type retention multiplier fitted **in sample on that
+> season's own designated rows** and scored on the same rows — the oracle that knows each
+> type's realised multiplier — with the ceiling gain per season being the shipped arm's MAE
+> minus the oracle's on those rows, handed to `run_gate` as `Ceiling(<arm name>, diffs)` with
+> the arm named as a module constant the way `margin.CEILING_ARM` is. Flattered by
+> construction, which is what a ceiling is; no other construction is used.
 
 ## What this measurement cannot do
 
@@ -2994,6 +3021,18 @@ rule 16's incident for, and knows why on both axes. REMOVE and SHOW are not exem
 finding — an interval that excludes zero on the negative side, or a null, needs no unanimity in
 the same brittle way and both remain fully reachable outcomes on 2026-onward data once three
 ceiling-qualified seasons exist.
+
+> **Amended 2026-09-21, at adoption: what ends the first reason, by ticket.** The ceiling arm
+> is the market's own repricing from the last pre-kickoff snapshot, and that archive holds
+> only from 2026-08-25 — and only where a capture persists, which CI captures currently do
+> not (#383: every `poll_odds` and `refresh` snapshot on the Actions runner is discarded with
+> it). So **stage 2 is blocked until the pre-kickoff snapshot archive holds three seasons** —
+> ADR-0019's minimum k for any gate — **tracked by #383**; on captures that persist from
+> 2026, that is the 2028 season at the earliest. This gate does not become decidable in
+> October; it becomes decidable when the archive has depth. The first NOT-RUNNABLE print is
+> the plan, not a surprise, and it names #383. Meanwhile the fit records the walk-forward
+> log-loss gap per season *without a verdict word*, so #375's posterior has rows the day it
+> lands.
 
 ## Exclusions (rule 11)
 
@@ -3812,7 +3851,12 @@ sensitivity table across all three at once.
 **Candidate 1 — the prior scale (`prior_sd`, and with it `tau_scale`).**
 (a) *Recommended.* `prior_sd = s / sqrt(k)`, `tau_scale = s`, both off each gate's own
 `s`/`k` — grounded in this repo's own published noise, no free parameter to tune, and the
-"shrinks a 2-SE effect by half" property is checkable by anyone reading the number.
+"shrinks a 2-SE effect by half" property is checkable by anyone reading the number. **Named
+at adoption (2026-09-21) for what it is: a unit-information prior, data-informed through
+`s`.** It takes its scale from the same gate's published between-season noise, so it is not
+independent of the data the posterior fits, and nobody should later read it as if it were;
+what it does not do is take its *location* or its scale from the measured effects the prior
+will judge — that is (c), rejected below.
 (b) A single fixed value across every gate (e.g. `prior_sd = 1`, in whatever unit) — rejected:
 arbitrary across gates whose `s` differ by an order of magnitude (7.34 vs 0.382), and "skeptical"
 would stop meaning anything a reader could check.
