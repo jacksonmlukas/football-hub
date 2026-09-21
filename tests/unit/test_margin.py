@@ -224,6 +224,21 @@ def test_a_better_challenger_is_adopted():
     assert winner == "all" and text.startswith("ADOPT")
 
 
+def test_a_binding_ceiling_makes_the_same_challenger_not_runnable():
+    """#363 (S6), the guard's firing condition: the same +0.05 gap that adopts above is
+    NOT-RUNNABLE when the per-season ceiling is present *and* smaller than the design's MDE.
+    `test_a_better_challenger_is_adopted` exercises a present, non-binding ceiling and the
+    no-ceiling tests exercise `Field.NO_SLOT`; this is the third branch, `mde > ceiling`, with
+    a fixture that reaches it rather than a docstring that describes it."""
+    # Both challengers get two seasons with *different* gains, so each design has a non-zero
+    # MDE for the ceiling to bind against -- identical seasons give an MDE of zero, which no
+    # ceiling can be smaller than, and a challenger left at zero MDE would still ADOPT and win.
+    winner, text = margin.verdict(_wf([0.60, 0.60], [0.55, 0.50], [0.58, 0.55],
+                                      ceiling_gain=[0.001, 0.001]))
+    assert winner == "incumbent" and text.startswith("KEEP")
+    assert text.count("NOT-RUNNABLE") == 2  # one per challenger, ahead of every other branch
+
+
 def test_the_incumbent_wins_a_tie():
     """Replacing a constant hashed into every model version, for no measured gain, is churn."""
     winner, text = margin.verdict(_wf([0.60, 0.60], [0.60, 0.60], [0.60, 0.60]))
