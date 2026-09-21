@@ -1656,3 +1656,145 @@ not — the simplex stays as the object the consumers read and its per-player ve
 reported as the null it predicted. If the lineup gate adopts, ADR-0016 reopens by its own
 gate and the do-no-harm branch decides scope. If coverage overshoots, the double-count is
 the finding and `TEAMMATE_RHO` is re-fitted conditional on the simplex before anything ships.
+
+# Pre-registered 2026-09-21 — PROPOSED: the restatement `paired_gain`'s cluster argument
+obliges (#311)
+
+**Status: PROPOSED.** Drafted during the operate-mode freeze (#326), which blocks a *landing*
+and does not block writing the rule before the number (#329's precedent, restated at #305's
+and #306's own headers). Becomes the rule on the maintainer's `ADOPTED:` comment on #311.
+**This is a restatement, not a gate** — #311 has no incumbent to beat and no candidate axis
+ADR-0024 could route to a decision; it corrects an input to statistics three modules already
+compute, and this section pre-registers which published numbers move, what each is re-read
+against, and the order, per `docs/method.md` rule 13. Parent decisions: ADR-0019 and its
+2026-09-21 amendments (`SEASON_CLUSTER`, the tie-aware every-season half, S1's t-interval),
+rule 3 (repeated measures), rule 13 (a contradicted number is not restated until it moves).
+
+## The defect, restated
+
+`paired_gain`'s `se`/`t` are computed over raw rows — `d.std(ddof=1) / sqrt(len(d))` — with no
+cluster argument, while `run_gate`'s own `summarise` has clustered on `SEASON_CLUSTER` since
+before this document existed. The three call sites that bypass `run_gate` (`hub.models.weekly`,
+`hub.models.spread`, `hub.models.injury`) therefore pool the significance half over ~30,000
+player-weeks (weekly) or ~1,000-2,000 player-seasons (spread, injury), and every `t` printed
+from any of them is a *t* on that many degrees of freedom minus one rather than on `k - 1`
+seasons. #335 already gave `paired_gain` `season=`/`within=` for the every-season half; `cluster`
+is the missing third argument, for the pooled half, and — per the pattern `summarise`'s own
+docstring states — it takes no default, for the same reason `cluster` and `within` do not
+elsewhere: guessing the unit is the mistake, not a convenience a caller can skip.
+
+**What moves inside `paired_gain` when `cluster` lands, named so the restatement is not a
+surprise.** Two things change together, not one:
+
+1. **`se`/`t` are computed over cluster-mean units**, the same construction `summarise` and
+   `_cluster_se` already use elsewhere in this module — group the rows by `cluster`, average
+   `diff` to one number per cluster, then take `se`/`t` from that vector rather than from the
+   raw rows. This is an implementation-consistency choice, not a modelling one: the
+   alternative — a bootstrap SE over the cluster-mean units, matching `_bootstrap_se`'s
+   percentile resampling exactly as `summarise` does for `run_gate`-driven gates, rather than
+   the closed-form `sd(cluster means) / sqrt(k)` the 2026-09-19 pilot used by hand — is the
+   one thing here that could go two ways without being ADR-0024's "different objects." This
+   document recommends the bootstrap form, for one reason only: it is what every other
+   clustered SE in `experiment.py` already is, and a fourth mechanism for one function's one
+   argument is exactly the drift ADR-0019 unified away. The hand arithmetic below uses the
+   closed form because it is what a human can check in a sentence; the two agree closely at
+   these `k`, and are not guaranteed to at `k` below `SMALL_CLUSTERS`.
+2. **`mean` becomes the mean of the per-cluster gains**, not the row-weighted mean of the raw
+   `diff` array. On an unbalanced panel these differ — a season with more player-weeks
+   currently pulls the pooled mean toward its own gain — and every "mean gain" figure quoted
+   from these three modules is, after this lands, an equal-season-weighted number for the
+   first time. This is the same correction `weekly_screen.summarise` already made for the
+   screen (#169) and #311 applies it to the three modules that never made it.
+
+## Worked restatement, by hand, from numbers already published (method.md rule 13's own style)
+
+Not a re-run — the same hand arithmetic #311's and #312's own 2026-09-19 comments used on the
+weekly gate's rebuild-vs-flat contrast, applied here to `docs/player-spread.md`'s published
+per-season MAE table, because that table already has the five numbers a season-clustered `se`
+needs and nothing about reading them differently requires code to move first.
+
+**`own_k` vs `positional`**, per-season gain (`mae_positional − mae_own_k`):
+
+| season | positional | own_k | gain |
+|---|---|---|---|
+| 2021 | 1.0914 | 1.0881 | +0.0033 |
+| 2022 | 1.1523 | 1.1442 | +0.0081 |
+| 2023 | 1.0374 | 1.0296 | +0.0078 |
+| 2024 | 1.1573 | 1.1467 | +0.0106 |
+| 2025 | 1.0414 | 1.0385 | +0.0029 |
+
+Mean **+0.0065** (matches the published pooled mean to four places — the panel is close enough
+to balanced across these seasons that the two weightings agree here, which will not be true of
+every gate this ticket touches). Clustered analytic SE `sd(gains, ddof=1)/sqrt(5)` **≈ 0.00149**,
+**t ≈ 4.4** on 4 df — against the published, unclustered **"1.8 se."** Clustering *raises* this
+one's significance rather than lowering it, which is exactly `docs/method.md` rule 3's own
+caveat that clustering is not a synonym for a wider interval: the between-season scatter of
+`own_k`'s gain is small next to what the row-pooled SE implied. **This is pre-registration
+arithmetic, not a run** — the real number comes from `paired_gain(cluster=...)` once #311
+lands, and it is flagged here because it changes which side of `MIN_SE` `own_k` sits on, which
+is exactly the kind of thing rule 13 says must not be left standing once known. It does not by
+itself license adoption: `own_k` already wins every season (5/5) and #343's ceiling for this
+gate — player-spread.md's own **0.085 headroom** — is what stage 2 checks the restated MDE
+against, not this document.
+
+**`usage` vs `positional`**, same construction: gains −0.0238, +0.0434, +0.0154, −0.0093,
+−0.0298; mean **≈ −0.0008** (published: −0.0004), matching direction and magnitude. Mixed sign
+in both weightings (2 of 5 positive either way), so `usage` fails the every-season half under
+clustering exactly as it does today — clustering does not change its disposition, only
+`own_k`'s significance does that.
+
+## The restatement order
+
+1. Land `cluster` on `paired_gain`, with the contract test `#311`'s acceptance criteria name
+   extended to the three call sites the way `test_gates_cluster_on_the_season.py` already
+   covers `run_gate`'s.
+2. Re-run `hub.models.weekly`'s rebuild-vs-flat contrast and restate
+   `docs/weekly-projection.md` and `docs/weekly-projection-plan.md` first — the incumbent
+   figure `#305` and `#306`'s pre-registrations already cite as *"the incumbent's own
+   standing"* (t = 2.66 on 3 df, p = 0.076, per #311's and #312's 2026-09-19 comments), and
+   every downstream pre-registration in this document that quotes it inherits the restated
+   number rather than the superseded one.
+3. Re-run `hub.models.spread.verdict` and restate `docs/player-spread.md`, carrying the
+   `own_k` finding above into whatever `#343` does with it.
+4. Re-run `hub.models.injury.type_verdict` and restate `docs/weekly-injury.md`,
+   `docs/method.md`'s measurement table (row 13) and `docs/where-to-look-next.md` — flagged
+   explicitly as a *statistic* restatement only: the module's *decision* stays frozen behind
+   `#360`/S3, and the restated sentence should say so rather than silently reading as settled.
+5. Restate the two `docs/improvements.md` citations of the frozen weekly gate's season count
+   (a historical regression-check page, lowest priority of the group since nothing downstream
+   cites it as current).
+6. Restate `docs/weekly-shrinkage.md`'s `2/4 seasons` figure.
+7. Name `#302`'s quarterback log-loss diagnostic in the restatement, per #311's own acceptance
+   criterion — it licenses no decision under #300's demotion, so restating it is a courtesy to
+   a reader who finds the old number, not a step anything else waits on.
+
+This list is inherited from #335's landing comment on #311 (2026-09-21), itself sourced by
+grep rather than an audit of every doc under `docs/` — #311's own work should treat it as a
+floor, not a ceiling.
+
+## What this measurement cannot do
+
+- It cannot re-derive a number this document has not already published; the `own_k` table
+  above is arithmetic on `docs/player-spread.md`'s own rows, not a new measurement.
+- It cannot decide `own_k`'s fate — that is `#343`'s gate, run with a declared ceiling, once
+  both land.
+- It cannot touch the weekly, lineup, draft, coverage, margin or quarterback-diagnostic gates:
+  all six already read `run_gate` → `summarise(cluster=SEASON_CLUSTER)`, independent of
+  `paired_gain`'s own `cluster` argument, so #311 does not move any of their published figures.
+- It cannot touch a screen: `weekly_screen` is a different test (`CONTEXT.md`) and #312 is its
+  own restatement.
+
+## What happens either way
+
+If `cluster` lands as the bootstrap-clustered form recommended above, the restatement order
+runs as listed and every figure carries a note that its se/t/mean changed basis. If the
+maintainer instead prefers the closed-form analytic SE over cluster means — the one open
+choice this section did not make — the restated *numbers* differ only at a decimal a bootstrap
+at these `k` would not move by much, and the order above is unchanged either way.
+
+**Closing.** Candidates: (a) bootstrap-clustered SE over cluster-mean units, matching every
+other clustered SE `experiment.py` computes (recommended, for consistency alone); (b) the
+closed-form `sd(cluster means)/sqrt(k)` the pilot used by hand. Recommendation: (a). What
+would reopen this: a gate whose `k` sits at or below `SMALL_CLUSTERS` (8), where the two
+mechanisms can disagree enough to matter and `summarise` itself already prints the percentile
+bootstrap beside the t interval for exactly that reason.
