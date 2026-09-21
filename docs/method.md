@@ -657,3 +657,4 @@ The most useful artifact in this repo is the record of what was measured and the
 | Why the ceiling closed a question | [player-spread.md](player-spread.md) |
 | Twenty-five decisions, with their trade-offs | [`docs/adr/`](adr/), indexed in [architecture.md](architecture.md) |
 | Objectives, and how objective 1 is judged | [decisions.md](decisions.md) |
+| What each of the fifteen measurements could detect, at 80% power | [detectable-effects.md](detectable-effects.md) |
