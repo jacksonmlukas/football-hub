@@ -2368,3 +2368,141 @@ place of the hardcoded clean rivals, every figure the module publishes is restat
 against the real field, and the restatement box names the prior (wrong) figure beside each.
 Nothing here is provisional in ADR-0014's sense — this is not a case where no gate can run; it
 is a correctness fix whose only blocker is a file that does not yet exist.
+
+# Pre-registered 2026-09-21 — PROPOSED: the buyback carries an interval and a three-state
+verdict (#318)
+
+**Status: PROPOSED.** Drafted under the #326 freeze. Like #317, this is not an ADR-0019 gate —
+there is no incumbent model and nothing is adopted or removed — but unlike #317 it **does**
+introduce a decision rule where none currently exists (buy / stay / unresolved), so this
+section maps the template's headings onto that rule where they apply and marks the two that
+do not (ceiling, rule-16's script) with the reason, rather than skipping them silently. Parent
+decisions: `DECISIVE_SIGMA` (`hub.season.pool`, `chosen(2.0)`, "the evidential bar the repo's
+gates are stated at" — the module's own declared constant, reused rather than invented here),
+rule 9 (a result too large to believe is a bug — the audit's own framing: "the run line then
+prints *the verdict holds at every point* across the concentration axis, attributing to the
+assumption a stability that Monte Carlo noise alone destroys").
+
+## The defect, restated
+
+`buyback()` (`src/hub/season/pool.py:1321-1456`) computes `equity = out.share * grown` and
+`net = equity - cfg.buyback_fee` from a single `Field.entry` call and recommends on
+`net > 0` alone — no standard error, though `EntryOutcome.share_sd` is sitting in `out` unread.
+Every other reader of this module refuses to call a difference inside its own resolution:
+`weekly`'s recommendation is gated on `DECISIVE_SIGMA` standard errors of the *paired*
+trial-by-trial difference (`pool.py:1743`), and `sensitivity`'s own rows carry
+`se = entry.share_sd / sqrt(trials) * stake` and an `unpaired_bar` (`pool.py:1901`, the
+identical construction this ticket asks `buyback` to share). `buyback` alone has none. The
+ticket's own eight-seed pilot at the CLI's default trial count: equity from **$17.90** to
+**$30.16**, net from **−$2.10** to **+$10.16**, **four BUY and four stay** — on the *same*
+board, ledger and field, differing only in seed — against the module's own bar on that equity,
+about **±$9.74**. The sign of the recommendation is not stable at the resolution the module's
+own trial count provides, and today's `buyback` reports one seed's sign as a fact.
+
+## The estimand, and what "arm" means here
+
+**The estimand is `net`** — the dollar value of buying back, `equity − fee`, at a stated field
+concentration and a stated rival-buyback assumption (both already named as such in `buyback`'s
+own docstring: "one point on the field-concentration axis," "an argument, not a model"). There
+is **one simulated arm**, not two: staying out is not simulated, it is `net = 0` by
+definition, so this is a one-sample question — is `net` resolvably different from zero at this
+trial count — rather than a paired two-arm comparison the way `weekly`'s recommendation is.
+That is the one place this ticket's shape genuinely differs from `weekly`'s, despite the
+ticket asking for a standard error "built the way the weekly figure's is": the *construction*
+(`share_sd / sqrt(trials)`, scaled to dollars) is shared; the *comparison* (one-sample against
+zero, not paired against a second simulated arm) is not, because there is nothing to pair
+against.
+
+## What is measured
+
+1. **`se_net = grown * out.share_sd / sqrt(trials)`** — the same scaling `sensitivity` already
+   applies to `entry.share_sd` (`pool.py:1901`), read off the same `Field.entry` call
+   `buyback` already makes, at the pot the buyback has already grown to (`grown`, not the
+   pre-buyback `pot`, since that is the dollar figure `equity` and `net` are stated in).
+2. **The three-state verdict**, in place of `net > 0`:
+   - **BUY** if `net - DECISIVE_SIGMA * se_net > 0` — net is positive and resolvably so.
+   - **STAY** if `net + DECISIVE_SIGMA * se_net < 0` — net is negative and resolvably so.
+   - **UNRESOLVED** otherwise — zero sits inside the `DECISIVE_SIGMA`-wide band around `net`,
+     and the trial count cannot tell buy from stay apart at this concentration and this
+     assumption about rival re-entries.
+3. **The eight-seed check, already named by the ticket's own acceptance criteria as the power
+   question this ticket asks — not `scripts/rule16_combined_power.py`'s machinery, which does
+   not apply (below).** Re-run the same board, ledger, field and concentration at eight seeds,
+   the CLI's default trial count: either all eight verdicts agree, or every one of them reads
+   UNRESOLVED. A run where some seeds say BUY, some say STAY, and none say UNRESOLVED is the
+   defect this ticket exists to close, restated as a passing/failing check rather than a
+   one-time pilot finding.
+4. **The run line's "holds at every point,"** printed across the field-concentration
+   sensitivity axis, is conditioned on the verdict being resolved at every point on that axis —
+   the ticket's fourth acceptance criterion, and rule 9's own instruction applied directly: a
+   claim of stability that Monte Carlo noise alone could produce is the "result too large to
+   believe" this rule exists to catch, restated here as a precondition on the sentence rather
+   than a fact the sentence asserts by default.
+
+## Ceiling, the Gate, rule 16 — not applicable, stated why
+
+- **Ceiling arm: N/A.** A ceiling in this document's sense bounds what a *forecasting* input
+  could earn against sampling noise in an *outcome* (rule 8's own construction, declared for
+  every gate above). `buyback`'s question is not "does this beat an incumbent" but "can this
+  trial count tell a computed dollar figure from zero" — there is no forecast to bound and no
+  perfect-information arm that means anything here; the analogous quantity is the trial
+  count's own resolution, which item 1 above computes directly rather than bounding.
+- **ADOPT/REMOVE/SHOW/NOT-RUNNABLE: N/A as spelled.** The three-state rule above (BUY/STAY/
+  UNRESOLVED) is this ticket's own version of the same shape — a decision with a positive
+  branch, a negative branch and an explicit "cannot tell" branch that must be named rather
+  than silently defaulted, which is exactly what NOT-RUNNABLE is for every other gate in this
+  document. UNRESOLVED **is** this ticket's NOT-RUNNABLE, stated in the module's own
+  vocabulary rather than borrowed wholesale from a walk-forward gate that has seasons to
+  cluster on and this one does not.
+- **`scripts/rule16_combined_power.py`: N/A.** That script's machinery (`SEASON_CLUSTER`,
+  `per_season`, the tie-aware every-season half) is built for a walk-forward gate with
+  multiple held-out seasons; `buyback` has one board, one week, one decision, and no season
+  axis to cluster on. The power question rule 16 asks — can this design resolve a real effect
+  before it runs — is answered directly by item 3 above: the eight-seed agreement check *is*
+  this ticket's rule-16 equivalent, pre-registered in the ticket's own acceptance criteria
+  before this section was written, which is what led this document to name it rather than
+  invent a second mechanism.
+
+## Exclusions (rule 11)
+
+- **`weekly`'s own resolution machinery** is excluded — already correct, already the pattern
+  item 1 above borrows, not itself part of this ticket.
+- **`sensitivity`** is excluded from the code change — its own `se`/`unpaired_bar` pair is
+  already the two-arm version of what `buyback` is getting the one-arm version of — but its
+  **reporting** is in scope for item 4: the run line the ticket names is printed alongside
+  `sensitivity`'s own rows.
+- **`PoolConfig`'s field-concentration axis and rival-buyback assumption** are excluded from
+  this ticket's decision — both stay stated assumptions the caller supplies, exactly as
+  `buyback`'s own docstring already frames them; #318 does not turn either into a fitted or
+  measured quantity.
+
+## The published numbers the result would move (rule 13)
+
+None are cited by number in this document today; the eight-seed pilot ($17.90–$30.16 equity,
+−$2.10 to +$10.16 net, four/four) is the ticket's own and is not a `docs/` publication. The
+restatement obligation is forward-looking: whatever a live buyback decision has printed since
+is restated once, in three-state form, at implementation time — #318's own comment names it as
+exempt from the #326 freeze the moment "a live buyback decision arrives before Audit V," which
+this section does not pre-empt.
+
+## Constants: chosen / fitted
+
+`DECISIVE_SIGMA = chosen(2.0)` is reused, not refit — the module's own existing declared
+constant, "the evidential bar the repo's gates are stated at." No new constant is introduced.
+
+## What this measurement cannot do
+
+- It cannot make the sign resolvable at the CLI's current default trial count if the true net
+  sits inside the `±$9.74` band the pilot already measured; UNRESOLVED is a legitimate outcome
+  of this fix, not a failure of it, and raising the trial count to resolve it is a separate,
+  later decision (the same shape `LEVERAGE_STUDY_TRIALS` was for the leverage term).
+- It cannot decide the field-concentration or rival-buyback assumptions; both remain the
+  caller's stated inputs.
+
+## What happens either way
+
+If the eight-seed check agrees, `buyback` prints BUY or STAY with its interval and the run
+line's "holds at every point" claim is earned rather than assumed. If seeds disagree or the
+band swallows zero, every affected point reports UNRESOLVED, the run line is restated to name
+which points on the axis resolve and which do not, and a live buyback decision made under an
+UNRESOLVED verdict is recorded as exactly that rather than silently rounded to a sign.
