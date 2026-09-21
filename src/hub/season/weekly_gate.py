@@ -858,7 +858,13 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                     help="also score a foresight arm -- the same lineup rule reading what "
                          "actually happened -- and report the largest effect any weekly "
                          "projection could show. `docs/gate-power.md` stage 2")
-    ap.add_argument("--seasons", default="2022,2023,2024,2025")
+    # #378: the earliest season named here is never itself scored -- `expanding_seasons`
+    # consumes it as the walk-forward buffer the season after it trains on -- so the default
+    # carries one season ahead of the four this gate actually reports on, matching
+    # `docs/weekly-blend-gate.md`'s Reproduce section. Naming only the four held-out seasons,
+    # as this default used to, silently scored three: `weekly_gate_data.SeasonDropped` is what
+    # now catches that instead of a per-season table one row short.
+    ap.add_argument("--seasons", default="2021,2022,2023,2024,2025")
     ap.add_argument("--drafts", type=int, default=DRAFTS, help="rosters per season")
     ap.add_argument("--seed", type=int, default=0)
     # The stamped paired rows, the same four stamps the other two gates write. This gate
@@ -898,6 +904,17 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                                        expected=a.expected, holdout=a.holdout)
         except Exception as e:
             return unavailable("hub.season.weekly_gate", "the gate's inputs", e)
+        # #378: which seasons this run actually scored, stated beside which it was asked for --
+        # not only on the failure path. `assemble_universe` already refuses a season that goes
+        # missing for any reason but the walk-forward buffer; this is what makes the buffer
+        # itself visible on every run rather than something a reader has to already know to
+        # look for.
+        scored_seasons = sorted(inputs.rosters)
+        buffer_season = min(seasons) if seasons else None
+        print(f"  seasons requested {sorted(seasons)}, scored {scored_seasons}"
+              + (f" -- {buffer_season} held back as the walk-forward buffer the earliest "
+                 f"scored season trains on" if buffer_season is not None
+                 and buffer_season not in scored_seasons else ""))
         cover = coverage(inputs)
         mix = mixture(inputs)
         pop = priced_share(inputs)
