@@ -1898,42 +1898,66 @@ a plausible effect size are **stated, conservative stand-ins**, by the same conv
   but computed anyway because the question rule 16 asks — *is ADOPT reachable at any plausible
   δ* — is a property of the combined rule and not of whether a ceiling happens to exist yet.
 
+**Two separate reasons ADOPT is blocked, kept separate rather than conflated into one number.**
+The ceiling section above already establishes that **no season in the archive has a measured
+ceiling**, which per S6 makes every real run of this gate NOT-RUNNABLE before the pooled
+interval or the every-season half is even read — that is a fact about *this archive today*, not
+about the combined rule's own statistical power. Rule 16 asks a different, narrower question —
+*if* a ceiling existed and did not bind, could the interval-and-tie combined rule ever say
+ADOPT at a plausible effect size? — so the run below supplies `experiment.summarise(...,
+ceiling=999.0)`, a stated, clearly non-binding placeholder whose only job is to keep S6's
+precondition from firing so the combined rule underneath it is what gets measured. Omitting
+`ceiling` entirely (as `scripts/rule16_combined_power.py` itself does) would, under the `gate`
+this tree ships today, return NOT-RUNNABLE on every trial by that precondition alone — a
+correct fact about a gate that never measured a ceiling, but not an answer to rule 16's
+question, and conflating the two would have been the very shape rule 17 warns against: a check
+whose outcome cannot vary with the thing it is supposed to be testing.
+
 **Run against `hub.models.experiment.summarise`/`per_season`/`gate` directly** (the shipped
 harness, not a reimplementation — the same discipline `scripts/rule16_combined_power.py`
 follows), at `m = 50` within-season clusters (a tractable stand-in; the real per-season game
 count, ~267 for the NFL, only shrinks the within-season SE further and makes ties *rarer*, so
 `m = 50` is not an inflated power estimate — see the run's own docstring for the argument in
-full), 10,000-trial-scale simulation:
+full), 3,000-trial simulation, `bootstrap = 150`:
 
 | k | δ | combined-rule null size | combined-rule power |
 |---|---|---|---|
-| 10 | 0.0090 | 0.0000 | 0.0000 |
+| 10 | 0.0090 | 0.0000 | **0.0007** |
 | 26 | 0.0090 | 0.0000 | 0.0000 |
-| 10 | 0.0180 | 0.0000 | 0.0000 |
+| 10 | 0.0180 | 0.0000 | **0.0060** |
 | 26 | 0.0180 | 0.0000 | 0.0000 |
 | 29 | 0.0180 | 0.0000 | 0.0000 |
 
-**Every cell reads ADOPT power indistinguishable from its own null size, at k up to the
-archive's own ceiling and δ up to twice the only pilot this repo has to scale by.** The reason
-is structural rather than a matter of trial count: ADOPT needs a **win in every one of k
-independently-drawn seasons**, and at `s = 0.0332` against `δ = 0.0090`–`0.0180`, the
-between-season noise is 1.8×–3.7× the mean effect — so a large share of individual seasons draw
-a losing or tied sign by chance alone, and the probability that all k do not falls
-geometrically in k. This is the same shape #357/#335 found for the draft gate at δ=2.0 (power
-0.0324 against unanimity-alone's 0.136) — here it is more extreme, because the borrowed `s` is
-large relative to the borrowed `δ`.
+**Every cell reads ADOPT power under 1%, at k up to the archive's own ceiling and δ up to twice
+the only pilot this repo has to scale by.** The reason is structural rather than a matter of
+trial count: ADOPT needs a **win in every one of k independently-drawn seasons**, and at
+`s = 0.0332` against `δ = 0.0090`–`0.0180`, the between-season noise is 1.8×–3.7× the mean
+effect — so a meaningful share of individual seasons draw a losing or tied sign by chance
+alone, and the probability that all k do not falls off fast in k. **That last part is the
+finding worth naming on its own: power at k=26/29 is not merely small, it is *smaller* than at
+k=10 for the same δ** (0.0000 against 0.0007 and 0.0060) — more held-out seasons tighten the
+pooled interval but each one is an independent chance to lose the unanimity requirement, so
+under this combined rule more data does not monotonically buy more power the way it would
+under the interval alone. This is the same shape #357/#335 found for the draft gate at δ=2.0
+(combined power 0.0324 against unanimity-alone's 0.136, both lower than the interval alone
+would give) — here it is more extreme, because the borrowed `s` is large relative to the
+borrowed `δ`.
 
-**The rule-16 exemption, named.** **ADOPT is not reachable at any plausible δ tested, at any k
-this archive could ever support**, for the same reason rule 16 names an exemption rather than a
-bar: a branch a gate cannot practically reach is not a strict bar on that gate. **Unless the
-rating's true edge over the close is large relative to its own season-to-season variance — a
-stronger and more falsifiable claim than "beats the close by a few hundredths of a nat" — ADOPT
-is this gate's named exemption, not its expectation.** This is written down now, before the
-first row is fitted, so a future reader sees the same three seasons of a printed NOT-RUNNABLE
-this document itself criticises rule 16's incident for, and knows why. REMOVE and SHOW are not
-exempted by this finding — an interval that excludes zero on the negative side, or a null, needs
-no unanimity in the same brittle way and both remain fully reachable outcomes on 2026-onward
-data once three ceiling-qualified seasons exist.
+**The rule-16 exemption, named, for two independent reasons.** First, **no season has a
+measured ceiling today**, so under S6 the gate is NOT-RUNNABLE regardless of what the interval
+or every-season half would say — this alone is already enough to make ADOPT unreachable at
+this archive's current state, and it is not a power question at all. Second, **even granting a
+hypothetical non-binding ceiling, the combined rule's own power is under 1% at every plausible
+δ and k tested** — so removing the ceiling obstacle would not, by itself, make ADOPT
+practically reachable either. **Unless the rating's true edge over the close is large relative
+to its own season-to-season variance — a stronger and more falsifiable claim than "beats the
+close by a few hundredths of a nat" — ADOPT is this gate's named exemption, not its
+expectation, on both counts.** This is written down now, before the first row is fitted, so a
+future reader sees the same years of a printed NOT-RUNNABLE this document itself criticises
+rule 16's incident for, and knows why on both axes. REMOVE and SHOW are not exempted by either
+finding — an interval that excludes zero on the negative side, or a null, needs no unanimity in
+the same brittle way and both remain fully reachable outcomes on 2026-onward data once three
+ceiling-qualified seasons exist.
 
 ## Exclusions (rule 11)
 
