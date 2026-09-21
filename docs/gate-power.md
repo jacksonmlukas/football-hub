@@ -1798,3 +1798,105 @@ closed-form `sd(cluster means)/sqrt(k)` the pilot used by hand. Recommendation: 
 would reopen this: a gate whose `k` sits at or below `SMALL_CLUSTERS` (8), where the two
 mechanisms can disagree enough to matter and `summarise` itself already prints the percentile
 bootstrap beside the t interval for exactly that reason.
+
+# Pre-registered 2026-09-21 — PROPOSED: the screen's verdict reads the p it computes (#312)
+
+**Status: PROPOSED.** Drafted under the #326 freeze — writing the rule, not running it.
+Becomes the rule on the maintainer's `ADOPTED:` comment on #312. **A restatement, not a
+gate**: `weekly_screen.verdict` has no incumbent and no candidate axis; it corrects the
+bar a pre-registered rule already uses, and this section says which published screen results
+move, what each is re-read against, and the order. Parent decisions: `docs/method.md` rule 14
+(the false-discovery threshold is a diagnostic, the pre-registered rule decides), #37 (family
+size printed beside the rule), #274 (CRPS's one narrow promotion, the same "a threshold is
+not a decision until it is pre-registered as one" logic this ticket extends), and #169 (the
+screen's own season-clustering fix, the direct predecessor of this defect in the same module).
+
+## The defect, restated
+
+`weekly_screen.verdict` (`src/hub/models/weekly_screen.py:438`) compares `abs(t) < min_se`
+(2.0, flat) rather than the two-sided `p` at the run's own degrees of freedom against `ALPHA`
+(0.05) — and `two_sided_p`/`t_quantile` already exist in `experiment.py`, eleven lines away
+from every place this bar is read, built for exactly this. At `k = 4` seasons (`df = 3`) a
+two-sided `p < 0.05` needs `|t| > 3.182`; at `k = 5` (`df = 4`) it needs `|t| > 2.776`. The
+flat bar of 2.0 is neither — it is the `p = 0.05` bar's normal-quantile approximation
+(`z(0.975) = 1.96`, rounded), the same reference-distribution confusion `minimum_detectable_effect`
+was corrected for on 2026-09-07 (`docs/gate-power.md`, "Restated 2026-09-07: the MDE's
+reference distribution"), landed in the gate's own MDE and never carried to the screen's own
+`min_se` comparison four lines away in the sibling module.
+
+**The headline case, from #312's own ticket body.** `td_rate_prior`, this screen's one
+pre-stated null, is quoted "throughout the tree" at **−2.49 se**, `p = 0.089` unadjusted — and
+at the family's false-discovery threshold it already fails at rank one. Under the *current*
+rule (`abs(t) < min_se`), `2.49 ≥ 2.0` means it does **not** clear as the pre-stated null and
+is read as a broken one (`NULL_BROKEN` if the sign is consistent across seasons, `CLEARS` with
+a "noisy" caveat otherwise — `weekly_screen.verdict` lines 451-457). Under the corrected rule,
+`0.089 > 0.05` (`ALPHA`) means it **does** clear as consistent with the pre-stated null. This
+is the one figure named directly in the ticket body and the clearest case where the bar
+change flips a reported status, not only a margin.
+
+**`docs/method.md` rule 3's own restated figure for the same feature is a second, earlier
+version of this number** — "the prior TD rate against passing attempts, published as a null at
+1.9 se, is a broken pre-stated null at 2.7 se across 5/5 seasons" — computed under an earlier
+run (#169's fix landing) at a different season count than the −2.49 se the ticket body quotes
+today. The two are not in tension so much as evidence of how often this number has already
+moved: #312's restatement is not the first time `td_rate_prior`'s status changed, and its own
+write-up should say so rather than treat −2.49 se as freshly discovered.
+
+## What is measured
+
+1. **The corrected verdict.** `weekly_screen.verdict` compares `two_sided_p(t, df=seasons-1)`
+   against `ALPHA` in place of `abs(t) < min_se`, or equivalently reads the `t_quantile(1 -
+   ALPHA/2, df)` at the run's own `df` rather than a constant — the ticket's acceptance
+   criterion permits either phrasing and this document does not choose between them, since
+   they are the same comparison stated two ways and not a modelling alternative.
+2. **The joint size of the two-part rule, by the existing permutation harness.** The screen's
+   `every_season_null` (`weekly_screen.py:710`, already the source of
+   `docs/weekly-screen.md`'s "null: P(≥1 season wrong sign)" table) simulates the every-season
+   half under the null. It is extended — not replaced — to also gate the simulated draws on
+   the corrected `p < ALPHA` condition and report the **joint** rejection rate beside the
+   marginal ones already printed, the same shape `test_the_size_check_flags_a_planted_degenerate_rule`
+   uses for rule 17's gate-side check. This answers the question the ticket's own body raises
+   and does not answer — "the two halves are correlated and their joint size has never been
+   computed" — without inventing a second mechanism: the harness already exists and the
+   ticket names it as the thing that "could produce it directly."
+3. **The family size, counted across anchors and bases.** `with_family`'s `m` is scoped per
+   call today (rule 14's own table: 8 for `--run`, 9 with `--routes`, 13 with `--scheme`); the
+   ticket's third acceptance criterion asks it to count everything actually run in one report,
+   which is a reporting change to `with_family`'s caller rather than to the false-discovery
+   arithmetic itself — `false_discovery`'s own `m` semantics (every test the caller ran, NaN
+   included) are unchanged.
+
+## The restatement order
+
+1. Land the corrected `verdict`, with the exact wording (`p` vs `min_se`, or the equivalent
+   `t_quantile` phrasing) at the maintainer's choice.
+2. Re-run the screen at its published anchor and restate `td_rate_prior`'s status first — it
+   is the one figure named in the ticket body and quoted "throughout the tree."
+3. Extend `every_season_null` for the joint size and print it beside the existing marginal
+   figures in `docs/weekly-screen.md`.
+4. Restate `docs/method.md` rule 3's TD-rate paragraph and rule 14's four-survivor table,
+   both of which quote `t`/`p` figures a corrected bar reads differently even where the
+   verdict does not flip (rank order and margin both move).
+5. Correct every module citing `td_rate_prior` as an established finding — the ticket's own
+   fourth acceptance criterion — which a grep for the feature name across `src/` and `docs/`
+   should enumerate at implementation time; not attempted here without running one.
+
+## What this measurement cannot do
+
+- It cannot decide whether the family-size fix (item 3 above) changes any other feature's
+  status; only `td_rate_prior`'s flip is asserted here, from the number already in the ticket
+  body.
+- It cannot touch a gate: `experiment.gate`'s own interval half already reads a t interval
+  (S1/#357) rather than a flat bar, so this defect's twin on the gate side is already fixed;
+  #312 closes the screen's copy of the same class of error.
+- It cannot re-run every anchor and basis combination; the restatement lands at the published
+  anchor first (rule 14's own convention) and other anchors follow if their status is cited
+  anywhere as current.
+
+## What happens either way
+
+If the corrected bar changes no status beyond `td_rate_prior`, the restatement is short and
+the joint-size figure is the more interesting output — the first honest answer to how
+correlated the two-part screen's halves are. If it changes others, each is restated in place
+with the superseded figure kept beside it per rule 13, and the false-discovery table is
+re-printed at the same run so a reader sees the diagnostic and the corrected rule together.
