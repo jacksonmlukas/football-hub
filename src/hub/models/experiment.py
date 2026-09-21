@@ -872,7 +872,8 @@ def _width_state(path: Path) -> list[dict]:
 
 def review_width(name: str, summary: Mapping[str, float], *, verdict: str,
                  config_digest: str, data_digest: str, path: Path = WIDTH_STATE,
-                 places: int = 2, write: bool = True) -> list[str]:
+                 places: int = 2, write: bool = True,
+                 seasons: pl.DataFrame | None = None) -> list[str]:
     """Compare this run's interval width with the last one under `name`, and append this one.
 
     The comparison is against the *most recent previous entry for this gate*, read back to
@@ -887,6 +888,15 @@ def review_width(name: str, summary: Mapping[str, float], *, verdict: str,
     other. `config_digest`/`data_digest` are the caller's -- `run_gate` reads them off the
     same `stamped_for_publication` call every other stamp comes from, so this ledger's digests
     cannot disagree with the row's own.
+
+    **`seasons`, since #382, optional and additive.** When the caller hands in the frame
+    `per_season` produced, the entry gains a `seasons` field -- `_season_records`' list of
+    per-season `season`/`gain`/`se`/`m`/`disposition` dicts -- so a tie (or a loss, or a win)
+    is readable from the ledger afterwards and not only from the run's stdout, per #381's open
+    question about whether a tie is abstaining on noisy seasons or small effects. `None` (the
+    default) omits the field entirely, which is what every pre-#382 entry -- and every call
+    this repo's own test suite makes without a `seasons` frame -- still writes, so the
+    pre-#362 dict-shape read and the append-only shape both keep reading exactly as before.
     """
     width = float(summary["hi"]) - float(summary["lo"])
     entries = _width_state(path)
@@ -897,7 +907,7 @@ def review_width(name: str, summary: Mapping[str, float], *, verdict: str,
             break
     said = narrowing(width, previous, places=places)
     if write:
-        entries.append({
+        entry: dict[str, object] = {
             "gate": name,
             "config_digest": config_digest,
             "data_digest": data_digest,
@@ -907,7 +917,10 @@ def review_width(name: str, summary: Mapping[str, float], *, verdict: str,
             "lo": float(summary["lo"]), "hi": float(summary["hi"]),
             "verdict": verdict,
             "requires_review": said.requires_review,
-        })
+        }
+        if seasons is not None:
+            entry["seasons"] = _season_records(seasons)
+        entries.append(entry)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps({"entries": entries}, indent=2, sort_keys=True) + "\n")
@@ -1073,6 +1086,51 @@ def per_season(paired: pl.DataFrame, *, within: Sequence[str],
         m_col.append(len(units))
     return base.with_columns(pl.Series("se", se_col, dtype=pl.Float64),
                              pl.Series("m", m_col, dtype=pl.Int64))
+
+
+def _season_records(seasons: pl.DataFrame) -> list[dict]:
+    """One dict per season -- `season`, `gain`, `se`, `m`, `disposition` -- the fields #382
+    adds beside `_seasons_won_tied_lost`'s tally so a tie is readable from the record and not
+    only from a run's stdout. #381's open question (is the tie rule abstaining on *noisy*
+    seasons rather than *small* ones?) cannot be checked from a run that only ever printed the
+    tally; this is what a later reader needs to check it, per season rather than pooled.
+
+    **Same backward-compatible reading as `_seasons_won_tied_lost`.** A frame with no `se`/`m`
+    columns reads `m = 0`, always below `TIE_MIN_CLUSTERS`, so `_disposition` falls back to the
+    sign alone -- every hand-built `seasons` frame in this repo's test suite included.
+    """
+    has_se = "se" in seasons.columns and "m" in seasons.columns
+    out = []
+    for r in seasons.iter_rows(named=True):
+        se = float(r["se"]) if has_se else float("nan")
+        m = int(r["m"]) if has_se else 0
+        gain = float(r["gain"])
+        out.append({"season": int(r["season"]), "gain": gain, "se": se, "m": m,
+                    "disposition": _disposition(gain, se, m)})
+    return out
+
+
+def per_season_report(seasons: pl.DataFrame, *, places: int = 2) -> list[str]:
+    """The per-season table #382 prints beside the tally -- `season`, `gain`, `se`, `m` and
+    the disposition each drove, for every season and every gate run, not only the ones under
+    `SMALL_CLUSTERS` `small_sample_report` already covers.
+
+    Nothing on an empty frame -- a run with nothing measured has no seasons to break out.
+    `(sign-only)` is appended to a season's disposition when it was read off the raw sign
+    rather than the `2 * se` test -- `se` non-finite or `m` below `TIE_MIN_CLUSTERS` -- so a
+    reader does not mistake a sign-only reading for the bootstrap-backed one at a glance.
+    """
+    if seasons.is_empty():
+        return []
+    lines = ["\n  per-season:"]
+    for rec in _season_records(seasons):
+        se, m = rec["se"], rec["m"]
+        se_str = f"{se:.{places}f}" if math.isfinite(se) else "nan"
+        sign_only = not math.isfinite(se) or m < TIE_MIN_CLUSTERS
+        tag = rec["disposition"] + (" (sign-only)" if sign_only else "")
+        lines.append(f"    {rec['season']}  gain {rec['gain']:+.{places}f}  se {se_str}  "
+                     f"m {m}  {tag}")
+    return lines
 
 
 def _seasons_won_tied_lost(seasons: pl.DataFrame) -> tuple[int, int, int]:
@@ -1392,11 +1450,11 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
     means one wiring, and it is the lineup gate's. No published weekly verdict was reached
     with a ceiling in hand, so none moves.
 
-    The report is the block, the small-sample lines, the width review, the ceiling check and
-    the stamp -- in that order for every gate, so a reader of one gate's output can read
-    another's. The stamp is said on every run and not only when a frame is written, for the
-    reason `stamped_for_publication` gives: the reader deciding whether two runs compare is at
-    the terminal.
+    The report is the block, the per-season table (#382), the small-sample lines, the width
+    review, the ceiling check and the stamp -- in that order for every gate, so a reader of one
+    gate's output can read another's. The stamp is said on every run and not only when a frame
+    is written, for the reason `stamped_for_publication` gives: the reader deciding whether two
+    runs compare is at the terminal.
     """
     top = None if ceiling is None else float(np.asarray(ceiling.diff, dtype=float).mean())
     summary = summarise(paired, cluster=cluster, bootstrap=bootstrap, seed=seed, ceiling=top)
@@ -1418,10 +1476,11 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
     lines = [
         *paired_report(summary, arm_a=arm_a, arm_b=arm_b, unit=unit, places=places,
                        show_n=show_n, ceiling_arm=None if ceiling is None else ceiling.arm),
+        *per_season_report(seasons, places=places),
         *small_sample_report(summary, seasons, unit=unit, places=places),
         *review_width(name, summary, verdict=verdict[0], config_digest=cfg_dig,
                       data_digest=data_dig, path=width_path, places=places,
-                      write=record_width),
+                      write=record_width, seasons=seasons),
         *ceiling_check(summary, places=places),
         "",
         *stamp.split("\n"),

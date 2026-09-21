@@ -14,6 +14,17 @@ What this repo has spent against two metered third-party accounts:
   set when the interval narrowed against that gate's *most recent* previous entry by more
   than the interval could honestly narrow (#45's clustering argument predicts widening).
 
+  **`seasons`, since #382.** Every entry written from a run that handed `review_width` a
+  `per_season` frame carries a `seasons` field: a list of per-season dicts (`season`, `gain`,
+  `se`, `m`, `disposition`), the same fields `experiment.per_season_report` prints beside the
+  run's tally. `_disposition`'s own three-way split -- win if `gain >= 2 * se` over the
+  season's within-season clusters, loss if `gain <= -2 * se`, tie between, falling back to the
+  sign alone below `TIE_MIN_CLUSTERS` -- is what decides ADR-0019's tie-aware every-season half
+  (#335), and until #382 that reading lived only in a run's stdout, not in the record. Optional
+  and additive: an entry written with no `seasons` frame in hand (every entry before #382, and
+  every call this repo's test suite makes directly against `review_width`) simply carries no
+  `seasons` key, and the pre-#362 dict-shape read is unaffected either way.
+
   **Why it moved off one record per gate.** The dict shape it replaced held exactly one row
   per gate name, overwritten on every run — so the file could never say how many times a gate
   had been run, and two runs whose numbers disagreed left only the second one behind. #362

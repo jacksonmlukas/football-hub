@@ -859,6 +859,65 @@ def test_an_unreadable_history_costs_a_line_and_not_the_run(tmp_path):
     assert _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path) == []
 
 
+# --- #382: the ledger's `seasons` field ---------------------------------------------------
+
+
+def test_a_ledger_entry_round_trips_its_seasons_field(tmp_path):
+    """`review_width`'s `seasons` argument, when handed in, lands in the written entry exactly
+    as `_season_records` reads the frame -- a later reader gets the per-season `gain`/`se`/`m`/
+    `disposition` back off disk, not only off the run's stdout (#382, split from #381)."""
+    path = tmp_path / "gate-width.json"
+    seasons = pl.DataFrame({
+        "season": [2022, 2023, 2024, 2025],
+        "gain": [-1.120, -1.448, -0.259, -1.761],
+        "n": [40, 40, 40, 40],
+        "se": [0.30, 0.30, 0.30, 0.30],
+        "m": [40, 40, 40, 40],
+    })
+    experiment.review_width("weekly", {"lo": -1.6, "hi": -0.5, "clusters": 4.0},
+                            verdict="SHOW", config_digest="cfg", data_digest="dat",
+                            path=path, seasons=seasons)
+    entries = json.loads(path.read_text())["entries"]
+    got = entries[-1]["seasons"]
+    assert got == experiment._season_records(seasons)
+    assert [r["season"] for r in got] == [2022, 2023, 2024, 2025]
+    assert [r["disposition"] for r in got] == ["loss", "loss", "tie", "loss"]
+
+
+def test_a_ledger_entry_with_no_seasons_frame_carries_no_seasons_field(tmp_path):
+    """The field is additive: a call that hands in no `seasons` frame -- every call in this
+    file above, and every pre-#382 entry already on disk -- writes exactly the pre-#382 shape,
+    so the pre-#362 dict-shape read (which has no `seasons` key either) stays unaffected."""
+    path = tmp_path / "gate-width.json"
+    _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path)
+    entries = json.loads(path.read_text())["entries"]
+    assert "seasons" not in entries[-1]
+
+
+def test_a_planted_tie_and_a_planted_loss_are_recorded_in_the_ledger(tmp_path):
+    """Rule 18 (docs/method.md): plant the condition a check exists to detect and confirm it
+    fires, before the check is trusted. A confident loss and a tie, run through the real
+    `per_season` bootstrap and into `review_width`, must be recorded on disk as `loss` and
+    `tie` -- not merely as branch logic asserted in `test_a_tie_blocks_remove_...` above, but
+    in the ledger entry #382 adds."""
+    path = tmp_path / "gate-width.json"
+    seasons = pl.concat([
+        _confident_season(2022, -3.0), _confident_season(2023, -3.0),
+        _confident_season(2024, -3.0),
+        _tied_season(2025, -0.05, seed=1),
+    ])
+    per = experiment.per_season(seasons, within=("unit",), bootstrap=2000)
+    summary = experiment.summarise(seasons, cluster=experiment.SEASON_CLUSTER, bootstrap=2000,
+                                   ceiling=1e6)
+    verdict = experiment.gate(summary, per, _ACTIONS)
+    experiment.review_width("draft", summary, verdict=verdict[0], config_digest="cfg",
+                            data_digest="dat", path=path, seasons=per)
+    entries = json.loads(path.read_text())["entries"]
+    by_season = {r["season"]: r["disposition"] for r in entries[-1]["seasons"]}
+    assert by_season[2022] == "loss" and by_season[2023] == "loss" and by_season[2024] == "loss"
+    assert by_season[2025] == "tie"
+
+
 # --- the Gate, which was a rule three modules each remembered --------------------
 #
 # `CONTEXT.md` defines a Gate exactly -- does this beat the simplest thing that already
