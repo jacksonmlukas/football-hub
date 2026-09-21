@@ -2044,3 +2044,205 @@ last-season baseline), not only how well it is estimated, which is exactly ADR-0
 between a sensitivity and a decision. What would reopen this: either candidate measured
 against the other and reported as a sensitivity, per ADR-0024's own default, if the maintainer
 reads it as one axis rather than two objects.
+
+# Pre-registered 2026-09-21 — PROPOSED: spread and injury route through the one Gate rule
+(#343)
+
+**Status: PROPOSED.** Drafted under the #326 freeze; #343 is itself `blocked_by` #326 in the
+tracker (the ticket body says so) and this section is what lets its build start against a
+written rule the day the freeze lifts, per this document's own standing instruction. Becomes
+the rule on the maintainer's `ADOPTED:` comment on #343. Parent decisions: ADR-0019 (one Gate
+rule, `experiment.gate`, read by every gate in the repo — the claim #343 makes true) and its
+2026-09-21 amendments (S1's t-interval, #335's tie-aware every-season half, S6's ceiling
+precondition — all three land on spread and injury for the first time here), rule 8 (compute
+the ceiling before chasing the gap — `docs/player-spread.md` already did, for one of the two),
+rule 3 (the repeated-measure unit, per gate). **Precedent, named because #343's own ticket
+body names it:** `hub.models.margin`'s `_house_rule` already wraps `summarise`+`gate` directly
+(not literally `run_gate`, but the same rule) and had its ceiling wired 2026-09-21 (`03d119f`)
+— the shape of what this section proposes for spread and injury is the shape margin already
+has, not a new pattern.
+
+## The question
+
+**Does `own_k` or `usage` beat `positional` as the estimator of a player's weekly spread, and
+does the injury type-adjustment beat retention, each under the fixed Gate — ADOPT/REMOVE only
+on a t interval excluding zero *and* every held-out season won (ties not wins, per #335), and
+NOT-RUNNABLE, in both directions, if no ceiling is declared (S6)?** Today both harnesses answer
+a narrower question by hand (`g.wins == seasons and g.t >= MIN_SE`, a flat bar with no stage 2
+and no ceiling), which is exactly the drift ADR-0019 was written to end in the other three
+gates and never reached in these two.
+
+## What is measured
+
+Two independent gates, not one — `own_k`/`usage` vs `positional` and `type` vs `retention`
+share no rows, no incumbent and no ceiling, and #343's ticket body's "each comparison ... is
+one `run_gate` call" is read literally: **three `run_gate` calls** (own_k, usage, and the
+injury type), each against its own incumbent.
+
+1. **The rows, unchanged from today.** `hub.models.spread.walk_forward`'s per-player-season
+   errors (2019–2025, `MIN_GAMES=8`, `MIN_PPG=3.0`, matching `docs/weekly-spread.md`'s sample)
+   and `hub.models.injury.walk_forward_type`'s per-player-week errors (2023–2025, the seasons
+   `MIN_CELL` and the crosswalk currently support). Nothing about the rows changes; only the
+   rule reading them does.
+2. **The arms, unchanged.** `own_k` and `usage` against `positional` (spread); `type` against
+   `retention` (injury) — `docs/weekly-spread.md`'s and `docs/weekly-injury.md`'s own
+   incumbents, exactly as pre-registered when each was first run.
+3. **Pairing (rule 7).** Already paired — both arms score the same player-season or
+   player-week, the construction `paired_gain` already assumes. Unchanged.
+4. **Clusters.** `cluster=SEASON_CLUSTER` for the pooled half (the season), same as every
+   other gate — this is what #311 has to land first for the pooled half to mean what
+   `run_gate` means elsewhere; #343's own acceptance criterion says so ("before #311, so the
+   cluster argument reaches all eight harnesses at once" is #343's own framing of the
+   dependency, read the other way: #343 is what makes #311's fix reach these two).
+   **Within-season unit, per #335's own table:** spread's is already `player_id` (wired at
+   `spread.py:373`, ahead of `run_gate` adopting it); injury type's stays the **declared
+   no-op** `season` (`injury.py:315`), pending #360 — #343 does not change it, and this
+   section does not pre-empt #360's own ticket.
+5. **The ceiling arm, declared for each — mandatory under S6, and this is the one thing
+   neither harness has ever measured.**
+   - **Spread: `docs/player-spread.md`'s own headroom, already computed.** The outcome being
+     predicted is a *realised* per-player-season sd from ~14 games, itself an estimate with
+     sampling error; the ceiling is *a model that knows every player's true volatility
+     exactly*, bounded only by that sampling noise. Published: irreducible sampling noise
+     **1.0113** MAE against the shipped positional model's **1.0965** — ceiling gain
+     **+0.0852**. This is rule 8's own worked example in this repo, already written up, and
+     #343 is what lets `experiment.gate`'s stage 2 read it as a `Ceiling` rather than leave it
+     as prose. No re-measurement is proposed; the ceiling arm is what `player-spread.md`
+     already is, wired to `summarise(ceiling=...)`.
+   - **Injury type: declared, not yet measured — *the best per-injury-type multiplier chosen
+     in-sample on these rows*.** Same construction as #305's and #306's own ceiling arms and
+     the coverage gate's ("the best per-position skew, chosen on these rows",
+     `docs/gate-power.md` line 967): fit the type multiplier's `k` and the per-type
+     coefficients on **each held-out season itself**, not on strictly earlier ones, bounding
+     what any walk-forward fit of the same functional form could earn. **Why not a ceiling of
+     "perfect knowledge of the true injury cost"**: that ceiling would read the outcome (the
+     player's actual game score net of what the report explained), the same disqualification
+     rule 8's own worked case gives the realised-team-total ceiling #305 withdrew — outcome,
+     not forecast, and answers nothing stage 2 asks. The in-sample multiplier is a forecast
+     bound on the same functional form under test, which is what a ceiling in this document
+     has meant every other time it has been declared, so this is not presented as a choice
+     between candidates: it is the one construction consistent with every other declared
+     ceiling in this document.
+6. **The statistic.** `experiment.paired_gain` through each harness's own contrast, feeding
+   `run_gate`'s `summarise`/`per_season`/`gate` — the same three functions margin's
+   `_house_rule` already calls, `run_gate` being the version of that wrapper with the report,
+   the width review and the stamp attached.
+
+## The bar, set now
+
+In `experiment.gate`'s order, for each of the three comparisons independently:
+
+- **NOT-RUNNABLE** if no ceiling is present as a value (S6, before anything else is read — the
+  branch both harnesses are in *today*, unnamed) or if the season-clustered MDE exceeds the
+  declared ceiling (stage 2).
+- **ADOPT** the candidate (`own_k`, `usage`, or `type`) only if the t interval on the paired
+  MAE gain excludes zero on the positive side **and** the candidate wins every held-out season
+  (ties not wins, #335). For spread this replaces `positional` as the shipped estimator of
+  `k`; for injury this replaces `retention` with the type-adjusted table.
+- **REMOVE** — the incumbent stays and the candidate is named as established worse, not merely
+  unproven: the interval excludes zero on the negative side and the candidate loses every
+  season.
+- **SHOW** otherwise — the incumbent stays, absence of evidence. In each module's own
+  vocabulary this and REMOVE both render as "KEEP `<incumbent>`"; the distinction the report
+  carries is REMOVE naming the candidate as excluded with evidence, exactly as `gate`'s own
+  `Actions` triple already separates them for every other gate in the repo.
+
+## Power before the run (rule 16) — CELLS this ticket would add, not a run
+
+This document does not execute `scripts/rule16_combined_power.py` here — doing so would
+produce a number, which the freeze this section is written under does not permit. What
+follows is the arithmetic `run_gate`'s own restatement needs to state the CELLS entries a
+real run would use, computed by hand from already-published per-season figures the same way
+#311's `own_k` worked example above was — not a new measurement.
+
+**Spread (`own_k`), from `docs/player-spread.md`'s per-season table** (worked in full in
+#311's section above): `k=5`, between-season `s ≈ 0.00333` (sd of the five per-season gains,
+ddof=1), **`m ≈ 205`** — `n` per season in the published table, since spread's within-season
+unit (`player_id`) is already one row per cluster at the walk-forward's own grain, unlike
+draft's `m=20` and weekly's `m=40`, which are stated pre-registration stand-ins for an unknown
+within-season sd. `m ≈ 205` is comfortably above `TIE_MIN_CLUSTERS` (12), so the tie test
+reads the bootstrap SE rather than falling back to the sign — the case #357's own two cells
+(draft, weekly) do not exercise, since both sit at stated `m` values chosen for illustration
+rather than measured ones. **δ = +0.0065** (the observed `own_k` gain), matching how #305's
+own MDE pilot used its measured effect as the delta rather than an arbitrary round number.
+**Expectation, stated before any run:** with `m` this far above the floor, the tie-aware every-
+season half is doing real work rather than degenerating to the sign test the way the draft
+cell's `m=20` mostly does — this cell is closer to `#357`'s weekly-blend cell (`m=40`,
+combined power 0.1925 against unanimity-alone's 0.378) than to its draft cell (`m=20`,
+combined power 0.0324 against 0.136), and a real run is expected to show combined power
+*below* unanimity-alone power but not collapsed to a named exemption the way the draft gate's
+ADOPT branch is — stated as an expectation to be checked, not assumed.
+
+**Injury type, from `docs/weekly-injury.md`'s per-season table**: `k=3` (2023–2025), gains
++0.0394 / +0.0526 / −0.0182, mean +0.0246 (published: +0.0244), between-season `s ≈ 0.0377`.
+**`m = 1` by construction — the declared no-op** (within-season unit is the season column
+itself, per #335's table and unchanged by #343). Below `TIE_MIN_CLUSTERS` unconditionally, so
+`_disposition` falls back to the sign alone regardless of what a bootstrap would say — **the
+tie mechanism contributes zero power loss here**, unlike the two published cells in #357's
+table, because there is no bootstrap for it to attenuate. The combined rule for injury type is
+therefore just S1's t-interval **and** unanimity-of-sign — closer to the pre-#335 rule's own
+shape than either #357 cell, and named here so a future run is not surprised that clustering
+`k=3` gives few degrees of freedom (`t_quantile(0.975, df=2) ≈ 4.303`) regardless of the tie
+question. **δ = +0.0244** (the observed gain). **At `k=3` a t interval needs an unusually large
+t to exclude zero at all** — `docs/weekly-injury.md`'s own published figure, 2.5 se, already
+fails S1's t-interval at this df (two-sided `p` at `t=2.5`, `df=2` is well above 0.05), which
+is consistent with the module's own frozen verdict (KEEP retention) and is named as **a
+rule-16 exemption candidate for injury type's ADOPT branch**: at `k=3` the every-season half
+alone requires winning all three seasons, which the type adjustment does not do today (2 of 3),
+so ADOPT is unreachable at the currently observed effect independent of any power question —
+this is #300's and #357's "named, not silently reachable" logic, applied here because the
+published data, not a hypothetical, already shows the branch closed at this sample.
+
+## Exclusions (rule 11)
+
+- **`hub.models.injury.verdict`** (the retention/table/baseline/out_zero argmin comparison) is
+  explicitly **not** in scope — it is S3/#360's ticket, a different defect (no gate at all,
+  not a hand-rolled one), frozen behind the same #326 freeze but tracked separately.
+- **`hub.models.margin`** is excluded because it already reads the shared rule via
+  `_house_rule` (`summarise`+`gate`), with its ceiling wired 2026-09-21 (`03d119f`) — #343's
+  own ticket body names this as precedent, not as remaining work.
+- **The weekly, lineup, draft and coverage gates** are excluded — all four already call
+  `run_gate` or `_house_rule` directly and are unaffected by this section.
+- **Injury type's within-season unit** stays the declared no-op pending #360; #343 converts
+  the *rule* (hand-rolled → `run_gate`) without pre-empting #360's own conversion of the
+  *unit*.
+
+## The published numbers the result would move (rule 13)
+
+`docs/player-spread.md` (`own_k`'s and `usage`'s verdict sentences, once a ceiling and stage 2
+are wired in — the KEEP verdict itself is not expected to move, since `own_k`'s gain
+(+0.0065) sits well under its own ceiling (+0.0852), but the *reported* MDE and the presence
+of a stage-2 line are new); `docs/weekly-injury.md`'s type-adjusted verdict (same expectation:
+KEEP retention stands, now with a declared ceiling and a stage-2 line it has never printed);
+ADR-0019's own claim, per #343's fourth acceptance criterion, gains a dated note that "read by
+every gate in the repo" held for six of eight gates until this ticket landed.
+
+## Constants: chosen / fitted
+
+No new constant is fitted by this section. Spread's ceiling (**+0.0852**) is arithmetic
+already published in `docs/player-spread.md` (itself `fitted`, per that page's own
+provenance). Injury type's ceiling (the in-sample per-type multiplier) is **to be fitted**
+at implementation time — declared here by construction, not by value, the same way #305's and
+#306's ceiling arms were declared before their numbers existed.
+
+## What this measurement cannot do
+
+- It cannot pick the ceiling, the cluster, or the within-season unit after a sign is seen —
+  both are stated above, before any of the three gates run.
+- It cannot resolve #360's own scope (injury's within-season unit, or the argmin defect in
+  `injury.verdict`).
+- It cannot promise a verdict change: the arithmetic above expects both modules' recorded
+  KEEP/KEEP to stand, with stage 2 and a ceiling reported for the first time rather than a
+  different winner.
+
+## What happens either way
+
+If both gates run and reach the verdicts expected above, the two docs gain a stage-2 line and
+a ceiling and no headline changes. If `own_k`'s restated, season-clustered significance (worked
+in #311's section: t ≈ 4.4 against the published unclustered 1.8 se) holds under the real
+clustered run and its MDE clears the +0.0852 ceiling, `own_k` becomes a live ADOPT candidate
+for the first time in this repo's record — which is exactly the kind of number rule 13 says
+must not be left standing once the arithmetic above is known, and is named here rather than
+left implicit. If injury type's `k=3` keeps it NOT-RUNNABLE-adjacent or SHOW under the named
+rule-16 exemption above, `docs/weekly-injury.md` restates that as the reason, not as a fresh
+failure.
