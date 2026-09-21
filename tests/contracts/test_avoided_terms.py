@@ -293,6 +293,11 @@ UNCHECKED: dict[str, str] = {
               "ADR, and the entry contrasts the two rather than banning the word",
     "dataset": "forbidden for the Panel; `hub.inspect` and `hub.store` describe stored "
                "datasets that are not panels",
+    "retired": "forbidden for an Eliminated entry; the draft board legitimately *retires* "
+               "when a newer slate exists (#348) and a page statement retires loudly (#354) -- "
+               "which sense a use is in needs the sentence",
+    "dormant": "forbidden for an Eliminated entry; the tracker's dormancy ticket (#379) and "
+               "the work behind it are dormant in the other sense, and say so",
     "projection unqualified": "the entry asks for weekly projection or xFP where the "
                               "contrast matters, which is a judgement about the sentence",
     "edge": "forbidden for Lift; **Edge** is itself a glossary entry, so most uses are right",

@@ -406,10 +406,10 @@ A pool fact, not a page state: it is what the pool says about the entry, and a b
 (through `buyback_cutoff_week`) is the only thing that reverses it. The published artifact
 reports an eliminated entry as such and publishes no plan for it. Our 2026 entry was
 eliminated in week 1 (LAC), with no buyback taken.
-_Avoid_: retired — a page artifact superseded by a newer one (the draft board when a newer
-slate exists), which nothing does to an elimination; dormant — the tracker's state for work
-that has no consumer this season, which is a ticket with edges (the 2026 survivor dormancy
-ticket) and not a fact about the entry.
+_Avoid_: retired, dormant — the first is a page artifact superseded by a newer one (the draft
+board when a newer slate exists), which nothing does to an elimination; the second is the
+tracker's state for work that has no consumer this season, a ticket with edges (the 2026
+survivor dormancy ticket) and not a fact about the entry.
 
 ### What the page publishes
 
