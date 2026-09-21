@@ -456,6 +456,50 @@ implementation detail. The mechanism takes it as a parameter and declares nothin
 > previously recorded one (11.10, ratio 0.94), the shape #169 found unnoticed in five of nine
 > cases. Worth a look before this table is treated as settled.
 >
+> **Chased down 2026-09-21 (diagnosis lane, this flag): explained by two things, neither a
+> bug.** The 11.10 entry (`lo -18.761, hi -7.665`, carried unchanged into
+> `state/gate-width.2026-09-20.pre-ceiling.json`) is the record `7e6625f` (2026-09-16)
+> committed for [ADR-0009](adr/0009-championship-equity-does-not-pick.md)'s #290 hold-out
+> run at `9855979` -- `--holdout --workers 4`, seed 0, 20 drafts x 4 seasons -- which
+> replays every season under `conf/holdout/<season>.json`, refitting `WEEKLY_K` and
+> `TEAMMATE_RHO` leave-one-season-out. Tonight's #376 run carried `--ceiling` and no
+> `--holdout`, so `compare()` played every season on the shipped constants instead --
+> **the recipes do not match.** `--ceiling` itself never touches the interval:
+> `default_gate_mode` calls `ceiling()` only to hand `run_gate` a bound carried beside the
+> summary (`experiment.summarise`'s `carried = {} if ceiling is None else {"ceiling":
+> ceiling}`) -- the bootstrap that produces `mean`/`lo`/`hi`/`width` runs only over
+> `compare()`'s `paired` frame, and that call reads `holdout=a.holdout`, `False` on
+> tonight's command line. This is also the direction ADR-0009's own 2026-09-16 restatement
+> already named: in-sample constants (no hold-out, tonight's run) flatter the losing arm and
+> pull the mean toward zero, and the season variance a refit otherwise absorbs stays in the
+> pooled estimate, narrowing the interval.
+>
+> **A second, independent thing also moved, and it is not gated by `--holdout` at all.**
+> Diffing every `fitted`/`chosen` constant `hub.declare` covers on the draft path
+> (`TALENT_CV`, `WEEKLY_K`, `WEEKLY_SKEW`, `MARGIN_SD`, `TEAMMATE_RHO`,
+> `PICK_NOISE_INTERCEPT`, `PICK_NOISE_SLOPE`) between `9855979` and `main` turns up nothing
+> -- except `IMPUTE_CV`/`IMPUTE_CV_BY_POS` (`src/hub/models/predict.py`), which commit
+> `02561b7` moved **32 minutes after** the hold-out run, at 2026-09-16 18:08: pooled
+> 0.260 -> 0.315 (QB 0.217 -> 0.315, RB 0.334 -> 0.359, WR 0.223 -> 0.288, TE 0.220 -> 0.315;
+> #298, the rookie-population remeasurement ADR-0009's own #290 restatement flags as still
+> open at the time of that run). `hub.holdout`'s `HELD_OUT` set never overrides this
+> constant either way -- the sets record it as "not refitted", so `compare()` reads whatever
+> `IMPUTE_CV` is on the checked-out tree regardless of `--holdout` -- so this move applies to
+> tonight's run and would apply to a `--holdout` re-run alike; it is not explained by the
+> flag above. More rookie-imputation noise on every skill position but RB is the kind of
+> input that can move a mean and a width either way; it is named here as a mover, not
+> quantified further (that would be a re-run, out of scope). No other declared draft-path
+> constant, the #197 frozen-Board test pin, or `board.py`/`backtest.py`'s own `fitted`/
+> `chosen` lines moved between the two commits. One more source of drift neither run controls
+> for and this diagnosis does not chase, because it predates both entries and CLAUDE.md's
+> rule 1 forbids reading it to check: the live Board each run builds from `data/` (ADP,
+> consensus, ffopportunity) is rebuilt at run time and moves with nflverse backfills between
+> any two dates regardless of code -- ADR-0009 says so explicitly for its own re-runs.
+>
+> **So: recipe mismatch (`--holdout` on vs. off) plus one constant that moved for an
+> unrelated, already-tracked reason (#298), not a defect in the gate or the width ledger.**
+> No bug filed, no constant changed by this diagnosis, no re-run performed.
+>
 > `state/gate-width.json` is restored after this run the same way both weekly runs were:
 > `git checkout -- state/gate-width.json` once the numbers above were recorded, so #362's
 > evidence -- the `requires_review` entries the live file already carries -- stays exactly what
