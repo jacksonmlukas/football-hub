@@ -335,6 +335,61 @@ implementation detail. The mechanism takes it as a parameter and declares nothin
 > #368's leverage study and #376's own acceptance criteria say it may land in a separate
 > commit. Still owed.
 
+> **Resolved 2026-09-21 (#378): the flag above was the bug, not a coverage curiosity.**
+> `weekly_gate.compare`'s walk-forward split (`experiment.expanding_seasons`) trains each
+> scored season on every season before it, so the *earliest* season handed to it is always
+> spent as training data and never itself scored — `docs/weekly-blend-gate.md`'s Reproduce
+> section already worked around this by naming five seasons so the buffer is a sacrificial
+> fifth. The run above did not: it took `weekly_gate`'s own `--seasons` default, which named
+> exactly the four held-out seasons with nothing ahead of them, so `expanding_seasons` dropped
+> 2022 — the earliest of *those four* — rather than a season nobody meant to score at all. The
+> run's own per-season table said so, correctly; nothing printed alongside it said that three
+> was short of four, which is the defect and the reason this was filed as #378 rather than
+> corrected in place.
+>
+> Fixed two ways: `weekly_gate`'s `--seasons` default now names the buffer season ahead of the
+> four (`2021,2022,2023,2024,2025`, matching the Reproduce section above), and
+> `hub.season.weekly_gate_data.SeasonDropped` refuses a run outright if any season goes missing
+> from the scored output beyond that one expected buffer drop — a partition absent on disk, a
+> VOID condition, a join failure, whichever it is, now stops the run instead of quietly
+> shortening its cluster count. Every run also now prints what it asked for beside what it
+> scored (`docs/gate-power.md` and `#378`'s acceptance criteria (b)).
+>
+> Re-run at the corrected default, same recipe otherwise (`uv run python -m
+> hub.season.weekly_gate --run --ceiling`, drafts=20, seed 0, frozen rosters, restricted,
+> mask_pool):
+>
+> | | #376's run (wrong) | **corrected** |
+> |---|---|---|
+> | weekly − consensus | −1.156 | **−1.147** |
+> | 95% CI, percentile | [−1.761, −0.259] | **[−1.605, −0.556]** |
+> | clusters | 3, not 4 | **4** |
+> | season-clustered MDE (80% power) | 1.926 | **1.119** |
+> | **ceiling (perfect foresight)** | +10.799 | **+10.873** |
+> | ceiling / MDE | 5.6x | **9.7x** |
+>
+> **Stage 2 still passes, by a wider margin than #376 reported**, not a narrower one — the
+> corrected MDE is smaller than the mistaken one, because a fourth genuine season narrows the
+> interval a dropped-season run cannot. The weekly gate is not the underpowered one, at the k
+> its own docs and the ADR-0019 amendment's rule-16 table both name.
+>
+> **This run's own verdict is not the published one and is not read as such.** With no
+> `--shrink` and `drafts=20` — the ceiling-measurement recipe #376 set, not the published
+> gate's `--shrink mae-market --drafts 40` — this run's season table (2022 −1.120, 2023
+> −1.448, 2024 −0.259, 2025 −1.761) reads SHOW under the post-S1 tie-aware rule (won 0, tied 1,
+> lost 3 of 4) rather than the REMOVE the mistaken 3-cluster run printed. That is the tie rule
+> reading 2024's small, noisy gain as indistinguishable from zero once four seasons — rather
+> than three with a different season composition — are on the table, and it says nothing about
+> `docs/weekly-blend-gate.md`'s published −1.004 REMOVE, which this ticket does not re-run and
+> does not move.
+>
+> `state/gate-width.json` is restored after this run the same way #376's was:
+> `git checkout -- state/gate-width.json` once the numbers above were recorded, so #362's
+> evidence is untouched by this ticket either.
+>
+> ADR-0019's rule-16 weekly row is unstruck with this: the row was computed at k=4 all along
+> and the number that briefly contradicted it was reading a different, accidental k.
+
 # Restated 2026-09-07: every number above was measured on a harness with a foresight leak
 
 Under [method.md rule 13](method.md). **Nothing in the tables above is edited.** They record
