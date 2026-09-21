@@ -2246,3 +2246,125 @@ must not be left standing once the arithmetic above is known, and is named here 
 left implicit. If injury type's `k=3` keeps it NOT-RUNNABLE-adjacent or SHOW under the named
 rule-16 exemption above, `docs/weekly-injury.md` restates that as the reason, not as a fresh
 failure.
+
+# Pre-registered 2026-09-21 — PROPOSED: every dollar figure against the rivals' real ledgers
+(#317)
+
+**Status: PROPOSED.** Drafted under the #326 freeze. This section uses the template's headings
+throughout so it reads beside the others, but names plainly where a heading does not apply:
+**#317 corrects an input to a Monte Carlo simulator, not a modelling alternative under
+ADR-0019 or ADR-0024** — there is no incumbent model to beat, no candidate axis, and no
+ADOPT/REMOVE verdict. What moves is every dollar figure the survivor module prints, restated
+once against a corrected field, per rule 13. Parent decisions: rule 7 (pairing — the fix is
+read entirely through the paired difference between today's clean-ledger field and a real one,
+scored on the identical trials), rule 13 (restatement protocol), and #334 (the pool-rules
+ticket this one shares its one human prerequisite with).
+
+## The defect, restated
+
+`Field.entry`'s trial loop (`src/hub/season/pool.py:1237`) builds every trial's rival ledgers
+as `[set(ledger)] + [set() for _ in range(entries - 1)]` — our own entry's ledger, and every
+rival clean, every trial, regardless of the week. In a week-12 run our entry carries eleven
+spent teams over the remaining weeks while all twenty rivals can never be eliminated by the
+no-repeat rule and may re-use a team they spent in week 2. Every public question this module
+answers through `Field.entry` (`weekly`, `buyback`, `sensitivity`) inherits this; `leverage`
+already reads the field honestly through `Field.outcome`'s own `ledgers` parameter, which
+exists and is correct — the defect is that `Field.entry`'s trial loop does not use it, not
+that the module cannot express real ledgers at all. The data to fill it is already fetched and
+unused: `hub.fetch.pool.ledgers` (`src/hub/fetch/pool.py:387`) returns every entry's ledger, in
+index order, ours first, in exactly the shape `Field.entry`'s `ledger` parameter takes for one
+entry — and it has zero callers in `src/`.
+
+## The estimand, arms and pairing (rules 6, 7) — restated for this module's shape
+
+**The estimand** is the same one every figure in this module already computes — expected
+survival share, expected dollar equity, the buyback's net — evaluated against the **observed**
+field state rather than an assumed clean one. **There is no second arm to gate against**: this
+is not "does a corrected simulator beat the shipped one," it is "the shipped one was computing
+the wrong quantity, and the corrected one computes the right one." Read as a paired comparison
+anyway, for the one thing rule 7 buys here: **the same trials, the same seed, the same board,
+scored once with `ledgers=[clean]*entries` and once with the pool's real ledgers**, so the
+restated figures are a paired difference against today's published ones rather than two
+independently-noisy runs that happen to disagree.
+
+## Clusters, ceiling, the gate, power (rules 3, 8, 16) — not applicable, stated why
+
+- **Clustering**: N/A. There is no walk-forward across held-out seasons here — one board, one
+  week, `trials` Monte Carlo draws of the *same* season's remaining weeks. The repeated-measure
+  unit this module already respects is the trial itself (`share_sd`, `given_up_se` are already
+  computed across trials, paired, per `pool.py`'s own docstrings), and #317 does not change it.
+- **Ceiling arm**: N/A, for the same reason #318's section below gives in full — there is no
+  competing arm to bound; the correction is unconditional once #334's prerequisite is met.
+- **The Gate, ADOPT/REMOVE/SHOW/NOT-RUNNABLE**: N/A. Nothing here is adopted or removed; the
+  restated figures simply replace the superseded ones, per rule 13, the moment the fix lands
+  and the real ledger is available.
+- **Rule 16 power**: N/A as a gate-power question. The relevant power question is a different
+  one and already answered by the ticket's own measurement: at 500 trials on the synthetic
+  32-team pilot board, the corrected share (0.0311) and the clean-ledger share (0.0417) are
+  well outside each other's Monte Carlo noise at that trial count — the ticket's own acceptance
+  criteria do not ask for a resolution check the way #318's do, because the direction (real
+  ledgers thin the field less than clean ones assume, so our own survival share falls) is not
+  in question; only the magnitude, on the real pool's field, is.
+
+## What is measured — the pilot already run, restated as what a real run would replace
+
+**Measured (already published in the ticket body, restated here for the numbers this section
+carries forward), on the synthetic 32-team board `tests/unit/test_pool.py::_board` builds**,
+weeks 11–18, our ledger ten deep, 21 entries, 500 trials: share **0.0417** with clean rivals
+against **0.0311** with ten-deep rivals — **$17.53** against **$13.06** on a $420 pot, a **25%**
+move. This is a pilot on a synthetic board, not the pool this repo actually plays — the real
+correction, on the real field, is what #317 measures once it can run.
+
+## Exclusions (rule 11)
+
+- **`Field.outcome`** is excluded — its `ledgers` parameter already threads real state
+  correctly; only `Field.entry`'s trial loop (and, transitively, `weekly`, `buyback`,
+  `sensitivity`, every caller reached through it) is in scope.
+- **`leverage`** is excluded from the restatement's first pass. `docs/pool-leverage.md`
+  already reads real ledgers where it can and is a study result about the instrument, not a
+  slate artifact (its own page says so); it restates on its own schedule if #317's fix changes
+  its inputs, not as part of this ticket.
+- **PoolConfig's three unconfirmed rules** (`co_survivor_rule`, `co_elimination_rule`,
+  `buyback_cap`) are excluded — that is #333/#334's scope, not #317's, even though both share
+  the one human prerequisite below.
+
+## The one human prerequisite, named rather than assumed away
+
+**#317 is `blocked_by` a browser save-as, not by code.** `POOL_URL` and `POOL_SESSION` reach
+no environment an agent runs in, and `data/processed/pool_state.json` has never been written
+in this checkout (per #317's own 2026-09-18 comment, recorded by AI from the maintainer's
+re-reading of the frozen audit). The door is `hub.fetch.pool --payload FILE`, and the payload
+is **the same saved page #334 reads for the pool's three rules** — one maintainer action
+unblocks both tickets. This section does not pre-register a work-around; it names the
+dependency so whoever picks this up after the freeze starts from the estimate the 2026-09-18
+comment gives, not the original audit's.
+
+## The published numbers the result would move (rule 13)
+
+Every dollar figure `hub.season.pool` prints through `weekly`, `buyback` and `sensitivity` on
+the live pool — none are cited by number in this document today (the pilot's $17.53/$13.06 pair
+is the only quoted figures, and both are synthetic-board, not live-pool). Whatever
+`docs/track-record.md` or a slate write-up has quoted from a live run since is the restatement
+target at implementation time, each once, with the prior value in a restatement box per rule
+13's own convention and the ticket's fourth acceptance criterion.
+
+## Constants: chosen / fitted
+
+None. #317 changes an input (which ledgers a trial samples against), not a fitted or chosen
+constant in `hub.season.pool`.
+
+## What this measurement cannot do
+
+- It cannot run before #334's page-save lands — not a code dependency, a data one.
+- It cannot say how large the real move is: the 25% figure is the synthetic pilot's, offered
+  as the mechanism's demonstrated size, not a prediction for the actual pool, whose ledger
+  depth, entry count and week differ from the pilot board's.
+- It cannot touch `PoolConfig`'s three unconfirmed rules; that is #333/#334's write.
+
+## What happens either way
+
+Once the payload lands, `Field.entry`'s trial loop threads `fetch.pool.ledgers(state)` in
+place of the hardcoded clean rivals, every figure the module publishes is restated once
+against the real field, and the restatement box names the prior (wrong) figure beside each.
+Nothing here is provisional in ADR-0014's sense — this is not a case where no gate can run; it
+is a correctness fix whose only blocker is a file that does not yet exist.
