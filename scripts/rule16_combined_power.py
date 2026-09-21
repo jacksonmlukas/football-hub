@@ -59,12 +59,24 @@ def _trial(rng: np.random.Generator, *, k: int, s: float, m: int, delta: float) 
     return pl.DataFrame(rows, schema=["season", "unit", "diff"], orient="row")
 
 
+# The simulation is about the interval half and the tie-aware every-season half -- the two
+# terms rule 17's incident was about. It is not about S6's stage-2 precondition (#363: a gate
+# that measured no ceiling is NOT-RUNNABLE in both directions), which is a separate branch
+# ahead of both. So every trial hands `summarise` a ceiling that cannot bind, by construction,
+# and says so here rather than leaving the keyword off: with it off, #363 makes every trial
+# NOT-RUNNABLE and the ADOPT rate reads 0 whatever the inputs -- a check whose outcome cannot
+# vary with the thing it is about (`docs/method.md`, the note beside rule 17). That is how the
+# table this script produced for ADR-0019 stopped reproducing the day #363 landed behind it.
+NON_BINDING_CEILING = float("inf")
+
+
 def _adopt_rate(*, k: int, s: float, m: int, delta: float, trials: int, seed: int) -> float:
     rng = np.random.default_rng(seed)
     adopts = 0
     for _ in range(trials):
         df = _trial(rng, k=k, s=s, m=m, delta=delta)
-        summary = summarise(df, cluster=SEASON_CLUSTER, bootstrap=BOOTSTRAP, seed=seed)
+        summary = summarise(df, cluster=SEASON_CLUSTER, bootstrap=BOOTSTRAP, seed=seed,
+                            ceiling=NON_BINDING_CEILING)
         seasons = per_season(df, within=("unit",), bootstrap=BOOTSTRAP, seed=seed)
         status, _ = gate(summary, seasons, _ACTIONS)
         adopts += status == "ADOPT"

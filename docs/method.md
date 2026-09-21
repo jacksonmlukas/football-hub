@@ -586,7 +586,7 @@ correlation or a reliability, fitted on quantities measured from few events, is 
 by the events' own sampling variance, and the correction is analytic when the count is
 known.** Two is a coincidence; three is rule 16's successor.
 
-### Noted three times in 24 hours, not yet a rule: an assertion whose outcome cannot vary with the thing it asserts about
+### Noted four times in 24 hours, not yet a rule: an assertion whose outcome cannot vary with the thing it asserts about
 
 Recorded 2026-09-21. Rule 17 above covers the first instance and only the first: it is about
 a *decision rule*, checked *before pre-registration*. The second and third were neither, so
@@ -611,14 +611,24 @@ The first draft of the freeze's ending test was `gh issue list --state open --la
 returns empty whether or not a hold exists. An empty result would have read as clearance. The
 outcome could not vary with the hold.
 
-**The shape all three share.** Different levels — a rule, a test, a query — and one defect:
+**Instance four (`scripts/rule16_combined_power.py`, found 2026-09-21 by two lanes
+independently, a harness).** The script that produced the rule-16 table in ADR-0019's
+amendment called `summarise` with no `ceiling`. It was run before #363 landed behind it in the
+same lane; after #363, a gate with no ceiling is NOT-RUNNABLE in both directions, so the
+harness returned an ADOPT rate of 0 at every δ. The published table was right and could no
+longer be re-derived from the tree. Fixed by handing the simulation a ceiling that cannot bind
+and saying why, and by a test that plants an effect the harness cannot miss and asserts it
+adopts — the outcome must vary with δ before any rate it reports means anything.
+
+**The shape all four share.** Different levels — a rule, a test, a query, a harness — and one
+defect:
 **the thing checked is not connected to the thing the check is about, so the check passes
 regardless.** Rule 15 is the test-shaped special case (a fixture that sets the condition under
 which the estimator is trivially correct); rule 17 is the rule-shaped one. What is not yet
 written is the general instruction — *before trusting any assertion, ask what observation
 would make it come out the other way, and confirm that observation is reachable* — and the
-check that would have caught all three is the same one each time: plant the failure and watch
-the assertion notice. Three at three levels in one day is more than a coincidence; it is
+check that would have caught all four is the same one each time: plant the failure and watch
+the assertion notice. Four at four levels in one day is more than a coincidence; it is
 recorded rather than promoted because the general form has not yet been tested against a
 case it was written for.
 
