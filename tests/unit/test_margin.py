@@ -10,7 +10,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from hub.models import margin
+from hub.models import experiment, margin
 from hub.models.market import MARGIN_SD
 
 
@@ -515,16 +515,27 @@ def test_the_verdict_needs_every_season_and_not_just_the_mean():
 
 
 def test_the_shape_verdict_is_the_house_rule():
-    """Same inputs, same answer as `experiment.gate` over a season-clustered `summarise`:
-    ADOPT is the only verdict that changes the shape, and both halves have to hold."""
-    from hub.models import experiment
+    """Same inputs, same answer as `experiment.gate`: ADOPT is the only verdict that changes
+    the shape, and both halves have to hold.
+
+    **#386 finding.** `_shape_wf` carries no `ceiling_gain`, so `margin.shape_verdict(wf)`
+    hands `gate` no ceiling -- and, migrating this off a hand-built summary dict, the
+    comparison call here turned out to have never carried one either. Since #363 (S6) a gate
+    with no ceiling is NOT-RUNNABLE, full stop, so both sides of every comparison below were
+    always "NOT-RUNNABLE" / "gaussian" and the two assertions were `False == False` on every
+    row in the table -- a check that could only ever pass, rule 15's own shape, present before
+    this ticket and found while migrating it rather than caused by the migration. Fixed here
+    with the same generous, non-binding ceiling `_wf`'s own docstring already uses for the
+    width gate's sibling tests."""
+    top = experiment.Ceiling("x", np.array([1e6]))
     for gains in ([0.02, 0.01, 0.03], [-0.01, -0.01, 0.1], [-0.02, -0.01, -0.03], [0.0, 0.01]):
         wf = _shape_wf(gains)
         paired = wf.select("season", pl.col("gain").alias("diff"))
-        house, _ = experiment.gate(
-            experiment.summarise(paired, cluster=experiment.SEASON_CLUSTER),
-            experiment.per_season(paired, within=("season",)), margin.SHAPE_ACTIONS)
-        shape, sentence = margin.shape_verdict(wf)
+        house, _ = experiment.gate(paired, cluster=experiment.SEASON_CLUSTER,
+                                   within=("season",), ceiling=top,
+                                   actions=margin.SHAPE_ACTIONS).verdict
+        shape, sentence = margin.shape_verdict(
+            wf.with_columns(pl.lit(1e6).alias("ceiling_gain")))
         assert (shape == "lumpy") == (house == "ADOPT"), gains
         assert ("ADOPT" in sentence) == (house == "ADOPT"), gains
 

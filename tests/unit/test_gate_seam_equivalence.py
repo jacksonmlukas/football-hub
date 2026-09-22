@@ -48,7 +48,7 @@ import polars as pl
 import pytest
 
 from hub.models import experiment, margin
-from hub.models.experiment import Actions, Ceiling, SEASON_CLUSTER, run_gate
+from hub.models.experiment import SEASON_CLUSTER, Actions, Ceiling, run_gate
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -124,11 +124,11 @@ def _draft_paired():
     """The draft gate's frozen Board pin (#197): `bt.compare` on `panelarchive`'s
     `draft_board`, at the same reduced budget `test_backtest.py`'s pin uses so this runs in
     seconds rather than the shipped budget's minutes."""
+    import panelarchive as arc
+
     from hub.draft import backtest as bt
     from hub.draft.board import Board
     from hub.names import player_key
-
-    import panelarchive as arc
     board = arc.frame("draft_board")
     real = pl.DataFrame({
         "player": [player_key(n) for n in board["player"].to_list() for _ in range(14)],
@@ -385,12 +385,12 @@ def test_the_adapter_reaches_the_expected_verdict(name):
 
 
 def test_margin_verdict_reaches_adopt_on_the_symmetric_lump():
-    winner, text = _margin_verdict()
+    winner, _text = _margin_verdict()
     assert winner in ("incumbent", "all", "trailing10")  # reproduced byte-identically below
 
 
 def test_margin_shape_verdict_runs():
-    shape, text = _margin_shape_verdict()
+    shape, _text = _margin_shape_verdict()
     assert shape in ("gaussian", "lumpy")  # reproduced byte-identically below
 
 

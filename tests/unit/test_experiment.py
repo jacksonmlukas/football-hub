@@ -13,6 +13,7 @@ import json
 import math
 import re
 import statistics
+from collections.abc import Sequence
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -747,7 +748,9 @@ def test_the_four_season_means_are_printed():
     """Criterion 4. An interval over four replications is a claim a reader should be able to
     check by eye -- one season carrying the whole effect is visible in the four and invisible
     in the interval."""
-    seasons = _gate_seasons([0.3, -0.5, 0.9, 0.1])
+    gains = [0.3, -0.5, 0.9, 0.1]
+    seasons = pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
+                            "gain": gains, "n": [10] * len(gains)})
     lines = experiment.small_sample_report(_small(4), seasons)
     joined = "\n".join(lines)
     assert "4 replications" in joined
@@ -961,12 +964,10 @@ def test_a_planted_tie_and_a_planted_loss_are_recorded_in_the_ledger(tmp_path):
         _confident_season(2024, -3.0),
         _tied_season(2025, -0.05, seed=1),
     ])
-    per = experiment.per_season(seasons, within=("unit",), bootstrap=2000)
-    summary = experiment.summarise(seasons, cluster=experiment.SEASON_CLUSTER, bootstrap=2000,
-                                   ceiling=1e6)
-    verdict = experiment.gate(summary, per, _ACTIONS)
-    experiment.review_width("draft", summary, verdict=verdict[0], config_digest="cfg",
-                            data_digest="dat", path=path, seasons=per)
+    run = experiment.gate(seasons, cluster=experiment.SEASON_CLUSTER, within=("unit",),
+                          ceiling=_HUGE_CEILING, actions=_ACTIONS, bootstrap=2000)
+    experiment.review_width("draft", run.summary, verdict=run.verdict[0], config_digest="cfg",
+                            data_digest="dat", path=path, seasons=run.seasons)
     entries = json.loads(path.read_text())["entries"]
     by_season = {r["season"]: r["disposition"] for r in entries[-1]["seasons"]}
     assert by_season[2022] == "loss" and by_season[2023] == "loss" and by_season[2024] == "loss"
@@ -991,74 +992,89 @@ _ACTIONS = experiment.Actions(
     remove="REMOVE: delete it.",
     show="SHOW, NEVER RANK ON: printed beside the incumbent.")
 
+# #386: `gate` reads a paired frame now, not a hand-built summary dict and a hand-built
+# per-season frame -- the exact place S1's degeneracy lived (how `summarise` produces that
+# dict). Every branch-logic test below builds a `paired` frame instead: one row per season,
+# `diff` the season's own gain, which is `per_season`'s within-season unit collapsing to a
+# single cluster (`m=1`, below `TIE_MIN_CLUSTERS`) -- the same sign-only every-season reading
+# every hand-built `_gate_seasons` frame gave before #335 read `se`/`m` at all. The pooled
+# interval this now produces is real, not asserted, so a case built to test "every season
+# agrees" uses season gains close enough together that the real t-interval decisively
+# excludes zero -- the qualitative intent of the original hand-set `(lo, hi)`, reached through
+# the estimator rather than around it.
 
-def _gate_seasons(gains):
+
+def _gate_paired(gains: Sequence[float]) -> pl.DataFrame:
     return pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
-                         "gain": [float(g) for g in gains],
-                         "n": [10] * len(gains)})
+                         "diff": [float(g) for g in gains]})
 
 
-def _gate_summary(lo, hi, clusters=80):
-    # `t_lo`/`t_hi` mirror the percentile bounds by default: #357 (S1) moved `gate`'s decision
-    # onto the t interval (`t_interval`, off `mean`/`se`/`clusters`), and every test in this
-    # section is exercising the branch logic rather than the interval math, so the double
-    # hands the rule the same bounds under both names unless a test overrides them directly.
-    # `ceiling` is huge and positive: #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling at
-    # all, and most of this section is exercising ADOPT/REMOVE/SHOW rather than stage 2 -- a
-    # ceiling this far above any MDE these tests produce never binds, whichever way `mean`
-    # points (the comparison is `mde > ceiling`, and `mde` is always non-negative, so a huge
-    # positive ceiling clears it regardless of the effect's own sign). Tests of stage 2 itself
-    # (below) override it or omit it explicitly.
-    mean = (lo + hi) / 2
-    return {"n": 800.0, "clusters": float(clusters), "mean": mean,
-            "lo": lo, "hi": hi, "t_lo": lo, "t_hi": hi, "p_better": 0.5,
-            "ceiling": 1e6}
+# A ceiling far above anything these fixtures' MDEs reach, so #363 (S6)'s stage-2 precondition
+# never binds and each test below exercises the branch it names. Stage-2 itself is tested on
+# its own, further down.
+_HUGE_CEILING = experiment.Ceiling("x", np.array([1e6]))
+
+
+def _gate(gains: Sequence[float], *, ceiling=_HUGE_CEILING,
+         void: str | None = None) -> tuple[str, str]:
+    return experiment.gate(_gate_paired(gains), cluster=experiment.SEASON_CLUSTER,
+                           within=("season",), ceiling=ceiling, actions=_ACTIONS,
+                           void=void).verdict
 
 
 def test_an_interval_above_zero_in_every_season_adopts():
-    status, said = experiment.gate(_gate_summary(0.4, 1.2), _gate_seasons([0.3, 0.5, 0.9]), _ACTIONS)
+    status, said = _gate([0.85, 0.90, 0.95])
     assert status == "ADOPT"
     assert said.startswith("ADOPT: the arm ships.")
     assert "won 3, tied 0, lost 0 of 3" in said
 
 
 def test_an_interval_above_zero_that_loses_a_season_does_not_adopt():
-    """The half two of the three gates did not have, and the reason this is now one rule.
-    A pooled interval that excludes zero while one season disagrees is the shape
-    `hub.models.spread` was corrected for."""
-    status, said = experiment.gate(_gate_summary(0.1, 1.2), _gate_seasons([0.3, -0.2, 0.9]), _ACTIONS)
+    """The half two of the three gates did not have, and the reason this is now one rule. A
+    pooled interval that excludes zero while one season disagrees is the shape
+    `hub.models.spread` was corrected for -- and here that is true regardless of exactly
+    where the real interval lands: two wins and a loss makes both ADOPT (`won == total`) and
+    REMOVE (`lost == total`) impossible on their own terms, so SHOW is the only reachable
+    branch and this does not depend on the interval's own arithmetic to prove it."""
+    status, said = _gate([0.3, -0.2, 0.9])
     assert status == "SHOW"
     assert "won 2, tied 0, lost 1 of 3" in said
 
 
 def test_an_interval_below_zero_in_every_season_removes():
-    status, said = experiment.gate(_gate_summary(-1.2, -0.4), _gate_seasons([-0.3, -0.5, -0.9]),
-                                   _ACTIONS)
+    status, said = _gate([-0.85, -0.90, -0.95])
     assert status == "REMOVE"
     assert said.startswith("REMOVE: delete it.")
 
 
 def test_an_interval_below_zero_that_wins_a_season_does_not_remove():
-    status, _ = experiment.gate(_gate_summary(-1.2, -0.1), _gate_seasons([-0.3, 0.2, -0.9]), _ACTIONS)
+    """Symmetric to the ADOPT case above: one win against two losses makes both REMOVE
+    (`lost == total`) and ADOPT (`won == total`) impossible on their own terms."""
+    status, _ = _gate([-0.3, 0.2, -0.9])
     assert status == "SHOW"
 
 
 def test_an_interval_containing_zero_shows():
-    status, said = experiment.gate(_gate_summary(-0.4, 0.9), _gate_seasons([0.3, -0.2, 0.9]), _ACTIONS)
+    status, said = _gate([0.3, -0.2, 0.9])
     assert status == "SHOW"
     assert "absence of evidence" in said
 
 
 def test_an_endpoint_of_exactly_zero_is_not_an_exclusion():
-    """The boundary. A bootstrap that lands on zero has not excluded it, and
-    ADR-0012's published interval is [-0.00, +0.00]."""
-    assert experiment.gate(_gate_summary(0.0, 1.2), _gate_seasons([0.3, 0.5]), _ACTIONS)[0] == "SHOW"
-    assert experiment.gate(_gate_summary(-1.2, 0.0), _gate_seasons([-0.3, -0.5]), _ACTIONS)[0] == "SHOW"
+    """The boundary, reached exactly rather than hand-set. Every paired diff identical (here,
+    identically zero) gives a bootstrap `se` of exactly 0, so `t_interval` -- `mean +/-
+    t_quantile * se` -- returns `(mean, mean)`: a single-point interval sitting exactly on
+    its own mean. At `mean == 0.0` that is `[-0.00, +0.00]`, ADR-0012's own published number,
+    reached here through the same no-op-season shape #386's control battery uses. A bootstrap
+    that lands on zero has not excluded it."""
+    assert _gate([0.0, 0.0])[0] == "SHOW"
+    assert _gate([0.0, 0.0, 0.0, 0.0])[0] == "SHOW"  # ADR-0012's own season count
 
 
 def test_nothing_measured_shows_rather_than_adopting_on_an_empty_interval():
-    status, said = experiment.gate(_gate_summary(float("nan"), float("nan"), clusters=0),
-                                   _gate_seasons([]), _ACTIONS)
+    empty = pl.DataFrame(schema={"season": pl.Int64, "diff": pl.Float64})
+    status, said = experiment.gate(empty, cluster=experiment.SEASON_CLUSTER, within=("season",),
+                                   ceiling=None, actions=_ACTIONS).verdict
     assert status == "SHOW"
     assert "Nothing measured" in said
 
@@ -1067,8 +1083,8 @@ def test_a_void_condition_preempts_every_branch():
     """A gate whose inputs are broken has no verdict to read. The condition itself is the
     caller's -- the weekly gate voids on a join-failure rate -- and the gate honours it
     rather than deciding what counts as broken."""
-    status, said = experiment.gate(_gate_summary(0.4, 1.2), _gate_seasons([0.3, 0.5]), _ACTIONS,
-                                   void="VOID: 4.0% of roster-weeks are a join failure.")
+    status, said = _gate([0.85, 0.90],
+                         void="VOID: 4.0% of roster-weeks are a join failure.")
     assert status == "VOID"
     assert said.startswith("VOID:")
 
@@ -1088,12 +1104,17 @@ def _null_adopt_rate(rule, *, trials: int, k: int = 4, n_per_season: int = 50,
                      bootstrap: int = 300, seed: int = 0) -> float:
     """The empirical ADOPT rate of `rule` under the null, at `k` seasons.
 
-    `rule(summary, seasons) -> verdict_str`, so it can be handed `experiment.gate` itself or a
-    hand-rolled stand-in for the pre-#357 rule -- the whole point is that this function does
-    not know or care which. Exactly M-S1's own reproduction: `k` season means drawn from a
-    standard normal with zero true effect, each repeated over `n_per_season` rows so every
-    within-season row shares its season's draw (matching how a real paired frame arrives, one
-    row per player-week sharing a season mean).
+    `rule(df, *, bootstrap, seed) -> verdict_str`, so it can be handed a stand-in for
+    `experiment.gate` itself or a hand-rolled stand-in for the pre-#357 rule -- the whole
+    point is that this function does not know or care which. Exactly M-S1's own reproduction:
+    `k` season means drawn from a standard normal with zero true effect, each repeated over
+    `n_per_season` rows so every within-season row shares its season's draw (matching how a
+    real paired frame arrives, one row per player-week sharing a season mean).
+
+    **#386.** `rule` used to be handed an already-materialised `(summary, seasons)` pair;
+    it is handed the raw paired frame `df` now, and each `rule` materialises what it needs --
+    which is also what caught a defect this migration found rather than introduced: see
+    `_fixed_rule`'s own comment.
     """
     rng = np.random.default_rng(seed)
     adopts = 0
@@ -1101,19 +1122,19 @@ def _null_adopt_rate(rule, *, trials: int, k: int = 4, n_per_season: int = 50,
         m = rng.normal(0.0, 1.0, k)
         df = pl.DataFrame({"season": np.repeat(np.arange(k), n_per_season),
                            "diff": np.repeat(m, n_per_season)})
-        s = experiment.summarise(df, cluster=experiment.SEASON_CLUSTER, bootstrap=bootstrap,
-                                 seed=seed)
-        # `within=("season",)`: S1's own size check is about the interval half in isolation,
-        # not #335's tie logic, so a season's own group is a no-op here too.
-        seasons = experiment.per_season(df, within=("season",))
-        adopts += rule(s, seasons) == "ADOPT"
+        adopts += rule(df, bootstrap=bootstrap, seed=seed) == "ADOPT"
     return adopts / trials
 
 
-def _old_degenerate_rule(summary: dict, seasons: pl.DataFrame) -> str:
+def _old_degenerate_rule(df: pl.DataFrame, *, bootstrap: int, seed: int) -> str:
     """The rule before #357: `won == total` and the *percentile* `lo > 0`, on the season
     bootstrap. Planted here on purpose, and never to be "improved" -- its whole job is to be
     the thing `_null_adopt_rate` must be able to catch."""
+    summary = experiment.summarise(df, cluster=experiment.SEASON_CLUSTER, bootstrap=bootstrap,
+                                   seed=seed)
+    # `within=("season",)`: S1's own size check is about the interval half in isolation, not
+    # #335's tie logic, so a season's own group is a no-op here too.
+    seasons = experiment.per_season(df, within=("season",))
     won = int((seasons["gain"] > 0).sum())
     total = seasons.height
     if summary["lo"] > 0 and won == total:
@@ -1121,8 +1142,16 @@ def _old_degenerate_rule(summary: dict, seasons: pl.DataFrame) -> str:
     return "SHOW"
 
 
-def _fixed_rule(summary: dict, seasons: pl.DataFrame) -> str:
-    return experiment.gate(summary, seasons, _ACTIONS)[0]
+def _fixed_rule(df: pl.DataFrame, *, bootstrap: int, seed: int) -> str:
+    """#386 found this call with no ceiling at all while migrating it off a hand-built
+    summary dict: `experiment.gate`'s no-ceiling branch (#363, S6) made every trial
+    NOT-RUNNABLE, silently, so `test_the_fixed_rule_s_null_size_is_not_degenerate`'s "rate"
+    was 0.0 regardless of the t-interval fix it exists to check -- a size test that can only
+    ever pass, rule 15's own shape. `_HUGE_CEILING` (never binding at these effect sizes)
+    restores what the test's own docstring already claimed it measured."""
+    return experiment.gate(df, cluster=experiment.SEASON_CLUSTER, within=("season",),
+                           ceiling=_HUGE_CEILING, actions=_ACTIONS, bootstrap=bootstrap,
+                           seed=seed).verdict[0]
 
 
 def test_the_size_check_flags_a_planted_degenerate_rule():
@@ -1192,11 +1221,10 @@ def test_a_tie_blocks_adopt_even_when_every_other_season_won():
     ])
     # `ceiling=1e6`: #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling; these tests are
     # about #335's tie logic, not stage 2, so a ceiling this large never binds.
-    summary = experiment.summarise(seasons, cluster=experiment.SEASON_CLUSTER, bootstrap=2000,
-                                   ceiling=1e6)
-    per = experiment.per_season(seasons, within=("unit",), bootstrap=2000)
-    status, said = experiment.gate(summary, per, _ACTIONS)
-    disp = per.sort("season")
+    run = experiment.gate(seasons, cluster=experiment.SEASON_CLUSTER, within=("unit",),
+                          ceiling=_HUGE_CEILING, actions=_ACTIONS, bootstrap=2000)
+    status, said = run.verdict
+    disp = run.seasons.sort("season")
     assert list((disp["gain"] >= 2 * disp["se"]).to_list())[:3] == [True, True, True], (
         "the fixture must actually win its first three seasons, or this proves nothing")
     assert status == "SHOW", (status, said)
@@ -1214,10 +1242,9 @@ def test_a_tie_blocks_remove_even_when_every_other_season_lost():
     ])
     # `ceiling=1e6`: #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling; these tests are
     # about #335's tie logic, not stage 2, so a ceiling this large never binds.
-    summary = experiment.summarise(seasons, cluster=experiment.SEASON_CLUSTER, bootstrap=2000,
-                                   ceiling=1e6)
-    per = experiment.per_season(seasons, within=("unit",), bootstrap=2000)
-    status, said = experiment.gate(summary, per, _ACTIONS)
+    status, said = experiment.gate(seasons, cluster=experiment.SEASON_CLUSTER, within=("unit",),
+                                   ceiling=_HUGE_CEILING, actions=_ACTIONS,
+                                   bootstrap=2000).verdict
     assert status == "SHOW", (status, said)
     assert "won 0, tied 1, lost 3 of 4" in said
 
@@ -1228,10 +1255,9 @@ def test_four_confident_wins_still_adopts_with_the_tie_aware_rule():
     seasons = pl.concat([_confident_season(y, 3.0) for y in (2022, 2023, 2024, 2025)])
     # `ceiling=1e6`: #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling; these tests are
     # about #335's tie logic, not stage 2, so a ceiling this large never binds.
-    summary = experiment.summarise(seasons, cluster=experiment.SEASON_CLUSTER, bootstrap=2000,
-                                   ceiling=1e6)
-    per = experiment.per_season(seasons, within=("unit",), bootstrap=2000)
-    status, said = experiment.gate(summary, per, _ACTIONS)
+    status, said = experiment.gate(seasons, cluster=experiment.SEASON_CLUSTER, within=("unit",),
+                                   ceiling=_HUGE_CEILING, actions=_ACTIONS,
+                                   bootstrap=2000).verdict
     assert status == "ADOPT", (status, said)
     assert "won 4, tied 0, lost 0 of 4" in said
 
@@ -1275,18 +1301,26 @@ def test_a_win_is_exactly_at_the_boundary_gain_equal_to_two_se():
 
 # --- the published verdicts must still fall out of the unified rule ------------
 
-@pytest.mark.parametrize("what,lo,hi,gains,expected", [
+@pytest.mark.parametrize("what,gains,expected", [
     # ADR-0009: equity vs the market, n=80, losing in all four seasons.
-    ("ADR-0009 championship equity", -23.16, -16.20, [-19.0, -21.0, -18.0, -20.0], "REMOVE"),
-    # ADR-0012: the lineup optimiser, an interval that is zero to two places both ways.
-    ("ADR-0012 lineup optimiser", -0.00, 0.00, [0.0, 0.0, 0.0, 0.0], "SHOW"),
-    # The frozen weekly gate: +0.215, CI [-0.242, +0.684], three seasons of four.
-    ("weekly gate", -0.242, 0.684, [0.4, 0.3, -0.2, 0.5], "SHOW"),
+    ("ADR-0009 championship equity", [-19.0, -21.0, -18.0, -20.0], "REMOVE"),
+    # ADR-0012: the lineup optimiser, four seasons of no measured difference at all -- a
+    # bootstrap se of exactly 0, so the real t interval is `[-0.00, +0.00]` exactly.
+    ("ADR-0012 lineup optimiser", [0.0, 0.0, 0.0, 0.0], "SHOW"),
+    # The frozen weekly gate: won 3 of 4, one season disagreeing -- SHOW regardless of where
+    # the pooled interval lands, since a mixed sign makes both ADOPT and REMOVE unreachable.
+    ("weekly gate", [0.4, 0.3, -0.2, 0.5], "SHOW"),
 ])
-def test_the_recorded_verdicts_reproduce(what, lo, hi, gains, expected):
+def test_the_recorded_verdicts_reproduce(what, gains, expected):
     """Unifying the rule tightened two of the three gates. If that had flipped a published
-    decision it would be a different change entirely, so it is checked rather than hoped."""
-    got = experiment.gate(_gate_summary(lo, hi), _gate_seasons(gains), _ACTIONS)[0]
+    decision it would be a different change entirely, so it is checked rather than hoped.
+
+    #386: each row's season gains are its own real record -- ADR-0009's four seasons, the
+    weekly gate's four -- run through the real bootstrap rather than the published `(lo, hi)`
+    handed in beside them. The recorded `(lo, hi)` a reader would compare this against are in
+    the comment history this replaced; what is asserted is the verdict, which is what the
+    docstring above claims survives."""
+    got = _gate(gains)[0]
     assert got == expected, f"{what} moved to {got}"
 
 # --- the MDE and the ceiling, and the difference between no data and no slot ---------
@@ -1518,45 +1552,59 @@ def test_only_the_empty_frame_renders_a_nan_across_the_sweep():
     assert {label.split("|")[0] for label in nan_blocks} == {"0"}
 
 
-_GATE_INTERVALS = ((-1.2, -0.4), (-1.2, -0.1), (-0.4, 0.9), (0.0, 1.2), (-1.2, 0.0),
-                   (0.1, 1.2), (0.4, 1.2), (-23.16, -16.20), (-0.242, 0.684), (-0.0, 0.0))
-_GATE_GAINS = ((0.3, 0.5, 0.9), (0.3, -0.2, 0.9), (-0.3, -0.5, -0.9), (-0.3, 0.2, -0.9),
-               (0.0, 0.0, 0.0), (1.0,), (-1.0,), (0.4, 0.3, -0.2, 0.5))
+# #386: the interval-times-seasons cross product above no longer exists as an independent
+# axis -- `gate` now derives the interval *from* the season data, so the 80-combination grid
+# (10 hand-set `(lo, hi)` pairs x 8 hand-set season-sign patterns, most pairings physically
+# impossible for any real paired frame to produce at once) has no frame-in equivalent. What
+# replaces it is smaller and asserts the verdict directly rather than a digest over one: eight
+# season-only paired frames, chosen the way the sweep's own gains tuples were -- one clean
+# ADOPT, one clean REMOVE, several mixed-sign SHOWs, the exact-zero tie boundary, and two
+# single-season frames (`clusters=1`, no t interval at all) -- covering the same branch
+# diversity through real data instead of independently dialled numbers. A verdict flipping
+# here is still a regression; `GATE_SWEEP_DIGEST` above is left as the record of what the
+# pre-#386 80-case grid last read, not deleted, since `docs/method.md` rule 13 keeps a
+# superseded figure rather than erasing it.
+_GATE_SWEEP_GAINS: tuple[tuple[float, ...], ...] = (
+    (0.85, 0.90, 0.95),            # ADOPT: every season wins, decisively
+    (-0.85, -0.90, -0.95),         # REMOVE: every season loses, decisively
+    (0.3, -0.2, 0.9),              # SHOW: two wins, one loss
+    (-0.3, 0.2, -0.9),             # SHOW: two losses, one win
+    (0.0, 0.0, 0.0),               # SHOW: every season a tie (the exact-zero boundary, #335)
+    (1.0,),                        # SHOW: a single season, no interval to exclude zero with
+    (-1.0,),                       # SHOW: a single season, the negative-sign sibling
+    (0.4, 0.3, -0.2, 0.5),         # SHOW: the frozen weekly gate's own recorded pattern
+)
 
 
-def _gate_sweep(extra: dict[str, float]) -> list[str]:
-    """Every verdict on the interval x seasons grid, with `extra` merged into each summary."""
-    out = []
-    for lo, hi in _GATE_INTERVALS:
-        for gains in _GATE_GAINS:
-            status, said = experiment.gate(_gate_summary(lo, hi) | extra,
-                                           _gate_seasons(gains), _ACTIONS)
-            out.append(f"{lo}|{hi}|{gains}|{status}|{said}")
-    return out
+def _gate_sweep() -> list[tuple[tuple[float, ...], str]]:
+    return [(gains, _gate(gains)[0]) for gains in _GATE_SWEEP_GAINS]
 
 
-def test_the_eighty_gate_verdicts_are_unmoved():
-    verdicts = _gate_sweep({})
-    assert len(verdicts) == 80
-    assert _digest(verdicts) == GATE_SWEEP_DIGEST
+def test_the_gate_sweep_verdicts_are_unmoved():
+    """The #386 successor to `test_the_eighty_gate_verdicts_are_unmoved`: real data through
+    the real interface, pinned as verdicts rather than as a digest over hand-set numbers."""
+    assert _gate_sweep() == [
+        ((0.85, 0.90, 0.95), "ADOPT"),
+        ((-0.85, -0.90, -0.95), "REMOVE"),
+        ((0.3, -0.2, 0.9), "SHOW"),
+        ((-0.3, 0.2, -0.9), "SHOW"),
+        ((0.0, 0.0, 0.0), "SHOW"),
+        ((1.0,), "SHOW"),
+        ((-1.0,), "SHOW"),
+        ((0.4, 0.3, -0.2, 0.5), "SHOW"),
+    ]
 
 
-@pytest.mark.parametrize("extra", [
-    {},
-    {"mde": 0.44},
-    {"mde": float("nan")},
-])
-def test_a_runnable_gate_reaches_the_verdict_adr_0019_gave_it(extra):
-    """The mde-exceeds-ceiling branch fires on one condition and leaves every other case
-    alone, given the ceiling `_gate_summary` always bakes in since #363 (S6).
-
-    Each row here is a state that must NOT trip it: no MDE computed, and an MDE that sits
-    comfortably below the default ceiling. `Field.NO_DATA` is that third state rather than a
-    licence to guess. The no-ceiling-at-all cases moved to
-    `test_no_ceiling_measured_is_not_runnable_in_both_directions` below, since #363 made that
-    state trip the branch by itself rather than leave it untripped.
-    """
-    assert _gate_sweep(extra) == _gate_sweep({})
+def test_a_single_season_is_runnable_with_no_interval_at_all():
+    """The mde-exceeds-ceiling branch reads `Field.NO_DATA`/`Field.NO_SLOT` as different facts
+    from a measured excess -- a single-cluster frame has no degrees of freedom for a t, so its
+    `mde` is NaN (`Field.NO_DATA`, not a licence to guess), and #363 (S6)'s stage-2 guard does
+    not fire on it: the huge ceiling this fixture carries never gets compared against
+    anything, and the run still reaches SHOW rather than getting stuck on a precondition it
+    has no number for."""
+    status, said = _gate([1.0])
+    assert status == "SHOW"
+    assert "not planned" not in said and "NOT RUNNABLE" not in said
 
 
 def test_no_ceiling_measured_is_not_runnable_in_both_directions():
@@ -1565,74 +1613,68 @@ def test_no_ceiling_measured_is_not_runnable_in_both_directions():
     free the way it used to (S6's own finding: the two excluding branches are self-limiting
     and REMOVE was one of them, so an underpowered design was never shown *safe* on REMOVE,
     only never caught)."""
-    would_adopt = {k: v for k, v in _gate_summary(0.4, 1.2).items() if k != "ceiling"}
-    status, said = experiment.gate(would_adopt, _gate_seasons([0.3, 0.5, 0.9]), _ACTIONS)
+    status, said = _gate([0.85, 0.90, 0.95], ceiling=None)      # would otherwise ADOPT
     assert status == "NOT-RUNNABLE"
     assert "has not measured a ceiling" in said
 
-    would_remove = {k: v for k, v in _gate_summary(-1.2, -0.4).items() if k != "ceiling"}
-    status, _ = experiment.gate(would_remove, _gate_seasons([-0.3, -0.5, -0.9]), _ACTIONS)
+    status, _ = _gate([-0.85, -0.90, -0.95], ceiling=None)      # would otherwise REMOVE
     assert status == "NOT-RUNNABLE"
 
-    would_show = {k: v for k, v in _gate_summary(-0.4, 0.9).items() if k != "ceiling"}
-    status, _ = experiment.gate(would_show, _gate_seasons([0.3, -0.2, 0.9]), _ACTIONS)
+    status, _ = _gate([0.3, -0.2, 0.9], ceiling=None)           # would otherwise SHOW
     assert status == "NOT-RUNNABLE"
 
 
 def test_a_ceiling_measured_as_no_data_is_also_not_runnable():
     """`Field.NO_DATA` -- a caller that attempted the ceiling and measured nothing -- is not
     `Field.VALUE` either, so #363's guard fires on it exactly as it does on `Field.NO_SLOT`."""
-    summary = _gate_summary(0.4, 1.2) | {"ceiling": float("nan")}
-    status, _ = experiment.gate(summary, _gate_seasons([0.3, 0.5, 0.9]), _ACTIONS)
+    no_data = experiment.Ceiling("x", np.array([float("nan")]))
+    status, _ = _gate([0.85, 0.90, 0.95], ceiling=no_data)
     assert status == "NOT-RUNNABLE"
-
-
-def test_an_empty_frame_with_no_ceiling_still_says_nothing_measured():
-    """The one exception to #363's broadened guard: a gate with no data at all reports that,
-    rather than reporting no ceiling -- `has_data` gates the new branch ahead of it, the same
-    way `clusters` already gated the old one, so an empty run still gets the more specific
-    sentence and not a stage-2 message about a ceiling there was never a chance to measure."""
-    empty = _gate_summary(0.0, 0.0, clusters=0)
-    del empty["ceiling"]
-    status, said = experiment.gate(empty, _gate_seasons([]), _ACTIONS)
-    assert status == "SHOW" and "Nothing measured" in said
 
 
 def test_an_mde_above_the_ceiling_is_not_runnable():
     """Criterion 8. The gate cannot separate a real effect from a perfect one, so it records
-    that it cannot run instead of publishing a null."""
-    status, said = experiment.gate(_gate_summary(-0.4, 0.9) | {"mde": 2.0, "ceiling": 1.2},
-                                   _gate_seasons([0.3, -0.5, 0.9]), _ACTIONS)
+    that it cannot run instead of publishing a null. The ceiling is set to exactly half
+    whatever this fixture's own real MDE turns out to be, so it is provably binding without
+    depending on hitting a specific historical MDE by coincidence."""
+    paired = _gate_paired([0.3, -0.5, 0.9])
+    raw = experiment.summarise(paired, cluster=experiment.SEASON_CLUSTER)
+    binding = experiment.Ceiling("x", np.array([raw["mde"] / 2.0]))
+    run = experiment.gate(paired, cluster=experiment.SEASON_CLUSTER, within=("season",),
+                          ceiling=binding, actions=_ACTIONS)
+    status, said = run.verdict
     assert status == "NOT-RUNNABLE"
-    assert "not planned" in said and "2.000" in said and "1.200" in said
+    assert "not planned" in said
+    assert f"{run.summary['mde']:+.3f}" in said and f"{run.summary['ceiling']:+.3f}" in said
 
 
 def test_not_runnable_preempts_every_branch_but_void():
     """Criterion 8's *ordering*, which is the whole point of it. A gate whose MDE exceeds its
     ceiling would otherwise publish one of ADOPT, REMOVE or SHOW -- and SHOW, the null, is
     exactly the verdict `docs/gate-power.md` exists to stop an underpowered gate printing."""
-    underpowered = {"mde": 99.0, "ceiling": 1.2}
-    for lo, hi in _GATE_INTERVALS:
-        for gains in _GATE_GAINS:
-            summary = _gate_summary(lo, hi) | underpowered
-            status, _ = experiment.gate(summary, _gate_seasons(gains), _ACTIONS)
-            assert status == "NOT-RUNNABLE", (lo, hi, gains)
-    # Including the branch that would otherwise ADOPT.
-    assert experiment.gate(_gate_summary(0.4, 1.2) | underpowered,
-                           _gate_seasons([0.3, 0.5, 0.9]), _ACTIONS)[0] == "NOT-RUNNABLE"
+    tiny = experiment.Ceiling("x", np.array([1e-9]))            # binds against any real mde
+    for gains in _GATE_SWEEP_GAINS:
+        if len(gains) < 2 or not any(gains):
+            continue    # a single season has no mde; an all-zero season has an mde of exactly
+                        # zero (se is zero), which no positive ceiling, however tiny, exceeds
+        status, _ = _gate(gains, ceiling=tiny)
+        assert status == "NOT-RUNNABLE", gains
+    # Including the branch that would otherwise ADOPT, named explicitly.
+    assert _gate([0.85, 0.90, 0.95], ceiling=tiny)[0] == "NOT-RUNNABLE"
     # The one exception: `clusters=0` is "nothing measured", and #363 (S6) gates its own
     # broadened branch behind `has_data` for exactly this case -- an empty run reports that
     # specifically, rather than a stage-2 sentence about a ceiling there was no data to
-    # measure one against, even when a caller stuffed `mde`/`ceiling` into the summary by hand.
-    assert experiment.gate(_gate_summary(0.4, 1.2, clusters=0) | underpowered,
-                           _gate_seasons([0.3]), _ACTIONS)[0] == "SHOW"
+    # measure one against, even when a caller hands one in.
+    empty = pl.DataFrame(schema={"season": pl.Int64, "diff": pl.Float64})
+    assert experiment.gate(empty, cluster=experiment.SEASON_CLUSTER, within=("season",),
+                           ceiling=tiny, actions=_ACTIONS).verdict[0] == "SHOW"
 
 
 def test_void_still_preempts_not_runnable():
     """The one branch above it. A void gate's inputs are broken, which makes its MDE and its
     ceiling untrustworthy too -- there is nothing to compare."""
-    status, said = experiment.gate(_gate_summary(-0.4, 0.9) | {"mde": 99.0, "ceiling": 1.2},
-                                   _gate_seasons([0.3]), _ACTIONS, void="VOID: join failure.")
+    tiny = experiment.Ceiling("x", np.array([1e-9]))
+    status, said = _gate([0.85, 0.90], ceiling=tiny, void="VOID: join failure.")
     assert status == "VOID" and said == "VOID: join failure."
 
 
@@ -1640,28 +1682,31 @@ def test_a_ceiling_of_zero_makes_any_positive_mde_not_runnable():
     """A measured zero is a value, not an absence -- a perfect arm gaining nothing over the
     incumbent is the strongest finding a ceiling can carry, and no gate can resolve an effect
     inside it. The comparison is signed for this reason rather than absolute."""
-    status, _ = experiment.gate(_gate_summary(-0.4, 0.9) | {"mde": 0.01, "ceiling": 0.0},
-                                _gate_seasons([0.3]), _ACTIONS)
+    zero = experiment.Ceiling("x", np.array([0.0]))
+    status, _ = _gate([0.85, 0.90, 0.95], ceiling=zero)
     assert status == "NOT-RUNNABLE"
 
 
 def test_an_mde_exactly_at_the_ceiling_still_runs():
     """The boundary, stated. `exceeds` is strict: a gate that can just resolve its ceiling has
-    not been shown unable to run."""
-    status, _ = experiment.gate(_gate_summary(-0.4, 0.9) | {"mde": 1.2, "ceiling": 1.2},
-                                _gate_seasons([0.3, -0.5, 0.9]), _ACTIONS)
+    not been shown unable to run. The ceiling is set to exactly this fixture's own real MDE,
+    so the boundary is reached exactly rather than approximated."""
+    paired = _gate_paired([0.3, -0.5, 0.9])
+    raw = experiment.summarise(paired, cluster=experiment.SEASON_CLUSTER)
+    at_boundary = experiment.Ceiling("x", np.array([raw["mde"]]))
+    status, _ = experiment.gate(paired, cluster=experiment.SEASON_CLUSTER, within=("season",),
+                                ceiling=at_boundary, actions=_ACTIONS).verdict
     assert status == "SHOW"
 
 
 def test_a_runnable_gate_still_does_not_adopt_at_two_of_three_seasons():
     """Criterion 7, and the worked example `docs/method.md` records as correctly failed: an
     interval excluding zero is not enough on its own, and the every-season half is what stops
-    one lucky season carrying a verdict. Asserted here *with* an MDE and a ceiling present, so
-    the new branch cannot be what produced the answer."""
-    summary = _gate_summary(0.1, 1.2) | {"mde": 0.44, "ceiling": 1.2}
-    status, said = experiment.gate(summary, _gate_seasons([0.4, 0.3, -0.2]), _ACTIONS)
+    one lucky season carrying a verdict. `_HUGE_CEILING` keeps stage 2 out of the way, so the
+    branch below is what produced the answer."""
+    status, said = _gate([3.0, -0.05, 3.05, 3.1])
     assert status == "SHOW"
-    assert "won 2, tied 0, lost 1 of 3 seasons" in said
+    assert "won 3, tied 0, lost 1 of 4 seasons" in said
     assert "the sign is not consistent across seasons" in said
 
 
@@ -1689,15 +1734,15 @@ def test_the_restated_weekly_gate_figures_reproduce():
     assert s["mde"] == pytest.approx(0.768, abs=0.001)
 
     # The verdict does not move: every season is negative, so no resample reaches zero.
-    seasons = pl.DataFrame({"season": list(published), "n": [500] * 4,
-                            "gain": list(published.values())})
-    # #363 (S6): a gate with no ceiling is NOT-RUNNABLE, full stop -- this frame, exactly as
-    # summarised above with no `ceiling` key, is what a real run without `--ceiling` produces.
-    assert experiment.gate(s, seasons, _ACTIONS)[0] == "NOT-RUNNABLE"
+    # #363 (S6): a gate with no ceiling is NOT-RUNNABLE, full stop -- this is what a real run
+    # without `--ceiling` produces.
+    assert experiment.gate(frame, cluster=experiment.SEASON_CLUSTER, within=("season",),
+                           ceiling=None, actions=_ACTIONS).verdict[0] == "NOT-RUNNABLE"
     # With #376's measured weekly ceiling (+10.799, docs/gate-power.md), stage 2 passes and
     # REMOVE reproduces -- the verdict this page has always published.
-    with_ceiling = s | {"ceiling": 10.799}
-    assert experiment.gate(with_ceiling, seasons, _ACTIONS)[0] == "REMOVE"
+    top = experiment.Ceiling("x", np.array([10.799]))
+    assert experiment.gate(frame, cluster=experiment.SEASON_CLUSTER, within=("season",),
+                           ceiling=top, actions=_ACTIONS).verdict[0] == "REMOVE"
 
 
 def test_the_weekly_percentile_interval_narrows_and_the_t_interval_widens():

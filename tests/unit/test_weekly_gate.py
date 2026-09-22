@@ -9,6 +9,7 @@ import polars as pl
 import pytest
 
 from hub.league import STARTERS
+from hub.models import experiment
 from hub.season import weekly_gate as G
 
 
@@ -109,9 +110,21 @@ def test_the_inputs_are_one_thing_rather_than_nine():
 # `experiment.run_gate`, which `main` calls, so the wrapper `verdict` used to be is spelled
 # here as what it was.
 
-def _verdict(summary, seasons, cover):
-    from hub.models.experiment import gate
-    return gate(summary, seasons, G.ACTIONS, void=G.void_condition(cover))
+# #386: `gate` reads a paired frame now, one row per season, rather than a hand-built summary
+# dict and a hand-built per-season frame -- the exact place S1's degeneracy lived. A huge
+# ceiling keeps #363 (S6)'s stage-2 guard out of the way for the tests below that are not
+# about it, and a case built to show "every season agrees" uses gains close enough together
+# that the real t interval decisively excludes zero, reaching the original hand-set `(lo,
+# hi)`'s qualitative intent through the estimator rather than around it.
+_HUGE_CEILING = experiment.Ceiling("x", np.array([1e6]))
+
+
+def _verdict(gains, cover, *, ceiling=_HUGE_CEILING):
+    paired = pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
+                           "diff": [float(g) for g in gains]})
+    return experiment.gate(paired, cluster=experiment.SEASON_CLUSTER, within=("season",),
+                           ceiling=ceiling, actions=G.ACTIONS,
+                           void=G.void_condition(cover)).verdict
 
 
 def _gate_run(paired, **kw):
@@ -123,33 +136,20 @@ def _gate_run(paired, **kw):
                     ceiling=G.declared_ceiling(paired), record_width=False, **kw)
 
 
-def _summary(mean, lo, hi, clusters=60):
-    # `t_lo`/`t_hi` mirror the percentile bounds: #357 (S1) moved `gate`'s decision onto the
-    # t interval, and this double is testing the branch logic rather than the interval math,
-    # so it hands the rule the same bounds under both names. `ceiling` is huge and positive:
-    # #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling at all, and this double is testing
-    # ADOPT/REMOVE/SHOW, not stage 2.
-    return {"n": 800.0, "clusters": float(clusters), "mean": mean, "lo": lo, "hi": hi,
-            "t_lo": lo, "t_hi": hi, "p_better": 1.0 if lo > 0 else 0.0, "ceiling": 1e6}
-
-
-def _seasons(gains):
-    return pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
-                         "gain": gains, "n": [200] * len(gains)})
-
-
 def test_a_join_failure_voids_the_run_however_large_the_result():
     """The branch that fired on the first live run: +11.1 points per team-week at P 100%,
-    which is the repo's own rule that a result too large to believe is a bug."""
-    status, note = _verdict(_summary(11.1, 10.1, 12.3), _seasons([10.0, 10.2, 13.2]),
-                             {"cells": 680.0, "unranked": 0.157, "join_failure": 0.062})
+    which is the repo's own rule that a result too large to believe is a bug. VOID preempts
+    the interval and the seasons both, so any gains fixture proves this -- the void message
+    is what is under test."""
+    status, note = _verdict([10.0, 10.2, 13.2],
+                            {"cells": 680.0, "unranked": 0.157, "join_failure": 0.062})
     assert status == "VOID"
     assert "6.2%" in note and "2%" in note
 
 
 def test_a_clean_join_lets_the_result_through():
-    status, _ = _verdict(_summary(0.9, 0.3, 1.5), _seasons([0.8, 1.0, 0.9]),
-                          {"cells": 680.0, "unranked": 0.1, "join_failure": 0.005})
+    status, _ = _verdict([0.85, 0.90, 0.95],
+                         {"cells": 680.0, "unranked": 0.1, "join_failure": 0.005})
     assert status == "ADOPT"
 
 
@@ -167,24 +167,35 @@ def test_the_floor_itself_is_not_a_void():
 
 
 def test_adopt_needs_every_season_as_well_as_the_interval():
-    status, note = _verdict(_summary(0.9, 0.3, 1.5), _seasons([-0.2, 1.4, 1.5]), None)
+    status, note = _verdict([-0.2, 1.4, 1.5], None)
     assert status == "SHOW" and "won 2, tied 0, lost 1 of 3" in note
 
 
 def test_losing_in_every_season_removes_the_module():
-    status, note = _verdict(_summary(-1.2, -1.8, -0.6), _seasons([-1.0, -1.3, -1.3]), None)
+    status, note = _verdict([-0.85, -0.90, -0.95], None)
     assert status == "REMOVE" and "Delete" in note
 
 
 def test_an_interval_containing_zero_is_shown_never_ranked_on():
-    """The expected branch, and it carries an action rather than a disappointment."""
-    status, note = _verdict(_summary(0.2, -0.4, 0.8), _seasons([0.1, 0.4, 0.1]), None)
+    """The expected branch, and it carries an action rather than a disappointment. Three
+    small, widely-spread wins whose real interval still straddles zero -- `won == total` on
+    its own is not enough."""
+    status, note = _verdict([0.1, 0.4, 0.1], None)
     assert status == "SHOW"
     assert "NEVER RANK ON" in note and "absence of evidence" in note
 
 
 def test_nothing_measured_does_not_adopt():
-    assert _verdict(_summary(0.0, 0.0, 0.0, clusters=0), _seasons([]), None)[0] == "SHOW"
+    empty = pl.DataFrame(schema={"season": pl.Int64, "diff": pl.Float64})
+    status, _ = experiment.gate(empty, cluster=experiment.SEASON_CLUSTER, within=("season",),
+                                ceiling=None, actions=G.ACTIONS,
+                                void=G.void_condition(None)).verdict
+    assert status == "SHOW"
+
+
+def _seasons(gains):
+    return pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
+                         "gain": gains, "n": [200] * len(gains)})
 
 
 # --- pairing and the cluster bootstrap -------------------------------------

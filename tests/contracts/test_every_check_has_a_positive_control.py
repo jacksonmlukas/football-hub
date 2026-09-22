@@ -51,12 +51,23 @@ EXPLICIT_GUARDS: tuple[str, ...] = ("hub.models.experiment.review_width",)
 # module.function -> (test file, the control tests). Each named test plants the condition
 # its decision exists to detect. Where a decision has two directions, both are named.
 CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
+    # #386: `gate(paired, *, cluster, within, ceiling, actions)` is the frame-in interface --
+    # a paired frame in, a `GateRun` out -- and every control named below drives it with a
+    # real paired frame rather than a hand-built summary dict, which is the substantive part
+    # of the move: a test that hand-builds `{"lo": ..., "mean": ...}` cannot catch a defect in
+    # how `summarise` produces that dict, and none of these do any more. `_verdict` (the
+    # renamed pre-#386 `gate`) is behind the seam and needs no entry of its own -- its own
+    # name does not match this file's discovery regex, deliberately, so it cannot be
+    # rediscovered as an unregistered decision.
     "hub.models.experiment.gate": ("tests/unit/test_experiment.py", (
         "test_the_size_check_flags_a_planted_degenerate_rule",
         "test_the_fixed_rule_s_null_size_is_not_degenerate",
         "test_a_tie_blocks_adopt_even_when_every_other_season_won",
         "test_a_tie_blocks_remove_even_when_every_other_season_lost",
         "test_no_ceiling_measured_is_not_runnable_in_both_directions",
+        "test_the_gate_sweep_verdicts_are_unmoved",
+        "test_not_runnable_preempts_every_branch_but_void",
+        "test_void_still_preempts_not_runnable",
     )),
     "hub.models.experiment.review_width": ("tests/unit/test_experiment.py", (
         "test_the_width_is_recorded_for_the_next_run_and_carries_the_review_flag",

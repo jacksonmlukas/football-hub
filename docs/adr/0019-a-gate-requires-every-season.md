@@ -491,3 +491,37 @@ still reproduces.
 **Not planned, not failed, in both directions now.** The distinction the first amendment drew
 — a gate that cannot run has not been shown to have lost the arm — was already the correct
 reading for ADOPT and SHOW. It is now the reading for REMOVE as well.
+
+---
+
+# Note, 2026-09-22 (#386): the rule lives in `gate(paired, ...)`, one seam
+
+`experiment.gate` moved from a summary-dict interface (`gate(summary, seasons, actions)`) to
+`gate(paired, *, cluster, within, ceiling, actions) -> GateRun` — a paired frame in, a verdict
+out, and pure: no Ledger row, no width stamp, no render, so calling it twice on the same frame
+at the same seed returns the identical `GateRun`. The old signature is `_verdict` now, the
+internal half `gate` materialises `summary`/`seasons` for (via `summarise`/`per_season`) and
+calls; `run_gate` stays the composition (`gate` + render + `stamped_for_publication` +
+`review_width`), unchanged at every one of its six call sites (`draft/backtest.py` x2,
+`season/weekly_gate.py`, `season/lineup_gate.py`, `models/coverage.py`,
+`models/starter_change.py`). `margin._house_rule` is deleted in favour of the same `gate`.
+
+**Implemented in `gate(paired, ...)` from `0b582cd`. The rule is unchanged; where it lives
+moved.** The equivalence control is `tests/unit/test_gate_seam_equivalence.py`, captured
+against `main` before the seam moved and its golden committed alongside it
+(`tests/unit/fixtures/gate_seam_equivalence_control.json`, commit `4259a53`) — green on
+unchanged code, red on the ticket's own literal plant (`_disposition`'s `>=` → `>`,
+`_verdict`'s own every-season half), and, after the move, byte-identical on both sides of the
+seam. Rule 18 was also planted on the interval/ceiling half — the values `gate` computes
+(`summary["mde"]`, `summary["ceiling"]`) and hands down to `_verdict` — with a one-token
+`>` → `>=` at the stage-2 comparison, caught by `test_an_mde_exactly_at_the_ceiling_still_runs`
+through the real frame-in pipeline with no floating-point luck required (the ceiling in that
+fixture is `gate`'s own computed MDE, handed back to it verbatim, so the two sides of the
+comparison are bit-identical by construction rather than by chance). Both plants were applied
+by hand, confirmed red, and reverted; `git diff` on `experiment.py` was empty after each.
+
+**The flat-2.0 bar `spread.verdict` and `injury.type_verdict` read is a second, named rule.**
+`g.t >= MIN_SE`, no degrees-of-freedom correction, is a different test from the t interval
+`gate()` reads (`t_quantile` at `df = k − 1`) — out of scope here, owned by #343 (frozen behind
+#326), and this line exists so a reader who concludes "all four call sites now read the same
+bar" is corrected rather than left to assume it.

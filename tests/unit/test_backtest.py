@@ -13,6 +13,7 @@ import pytest
 
 from hub.draft import backtest as bt
 from hub.draft.board import Board, BuildReport
+from hub.models.experiment import SEASON_CLUSTER, Ceiling, gate
 from hub.names import player_key
 
 # --- the pre-registered decision rule, as executable code ------------------
@@ -26,58 +27,57 @@ from hub.names import player_key
 # Since #135 there is no per-gate `verdict` wrapper either: the rule is `experiment.gate` and
 # the sentences are `ACTIONS`, and the two meet inside `experiment.run_gate`.
 
-def _verdict(summary, seasons):
-    from hub.models.experiment import gate
-    return gate(summary, seasons, bt.ACTIONS)
+# #386: `gate` reads a paired frame now, one row per season, rather than a hand-built summary
+# dict and a hand-built per-season frame -- the exact place S1's degeneracy lived. A season's
+# `diff` is its own gain; the real pooled interval this produces is not asserted, so a case
+# built to show "every season agrees" uses gains close enough together that the real t
+# interval decisively excludes zero, reaching the original hand-set `(lo, hi)`'s qualitative
+# intent through the estimator rather than around it. A huge ceiling keeps #363 (S6)'s stage-2
+# guard out of the way -- these tests are the ADOPT/REMOVE/SHOW branches, not stage 2.
+_HUGE_CEILING = Ceiling("x", np.array([1e6]))
 
 
-def _yrs(gains):
-    return pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
-                         "gain": [float(g) for g in gains], "n": [10] * len(gains)})
-
-
-def _sum(lo, hi):
-    # `t_lo`/`t_hi` mirror the percentile bounds: #357 (S1) moved `gate`'s decision onto the
-    # t interval, and this double is testing the branch logic rather than the interval math,
-    # so it hands the rule the same bounds under both names. `ceiling` is huge and
-    # same-signed as the mean: #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling at all, and
-    # this double is testing the ADOPT/REMOVE/SHOW branches, not stage 2 -- a ceiling this far
-    # from any MDE these tests produce never binds.
-    mean = (lo + hi) / 2
-    return {"n": 80.0, "clusters": 80.0, "mean": mean, "lo": lo, "hi": hi,
-            "t_lo": lo, "t_hi": hi, "p_better": 0.5,
-            "ceiling": 1e6 if mean >= 0 else -1e6}
+def _verdict(gains):
+    paired = pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
+                           "diff": [float(g) for g in gains]})
+    return gate(paired, cluster=SEASON_CLUSTER, within=("season",), ceiling=_HUGE_CEILING,
+               actions=bt.ACTIONS).verdict
 
 
 def test_an_interval_above_zero_in_every_season_promotes_equity():
-    status, said = _verdict(_sum(0.4, 3.0), _yrs([0.5, 1.2, 0.9]))
+    status, said = _verdict([0.85, 0.90, 0.95])
     assert status == "ADOPT" and said.startswith("PROMOTE")
 
 
 def test_an_interval_below_zero_in_every_season_removes_equity():
     """Evidence demotes as well as promotes. A rule that only ever promotes is
     'heads I win, tails nothing changes'."""
-    status, said = _verdict(_sum(-3.0, -0.4), _yrs([-0.5, -1.2, -0.9]))
+    status, said = _verdict([-0.85, -0.90, -0.95])
     assert status == "REMOVE" and said.startswith("REMOVE")
 
 
 def test_an_interval_containing_zero_changes_nothing():
     """The branch P0 landed on, and the one worth pre-registering: a null has an action
-    rather than being a disappointment to explain away."""
-    status, said = _verdict(_sum(-3.64, 3.58), _yrs([0.5, -1.2, 0.9]))
+    rather than being a disappointment to explain away. Two wins and a loss makes both ADOPT
+    (`won == total`) and REMOVE (`lost == total`) unreachable on their own terms, so this does
+    not depend on exactly where the real interval lands."""
+    status, said = _verdict([0.5, -1.2, 0.9])
     assert status == "SHOW" and said.startswith("NO CHANGE")
 
 
 def test_p0s_own_numbers_still_read_as_no_change():
-    """Regression on the historical result: +0.04, [-3.64, +3.58], n=36."""
-    status, said = _verdict(_sum(-3.64, 3.58), _yrs([0.4, -0.3, 0.1]))
+    """Regression on the historical result: +0.04, [-3.64, +3.58], n=36 -- the season pattern
+    that produced it, two wins and a loss, reads SHOW the same way the case above does."""
+    status, said = _verdict([0.4, -0.3, 0.1])
     assert status == "SHOW" and said.startswith("NO CHANGE")
 
 
 def test_adr_0009s_own_numbers_still_remove_equity():
-    """The published decision: -19.66, CI [-23.16, -16.20], losing in all four seasons.
-    Unifying the rule tightened this gate, and it must not have moved what it published."""
-    status, said = _verdict(_sum(-23.16, -16.20), _yrs([-19.0, -21.0, -18.0, -20.0]))
+    """The published decision: -19.66, CI [-23.16, -16.20], losing in all four seasons --
+    this module's own recorded season means, run through the real bootstrap rather than the
+    published bound handed in beside them. Unifying the rule tightened this gate, and it must
+    not have moved what it published."""
+    status, said = _verdict([-19.0, -21.0, -18.0, -20.0])
     assert status == "REMOVE" and said.startswith("REMOVE")
 
 

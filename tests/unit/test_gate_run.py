@@ -85,13 +85,20 @@ def test_the_run_returns_the_five_things_the_entry_points_used_to_assemble():
 # weekly gate's, which handed its ceiling to `ceiling_report` and never to `summarise`. The
 # summary, the season table and the verdict must be the same objects the old sequence made.
 
+# #386: `gate` became `_verdict` (the old signature is now the internal half of the rule);
+# these three still call it by that name deliberately -- they are reproducing the pre-#135
+# sequence *by hand*, one call at a time, precisely so `run_gate`'s (and now `gate`'s own)
+# composition can be checked against it. Calling `_verdict` directly is what "by hand" means
+# here, not a hand-built summary dict: `s` and `seasons` both still come from the real
+# `summarise`/`per_season` calls two lines above each.
+
 def _old_draft(paired, bound, seed):
     s = experiment.summarise(paired, cluster=SEASON_CLUSTER, seed=seed, bootstrap=200)
     if bound is not None:
         top = float(np.asarray(bound["diff"].to_numpy()).mean())
         s = dict(s, ceiling=top)
     seasons = experiment.per_season(paired, within=("draft",), bootstrap=200, seed=seed)
-    return s, seasons, experiment.gate(s, seasons, _ACTIONS)
+    return s, seasons, experiment._verdict(s, seasons, _ACTIONS)
 
 
 def _old_lineup(paired, seed):
@@ -100,13 +107,13 @@ def _old_lineup(paired, seed):
     s = experiment.summarise(paired, cluster=SEASON_CLUSTER, seed=seed, bootstrap=200,
                              ceiling=top)
     seasons = experiment.per_season(paired, within=("roster",), bootstrap=200, seed=seed)
-    return s, seasons, experiment.gate(s, seasons, _ACTIONS)
+    return s, seasons, experiment._verdict(s, seasons, _ACTIONS)
 
 
 def _old_weekly(paired, seed, void):
     s = experiment.summarise(paired, cluster=SEASON_CLUSTER, seed=seed, bootstrap=200)
     seasons = experiment.per_season(paired, within=("roster",), bootstrap=200, seed=seed)
-    return s, seasons, experiment.gate(s, seasons, _ACTIONS, void=void)
+    return s, seasons, experiment._verdict(s, seasons, _ACTIONS, void=void)
 
 
 def _same(old, new):

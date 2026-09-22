@@ -8,9 +8,11 @@ works, which here is "start your highest projections".
 Everything below runs offline. The statistics have to be exercisable without nflverse, or the
 gate is one nobody re-runs -- which is how P0 ended up unreproducible.
 """
+import numpy as np
 import polars as pl
 import pytest
 
+from hub.models.experiment import SEASON_CLUSTER, Ceiling, gate
 from hub.names import player_key
 from hub.season import lineup_gate as lg
 
@@ -30,14 +32,26 @@ def _realised(rows):
 # there is no per-gate `verdict` wrapper either: the rule and the sentences meet inside
 # `experiment.run_gate`, which `main` calls with this gate's `ACTIONS`.
 
-def _verdict(summary, seasons):
-    from hub.models.experiment import gate
-    return gate(summary, seasons, lg.ACTIONS)
+# #386: `gate` reads a paired frame now, one row per season, rather than a hand-built summary
+# dict and a hand-built per-season frame -- the exact place S1's degeneracy lived. A huge
+# ceiling keeps #363 (S6)'s stage-2 guard out of the way -- these tests are the ADOPT/REMOVE/
+# SHOW branches, not stage 2 -- and a case built to show "every season agrees" uses gains
+# close enough together that the real t interval decisively excludes zero, reaching the
+# original hand-set `(lo, hi)`'s qualitative intent through the estimator rather than around
+# it.
+_HUGE_CEILING = Ceiling("x", np.array([1e6]))
+
+
+def _verdict(gains):
+    paired = pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
+                           "diff": [float(g) for g in gains]})
+    return gate(paired, cluster=SEASON_CLUSTER, within=("season",), ceiling=_HUGE_CEILING,
+               actions=lg.ACTIONS).verdict
 
 
 def _gate_run(paired, *, ceiling_arm=lg.DECLARED_CEILING_ARM, **kw):
     """This gate's call, as `main` spells it, with the width history pointed nowhere."""
-    from hub.models.experiment import SEASON_CLUSTER, run_gate
+    from hub.models.experiment import run_gate
     return run_gate(paired, cluster=SEASON_CLUSTER, within=lg.WITHIN, actions=lg.ACTIONS,
                     name="lineup", arm_a="optimiser", arm_b="projections", unit=lg.UNIT,
                     bootstrap=200,
@@ -45,42 +59,31 @@ def _gate_run(paired, *, ceiling_arm=lg.DECLARED_CEILING_ARM, **kw):
                     record_width=False, **kw)
 
 
-def _yrs(gains):
-    return pl.DataFrame({"season": list(range(2022, 2022 + len(gains))),
-                         "gain": [float(g) for g in gains], "n": [10] * len(gains)})
-
-
-def _sum(lo, hi):
-    # `t_lo`/`t_hi` mirror the percentile bounds: #357 (S1) moved `gate`'s decision onto the
-    # t interval, and this double is testing the branch logic rather than the interval math,
-    # so it hands the rule the same bounds under both names. `ceiling` is huge and positive:
-    # #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling at all, and this double is testing
-    # ADOPT/REMOVE/SHOW, not stage 2.
-    return {"n": 80.0, "clusters": 80.0, "mean": (lo + hi) / 2, "lo": lo, "hi": hi,
-            "t_lo": lo, "t_hi": hi, "p_better": 0.5, "ceiling": 1e6}
-
-
 def test_an_interval_above_zero_in_every_season_trusts_the_optimiser():
-    status, said = _verdict(_sum(0.5, 3.0), _yrs([0.4, 0.6, 0.9]))
+    status, said = _verdict([0.85, 0.90, 0.95])
     assert status == "ADOPT" and said.startswith("TRUST")
 
 
 def test_an_interval_containing_zero_says_start_your_projections():
-    """The likely branch, and it has an action rather than being a disappointment."""
-    status, said = _verdict(_sum(-1.0, 2.0), _yrs([0.4, -0.6, 0.9]))
+    """The likely branch, and it has an action rather than being a disappointment. Two wins
+    and a loss makes both ADOPT and REMOVE unreachable on their own terms, so this does not
+    depend on exactly where the real interval lands."""
+    status, said = _verdict([0.4, -0.6, 0.9])
     assert status == "SHOW" and said.startswith("START YOUR PROJECTIONS")
 
 
 def test_an_interval_below_zero_in_every_season_removes_it():
     """Evidence demotes as well as promotes -- the asymmetry P0's rule originally lacked."""
-    status, said = _verdict(_sum(-3.0, -0.5), _yrs([-0.4, -0.6, -0.9]))
+    status, said = _verdict([-0.85, -0.90, -0.95])
     assert status == "REMOVE" and said.startswith("REMOVE")
 
 
 def test_adr_0012s_own_numbers_still_read_as_start_your_projections():
-    """Regression on the recorded result: +0.00, CI [-0.00, +0.00] over four seasons.
-    Unifying the rule tightened this gate, and it must not have moved what it published."""
-    status, said = _verdict(_sum(-0.00, 0.00), _yrs([0.0, 0.0, 0.0, 0.0]))
+    """Regression on the recorded result: +0.00, CI [-0.00, +0.00] over four seasons -- every
+    paired diff identical (here, identically zero) gives a bootstrap se of exactly 0, so the
+    real t interval is `[-0.00, +0.00]` exactly. Unifying the rule tightened this gate, and it
+    must not have moved what it published."""
+    status, said = _verdict([0.0, 0.0, 0.0, 0.0])
     assert status == "SHOW" and said.startswith("START YOUR PROJECTIONS")
 
 
