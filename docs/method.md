@@ -632,12 +632,33 @@ was published as reassurance:
   standard errors wide must ADOPT on essentially every trial, or the harness — not the rule —
   is what returned zero.
 
+- **Three more inside a day of the rule being written (2026-09-22, landing #386).** The S1
+  size control itself, `test_the_fixed_rule_s_null_size_is_not_degenerate`, called `gate` with
+  no ceiling — so after #363 every trial was NOT-RUNNABLE and the test that proves the fixed
+  rule's size could only pass (the rule-16 *script* had the same defect and was fixed the
+  day before; the *test* beside it was not checked). `test_the_shape_verdict_is_the_house_rule`
+  compared two branches that were both always NOT-RUNNABLE, `False == False` on every row.
+  And the #386 equivalence control — the refactor's own positive control, authored before the
+  seam moved — was byte-identical where it looked and blind to the every-season half: every
+  battery frame's within-season SE was ~0.002 against gains of ~1.0, so halving the tie
+  threshold changed no disposition and the goldens stayed green. It was caught by planting on
+  *both* halves the seam moved rather than on the one plant the brief named. **A control's
+  own positive control is a plant on every axis the change touches, not the one it was
+  written around.**
+
 **The shape.** Different levels, one defect: *the thing checked is not connected to the thing
 the check is about, so the check passes regardless.* Rule 15 is this rule's test-shaped
 special case (a fixture that sets the condition under which the estimator is trivially
 correct); rule 17 is its rule-shaped one (a conjunction whose second term is implied by its
 first). Both stay, because each names a shape worth recognising on sight. This rule is what
 they are instances of.
+
+**Two ordering rules for a refactor's control, from #386 (2026-09-22).** *Author the control
+against the code as it stands, prove it green there and red on a plant, commit it alone, and
+only then move the seam* — a control written after the refactor is fitted to the refactor and
+cannot see what it is checking for. And *a test that migrates across the seam is proven against
+the plant its original covered* — a migrated test can land on a path that no longer reaches its
+assertion and still pass.
 
 **The procedure, which was rediscovered three times in one week before it was written
 down.** S1's null-size simulation, margin's binding-ceiling fixture and the harness's
