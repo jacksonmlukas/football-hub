@@ -64,3 +64,39 @@ Phase 2/3 re-plan. Its own `schema.relation_to_audit_v` says the same; filed as 
   the constant wrong, the conclusion wrong. `docs/pool-leverage.md` carries the restatement and
   the disposition of the first run's 24-of-25 figure (superseded and unestablished, #167's
   form). The JSON is not edited.
+- **S12, restated 2026-09-21 (rule 13):** the finding's third piece named the odds poll cadence as
+  why the lines archive is thin. The cause is persistence, not cadence: `poll_odds` and the
+  pre-existing `refresh` job both write captures into a gitignored `data/processed` store on an
+  ephemeral runner, so no CI poll has ever persisted one and the durable archive has only ever
+  been local runs. Raising the cadence to six polls a week added four more that also evaporate.
+  #383 holds the decision on where a CI capture should live; #370 carries the correction.
+- **The verdict's power figures, restated 2026-09-21 (rule 13):** the headline *"a sign test with
+  14% power"* was derived from the repo's published standard errors against a faithful
+  reimplementation. The rule it described no longer exists: S1 (#357) made the interval half
+  independent of the sign half, and #335 added the tie-aware every-season half. Measured on the
+  combined rule at 10,000 trials (`scripts/rule16_combined_power.py`, ADR-0019): null size 0.011
+  and power 0.032 at delta = 2.0 pts/team-game for the draft gate; 0.019 and 0.19 at
+  delta = 0.3 pts/team-week for the weekly gate. Power fell rather than rose, and the mechanism is
+  that one tie abstains from both halves -- a single unresolvable season forces SHOW whatever the
+  effect elsewhere. The draft gate's ADOPT branch is a named rule-16 exemption. `docs/gate-power.md`
+  and ADR-0019 carry both the numbers and the mechanism.
+- **Championship equity, restated 2026-09-21 (rule 13):** the audit reasons throughout from
+  ADR-0009's REMOVE as this repo's headline removal. Under the rule S1 and #335 produced, the
+  2026-09-21 draft-gate run reads **SHOW** -- won 0, tied 1, lost 3 of 4, with 2024's -5.99 inside
+  its own noise at 20 rooms. The decision stands on judgment and three of four losses; the verdict
+  word does not. `README.md` row 1, `docs/method.md` row 6, ADR-0009 and `docs/gate-power.md` carry
+  the dated restatement beside their originals.
+- **`method_rule_to_add`, superseded 2026-09-21:** the drafted clause landed as `docs/method.md`
+  rule 17. A fourth instance in three days -- a decision rule, a test fixture, an operational `gh`
+  query and a power harness, each a check whose outcome could not vary with the thing it checked --
+  promoted the pattern to **rule 18**: every check gets a positive control, planted and seen to fire
+  before the check is trusted. Rule 18 carries its own contract
+  (`tests/contracts/test_every_check_has_a_positive_control.py`), walking every verdict, gate and
+  guard in `src/hub`; rules 15 and 17 are named as its test-shaped and rule-shaped special cases.
+- **Findings that landed in a different shape, 2026-09-21:** S5's remedy is wider than the finding --
+  the width ledger is append-only *and* compares only at an identical `config_digest` and
+  `data_digest`, and records per-season `gain`, `se`, `m` and disposition (#362, #382, `4c03934`).
+  S9, S11 and S13 carry `blocked_by #326` edges rather than being phase-0 work. S8 and S8a are
+  pre-registered and adoptable as unwired exhibits, and their stage 2 is blocked on
+  snapshot-archive depth rather than on the freeze -- which makes #383 upstream of either rating
+  gate ever being decidable.
