@@ -123,14 +123,18 @@ ACTIONS = experiment.Actions(
          "(docs/qb-adjustment.md, docs/gate-power.md); this log-loss picture is read beside "
          "it.")
 
-# #335, ADR-0019's amendment: this gate's paired frame is already one row per event-season
-# (`gate_rows`) -- so its within-season unit, the event, is a declared no-op: grouping by
-# `game_id` clusters one row per group, which is exactly the row-level bootstrap `per_season`
-# would run with no clustering at all. Named as a no-op per the ticket rather than left
-# implicit. A quarterback change is a rare event, so most seasons will sit under
-# `TIE_MIN_CLUSTERS` on event count alone and fall back to the sign -- not by construction the
-# way the frozen injury gate's choice is, but in practice for the same reason.
-WITHIN: tuple[str, ...] = ("game_id",)
+# #335, ADR-0019's amendment, corrected 2026-09-21 (the ADOPTED line, item 2): this gate's
+# within-season unit is a **real** no-op, by the same device `injury` and `margin` use -- one
+# cluster per season, always below `TIE_MIN_CLUSTERS`, so `per_season` reads the sign alone
+# and the gate stays on the rule #300/#329 pre-registered. The first version said `game_id`
+# was the no-op because "the frame is one row per event-season". The *clustering* was --
+# grouping one row per event groups nothing -- but the frame is one row per scored event
+# *game*, 48-57 a season (`docs/gate-power.md`), four times the floor, so the tie test was
+# live under a comment that said it was inert. Whether a row-level tie test belongs on this
+# gate is #381's question, decided on evidence this gate does not contaminate by accident.
+# The alias, not a re-spelling: `test_gates_cluster_on_the_season` refuses a second
+# `("season",)` object, and the within unit here *is* the season cluster -- one claim.
+WITHIN: tuple[str, ...] = SEASON_CLUSTER
 
 PASSER = "passer_player_id"
 

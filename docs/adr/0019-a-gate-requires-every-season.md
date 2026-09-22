@@ -210,17 +210,17 @@ one gate's own default, so an off-by-one in an unrelated flag cannot flip the ru
 for every gate at once) **the tie test falls back to the sign alone**, and says so: `m` is
 printed beside the threshold, per season, in every verdict sentence.
 
-> **Amendment PROPOSED 2026-09-21 (code review, same day) — awaiting the maintainer's
-> `ADOPTED:` line on #335.** The delta is one point, stated exactly: at a bootstrap SE of
+> **Amended 2026-09-21 — ADOPTED on #335 (item 1) the same day, after a code review found
+> it.** The delta is one point, stated exactly: at a bootstrap SE of
 > exactly zero — every paired diff in the season identical — the adopted test `gain >= 2 * se`
 > read a gain of **exactly zero** as a win (`0 >= 0`), so three real wins plus one season in
 > which the arm changed nothing adopted 4/4. A zero SE now takes the sign-alone branch, where
 > exactly zero is a tie; a strictly positive gain at zero SE was a win before and is a win
 > still. Strictly stricter on ADOPT, unchanged on REMOVE, and the rule-16 table above is
 > unaffected (a zero SE has probability zero under its simulation). It is nonetheless an edit
-> to a rule adopted the same morning, after two gates ran under it, so it is not adopted by
-> this note: the code carries it because the fix is right and harmless, the record says
-> PROPOSED until the line is written. Control:
+> to a rule adopted the same morning, after two gates ran under it, so it was not adopted by
+> the review's note: the code carried it because the fix is right and harmless, the record
+> said PROPOSED until the maintainer's line was written, and it was. Control:
 > `test_a_no_op_season_is_a_tie_and_cannot_carry_an_adopt`.
 
 The quarterback gate (`hub.models.starter_change`) is a no-op, named as one: its paired frame
@@ -235,7 +235,7 @@ within-season SE this computes is over rows — exactly what it would do anyway.
 | weekly (`hub.season.weekly_gate`) | `roster` | one row per (season, roster, week) |
 | lineup (`hub.season.lineup_gate`) | `roster` | one row per (season, roster) |
 | coverage (`hub.models.coverage`) | `player_id` | rule 3's own unit |
-| quarterback (`hub.models.starter_change`) | the event (`game_id`) — **a no-op** | already one row per event-season |
+| quarterback (`hub.models.starter_change`) | `season` — **a real no-op, corrected 2026-09-21** | one cluster per season, always below `TIE_MIN_CLUSTERS`; the first version said `game_id` was a no-op because the frame is "one row per event-season" — the clustering was, the tie test was not (48–57 event games a season, four times the floor). #335 item 2; the row-level question is #381's |
 | the margin/shape house rule (`hub.models.margin`) | `season` — **a declared no-op** | `paired` is already one row per season; no finer unit exists |
 | injury type (`hub.models.injury`) | `season` — **a declared no-op, and deliberately so** | `#360` is frozen; see below |
 

@@ -2849,8 +2849,9 @@ resamples on since ADR-0019.
 **Within-season: the game.** Stated explicitly because #335's table (`docs/adr/0019-…md`,
 "Per-gate within-season units") does not yet carry this gate, and because the answer here is
 the opposite of the quarterback gate's: `starter_change`'s within-season unit is a **no-op**
-because that gate's paired frame is already one row per event-season — there is nothing finer
-to cluster on. **This gate's frame is not that shape.** A season holds one row per game (~267
+— by choice, `("season",)`, one cluster per season (corrected 2026-09-21, #335 item 2: the
+first draft said "one row per event-season", but that frame is one row per event *game*,
+48–57 a season, and the tie test was live there). **This gate's frame is not that shape.** A season holds one row per game (~267
 for a 32-team, 17-game NFL season, before exclusions), so `within=("game_id",)` is a real
 degree of freedom distinct from the season cluster itself, and #335's tie test
 (`gain >= 2 * SE` over the within-season clusters, `TIE_MIN_CLUSTERS = 12`) reads real

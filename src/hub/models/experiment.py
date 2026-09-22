@@ -588,7 +588,7 @@ def _disposition(gain: float, se: float, m: int) -> str:
     alone**: win if strictly positive, loss if strictly negative, tie at exactly zero (the
     same three-way split, read off the sign rather than the bootstrap).
     """
-    # `se <= 0` joins the fallback (review of 2026-09-21; amendment PROPOSED on #335): a
+    # `se <= 0` joins the fallback (review of 2026-09-21; ADOPTED on #335 the same day): a
     # season whose paired diffs are all identical has a bootstrap SE of exactly zero, and
     # `gain >= 2 * 0` counted a gain of *exactly zero* -- an arm that changed nothing in that
     # season -- as a win. Read off the sign, exactly zero is a tie; a strictly positive gain

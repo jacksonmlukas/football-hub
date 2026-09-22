@@ -90,7 +90,7 @@ def test_the_within_unit_resolves_to_a_declared_non_empty_tuple(harness):
 DECLARED_UNITS = {
     "backtest": ("draft",),
     "coverage": ("player_id",),
-    "starter_change": ("game_id",),      # the event -- a declared no-op
+    "starter_change": ("season",),       # one cluster per season: a real no-op (#335 item 2)
     "weekly_gate": ("roster",),
     "lineup_gate": ("roster",),
 }
