@@ -17,8 +17,9 @@ noise level, not a precise re-derivation of one this repo has not measured -- if
 within-season sd is measured later, re-run this script rather than editing its numbers by
 hand (`docs/method.md` rule 13).
 
-Calls the shipped `experiment.summarise` / `per_season` / `gate` directly rather than
-reimplementing the rule, so what this measures is the rule the repo actually runs.
+Calls the shipped `experiment.gate` directly (#386: the paired-frame-in interface, which
+materialises `summarise`/`per_season` itself now) rather than reimplementing the rule, so what
+this measures is the rule the repo actually runs.
 
     uv run python scripts/rule16_combined_power.py
 """
@@ -29,7 +30,7 @@ import time
 import numpy as np
 import polars as pl
 
-from hub.models.experiment import SEASON_CLUSTER, Actions, gate, per_season, summarise
+from hub.models.experiment import SEASON_CLUSTER, Actions, Ceiling, gate
 
 TRIALS = 10_000
 BOOTSTRAP = 200
@@ -62,11 +63,11 @@ def _trial(rng: np.random.Generator, *, k: int, s: float, m: int, delta: float) 
 # The simulation is about the interval half and the tie-aware every-season half -- the two
 # terms rule 17's incident was about. It is not about S6's stage-2 precondition (#363: a gate
 # that measured no ceiling is NOT-RUNNABLE in both directions), which is a separate branch
-# ahead of both. So every trial hands `summarise` a ceiling that cannot bind, by construction,
-# and says so here rather than leaving the keyword off: with it off, #363 makes every trial
-# NOT-RUNNABLE and the ADOPT rate reads 0 whatever the inputs -- a check whose outcome cannot
-# vary with the thing it is about (`docs/method.md`, the note beside rule 17). That is how the
-# table this script produced for ADR-0019 stopped reproducing the day #363 landed behind it.
+# ahead of both. So every trial hands `gate` a ceiling that cannot bind, by construction, and
+# says so here rather than leaving it off: with it off, #363 makes every trial NOT-RUNNABLE
+# and the ADOPT rate reads 0 whatever the inputs -- a check whose outcome cannot vary with the
+# thing it is about (`docs/method.md`, the note beside rule 17). That is how the table this
+# script produced for ADR-0019 stopped reproducing the day #363 landed behind it.
 NON_BINDING_CEILING = float("inf")
 
 
@@ -75,10 +76,13 @@ def _adopt_rate(*, k: int, s: float, m: int, delta: float, trials: int, seed: in
     adopts = 0
     for _ in range(trials):
         df = _trial(rng, k=k, s=s, m=m, delta=delta)
-        summary = summarise(df, cluster=SEASON_CLUSTER, bootstrap=BOOTSTRAP, seed=seed,
-                            ceiling=NON_BINDING_CEILING)
-        seasons = per_season(df, within=("unit",), bootstrap=BOOTSTRAP, seed=seed)
-        status, _ = gate(summary, seasons, _ACTIONS)
+        # #386: `gate` takes the paired frame directly now and materialises `summarise`/
+        # `per_season` itself -- one call where this used to be two plus the old summary-dict
+        # `gate`. `NON_BINDING_CEILING`'s mean, not the scalar itself, is what `gate` reads,
+        # so a one-row `Ceiling` carrying it is the frame-in equivalent of the old keyword.
+        top = Ceiling("non-binding", np.array([NON_BINDING_CEILING]))
+        status, _ = gate(df, cluster=SEASON_CLUSTER, within=("unit",), ceiling=top,
+                         actions=_ACTIONS, bootstrap=BOOTSTRAP, seed=seed).verdict
         adopts += status == "ADOPT"
     return adopts / trials
 

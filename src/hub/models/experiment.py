@@ -1188,9 +1188,17 @@ def _seasons_won_tied_lost(seasons: pl.DataFrame) -> tuple[int, int, int]:
     return disps.count("win"), disps.count("tie"), disps.count("loss")
 
 
-def gate(summary: dict, seasons: pl.DataFrame, actions: Actions,
-         *, void: str | None = None) -> tuple[str, str]:
+def _verdict(summary: dict, seasons: pl.DataFrame, actions: Actions,
+             *, void: str | None = None) -> tuple[str, str]:
     """Did this beat the simplest thing that already works? The rule, in one place.
+
+    **#386.** This was `gate` until the seam moved: a summary dict and a per-season frame in,
+    a verdict out. It is now the *internal* half of the rule -- `gate(paired, ...)` below is
+    the interface every caller reads, and it materialises the two arguments this function
+    still takes from a raw paired frame via `summarise`/`per_season` before calling this. The
+    rule stated here is unchanged; where it lives moved. `_verdict` has no positive control of
+    its own in `tests/contracts/test_every_check_has_a_positive_control.py` -- it is behind
+    the seam, and `gate`'s registry entry names the frame-in controls that exercise it.
 
     `CONTEXT.md` defines a **Gate** as exactly that question, and three modules answered it
     with three copies of these branches. They had diverged: the weekly gate required the sign
@@ -1342,13 +1350,60 @@ class Ceiling(NamedTuple):
 
 
 class GateRun(NamedTuple):
-    """What one gate run returns, in the order an entry point used to assemble them."""
+    """What one gate run returns, in the order an entry point used to assemble them.
+
+    Also `gate`'s own return type (#386): a bare `GateRun` with `lines=[]` and
+    `stamped=paired` unstamped is what the pure half of the rule hands back, and `run_gate`
+    below is what fills those two fields in. One type for both ends of the seam, so a caller
+    reading `run.summary`/`run.seasons`/`run.verdict` cannot tell, and does not need to,
+    which one produced them.
+    """
 
     summary: dict[str, float]
     seasons: pl.DataFrame
     verdict: tuple[str, str]
     lines: list[str]
     stamped: pl.DataFrame
+
+
+def gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Sequence[str],
+        ceiling: Ceiling | None, actions: Actions, void: str | None = None,
+        seed: int = 0, bootstrap: int = BOOTSTRAP) -> GateRun:
+    """Did this beat the simplest thing that already works? A paired frame in, a verdict out.
+
+    **#386: the one seam.** Consolidation moves where the rule lives; it does not move what
+    it says. Before this ticket the rule was `gate(summary, seasons, actions)` -- read a
+    summary dict and a per-season frame a caller had already produced -- with `run_gate` doing
+    the materialising (`summarise` + `per_season`) ahead of it. That split let a test reach
+    the rule with a hand-built summary dict, past the exact place S1's degeneracy lived (how
+    `summarise` produces that dict), and let `margin._house_rule` copy the three lines that
+    call `summarise`/`per_season`/the old `gate` rather than share a function that already did.
+    This is that function: the materialising and the rule in one place, and it is now what
+    `_verdict` (the renamed old `gate`) is called through rather than called instead of.
+
+    **Pure.** No Ledger row, no width stamp, no render -- `summarise`, `per_season` and
+    `_verdict` are themselves pure, so calling this twice on the same frame at the same seed
+    returns the identical `GateRun`, prints nothing and moves nothing under `state/`. The
+    returned `GateRun.lines` is empty and `.stamped` is `paired` itself, unstamped -- the
+    render and the stamp are `run_gate`'s (below), which is the composition: `gate` + render +
+    `stamped_for_publication` + `review_width`. The Ledger write stays in `run_gate`, which is
+    #385's seam and not this one.
+
+    **`cluster` has no default.** `summarise`'s own docstring says why: what one independent
+    observation is has no safe default, and getting it wrong is the most expensive mistake
+    this repo's record holds. `within` is the same rule one grain finer -- `per_season`'s
+    repeated-measure unit, ADR-0019's #335 amendment -- and neither is guessed here on a
+    caller's behalf.
+
+    **The rule itself, and every branch VOID/NOT-RUNNABLE/ADOPT/REMOVE/SHOW decides, is
+    `_verdict`'s docstring**, unchanged by this move: read it there rather than restated here,
+    which is the whole point of a rule that has one home.
+    """
+    top = None if ceiling is None else float(np.asarray(ceiling.diff, dtype=float).mean())
+    summary = summarise(paired, cluster=cluster, bootstrap=bootstrap, seed=seed, ceiling=top)
+    seasons = per_season(paired, within=within, bootstrap=bootstrap, seed=seed)
+    verdict = _verdict(summary, seasons, actions, void=void)
+    return GateRun(summary, seasons, verdict, [], paired)
 
 
 def ceiling_check(summary: Mapping[str, float], *, places: int = 2) -> list[str]:
@@ -1488,10 +1543,9 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
     is written, for the reason `stamped_for_publication` gives: the reader deciding whether two
     runs compare is at the terminal.
     """
-    top = None if ceiling is None else float(np.asarray(ceiling.diff, dtype=float).mean())
-    summary = summarise(paired, cluster=cluster, bootstrap=bootstrap, seed=seed, ceiling=top)
-    seasons = per_season(paired, within=within, bootstrap=bootstrap, seed=seed)
-    verdict = gate(summary, seasons, actions, void=void)
+    core = gate(paired, cluster=cluster, within=within, ceiling=ceiling, actions=actions,
+               void=void, seed=seed, bootstrap=bootstrap)
+    summary, seasons, verdict = core.summary, core.seasons, core.verdict
     stamped, stamp = stamped_for_publication(paired, boards)
     # The ledger's own digests come off the same stamp every other row in `stamped` carries,
     # so `review_width`'s record cannot name a config or a data byte this run did not read.

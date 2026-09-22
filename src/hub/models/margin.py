@@ -53,8 +53,6 @@ from hub.models.experiment import (
     Ceiling,
     expanding_seasons,
     gate,
-    per_season,
-    summarise,
 )
 
 # The incumbent. Imported rather than restated so the two cannot drift apart.
@@ -328,29 +326,16 @@ def walk_forward_shape(resid: pl.DataFrame, *, sd: float = MARGIN_SD,
 # exclude zero *and* the sign must hold in every held-out season. One season is one
 # independent observation here for the reason `SEASON_CLUSTER` gives, and a walk-forward
 # already scores one row per season, so the gain column is the paired difference as it stands.
-def _house_rule(paired: pl.DataFrame, actions: Actions,
-                *, ceiling: Ceiling | None = None) -> tuple[str, str, dict[str, float]]:
-    """`experiment.gate` over a season-clustered `summarise`. Returns (verdict, why, summary).
-
-    `paired` is one row per held-out season with the gain in `diff`, positive when the arm
-    under test scored the lower log-loss. Nothing is decided here that `gate` does not decide.
-
-    **`within=("season",)`, a declared no-op (#335).** `paired` already carries one row per
-    season -- there is no finer within-season unit to name, unlike the walk-forward gates
-    this rule was unified with -- so grouping a season's single row by its own `season` value
-    gives exactly one cluster, always below `TIE_MIN_CLUSTERS`. `_disposition` falls back to
-    the sign, which is what `gate`'s every-season half read here before #335 in any case.
-
-    **`ceiling`, optional (#363, S6).** `None` for `shape_verdict`, which this module has
-    never measured one for; `verdict` hands in the width gate's own (`CEILING_ARM`), built
-    from `walk_forward`'s `ceiling_gain` column on the same rows `paired` scores. Its mean
-    is the scalar `summarise` reads -- the run takes the mean, not the caller, so the number
-    the rule reads and the number a report would print cannot be two numbers.
-    """
-    top = None if ceiling is None else float(np.asarray(ceiling.diff, dtype=float).mean())
-    summary = summarise(paired, cluster=SEASON_CLUSTER, ceiling=top)
-    verdict, why = gate(summary, per_season(paired, within=("season",)), actions)
-    return verdict, why, summary
+# `_house_rule` was deleted under #386: it copied three lines -- summarise, per_season, the
+# old summary-dict `gate` -- that `experiment.gate(paired, ...)` now does in one call, and its
+# own docstring already said "nothing is decided here that `gate` does not decide". Both
+# callers below read `run.summary`/`run.verdict` off `experiment.gate`'s `GateRun` directly.
+#
+# `within=("season",)` is still a declared no-op (#335): `paired` already carries one row per
+# held-out season -- there is no finer within-season unit to name, unlike the walk-forward
+# gates this rule was unified with -- so grouping a season's single row by its own `season`
+# value gives exactly one cluster, always below `TIE_MIN_CLUSTERS`, and `_disposition` falls
+# back to the sign, which is what this module's every-season half read before #335 in any case.
 
 
 SHAPE_ACTIONS = Actions(
@@ -366,7 +351,7 @@ def shape_verdict(wf: pl.DataFrame) -> tuple[str, str]:
 
     The lumpy distribution is adopted only if it beats the Gaussian on held-out log-loss in
     **every** season and the season-bootstrap interval on the mean gain excludes zero
-    (`_house_rule` above, #285). Until then it adopted on `mean > 0` alone, which is the
+    (`experiment.gate`, #285, #386). Until then it adopted on `mean > 0` alone, which is the
     weakness the width gate's write-up had already named -- a shape ahead by 0.00002 on one
     lucky season would have been adopted on a rule every other gate in the tree rejects. The
     recorded verdict does not move: the lumpy price lost in 20 of 27 seasons, which fails the
@@ -381,7 +366,10 @@ def shape_verdict(wf: pl.DataFrame) -> tuple[str, str]:
     # width gate reads (#363); a hand-built frame without it is NOT-RUNNABLE, as `verdict`'s is.
     top = (Ceiling(CEILING_ARM, wf["ceiling_gain"].to_numpy())
            if "ceiling_gain" in wf.columns else None)
-    verdict, why, s = _house_rule(paired, SHAPE_ACTIONS, ceiling=top)
+    run = gate(paired, cluster=SEASON_CLUSTER, within=("season",), ceiling=top,
+              actions=SHAPE_ACTIONS)
+    verdict, why = run.verdict
+    s = run.summary
     better = int((paired["diff"] > 0).sum())
     detail = (f"Mean held-out log-loss gain {s['mean']:+.5f} (se {s['se']:.5f}, 95% "
               f"[{s['lo']:+.5f}, {s['hi']:+.5f}]), lumpy better in {better}/{paired.height} "
@@ -523,8 +511,9 @@ def verdict(wf: pl.DataFrame) -> tuple[str, str]:
     """The pre-registered rule, now the house rule. Returns (winning candidate, sentence).
 
     A candidate is adopted only if it beats the incumbent on held-out log-loss in **every**
-    season and the season-bootstrap interval on its mean gain excludes zero (`_house_rule`,
-    #285); where more than one clears both halves the larger mean gain wins. Ties and
+    season and the season-bootstrap interval on its mean gain excludes zero
+    (`experiment.gate`, #285, #386); where more than one clears both halves the larger mean
+    gain wins. Ties and
     everything short of both halves go to the incumbent: replacing a constant that is hashed
     into every model version, for a gain one season could have carried, is churn rather than
     improvement.
@@ -551,7 +540,9 @@ def verdict(wf: pl.DataFrame) -> tuple[str, str]:
     lines, cleared = [], {}
     for c in challengers:
         paired = wf.select("season", (pl.col("ll_incumbent") - pl.col(f"ll_{c}")).alias("diff"))
-        v, _, s = _house_rule(paired, WIDTH_ACTIONS, ceiling=top)
+        run = gate(paired, cluster=SEASON_CLUSTER, within=("season",), ceiling=top,
+                  actions=WIDTH_ACTIONS)
+        v, s = run.verdict[0], run.summary
         won = int((paired["diff"] > 0).sum())
         lines.append(f"  {c}: mean gain {s['mean']:+.5f} [{s['lo']:+.5f}, {s['hi']:+.5f}], "
                      f"wins {won}/{paired.height} seasons -> {v}")
