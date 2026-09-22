@@ -261,6 +261,72 @@
       "SHOW. won 2, tied 0, lost 2 of 4 seasons and the interval contains zero -- absence of evidence, not evidence of equivalence."
     ]
   },
+  "battery_threshold": {
+    "lines": [
+      "\n  n=80  arm - incumbent = +0.72 points per team game",
+      "  95% CI [+0.48, +1.01]   P(arm better) 100.0%",
+      "  MDE at 80% power +0.56 points per team game",
+      "  achieved power against the observed effect 98.0% (a diagnostic: `gate` does not read it)",
+      "  ceiling (perfect) +5.00 points per team game, measured on this gate's own harness -- not comparable with another gate's",
+      "\n  per-season:",
+      "    2020  gain +0.77  se 0.25  m 20  win",
+      "    2021  gain +0.56  se 0.17  m 20  win",
+      "    2022  gain +0.40  se 0.30  m 20  tie",
+      "    2023  gain +1.17  se 0.21  m 20  win",
+      "\n  4 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  95% t CI [+0.28, +1.16] points per team game   (percentile [+0.48, +1.01])",
+      "  the 4 replications the interval rests on: 2020 +0.77  2021 +0.56  2022 +0.40  2023 +1.17"
+    ],
+    "seasons": [
+      {
+        "gain": 0.767522,
+        "m": 20,
+        "n": 20,
+        "se": 0.245791,
+        "season": 2020
+      },
+      {
+        "gain": 0.559233,
+        "m": 20,
+        "n": 20,
+        "se": 0.174971,
+        "season": 2021
+      },
+      {
+        "gain": 0.399819,
+        "m": 20,
+        "n": 20,
+        "se": 0.299869,
+        "season": 2022
+      },
+      {
+        "gain": 1.165373,
+        "m": 20,
+        "n": 20,
+        "se": 0.212022,
+        "season": 2023
+      }
+    ],
+    "summary": {
+      "ceiling": 5.0,
+      "clusters": 4.0,
+      "hi": 1.013838,
+      "lo": 0.479526,
+      "mde": 0.555256,
+      "mean": 0.722987,
+      "n": 80.0,
+      "p_better": 1.0,
+      "power": 0.980167,
+      "se": 0.137984,
+      "t_hi": 1.162112,
+      "t_lo": 0.283861
+    },
+    "summary_nan_keys": [],
+    "verdict": [
+      "SHOW",
+      "SHOW. won 3, tied 1, lost 0 of 4 seasons and the interval excludes zero but the sign is not consistent across seasons -- absence of evidence, not evidence of equivalence."
+    ]
+  },
   "battery_tie": {
     "lines": [
       "\n  n=80  arm - incumbent = +0.82 points per team game",

@@ -287,7 +287,8 @@ def _margin_shape_verdict():
 _BATTERY_ACTIONS = Actions(adopt="ADOPT.", remove="REMOVE.", show="SHOW.")
 
 
-def _battery_frame(gains: list[float], *, n_per_season: int = 20, seed: int = 0):
+def _battery_frame(gains: list[float], *, n_per_season: int = 20, seed: int = 0,
+                   noise_sd: float = 0.01):
     """One row per (season, unit), `n_per_season` units a season, each unit's own diff drawn
     tightly around that season's `gain` so the within-season SE is real and small -- enough
     clusters (`n_per_season >= TIE_MIN_CLUSTERS`) that `_disposition` reads the bootstrap
@@ -296,15 +297,15 @@ def _battery_frame(gains: list[float], *, n_per_season: int = 20, seed: int = 0)
     seasons, units, diffs = [], [], []
     for i, g in enumerate(gains):
         yr = 2020 + i
-        noise = rng.normal(0.0, 0.01, n_per_season)
+        noise = rng.normal(0.0, noise_sd, n_per_season)
         seasons += [yr] * n_per_season
         units += list(range(n_per_season))
         diffs += list(g + noise)
     return pl.DataFrame({"season": seasons, "unit": units, "diff": diffs})
 
 
-def _battery_gate_run(gains, *, ceiling=None, void=None, seed=0):
-    paired = _battery_frame(gains, seed=seed)
+def _battery_gate_run(gains, *, ceiling=None, void=None, seed=0, noise_sd=0.01):
+    paired = _battery_frame(gains, seed=seed, noise_sd=noise_sd)
     top = None if ceiling is None else Ceiling("perfect", np.full(paired.height, ceiling))
     return run_gate(paired, cluster=SEASON_CLUSTER, within=("unit",),
                     actions=_BATTERY_ACTIONS, name=f"control-battery-{seed}",
@@ -322,6 +323,17 @@ def _remove_run():
 
 def _show_run():
     return _battery_gate_run([1.0, -1.0, 0.5, -0.5], ceiling=5.0, seed=3)
+
+
+def _threshold_run():
+    """The case the first battery could not see (review of 2026-09-22): every other frame's
+    within-season SE is ~0.002 against gains of ~1.0, so halving the tie threshold changed no
+    season's disposition and the goldens stayed green under a `2 * se -> 1 * se` plant -- a
+    control blind to the every-season half it was meant to hold. Here the units are noisy
+    (`noise_sd=1.2`, so a season's SE is ~0.27) and the third season's gain of 0.4 sits
+    between one and two SEs: a tie under the rule as adopted, a win under a halved
+    threshold. Captured on `main` before the seam, like the rest."""
+    return _battery_gate_run([1.0, 1.1, 0.4, 1.2], ceiling=5.0, seed=5, noise_sd=1.2)
 
 
 def _tie_run():
@@ -353,6 +365,7 @@ CASES = {
     "battery_remove": _remove_run,
     "battery_show": _show_run,
     "battery_tie": _tie_run,
+    "battery_threshold": _threshold_run,
     "battery_not_runnable": _not_runnable_run,
     "battery_void": _void_run,
 }
@@ -375,6 +388,7 @@ def test_the_adapter_reaches_the_expected_verdict(name):
         "battery_remove": "REMOVE",
         "battery_show": "SHOW",
         "battery_tie": "SHOW",
+        "battery_threshold": "SHOW",
         "battery_not_runnable": "NOT-RUNNABLE",
         "battery_void": "VOID",
     }[name]
