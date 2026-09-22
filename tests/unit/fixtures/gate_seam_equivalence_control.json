@@ -1,0 +1,738 @@
+{
+  "battery_adopt": {
+    "lines": [
+      "\n  n=80  arm - incumbent = +1.05 points per team game",
+      "  95% CI [+0.95, +1.16]   P(arm better) 100.0%",
+      "  MDE at 80% power +0.23 points per team game",
+      "  achieved power against the observed effect 100.0% (a diagnostic: `gate` does not read it)",
+      "  ceiling (perfect) +5.00 points per team game, measured on this gate's own harness -- not comparable with another gate's",
+      "\n  per-season:",
+      "    2020  gain +1.00  se 0.00  m 20  win",
+      "    2021  gain +1.10  se 0.00  m 20  win",
+      "    2022  gain +0.90  se 0.00  m 20  win",
+      "    2023  gain +1.20  se 0.00  m 20  win",
+      "\n  4 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  95% t CI [+0.87, +1.23] points per team game   (percentile [+0.95, +1.16])",
+      "  the 4 replications the interval rests on: 2020 +1.00  2021 +1.10  2022 +0.90  2023 +1.20"
+    ],
+    "seasons": [
+      {
+        "gain": 1.000375,
+        "m": 20,
+        "n": 20,
+        "se": 0.001374,
+        "season": 2020
+      },
+      {
+        "gain": 1.099681,
+        "m": 20,
+        "n": 20,
+        "se": 0.002594,
+        "season": 2021
+      },
+      {
+        "gain": 0.898478,
+        "m": 20,
+        "n": 20,
+        "se": 0.001668,
+        "season": 2022
+      },
+      {
+        "gain": 1.198603,
+        "m": 20,
+        "n": 20,
+        "se": 0.001759,
+        "season": 2023
+      }
+    ],
+    "summary": {
+      "ceiling": 5.0,
+      "clusters": 4.0,
+      "hi": 1.162126,
+      "lo": 0.948779,
+      "mde": 0.2267,
+      "mean": 1.049284,
+      "n": 80.0,
+      "p_better": 1.0,
+      "power": 1.0,
+      "se": 0.056336,
+      "t_hi": 1.228571,
+      "t_lo": 0.869998
+    },
+    "summary_nan_keys": [],
+    "verdict": [
+      "ADOPT",
+      "ADOPT. It won in every held-out season (won 4, tied 0, lost 0 of 4 seasons) and the t interval [+0.870, +1.229] excludes zero."
+    ]
+  },
+  "battery_not_runnable": {
+    "lines": [
+      "\n  n=80  arm - incumbent = +1.05 points per team game",
+      "  95% CI [+0.95, +1.15]   P(arm better) 100.0%",
+      "  MDE at 80% power +0.21 points per team game",
+      "  achieved power against the observed effect 100.0% (a diagnostic: `gate` does not read it)",
+      "\n  per-season:",
+      "    2020  gain +1.00  se 0.00  m 20  win",
+      "    2021  gain +1.10  se 0.00  m 20  win",
+      "    2022  gain +0.90  se 0.00  m 20  win",
+      "    2023  gain +1.20  se 0.00  m 20  win",
+      "\n  4 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  95% t CI [+0.88, +1.22] points per team game   (percentile [+0.95, +1.15])",
+      "  the 4 replications the interval rests on: 2020 +1.00  2021 +1.10  2022 +0.90  2023 +1.20"
+    ],
+    "seasons": [
+      {
+        "gain": 0.998063,
+        "m": 20,
+        "n": 20,
+        "se": 0.002048,
+        "season": 2020
+      },
+      {
+        "gain": 1.095494,
+        "m": 20,
+        "n": 20,
+        "se": 0.001458,
+        "season": 2021
+      },
+      {
+        "gain": 0.899998,
+        "m": 20,
+        "n": 20,
+        "se": 0.002499,
+        "season": 2022
+      },
+      {
+        "gain": 1.199711,
+        "m": 20,
+        "n": 20,
+        "se": 0.001767,
+        "season": 2023
+      }
+    ],
+    "summary": {
+      "clusters": 4.0,
+      "hi": 1.149299,
+      "lo": 0.949031,
+      "mde": 0.214238,
+      "mean": 1.048317,
+      "n": 80.0,
+      "p_better": 1.0,
+      "power": 1.0,
+      "se": 0.053239,
+      "t_hi": 1.217747,
+      "t_lo": 0.878886
+    },
+    "summary_nan_keys": [],
+    "verdict": [
+      "NOT-RUNNABLE",
+      "NOT RUNNABLE: this gate has not measured a ceiling. Per ADR-0019's #363 (S6) amendment, a gate that measured no ceiling is NOT-RUNNABLE in both directions -- not only when its MDE happens to exceed one, since REMOVE was never shown safe on an unmeasured design, only never caught. Run with the ceiling this gate declares, or read `docs/gate-power.md` for which ceilings are measured and #376 for what ends this for the rest."
+    ]
+  },
+  "battery_remove": {
+    "lines": [
+      "\n  n=80  arm - incumbent = -1.05 points per team game",
+      "  95% CI [-1.15, -0.95]   P(arm better) 0.0%",
+      "  MDE at 80% power +0.22 points per team game",
+      "  achieved power against the observed effect 100.0% (a diagnostic: `gate` does not read it)",
+      "  ceiling (perfect) +5.00 points per team game, measured on this gate's own harness -- not comparable with another gate's",
+      "\n  per-season:",
+      "    2020  gain -1.00  se 0.00  m 20  loss",
+      "    2021  gain -1.10  se 0.00  m 20  loss",
+      "    2022  gain -0.90  se 0.00  m 20  loss",
+      "    2023  gain -1.20  se 0.00  m 20  loss",
+      "\n  4 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  95% t CI [-1.23, -0.87] points per team game   (percentile [-1.15, -0.95])",
+      "  the 4 replications the interval rests on: 2020 -1.00  2021 -1.10  2022 -0.90  2023 -1.20"
+    ],
+    "seasons": [
+      {
+        "gain": -1.000497,
+        "m": 20,
+        "n": 20,
+        "se": 0.001999,
+        "season": 2020
+      },
+      {
+        "gain": -1.09943,
+        "m": 20,
+        "n": 20,
+        "se": 0.002101,
+        "season": 2021
+      },
+      {
+        "gain": -0.897689,
+        "m": 20,
+        "n": 20,
+        "se": 0.002589,
+        "season": 2022
+      },
+      {
+        "gain": -1.200691,
+        "m": 20,
+        "n": 20,
+        "se": 0.002174,
+        "season": 2023
+      }
+    ],
+    "summary": {
+      "ceiling": 5.0,
+      "clusters": 4.0,
+      "hi": -0.949093,
+      "lo": -1.150366,
+      "mde": 0.222529,
+      "mean": -1.049577,
+      "n": 80.0,
+      "p_better": 0.0,
+      "power": 1.0,
+      "se": 0.0553,
+      "t_hi": -0.873589,
+      "t_lo": -1.225565
+    },
+    "summary_nan_keys": [],
+    "verdict": [
+      "REMOVE",
+      "REMOVE. Worse in every held-out season (won 0, tied 0, lost 4 of 4 seasons) and the t interval [-1.226, -0.874] excludes zero."
+    ]
+  },
+  "battery_show": {
+    "lines": [
+      "\n  n=80  arm - incumbent = -0.00 points per team game",
+      "  95% CI [-0.88, +0.87]   P(arm better) 48.3%",
+      "  MDE at 80% power +1.69 points per team game",
+      "  achieved power against the observed effect 0.1% (a diagnostic: `gate` does not read it)",
+      "  ceiling (perfect) +5.00 points per team game, measured on this gate's own harness -- not comparable with another gate's",
+      "\n  per-season:",
+      "    2020  gain +1.00  se 0.00  m 20  win",
+      "    2021  gain -1.00  se 0.00  m 20  loss",
+      "    2022  gain +0.50  se 0.00  m 20  win",
+      "    2023  gain -0.50  se 0.00  m 20  loss",
+      "\n  4 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  95% t CI [-1.33, +1.33] points per team game   (percentile [-0.88, +0.87])",
+      "  the 4 replications the interval rests on: 2020 +1.00  2021 -1.00  2022 +0.50  2023 -0.50"
+    ],
+    "seasons": [
+      {
+        "gain": 0.998676,
+        "m": 20,
+        "n": 20,
+        "se": 0.002801,
+        "season": 2020
+      },
+      {
+        "gain": -0.999498,
+        "m": 20,
+        "n": 20,
+        "se": 0.002394,
+        "season": 2021
+      },
+      {
+        "gain": 0.500421,
+        "m": 20,
+        "n": 20,
+        "se": 0.001952,
+        "season": 2022
+      },
+      {
+        "gain": -0.503402,
+        "m": 20,
+        "n": 20,
+        "se": 0.002473,
+        "season": 2023
+      }
+    ],
+    "summary": {
+      "ceiling": 5.0,
+      "clusters": 4.0,
+      "hi": 0.874112,
+      "lo": -0.875474,
+      "mde": 1.68521,
+      "mean": -0.000951,
+      "n": 80.0,
+      "p_better": 0.483333,
+      "power": 0.000736,
+      "se": 0.418783,
+      "t_hi": 1.331803,
+      "t_lo": -1.333705
+    },
+    "summary_nan_keys": [],
+    "verdict": [
+      "SHOW",
+      "SHOW. won 2, tied 0, lost 2 of 4 seasons and the interval contains zero -- absence of evidence, not evidence of equivalence."
+    ]
+  },
+  "battery_tie": {
+    "lines": [
+      "\n  n=80  arm - incumbent = +0.82 points per team game",
+      "  95% CI [+0.27, +1.15]   P(arm better) 98.3%",
+      "  MDE at 80% power +1.02 points per team game",
+      "  achieved power against the observed effect 53.3% (a diagnostic: `gate` does not read it)",
+      "  ceiling (perfect) +5.00 points per team game, measured on this gate's own harness -- not comparable with another gate's",
+      "\n  per-season:",
+      "    2020  gain +1.00  se 0.00  m 20  win",
+      "    2021  gain +1.10  se 0.00  m 20  win",
+      "    2022  gain -0.00  se 0.00  m 20  tie",
+      "    2023  gain +1.20  se 0.00  m 20  win",
+      "\n  4 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  95% t CI [+0.02, +1.63] points per team game   (percentile [+0.27, +1.15])",
+      "  the 4 replications the interval rests on: 2020 +1.00  2021 +1.10  2022 -0.00  2023 +1.20"
+    ],
+    "seasons": [
+      {
+        "gain": 0.999691,
+        "m": 20,
+        "n": 20,
+        "se": 0.002568,
+        "season": 2020
+      },
+      {
+        "gain": 1.097944,
+        "m": 20,
+        "n": 20,
+        "se": 0.002213,
+        "season": 2021
+      },
+      {
+        "gain": -0.000205,
+        "m": 20,
+        "n": 20,
+        "se": 0.00179,
+        "season": 2022
+      },
+      {
+        "gain": 1.199935,
+        "m": 20,
+        "n": 20,
+        "se": 0.002651,
+        "season": 2023
+      }
+    ],
+    "summary": {
+      "ceiling": 5.0,
+      "clusters": 4.0,
+      "hi": 1.149874,
+      "lo": 0.273548,
+      "mde": 1.01611,
+      "mean": 0.824341,
+      "n": 80.0,
+      "p_better": 0.983333,
+      "power": 0.532743,
+      "se": 0.252508,
+      "t_hi": 1.627935,
+      "t_lo": 0.020748
+    },
+    "summary_nan_keys": [],
+    "verdict": [
+      "SHOW",
+      "SHOW. won 3, tied 1, lost 0 of 4 seasons and the interval excludes zero but the sign is not consistent across seasons -- absence of evidence, not evidence of equivalence."
+    ]
+  },
+  "battery_void": {
+    "lines": [
+      "\n  n=80  arm - incumbent = +1.05 points per team game",
+      "  95% CI [+0.95, +1.15]   P(arm better) 100.0%",
+      "  MDE at 80% power +0.22 points per team game",
+      "  achieved power against the observed effect 100.0% (a diagnostic: `gate` does not read it)",
+      "  ceiling (perfect) +5.00 points per team game, measured on this gate's own harness -- not comparable with another gate's",
+      "\n  per-season:",
+      "    2020  gain +1.00  se 0.00  m 20  win",
+      "    2021  gain +1.10  se 0.00  m 20  win",
+      "    2022  gain +0.90  se 0.00  m 20  win",
+      "    2023  gain +1.20  se 0.00  m 20  win",
+      "\n  4 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  95% t CI [+0.87, +1.23] points per team game   (percentile [+0.95, +1.15])",
+      "  the 4 replications the interval rests on: 2020 +1.00  2021 +1.10  2022 +0.90  2023 +1.20"
+    ],
+    "seasons": [
+      {
+        "gain": 1.004637,
+        "m": 20,
+        "n": 20,
+        "se": 0.002476,
+        "season": 2020
+      },
+      {
+        "gain": 1.098976,
+        "m": 20,
+        "n": 20,
+        "se": 0.001778,
+        "season": 2021
+      },
+      {
+        "gain": 0.900291,
+        "m": 20,
+        "n": 20,
+        "se": 0.00212,
+        "season": 2022
+      },
+      {
+        "gain": 1.199256,
+        "m": 20,
+        "n": 20,
+        "se": 0.001999,
+        "season": 2023
+      }
+    ],
+    "summary": {
+      "ceiling": 5.0,
+      "clusters": 4.0,
+      "hi": 1.150601,
+      "lo": 0.949962,
+      "mde": 0.223152,
+      "mean": 1.05079,
+      "n": 80.0,
+      "p_better": 1.0,
+      "power": 1.0,
+      "se": 0.055454,
+      "t_hi": 1.22727,
+      "t_lo": 0.87431
+    },
+    "summary_nan_keys": [],
+    "verdict": [
+      "VOID",
+      "VOID: control."
+    ]
+  },
+  "coverage": {
+    "lines": [
+      "\n  n=1549  skew-free - deployed skew = -0.0492 CRPS points per player-week",
+      "  95% CI [-0.0599, -0.0377]   P(skew-free better) 0.0%",
+      "  MDE at 80% power +0.0243 CRPS points per player-week",
+      "  achieved power against the observed effect 100.0% (a diagnostic: `gate` does not read it)",
+      "  ceiling (the best per-position skew, chosen on these rows) +0.0204 CRPS points per player-week, measured on this gate's own harness -- not comparable with another gate's",
+      "\n  per-season:",
+      "    2022  gain -0.0550  se 0.0135  m 30  loss",
+      "    2023  gain -0.0450  se 0.0133  m 30  loss",
+      "    2024  gain -0.0320  se 0.0195  m 30  tie",
+      "    2025  gain -0.0648  se 0.0182  m 30  loss",
+      "\n  4 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  95% t CI [-0.0684, -0.0300] CRPS points per player-week   (percentile [-0.0599, -0.0377])",
+      "  the 4 replications the interval rests on: 2022 -0.0550  2023 -0.0450  2024 -0.0320  2025 -0.0648"
+    ],
+    "seasons": [
+      {
+        "gain": -0.05496,
+        "m": 30,
+        "n": 386,
+        "se": 0.013515,
+        "season": 2022
+      },
+      {
+        "gain": -0.045011,
+        "m": 30,
+        "n": 390,
+        "se": 0.013342,
+        "season": 2023
+      },
+      {
+        "gain": -0.031975,
+        "m": 30,
+        "n": 386,
+        "se": 0.019463,
+        "season": 2024
+      },
+      {
+        "gain": -0.064762,
+        "m": 30,
+        "n": 387,
+        "se": 0.018168,
+        "season": 2025
+      }
+    ],
+    "summary": {
+      "ceiling": 0.020418,
+      "clusters": 4.0,
+      "hi": -0.037721,
+      "lo": -0.059861,
+      "mde": 0.024272,
+      "mean": -0.049177,
+      "n": 1549.0,
+      "p_better": 0.0,
+      "power": 1.0,
+      "se": 0.006032,
+      "t_hi": -0.029982,
+      "t_lo": -0.068372
+    },
+    "summary_nan_keys": [],
+    "verdict": [
+      "NOT-RUNNABLE",
+      "NOT RUNNABLE: the smallest effect this gate could resolve at 80% power is +0.024, against a ceiling of +0.020 -- the largest effect there was to find. Over 4 independent clusters this design cannot tell a real effect from a perfect one, so no verdict below is reported. `docs/gate-power.md` stage 2: this is *not planned*, not *failed* -- the arm did not lose, the question cannot be answered with the data that exists."
+    ]
+  },
+  "draft": {
+    "lines": [
+      "\n  n=1  optimizer - market = -0.54 points per team game",
+      "  95% CI [-0.54, -0.54]   P(optimizer better) 0.0%",
+      "\n  per-season:",
+      "    2025  gain -0.54  se nan  m 1  loss (sign-only)",
+      "\n  1 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  the 1 replications the interval rests on: 2025 -0.54"
+    ],
+    "seasons": [
+      {
+        "gain": -0.540355,
+        "m": 1,
+        "n": 1,
+        "se": "NaN",
+        "season": 2025
+      }
+    ],
+    "summary": {
+      "clusters": 1.0,
+      "hi": -0.540355,
+      "lo": -0.540355,
+      "mean": -0.540355,
+      "n": 1.0,
+      "p_better": 0.0,
+      "se": 0.0
+    },
+    "summary_nan_keys": [
+      "mde",
+      "power",
+      "t_hi",
+      "t_lo"
+    ],
+    "verdict": [
+      "NOT-RUNNABLE",
+      "NOT RUNNABLE: this gate has not measured a ceiling. Per ADR-0019's #363 (S6) amendment, a gate that measured no ceiling is NOT-RUNNABLE in both directions -- not only when its MDE happens to exceed one, since REMOVE was never shown safe on an unmeasured design, only never caught. Run with the ceiling this gate declares, or read `docs/gate-power.md` for which ceilings are measured and #376 for what ends this for the rest."
+    ]
+  },
+  "draft_sensitivity": {
+    "lines": [
+      "\n  n=1  optimizer - market = -0.54 points per team game",
+      "  95% CI [-0.54, -0.54]   P(optimizer better) 0.0%",
+      "  ceiling (perfect foresight -- the season known in advance) +3.00 points per team game, measured on this gate's own harness -- not comparable with another gate's",
+      "\n  per-season:",
+      "    2025  gain -0.54  se nan  m 1  loss (sign-only)",
+      "\n  1 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  the 1 replications the interval rests on: 2025 -0.54"
+    ],
+    "seasons": [
+      {
+        "gain": -0.540355,
+        "m": 1,
+        "n": 1,
+        "se": "NaN",
+        "season": 2025
+      }
+    ],
+    "summary": {
+      "ceiling": 3.0,
+      "clusters": 1.0,
+      "hi": -0.540355,
+      "lo": -0.540355,
+      "mean": -0.540355,
+      "n": 1.0,
+      "p_better": 0.0,
+      "se": 0.0
+    },
+    "summary_nan_keys": [
+      "mde",
+      "power",
+      "t_hi",
+      "t_lo"
+    ],
+    "verdict": [
+      "SHOW",
+      "NO CHANGE: the market leads and equity stays a tiebreaker. won 0, tied 0, lost 1 of 1 seasons and too few clusters for a t interval -- absence of evidence, not evidence of equivalence."
+    ]
+  },
+  "lineup": {
+    "lines": [
+      "\n  n=80  optimiser - projections = +0.59 points per game",
+      "  95% CI [+0.59, +0.59]   P(optimiser better) 100.0%",
+      "  MDE at 80% power +0.00 points per game",
+      "  achieved power against the observed effect 100.0% (a diagnostic: `gate` does not read it)",
+      "  ceiling (a perfect spread, not foresight) +5.00 points per game, measured on this gate's own harness -- not comparable with another gate's",
+      "\n  per-season:",
+      "    2022  gain +0.59  se 0.01  m 20  win",
+      "    2023  gain +0.59  se 0.01  m 20  win",
+      "    2024  gain +0.59  se 0.01  m 20  win",
+      "    2025  gain +0.59  se 0.01  m 20  win",
+      "\n  4 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  95% t CI [+0.59, +0.60] points per game   (percentile [+0.59, +0.59])",
+      "  the 4 replications the interval rests on: 2022 +0.59  2023 +0.59  2024 +0.59  2025 +0.59"
+    ],
+    "seasons": [
+      {
+        "gain": 0.595,
+        "m": 20,
+        "n": 20,
+        "se": 0.012484,
+        "season": 2022
+      },
+      {
+        "gain": 0.595,
+        "m": 20,
+        "n": 20,
+        "se": 0.012484,
+        "season": 2023
+      },
+      {
+        "gain": 0.595,
+        "m": 20,
+        "n": 20,
+        "se": 0.012484,
+        "season": 2024
+      },
+      {
+        "gain": 0.595,
+        "m": 20,
+        "n": 20,
+        "se": 0.012484,
+        "season": 2025
+      }
+    ],
+    "summary": {
+      "ceiling": 5.0,
+      "clusters": 4.0,
+      "hi": 0.595,
+      "lo": 0.595,
+      "mde": 0.0,
+      "mean": 0.595,
+      "n": 80.0,
+      "p_better": 1.0,
+      "power": 1.0,
+      "se": 0.0,
+      "t_hi": 0.595,
+      "t_lo": 0.595
+    },
+    "summary_nan_keys": [],
+    "verdict": [
+      "ADOPT",
+      "TRUST: accounting for variance beats sorting on projection alone. The optimiser sets the lineup. It won in every held-out season (won 4, tied 0, lost 0 of 4 seasons) and the t interval [+0.595, +0.595] excludes zero."
+    ]
+  },
+  "margin_shape_verdict": [
+    "gaussian",
+    "KEEP the Gaussian. won 2, tied 0, lost 1 of 3 seasons and the interval contains zero -- absence of evidence, not evidence of equivalence. Mean held-out log-loss gain +0.00270 (se 0.00521, 95% [-0.00968, +0.01117]), lumpy better in 2/3 seasons."
+  ],
+  "margin_verdict": [
+    "incumbent",
+    "KEEP 12.741: no candidate cleared both halves of the gate (every held-out season, and an interval excluding zero; best challenger 0.68028 against 0.65734). An asserted number that survives a fit is no longer asserted.\n  all: mean gain -0.02295 [-0.03902, -0.00192], wins 0/3 seasons -> SHOW\n  trailing10: mean gain -0.02295 [-0.03902, -0.00192], wins 0/3 seasons -> SHOW"
+  ],
+  "quarterback": {
+    "lines": [
+      "\n  n=18  the frozen line - quarterback-adjusted = +0.0500 log-loss per event game",
+      "  95% CI [+0.0500, +0.0500]   P(the frozen line better) 100.0%",
+      "  MDE at 80% power +0.0000 log-loss per event game",
+      "  achieved power against the observed effect 100.0% (a diagnostic: `gate` does not read it)",
+      "  ceiling (the betting market's own repricing, the last snapshot before the game day) +0.5000 log-loss per event game, measured on this gate's own harness -- not comparable with another gate's",
+      "\n  per-season:",
+      "    2026  gain +0.0500  se nan  m 1  win (sign-only)",
+      "    2027  gain +0.0500  se nan  m 1  win (sign-only)",
+      "    2028  gain +0.0500  se nan  m 1  win (sign-only)",
+      "\n  3 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  95% t CI [+0.0500, +0.0500] log-loss per event game   (percentile [+0.0500, +0.0500])",
+      "  the 3 replications the interval rests on: 2026 +0.0500  2027 +0.0500  2028 +0.0500"
+    ],
+    "seasons": [
+      {
+        "gain": 0.05,
+        "m": 1,
+        "n": 6,
+        "se": "NaN",
+        "season": 2026
+      },
+      {
+        "gain": 0.05,
+        "m": 1,
+        "n": 6,
+        "se": "NaN",
+        "season": 2027
+      },
+      {
+        "gain": 0.05,
+        "m": 1,
+        "n": 6,
+        "se": "NaN",
+        "season": 2028
+      }
+    ],
+    "summary": {
+      "ceiling": 0.5,
+      "clusters": 3.0,
+      "hi": 0.05,
+      "lo": 0.05,
+      "mde": 0.0,
+      "mean": 0.05,
+      "n": 18.0,
+      "p_better": 1.0,
+      "power": 1.0,
+      "se": 0.0,
+      "t_hi": 0.05,
+      "t_lo": 0.05
+    },
+    "summary_nan_keys": [],
+    "verdict": [
+      "ADOPT",
+      "Diagnostic only, since #300: this branch does not license shipping the module. The ADOPT condition is #221's line-move coefficient, sign and magnitude against 0.132 (docs/qb-adjustment.md, docs/gate-power.md); this log-loss picture is read beside it. It won in every held-out season (won 3, tied 0, lost 0 of 3 seasons) and the t interval [+0.050, +0.050] excludes zero."
+    ]
+  },
+  "weekly": {
+    "lines": [
+      "\n  weekly - consensus = -1.004 points per team-week",
+      "  95% CI [-1.349, -0.659]   P(weekly better) 0.0%",
+      "  MDE at 80% power +0.772 points per team-week",
+      "  achieved power against the observed effect 98.0% (a diagnostic: `gate` does not read it)",
+      "  ceiling (perfect foresight) +10.799 points per team-week, measured on this gate's own harness -- not comparable with another gate's",
+      "\n  per-season:",
+      "    2022  gain -0.452  se nan  m 1  loss (sign-only)",
+      "    2023  gain -1.490  se nan  m 1  loss (sign-only)",
+      "    2024  gain -0.868  se nan  m 1  loss (sign-only)",
+      "    2025  gain -1.204  se nan  m 1  loss (sign-only)",
+      "\n  4 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  95% t CI [-1.614, -0.393] points per team-week   (percentile [-1.349, -0.659])",
+      "  the 4 replications the interval rests on: 2022 -0.452  2023 -1.490  2024 -0.868  2025 -1.204"
+    ],
+    "seasons": [
+      {
+        "gain": -0.452,
+        "m": 1,
+        "n": 1,
+        "se": "NaN",
+        "season": 2022
+      },
+      {
+        "gain": -1.49,
+        "m": 1,
+        "n": 1,
+        "se": "NaN",
+        "season": 2023
+      },
+      {
+        "gain": -0.868,
+        "m": 1,
+        "n": 1,
+        "se": "NaN",
+        "season": 2024
+      },
+      {
+        "gain": -1.204,
+        "m": 1,
+        "n": 1,
+        "se": "NaN",
+        "season": 2025
+      }
+    ],
+    "summary": {
+      "ceiling": 10.799,
+      "clusters": 4.0,
+      "hi": -0.6595,
+      "lo": -1.348788,
+      "mde": 0.772246,
+      "mean": -1.0035,
+      "n": 4.0,
+      "p_better": 0.0,
+      "power": 0.979654,
+      "se": 0.191907,
+      "t_hi": -0.392767,
+      "t_lo": -1.614233
+    },
+    "summary_nan_keys": [],
+    "verdict": [
+      "REMOVE",
+      "REMOVE: worse than a free ranking. Delete the module rather than shipping it as an option. Worse in every held-out season (won 0, tied 0, lost 4 of 4 seasons) and the t interval [-1.614, -0.393] excludes zero."
+    ]
+  }
+}
