@@ -1,35 +1,35 @@
 {
-  "generated_at": "2026-09-19T17:08:19+00:00",
+  "generated_at": "2026-09-23T15:16:54+00:00",
   "season": 2026,
-  "week": 2,
+  "week": 3,
   "artifacts": [
     {
-      "name": "preds_2026_wk02",
+      "name": "preds_2026_wk03",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-09-19T17:08:18+00:00"
+      "generated_at": "2026-09-23T15:16:53+00:00"
     },
     {
       "name": "track_record",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-09-19T17:08:18+00:00"
+      "generated_at": "2026-09-23T15:16:53+00:00"
     },
     {
       "name": "live",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-09-19T17:08:18+00:00"
+      "generated_at": "2026-09-23T15:16:54+00:00"
     },
     {
       "name": "roster",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-09-19T17:08:17+00:00"
+      "generated_at": "2026-09-23T15:16:52+00:00"
     },
     {
       "name": "draft_board",
@@ -43,7 +43,7 @@
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-09-19T17:08:19+00:00"
+      "generated_at": "2026-09-23T15:16:54+00:00"
     }
   ]
 }
