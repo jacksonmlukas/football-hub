@@ -74,6 +74,7 @@ from hub.draft.state import DraftState
 from hub.exhibits.championship_equity import rank_tiers, win_probability
 from hub.fetch.nflverse import reads_of_one_run
 from hub.league import REG_SEASON_WEEKS
+from hub.ledger import Ledger
 from hub.models.experiment import (
     BOOTSTRAP,  # used by `noise_sensitivity`, and tests reach it as `bt.BOOTSTRAP`
     SEASON_CLUSTER,
@@ -707,7 +708,7 @@ def noise_sensitivity(boards: dict[int, Board], realised: dict[int, pl.DataFrame
         run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS,
                        name=f"draft noise x{scale:g}", arm_a="optimizer", arm_b="market",
                        void=void_condition(rates), ceiling=bound, seed=seed,
-                       bootstrap=bootstrap, boards=boards, record_width=False)
+                       bootstrap=bootstrap, boards=boards, ledger=Ledger(write=False))
         stamps = (run.stamped.select(STAMPS).row(0, named=True) if run.stamped.height
                   else dict.fromkeys(STAMPS))
         rows.append({"noise_scale": float(scale),

@@ -26,6 +26,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from hub.ledger import Ledger
 from hub.models import coverage, predict
 
 
@@ -344,7 +345,7 @@ def test_the_shape_gate_clusters_on_the_season_reads_the_unclipped_weeks_and_nam
     unclipped subset, `experiment.gate`'s four verdicts, the declared ceiling arm on the
     ceiling line."""
     stats = _drawn(n_players=40, seed=24, seasons=(2021, 2022, 2023, 2024, 2025))
-    run, paired, pooled = coverage.shape_law(stats, width_path=tmp_path / "w.json")
+    run, paired, pooled = coverage.shape_law(stats, ledger=Ledger(path=None))
     assert run.summary["clusters"] == 5
     assert paired["season"].n_unique() == 5
     assert run.verdict[0] in ("NOT-RUNNABLE", "ADOPT", "REMOVE", "SHOW")
@@ -359,7 +360,7 @@ def test_the_shape_gate_removes_the_skew_free_arm_when_the_skew_is_the_truth(tmp
     """Weeks drawn through the shipped skew, in every season: the deployed arm wins each of
     them and the interval sits below zero, which is REMOVE -- the skew earns its place."""
     stats = _drawn(n_players=200, seed=25, seasons=(2021, 2022, 2023, 2024, 2025))
-    run, _paired, _pooled = coverage.shape_law(stats, width_path=tmp_path / "w.json")
+    run, _paired, _pooled = coverage.shape_law(stats, ledger=Ledger(path=None))
     assert run.summary["mean"] < 0
     assert run.verdict[0] in ("REMOVE", "NOT-RUNNABLE"), run.verdict
 
