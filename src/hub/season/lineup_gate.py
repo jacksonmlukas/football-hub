@@ -42,11 +42,9 @@ from hub.draft.board import board_as_of
 from hub.fetch.nflverse import reads_of_one_run
 from hub.league import REG_SEASON_WEEKS, starting_lineup
 from hub.models.experiment import (
-    SEASON_CLUSTER,
     Actions,
     Ceiling,
     Harness,
-    run_gate,
     walk_forward_inputs,
 )
 from hub.names import player_key
@@ -303,11 +301,7 @@ ACTIONS = Actions(
 
 # #387: this module's Harness -- one of the seven. `ceiling_arm` is the one field a run
 # overrides: `--ceiling-arm` (#138) picks which of `CEILING_ARM_NAMES` plays, so `main` builds
-# `HARNESS._replace(ceiling_arm=...)` rather than a fifth `Ceiling(...)` construction. `main`
-# still calls `run_gate` directly rather than `HARNESS.run` -- keeping the module-level
-# `run_gate` name a caller can monkeypatch, which `tests/unit/test_lineup_gate.py` does to
-# inject a faster bootstrap and `record_width=False`; #385's Ledger is what ends the need for
-# that monkeypatch, not this ticket.
+# `HARNESS._replace(ceiling_arm=...)` rather than a fifth `Ceiling(...)` construction.
 HARNESS = Harness(name="lineup", arm_a="optimiser", arm_b="projections", within=WITHIN,
                   ceiling_arm=CEILING_ARM_NAMES[DECLARED_CEILING_ARM], actions=ACTIONS,
                   unit=UNIT)
@@ -402,14 +396,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             rosters[yr] = made
 
         paired = compare(rosters, realised, ceiling=a.ceiling, ceiling_arm=a.ceiling_arm)
-        # #387: `HARNESS._replace(ceiling_arm=...)` for the one field #138 lets a run choose;
-        # every other fixed field below is `HARNESS`'s own -- `run_gate` stays the name called
-        # (see `HARNESS`'s own comment, above) rather than `HARNESS.run`.
+        # #387: `ceiling_arm` is the one field #138 lets a run choose.
         harness = HARNESS._replace(ceiling_arm=CEILING_ARM_NAMES[a.ceiling_arm])
-        run = run_gate(paired, cluster=SEASON_CLUSTER, within=harness.within,
-                       actions=harness.actions, name=harness.name, arm_a=harness.arm_a,
-                       arm_b=harness.arm_b, unit=harness.unit,
-                       ceiling=harness.ceiling(paired), seed=a.seed, boards=boards)
+        run = harness.run(paired, seed=a.seed, boards=boards)
         for line in run.lines:
             print(line)
         print(f"\n  {run.verdict[1]}")

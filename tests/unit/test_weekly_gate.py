@@ -1108,11 +1108,9 @@ def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_pa
     covers the gate's reads and not the enclosing run's -- and the enclosing run still ends
     up holding both, because a scope narrows what a component reports and must never be a
     way for a run to lose a read."""
-    from functools import partial
 
     from hub.config import data_digest
     from hub.fetch import nflverse as nv
-    from hub.models.experiment import run_gate
     from hub.season import weekly_gate_data
 
     monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
@@ -1128,7 +1126,7 @@ def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_pa
         return _inputs()
 
     monkeypatch.setattr(weekly_gate_data, "assemble_universe", assembles)
-    monkeypatch.setattr(G, "run_gate", partial(run_gate, ledger=Ledger(path=None, write=False), bootstrap=100))
+    monkeypatch.setattr(G, "HARNESS", G.HARNESS._replace(ledger=Ledger(path=None, write=False), bootstrap=100))
     out = tmp_path / "paired.parquet"
     assert G.main(["--run", "--seasons", "2024", "--drafts", "1", "--out", str(out)]) == 0
     stamped = pl.read_parquet(out)

@@ -1492,9 +1492,10 @@ class Harness(NamedTuple):
     `backtest`'s `"diff"` on the separate frame its own `ceiling()` returns) names it here
     instead of a fifth hand-built `Ceiling(...)`.
 
-    `bootstrap` is Harness configuration rather than a `run_gate` call a test monkeypatches
-    past: a caller wanting a smaller bootstrap for a fast test builds `HARNESS._replace(
-    bootstrap=100)` rather than reaching for `monkeypatch.setattr(module, "run_gate", ...)`.
+    `bootstrap` and `ledger` are Harness configuration rather than a `run_gate` call a test
+    monkeypatches past: a fast, isolated test builds `HARNESS._replace(bootstrap=100,
+    ledger=Ledger(path=None))` rather than reaching for `monkeypatch.setattr(module,
+    "run_gate", ...)`.
     """
 
     name: str
@@ -1507,6 +1508,10 @@ class Harness(NamedTuple):
     places: int = 2
     ceiling_column: str = "ceiling_diff"
     bootstrap: int = BOOTSTRAP
+    # `None` is `run_gate`'s own default, the file-backed ledger. A test configures an
+    # in-memory one with `HARNESS._replace(ledger=Ledger(path=None))` -- the declaration,
+    # not a monkeypatch of the function it feeds.
+    ledger: Ledger | None = None
 
     def ceiling(self, frame: pl.DataFrame | None) -> Ceiling | None:
         """This harness's `Ceiling` off `frame`'s own `ceiling_column` -- the one collapse of
@@ -1546,7 +1551,8 @@ class Harness(NamedTuple):
             unit=self.unit, places=self.places, show_n=show_n, void=void,
             ceiling=self.ceiling(paired if ceiling_frame is None else ceiling_frame),
             seed=seed, bootstrap=self.bootstrap if bootstrap is None else bootstrap,
-            boards=boards, ledger=ledger, recipe=recipe)
+            boards=boards, ledger=self.ledger if ledger is None else ledger,
+            recipe=recipe)
 
     def decide(self, paired: pl.DataFrame, *, ceiling_frame: pl.DataFrame | None = None,
               void: str | None = None, seed: int = 0,

@@ -85,7 +85,6 @@ from hub.models.experiment import (
     Harness,
     per_season,
     reading,
-    run_gate,
     summarise,
 )
 
@@ -434,11 +433,8 @@ ACTIONS = Actions(
            "an option.",
     show="SHOW, NEVER RANK ON: printed beside consensus, never sorted on.")
 
-# #387: this module's Harness -- one of the seven. `main` reads it through `declared_ceiling`
-# and still calls `run_gate` directly rather than `Harness.run` -- keeping the module-level
-# `run_gate` name a caller can monkeypatch, which `tests/unit/test_weekly_gate.py` does to
-# inject a faster bootstrap and `record_width=False`; #385's Ledger is what ends the need for
-# that monkeypatch, not this ticket.
+# #387: this module's Harness -- one of the seven; `main` runs it and `declared_ceiling` reads
+# its ceiling.
 HARNESS = Harness(name="weekly", arm_a="weekly", arm_b="consensus", within=WITHIN,
                   ceiling_arm=CEILING_ARM, actions=ACTIONS, unit=UNIT, places=PLACES)
 
@@ -931,14 +927,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         restrict = not a.unrestricted
         paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
                          ceiling=a.ceiling, restrict=restrict)
-        # `SEASON_CLUSTER`, stated at this gate's own call site: the run has no default for it.
-        # #387: every other fixed field below is `HARNESS`'s own -- `run_gate` stays the name
-        # called (see `HARNESS`'s own comment, above) rather than `HARNESS.run`.
-        run = run_gate(paired, cluster=SEASON_CLUSTER, within=HARNESS.within,
-                       actions=HARNESS.actions, name=HARNESS.name, arm_a=HARNESS.arm_a,
-                       arm_b=HARNESS.arm_b, unit=HARNESS.unit, places=HARNESS.places,
-                       show_n=False, void=void_condition(cover),
-                       ceiling=HARNESS.ceiling(paired), seed=a.seed)
+        run = HARNESS.run(paired, show_n=False, void=void_condition(cover), seed=a.seed)
         s, seasons_tbl = run.summary, run.seasons
         # The assembled column's frame is handed back rather than rebuilt, so this is two extra
         # scorings and not three, and the row it fills is the one the verdict is read off. No
