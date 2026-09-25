@@ -85,7 +85,7 @@ from hub.config import SEASON_AHEAD
 from hub.declare import not_an_input
 from hub.fetch import nfeloqb, odds
 from hub.models import experiment, quarterback
-from hub.models.experiment import SEASON_CLUSTER, run_gate
+from hub.models.experiment import SEASON_CLUSTER, Harness
 from hub.models.market import MARGIN_SD, normal_cdf
 
 PROG = "hub.models.starter_change"
@@ -135,6 +135,13 @@ ACTIONS = experiment.Actions(
 # The alias, not a re-spelling: `test_gates_cluster_on_the_season` refuses a second
 # `("season",)` object, and the within unit here *is* the season cluster -- one claim.
 WITHIN: tuple[str, ...] = SEASON_CLUSTER
+
+# #387: this module's Harness -- one of the seven -- read by `run` through `Harness.run`.
+# `ceiling_column="ceiling"` names `gate_rows`' own column, not `"ceiling_diff"`, the name
+# `Harness.ceiling`'s default assumes.
+HARNESS = Harness(name="quarterback_gate", arm_a="the frozen line", arm_b="quarterback-adjusted",
+                  within=WITHIN, ceiling_arm=CEILING_ARM, actions=ACTIONS,
+                  unit="log-loss per event game", places=4, ceiling_column="ceiling")
 
 PASSER = "passer_player_id"
 
@@ -577,12 +584,8 @@ def run(paired: pl.DataFrame, *, needed: int | None, ceiling: bool = True,
             f"is not-runnable, not a null.")
         return experiment.GateRun(summary={}, seasons=pl.DataFrame(), verdict=verdict,
                                   lines=[], stamped=paired)
-    arm = (experiment.Ceiling(CEILING_ARM, paired["ceiling"].to_numpy())
-           if ceiling and "ceiling" in paired.columns and paired.height else None)
-    return run_gate(
-        paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS, name="quarterback_gate",
-        arm_a="the frozen line", arm_b="quarterback-adjusted", unit="log-loss per event game",
-        places=4, ceiling=arm,
+    return HARNESS.run(
+        paired, ceiling_frame=paired if ceiling else None,
         width_path=width_path if width_path is not None else experiment.WIDTH_STATE,
         record_width=record_width)
 
