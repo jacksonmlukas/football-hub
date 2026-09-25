@@ -48,11 +48,9 @@ import polars as pl
 from hub.cli import unavailable
 from hub.declare import not_an_input
 from hub.models.experiment import (
-    SEASON_CLUSTER,
     Actions,
-    Ceiling,
+    Harness,
     expanding_seasons,
-    gate,
 )
 
 # The incumbent. Imported rather than restated so the two cannot drift apart.
@@ -345,6 +343,18 @@ SHAPE_ACTIONS = Actions(
     show="KEEP the Gaussian.",
 )
 
+# #387: this module's Harness -- one of the seven -- declared once and read by both of its
+# verdicts through `Harness.decide`, `gate`'s pure seam and never `run_gate`'s: neither verdict
+# here has ever written a width-history entry or a stamp, since each scores several candidates
+# a run and was never one gate run to publish. `within=("season",)` stays the declared no-op
+# #335 already documents -- `paired` is one row per held-out season, so there is no finer unit
+# to name -- and `ceiling_column="ceiling_gain"` is `walk_forward`/`walk_forward_shape`'s own
+# per-season column, read off `wf` rather than off `paired` itself (`Harness.decide`'s
+# `ceiling_frame` is exactly this: a caller whose ceiling lives on a different frame).
+SHAPE_HARNESS = Harness(name="margin_shape", arm_a="skew-free", arm_b="deployed skew",
+                        within=("season",), ceiling_arm=CEILING_ARM, actions=SHAPE_ACTIONS,
+                        ceiling_column="ceiling_gain")
+
 
 def shape_verdict(wf: pl.DataFrame) -> tuple[str, str]:
     """The pre-registered rule, now the house rule. Returns (shape, sentence).
@@ -364,10 +374,9 @@ def shape_verdict(wf: pl.DataFrame) -> tuple[str, str]:
     paired = wf.select("season", pl.col("gain").alias("diff"))
     # `walk_forward_shape`'s per-season ceiling, handed to the same stage-2 precondition the
     # width gate reads (#363); a hand-built frame without it is NOT-RUNNABLE, as `verdict`'s is.
-    top = (Ceiling(CEILING_ARM, wf["ceiling_gain"].to_numpy())
-           if "ceiling_gain" in wf.columns else None)
-    run = gate(paired, cluster=SEASON_CLUSTER, within=("season",), ceiling=top,
-              actions=SHAPE_ACTIONS)
+    # #387: `SHAPE_HARNESS.ceiling(wf)` is the one collapse of this same `Ceiling(...)` call --
+    # `wf`, not `paired`, carries `"ceiling_gain"`, which is `ceiling_frame`'s whole reason.
+    run = SHAPE_HARNESS.decide(paired, ceiling_frame=wf)
     verdict, why = run.verdict
     s = run.summary
     better = int((paired["diff"] > 0).sum())
@@ -506,6 +515,14 @@ def _mean(df: pl.DataFrame, col: str) -> float:
 
 WIDTH_ACTIONS = Actions(adopt="ADOPT", remove="REMOVE", show="KEEP")
 
+# #387: the width gate's own Harness, declared beside its actions -- `verdict` reads it once
+# per challenger through `Harness.decide`, never `run_gate`'s render-and-stamp composition,
+# for the same reason `SHAPE_HARNESS` does not: several challengers are scored in one call and
+# this was never one gate run to publish a width-history entry for.
+WIDTH_HARNESS = Harness(name="margin_width", arm_a="challenger", arm_b="incumbent",
+                        within=("season",), ceiling_arm=CEILING_ARM, actions=WIDTH_ACTIONS,
+                        ceiling_column="ceiling_gain")
+
 
 def verdict(wf: pl.DataFrame) -> tuple[str, str]:
     """The pre-registered rule, now the house rule. Returns (winning candidate, sentence).
@@ -535,13 +552,13 @@ def verdict(wf: pl.DataFrame) -> tuple[str, str]:
     means = {c: _mean(wf, f"ll_{c}") for c in CANDIDATES}
     base = means["incumbent"]
     challengers = {c: m for c, m in means.items() if c != "incumbent"}
-    top = (Ceiling(CEILING_ARM, wf["ceiling_gain"].to_numpy())
-           if "ceiling_gain" in wf.columns else None)
     lines, cleared = [], {}
     for c in challengers:
         paired = wf.select("season", (pl.col("ll_incumbent") - pl.col(f"ll_{c}")).alias("diff"))
-        run = gate(paired, cluster=SEASON_CLUSTER, within=("season",), ceiling=top,
-                  actions=WIDTH_ACTIONS)
+        # #387: `WIDTH_HARNESS.decide(paired, ceiling_frame=wf)` is the one collapse of the
+        # `Ceiling(CEILING_ARM, wf["ceiling_gain"])` + `gate(...)` pair every challenger used
+        # to repeat -- `wf`, not `paired`, carries `"ceiling_gain"`.
+        run = WIDTH_HARNESS.decide(paired, ceiling_frame=wf)
         v, s = run.verdict[0], run.summary
         won = int((paired["diff"] > 0).sum())
         lines.append(f"  {c}: mean gain {s['mean']:+.5f} [{s['lo']:+.5f}, {s['hi']:+.5f}], "
