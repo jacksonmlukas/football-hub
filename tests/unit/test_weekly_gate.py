@@ -9,6 +9,7 @@ import polars as pl
 import pytest
 
 from hub.league import STARTERS
+from hub.ledger import Ledger
 from hub.models import experiment
 from hub.season import weekly_gate as G
 
@@ -133,7 +134,7 @@ def _gate_run(paired, **kw):
     return run_gate(paired, cluster=SEASON_CLUSTER, within=G.WITHIN, actions=G.ACTIONS,
                     name="weekly", arm_a="weekly", arm_b="consensus", unit=G.UNIT,
                     places=G.PLACES, show_n=False, bootstrap=200,
-                    ceiling=G.declared_ceiling(paired), record_width=False, **kw)
+                    ceiling=G.declared_ceiling(paired), ledger=Ledger(path=None, write=False), **kw)
 
 
 def test_a_join_failure_voids_the_run_however_large_the_result():
@@ -1127,7 +1128,7 @@ def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_pa
         return _inputs()
 
     monkeypatch.setattr(weekly_gate_data, "assemble_universe", assembles)
-    monkeypatch.setattr(G, "run_gate", partial(run_gate, record_width=False, bootstrap=100))
+    monkeypatch.setattr(G, "run_gate", partial(run_gate, ledger=Ledger(path=None, write=False), bootstrap=100))
     out = tmp_path / "paired.parquet"
     assert G.main(["--run", "--seasons", "2024", "--drafts", "1", "--out", str(out)]) == 0
     stamped = pl.read_parquet(out)

@@ -21,6 +21,7 @@ import polars as pl
 import pytest
 
 from hub.fetch import nfeloqb, odds
+from hub.ledger import Ledger, WidthEntry
 from hub.models import experiment, quarterback
 from hub.models import starter_change as sc
 from hub.models.market import MARGIN_SD, normal_cdf
@@ -453,7 +454,7 @@ def test_the_rule_reads_the_shipped_arm_and_never_the_oracle(tmp_path):
     verdict is the shipped arm's."""
     paired = _paired([2026, 2027, 2028], diff=-0.05).with_columns(
         pl.lit(0.05).alias("oracle_diff"))
-    run = sc.run(paired, needed=3, width_path=tmp_path / "w.json")
+    run = sc.run(paired, needed=3, ledger=Ledger(path=None))
     assert run.verdict[0] == "REMOVE"
 
 
@@ -521,11 +522,11 @@ def test_fewer_than_three_event_seasons_is_not_runnable_and_names_the_count_need
     firing rather than a bar to the module's ADOPT condition (#221's coefficient). The house
     rule is never read: a frame that would ADOPT at three seasons is NOT-RUNNABLE at two, and
     the sentence carries the event-season count the pilot says is needed."""
-    run = sc.run(_paired([2026, 2027]), needed=31, width_path=tmp_path / "w.json")
+    run = sc.run(_paired([2026, 2027]), needed=31, ledger=Ledger(path=None))
     assert run.verdict[0] == "NOT-RUNNABLE"
     assert "2 event-season" in run.verdict[1] and "31" in run.verdict[1]
     assert "exemption" in run.verdict[1] and "#221" in run.verdict[1]
-    enough = sc.run(_paired([2026, 2027, 2028]), needed=3, width_path=tmp_path / "w.json")
+    enough = sc.run(_paired([2026, 2027, 2028]), needed=3, ledger=Ledger(path=None))
     assert enough.verdict[0] == "ADOPT"
 
 
@@ -534,37 +535,40 @@ def test_the_verdict_names_itself_a_diagnostic_on_every_branch(tmp_path):
     module -- #221's line-move coefficient does, and this gate is read beside it. The three
     sentences say so, on ADOPT as much as on SHOW or REMOVE."""
     mixed = pl.concat([_paired([2026, 2027], diff=0.05), _paired([2028], diff=-0.05)])
-    show = sc.run(mixed, needed=3, width_path=tmp_path / "w.json")
+    show = sc.run(mixed, needed=3, ledger=Ledger(path=None))
     assert show.verdict[0] == "SHOW"
     assert "Diagnostic only" in show.verdict[1] and "#221" in show.verdict[1]
 
-    adopt = sc.run(_paired([2026, 2027, 2028]), needed=3, width_path=tmp_path / "w.json")
+    adopt = sc.run(_paired([2026, 2027, 2028]), needed=3, ledger=Ledger(path=None))
     assert adopt.verdict[0] == "ADOPT"
     assert "Diagnostic only" in adopt.verdict[1] and "#221" in adopt.verdict[1]
 
     remove = sc.run(_paired([2026, 2027, 2028], diff=-0.05), needed=3,
-                    width_path=tmp_path / "w.json")
+                    ledger=Ledger(path=None))
     assert remove.verdict[0] == "REMOVE"
     assert "Diagnostic only" in remove.verdict[1] and "#221" in remove.verdict[1]
 
 
 def test_no_rows_is_not_runnable_with_zero_event_seasons(tmp_path):
     run = sc.run(pl.DataFrame(schema={"season": pl.Int64, "diff": pl.Float64}), needed=None,
-                 width_path=tmp_path / "w.json")
+                 ledger=Ledger(path=None))
     assert run.verdict[0] == "NOT-RUNNABLE" and "0 event-season" in run.verdict[1]
 
 
-def test_not_runnable_publishes_no_interval_and_records_no_width(tmp_path):
+def test_not_runnable_publishes_no_interval_and_records_no_width():
     """The three-season floor is applied before the summary, the house verdict, the width
     history and the rendered lines -- not applied to the house verdict alone after they have
     already run. An underpowered run's `lines` are empty (no CI, no MDE, no ceiling check,
-    no stamp) and nothing is written to the width file even though this call asks to record
-    one, because a run that publishes no interval has no width to keep."""
-    width_path = tmp_path / "w.json"
-    run = sc.run(_paired([2026, 2027]), needed=31, width_path=width_path, record_width=True)
+    no stamp) and the ledger is never touched -- a run that publishes no interval has no width
+    to keep. Checked on the ledger itself, not a file: a comparable entry recorded afterward
+    sees no history, so nothing was written."""
+    ledger = Ledger(path=None)
+    run = sc.run(_paired([2026, 2027]), needed=31, ledger=ledger)
     assert run.verdict[0] == "NOT-RUNNABLE"
     assert run.lines == []
-    assert not width_path.exists()
+    probe = WidthEntry(name="quarterback_gate", config_digest="cfg", data_digest="dat",
+                       width=1.0, clusters=4.0, lo=-0.5, hi=0.5, verdict="SHOW")
+    assert ledger.record(probe).previous is None
 
 
 def test_the_ceiling_arm_can_make_stage_2_fire(tmp_path):
@@ -582,7 +586,7 @@ def test_the_ceiling_arm_can_make_stage_2_fire(tmp_path):
         "diff": [0.30, 0.28, -0.25, -0.30, 0.05, -0.05],
         "ceiling": [0.001] * 6,
     })
-    run = sc.run(paired, needed=3, width_path=tmp_path / "w.json")
+    run = sc.run(paired, needed=3, ledger=Ledger(path=None))
     assert run.verdict[0] == "NOT-RUNNABLE"
     assert "stage 2" in run.verdict[1]
     assert "event-season" not in run.verdict[1]              # not this module's own guard
@@ -1222,7 +1226,7 @@ def test_the_cli_ceiling_flag_defaults_on_and_no_ceiling_turns_it_off(tmp_path, 
     rows.write_csv(cache / nfeloqb.FILE)
     seen: list[bool] = []
 
-    def fake_run(paired, *, needed, ceiling=True, width_path=None, record_width=False):
+    def fake_run(paired, *, needed, ceiling=True, ledger=None):
         seen.append(ceiling)
         return experiment.GateRun({}, pl.DataFrame(), ("SHOW", "stub"), [], pl.DataFrame())
 

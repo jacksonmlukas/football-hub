@@ -24,9 +24,9 @@ say *when* the code ran, not what the gate decided, and the ticket's own listed 
 (verdict, why, summary, seasons, lines) does not include it. `_reduce` below drops `stamped`
 entirely and truncates `lines` at the blank separator `run_gate` inserts ahead of the stamp
 block, so a byte-identical assertion here is about the decision, not the tree it ran in. Both
-call sites keep `record_width=False` and an unopened `width_path`, so `review_width`'s own
-lines (which read a digest) stay empty on both sides of the seam rather than becoming a third
-thing that moves with the commit.
+call sites keep an in-memory `Ledger` (`ledger=Ledger(path=None)`), so the Ledger's own lines
+(which read a digest) stay empty on both sides of the seam rather than becoming a third thing
+that moves with the commit.
 
 **Rule 18, applied to this file.** `test_the_literal_plant_flips_the_boundary_case` is the
 direct, exact demonstration: `_disposition`'s stated rule is `gain >= 2 * se` is a win, and
@@ -47,6 +47,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from hub.ledger import Ledger
 from hub.models import experiment, margin
 from hub.models.experiment import SEASON_CLUSTER, Actions, Ceiling, run_gate
 
@@ -145,7 +146,7 @@ def _draft_gate_run():
     return run_gate(paired, cluster=SEASON_CLUSTER, within=bt.WITHIN, actions=bt.ACTIONS,
                     name="control-draft", arm_a="optimizer", arm_b="market",
                     void=bt.void_condition({"picks": 100.0, "market": 0.0, "optimizer": 0.0}),
-                    ceiling=None, seed=0, bootstrap=200, record_width=False)
+                    ceiling=None, seed=0, bootstrap=200, ledger=Ledger(path=None))
 
 
 def _draft_sensitivity_gate_run():
@@ -157,7 +158,7 @@ def _draft_sensitivity_gate_run():
     top = Ceiling(bt.CEILING_ARM, (paired["market"].to_numpy() * 0.0 + 3.0))
     return run_gate(paired, cluster=SEASON_CLUSTER, within=bt.WITHIN, actions=bt.ACTIONS,
                     name="control-draft-sensitivity", arm_a="optimizer", arm_b="market",
-                    void=None, ceiling=top, seed=0, bootstrap=200, record_width=False)
+                    void=None, ceiling=top, seed=0, bootstrap=200, ledger=Ledger(path=None))
 
 
 def _weekly_paired():
@@ -178,7 +179,7 @@ def _weekly_gate_run():
     return run_gate(paired, cluster=SEASON_CLUSTER, within=wg.WITHIN, actions=wg.ACTIONS,
                     name="control-weekly", arm_a="weekly", arm_b="consensus", unit=wg.UNIT,
                     places=wg.PLACES, show_n=False, void=None, ceiling=top, seed=0,
-                    bootstrap=200, record_width=False)
+                    bootstrap=200, ledger=Ledger(path=None))
 
 
 def _lineup_paired():
@@ -201,7 +202,7 @@ def _lineup_gate_run():
     return run_gate(paired, cluster=SEASON_CLUSTER, within=lg.WITHIN, actions=lg.ACTIONS,
                     name="control-lineup", arm_a="optimiser", arm_b="projections", unit=lg.UNIT,
                     void=None, ceiling=lg.declared_ceiling(paired), seed=0, bootstrap=200,
-                    record_width=False)
+                    ledger=Ledger(path=None))
 
 
 def _coverage_stats():
@@ -231,7 +232,8 @@ def _coverage_stats():
 
 def _coverage_gate_run():
     from hub.models import coverage
-    run, _, _ = coverage.shape_law(_coverage_stats(), width_path=Path("/nonexistent/control.json"))
+    run, _, _ = coverage.shape_law(_coverage_stats(),
+                                   ledger=Ledger(Path("/nonexistent/control.json")))
     return run
 
 
@@ -248,7 +250,8 @@ def _quarterback_paired():
 
 def _quarterback_gate_run():
     from hub.models import starter_change as sc
-    return sc.run(_quarterback_paired(), needed=3, width_path=Path("/nonexistent/control2.json"))
+    return sc.run(_quarterback_paired(), needed=3,
+                 ledger=Ledger(Path("/nonexistent/control2.json"), write=False))
 
 
 def _margin_wf(seasons=(2022, 2023, 2024, 2025), share=0.5, symmetric=True):
@@ -310,7 +313,7 @@ def _battery_gate_run(gains, *, ceiling=None, void=None, seed=0, noise_sd=0.01):
     return run_gate(paired, cluster=SEASON_CLUSTER, within=("unit",),
                     actions=_BATTERY_ACTIONS, name=f"control-battery-{seed}",
                     arm_a="arm", arm_b="incumbent", void=void, ceiling=top, seed=seed,
-                    bootstrap=300, record_width=False)
+                    bootstrap=300, ledger=Ledger(path=None))
 
 
 def _adopt_run():

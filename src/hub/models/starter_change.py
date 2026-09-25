@@ -84,6 +84,7 @@ from hub.cli import unavailable
 from hub.config import SEASON_AHEAD
 from hub.declare import not_an_input
 from hub.fetch import nfeloqb, odds
+from hub.ledger import Ledger
 from hub.models import experiment, quarterback
 from hub.models.experiment import SEASON_CLUSTER, run_gate
 from hub.models.market import MARGIN_SD, normal_cdf
@@ -546,7 +547,7 @@ def event_seasons_needed(target: float, season_sd: float, *, cap: int = 100) -> 
 
 
 def run(paired: pl.DataFrame, *, needed: int | None, ceiling: bool = True,
-        width_path: Path | None = None, record_width: bool = False) -> experiment.GateRun:
+        ledger: Ledger | None = None) -> experiment.GateRun:
     """The pre-registered precondition first, then -- only if it clears -- one gate run
     through `experiment.run_gate`. `ceiling` hands the declared arm's rows to the rule so
     stage 2 can fire.
@@ -554,13 +555,20 @@ def run(paired: pl.DataFrame, *, needed: int | None, ceiling: bool = True,
     **Fewer than `EVENT_SEASONS_MINIMUM` event-seasons is NOT-RUNNABLE ahead of the summary,
     the house verdict, the width history and the rendered lines -- not a verdict string
     swapped in after they have already run.** `run_gate` bootstraps an interval, decides
-    ADOPT/REMOVE/SHOW, renders the CI and the stamp, and writes this run's width into
-    `width_path` as a side effect of being called at all; computing any of that from an
+    ADOPT/REMOVE/SHOW, renders the CI and the stamp, and records this run's width through
+    `ledger` as a side effect of being called at all; computing any of that from an
     underpowered frame and then only replacing the verdict sentence would publish the
     interval it exists to keep unpublished and record a width history entry for a run with
     no license to have one. So the count is read directly off `paired` and, below the
     minimum, `run_gate` is never called: the verdict is NOT-RUNNABLE, `lines` is empty, and
-    nothing is written to `width_path`.
+    `ledger` is never touched.
+
+    **`ledger` replaces `width_path`/`record_width` (#385)**, the single parameter `run_gate`
+    itself takes now: `None` (the default) is `run_gate`'s own default, a file-backed
+    `hub.ledger.Ledger()` writing to `hub.ledger.WIDTH_STATE`. `main` builds its own explicit
+    `Ledger` reading `experiment.WIDTH_STATE` at call time -- not this function's default,
+    which is bound once -- so a test that monkeypatches `experiment.WIDTH_STATE` still
+    isolates the CLI from the repo's own history the way it always could.
     """
     k = paired["season"].n_unique() if paired.height else 0
     if k < EVENT_SEASONS_MINIMUM:
@@ -582,9 +590,7 @@ def run(paired: pl.DataFrame, *, needed: int | None, ceiling: bool = True,
     return run_gate(
         paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS, name="quarterback_gate",
         arm_a="the frozen line", arm_b="quarterback-adjusted", unit="log-loss per event game",
-        places=4, ceiling=arm,
-        width_path=width_path if width_path is not None else experiment.WIDTH_STATE,
-        record_width=record_width)
+        places=4, ceiling=arm, ledger=ledger)
 
 
 # --- the study --------------------------------------------------------------------------------
@@ -1186,7 +1192,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         paired = gate_rows(polls, season_games, tg, rows)
         # The width history is kept only when a run has an interval to keep; a run over
         # no rows would file a NaN width under the gate's name.
-        got = run(paired, needed=needed, ceiling=a.ceiling, record_width=paired.height > 0)
+        # The width history is kept only when a run has an interval to keep; a run over no
+        # rows would file a NaN width under the gate's name. `experiment.WIDTH_STATE`, read
+        # here rather than defaulted on `Ledger.__init__`, so a test that monkeypatches it
+        # still isolates this call from the repo's own history.
+        got = run(paired, needed=needed, ceiling=a.ceiling,
+                 ledger=Ledger(experiment.WIDTH_STATE, write=paired.height > 0))
         print(f"  gate: {paired.height} scored event games over "
               f"{paired['season'].n_unique() if paired.height else 0} event-season(s); the "
               f"arm is the shipped seam, nfeloqb.state as of the week's first game day")
