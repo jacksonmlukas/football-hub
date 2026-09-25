@@ -1,0 +1,50 @@
+{
+  "first_run": [],
+  "second_run_narrower": [
+    "\n  REQUIRES REVIEW: this run's season-clustered interval is NARROWER than the previous one -- 1.00 against 4.00, a ratio of 0.25.",
+    "  Clustering on the season predicts widening. Narrower is not automatically wrong -- a gate whose variance sat within the season honestly tightens -- but it contradicts the argument the cluster was chosen on, and #169 found five of nine intervals doing this unnoticed. Read it before quoting the interval."
+  ],
+  "third_run_wider_than_most_recent": [
+    "  interval width 3.00 against the previous run's 1.00 -- 3.00x, wider as clustering predicts"
+  ],
+  "different_config_digest_not_compared": [
+    "  interval width 0.50; 3 earlier run(s) of this gate at another config or data digest, not compared -- two runs are comparable only at an identical digest (docs/gate-power.md)"
+  ],
+  "unreadable_ledger": [
+    "  interval width 2.00; unreadable.json is on disk and does not parse, so this run is not recorded and nothing is compared -- the ledger is left as it is for a reader to recover, not replaced"
+  ],
+  "pre_362_dict_shape": [
+    "  interval width 2.00; 1 earlier run(s) of this gate at another config or data digest, not compared -- two runs are comparable only at an identical digest (docs/gate-power.md)"
+  ],
+  "seasons_first_run": [],
+  "seasons_entry_seasons_field": [
+    {
+      "disposition": "loss",
+      "gain": -1.12,
+      "m": 40,
+      "se": 0.3,
+      "season": 2022
+    },
+    {
+      "disposition": "loss",
+      "gain": -1.448,
+      "m": 40,
+      "se": 0.3,
+      "season": 2023
+    },
+    {
+      "disposition": "tie",
+      "gain": -0.259,
+      "m": 40,
+      "se": 0.3,
+      "season": 2024
+    },
+    {
+      "disposition": "loss",
+      "gain": -1.761,
+      "m": 40,
+      "se": 0.3,
+      "season": 2025
+    }
+  ]
+}
