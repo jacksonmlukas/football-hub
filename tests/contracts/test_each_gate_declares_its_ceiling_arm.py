@@ -23,7 +23,7 @@ re-listing which module has one.
 import pathlib
 
 import pytest
-from gate_harnesses import GATE_MODULES, all_harnesses
+from gate_harnesses import GATE_MODULES, all_harnesses, assert_declares_ceiling_arm
 
 
 def test_seven_harnesses_over_the_six_gate_modules():
@@ -38,10 +38,7 @@ def test_seven_harnesses_over_the_six_gate_modules():
 
 @pytest.mark.parametrize("key", sorted(all_harnesses()))
 def test_every_harness_declares_its_ceiling_arm_by_name(key):
-    arm = all_harnesses()[key].ceiling_arm
-    assert isinstance(arm, str) and arm.strip(), (
-        f"{key} has no ceiling_arm. Stage 2 of docs/gate-power.md is applied to each gate's "
-        f"*declared* arm, and a gate that declares none has nothing for the rule to read.")
+    assert_declares_ceiling_arm(key, all_harnesses()[key])
 
 
 def test_the_arms_are_distinct_so_no_two_numbers_read_as_one():

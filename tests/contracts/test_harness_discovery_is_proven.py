@@ -12,7 +12,7 @@ own last test plants a decision function in a temporary tree rather than trustin
 from pathlib import Path
 
 import pytest
-from gate_harnesses import harnesses_under
+from gate_harnesses import assert_declares_ceiling_arm, harnesses_under
 
 from hub.models.experiment import Actions, Harness
 
@@ -55,3 +55,14 @@ def test_a_harness_with_no_ceiling_arm_cannot_be_built():
     with pytest.raises(TypeError):
         Harness(name="planted", arm_a="a", arm_b="b", within=("x",),  # type: ignore[call-arg]
                 actions=Actions(adopt="A", remove="R", show="S"))
+
+
+@pytest.mark.parametrize("arm", ["", "   "])
+def test_a_harness_with_a_blank_ceiling_arm_fails_the_ceiling_contract(arm):
+    """The control the construction test above cannot be: `ceiling_arm=""` builds fine, so
+    only the contract stands between it and a ceiling line that names nothing. Planted
+    through the contract's own check, not a restatement of it."""
+    planted = Harness(name="planted", arm_a="a", arm_b="b", within=("x",), ceiling_arm=arm,
+                      actions=Actions(adopt="A", remove="R", show="S"))
+    with pytest.raises(AssertionError, match="no ceiling_arm"):
+        assert_declares_ceiling_arm("planted.PLANTED", planted)

@@ -85,3 +85,13 @@ def gate_harnesses() -> dict[str, Harness]:
         by_module.setdefault(module, {})[key] = harness
     return {module: next(iter(names.values())) for module, names in by_module.items()
             if module in GATE_MODULES and len(names) == 1}
+
+
+def assert_declares_ceiling_arm(key, harness):
+    """The contract's one check, callable on any harness -- so the planted control in
+    `test_harness_discovery_is_proven.py` runs this, not a copy of it. Used by
+    `test_each_gate_declares_its_ceiling_arm.py`."""
+    arm = harness.ceiling_arm
+    assert isinstance(arm, str) and arm.strip(), (
+        f"{key} has no ceiling_arm. Stage 2 of docs/gate-power.md is applied to each gate's "
+        f"*declared* arm, and a gate that declares none has nothing for the rule to read.")

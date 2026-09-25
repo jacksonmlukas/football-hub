@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from hub import atomic
+from hub.declare import decision
 from hub.jsonio import stamp as _now
 from hub.paths import STATE_DIR
 
@@ -198,6 +199,7 @@ class Ledger:
                     for gate, rec in got.items() if isinstance(rec, dict)]
         return []
 
+    @decision
     def record(self, entry: WidthEntry) -> Comparison:
         """Compare `entry` against this gate's most recent comparable one, and append it.
 
