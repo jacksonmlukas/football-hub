@@ -65,9 +65,9 @@ from hub import atomic, jsonio
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.declare import not_an_input
+from hub.ledger import WIDTH_STATE, Ledger
 from hub.models import predict
 from hub.models.experiment import (
-    WIDTH_STATE,
     Actions,
     GateRun,
     Harness,
@@ -541,7 +541,7 @@ def shape_scores(g: pl.DataFrame) -> pl.DataFrame:
 
 def shape_law(stats: pl.DataFrame, *, min_weeks: int = MIN_WEEKS, min_prior: int = MIN_PRIOR,
               min_mu: float = MIN_MU, seed: int = 0,
-              width_path: Path = WIDTH_STATE) -> tuple[GateRun, pl.DataFrame, dict[str, Any]]:
+              ledger: Ledger | None = None) -> tuple[GateRun, pl.DataFrame, dict[str, Any]]:
     """The pre-registered comparison: one gate run, the paired rows, and the pooled diagnostic.
 
     The rows are the coverage gate's -- prior centre, the same filters -- restricted to the
@@ -549,13 +549,18 @@ def shape_law(stats: pl.DataFrame, *, min_weeks: int = MIN_WEEKS, min_prior: int
     after the sign is seen. The season is the cluster, the MDE comes from the interval's own
     bootstrap, and the ceiling is `CEILING_ARM` on the same rows. The pooled figure over every
     row, clipped weeks included, is returned beside it as a diagnostic and decides nothing.
+
+    `ledger` replaces `width_path` (#385) -- `None` is `run_gate`'s own default, a file-backed
+    `hub.ledger.Ledger()` writing to `hub.ledger.WIDTH_STATE`. `main` builds its own explicit
+    `Ledger` from this module's own `WIDTH_STATE`, read at call time rather than defaulted
+    here, so a test that monkeypatches `coverage.WIDTH_STATE` still isolates it.
     """
     g = graded(centred(player_weeks(stats), "prior", min_weeks=min_weeks,
                        min_prior=min_prior, min_mu=min_mu))
     scored = shape_scores(g)
     paired = scored.filter(pl.col("p10_raw") > 0.0)
     pooled = {"n": int(scored.height), "mean": float(cast(float, scored["diff"].mean()))}
-    run = SHAPE_HARNESS.run(paired, seed=seed, width_path=width_path)
+    run = SHAPE_HARNESS.run(paired, seed=seed, ledger=ledger)
     return run, paired, pooled
 
 
@@ -719,7 +724,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return unavailable("hub.models.coverage", "nflverse player_stats", e)
         try:
             run, paired, pooled = shape_law(stats, min_prior=a.min_prior,
-                                            width_path=WIDTH_STATE)
+                                            ledger=Ledger(WIDTH_STATE))
         except (ValueError, NotEnoughWeeks) as e:
             print(f"hub.models.coverage: {e}", file=sys.stderr)
             return 1

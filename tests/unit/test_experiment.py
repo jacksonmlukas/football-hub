@@ -9,7 +9,6 @@ All offline.
 """
 import functools
 import hashlib
-import json
 import math
 import re
 import statistics
@@ -794,171 +793,22 @@ def test_a_first_run_has_nothing_to_compare_and_says_nothing():
     assert got.lines == [] and not got.requires_review
 
 
-def _review_width(name, summary, *, path, verdict="SHOW", config_digest="cfg", data_digest="dat",
-                  write=True):
-    return experiment.review_width(name, summary, verdict=verdict, config_digest=config_digest,
-                                   data_digest=data_digest, path=path, write=write)
-
-
-def test_the_width_is_recorded_for_the_next_run_and_carries_the_review_flag(tmp_path):
-    """Printed lines scroll past; the record is what a later reader has. Two runs of the same
-    gate: the first has nothing to compare against, the second compares against the first."""
-    path = tmp_path / "gate-width.json"
-    first = {"lo": -2.0, "hi": 2.0, "clusters": 4.0}
-    assert _review_width("draft", first, path=path) == []
-    entries = json.loads(path.read_text())["entries"]
-    assert len(entries) == 1 and entries[0]["width"] == pytest.approx(4.0)
-
-    second = {"lo": -0.5, "hi": 0.5, "clusters": 4.0}
-    said = _review_width("draft", second, path=path, verdict="REMOVE")
-    assert "REQUIRES REVIEW" in "\n".join(said)
-    entries = json.loads(path.read_text())["entries"]
-    # Append-only (#362): the first run's row is still there, unmodified.
-    assert len(entries) == 2
-    assert entries[0]["width"] == pytest.approx(4.0)
-    entry = entries[1]
-    assert entry["requires_review"] is True and entry["width"] == pytest.approx(1.0)
-    assert entry["verdict"] == "REMOVE"
-    assert entry["gate"] == "draft"
-    assert entry["config_digest"] == "cfg" and entry["data_digest"] == "dat"
-    assert isinstance(entry["timestamp"], str) and entry["timestamp"]
-
-
-def test_one_gate_s_history_is_not_another_s(tmp_path):
-    """Keyed by name (among the other keys #362 adds), so three gates do not overwrite each
-    other and read a narrowing that is really a different gate's interval."""
-    path = tmp_path / "gate-width.json"
-    _review_width("draft", {"lo": -2.0, "hi": 2.0, "clusters": 4.0}, path=path)
-    assert _review_width("weekly", {"lo": -0.5, "hi": 0.5, "clusters": 4.0}, path=path) == []
-    entries = json.loads(path.read_text())["entries"]
-    assert {e["gate"] for e in entries} == {"draft", "weekly"}
-
-
-def test_a_third_run_of_the_same_gate_compares_against_the_most_recent_one(tmp_path):
-    """Not the first entry ever written for a gate -- the last one -- so a gate run three
-    times reads its own second run's width, not its first."""
-    path = tmp_path / "gate-width.json"
-    _review_width("draft", {"lo": -2.0, "hi": 2.0, "clusters": 4.0}, path=path)  # width 4
-    _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path)  # width 2
-    said = _review_width("draft", {"lo": -1.5, "hi": 1.5, "clusters": 4.0}, path=path)  # 3
-    assert "wider" in "\n".join(said), "3 against the most recent 2, not the oldest 4"
-
-
-def test_the_pre_362_dict_shape_still_reads_but_is_not_compared(tmp_path):
-    """A file this function has not yet rewritten -- the one-record-per-gate shape #362
-    replaces -- does not read as empty, so an old file's history is not silently dropped.
-    But an old entry carries no digest, so it is of *unknown* digest and is not compared
-    against: read into the ledger and named, not read as a narrowing (2026-09-21)."""
-    path = tmp_path / "gate-width.json"
-    path.write_text(json.dumps({"draft": {"width": 4.0, "clusters": 4.0, "lo": -2.0, "hi": 2.0,
-                                          "requires_review": False}}))
-    said = _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path)
-    text = "\n".join(said)
-    assert "REQUIRES REVIEW" not in text
-    assert "1 earlier run(s) of this gate at another config or data digest" in text
-    entries = json.loads(path.read_text())["entries"]
-    assert len(entries) == 2 and entries[0]["width"] == pytest.approx(4.0), "the old row is kept"
-
-
-def test_two_runs_at_different_digests_are_not_compared(tmp_path):
-    """Rule 18's positive control for the digest condition: the same gate, the same width
-    halving, at a different config digest -- the case that produced a meaningless REQUIRES
-    REVIEW on 2026-09-21 (a --holdout draft run against a non-holdout one). It must not
-    compare, and it must say why."""
-    path = tmp_path / "gate-width.json"
-    _review_width("draft", {"lo": -2.0, "hi": 2.0, "clusters": 4.0}, path=path,
-                  config_digest="holdout-2022")
-    said = _review_width("draft", {"lo": -0.5, "hi": 0.5, "clusters": 4.0}, path=path,
-                         config_digest="shipped")
-    text = "\n".join(said)
-    assert "REQUIRES REVIEW" not in text
-    assert "1 earlier run(s) of this gate at another config or data digest" in text
-    entries = json.loads(path.read_text())["entries"]
-    assert entries[-1]["requires_review"] is False
-
-
-def test_the_same_digest_still_compares_and_a_data_digest_alone_is_enough_to_block(tmp_path):
-    """Both halves of the condition: identical digests compare (the flag can still fire), and
-    a changed *data* digest alone -- same constants, a different board -- blocks it too."""
-    path = tmp_path / "gate-width.json"
-    _review_width("draft", {"lo": -2.0, "hi": 2.0, "clusters": 4.0}, path=path)
-    same = _review_width("draft", {"lo": -0.5, "hi": 0.5, "clusters": 4.0}, path=path)
-    assert "REQUIRES REVIEW" in "\n".join(same)
-    other = _review_width("draft", {"lo": -0.25, "hi": 0.25, "clusters": 4.0}, path=path,
-                          data_digest="another-board")
-    assert "REQUIRES REVIEW" not in "\n".join(other)
-
-
-def test_an_unreadable_history_costs_a_line_and_not_the_run_and_is_not_replaced(tmp_path):
-    """CLAUDE.md's degradation rule. A gate that cannot read its own history still has a
-    verdict; a harness that dies because a JSON file is half-written does not. **And the
-    history is not destroyed** (review of 2026-09-21): before it, an unreadable ledger read
-    as no history, the run appended its one row to nothing and wrote the file back -- an
-    append-only ledger replaced by a one-entry file that then looked valid. The positive
-    control is the bytes: plant an unparsable file, run with `write=True`, and the bytes
-    are what they were."""
-    path = tmp_path / "gate-width.json"
-    planted = "{ this is not json"
-    path.write_text(planted)
-    said = _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path)
-    assert path.read_text() == planted, "the unreadable ledger was replaced"
-    assert len(said) == 1 and "does not parse" in said[0] and "not replaced" in said[0]
-    assert "REQUIRES REVIEW" not in said[0]
-
-
-def test_a_missing_ledger_is_created_and_a_present_one_is_appended_atomically(tmp_path):
-    """The other side of the same fix: absent is not unreadable -- a first run creates the
-    file, a second appends, and no scratch file is left beside it."""
-    path = tmp_path / "gate-width.json"
-    _review_width("draft", {"lo": -2.0, "hi": 2.0, "clusters": 4.0}, path=path)
-    _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path)
-    entries = json.loads(path.read_text())["entries"]
-    assert len(entries) == 2
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["gate-width.json"]
-
-
-# --- #382: the ledger's `seasons` field ---------------------------------------------------
-
-
-def test_a_ledger_entry_round_trips_its_seasons_field(tmp_path):
-    """`review_width`'s `seasons` argument, when handed in, lands in the written entry exactly
-    as `_season_records` reads the frame -- a later reader gets the per-season `gain`/`se`/`m`/
-    `disposition` back off disk, not only off the run's stdout (#382, split from #381)."""
-    path = tmp_path / "gate-width.json"
-    seasons = pl.DataFrame({
-        "season": [2022, 2023, 2024, 2025],
-        "gain": [-1.120, -1.448, -0.259, -1.761],
-        "n": [40, 40, 40, 40],
-        "se": [0.30, 0.30, 0.30, 0.30],
-        "m": [40, 40, 40, 40],
-    })
-    experiment.review_width("weekly", {"lo": -1.6, "hi": -0.5, "clusters": 4.0},
-                            verdict="SHOW", config_digest="cfg", data_digest="dat",
-                            path=path, seasons=seasons)
-    entries = json.loads(path.read_text())["entries"]
-    got = entries[-1]["seasons"]
-    assert got == experiment._season_records(seasons)
-    assert [r["season"] for r in got] == [2022, 2023, 2024, 2025]
-    assert [r["disposition"] for r in got] == ["loss", "loss", "tie", "loss"]
-
-
-def test_a_ledger_entry_with_no_seasons_frame_carries_no_seasons_field(tmp_path):
-    """The field is additive: a call that hands in no `seasons` frame -- every call in this
-    file above, and every pre-#382 entry already on disk -- writes exactly the pre-#382 shape,
-    so the pre-#362 dict-shape read (which has no `seasons` key either) stays unaffected."""
-    path = tmp_path / "gate-width.json"
-    _review_width("draft", {"lo": -1.0, "hi": 1.0, "clusters": 4.0}, path=path)
-    entries = json.loads(path.read_text())["entries"]
-    assert "seasons" not in entries[-1]
+# The Ledger's own tests -- construction, comparability, the atomic write, the pre-#362 read,
+# and the `seasons` round trip -- moved to `tests/unit/test_ledger.py` (#385), which is where
+# `hub.ledger.Ledger` lives now that `review_width`'s file-as-interface is gone. This file
+# keeps the one test below that reads *this* module's own Gate machinery (`_confident_season`,
+# `_tied_season`, `_HUGE_CEILING`, `_ACTIONS`, defined further down) end to end into a Ledger.
 
 
 def test_a_planted_tie_and_a_planted_loss_are_recorded_in_the_ledger(tmp_path):
     """Rule 18 (docs/method.md): plant the condition a check exists to detect and confirm it
     fires, before the check is trusted. A confident loss and a tie, run through the real
-    `per_season` bootstrap and into `review_width`, must be recorded on disk as `loss` and
-    `tie` -- not merely as branch logic asserted in `test_a_tie_blocks_remove_...` above, but
-    in the ledger entry #382 adds."""
-    path = tmp_path / "gate-width.json"
+    `per_season` bootstrap and into the Ledger, must be recorded as `loss` and `tie` -- not
+    merely as branch logic asserted in `test_a_tie_blocks_remove_...` above, but in the entry
+    #382 adds."""
+    from hub.ledger import Ledger, WidthEntry
+
+    ledger = Ledger(tmp_path / "gate-width.json")
     seasons = pl.concat([
         _confident_season(2022, -3.0), _confident_season(2023, -3.0),
         _confident_season(2024, -3.0),
@@ -966,10 +816,15 @@ def test_a_planted_tie_and_a_planted_loss_are_recorded_in_the_ledger(tmp_path):
     ])
     run = experiment.gate(seasons, cluster=experiment.SEASON_CLUSTER, within=("unit",),
                           ceiling=_HUGE_CEILING, actions=_ACTIONS, bootstrap=2000)
-    experiment.review_width("draft", run.summary, verdict=run.verdict[0], config_digest="cfg",
-                            data_digest="dat", path=path, seasons=run.seasons)
-    entries = json.loads(path.read_text())["entries"]
-    by_season = {r["season"]: r["disposition"] for r in entries[-1]["seasons"]}
+    entry = WidthEntry(name="draft", config_digest="cfg", data_digest="dat",
+                       width=float(run.summary["hi"]) - float(run.summary["lo"]),
+                       clusters=float(run.summary.get("clusters", 0)),
+                       lo=float(run.summary["lo"]), hi=float(run.summary["hi"]),
+                       verdict=run.verdict[0],
+                       seasons=experiment._season_records(run.seasons))
+    got = ledger.record(entry)
+    assert got.entry.seasons is not None
+    by_season = {r["season"]: r["disposition"] for r in got.entry.seasons}
     assert by_season[2022] == "loss" and by_season[2023] == "loss" and by_season[2024] == "loss"
     assert by_season[2025] == "tie"
 
@@ -1962,25 +1817,8 @@ def test_the_t_quantile_refuses_a_degrees_of_freedom_it_has_no_table_for():
     assert experiment.t_quantile(0.975, 1) > experiment.t_quantile(0.975, 3) > 0
 
 
-def test_a_width_state_that_cannot_be_written_does_not_take_the_gate_down(tmp_path):
-    """The narrowing record is a convenience, and the gate's verdict is not.
-
-    `review_width` remembers the previous interval so criterion 5 can report a run that
-    narrowed. If that file cannot be written -- a read-only checkout, a runner with no state
-    directory -- the gate must still return its verdict. What it loses is the comparison on
-    the *next* run, which is the right thing to lose.
-    """
-    d = tmp_path / "ro"
-    d.mkdir()
-    path = d / "gate-width.json"
-    d.chmod(0o500)                                  # writable no longer
-    try:
-        got = _review_width("draft", {"lo": -2.0, "hi": -1.0, "clusters": 4.0}, path=path)
-        assert got is not None, "a gate lost its verdict to a state file it could not write"
-        assert not path.exists(), "the fixture did not actually make the write fail"
-    finally:
-        d.chmod(0o700)
-
+# `test_a_width_state_that_cannot_be_written_does_not_take_the_gate_down` moved to
+# `tests/unit/test_ledger.py` (#385) -- it is a `Ledger` behaviour now, not this module's.
 
 # --- #37: the family is counted, and the false-discovery threshold is printed beside the t ---
 

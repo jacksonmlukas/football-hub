@@ -13,6 +13,7 @@ import pytest
 
 from hub.draft import backtest as bt
 from hub.draft.board import Board, BuildReport
+from hub.ledger import Ledger
 from hub.models.experiment import SEASON_CLUSTER, Ceiling, gate
 from hub.names import player_key
 
@@ -1055,7 +1056,7 @@ def _gate_run(paired, bound):
     from hub.models.experiment import SEASON_CLUSTER, Ceiling, run_gate
     return run_gate(paired, cluster=SEASON_CLUSTER, within=bt.WITHIN, actions=bt.ACTIONS,
                     name="draft", arm_a="optimizer", arm_b="market", bootstrap=200,
-                    ceiling=Ceiling(bt.CEILING_ARM, bound["diff"]), record_width=False)
+                    ceiling=Ceiling(bt.CEILING_ARM, bound["diff"]), ledger=Ledger(path=None, write=False))
 
 
 def test_a_ceiling_that_does_not_bound_says_so_loudly():
@@ -1593,7 +1594,7 @@ def test_below_the_floor_the_verdict_is_unchanged_from_today_for_the_same_inputs
     assert bt.void_condition(rates) is None
     ceiling = Ceiling("foresight", pl.Series([1e6] * paired.height))
     kw = {"cluster": SEASON_CLUSTER, "within": bt.WITHIN, "actions": bt.ACTIONS, "name": "draft",
-          "arm_a": "optimizer", "arm_b": "market", "bootstrap": 200, "record_width": False,
+          "arm_a": "optimizer", "arm_b": "market", "bootstrap": 200, "ledger": Ledger(path=None, write=False),
           "ceiling": ceiling}
     with_void = run_gate(paired, void=bt.void_condition(rates), **kw)
     before = run_gate(paired, **kw)
@@ -1790,7 +1791,7 @@ def _in_process_gate(monkeypatch, tmp_path, *, inner, argv=()):
     paired = paired.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
     monkeypatch.setattr(bt, "walk_forward_inputs", loads)
     monkeypatch.setattr(bt, "compare", lambda *a, **k: paired)
-    monkeypatch.setattr(bt, "run_gate", partial(run_gate, record_width=False, bootstrap=100))
+    monkeypatch.setattr(bt, "run_gate", partial(run_gate, ledger=Ledger(path=None, write=False), bootstrap=100))
     out = tmp_path / "paired.parquet"
     assert bt.main(["--seasons", "2024", "--drafts", "4", "--out", str(out), *argv]) == 0
     return pl.read_parquet(out)
@@ -1964,7 +1965,7 @@ def test_the_sweep_is_reachable_from_the_command_line(monkeypatch, tmp_path):
     from functools import partial
 
     from hub.models.experiment import run_gate
-    monkeypatch.setattr(bt, "run_gate", partial(run_gate, record_width=False))
+    monkeypatch.setattr(bt, "run_gate", partial(run_gate, ledger=Ledger(path=None, write=False)))
     out = tmp_path / "sweep.parquet"
     assert bt.main(["--seasons", "2024", "--noise-scales", "0.5,1.5", "--out", str(out)]) == 0
     table = pl.read_parquet(out)
@@ -1995,7 +1996,7 @@ def test_noise_scales_mode_returns_the_table_in_the_typed_result(monkeypatch):
     from functools import partial
 
     from hub.models.experiment import run_gate
-    monkeypatch.setattr(bt, "run_gate", partial(run_gate, record_width=False))
+    monkeypatch.setattr(bt, "run_gate", partial(run_gate, ledger=Ledger(path=None, write=False)))
     got = bt.noise_scales_mode(
         {2024: _served(board)}, {2024: real}, scales=[0.5, 1.5], n_drafts=3, seed=0,
         rounds=3, n_draft_sims=2, n_season_sims=5, with_ceiling=False,
@@ -2150,7 +2151,7 @@ def test_the_gate_cli_defaults_to_one_worker_per_season(monkeypatch, tmp_path):
                             {2024: _served(board), 2025: _served(board)},
                             {2024: real, 2025: real}))
     monkeypatch.setattr(bt, "compare", fake_compare)
-    monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, record_width=False, bootstrap=50))
+    monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, ledger=Ledger(path=None, write=False), bootstrap=50))
     assert bt.main(["--seasons", "2024,2025", "--drafts", "1"]) == 0
     assert got["workers"] == 2
     assert bt.main(["--seasons", "2024,2025", "--drafts", "1", "--workers", "1"]) == 0
@@ -2173,7 +2174,7 @@ def test_default_gate_mode_returns_the_paired_frame_and_the_verdict(monkeypatch)
                            "picks": [4] * 4})
     paired = paired.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
     monkeypatch.setattr(bt, "compare", lambda *a, **k: paired)
-    monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, record_width=False, bootstrap=50))
+    monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, ledger=Ledger(path=None, write=False), bootstrap=50))
 
     board = _full_board(24)
     real = _flat_realised(board)
@@ -2197,7 +2198,7 @@ def test_default_gate_mode_names_the_hold_out_constants_when_asked(monkeypatch):
                            "picks": [4] * 4})
     paired = paired.with_columns((pl.col("optimizer") - pl.col("market")).alias("diff"))
     monkeypatch.setattr(bt, "compare", lambda *a, **k: paired)
-    monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, record_width=False, bootstrap=50))
+    monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, ledger=Ledger(path=None, write=False), bootstrap=50))
 
     board = _full_board(24)
     real = _flat_realised(board)
@@ -2282,7 +2283,7 @@ def test_the_default_worker_count_never_exceeds_the_cores(monkeypatch, tmp_path)
                             dict.fromkeys(seasons, real)))
     monkeypatch.setattr(bt, "compare", fake_compare)
     from functools import partial
-    monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, record_width=False, bootstrap=50))
+    monkeypatch.setattr(bt, "run_gate", partial(bt.run_gate, ledger=Ledger(path=None, write=False), bootstrap=50))
     monkeypatch.setattr(bt.os, "cpu_count", lambda: 2)
     assert bt.main(["--seasons", "2022,2023,2024", "--drafts", "1"]) == 0
     assert got["workers"] == 2

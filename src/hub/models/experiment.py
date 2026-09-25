@@ -37,19 +37,16 @@ its own incumbent and its own sentences.
 """
 from __future__ import annotations
 
-import json
 import math
 import statistics
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from enum import Enum
-from pathlib import Path
 from typing import NamedTuple, Protocol, TypeVar
 
 import numpy as np
 import numpy.typing as npt
 import polars as pl
 
-from hub import atomic
 from hub.config import (
     NO_FRAMES,
     commit,
@@ -59,9 +56,8 @@ from hub.config import (
     resolved_config,
 )
 from hub.declare import chosen, not_an_input
-from hub.jsonio import stamp as _now
+from hub.ledger import WIDTH_STATE, Ledger, WidthEntry  # noqa: F401 -- re-exported; see below
 from hub.names import player_key
-from hub.paths import STATE_DIR
 
 # One column list, so both harnesses hit one cache entry. `nflverse._cache_path` keys on the
 # sorted column set -- deliberately, so a caller asking for six columns is never served an
@@ -804,12 +800,6 @@ def small_sample_report(s: Mapping[str, float], seasons: pl.DataFrame | None = N
     return lines
 
 
-# Where a gate's last season-clustered interval width is remembered between runs. Under
-# `state/` with the odds poller and the CFBD quota, which is where this repo keeps the small
-# facts one run leaves for the next -- not under `data/processed/`, which is measured output.
-WIDTH_STATE = STATE_DIR / "gate-width.json"
-
-
 class Narrowing(NamedTuple):
     """Whether this run's interval narrowed against the last, and what to say about it."""
     ratio: float
@@ -849,124 +839,6 @@ def narrowing(width: float, previous: float | None, *, places: int = 2) -> Narro
         "-- a gate whose variance sat within the season honestly tightens -- but it "
         "contradicts the argument the cluster was chosen on, and #169 found five of nine "
         "intervals doing this unnoticed. Read it before quoting the interval."])
-
-
-def _width_state(path: Path) -> list[dict] | None:
-    """Every entry on disk, oldest first, or nothing. Never raises -- CLAUDE.md's degradation
-    rule: a gate that could not read its own history still has a verdict to report; what it
-    loses is one comparison line, and losing that is strictly better than a harness that dies
-    because a JSON file is half-written.
-
-    **#362 (S5): a list under `"entries"`, not a `{gate: record}` dict.** The dict shape was
-    overwritten on every run -- one record per gate, no matter how many times it had been run
-    -- so nothing on disk could say which run produced a number or whether a run had ever
-    happened between two published figures. Reads the pre-#362 dict shape too, as a single
-    entry per gate with no `config_digest`/`data_digest`/`timestamp`/`verdict`, so a file this
-    function has not yet rewritten does not read as empty.
-    """
-    if not path.exists():
-        return []
-    try:
-        got = json.loads(path.read_text())
-    except (OSError, ValueError):
-        # Present and unreadable is not the same fact as absent (review of 2026-09-21): an
-        # absent ledger has no history to lose, an unreadable one has history nobody can
-        # see. `None` tells the writer to leave the bytes alone rather than replace them.
-        return None
-    if isinstance(got, dict) and isinstance(got.get("entries"), list):
-        return [e for e in got["entries"] if isinstance(e, dict)]
-    if isinstance(got, dict):
-        # The shape before #362: `{gate: {width, clusters, lo, hi, requires_review}}`.
-        return [{"gate": gate, **rec} for gate, rec in got.items() if isinstance(rec, dict)]
-    return []
-
-
-def review_width(name: str, summary: Mapping[str, float], *, verdict: str,
-                 config_digest: str, data_digest: str, path: Path = WIDTH_STATE,
-                 places: int = 2, write: bool = True,
-                 seasons: pl.DataFrame | None = None) -> list[str]:
-    """Compare this run's interval width with the last one under `name`, and append this one.
-
-    The comparison is against the *most recent previous entry for this gate*, read back to
-    front so three gates' histories interleaved in one file do not confuse each other.
-    `requires_review` is written into the record as well as printed, because the printed line
-    scrolls past and the record is what a later reader has.
-
-    **Append-only, since #362 (S5).** Every call that writes adds one entry rather than
-    overwriting the one this gate already had -- keyed by `(gate, config_digest, data_digest,
-    timestamp)`, with the verdict recorded alongside the width, so two runs of the same gate
-    are two rows a later reader can tell apart rather than one row silently replaced by the
-    other. `config_digest`/`data_digest` are the caller's -- `run_gate` reads them off the
-    same `stamped_for_publication` call every other stamp comes from, so this ledger's digests
-    cannot disagree with the row's own.
-
-    **`seasons`, since #382, optional and additive.** When the caller hands in the frame
-    `per_season` produced, the entry gains a `seasons` field -- `_season_records`' list of
-    per-season `season`/`gain`/`se`/`m`/`disposition` dicts -- so a tie (or a loss, or a win)
-    is readable from the ledger afterwards and not only from the run's stdout, per #381's open
-    question about whether a tie is abstaining on noisy seasons or small effects. `None` (the
-    default) omits the field entirely, which is what every pre-#382 entry -- and every call
-    this repo's own test suite makes without a `seasons` frame -- still writes, so the
-    pre-#362 dict-shape read and the append-only shape both keep reading exactly as before.
-    """
-    width = float(summary["hi"]) - float(summary["lo"])
-    entries = _width_state(path)
-    if entries is None:
-        # The ledger is on disk and will not parse. Before 2026-09-21 this read as "no
-        # history", the run appended its one row to nothing and wrote the file back -- an
-        # append-only ledger replaced by a one-entry file that then looked valid. The
-        # comparison line is lost either way; the history is not, because nothing writes.
-        return [f"  interval width {width:.{places}f}; {path.name} is on disk and does not "
-                f"parse, so this run is not recorded and nothing is compared -- the ledger "
-                f"is left as it is for a reader to recover, not replaced"]
-    # **Comparable only at an identical config and data digest** (2026-09-21). The ledger
-    # recorded both digests from #362 and this lookup matched on the gate's name alone, so a
-    # `--holdout` run of the draft gate was compared with a non-holdout one -- different
-    # constants, a "6% narrowing" that meant nothing, and a REQUIRES REVIEW that cost a
-    # diagnosis to close. `docs/gate-power.md` already says two runs are comparable only at
-    # an identical digest; the row carried the digests; the check did not read them. It does
-    # now. An earlier run at another digest -- or a pre-#362 entry, which has none -- is
-    # counted and named, never compared: a width against a different model is not a
-    # narrowing, and a flag that cannot tell the two apart is not a guard.
-    previous = None
-    elsewhere = 0
-    for e in reversed(entries):
-        if e.get("gate") != name or not isinstance(e.get("width"), int | float):
-            continue
-        if e.get("config_digest") == config_digest and e.get("data_digest") == data_digest:
-            previous = float(e["width"])
-            break
-        elsewhere += 1
-    said = narrowing(width, previous, places=places)
-    lines = list(said.lines)
-    if previous is None and elsewhere:
-        lines.append(f"  interval width {width:.{places}f}; {elsewhere} earlier run(s) of this "
-                     f"gate at another config or data digest, not compared -- two runs are "
-                     f"comparable only at an identical digest (docs/gate-power.md)")
-    if write:
-        entry: dict[str, object] = {
-            "gate": name,
-            "config_digest": config_digest,
-            "data_digest": data_digest,
-            "timestamp": _now(),
-            "width": width,
-            "clusters": float(summary.get("clusters", 0)),
-            "lo": float(summary["lo"]), "hi": float(summary["hi"]),
-            "verdict": verdict,
-            "requires_review": said.requires_review,
-        }
-        if seasons is not None:
-            entry["seasons"] = _season_records(seasons)
-        entries.append(entry)
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            # Landing whole: a process killed mid-write used to leave exactly the truncated
-            # file the branch above now refuses to write over.
-            atomic.write_text(path, json.dumps({"entries": entries}, indent=2,
-                                               sort_keys=True) + "\n")
-        except OSError:
-            pass
-    return lines
 
 
 def realised_ppg(stats: pl.DataFrame) -> pl.DataFrame:
@@ -1506,7 +1378,7 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
              unit: str = "points per team game", places: int = 2, show_n: bool = True,
              void: str | None = None, ceiling: Ceiling | None = None, seed: int = 0,
              bootstrap: int = BOOTSTRAP, boards: Mapping[int, ReportedFrame] | None = None,
-             width_path: Path = WIDTH_STATE, record_width: bool = True) -> GateRun:
+             ledger: Ledger | None = None, recipe: str | None = None) -> GateRun:
     """One gate run: summarise, break out by season, take the verdict, render, stamp.
 
     **`cluster` has no default, and that is the most important line of the signature.**
@@ -1522,8 +1394,15 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
     the coverage gate, the event (a declared no-op) for the quarterback gate. See
     `tests/contracts/test_gates_tie_test_names_its_within_season_unit.py`.
 
-    `name` keys the interval-width history in `WIDTH_STATE`, so three gates do not overwrite
-    each other's; `record_width=False` is for a test, which has no history to keep.
+    **`ledger` replaces `width_path`/`record_width` (#385).** `None`, the default, is a fresh
+    file-backed `hub.ledger.Ledger()` writing to `hub.ledger.WIDTH_STATE` -- the same place and
+    the same "on by default" `record_width=True` always meant. A caller wanting isolation --
+    a test that must not touch a real file, or `hub.draft.backtest`'s noise sweep, which must
+    not crowd the draft gate's own history -- hands in its own `Ledger`: an in-memory one
+    (`Ledger(path=None)`, sharable across calls so a test can see its own second run compare
+    against its first) or a file-backed one with `write=False`. `recipe` is #384's arm string,
+    folded into the ledger's key; `None`, its default and today's only value anywhere in this
+    repo, compares the way `review_width` always did -- on name and digests alone.
 
     `void` is the caller's precondition, already phrased -- the weekly gate voids above a
     join-failure share, and since #46 so does the draft gate. `gate` honours it ahead of every
@@ -1548,10 +1427,10 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
     summary, seasons, verdict = core.summary, core.seasons, core.verdict
     stamped, stamp = stamped_for_publication(paired, boards)
     # The ledger's own digests come off the same stamp every other row in `stamped` carries,
-    # so `review_width`'s record cannot name a config or a data byte this run did not read.
-    # `stamped` is cleared to no rows on an empty `paired` (`stamped_for_publication`'s own
-    # empty-frame rule), so the columns exist but there is no row to read them off; the
-    # digests are recomputed the same way in that one case.
+    # so its entry cannot name a config or a data byte this run did not read. `stamped` is
+    # cleared to no rows on an empty `paired` (`stamped_for_publication`'s own empty-frame
+    # rule), so the columns exist but there is no row to read them off; the digests are
+    # recomputed the same way in that one case.
     if stamped.height:
         row = stamped.row(0, named=True)
         cfg_dig, data_dig = row["cfg_digest"], row["data_digest"]
@@ -1559,14 +1438,20 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
         from hub.fetch.nflverse import pins_this_run
         cfg_dig = config_digest(resolved_config())
         data_dig = data_digest(pins_this_run())
+    writer = ledger if ledger is not None else Ledger()
+    entry = WidthEntry(name=name, recipe=recipe, config_digest=cfg_dig, data_digest=data_dig,
+                       width=float(summary["hi"]) - float(summary["lo"]),
+                       clusters=float(summary.get("clusters", 0)),
+                       lo=float(summary.get("lo", float("nan"))),
+                       hi=float(summary.get("hi", float("nan"))),
+                       verdict=verdict[0], seasons=_season_records(seasons))
+    comparison = writer.record(entry)
     lines = [
         *paired_report(summary, arm_a=arm_a, arm_b=arm_b, unit=unit, places=places,
                        show_n=show_n, ceiling_arm=None if ceiling is None else ceiling.arm),
         *per_season_report(seasons, places=places),
         *small_sample_report(summary, seasons, unit=unit, places=places),
-        *review_width(name, summary, verdict=verdict[0], config_digest=cfg_dig,
-                      data_digest=data_dig, path=width_path, places=places,
-                      write=record_width, seasons=seasons),
+        *comparison.lines,
         *ceiling_check(summary, places=places),
         "",
         *stamp.split("\n"),
@@ -1641,8 +1526,8 @@ class Harness(NamedTuple):
     def run(self, paired: pl.DataFrame, *, ceiling_frame: pl.DataFrame | None = None,
            name: str | None = None, void: str | None = None, seed: int = 0,
            bootstrap: int | None = None, boards: Mapping[int, ReportedFrame] | None = None,
-           show_n: bool = True, width_path: Path = WIDTH_STATE,
-           record_width: bool = True) -> GateRun:
+           show_n: bool = True, ledger: Ledger | None = None,
+           recipe: str | None = None) -> GateRun:
         """`run_gate` (#135's composition: `gate` + render + stamp), reading everything but
         the frame and the run's own preconditions off this declaration.
 
@@ -1661,7 +1546,7 @@ class Harness(NamedTuple):
             unit=self.unit, places=self.places, show_n=show_n, void=void,
             ceiling=self.ceiling(paired if ceiling_frame is None else ceiling_frame),
             seed=seed, bootstrap=self.bootstrap if bootstrap is None else bootstrap,
-            boards=boards, width_path=width_path, record_width=record_width)
+            boards=boards, ledger=ledger, recipe=recipe)
 
     def decide(self, paired: pl.DataFrame, *, ceiling_frame: pl.DataFrame | None = None,
               void: str | None = None, seed: int = 0,

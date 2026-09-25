@@ -18,6 +18,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from hub.ledger import Ledger
 from hub.models import experiment
 from hub.models.experiment import SEASON_CLUSTER, Actions, Ceiling, run_gate
 
@@ -43,7 +44,8 @@ def _paired(seed=0, seasons=4, per=6, shift=0.0):
 
 
 def _run(paired, **kw: Any):
-    """The shared call with the state file pointed nowhere, so a test writes no history.
+    """The shared call with a fresh in-memory ledger, so a test writes no history unless it
+    hands in its own `ledger=` to share across two calls.
 
     `within` defaults to `"draft"`, this module's own fixture column, and is overridden by
     callers whose frame renamed it to `"roster"` -- the same rename `_paired` itself takes.
@@ -51,7 +53,7 @@ def _run(paired, **kw: Any):
     base: dict[str, Any] = {"cluster": SEASON_CLUSTER, "within": ("draft",),
                             "actions": _ACTIONS, "name": "test",
                             "arm_a": "a", "arm_b": "b", "bootstrap": 200,
-                            "record_width": False}
+                            "ledger": Ledger(path=None)}
     return run_gate(paired, **(base | kw))
 
 
@@ -212,26 +214,28 @@ def test_a_ceiling_below_the_effect_says_so_loudly_in_the_gate_s_own_places():
     assert not any("CEILING BELOW" in ln for ln in bounded.lines)
 
 
-def test_the_report_is_the_block_then_the_small_sample_lines_then_the_width_review(tmp_path):
+def test_the_report_is_the_block_then_the_small_sample_lines_then_the_width_review():
+    """One `Ledger` shared across both calls -- the in-memory adapter (#385) in place of a tmp
+    file -- so the second run's comparison is asserted on `run.lines`, not on a file read."""
     paired = _paired(seed=5)
-    path = tmp_path / "gate-width.json"
-    first = _run(paired, seed=5, record_width=True, width_path=path)
+    ledger = Ledger(path=None)
+    first = _run(paired, seed=5, ledger=ledger)
     assert first.lines[0].startswith("\n  n=24  a - b = ")
     assert "95% CI" in first.lines[1] and "MDE at 80% power" in first.lines[2]
     assert any("4 clusters" in ln for ln in first.lines)
     assert not any("interval width" in ln for ln in first.lines), "a first run has no history"
-    second = _run(paired, seed=5, record_width=True, width_path=path)
+    second = _run(paired, seed=5, ledger=ledger)
     assert any("interval width" in ln for ln in second.lines), "the second run compares"
-    assert path.exists()
 
 
-def test_the_width_history_is_keyed_by_the_gate_s_name(tmp_path):
-    import json
-    path = tmp_path / "gate-width.json"
-    _run(_paired(), name="draft", record_width=True, width_path=path)
-    _run(_paired(), name="lineup", record_width=True, width_path=path)
-    entries = json.loads(path.read_text())["entries"]
-    assert {e["gate"] for e in entries} == {"draft", "lineup"}
+def test_the_width_history_is_keyed_by_the_gate_s_name():
+    """Keyed by name: a `draft` run and a `lineup` run share one `Ledger` and neither sees the
+    other's history -- checked on the `Comparison` each run got, not a file's contents."""
+    ledger = Ledger(path=None)
+    draft = _run(_paired(), name="draft", ledger=ledger)
+    lineup = _run(_paired(), name="lineup", ledger=ledger)
+    assert not any("interval width" in ln for ln in draft.lines)
+    assert not any("interval width" in ln for ln in lineup.lines)
 
 
 def test_an_empty_frame_runs_and_says_nothing_was_measured():
@@ -288,7 +292,7 @@ def test_every_gate_stamps_the_data_it_scored_against(paired, site, boards):
     # attached (#295). Structural, like `ReportedFrame`; the digest is over the frame.
     played = {2024: _Played(paired, None)} if boards else None
     got = run_gate(paired, actions=_ACTIONS, name="p", arm_a="a", arm_b="b",
-                   bootstrap=50, record_width=False, boards=played, **site)
+                   bootstrap=50, ledger=Ledger(path=None), boards=played, **site)
     assert got.stamped.height == paired.height
     assert set(got.stamped.columns) == set(paired.columns) | set(STAMPS)
     assert got.stamped.select(paired.columns).equals(paired), "a stamp changed a row"

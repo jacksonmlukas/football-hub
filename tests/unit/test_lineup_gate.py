@@ -12,6 +12,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from hub.ledger import Ledger
 from hub.models.experiment import SEASON_CLUSTER, Ceiling, gate
 from hub.names import player_key
 from hub.season import lineup_gate as lg
@@ -56,7 +57,7 @@ def _gate_run(paired, *, ceiling_arm=lg.DECLARED_CEILING_ARM, **kw):
                     name="lineup", arm_a="optimiser", arm_b="projections", unit=lg.UNIT,
                     bootstrap=200,
                     ceiling=lg.declared_ceiling(paired, ceiling_arm=ceiling_arm),
-                    record_width=False, **kw)
+                    ledger=Ledger(path=None, write=False), **kw)
 
 
 def test_an_interval_above_zero_in_every_season_trusts_the_optimiser():
@@ -606,7 +607,7 @@ def _in_process_gate(monkeypatch, tmp_path, *, inner):
     monkeypatch.setattr(cohort_mod, "cohort",
                         lambda *a, **k: cohort_mod.Cohort([[0, 1]], [[]], ["QB", "RB"]))
     monkeypatch.setattr(lg, "compare", lambda *a, **k: paired)
-    monkeypatch.setattr(lg, "run_gate", partial(run_gate, record_width=False, bootstrap=100))
+    monkeypatch.setattr(lg, "run_gate", partial(run_gate, ledger=Ledger(path=None, write=False), bootstrap=100))
     out = tmp_path / "paired.parquet"
     assert lg.main(["--seasons", "2024", "--drafts", "1", "--out", str(out)]) == 0
     return pl.read_parquet(out)
