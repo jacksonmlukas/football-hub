@@ -82,6 +82,7 @@ from hub.models.experiment import (
     Actions,
     Ceiling,
     Field,
+    Harness,
     per_season,
     reading,
     run_gate,
@@ -393,10 +394,11 @@ def declared_ceiling(paired: pl.DataFrame) -> Ceiling | None:
     `experiment.run_gate` prints *perfect foresight* here and *a perfect spread* for the
     lineup gate (#135); until then this gate rendered its own line through a `ceiling_report`
     and handed `summarise` nothing, so the not-runnable rule could never read its ceiling.
+
+    **#387: the one collapse.** This function's whole body is now `HARNESS.ceiling(paired)`;
+    it stays as a thin wrapper because `main` calls it by name.
     """
-    if "ceiling_diff" not in paired.columns:
-        return None
-    return Ceiling(CEILING_ARM, paired["ceiling_diff"])
+    return HARNESS.ceiling(paired)
 
 
 def void_condition(cover: dict[str, float] | None) -> str | None:
@@ -431,6 +433,14 @@ ACTIONS = Actions(
     remove="REMOVE: worse than a free ranking. Delete the module rather than shipping it as "
            "an option.",
     show="SHOW, NEVER RANK ON: printed beside consensus, never sorted on.")
+
+# #387: this module's Harness -- one of the seven. `main` reads it through `declared_ceiling`
+# and still calls `run_gate` directly rather than `Harness.run` -- keeping the module-level
+# `run_gate` name a caller can monkeypatch, which `tests/unit/test_weekly_gate.py` does to
+# inject a faster bootstrap and `record_width=False`; #385's Ledger is what ends the need for
+# that monkeypatch, not this ticket.
+HARNESS = Harness(name="weekly", arm_a="weekly", arm_b="consensus", within=WITHIN,
+                  ceiling_arm=CEILING_ARM, actions=ACTIONS, unit=UNIT, places=PLACES)
 
 
 def coverage(g: GateInputs, weeks: Sequence[int] = GATE_WEEKS) -> dict[str, float]:
@@ -922,10 +932,13 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
                          ceiling=a.ceiling, restrict=restrict)
         # `SEASON_CLUSTER`, stated at this gate's own call site: the run has no default for it.
-        run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS,
-                       name="weekly", arm_a="weekly", arm_b="consensus", unit=UNIT,
-                       places=PLACES, show_n=False, void=void_condition(cover),
-                       ceiling=declared_ceiling(paired), seed=a.seed)
+        # #387: every other fixed field below is `HARNESS`'s own -- `run_gate` stays the name
+        # called (see `HARNESS`'s own comment, above) rather than `HARNESS.run`.
+        run = run_gate(paired, cluster=SEASON_CLUSTER, within=HARNESS.within,
+                       actions=HARNESS.actions, name=HARNESS.name, arm_a=HARNESS.arm_a,
+                       arm_b=HARNESS.arm_b, unit=HARNESS.unit, places=HARNESS.places,
+                       show_n=False, void=void_condition(cover),
+                       ceiling=HARNESS.ceiling(paired), seed=a.seed)
         s, seasons_tbl = run.summary, run.seasons
         # The assembled column's frame is handed back rather than rebuilt, so this is two extra
         # scorings and not three, and the row it fills is the one the verdict is read off. No

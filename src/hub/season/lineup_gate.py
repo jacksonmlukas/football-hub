@@ -45,6 +45,7 @@ from hub.models.experiment import (
     SEASON_CLUSTER,
     Actions,
     Ceiling,
+    Harness,
     run_gate,
     walk_forward_inputs,
 )
@@ -278,10 +279,12 @@ def declared_ceiling(paired: pl.DataFrame, *,
 
     `ceiling_arm` defaults to the arm this gate declares, for the reason `compare`'s does:
     which arm that should be is #138's one line, and nothing else in the tree names one.
+
+    **#387: the one collapse.** This function's whole body is now `HARNESS._replace(
+    ceiling_arm=CEILING_ARM_NAMES[ceiling_arm]).ceiling(paired)`; it stays as a thin wrapper
+    because `main` calls it by name.
     """
-    if "ceiling_diff" not in paired.columns:
-        return None
-    return Ceiling(CEILING_ARM_NAMES[ceiling_arm], paired["ceiling_diff"])
+    return HARNESS._replace(ceiling_arm=CEILING_ARM_NAMES[ceiling_arm]).ceiling(paired)
 
 
 # #335, ADR-0019's amendment: this gate's within-season repeated-measure unit is the roster --
@@ -297,6 +300,17 @@ ACTIONS = Actions(
     remove="REMOVE: the optimiser is worse than sorting on projection. Enumerating every "
            "legal lineup to maximise a win probability actively costs points.",
     show="START YOUR PROJECTIONS: variance-awareness buys nothing detectable.")
+
+# #387: this module's Harness -- one of the seven. `ceiling_arm` is the one field a run
+# overrides: `--ceiling-arm` (#138) picks which of `CEILING_ARM_NAMES` plays, so `main` builds
+# `HARNESS._replace(ceiling_arm=...)` rather than a fifth `Ceiling(...)` construction. `main`
+# still calls `run_gate` directly rather than `HARNESS.run` -- keeping the module-level
+# `run_gate` name a caller can monkeypatch, which `tests/unit/test_lineup_gate.py` does to
+# inject a faster bootstrap and `record_width=False`; #385's Ledger is what ends the need for
+# that monkeypatch, not this ticket.
+HARNESS = Harness(name="lineup", arm_a="optimiser", arm_b="projections", within=WITHIN,
+                  ceiling_arm=CEILING_ARM_NAMES[DECLARED_CEILING_ARM], actions=ACTIONS,
+                  unit=UNIT)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -388,11 +402,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             rosters[yr] = made
 
         paired = compare(rosters, realised, ceiling=a.ceiling, ceiling_arm=a.ceiling_arm)
-        run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS,
-                       name="lineup",
-                       arm_a="optimiser", arm_b="projections", unit=UNIT,
-                       ceiling=declared_ceiling(paired, ceiling_arm=a.ceiling_arm), seed=a.seed,
-                       boards=boards)
+        # #387: `HARNESS._replace(ceiling_arm=...)` for the one field #138 lets a run choose;
+        # every other fixed field below is `HARNESS`'s own -- `run_gate` stays the name called
+        # (see `HARNESS`'s own comment, above) rather than `HARNESS.run`.
+        harness = HARNESS._replace(ceiling_arm=CEILING_ARM_NAMES[a.ceiling_arm])
+        run = run_gate(paired, cluster=SEASON_CLUSTER, within=harness.within,
+                       actions=harness.actions, name=harness.name, arm_a=harness.arm_a,
+                       arm_b=harness.arm_b, unit=harness.unit,
+                       ceiling=harness.ceiling(paired), seed=a.seed, boards=boards)
         for line in run.lines:
             print(line)
         print(f"\n  {run.verdict[1]}")
