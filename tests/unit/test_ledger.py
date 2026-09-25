@@ -253,3 +253,30 @@ def test_a_planted_recipe_regression_would_be_caught():
     b = _entry(recipe="b", width=4.0, lo=-2.0, hi=2.0)
     assert a.key != b.key
     assert not a.comparable(b)
+
+
+def test_an_entry_with_null_bounds_reads_and_does_not_take_the_gate_down(tmp_path):
+    """Rule 18 for the read side's own degradation promise: a row whose `lo`, `hi` or
+    `clusters` is `null` (hand-edited, or written by a future field's absence) is read as
+    missing numbers, not raised on -- `record` never raises, whatever it finds on disk."""
+    path = tmp_path / "gate-width.json"
+    path.write_text(json.dumps({"entries": [
+        {"gate": "draft", "recipe": None, "config_digest": "cfg", "data_digest": "dat",
+         "width": 4.0, "clusters": None, "lo": None, "hi": None, "verdict": "SHOW"}]}))
+    got = Ledger(path).record(_entry(width=1.0, lo=-0.5, hi=0.5))
+    assert got.previous is not None and got.previous.width == pytest.approx(4.0)
+
+
+def test_a_recipe_less_row_at_the_same_digests_is_named_for_its_recipe_not_a_digest(tmp_path):
+    """Every row `review_width` wrote after #362 carries both digests and no `recipe` key.
+    Such a row is skipped only because its recipe is unknown, so the line says that -- the
+    digest line would name a mismatch that is not there."""
+    path = tmp_path / "gate-width.json"
+    path.write_text(json.dumps({"entries": [
+        {"gate": "draft", "config_digest": "cfg", "data_digest": "dat", "width": 4.0,
+         "clusters": 4.0, "lo": -2.0, "hi": 2.0, "verdict": "SHOW"}]}))
+    got = Ledger(path).record(_entry(width=1.0, lo=-0.5, hi=0.5))
+    text = "\n".join(got.lines)
+    assert got.previous is None and got.elsewhere == 1
+    assert "1 earlier run(s) of this gate of unknown recipe" in text
+    assert "another config or data digest" not in text

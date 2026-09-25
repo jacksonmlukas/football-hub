@@ -119,21 +119,26 @@ class WidthEntry:
         `review_width` always did.
         """
         known = "recipe" in d
-        width = d.get("width")
         return WidthEntry(
             name=str(d.get("gate", "")),
             config_digest=str(d.get("config_digest", "")),
             data_digest=str(d.get("data_digest", "")),
-            width=float(width) if isinstance(width, int | float) else float("nan"),
-            clusters=float(d.get("clusters", 0) or 0),
-            lo=float(d.get("lo", float("nan"))),
-            hi=float(d.get("hi", float("nan"))),
+            width=_num(d.get("width")),
+            clusters=_num(d.get("clusters"), 0.0),
+            lo=_num(d.get("lo")),
+            hi=_num(d.get("hi")),
             verdict=str(d.get("verdict", "")),
             recipe=d.get("recipe"),
             seasons=d.get("seasons"),
             timestamp=d.get("timestamp"),
             known=known,
         )
+
+
+def _num(v: object, missing: float = float("nan")) -> float:
+    """A number read off disk, or `missing` -- never a raise: `null`, a string or an absent
+    key in one row must not take a gate run down (`Ledger.record` never raises)."""
+    return float(v) if isinstance(v, int | float) and not isinstance(v, bool) else missing
 
 
 class Comparison(NamedTuple):
@@ -221,6 +226,7 @@ class Ledger:
 
         previous: WidthEntry | None = None
         elsewhere = 0
+        unknown = 0
         for e in reversed(entries):
             if e.name != stamped.name:
                 continue
@@ -228,15 +234,26 @@ class Ledger:
                 previous = e
                 break
             elsewhere += 1
+            # Skipped only for want of a recipe: same digests, no "recipe" key on disk. A row
+            # whose digests also differ keeps the digest line, which is the true reason for it.
+            unknown += (not e.known and (e.config_digest, e.data_digest)
+                        == (stamped.config_digest, stamped.data_digest))
 
         said = narrowing(stamped.width, previous.width if previous is not None else None,
                          places=self.places)
         lines = list(said.lines)
-        if previous is None and elsewhere:
-            lines.append(f"  interval width {stamped.width:.{self.places}f}; {elsewhere} "
+        if previous is None and elsewhere - unknown:
+            lines.append(f"  interval width {stamped.width:.{self.places}f}; "
+                         f"{elsewhere - unknown} "
                          f"earlier run(s) of this gate at another config or data digest, "
                          f"not compared -- two runs are comparable only at an identical "
                          f"digest (docs/gate-power.md)")
+        if previous is None and unknown:
+            # Named apart from the digest line: these rows are skipped because nobody recorded
+            # their recipe (written before #385), not because a digest differs.
+            lines.append(f"  interval width {stamped.width:.{self.places}f}; {unknown} "
+                         f"earlier run(s) of this gate of unknown recipe (written before the "
+                         f"ledger key carried one), not compared -- state/README.md")
 
         if self.write:
             entries.append(stamped)
