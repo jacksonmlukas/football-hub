@@ -78,7 +78,7 @@ from hub.models.experiment import (
     BOOTSTRAP,  # used by `noise_sensitivity`, and tests reach it as `bt.BOOTSTRAP`
     SEASON_CLUSTER,
     Actions,
-    Ceiling,
+    Harness,
     realised_ppg,  # noqa: F401 -- same
     run_gate,
     stamped_for_publication,  # noqa: F401 -- same; it was written here and moved (#135)
@@ -702,10 +702,11 @@ def noise_sensitivity(boards: dict[int, Board], realised: dict[int, pl.DataFrame
         if with_ceiling:
             top = ceiling(boards, realised, n_drafts=n_drafts, seed=seed, rounds=rounds,
                           on_draft=on_draft, opp_noise=scale)
-            bound = Ceiling(CEILING_ARM, top["diff"])
+            bound = HARNESS.ceiling(top)
         rates = join_failure_rates(paired)
-        run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS,
-                       name=f"draft noise x{scale:g}", arm_a="optimizer", arm_b="market",
+        run = run_gate(paired, cluster=SEASON_CLUSTER, within=HARNESS.within,
+                       actions=HARNESS.actions, name=f"draft noise x{scale:g}",
+                       arm_a=HARNESS.arm_a, arm_b=HARNESS.arm_b,
                        void=void_condition(rates), ceiling=bound, seed=seed,
                        bootstrap=bootstrap, boards=boards, record_width=False)
         stamps = (run.stamped.select(STAMPS).row(0, named=True) if run.stamped.height
@@ -963,6 +964,18 @@ ACTIONS = Actions(
     remove="REMOVE: championship equity leaves the draft-night output. A tiebreaker "
            "measurably worse than the market steers close calls the wrong way.",
     show="NO CHANGE: the market leads and equity stays a tiebreaker.")
+
+# #387: this module's Harness -- one of the seven, shared by both `run_gate` call sites
+# (`default_gate_mode` and `noise_sensitivity`) since both name the same arms, unit and
+# actions and differ only in `name` and `bootstrap`, which `Harness.run`/the call itself
+# override. `ceiling_column="diff"` names `ceiling()`'s own frame -- not `paired`'s, which
+# carries the *arms'* diff under the same name -- so a caller always hands `HARNESS.ceiling`
+# that separate frame (`top`, below) rather than `paired` itself. Both call sites still name
+# `run_gate` directly rather than `HARNESS.run`, keeping the module-level name the seven
+# `monkeypatch.setattr(bt, "run_gate", ...)` sites in `tests/unit/test_backtest.py` patch;
+# #385's Ledger is what ends the need for that monkeypatch, not this ticket.
+HARNESS = Harness(name="draft", arm_a="optimizer", arm_b="market", within=WITHIN,
+                  ceiling_arm=CEILING_ARM, actions=ACTIONS, ceiling_column="diff")
 
 
 # Above this share of either arm's drafted names lost to a join failure, the run is VOID
@@ -1303,11 +1316,12 @@ def default_gate_mode(boards: dict[int, Board], realised: dict[int, pl.DataFrame
         print("  measuring the ceiling: the same arm, given the season in advance ...")
         top = ceiling(boards, realised, n_drafts=n_drafts, seed=seed, rounds=rounds,
                       on_draft=_tick("ceiling") if progress else None)
-        bound = Ceiling(CEILING_ARM, top["diff"])
+        bound = HARNESS.ceiling(top)
 
     rates = join_failure_rates(paired)
-    run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS, name="draft",
-                   arm_a="optimizer", arm_b="market", void=void_condition(rates),
+    run = run_gate(paired, cluster=SEASON_CLUSTER, within=HARNESS.within,
+                   actions=HARNESS.actions, name=HARNESS.name, arm_a=HARNESS.arm_a,
+                   arm_b=HARNESS.arm_b, void=void_condition(rates),
                    ceiling=bound, seed=seed, boards=boards)
     lines = [*join_report(rates), *run.lines]
     for line in lines:
