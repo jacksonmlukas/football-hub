@@ -11,36 +11,57 @@ make the rule read literally. That amendment is honest only if every gate *decla
 name where it prints, so no two gates' numbers can be read as one quantity -- which is what this
 holds. A gate whose ceiling line said only "ceiling" would let three numbers in three units be
 tabulated as one, and the rule would be comparing against a word.
+
+**#387.** Before, this file hand-kept `GATES`, a tuple of module names, and read `CEILING_ARM`
+off each -- a fifth registry, alongside the three other hand-kept tuples #387's own ticket
+found drifting (coverage was in none of them, margin in none). Every gate now declares one or
+more `Harness` (`hub.models.experiment.Harness`; `hub.models.margin` declares two, for its two
+verdicts), whose `ceiling_arm` field *is* the declared arm, so this iterates
+`tests/gate_harnesses.py`'s discovery -- seven harnesses over six modules -- rather than
+re-listing which module has one.
 """
-import importlib
+import pathlib
 
 import pytest
-
-GATES = ("hub.draft.backtest", "hub.season.weekly_gate", "hub.season.lineup_gate",
-         "hub.models.starter_change")
+from gate_harnesses import GATE_MODULES, all_harnesses
 
 
-@pytest.mark.parametrize("module", GATES)
-def test_every_gate_declares_its_ceiling_arm_by_name(module):
-    mod = importlib.import_module(module)
-    arm = getattr(mod, "CEILING_ARM", None)
+def test_seven_harnesses_over_the_six_gate_modules():
+    """The discovery itself, and the count #387's ticket fixes: seven declarations (margin has
+    two, for its two verdicts; every other gate module has one)."""
+    found = all_harnesses()
+    assert {key.rsplit(".", 1)[0] for key in found} == set(GATE_MODULES), (
+        f"expected a Harness in each of {sorted(GATE_MODULES)}, found declarations in "
+        f"{sorted({k.rsplit('.', 1)[0] for k in found})}")
+    assert len(found) == 7, f"expected seven harnesses, found {len(found)}: {sorted(found)}"
+
+
+@pytest.mark.parametrize("key", sorted(all_harnesses()))
+def test_every_harness_declares_its_ceiling_arm_by_name(key):
+    arm = all_harnesses()[key].ceiling_arm
     assert isinstance(arm, str) and arm.strip(), (
-        f"{module} has no CEILING_ARM. Stage 2 of docs/gate-power.md is applied to each gate's "
+        f"{key} has no ceiling_arm. Stage 2 of docs/gate-power.md is applied to each gate's "
         f"*declared* arm, and a gate that declares none has nothing for the rule to read.")
 
 
-def test_the_three_arms_are_distinct_so_no_two_numbers_read_as_one():
-    """Two gates naming their arm identically would invite exactly the tabulation the
+def test_the_arms_are_distinct_so_no_two_numbers_read_as_one():
+    """Two *gate modules* naming their arm identically would invite exactly the tabulation the
     amendment exists to prevent -- unless they genuinely bound the same quantity, which the
     draft and weekly gates (both foresight) do not: one is a season known in advance to a
-    drafter, the other a week known in advance to a projection."""
-    arms = {m: importlib.import_module(m).CEILING_ARM for m in GATES}
-    assert len(set(arms.values())) == len(arms), f"two gates share an arm name: {arms}"
+    drafter, the other a week known in advance to a projection.
+
+    One arm per module, not per harness: `margin`'s two verdicts (`SHAPE_HARNESS`,
+    `WIDTH_HARNESS`) deliberately share `CEILING_ARM` -- both bound the same in-sample
+    "perfect P(win | spread)" -- which is one declared quantity read by two verdicts, not two
+    gates converging on one name by accident."""
+    arms = {}
+    for key, h in all_harnesses().items():
+        arms[key.rsplit(".", 1)[0]] = h.ceiling_arm
+    assert len(set(arms.values())) == len(arms), f"two gate modules share an arm name: {arms}"
 
 
 def test_the_rule_names_the_declared_arm_not_foresight():
     """The amendment itself, held. Stage 2 must not quietly revert to 'foresight ceiling'."""
-    import pathlib
     doc = (pathlib.Path(__file__).resolve().parents[2] / "docs" / "gate-power.md").read_text()
     stage2 = doc[doc.index("**Stage 2"):doc.index("**Stage 2") + 900]
     assert "declared ceiling arm" in stage2, (
@@ -52,12 +73,19 @@ def test_the_rule_names_the_declared_arm_not_foresight():
         "an amended pre-registration that does not say it was amended is worse than none")
 
 
-def test_each_gate_prints_the_arm_on_its_ceiling_line():
+@pytest.mark.parametrize("module", sorted(GATE_MODULES))
+def test_each_gate_module_prints_its_arms_on_its_ceiling_lines(module):
     """Declaring it is not enough; the line a reader sees has to carry it. Held on the source
-    rather than by running three network gates: the constant must appear in the same file's
-    ceiling output, not only at the top of the module."""
+    rather than by running a network gate: every arm this module's Harness(es) declare has to
+    appear somewhere in the module beyond the Harness construction itself -- a module constant,
+    a CLI help string, or both."""
+    import importlib
     import inspect
-    for module in GATES:
-        src = inspect.getsource(importlib.import_module(module))
-        assert src.count("CEILING_ARM") >= 2, (
-            f"{module} declares CEILING_ARM but nothing in the module reads it")
+
+    src = inspect.getsource(importlib.import_module(module))
+    arms = {key.rsplit(".", 1)[1]: h.ceiling_arm for key, h in all_harnesses().items()
+            if key.rsplit(".", 1)[0] == module}
+    for name, arm in arms.items():
+        assert src.count(arm) >= 1, (
+            f"{module}'s {name} declares ceiling_arm={arm!r} but nothing in the module prints "
+            f"it")
