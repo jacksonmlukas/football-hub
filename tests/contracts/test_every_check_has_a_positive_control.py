@@ -44,9 +44,11 @@ _DECISION_NAME = re.compile(r"^(verdict|[a-z_]+_verdict|gate|run_gate|screen|[a-
 
 # Guards that decide something without carrying a decision name. Named here so the naming
 # rule stays the discovery rule for everything else, and so a guard added to this list is a
-# deliberate act with a control beside it. `review_width` flags a narrowing interval; on
-# 2026-09-21 it compared a --holdout run against a non-holdout one and flagged nothing real.
-EXPLICIT_GUARDS: tuple[str, ...] = ("hub.models.experiment.review_width",)
+# deliberate act with a control beside it. `Ledger.record` flags a narrowing interval; on
+# 2026-09-21 its predecessor (`review_width`) compared a --holdout run against a non-holdout
+# one and flagged nothing real -- #385 moved the guard to a method, which is why `_decisions`
+# below also looks inside classes for a name on this list rather than only at module level.
+EXPLICIT_GUARDS: tuple[str, ...] = ("hub.ledger.Ledger.record",)
 
 # module.function -> (test file, the control tests). Each named test plants the condition
 # its decision exists to detect. Where a decision has two directions, both are named.
@@ -69,10 +71,16 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_not_runnable_preempts_every_branch_but_void",
         "test_void_still_preempts_not_runnable",
     )),
-    "hub.models.experiment.review_width": ("tests/unit/test_experiment.py", (
-        "test_the_width_is_recorded_for_the_next_run_and_carries_the_review_flag",
+    # #385: `review_width`'s guard moved to `Ledger.record`. Required controls per the
+    # ticket: an unreadable ledger is not replaced, different digests do not compare, the
+    # same key does, `seasons` round-trips, and -- new here -- #384's own case, two entries
+    # at one digest pair with different recipes.
+    "hub.ledger.Ledger.record": ("tests/unit/test_ledger.py", (
+        "test_an_unreadable_history_costs_a_line_and_not_the_run_and_is_not_replaced",
         "test_two_runs_at_different_digests_are_not_compared",
         "test_the_same_digest_still_compares_and_a_data_digest_alone_is_enough_to_block",
+        "test_a_ledger_entry_round_trips_its_seasons_field",
+        "test_same_digests_different_recipes_do_not_compare",
     )),
     "hub.models.experiment.run_gate": ("tests/unit/test_gate_run.py", (
         "test_a_void_condition_preempts_every_branch_and_is_the_caller_s_sentence",
@@ -132,7 +140,10 @@ OWED: dict[str, str] = {
 
 
 def _decisions(src: Path) -> dict[str, Path]:
-    """`module.function` -> file, for every top-level function whose name says it decides."""
+    """`module.function` -> file, for every top-level function whose name says it decides,
+    plus every method named in `EXPLICIT_GUARDS` -- `Ledger.record` (#385) is a guard behind a
+    class, not a module-level function, so the naming regex alone cannot find it; the registry
+    still can, deliberately, the same way it already does for a module-level guard."""
     found: dict[str, Path] = {}
     for path in sorted(src.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -140,11 +151,17 @@ def _decisions(src: Path) -> dict[str, Path]:
         if module.endswith(".__init__"):
             module = module[: -len(".__init__")]
         for node in tree.body:
-            if not isinstance(node, ast.FunctionDef):
-                continue
-            qualified = f"{module}.{node.name}"
-            if _DECISION_NAME.match(node.name) or qualified in EXPLICIT_GUARDS:
-                found[qualified] = path
+            if isinstance(node, ast.FunctionDef):
+                qualified = f"{module}.{node.name}"
+                if _DECISION_NAME.match(node.name) or qualified in EXPLICIT_GUARDS:
+                    found[qualified] = path
+            elif isinstance(node, ast.ClassDef):
+                for sub in node.body:
+                    if not isinstance(sub, ast.FunctionDef):
+                        continue
+                    qualified = f"{module}.{node.name}.{sub.name}"
+                    if qualified in EXPLICIT_GUARDS:
+                        found[qualified] = path
     return found
 
 

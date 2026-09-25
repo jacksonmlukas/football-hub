@@ -8,22 +8,36 @@ What this repo has spent against two metered third-party accounts:
   is unknown and one pull may re-read it (#264).
 - `cfbd-quota.json` — CFBD calls made, by billing month, against the 1,000-a-month free tier.
 - `gate-width.json` — **an append-only ledger, since #362 (S5)**, of every season-clustered
-  interval width a backtest gate has produced. `hub.models.experiment.review_width` appends
-  one entry per gate run, never overwrites one, keyed by `(gate, config_digest, data_digest,
-  timestamp)`, with the run's own verdict recorded alongside the width and `requires_review`
-  set when the interval narrowed against that gate's *most recent* previous entry by more
-  than the interval could honestly narrow (#45's clustering argument predicts widening).
+  interval width a backtest gate has produced. `hub.ledger.Ledger.record` (`experiment.
+  review_width` before #385) appends one entry per gate run, never overwrites one, keyed by
+  `(gate, config_digest, data_digest, timestamp)`, with the run's own verdict recorded
+  alongside the width and `requires_review` set when the interval narrowed against that
+  gate's *most recent comparable* previous entry by more than the interval could honestly
+  narrow (#45's clustering argument predicts widening).
 
-  **`seasons`, since #382.** Every entry written from a run that handed `review_width` a
-  `per_season` frame carries a `seasons` field: a list of per-season dicts (`season`, `gain`,
-  `se`, `m`, `disposition`), the same fields `experiment.per_season_report` prints beside the
-  run's tally. `_disposition`'s own three-way split -- win if `gain >= 2 * se` over the
-  season's within-season clusters, loss if `gain <= -2 * se`, tie between, falling back to the
-  sign alone below `TIE_MIN_CLUSTERS` -- is what decides ADR-0019's tie-aware every-season half
-  (#335), and until #382 that reading lived only in a run's stdout, not in the record. Optional
-  and additive: an entry written with no `seasons` frame in hand (every entry before #382, and
-  every call this repo's test suite makes directly against `review_width`) simply carries no
-  `seasons` key, and the pre-#362 dict-shape read is unaffected either way.
+  **The key, since #385.** Two entries compare iff `(name, recipe, config_digest,
+  data_digest)` are equal *and* both carry a known `recipe` -- `WidthEntry.comparable`, one
+  line answering both the digest condition (2026-09-21) and #384 (a recipe carries the run's
+  arm, so two recipes at one digest pair are not compared). Every entry this ledger has ever
+  written carries a `"recipe"` key -- `null` until a caller adopts #384's arm string, which
+  compares equal to another `null` the way `review_width` always compared on name and
+  digests alone. **An entry with no `"recipe"` key at all** -- every row written before #385,
+  including the two historical rows below -- reads as *of unknown recipe* and is never
+  compared against anything, not even another unknown-recipe row: named in the ledger, read
+  back, and left out of every narrowing check until this repo's gates re-baseline under the
+  new key.
+
+  **`seasons`, since #382.** Every entry written from a run that handed the Ledger a
+  `per_season` frame's records carries a `seasons` field: a list of per-season dicts
+  (`season`, `gain`, `se`, `m`, `disposition`), the same fields `experiment.per_season_report`
+  prints beside the run's tally. `_disposition`'s own three-way split -- win if `gain >= 2 *
+  se` over the season's within-season clusters, loss if `gain <= -2 * se`, tie between,
+  falling back to the sign alone below `TIE_MIN_CLUSTERS` -- is what decides ADR-0019's
+  tie-aware every-season half (#335), and until #382 that reading lived only in a run's
+  stdout, not in the record. Optional and additive: an entry constructed with no `seasons`
+  (every entry before #382, and every call this repo's test suite makes directly against the
+  Ledger without one) simply carries no `seasons` key, and the pre-#362 dict-shape read is
+  unaffected either way.
 
   **Why it moved off one record per gate.** The dict shape it replaced held exactly one row
   per gate name, overwritten on every run — so the file could never say how many times a gate
