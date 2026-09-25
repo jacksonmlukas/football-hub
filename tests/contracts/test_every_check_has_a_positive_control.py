@@ -46,6 +46,10 @@ _DECISION_NAME = re.compile(r"^(verdict|[a-z_]+_verdict|gate|run_gate|screen|[a-
 # rule stays the discovery rule for everything else, and so a guard added to this list is a
 # deliberate act with a control beside it. `review_width` flags a narrowing interval; on
 # 2026-09-21 it compared a --holdout run against a non-holdout one and flagged nothing real.
+# #387 left this the one entry: `review_width`, `record_width` and `width_path` are #385's
+# Ledger territory, and the Ledger's `record(...)` seam is what replaces this registry for
+# them once #385 lands -- not this ticket's Harness, which passes those parameters through
+# `run_gate` unchanged rather than absorbing them.
 EXPLICIT_GUARDS: tuple[str, ...] = ("hub.models.experiment.review_width",)
 
 # module.function -> (test file, the control tests). Each named test plants the condition
