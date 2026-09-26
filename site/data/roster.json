@@ -1,7 +1,7 @@
 {
   "name": "roster",
   "source": "roster.parquet",
-  "generated_at": "2026-09-23T15:16:52+00:00",
+  "generated_at": "2026-09-26T17:42:34+00:00",
   "shape": "rows",
   "n": 17,
   "rows": [
@@ -9,15 +9,15 @@
       "player": "Ja'Marr Chase",
       "pos": "WR",
       "nfl_team": "CIN",
-      "mu": 19.783749999999998,
-      "sd": 9.474011577732,
+      "mu": 19.77375,
+      "sd": 9.471616882824177,
       "projected": true,
       "starting": true,
-      "best_start": true,
+      "best_start": false,
       "injury_status": "ACTIVE",
-      "available": true,
+      "available": false,
       "can_start": true,
-      "missing_games": 0
+      "missing_games": 2
     },
     {
       "player": "Drake London",
@@ -27,11 +27,11 @@
       "sd": 8.586634738068225,
       "projected": true,
       "starting": true,
-      "best_start": true,
+      "best_start": false,
       "injury_status": "ACTIVE",
-      "available": true,
+      "available": false,
       "can_start": true,
-      "missing_games": 0
+      "missing_games": 2
     },
     {
       "player": "Jordan Love",
@@ -41,25 +41,11 @@
       "sd": 7.560720997365264,
       "projected": true,
       "starting": true,
-      "best_start": true,
-      "injury_status": "ACTIVE",
-      "available": true,
-      "can_start": true,
-      "missing_games": 0
-    },
-    {
-      "player": "Nico Collins",
-      "pos": "WR",
-      "nfl_team": "HOU",
-      "mu": 15.6725,
-      "sd": 8.432352296364282,
-      "projected": true,
-      "starting": true,
       "best_start": false,
-      "injury_status": "QUESTIONABLE",
+      "injury_status": "ACTIVE",
       "available": false,
       "can_start": true,
-      "missing_games": 1
+      "missing_games": 2
     },
     {
       "player": "Josh Jacobs",
@@ -73,21 +59,49 @@
       "injury_status": "DAY_TO_DAY",
       "available": false,
       "can_start": true,
-      "missing_games": 4
+      "missing_games": 6
+    },
+    {
+      "player": "Nico Collins",
+      "pos": "WR",
+      "nfl_team": "HOU",
+      "mu": 15.0975,
+      "sd": 8.276221828225728,
+      "projected": true,
+      "starting": false,
+      "best_start": false,
+      "injury_status": "OUT",
+      "available": false,
+      "can_start": true,
+      "missing_games": 3
     },
     {
       "player": "J.K. Dobbins",
       "pos": "RB",
       "nfl_team": "DEN",
-      "mu": 11.577,
-      "sd": 7.043173098824137,
+      "mu": 11.177,
+      "sd": 6.920428259869471,
       "projected": true,
       "starting": true,
       "best_start": false,
-      "injury_status": "QUESTIONABLE",
+      "injury_status": "ACTIVE",
       "available": false,
       "can_start": true,
-      "missing_games": 1
+      "missing_games": 2
+    },
+    {
+      "player": "Jonathon Brooks",
+      "pos": "RB",
+      "nfl_team": "CAR",
+      "mu": 10.323884419719889,
+      "sd": 6.651076029490096,
+      "projected": true,
+      "starting": false,
+      "best_start": false,
+      "injury_status": "INJURY_RESERVE",
+      "available": true,
+      "can_start": false,
+      "missing_games": 0
     },
     {
       "player": "KC Concepcion",
@@ -97,11 +111,11 @@
       "sd": 6.8348333556861505,
       "projected": true,
       "starting": false,
-      "best_start": true,
+      "best_start": false,
       "injury_status": "ACTIVE",
-      "available": true,
+      "available": false,
       "can_start": true,
-      "missing_games": 0
+      "missing_games": 2
     },
     {
       "player": "Denzel Boston",
@@ -110,12 +124,12 @@
       "mu": 9.894073468391506,
       "sd": 6.699882231707168,
       "projected": true,
-      "starting": false,
-      "best_start": true,
+      "starting": true,
+      "best_start": false,
       "injury_status": "ACTIVE",
-      "available": true,
+      "available": false,
       "can_start": true,
-      "missing_games": 0
+      "missing_games": 2
     },
     {
       "player": "Mark Andrews",
@@ -125,25 +139,11 @@
       "sd": 6.024573116436891,
       "projected": true,
       "starting": true,
-      "best_start": true,
-      "injury_status": "ACTIVE",
-      "available": true,
-      "can_start": true,
-      "missing_games": 0
-    },
-    {
-      "player": "Jonathon Brooks",
-      "pos": "RB",
-      "nfl_team": "CAR",
-      "mu": 8.511190476190476,
-      "sd": 6.039006546728408,
-      "projected": true,
-      "starting": false,
       "best_start": false,
-      "injury_status": "INJURY_RESERVE",
+      "injury_status": "ACTIVE",
       "available": false,
-      "can_start": false,
-      "missing_games": 1
+      "can_start": true,
+      "missing_games": 2
     },
     {
       "player": "Matthew Golden",
@@ -155,9 +155,9 @@
       "starting": true,
       "best_start": false,
       "injury_status": "ACTIVE",
-      "available": true,
+      "available": false,
       "can_start": true,
-      "missing_games": 0
+      "missing_games": 2
     },
     {
       "player": "Bhayshul Tuten",
@@ -167,11 +167,11 @@
       "sd": 5.946072748041349,
       "projected": true,
       "starting": true,
-      "best_start": true,
+      "best_start": false,
       "injury_status": "ACTIVE",
-      "available": true,
+      "available": false,
       "can_start": true,
-      "missing_games": 0
+      "missing_games": 2
     },
     {
       "player": "MarShawn Lloyd",
@@ -181,11 +181,11 @@
       "sd": 5.736996868696075,
       "projected": true,
       "starting": false,
-      "best_start": true,
+      "best_start": false,
       "injury_status": "ACTIVE",
-      "available": true,
+      "available": false,
       "can_start": true,
-      "missing_games": 0
+      "missing_games": 2
     },
     {
       "player": "Chris Rodriguez Jr.",
@@ -197,9 +197,9 @@
       "starting": false,
       "best_start": false,
       "injury_status": "ACTIVE",
-      "available": true,
+      "available": false,
       "can_start": true,
-      "missing_games": 0
+      "missing_games": 2
     },
     {
       "player": "Kaelon Black",
@@ -211,23 +211,9 @@
       "starting": false,
       "best_start": false,
       "injury_status": "ACTIVE",
-      "available": true,
+      "available": false,
       "can_start": true,
-      "missing_games": 0
-    },
-    {
-      "player": "Emmett Johnson",
-      "pos": "RB",
-      "nfl_team": "KC",
-      "mu": 5.879444444444444,
-      "sd": 5.019246108729875,
-      "projected": true,
-      "starting": false,
-      "best_start": false,
-      "injury_status": "ACTIVE",
-      "available": true,
-      "can_start": true,
-      "missing_games": 0
+      "missing_games": 2
     },
     {
       "player": "Eddy Pineiro",
@@ -239,28 +225,45 @@
       "starting": true,
       "best_start": false,
       "injury_status": "ACTIVE",
+      "available": false,
+      "can_start": true,
+      "missing_games": 2
+    },
+    {
+      "player": "Eagles D/ST",
+      "pos": "D/ST",
+      "nfl_team": "PHI",
+      "mu": null,
+      "sd": null,
+      "projected": false,
+      "starting": true,
+      "best_start": false,
+      "injury_status": "NORMAL",
       "available": true,
       "can_start": true,
       "missing_games": 0
     }
   ],
-  "set_total": 78.12562745098039,
-  "optimal_total": 97.49722472889572,
-  "gain": 19.371597277915328,
+  "set_total": null,
+  "optimal_total": null,
+  "gain": null,
   "withheld": [
-    "J.K. Dobbins",
-    "Jonathon Brooks",
-    "Josh Jacobs",
-    "Nico Collins"
-  ],
-  "start": [
+    "Bhayshul Tuten",
+    "Chris Rodriguez Jr.",
     "Denzel Boston",
-    "KC Concepcion",
-    "MarShawn Lloyd"
-  ],
-  "sit": [
+    "Drake London",
     "J.K. Dobbins",
+    "Ja'Marr Chase",
+    "Jonathon Brooks",
+    "Jordan Love",
+    "Josh Jacobs",
+    "KC Concepcion",
+    "Kaelon Black",
+    "MarShawn Lloyd",
+    "Mark Andrews",
     "Matthew Golden",
     "Nico Collins"
-  ]
+  ],
+  "start": [],
+  "sit": []
 }
