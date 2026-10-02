@@ -41,10 +41,12 @@ import sys
 from collections.abc import Mapping, Sequence
 from itertools import pairwise
 from math import erf, sqrt
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 
+from hub import atomic
 from hub.cli import unavailable
 from hub.declare import not_an_input
 from hub.models.experiment import (
@@ -660,7 +662,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     resid.filter(pl.col("season") >= resid["season"].max() - a.trailing))
         print(f"  Value to adopt: {final['sd']:.3f} +/-{final['se']:.3f} (n={int(final['n'])})")
     if a.out:
-        wf.write_parquet(a.out)
+        atomic.write_parquet(wf, Path(a.out))
         print(f"  wrote {wf.height} rows to {a.out}")
     return 0
 

@@ -13,8 +13,8 @@ The fix is the old one: write to a scratch name beside the target and rename ove
 new bytes and never a mixture; an interrupted write leaves the old file exactly as it was.
 
 **One helper, and a scan that holds every writer to it.** `tests/contracts/
-test_writers_are_crash_atomic.py` parses the modules that serve last-good state and refuses
-a `.write_text`, `.write_bytes` or `.write_parquet` call that is not this module's. The
+test_writers_are_crash_atomic.py` parses every module under `hub` and refuses a
+`.write_text`, `.write_bytes` or `.write_parquet` call that is not this module's (#393). The
 three functions here carry the pathlib and polars names on purpose: the call site reads
 the same, with `atomic.` in front.
 
