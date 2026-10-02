@@ -495,3 +495,101 @@ jobs:
             echo "${{ steps.capture.outputs.detail }}. A capture scheduled at the deadline"
             echo "may still be queued, so the stamp's age is not evidence of anything yet."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # A game window in which **no watchdog check ran at all** (#391). Every other job in this
+  # file measures when it runs; on the Monday night of 2026-09-28/29 nothing ran. PHI @ CHI
+  # kicked off at 00:15Z, `live` and this workflow share GitHub's scheduler, and the scheduler
+  # dropped both for the whole window -- so the refresher and the alarm about it failed
+  # together and the silence read as health.
+  #
+  # This job looks backwards instead: the first run delivered after such a window finds it,
+  # because the question "did any check run inside each recent window, and was there a game
+  # in it" does not need to have been asked at the time. The decision is in
+  # `hub.watchdog_gap`; the windows are `live.yml`'s crons read from the file, so this job
+  # holds no second copy of one, and it adds no cron of its own (it runs on the ones above).
+  #
+  # **The incident closes itself**, because a gap is a fact about a past window and cannot
+  # recover: it closes when a look-back of `LOOKBACK_DAYS` finds no such window, so a fixed
+  # scheduler ages the incident out and a broken one keeps it open. A gap already named in the
+  # open incident is not commented again.
+  gaps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Re-stated in full: a job-level block replaces the workflow's rather than adding to it.
+    # `actions: read` is for `gh run list`, the one new thing this job needs.
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+
+      # `set +e` for the reason the other jobs give, but a failure to *establish* the run
+      # history is not swallowed: `hub.watchdog_gap` exits 2 and this step fails the job. A
+      # check that cannot read the run list has established nothing, and exiting quietly is
+      # how it would stay silent for as long as its token was wrong.
+      - name: Which recent game windows had no check
+        id: gaps
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          MARKER="<!-- watchdog-gap -->"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" \
+            --label incident --state open --json number,body \
+            --jq "([.[] | select(.body | contains(\"$MARKER\"))][0].number) // empty" 2>/dev/null)
+          : > "$RUNNER_TEMP/known.txt"
+          if [ -n "$EXISTING" ]; then
+            echo "existing=$EXISTING" >> "$GITHUB_OUTPUT"
+            gh issue view "$EXISTING" --repo "${{ github.repository }}" \
+              --json body,comments --jq '.body, (.comments[].body)' > "$RUNNER_TEMP/known.txt"
+          fi
+          RESULT=$(uv run python -m hub.watchdog_gap --repo "${{ github.repository }}" \
+            --season-opens "$SEASON_OPENS" --known-file "$RUNNER_TEMP/known.txt" \
+            --report "$RUNNER_TEMP/gap.md")
+          CODE=$?
+          if [ "$CODE" -ne 0 ]; then
+            echo "::error::could not establish whether any game window went unchecked"
+            exit 1
+          fi
+          echo "$RESULT" >> "$GITHUB_OUTPUT"
+          echo "$RESULT"
+
+      # Filing is the job; the label is decoration and must not silence it (2026-09-04).
+      - name: File or update the gap incident
+        if: steps.gaps.outputs.new != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          if [ -n "${{ steps.gaps.outputs.existing }}" ]; then
+            gh issue comment "${{ steps.gaps.outputs.existing }}" \
+              --repo "${{ github.repository }}" --body-file "$RUNNER_TEMP/gap.md"
+          else
+            gh issue create --repo "${{ github.repository }}" \
+              --title "A game window ran with no watchdog check" --label incident \
+              --body-file "$RUNNER_TEMP/gap.md" \
+              || gh issue create --repo "${{ github.repository }}" \
+                   --title "A game window ran with no watchdog check" \
+                   --body-file "$RUNNER_TEMP/gap.md"
+          fi
+          if [ $? -ne 0 ]; then
+            echo "::error::a game window went unchecked AND the incident could not be filed"
+            exit 1
+          fi
+
+      # Only this job's own incidents, by marker, for the reason the heartbeat job gives.
+      - name: Close the gap incident when no window in the look-back is unchecked
+        if: steps.gaps.outputs.gaps == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MARKER="<!-- watchdog-gap -->"
+          for n in $(gh issue list --repo "${{ github.repository }}" \
+                      --label incident --state open --json number,body \
+                      --jq ".[] | select(.body | contains(\"$MARKER\")) | .number"); do
+            gh issue close "$n" --repo "${{ github.repository }}" --reason completed \
+              --comment "No game window in the look-back is missing a watchdog check any more; the gaps this named have aged out of it."
+          done

@@ -57,7 +57,7 @@ CLI_MODULES = (
     "hub.draft.fit_corrections", "hub.draft.impute_cv",
     "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage", "hub.fetch.bigten",
     "hub.fetch.cfbd", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
-    "hub.fetch.pool", "hub.inspect",
+    "hub.fetch.pool", "hub.inspect", "hub.live_chain", "hub.watchdog_gap",
     "hub.models.conformal",
     "hub.models.coverage",
     "hub.models.correlate", "hub.models.eval", "hub.models.injury", "hub.models.margin",
@@ -250,6 +250,11 @@ ABSENT_INPUT = [
     # store, so a fresh clone meets no cookie, no host and nothing cached to serve instead.
     ("hub.fetch.pool", ["--refresh", "--store", "{tmp}"]),
     ("hub.inspect", ["{tmp}/nope"]),
+    # The two CI helpers (#391). `live_chain` meets an ESPN it cannot ask and says `unknown`;
+    # `watchdog_gap` meets a workflow file that is not there and says it could not establish
+    # the run history -- both exit non-zero rather than reading absence as "nothing to do".
+    ("hub.live_chain", []),
+    ("hub.watchdog_gap", ["--repo", "o/r", "--live-yml", "{tmp}/nope.yml"]),
     ("hub.models.component_error", ["--run"]),
     ("hub.models.conformal", ["--recalibrate", "--store", "{tmp}"]),
     ("hub.models.coverage", ["--measure", "--cache", "{tmp}"]),

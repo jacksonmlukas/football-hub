@@ -80,6 +80,7 @@ FLOOR: dict[str, int] = {
     "src/hub/jsonio.py": 0,
     "src/hub/league.py": 0,
     "src/hub/ledger.py": 1,
+    "src/hub/live_chain.py": 1,
     "src/hub/models/__init__.py": 0,
     "src/hub/models/base.py": 2,
     "src/hub/models/component_error.py": 8,
@@ -117,4 +118,5 @@ FLOOR: dict[str, int] = {
     "src/hub/season/weekly_gate.py": 1,
     "src/hub/season/weekly_gate_data.py": 0,
     "src/hub/store.py": 3,
+    "src/hub/watchdog_gap.py": 2,
 }
