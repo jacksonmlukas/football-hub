@@ -596,3 +596,23 @@ def test_a_fetched_roster_is_still_written(tmp_path, monkeypatch):
     monkeypatch.setattr(R, "fetch", lambda: pl.read_parquet(fresh))
     assert R.main(["--write", "--out", str(p)]) == 0
     assert pl.read_parquet(p).height == 2, "a successful sync must still write"
+
+
+def test_a_write_killed_before_the_replace_leaves_the_last_good_roster_byte_identical(
+        tmp_path, monkeypatch):
+    """#392: this runs on every slate. The scratch is written, the replace is never reached,
+    and the roster on disk is the previous one -- not a truncated parquet."""
+    p = tmp_path / "roster.parquet"
+    R.write(R.build(E.roster_rows(_Team([], [_Player("Ja'Marr Chase", "WR")])), _board()), p)
+    before = p.read_bytes()
+    newer = R.build(E.roster_rows(_Team([], [_Player("Ja'Marr Chase", "WR"),
+                                             _Player("Other Guy", "RB", pid=2)])), _board())
+
+    def killed(src, dst):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("hub.atomic.os.replace", killed)
+    with pytest.raises(KeyboardInterrupt):
+        R.write(newer, p)
+    monkeypatch.undo()
+    assert p.read_bytes() == before

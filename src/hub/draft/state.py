@@ -16,6 +16,7 @@ from pathlib import Path
 
 import polars as pl
 
+from hub import atomic
 from hub.draft.picks import snake_picks
 from hub.names import player_key
 
@@ -50,8 +51,7 @@ def load(path: Path | None = None) -> DraftState:
 
 def save(state: DraftState, path: Path | None = None) -> None:
     p = Path(path if path is not None else STATE)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"taken": state.taken}, indent=2))
+    atomic.write_text(p, json.dumps({"taken": state.taken}, indent=2))
 
 
 def take(state: DraftState, *names: str) -> DraftState:
