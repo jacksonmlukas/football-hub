@@ -117,7 +117,10 @@ def test_a_stored_balance_below_the_floor_refuses_the_next_pull(tmp_path):
     state.write_text(json.dumps({"remaining": 10, "checked_at": "2026-09-04T00:00:00"}))
     assert odds.credits_remaining(state) == 10
     try:
-        odds.snapshot(season=2026, state_path=state, floor=50)
+        # `now` pinned to the reading's own month: unpinned, the clock reached October on
+        # 2026-10-01 and the September reading became a pre-reset one -- unknown by design
+        # (`odds.known_balance`), so the pull went to the wire instead of refusing.
+        odds.snapshot(season=2026, state_path=state, floor=50, now=datetime(2026, 9, 10))
     except odds.QuotaFloor as e:
         assert "floor" in str(e)
     else:                                                    # pragma: no cover
