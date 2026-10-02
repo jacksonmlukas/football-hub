@@ -375,6 +375,81 @@ WATCHED = (
 )
 
 
+# #394: WATCHED cannot be *derived*, and this is why. Membership is a judgement made once per
+# module -- "no caller treats this module's refusal as ordinary control flow" -- and a scan
+# cannot make it: `ContractViolation` is caught in six modules of `src` and `scripts` (publish,
+# panel, cached, season/pool, survivor, capture_panel_archive), so "nothing catches it" is not
+# a rule that reproduces the entries above, and any rule loose enough to reproduce them
+# admits every module that raises it. What a scan *can* see is which modules refuse at all, so
+# the list is held to that: every module the scan finds is either in WATCHED or named below
+# with the reason it is not, and an entry on neither side fails. A new refusing module cannot
+# land unjudged; it is not discovered into WATCHED, because being watched is the judgement.
+REFUSAL_TYPES: frozenset[str] = frozenset({"ContractViolation", "WideFrameRefused"})
+REFUSAL_COLLECTORS: frozenset[str] = frozenset({"problems"})
+
+NOT_WATCHED: dict[str, str] = {
+    "draft/board.py": (
+        "Raises `ContractViolation` (four sites) and has not had the once-per-module judgement "
+        "made. Unwatched by omission until now; naming it here is what #394 adds, not a "
+        "verdict that it is safe."),
+    "fetch/pool.py": (
+        "Raises `ContractViolation` (twelve sites) validating the pool payload and has not had "
+        "the once-per-module judgement made. Unwatched by omission until now; naming it here "
+        "is what #394 adds, not a verdict that it is safe."),
+}
+
+
+def _refusing_modules(root: Path) -> set[str]:
+    """Every `.py` under `root`, as a path relative to it, that raises one of `REFUSAL_TYPES`
+    or appends to one of `REFUSAL_COLLECTORS` -- the shapes `_refusals` reads, found
+    module-wide rather than in a module someone already named."""
+    found = set()
+    for path in sorted(root.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Raise) and node.exc is not None:
+                exc = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+                hit = isinstance(exc, ast.Name) and exc.id in REFUSAL_TYPES
+            elif isinstance(node, ast.Call):
+                fn = node.func
+                hit = (isinstance(fn, ast.Attribute) and fn.attr == "append"
+                       and isinstance(fn.value, ast.Name) and fn.value.id in REFUSAL_COLLECTORS)
+            else:
+                continue
+            if hit:
+                found.add(path.relative_to(root).as_posix())
+                break
+    return found
+
+
+def test_every_refusing_module_is_watched_or_named_as_not():
+    watched = {w.path.relative_to(SRC).as_posix() for w in WATCHED}
+    seen = _refusing_modules(SRC)
+    assert watched <= seen, (
+        f"WATCHED names modules the scan sees no refusal in: {sorted(watched - seen)}")
+    assert not watched & NOT_WATCHED.keys(), (
+        f"in both WATCHED and NOT_WATCHED: {sorted(watched & NOT_WATCHED.keys())}")
+    assert seen == watched | NOT_WATCHED.keys(), (
+        f"refusing modules on neither list: {sorted(seen - watched - NOT_WATCHED.keys())}; "
+        f"listed but refusing nothing: {sorted((watched | NOT_WATCHED.keys()) - seen)}. "
+        f"Judge each once: add a `Watched` entry to WATCHED, or a reason to NOT_WATCHED.")
+
+
+def test_the_refusal_scan_finds_a_planted_module_and_only_that(tmp_path):
+    """Rule 18 for `_refusing_modules`: a planted refusing module is found, and a planted
+    module that only mentions the names is not."""
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "refuses.py").write_text(
+        "from hub.contracts import ContractViolation\n"
+        "def f():\n    raise ContractViolation('no')\n")
+    (tmp_path / "collects.py").write_text(
+        "def f():\n    problems = []\n    problems.append('x')\n")
+    (tmp_path / "quiet.py").write_text(
+        "# raise ContractViolation('in a comment')\n"
+        "NAME = 'ContractViolation problems.append'\n"
+        "def f():\n    raise ValueError('ordinary')\n")
+    assert _refusing_modules(tmp_path) == {"sub/refuses.py", "collects.py"}
+
+
 def _refusals(text: str, watched: Watched) -> list[tuple[int, int, str]]:
     """Every refusal in `text`, as (character offset, line number, source line).
 

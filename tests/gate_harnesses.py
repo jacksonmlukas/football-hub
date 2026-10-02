@@ -23,20 +23,6 @@ import pathlib
 
 from hub.models.experiment import Harness
 
-# The six modules `docs/gate-power.md` and #387 call gates -- read once here so a caller
-# wanting only "the six gates" (as opposed to "everything the tree walk found") has a name for
-# it, not a re-derivation. `hub.models.margin` declares two harnesses (`SHAPE_HARNESS`,
-# `WIDTH_HARNESS`) for its two verdicts; every other module declares one (named `HARNESS`),
-# matching #387's count of seven harnesses in all.
-GATE_MODULES: tuple[str, ...] = (
-    "hub.draft.backtest",
-    "hub.season.weekly_gate",
-    "hub.season.lineup_gate",
-    "hub.models.coverage",
-    "hub.models.starter_change",
-    "hub.models.margin",
-)
-
 
 def harnesses_under(root: pathlib.Path, package: str) -> dict[str, Harness]:
     """`"module.NAME" -> Harness`, for every module-level `Harness` instance found by
@@ -68,6 +54,21 @@ def all_harnesses() -> dict[str, Harness]:
     """Every `Harness` in this repo's own `src/hub` tree -- seven, over six modules, today."""
     src = pathlib.Path(__file__).resolve().parents[1] / "src" / "hub"
     return harnesses_under(src, "hub")
+
+
+def gate_modules(found: dict[str, Harness]) -> tuple[str, ...]:
+    """The modules that declare a `Harness`, sorted -- the gates, by definition (#394).
+
+    `docs/gate-power.md` and #387 call six modules gates; this is that set read off the walk
+    rather than copied beside it. `hub.models.margin` declares two harnesses (`SHAPE_HARNESS`,
+    `WIDTH_HARNESS`) for its two verdicts and every other module declares one (`HARNESS`),
+    matching #387's seven harnesses over six modules. Takes the walk's result so the control
+    in `test_harness_discovery_is_proven.py` can hand it a planted tree.
+    """
+    return tuple(sorted({key.rsplit(".", 1)[0] for key in found}))
+
+
+GATE_MODULES: tuple[str, ...] = gate_modules(all_harnesses())
 
 
 def gate_harnesses() -> dict[str, Harness]:
