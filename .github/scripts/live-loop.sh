@@ -22,8 +22,8 @@
 #
 #   0  ESPN answered -- with games, or with an empty board, which under ADR-0018 is ESPN
 #      saying there are no games and is worth publishing. Write and deploy.
-#   3  ESPN was not reached. `hub.fetch.espn._get` degrades to a last-good cache for the
-#      dashboard's sake, so `hub.publish.live` refuses that cache and writes nothing at all.
+#   3  ESPN was not reached. `hub.fetch.espn._get` raises (it holds no last-good cache since
+#      #401), so `hub.publish.live` writes nothing at all.
 #      **Do not deploy, and do not let anything advance the stamp.** A deploy here would
 #      republish the carried-forward overlay under a fresh `generated_at`, so the heartbeat
 #      would report the page fresh while it showed frozen scores -- and the watchdog reads

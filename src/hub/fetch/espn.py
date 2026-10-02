@@ -4,7 +4,7 @@
   2. fantasy ESPN v3    -> your league, via espn_s2 + swid cookies
 
 Both break without notice. Every call here retries across hostname and User-Agent
-variants before giving up, and falls back to last-good cached state.
+variants before giving up; the site.api reads then raise rather than serve a cache (#401).
 """
 from __future__ import annotations
 
@@ -23,9 +23,6 @@ from hub import atomic, jsonio
 from hub.config import SEASON_AHEAD
 from hub.contracts import ESPN_SCOREBOARD
 
-CACHE = Path(__file__).resolve().parents[3] / "data" / "raw" / "espn"
-CACHE.mkdir(parents=True, exist_ok=True)
-
 # As of Aug 2026 site.api.espn.com started 403ing scripted traffic; adding `.web`
 # to the host, or using a non-browser UA, resolves it. Try all four combinations.
 HOSTS = ["site.web.api.espn.com", "site.api.espn.com"]
@@ -34,19 +31,15 @@ AGENTS = ["football-hub/0.1", "Mozilla/5.0"]
 LEAGUE_PATHS = {"nfl": "football/nfl", "cfb": "football/college-football"}
 
 
-def _get(path: str, params: dict | None = None, cache_key: str | None = None,
-         *, allow_cache: bool = True) -> dict:
-    """One ESPN read, across four host/user-agent combinations, then the cache.
+def _get(path: str, params: dict | None = None) -> dict:
+    """One ESPN read, across four host/user-agent combinations. Raises when all four fail.
 
-    `allow_cache=False` is how a caller says it needs *this* answer rather than the last
-    good one. The two are indistinguishable in the return value -- both are a payload of
-    games -- and that is exactly the confusion issue #91 was: the refresher's whole job is
-    to stamp `generated_at` with the time ESPN was asked, so serving it a cached payload
-    would have it publish a fresh timestamp over frozen scores. The heartbeat would then
-    read healthy forever while the page sat still, and the watchdog could never fire again.
-
-    Every other caller keeps the fallback, which is CLAUDE.md's rule and the dashboard's
-    whole degradation story: a dead endpoint must not raise into a panel.
+    There is no last-good fallback, and that is deliberate (#401). A cached payload and a live
+    one are both a dict of games, so a caller handed the cache cannot tell -- and the one
+    unattended caller, `hub.publish.live`, stamps what it is given with the time ESPN was
+    asked, so a cache-served read published a fresh `generated_at` over frozen scores and
+    hid the freeze from the watchdog that reads that stamp (#91). That caller had to refuse
+    the cache; with it refused, nothing read it, so the cache write went with the read.
     """
     last = None
     for host in HOSTS:
@@ -59,50 +52,24 @@ def _get(path: str, params: dict | None = None, cache_key: str | None = None,
                     timeout=10,
                 )
                 r.raise_for_status()
-                data = r.json()
-                if cache_key:
-                    atomic.write_text(CACHE / f"{cache_key}.json", json.dumps(data))
-                return data
+                return r.json()
             except Exception as e:
                 last = e
-    # Graceful degradation: serve last-good rather than raising into the dashboard.
-    #
-    # GUARD cache-is-not-an-answer: a refused cache is reported unreachable, never served
-    #
-    # The consequence is a module away and is asserted there too --
-    # `tests/unit/test_publish.py::test_a_cache_served_scoreboard_does_not_advance_the_stamp`
-    # and `tests/contracts/test_live_loop.py` -- but the excision run stays on the derived
-    # selector, because this block's own removal is visible in `test_fetch_espn.py`.
-    #
-    # Without this the two failures below are one: `allow_cache=False` would still be
-    # served the cache, `hub.publish.live` would write it, and the refresher would stamp
-    # `generated_at` with a time nobody asked ESPN anything at. That is a frozen page
-    # reporting itself fresh -- the defect in issue #91, and the one the watchdog cannot
-    # see, because the watchdog reads that stamp.
-    if not allow_cache:
-        raise RuntimeError(
-            f"ESPN unreachable for {path} and the caller asked for a live read rather than "
-            f"the cache: {last!r}")
-    # /GUARD
-    if cache_key and (CACHE / f"{cache_key}.json").exists():
-        return json.loads((CACHE / f"{cache_key}.json").read_text())
-    raise RuntimeError(f"ESPN unreachable and no cache for {path}: {last!r}")
+    raise RuntimeError(f"ESPN unreachable for {path}: {last!r}")
 
 
-def scoreboard(league: str = "nfl", date: str | None = None, *,
-               allow_cache: bool = True) -> dict:
+def scoreboard(league: str = "nfl", date: str | None = None) -> dict:
     """date is YYYYMMDD, not YYYY-MM-DD. Future games return fewer fields."""
     params = {"dates": date} if date else {}
     if league == "cfb":
         params["groups"] = "80"  # FBS only
         params["limit"] = "200"  # default page size truncates a full Saturday
-    return _get(f"{LEAGUE_PATHS[league]}/scoreboard", params, f"sb_{league}_{date or 'now'}",
-                allow_cache=allow_cache)
+    return _get(f"{LEAGUE_PATHS[league]}/scoreboard", params)
 
 
 def summary(event_id: str, league: str = "nfl") -> dict:
     """Box score, plays, and win probability. WP only exists once the feed is live."""
-    return _get(f"{LEAGUE_PATHS[league]}/summary", {"event": event_id}, f"sum_{event_id}")
+    return _get(f"{LEAGUE_PATHS[league]}/summary", {"event": event_id})
 
 
 # The four columns the contract types, given explicitly because an *empty* scoreboard would
@@ -210,17 +177,17 @@ def scoreboard_frame(rows: list[dict]) -> pl.DataFrame:
             else pl.DataFrame(schema=SCOREBOARD_TYPES))
 
 
-def live_state(league: str = "nfl", *, allow_cache: bool = True) -> list[dict]:
+def live_state(league: str = "nfl") -> list[dict]:
     """Flattened in-progress game state for the dashboard overlay.
 
-    `allow_cache=False` asks for a read that reached ESPN just now, and raises rather than
-    degrading. `hub.publish.live` is the caller that needs it: it stamps what it is given,
+    Always a read that reached ESPN just now: it raises when ESPN is unreachable rather than
+    degrading to a cached payload (#401), because `hub.publish.live` stamps what it is given
     and a stamp over a cached payload is a page that reports itself fresh while standing
-    still. Every other caller wants the fallback.
+    still.
     """
     out: list[dict] = []
     dropped: list[str] = []
-    events = scoreboard(league, allow_cache=allow_cache).get("events") or []
+    events = scoreboard(league).get("events") or []
     for ev in events:
         row, why = _overlay_row(ev)
         if row is None:
