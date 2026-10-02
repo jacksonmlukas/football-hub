@@ -41,11 +41,13 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import polars as pl
 
+from hub import atomic
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.contracts import SNAP_COUNTS
@@ -422,7 +424,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"\n{verdict(errs)[1]}")
 
     if a.out:
-        per.write_parquet(a.out)
+        atomic.write_parquet(per, Path(a.out))
         print(f"\nwrote {a.out}")
     return 0
 

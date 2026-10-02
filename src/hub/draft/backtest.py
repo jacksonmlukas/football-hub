@@ -50,6 +50,7 @@ from typing import NamedTuple
 import numpy as np
 import polars as pl
 
+from hub import atomic
 from hub.cli import unavailable
 from hub.config import DraftConfig, RosterConfig, drafted_positions
 from hub.declare import not_an_input
@@ -1131,7 +1132,7 @@ def diagnose_corrections(*, out: Path | None = None) -> DiagnoseCorrections:
     print("  tripwire clear: every move is a function of a real correction, "
           "and none exceeds the clamp.")
     if out:
-        rep.write_parquet(out)
+        atomic.write_parquet(rep, Path(out))
         print(f"  wrote {rep.height} rows to {out}")
     return DiagnoseCorrections(exit_code=0, moved=rep.height, total=board.height,
                                lines=tuple(lines))
@@ -1169,7 +1170,7 @@ def diagnose_mode(*, board_path: Path | None, rounds: int, n_draft_sims: int,
             return DiagnoseRun(
                 exit_code=unavailable("hub.draft.backtest", "the live board", e))
         if board_path:
-            board.frame.write_parquet(board_path)
+            atomic.write_parquet(board.frame, board_path)
             print(f"  board snapshot written to {board_path}")
 
     # Owned here rather than inside `diagnose`, so the count survives the call. `note()` is
@@ -1213,7 +1214,7 @@ def diagnose_mode(*, board_path: Path | None, rounds: int, n_draft_sims: int,
         print("  tripwire clear: no pick named a filled required position "
               "over an unfilled one.")
     if out:
-        got.write_parquet(out)
+        atomic.write_parquet(got, Path(out))
         print(f"  wrote {got.height} rows to {out}")
     return DiagnoseRun(exit_code=0, picks=got.height, tripped=tuple(bad), lines=tuple(lines))
 
@@ -1273,7 +1274,7 @@ def noise_scales_mode(boards: dict[int, Board], realised: dict[int, pl.DataFrame
     for line in stamp_lines:
         print(line)
     if out:
-        table.write_parquet(out)
+        atomic.write_parquet(table, Path(out))
         print(f"\n  wrote {table.height} sensitivity rows to {out}")
     return NoiseSweep(exit_code=0, table=table, lines=tuple(report) + stamp_lines)
 
@@ -1339,7 +1340,7 @@ def default_gate_mode(boards: dict[int, Board], realised: dict[int, pl.DataFrame
     lines += [limitations_header, *limitation_lines]
 
     if out:
-        run.stamped.write_parquet(out)
+        atomic.write_parquet(run.stamped, Path(out))
         print(f"\n  wrote {run.stamped.height} paired rows to {out}")
     return DefaultGateMode(exit_code=0, paired=paired, lines=tuple(lines))
 
