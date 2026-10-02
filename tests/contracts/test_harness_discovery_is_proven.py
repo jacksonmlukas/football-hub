@@ -12,7 +12,7 @@ own last test plants a decision function in a temporary tree rather than trustin
 from pathlib import Path
 
 import pytest
-from gate_harnesses import assert_declares_ceiling_arm, harnesses_under
+from gate_harnesses import assert_declares_ceiling_arm, gate_modules, harnesses_under
 
 from hub.models.experiment import Actions, Harness
 
@@ -45,6 +45,10 @@ def test_a_planted_eighth_harness_is_discovered(tmp_path: Path):
                 del sys.modules[name]
     assert "planted_tree.models.planted.PLANTED" in found, found
     assert found["planted_tree.models.planted.PLANTED"].ceiling_arm == "an arm"
+    # #394: `GATE_MODULES` is `gate_modules(all_harnesses())`, so the planted module joins the
+    # gate set by the same derivation, with no edit to any list of names.
+    assert "planted_tree.models.planted" in gate_modules(found)
+    assert gate_modules(found) == tuple(sorted({k.rsplit(".", 1)[0] for k in found}))
 
 
 def test_a_harness_with_no_ceiling_arm_cannot_be_built():
