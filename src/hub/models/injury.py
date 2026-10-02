@@ -48,10 +48,12 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 
+from hub import atomic
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.declare import not_an_input
@@ -433,7 +435,7 @@ def main(argv: Sequence[str] | None = None) -> int:
               + ", ".join(f"{r['injury']} {r['n']}" for r in top.iter_rows(named=True)))
         print(f"  {type_verdict(errs)[1]}")
     if a.out:
-        table.write_parquet(a.out)
+        atomic.write_parquet(table, Path(a.out))
         print(f"  wrote {table.height} rows to {a.out}")
     return 0
 

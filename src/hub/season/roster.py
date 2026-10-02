@@ -32,6 +32,7 @@ from typing import NamedTuple, cast
 
 import polars as pl
 
+from hub import atomic
 from hub.fetch.espn import my_team, roster_rows
 from hub.models.predict import blend as predict_blend
 from hub.models.predict import moments
@@ -266,8 +267,7 @@ def write(df: pl.DataFrame, path: Path | None = None) -> Path:
                          "failed sync, not an empty team")
     # /GUARD
     p = path or ROSTER_PARQUET
-    p.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(p)
+    atomic.write_parquet(df, p)
     return p
 
 

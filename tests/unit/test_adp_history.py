@@ -111,3 +111,25 @@ def test_columns_that_differ_between_days_still_concatenate(tmp_path):
     H.snapshot(_board(["A"], [1.0], ecr=[2.0]), on=date(2026, 8, 20), base=tmp_path)
     H.snapshot(_board(["A"], [2.0]), on=date(2026, 8, 21), base=tmp_path)
     assert H.history(tmp_path).height == 2
+
+
+def test_a_snapshot_killed_before_the_replace_leaves_the_archived_day_byte_identical(
+        tmp_path, monkeypatch):
+    """#392: the archive cannot be re-fetched, so a rewrite of a day that dies after the
+    scratch is written and before the replace must leave the day's file as it was."""
+    p = H.snapshot(_board(["A"], [1.5]), on=date(2026, 8, 25), base=tmp_path)
+    assert p is not None
+    before = p.read_bytes()
+
+    def killed(src, dst):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("hub.atomic.os.replace", killed)
+    try:
+        H.snapshot(_board(["A", "B"], [1.5, 2.5]), on=date(2026, 8, 25), base=tmp_path)
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("the planted kill never fired: the write is not routed")
+    monkeypatch.undo()
+    assert p.read_bytes() == before

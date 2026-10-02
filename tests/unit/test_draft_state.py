@@ -258,3 +258,22 @@ def test_the_first_spelling_is_the_one_kept():
     import hub.draft.state as st
     s = st.take(st.DraftState(taken=[]), "A.J. Brown")
     assert st.take(s, "AJ Brown").taken == ["A.J. Brown"]
+
+
+def test_a_save_killed_before_the_replace_leaves_the_previous_picks_byte_identical(
+        tmp_state, monkeypatch):
+    """#392: `load` swallows any exception into an empty DraftState, so a truncated picks file
+    is a draft silently reset to zero picks. The scratch is written, the replace is never
+    reached, and the file on disk is the one from before."""
+    st.save(st.DraftState(taken=["A", "B"]), tmp_state)
+    before = tmp_state.read_bytes()
+
+    def killed(src, dst):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("hub.atomic.os.replace", killed)
+    with pytest.raises(KeyboardInterrupt):
+        st.save(st.DraftState(taken=["A", "B", "C"]), tmp_state)
+    monkeypatch.undo()
+    assert tmp_state.read_bytes() == before
+    assert st.load(tmp_state).taken == ["A", "B"]

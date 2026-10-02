@@ -32,10 +32,12 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Sequence
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 
+from hub import atomic
 from hub.cli import unavailable
 from hub.declare import not_an_input
 from hub.draft.board import board_as_of
@@ -407,7 +409,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("  Limitation: projections are static across the season, because weekly historical")
         print("  projections do not exist. This measures variance-awareness, not in-season news.")
         if a.out:
-            run.stamped.write_parquet(a.out)
+            atomic.write_parquet(run.stamped, Path(a.out))
             print(f"\n  wrote {run.stamped.height} paired rows to {a.out}")
         return 0
 

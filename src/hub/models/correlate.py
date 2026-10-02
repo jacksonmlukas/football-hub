@@ -26,10 +26,12 @@ import itertools
 import sys
 from collections import defaultdict
 from collections.abc import Sequence
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 
+from hub import atomic
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 
@@ -180,7 +182,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     sig = significant(table)
     print(f"\n  {sig.height} of {table.height} pairs clear two standard errors.")
     if a.out:
-        table.write_parquet(a.out)
+        atomic.write_parquet(table, Path(a.out))
         print(f"  wrote {table.height} rows to {a.out}")
     return 0
 
