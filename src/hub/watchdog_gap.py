@@ -46,6 +46,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from hub import atomic
+
 UTC = dt.UTC
 ET = ZoneInfo("America/New_York")
 
@@ -288,7 +290,7 @@ def main(argv: Sequence[str] | None = None,
     print(f"gaps={len(gaps)}")
     print(f"new={len(fresh)}")
     if fresh and args.report:
-        args.report.write_text(render(fresh, args.workflow.removesuffix(".yml")))
+        atomic.write_text(args.report, render(fresh, args.workflow.removesuffix(".yml")))
     return 0
 
 
