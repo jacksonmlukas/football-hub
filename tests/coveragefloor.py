@@ -70,7 +70,7 @@ FLOOR: dict[str, int] = {
     "src/hub/fetch/bigten.py": 3,
     "src/hub/fetch/cached.py": 0,
     "src/hub/fetch/cfbd.py": 2,
-    "src/hub/fetch/espn.py": 1,
+    "src/hub/fetch/espn.py": 0,
     "src/hub/fetch/nfeloqb.py": 1,
     "src/hub/fetch/nflverse.py": 19,
     "src/hub/fetch/odds.py": 10,

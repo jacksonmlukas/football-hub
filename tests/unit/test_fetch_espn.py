@@ -146,6 +146,23 @@ def test_cfb_asks_for_fbs_only_and_a_full_saturday(monkeypatch, tmp_path):
     assert seen == {"dates": "20261003", "groups": "80", "limit": "200"}
 
 
+def test_a_summary_asks_for_its_event_on_its_league_path(monkeypatch, tmp_path):
+    """`poll_once` reads win probability through `summary` for every watched game; the
+    contract that drives `poll_once` stubs `summary`, so this is the one test of its own body
+    (the cached-serve tests that used to reach it went with #401)."""
+    espn = _espn()
+    seen = {}
+
+    def _get(url, params=None, headers=None, timeout=None):
+        seen.update(url=url, **(params or {}))
+        return _Resp({"winprobability": [{"homeWinPercentage": 0.6}]})
+    monkeypatch.setattr(espn.requests, "get", _get)
+    got = espn.summary("401", league="cfb")
+    assert seen["event"] == "401"
+    assert seen["url"].endswith(f"{espn.LEAGUE_PATHS['cfb']}/summary")
+    assert got["winprobability"][-1]["homeWinPercentage"] == 0.6
+
+
 def _event(competitors, event_id="1"):
     """One scoreboard event. `competitors` is handed in whatever order the test is about."""
     return {"id": event_id, "competitions": [{
