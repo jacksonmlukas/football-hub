@@ -86,7 +86,14 @@ def refuse_live_call(would: str, *, patch: str, tests: str) -> None:
 def read_stamp(path: Path) -> dict[str, Any]:
     """The JSON record at `path` as a dict, or an empty one with nothing there or nothing
     readable. A stamp that will not parse is no capture time rather than a traceback: the
-    fetch it sits beside still has to serve."""
+    fetch it sits beside still has to serve.
+
+    **A stamp is read, never inferred from the file's mtime** (cfbd's #175, kept here when its
+    private sidecar moved onto this one). A clone, a copy, a restore or a `touch` rewrites the
+    mtime, so it dates the *file* and not the fetch -- and a capture time that is confidently
+    wrong is worse than one that is missing, because unknown means "ask again" and a
+    fabricated one means "no need to". An entry with no stamp beside it reads back as no
+    capture time, which is the truth about it."""
     if not path.exists():
         return {}
     try:

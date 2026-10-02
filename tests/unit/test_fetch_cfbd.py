@@ -29,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 import polars as pl
 import pytest
 
-from hub.fetch import cfbd
+from hub.fetch import cached, cfbd
 
 
 @pytest.fixture(autouse=True)
@@ -656,16 +656,20 @@ def _entry(paths, endpoint="games", year=2026, week=1):
     return cfbd._cache_path(endpoint, year, week, paths["cache"])
 
 
+def _sidecar(entry):
+    """The stamp beside one cache entry: `fetch.cached`'s stamp, at cfbd's filename."""
+    return entry.with_suffix(cfbd.STAMP_SUFFIX)
+
+
 def _forget_the_capture(paths):
     """An entry as it was written before #175: a payload with nothing beside it."""
-    cfbd._capture_path(_entry(paths)).unlink()
+    _sidecar(_entry(paths)).unlink()
 
 
 def _age(paths, hours):
     """Backdate the capture record beside one cache entry."""
     when = datetime.now(UTC) - timedelta(hours=hours)
-    cfbd._capture_path(_entry(paths)).write_text(
-        json.dumps({"captured_at": when.isoformat()}))
+    cached.write_stamp(_sidecar(_entry(paths)), when.isoformat())
     return when
 
 
@@ -854,45 +858,92 @@ def test_the_weekly_slate_passes_a_refresh_through_to_every_endpoint(transport, 
 # claim being kept, and the coverage ratchet caught all of them arriving untested.
 
 
+def _bare_entry(tmp_path):
+    """An entry at the path `captured_at("games", 2026, cache=tmp_path)` looks beside."""
+    entry = cfbd._cache_path("games", 2026, None, tmp_path)
+    entry.parent.mkdir(parents=True)
+    entry.write_text("[]")
+    return entry
+
+
 def test_a_sidecar_that_is_not_an_object_reads_as_unknown(tmp_path):
     """Valid JSON, wrong shape. A list parses and has no capture time in it."""
-    entry = tmp_path / "games.json"
-    entry.write_text("[]")
-    cfbd._capture_path(entry).write_text('["2026-09-07T00:00:00+00:00"]')
-    assert cfbd._capture_beside(entry) is None
+    _sidecar(_bare_entry(tmp_path)).write_text('["2026-09-07T00:00:00+00:00"]')
+    assert cfbd.captured_at("games", 2026, cache=tmp_path) is None
 
 
 def test_a_sidecar_whose_timestamp_is_not_a_string_reads_as_unknown(tmp_path):
     """The key is present and the value is a number -- an epoch, plausibly, and not ours."""
-    entry = tmp_path / "games.json"
-    entry.write_text("[]")
-    cfbd._capture_path(entry).write_text(json.dumps({"captured_at": 1757203200}))
-    assert cfbd._capture_beside(entry) is None
+    _sidecar(_bare_entry(tmp_path)).write_text(json.dumps({"captured_at": 1757203200}))
+    assert cfbd.captured_at("games", 2026, cache=tmp_path) is None
 
 
 def test_a_sidecar_whose_timestamp_will_not_parse_reads_as_unknown(tmp_path):
     """A string that is not a timestamp. `fromisoformat` raises and the answer is unknown,
     not today -- the whole point of the field is that it dates the fetch."""
-    entry = tmp_path / "games.json"
-    entry.write_text("[]")
-    cfbd._capture_path(entry).write_text(json.dumps({"captured_at": "last Tuesday"}))
-    assert cfbd._capture_beside(entry) is None
+    _sidecar(_bare_entry(tmp_path)).write_text(json.dumps({"captured_at": "last Tuesday"}))
+    assert cfbd.captured_at("games", 2026, cache=tmp_path) is None
 
 
-def test_a_sidecar_that_cannot_be_written_does_not_take_the_payload_down(tmp_path):
+def test_a_sidecar_that_cannot_be_written_does_not_take_the_payload_down(
+        transport, paths, monkeypatch):
     """A fetched week is worth more than its stamp.
 
-    The call has already been spent against a metered quota by the time the sidecar is
+    The call has already been spent against a metered quota by the time the stamp is
     written, so a failure here must cost the capture time and not the rows. What it leaves
     behind is an entry that reads back unknown, which is exactly the state the reader is
     built for.
     """
-    entry = tmp_path / "sub" / "games.json"
-    entry.parent.mkdir()
-    entry.write_text("[]")
-    entry.parent.chmod(0o500)                      # writable no longer
-    try:
-        cfbd._record_capture(entry)                # must not raise
-        assert cfbd._capture_beside(entry) is None
-    finally:
-        entry.parent.chmod(0o700)                  # so tmp_path can be cleaned up
+    def refuse(*a, **k):
+        raise OSError("read-only")
+    monkeypatch.setattr(cached, "write_stamp", refuse)
+    transport([{"id": 1}])
+    got = cfbd.bulk("games", year=2026, week=1, cache=paths["cache"], quota_path=paths["quota"])
+    assert got.height == 1, "the rows survive the stamp failing"
+    assert cfbd.captured_at("games", 2026, 1, cache=paths["cache"]) is None
+
+
+# --- the capture is `fetch.cached`'s stamp (#402) ---------------------------------
+#
+# cfbd had a sidecar of its own saying what `cached.write_stamp`/`read_stamp` say. These hold
+# the join: what cfbd records is read back by the shared reader, what the shared writer records
+# is what cfbd reads, and an entry from before the move still reads.
+
+
+def test_a_capture_round_trips_through_the_shared_stamp(transport, paths):
+    """Written by cfbd's fetch, read by `cached.read_stamp`, and the same instant comes back
+    out of `captured_at`. If cfbd wrote a private shape again, the first assert is the one
+    that goes."""
+    _seed(transport, paths)
+    stamp = cached.read_stamp(_sidecar(_entry(paths)))
+    assert set(stamp) == {"captured_at"}
+    assert cfbd.captured_at("games", 2026, 1, cache=paths["cache"]) == datetime.fromisoformat(
+        stamp["captured_at"])
+
+
+def test_a_stale_stamp_written_through_the_shared_writer_reads_as_stale(transport, paths):
+    """The other direction: `cached.write_stamp` records an old instant, cfbd reads it as old
+    and, given a bound, refetches rather than serving."""
+    calls = _seed(transport, paths)
+    long_ago = datetime.now(UTC) - timedelta(days=30)
+    cached.write_stamp(_sidecar(_entry(paths)), long_ago.isoformat(timespec="seconds"))
+    got = cfbd.captured_at("games", 2026, 1, cache=paths["cache"])
+    assert got == long_ago.replace(microsecond=0)
+    assert cfbd._past_its_age(got, refresh=False, max_age=timedelta(days=1))
+    assert not cfbd._past_its_age(got, refresh=False, max_age=timedelta(days=60))
+    cfbd.bulk("games", year=2026, week=1, cache=paths["cache"], quota_path=paths["quota"],
+              max_age=timedelta(days=1))
+    assert len(calls) == 2, "a stale stamp refetched; the fresh one would not have"
+
+
+def test_a_capture_json_written_before_the_move_still_reads(tmp_path):
+    """`.capture.json` is the filename and `captured_at` the key, both unchanged, so entries
+    on disk from before this change read as they did -- including the indented form the old
+    private writer produced."""
+    entry = _bare_entry(tmp_path)
+    assert entry.with_suffix(".capture.json") == _sidecar(entry)
+    _sidecar(entry).write_text('{\n  "captured_at": "2026-09-07T00:00:00+00:00"\n}')
+    assert cfbd.captured_at("games", 2026, cache=tmp_path) == datetime(2026, 9, 7, tzinfo=UTC)
+    _sidecar(entry).write_text('{"captured_at": "2026-09-07T00:00:00"}')
+    assert cfbd.captured_at("games", 2026, cache=tmp_path) == datetime(2026, 9, 7, tzinfo=UTC), (
+        "a naive time is read as UTC, as it always was")
