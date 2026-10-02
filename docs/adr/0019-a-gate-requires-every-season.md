@@ -525,3 +525,39 @@ by hand, confirmed red, and reverted; `git diff` on `experiment.py` was empty af
 `gate()` reads (`t_quantile` at `df = k − 1`) — out of scope here, owned by #343 (frozen behind
 #326), and this line exists so a reader who concludes "all four call sites now read the same
 bar" is corrected rather than left to assume it.
+
+---
+
+# Amendment, 2026-10-02 (#397): the one-implementation rule covers Gates, not Screens
+
+**Amended rather than replaced.** Nothing above is withdrawn. The decision paragraph's last
+sentence — *one implementation, `hub.models.experiment.gate`, read by every gate in the repo* —
+is true of the six modules that declare a `Harness` and was read, by omission, as covering every
+function in the repo that returns a verdict. It does not. `hub.models.weekly_screen.verdict`
+reads a different rule on purpose and is not a call site of `gate`.
+
+**The scope, stated.** "One implementation, read by every gate" covers **Gates**. It does not
+cover **Screens**. `weekly_screen.verdict` is a Screen, and a Screen is not held to the
+every-season adoption bar or to the NOT-RUNNABLE precondition above.
+
+**Why, and it is not a loophole.** `CONTEXT.md` separates the two tests and says they are not
+interchangeable: a Screen asks "is this real?" and a Gate asks "is this better than what it
+replaces?". The rule this ADR centralises is an *adoption* rule — it decides whether a candidate
+replaces the thing already working, which is the Gate's question and only the Gate's. A Screen
+adopts nothing. `weekly_screen.verdict` takes a sign fixed before the run, clears a feature when
+that sign holds in every season and the pooled statistic clears `MIN_SE`, and also has a
+pre-stated-null branch (`sign="0"`) that a Gate has no analogue of. Routing it through `gate`
+would make a screening question answer an adoption one: the Screen has no arm to beat and no
+ceiling to run against, so the precondition has nothing to read. Merging the two would be the
+confusion `CONTEXT.md` warns about, written into code.
+
+**The other verdicts that bypass `gate` are not covered by this amendment.** They are Gates (or
+are meant to read one) and are handled by their own tickets, not excused here:
+`spread.verdict` and `injury.type_verdict` / `injury.verdict` route through the shared Gate
+under #343 (frozen behind #326); `component_error.verdict`, a Gate by this ADR's own list,
+joins #343's batch. Until those land, "read by every gate" is a target for them and a fact for
+the six `Harness` modules.
+
+**What this does not move.** Both halves of the adoption bar and the precondition stand, and
+`weekly_screen.verdict` is untouched: this amendment changes what the ADR claims, not what any
+code does.
