@@ -16,10 +16,10 @@ from datetime import date
 
 import polars as pl
 import pytest
-from replays import serve
 
 from hub.contracts import ContractViolation
 from hub.fetch import nflverse as nv
+from hub.fetch.replay import serve
 
 
 @pytest.fixture
@@ -1275,31 +1275,30 @@ def test_the_new_sources_are_not_wide():
 
 
 @pytest.fixture
-def no_live_rankings(monkeypatch):
-    """nflreadpy's own door, shut.
+def no_live_rankings():
+    """The adapter's door, shut: any read of the archive at all fails the test.
 
-    `_raw_ff_rankings`'s refusal is the last thing between a bad partition key and
-    `nfl.load_ff_rankings`, so the mutant that proves it is by construction one that calls
-    the real function. Blocked here rather than declared unprovable: an `# UNPROVED` block
-    would have been an argument about a fetch, and this is the fetch not happening.
+    The partition-key refusal is the last thing between a bad key and the adapter, so the
+    mutant that proves it is by construction one that makes the read. The adapter selected here
+    answers that read with a failure rather than with 1.83M rows -- a fetch not happening, not
+    an argument about one.
     """
-    def _blocked(*args, **kwargs):
+    def _blocked(keys):
         raise AssertionError(
-            f"nflreadpy.load_ff_rankings{args!r} was called -- the refusal under test is "
-            f"supposed to fire before the live archive is reached for at all")
+            f"the rankings adapter was asked for {list(keys)!r} -- the refusal under test is "
+            f"supposed to fire before the archive is reached for at all")
 
-    import nflreadpy
-    monkeypatch.setattr(nflreadpy, "load_ff_rankings", _blocked)
+    serve(ff_rankings=_blocked)
 
 
 @pytest.fixture
-def no_rankings_fetch(monkeypatch, no_live_rankings):
+def no_rankings_fetch(no_live_rankings):
     """Every reach for the archive, recorded and served locally. Returns the record.
 
     The record is the assertion `load_rankings`'s two refusals need. Both must fire before
     `load` is called, and a test that only names the exception cannot say so: deleting the
     unknown-page check by hand on 2026-09-06 left all 77 tests here green, because
-    `_raw_ff_rankings` refuses the same call with the same `WideFrameRefused` and a message
+    the read's own refusal fires on the same call with the same `WideFrameRefused` and a message
     that also lists every page in `RANKINGS_PAGES`. An empty record tells the two apart by
     where each happens rather than by what it says.
     """
@@ -1333,7 +1332,7 @@ def test_a_season_list_is_refused_at_the_other_door_too(no_live_rankings, tmp_pa
     where the page belongs has to fail there as well, and before any network call.
 
     `no_live_rankings` rather than `no_rankings_fetch`: this is the refusal *inside*
-    `_raw_ff_rankings`, so replacing that function would replace the thing under test.
+    the loader's read, so an adapter that answered would replace the thing under test.
     """
     with pytest.raises(nv.WideFrameRefused, match="one page type"):
         nv.load("ff_rankings", seasons=[2024], cache=tmp_path)
@@ -1346,7 +1345,7 @@ def test_an_unknown_rankings_page_is_refused_and_names_the_known_ones(no_ranking
     to be loosened to cover both or fail on every weekly load.
 
     Matched on `load_rankings`'s own wording and paired with an empty fetch record, because
-    the exception type alone cannot distinguish this refusal from `_raw_ff_rankings`'s. The
+    the exception type alone cannot distinguish this refusal from the read's own. The
     earlier version asserted only that the message contained "draft" and "all", which the
     downstream refusal's message does too -- so it held over a mutant with this check
     deleted, which is the "asserted the outcome the guard was meant to produce" shape
@@ -1773,6 +1772,20 @@ def _a_schedule() -> pl.DataFrame:
                          "away_team": ["A"]})
 
 
+def _worker_load(cache, results):
+    """The body of a worker process that tries to read nflverse.
+
+    Module-level because a spawned child imports its target by name. It reports the type of
+    whatever happened rather than raising, since a child's traceback never reaches the test.
+    """
+    try:
+        nv.load("schedules", [2025], cache=cache)
+    except BaseException as e:      # the child reports; the parent asserts
+        results.put(type(e).__name__)
+    else:
+        results.put("loaded")
+
+
 def test_a_load_inside_a_worker_process_raises(tmp_path):
     """Rule 18's control for the guard: a planted worker-process load, seen to fail.
 
@@ -1783,14 +1796,12 @@ def test_a_load_inside_a_worker_process_raises(tmp_path):
     """
     import multiprocessing
 
-    import replays
-
     serve(schedules=_a_schedule())
     nv.load("schedules", [2025], cache=tmp_path)            # the parent may; the entry exists
 
     ctx = multiprocessing.get_context("spawn")
     results = ctx.Queue()
-    child = ctx.Process(target=replays.worker_load, args=(tmp_path, results))
+    child = ctx.Process(target=_worker_load, args=(tmp_path, results))
     child.start()
     answer = results.get(timeout=60)
     child.join(timeout=60)

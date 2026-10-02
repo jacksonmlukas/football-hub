@@ -10,8 +10,8 @@ All offline.
 import numpy as np
 import polars as pl
 import pytest
-from replays import serve
 
+from hub.fetch.replay import serve
 from hub.models import correlate
 
 

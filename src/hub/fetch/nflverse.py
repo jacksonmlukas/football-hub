@@ -356,13 +356,12 @@ def _read(source: Source, keys: Sequence[int | str]) -> pl.DataFrame:
     `keys` is the partition key set. For every source but two that is a list of seasons;
     `ff_rankings`' is a FantasyPros page type, which is why the annotation admits a string.
     """
-    if source.key == "page":
-        # GUARD rankings-partition-key: a key that is not one known page never reaches an adapter
-        if len(keys) != 1 or keys[0] not in RANKINGS_PAGES:
-            raise WideFrameRefused(
-                f"ff_rankings is keyed by one page type, not by {list(keys)!r}. "
-                f"Known: {', '.join(RANKINGS_PAGES)}; use load_rankings(page, as_of=...).")
-        # /GUARD
+    # GUARD rankings-partition-key: a key that is not one known page never reaches an adapter
+    if source.key == "page" and (len(keys) != 1 or keys[0] not in RANKINGS_PAGES):
+        raise WideFrameRefused(
+            f"ff_rankings is keyed by one page type, not by {list(keys)!r}. "
+            f"Known: {', '.join(RANKINGS_PAGES)}; use load_rankings(page, as_of=...).")
+    # /GUARD
     df = _ADAPTER.read(source, keys)
     if source.whole and source.key == "seasons":
         df = df.filter(pl.col("season").is_in([int(k) for k in keys]))

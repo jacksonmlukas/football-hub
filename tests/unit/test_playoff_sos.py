@@ -5,7 +5,6 @@ place on a team getting 1.0 and reading as "average playoff schedule".
 """
 import polars as pl
 import pytest
-from replays import serve
 
 from hub.draft.playoff_sos import (
     PLAYOFF_WEEKS,
@@ -15,6 +14,7 @@ from hub.draft.playoff_sos import (
     attach_sos,
     canon_team,
 )
+from hub.fetch.replay import serve
 
 
 def _stats(rows):
@@ -312,6 +312,7 @@ def test_playoff_sos_reads_the_config_default_and_honours_an_override(monkeypatc
                                   pl.col("week").cast(pl.Int32),
                                   pl.int_range(pl.len()).cast(pl.Utf8).alias("game_id"))
     serve(player_stats=games, schedules=sched)
+    _the_two_reads_a_board_build_makes_are_named_by_the_run(PS)
 
     by_config = PS.playoff_sos()
     explicit = PS.playoff_sos(ridge=DraftConfig().sos_ridge)
@@ -319,3 +320,16 @@ def test_playoff_sos_reads_the_config_default_and_honours_an_override(monkeypatc
     assert by_config.equals(explicit), "the default did not resolve to DraftConfig.sos_ridge"
     assert not by_config.equals(unadjusted), "the config default is the unadjusted metric"
     assert PS.playoff_sos(ridge=8.0).height == by_config.height
+
+
+def _the_two_reads_a_board_build_makes_are_named_by_the_run(PS):
+    """`hub.draft.board.build` calls `playoff_sos`, and the gates that build boards stamp a data
+    digest over what their run read. Before #398 this function reached `nflreadpy` directly, so
+    those digests were silent about two sources their boards rested on; routed, they name them.
+    That is the digest that moves, and this is what it moves by: the weekly stats and the
+    schedule, each as a pin the enclosing run holds."""
+    from hub.fetch import nflverse
+    with nflverse.reads_of_one_run() as reads:
+        PS.playoff_sos()
+    assert sorted(p.source for p in reads.pins() if hasattr(p, "source")) == [
+        "player_stats", "schedules"]

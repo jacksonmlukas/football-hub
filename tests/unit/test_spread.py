@@ -10,10 +10,10 @@ All offline.
 import numpy as np
 import polars as pl
 import pytest
-from replays import serve
 
 from hub.contracts import ContractViolation
 from hub.fetch import nflverse as nv
+from hub.fetch.replay import serve
 from hub.models import spread
 from hub.models.predict import WEEKLY_K
 

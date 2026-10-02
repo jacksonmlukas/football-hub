@@ -14,9 +14,9 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from replays import serve
 
 from hub import store
+from hub.fetch.replay import serve
 
 
 @pytest.fixture

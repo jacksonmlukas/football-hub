@@ -20,11 +20,11 @@ import statistics
 
 import polars as pl
 import pytest
-from replays import serve
 
 from hub import store
 from hub.contracts import ContractViolation
 from hub.fetch import odds
+from hub.fetch.replay import serve
 
 
 @pytest.fixture

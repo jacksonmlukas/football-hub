@@ -22,6 +22,7 @@ from pathlib import Path
 
 import polars as pl
 
+from hub.fetch import nflverse
 from hub.fetch.nflverse import SOURCES, Source
 
 Edit = Callable[[pl.DataFrame], pl.DataFrame]
@@ -106,3 +107,22 @@ class Replay:
             return table
 
         return cls({name: serve(name) for name in sources}, absent=absent)
+
+
+def serve(**tables: Table) -> Replay:
+    """Select a Replay holding these tables as the nflverse adapter, for a test that wants one
+    source to answer with one frame -- or to raise, or to count its calls.
+
+    Called again, it adds to the set already selected, so two sources are two calls. A source
+    not named raises `NotRecorded`, so a test never reaches the wire for one it did not mean to.
+    The cache stays wherever `nflverse` has it (a test's own, under `tests/conftest.py`), and
+    `tests/conftest.py` puts the network adapter back afterwards. For a recorded set read from
+    disk, build `Replay.recorded` and select it with `nflverse.select`.
+    """
+    current = nflverse.selected()
+    if isinstance(current, Replay):
+        current.add(**tables)
+        return current
+    rep = Replay(tables)
+    nflverse.select(rep)
+    return rep

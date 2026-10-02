@@ -16,9 +16,9 @@ import numpy as np
 import polars as pl
 import pytest
 from polars.exceptions import ColumnNotFoundError
-from replays import serve
 
 from hub.draft import board
+from hub.fetch.replay import serve
 
 # The DRAFT_BOARD contract requires 300 rows, so these are league-sized rather than toy.
 # `games` is UInt32 because the contract declares it and now checks it.

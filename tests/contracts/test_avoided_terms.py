@@ -265,8 +265,9 @@ CHECKED: dict[str, Rule] = {
 UNCHECKED: dict[str, str] = {
     "frozen capture": "Replay's own predecessor used the phrase in comments, and 'capture' is "
                       "correct for a Snapshot; a scan cannot tell the two senses apart",
-    "panel archive": "`tests/panelarchive.py` and `tests/golden/fixtures/panel_archive/` carry "
-                     "the name until #398 replaces them with the Replay adapter",
+    "panel archive": "`tests/golden/fixtures/panel_archive/` holds the recorded set and "
+                     "`tests/panelarchive.py` only selects the Replay adapter over it (#398 "
+                     "moved the serving into `hub.fetch.replay`); both still name real files",
     "adp alone when the contrast with consensus matters": (
         "conditional on a contrast being drawn, which is a judgement about the paragraph"),
     "rankings": "ECR is a ranking; the entry forbids the plural for Consensus and the repo "

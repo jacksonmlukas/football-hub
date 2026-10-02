@@ -20,9 +20,9 @@ import pathlib
 
 import polars as pl
 import pytest
-from replays import serve
 
 from hub import jsonio, publish, store
+from hub.fetch.replay import serve
 
 
 def _sched(game_ids, results):

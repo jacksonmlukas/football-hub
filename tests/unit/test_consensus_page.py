@@ -13,10 +13,10 @@ K or DST off this board.
 """
 import polars as pl
 import pytest
-from replays import serve
 
 from hub.contracts import ContractViolation
 from hub.draft.board import _select_consensus
+from hub.fetch.replay import serve
 
 
 def _rows(*specs):

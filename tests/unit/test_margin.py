@@ -9,8 +9,8 @@ answer. Everything here is offline.
 import numpy as np
 import polars as pl
 import pytest
-from replays import serve
 
+from hub.fetch.replay import serve
 from hub.models import experiment, margin
 from hub.models.market import MARGIN_SD
 

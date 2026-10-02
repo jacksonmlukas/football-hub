@@ -150,7 +150,8 @@ def test_a_whole_percent_capture_reaches_one_answer_down_one_path():
 
     The repair is declared beside the bound now, so there is one answer, and this is where
     the two ends are tied to it: the contract hands back the capture's own numbers, and the
-    consumer computes what it computes from the frame that never varied.
+    consumer computes from that repaired frame what it computes from the frame that never
+    varied.
     """
     pcts = ("offense_pct", "defense_pct", "st_pct")
     df = frame("nflverse_snap_counts.json").with_columns(
@@ -161,8 +162,10 @@ def test_a_whole_percent_capture_reaches_one_answer_down_one_path():
     for c in pcts:
         assert repaired[c].to_list() == pytest.approx(df[c].to_list()), c
 
+    # `snap_usage` reads what the loader hands it, and the loader is `validate` on the whole
+    # response -- so the frame it is given is the repaired one, which is asserted above.
     xw = pl.DataFrame({"pfr_id": df["pfr_player_id"], "gsis_id": df["pfr_player_id"]})
-    read = snap_usage(percents, xw).sort("player_id")
+    read = snap_usage(repaired, xw).sort("player_id")
     assert read.height == 1, "the capture no longer carries a drafted-position row to read"
     assert_frame_equal(read, snap_usage(df, xw).sort("player_id"))
 
