@@ -9,6 +9,7 @@ answer. Everything here is offline.
 import numpy as np
 import polars as pl
 import pytest
+from replays import serve
 
 from hub.models import experiment, margin
 from hub.models.market import MARGIN_SD
@@ -301,9 +302,8 @@ def test_help_path_needs_no_network():
 def test_the_fit_path_reports_and_gates(monkeypatch, capsys, tmp_path):
     """The whole reporting path, on synthetic seasons, with the fetch patched out. A gate
     whose CLI is only exercisable against the live API is one nobody re-runs."""
-    import nflreadpy as nfl
     sched = _synthetic(seasons=range(2010, 2021), per=400, sd=8.0)
-    monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: sched)
+    serve(schedules=_shipped(sched))
 
     out = tmp_path / "wf.parquet"
     assert margin.main(["--fit", "--out", str(out)]) == 0
@@ -327,11 +327,9 @@ def test_the_fit_path_reports_and_gates(monkeypatch, capsys, tmp_path):
 def test_the_fit_path_keeps_the_incumbent_when_it_is_right(monkeypatch, capsys):
     """The branch that matters more: an asserted number that survives a fit is no longer
     asserted, and the CLI has to be able to say so."""
-    import nflreadpy as nfl
-
     from hub.models.market import MARGIN_SD as live
     sched = _synthetic(seasons=range(2010, 2021), per=200, sd=live)
-    monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: sched)
+    serve(schedules=_shipped(sched))
 
     assert margin.main(["--fit"]) == 0
     assert "KEEP" in capsys.readouterr().out
@@ -342,6 +340,15 @@ def test_the_fit_path_keeps_the_incumbent_when_it_is_right(monkeypatch, capsys):
 # Written before the walk-forward was run, as the tests above were. The recorded outcome
 # (`FITTED_KEY_EXCESS`, `FITTED_SHAPE_GAIN`) was filled in afterwards and the last two tests
 # guard the live shape against it.
+
+def _shipped(sched):
+    """The frame as the loader will accept it from nflverse: a real schedule has an id, a week
+    and two teams per game, and `SCHEDULES` refuses one that does not."""
+    n = sched.height
+    return sched.with_columns(
+        game_id=pl.int_range(n).cast(pl.Utf8), week=pl.lit(1, pl.Int32),
+        home_team=pl.lit("H"), away_team=pl.lit("A"))
+
 
 def _lumpy_synthetic(seasons=range(2000, 2011), per=200, sd=11.0, seed=1, at=3, share=0.15,
                      symmetric=True):
@@ -604,9 +611,8 @@ def test_the_shape_path_reports_the_ceiling_first_and_keeps_the_gaussian(monkeyp
     """Rule 8 in the printed order: the ceiling before the histogram before the verdict. On
     the favourite-side lump, the verdict is the one the real data gave -- KEEP, through a
     measured ceiling (#363 left it NOT-RUNNABLE for a day; review of 2026-09-21)."""
-    import nflreadpy as nfl
     sched = _lumpy_synthetic(seasons=range(2010, 2021), share=0.4, symmetric=False)
-    monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: sched)
+    serve(schedules=_shipped(sched))
     assert margin.main(["--shape"]) == 0
     text = capsys.readouterr().out
     assert (text.index("Ceiling") < text.index("Mass on the key numbers")
@@ -649,9 +655,8 @@ def test_survival_beside_is_labelled_as_the_independence_bound_it_is(monkeypatch
     assert "independence bound" in line and "10 games" in line
     assert "not a measurement" in line and f"{0.9 ** 3:.4f}" in line
 
-    import nflreadpy as nfl
     sched = _lumpy_synthetic(seasons=range(2010, 2021), share=0.4, symmetric=False)
-    monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: sched)
+    serve(schedules=_shipped(sched))
     assert margin.main(["--shape"]) == 0
     assert "independence bound" in capsys.readouterr().out
 
@@ -678,11 +683,10 @@ def test_since_skips_the_seasons_before_it_in_the_walk_forward():
 def test_main_degrades_when_the_schedule_pull_fails(monkeypatch, capsys):
     """CLAUDE.md's rule: a failing source is reported, not raised. `main` returns
     `unavailable`'s code and says which source, rather than a stack trace."""
-    import types
+    def down(keys):
+        raise RuntimeError("nflverse down")
 
-    fake = types.SimpleNamespace(load_schedules=lambda: (_ for _ in ()).throw(
-        RuntimeError("nflverse down")))
-    monkeypatch.setitem(__import__("sys").modules, "nflreadpy", fake)
+    serve(schedules=down)
     code = margin.main(["--shape"])
     captured = capsys.readouterr()
     said = captured.out + captured.err

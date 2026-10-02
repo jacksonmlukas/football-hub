@@ -25,6 +25,7 @@ import polars as pl
 import pytest
 
 from hub.fetch import nflverse as nv
+from hub.fetch.replay import Replay
 from hub.models import injury, margin, spread
 
 # Measured 2026-10-01 on the code that imported `nflreadpy` directly, before #398 routed it.
@@ -111,7 +112,7 @@ def _margin_tables() -> dict[str, pl.DataFrame]:
         for g in range(260):
             line = float(rng.choice([-10.5, -7.0, -3.0, -1.5, 1.5, 3.0, 7.0, 10.5]))
             rows.append((f"{season}_{g // 16 + 1:02d}_{g}", season, g // 16 + 1, "HHH", "AAA",
-                         line, int(round(line + rng.normal(0, 13.5)))))
+                         line, round(line + rng.normal(0, 13.5))))
     sched = pl.DataFrame(
         {"game_id": [r[0] for r in rows], "season": [r[1] for r in rows],
          "week": [r[2] for r in rows], "home_team": [r[3] for r in rows],
@@ -123,14 +124,14 @@ def _margin_tables() -> dict[str, pl.DataFrame]:
     return {"schedules": sched}
 
 
-def _serve(monkeypatch, tables: dict[str, pl.DataFrame]) -> None:
-    """Make these frames what nflverse answers. The one line that knows how."""
-    import nflreadpy as nfl
-    named = {"player_stats": "load_player_stats", "snap_counts": "load_snap_counts",
-             "ff_playerids": "load_ff_playerids", "injuries": "load_injuries",
-             "schedules": "load_schedules"}
-    for source, frame in tables.items():
-        monkeypatch.setattr(nfl, named[source], lambda *a, _f=frame, **k: _f)
+def _serve(tables: dict[str, pl.DataFrame], cache) -> None:
+    """Make these frames what nflverse answers. The one line that knows how.
+
+    Before #398 this patched `nflreadpy`'s functions, because that is where the modules read;
+    now it selects a Replay as the nflverse adapter. The fixtures and the expectations did not
+    change with it, which is the point of keeping this the only place that knows.
+    """
+    nv.select(Replay(tables), cache=cache)
 
 
 def _observed(main, argv: list[str], out) -> str:
@@ -161,10 +162,9 @@ CASES = {
 
 
 @pytest.mark.parametrize("module", sorted(CASES))
-def test_a_frozen_module_prints_the_numbers_it_printed_before_it_was_routed(
-        module, monkeypatch, tmp_path):
+def test_a_frozen_module_prints_the_numbers_it_printed_before_it_was_routed(module, tmp_path):
     main, argv, tables = CASES[module]
-    _serve(monkeypatch, tables())
+    _serve(tables(), tmp_path / "raw")
     got = _observed(main, argv, tmp_path / "out.parquet")
     assert got == EXPECTED[module], (
         f"{module} printed a different thing from the same fixture ({got}). Under #326 no "

@@ -913,14 +913,12 @@ def test_diagnose_advances_by_the_draft_market_so_both_runs_share_a_path():
 
 # --- what produced these rows (issue #71) ---------------------------------
 
-def test_the_paired_frame_names_the_config_and_the_data_that_made_it(monkeypatch):
+def test_the_paired_frame_names_the_config_and_the_data_that_made_it(monkeypatch, run):
     """A gate output that cannot name its data leaves a moved archive as a silently different
     number, which is the defect the whole pinning layer exists to remove."""
     from hub.config import UNPINNED
     from hub.draft import backtest as bt
-    from hub.fetch import nflverse as nv
 
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     paired = pl.DataFrame({"season": [2024, 2025], "effect": [1.0, -2.0]})
 
     stamped, said = bt.stamped_for_publication(paired)
@@ -932,7 +930,7 @@ def test_the_paired_frame_names_the_config_and_the_data_that_made_it(monkeypatch
     assert "nothing was loaded through the pinning layer" in said
 
 
-def test_a_pinned_load_changes_the_published_data_digest(monkeypatch):
+def test_a_pinned_load_changes_the_published_data_digest(monkeypatch, run):
     """The property a reader acts on: two runs over different data do not carry the same
     stamp. Without this the digest is decoration."""
     from hub.config import UNPINNED
@@ -940,13 +938,13 @@ def test_a_pinned_load_changes_the_published_data_digest(monkeypatch):
     from hub.fetch import nflverse as nv
 
     paired = pl.DataFrame({"season": [2024], "effect": [1.0]})
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
-    unpinned, _ = bt.stamped_for_publication(paired)
+    with nv.reads_of_one_run():
+        unpinned, _ = bt.stamped_for_publication(paired)
 
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {
-        "entry": nv.Pin(source="ff_opportunity", as_of="2026-09-04", digest="abcd1234",
-                        rows=10, pinned_at=None)})
-    pinned, said = bt.stamped_for_publication(paired)
+    with nv.reads_of_one_run() as reads:
+        reads.remember("entry", nv.Pin(source="ff_opportunity", as_of="2026-09-04",
+                                       digest="abcd1234", rows=10, pinned_at=None))
+        pinned, said = bt.stamped_for_publication(paired)
 
     assert unpinned["data_digest"][0] == UNPINNED
     assert pinned["data_digest"][0] != UNPINNED
@@ -1318,7 +1316,7 @@ def test_the_frozen_board_carries_the_pair_the_build_contract_refuses():
     walkers = [n for n in board["player"].to_list() if player_key(n) == "kenneth walker"]
     assert sorted(walkers) == ["Ken Walker III", "Kenneth Walker III"]
     with pytest.raises(ContractViolation, match="'Ken Walker III' / 'Kenneth Walker III'"):
-        DRAFT_BOARD.conform(board, "player")
+        DRAFT_BOARD.validate(board)
 
 
 def test_two_boards_differing_by_one_player_do_not_share_a_digest():
@@ -1388,13 +1386,11 @@ def test_the_same_frames_under_different_seasons_are_different_runs():
     assert frames_digest({2024: board}) != frames_digest({2025: board})
 
 
-def test_the_paired_frame_names_the_board_it_was_measured_on(monkeypatch):
+def test_the_paired_frame_names_the_board_it_was_measured_on(monkeypatch, run):
     """Two runs on different Boards are distinguishable from their stamps alone, which is the
     criterion -- without reading the frames back."""
     from hub.draft import backtest as bt
-    from hub.fetch import nflverse as nv
 
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     paired = pl.DataFrame({"season": [2024], "effect": [1.0]})
     board = _full_board()
 
@@ -1410,28 +1406,24 @@ def test_the_paired_frame_names_the_board_it_was_measured_on(monkeypatch):
     assert f"board: {one['board_digest'][0]}" in said
 
 
-def test_a_run_that_hands_over_no_boards_stamps_the_sentinel(monkeypatch):
+def test_a_run_that_hands_over_no_boards_stamps_the_sentinel(monkeypatch, run):
     """`stamped_for_publication` keeps its one-argument form for the callers that have no
     frames to give, and those runs must say `noframes` rather than a plausible hash."""
     from hub.config import NO_FRAMES
     from hub.draft import backtest as bt
-    from hub.fetch import nflverse as nv
 
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     stamped, said = bt.stamped_for_publication(pl.DataFrame({"season": [2024]}))
     assert stamped["board_digest"].unique().to_list() == [NO_FRAMES]
     assert "did not hand over the frames it played" in said
 
 
-def test_the_run_stamps_the_commit_that_produced_it(monkeypatch):
+def test_the_run_stamps_the_commit_that_produced_it(monkeypatch, run):
     """`docs/track-record.md` rule 1 makes these numbers commit-dated, and #190 records an
     effect moving 8.07 points across 270 commits with no owning commit -- because no run ever
     recorded which tree read the bytes."""
     from hub.config import NO_COMMIT
     from hub.draft import backtest as bt
-    from hub.fetch import nflverse as nv
 
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     stamped, said = bt.stamped_for_publication(pl.DataFrame({"season": [2024]}))
     got = stamped["commit"][0]
     assert got, "the commit column is empty"
@@ -1795,7 +1787,7 @@ def _in_process_gate(monkeypatch, tmp_path, *, inner, argv=()):
     return pl.read_parquet(out)
 
 
-def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_path, capsys):
+def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_path, capsys, run):
     """Called from inside a run that has already read something, the gate's published digest
     covers the gate's reads and not the enclosing run's -- and the enclosing run still ends
     up holding both, because a scope narrows what a component reports and must never be a
@@ -1803,7 +1795,6 @@ def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_pa
     from hub.config import data_digest
     from hub.fetch import nflverse as nv
 
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     outer = nv.Pin(source="player_stats", as_of=None, digest="0ut51de0", rows=1,
                    pinned_at=None)
     inner = nv.Pin(source="ff_opportunity", as_of="2024-09-01", digest="1n51de01", rows=1,
@@ -1937,11 +1928,10 @@ def test_the_same_scale_on_the_same_seed_reproduces_exactly():
         "the same scale on the same seed did not reproduce")
 
 
-def test_the_sweep_is_reachable_from_the_command_line(monkeypatch, tmp_path):
+def test_the_sweep_is_reachable_from_the_command_line(monkeypatch, tmp_path, run):
     """`--noise-scales` runs the sweep instead of the single gate and writes the table."""
     from hub.fetch import nflverse as nv
 
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     inner = nv.Pin(source="ff_opportunity", as_of="2024-09-01", digest="1n51de01", rows=1,
                    pinned_at=None)
     board = _full_board(24)

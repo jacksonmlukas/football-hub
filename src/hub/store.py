@@ -389,8 +389,8 @@ def schedules_for(season: int) -> pl.DataFrame:
     defects, and calling them "the nflverse schedules unavailable" sends the operator to
     re-fetch data that is fine (issue #119).
     """
-    import nflreadpy as nfl
-    return (nfl.load_schedules()
+    from hub.fetch import nflverse
+    return (nflverse.load("schedules", [season], refresh=True)
             .filter((pl.col("season") == season) & pl.col("spread_line").is_not_null()))
 
 

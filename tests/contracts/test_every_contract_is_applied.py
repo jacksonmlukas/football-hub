@@ -58,6 +58,16 @@ def _declared() -> set[str]:
     return out
 
 
+def _declared_in_sources(value: ast.AST, declared: set[str]) -> set[str]:
+    """The declared contracts named in `Source(...)` calls anywhere inside `value`."""
+    held: set[str] = set()
+    for n in ast.walk(value):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "Source":
+            args = [*n.args, *(k.value for k in n.keywords)]
+            held |= {a.id for a in args if isinstance(a, ast.Name)} & declared
+    return held
+
+
 def _registries(tree: ast.AST, declared: set[str]) -> dict[str, set[str]]:
     """Module-level dicts whose values are declared contracts, by the name they are bound to.
 
@@ -77,9 +87,15 @@ def _registries(tree: ast.AST, declared: set[str]) -> dict[str, set[str]]:
             targets, value = [node.target], node.value
         else:
             continue
-        if not isinstance(value, ast.Dict):
-            continue
-        held = {v.id for v in value.values if isinstance(v, ast.Name)} & declared
+        if isinstance(value, ast.Dict):
+            held = {v.id for v in value.values if isinstance(v, ast.Name)} & declared
+        else:
+            held = set()
+        # `hub.fetch.nflverse` declares each source once, as a `Source(name, CONTRACT, ...)`,
+        # and builds `SOURCES` from them (#398). The contract is then named inside a call
+        # rather than held as a dict value, and the registry is the thing the load validates
+        # through -- so the declarations are read as part of the registry they build.
+        held |= _declared_in_sources(value, declared)
         if held:
             for t in targets:
                 if isinstance(t, ast.Name):
@@ -92,6 +108,8 @@ def _yields(value: ast.AST, declared: set[str],
     """Which declared contracts an expression can evaluate to. Empty means "cannot tell"."""
     if isinstance(value, ast.Name):
         return {value.id} & declared
+    if isinstance(value, ast.Attribute) and value.attr == "contract":
+        return _yields(value.value, declared, registries)      # SOURCES[source].contract
     if isinstance(value, ast.Subscript) and isinstance(value.value, ast.Name):
         return registries.get(value.value.id, set())          # SOURCES[source]
     if (isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
@@ -315,6 +333,23 @@ def test_validating_a_different_contract_does_not_count_as_applying_this_one():
             return PBP.validate(df)
     """)
     assert got == {"PBP"}, f"the odds snapshots are not enforced here, but {got} says so"
+
+
+def test_a_contract_named_in_a_source_declaration_counts_only_where_it_is_validated():
+    """#398 declared each nflverse source once, as a `Source`, so the registry the load
+    validates through is built from calls rather than written as a dict of contracts. The
+    guard has to follow it -- and it has to follow it without learning to count a mention."""
+    assert _guard("""
+        SOURCES = {s.name: s for s in (Source("pbp", PBP, "pbp"),)}
+        def load(source, df):
+            contract = SOURCES[source].contract
+            return contract.validate(df)
+    """) == {"PBP"}
+    assert _guard("""
+        SOURCES = {s.name: s for s in (Source("pbp", PBP, "pbp"),)}
+        def load(source, df):
+            return df
+    """) == set()
 
 
 def test_a_bare_mention_in_a_comment_is_not_enforcement():

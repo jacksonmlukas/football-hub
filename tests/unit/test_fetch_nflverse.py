@@ -16,6 +16,7 @@ from datetime import date
 
 import polars as pl
 import pytest
+from replays import serve
 
 from hub.contracts import ContractViolation
 from hub.fetch import nflverse as nv
@@ -41,7 +42,7 @@ def fake_pbp(monkeypatch):
             **named,
             **{f"filler_{i}": [0.0] * rows for i in range(cols - len(named))},
         })
-        monkeypatch.setattr(nv, "_raw_pbp", lambda seasons: frame)
+        serve(pbp=lambda seasons: frame)
         return frame
     return _install
 
@@ -56,7 +57,7 @@ def fake_ffo(monkeypatch):
             "season": pl.Series([2025] * rows, dtype=pl.Int32),
             "week": pl.Series([1] * rows, dtype=pl.Int32),
         })
-        monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: frame)
+        serve(ff_opportunity=lambda seasons: frame)
         return frame
     return _install
 
@@ -109,7 +110,7 @@ def test_unknown_source_names_the_known_ones(tmp_path):
 def test_contract_runs_on_the_way_out(fake_pbp, tmp_path, monkeypatch):
     """A silently renamed upstream column is the Week 7 failure this repo names."""
     frame = fake_pbp()
-    monkeypatch.setattr(nv, "_raw_pbp", lambda seasons: frame.drop("game_id"))
+    serve(pbp=lambda seasons: frame.drop("game_id"))
     with pytest.raises(ContractViolation):
         nv.load("pbp", seasons=[2025], cols=["season", "week", "epa"], cache=tmp_path)
 
@@ -117,7 +118,7 @@ def test_contract_runs_on_the_way_out(fake_pbp, tmp_path, monkeypatch):
 def test_contract_catches_an_out_of_range_value(fake_ffo, tmp_path, monkeypatch):
     frame = fake_ffo()
     bad = frame.with_columns(pl.lit(500.0).alias("total_fantasy_points_exp"))
-    monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: bad)
+    serve(ff_opportunity=lambda seasons: bad)
     with pytest.raises(ContractViolation):
         nv.load("ff_opportunity", seasons=[2025], cache=tmp_path)
 
@@ -131,7 +132,7 @@ def test_second_call_is_served_from_cache(fake_pbp, tmp_path, monkeypatch):
 
     def _boom(seasons):
         raise AssertionError("should have been served from cache")
-    monkeypatch.setattr(nv, "_raw_pbp", _boom)
+    serve(pbp=_boom)
     assert nv.load("pbp", seasons=[2025], cols=cols, cache=tmp_path).height == 1200
 
 
@@ -140,7 +141,7 @@ def test_refresh_bypasses_the_cache(fake_pbp, tmp_path, monkeypatch):
     cols = ["game_id", "season", "week", "epa"]
     nv.load("pbp", seasons=[2025], cols=cols, cache=tmp_path)
     calls = []
-    monkeypatch.setattr(nv, "_raw_pbp", lambda seasons: (calls.append(1), fake_pbp())[1])
+    serve(pbp=lambda seasons: (calls.append(1), fake_pbp())[1])
     nv.load("pbp", seasons=[2025], cols=cols, cache=tmp_path, refresh=True)
     assert calls, "refresh must go back to the source"
 
@@ -181,7 +182,7 @@ def test_refresh_splits_multi_week_data_into_separate_partitions(fake_ffo, fake_
                                                                  tmp_path, monkeypatch):
     frame = fake_ffo()
     multi = pl.concat([frame, frame.with_columns(pl.lit(2, dtype=pl.Int32).alias("week"))])
-    monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: multi)
+    serve(ff_opportunity=lambda seasons: multi)
     fake_pbp()
     store_root = tmp_path / "processed"
     nv.refresh(season=2025, cache=tmp_path / "raw", base=store_root)
@@ -251,7 +252,7 @@ def _weekly(**over):
 
 
 def test_player_stats_passes_its_contract(monkeypatch, tmp_path):
-    monkeypatch.setattr(nv, "_raw_player_stats", lambda seasons: _weekly())
+    serve(player_stats=lambda seasons: _weekly())
     got = nv.load("player_stats", seasons=[2024], cols=nv.PLAYER_STATS_COLS,
                   cache=tmp_path)
     assert got.height == 2
@@ -261,7 +262,7 @@ def test_a_renamed_points_column_is_caught(monkeypatch, tmp_path):
     """The failure this exists for: nv renames the column between releases and every
     weekly-spread number goes quietly wrong for a month."""
     bad = _weekly().rename({"fantasy_points_ppr": "fantasy_points_full_ppr"})
-    monkeypatch.setattr(nv, "_raw_player_stats", lambda seasons: bad)
+    serve(player_stats=lambda seasons: bad)
     with pytest.raises(nv.WideFrameRefused):
         # tmp cache, or the previous test's cached parquet is served and nothing is
         # validated -- which is how this test first passed for the wrong reason.
@@ -279,8 +280,7 @@ def test_rows_belonging_to_no_player_are_dropped(monkeypatch, tmp_path):
         "season": pl.Series([2024], dtype=pl.Int32),
         "week": pl.Series([1], dtype=pl.Int32),
         "season_type": ["REG"], "fantasy_points_ppr": [0.0]})])
-    monkeypatch.setattr(nv, "_raw_player_stats",
-                        lambda seasons: nv._clean_player_stats(raw))
+    serve(player_stats=lambda seasons: nv._clean_player_stats(raw))
     got = nv.load("player_stats", seasons=[2024], cols=nv.PLAYER_STATS_COLS, cache=tmp_path)
     assert got.height == 2
 
@@ -434,7 +434,7 @@ def fake_archive(monkeypatch):
                 [d for d in dates for _ in range(per_date)]).str.to_date(),
         })
         monkeypatch.setattr(nv, "APPEND_ONLY", {"ff_opportunity": "scrape_date"})
-        monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: frame)
+        serve(ff_opportunity=lambda seasons: frame)
         return frame
     return _install
 
@@ -451,7 +451,7 @@ def test_two_as_ofs_are_two_entries_and_neither_is_served_the_others_rows(
     """The reason the column set is already part of the key, applied to the date."""
     frame = fake_ffo()
     early = nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-08-01")
-    monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: frame.head(1100))
+    serve(ff_opportunity=lambda seasons: frame.head(1100))
     late = nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
     assert (early.height, late.height) == (1200, 1100)
     again = nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-08-01")
@@ -464,7 +464,7 @@ def test_a_second_load_at_one_as_of_hits_the_network_once(fake_ffo, tmp_path, mo
 
     def _boom(seasons):
         raise AssertionError("a pinned load must be served from its dated entry")
-    monkeypatch.setattr(nv, "_raw_ff_opportunity", _boom)
+    serve(ff_opportunity=_boom)
     assert nv.load("ff_opportunity", seasons=[2025], cache=tmp_path,
                    as_of="2026-09-04").height == 1200
 
@@ -479,7 +479,7 @@ def test_a_load_with_no_as_of_uses_the_undated_path_for_read_and_write(
 
     def _boom(seasons):
         raise AssertionError("the undated entry must still be read back")
-    monkeypatch.setattr(nv, "_raw_ff_opportunity", _boom)
+    serve(ff_opportunity=_boom)
     assert nv.load("ff_opportunity", seasons=[2025], cache=tmp_path).height == 1200
 
 
@@ -488,7 +488,7 @@ def test_refresh_rewrites_the_entry_matching_the_as_of_it_was_given(
     frame = fake_ffo()
     nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
     nv.load("ff_opportunity", seasons=[2025], cache=tmp_path)
-    monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: frame.head(1100))
+    serve(ff_opportunity=lambda seasons: frame.head(1100))
     pinned = nv.load("ff_opportunity", seasons=[2025], cache=tmp_path,
                      as_of="2026-09-04", refresh=True)
     assert pinned.height == 1100
@@ -510,7 +510,7 @@ def test_a_grown_archive_still_yields_the_same_rows_at_one_as_of(
     first = nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
     grown = pl.concat([original, original.with_columns(
         pl.lit("2026-09-20").str.to_date().alias("scrape_date"))])
-    monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: grown)
+    serve(ff_opportunity=lambda seasons: grown)
     second = nv.load("ff_opportunity", seasons=[2025], cache=tmp_path,
                      as_of="2026-09-04", refresh=True)
     assert second.equals(first)
@@ -543,7 +543,7 @@ def test_two_runs_at_one_as_of_that_fetched_different_bytes_disagree(
     frame = fake_ffo()
     nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
     before = nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04")
-    monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: frame.with_columns(
+    serve(ff_opportunity=lambda seasons: frame.with_columns(
         pl.lit(11.0).alias("total_fantasy_points_exp")))
     nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04",
             refresh=True)
@@ -665,7 +665,7 @@ def test_the_pin_digest_takes_its_order_from_the_registered_contract(fake_ffo, t
     nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
     before = nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04")
 
-    monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: _shuffled(frame))
+    serve(ff_opportunity=lambda seasons: _shuffled(frame))
     nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04",
             refresh=True)
     after = nv.data_pin("ff_opportunity", [2025], cache=tmp_path, as_of="2026-09-04")
@@ -681,7 +681,7 @@ def test_a_source_that_declares_a_unique_key_reaches_the_keyed_path():
     exercised by the tests that pass a key directly."""
     from hub.contracts import SCHEDULES
 
-    assert nv.SOURCES["schedules"] is SCHEDULES
+    assert nv.SOURCES["schedules"].contract is SCHEDULES
     assert SCHEDULES.unique == ("game_id",)
 
 
@@ -689,7 +689,7 @@ def test_a_source_that_revises_in_place_carries_a_pinned_at(monkeypatch, tmp_pat
     """`player_stats` mirrors an upstream that rewrites -- `_write_by_week` says so where it
     passes `replace=True`. An as-of cannot reproduce those rows, so the pin records when they
     were taken instead of claiming they can be fetched again."""
-    monkeypatch.setattr(nv, "_raw_player_stats", lambda seasons: _weekly())
+    serve(player_stats=lambda seasons: _weekly())
     nv.load("player_stats", seasons=[2024], cols=nv.PLAYER_STATS_COLS, cache=tmp_path,
             as_of="2026-09-04")
     pin = nv.data_pin("player_stats", [2024], cols=nv.PLAYER_STATS_COLS, cache=tmp_path,
@@ -732,8 +732,7 @@ def test_a_pin_records_that_its_archive_was_rescaled_on_ingest(monkeypatch, tmp_
     """The whole-percent refresh, end to end. It is repaired, written, and the record beside
     what was written names the columns that moved -- so a gate reading this pin in November
     can tell a units change from any other reason the bytes are not what they were."""
-    monkeypatch.setattr(nv, "_raw_snap_counts",
-                        lambda seasons: _snaps(offense_pct=[85.0], st_pct=[20.0]))
+    serve(snap_counts=lambda seasons: _snaps(offense_pct=[85.0], st_pct=[20.0]))
     got = nv.load("snap_counts", seasons=[2024], cache=tmp_path)
     assert got["offense_pct"][0] == pytest.approx(0.85), "the repaired frame was not stored"
 
@@ -747,7 +746,7 @@ def test_a_pin_records_that_its_archive_was_rescaled_on_ingest(monkeypatch, tmp_
 def test_a_pin_from_an_ordinary_refresh_records_no_rescaling(monkeypatch, tmp_path):
     """Empty is the ordinary state, and it means the declared repair did not fire -- not
     that nobody asked. Every load of a source with a contract asks."""
-    monkeypatch.setattr(nv, "_raw_snap_counts", lambda seasons: _snaps())
+    serve(snap_counts=lambda seasons: _snaps())
     nv.load("snap_counts", seasons=[2024], cache=tmp_path)
     pin = nv.data_pin("snap_counts", [2024], cache=tmp_path)
     assert pin is not None and pin.rescaled == ()
@@ -764,7 +763,7 @@ def test_the_pinned_columns_are_the_ones_the_repair_actually_moved(monkeypatch, 
     of naming a column it was right to name.
     """
     sent = _snaps(offense_pct=[85.0], st_pct=[20.0], defense_pct=[3.0])
-    monkeypatch.setattr(nv, "_raw_snap_counts", lambda seasons: sent)
+    serve(snap_counts=lambda seasons: sent)
     got = nv.load("snap_counts", seasons=[2024], cache=tmp_path)
     moved = tuple(sorted(c for c in sent.columns
                          if sent.schema[c].is_numeric() and sent[c][0] != got[c][0]))
@@ -775,8 +774,7 @@ def test_the_pinned_columns_are_the_ones_the_repair_actually_moved(monkeypatch, 
 def test_a_rescaled_pin_survives_the_round_trip_through_its_sidecar(monkeypatch, tmp_path):
     """JSON has no tuple, so the field comes back a list unless the read closes it -- and a
     frozen `Pin` holding a list is a pin that is a `Pin` until something hashes it."""
-    monkeypatch.setattr(nv, "_raw_snap_counts",
-                        lambda seasons: _snaps(offense_pct=[85.0], st_pct=[20.0]))
+    serve(snap_counts=lambda seasons: _snaps(offense_pct=[85.0], st_pct=[20.0]))
     nv.load("snap_counts", seasons=[2024], cache=tmp_path)
     pin = nv.data_pin("snap_counts", [2024], cache=tmp_path)
     assert pin is not None and isinstance(pin.rescaled, tuple)
@@ -998,7 +996,7 @@ def test_a_moved_archive_shows_up_in_what_refresh_prints(fake_pbp, fake_ffo, tmp
     frame = fake_ffo()
     nv.refresh(season=2025, cache=tmp_path, base=tmp_path / "store")
     first = capsys.readouterr().out
-    monkeypatch.setattr(nv, "_raw_ff_opportunity", lambda seasons: frame.with_columns(
+    serve(ff_opportunity=lambda seasons: frame.with_columns(
         pl.lit(11.0).alias("total_fantasy_points_exp")))
     nv.refresh(season=2025, cache=tmp_path, base=tmp_path / "store")
     second = capsys.readouterr().out
@@ -1087,7 +1085,7 @@ def fake_rankings(monkeypatch):
     """
     def _install(dates=("2026-08-28",), per_date: int = 4, **over):
         frame = _rankings_frame(dates, per_date, **over)
-        monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: frame)
+        serve(ff_rankings=lambda pages: frame)
         return frame
     return _install
 
@@ -1140,11 +1138,6 @@ BREAKAGES = {
     "depth_charts": (_depth_chart_frame, "player_name", "team", "pos_slot", 99),
 }
 
-RAW_FETCHER = {"ff_rankings": "_raw_ff_rankings", "injuries": "_raw_injuries",
-               "snap_counts": "_raw_snap_counts", "nextgen_passing": "_raw_nextgen_passing",
-               "depth_charts": "_raw_depth_charts"}
-
-
 def _load(source: str, frame: pl.DataFrame, monkeypatch, tmp_path) -> pl.DataFrame:
     """Put one frame through the real loader for its source.
 
@@ -1158,7 +1151,7 @@ def _load(source: str, frame: pl.DataFrame, monkeypatch, tmp_path) -> pl.DataFra
     source where the null column *is* the scrape date. Unpinned, the contract is what catches
     it, which is the path every non-pinned caller takes.
     """
-    monkeypatch.setattr(nv, RAW_FETCHER[source], lambda keys: frame)
+    serve(**{source: lambda keys: frame})
     keys = ["all"] if source == "ff_rankings" else [2024]
     return nv.load(source, seasons=keys, cache=tmp_path)
 
@@ -1255,7 +1248,7 @@ def test_one_corrupt_share_is_refused_rather_than_rescaled_into_the_cache(monkey
     holed = df.with_columns(
         pl.when(pl.int_range(pl.len()) == 0).then(pl.lit(87.0))
           .otherwise(pl.col("offense_pct")).alias("offense_pct"))
-    monkeypatch.setattr(nv, "_raw_snap_counts", lambda seasons: holed)
+    serve(snap_counts=lambda seasons: holed)
     with pytest.raises(ContractViolation, match="offense_pct range"):
         nv.load("snap_counts", seasons=[2024], cache=tmp_path)
 
@@ -1316,7 +1309,7 @@ def no_rankings_fetch(monkeypatch, no_live_rankings):
         reached.append(list(pages))
         return _rankings_frame()
 
-    monkeypatch.setattr(nv, "_raw_ff_rankings", _record)
+    serve(ff_rankings=_record)
     return reached
 
 
@@ -1372,7 +1365,7 @@ def test_the_page_is_part_of_the_cache_key(fake_rankings, tmp_path, monkeypatch)
     served the last caller's draft page -- 5,850 rows of one scrape, on the same columns."""
     fake_rankings(per_date=4)
     assert nv.load_rankings("all", cache=tmp_path).height == 4
-    monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: _rankings_frame(per_date=2))
+    serve(ff_rankings=lambda pages: _rankings_frame(per_date=2))
     assert nv.load_rankings("draft", cache=tmp_path).height == 2
     assert nv.load_rankings("all", cache=tmp_path).height == 4, "the draft page overwrote it"
 
@@ -1397,7 +1390,7 @@ def test_a_grown_rankings_archive_still_yields_the_same_rows_at_one_as_of(
     first = nv.load_rankings("all", as_of="2026-09-04", cache=tmp_path)
     grown = pl.concat([original, original.with_columns(
         pl.lit("2026-09-20").alias("scrape_date"))])
-    monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: grown)
+    serve(ff_rankings=lambda pages: grown)
     second = nv.load_rankings("all", as_of="2026-09-04", cache=tmp_path, refresh=True)
     assert second.equals(first)
     pin = nv.data_pin("ff_rankings", ["all"], cache=tmp_path, as_of="2026-09-04")
@@ -1429,8 +1422,7 @@ def test_a_rankings_load_with_no_as_of_still_returns_the_whole_archive(fake_rank
 
 # --- what a run read, so a gate can name it (issue #71) --------------------
 
-def test_a_run_records_what_it_loaded_so_a_gate_can_name_it(fake_rankings, tmp_path,
-                                                            monkeypatch):
+def test_a_run_records_what_it_loaded_so_a_gate_can_name_it(fake_rankings, tmp_path, monkeypatch, run):
     """The pinning layer's premise: every gate output names the data it scored against, so a
     moved archive shows up as a changed digest rather than as a silently different number.
 
@@ -1440,7 +1432,6 @@ def test_a_run_records_what_it_loaded_so_a_gate_can_name_it(fake_rankings, tmp_p
     from hub.config import UNPINNED, data_digest
 
     fake_rankings()
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     assert nv.pins_this_run() == ()
     assert data_digest(nv.pins_this_run()) == UNPINNED, (
         "a run that loaded nothing must say so rather than hashing an empty set into "
@@ -1452,7 +1443,7 @@ def test_a_run_records_what_it_loaded_so_a_gate_can_name_it(fake_rankings, tmp_p
     assert data_digest(pins) != UNPINNED
 
 
-def test_a_cache_hit_is_still_a_read(fake_rankings, tmp_path, monkeypatch):
+def test_a_cache_hit_is_still_a_read(fake_rankings, tmp_path, monkeypatch, run):
     """The path that returned before recording anything.
 
     A run answered entirely from cache has read data and has to be able to say which -- and
@@ -1461,7 +1452,6 @@ def test_a_cache_hit_is_still_a_read(fake_rankings, tmp_path, monkeypatch):
     """
     fake_rankings()
     nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)   # populates the entry
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
 
     nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)   # served from cache
     pins = nv.pins_this_run()
@@ -1489,26 +1479,26 @@ def _sidecar(cache):
     return found[0]
 
 
-def test_a_cache_hit_with_no_pin_unpins_the_run(fake_rankings, tmp_path, monkeypatch):
+def test_a_cache_hit_with_no_pin_unpins_the_run(fake_rankings, tmp_path):
     """The invisible case. An entry written before pinning existed, or one whose sidecar
     write was interrupted, is a read of bytes the run cannot name -- and it used to leave
     the digest looking complete rather than saying so."""
     from hub.config import UNPINNED, data_digest
 
     fake_rankings()
-    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    with nv.reads_of_one_run():
+        nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
     _sidecar(tmp_path).unlink()                                  # the interrupted write
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
 
-    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
-    read = nv.pins_this_run()
+    with nv.reads_of_one_run() as reads:
+        nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    read = reads.pins()
     assert len(read) == 1, "the read dropped out of the run entirely"
     assert read[0].source == "ff_rankings" and read[0].digest == UNPINNED
     assert data_digest(read) == UNPINNED
 
 
-def test_a_run_that_mixes_a_pinned_and_an_unpinned_hit_says_unpinned(
-        fake_rankings, fake_ffo, tmp_path, monkeypatch):
+def test_a_run_that_mixes_a_pinned_and_an_unpinned_hit_says_unpinned(fake_rankings, fake_ffo, tmp_path, monkeypatch, run):
     """Two sources, one pin between them. The digest of the one it managed would be eight
     hex characters naming the wrong set of bytes -- and would compare equal to a run that
     had read only that one source."""
@@ -1519,25 +1509,23 @@ def test_a_run_that_mixes_a_pinned_and_an_unpinned_hit_says_unpinned(
     nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
     nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
 
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
     pinned_only = data_digest(nv.pins_this_run())
     assert pinned_only != UNPINNED
 
     _sidecar(tmp_path).unlink()
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
-    nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
-    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    with nv.reads_of_one_run() as fresh:
+        nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
+        nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
 
-    both = nv.pins_this_run()
+    both = fresh.pins()
     assert len(both) == 2, "the unpinned read is not in the run"
     assert data_digest(both) == UNPINNED, (
         "a run that read two sources and pinned one published a digest over the one")
     assert data_digest(both) != pinned_only
 
 
-def test_a_sidecar_that_will_not_parse_unpins_the_run_too(fake_rankings, tmp_path,
-                                                          monkeypatch):
+def test_a_sidecar_that_will_not_parse_unpins_the_run_too(fake_rankings, tmp_path):
     """`_pin_beside` answers None three ways and only one of them is a missing file. A
     half-written sidecar is the one that happens under an interrupted build.
 
@@ -1548,19 +1536,19 @@ def test_a_sidecar_that_will_not_parse_unpins_the_run_too(fake_rankings, tmp_pat
     from hub.config import UNPINNED, data_digest
 
     fake_rankings()
-    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    with nv.reads_of_one_run():
+        nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
     _sidecar(tmp_path).write_text('{"source": "ff_rankings", "as_of": "2026-')
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
 
-    nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
-    read = nv.pins_this_run()
+    with nv.reads_of_one_run() as reads:
+        nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
+    read = reads.pins()
     assert len(read) == 1, "a read this run made is not in what the run says it read"
     assert read[0].digest == UNPINNED
     assert data_digest(read) == UNPINNED
 
 
-def test_two_components_in_one_process_name_their_own_reads(fake_rankings, fake_ffo,
-                                                            tmp_path, monkeypatch):
+def test_two_components_in_one_process_name_their_own_reads(fake_rankings, fake_ffo, tmp_path, monkeypatch, run):
     """One build running the board, the gate and the publisher folded all three components'
     reads into every component's digest, so three different questions came out with one
     answer -- which is the comparison a digest exists to be able to deny."""
@@ -1568,7 +1556,6 @@ def test_two_components_in_one_process_name_their_own_reads(fake_rankings, fake_
 
     fake_rankings()
     fake_ffo()
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
 
     with nv.reads_of_one_run():
         nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
@@ -1584,15 +1571,13 @@ def test_two_components_in_one_process_name_their_own_reads(fake_rankings, fake_
     assert first != second
 
 
-def test_a_scope_hands_its_reads_back_to_the_run_around_it(fake_rankings, fake_ffo,
-                                                           tmp_path, monkeypatch):
+def test_a_scope_hands_its_reads_back_to_the_run_around_it(fake_rankings, fake_ffo, tmp_path, monkeypatch, run):
     """The scope narrows what a component reports and must not become a way for a run to
     lose a read. A helper opening a scope of its own would otherwise leave its caller's
     digest short by exactly the sources the helper loaded -- which is the other half of this
     issue wearing a different hat."""
     fake_rankings()
     fake_ffo()
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
 
     nv.load("ff_opportunity", seasons=[2025], cache=tmp_path, as_of="2026-09-04")
     with nv.reads_of_one_run():
@@ -1600,12 +1585,10 @@ def test_a_scope_hands_its_reads_back_to_the_run_around_it(fake_rankings, fake_f
     assert sorted(p.source for p in nv.pins_this_run()) == ["ff_opportunity", "ff_rankings"]
 
 
-def test_a_scope_that_raises_still_restores_the_run_around_it(fake_rankings, tmp_path,
-                                                              monkeypatch):
+def test_a_scope_that_raises_still_restores_the_run_around_it(fake_rankings, tmp_path, monkeypatch, run):
     """A component that fails half way through must not take the enclosing run's reads with
     it, or the digest printed after a caught failure names less than the run read."""
     fake_rankings()
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
 
     with pytest.raises(RuntimeError), nv.reads_of_one_run():
@@ -1613,15 +1596,13 @@ def test_a_scope_that_raises_still_restores_the_run_around_it(fake_rankings, tmp
     assert [p.source for p in nv.pins_this_run()] == ["ff_rankings"]
 
 
-def test_reading_the_same_entry_twice_does_not_double_the_digest(fake_rankings, tmp_path,
-                                                                 monkeypatch):
+def test_reading_the_same_entry_twice_does_not_double_the_digest(fake_rankings, tmp_path, monkeypatch, run):
     """The cache path is a function of the key, so a second load returns the same bytes.
     Recording it again would only reorder the digest's inputs, which would make a digest
     depend on how many times a run happened to ask."""
     from hub.config import data_digest
 
     fake_rankings()
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
     once = data_digest(nv.pins_this_run())
     nv.load_rankings("draft", as_of="2026-09-04", cache=tmp_path)
@@ -1661,10 +1642,8 @@ def fake_archived_sources(monkeypatch):
             "n_defense_box": pl.Series([6] * 1200, dtype=pl.Int32),
         }),
     }
-    for source, fetcher in (("injuries", "_raw_injuries"), ("snap_counts", "_raw_snap_counts"),
-                            ("participation", "_raw_participation"),
-                            ("ftn_charting", "_raw_ftn_charting")):
-        monkeypatch.setattr(nv, fetcher, lambda seasons, f=frames[source]: f)
+    serve(**{source: (lambda seasons, f=frames[source]: f) for source in
+             ("injuries", "snap_counts", "participation", "ftn_charting")})
     return frames
 
 
@@ -1714,7 +1693,7 @@ def test_a_second_archive_call_the_same_day_is_a_cache_hit(fake_archived_sources
                                                             monkeypatch):
     nv.archive(seasons=[2024], as_of="2026-09-21", cache=tmp_path)
     calls = []
-    monkeypatch.setattr(nv, "_raw_injuries", lambda seasons: calls.append(seasons) or
+    serve(injuries=lambda seasons: calls.append(seasons) or
                         fake_archived_sources["injuries"])
     nv.archive(seasons=[2024], as_of="2026-09-21", cache=tmp_path)
     assert calls == [], "the second call on the same day should be served from the dated entry"
@@ -1727,7 +1706,7 @@ def test_one_source_failing_does_not_take_the_others_down(fake_archived_sources,
     failure. Real behaviour found running `--archive` against 2026 (issue #370)."""
     def _broken(seasons):
         raise ValueError("Season must be between 2016 and 2025")
-    monkeypatch.setattr(nv, "_raw_participation", _broken)
+    serve(participation=_broken)
 
     rc = nv.archive(seasons=[2024], as_of="2026-09-21", cache=tmp_path)
     assert rc == 0, "three of four sources answered; that is not a total failure"
@@ -1743,9 +1722,8 @@ def test_every_source_failing_is_reported_as_failure(fake_archived_sources, tmp_
                                                        monkeypatch):
     def _broken(seasons):
         raise ValueError("nope")
-    for fetcher in ("_raw_injuries", "_raw_snap_counts", "_raw_participation",
-                   "_raw_ftn_charting"):
-        monkeypatch.setattr(nv, fetcher, _broken)
+    serve(**dict.fromkeys(("injuries", "snap_counts", "participation", "ftn_charting"),
+                          _broken))
     assert nv.archive(seasons=[2024], as_of="2026-09-21", cache=tmp_path) == 1
 
 
@@ -1774,8 +1752,55 @@ def test_backfill_pulls_every_retained_season_of_both_sources(monkeypatch, tmp_p
             "n_defense_box": pl.Series([6] * n, dtype=pl.Int32),
         })
 
-    monkeypatch.setattr(nv, "_raw_participation", _part)
-    monkeypatch.setattr(nv, "_raw_ftn_charting", _ftn)
+    serve(participation=_part)
+    serve(ftn_charting=_ftn)
     assert nv.backfill(cache=tmp_path) == 0
     assert seen["participation"] == list(nv.BACKFILL_SEASONS["participation"])
     assert seen["ftn_charting"] == list(nv.BACKFILL_SEASONS["ftn_charting"])
+
+
+# --- a worker's reads are lost to the parent's digest (#398) ----------------------------
+#
+# The run's record of what it read lives in the parent process. A `load` made inside a worker
+# records into the worker's own copy of it, which dies with the worker: real bytes behind a
+# digest that cannot name them. Latent today -- `backtest`'s pool receives pre-built boards --
+# and refused now, so the day somebody hands a worker a loader the failure is an exception and
+# not a digest that looks complete.
+
+def _a_schedule() -> pl.DataFrame:
+    return pl.DataFrame({"game_id": ["2025_01_A_B"], "season": pl.Series([2025], dtype=pl.Int32),
+                         "week": pl.Series([1], dtype=pl.Int32), "home_team": ["B"],
+                         "away_team": ["A"]})
+
+
+def test_a_load_inside_a_worker_process_raises(tmp_path):
+    """Rule 18's control for the guard: a planted worker-process load, seen to fail.
+
+    The cache entry is written first, by the parent, and the child asks for exactly it. So the
+    only thing between the child and a successful read is the guard -- no network is needed to
+    fail, and none is reachable if the guard is gone: the child would answer from the cache and
+    report `loaded`, which is what the mutant shows.
+    """
+    import multiprocessing
+
+    import replays
+
+    serve(schedules=_a_schedule())
+    nv.load("schedules", [2025], cache=tmp_path)            # the parent may; the entry exists
+
+    ctx = multiprocessing.get_context("spawn")
+    results = ctx.Queue()
+    child = ctx.Process(target=replays.worker_load, args=(tmp_path, results))
+    child.start()
+    answer = results.get(timeout=60)
+    child.join(timeout=60)
+    assert answer == "LoadInWorker", (
+        f"a load inside a worker process answered {answer!r}; its read would be missing from "
+        f"the parent's data digest")
+
+
+def test_the_same_load_in_the_parent_is_not_refused(tmp_path):
+    """The control the test above needs: the guard is about *where* a load runs, not what it
+    asks for. Without this, a `load` that raised for everyone would pass the test above."""
+    serve(schedules=_a_schedule())
+    assert nv.load("schedules", [2025], cache=tmp_path).height == 1

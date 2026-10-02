@@ -456,8 +456,11 @@ def _finished(out: Path) -> pl.DataFrame | None:
         return empty
 
     try:
-        import nflreadpy as nfl
-        sched = (nfl.load_schedules().select("game_id", "result").drop_nulls("result")
+        from hub.fetch import nflverse
+        # `refresh`: the record is scored on results that did not exist at the last pull, and
+        # an undated cache entry would serve it the schedule as it stood the first time.
+        sched = (nflverse.load("schedules", nflverse.every_season(), refresh=True)
+                 .select("game_id", "result").drop_nulls("result")
                  .with_columns(pl.col("result").cast(pl.Int64)))
     except Exception as e:
         # This one stays broad -- it is a network call on a schedule that runs unattended --

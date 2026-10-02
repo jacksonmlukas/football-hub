@@ -389,8 +389,8 @@ def _team_abbrs(valid: set[str]) -> dict[str, str]:
     entries, Oakland and San Diego and the rest -- keeps the first, and never appears in a
     payload for a season it did not play in.
     """
-    import nflreadpy as nfl
-    t = nfl.load_teams()
+    from hub.fetch import nflverse
+    t = nflverse.load("teams", ())
     out: dict[str, str] = {}
     for name, abbr in zip(t["team_name"].to_list(), t["team_abbr"].to_list(), strict=True):
         if name not in out or (abbr in valid and out[name] not in valid):
@@ -399,8 +399,8 @@ def _team_abbrs(valid: set[str]) -> dict[str, str]:
 
 
 def _schedule(season: int) -> pl.DataFrame:
-    import nflreadpy as nfl
-    return nfl.load_schedules().filter(pl.col("season") == season)
+    from hub.fetch import nflverse
+    return nflverse.load("schedules", [season], refresh=True).filter(pl.col("season") == season)
 
 
 def _american(price: Any) -> float | None:
@@ -921,8 +921,8 @@ def _qb_starters(season: int) -> pl.DataFrame:                  # pragma: no cov
     `captured_at`. A team that changes its starter publishes a new chart, so the as-of join
     in `_starter_at` reads the change from the first chart that carries it.
     """
-    import nflreadpy as nfl
-    chart = nfl.load_depth_charts([season])
+    from hub.fetch import nflverse
+    chart = nflverse.load("depth_charts", [season], refresh=True)
     return (chart.filter((pl.col("pos_abb") == "QB") & (pl.col("pos_rank") == 1))
                  .select(pl.col("dt").str.to_datetime("%Y-%m-%dT%H:%M:%SZ").alias("dt"),
                          pl.col("team"), pl.col("gsis_id").alias("qb"))

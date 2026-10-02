@@ -4,19 +4,21 @@ renaming a field and your projections going quietly wrong for three weeks.
 Every fetch function asserts its contract at the boundary. Violations raise loudly
 and the pipeline serves last-good state rather than propagating bad data.
 
-**A contract has two verbs, and for a long time it had one.** `validate` refuses a frame
-that breaks the declaration. `conform` hands a consumer the columns it names, in the shape
-this file declares them -- because refusal is not an answer a module that has to keep going
-can use, and the one that could not use it grew a private copy of the schema instead. That
-copy is what issue #132 was: `SNAP_COUNTS` bounded `offense_pct` and named the day PFR ships
-whole percents as the failure it exists to catch, while `hub.models.spread.snap_usage` --
-a module this file names as its own consumer -- detected the same case forty lines away and
-divided by a hundred, with nothing pointing at the other. A declaration nobody can read is a
-declaration somebody will restate.
+**A contract has one verb, and it used to have two.** `validate` refuses a frame that breaks
+the declaration, after applying the repairs the declaration owns (a `Normalisation`). A second
+verb, `conform`, once handed a consumer the columns it named in the shape this file declares
+them -- because refusal is not an answer a module that has to keep going can use, and the one
+that could not use it grew a private copy of the schema instead. That copy is what issue #132
+was: `SNAP_COUNTS` bounded `offense_pct` and named the day PFR ships whole percents as the
+failure it exists to catch, while `hub.models.spread.snap_usage` detected the same case forty
+lines away and divided by a hundred. #398 deleted the verb once every reader went through
+`hub.fetch.nflverse.load`, which validates -- and so repairs -- the whole response where it
+enters, so a consumer is handed the frame in the declared units and has no second question to
+ask the declaration.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 import polars as pl
@@ -109,8 +111,7 @@ def _announce(name: str, rescaled: dict[str, str]) -> None:
     which is the source -- so a reader can go and check upstream without opening this file.
 
     It sits in `validate` rather than at each of the four boundaries because a boundary that
-    has to remember is a boundary that will not: `conform` reports on the same terms, and no
-    call site can be the one that forgot.
+    has to remember is a boundary that will not: no call site can be the one that forgot.
 
     **Reporting may not break the live path.** This runs at a fetch boundary CLAUDE.md
     requires to degrade rather than raise, and `hub.publish.live` reads one of them every
@@ -278,7 +279,8 @@ class Contract:
         The declared normalisations run first and the frame they produce is what every check
         below sees and what a caller gets back, which is what makes a repair a thing this
         file states once rather than a thing each consumer works out. A caller that discards
-        the return still gets the refusal; `conform` is how a consumer asks for the frame.
+        the return still gets the refusal; the returned frame is the repaired one, and
+        `hub.fetch.nflverse.load` is how a consumer is handed it.
 
         A repair that fires says so on the terminal before any check below runs. `_announce`
         argues why that belongs here rather than at each boundary, and why a repair that
@@ -444,55 +446,6 @@ class Contract:
             for c in present:
                 df = df.with_columns(pl.col(c) * rule.scale)
         return df, _reasons(fired)
-
-    def conform(self, df: pl.DataFrame, *columns: str) -> pl.DataFrame:
-        """The columns a consumer names, repaired and checked as this contract declares them.
-
-        The reading verb. `validate` answers "is this whole response servable", which is the
-        fetch boundary's question and no use to a module holding a slice of one; this answers
-        "may I read these columns, and are they in the units you say", which is what a
-        consumer was hand-rolling a second schema to find out. Everything it enforces is the
-        same declaration `validate` enforces, narrowed -- there is one statement of what the
-        source may return, and asking it a smaller question does not create a second.
-
-        Narrowed to the columns named and no further. `hub.models.spread.snap_usage` reads
-        four of `SNAP_COUNTS`' thirteen, so demanding all thirteen would refuse a legitimate
-        slice; the frozen capture `tests/panelarchive.py` drives the Panel from holds exactly
-        the five columns `hub.models.panel.injury_severity` reads, and no more. `min_rows`
-        goes the same way: how big a response has to be is a fact about a refresh, and a
-        consumer is handed whatever the boundary has already vouched for.
-
-        Naming a column this contract does not declare is itself a refusal, and it is the
-        one that catches the drift this method exists to end. A consumer that starts reading
-        a column the source never promised has left the declaration behind, and it should
-        hear about it here rather than three joins later.
-        """
-        # GUARD undeclared-column-refused: a consumer reading past the declaration is caught
-        unknown = sorted(set(columns) - set(self.required))
-        if unknown:
-            raise ContractViolation(
-                f"{self.name}: asked for {unknown}, which this contract does not declare. "
-                f"It declares {sorted(self.required)} -- add the column here if the source "
-                f"really returns it, rather than reading it on trust.")
-        # /GUARD
-        keep = set(columns)
-        return replace(
-            self,
-            required={c: dt for c, dt in self.required.items() if c in keep},
-            non_null=tuple(c for c in self.non_null if c in keep),
-            unique=tuple(c for c in self.unique if c in keep),
-            ranges={c: r for c, r in self.ranges.items() if c in keep},
-            no_nan=tuple(c for c in self.no_nan if c in keep),
-            unique_by_key=tuple(c for c in self.unique_by_key if c in keep),
-            # Narrowed to the columns named -- except the repairs, which are not narrowed.
-            # A `Normalisation` is a fact about the response and is decided across all the
-            # columns it names; splitting it per caller puts back the half-repaired frame
-            # `_normalised` exists to prevent, and `conform` hands back the whole frame, so
-            # those other columns leave here in a reader's hands either way. What narrows is
-            # what is *checked*: a consumer answers for the columns it reads.
-            normalisations=self.normalisations,
-            min_rows=0,
-        ).validate(df)
 
 
 # The board frame is the widest interface in the repo: ~14 modules read columns off it by

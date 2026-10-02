@@ -64,8 +64,8 @@ def _schedules() -> pl.DataFrame:                                    # pragma: n
     temporary store without touching the network. `nflreadpy` is configured to cache in
     memory, so the two `load_predictions` calls one comparison makes cost one fetch.
     """
-    import nflreadpy as nfl
-    return nfl.load_schedules()
+    from hub.fetch import nflverse
+    return nflverse.load("schedules", nflverse.every_season(), refresh=True)
 
 
 def _nothing_predicted() -> pl.DataFrame:

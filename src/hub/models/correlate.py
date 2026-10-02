@@ -37,6 +37,11 @@ from hub.config import DRAFTED_POSITIONS
 # half a season; below it, one big game defines the standardisation.
 MIN_WEEKS = 8
 
+# What `standardised` reads of the weekly stats: `PLAYER_STATS`' five required, the game and team
+# it pairs within, and the season type it filters on.
+STAT_COLS = ("season", "week", "player_id", "position", "fantasy_points_ppr",
+             "game_id", "team", "season_type")
+
 # Positions this league drafts. K and DST are excluded for the same reason they are excluded
 # from the board.
 
@@ -154,12 +159,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--out", default=None)
     a = ap.parse_args(argv)
 
-    import nflreadpy as nfl
+    from hub.fetch import nflverse
 
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     print(f"  loading weekly player stats for {seasons} ...")
     try:
-        z = standardised(nfl.load_player_stats(seasons=seasons, summary_level="week"))
+        z = standardised(nflverse.load("player_stats", seasons, cols=STAT_COLS))
     except Exception as e:
         return unavailable("hub.models.correlate", "nflverse weekly player stats", e)
     print(f"  {z.height} player-weeks after standardising "

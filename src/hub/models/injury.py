@@ -67,6 +67,10 @@ MIN_HEALTHY_WEEKS = 6
 # Cells thinner than this are folded into their status's pooled value rather than reported.
 MIN_CELL = 60
 
+# The weekly-stats columns `observations` reads: `PLAYER_STATS`' five required, which is also
+# everything it asks of the frame.
+STAT_COLS = ("season", "week", "player_id", "position", "fantasy_points_ppr")
+
 
 
 def _injury_type(injuries: pl.DataFrame) -> pl.Expr:
@@ -391,14 +395,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         ap.print_help()
         return 0
 
-    import nflreadpy as nfl
+    from hub.fetch import nflverse
 
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     print(f"  loading injuries and weekly stats for {seasons} ...")
     try:
         obs = observations(
-            nfl.load_injuries(seasons=seasons),
-            nfl.load_player_stats(seasons=seasons, summary_level="week"))
+            nflverse.load("injuries", seasons),
+            nflverse.load("player_stats", seasons, cols=STAT_COLS))
     except Exception as e:
         return unavailable("hub.models.injury", "nflverse injuries and weekly player stats", e)
     print(f"  {obs.height} designated player-weeks with a usable healthy baseline")

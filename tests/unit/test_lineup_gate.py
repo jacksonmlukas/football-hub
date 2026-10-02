@@ -498,8 +498,7 @@ def test_a_run_that_asked_for_no_ceiling_prints_no_ceiling_line():
 # property of `experiment.run_gate` held in `tests/unit/test_gate_run.py`. What stays here is
 # that *this* gate's frame comes back stamped and that the file it writes is that frame.
 
-def test_the_published_frame_names_the_config_and_the_data_that_made_it(tmp_path,
-                                                                        monkeypatch):
+def test_the_published_frame_names_the_config_and_the_data_that_made_it(tmp_path, monkeypatch, run):
     """The file a reader is left with has to say what it was scored against.
 
     Read back off disk rather than off the returned frame, because what a later reader opens
@@ -507,9 +506,7 @@ def test_the_published_frame_names_the_config_and_the_data_that_made_it(tmp_path
     the return value while publishing the same bare rows as before.
     """
     from hub.config import UNPINNED
-    from hub.fetch import nflverse as nv
 
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     paired = pl.DataFrame({"season": [2024, 2025], "roster": [0, 0], "diff": [1.0, -2.0]})
     out = tmp_path / "lineup_paired.parquet"
 
@@ -525,20 +522,20 @@ def test_the_published_frame_names_the_config_and_the_data_that_made_it(tmp_path
     assert "nothing was loaded through the pinning layer" in "\n".join(run.lines)
 
 
-def test_a_pinned_load_moves_this_gates_data_digest_and_leaves_its_config_alone(monkeypatch):
+def test_a_pinned_load_moves_this_gates_data_digest_and_leaves_its_config_alone(monkeypatch, run):
     """The property a reader acts on: two runs over different archives do not carry the same
     stamp, and the archive moving does not pretend the model moved with it."""
     from hub.config import UNPINNED
     from hub.fetch import nflverse as nv
 
     paired = pl.DataFrame({"season": [2024], "roster": [0], "diff": [1.0]})
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
-    unpinned = _gate_run(paired).stamped
+    with nv.reads_of_one_run():
+        unpinned = _gate_run(paired).stamped
 
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {
-        "entry": nv.Pin(source="player_stats", as_of="2026-09-04", digest="abcd1234",
-                        rows=10, pinned_at=None)})
-    run = _gate_run(paired)
+    with nv.reads_of_one_run() as reads:
+        reads.remember("entry", nv.Pin(source="player_stats", as_of="2026-09-04",
+                                       digest="abcd1234", rows=10, pinned_at=None))
+        run = _gate_run(paired)
     pinned = run.stamped
 
     assert unpinned["data_digest"][0] == UNPINNED
@@ -611,7 +608,7 @@ def _in_process_gate(monkeypatch, tmp_path, *, inner):
     return pl.read_parquet(out)
 
 
-def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_path, capsys):
+def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_path, capsys, run):
     """Called from inside a run that has already read something, the gate's published digest
     covers the gate's reads and not the enclosing run's -- and the enclosing run still ends
     up holding both, because a scope narrows what a component reports and must never be a
@@ -619,7 +616,6 @@ def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_pa
     from hub.config import data_digest
     from hub.fetch import nflverse as nv
 
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     outer = nv.Pin(source="player_stats", as_of=None, digest="0ut51de0", rows=1,
                    pinned_at=None)
     inner = nv.Pin(source="ff_opportunity", as_of="2024-09-01", digest="1n51de01", rows=1,

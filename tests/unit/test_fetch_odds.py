@@ -20,6 +20,7 @@ import statistics
 
 import polars as pl
 import pytest
+from replays import serve
 
 from hub import store
 from hub.contracts import ContractViolation
@@ -399,12 +400,7 @@ def test_a_team_listed_under_two_abbreviations_resolves_to_the_one_in_play(monke
                                        "Los Angeles Rams"],
                          "team_abbr": ["LA", "LAC", "LAR"]})
 
-    class _Nfl:
-        @staticmethod
-        def load_teams():
-            return fake
-
-    monkeypatch.setitem(__import__("sys").modules, "nflreadpy", _Nfl)
+    serve(teams=fake)
     assert odds._team_abbrs({"LA", "LAC"})["Los Angeles Rams"] == "LA"
     assert odds._team_abbrs({"LAR", "LAC"})["Los Angeles Rams"] == "LAR"
     assert odds._team_abbrs({"LAC"})["Los Angeles Rams"] == "LA", "no signal: keep the first"
@@ -417,12 +413,7 @@ def test_the_strict_zip_never_protected_against_this(monkeypatch):
 
     fake = pl.DataFrame({"team_name": ["A", "A"], "team_abbr": ["X", "Y"]})
 
-    class _Nfl:
-        @staticmethod
-        def load_teams():
-            return fake
-
-    monkeypatch.setitem(__import__("sys").modules, "nflreadpy", _Nfl)
+    serve(teams=fake)
     assert odds._team_abbrs({"Y"})["A"] == "Y"
     assert len(odds._team_abbrs({"Y"})) == 1, "two rows, one name, one entry"
 

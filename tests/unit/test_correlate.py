@@ -10,6 +10,7 @@ All offline.
 import numpy as np
 import polars as pl
 import pytest
+from replays import serve
 
 from hub.models import correlate
 
@@ -22,6 +23,11 @@ def _stats(rows):
                         schema={"season": pl.Int32, "week": pl.Int32, "game_id": pl.Utf8,
                                 "team": pl.Utf8, "player_id": pl.Utf8,
                                 "position": pl.Utf8, "fantasy_points_ppr": pl.Float64})
+
+
+def _shipped(stats):
+    """The weekly stats as nflverse ships them: the loader asks for the season type too."""
+    return stats.with_columns(season_type=pl.lit("REG"))
 
 
 def _game(week, home, away, players):
@@ -197,8 +203,8 @@ def test_an_empty_table_is_handled():
 
 
 def test_the_cli_runs_offline(monkeypatch, capsys, tmp_path):
-    import nflreadpy as nfl
-    monkeypatch.setattr(nfl, "load_player_stats", lambda *a, **k: _two_qbs(+1, n=400))
+    # A season's worth of weeks: `PLAYER_STATS` refuses a week past 22, as it should.
+    serve(player_stats=_shipped(_two_qbs(+1, n=18)))
     out = tmp_path / "c.parquet"
     assert correlate.main(["--seasons", "2024", "--out", str(out)]) == 0
     text = capsys.readouterr().out
@@ -207,11 +213,10 @@ def test_the_cli_runs_offline(monkeypatch, capsys, tmp_path):
 
 
 def test_the_cli_can_report_teammates_instead(monkeypatch, capsys):
-    import nflreadpy as nfl
     rows = []
-    for w in range(1, 40):
+    for w in range(1, 19):
         rows += _game(w, "KC", "LV", [("q", "KC", "QB", float(w)),
                                       ("r", "KC", "WR", float(w) * 1.2)])
-    monkeypatch.setattr(nfl, "load_player_stats", lambda *a, **k: _stats(rows))
+    serve(player_stats=_shipped(_stats(rows)))
     assert correlate.main(["--seasons", "2024", "--teammates"]) == 0
     assert "TEAMMATE correlation" in capsys.readouterr().out

@@ -16,6 +16,7 @@ import numpy as np
 import polars as pl
 import pytest
 from polars.exceptions import ColumnNotFoundError
+from replays import serve
 
 from hub.draft import board
 
@@ -983,7 +984,7 @@ def test_a_routed_board_reads_one_archive_entry_twice_and_gets_the_same_frame(
     })
     calls = []
     monkeypatch.setattr(nv, "RAW", tmp_path / "raw")
-    monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: calls.append(pages) or frame)
+    serve(ff_rankings=lambda pages: calls.append(pages) or frame)
 
     first = nv.load_rankings("all", as_of="2026-09-01")
     second = nv.load_rankings("all", as_of="2026-09-01")

@@ -5,6 +5,7 @@ place on a team getting 1.0 and reading as "average playoff schedule".
 """
 import polars as pl
 import pytest
+from replays import serve
 
 from hub.draft.playoff_sos import (
     PLAYOFF_WEEKS,
@@ -296,21 +297,21 @@ def test_playoff_sos_reads_the_config_default_and_honours_an_override(monkeypatc
     overrides for one call. Covered because the two lines that resolve the default sit inside
     the network function, and a floor raised for them would have hidden the pull itself.
     """
-    import types
-
     from hub.config import DraftConfig
     from hub.draft import playoff_sos as PS
 
     games = _two_defences_two_schedules().with_columns(
         pl.col("opponent_team").replace({"DEF_HARD": "A", "DEF_EASY": "B", "DEF_BOTH": "C"}),
-        pl.lit("REG").alias("season_type"))
+        pl.lit("REG").alias("season_type"), pl.lit("p").alias("player_id"),
+        pl.lit(PS.SEASON_COMPLETED, pl.Int32).alias("season"),
+        pl.col("week").cast(pl.Int32))
     sched = _sched([{"week": 15, "home_team": "A", "away_team": "B"},
                     {"week": 16, "home_team": "A", "away_team": "C"},
                     {"week": 17, "home_team": "B", "away_team": "C"}]
-                   ).with_columns(pl.lit(PS.SEASON_AHEAD).alias("season"))
-    fake = types.SimpleNamespace(load_player_stats=lambda seasons: games,
-                                 load_schedules=lambda: sched)
-    monkeypatch.setitem(__import__("sys").modules, "nflreadpy", fake)
+                   ).with_columns(pl.lit(PS.SEASON_AHEAD, pl.Int32).alias("season"),
+                                  pl.col("week").cast(pl.Int32),
+                                  pl.int_range(pl.len()).cast(pl.Utf8).alias("game_id"))
+    serve(player_stats=games, schedules=sched)
 
     by_config = PS.playoff_sos()
     explicit = PS.playoff_sos(ridge=DraftConfig().sos_ridge)

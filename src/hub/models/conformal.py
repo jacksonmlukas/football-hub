@@ -162,8 +162,8 @@ def load_scored(model: str, base: Path | None = None,
     # The season rides along so `rolling_coverage` can walk time rather than week numbers.
     preds = got.select("game_id", "season", "week", "margin_mean")
     if schedules is None:                                       # pragma: no cover
-        import nflreadpy as nfl
-        schedules = nfl.load_schedules()
+        from hub.fetch import nflverse
+        schedules = nflverse.load("schedules", nflverse.every_season(), refresh=True)
     if "result" not in schedules.columns:
         raise ValueError("schedules is missing `result`, the realised margin")
     actual = (schedules.select("game_id",

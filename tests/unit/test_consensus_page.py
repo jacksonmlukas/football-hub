@@ -13,6 +13,7 @@ K or DST off this board.
 """
 import polars as pl
 import pytest
+from replays import serve
 
 from hub.contracts import ContractViolation
 from hub.draft.board import _select_consensus
@@ -123,7 +124,7 @@ def _patch(monkeypatch, tmp_path, frame):
     # double; since #36 both paths reach the archive through `load_rankings`, so stubbing the
     # fetch layer's one entry point covers them -- and a test that has to double two seams to
     # cover one source is a test asserting that the two agree, which nothing guaranteed.
-    monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: frame)
+    serve(ff_rankings=lambda pages: frame)
 
 
 def test_as_of_takes_the_latest_scrape_before_the_date(monkeypatch, tmp_path):
@@ -163,7 +164,7 @@ def test_the_live_path_reads_the_small_table_and_never_a_cached_one(monkeypatch,
     frame = _dated(("Guy", 3.0, "2022-08-20"))
     routed = []
     monkeypatch.setattr(nv, "RAW", tmp_path / "raw")
-    monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: routed.append(pages) or frame)
+    serve(ff_rankings=lambda pages: routed.append(pages) or frame)
 
     consensus()
     assert routed == [["draft"]], "the live path reads the small table through the loader"
@@ -279,7 +280,7 @@ def test_two_players_on_one_key_at_different_positions_are_not_merged(
     assert sorted(snap["player"].to_list()) == ["Josh Allen", "Josh Allen Jr."]
     assert "merged" not in capsys.readouterr().out
     with pytest.raises(ContractViolation, match=r"'Josh Allen' / 'Josh Allen Jr\.'"):
-        DRAFT_BOARD.conform(snap, "player")
+        DRAFT_BOARD.validate(snap)
     # And the drafted-position path still serves the quarterback under his own rank.
     assert consensus(as_of="2024-08-31")["player"].to_list() == ["Josh Allen"]
 
@@ -412,7 +413,7 @@ def test_the_live_path_is_exempt_and_that_is_deliberate(monkeypatch, tmp_path):
     from hub.draft.board import consensus
     frame = _dated(("Only", 3.0, "2019-01-01"))       # far outside any preseason window
     monkeypatch.setattr(nv, "RAW", tmp_path / "raw")
-    monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: frame)
+    serve(ff_rankings=lambda pages: frame)
     assert consensus()["player"].to_list() == ["Only"], (
         "the live board applied a historical window to today's scrape")
 

@@ -627,11 +627,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         ap.print_help()
         return 0
 
-    import nflreadpy as nfl
+    from hub.fetch import nflverse
 
     print("  loading schedules ...")
     try:
-        resid = residuals(nfl.load_schedules())
+        resid = residuals(nflverse.load("schedules", nflverse.every_season(), refresh=True))
     except Exception as e:
         return unavailable("hub.models.margin", "nflverse schedules", e)
     if a.shape:

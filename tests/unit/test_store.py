@@ -14,6 +14,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from replays import serve
 
 from hub import store
 
@@ -189,22 +190,30 @@ def test_holds_up_at_a_real_season_of_games(base):
 # --- the verify entry point ----------------------------------------------
 
 def _fake_schedule(rows):
+    """A schedule the loader accepts: its contract wants teams and a week, and refuses no rows.
+
+    One game with no published spread rides along, so "nothing to verify" is still a frame the
+    contract passes; `schedules_for` drops it, as it drops every game without a line.
+    """
+    rows = [*rows, ("unlined_pad", None, "2025-09-04", "13:00")]
     return pl.DataFrame(
         {"season": [2025] * len(rows),
+         "week": [1] * len(rows),
          "game_id": [r[0] for r in rows],
+         "home_team": ["H"] * len(rows),
+         "away_team": ["A"] * len(rows),
          "spread_line": [r[1] for r in rows],
          "gameday": [r[2] for r in rows],
          "gametime": [r[3] for r in rows]},
-        schema={"season": pl.Int64, "game_id": pl.Utf8, "spread_line": pl.Float64,
+        schema={"season": pl.Int32, "week": pl.Int32, "game_id": pl.Utf8,
+                "home_team": pl.Utf8, "away_team": pl.Utf8, "spread_line": pl.Float64,
                 "gameday": pl.Utf8, "gametime": pl.Utf8})
 
 
 @pytest.fixture
-def fake_nflverse(monkeypatch):
-    import nflreadpy as nfl
-
+def fake_nflverse():
     def _install(rows):
-        monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: _fake_schedule(rows))
+        serve(schedules=_fake_schedule(rows))
     return _install
 
 
