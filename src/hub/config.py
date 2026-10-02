@@ -473,9 +473,10 @@ def pin_fold(source: str, as_of: str | None, digest: str) -> str:
 # (counted 2026-09-05), so the unpinned run was the common case until U2 of
 # docs/plans/2026-09-04-001-fix-pin-reprice-correct-board-plan.md routed them, and #398 routed
 # the last. It is still the answer for a run that read nothing from nflverse, or whose entries
-# carry no readable pin. A plausible-looking eight hex characters for that case would be provenance present in the
-# schema and absent in the data, which is the defect `models/ratings.py` records when
-# `cfg_digest` defaulted to "default" for every run under every configuration.
+# carry no readable pin. A plausible-looking eight hex characters for that case would be
+# provenance present in the schema and absent in the data, which is the defect
+# `models/ratings.py` records when `cfg_digest` defaulted to "default" for every run under
+# every configuration.
 #
 # So it shares a *width* with a digest and nothing else, and that is the whole of the answer
 # to "should the sentinel and an eight-character digest share a shape". Eight characters so

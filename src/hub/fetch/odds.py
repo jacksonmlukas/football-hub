@@ -628,19 +628,10 @@ _QUOTE_SCHEMA: dict[str, Any] = {"game_id": pl.Utf8, "close_spread": pl.Float64,
 def _archive(season: int, base: Path | None) -> pl.DataFrame:
     """Every poll already in the store for the season, in `_QUOTE` shape plus `week`.
 
-    Empty on a fresh clone. Read with `SELECT *` rather than by naming the columns, because
-    an archive written entirely before #211 -- which is the live one on 2026-09-11 -- has no
-    `spread_price` column in any partition, and `union_by_name` unions what exists rather
-    than what a contract now declares. A column the archive has never had is added here as
-    nulls, which `_quote_moved` reads as no evidence.
+    Empty on a fresh clone. The query, the `spread_price` fill for an archive written before
+    #211 and the empty schema are `store.lines`' -- this takes the projection it reads.
     """
-    if "lines" not in store.tables(base):
-        return pl.DataFrame(schema={**_QUOTE_SCHEMA, "week": pl.Int64})
-    got = store.sql("SELECT * FROM lines WHERE league = 'nfl' AND season = ?",
-                    params=[season], base=base)
-    absent = [pl.lit(None, dtype=t).alias(c) for c, t in _QUOTE_SCHEMA.items()
-              if c not in got.columns]
-    return got.with_columns(absent).select(*_QUOTE, pl.col("week").cast(pl.Int64))
+    return store.lines(season, base=base).select(*_QUOTE, "week")
 
 
 def _with_staleness(new: pl.DataFrame, season: int, base: Path | None) -> pl.DataFrame:

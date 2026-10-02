@@ -912,14 +912,8 @@ def verdict(fit: dict[str, float]) -> tuple[str, str]:
 
 def archive(season: int, base: Path | None) -> pl.DataFrame:
     """The season's polls off the store, in the shape the readers take; empty on a fresh
-    clone. Read here rather than through `hub.fetch.odds`, whose reader is its own."""
-    schema = {"game_id": pl.Utf8, "close_spread": pl.Float64, "captured_at": pl.Datetime("us"),
-              "week": pl.Int64}
-    if "lines" not in store.tables(base):
-        return pl.DataFrame(schema=schema)
-    got = store.sql("SELECT game_id, close_spread, captured_at, week FROM lines "
-                    "WHERE league = 'nfl' AND season = ?", params=[season], base=base)
-    return got.with_columns(pl.col("week").cast(pl.Utf8).cast(pl.Int64)).select(*schema)
+    clone. `store.lines` is the one reader of every poll; this takes its four columns."""
+    return store.lines(season, base=base).select("game_id", "close_spread", "captured_at", "week")
 
 
 def noise_floor_per_root_day(

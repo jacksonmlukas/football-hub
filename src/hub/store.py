@@ -113,6 +113,12 @@ def connect(read_only: bool = False, base: Path | None = None) -> duckdb.DuckDBP
     root.mkdir(parents=True, exist_ok=True)
     catalog = (root / "hub.duckdb") if base else CATALOG
     con = duckdb.connect(str(catalog), read_only=read_only)
+    # Replacement scans off. DuckDB resolves a table name it does not know against Python
+    # objects in the calling frame, so once this module had a function called `lines` a query on
+    # a store with no `lines` table found *that* and failed with a message about functions,
+    # where it must raise the `CatalogException` the fresh-clone guards read as "no archive".
+    # A catalog that answers from whatever happens to be in scope is not one.
+    con.execute("SET python_enable_replacements = false")
     for d in sorted(p for p in root.iterdir() if p.is_dir()):
         if not is_table(d):
             continue
@@ -260,6 +266,40 @@ def lines_as_of(at: datetime, season: int, league: str = "nfl",
         return pl.DataFrame(schema=LINE_SCHEMA)
     got = sql(LINE_AS_OF, params=[at, league, season, league, season], base=base)
     return got.drop_nulls("close_spread")
+
+
+# Every poll's columns, as `lines()` hands them back. `spread_price` is here although partitions
+# written before #211 do not carry it: `lines()` is where that is answered, once.
+POLLS_SCHEMA = {"game_id": pl.Utf8, "close_spread": pl.Float64, "spread_price": pl.Float64,
+                "captured_at": pl.Datetime, "week": pl.Int64}
+
+
+def lines(season: int, *, base: Path | None = None) -> pl.DataFrame:
+    """Every poll the store holds for the season's NFL lines, as stored plus what a reader needs.
+
+    The other question about this table: not "the price as of T, one row per game" -- that is
+    `lines_as_of`, the lookahead guard -- but "every poll this season", which the staleness
+    derivation, the noise floor and the quarterback study each need. Three readers used to ask
+    it three ways outside the store, each repeating the fresh-clone guard and writing the empty
+    frame by hand; this is the one owner of what the answer looks like.
+
+    Read with `SELECT *` rather than by naming columns, because an archive written entirely
+    before #211 has no `spread_price` column in any partition, and `union_by_name` unions what
+    exists rather than what a contract now declares. A column in `POLLS_SCHEMA` the archive has
+    never had is added as nulls, which `_quote_moved` reads as no evidence. `week` comes back an
+    integer however the Hive partition spelled it (`01` is a string to the catalog); any other
+    column the store holds rides along untouched, and a caller takes the projection it reads.
+
+    An empty frame of `POLLS_SCHEMA` on a fresh clone, where `lines` is not an empty table but
+    no table, and querying it raises `CatalogException`.
+    """
+    if "lines" not in tables(base):
+        return pl.DataFrame(schema=POLLS_SCHEMA)
+    got = sql("SELECT * FROM lines WHERE league = 'nfl' AND season = ?", params=[season],
+              base=base)
+    absent = [pl.lit(None, dtype=t).alias(c) for c, t in POLLS_SCHEMA.items()
+              if c not in got.columns]
+    return got.with_columns(absent).with_columns(pl.col("week").cast(pl.Utf8).cast(pl.Int64))
 
 
 # One prediction per game, and the rule for choosing it.
