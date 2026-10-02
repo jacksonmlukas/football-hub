@@ -162,3 +162,41 @@ jobs:
             site/data \
             gh workflow run pages.yml --repo "${{ github.repository }}" \
               -f league="${{ steps.board.outputs.league }}"
+
+      # **At its cap, hand the window on while ESPN still reports a game in progress** (#391).
+      #
+      # The loop stops after two hours wherever in a window it started, so a loop that began
+      # late is cut off mid-game (#390: 02:34Z start for a 00:20Z kickoff), and the cron
+      # delivery that would replace it is exactly what GitHub drops under load. The question
+      # asked here is game *state* -- is anything `in` right now -- and the answer lives in
+      # `hub.live_chain`, which holds no hour, weekday or kickoff. The crons above remain the
+      # only definition of a window; this step never learns where one ends, it just sees that
+      # a game has not.
+      #
+      # **The concurrency group does not defeat this, and the reason is worth having.** The
+      # dispatched run joins `live-loop` with `cancel-in-progress: true`, so it cancels *this*
+      # run. That is the intended hand-over: this run is on its last step and its loop is
+      # finished, the dispatch is a synchronous API call that has returned before the new run
+      # exists to cancel anything, and the new run starts as this one stops. The cost is a
+      # `cancelled` mark on a run that did its job, and a gap of the new job's start-up
+      # (checkout, uv sync) in which no loop is running; the deploy cadence is five minutes, so
+      # that is at most one skipped cycle. `actions: write`, which the dispatch of `pages.yml`
+      # already needs, covers this too.
+      #
+      # An unreachable ESPN, or one reporting no game, ends the chain (`live_chain` exits 2 and
+      # 1). A chain kept alive by an outage would have nothing to end it.
+      #
+      # It extends a running loop and cannot start one: the 2026-09-28/29 Monday window had no
+      # loop at all, which is the watchdog's half to report (`hub.watchdog_gap`).
+      - name: Continue while a game is in progress
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LEAGUE="${{ steps.board.outputs.league }}"
+          if uv run python -m hub.live_chain --league "$LEAGUE"; then
+            gh workflow run live.yml --repo "${{ github.repository }}" \
+              -f league="$LEAGUE" \
+              -f minutes="${{ inputs.minutes || 115 }}" \
+              -f interval="${{ inputs.interval || 300 }}" \
+              || echo "::warning::could not hand the window on; the crons are the fallback"
+          fi

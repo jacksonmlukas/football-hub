@@ -401,15 +401,13 @@ def test_espn_being_down_leaves_the_last_scores_in_place(site, monkeypatch):
 
 
 def _espn_answering(monkeypatch, tmp_path, payload=None):
-    """The whole fetch layer against a real cache directory and a controllable network.
+    """The whole fetch layer against a controllable network.
 
-    Stubbing `live_state` -- which every other test here does -- cannot see this class of
-    bug at all: the cache lives *below* that seam, and the payload it serves is shaped
-    exactly like a live one. So the double goes at the network boundary instead.
+    Stubbing `live_state` -- which every other test here does -- cannot see a bug *below*
+    that seam, such as the fetch layer answering an outage with a payload shaped exactly like
+    a live one. So the double goes at the network boundary instead.
     """
     from hub.fetch import espn
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(espn, "CACHE", tmp_path)
 
     class _Resp:
         def raise_for_status(self):
@@ -431,26 +429,26 @@ _ONE_GAME = {"events": [{"id": "1", "competitions": [{
 def test_a_cache_served_scoreboard_does_not_advance_the_stamp(site, tmp_path, monkeypatch):
     """Issue #91's heart, and the failure the return value hides.
 
-    `_get` falls back to its last-good cache when ESPN cannot be reached, which is the
-    dashboard's degradation and is right. But `live` stamps what it is handed with the
-    current time, and the watchdog reads *that stamp* to decide whether the page is moving.
-    A cached payload published under a fresh `generated_at` is therefore a frozen page
-    reporting itself healthy -- and, worse, one no monitor can ever notice, because the only
-    evidence of the freeze is the field being overwritten.
+    `live` stamps what it is handed with the current time, and the watchdog reads *that
+    stamp* to decide whether the page is moving. A stale payload published under a fresh
+    `generated_at` is a frozen page reporting itself healthy -- and one no monitor can ever
+    notice, because the only evidence of the freeze is the field being overwritten. The fetch
+    layer used to hold a last-good cache that could have supplied that payload; #401 deleted it,
+    and this test is why the deletion is safe to keep rather than merely done.
 
-    So the cache being warm must change nothing: no write, no new stamp, the previously
+    So an unreachable ESPN must change nothing: no write, no new stamp, the previously
     published overlay left exactly as it was.
     """
     espn = _espn_answering(monkeypatch, tmp_path, _ONE_GAME)
     site.mkdir(parents=True, exist_ok=True)
     assert publish.live(out=site) is not None, "a reachable ESPN publishes"
     published = (site / "live.json").read_text()
-    assert (tmp_path / "sb_nfl_now.json").exists(), "and leaves the cache warm"
 
     _espn_answering(monkeypatch, tmp_path, None)          # ESPN now unreachable
-    assert espn.scoreboard("nfl")["events"], "the cache would answer a degrading caller"
+    with pytest.raises(RuntimeError, match="ESPN unreachable"):
+        espn.scoreboard("nfl")                            # nothing is served in its place
 
-    assert publish.live(out=site) is None, "but a refresh is not a degrading caller"
+    assert publish.live(out=site) is None, "so a refresh publishes nothing"
     assert (site / "live.json").read_text() == published, (
         "the stamp advanced over cached scores: the page freezes and the heartbeat says it "
         "did not")

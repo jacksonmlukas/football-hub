@@ -651,14 +651,13 @@ def live(out: Path | None = None, league: str = "nfl") -> dict[str, Any] | None:
     out = out or SITE
     try:
         from hub.fetch.espn import live_state
-        # `allow_cache=False`, because the artifact this writes is a *timestamp* as much as a
-        # scoreboard. `hub.fetch.espn._get` degrades to its last-good cache on failure, which
-        # is right for the dashboard and wrong here: the cached payload would arrive
-        # indistinguishable from a live one, be stamped with this moment, and publish a
+        # `live_state` raises when ESPN is unreachable rather than serving a last-good
+        # cache (#401 deleted that path; it had to be refused here for #91 anyway). This
+        # artifact is a *timestamp* as much as a scoreboard: a cached payload would be
+        # indistinguishable from a live one, stamped with this moment, and publish a
         # heartbeat saying the page is fresh while it shows scores nobody has refreshed. The
         # watchdog reads exactly that stamp, so it could never fire again -- issue #91.
-        # Refusing the cache turns that into the failed fetch it actually is.
-        rows = live_state(league, allow_cache=False)
+        rows = live_state(league)
     except Exception as e:
         print(f"  live: ESPN unavailable ({type(e).__name__}); leaving last-good in place")
         return None
