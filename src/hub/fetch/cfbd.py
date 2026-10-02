@@ -23,12 +23,12 @@ speed one: a completed season is never re-fetched.
 if the path was there it was returned, with no maximum age, no refresh parameter and nothing
 recording when the bytes arrived. That is the expensive half of a metered source rather than
 the cheap one: it is both the reason to cache and the reason a stale price could never be
-put right. So a written entry carries its capture time in a `.capture.json` beside it,
-`refresh=True` re-fetches, and `max_age` states a bound past which an entry is re-fetched
-instead of served. An entry written before this reads back as an *unknown* capture time and
-never a guessed one -- the file's mtime dates the file, not the fetch. Both parameters
-default off, so nothing that was not asked to refresh spends anything, and a refresh that
-cannot be afforded serves the cached payload and says that it did.
+put right. So a written entry carries its capture time in a `.capture.json` beside it
+(`fetch.cached`'s stamp), `refresh=True` re-fetches, and `max_age` states a bound past which
+an entry is re-fetched instead of served. An entry written before this reads back as an
+*unknown* capture time and never a guessed one -- the file's mtime dates the file, not the
+fetch. Both parameters default off, so nothing that was not asked to refresh spends
+anything, and a refresh that cannot be afforded serves the cached payload and says that it did.
 
 Those three are about a loop. A fourth is about the suite: `_http_get` refuses to run under
 pytest at all, outside the one directory that exists to hit live APIs. Tests patch the
@@ -64,6 +64,7 @@ import polars as pl
 from hub import atomic, jsonio
 from hub.config import SEASON_AHEAD
 from hub.contracts import CFBD_GAMES, CFBD_LINES, Contract
+from hub.fetch import cached
 from hub.fetch.cached import (  # noqa: F401 -- re-exported, see the guard note below
     LIVE_TEST_SUITE,
     PYTEST_NODE_ENV,
@@ -242,57 +243,18 @@ def _cache_path(endpoint: str, year: int, week: int | None, cache: Path | None) 
     return root / endpoint / f"{stem}.parquet"
 
 
-def _capture_path(path: Path) -> Path:
-    """The capture record sits beside its cache entry, the way `nflverse._pin_path` does.
-
-    Beside rather than in a registry of its own, for the reason ADR-0006 keeps a fitted
-    constant with its provenance: a record kept away from the thing it describes is one that
-    stops matching it. Beside rather than *inside*, because the entry is a third-party
-    payload this module re-validates against a declared contract, and a `captured_at` column
-    would be a column CFBD never sent turning up in every frame the contract checks.
-    """
-    return path.with_suffix(".capture.json")
-
-
-def _capture_beside(path: Path) -> datetime | None:
-    """When the payload at `path` was fetched, or None where nothing on disk says.
-
-    None is the honest answer three ways and they are all one answer: an entry written
-    before this existed has no record beside it, an interrupted write leaves a file that is
-    not JSON, and a hand-edited one can hold anything.
-
-    The file's own mtime is deliberately not consulted, and that is #175's fourth criterion.
-    A clone, a copy, a restore or a `touch` rewrites it, so it dates the *file* and not the
-    fetch -- and a capture time that is confidently wrong is worse than one that is missing,
-    because unknown means "ask again" and a fabricated one means "no need to". Every entry
-    written before this change reads back unknown here, which is the truth about it.
-    """
-    try:
-        raw = json.loads(_capture_path(path).read_text())
-    except (OSError, ValueError):
-        return None
-    if not isinstance(raw, dict) or not isinstance(raw.get("captured_at"), str):
-        return None
-    try:
-        when = datetime.fromisoformat(raw["captured_at"])
-    except ValueError:
-        return None
-    return when if when.tzinfo else when.replace(tzinfo=UTC)
-
-
-def _record_capture(path: Path) -> None:
-    """Stamp a freshly written entry with the moment it was fetched.
-
-    A failure here is swallowed on purpose: a payload that could not be stamped is still a
-    payload, and taking a fetched week down over its sidecar would spend the call and throw
-    the rows away. What it costs is an entry that reads back as unknown, which is the state
-    the reader above is built for.
-    """
-    payload = {"captured_at": jsonio.stamp()}
-    try:
-        atomic.write_text(_capture_path(path), jsonio.dumps(payload, indent=2))
-    except OSError:
-        pass
+# The capture sits beside its cache entry, the way `nflverse._pin_path` does, and is
+# `fetch.cached`'s stamp: `cached.write_stamp` records it and `cached.read_stamp` reads it
+# back (#402). This module had a sidecar of its own saying the same thing.
+#
+# Beside rather than in a registry of its own, for the reason ADR-0006 keeps a fitted
+# constant with its provenance: a record kept away from the thing it describes is one that
+# stops matching it. Beside rather than *inside*, because the entry is a third-party payload
+# this module re-validates against a declared contract, and a `captured_at` column would be a
+# column CFBD never sent turning up in every frame the contract checks.
+#
+# The name is the one entries already on disk carry, so none of them stops reading.
+STAMP_SUFFIX = ".capture.json"
 
 
 def captured_at(endpoint: str, year: int, week: int | None = None, *,
@@ -304,8 +266,21 @@ def captured_at(endpoint: str, year: int, week: int | None = None, *,
     price is needs the same number. Before #175 there was no way to ask at all -- the cache
     was permanent by file existence, so a price captured in September was indistinguishable
     in January from one captured that morning.
+
+    None is the honest answer three ways and they are all one answer: an entry written
+    before stamps existed has none beside it, an interrupted write leaves a file that is not
+    JSON, and a hand-edited one can hold anything. The file's mtime is deliberately not
+    consulted (#175's fourth criterion; `fetch.cached.read_stamp` keeps the argument).
     """
-    return _capture_beside(_cache_path(endpoint, year, week, cache))
+    stamp = cached.read_stamp(_cache_path(endpoint, year, week, cache).with_suffix(STAMP_SUFFIX))
+    raw = stamp.get("captured_at")
+    if not isinstance(raw, str):
+        return None
+    try:
+        when = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
 
 
 def _past_its_age(captured: datetime | None, *, refresh: bool, max_age: timedelta | None,
@@ -402,7 +377,7 @@ def bulk(endpoint: str, year: int, week: int | None = None, *,
         params.update(extra)
 
     path = _cache_path(endpoint, year, week, cache)
-    captured = _capture_beside(path)
+    captured = captured_at(endpoint, year, week, cache=cache)
     held = path.exists()
     if held and not _past_its_age(captured, refresh=refresh, max_age=max_age):
         return pl.read_parquet(path)
@@ -446,7 +421,14 @@ def bulk(endpoint: str, year: int, week: int | None = None, *,
 
     df = pl.DataFrame(payload, infer_schema_length=None) if payload else pl.DataFrame()
     atomic.write_parquet(df, path)
-    _record_capture(path)
+    # A failure here is swallowed on purpose: a payload that could not be stamped is still a
+    # payload, and taking a fetched week down over its stamp would spend the call and throw
+    # the rows away. What it costs is an entry that reads back as unknown, which is the state
+    # `captured_at` is built for.
+    try:
+        cached.write_stamp(path.with_suffix(STAMP_SUFFIX), jsonio.stamp())
+    except OSError:
+        pass
     return df
 
 

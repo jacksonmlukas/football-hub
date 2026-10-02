@@ -84,16 +84,15 @@ class _Resp:
         return self._payload
 
 
-def _cache_at(monkeypatch, tmp_path):
+def _espn():
     from hub.fetch import espn
-    monkeypatch.setattr(espn, "CACHE", tmp_path)
     return espn
 
 
 def test_a_403_on_the_first_host_falls_through_to_the_next(monkeypatch, tmp_path):
     """Aug 2026: site.api.espn.com started 403ing scripted traffic. The fix was to try
     `.web` in the host and a browser UA -- four combinations, in order."""
-    espn = _cache_at(monkeypatch, tmp_path)
+    espn = _espn()
     tried = []
 
     def _get(url, params=None, headers=None, timeout=None):
@@ -105,83 +104,38 @@ def test_a_403_on_the_first_host_falls_through_to_the_next(monkeypatch, tmp_path
     assert len(tried) == 2
 
 
-def test_a_successful_pull_is_cached_for_the_next_outage(monkeypatch, tmp_path):
-    espn = _cache_at(monkeypatch, tmp_path)
-    monkeypatch.setattr(espn.requests, "get",
-                        lambda *a, **k: _Resp({"events": [1]}))
-    espn._get("football/nfl/scoreboard", cache_key="sb_nfl_now")
-    assert (tmp_path / "sb_nfl_now.json").exists()
+def test_an_unreachable_espn_raises_even_with_a_stale_payload_on_disk(monkeypatch, tmp_path):
+    """There is no cache to serve, so an outage is an outage at every layer.
 
+    #401 deleted the last-good serve: its only production caller, `publish.live`, had to
+    refuse it (#91), and a cached payload is shaped exactly like a live one. The stale file is
+    planted where the deleted path would have read it -- `raising=False` because the attribute
+    itself is gone -- and `scoreboard` and `live_state` must both raise rather than return it.
+    """
+    import json
 
-def test_all_four_combinations_failing_serves_the_cache(monkeypatch, tmp_path):
-    """The rule itself. A dead endpoint must not raise into the dashboard."""
-    espn = _cache_at(monkeypatch, tmp_path)
-    (tmp_path / "sb_nfl_now.json").write_text('{"events": ["stale"]}')
+    import pytest
 
+    from hub.fetch import espn
+    monkeypatch.setattr(espn, "CACHE", tmp_path, raising=False)
+    (tmp_path / "sb_nfl_now.json").write_text(json.dumps({"events": [_event([_PHI, _DAL])]}))
     calls = {"n": 0}
 
     def _dead(*a, **k):
         calls["n"] += 1
-        raise OSError("connection refused")
+        raise OSError("down")
     monkeypatch.setattr(espn.requests, "get", _dead)
-    assert espn._get("football/nfl/scoreboard", cache_key="sb_nfl_now") == {"events": ["stale"]}
-    assert calls["n"] == 4, "two hosts times two user agents, then the cache"
 
-
-def test_no_cache_and_no_network_raises_rather_than_returning_a_lie(monkeypatch, tmp_path):
-    """Degradation serves last-good; it does not invent an empty payload. An empty
-    scoreboard would read as 'no games today'."""
-    import pytest
-    espn = _cache_at(monkeypatch, tmp_path)
-    monkeypatch.setattr(espn.requests, "get",
-                        lambda *a, **k: (_ for _ in ()).throw(OSError("down")))
-    with pytest.raises(RuntimeError, match="ESPN unreachable and no cache"):
-        espn._get("football/nfl/scoreboard", cache_key="missing")
-
-
-def test_a_caller_that_asked_for_a_live_read_is_not_handed_the_cache(monkeypatch, tmp_path):
-    """The unattended refresher's whole question, and the one the return value cannot answer.
-
-    A cached payload and a fresh one are both a dict of games. `hub.publish.live` stamps
-    whatever it is given with `generated_at`, and the watchdog reads that stamp -- so a
-    refresher served the cache publishes a fresh timestamp over frozen scores and reports
-    itself healthy for as long as the outage lasts. Issue #91. The caller says which it
-    needs; degradation stays the default for the dashboard.
-    """
-    import pytest
-    espn = _cache_at(monkeypatch, tmp_path)
-    (tmp_path / "sb_nfl_now.json").write_text('{"events": ["stale"]}')
-    monkeypatch.setattr(espn.requests, "get",
-                        lambda *a, **k: (_ for _ in ()).throw(OSError("down")))
-
-    assert espn._get("football/nfl/scoreboard", cache_key="sb_nfl_now") == {
-        "events": ["stale"]}, "the default is still last-good"
-    with pytest.raises(RuntimeError, match="asked for a live read"):
-        espn._get("football/nfl/scoreboard", cache_key="sb_nfl_now", allow_cache=False)
-
-
-def test_the_refusal_reaches_the_scoreboard_and_the_overlay(monkeypatch, tmp_path):
-    """The flag is only worth having if it survives the two calls above `_get`. Both are
-    passed through rather than re-defaulted, which a `**kwargs` seam would not show."""
-    import json
-
-    import pytest
-    espn = _cache_at(monkeypatch, tmp_path)
-    (tmp_path / "sb_nfl_now.json").write_text(json.dumps(
-        {"events": [_event([_PHI, _DAL])]}))
-    monkeypatch.setattr(espn.requests, "get",
-                        lambda *a, **k: (_ for _ in ()).throw(OSError("down")))
-
-    assert [g["id"] for g in espn.live_state()] == ["1"], "the poller still serves stale"
-    with pytest.raises(RuntimeError, match="asked for a live read"):
-        espn.scoreboard("nfl", allow_cache=False)
-    with pytest.raises(RuntimeError, match="asked for a live read"):
-        espn.live_state(allow_cache=False)
+    with pytest.raises(RuntimeError, match="ESPN unreachable"):
+        espn.scoreboard("nfl")
+    with pytest.raises(RuntimeError, match="ESPN unreachable"):
+        espn.live_state("nfl")
+    assert calls["n"] == 8, "two hosts times two user agents, per call, then the raise"
 
 
 def test_cfb_asks_for_fbs_only_and_a_full_saturday(monkeypatch, tmp_path):
     """The default page size truncates a 60-game Saturday, and group 80 is FBS."""
-    espn = _cache_at(monkeypatch, tmp_path)
+    espn = _espn()
     seen = {}
 
     def _get(url, params=None, headers=None, timeout=None):
@@ -190,14 +144,6 @@ def test_cfb_asks_for_fbs_only_and_a_full_saturday(monkeypatch, tmp_path):
     monkeypatch.setattr(espn.requests, "get", _get)
     espn.scoreboard("cfb", date="20261003")
     assert seen == {"dates": "20261003", "groups": "80", "limit": "200"}
-
-
-def test_summary_is_keyed_by_event_so_two_games_do_not_share_a_cache_entry(monkeypatch, tmp_path):
-    espn = _cache_at(monkeypatch, tmp_path)
-    monkeypatch.setattr(espn.requests, "get", lambda *a, **k: _Resp({"winprobability": []}))
-    espn.summary("401671", "nfl")
-    espn.summary("401672", "nfl")
-    assert {p.name for p in tmp_path.glob("*.json")} == {"sum_401671.json", "sum_401672.json"}
 
 
 def _event(competitors, event_id="1"):
@@ -214,7 +160,7 @@ _DAL = {"homeAway": "away", "team": {"abbreviation": "DAL"}, "score": "17"}
 
 
 def test_live_state_flattens_what_the_overlay_needs(monkeypatch, tmp_path):
-    espn = _cache_at(monkeypatch, tmp_path)
+    espn = _espn()
     monkeypatch.setattr(espn, "scoreboard",
                         lambda league="nfl", **_: {"events": [_event([_PHI, _DAL])]})
     got = espn.live_state()[0]
@@ -229,7 +175,7 @@ def test_the_side_comes_from_the_field_that_names_it_not_from_the_order(monkeypa
     field swaps both teams and both scores, and the overlay is the one artifact that moves
     during a Sunday -- there is nothing on the page to compare it against, so it renders as
     a plausible scoreline that is exactly backwards."""
-    espn = _cache_at(monkeypatch, tmp_path)
+    espn = _espn()
 
     def state(order):
         monkeypatch.setattr(espn, "scoreboard",
@@ -246,7 +192,7 @@ def test_an_event_that_does_not_name_its_sides_is_left_out_and_said_so(monkeypat
     """Degrade by saying so, not by guessing. Emitting the game with a side picked off the
     array would put a possibly-inverted scoreline on the page, which is worse than a game
     the panel does not show."""
-    espn = _cache_at(monkeypatch, tmp_path)
+    espn = _espn()
     bare = [{"team": {"abbreviation": "KC"}, "score": "3"},
             {"team": {"abbreviation": "LV"}, "score": "0"}]
     monkeypatch.setattr(espn, "scoreboard", lambda league="nfl", **_: {
@@ -264,7 +210,7 @@ def test_two_competitors_on_the_same_side_is_not_a_game_either(monkeypatch, tmp_
     finding and raises -- see the guard test at the end of this section. This test is about
     the one event, so it needs a board that is otherwise fine.
     """
-    espn = _cache_at(monkeypatch, tmp_path)
+    espn = _espn()
     both = [_PHI, {**_DAL, "homeAway": "home"}]
     monkeypatch.setattr(espn, "scoreboard", lambda league="nfl", **_: {
         "events": [_event([_PHI, _DAL]), _event(both, event_id="2")]})
@@ -298,7 +244,7 @@ def test_two_competitors_on_the_same_side_is_not_a_game_either(monkeypatch, tmp_
 def test_an_event_the_reader_cannot_resolve_is_dropped_and_named(monkeypatch, tmp_path,
                                                                  capsys, broken, why):
     """Each of these used to raise `KeyError` or `IndexError` out of `live_state`."""
-    espn = _cache_at(monkeypatch, tmp_path)
+    espn = _espn()
     monkeypatch.setattr(espn, "scoreboard",
                         lambda league="nfl", **_: {"events": [_event([_PHI, _DAL]), broken]})
     assert [g["id"] for g in espn.live_state()] == ["1"], "the good game still renders"
@@ -317,7 +263,7 @@ def test_a_board_that_resolves_none_of_its_games_raises_rather_than_going_quiet(
     Both callers already degrade on an exception: `publish.live` keeps last-good, `poll`
     serves stale, and either beats publishing 'no games today' during a Sunday.
     """
-    espn = _cache_at(monkeypatch, tmp_path)
+    espn = _espn()
     renamed = [{**_PHI, "side": "home"}, {**_DAL, "side": "away"}]
     for c in renamed:
         del c["homeAway"]
@@ -330,7 +276,7 @@ def test_a_board_that_resolves_none_of_its_games_raises_rather_than_going_quiet(
 def test_a_board_with_no_games_on_it_is_not_a_failure(monkeypatch, tmp_path):
     """The other side of that guard, and the reason it counts events rather than rows.
     There is no NFL slate in February and the deploy runs all year."""
-    espn = _cache_at(monkeypatch, tmp_path)
+    espn = _espn()
     monkeypatch.setattr(espn, "scoreboard", lambda league="nfl", **_: {"events": []})
     assert espn.live_state() == []
 
@@ -354,7 +300,7 @@ def test_the_frozen_capture_reaches_the_overlay_with_its_live_fields(monkeypatch
     extra point -- whose `situation` carried neither. That is observed, not supposed, and it
     is why those two are read with `.get` rather than subscripted.
     """
-    espn = _cache_at(monkeypatch, tmp_path)
+    espn = _espn()
     payload = _capture("espn_scoreboard_cfb.json")
     monkeypatch.setattr(espn, "scoreboard", lambda league="nfl", **_: payload)
     rows = {g["id"]: g for g in espn.live_state()}
@@ -393,7 +339,7 @@ def test_the_event_level_status_is_in_the_capture_and_still_unread(monkeypatch, 
     import re as _re
     from pathlib import Path as _Path
 
-    espn = _cache_at(monkeypatch, tmp_path)
+    espn = _espn()
     # Scoped to `_overlay_row` and matched as one sentence. Two substrings anywhere in the
     # module is the weaker test that was here first: a rewording which deletes the claim but
     # leaves both phrases elsewhere in the file passes it, so it would go on guarding a
@@ -751,7 +697,7 @@ def test_an_empty_board_still_carries_the_columns_the_contract_reads(monkeypatch
     """
     from hub.contracts import ESPN_SCOREBOARD
 
-    espn = _cache_at(monkeypatch, tmp_path)
+    espn = _espn()
     empty = espn.scoreboard_frame([])
     assert empty.height == 0
     assert set(empty.columns) == set(espn.SCOREBOARD_TYPES), (

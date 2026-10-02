@@ -229,8 +229,7 @@ def _live_frame(monkeypatch, fixture: str, league: str = "cfb") -> pl.DataFrame:
         f"The frame would validate either way, which is why the pair is checked here rather "
         f"than left to match by convention.")
 
-    def _scoreboard(league: str = "nfl", date: str | None = None, *,
-                    allow_cache: bool = True) -> dict:
+    def _scoreboard(league: str = "nfl", date: str | None = None) -> dict:
         assert league == captured, (
             f"the reader asked for the {league} board while holding the {captured} capture")
         return payload

@@ -116,19 +116,12 @@ def test_the_live_board_still_resolves_through_the_reader(league, monkeypatch):
     partial rename until it reaches all of them, and `live_state` only raises when *nothing*
     resolves.
     """
-    # `_get` degrades to last-good when every host fails -- right for the dashboard, wrong
-    # here: it would let this pass on a replayed file and claim a verification that did not
-    # happen, which is the one thing this file's header says a golden test must not do. The
-    # cache is written only on a successful fetch, so an unadvanced mtime *is* the outage.
-    cached = espn.CACHE / f"sb_{league}_now.json"
-    before = cached.stat().st_mtime if cached.exists() else 0.0
+    # `_get` serves nothing when every host fails (#401), so a payload here was fetched just
+    # now -- the one thing this file's header says a golden test must not fake.
     try:
         payload = espn.scoreboard(league)
-    except RuntimeError as e:                       # unreachable, and nothing to serve
+    except RuntimeError as e:                       # unreachable
         pytest.skip(f"ESPN unreachable for {league}: {e}")
-    if cached.exists() and cached.stat().st_mtime <= before:
-        pytest.skip(f"ESPN unreachable for {league}; `_get` served last-good, which proves "
-                    f"nothing about the live shape")
 
     events = (payload or {}).get("events") or []
     if not events:

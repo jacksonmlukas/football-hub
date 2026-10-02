@@ -15,13 +15,14 @@ is made to happen, through the real script and the real CLI, and what came out i
   * ESPN answers with games      -> the overlay is written and the deploy command runs.
   * ESPN answers with no games   -> the same. ADR-0018: an empty board is ESPN saying there
                                     are no games, and relaying it is the relay working.
-  * ESPN cannot be reached       -> **no deploy, and `generated_at` does not move**, even
-                                    though the fetch layer's cache could have answered.
+  * ESPN cannot be reached       -> **no deploy, and `generated_at` does not move**. The
+                                    fetch layer holds no last-good cache to answer in its
+                                    place (#401); this is the test that keeps it that way.
 
 Only two things are doubles: the socket, and the deploy. The socket, because the outcomes are
 defined by what ESPN does and a test that waited for ESPN to fail would never run; the deploy,
 for the reason `heartbeat.sh` takes a URL. Everything between them -- `live-loop.sh`,
-`hub.publish --live`, `hub.publish.live`, `hub.fetch.espn._get` and its cache -- is the code
+`hub.publish --live`, `hub.publish.live` and `hub.fetch.espn._get` -- is the code
 that will run on a Sunday.
 """
 import json
@@ -44,8 +45,8 @@ ONE_GAME = {"events": [{"id": "401", "competitions": [{
 NO_GAMES: dict = {"events": []}
 
 # Imported at interpreter start-up by every `uv run python` the loop spawns, which is the only
-# way into a subprocess the script starts itself. It redirects the fetch layer's cache and
-# decides what the network does; where the overlay is written is the CLI's own `--out`.
+# way into a subprocess the script starts itself. It decides what the network does; where the
+# overlay is written is the CLI's own `--out`.
 #
 # `hub.publish` is deliberately *not* patched here: `python -m hub.publish` runs the module as
 # `__main__`, a second module object, so patching the imported one would silently miss.
@@ -56,10 +57,7 @@ import pathlib
 
 import requests
 
-import hub.fetch.espn
-
-hub.fetch.espn.CACHE = pathlib.Path(os.environ["FAKE_CACHE"])
-hub.fetch.espn.CACHE.mkdir(parents=True, exist_ok=True)
+import hub.fetch.espn  # noqa: F401  -- imported so `requests` is patched before any caller
 
 
 class _Resp:
@@ -90,7 +88,6 @@ class Run:
     def __init__(self, tmp_path: Path):
         self.root = tmp_path
         self.site = tmp_path / "site" / "data"
-        self.cache = tmp_path / "cache"
         self.board = tmp_path / "board.json"
         self.log = tmp_path / "deploys.log"
         shim = tmp_path / "shim"
@@ -122,7 +119,7 @@ class Run:
              str(self.deploy)],
             capture_output=True, text=True, timeout=300,
             env={**_env(), "PYTHONPATH": str(self.shim), "FAKE_ESPN": str(self.board),
-                 "FAKE_CACHE": str(self.cache), "DEPLOY_EXIT": str(deploy_exit)})
+                 "DEPLOY_EXIT": str(deploy_exit)})
         assert got.returncode == 0, got.stdout + got.stderr
         return got
 
@@ -141,7 +138,7 @@ class Run:
 
 def _env() -> dict:
     import os
-    return {k: v for k, v in os.environ.items() if k not in ("FAKE_ESPN", "FAKE_CACHE")}
+    return {k: v for k, v in os.environ.items() if k not in ("FAKE_ESPN",)}
 
 
 @pytest.fixture
@@ -240,26 +237,26 @@ def test_an_empty_board_is_still_deployed(run):
 def test_an_unreachable_espn_holds_the_stamp_and_does_not_deploy(run):
     """The heart of issue #91, and the one that erases its own evidence if it is wrong.
 
-    `hub.fetch.espn._get` falls back to a last-good cache, deliberately, so the dashboard
-    degrades instead of erroring. Here that cache is *warm* -- the first cycle filled it --
-    and a refresher that took it would write a payload of frozen scores under a brand new
-    `generated_at`. The page would sit still while the heartbeat said it was fresh, and the
-    watchdog, which reads exactly that field, could never fire again.
+    A refresher that answered an unreachable ESPN with the last payload it had would write
+    frozen scores under a brand new `generated_at`. The page would sit still while the
+    heartbeat said it was fresh, and the watchdog, which reads exactly that field, could
+    never fire again. `hub.fetch.espn` used to keep such a last-good cache; #401 deleted it,
+    and the first cycle here leaves a published overlay for the same reason it once left a
+    warm cache: so there is something stale to be tempted by.
 
     So: no write, no deploy, and the previously published overlay untouched, byte for byte.
     """
     run.espn(ONE_GAME)
     run.go(seconds=1, interval=2)
     published = (run.site / "live.json").read_text()
-    assert (run.cache / "sb_nfl_now.json").exists(), (
-        "the cache is cold, so this test would pass without the refusal it is about")
+    assert published, "nothing was published first, so there is no stale overlay to hold"
 
     run.espn("down")
     got = run.go(seconds=5, interval=2)
 
     assert (run.site / "live.json").read_text() == published, (
         "generated_at moved over scores nobody refreshed")
-    assert len(run.deploys) == 1, f"a cache-served cycle deployed: {run.deploys}"
+    assert len(run.deploys) == 1, f"a cycle with ESPN down deployed: {run.deploys}"
     assert "ESPN was not reached" in got.stdout
     assert "held" in got.stdout.splitlines()[-1]
 
