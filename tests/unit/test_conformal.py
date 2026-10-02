@@ -245,13 +245,24 @@ def test_the_cli_season_reaches_the_reader_and_the_report_names_it(capsys, monke
 # CLI died on a DuckDB binder error on every real invocation, which is the practical reason
 # nothing in the repo consumes a conformal interval.
 
-def _preds(rows):
-    """(game_id, week, margin_mean), all in season 2026 -- the store always carries the
-    season, and since #262 `load_scored` carries it through."""
-    return pl.DataFrame({"game_id": [r[0] for r in rows],
-                         "season": pl.Series([2026] * len(rows), dtype=pl.Int32),
-                         "week": [r[1] for r in rows],
-                         "margin_mean": [r[2] for r in rows]})
+def _seed(base, rows):
+    """(game_id, week, margin_mean), all in season 2026, written to a real store under `base`
+    the way `hub.publish` writes predictions -- the store always carries the season, and since
+    #262 `load_scored` carries it through. `load_scored` reads them through
+    `store.predictions`, so these tests exercise the store and not a patched answer."""
+    import datetime as dt
+
+    from hub import store
+    for week in sorted({r[1] for r in rows}):
+        part = [r for r in rows if r[1] == week]
+        store.write(pl.DataFrame(
+            {"game_id": [r[0] for r in part], "league": ["nfl"] * len(part),
+             "season": pl.Series([2026] * len(part), dtype=pl.Int32),
+             "week": pl.Series([week] * len(part), dtype=pl.Int32),
+             "model": ["m"] * len(part), "version": ["v1"] * len(part),
+             "margin_mean": [r[2] for r in part],
+             "predicted_at": [dt.datetime(2026, 9, 1)] * len(part)}),
+            "preds", "nfl", 2026, week, base=base)
 
 
 def _sched(rows):
@@ -261,62 +272,50 @@ def _sched(rows):
                         schema={"game_id": pl.Utf8, "result": pl.Float64})
 
 
-def test_a_played_game_gets_its_realised_margin(monkeypatch):
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([("g1", 1, 3.0)]))
-    got = conformal.load_scored("m", schedules=_sched([("g1", 7.0)]))
+def test_a_played_game_gets_its_realised_margin(monkeypatch, tmp_path):
+    _seed(tmp_path, [("g1", 1, 3.0)])
+    got = conformal.load_scored("m", base=tmp_path, schedules=_sched([("g1", 7.0)]))
     assert got["margin_actual"].to_list() == [7.0]
     assert got.columns == ["season", "week", "margin_mean", "margin_actual"]
     assert got["season"].to_list() == [2026]
 
 
-def test_an_unplayed_game_does_not_survive_the_join(monkeypatch):
+def test_an_unplayed_game_does_not_survive_the_join(monkeypatch, tmp_path):
     """The whole 2026 board is unplayed games. They must not arrive as zeros -- a zero
     margin is a tie, not a missing result, and it would calibrate against fiction."""
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([("g1", 1, 3.0)]))
-    assert conformal.load_scored("m", schedules=_sched([("g1", None)])).is_empty()
+    _seed(tmp_path, [("g1", 1, 3.0)])
+    assert conformal.load_scored("m", base=tmp_path, schedules=_sched([("g1", None)])).is_empty()
 
 
-def test_a_prediction_with_no_matching_game_is_dropped(monkeypatch):
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([("ghost", 1, 3.0)]))
-    assert conformal.load_scored("m", schedules=_sched([("g1", 7.0)])).is_empty()
+def test_a_prediction_with_no_matching_game_is_dropped(monkeypatch, tmp_path):
+    _seed(tmp_path, [("ghost", 1, 3.0)])
+    assert conformal.load_scored("m", base=tmp_path, schedules=_sched([("g1", 7.0)])).is_empty()
 
 
-def test_no_predictions_returns_the_right_shape_not_a_crash(monkeypatch):
+def test_no_predictions_returns_the_right_shape_not_a_crash(monkeypatch, tmp_path):
     """Before any game is published this is the normal state, and it has to flow through to
     the `not enough calibration` message rather than blowing up on a missing column."""
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([]))
-    got = conformal.load_scored("m", schedules=_sched([]))
+    _seed(tmp_path, [])
+    got = conformal.load_scored("m", base=tmp_path, schedules=_sched([]))
     assert got.is_empty() and got.columns == ["season", "week", "margin_mean", "margin_actual"]
 
 
-def test_schedules_without_a_result_column_says_so(monkeypatch):
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _preds([("g1", 1, 3.0)]))
+def test_schedules_without_a_result_column_says_so(monkeypatch, tmp_path):
+    _seed(tmp_path, [("g1", 1, 3.0)])
     with pytest.raises(ValueError, match="result"):
-        conformal.load_scored("m", schedules=pl.DataFrame({"game_id": ["g1"]}))
+        conformal.load_scored("m", base=tmp_path, schedules=pl.DataFrame({"game_id": ["g1"]}))
 
 
-def test_a_store_with_no_preds_at_all_is_empty_not_a_catalog_error(monkeypatch):
+def test_a_store_with_no_preds_at_all_is_empty_not_a_catalog_error(monkeypatch, tmp_path):
     """A fresh clone has no `data/` directory, so `preds` is not an empty table -- there is
     no view, and DuckDB raises CatalogException. This is the guard that flows that through
     to the `not enough calibration` message.
 
-    The tests above must declare `tables` too, or they exercise *this* path by accident and
-    pass or fail on whether the developer's machine happens to have a preds directory. That
-    is how they came to pass here and fail on a fresh clone.
+    The tests above seed a store of their own under `tmp_path`, or they would exercise *this*
+    path by accident and pass or fail on whether the developer's machine happens to have a preds
+    directory. That is how they came to pass here and fail on a fresh clone.
     """
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: set())
-    got = conformal.load_scored("m", schedules=_sched([("g1", 7.0)]))
+    got = conformal.load_scored("m", base=tmp_path, schedules=_sched([("g1", 7.0)]))
     assert got.is_empty() and got.columns == ["season", "week", "margin_mean", "margin_actual"]
 
 

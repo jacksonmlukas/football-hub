@@ -18,6 +18,7 @@ import pytest
 from polars.exceptions import ColumnNotFoundError
 
 from hub.draft import board
+from hub.fetch.replay import serve
 
 # The DRAFT_BOARD contract requires 300 rows, so these are league-sized rather than toy.
 # `games` is UInt32 because the contract declares it and now checks it.
@@ -983,7 +984,7 @@ def test_a_routed_board_reads_one_archive_entry_twice_and_gets_the_same_frame(
     })
     calls = []
     monkeypatch.setattr(nv, "RAW", tmp_path / "raw")
-    monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: calls.append(pages) or frame)
+    serve(ff_rankings=lambda pages: calls.append(pages) or frame)
 
     first = nv.load_rankings("all", as_of="2026-09-01")
     second = nv.load_rankings("all", as_of="2026-09-01")

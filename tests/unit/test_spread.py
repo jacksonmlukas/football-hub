@@ -7,13 +7,13 @@ whether anything richer earns its way in.
 
 All offline.
 """
-from dataclasses import replace
-
 import numpy as np
 import polars as pl
 import pytest
 
-from hub.contracts import SNAP_COUNTS, ContractViolation
+from hub.contracts import ContractViolation
+from hub.fetch import nflverse as nv
+from hub.fetch.replay import serve
 from hub.models import spread
 from hub.models.predict import WEEKLY_K
 
@@ -138,13 +138,33 @@ def _snaps(rows):
 _XW = pl.DataFrame({"pfr_id": ["P1"], "gsis_id": ["a"]})
 
 
+def _shipped_snaps(rows):
+    """`_snaps` with the other columns `SNAP_COUNTS` requires, which the loader now checks."""
+    return _snaps(rows).with_columns(
+        game_id=pl.lit("g"), game_type=pl.lit("REG"), player=pl.lit("p"), team=pl.lit("T"),
+        opponent=pl.lit("O"), offense_snaps=pl.lit(50.0), defense_pct=pl.lit(0.0),
+        st_pct=pl.lit(0.1))
+
+
+def _loaded(rows):
+    """What `snap_usage` is handed in production: the frame as the loader returns it.
+
+    Through `nflverse.load` and a Replay, so the contract's repair and refusals are the real
+    ones. `snap_usage` no longer asks the contract anything -- the units are settled where the
+    response enters, which is what these tests now hold.
+    """
+    serve(snap_counts=_shipped_snaps(rows))
+    return nv.load("snap_counts", [2023])
+
+
 def test_snap_share_arrives_as_a_fraction_however_nflverse_ships_it():
     """nflverse has shipped this both ways. Detecting beats assuming -- and the detecting is
-    `SNAP_COUNTS`', not this module's. The answer used to live here, in a private repair
-    beside a contract that refused the same frame; what this now asserts is that the
-    declaration reaches the consumer, not that the consumer has its own copy."""
-    frac = spread.snap_usage(_snaps([(2023, w, "P1", "WR", 0.5) for w in range(1, 9)]), _XW)
-    pct = spread.snap_usage(_snaps([(2023, w, "P1", "WR", 50.0) for w in range(1, 9)]), _XW)
+    `SNAP_COUNTS`', applied by the loader, not this module's. The answer used to live here, in
+    a private repair beside a contract that refused the same frame; what this asserts is that
+    the declaration reaches the consumer through the seam, not that the consumer has its own
+    copy."""
+    frac = spread.snap_usage(_loaded([(2023, w, "P1", "WR", 0.5) for w in range(1, 9)]), _XW)
+    pct = spread.snap_usage(_loaded([(2023, w, "P1", "WR", 50.0) for w in range(1, 9)]), _XW)
     assert frac["snap_pct"][0] == pytest.approx(0.5)
     assert pct["snap_pct"][0] == pytest.approx(0.5)
 
@@ -154,30 +174,22 @@ def test_a_snap_share_no_rescaling_can_rescue_reaches_the_consumer_as_a_refusal(
     refuses to one: a hundredth of 500 is 5, and 5 is not a share."""
     rows = [(2023, w, "P1", "WR", 500.0) for w in range(1, 9)]
     with pytest.raises(ContractViolation, match="offense_pct range"):
-        spread.snap_usage(_snaps(rows), _XW)
+        _loaded(rows)
 
 
-def test_snap_usage_refuses_a_frame_missing_a_column_the_contract_declares():
-    """The presence check this function used to hold itself. It names the contract now, so
-    a reader is sent to the declaration that was broken rather than to this function."""
-    df = _snaps([(2023, 1, "P1", "WR", 0.5)]).drop("offense_pct")
+def test_a_snap_frame_missing_a_column_the_contract_declares_is_refused_at_the_load():
+    """The presence check this function used to hold itself, and then asked the contract for.
+    It names the contract, so a reader is sent to the declaration that was broken."""
+    serve(snap_counts=_shipped_snaps([(2023, 1, "P1", "WR", 0.5)]).drop("offense_pct"))
     with pytest.raises(ContractViolation, match="nflverse_snap_counts: missing columns"):
-        spread.snap_usage(df, _XW)
+        nv.load("snap_counts", [2023])
 
 
-def test_snap_usage_refuses_a_declaration_that_has_stopped_naming_what_it_reads(monkeypatch):
-    """The drift the ticket was about, made to happen.
-
-    Two statements of one schema cannot be held together by anybody noticing. This function
-    asks `SNAP_COUNTS` for four columns by name, so a declaration that loses one -- renamed
-    upstream, dropped by hand, moved to another contract -- refuses here, at the read. The
-    private column list it used to carry would have gone on agreeing with itself.
-    """
-    drifted = replace(SNAP_COUNTS, required={c: dt for c, dt in SNAP_COUNTS.required.items()
-                                             if c != "offense_pct"})
-    monkeypatch.setattr(spread, "SNAP_COUNTS", drifted)
-    with pytest.raises(ContractViolation, match=r"asked for \['offense_pct'\]"):
-        spread.snap_usage(_snaps([(2023, 1, "P1", "WR", 0.5)]), _XW)
+def test_snap_usage_refuses_a_frame_that_lacks_what_it_reads():
+    """A frame that did not come through the loader has no contract behind it, so this says
+    what it needs rather than failing somewhere inside a join."""
+    with pytest.raises(ValueError, match="offense_pct"):
+        spread.snap_usage(_snaps([(2023, 1, "P1", "WR", 0.5)]).drop("offense_pct"), _XW)
 
 
 def test_a_growing_role_has_positive_drift():
@@ -388,7 +400,6 @@ def test_help_needs_no_network():
 
 
 def test_the_fit_path_runs_offline(monkeypatch, capsys, tmp_path):
-    import nflreadpy as nfl
     rng = np.random.default_rng(1)
     rows = []
     for season in (2023, 2024, 2025):
@@ -396,10 +407,12 @@ def test_the_fit_path_runs_offline(monkeypatch, capsys, tmp_path):
             base = 12.0 + rng.normal(0, 2)
             rows += _season(f"p{pid}", [max(0.0, base + rng.normal(0, 6))
                                         for _ in range(12)], season)
-    monkeypatch.setattr(nfl, "load_player_stats", lambda *a, **k: _stats(rows))
-    monkeypatch.setattr(nfl, "load_snap_counts", lambda *a, **k: _snaps(
-        [(s, w, "P1", "WR", 0.5) for s in (2023, 2024, 2025) for w in range(1, 13)]))
-    monkeypatch.setattr(nfl, "load_ff_playerids", lambda *a, **k: _XW)
+    serve(player_stats=_stats(rows).with_columns(
+              season_type=pl.lit("REG"), target_share=pl.lit(0.2), air_yards_share=pl.lit(0.2),
+              receiving_tds=pl.lit(0.0), rushing_tds=pl.lit(0.0), passing_tds=pl.lit(0.0)),
+          snap_counts=_shipped_snaps(
+              [(s, w, "P1", "WR", 0.5) for s in (2023, 2024, 2025) for w in range(1, 13)]),
+          ff_playerids=_XW)
     out = tmp_path / "s.parquet"
     assert spread.main(["--fit", "--seasons", "2023,2024,2025", "--out", str(out)]) == 0
     text = capsys.readouterr().out

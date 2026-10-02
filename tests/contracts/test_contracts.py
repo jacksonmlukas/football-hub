@@ -113,11 +113,6 @@ def test_contract_catches_two_spellings_of_one_player():
     with pytest.raises(ContractViolation,
                        match=r"'Ken Walker III' / 'Kenneth Walker III' -> kenneth walker"):
         c.validate(two)
-    # Narrowed with the column, and dropped with it: a consumer that reads only `ecr` is not
-    # refused for a pair it never sees, and `conform` must carry the declaration through.
-    with pytest.raises(ContractViolation, match="kenneth walker"):
-        c.conform(two, "player")
-    assert c.conform(two, "ecr").height == 3
     ok = Contract("t", required={"player": pl.Utf8}, unique_by_key=("player", "absent"))
     assert ok.validate(pl.DataFrame({"player": ["A.J. Brown", "Marvin Harrison Jr."]})).height == 2
 
@@ -232,31 +227,6 @@ def test_a_column_that_arrived_as_the_wrong_kind_is_refused_rather_than_rescaled
         _REPAIRED.validate(_repairable(pct=pl.lit("50")))
 
 
-def test_conform_enforces_only_the_columns_a_consumer_names():
-    """A consumer holding a slice is not the fetch boundary. `hub.models.spread.snap_usage`
-    reads four of `SNAP_COUNTS`' thirteen columns, so demanding all thirteen would refuse a
-    legitimate frame -- which is how it came to carry its own column list instead."""
-    df = pl.DataFrame({"key": ["a"], "pct": [0.5]})
-    assert _REPAIRED.conform(df, "key", "pct").height == 1
-    with pytest.raises(ContractViolation, match="missing columns"):
-        _REPAIRED.validate(df)
-
-
-def test_conform_refuses_a_column_the_contract_does_not_declare():
-    """The drift this seam exists to end, caught coming the other way. A consumer that
-    starts reading a column the source never promised has left the declaration behind, and
-    reading it on trust is exactly how the second copy of a schema begins."""
-    df = pl.DataFrame({"key": ["a"], "pct": [0.5], "share": [0.5]})
-    with pytest.raises(ContractViolation, match=r"asked for \['share'\], which this "):
-        _REPAIRED.conform(df, "key", "share")
-
-
-def test_conform_hands_back_the_repaired_column_and_not_only_a_verdict():
-    """The half `validate` could not give anybody: the frame, in the units declared."""
-    df = pl.DataFrame({"key": ["a"], "pct": [50.0]})
-    assert _REPAIRED.conform(df, "key", "pct")["pct"][0] == pytest.approx(0.5)
-
-
 def test_the_repair_is_one_decision_for_every_column_it_declares():
     """A units change is a fact about the source, not about a column.
 
@@ -270,7 +240,7 @@ def test_the_repair_is_one_decision_for_every_column_it_declares():
     column `hub.models.panel` reads.
     """
     df = pl.DataFrame({"key": ["a"], "pct": [85.0], "other": [0.8]})
-    out = _WHOLE_RULE.conform(df, "key", "pct", "other")
+    out = _WHOLE_RULE.validate(df)
     assert out["pct"][0] == pytest.approx(0.85)
     assert out["other"][0] == pytest.approx(0.008), (
         "one column tripped the trigger and the other was left in the units the first one "
@@ -281,7 +251,7 @@ def test_the_repair_is_one_decision_for_every_column_it_declares():
 def test_a_frame_under_the_trigger_everywhere_is_left_entirely_alone():
     """The other half of one decision: no column trips it, so no column moves."""
     df = pl.DataFrame({"key": ["a"], "pct": [0.85], "other": [0.008]})
-    out = _WHOLE_RULE.conform(df, "key", "pct", "other")
+    out = _WHOLE_RULE.validate(df)
     assert out["pct"][0] == pytest.approx(0.85)
     assert out["other"][0] == pytest.approx(0.008)
 
@@ -374,49 +344,15 @@ def test_narrowing_by_row_does_not_turn_a_bad_reading_into_a_units_change():
     sliced = _fractional(pct=_ONE_BAD)[2:]
     assert sliced["pct"].max() == 87.0, "the slice no longer carries the corrupt reading"
     with pytest.raises(ContractViolation, match="pct range"):
-        _WHOLE_RULE.conform(sliced, "key", "pct", "other")
+        _WHOLE_RULE.validate(sliced)
 
 
 def test_narrowing_by_row_still_repairs_a_slice_of_a_whole_percent_frame():
     """And the same narrowing on the frame the repair is for. A consumer reading two rows of
     a percent refresh is reading percents, and gets the fraction it asked the contract for
     rather than a refusal it cannot use."""
-    out = _WHOLE_RULE.conform(_WHOLE_PERCENTS[2:], "key", "pct", "other")
+    out = _WHOLE_RULE.validate(_WHOLE_PERCENTS[2:])
     assert out["pct"].to_list() == pytest.approx([0.90, 0.61])
-
-
-def test_conform_narrows_what_is_checked_and_not_what_is_repaired():
-    """What a consumer answers for is the columns it reads; what the units are is not its
-    call.
-
-    This asserted the opposite until the review of #132: that naming one column repaired
-    only that one, so a return value never depended on a declaration the caller had not
-    named. The reasoning does not survive `conform` handing back the *whole* frame. A
-    consumer that names `offense_pct` still receives `st_pct`, and narrowing the repair
-    left that column in units the frame had already proved it was not in -- the
-    half-repaired frame under a different door. Narrowing the checks is the part that was
-    always right: an empty `ranges` here, and no refusal for a column nobody read.
-    """
-    df = pl.DataFrame({"key": ["a"], "pct": [85.0], "other": [0.8]})
-    out = _WHOLE_RULE.conform(df, "key")
-    assert out["pct"][0] == pytest.approx(0.85), "the repair is the frame's, not the caller's"
-    assert out["other"][0] == pytest.approx(0.008)
-
-    # ...and the narrowing that does happen. 1.2 is above the bound and below the trigger,
-    # so no repair reaches it and the only question left is whether anybody read it.
-    unread = pl.DataFrame({"key": ["a"], "pct": [1.2], "other": [0.5]})
-    assert _WHOLE_RULE.conform(unread, "key")["pct"][0] == pytest.approx(1.2)
-    with pytest.raises(ContractViolation, match="pct range"):
-        _WHOLE_RULE.conform(unread, "key", "pct")
-
-
-def test_conform_does_not_apply_the_volume_floor():
-    """How big a response has to be is a fact about a refresh, and the boundary has already
-    asked it. A consumer handed an empty slice gets an empty slice, not a refusal."""
-    empty = pl.DataFrame(schema={"key": pl.Utf8, "pct": pl.Float64})
-    assert _REPAIRED.conform(empty, "key", "pct").height == 0
-    with pytest.raises(ContractViolation, match="rows < min"):
-        _REPAIRED.validate(empty.with_columns(pl.lit(1.0).alias("other")))
 
 
 # --- a repair that succeeds says so (issue #140) ------------------------------

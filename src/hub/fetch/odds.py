@@ -389,8 +389,8 @@ def _team_abbrs(valid: set[str]) -> dict[str, str]:
     entries, Oakland and San Diego and the rest -- keeps the first, and never appears in a
     payload for a season it did not play in.
     """
-    import nflreadpy as nfl
-    t = nfl.load_teams()
+    from hub.fetch import nflverse
+    t = nflverse.load("teams", ())
     out: dict[str, str] = {}
     for name, abbr in zip(t["team_name"].to_list(), t["team_abbr"].to_list(), strict=True):
         if name not in out or (abbr in valid and out[name] not in valid):
@@ -399,8 +399,8 @@ def _team_abbrs(valid: set[str]) -> dict[str, str]:
 
 
 def _schedule(season: int) -> pl.DataFrame:
-    import nflreadpy as nfl
-    return nfl.load_schedules().filter(pl.col("season") == season)
+    from hub.fetch import nflverse
+    return nflverse.load("schedules", [season], refresh=True).filter(pl.col("season") == season)
 
 
 def _american(price: Any) -> float | None:
@@ -628,19 +628,10 @@ _QUOTE_SCHEMA: dict[str, Any] = {"game_id": pl.Utf8, "close_spread": pl.Float64,
 def _archive(season: int, base: Path | None) -> pl.DataFrame:
     """Every poll already in the store for the season, in `_QUOTE` shape plus `week`.
 
-    Empty on a fresh clone. Read with `SELECT *` rather than by naming the columns, because
-    an archive written entirely before #211 -- which is the live one on 2026-09-11 -- has no
-    `spread_price` column in any partition, and `union_by_name` unions what exists rather
-    than what a contract now declares. A column the archive has never had is added here as
-    nulls, which `_quote_moved` reads as no evidence.
+    Empty on a fresh clone. The query, the `spread_price` fill for an archive written before
+    #211 and the empty schema are `store.lines`' -- this takes the projection it reads.
     """
-    if "lines" not in store.tables(base):
-        return pl.DataFrame(schema={**_QUOTE_SCHEMA, "week": pl.Int64})
-    got = store.sql("SELECT * FROM lines WHERE league = 'nfl' AND season = ?",
-                    params=[season], base=base)
-    absent = [pl.lit(None, dtype=t).alias(c) for c, t in _QUOTE_SCHEMA.items()
-              if c not in got.columns]
-    return got.with_columns(absent).select(*_QUOTE, pl.col("week").cast(pl.Int64))
+    return store.lines(season, base=base).select(*_QUOTE, "week")
 
 
 def _with_staleness(new: pl.DataFrame, season: int, base: Path | None) -> pl.DataFrame:
@@ -921,8 +912,8 @@ def _qb_starters(season: int) -> pl.DataFrame:                  # pragma: no cov
     `captured_at`. A team that changes its starter publishes a new chart, so the as-of join
     in `_starter_at` reads the change from the first chart that carries it.
     """
-    import nflreadpy as nfl
-    chart = nfl.load_depth_charts([season])
+    from hub.fetch import nflverse
+    chart = nflverse.load("depth_charts", [season], refresh=True)
     return (chart.filter((pl.col("pos_abb") == "QB") & (pl.col("pos_rank") == 1))
                  .select(pl.col("dt").str.to_datetime("%Y-%m-%dT%H:%M:%SZ").alias("dt"),
                          pl.col("team"), pl.col("gsis_id").alias("qb"))
@@ -1274,10 +1265,9 @@ def prop_quotes(event: Mapping[str, Any], game_id: str, week: int,
 
 def _prop_archive(season: int, base: Path | None) -> pl.DataFrame:
     """Every prop poll already stored for the season, in `_PROP_SCHEMA`. Empty on a fresh clone."""
-    if "prop_lines" not in store.tables(base):
+    got = store.prop_lines(season, base=base)
+    if got is None:
         return pl.DataFrame(schema=_PROP_SCHEMA)
-    got = store.sql("SELECT * FROM prop_lines WHERE league = 'nfl' AND season = ?",
-                    params=[season], base=base)
     return got.select(*[pl.col(c).cast(t) for c, t in _PROP_SCHEMA.items()])
 
 

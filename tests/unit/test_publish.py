@@ -22,6 +22,24 @@ import polars as pl
 import pytest
 
 from hub import jsonio, publish, store
+from hub.fetch.replay import serve
+
+
+def _sched(game_ids, results):
+    """nflverse's schedule as the loader will accept it, carrying these games and results.
+
+    `schedules` is read through `hub.fetch.nflverse.load`, whose contract refuses a frame with no
+    rows or no `season`, so a fake of `game_id` and `result` alone is no longer a schedule. One
+    unplayed padding game keeps the frame legal and changes nothing the record scores: it has no
+    result, and the record drops those.
+    """
+    ids = [*game_ids, "unplayed_pad"]
+    return pl.DataFrame(
+        {"game_id": ids, "season": [2025] * len(ids), "week": [1] * len(ids),
+         "home_team": ["H"] * len(ids), "away_team": ["A"] * len(ids),
+         "result": [*[float(r) for r in results], None]},
+        schema={"game_id": pl.Utf8, "season": pl.Int32, "week": pl.Int32,
+                "home_team": pl.Utf8, "away_team": pl.Utf8, "result": pl.Float64})
 
 
 @pytest.fixture(autouse=True)
@@ -50,12 +68,10 @@ def offline(monkeypatch, tmp_path):
     The same shape as `offline` in `test_board_build.py`, which this module wanted and did
     not have.
     """
-    import nflreadpy as nfl
 
     import hub.season.survivor as sv
     from hub.fetch import pool as fetch_pool
-    monkeypatch.setattr(nfl, "load_schedules", lambda *a, **k: pl.DataFrame(
-        schema={"game_id": pl.Utf8, "result": pl.Float64}))
+    serve(schedules=_sched([], []))
     # The survivor producer reads the pool host's last-known state for the Ledger (#280);
     # a real one under `data/processed/` must not reach a test's plan.
     monkeypatch.setattr(fetch_pool, "PROCESSED", tmp_path / "no-pool-state")
@@ -151,11 +167,9 @@ def _scored_one(base, monkeypatch, site):
     Through `publish.predictions` rather than straight into the store, because the record is
     scored from what was published -- a test seeding only the store would be asserting
     against a source nothing reads."""
-    import nflreadpy as nfl
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     publish.predictions(2026, 1, base=base, out=site)
-    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
-        {"game_id": ["g1"], "result": [7]}))
+    serve(schedules=_sched(['g1'], [7]))
 
 
 def test_with_no_scored_predictions_the_record_says_so(site, base):
@@ -257,12 +271,10 @@ def test_no_measurement_drops_the_field_rather_than_the_page(site, base, monkeyp
 
 def _tied_and_won(base, monkeypatch, site):
     """Two published predictions: `g1` ends level, `g2` is a home win."""
-    import nflreadpy as nfl
     store.write(_preds([("g1", 0.2, -3.0), ("g2", 0.6, 3.0)]), "preds", "nfl", 2026, 1,
                 base=base)
     publish.predictions(2026, 1, base=base, out=site)
-    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
-        {"game_id": ["g1", "g2"], "result": [0, 7]}))
+    serve(schedules=_sched(['g1', 'g2'], [0, 7]))
 
 
 def test_a_tie_is_not_scored_as_a_home_loss_in_the_record(site, base, monkeypatch):
@@ -289,18 +301,11 @@ def test_the_record_reads_the_tie_constant_rather_than_hardcoding_it(site, base,
 def test_both_paths_score_the_same_tied_game_the_same_way(site, base, monkeypatch):
     """The whole of issue #64 end to end. No published prediction is a tied game yet, so
     nothing but a test can show the two paths agreeing -- which is why this exists."""
-    import hub.store as hub_store
     from hub.models import eval as me
     _tied_and_won(base, monkeypatch, site)
 
     record = publish._scored(site)
     assert record is not None
-    monkeypatch.setattr(hub_store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(hub_store, "sql", lambda *a, **k: pl.DataFrame(
-        {"game_id": ["g1", "g2"],
-         "season": pl.Series([2026, 2026], dtype=pl.Int32),
-         "week": pl.Series([1, 1], dtype=pl.Int32),
-         "model": ["market_baseline"] * 2, "home_win_prob": [0.2, 0.6]}))
     comparison = me.load_predictions("market_baseline", base=base)
 
     assert record["game_id"].to_list() == comparison["game_id"].to_list() == ["g2"]
@@ -594,13 +599,14 @@ def test_an_empty_store_reports_absence_by_asking_not_by_catching(tmp_path):
 def test_a_real_query_failure_now_surfaces(site, base, monkeypatch):
     """The behaviour that changed. With predictions present, a broken query must raise rather
     than be reported to the page as an absence."""
+    import duckdb
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     assert "preds" in store.tables(base), "the fixture store has predictions"
-
-    def boom(*a, **k):
-        raise RuntimeError("schema drift")
-    monkeypatch.setattr(store, "sql", boom)
-    with pytest.raises(RuntimeError, match="schema drift"):
+    # A partition the catalog cannot read: the real shape of drift, where the patched `sql`
+    # that stood here raised an exception of the test's own invention.
+    (base / "preds" / "league=nfl" / "season=2026" / "week=01" / "rotten.parquet").write_text(
+        "not a parquet file")
+    with pytest.raises(duckdb.Error):
         publish.predictions(2026, 1, base=base, out=site)
 
 
@@ -777,7 +783,6 @@ def test_a_week_with_several_fitted_versions_publishes_each_game_once(site, base
 def test_the_track_record_scores_each_game_once(site, base, monkeypatch):
     """Pooling versions counts every prediction as many times as it was re-fitted, and the
     reliability curve reports the inflated count as its sample size."""
-    import nflreadpy as nfl
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base, name="v1")
     later = _preds([("g1", 0.6, 3.0)]).with_columns(
         pl.lit("v2").alias("version"), pl.lit(dt.datetime(2026, 9, 3)).alias("predicted_at"))
@@ -786,8 +791,7 @@ def test_the_track_record_scores_each_game_once(site, base, monkeypatch):
     # is where the one-row-per-game rule is applied, so this now asserts that rule end to end
     # rather than only where it is implemented.
     publish.predictions(2026, 1, base=base, out=site)
-    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
-        {"game_id": ["g1"], "result": [7]}))
+    serve(schedules=_sched(['g1'], [7]))
     got = publish.track_record(base=base, out=site)
     assert isinstance(got, dict) and got["n_scored"] == 1
 
@@ -855,14 +859,12 @@ def test_a_run_with_nothing_to_score_keeps_the_last_good_record(site, base, monk
     blank the public record -- and it has, once. The published record is seeded because that
     is the case: `site/data/track_record.json` is committed and the store that produced it
     is not, so the runner sees sixteen scored predictions on the page and none on disk."""
-    import nflreadpy as nfl
     site.mkdir(parents=True, exist_ok=True)
     (site / "track_record.json").write_text(json.dumps(
         {"name": "track_record", "n_scored": 16, "log_loss": 0.556,
          "generated_at": "2026-01-06T00:00:00+00:00"}))
     before = (site / "track_record.json").read_text()
-    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
-        {"game_id": ["g1"], "result": [7]}))
+    serve(schedules=_sched(['g1'], [7]))
 
     got = publish.track_record(base=base, out=site)
     assert isinstance(got, publish.Kept), "an empty record was published as fresh"
@@ -879,12 +881,10 @@ def test_the_panel_says_why_rather_than_going_blank(site, base, monkeypatch):
     """Stale with a reason, which is what the page renders. A blank record and a stale one
     look different to a reader and only one of them is honest -- and the reason says the
     source was read, rather than sending the reader after a record that is already there."""
-    import nflreadpy as nfl
     site.mkdir(parents=True, exist_ok=True)
     (site / "track_record.json").write_text(json.dumps(
         {"name": "track_record", "n_scored": 16, "generated_at": "2026-01-06T00:00:00+00:00"}))
-    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
-        {"game_id": ["g1"], "result": [7]}))
+    serve(schedules=_sched(['g1'], [7]))
     man = publish.publish_all(2026, 1, base=base, out=site)
     art = next(a for a in man["artifacts"] if a["name"] == "track_record")
     assert art["stale"] is True
@@ -982,11 +982,9 @@ def test_the_live_overlay_is_not_in_the_committed_record():
 
 def test_the_record_is_scored_without_any_store(site, base, monkeypatch):
     """The regression this fixes. A runner has no store and must still advance the record."""
-    import nflreadpy as nfl
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     publish.predictions(2026, 1, base=base, out=site)
-    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
-        {"game_id": ["g1"], "result": [7]}))
+    serve(schedules=_sched(['g1'], [7]))
 
     empty = base / "nothing-here"
     got = publish.track_record(base=empty, out=site)
@@ -994,12 +992,10 @@ def test_the_record_is_scored_without_any_store(site, base, monkeypatch):
 
 
 def test_every_published_week_is_scored_not_only_the_latest(site, base, monkeypatch):
-    import nflreadpy as nfl
     for wk, gid in ((1, "g1"), (2, "g2")):
         store.write(_preds([(gid, 0.6, 3.0)], week=wk), "preds", "nfl", 2026, wk, base=base)
         publish.predictions(2026, wk, base=base, out=site)
-    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
-        {"game_id": ["g1", "g2"], "result": [7, -3]}))
+    serve(schedules=_sched(['g1', 'g2'], [7, -3]))
     got = publish.track_record(base=base, out=site)
     assert isinstance(got, dict) and got["n_scored"] == 2
 
@@ -1008,10 +1004,8 @@ def test_a_prediction_in_the_store_and_never_published_is_not_scored(site, base,
     """The property that makes this the right source rather than a convenient one. Rule 1
     counts a prediction because its commit predates kickoff; one that was never published has
     no commit to check, so it is not part of the record."""
-    import nflreadpy as nfl
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
-    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
-        {"game_id": ["g1"], "result": [7]}))
+    serve(schedules=_sched(['g1'], [7]))
     publish.track_record(base=base, out=site)
     assert json.loads((site / "track_record.json").read_text())["n_scored"] == 0, (
         "a prediction that was never published was scored from the store")
@@ -1021,13 +1015,11 @@ def test_a_site_with_no_predictions_keeps_last_good(site, base, monkeypatch):
     """The record on the page outlives the store that made it -- `site/data/` is committed
     and `data/processed/` is not -- so "this site publishes no predictions" is a fact about
     this checkout and must not reach the page as a calibration of nothing."""
-    import nflreadpy as nfl
     site.mkdir(parents=True, exist_ok=True)
     (site / "track_record.json").write_text(json.dumps(
         {"name": "track_record", "n_scored": 16, "log_loss": 0.556}))
     before = (site / "track_record.json").read_text()
-    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
-        {"game_id": ["g1"], "result": [7]}))
+    serve(schedules=_sched(['g1'], [7]))
     assert isinstance(publish.track_record(base=base, out=site), publish.Kept)
     assert (site / "track_record.json").read_text() == before
 
@@ -1157,11 +1149,9 @@ def barren(site, tmp_path, monkeypatch):
     an empty scoreboard, an empty survivor grid and a schedule with no results. What each
     producer does with that is the thing under test.
     """
-    import nflreadpy as nfl
 
     import hub.season.survivor as sv
-    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
-        {"game_id": [], "result": []}, schema={"game_id": pl.Utf8, "result": pl.Int64}))
+    serve(schedules=_sched([], []))
     empty_roster = tmp_path / "empty-roster.parquet"
     _roster_frame([]).write_parquet(empty_roster)
     monkeypatch.setattr(publish, "ROSTER_PARQUET", empty_roster)
@@ -1300,7 +1290,6 @@ def test_both_seasons_of_a_week_are_scored(site, base, monkeypatch):
 def _two_seasons(site, base, monkeypatch):
     """One published prediction per season, both with a result. 2025's is right (0.6 on a
     home win), 2026's is wrong (0.4 on one), so a pooled loss differs from either."""
-    import nflreadpy as nfl
     old = _preds([("2025_18_KC_LV", 0.6, 3.0)], week=18).with_columns(
         pl.lit(2025, dtype=pl.Int32).alias("season"))
     store.write(old, "preds", "nfl", 2025, 18, base=base)
@@ -1308,8 +1297,7 @@ def _two_seasons(site, base, monkeypatch):
     new = base / "next-season"
     store.write(_preds([("2026_01_SF_SEA", 0.4, -1.0)]), "preds", "nfl", 2026, 1, base=new)
     publish.predictions(2026, 1, base=new, out=site)
-    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
-        {"game_id": ["2025_18_KC_LV", "2026_01_SF_SEA"], "result": [7, 3]}))
+    serve(schedules=_sched(['2025_18_KC_LV', '2026_01_SF_SEA'], [7, 3]))
 
 
 def test_each_season_is_scored_on_its_own_curve(site, base, monkeypatch):
@@ -1344,14 +1332,12 @@ def test_a_prediction_from_before_the_row_carried_a_season_is_still_scored(site,
     record this change exists to protect; folding them into the newest season would put rows
     from a season nothing can name inside that season's curve. So they get a group of their
     own, ordered last, and the page can say what it is."""
-    import nflreadpy as nfl
     _two_seasons(site, base, monkeypatch)
     (site / "preds_wk18.json").write_text(json.dumps(
         {"name": "preds_wk18", "source": "preds", "n": 1,
          "rows": [{"game_id": "legacy1", "home_win_prob": 0.7,
                    "predicted_at": "2025-01-05T00:00:00+00:00"}]}))
-    monkeypatch.setattr(nfl, "load_schedules", lambda: pl.DataFrame(
-        {"game_id": ["2025_18_KC_LV", "2026_01_SF_SEA", "legacy1"], "result": [7, 3, 7]}))
+    serve(schedules=_sched(['2025_18_KC_LV', '2026_01_SF_SEA', 'legacy1'], [7, 3, 7]))
 
     got = publish.track_record(base=base, out=site)
     assert isinstance(got, dict)

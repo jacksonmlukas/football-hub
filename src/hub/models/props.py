@@ -722,15 +722,11 @@ def report(log: pl.DataFrame) -> None:
 # --- the CLI ---------------------------------------------------------------------
 
 def _polls(season: int, week: int | None, base: Path | None) -> pl.DataFrame:
-    if "prop_lines" not in store.tables(base):
+    got = store.prop_lines(season, week=week, base=base)
+    if got is None:
         raise FileNotFoundError("no prop_lines archive in the store; "
                                 "`hub.fetch.odds --record-props` writes one")
-    q = "SELECT * FROM prop_lines WHERE league = 'nfl' AND season = ?"
-    params: list[object] = [season]
-    if week is not None:
-        q += " AND week = ?"
-        params.append(store.week_key(week))
-    return store.sql(q, params=params, base=base)
+    return got
 
 
 def log_decisions(players: pl.DataFrame, polls: pl.DataFrame, *, decided_at: datetime,
@@ -784,12 +780,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         report(log)
         return 0
 
-    if "prop_log" not in store.tables(base):
+    log = store.prop_log(a.season, base=base)
+    if log is None:
         print("hub.models.props: no prop_log in the store; `--log` writes one from a "
               "players file and the prop_lines archive", file=sys.stderr)
         return 1
-    log = store.sql("SELECT * FROM prop_log WHERE league = 'nfl' AND season = ?",
-                    params=[a.season], base=base)
     if log.is_empty():
         print(f"hub.models.props: no {a.season} rows in prop_log", file=sys.stderr)
         return 1

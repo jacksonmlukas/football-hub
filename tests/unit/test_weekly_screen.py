@@ -1086,7 +1086,7 @@ def _screenable_panel(seasons=(2023, 2024), weeks=range(1, 15), players=60, seed
     return pl.DataFrame(rows)
 
 
-def test_the_screen_called_in_process_names_only_its_own_reads(monkeypatch, capsys, tmp_path):
+def test_the_screen_called_in_process_names_only_its_own_reads(monkeypatch, capsys, tmp_path, run):
     """Called from inside a run that has already read something, the `data` line the screen
     prints covers the screen's reads and not the enclosing run's -- and the enclosing run
     still ends up holding both, because the scope narrows what a component reports and is
@@ -1094,7 +1094,6 @@ def test_the_screen_called_in_process_names_only_its_own_reads(monkeypatch, caps
     from hub.config import data_digest
     from hub.fetch import nflverse as nv
 
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     outer = nv.Pin(source="player_stats", as_of=None, digest="0ut51de0", rows=1,
                    pinned_at=None)
     inner = nv.Pin(source="ff_rankings", as_of="2024-09-01", digest="1n51de01", rows=1,

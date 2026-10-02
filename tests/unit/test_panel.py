@@ -310,8 +310,8 @@ def _routed(monkeypatch, tmp_path, frame):
     same as-of is served this frame instead of its own.
     """
     import hub.fetch.nflverse as nv
-    monkeypatch.setattr(nv, "RAW", tmp_path / "raw")
-    monkeypatch.setattr(nv, "_raw_ff_rankings", lambda pages: frame)
+    from hub.fetch.replay import Replay
+    nv.select(Replay({"ff_rankings": frame}), cache=tmp_path / "raw")
     monkeypatch.setattr(pnl, "week_windows", lambda seasons: _windows())
 
 
@@ -319,11 +319,11 @@ def test_the_weekly_consensus_comes_through_the_loader_not_from_nflreadpy(monkey
                                                                          tmp_path):
     """The routing itself. A page type reaches the loader; nothing here reaches the network."""
     import hub.fetch.nflverse as nv
+    from hub.fetch.replay import Replay
     pages = []
     _routed(monkeypatch, tmp_path, _rankings(("Ja'Marr Chase", 3.0, "2024-10-04")))
-    monkeypatch.setattr(nv, "_raw_ff_rankings",
-                        lambda p: pages.append(p) or _rankings(("Ja'Marr Chase", 3.0,
-                                                               "2024-10-04")))
+    nv.select(Replay({"ff_rankings": lambda p: pages.append(p) or _rankings(
+        ("Ja'Marr Chase", 3.0, "2024-10-04"))}), cache=tmp_path / "raw")
     got = pnl.weekly_consensus([2024])
     assert pages == [["all"]], "the archive is keyed by page type, not by a season list"
     assert got["ecr"].to_list() == [3.0]
@@ -1358,9 +1358,9 @@ def _watched_build(monkeypatch, tmp_path, **spec) -> tuple[list[str], tuple]:
 
     arc.install(monkeypatch, tmp_path)
     monkeypatch.setattr(nv, "load", watched)
-    with nv.reads_of_one_run():
+    with nv.reads_of_one_run() as reads:
         pnl.build_panel(arc.SEASONS, pnl.PanelSpec(**spec))
-        pins = nv.pins_this_run()
+        pins = reads.pins()
     return seen, pins
 
 
@@ -1399,23 +1399,18 @@ def test_a_panel_built_twice_at_one_as_of_is_the_first_ones_bytes_read_back(monk
     ignored, the second build refetches six sources and this says so.
     """
     import hub.fetch.nflverse as nv
-    real_fetch, fetched = nv._fetch, []
-
-    def counted(source, keys):
-        fetched.append(source)
-        return real_fetch(source, keys)
-
-    arc.install(monkeypatch, tmp_path)
-    monkeypatch.setattr(nv, "_fetch", counted)
+    rep = arc.install(monkeypatch, tmp_path)
     keys, spec = ["player_id", "season", "week"], pnl.PanelSpec(expected=True)
-    with nv.reads_of_one_run():
+    with nv.reads_of_one_run() as run:
         first = pnl.build_panel(arc.SEASONS, spec, as_of="2024-12-31").sort(keys)
-        first_pins = nv.pins_this_run()
+        first_pins = run.pins()
+    fetched = [name for name, _ in rep.served]
     assert len(fetched) >= len(_ARCHIVE_SOURCES), "the first build fetches every source"
-    del fetched[:]
-    with nv.reads_of_one_run():
+    del rep.served[:]
+    with nv.reads_of_one_run() as run:
         second = pnl.build_panel(arc.SEASONS, spec, as_of="2024-12-31").sort(keys)
-        second_pins = nv.pins_this_run()
+        second_pins = run.pins()
+    fetched = [name for name, _ in rep.served]
     assert fetched == [], (
         f"the second build at the same as-of fetched {fetched} again; a re-run that refetches "
         f"is one whose result depends on what upstream holds that minute, not on the as-of")

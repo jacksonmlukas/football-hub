@@ -10,6 +10,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from hub.fetch.replay import serve
 from hub.models import injury
 
 
@@ -197,7 +198,6 @@ def test_help_needs_no_network():
 
 
 def test_the_fit_path_runs_offline(monkeypatch, capsys, tmp_path):
-    import nflreadpy as nfl
     rows_st, rows_inj = [], []
     for season in (2023, 2024):
         for pid in ("a", "b", "c"):
@@ -206,8 +206,11 @@ def test_the_fit_path_runs_offline(monkeypatch, capsys, tmp_path):
             for w in range(9, 18):
                 rows_inj.append((season, w, pid, "WR", "Questionable", "Limited"))
                 rows_st.append((season, w, pid, "WR", 4.0))
-    monkeypatch.setattr(nfl, "load_injuries", lambda *a, **k: _inj(rows_inj))
-    monkeypatch.setattr(nfl, "load_player_stats", lambda *a, **k: _stats(rows_st))
+    # As nflverse ships them, which is what the loader's contracts accept: the injury report
+    # names a team, a game type and a player; the stats are narrowed to the five columns read.
+    serve(injuries=_inj(rows_inj).with_columns(
+              team=pl.lit("AAA"), game_type=pl.lit("REG"), full_name=pl.col("gsis_id")),
+          player_stats=_stats(rows_st))
     out = tmp_path / "t.parquet"
     assert injury.main(["--fit", "--seasons", "2023,2024", "--out", str(out)]) == 0
     text = capsys.readouterr().out

@@ -99,7 +99,16 @@ def _the_suite_stays_offline(request, monkeypatch, tmp_path_factory):
     # `nflverse.RAW`: a test that wants the state writes it where its own `cache` points.
     from hub.fetch import nfeloqb
     monkeypatch.setattr(nfeloqb, "RAW", tmp_path_factory.mktemp("nfeloqb-default"))
+    # A Replay a test selected is process state, and the next test must not inherit it.
+    #
+    # And the cache a read lands in. `load` writes a parquet and a pin for everything it serves,
+    # a Replay included, and the default is the developer's own `data/raw/nflverse/`: a test
+    # that read through it would be served -- or would overwrite -- the real archive.
+    from hub.fetch import nflverse
+    monkeypatch.setattr(nflverse, "RAW", tmp_path_factory.mktemp("nflverse-default"))
+    nflverse.select(None)
     yield
+    nflverse.select(None)
     if reached:
         pytest.fail(
             f"this test reached for the network: {reached!r}. tests/unit and tests/contracts "
@@ -107,3 +116,16 @@ def _the_suite_stays_offline(request, monkeypatch, tmp_path_factory):
             f"about its fixture, and one that passes because the wire was refused is "
             f"exercising a degradation path it did not mean to. Stub the reach, or move the "
             f"test to tests/golden and mark it `golden`.")
+
+
+@pytest.fixture
+def run():
+    """A clean scope of nflverse reads, which the test holds.
+
+    `with reads_of_one_run() as reads:` for a whole test. It replaces the tests that rebound the
+    recorder's module global to get an empty slate -- a test depending on how `hub.fetch.nflverse`
+    happens to store its state -- with the one door the module offers.
+    """
+    from hub.fetch import nflverse
+    with nflverse.reads_of_one_run() as reads:
+        yield reads

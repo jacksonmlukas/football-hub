@@ -59,6 +59,10 @@ EXPECTED: dict[str, str] = {k: components.EXPECTED[k][0] for k in COMPONENTS}
 # Below this a per-game rate is a handful of snaps and the pairing is noise on both sides.
 MIN_GAMES = 6
 
+# `PLAYER_STATS`' five required columns, which any load of it must carry; the realised
+# components are named beside them from the expected ones the opportunity table has.
+_STAT_KEYS = ("season", "week", "player_id", "position", "fantasy_points_ppr")
+
 
 def scorecard(paired: pl.DataFrame) -> pl.DataFrame:
     """Per-component accuracy, with the error priced in points.
@@ -187,10 +191,10 @@ def attribution(paired: pl.DataFrame, by: str | None = None) -> pl.DataFrame:
 
 def pairs(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
     """Prior-season expected components against next-season realised ones, per game."""
-    import nflreadpy as nfl
+    from hub.fetch import nflverse
     out = []
     for prev, nxt in itertools.pairwise(seasons):
-        o = nfl.load_ff_opportunity(seasons=[prev], stat_type="weekly")
+        o = nflverse.load("ff_opportunity", [prev])
         have = {k: v for k, v in EXPECTED.items() if v in o.columns}
         pos = (o.select("player_id", "position").drop_nulls()
                  .unique(subset="player_id", keep="first"))
@@ -199,7 +203,7 @@ def pairs(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
                       + [pl.len().alias("pg")])
                  .with_columns([(pl.col(f"p_{k}") / pl.col("pg")).alias(f"p_{k}") for k in have])
                  .filter(pl.col("pg") >= MIN_GAMES))
-        s = nfl.load_player_stats(seasons=[nxt])
+        s = nflverse.load("player_stats", [nxt], cols=[*_STAT_KEYS, *have])
         act = (s.group_by("player_id")
                 .agg([pl.col(k).sum().alias(f"a_{k}") for k in have] + [pl.len().alias("ag")])
                 .with_columns([(pl.col(f"a_{k}") / pl.col("ag")).alias(f"a_{k}") for k in have])

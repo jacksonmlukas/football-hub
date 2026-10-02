@@ -1103,7 +1103,7 @@ def test_the_result_says_what_it_covers_and_what_it_leaves_unanswered():
 # of #135 -- it inherited the enclosing run's reads and published a digest over bytes it never
 # touched, a failure that looks exactly like a clean digest.
 
-def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_path, capsys):
+def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_path, capsys, run):
     """Called from inside a run that has already read something, the gate's published digest
     covers the gate's reads and not the enclosing run's -- and the enclosing run still ends
     up holding both, because a scope narrows what a component reports and must never be a
@@ -1113,7 +1113,6 @@ def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_pa
     from hub.fetch import nflverse as nv
     from hub.season import weekly_gate_data
 
-    monkeypatch.setattr(nv, "_READ_THIS_RUN", {})
     outer = nv.Pin(source="player_stats", as_of=None, digest="0ut51de0", rows=1,
                    pinned_at=None)
     inner = nv.Pin(source="ff_rankings", as_of="2024-09-01", digest="1n51de01", rows=1,

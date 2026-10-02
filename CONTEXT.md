@@ -272,22 +272,22 @@ in `hub.draft`, however close it sits to the arm that lost.
 **Contract**:
 What a source is allowed to return, declared once in `hub.contracts` and applied where the
 source is read: which columns, of which dtype family, which keys may not be null or repeat,
-and the range a plausible response stays inside. It has **two verbs, and for a long time it
-had one**. It *refuses* a frame that breaks the declaration — that is `validate`, and it is
-why a fetch failure serves last-good state instead of propagating a bad frame. It also
-*answers* a consumer that names the columns it reads, handing the frame back in the units
-the declaration states and checking the columns that consumer named — that is `conform`,
-and it exists because refusal is
-no use to a module that has to keep going, so the module that could not use it wrote a second
-copy of the schema instead. A **Normalisation** is what the second verb can say: one declared
-whole-column repair for one known upstream variation, applied before the bound it protects is
-checked. Whole-column in its trigger as well as its effect: it fires only where a column is
-implausible in the units declared *and* plausible in the units it repairs to, so one corrupt
-reading inside an otherwise-correct frame is refused by the bound rather than rescaling the
-frame around it. It widens what a Contract can say and never what it will accept — a value the
-repair cannot bring inside the bound is refused exactly as before. A repair that fires says so twice:
-on the terminal as it happens, and in the **Pin** beside the cache entry it wrote, because the
-repaired frame is served from that entry long after the line has scrolled past.
+and the range a plausible response stays inside. It *refuses* a frame that breaks the
+declaration — that is `validate`, and it is why a fetch failure serves last-good state instead
+of propagating a bad frame. It used to have a second verb, `conform`, which answered a consumer
+that named the columns it read; refusal was no use to a module that had to keep going, so the
+module that could not use it had written a second copy of the schema instead. Every nflverse
+reader now goes through the loader at the one seam, which validates the whole response where it
+enters, so the consumer is handed the frame in the declared units and the second verb has
+nothing left to answer. A **Normalisation** is what `validate` can say besides *no*: one
+declared whole-column repair for one known upstream variation, applied before the bound it
+protects is checked. Whole-column in its trigger as well as its effect: it fires only where a
+column is implausible in the units declared *and* plausible in the units it repairs to, so one
+corrupt reading inside an otherwise-correct frame is refused by the bound rather than rescaling
+the frame around it. It widens what a Contract can say and never what it will accept — a value
+the repair cannot bring inside the bound is refused exactly as before. A repair that fires says
+so twice: on the terminal as it happens, and in the **Pin** beside the cache entry it wrote,
+because the repaired frame is served from that entry long after the line has scrolled past.
 
 **Replay**:
 A source adapter that serves a run's nflverse reads from a recorded set instead of the

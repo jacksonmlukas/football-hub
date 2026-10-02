@@ -547,15 +547,8 @@ def archived(season: int, *, week: int | None = None,
     is, so a drifted partition is refused rather than served as a field. Empty on a fresh
     clone or a season nothing has read.
     """
-    if ARCHIVE_TABLE not in store.tables(base):
-        return []
-    q = f"SELECT * FROM {ARCHIVE_TABLE} WHERE league = ? AND season = ?"
-    params: list[object] = [LEAGUE, season]
-    if week is not None:
-        q += " AND week = ?"
-        params.append(week)
-    rows = store.sql(q, params=params, base=base)
-    if rows.is_empty():
+    rows = store.pool_state(season, week=week, base=base)
+    if rows is None or rows.is_empty():
         return []
     out = []
     for (when,), part in sorted(rows.group_by("captured_at"), key=lambda kv: kv[0]):

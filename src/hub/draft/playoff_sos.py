@@ -28,6 +28,11 @@ from hub.declare import not_an_input
 
 PLAYOFF_WEEKS = (15, 16, 17)
 
+# What the points-allowed table reads of the weekly stats: `PLAYER_STATS`' five required, the
+# opponent, the scoring team the ridge adjustment removes, and the season type it filters on.
+STAT_COLS = ("season", "week", "player_id", "position", "fantasy_points_ppr",
+             "opponent_team", "team", "season_type")
+
 # The ridge penalties the sensitivity reports across, fixed here before any run (#180). The
 # unit is games: a penalty of 1.0 shrinks a defence's effect as if it had faced one extra
 # average offence, so the range runs from "believe the data almost outright" to "eight
@@ -244,14 +249,14 @@ def playoff_sos(season_ahead: int = SEASON_AHEAD, dvp_season: int = SEASON_COMPL
 
     `ridge` defaults to `DraftConfig.sos_ridge`; pass `None` for the unadjusted metric the
     published ranking was measured on, or a float to override for one call."""
-    import nflreadpy as nfl
+    from hub.fetch import nflverse
 
     if ridge == "config":
         ridge = _default_ridge()
 
-    stats = nfl.load_player_stats(seasons=[dvp_season])
+    stats = nflverse.load("player_stats", [dvp_season], cols=STAT_COLS)
     if "season_type" in stats.columns:
         stats = stats.filter(pl.col("season_type") == "REG")
-    sched = nfl.load_schedules().filter(pl.col("season") == season_ahead)
+    sched = nflverse.load("schedules", [season_ahead], refresh=True)
     return _sos_from(_dvp_from_stats(stats, ridge=None if ridge is None else float(ridge)),
                      _opponents_from_schedule(sched, weeks))

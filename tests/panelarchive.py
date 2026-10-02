@@ -7,25 +7,27 @@ with it was read its source text back. A greppable string survives a rewrite tha
 something else entirely; the rule does not. This module is the adapter that lets the assembly
 *run*.
 
-**The seam is nflreadpy, not this repo's own functions.** Faking `snap_share` or
+**The seam is the nflverse adapter, not this repo's own functions.** Faking `snap_share` or
 `weekly_consensus` would leave the per-source narrowing -- the REG filter, the position
 filter, the name key, the as-of window -- untested, and those narrowings are half of where a
-join goes wrong. So every substitution here is at the last call before the wire, and
-everything above it is the production code path.
+join goes wrong. So the archive is served as a `hub.fetch.replay.Replay`, the last thing
+before the wire, and everything above it is the production code path.
 
-**Anything not frozen raises.** `load_participation` and `load_ftn_charting` are installed as
-refusals rather than left alone, because a source that quietly reached the real nflverse from
-a unit test would be a test that passes on a laptop and hangs in CI -- and one whose result
-nobody froze. See `tests/golden/fixtures/README.md` for what each capture holds, what was
+**Anything not frozen raises.** `participation` and `ftn_charting` are not in the recorded
+set, and a Replay raises `NotRecorded` for what it does not hold, because a source that
+quietly reached the real nflverse from a unit test would be a test that passes on a laptop and
+hangs in CI -- and one whose result nobody froze. See `tests/golden/fixtures/README.md` for what each capture holds, what was
 trimmed, and the two spec flags this archive deliberately cannot drive.
 """
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import polars as pl
+
+import hub.fetch.nflverse as nv
+from hub.fetch.replay import Replay, read_recording
 
 ARCHIVE = Path(__file__).resolve().parent / "golden" / "fixtures" / "panel_archive"
 
@@ -46,42 +48,43 @@ PLAYERS: tuple[str, ...] = (
 )
 
 
-class NotFrozen(Exception):
-    """A source the archive does not hold was asked for. Loud, rather than a live fetch."""
-
-
 def frame(name: str) -> pl.DataFrame:
-    """One captured table, in the dtypes it was captured with.
-
-    The dtype map is part of the capture and not decoration. JSON has three scalar types and
-    nflverse has a dozen; inferred, a column of whole numbers comes back `Int64` and a column
-    that happened to be null on every captured row comes back `Null`, and either one changes
-    what the assembly does with it. Recording the dtypes keeps the file a statement about the
-    frame nflverse returned rather than about what JSON could carry.
-    """
-    blob = json.loads((ARCHIVE / f"{name}.json").read_text())
-    schema = {c: getattr(pl, t) for c, t in blob["dtypes"].items()}
-    return pl.DataFrame(blob["rows"], schema=schema)
+    """One captured table, in the dtypes it was captured with."""
+    return read_recording(ARCHIVE / f"{name}.json")
 
 
 Edit = Callable[[pl.DataFrame], pl.DataFrame]
 
+# The sources the archive holds. `participation` and `ftn_charting` are deliberately absent:
+# a Replay raises `NotRecorded` for them, which is what keeps a unit test from quietly
+# reaching the real nflverse for a source nobody froze.
+RECORDED = ("player_stats", "snap_counts", "injuries", "ff_opportunity", "schedules",
+            "ff_rankings")
+NOT_FROZEN = ("It is play-level, and a capture deep enough to make a six-week trend real "
+              "would be larger than the rest of the archive together -- see "
+              "tests/golden/fixtures/README.md for what the two opt-in spec flags therefore "
+              "cannot be driven against here.")
 
-def _seasons(arg: object) -> list[int] | None:
-    """nflreadpy takes `seasons` as an int, a list, True for all, or None."""
-    if arg is None or arg is True:
-        return None
-    return [int(arg)] if isinstance(arg, int) else [int(s) for s in arg]  # type: ignore[arg-type]
+
+def replay(*, edits: dict[str, Edit] | None = None) -> Replay:
+    """The archive as the nflverse seam's second adapter."""
+    return Replay.recorded(ARCHIVE, RECORDED, edits=edits,
+                           absent={"participation": NOT_FROZEN, "ftn_charting": NOT_FROZEN})
 
 
 def install(monkeypatch, tmp_path: Path, *, edits: dict[str, Edit] | None = None,
-            board: bool = False) -> None:
-    """Serve the archive to every nflverse read the assembly makes, and nothing else.
+            board: bool = False) -> Replay:
+    """Select the archive as the nflverse adapter, with its cache under `tmp_path`.
 
     `edits` maps a captured table to a transform applied on the way out. That is how the
     leakage rule is asserted behaviourally rather than read: change one player-week's realised
     play in the archive, rebuild, and see which feature values move. A test that only ran the
     assembly and checked it returned rows would prove nothing about the rule.
+
+    The seam is `hub.fetch.nflverse`'s adapter, not nflreadpy and not this repo's own
+    functions: everything above the adapter -- the REG filter, the position filter, the name
+    key, the as-of window, the contract, the cache and the pin -- is the production path.
+    `tests/conftest.py` puts the network adapter back after the test.
 
     `board` additionally serves the frozen board to `hub.draft.board.board_as_of`, which
     `hub.season.weekly_gate_data.assemble_universe` calls. The board is a capture of that
@@ -90,60 +93,17 @@ def install(monkeypatch, tmp_path: Path, *, edits: dict[str, Edit] | None = None
     `hub.draft.board` and has six test files of its own. What `assemble_universe` owns is
     everything from the board onward, and that runs here for real.
     """
-    import nflreadpy as nfl
-
-    import hub.fetch.nflverse as nv
-
-    got = edits or {}
-
-    def served(name: str) -> pl.DataFrame:
-        df = frame(name)
-        return got[name](df) if name in got else df
-
-    def by_season(name: str):
-        def load(seasons=None, **_kw):
-            df = served(name)
-            want = _seasons(seasons)
-            # nflreadpy picks the season *files* to read, so its `seasons` argument never
-            # meets the column's dtype. This filter does, and `ff_opportunity` ships `season`
-            # as a string -- the capture records that, as it should, and `expected_weekly`
-            # casts it -- so the comparison is made on the integer the argument names.
-            return df if want is None else df.filter(
-                pl.col("season").cast(pl.Int64).is_in(want))
-        return load
-
-    def refuse(source: str):
-        def load(*_a, **_kw):
-            raise NotFrozen(
-                f"{source} is not in tests/golden/fixtures/panel_archive. It is play-level, "
-                f"and a capture deep enough to make a six-week trend real would be larger "
-                f"than the rest of the archive together -- see that directory's README for "
-                f"what the two opt-in spec flags therefore cannot be driven against here.")
-        return load
-
-    monkeypatch.setattr(nfl, "load_player_stats", by_season("player_stats"))
-    monkeypatch.setattr(nfl, "load_snap_counts", by_season("snap_counts"))
-    monkeypatch.setattr(nfl, "load_injuries", by_season("injuries"))
-    monkeypatch.setattr(nfl, "load_ff_opportunity", by_season("ff_opportunity"))
-    monkeypatch.setattr(nfl, "load_schedules", lambda *_a, **_kw: served("schedules"))
-    monkeypatch.setattr(nfl, "load_ff_rankings", lambda *_a, **_kw: served("ff_rankings"))
-    monkeypatch.setattr(nfl, "load_participation", refuse("participation"))
-    monkeypatch.setattr(nfl, "load_ftn_charting", refuse("ftn_charting"))
-
-    # The rankings archive is the one source read through the pinning loader, which writes a
-    # dated parquet and a pin beside it. Left alone it writes into the developer's own
-    # data/raw and the next test naming the same as-of is served this archive instead of its
-    # own -- the reason `test_panel.py::_routed` redirects it too.
-    monkeypatch.setattr(nv, "RAW", tmp_path / "raw")
-
+    rep = replay(edits=edits)
+    nv.select(rep, cache=tmp_path / "raw")
     if board:
         import hub.draft.board as brd
         from hub.draft.board import Board
         # The frozen frame under the report its columns derive (#295): what `board_as_of`
-        # returns is a Board, and the frame with an empty report beside it -- which is what
-        # this handed back before -- is a frame fuller than its report and no longer a Board.
+        # returns is a Board, and the frame with an empty report beside it is a frame fuller
+        # than its report and no longer a Board.
         monkeypatch.setattr(brd, "board_as_of",
                             lambda season: Board.served(frame("draft_board")))
+    return rep
 
 
 def play_derived_columns() -> set[str]:

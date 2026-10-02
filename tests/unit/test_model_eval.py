@@ -319,99 +319,90 @@ def _sched(rows):
                         schema={"game_id": pl.Utf8, "result": pl.Float64})
 
 
-def _stored(rows):
-    """What `store.predictions` hands back: no outcome column, `week` as the declared Int32."""
-    return pl.DataFrame(
-        {"game_id": [r[0] for r in rows],
-         "season": pl.Series([2026] * len(rows), dtype=pl.Int32),
-         "week": pl.Series([r[1] for r in rows], dtype=pl.Int32),
-         "model": ["m"] * len(rows),
-         "home_win_prob": [r[2] for r in rows]})
+def _seed(base, rows):
+    """Predictions in a real store under `base`, as `hub.publish` writes them: one partition per
+    week, no outcome column. `load_predictions` reads them through `store.predictions`, so what
+    these tests exercise is the store and not a patched answer in its place."""
+    import datetime as dt
+
+    from hub import store
+    for week in sorted({r[1] for r in rows}):
+        part = [r for r in rows if r[1] == week]
+        store.write(pl.DataFrame(
+            {"game_id": [r[0] for r in part], "league": ["nfl"] * len(part),
+             "season": pl.Series([2026] * len(part), dtype=pl.Int32),
+             "week": pl.Series([week] * len(part), dtype=pl.Int32),
+             "model": ["m"] * len(part), "version": ["v1"] * len(part),
+             "home_win_prob": [r[2] for r in part],
+             "predicted_at": [dt.datetime(2026, 9, 1)] * len(part)}),
+            "preds", "nfl", 2026, week, base=base)
 
 
-def test_a_played_game_gets_its_outcome_joined_on(monkeypatch):
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _stored([("g1", 1, 0.6)]))
-    got = me.load_predictions("m", schedules=_sched([("g1", 7.0)]))
+def test_a_played_game_gets_its_outcome_joined_on(monkeypatch, tmp_path):
+    _seed(tmp_path, [("g1", 1, 0.6)])
+    got = me.load_predictions("m", base=tmp_path, schedules=_sched([("g1", 7.0)]))
     assert got["home_won"].to_list() == [1]
 
 
-def test_a_home_loss_is_scored_as_one(monkeypatch):
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _stored([("g1", 1, 0.6)]))
-    got = me.load_predictions("m", schedules=_sched([("g1", -3.0)]))
+def test_a_home_loss_is_scored_as_one(monkeypatch, tmp_path):
+    _seed(tmp_path, [("g1", 1, 0.6)])
+    got = me.load_predictions("m", base=tmp_path, schedules=_sched([("g1", -3.0)]))
     assert got["home_won"].to_list() == [0]
 
 
-def test_an_unplayed_game_does_not_survive_the_join(monkeypatch):
+def test_an_unplayed_game_does_not_survive_the_join(monkeypatch, tmp_path):
     """The whole 2026 board is unplayed. An unplayed game arriving as a home loss would be
     scored against a fabricated outcome, and log loss cannot tell that from a real one."""
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _stored([("g1", 1, 0.6)]))
-    assert me.load_predictions("m", schedules=_sched([("g1", None)])).is_empty()
+    _seed(tmp_path, [("g1", 1, 0.6)])
+    assert me.load_predictions("m", base=tmp_path, schedules=_sched([("g1", None)])).is_empty()
 
 
-def test_a_tie_is_dropped_rather_than_scored_as_a_home_loss(monkeypatch):
+def test_a_tie_is_dropped_rather_than_scored_as_a_home_loss(monkeypatch, tmp_path):
     """`hub.models.margin.DROP_TIES` states the rule this follows: a tie is neither a home
     win nor an away win, and there is no sensible probability to score it against."""
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _stored([("g1", 1, 0.6),
-                                                              ("g2", 1, 0.6)]))
-    got = me.load_predictions("m", schedules=_sched([("g1", 0.0), ("g2", 4.0)]))
+    _seed(tmp_path, [("g1", 1, 0.6),
+                                                              ("g2", 1, 0.6)])
+    got = me.load_predictions("m", base=tmp_path, schedules=_sched([("g1", 0.0), ("g2", 4.0)]))
     assert got["game_id"].to_list() == ["g2"]
 
 
-def test_the_comparison_reads_the_tie_constant_rather_than_hardcoding_it(monkeypatch):
+def test_the_comparison_reads_the_tie_constant_rather_than_hardcoding_it(monkeypatch, tmp_path):
     """Issue #64's citation half. The docstring above quoted `margin.DROP_TIES` while the
     filter here restated the test, so flipping the constant to False changed no behaviour
     and broke no test -- a named constant referenced in prose and read by nothing."""
-    import hub.store as store
     from hub.models import margin
     monkeypatch.setattr(margin, "DROP_TIES", False)
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _stored([("g1", 1, 0.6)]))
-    got = me.load_predictions("m", schedules=_sched([("g1", 0.0)]))
+    _seed(tmp_path, [("g1", 1, 0.6)])
+    got = me.load_predictions("m", base=tmp_path, schedules=_sched([("g1", 0.0)]))
     assert got["home_won"].to_list() == [0], "the constant is not being read"
 
 
-def test_a_prediction_with_no_matching_game_is_dropped(monkeypatch):
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _stored([("ghost", 1, 0.6)]))
-    assert me.load_predictions("m", schedules=_sched([("g1", 7.0)])).is_empty()
+def test_a_prediction_with_no_matching_game_is_dropped(monkeypatch, tmp_path):
+    _seed(tmp_path, [("ghost", 1, 0.6)])
+    assert me.load_predictions("m", base=tmp_path, schedules=_sched([("g1", 7.0)])).is_empty()
 
 
-def test_no_predictions_returns_the_right_shape_not_a_crash(monkeypatch):
+def test_no_predictions_returns_the_right_shape_not_a_crash(monkeypatch, tmp_path):
     """Before any game is published this is the normal state, and it has to flow through to
     the no-overlap message rather than blowing up on a missing column."""
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _stored([]))
-    got = me.load_predictions("m", schedules=_sched([]))
+    _seed(tmp_path, [])
+    got = me.load_predictions("m", base=tmp_path, schedules=_sched([]))
     assert got.is_empty() and "home_won" in got.columns
 
 
-def test_a_store_with_no_preds_at_all_is_empty_not_a_catalog_error(monkeypatch):
+def test_a_store_with_no_preds_at_all_is_empty_not_a_catalog_error(monkeypatch, tmp_path):
     """A fresh clone has no `data/` directory, so `preds` is not an empty table -- there is
     no view, and DuckDB raises CatalogException."""
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: set())
-    got = me.load_predictions("m", schedules=_sched([("g1", 7.0)]))
+    got = me.load_predictions("m", base=tmp_path, schedules=_sched([("g1", 7.0)]))
     assert got.is_empty() and "home_won" in got.columns
 
 
-def test_schedules_without_a_result_column_says_so(monkeypatch):
+def test_schedules_without_a_result_column_says_so(monkeypatch, tmp_path):
     """`OutcomesUnavailable` rather than a bare `ValueError`, so the CLI can catch it
     without also catching every unrelated value error raised beneath it (issue #63)."""
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _stored([("g1", 1, 0.6)]))
+    _seed(tmp_path, [("g1", 1, 0.6)])
     with pytest.raises(me.OutcomesUnavailable, match="result"):
-        me.load_predictions("m", schedules=pl.DataFrame({"game_id": ["g1"]}))
+        me.load_predictions("m", base=tmp_path, schedules=pl.DataFrame({"game_id": ["g1"]}))
 
 
 # --- against the store's own output, not a hand-built frame (issues #25, #59) --
@@ -574,12 +565,10 @@ def test_the_three_failure_causes_do_not_share_one_message(capsys, tmp_path, mon
     assert "share no games" in said[2]
 
 
-def test_the_underlying_fetch_failure_is_kept_as_the_cause(monkeypatch):
+def test_the_underlying_fetch_failure_is_kept_as_the_cause(monkeypatch, tmp_path):
     """Broad like `_scored`'s, but not swallowing: the original is chained, so a stack trace
     is still there for whoever goes looking."""
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(store, "sql", lambda *a, **k: _stored([("g1", 1, 0.6)]))
+    _seed(tmp_path, [("g1", 1, 0.6)])
 
     boom = ConnectionError("nflverse unreachable")
 
@@ -588,22 +577,19 @@ def test_the_underlying_fetch_failure_is_kept_as_the_cause(monkeypatch):
 
     monkeypatch.setattr(me, "_schedules", _down)
     with pytest.raises(me.OutcomesUnavailable) as e:
-        me.load_predictions("m")
+        me.load_predictions("m", base=tmp_path)
     assert e.value.__cause__ is boom
 
 
-def test_a_model_with_nothing_stored_never_reaches_the_fetch(monkeypatch):
+def test_a_model_with_nothing_stored_never_reaches_the_fetch(monkeypatch, tmp_path):
     """The normal state before the first prediction is written, and the frame it returns is
     named for meaning that: nothing predicted. It must not cost a fetch to say so -- and a
     fresh clone with nflverse down still has to reach the no-overlap message."""
-    import hub.store as store
-    monkeypatch.setattr(store, "tables", lambda *a, **k: set())
-
     def _down():
         raise ConnectionError("nflverse unreachable")
 
     monkeypatch.setattr(me, "_schedules", _down)
-    got = me.load_predictions("m")
+    got = me.load_predictions("m", base=tmp_path)
     assert got.is_empty() and "home_won" in got.columns
 
 

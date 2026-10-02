@@ -113,6 +113,12 @@ def connect(read_only: bool = False, base: Path | None = None) -> duckdb.DuckDBP
     root.mkdir(parents=True, exist_ok=True)
     catalog = (root / "hub.duckdb") if base else CATALOG
     con = duckdb.connect(str(catalog), read_only=read_only)
+    # Replacement scans off. DuckDB resolves a table name it does not know against Python
+    # objects in the calling frame, so once this module had a function called `lines` a query on
+    # a store with no `lines` table found *that* and failed with a message about functions,
+    # where it must raise the `CatalogException` the fresh-clone guards read as "no archive".
+    # A catalog that answers from whatever happens to be in scope is not one.
+    con.execute("SET python_enable_replacements = false")
     for d in sorted(p for p in root.iterdir() if p.is_dir()):
         if not is_table(d):
             continue
@@ -262,6 +268,94 @@ def lines_as_of(at: datetime, season: int, league: str = "nfl",
     return got.drop_nulls("close_spread")
 
 
+# Every poll's columns, as `lines()` hands them back. `spread_price` is here although partitions
+# written before #211 do not carry it: `lines()` is where that is answered, once.
+POLLS_SCHEMA = {"game_id": pl.Utf8, "close_spread": pl.Float64, "spread_price": pl.Float64,
+                "captured_at": pl.Datetime, "week": pl.Int64}
+
+
+def lines(season: int, *, base: Path | None = None) -> pl.DataFrame:
+    """Every poll the store holds for the season's NFL lines, as stored plus what a reader needs.
+
+    The other question about this table: not "the price as of T, one row per game" -- that is
+    `lines_as_of`, the lookahead guard -- but "every poll this season", which the staleness
+    derivation, the noise floor and the quarterback study each need. Three readers used to ask
+    it three ways outside the store, each repeating the fresh-clone guard and writing the empty
+    frame by hand; this is the one owner of what the answer looks like.
+
+    Read with `SELECT *` rather than by naming columns, because an archive written entirely
+    before #211 has no `spread_price` column in any partition, and `union_by_name` unions what
+    exists rather than what a contract now declares. A column in `POLLS_SCHEMA` the archive has
+    never had is added as nulls, which `_quote_moved` reads as no evidence. `week` comes back an
+    integer however the Hive partition spelled it (`01` is a string to the catalog); any other
+    column the store holds rides along untouched, and a caller takes the projection it reads.
+
+    An empty frame of `POLLS_SCHEMA` on a fresh clone, where `lines` is not an empty table but
+    no table, and querying it raises `CatalogException`.
+    """
+    if "lines" not in tables(base):
+        return pl.DataFrame(schema=POLLS_SCHEMA)
+    got = sql("SELECT * FROM lines WHERE league = 'nfl' AND season = ?", params=[season],
+              base=base)
+    absent = [pl.lit(None, dtype=t).alias(c) for c, t in POLLS_SCHEMA.items()
+              if c not in got.columns]
+    return got.with_columns(absent).with_columns(pl.col("week").cast(pl.Utf8).cast(pl.Int64))
+
+
+# --- the other archives ----------------------------------------------------------------
+#
+# Each one a name, so the table, its league filter and its fresh-clone answer are stated here
+# and not in whichever module wanted the rows. The shared answer for a fresh clone is `None`:
+# "no such archive", which is a different statement from an archive with nothing in the season
+# (an empty frame), and the callers say different things for the two -- a CLI that names the
+# command that writes the archive, a reader that degrades to an empty schema. Returning `None`
+# keeps that decision with the caller who has a message to write, and the query with the store.
+# The rows come back as stored, partition columns and all; a caller casts and selects what it
+# reads, which is frame arithmetic and needs no catalog.
+
+def _archive(table: str, season: int, week: int | None, base: Path | None) -> pl.DataFrame | None:
+    if table not in tables(base):
+        return None
+    q = f"SELECT * FROM {table} WHERE league = 'nfl' AND season = ?"
+    params: list[object] = [season]
+    if week is not None:
+        q += " AND week = ?"
+        params.append(week_key(week))
+    return sql(q, params=params, base=base)
+
+
+def prop_lines(season: int, *, week: int | None = None,
+               base: Path | None = None) -> pl.DataFrame | None:
+    """Every prop poll stored for the season (one week of it if asked), or None if the store
+    has no `prop_lines` archive -- which is `hub.fetch.odds --record-props` never having run."""
+    return _archive("prop_lines", season, week, base)
+
+
+def prop_log(season: int, *, base: Path | None = None) -> pl.DataFrame | None:
+    """The season's prop decisions and their closes, or None if `hub.models.props --log` has
+    never written one."""
+    return _archive("prop_log", season, None, base)
+
+
+def pool_state(season: int, *, week: int | None = None,
+               base: Path | None = None) -> pl.DataFrame | None:
+    """Every archived read of the survivor pool for the season, one row per entry per read,
+    or None on a fresh clone. The grouping into reads and the contract are `hub.fetch.pool`'s."""
+    return _archive("pool_state", season, week, base)
+
+
+def journal(season: int, *, week: int | None = None,
+            base: Path | None = None) -> pl.DataFrame | None:
+    """The season's journalled decisions as stored, or None if none was ever recorded. Rows
+    written before a column existed lack it; adding it as null is the journal's to say."""
+    return _archive("journal", season, week, base)
+
+
+def journal_outcomes(season: int, *, base: Path | None = None) -> pl.DataFrame | None:
+    """The season's settled outcomes as stored, or None if none was ever settled."""
+    return _archive("journal_outcome", season, None, base)
+
+
 # One prediction per game, and the rule for choosing it.
 #
 # The store keeps every version on purpose -- two configurations both survive, which is
@@ -389,8 +483,8 @@ def schedules_for(season: int) -> pl.DataFrame:
     defects, and calling them "the nflverse schedules unavailable" sends the operator to
     re-fetch data that is fine (issue #119).
     """
-    import nflreadpy as nfl
-    return (nfl.load_schedules()
+    from hub.fetch import nflverse
+    return (nflverse.load("schedules", [season], refresh=True)
             .filter((pl.col("season") == season) & pl.col("spread_line").is_not_null()))
 
 

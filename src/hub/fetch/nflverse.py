@@ -29,13 +29,14 @@ import argparse
 import hashlib
 import io
 import json
+import multiprocessing
 import sys
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, fields
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, Protocol
 
 import polars as pl
 
@@ -128,13 +129,19 @@ RANKINGS_PAGES: tuple[str, ...] = ("draft", "all")
 RANKINGS_COLS: tuple[str, ...] = tuple(FF_RANKINGS.required)
 
 
+# The first season nflverse's schedule table holds. `schedules` is one file of every season, so
+# a reader that wants "all of it" -- the margin fit, the conformal window, the track record --
+# names the span here rather than passing nothing, which is what the read used to say.
+FIRST_SEASON = 1999
+
+
+def every_season() -> list[int]:
+    """Every season the schedule table can hold, through the one in progress."""
+    return list(range(FIRST_SEASON, SEASON_AHEAD + 1))
+
+
 class WideFrameRefused(Exception):
     """Asked for a frame this module will not return in the shape requested."""
-
-
-def _raw_pbp(seasons: Sequence[int]) -> pl.DataFrame:
-    import nflreadpy as nfl
-    return nfl.load_pbp(seasons=list(seasons))
 
 
 def _clean_ff_opportunity(df: pl.DataFrame) -> pl.DataFrame:
@@ -150,17 +157,17 @@ def _clean_ff_opportunity(df: pl.DataFrame) -> pl.DataFrame:
     groups by player_id, so they were silently collapsing into a null bucket that joined
     to nothing. Dropping here makes a loss that was already happening visible.
     """
-    return df.filter(pl.col("player_id").is_not_null())
-
-
-def _raw_ff_opportunity(seasons: Sequence[int]) -> pl.DataFrame:
-    import nflreadpy as nfl
-    raw = nfl.load_ff_opportunity(seasons=list(seasons), stat_type="weekly")
-    clean = _clean_ff_opportunity(raw)
-    if clean.height < raw.height:
-        print(f"    ff_opportunity: dropped {raw.height - clean.height:,} unattributed "
-              f"rows of {raw.height:,}")
+    if "player_id" not in df.columns:
+        return df               # a vanished column is `load`'s to name, not a crash in here
+    clean = df.filter(pl.col("player_id").is_not_null())
+    if clean.height < df.height:
+        print(f"    ff_opportunity: dropped {df.height - clean.height:,} unattributed "
+              f"rows of {df.height:,}")
     return clean
+
+
+class LoadInWorker(Exception):
+    """`load` was called inside a worker process, whose reads the parent's digest cannot see."""
 
 
 class UnattributedPoints(Exception):
@@ -180,6 +187,8 @@ def _clean_player_stats(df: pl.DataFrame) -> pl.DataFrame:
     row that scored would mean nflverse had changed something, and silently dropping real
     points is how a projection goes quietly wrong for a month.
     """
+    if not {"player_id", "fantasy_points_ppr"} <= set(df.columns):
+        return df               # a vanished column is `load`'s to name, not a crash in here
     orphan = df.filter(pl.col("player_id").is_null())
     scoring = orphan.filter(pl.col("fantasy_points_ppr").fill_null(0.0) != 0.0)
     if scoring.height:
@@ -187,149 +196,176 @@ def _clean_player_stats(df: pl.DataFrame) -> pl.DataFrame:
             f"{scoring.height} rows with no player_id carry "
             f"{scoring['fantasy_points_ppr'].sum():.1f} fantasy points. Historically these "
             "rows are empty residue; points in them means the upstream shape changed.")
-    return df.filter(pl.col("player_id").is_not_null())
-
-
-def _raw_player_stats(seasons: Sequence[int]) -> pl.DataFrame:
-    import nflreadpy as nfl
-    raw = nfl.load_player_stats(seasons=list(seasons), summary_level="week")
-    clean = _clean_player_stats(raw)
-    if clean.height < raw.height:
-        print(f"    player_stats: dropped {raw.height - clean.height:,} unattributed "
-              f"rows of {raw.height:,}")
+    clean = df.filter(pl.col("player_id").is_not_null())
+    if clean.height < df.height:
+        print(f"    player_stats: dropped {df.height - clean.height:,} unattributed "
+              f"rows of {df.height:,}")
     return clean
 
 
-def _raw_schedules(seasons: Sequence[int]) -> pl.DataFrame:
-    import nflreadpy as nfl
-    return nfl.load_schedules().filter(pl.col("season").is_in(list(seasons)))
+@dataclass(frozen=True)
+class Source:
+    """One nflverse source, declared once: what it is called, what may come back, how it is
+    keyed, and how the wire is asked for it.
 
+    This used to be two hand-kept registries of the same thirteen names -- `SOURCES`, name to
+    contract, and the dispatch dict `_fetch` built per call, name to fetcher -- plus three
+    near-identical wrappers for the one `nflreadpy` function that takes a `stat_type`. A source
+    added to one and not the other was a source `load` accepted and could not fetch, or fetched
+    and never validated.
 
-def _raw_participation(seasons: Sequence[int]) -> pl.DataFrame:
-    import nflreadpy as nfl
-    return nfl.load_participation(seasons=list(seasons))
+    `wire` is the `nflreadpy` loader this source is, minus its `load_` prefix, and `arguments`
+    are the fixed keywords it is called with. The adapter is what makes the call -- see
+    `Adapter` -- so a `Source` is data and carries no `nflreadpy` import of its own.
 
+    `key` is what the partition key `load` is handed means. `"seasons"` is a season list, which
+    is every source but three. `"page"` is `ff_rankings`, keyed by a FantasyPros page type
+    (reach it through `load_rankings`). `"none"` is a source with no partition at all -- the
+    team table and the player-id crosswalk -- which is read with an empty key.
 
-def _raw_ftn_charting(seasons: Sequence[int]) -> pl.DataFrame:
-    import nflreadpy as nfl
-    return nfl.load_ftn_charting(seasons=list(seasons))
+    `whole` is for the one source `nflreadpy` will only hand back entire: `schedules` is a
+    single file of every season, and the season narrowing happens here, after the read, on
+    whichever adapter made it. A replay of a recorded schedule is narrowed the same way the
+    wire's is.
 
-
-def _raw_injuries(seasons: Sequence[int]) -> pl.DataFrame:
-    import nflreadpy as nfl
-    return nfl.load_injuries(seasons=list(seasons))
-
-
-def _raw_snap_counts(seasons: Sequence[int]) -> pl.DataFrame:
-    import nflreadpy as nfl
-    return nfl.load_snap_counts(seasons=list(seasons))
-
-
-def _raw_nextgen(stat_type: str, seasons: Sequence[int]) -> pl.DataFrame:
-    import nflreadpy as nfl
-    # nflreadpy types `stat_type` as a `Literal["passing", "receiving", "rushing"]`; the
-    # three wrappers below are the only callers and each passes one of those three literally,
-    # so the narrowing lives at the call sites rather than in a runtime check here -- the
-    # same shape `_raw_ff_rankings` takes for `load_ff_rankings`'s page-type literal.
-    return nfl.load_nextgen_stats(stat_type=stat_type, seasons=list(seasons))  # type: ignore[bad-argument-type]
-
-
-# `load_nextgen_stats` takes a `stat_type` this module's `_fetch(source, keys)` dispatch has
-# no slot for -- `keys` is the partition key and is seasons for every source but
-# `ff_rankings`. Rather than thread a second parameter through `_fetch` for one source, the
-# three shapes are three sources, each a `functools.partial` closing over its own stat_type
-# so the fetcher registry stays a plain `Callable[[Sequence[int]], pl.DataFrame]`.
-def _raw_nextgen_passing(seasons: Sequence[int]) -> pl.DataFrame:
-    return _raw_nextgen("passing", seasons)
-
-
-def _raw_nextgen_rushing(seasons: Sequence[int]) -> pl.DataFrame:
-    return _raw_nextgen("rushing", seasons)
-
-
-def _raw_nextgen_receiving(seasons: Sequence[int]) -> pl.DataFrame:
-    return _raw_nextgen("receiving", seasons)
-
-
-def _raw_depth_charts(seasons: Sequence[int]) -> pl.DataFrame:
-    import nflreadpy as nfl
-    return nfl.load_depth_charts(seasons=list(seasons))
-
-
-def _raw_ff_rankings(pages: Sequence[str]) -> pl.DataFrame:
-    """The one source keyed by a page type instead of a season.
-
-    `pages` is the partition key `load` was handed, which for this source is a single
-    FantasyPros page. Refused rather than silently served if it is anything else: a caller
-    who passed two pages would get one of them, and a board built from the wrong scale is
-    the failure `hub.draft.board._select_consensus` already exists to prevent.
+    `clean` drops the rows that belong to no player before the contract is applied, for the
+    two sources that ship them. It runs on what the adapter returned, so it runs on a Replay
+    as it runs on the network, and a recorded set cannot be cleaner than the wire was.
     """
-    # GUARD rankings-partition-key: a key that is not one known page never reaches nflreadpy
-    if len(pages) != 1 or pages[0] not in RANKINGS_PAGES:
-        raise WideFrameRefused(
-            f"ff_rankings is keyed by one page type, not by {list(pages)!r}. "
-            f"Known: {', '.join(RANKINGS_PAGES)}; use load_rankings(page, as_of=...).")
-    # /GUARD
-    import nflreadpy as nfl
-    # nflreadpy types the argument as a `Literal`, and the check above is what narrows it --
-    # a membership test in a module-level tuple, which no type checker follows.
-    return nfl.load_ff_rankings(pages[0])  # type: ignore[bad-argument-type]
+
+    name: str
+    contract: Contract | None
+    wire: str
+    key: Literal["seasons", "page", "none"] = "seasons"
+    arguments: tuple[tuple[str, Any], ...] = ()
+    whole: bool = False
+    clean: Callable[[pl.DataFrame], pl.DataFrame] | None = None
 
 
-SOURCES: dict[str, Contract | None] = {
-    "pbp": PBP,
-    "ff_opportunity": FF_OPPORTUNITY,
-    "player_stats": PLAYER_STATS,
-    "schedules": SCHEDULES,
+class Adapter(Protocol):
+    """Where nflverse's bytes come from. The one seam, with the network as its first adapter.
+
+    `read` returns the frame `nflreadpy` would return for this source and key -- before
+    narrowing, cleaning or validation, all of which `load` does on whatever an adapter hands
+    back. That is the layer worth faking: everything above it is production code. The second
+    adapter is `hub.fetch.replay.Replay`.
+    """
+
+    def read(self, source: Source, keys: Sequence[int | str]) -> pl.DataFrame: ...
+
+
+class Network:
+    """The default adapter: nflreadpy, over the wire, and the only place that imports it.
+
+    `tests/contracts/test_sources_are_routed.py` holds that nothing else under `src/hub` does.
+    """
+
+    def read(self, source: Source, keys: Sequence[int | str]) -> pl.DataFrame:
+        import nflreadpy as nfl
+        fetch = getattr(nfl, f"load_{source.wire}")
+        kwargs = dict(source.arguments)
+        if source.key == "page":
+            return fetch(keys[0])
+        if source.key == "seasons" and not source.whole:
+            return fetch(seasons=list(keys), **kwargs)
+        return fetch(**kwargs)
+
+
+SOURCES: dict[str, Source] = {s.name: s for s in (
+    Source("pbp", PBP, "pbp"),
+    Source("ff_opportunity", FF_OPPORTUNITY, "ff_opportunity",
+           arguments=(("stat_type", "weekly"),), clean=_clean_ff_opportunity),
+    Source("player_stats", PLAYER_STATS, "player_stats",
+           arguments=(("summary_level", "week"),), clean=_clean_player_stats),
+    Source("schedules", SCHEDULES, "schedules", whole=True),
     # The scheme layer. Neither is WIDE -- 26 and 29 columns -- so both come back whole.
-    "participation": PARTICIPATION,
-    "ftn_charting": FTN_CHARTING,
+    Source("participation", PARTICIPATION, "participation"),
+    Source("ftn_charting", FTN_CHARTING, "ftn_charting"),
     # The three #33 added. None is WIDE -- 25, 17 and 16 columns -- so none needs `cols`,
     # though passing one still narrows. `ff_rankings` is keyed by page type rather than by
     # season and is reached through `load_rankings`.
-    "ff_rankings": FF_RANKINGS,
-    "injuries": INJURIES,
-    "snap_counts": SNAP_COUNTS,
+    Source("ff_rankings", FF_RANKINGS, "ff_rankings", key="page"),
+    Source("injuries", INJURIES, "injuries"),
+    Source("snap_counts", SNAP_COUNTS, "snap_counts"),
     # #370 (S12): free nflverse sources nothing in this repo ever called. Next Gen Stats
-    # ships three shapes under one nflreadpy function, keyed by stat_type -- see
-    # `_raw_nextgen` -- so it is three sources here rather than one with a parameter `load`
-    # has no slot for.
-    "nextgen_passing": NEXTGEN_STATS,
-    "nextgen_rushing": NEXTGEN_STATS,
-    "nextgen_receiving": NEXTGEN_STATS,
-    "depth_charts": DEPTH_CHARTS,
-}
+    # ships three shapes under one nflreadpy function, keyed by stat_type, so it is three
+    # sources here -- one declaration each, where it used to be a wrapper each.
+    Source("nextgen_passing", NEXTGEN_STATS, "nextgen_stats",
+           arguments=(("stat_type", "passing"),)),
+    Source("nextgen_rushing", NEXTGEN_STATS, "nextgen_stats",
+           arguments=(("stat_type", "rushing"),)),
+    Source("nextgen_receiving", NEXTGEN_STATS, "nextgen_stats",
+           arguments=(("stat_type", "receiving"),)),
+    Source("depth_charts", DEPTH_CHARTS, "depth_charts"),
+    # #398 routed the last readers that went straight to nflreadpy, and two of them read
+    # tables that were never sources: the team table (`odds`' name-to-abbreviation map) and
+    # the player-id crosswalk (`spread`'s PFR-to-GSIS join). Neither is season-partitioned and
+    # neither has a contract yet -- one is owed on the day something is measured to depend on
+    # it -- but a read that is cached, recordable and pinned beats one that is none of those.
+    Source("teams", None, "teams", key="none"),
+    Source("ff_playerids", None, "ff_playerids", key="none"),
+)}
 
 
-def _fetch(source: str, keys: Sequence[int | str]) -> pl.DataFrame:
-    """Dispatch by name at call time, not by binding function objects at import.
+_ADAPTER: Adapter = Network()
+# Where `load` caches when its caller names no root. `None` means `RAW`, looked up when it is
+# needed rather than bound here, so a test that points `RAW` at a tmp tree still works.
+_CACHE_ROOT: Path | None = None
 
-    A dict of function objects built at module scope captures whatever was defined then,
-    so a test that replaces `_raw_ff_opportunity` is ignored and the call goes to the
-    network instead. That is not only a testing problem: it makes the indirection a lie.
 
-    `keys` is the partition key set. For every source but one that is a list of seasons;
-    `ff_rankings` is not season-partitioned and its key is the FantasyPros page type, which
-    is why the annotation admits a string. The value type stays `Any`: a fetcher declared
-    over `Sequence[int]` is not assignable to one declared over the wider type, and widening
-    all six to say otherwise would be six lies told to make one true.
+def select(adapter: Adapter | None, *, cache: Path | None = None) -> None:
+    """Choose where this process's nflverse reads come from, and where their cache lives.
+
+    `None` is the network and the repo's own cache. Anything else is an `Adapter`, and the
+    cache goes with it: a Replay that wrote its pins under the developer's `data/raw` would
+    leave the next test naming the same as-of served this one's frame, which is why choosing
+    an adapter and choosing a cache are one call.
+
+    Process-wide, because that is what the seam is -- the reads of a run are one stream, and a
+    module that picked its own adapter would be a read the run's digest could not name. A test
+    selects through `serving`, and `tests/conftest.py` puts it back after each one.
     """
-    fetchers: dict[str, Callable[[Any], pl.DataFrame]] = {
-        "pbp": _raw_pbp,
-        "ff_opportunity": _raw_ff_opportunity,
-        "player_stats": _raw_player_stats,
-        "schedules": _raw_schedules,
-        "participation": _raw_participation,
-        "ftn_charting": _raw_ftn_charting,
-        "injuries": _raw_injuries,
-        "snap_counts": _raw_snap_counts,
-        "ff_rankings": _raw_ff_rankings,
-        "nextgen_passing": _raw_nextgen_passing,
-        "nextgen_rushing": _raw_nextgen_rushing,
-        "nextgen_receiving": _raw_nextgen_receiving,
-        "depth_charts": _raw_depth_charts,
-    }
-    return fetchers[source](keys)
+    global _ADAPTER, _CACHE_ROOT
+    _ADAPTER = Network() if adapter is None else adapter
+    _CACHE_ROOT = cache
+
+
+def selected() -> Adapter:
+    """The adapter reads are coming from now."""
+    return _ADAPTER
+
+
+@contextmanager
+def serving(adapter: Adapter, *, cache: Path | None = None) -> Iterator[Adapter]:
+    """`select`, for the length of a block."""
+    before = (_ADAPTER, _CACHE_ROOT)
+    select(adapter, cache=cache)
+    try:
+        yield adapter
+    finally:
+        select(before[0], cache=before[1])
+
+
+def _cache_root() -> Path:
+    return _CACHE_ROOT if _CACHE_ROOT is not None else RAW
+
+
+def _read(source: Source, keys: Sequence[int | str]) -> pl.DataFrame:
+    """What the selected adapter hands back for this source, narrowed to the key and cleaned.
+
+    `keys` is the partition key set. For every source but two that is a list of seasons;
+    `ff_rankings`' is a FantasyPros page type, which is why the annotation admits a string.
+    """
+    # GUARD rankings-partition-key: a key that is not one known page never reaches an adapter
+    if source.key == "page" and (len(keys) != 1 or keys[0] not in RANKINGS_PAGES):
+        raise WideFrameRefused(
+            f"ff_rankings is keyed by one page type, not by {list(keys)!r}. "
+            f"Known: {', '.join(RANKINGS_PAGES)}; use load_rankings(page, as_of=...).")
+    # /GUARD
+    df = _ADAPTER.read(source, keys)
+    if source.whole and source.key == "seasons":
+        df = df.filter(pl.col("season").is_in([int(k) for k in keys]))
+    return df if source.clean is None else source.clean(df)
 
 
 @dataclass(frozen=True)
@@ -457,7 +493,8 @@ def pin_digest(source: str, as_of: str | None, df: pl.DataFrame) -> str:
     with the one the frame was validated against. A source with no contract declares no key,
     and `content_digest` orders on the whole frame instead.
     """
-    contract = SOURCES.get(source)
+    declared = SOURCES.get(source)
+    contract = None if declared is None else declared.contract
     key = () if contract is None else contract.unique
     return hashlib.sha256(
         pin_fold(source, as_of, content_digest(df, key)).encode()).hexdigest()[:8]
@@ -507,7 +544,7 @@ def _cache_path(source: str, seasons: Sequence[int | str], cols: Sequence[str] |
     write both -- which is what leaves `make slate`, which drives `refresh=True` and passes
     no as-of, on exactly the file it used yesterday.
     """
-    root = cache or RAW
+    root = cache or _cache_root()
     key = ",".join(sorted(cols)) if cols else "all"
     digest = hashlib.sha256(key.encode()).hexdigest()[:8]
     stamp = "-".join(str(s) for s in sorted(seasons))
@@ -542,18 +579,55 @@ def _pin_path(path: Path) -> Path:
 # read three sources with two pinned published a digest over two, and nothing said so.
 # `config.UnpinnedRead` is what such a read records instead, and `config.data_digest` turns
 # the run's whole answer into the sentinel when it sees one.
-_READ_THIS_RUN: dict[str, DataPin] = {}
+class Reads:
+    """What one run has read: the recorder `reads_of_one_run` hands out, one per scope.
+
+    A class and not a bare dict so that a scope is something a caller *holds*. The recorder
+    used to be a process-global dict that `reads_of_one_run` rebound, and twenty-four tests
+    reached in and rebound it themselves to get a clean slate or a pre-loaded one -- which
+    is a test depending on how the module happens to store its state. `with reads_of_one_run()
+    as reads:` gives the clean slate, and `reads.remember` is how a test says what a run read.
+    """
+
+    def __init__(self) -> None:
+        self._by_entry: dict[str, DataPin] = {}
+
+    def remember(self, entry: str | Path, read: DataPin) -> None:
+        """Record what an entry held, once per entry. First read wins.
+
+        A second load of the same entry in one process returns the same bytes -- the cache
+        path is a function of the key -- so re-recording would only reorder the digest's
+        inputs.
+
+        `read` is not optional. It used to be, and a `None` meant nothing was recorded at all,
+        which is how an entry with no readable pin left the digest looking complete. A caller
+        with no pin passes `config.UnpinnedRead`, which says so.
+        """
+        self._by_entry.setdefault(str(entry), read)
+
+    def pins(self) -> tuple[DataPin, ...]:
+        """Every entry read, in the order it was first read."""
+        return tuple(self._by_entry.values())
+
+
+# The scopes now open, outermost first. The first is the process's own run -- what every read
+# lands in when no caller has opened a scope -- and is never popped. Mutated in place, never
+# rebound, so there is nothing for a caller to reach in and replace.
+_RUNS: list[Reads] = [Reads()]
 
 
 @contextmanager
-def reads_of_one_run() -> Iterator[None]:
+def reads_of_one_run() -> Iterator[Reads]:
     """Scope the reads below to one run, so a component's digest names its own bytes.
 
-    The dict above is process-global and used never to be reset, which is right for a process
-    that is one run and wrong the moment it is not: a build driving the board, the gate and
-    the publisher in turn folded all three components' reads into every component's digest.
-    Each then named bytes it had not read, and the digests of three different questions came
-    out identical -- which is precisely the claim a digest exists to be able to deny.
+    The process-wide recorder used never to be reset, which is right for a process that is one
+    run and wrong the moment it is not: a build driving the board, the gate and the publisher
+    in turn folded all three components' reads into every component's digest. Each then named
+    bytes it had not read, and the digests of three different questions came out identical --
+    which is precisely the claim a digest exists to be able to deny.
+
+    Yields the recorder for the block, so a caller that wants to say what a run read -- or to
+    read it back -- holds it instead of reaching for module state.
 
     Reads made inside the block still reach the enclosing run on the way out. The scope
     narrows what a component *reports*, and must not become a way for a run to lose a read:
@@ -561,16 +635,14 @@ def reads_of_one_run() -> Iterator[None]:
     exactly the sources the helper loaded, which is the defect in this file's other half
     wearing a different hat. First read still wins, on both sides of the boundary.
     """
-    global _READ_THIS_RUN
-    outer = _READ_THIS_RUN
-    _READ_THIS_RUN = {}
+    inner = Reads()
+    _RUNS.append(inner)
     try:
-        yield
+        yield inner
     finally:
-        inner = _READ_THIS_RUN
-        _READ_THIS_RUN = outer
-        for entry, read in inner.items():
-            _READ_THIS_RUN.setdefault(entry, read)
+        _RUNS.pop()
+        for entry, read in inner._by_entry.items():
+            _RUNS[-1].remember(entry, read)
 
 
 def pins_this_run() -> tuple[DataPin, ...]:
@@ -588,20 +660,12 @@ def pins_this_run() -> tuple[DataPin, ...]:
     coming back, so the count here is the number of entries read and not the number that
     happened to have a sidecar.
     """
-    return tuple(_READ_THIS_RUN.values())
+    return _RUNS[-1].pins()
 
 
 def _remember(path: Path, read: DataPin) -> None:
-    """Record what an entry held, once per entry. First read wins.
-
-    A second load of the same entry in one process returns the same bytes -- the cache path is
-    a function of the key -- so re-recording would only reorder the digest's inputs.
-
-    `read` is not optional. It used to be, and a `None` meant nothing was recorded at all,
-    which is how an entry with no readable pin left the digest looking complete. A caller with
-    no pin passes `config.UnpinnedRead`, which says so.
-    """
-    _READ_THIS_RUN.setdefault(str(path), read)
+    """Record what an entry held in the run now open. `Reads.remember` says how."""
+    _RUNS[-1].remember(path, read)
 
 
 def _pin_beside(path: Path) -> Pin | None:
@@ -667,6 +731,15 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
     pin carries no `pinned_at`, because those rows reproduce from the as-of alone; every
     other source is labelled and stamped. See `APPEND_ONLY` and `Pin.pinned_at`.
     """
+    # GUARD load-in-a-worker-refused [unit/test_fetch_nflverse.py]: a read whose record would
+    # die with the process that made it is refused rather than made
+    if multiprocessing.parent_process() is not None:
+        raise LoadInWorker(
+            f"load({source!r}) was called inside a worker process. The run's record of what it "
+            f"read lives in the parent, so a read made here would be real data in a digest that "
+            f"cannot name it. Load in the parent and hand the worker the frame.")
+    # /GUARD
+
     # GUARD unknown-source-refused: a name the registry does not know reaches no fetcher
     if source not in SOURCES:
         raise WideFrameRefused(
@@ -696,8 +769,8 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
         _remember(path, served if served is not None else UnpinnedRead(source, iso))
         return pl.read_parquet(path)
 
-    contract = SOURCES[source]
-    df = _fetch(source, seasons)
+    contract = SOURCES[source].contract
+    df = _read(SOURCES[source], seasons)
 
     # The as-of filters content where the source allows it and only labels a snapshot where
     # it does not. `pinned_at` on the pin below is what says which of the two happened, so

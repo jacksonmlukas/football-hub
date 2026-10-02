@@ -50,7 +50,6 @@ import polars as pl
 from hub import atomic
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
-from hub.contracts import SNAP_COUNTS
 from hub.declare import not_an_input
 from hub.models.experiment import MIN_SE, expanding_seasons, paired_gain
 from hub.models.predict import WEEKLY_K, WEEKLY_K_POOLED
@@ -76,6 +75,11 @@ CANDIDATES = ("positional", "own_k", "usage")
 FEATURES = ("tgt_share", "ay_share", "td_pg", "snap_pct", "drift", "log_mu")
 
 _TD_COLS = ("receiving_tds", "rushing_tds", "passing_tds")
+
+# What `player_seasons` reads of the weekly stats: `PLAYER_STATS`' five required, the season
+# type it filters on, the three touchdown counts it sums, and the two shares of the usage arm.
+STAT_COLS = ("season", "week", "player_id", "position", "fantasy_points_ppr", "season_type",
+             *_TD_COLS, "target_share", "air_yards_share")
 
 
 def _positional_k(pos: pl.Expr) -> pl.Expr:
@@ -108,17 +112,22 @@ def snap_usage(snaps: pl.DataFrame, crosswalk: pl.DataFrame) -> pl.DataFrame:
     absent rather than zero: a missing snap share is unknown, and zero would assert he
     never played.
 
-    **The four columns and the units are asked of `SNAP_COUNTS`, not restated here.** This
-    function used to hold its own list of required columns and its own answer to nflverse
-    shipping whole percents -- detect a share above 1.5, divide by a hundred -- while the
-    contract that bounds the same column *refused* that frame. Two answers to one upstream
-    variation, in two files, with nothing pointing at the other, and the repair became
-    unreachable the moment anything routed this source through the contract. The bound and
-    the repair are one declaration now, and this asks it for them.
+    **`snaps` is what `hub.fetch.nflverse.load("snap_counts", ...)` returns, and that is where
+    the units are settled.** This function used to hold its own list of required columns and
+    its own answer to nflverse shipping whole percents -- detect a share above 1.5, divide by a
+    hundred -- while the contract that bounds the same column *refused* that frame; then it
+    asked `SNAP_COUNTS.conform` for both. The loader validates the whole response, repairs a
+    whole-percent refresh by the contract's one declared `Normalisation`, and pins that it did,
+    so what arrives here is already in the units the declaration states and this reads it as
+    it is. Hand it a frame that did not come through the loader and the units are yours to
+    answer for.
     """
     if not {"pfr_id", "gsis_id"} <= set(crosswalk.columns):
         raise ValueError("crosswalk needs pfr_id and gsis_id")
-    s = SNAP_COUNTS.conform(snaps, "season", "week", "pfr_player_id", "offense_pct")
+    need = {"season", "week", "pfr_player_id", "offense_pct"}
+    if need - set(snaps.columns):
+        raise ValueError(f"snap_usage needs {sorted(need - set(snaps.columns))}")
+    s = snaps
 
     if "position" in s.columns:
         s = s.filter(pl.col("position").is_in(DRAFTED_POSITIONS))
@@ -395,14 +404,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         p.print_help()
         return 0
 
-    import nflreadpy as nfl
+    from hub.fetch import nflverse
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     try:
-        stats = nfl.load_player_stats(seasons=seasons)
+        stats = nflverse.load("player_stats", seasons, cols=STAT_COLS)
     except Exception as e:
         return unavailable("hub.models.spread", "nflverse weekly player stats", e)
     try:
-        snaps, xw = nfl.load_snap_counts(seasons=seasons), nfl.load_ff_playerids()
+        # Whole, no `cols`: `SNAP_COUNTS`' repair of a whole-percent refresh is decided across
+        # every share column in the frame, and narrowing before the contract sees it would
+        # take away the columns that can carry the evidence.
+        snaps, xw = nflverse.load("snap_counts", seasons), nflverse.load("ff_playerids", ())
     except Exception as exc:
         print(f"snap counts unavailable ({exc}); usage arm runs without snap share")
         snaps, xw = None, None
