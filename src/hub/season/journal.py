@@ -562,16 +562,8 @@ def read(season: int, week: int | None = None,
     """
     empty = pl.DataFrame(schema={**SCHEMA, **{k: v for k, v in OUTCOME_SCHEMA.items()
                                               if k != "key"}})
-    have = store.tables(base)
-    if TABLE not in have:
-        return empty
-    params: list[object] = [LEAGUE, season]
-    q = f"SELECT * FROM {TABLE} WHERE league = ? AND season = ?"
-    if week is not None:
-        q += " AND week = ?"
-        params.append(week)
-    decisions = store.sql(q, params=params, base=base)
-    if decisions.is_empty():
+    decisions = store.journal(season, week=week, base=base)
+    if decisions is None or decisions.is_empty():
         return empty
     # `season` and `week` arrive twice: once as written and once as the Hive partition the
     # store lays out, and the partition's string wins the name. Cast back, so a caller
@@ -587,12 +579,9 @@ def read(season: int, week: int | None = None,
     decisions = decisions.with_columns(
         pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64), *absent
     ).select(list(SCHEMA))
-    if OUTCOME_TABLE not in have:
-        outcomes = pl.DataFrame(schema=OUTCOME_SCHEMA)
-    else:
-        outcomes = store.sql(
-            f"SELECT * FROM {OUTCOME_TABLE} WHERE league = ? AND season = ?",
-            params=[LEAGUE, season], base=base).select(list(OUTCOME_SCHEMA))
+    settled = store.journal_outcomes(season, base=base)
+    outcomes = (pl.DataFrame(schema=OUTCOME_SCHEMA) if settled is None
+                else settled.select(list(OUTCOME_SCHEMA)))
     return decisions.join(outcomes, on="key", how="left").sort("at")
 
 

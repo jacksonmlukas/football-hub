@@ -1265,10 +1265,9 @@ def prop_quotes(event: Mapping[str, Any], game_id: str, week: int,
 
 def _prop_archive(season: int, base: Path | None) -> pl.DataFrame:
     """Every prop poll already stored for the season, in `_PROP_SCHEMA`. Empty on a fresh clone."""
-    if "prop_lines" not in store.tables(base):
+    got = store.prop_lines(season, base=base)
+    if got is None:
         return pl.DataFrame(schema=_PROP_SCHEMA)
-    got = store.sql("SELECT * FROM prop_lines WHERE league = 'nfl' AND season = ?",
-                    params=[season], base=base)
     return got.select(*[pl.col(c).cast(t) for c, t in _PROP_SCHEMA.items()])
 
 

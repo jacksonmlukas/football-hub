@@ -301,18 +301,11 @@ def test_the_record_reads_the_tie_constant_rather_than_hardcoding_it(site, base,
 def test_both_paths_score_the_same_tied_game_the_same_way(site, base, monkeypatch):
     """The whole of issue #64 end to end. No published prediction is a tied game yet, so
     nothing but a test can show the two paths agreeing -- which is why this exists."""
-    import hub.store as hub_store
     from hub.models import eval as me
     _tied_and_won(base, monkeypatch, site)
 
     record = publish._scored(site)
     assert record is not None
-    monkeypatch.setattr(hub_store, "tables", lambda *a, **k: {"preds"})
-    monkeypatch.setattr(hub_store, "sql", lambda *a, **k: pl.DataFrame(
-        {"game_id": ["g1", "g2"],
-         "season": pl.Series([2026, 2026], dtype=pl.Int32),
-         "week": pl.Series([1, 1], dtype=pl.Int32),
-         "model": ["market_baseline"] * 2, "home_win_prob": [0.2, 0.6]}))
     comparison = me.load_predictions("market_baseline", base=base)
 
     assert record["game_id"].to_list() == comparison["game_id"].to_list() == ["g2"]
@@ -606,13 +599,14 @@ def test_an_empty_store_reports_absence_by_asking_not_by_catching(tmp_path):
 def test_a_real_query_failure_now_surfaces(site, base, monkeypatch):
     """The behaviour that changed. With predictions present, a broken query must raise rather
     than be reported to the page as an absence."""
+    import duckdb
     store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
     assert "preds" in store.tables(base), "the fixture store has predictions"
-
-    def boom(*a, **k):
-        raise RuntimeError("schema drift")
-    monkeypatch.setattr(store, "sql", boom)
-    with pytest.raises(RuntimeError, match="schema drift"):
+    # A partition the catalog cannot read: the real shape of drift, where the patched `sql`
+    # that stood here raised an exception of the test's own invention.
+    (base / "preds" / "league=nfl" / "season=2026" / "week=01" / "rotten.parquet").write_text(
+        "not a parquet file")
+    with pytest.raises(duckdb.Error):
         publish.predictions(2026, 1, base=base, out=site)
 
 

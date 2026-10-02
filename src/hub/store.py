@@ -302,6 +302,60 @@ def lines(season: int, *, base: Path | None = None) -> pl.DataFrame:
     return got.with_columns(absent).with_columns(pl.col("week").cast(pl.Utf8).cast(pl.Int64))
 
 
+# --- the other archives ----------------------------------------------------------------
+#
+# Each one a name, so the table, its league filter and its fresh-clone answer are stated here
+# and not in whichever module wanted the rows. The shared answer for a fresh clone is `None`:
+# "no such archive", which is a different statement from an archive with nothing in the season
+# (an empty frame), and the callers say different things for the two -- a CLI that names the
+# command that writes the archive, a reader that degrades to an empty schema. Returning `None`
+# keeps that decision with the caller who has a message to write, and the query with the store.
+# The rows come back as stored, partition columns and all; a caller casts and selects what it
+# reads, which is frame arithmetic and needs no catalog.
+
+def _archive(table: str, season: int, week: int | None, base: Path | None) -> pl.DataFrame | None:
+    if table not in tables(base):
+        return None
+    q = f"SELECT * FROM {table} WHERE league = 'nfl' AND season = ?"
+    params: list[object] = [season]
+    if week is not None:
+        q += " AND week = ?"
+        params.append(week_key(week))
+    return sql(q, params=params, base=base)
+
+
+def prop_lines(season: int, *, week: int | None = None,
+               base: Path | None = None) -> pl.DataFrame | None:
+    """Every prop poll stored for the season (one week of it if asked), or None if the store
+    has no `prop_lines` archive -- which is `hub.fetch.odds --record-props` never having run."""
+    return _archive("prop_lines", season, week, base)
+
+
+def prop_log(season: int, *, base: Path | None = None) -> pl.DataFrame | None:
+    """The season's prop decisions and their closes, or None if `hub.models.props --log` has
+    never written one."""
+    return _archive("prop_log", season, None, base)
+
+
+def pool_state(season: int, *, week: int | None = None,
+               base: Path | None = None) -> pl.DataFrame | None:
+    """Every archived read of the survivor pool for the season, one row per entry per read,
+    or None on a fresh clone. The grouping into reads and the contract are `hub.fetch.pool`'s."""
+    return _archive("pool_state", season, week, base)
+
+
+def journal(season: int, *, week: int | None = None,
+            base: Path | None = None) -> pl.DataFrame | None:
+    """The season's journalled decisions as stored, or None if none was ever recorded. Rows
+    written before a column existed lack it; adding it as null is the journal's to say."""
+    return _archive("journal", season, week, base)
+
+
+def journal_outcomes(season: int, *, base: Path | None = None) -> pl.DataFrame | None:
+    """The season's settled outcomes as stored, or None if none was ever settled."""
+    return _archive("journal_outcome", season, None, base)
+
+
 # One prediction per game, and the rule for choosing it.
 #
 # The store keeps every version on purpose -- two configurations both survive, which is
